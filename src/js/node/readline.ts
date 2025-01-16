@@ -1643,7 +1643,7 @@ var _Interface = class Interface extends InterfaceConstructor {
 
     // Apply/show completions.
     var completionsWidth = ArrayPrototypeMap.$call(completions, e => getStringWidth(e));
-    var width = MathMax.$apply(completionsWidth) + 2; // 2 space padding
+    var width = MathMax.$apply(null, completionsWidth) + 2; // 2 space padding
     var maxColumns = MathFloor(this.columns / width) || 1;
     if (maxColumns === Infinity) {
       maxColumns = 1;

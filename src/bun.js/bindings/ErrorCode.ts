@@ -6,11 +6,13 @@ type ErrorCodeMapping = Array<
     /** Constructor **/
     typeof TypeError | typeof RangeError | typeof Error | typeof SyntaxError,
     /** error.name. Defaults to `Constructor.name` (that is, mapping[1].name  */
-    string,
+    string?,
+    (typeof TypeError | typeof RangeError | typeof Error | typeof SyntaxError)?,
+    (typeof TypeError | typeof RangeError | typeof Error | typeof SyntaxError)?,
   ]
 >;
 
-export default [
+const errors: ErrorCodeMapping = [
   ["ABORT_ERR", Error, "AbortError"],
   ["ERR_CRYPTO_INVALID_DIGEST", TypeError],
   ["ERR_ENCODING_INVALID_ENCODED_DATA", TypeError],
@@ -44,7 +46,7 @@ export default [
   ["ERR_BUFFER_TOO_LARGE", RangeError],
   ["ERR_BROTLI_INVALID_PARAM", RangeError],
   ["ERR_UNKNOWN_ENCODING", TypeError],
-  ["ERR_INVALID_STATE", Error],
+  ["ERR_INVALID_STATE", Error, undefined, TypeError, RangeError],
   ["ERR_BUFFER_OUT_OF_BOUNDS", RangeError],
   ["ERR_UNKNOWN_SIGNAL", TypeError],
   ["ERR_SOCKET_BAD_PORT", RangeError],
@@ -161,4 +163,5 @@ export default [
   ["ERR_S3_INVALID_ENDPOINT", Error],
   ["ERR_S3_INVALID_SIGNATURE", Error],
   ["ERR_S3_INVALID_SESSION_TOKEN", Error],
-] as ErrorCodeMapping;
+] as const;
+export default errors;

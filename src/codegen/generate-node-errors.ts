@@ -6,6 +6,16 @@ if (!outputDir) {
   throw new Error("Missing output directory");
 }
 
+const extra_count = NodeErrors.map(x => x.slice(3))
+  .filter(x => x.length > 0)
+  .reduce((ac, cv) => ac + cv.length, 0);
+const count = NodeErrors.length + extra_count;
+
+if (count > 265) {
+  console.error("NodeError count exceeds u8");
+  process.exit(1);
+}
+
 let enumHeader = ``;
 let listHeader = ``;
 let zig = ``;
@@ -18,7 +28,7 @@ enumHeader = `
 #include <cstdint>
 
 namespace Bun {
-  static constexpr size_t NODE_ERROR_COUNT = ${NodeErrors.length};
+  static constexpr size_t NODE_ERROR_COUNT = ${count};
   enum class ErrorCode : uint8_t {
 `;
 
@@ -34,7 +44,7 @@ struct ErrorCodeData {
     WTF::ASCIILiteral name;
     WTF::ASCIILiteral code;
 };
-static constexpr ErrorCodeData errors[${NodeErrors.length}] = {
+static constexpr ErrorCodeData errors[${count}] = {
 `;
 
 zig = `
@@ -71,7 +81,7 @@ pub const Error = enum(u8) {
 
 let i = 0;
 let listForUsingNamespace = "";
-for (let [code, constructor, name] of NodeErrors) {
+for (let [code, constructor, name, ...other_constructors] of NodeErrors) {
   if (name == null) name = constructor.name;
   enumHeader += `    ${code} = ${i},\n`;
   listHeader += `    { JSC::ErrorType::${constructor.name}, "${name}"_s, "${code}"_s },\n`;
@@ -81,6 +91,19 @@ for (let [code, constructor, name] of NodeErrors) {
   listForUsingNamespace += `     return .{ .globalThis = globalThis, .args = args };\n`;
   listForUsingNamespace += ` }\n`;
   i++;
+
+  for (const con of other_constructors) {
+    if (con == null) continue;
+    if (name == null) name = con.name;
+    enumHeader += `    ${code}_${con.name} = ${i},\n`;
+    listHeader += `    { JSC::ErrorType::${con.name}, "${con.name}"_s, "${code}"_s },\n`;
+    zig += `    ${code}_${con.name} = ${i},\n`;
+    listForUsingNamespace += ` /// ${name}: ${code} (instanceof ${con.name})\n`;
+    listForUsingNamespace += ` pub inline fn ${code}_${con.name}(globalThis: *JSC.JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) ErrorBuilder(Error.${code}_${con.name}, fmt, @TypeOf(args)) {\n`;
+    listForUsingNamespace += `     return .{ .globalThis = globalThis, .args = args };\n`;
+    listForUsingNamespace += ` }\n`;
+    i++;
+  }
 }
 
 enumHeader += `

@@ -879,7 +879,9 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, error, Message::ERR_OUT_OF_RANGE(scope, globalObject, arg0, arg1, arg2)));
     }
 
-    case Bun::ErrorCode::ERR_INVALID_STATE: {
+    case Bun::ErrorCode::ERR_INVALID_STATE:
+    case Bun::ErrorCode::ERR_INVALID_STATE_TypeError:
+    case Bun::ErrorCode::ERR_INVALID_STATE_RangeError: {
         auto arg0 = callFrame->argument(1);
         auto str0 = arg0.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});

@@ -2677,8 +2677,7 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__generateKeyPairSync, (JSC::JSGlobalObject * 
         } else if (namedCurve == "P-521"_s || namedCurve == "p521"_s || namedCurve == "secp521r1"_s) {
             namedCurve = "P-521"_s;
         } else {
-            throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "curve not supported"_s));
-            return {};
+            return Bun::ERR::CRYPTO_JWK_UNSUPPORTED_CURVE(scope, lexicalGlobalObject, namedCurve);
         }
 
         auto result = CryptoKeyEC::generatePair(CryptoAlgorithmIdentifier::ECDSA, namedCurve, true, CryptoKeyUsageSign | CryptoKeyUsageVerify);

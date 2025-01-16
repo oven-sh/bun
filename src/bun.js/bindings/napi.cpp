@@ -1293,12 +1293,6 @@ extern "C" napi_status napi_get_reference_value(napi_env env, napi_ref ref,
     NAPI_RETURN_SUCCESS(env);
 }
 
-extern "C" JSC__JSValue napi_get_reference_value_internal(NapiRef* napiRef)
-{
-    NAPI_LOG_CURRENT_FUNCTION;
-    return JSC::JSValue::encode(napiRef->value());
-}
-
 extern "C" napi_status napi_reference_ref(napi_env env, napi_ref ref,
     uint32_t* result)
 {
@@ -1713,8 +1707,6 @@ void NapiClass::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_CHILDREN(NapiClass);
-
-#define ADDRESS_OF_THIS_VALUE_IN_CALLFRAME(callframe) (callframe->addressOfArgumentsStart() - 1)
 
 template<bool ConstructCall>
 JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)

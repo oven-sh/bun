@@ -224,7 +224,6 @@ if (!common.openSSLIsBoringSSL) {
   crypto.getHashes()
     .filter((hash) => !kNotPBKDF2Supported.includes(hash))
     .forEach((hash) => {
-      console.log({hash});
       runPBKDF2(new Uint8Array(10), 'salt', 8, 8, hash);
     });
 }

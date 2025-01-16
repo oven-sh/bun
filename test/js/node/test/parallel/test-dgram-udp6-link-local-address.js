@@ -12,7 +12,7 @@ const { isWindows } = common;
 function linklocal() {
   for (const [ifname, entries] of Object.entries(os.networkInterfaces())) {
     for (const { address, family, scopeid } of entries) {
-      if (family === 'IPv6' && address.startsWith('fe80:') && ifname !== 'Tailscale') {
+      if (family === 'IPv6' && address.startsWith('fe80:') && !ifname.match(/tailscale/i)) {
         return { address, ifname, scopeid };
       }
     }

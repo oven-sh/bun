@@ -641,35 +641,38 @@ pub const UDPSocket = struct {
             addr4.family = std.posix.AF.INET;
         } else {
             var addr6: *std.posix.sockaddr.in6 = @ptrCast(storage);
+
+            if (str.indexOfAsciiChar('%')) |percent| {
+                if (percent + 1 < str.length()) {
+                    const iface_id: ?u32 = blk: {
+                        if (comptime bun.Environment.isWindows) {
+                            if (str.substring(percent + 1).toInt32()) |signed| {
+                                if (std.math.cast(u32, signed)) |id| {
+                                    break :blk id;
+                                }
+                            }
+                        } else {
+                            const index = std.c.if_nametoindex(address_slice[percent + 1 ..]);
+                            if (index > 0) {
+                                if (std.math.cast(u32, index)) |id| {
+                                    break :blk id;
+                                }
+                            }
+                        }
+                        break :blk null;
+                    };
+
+                    if (iface_id) |id| {
+                        address_slice[percent] = '\x00';
+                        addr6.scope_id = id;
+                    }
+                }
+            }
+
             if (inet_pton(std.posix.AF.INET6, address_slice.ptr, &addr6.addr) == 1) {
                 addr6.port = htons(@truncate(port));
                 addr6.family = std.posix.AF.INET6;
                 addr6.scope_id = 0;
-                if (str.indexOfAsciiChar('%')) |percent| {
-                    if (percent + 1 < str.length()) {
-                        const iface_id: ?u32 = blk: {
-                            if (comptime bun.Environment.isWindows) {
-                                if (str.substring(percent + 1).toInt32()) |signed| {
-                                    if (std.math.cast(u32, signed)) |id| {
-                                        break :blk id;
-                                    }
-                                }
-                            } else {
-                                const index = std.c.if_nametoindex(address_slice[percent + 1 ..]);
-                                if (index > 0) {
-                                    if (std.math.cast(u32, index)) |id| {
-                                        break :blk id;
-                                    }
-                                }
-                            }
-                            break :blk null;
-                        };
-
-                        if (iface_id) |id| {
-                            addr6.scope_id = id;
-                        }
-                    }
-                }
             } else {
                 return false;
             }

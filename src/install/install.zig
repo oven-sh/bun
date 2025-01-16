@@ -8912,7 +8912,7 @@ pub const PackageManager = struct {
         }
 
         try BunArguments.loadConfig(ctx.allocator, cli.config, ctx, .InstallCommand);
-        
+
         const cpu_count = bun.getThreadCount();
 
         const options = Options{

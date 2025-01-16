@@ -98,7 +98,7 @@ describe("invalid inputs", () => {
       });
       expect(() => {
         crypto.pbkdf2("password", "salt", 1, input, "sha256", outer);
-      }).toThrow(`The value of "keylen" is out of range. It must be >= 0 && <= 2147483647. Received ${input}`);
+      }).toThrow(`The value of "keylen" is out of range. It must be >= 0 and <= 2147483647. Received ${input}`);
       expect(outer).not.toHaveBeenCalled();
     });
   });
@@ -129,7 +129,7 @@ describe("invalid inputs", () => {
 [-1, 2147483648, 4294967296].forEach(input => {
   test(`${input} keylen`, () => {
     expect(() => crypto.pbkdf2("password", "salt", 1, input, "sha256")).toThrow(
-      `The value of "keylen" is out of range. It must be >= 0 && <= 2147483647. Received ${input}`,
+      `The value of "keylen" is out of range. It must be >= 0 and <= 2147483647. Received ${input}`,
     );
   });
 });

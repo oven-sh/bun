@@ -1126,6 +1126,7 @@ pub const Crypto = struct {
             sha512,
             @"sha512-224",
             @"sha512-256",
+
             @"sha3-224",
             @"sha3-256",
             @"sha3-384",
@@ -1139,6 +1140,7 @@ pub const Crypto = struct {
                     .blake2b512 => BoringSSL.EVP_blake2b512(),
                     .md4 => BoringSSL.EVP_md4(),
                     .md5 => BoringSSL.EVP_md5(),
+                    .ripemd160 => BoringSSL.EVP_ripemd160(),
                     .sha1 => BoringSSL.EVP_sha1(),
                     .sha224 => BoringSSL.EVP_sha224(),
                     .sha256 => BoringSSL.EVP_sha256(),
@@ -1401,15 +1403,20 @@ pub const Crypto = struct {
                         return globalThis.throwInvalidArgumentTypeValue("digest", "string", arguments[4]);
                     }
 
-                    break :brk EVP.Algorithm.map.fromJSCaseInsensitive(globalThis, arguments[4]) orelse {
-                        if (!globalThis.hasException()) {
-                            const slice = arguments[4].toSlice(globalThis, bun.default_allocator);
-                            defer slice.deinit();
-                            const name = slice.slice();
-                            return globalThis.ERR_CRYPTO_INVALID_DIGEST("Invalid digest: {s}", .{name}).throw();
+                    invalid: {
+                        switch (EVP.Algorithm.map.fromJSCaseInsensitive(globalThis, arguments[4]) orelse break :invalid) {
+                            .shake128, .shake256, .@"sha3-224", .@"sha3-256", .@"sha3-384", .@"sha3-512" => break :invalid,
+                            else => |alg| break :brk alg,
                         }
-                        return error.JSError;
-                    };
+                    }
+
+                    if (!globalThis.hasException()) {
+                        const slice = arguments[4].toSlice(globalThis, bun.default_allocator);
+                        defer slice.deinit();
+                        const name = slice.slice();
+                        return globalThis.ERR_CRYPTO_INVALID_DIGEST("Invalid digest: {s}", .{name}).throw();
+                    }
+                    return error.JSError;
                 };
 
                 var out = PBKDF2{

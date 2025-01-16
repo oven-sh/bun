@@ -2095,8 +2095,6 @@ pub fn dangerouslyConvertPathToPosixInPlace(comptime T: type, path: []T) void {
 
 pub fn dangerouslyConvertPathToWindowsInPlace(comptime T: type, path: []T) void {
     var idx: usize = 0;
-    if (T == u16)
-        std.debug.print("ugh {}\n", .{bun.fmt.utf16(path)});
     while (std.mem.indexOfScalarPos(T, path, idx, std.fs.path.sep_posix)) |index| : (idx = index + 1) {
         path[index] = '\\';
     }

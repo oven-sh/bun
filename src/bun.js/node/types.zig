@@ -892,6 +892,7 @@ pub const PathLike = union(enum) {
                     // Add the long path syntax. This affects most of node:fs
                     const rest = path_handler.PosixToWinNormalizer.resolveCWDWithExternalBufZ(@ptrCast(buf[4..]), sliced) catch @panic("Error while resolving path.");
                     buf[0..4].* = bun.windows.nt_maxpath_prefix_u8;
+                    bun.path.dangerouslyConvertPathToWindowsInPlace(u8, buf[4..][0..rest.len]);
                     return buf[0 .. 4 + rest.len :0];
                 }
                 return path_handler.PosixToWinNormalizer.resolveCWDWithExternalBufZ(buf, sliced) catch @panic("Error while resolving path.");

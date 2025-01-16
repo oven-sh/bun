@@ -5477,7 +5477,7 @@ pub const NodeFS = struct {
                 if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
                     return .{ .result = .{ .not_found = {} } };
                 }
-                break :brk .{ .err = err.withPath(path) };
+                break :brk .{ .err = err.withPath(args.path.slice()) };
             },
         };
     }

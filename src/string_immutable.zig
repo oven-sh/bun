@@ -2049,9 +2049,12 @@ pub fn toKernel32Path(wbuf: []u16, utf8: []const u8) [:0]u16 {
     if (hasPrefixComptime(path, bun.windows.nt_maxpath_prefix_u8)) {
         return toWPath(wbuf, path);
     }
-    wbuf[0..4].* = bun.windows.nt_maxpath_prefix;
-    const wpath = toWPath(wbuf[4..], path);
-    return wbuf[0 .. wpath.len + 4 :0];
+    if (utf8.len > 2 and bun.path.isDriveLetter(utf8[0]) and utf8[1] == ':' and bun.path.isSepAny(utf8[2])) {
+        wbuf[0..4].* = bun.windows.nt_maxpath_prefix;
+        const wpath = toWPath(wbuf[4..], path);
+        return wbuf[0 .. wpath.len + 4 :0];
+    }
+    return toWPath(wbuf, path);
 }
 
 fn isUNCPath(comptime T: type, path: []const T) bool {

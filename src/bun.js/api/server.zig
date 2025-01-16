@@ -3106,11 +3106,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this.response_ptr = response;
             const server = this.server orelse {
                 // server detached?
-                resp.writeHeaderInt("content-length", 0);
                 this.renderMetadata();
+                resp.writeHeaderInt("content-length", 0);
                 this.endWithoutBody(this.shouldCloseConnection());
                 return;
             };
+            this.renderMetadata();
             const globalThis = server.globalThis;
             var has_content_length_or_transfer_encoding = false;
             if (response.getFetchHeaders()) |headers| {
@@ -3173,7 +3174,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
             }
 
-            this.renderMetadata();
             this.endWithoutBody(this.shouldCloseConnection());
         }
 

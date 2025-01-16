@@ -206,7 +206,7 @@ static napi_value perform_set(const Napi::CallbackInfo &info) {
   napi_value value = info[2];
   napi_status status;
 
-  // if key is a string, try napi_get_named_property
+  // if key is a string, try napi_set_named_property
   napi_valuetype type = get_typeof(env, key);
   if (type == napi_string) {
     char buf[1024];
@@ -289,6 +289,34 @@ static napi_value check_tag(const Napi::CallbackInfo &info) {
   return Napi::Boolean::New(env, matches);
 }
 
+static napi_value create_weird_bigints(const Napi::CallbackInfo &info) {
+  // create bigints by passing weird parameters to napi_create_bigint_words
+  napi_env env = info.Env();
+
+  std::array<napi_value, 5> bigints;
+  std::array<uint64_t, 4> words{{123, 0, 0, 0}};
+
+  NODE_API_CALL(env, napi_create_bigint_int64(env, 0, &bigints[0]));
+  NODE_API_CALL(env, napi_create_bigint_uint64(env, 0, &bigints[1]));
+  // sign is not 0 or 1 (should be interpreted as negative)
+  NODE_API_CALL(env,
+                napi_create_bigint_words(env, 2, 1, words.data(), &bigints[2]));
+  // leading zeroes in word representation
+  NODE_API_CALL(env,
+                napi_create_bigint_words(env, 0, 4, words.data(), &bigints[3]));
+  // zero
+  NODE_API_CALL(env,
+                napi_create_bigint_words(env, 1, 0, words.data(), &bigints[4]));
+
+  napi_value array;
+  NODE_API_CALL(env,
+                napi_create_array_with_length(env, bigints.size(), &array));
+  for (size_t i = 0; i < bigints.size(); i++) {
+    NODE_API_CALL(env, napi_set_element(env, array, (uint32_t)i, bigints[i]));
+  }
+  return array;
+}
+
 void register_js_test_helpers(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, create_ref_with_finalizer);
   REGISTER_FUNCTION(env, exports, was_finalize_called);
@@ -301,6 +329,7 @@ void register_js_test_helpers(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, add_tag);
   REGISTER_FUNCTION(env, exports, try_add_tag);
   REGISTER_FUNCTION(env, exports, check_tag);
+  REGISTER_FUNCTION(env, exports, create_weird_bigints);
 }
 
 } // namespace napitests

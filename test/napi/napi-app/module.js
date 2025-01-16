@@ -92,7 +92,8 @@ nativeTests.test_get_property = () => {
     ),
     5,
     "hello",
-    // TODO(@190n) test null and undefined here on the napi fix branch
+    null,
+    undefined,
   ];
   const keys = [
     "foo",
@@ -116,7 +117,61 @@ nativeTests.test_get_property = () => {
         const ret = nativeTests.perform_get(object, key);
         console.log("native function returned", ret);
       } catch (e) {
-        console.log("threw", e.toString());
+        console.log("threw", e.name);
+      }
+    }
+  }
+};
+
+nativeTests.test_set_property = () => {
+  const objects = [
+    {},
+    { foo: "bar" },
+    {
+      set foo(value) {
+        throw new Error(`set foo to ${value}`);
+      },
+    },
+    {
+      // getter but no setter
+      get foo() {},
+    },
+    new Proxy(
+      {},
+      {
+        set(_target, key, value) {
+          throw new Error(`proxy set ${key} to ${value}`);
+        },
+      },
+    ),
+    null,
+    undefined,
+  ];
+  const keys = [
+    "foo",
+    {
+      toString() {
+        throw new Error("toString");
+      },
+    },
+    {
+      [Symbol.toPrimitive]() {
+        throw new Error("Symbol.toPrimitive");
+      },
+    },
+  ];
+
+  for (const object of objects) {
+    for (const key of keys) {
+      console.log(objects.indexOf(object) + ", " + keys.indexOf(key));
+      try {
+        const ret = nativeTests.perform_set(object, key, 42);
+        console.log("native function returned", ret);
+        if (object[key] != 42) {
+          throw new Error("setting property did not throw an error, but the property was not actually set");
+        }
+      } catch (e) {
+        console.log("threw", e.name);
       }
     }
   }

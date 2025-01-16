@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cinttypes>
 #include <iostream>
 #include <string>
 
@@ -362,6 +363,139 @@ static napi_value test_napi_run_script(const Napi::CallbackInfo &info) {
   return ret;
 }
 
+// Call Node-API functions in ways that result in different error handling
+// (erroneous call, valid call, or valid call while an exception is pending) and
+// log information from napi_get_last_error_info
+static napi_value test_extended_error_messages(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  const napi_extended_error_info *error;
+
+  // this function is implemented in C++
+  // error because the result pointer is null
+  printf("erroneous napi_create_double returned code %d\n",
+         napi_create_double(env, 1.0, nullptr));
+  NODE_API_CALL(env, napi_get_last_error_info(env, &error));
+  printf("erroneous napi_create_double info: code = %d, message = %s\n",
+         error->error_code, error->error_message);
+
+  // this function should succeed and the success should overwrite the error
+  // from the last call
+  napi_value js_number;
+  printf("successful napi_create_double returned code %d\n",
+         napi_create_double(env, 5.0, &js_number));
+  NODE_API_CALL(env, napi_get_last_error_info(env, &error));
+  printf("successful napi_create_double info: code = %d, message = %s\n",
+         error->error_code,
+         error->error_message ? error->error_message : "(null)");
+
+  // this function is implemented in zig
+  // error because the value is not an array
+  unsigned int len;
+  printf("erroneous napi_get_array_length returned code %d\n",
+         napi_get_array_length(env, js_number, &len));
+  NODE_API_CALL(env, napi_get_last_error_info(env, &error));
+  printf("erroneous napi_get_array_length info: code = %d, message = %s\n",
+         error->error_code, error->error_message);
+
+  // throw an exception
+  NODE_API_CALL(env, napi_throw_type_error(env, nullptr, "oops!"));
+  // nothing is wrong with this call by itself, but it should return
+  // napi_pending_exception without doing anything because an exception is
+  // pending
+  napi_value coerced_string;
+  printf("napi_coerce_to_string with pending exception returned code %d\n",
+         napi_coerce_to_string(env, js_number, &coerced_string));
+  NODE_API_CALL(env, napi_get_last_error_info(env, &error));
+  printf(
+      "napi_coerce_to_string with pending exception info: code = %d, message = "
+      "%s\n",
+      error->error_code, error->error_message);
+
+  // clear the exception
+  napi_value exception;
+  NODE_API_CALL(env, napi_get_and_clear_last_exception(env, &exception));
+
+  return ok(env);
+}
+
+static napi_value bigint_to_i64(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  // start at 1 is intentional, since argument 0 is the callback to run GC
+  // passed to every function
+  // perform test on all arguments
+  for (size_t i = 1; i < info.Length(); i++) {
+    napi_value bigint = info[i];
+
+    napi_valuetype type;
+    NODE_API_CALL(env, napi_typeof(env, bigint, &type));
+
+    int64_t result = 0;
+    bool lossless = false;
+
+    if (type != napi_bigint) {
+      printf("napi_get_value_bigint_int64 return for non-bigint: %d\n",
+             napi_get_value_bigint_int64(env, bigint, &result, &lossless));
+    } else {
+      NODE_API_CALL(
+          env, napi_get_value_bigint_int64(env, bigint, &result, &lossless));
+      printf("napi_get_value_bigint_int64 result: %" PRId64 "\n", result);
+      printf("lossless: %s\n", lossless ? "true" : "false");
+    }
+  }
+
+  return ok(env);
+}
+
+static napi_value bigint_to_u64(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  // start at 1 is intentional, since argument 0 is the callback to run GC
+  // passed to every function
+  // perform test on all arguments
+  for (size_t i = 1; i < info.Length(); i++) {
+    napi_value bigint = info[i];
+
+    napi_valuetype type;
+    NODE_API_CALL(env, napi_typeof(env, bigint, &type));
+
+    uint64_t result;
+    bool lossless;
+
+    if (type != napi_bigint) {
+      printf("napi_get_value_bigint_uint64 return for non-bigint: %d\n",
+             napi_get_value_bigint_uint64(env, bigint, &result, &lossless));
+    } else {
+      NODE_API_CALL(
+          env, napi_get_value_bigint_uint64(env, bigint, &result, &lossless));
+      printf("napi_get_value_bigint_uint64 result: %" PRIu64 "\n", result);
+      printf("lossless: %s\n", lossless ? "true" : "false");
+    }
+  }
+
+  return ok(env);
+}
+
+static napi_value bigint_to_64_null(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  napi_value bigint;
+  NODE_API_CALL(env, napi_create_bigint_int64(env, 5, &bigint));
+
+  int64_t result_signed;
+  uint64_t result_unsigned;
+  bool lossless;
+
+  printf("status (int64, null result) = %d\n",
+         napi_get_value_bigint_int64(env, bigint, nullptr, &lossless));
+  printf("status (int64, null lossless) = %d\n",
+         napi_get_value_bigint_int64(env, bigint, &result_signed, nullptr));
+  printf("status (uint64, null result) = %d\n",
+         napi_get_value_bigint_uint64(env, bigint, nullptr, &lossless));
+  printf("status (uint64, null lossless) = %d\n",
+         napi_get_value_bigint_uint64(env, bigint, &result_unsigned, nullptr));
+
+  return ok(env);
+}
+
 void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_issue_7685);
   REGISTER_FUNCTION(env, exports, test_issue_11949);
@@ -376,6 +510,10 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_handle_scope_many_args);
   REGISTER_FUNCTION(env, exports, test_napi_ref);
   REGISTER_FUNCTION(env, exports, test_napi_run_script);
+  REGISTER_FUNCTION(env, exports, test_extended_error_messages);
+  REGISTER_FUNCTION(env, exports, bigint_to_i64);
+  REGISTER_FUNCTION(env, exports, bigint_to_u64);
+  REGISTER_FUNCTION(env, exports, bigint_to_64_null);
 }
 
 } // namespace napitests

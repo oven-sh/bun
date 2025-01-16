@@ -771,17 +771,15 @@ Socket.prototype.setBroadcast = function (arg) {
 };
 
 Socket.prototype.setTTL = function (ttl) {
-  throwNotImplemented("setTTL", 10381);
-  /*
-  validateNumber(ttl, 'ttl');
-
-  const err = this[kStateSymbol].handle.setTTL(ttl);
-  if (err) {
-    throw new ErrnoException(err, 'setTTL');
+  if (typeof ttl !== "number") {
+    throw $ERR_INVALID_ARG_TYPE("ttl", "number", ttl);
   }
 
-  return ttl;
-  */
+  const handle = this[kStateSymbol].handle;
+  if (!handle?.socket) {
+    throw new Error("setTTL EBADF");
+  }
+  return handle.socket.setTTL(ttl);
 };
 
 Socket.prototype.setMulticastTTL = function (ttl) {

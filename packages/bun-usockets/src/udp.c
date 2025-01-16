@@ -110,6 +110,10 @@ int us_udp_socket_set_broadcast(struct us_udp_socket_t *s, int enabled) {
     return bsd_socket_broadcast(us_poll_fd(&s->p), enabled);
 }
 
+int us_udp_socket_set_ttl(struct us_udp_socket_t *s, int ttl) {
+    return bsd_socket_ttl(us_poll_fd(&s->p), ttl);
+}
+
 int us_udp_socket_connect(struct us_udp_socket_t *s, const char* host, unsigned short port) {
     return bsd_connect_udp_socket(us_poll_fd((struct us_poll_t *)s), host, port);
 }

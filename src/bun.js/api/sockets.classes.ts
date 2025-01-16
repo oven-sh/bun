@@ -323,6 +323,10 @@ export default [
         fn: "setBroadcast",
         length: 1,
       },
+      setTTL: {
+        fn: "setTTL",
+        length: 1,
+      },
     },
     klass: {},
   }),

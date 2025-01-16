@@ -385,7 +385,7 @@ pub const UDPSocket = struct {
 
     pub fn setBroadcast(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
         if (this.closed) {
-            return globalThis.throw("TODO: setBroadcast on a closed UDP socket", .{});
+            return globalThis.throwValue(bun.JSC.Maybe(void).errnoSys(@intFromEnum(std.posix.E.BADF), .setsockopt).?.toJS(globalThis));
         }
 
         const arguments = callframe.arguments();
@@ -401,6 +401,26 @@ pub const UDPSocket = struct {
         }
 
         return .undefined;
+    }
+
+    pub fn setTTL(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
+        if (this.closed) {
+            return globalThis.throwValue(bun.JSC.Maybe(void).errnoSys(@intFromEnum(std.posix.E.BADF), .setsockopt).?.toJS(globalThis));
+        }
+
+        const arguments = callframe.arguments();
+        if (arguments.len < 1) {
+            return globalThis.throwInvalidArguments("Expected 1 argument, got {}", .{arguments.len});
+        }
+
+        const ttl = arguments[0].coerceToInt32(globalThis);
+        const res = this.socket.setTTL(ttl);
+
+        if (bun.JSC.Maybe(void).errnoSys(res, .setsockopt)) |err| {
+            return globalThis.throwValue(err.toJS(globalThis));
+        }
+
+        return JSValue.jsNumber(ttl);
     }
 
     pub fn sendMany(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {

@@ -330,6 +330,25 @@ int bsd_socket_broadcast(LIBUS_SOCKET_DESCRIPTOR fd, int enabled) {
     return setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &enabled, sizeof(enabled));
 }
 
+int bsd_socket_ttl(LIBUS_SOCKET_DESCRIPTOR fd, int ttl) {
+    if (ttl < 1 || ttl > 255) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    int res = setsockopt(fd, IPPROTO_IPV6, IPV6_UNICAST_HOPS, &ttl, sizeof(ttl));
+
+    if (res == 0) {
+        return 0;
+    }
+
+    if (errno == ENOPROTOOPT || errno == EINVAL) {
+        return setsockopt(fd, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl));
+    }
+
+    return res;
+}
+
 int bsd_socket_keepalive(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay) {
 
 #ifndef _WIN32

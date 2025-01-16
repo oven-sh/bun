@@ -719,6 +719,7 @@ pub const FormatOptions = struct {
             name: bun.String,
             level: ErrorDisplayLevel,
             enable_colors: bool,
+            colon: Colon,
             pub fn format(this: @This(), comptime _: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
                 if (this.enable_colors) {
                     switch (this.level) {
@@ -736,6 +737,13 @@ pub const FormatOptions = struct {
                     try writer.writeAll("error");
                 }
 
+                if (this.colon == .exclude_colon) {
+                    if (this.enable_colors) {
+                        try writer.writeAll(Output.prettyFmt("<r>", true));
+                    }
+                    return;
+                }
+
                 if (this.enable_colors) {
                     try writer.writeAll(Output.prettyFmt("<r><d>:<r> ", true));
                 } else {
@@ -744,11 +752,13 @@ pub const FormatOptions = struct {
             }
         };
 
-        pub fn formatter(this: ErrorDisplayLevel, error_name: bun.String, enable_colors: bool) ErrorDisplayLevel.Formatter {
+        pub const Colon = enum { include_colon, exclude_colon };
+        pub fn formatter(this: ErrorDisplayLevel, error_name: bun.String, enable_colors: bool, colon: Colon) ErrorDisplayLevel.Formatter {
             return .{
                 .name = error_name,
                 .level = this,
                 .enable_colors = enable_colors,
+                .colon = colon,
             };
         }
     };

@@ -4221,7 +4221,7 @@ static void populateStackFrameMetadata(JSC::VM& vm, JSC::JSGlobalObject* globalO
 
 static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunString* source_lines,
     OrdinalNumber* source_line_numbers, uint8_t source_lines_count,
-    ZigStackFramePosition* position, JSC::SourceProvider** referenced_source_provider, bool only_position = true)
+    ZigStackFramePosition* position, JSC::SourceProvider** referenced_source_provider, PopulateStackTraceFlags flags)
 {
     auto code = stackFrame->codeBlock();
     if (!code)
@@ -4249,7 +4249,7 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
 
     auto location = Bun::getAdjustedPositionForBytecode(code, stackFrame->bytecodeIndex());
     *position = location;
-    if (only_position)
+    if (flags == PopulateStackTraceFlags::OnlyPosition)
         return;
 
     if (source_lines_count > 1 && source_lines != nullptr && sourceString.is8Bit()) {
@@ -4323,11 +4323,11 @@ static void populateStackFrame(JSC::VM& vm, ZigStackTrace* trace, const JSC::Sta
         populateStackFrameMetadata(vm, globalObject, stackFrame, frame);
         populateStackFramePosition(stackFrame, nullptr,
             nullptr,
-            0, &frame->position, referenced_source_provider, true);
+            0, &frame->position, referenced_source_provider, flags);
     } else if (flags == PopulateStackTraceFlags::OnlySourceLines) {
         populateStackFramePosition(stackFrame, is_top ? trace->source_lines_ptr : nullptr,
             is_top ? trace->source_lines_numbers : nullptr,
-            is_top ? trace->source_lines_to_collect : 0, &frame->position, referenced_source_provider);
+            is_top ? trace->source_lines_to_collect : 0, &frame->position, referenced_source_provider, flags);
     }
 }
 

@@ -1972,27 +1972,11 @@ JSC_DEFINE_CUSTOM_SETTER(setterSubtleCrypto,
     return true;
 }
 
-JSC_DECLARE_HOST_FUNCTION(makeThisTypeErrorForBuiltins);
 JSC_DECLARE_HOST_FUNCTION(makeGetterTypeErrorForBuiltins);
 JSC_DECLARE_HOST_FUNCTION(makeDOMExceptionForBuiltins);
 JSC_DECLARE_HOST_FUNCTION(createWritableStreamFromInternal);
 JSC_DECLARE_HOST_FUNCTION(getInternalWritableStream);
 JSC_DECLARE_HOST_FUNCTION(isAbortSignal);
-
-JSC_DEFINE_HOST_FUNCTION(makeThisTypeErrorForBuiltins, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    ASSERT(callFrame);
-    ASSERT(callFrame->argumentCount() == 2);
-    VM& vm = globalObject->vm();
-    DeferTermination deferScope(vm);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
-
-    auto interfaceName = callFrame->uncheckedArgument(0).getString(globalObject);
-    scope.assertNoException();
-    auto functionName = callFrame->uncheckedArgument(1).getString(globalObject);
-    scope.assertNoException();
-    return JSValue::encode(createTypeError(globalObject, makeThisTypeErrorMessage(interfaceName.utf8().data(), functionName.utf8().data())));
-}
 
 JSC_DEFINE_HOST_FUNCTION(makeGetterTypeErrorForBuiltins, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
@@ -3590,7 +3574,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
             JSC::JSFunction::create(vm, this, 0, "@lazy"_s, JS2Native::jsDollarLazy, ImplementationVisibility::Public),
             PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0 },
 
-        GlobalPropertyInfo(builtinNames.makeThisTypeErrorPrivateName(), JSFunction::create(vm, this, 2, String(), makeThisTypeErrorForBuiltins, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.makeGetterTypeErrorPrivateName(), JSFunction::create(vm, this, 2, String(), makeGetterTypeErrorForBuiltins, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.makeDOMExceptionPrivateName(), JSFunction::create(vm, this, 2, String(), makeDOMExceptionForBuiltins, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.addAbortAlgorithmToSignalPrivateName(), JSFunction::create(vm, this, 2, String(), addAbortAlgorithmToSignal, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),

@@ -940,6 +940,14 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, error, message));
     }
 
+    case Bun::ErrorCode::ERR_INVALID_THIS: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Value of \"this\" must be of type "_s, str0);
+        return JSC::JSValue::encode(createError(globalObject, error, message));
+    }
+
     case ErrorCode::ERR_IPC_DISCONNECTED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_DISCONNECTED, "IPC channel is already disconnected"_s));
     case ErrorCode::ERR_SERVER_NOT_RUNNING:

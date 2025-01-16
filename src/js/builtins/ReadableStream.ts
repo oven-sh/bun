@@ -370,7 +370,7 @@ export function createNativeReadableStream(nativePtr, autoAllocateChunkSize) {
 }
 
 export function cancel(this, reason) {
-  if (!$isReadableStream(this)) return Promise.$reject($makeThisTypeError("ReadableStream", "cancel"));
+  if (!$isReadableStream(this)) return Promise.$reject($ERR_INVALID_THIS("ReadableStream"));
 
   if ($isReadableStreamLocked(this)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
 
@@ -378,7 +378,7 @@ export function cancel(this, reason) {
 }
 
 export function getReader(this, options) {
-  if (!$isReadableStream(this)) throw $makeThisTypeError("ReadableStream", "getReader");
+  if (!$isReadableStream(this)) throw $ERR_INVALID_THIS("ReadableStream");
 
   const mode = $toDictionary(options, {}, "ReadableStream.getReader takes an object as first argument").mode;
   if (mode === undefined) {
@@ -423,7 +423,7 @@ export function pipeThrough(this, streams, options) {
     if (signal !== undefined && !$isAbortSignal(signal)) throw $makeTypeError("options.signal must be AbortSignal");
   }
 
-  if (!$isReadableStream(this)) throw $makeThisTypeError("ReadableStream", "pipeThrough");
+  if (!$isReadableStream(this)) throw $ERR_INVALID_THIS("ReadableStream");
 
   if ($isReadableStreamLocked(this)) throw $ERR_INVALID_STATE_TypeError("ReadableStream is locked");
 
@@ -443,7 +443,7 @@ export function pipeThrough(this, streams, options) {
 }
 
 export function pipeTo(this, destination) {
-  if (!$isReadableStream(this)) return Promise.$reject($makeThisTypeError("ReadableStream", "pipeTo"));
+  if (!$isReadableStream(this)) return Promise.$reject($ERR_INVALID_THIS("ReadableStream"));
 
   if ($isReadableStreamLocked(this)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
 
@@ -489,7 +489,7 @@ export function pipeTo(this, destination) {
 }
 
 export function tee(this) {
-  if (!$isReadableStream(this)) throw $makeThisTypeError("ReadableStream", "tee");
+  if (!$isReadableStream(this)) throw $ERR_INVALID_THIS("ReadableStream");
 
   return $readableStreamTee(this, false);
 }

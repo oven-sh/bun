@@ -355,7 +355,6 @@ declare function $localStreams(): TODO;
 declare function $main(): TODO;
 declare function $makeDOMException(): TODO;
 declare function $makeGetterTypeError(className: string, prop: string): Error;
-declare function $makeThisTypeError(className: string, method: string): Error;
 declare function $map(): TODO;
 declare function $method(): TODO;
 declare function $nextTick(): TODO;

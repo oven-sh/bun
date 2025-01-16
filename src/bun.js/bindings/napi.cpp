@@ -1180,12 +1180,11 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
     napi_ref* result)
 {
     NAPI_PREAMBLE(env);
-    NAPI_CHECK_ENV_NOT_IN_GC(env); ////
+    NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, result);
     NAPI_CHECK_ARG(env, value);
 
     JSC::JSValue val = toJS(value);
-    //// NAPI_RETURN_EARLY_IF_FALSE(env, val.isCell(), napi_object_expected);
 
     bool can_be_weak = true;
 
@@ -1196,10 +1195,6 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
 
     auto* ref = new NapiRef(env, initial_refcount, Bun::NapiFinalizer {});
     ref->setValueInitial(val, can_be_weak);
-    //// if (initial_refcount > 0) {
-    ////     ref->strongRef.set(globalObject->vm(), val);
-    //// }
-    //// ref->weakValueRef.set(val, weakValueHandleOwner(), ref);
 
     *result = toNapi(ref);
     NAPI_RETURN_SUCCESS(env);

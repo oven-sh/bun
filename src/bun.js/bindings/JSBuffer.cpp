@@ -787,26 +787,25 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JS
     }
 
     for (unsigned i = 0; i < arrayLength; i++) {
-        auto element = array->getIndex(lexicalGlobalObject, i);
+        JSValue element = array->getIndex(lexicalGlobalObject, i);
         RETURN_IF_EXCEPTION(throwScope, {});
 
-        auto* typedArray = JSC::jsDynamicCast<JSC::JSUint8Array*>(element);
-        if (!typedArray) {
-            throwTypeError(lexicalGlobalObject, throwScope, "Buffer.concat expects Uint8Array"_s);
+        if (auto* bufferView = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(element)) {
+            if (UNLIKELY(bufferView->isDetached())) {
+                throwVMTypeError(lexicalGlobalObject, throwScope, "ArrayBufferView is detached"_s);
+                return {};
+            }
+
+            auto length = bufferView->byteLength();
+
+            if (length > 0)
+                args.append(element);
+
+            byteLength += length;
+        } else {
+            throwTypeError(lexicalGlobalObject, throwScope, "Buffer.concat expects Buffer or Uint8Array"_s);
             return {};
         }
-
-        if (UNLIKELY(typedArray->isDetached())) {
-            throwVMTypeError(lexicalGlobalObject, throwScope, "Uint8Array is detached"_s);
-            return {};
-        }
-
-        auto length = typedArray->length();
-
-        if (length > 0)
-            args.append(element);
-
-        byteLength += length;
     }
 
     size_t availableLength = byteLength;
@@ -843,12 +842,12 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JS
     auto* head = outBuffer->typedVector();
     const int arrayLengthI = arrayLength;
     for (int i = 0; i < arrayLengthI && remain > 0; i++) {
-        auto* typedArray = JSC::jsCast<JSC::JSUint8Array*>(args.at(i));
-        size_t length = std::min(remain, typedArray->length());
+        auto* bufferView = JSC::jsCast<JSC::JSArrayBufferView*>(args.at(i));
+        size_t length = std::min(remain, bufferView->byteLength());
 
         ASSERT_WITH_MESSAGE(length > 0, "length should be greater than 0. This should be checked before appending to the MarkedArgumentBuffer.");
 
-        auto* source = typedArray->typedVector();
+        auto* source = bufferView->vector();
         ASSERT(source);
         memcpy(head, source, length);
 

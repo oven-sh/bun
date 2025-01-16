@@ -633,7 +633,7 @@ function doSend(ex, self, ip, list, address, port, callback) {
       err.message = `send ${err.code} ${ip}:${port}`;
       process.nextTick(callback, err);
     } else {
-      const sent = success ? data.length : 0;
+      const sent = success ? list.byteLength : 0;
       process.nextTick(callback, null, sent);
     }
   }

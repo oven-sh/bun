@@ -1,3 +1,4 @@
+// UNUSED as of #14501
 const nativeTests = require("./build/Debug/napitests.node");
 
 function usage() {

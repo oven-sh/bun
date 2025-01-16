@@ -769,6 +769,60 @@ test.skip("should be able to stream huge amounts of data", async () => {
   expect(received).toBe(CONTENT_LENGTH);
 }, 30_000);
 
+describe("HEAD requests #16431", () => {
+  test("should return correct status codes for HEAD requests", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+
+        switch (url.pathname) {
+          case "/404":
+            return new Response("Not Found", { status: 404 });
+          case "/500":
+            return new Response("Server Error", { status: 500 });
+          case "/403":
+            return new Response("Forbidden", { status: 403 });
+          default:
+            return new Response("OK", { status: 200 });
+        }
+      },
+    });
+
+    // Test 404 response
+    {
+      const response = await fetch(server.url + "/404", { method: "HEAD" });
+      expect(response.status).toBe(404);
+      expect(await response.text()).toBe("");
+      expect(response.headers.get("content-length")).toBe("9");
+    }
+
+    // Test 500 response
+    {
+      const response = await fetch(server.url + "/500", { method: "HEAD" });
+      expect(response.status).toBe(500);
+      expect(await response.text()).toBe("");
+      expect(response.headers.get("content-length")).toBe("12");
+    }
+
+    // Test 403 response
+    {
+      const response = await fetch(server.url + "/403", { method: "HEAD" });
+      expect(response.status).toBe(403);
+      expect(await response.text()).toBe("");
+      expect(response.headers.get("content-length")).toBe("9");
+    }
+
+    // Test 200 response
+    {
+      const response = await fetch(server.url + "/200", { method: "HEAD" });
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe("");
+      expect(response.headers.get("content-length")).toBe("2");
+    }
+  });
+});
+
 describe("HEAD requests #15355", () => {
   test("should be able to make HEAD requests with content-length or transfer-encoding (async)", async () => {
     using server = Bun.serve({

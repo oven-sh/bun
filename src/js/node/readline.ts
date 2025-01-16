@@ -254,6 +254,7 @@ function charLengthAt(str, i) {
 /*
   Some patterns seen in terminal key escape codes, derived from combos seen
   at http://www.midnight-commander.org/browser/lib/tty/key.c
+
   ESC letter
   ESC [ letter
   ESC [ modifier letter
@@ -268,6 +269,7 @@ function charLengthAt(str, i) {
   ESC [ [ 1 ; modifier letter
   ESC ESC [ num char
   ESC ESC O letter
+
   - char is usually ~ but $ and ^ also happen with rxvt
   - modifier is 1 +
                 (shift     * 1) +
@@ -278,23 +280,23 @@ function charLengthAt(str, i) {
 */
 function* emitKeys(stream) {
   while (true) {
-    var ch = yield;
-    var s = ch;
-    var escaped = false;
-
-    var keySeq = null;
-    var keyName;
-    var keyCtrl = false;
-    var keyMeta = false;
-    var keyShift = false;
-
-    // var key = {
-    //   sequence: null,
-    //   name: undefined,
-    //   ctrl: false,
-    //   meta: false,
-    //   shift: false,
-    // };
+    let ch = yield;
+    let s = ch;
+    let escaped = false;
+    const key: {
+      sequence: string | null;
+      name?: string;
+      code?: string;
+      ctrl: boolean;
+      meta: boolean;
+      shift: boolean;
+    } = {
+      sequence: null,
+      name: undefined,
+      ctrl: false,
+      meta: false,
+      shift: false,
+    };
 
     if (ch === kEscape) {
       escaped = true;
@@ -307,8 +309,8 @@ function* emitKeys(stream) {
 
     if (escaped && (ch === "O" || ch === "[")) {
       // ANSI escape sequence
-      var code = ch;
-      var modifier = 0;
+      let code = ch;
+      let modifier = 0;
 
       if (ch === "O") {
         // ESC O letter
@@ -348,8 +350,10 @@ function* emitKeys(stream) {
          *
          *  - `;5` part is optional, e.g. it could be `\x1b[24~`
          *  - first part can contain one or two digits
+         *  - there is also special case when there can be 3 digits
+         *    but without modifier. They are the case of paste bracket mode
          *
-         * So the generic regexp is like /^\d\d?(;\d)?[~^$]$/
+         * So the generic regexp is like /^(?:\d\d?(;\d)?[~^$]|\d{3}~)$/
          *
          *
          * 2. `\x1b[1;5H` should be parsed as { code: '[H', modifier: 5 }
@@ -362,7 +366,7 @@ function* emitKeys(stream) {
          * So the generic regexp is like /^((\d;)?\d)?[A-Za-z]$/
          *
          */
-        var cmdStart = s.length - 1;
+        const cmdStart = s.length - 1;
 
         // Skip one or two leading digits
         if (ch >= "0" && ch <= "9") {
@@ -370,6 +374,10 @@ function* emitKeys(stream) {
 
           if (ch >= "0" && ch <= "9") {
             s += ch = yield;
+
+            if (ch >= "0" && ch <= "9") {
+              s += ch = yield;
+            }
           }
         }
 
@@ -386,12 +394,16 @@ function* emitKeys(stream) {
          * We buffered enough data, now trying to extract code
          * and modifier from it
          */
-        var cmd = StringPrototypeSlice.$call(s, cmdStart);
-        var match;
+        const cmd = StringPrototypeSlice.$call(s, cmdStart);
+        let match;
 
-        if ((match = RegExpPrototypeExec.$call(/^(\d\d?)(;(\d))?([~^$])$/, cmd))) {
-          code += match[1] + match[4];
-          modifier = (match[3] || 1) - 1;
+        if ((match = RegExpPrototypeExec.$call(/^(?:(\d\d?)(?:;(\d))?([~^$])|(\d{3}~))$/, cmd))) {
+          if (match[4]) {
+            code += match[4];
+          } else {
+            code += match[1] + match[3];
+            modifier = (match[2] || 1) - 1;
+          }
         } else if ((match = RegExpPrototypeExec.$call(/^((\d;)?(\d))?([A-Za-z])$/, cmd))) {
           code += match[4];
           modifier = (match[3] || 1) - 1;
@@ -401,344 +413,336 @@ function* emitKeys(stream) {
       }
 
       // Parse the key modifier
-      keyCtrl = !!(modifier & 4);
-      keyMeta = !!(modifier & 10);
-      keyShift = !!(modifier & 1);
+      key.ctrl = !!(modifier & 4);
+      key.meta = !!(modifier & 10);
+      key.shift = !!(modifier & 1);
+      key.code = code;
 
       // Parse the key itself
       switch (code) {
         /* xterm/gnome ESC [ letter (with modifier) */
         case "[P":
-          keyName = "f1";
+          key.name = "f1";
           break;
         case "[Q":
-          keyName = "f2";
+          key.name = "f2";
           break;
         case "[R":
-          keyName = "f3";
+          key.name = "f3";
           break;
         case "[S":
-          keyName = "f4";
+          key.name = "f4";
           break;
 
         /* xterm/gnome ESC O letter (without modifier) */
         case "OP":
-          keyName = "f1";
+          key.name = "f1";
           break;
         case "OQ":
-          keyName = "f2";
+          key.name = "f2";
           break;
         case "OR":
-          keyName = "f3";
+          key.name = "f3";
           break;
         case "OS":
-          keyName = "f4";
+          key.name = "f4";
           break;
 
         /* xterm/rxvt ESC [ number ~ */
         case "[11~":
-          keyName = "f1";
+          key.name = "f1";
           break;
         case "[12~":
-          keyName = "f2";
+          key.name = "f2";
           break;
         case "[13~":
-          keyName = "f3";
+          key.name = "f3";
           break;
         case "[14~":
-          keyName = "f4";
+          key.name = "f4";
+          break;
+
+        /* paste bracket mode */
+        case "[200~":
+          key.name = "paste-start";
+          break;
+        case "[201~":
+          key.name = "paste-end";
           break;
 
         /* from Cygwin and used in libuv */
         case "[[A":
-          keyName = "f1";
+          key.name = "f1";
           break;
         case "[[B":
-          keyName = "f2";
+          key.name = "f2";
           break;
         case "[[C":
-          keyName = "f3";
+          key.name = "f3";
           break;
         case "[[D":
-          keyName = "f4";
+          key.name = "f4";
           break;
         case "[[E":
-          keyName = "f5";
+          key.name = "f5";
           break;
 
         /* common */
         case "[15~":
-          keyName = "f5";
+          key.name = "f5";
           break;
         case "[17~":
-          keyName = "f6";
+          key.name = "f6";
           break;
         case "[18~":
-          keyName = "f7";
+          key.name = "f7";
           break;
         case "[19~":
-          keyName = "f8";
+          key.name = "f8";
           break;
         case "[20~":
-          keyName = "f9";
+          key.name = "f9";
           break;
         case "[21~":
-          keyName = "f10";
+          key.name = "f10";
           break;
         case "[23~":
-          keyName = "f11";
+          key.name = "f11";
           break;
         case "[24~":
-          keyName = "f12";
+          key.name = "f12";
           break;
 
         /* xterm ESC [ letter */
         case "[A":
-          keyName = "up";
+          key.name = "up";
           break;
         case "[B":
-          keyName = "down";
+          key.name = "down";
           break;
         case "[C":
-          keyName = "right";
+          key.name = "right";
           break;
         case "[D":
-          keyName = "left";
+          key.name = "left";
           break;
         case "[E":
-          keyName = "clear";
+          key.name = "clear";
           break;
         case "[F":
-          keyName = "end";
+          key.name = "end";
           break;
         case "[H":
-          keyName = "home";
+          key.name = "home";
           break;
 
         /* xterm/gnome ESC O letter */
         case "OA":
-          keyName = "up";
+          key.name = "up";
           break;
         case "OB":
-          keyName = "down";
+          key.name = "down";
           break;
         case "OC":
-          keyName = "right";
+          key.name = "right";
           break;
         case "OD":
-          keyName = "left";
+          key.name = "left";
           break;
         case "OE":
-          keyName = "clear";
+          key.name = "clear";
           break;
         case "OF":
-          keyName = "end";
+          key.name = "end";
           break;
         case "OH":
-          keyName = "home";
+          key.name = "home";
           break;
 
         /* xterm/rxvt ESC [ number ~ */
         case "[1~":
-          keyName = "home";
+          key.name = "home";
           break;
         case "[2~":
-          keyName = "insert";
+          key.name = "insert";
           break;
         case "[3~":
-          keyName = "delete";
+          key.name = "delete";
           break;
         case "[4~":
-          keyName = "end";
+          key.name = "end";
           break;
         case "[5~":
-          keyName = "pageup";
+          key.name = "pageup";
           break;
         case "[6~":
-          keyName = "pagedown";
+          key.name = "pagedown";
           break;
 
         /* putty */
         case "[[5~":
-          keyName = "pageup";
+          key.name = "pageup";
           break;
         case "[[6~":
-          keyName = "pagedown";
+          key.name = "pagedown";
           break;
 
         /* rxvt */
         case "[7~":
-          keyName = "home";
+          key.name = "home";
           break;
         case "[8~":
-          keyName = "end";
+          key.name = "end";
           break;
 
         /* rxvt keys with modifiers */
         case "[a":
-          keyName = "up";
-          keyShift = true;
+          key.name = "up";
+          key.shift = true;
           break;
         case "[b":
-          keyName = "down";
-          keyShift = true;
+          key.name = "down";
+          key.shift = true;
           break;
         case "[c":
-          keyName = "right";
-          keyShift = true;
+          key.name = "right";
+          key.shift = true;
           break;
         case "[d":
-          keyName = "left";
-          keyShift = true;
+          key.name = "left";
+          key.shift = true;
           break;
         case "[e":
-          keyName = "clear";
-          keyShift = true;
+          key.name = "clear";
+          key.shift = true;
           break;
 
         case "[2$":
-          keyName = "insert";
-          keyShift = true;
+          key.name = "insert";
+          key.shift = true;
           break;
         case "[3$":
-          keyName = "delete";
-          keyShift = true;
+          key.name = "delete";
+          key.shift = true;
           break;
         case "[5$":
-          keyName = "pageup";
-          keyShift = true;
+          key.name = "pageup";
+          key.shift = true;
           break;
         case "[6$":
-          keyName = "pagedown";
-          keyShift = true;
+          key.name = "pagedown";
+          key.shift = true;
           break;
         case "[7$":
-          keyName = "home";
-          keyShift = true;
+          key.name = "home";
+          key.shift = true;
           break;
         case "[8$":
-          keyName = "end";
-          keyShift = true;
+          key.name = "end";
+          key.shift = true;
           break;
 
         case "Oa":
-          keyName = "up";
-          keyCtrl = true;
+          key.name = "up";
+          key.ctrl = true;
           break;
         case "Ob":
-          keyName = "down";
-          keyCtrl = true;
+          key.name = "down";
+          key.ctrl = true;
           break;
         case "Oc":
-          keyName = "right";
-          keyCtrl = true;
+          key.name = "right";
+          key.ctrl = true;
           break;
         case "Od":
-          keyName = "left";
-          keyCtrl = true;
+          key.name = "left";
+          key.ctrl = true;
           break;
         case "Oe":
-          keyName = "clear";
-          keyCtrl = true;
+          key.name = "clear";
+          key.ctrl = true;
           break;
 
         case "[2^":
-          keyName = "insert";
-          keyCtrl = true;
+          key.name = "insert";
+          key.ctrl = true;
           break;
         case "[3^":
-          keyName = "delete";
-          keyCtrl = true;
+          key.name = "delete";
+          key.ctrl = true;
           break;
         case "[5^":
-          keyName = "pageup";
-          keyCtrl = true;
+          key.name = "pageup";
+          key.ctrl = true;
           break;
         case "[6^":
-          keyName = "pagedown";
-          keyCtrl = true;
+          key.name = "pagedown";
+          key.ctrl = true;
           break;
         case "[7^":
-          keyName = "home";
-          keyCtrl = true;
+          key.name = "home";
+          key.ctrl = true;
           break;
         case "[8^":
-          keyName = "end";
-          keyCtrl = true;
+          key.name = "end";
+          key.ctrl = true;
           break;
 
         /* misc. */
         case "[Z":
-          keyName = "tab";
-          keyShift = true;
+          key.name = "tab";
+          key.shift = true;
           break;
         default:
-          keyName = "undefined";
+          key.name = "undefined";
           break;
       }
     } else if (ch === "\r") {
       // carriage return
-      keyName = "return";
-      keyMeta = escaped;
+      key.name = "return";
+      key.meta = escaped;
     } else if (ch === "\n") {
       // Enter, should have been called linefeed
-      keyName = "enter";
-      keyMeta = escaped;
+      key.name = "enter";
+      key.meta = escaped;
     } else if (ch === "\t") {
       // tab
-      keyName = "tab";
-      keyMeta = escaped;
+      key.name = "tab";
+      key.meta = escaped;
     } else if (ch === "\b" || ch === "\x7f") {
       // backspace or ctrl+h
-      keyName = "backspace";
-      keyMeta = escaped;
+      key.name = "backspace";
+      key.meta = escaped;
     } else if (ch === kEscape) {
       // escape key
-      keyName = "escape";
-      keyMeta = escaped;
+      key.name = "escape";
+      key.meta = escaped;
     } else if (ch === " ") {
-      keyName = "space";
-      keyMeta = escaped;
+      key.name = "space";
+      key.meta = escaped;
     } else if (!escaped && ch <= "\x1a") {
       // ctrl+letter
-      keyName = StringFromCharCode(
-        StringPrototypeCharCodeAt.$call(ch, 0) + StringPrototypeCharCodeAt.$call("a", 0) - 1,
-      );
-      keyCtrl = true;
+      key.name = StringFromCharCode(StringPrototypeCharCodeAt.$call(ch) + StringPrototypeCharCodeAt.$call("a") - 1);
+      key.ctrl = true;
     } else if (RegExpPrototypeExec.$call(/^[0-9A-Za-z]$/, ch) !== null) {
       // Letter, number, shift+letter
-      keyName = StringPrototypeToLowerCase.$call(ch);
-      keyShift = RegExpPrototypeExec.$call(/^[A-Z]$/, ch) !== null;
-      keyMeta = escaped;
+      key.name = StringPrototypeToLowerCase.$call(ch);
+      key.shift = RegExpPrototypeExec.$call(/^[A-Z]$/, ch) !== null;
+      key.meta = escaped;
     } else if (escaped) {
       // Escape sequence timeout
-      keyName = ch.length ? undefined : "escape";
-      keyMeta = true;
-    } else {
-      // Otherwise, unhandled
-      keyName = undefined;
+      key.name = ch.length ? undefined : "escape";
+      key.meta = true;
     }
 
-    keySeq = s;
+    key.sequence = s;
 
-    if (s.length !== 0 && (keyName !== undefined || escaped)) {
+    if (s.length !== 0 && (key.name !== undefined || escaped)) {
       /* Named character or sequence */
-      stream.emit("keypress", escaped ? undefined : s, {
-        sequence: keySeq,
-        name: keyName,
-        ctrl: keyCtrl,
-        meta: keyMeta,
-        shift: keyShift,
-      });
+      stream.emit("keypress", escaped ? undefined : s, key);
     } else if (charLengthAt(s, 0) === s.length) {
       /* Single unnamed character, e.g. "." */
-      stream.emit("keypress", s, {
-        sequence: keySeq,
-        name: keyName,
-        ctrl: keyCtrl,
-        meta: keyMeta,
-        shift: keyShift,
-      });
+      stream.emit("keypress", s, key);
     }
     /* Unrecognized or broken escape sequence, don't emit anything */
   }

@@ -2561,7 +2561,7 @@ extern "C" napi_status napi_create_bigint_words(napi_env env,
     const uint64_t* words,
     napi_value* result)
 {
-    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, result);
     NAPI_CHECK_ARG(env, words);
     // JSBigInt::createWithLength's size argument is unsigned int
@@ -2569,18 +2569,10 @@ extern "C" napi_status napi_create_bigint_words(napi_env env,
 
     Zig::GlobalObject* globalObject = toJS(env);
 
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-
-    if (word_count >= INT_MAX) {
-        JSC::throwRangeError(globalObject, scope, "BigInt size exceeded"_s);
-        RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
-    }
-
     if (word_count == 0) {
         auto* bigint = JSBigInt::createZero(globalObject);
         *result = toNapi(bigint, globalObject);
-        scope.release();
-        return napi_set_last_error(env, napi_ok);
+        NAPI_RETURN_SUCCESS(env);
     }
 
     // JSBigInt requires there are no leading zeroes in the words array, but native modules may have
@@ -2591,7 +2583,7 @@ extern "C" napi_status napi_create_bigint_words(napi_env env,
 
     // throws RangeError if size is larger than JSC's limit
     auto* bigint = JSBigInt::createWithLength(globalObject, word_count);
-    RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
+    NAPI_RETURN_IF_EXCEPTION(env);
     ASSERT(bigint);
 
     bigint->setSign(sign_bit != 0);
@@ -2604,8 +2596,7 @@ extern "C" napi_status napi_create_bigint_words(napi_env env,
     }
 
     *result = toNapi(bigint, globalObject);
-    scope.release();
-    return napi_set_last_error(env, napi_ok);
+    NAPI_RETURN_SUCCESS(env);
 }
 
 extern "C" napi_status napi_create_symbol(napi_env env, napi_value description,

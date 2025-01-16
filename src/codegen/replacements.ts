@@ -14,18 +14,21 @@ export const replacements: ReplacementRule[] = [
   { from: /\bexport\s*default/g, to: "$exports =" },
 ];
 
+let error_i = 0;
 for (let i = 0; i < NodeErrors.length; i++) {
   const [code, _constructor, _name, ...other_constructors] = NodeErrors[i];
   replacements.push({
     from: new RegExp(`\\b\\__intrinsic__${code}\\(`, "g"),
-    to: `$makeErrorWithCode(${i}, `,
+    to: `$makeErrorWithCode(${error_i}, `,
   });
+  error_i += 1;
   for (const con of other_constructors) {
     if (con == null) continue;
     replacements.push({
       from: new RegExp(`\\b\\__intrinsic__${code}_${con.name}\\(`, "g"),
-      to: `$makeErrorWithCode(${i}, `,
+      to: `$makeErrorWithCode(${error_i}, `,
     });
+    error_i += 1;
   }
 }
 

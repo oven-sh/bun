@@ -1299,3 +1299,41 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
     });
   });
 }
+
+it("sensitive headers should work", async () => {
+  const server = http2.createServer();
+  let client;
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    server.on("stream", stream => {
+      stream.respond({
+        ":status": 200,
+        "content-type": "application/json",
+        "x-custom-header": "some-value",
+
+        [http2.sensitiveHeaders]: ["x-custom-header"],
+      });
+
+      stream.end(JSON.stringify({ message: "Hello from h2c server!" }));
+    });
+
+    server.listen(0, () => {
+      const port = server.address().port;
+      client = http2.connect(`http://localhost:${port}`);
+
+      client.on("error", reject);
+
+      const req = client.request({ ":path": "/" });
+      req.on("response", resolve);
+      req.on("error", reject);
+      req.end();
+    });
+    const res = await promise;
+
+    expect(res["x-custom-header"]).toBe("some-value");
+    expect(res[http2.sensitiveHeaders]).toEqual(["x-custom-header"]);
+  } finally {
+    server.close();
+    client?.close?.();
+  }
+});

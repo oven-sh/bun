@@ -1048,6 +1048,7 @@ pub const ServerConfig = struct {
         args: *ServerConfig,
         arguments: *JSC.Node.ArgumentsSlice,
         allow_bake_config: bool,
+        is_fetch_required: bool,
     ) bun.JSError!void {
         const vm = arguments.vm;
         const env = vm.transpiler.env;
@@ -1311,7 +1312,7 @@ pub const ServerConfig = struct {
                 const onRequest = onRequest_.withAsyncContextIfNeeded(global);
                 JSC.C.JSValueProtect(global, onRequest.asObjectRef());
                 args.onRequest = onRequest;
-            } else if (args.bake == null) {
+            } else if (args.bake == null and is_fetch_required) {
                 if (global.hasException()) return error.JSError;
                 return global.throwInvalidArguments("Expected fetch() to be a function", .{});
             } else {
@@ -6150,12 +6151,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             this.app.?.clearRoutes();
 
-            // only reload those two
-            if (this.config.onRequest != new_config.onRequest) {
+            // only reload those two, but ignore if they're not specified.
+            if (this.config.onRequest != new_config.onRequest and (new_config.onRequest != .zero and new_config.onRequest != .undefined)) {
                 this.config.onRequest.unprotect();
                 this.config.onRequest = new_config.onRequest;
             }
-            if (this.config.onError != new_config.onError) {
+            if (this.config.onError != new_config.onError and (new_config.onError != .zero and new_config.onError != .undefined)) {
                 this.config.onError.unprotect();
                 this.config.onError = new_config.onError;
             }
@@ -6202,7 +6203,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             defer args_slice.deinit();
 
             var new_config: ServerConfig = .{};
-            try ServerConfig.fromJS(globalThis, &new_config, &args_slice, false);
+            try ServerConfig.fromJS(globalThis, &new_config, &args_slice, false, false);
             if (globalThis.hasException()) {
                 new_config.deinit();
                 return error.JSError;
@@ -6376,9 +6377,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this: *ThisServer,
             globalThis: *JSC.JSGlobalObject,
         ) JSC.JSValue {
-            var str = bun.String.createUTF8(this.config.id);
-            defer str.deref();
-            return str.toJS(globalThis);
+            return bun.String.createUTF8ForJS(globalThis, this.config.id);
         }
 
         pub fn getPendingRequests(

@@ -811,6 +811,12 @@ pub const ZigException = extern struct {
 
     fd: i32 = -1,
 
+    pub extern fn ZigException__collectSourceLines(jsValue: JSValue, global: *JSGlobalObject, exception: *ZigException) void;
+
+    pub fn collectSourceLines(this: *ZigException, value: JSValue, global: *JSGlobalObject) void {
+        ZigException__collectSourceLines(value, global, this);
+    }
+
     pub fn deinit(this: *ZigException) void {
         this.syscall.deref();
         this.system_code.deref();

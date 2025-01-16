@@ -1871,9 +1871,7 @@ pub const Element = struct {
     ) JSValue {
         if (this.element == null)
             return JSValue.jsUndefined();
-        var str = bun.String.createUTF8(std.mem.span(this.element.?.namespaceURI()));
-        defer str.deref();
-        return str.toJS(globalObject);
+        return bun.String.createUTF8ForJS(globalObject, std.mem.span(this.element.?.namespaceURI()));
     }
 
     pub fn getAttributes(

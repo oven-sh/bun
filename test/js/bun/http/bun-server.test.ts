@@ -778,13 +778,27 @@ describe("HEAD requests #16431", () => {
 
         switch (url.pathname) {
           case "/404":
-            return new Response("Not Found", { status: 404 });
+            return new Response(null, { status: 404 });
           case "/500":
-            return new Response("Server Error", { status: 500 });
+            return new Response(null, { status: 500 });
           case "/403":
-            return new Response("Forbidden", { status: 403 });
+            return new Response(null, { status: 403 });
+          case "/401":
+            return new Response(null, { status: 401 });
+          case "/400":
+            return new Response(null, { status: 400 });
+          case "/301":
+            return new Response(null, { status: 301 });
+          case "/302":
+            return new Response(null, { status: 302 });
+          case "/307":
+            return new Response(null, { status: 307 });
+          case "/308":
+            return new Response(null, { status: 308 });
+          case "/200-with-body":
+            return new Response(null, { status: 200 });
           default:
-            return new Response("OK", { status: 200 });
+            return new Response(null, { status: 200 });
         }
       },
     });
@@ -794,7 +808,7 @@ describe("HEAD requests #16431", () => {
       const response = await fetch(server.url + "/404", { method: "HEAD" });
       expect(response.status).toBe(404);
       expect(await response.text()).toBe("");
-      expect(response.headers.get("content-length")).toBe("9");
+      expect(response.headers.get("content-length")).toBe("0");
     }
 
     // Test 500 response
@@ -802,7 +816,7 @@ describe("HEAD requests #16431", () => {
       const response = await fetch(server.url + "/500", { method: "HEAD" });
       expect(response.status).toBe(500);
       expect(await response.text()).toBe("");
-      expect(response.headers.get("content-length")).toBe("12");
+      expect(response.headers.get("content-length")).toBe("0");
     }
 
     // Test 403 response
@@ -810,7 +824,63 @@ describe("HEAD requests #16431", () => {
       const response = await fetch(server.url + "/403", { method: "HEAD" });
       expect(response.status).toBe(403);
       expect(await response.text()).toBe("");
-      expect(response.headers.get("content-length")).toBe("9");
+      expect(response.headers.get("content-length")).toBe("0");
+    }
+
+    // Test 401 response
+    {
+      const response = await fetch(server.url + "/401", { method: "HEAD" });
+      expect(response.status).toBe(401);
+      expect(await response.text()).toBe("");
+      expect(response.headers.get("content-length")).toBe("0");
+    }
+
+    // Test 400 response
+    {
+      const response = await fetch(server.url + "/400", { method: "HEAD" });
+      expect(response.status).toBe(400);
+      expect(await response.text()).toBe("");
+      expect(response.headers.get("content-length")).toBe("0");
+    }
+
+    // Test 301 response
+    {
+      const response = await fetch(server.url + "/301", { method: "HEAD" });
+      expect(response.status).toBe(301);
+      expect(await response.text()).toBe("");
+      expect(response.headers.get("content-length")).toBe("0");
+    }
+
+    // Test 302 response
+    {
+      const response = await fetch(server.url + "/302", { method: "HEAD" });
+      expect(response.status).toBe(302);
+      expect(await response.text()).toBe("");
+      expect(response.headers.get("content-length")).toBe("0");
+    }
+
+    // Test 307 response
+    {
+      const response = await fetch(server.url + "/307", { method: "HEAD" });
+      expect(response.status).toBe(307);
+      expect(await response.text()).toBe("");
+      expect(response.headers.get("content-length")).toBe("0");
+    }
+
+    // Test 308 response
+    {
+      const response = await fetch(server.url + "/308", { method: "HEAD" });
+      expect(response.status).toBe(308);
+      expect(await response.text()).toBe("");
+      expect(response.headers.get("content-length")).toBe("0");
+    }
+
+    // Test 200-with-body response
+    {
+      const response = await fetch(server.url + "/200-with-body", { method: "HEAD" });
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe("");
+      expect(response.headers.get("content-length")).toBe("0");
     }
 
     // Test 200 response
@@ -818,7 +888,7 @@ describe("HEAD requests #16431", () => {
       const response = await fetch(server.url + "/200", { method: "HEAD" });
       expect(response.status).toBe(200);
       expect(await response.text()).toBe("");
-      expect(response.headers.get("content-length")).toBe("2");
+      expect(response.headers.get("content-length")).toBe("0");
     }
   });
 });

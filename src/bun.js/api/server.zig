@@ -1566,6 +1566,7 @@ fn NewFlags(comptime debug_mode: bool) type {
         /// Used in renderMissing in debug mode to show the user an HTML page
         /// Used to avoid looking at the uws.Request struct after it's been freed
         is_web_browser_navigation: if (debug_mode) bool else void = if (debug_mode) false,
+        head_request_status_written: bool = false,
         has_written_status: bool = false,
         response_protected: bool = false,
         aborted: bool = false,
@@ -3106,12 +3107,18 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this.response_ptr = response;
             const server = this.server orelse {
                 // server detached?
-                this.renderMetadata();
+                this.doWriteStatus(response.statusCode());
+                this.flags.head_request_status_written = true;
+
                 resp.writeHeaderInt("content-length", 0);
+                this.renderMetadata();
                 this.endWithoutBody(this.shouldCloseConnection());
                 return;
             };
-            this.renderMetadata();
+
+            this.doWriteStatus(response.statusCode());
+            this.flags.head_request_status_written = true;
+
             const globalThis = server.globalThis;
             var has_content_length_or_transfer_encoding = false;
             if (response.getFetchHeaders()) |headers| {
@@ -3174,6 +3181,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
             }
 
+            this.renderMetadata();
             this.endWithoutBody(this.shouldCloseConnection());
         }
 
@@ -3903,6 +3911,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         fn doWriteStatus(this: *RequestContext, status: u16) void {
+            if (this.flags.head_request_status_written) return;
+
             assert(!this.flags.has_written_status);
             this.flags.has_written_status = true;
 

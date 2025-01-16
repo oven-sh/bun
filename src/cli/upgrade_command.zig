@@ -748,7 +748,7 @@ pub const UpgradeCommand = struct {
                 if (use_canary) {
                     var version_string = result.stdout;
                     if (strings.indexOfChar(version_string, '+')) |i| {
-                        version.tag = version_string[i+1..version_string.len];
+                        version.tag = version_string[i + 1 .. version_string.len];
                     }
                 } else {
                     var version_string = result.stdout;

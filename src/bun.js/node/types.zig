@@ -888,6 +888,12 @@ pub const PathLike = union(enum) {
 
         if (Environment.isWindows) {
             if (std.fs.path.isAbsolute(sliced)) {
+                if (sliced.len > 2 and bun.path.isDriveLetter(sliced[0]) and sliced[1] == ':' and bun.path.isSepAny(sliced[2])) {
+                    // Add the long path syntax. This affects most of node:fs
+                    const rest = path_handler.PosixToWinNormalizer.resolveCWDWithExternalBufZ(@ptrCast(buf[4..]), sliced) catch @panic("Error while resolving path.");
+                    buf[0..4].* = bun.windows.nt_maxpath_prefix_u8;
+                    return buf[0 .. 4 + rest.len :0];
+                }
                 return path_handler.PosixToWinNormalizer.resolveCWDWithExternalBufZ(buf, sliced) catch @panic("Error while resolving path.");
             }
         }
@@ -928,7 +934,7 @@ pub const PathLike = union(enum) {
 
     pub inline fn osPathKernel32(this: PathLike, buf: *bun.PathBuffer) bun.OSPathSliceZ {
         if (comptime Environment.isWindows) {
-            return strings.toWPath(@alignCast(std.mem.bytesAsSlice(u16, buf)), this.slice());
+            return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), this.slice());
         }
 
         return sliceZWithForceCopy(this, buf, false);

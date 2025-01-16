@@ -3184,15 +3184,15 @@ pub const NodeFS = struct {
     /// We want to avoid allocating a new path buffer for every error message so that JSC can clone + GC it.
     /// That means a stack-allocated buffer won't suffice. Instead, we re-use
     /// the heap allocated buffer on the NodeFS struct
-    sync_error_buf: bun.PathBuffer = undefined,
+    sync_error_buf: bun.PathBuffer align(@alignOf(u16)) = undefined,
     vm: ?*JSC.VirtualMachine = null,
 
     pub const ReturnType = Return;
 
     pub fn access(this: *NodeFS, args: Arguments.Access, _: Flavor) Maybe(Return.Access) {
-        const path = args.path.sliceZ(&this.sync_error_buf);
+        const path = args.path.osPathKernel32(&this.sync_error_buf);
         return switch (Syscall.access(path, @intFromEnum(args.mode))) {
-            .err => |err| .{ .err = err },
+            .err => |err| .{ .err = err.withPath(args.path.slice()) },
             .result => .{ .result = .{} },
         };
     }
@@ -5075,7 +5075,7 @@ pub const NodeFS = struct {
 
                 break :brk switch (open_result) {
                     .err => |err| return .{
-                        .err = err.withPath(path),
+                        .err = err.withPath(args.file.path.slice()),
                     },
                     .result => |fd| fd,
                 };

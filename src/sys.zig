@@ -27,6 +27,11 @@ const linux = syscall;
 
 pub const sys_uv = if (Environment.isWindows) @import("./sys_uv.zig") else Syscall;
 
+pub const F_OK = 0;
+pub const X_OK = 1;
+pub const W_OK = 2;
+pub const R_OK = 4;
+
 const log = bun.Output.scoped(.SYS, false);
 pub const syslog = log;
 
@@ -884,6 +889,9 @@ pub fn getErrno(rc: anytype) bun.C.E {
 
 const w = std.os.windows;
 
+/// Normalizes for ntdll.dll APIs. Replaces long-path prefixes with nt object
+/// prefixes, which may not function properly in kernel32 APIs.
+// TODO: Rename to normalizePathWindowsForNtdll
 pub fn normalizePathWindows(
     comptime T: type,
     dir_fd: bun.FileDescriptor,
@@ -907,14 +915,22 @@ pub fn normalizePathWindows(
                 return .{ .result = buf[0..bun.strings.w("\\??\\NUL").len :0] };
             }
             if ((path[1] == '/' or path[1] == '\\') and
-                (path[2] == '.' or path[2] == '?') and
                 (path[3] == '/' or path[3] == '\\'))
             {
-                buf[0..4].* = .{ '\\', '\\', path[2], '\\' };
-                const rest = path[4..];
-                @memcpy(buf[4..][0..rest.len], rest);
-                buf[path.len] = 0;
-                return .{ .result = buf[0..path.len :0] };
+                // Preserve the device path, instead of resolving '.' as a relative
+                // path. This prevents simplifying the path '\\.\pipe' into '\pipe'
+                if (path[2] == '.') {
+                    buf[0..4].* = .{ '\\', '\\', '.', '\\' };
+                    const rest = path[4..];
+                    @memcpy(buf[4..][0..rest.len], rest);
+                    buf[path.len] = 0;
+                    return .{ .result = buf[0..path.len :0] };
+                }
+                // For long paths and nt object paths, conver the prefix into an nt object, then resolve.
+                // TODO: NT object paths technically mean they are already resolved. Will that break?
+                if (path[2] == '?' and (path[1] == '?' or path[1] == '/' or path[1] == '\\')) {
+                    path = path[4..];
+                }
             }
         }
 
@@ -1342,9 +1358,24 @@ pub fn openatWindowsT(comptime T: type, dir: bun.FileDescriptor, path: []const T
     return openatWindowsTMaybeNormalize(T, dir, path, flags, true);
 }
 
-fn openatWindowsTMaybeNormalize(comptime T: type, dir: bun.FileDescriptor, path: []const T, flags: bun.Mode, comptime normalize: bool) Maybe(bun.FileDescriptor) {
+fn openatWindowsTMaybeNormalize(comptime T: type, dir: bun.FileDescriptor, path: []const T, flags_in: bun.Mode, comptime normalize: bool) Maybe(bun.FileDescriptor) {
+    var flags = flags_in;
+    if (flags & bun.windows.libuv.UV_FS_O_FILEMAP != 0) {
+        if (flags & (O.RDONLY | O.WRONLY | O.RDWR) != 0) {
+            flags = (flags & ~@as(c_int, O.WRONLY)) | O.RDWR;
+        }
+        if (flags & O.APPEND != 0) {
+            flags &= ~@as(c_int, O.APPEND);
+            flags &= ~@as(c_int, O.RDONLY | O.WRONLY | O.RDWR);
+            flags |= O.RDWR;
+        }
+    }
     if (flags & O.DIRECTORY != 0) {
-        const windows_options: WindowsOpenDirOptions = .{ .iterable = flags & O.PATH == 0, .no_follow = flags & O.NOFOLLOW != 0, .can_rename_or_delete = false };
+        const windows_options: WindowsOpenDirOptions = .{
+            .iterable = flags & O.PATH == 0,
+            .no_follow = flags & O.NOFOLLOW != 0,
+            .can_rename_or_delete = false,
+        };
         if (comptime !normalize and T == u16) {
             return openDirAtWindowsNtPath(dir, path, windows_options);
         }
@@ -1371,6 +1402,8 @@ fn openatWindowsTMaybeNormalize(comptime T: type, dir: bun.FileDescriptor, path:
     } else {
         access_mask |= w.GENERIC_READ;
     }
+
+    // TODO: UV_FS_O_EXLOCK must set share access to 0.
 
     const creation: w.ULONG = blk: {
         if (flags & O.CREAT != 0) {
@@ -1447,6 +1480,26 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSliceZ, flag
 }
 
 pub fn access(path: bun.OSPathSliceZ, mode: bun.Mode) Maybe(void) {
+    if (Environment.isWindows) {
+        const attrs = getFileAttributes(path) orelse {
+            return .{ .err = .{
+                .errno = @intFromEnum(bun.windows.getLastErrno()),
+                .syscall = .access,
+            } };
+        };
+
+        if (!((mode & W_OK) > 0) or
+            !(attrs.is_readonly) or
+            (attrs.is_directory))
+        {
+            return .{ .result = {} };
+        } else {
+            return .{ .err = .{
+                .errno = @intFromEnum(bun.C.E.PERM),
+                .syscall = .access,
+            } };
+        }
+    }
     return Maybe(void).errnoSysP(syscall.access(path, mode), .access, path) orelse .{ .result = {} };
 }
 
@@ -2762,7 +2815,7 @@ pub fn getFileAttributes(path: anytype) ?WindowsFileAttributes {
     } else {
         const wbuf = bun.WPathBufferPool.get();
         defer bun.WPathBufferPool.put(wbuf);
-        const path_to_use = bun.strings.toWPath(wbuf, path);
+        const path_to_use = bun.strings.toKernel32Path(wbuf, path);
         return getFileAttributes(path_to_use);
     }
 }
@@ -2778,13 +2831,24 @@ pub fn existsOSPath(path: bun.OSPathSliceZ, file_only: bool) bool {
 
     if (Environment.isWindows) {
         const attributes = getFileAttributes(path) orelse return false;
-
         if (file_only and attributes.is_directory) {
             return false;
         }
-
-        std.debug.print("{}\n", .{attributes});
-
+        if (attributes.is_reparse_point) {
+            // Check if the underlying file exists by opening it.
+            const rc = std.os.windows.kernel32.CreateFileW(
+                path,
+                0,
+                0,
+                null,
+                w.OPEN_EXISTING,
+                w.FILE_FLAG_BACKUP_SEMANTICS,
+                null,
+            );
+            if (rc == w.INVALID_HANDLE_VALUE) return false;
+            defer _ = std.os.windows.kernel32.CloseHandle(rc);
+            return true;
+        }
         return true;
     }
 

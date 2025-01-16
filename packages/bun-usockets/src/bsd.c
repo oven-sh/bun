@@ -322,6 +322,20 @@ LIBUS_SOCKET_DESCRIPTOR bsd_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd) {
     return fd;
 }
 
+static int setsockopt_6_or_4(LIBUS_SOCKET_DESCRIPTOR fd, int option4, int option6, const void *option_value, socklen_t option_len) {
+    int res = setsockopt(fd, IPPROTO_IPV6, option6, option_value, option_len);
+
+    if (res == 0) {
+        return 0;
+    }
+
+    if (errno == ENOPROTOOPT || errno == EINVAL) {
+        return setsockopt(fd, IPPROTO_IP, option4, option_value, option_len);
+    }
+
+    return res;
+}
+
 void bsd_socket_nodelay(LIBUS_SOCKET_DESCRIPTOR fd, int enabled) {
     setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &enabled, sizeof(enabled));
 }
@@ -330,23 +344,17 @@ int bsd_socket_broadcast(LIBUS_SOCKET_DESCRIPTOR fd, int enabled) {
     return setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &enabled, sizeof(enabled));
 }
 
+int bsd_socket_multicast_loopback(LIBUS_SOCKET_DESCRIPTOR fd, int enabled) {
+    return setsockopt_6_or_4(fd, IP_MULTICAST_LOOP, IPV6_MULTICAST_LOOP, &enabled, sizeof(enabled));
+}
+
 static int bsd_socket_ttl_any(LIBUS_SOCKET_DESCRIPTOR fd, int ttl, int ipv4, int ipv6) {
     if (ttl < 1 || ttl > 255) {
         errno = EINVAL;
         return -1;
     }
 
-    int res = setsockopt(fd, IPPROTO_IPV6, ipv6, &ttl, sizeof(ttl));
-
-    if (res == 0) {
-        return 0;
-    }
-
-    if (errno == ENOPROTOOPT || errno == EINVAL) {
-        return setsockopt(fd, IPPROTO_IP, ipv4, &ttl, sizeof(ttl));
-    }
-
-    return res;
+    return setsockopt_6_or_4(fd, ipv4, ipv6, &ttl, sizeof(ttl));
 }
 
 int bsd_socket_ttl_unicast(LIBUS_SOCKET_DESCRIPTOR fd, int ttl) {

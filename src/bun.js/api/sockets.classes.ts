@@ -331,6 +331,10 @@ export default [
         fn: "setMulticastTTL",
         length: 1,
       },
+      setMulticastLoopback: {
+        fn: "setMulticastLoopback",
+        length: 1,
+      },
     },
     klass: {},
   }),

@@ -126,6 +126,10 @@ int us_udp_socket_disconnect(struct us_udp_socket_t *s) {
     return bsd_disconnect_udp_socket(us_poll_fd((struct us_poll_t *)s));
 }
 
+int us_udp_socket_set_multicast_loopback(struct us_udp_socket_t *s, int enabled) {
+    return bsd_socket_multicast_loopback(us_poll_fd(&s->p), enabled);
+}
+
 struct us_udp_socket_t *us_create_udp_socket(
     struct us_loop_t *loop,
     void (*data_cb)(struct us_udp_socket_t *, void *, int),

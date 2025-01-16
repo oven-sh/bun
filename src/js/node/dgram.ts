@@ -748,7 +748,7 @@ Socket.prototype.setBroadcast = function (arg) {
   if (!handle?.socket) {
     throw new Error("setBroadcast EBADF");
   }
-  return handle.socket.setBroadcast(!!arg);
+  return handle.socket.setBroadcast(arg);
 };
 
 Socket.prototype.setTTL = function (ttl) {
@@ -776,15 +776,11 @@ Socket.prototype.setMulticastTTL = function (ttl) {
 };
 
 Socket.prototype.setMulticastLoopback = function (arg) {
-  throwNotImplemented("setMulticastLoopback", 10381);
-  /*
-  const err = this[kStateSymbol].handle.setMulticastLoopback(arg ? 1 : 0);
-  if (err) {
-    throw new ErrnoException(err, 'setMulticastLoopback');
+  const handle = this[kStateSymbol].handle;
+  if (!handle?.socket) {
+    throw new Error("setMulticastLoopback EBADF");
   }
-
-  return arg; // 0.4 compatibility
-  */
+  return handle.socket.setMulticastLoopback(arg);
 };
 
 Socket.prototype.setMulticastInterface = function (interfaceAddress) {

@@ -4547,6 +4547,10 @@ pub const udp = struct {
         pub fn setMulticastTTL(this: *This, ttl: i32) c_int {
             return us_udp_socket_set_ttl_multicast(this, @intCast(ttl));
         }
+
+        pub fn setMulticastLoopback(this: *This, enabled: bool) c_int {
+            return us_udp_socket_set_multicast_loopback(this, @intCast(@intFromBool(enabled)));
+        }
     };
 
     extern fn us_create_udp_socket(loop: ?*Loop, data_cb: *const fn (*udp.Socket, *PacketBuffer, c_int) callconv(.C) void, drain_cb: *const fn (*udp.Socket) callconv(.C) void, close_cb: *const fn (*udp.Socket) callconv(.C) void, host: [*c]const u8, port: c_ushort, options: c_int, err: ?*c_int, user_data: ?*anyopaque) ?*udp.Socket;
@@ -4562,6 +4566,7 @@ pub const udp = struct {
     extern fn us_udp_socket_set_broadcast(socket: ?*udp.Socket, enabled: c_int) c_int;
     extern fn us_udp_socket_set_ttl_unicast(socket: ?*udp.Socket, ttl: c_int) c_int;
     extern fn us_udp_socket_set_ttl_multicast(socket: ?*udp.Socket, ttl: c_int) c_int;
+    extern fn us_udp_socket_set_multicast_loopback(socket: ?*udp.Socket, enabled: c_int) c_int;
 
     pub const PacketBuffer = opaque {
         const This = @This();

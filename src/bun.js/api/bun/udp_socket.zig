@@ -420,7 +420,27 @@ pub const UDPSocket = struct {
             return globalThis.throwValue(err.toJS(globalThis));
         }
 
-        return .undefined;
+        return arguments[0];
+    }
+
+    pub fn setMulticastLoopback(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
+        if (this.closed) {
+            return globalThis.throwValue(bun.JSC.Maybe(void).errnoSys(@as(i32, @intCast(@intFromEnum(std.posix.E.BADF))), .setsockopt).?.toJS(globalThis));
+        }
+
+        const arguments = callframe.arguments();
+        if (arguments.len < 1) {
+            return globalThis.throwInvalidArguments("Expected 1 argument, got {}", .{arguments.len});
+        }
+
+        const enabled = arguments[0].toBoolean();
+        const res = this.socket.setMulticastLoopback(enabled);
+
+        if (bun.JSC.Maybe(void).errnoSys(res, .setsockopt)) |err| {
+            return globalThis.throwValue(err.toJS(globalThis));
+        }
+
+        return arguments[0];
     }
 
     pub fn setTTL(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {

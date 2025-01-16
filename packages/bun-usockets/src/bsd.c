@@ -357,9 +357,8 @@ static int bsd_socket_ttl_any(LIBUS_SOCKET_DESCRIPTOR fd, int ttl, int ipv4, int
     if (ttl < 1 || ttl > 255) {
 #ifdef _WIN32
         WSASetLastError(WSAEINVAL);
-#else
-        errno = EINVAL;
 #endif
+        errno = EINVAL;
         return -1;
     }
 

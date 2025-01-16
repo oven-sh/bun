@@ -330,23 +330,31 @@ int bsd_socket_broadcast(LIBUS_SOCKET_DESCRIPTOR fd, int enabled) {
     return setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &enabled, sizeof(enabled));
 }
 
-int bsd_socket_ttl(LIBUS_SOCKET_DESCRIPTOR fd, int ttl) {
+static int bsd_socket_ttl_any(LIBUS_SOCKET_DESCRIPTOR fd, int ttl, int ipv4, int ipv6) {
     if (ttl < 1 || ttl > 255) {
         errno = EINVAL;
         return -1;
     }
 
-    int res = setsockopt(fd, IPPROTO_IPV6, IPV6_UNICAST_HOPS, &ttl, sizeof(ttl));
+    int res = setsockopt(fd, IPPROTO_IPV6, ipv6, &ttl, sizeof(ttl));
 
     if (res == 0) {
         return 0;
     }
 
     if (errno == ENOPROTOOPT || errno == EINVAL) {
-        return setsockopt(fd, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl));
+        return setsockopt(fd, IPPROTO_IP, ipv4, &ttl, sizeof(ttl));
     }
 
     return res;
+}
+
+int bsd_socket_ttl_unicast(LIBUS_SOCKET_DESCRIPTOR fd, int ttl) {
+    return bsd_socket_ttl_any(fd, ttl, IP_TTL, IPV6_UNICAST_HOPS);
+}
+
+int bsd_socket_ttl_multicast(LIBUS_SOCKET_DESCRIPTOR fd, int ttl) {
+    return bsd_socket_ttl_any(fd, ttl, IP_MULTICAST_TTL, IPV6_MULTICAST_HOPS);
 }
 
 int bsd_socket_keepalive(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay) {

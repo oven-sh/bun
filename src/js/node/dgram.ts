@@ -761,17 +761,15 @@ Socket.prototype.setTTL = function (ttl) {
 };
 
 Socket.prototype.setMulticastTTL = function (ttl) {
-  throwNotImplemented("setMulticastTTL", 10381);
-  /*
-  validateNumber(ttl, 'ttl');
-
-  const err = this[kStateSymbol].handle.setMulticastTTL(ttl);
-  if (err) {
-    throw new ErrnoException(err, 'setMulticastTTL');
+  if (typeof ttl !== "number") {
+    throw $ERR_INVALID_ARG_TYPE("ttl", "number", ttl);
   }
 
-  return ttl;
-  */
+  const handle = this[kStateSymbol].handle;
+  if (!handle?.socket) {
+    throw new Error("setMulticastTTL EBADF");
+  }
+  return handle.socket.setMulticastTTL(ttl);
 };
 
 Socket.prototype.setMulticastLoopback = function (arg) {

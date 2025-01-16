@@ -327,6 +327,10 @@ export default [
         fn: "setTTL",
         length: 1,
       },
+      setMulticastTTL: {
+        fn: "setMulticastTTL",
+        length: 1,
+      },
     },
     klass: {},
   }),

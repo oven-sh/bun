@@ -110,8 +110,12 @@ int us_udp_socket_set_broadcast(struct us_udp_socket_t *s, int enabled) {
     return bsd_socket_broadcast(us_poll_fd(&s->p), enabled);
 }
 
-int us_udp_socket_set_ttl(struct us_udp_socket_t *s, int ttl) {
-    return bsd_socket_ttl(us_poll_fd(&s->p), ttl);
+int us_udp_socket_set_ttl_unicast(struct us_udp_socket_t *s, int ttl) {
+    return bsd_socket_ttl_unicast(us_poll_fd(&s->p), ttl);
+}
+
+int us_udp_socket_set_ttl_multicast(struct us_udp_socket_t *s, int ttl) {
+    return bsd_socket_ttl_multicast(us_poll_fd(&s->p), ttl);
 }
 
 int us_udp_socket_connect(struct us_udp_socket_t *s, const char* host, unsigned short port) {

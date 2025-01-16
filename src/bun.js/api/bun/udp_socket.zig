@@ -424,6 +424,14 @@ pub const UDPSocket = struct {
     }
 
     pub fn setTTL(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
+        return setAnyTTL(this, globalThis, callframe, uws.udp.Socket.setUnicastTTL);
+    }
+
+    pub fn setMulticastTTL(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
+        return setAnyTTL(this, globalThis, callframe, uws.udp.Socket.setMulticastTTL);
+    }
+
+    fn setAnyTTL(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame, comptime function: fn (*uws.udp.Socket, i32) c_int) bun.JSError!JSValue {
         if (this.closed) {
             return globalThis.throwValue(bun.JSC.Maybe(void).errnoSys(@intFromEnum(std.posix.E.BADF), .setsockopt).?.toJS(globalThis));
         }
@@ -434,7 +442,7 @@ pub const UDPSocket = struct {
         }
 
         const ttl = arguments[0].coerceToInt32(globalThis);
-        const res = this.socket.setTTL(ttl);
+        const res = function(this.socket, ttl);
 
         if (bun.JSC.Maybe(void).errnoSys(res, .setsockopt)) |err| {
             return globalThis.throwValue(err.toJS(globalThis));

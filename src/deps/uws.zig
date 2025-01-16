@@ -4540,8 +4540,12 @@ pub const udp = struct {
             return us_udp_socket_set_broadcast(this, @intCast(@intFromBool(enabled)));
         }
 
-        pub fn setTTL(this: *This, ttl: i32) c_int {
-            return us_udp_socket_set_ttl(this, @intCast(ttl));
+        pub fn setUnicastTTL(this: *This, ttl: i32) c_int {
+            return us_udp_socket_set_ttl_unicast(this, @intCast(ttl));
+        }
+
+        pub fn setMulticastTTL(this: *This, ttl: i32) c_int {
+            return us_udp_socket_set_ttl_multicast(this, @intCast(ttl));
         }
     };
 
@@ -4556,7 +4560,8 @@ pub const udp = struct {
     extern fn us_udp_socket_remote_ip(socket: ?*udp.Socket, buf: [*c]u8, length: [*c]i32) void;
     extern fn us_udp_socket_close(socket: ?*udp.Socket) void;
     extern fn us_udp_socket_set_broadcast(socket: ?*udp.Socket, enabled: c_int) c_int;
-    extern fn us_udp_socket_set_ttl(socket: ?*udp.Socket, ttl: c_int) c_int;
+    extern fn us_udp_socket_set_ttl_unicast(socket: ?*udp.Socket, ttl: c_int) c_int;
+    extern fn us_udp_socket_set_ttl_multicast(socket: ?*udp.Socket, ttl: c_int) c_int;
 
     pub const PacketBuffer = opaque {
         const This = @This();

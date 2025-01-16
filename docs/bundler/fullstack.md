@@ -245,7 +245,3 @@ This works similarly to how [`Bun.build` processes HTML files](/docs/bundler/htm
 - Client-side hot reloading isn't wired up yet. It will be in the future.
 - This doesn't support `bun build` yet. It also will in the future.
 - We haven't figured out plugins yet. This probably will live in `bunfig.toml` with the same API as in `Bun.build` otherwise.
-
-```
-
-```

@@ -49,6 +49,8 @@ const {
   validateAbortSignal,
 } = require("internal/validators");
 
+const { isIP } = require("./net");
+
 const EventEmitter = require("node:events");
 
 const { deprecate } = require("node:util");
@@ -795,33 +797,42 @@ Socket.prototype.setMulticastInterface = function (interfaceAddress) {
 };
 
 Socket.prototype.addMembership = function (multicastAddress, interfaceAddress) {
-  throwNotImplemented("addMembership", 10381);
-  /*
   if (!multicastAddress) {
-    throw $ERR_MISSING_ARGS('multicastAddress');
+    throw $ERR_MISSING_ARGS("multicastAddress");
   }
-
-  const { handle } = this[kStateSymbol];
-  const err = handle.addMembership(multicastAddress, interfaceAddress);
-  if (err) {
-    throw new ErrnoException(err, 'addMembership');
+  validateString(multicastAddress, "multicastAddress");
+  if (typeof interfaceAddress !== "undefined") {
+    validateString(interfaceAddress, "interfaceAddress");
   }
-  */
+  const { handle, bindState } = this[kStateSymbol];
+  if (!handle?.socket) {
+    if (!isIP(multicastAddress)) {
+      throw new Error("addMembership EINVAL");
+    }
+    throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
+  }
+  if (bindState === BIND_STATE_UNBOUND) {
+    this.bind(0);
+  }
+  return handle.socket.addMembership(multicastAddress, interfaceAddress);
 };
 
 Socket.prototype.dropMembership = function (multicastAddress, interfaceAddress) {
-  throwNotImplemented("dropMembership", 10381);
-  /*
   if (!multicastAddress) {
-    throw $ERR_MISSING_ARGS('multicastAddress');
+    throw $ERR_MISSING_ARGS("multicastAddress");
   }
-
+  validateString(multicastAddress, "multicastAddress");
+  if (typeof interfaceAddress !== "undefined") {
+    validateString(interfaceAddress, "interfaceAddress");
+  }
   const { handle } = this[kStateSymbol];
-  const err = handle.dropMembership(multicastAddress, interfaceAddress);
-  if (err) {
-    throw new ErrnoException(err, 'dropMembership');
+  if (!handle?.socket) {
+    if (!isIP(multicastAddress)) {
+      throw new Error("dropMembership EINVAL");
+    }
+    throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
   }
-  */
+  return handle.socket.dropMembership(multicastAddress, interfaceAddress);
 };
 
 Socket.prototype.addSourceSpecificMembership = function (sourceAddress, groupAddress, interfaceAddress) {

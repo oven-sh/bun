@@ -434,6 +434,45 @@ pub const UDPSocket = struct {
         return arguments[0];
     }
 
+    fn setMembership(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame, drop: bool) bun.JSError!JSValue {
+        if (this.closed) {
+            return globalThis.throwValue(bun.JSC.Maybe(void).errnoSys(@as(i32, @intCast(@intFromEnum(std.posix.E.BADF))), .setsockopt).?.toJS(globalThis));
+        }
+
+        const arguments = callframe.arguments();
+        if (arguments.len < 1) {
+            return globalThis.throwInvalidArguments("Expected 1 argument, got {}", .{arguments.len});
+        }
+
+        var addr: std.posix.sockaddr.storage = undefined;
+        if (!parseAddr(this, globalThis, JSC.jsNumber(0), arguments[0], &addr)) {
+            return globalThis.throwValue(bun.JSC.Maybe(void).errnoSys(@as(i32, @intCast(@intFromEnum(std.posix.E.INVAL))), .setsockopt).?.toJS(globalThis));
+        }
+
+        var interface: std.posix.sockaddr.storage = undefined;
+
+        const res = if (arguments.len > 1 and parseAddr(this, globalThis, JSC.jsNumber(0), arguments[1], &interface)) blk: {
+            if (addr.family != interface.family) {
+                return globalThis.throwInvalidArguments("Family mismatch between address and interface", .{});
+            }
+            break :blk this.socket.addMembership(&addr, &interface, drop);
+        } else this.socket.addMembership(&addr, null, drop);
+
+        if (getUSError(res, .setsockopt, true)) |err| {
+            return globalThis.throwValue(err.toJS(globalThis));
+        }
+
+        return .true;
+    }
+
+    pub fn addMembership(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
+        return this.setMembership(globalThis, callframe, false);
+    }
+
+    pub fn dropMembership(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
+        return this.setMembership(globalThis, callframe, true);
+    }
+
     pub fn setMulticastInterface(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
         if (this.closed) {
             return globalThis.throwValue(bun.JSC.Maybe(void).errnoSys(@as(i32, @intCast(@intFromEnum(std.posix.E.BADF))), .setsockopt).?.toJS(globalThis));

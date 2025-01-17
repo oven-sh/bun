@@ -351,6 +351,14 @@ export default [
         fn: "setMulticastInterface",
         length: 1,
       },
+      addMembership: {
+        fn: "addMembership",
+        length: 2,
+      },
+      dropMembership: {
+        fn: "dropMembership",
+        length: 2,
+      },
     },
     klass: {},
   }),

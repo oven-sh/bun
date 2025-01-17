@@ -4555,6 +4555,10 @@ pub const udp = struct {
         pub fn setMulticastInterface(this: *This, iface: *const std.posix.sockaddr.storage) c_int {
             return us_udp_socket_set_multicast_interface(this, iface);
         }
+
+        pub fn addMembership(this: *This, address: *const std.posix.sockaddr.storage, iface: ?*const std.posix.sockaddr.storage, drop: bool) c_int {
+            return us_udp_socket_set_membership(this, address, iface, @intFromBool(drop));
+        }
     };
 
     extern fn us_create_udp_socket(loop: ?*Loop, data_cb: *const fn (*udp.Socket, *PacketBuffer, c_int) callconv(.C) void, drain_cb: *const fn (*udp.Socket) callconv(.C) void, close_cb: *const fn (*udp.Socket) callconv(.C) void, host: [*c]const u8, port: c_ushort, options: c_int, err: ?*c_int, user_data: ?*anyopaque) ?*udp.Socket;
@@ -4572,6 +4576,7 @@ pub const udp = struct {
     extern fn us_udp_socket_set_ttl_multicast(socket: ?*udp.Socket, ttl: c_int) c_int;
     extern fn us_udp_socket_set_multicast_loopback(socket: ?*udp.Socket, enabled: c_int) c_int;
     extern fn us_udp_socket_set_multicast_interface(socket: ?*udp.Socket, iface: *const std.posix.sockaddr.storage) c_int;
+    extern fn us_udp_socket_set_membership(socket: ?*udp.Socket, address: *const std.posix.sockaddr.storage, iface: ?*const std.posix.sockaddr.storage, drop: c_int) c_int;
 
     pub const PacketBuffer = opaque {
         const This = @This();

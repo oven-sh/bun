@@ -134,6 +134,10 @@ int us_udp_socket_set_multicast_interface(struct us_udp_socket_t *s, const struc
     return bsd_socket_multicast_interface(us_poll_fd(&s->p), addr);
 }
 
+int us_udp_socket_set_membership(struct us_udp_socket_t *s, const struct sockaddr_storage *addr, const struct sockaddr_storage *iface, int drop) {
+    return bsd_socket_set_membership(us_poll_fd(&s->p), addr, iface, drop);
+}
+
 struct us_udp_socket_t *us_create_udp_socket(
     struct us_loop_t *loop,
     void (*data_cb)(struct us_udp_socket_t *, void *, int),

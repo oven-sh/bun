@@ -565,7 +565,7 @@ pub const UDPSocket = struct {
             return globalThis.throwInvalidArguments("Mismatch between array length property and number of items", .{});
         }
         const res = this.socket.send(payloads, lens, addr_ptrs);
-        if (getUSError(res, .send, true)) |err| {
+        if (bun.JSC.Maybe(void).errnoSys(res, .send)) |err| {
             return globalThis.throwValue(err.toJS(globalThis));
         }
         return JSValue.jsNumber(res);
@@ -623,7 +623,7 @@ pub const UDPSocket = struct {
         };
 
         const res = this.socket.send(&.{payload.ptr}, &.{payload.len}, &.{addr_ptr});
-        if (getUSError(res, .send, true)) |err| {
+        if (bun.JSC.Maybe(void).errnoSys(res, .send)) |err| {
             return globalThis.throwValue(err.toJS(globalThis));
         }
         return JSValue.jsBoolean(res > 0);

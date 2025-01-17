@@ -216,7 +216,6 @@ pub fn symlinkUV(from: [:0]const u8, to: [:0]const u8, flags: c_int) Maybe(void)
 
     log("uv symlink({s}, {s}) = {d}", .{ from, to, rc.int() });
     return if (rc.errno()) |errno|
-        // which one goes in the .path field?
         .{ .err = .{ .errno = errno, .syscall = .symlink } }
     else
         .{ .result = {} };

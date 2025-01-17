@@ -501,8 +501,7 @@ pub fn getBucket(
     globalThis: *JSC.JSGlobalObject,
 ) callconv(JSC.conv) JSValue {
     if (getBucketName(this)) |name| {
-        var str = bun.String.createUTF8(name);
-        return str.transferToJS(globalThis);
+        return bun.String.createUTF8ForJS(globalThis, name);
     }
     return .undefined;
 }

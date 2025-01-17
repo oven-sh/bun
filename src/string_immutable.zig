@@ -1916,19 +1916,7 @@ pub fn toNTPath(wbuf: []u16, utf8: []const u8) [:0]u16 {
     return wbuf[0 .. toWPathNormalized(wbuf[prefix.len..], utf8).len + prefix.len :0];
 }
 
-pub fn toNTMaxPath(buf: []u8, utf8: []const u8) [:0]const u8 {
-    if (!std.fs.path.isAbsoluteWindows(utf8) or utf8.len <= 260) {
-        @memcpy(buf[0..utf8.len], utf8);
-        buf[utf8.len] = 0;
-        return buf[0..utf8.len :0];
-    }
-
-    const prefix = bun.windows.nt_maxpath_prefix_u8;
-    buf[0..prefix.len].* = prefix;
-    return buf[0 .. toPathNormalized(buf[prefix.len..], utf8).len + prefix.len :0];
-}
-
-pub fn addNTPathPrefix(wbuf: []u16, utf16: []const u16) [:0]u16 {
+fn addNTPathPrefix(wbuf: []u16, utf16: []const u16) [:0]u16 {
     wbuf[0..bun.windows.nt_object_prefix.len].* = bun.windows.nt_object_prefix;
     @memcpy(wbuf[bun.windows.nt_object_prefix.len..][0..utf16.len], utf16);
     wbuf[utf16.len + bun.windows.nt_object_prefix.len] = 0;
@@ -2049,9 +2037,12 @@ pub fn toKernel32Path(wbuf: []u16, utf8: []const u8) [:0]u16 {
     if (hasPrefixComptime(path, bun.windows.nt_maxpath_prefix_u8)) {
         return toWPath(wbuf, path);
     }
-    wbuf[0..4].* = bun.windows.nt_maxpath_prefix;
-    const wpath = toWPath(wbuf[4..], path);
-    return wbuf[0 .. wpath.len + 4 :0];
+    if (utf8.len > 2 and bun.path.isDriveLetter(utf8[0]) and utf8[1] == ':' and bun.path.isSepAny(utf8[2])) {
+        wbuf[0..4].* = bun.windows.nt_maxpath_prefix;
+        const wpath = toWPath(wbuf[4..], path);
+        return wbuf[0 .. wpath.len + 4 :0];
+    }
+    return toWPath(wbuf, path);
 }
 
 fn isUNCPath(comptime T: type, path: []const T) bool {

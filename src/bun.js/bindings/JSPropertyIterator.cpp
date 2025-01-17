@@ -134,8 +134,10 @@ extern "C" EncodedJSValue Bun__JSPropertyIterator__getNameAndValue(JSPropertyIte
 
     auto& vm = iter->vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
-    PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
-    if (!object->methodTable()->getOwnPropertySlot(object, globalObject, prop, slot)) {
+    // This has to be get because we may need to call on prototypes
+    // If we meant for this to only run for own keys, the property name would not be included in the array.
+    PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
+    if (!object->getPropertySlot(globalObject, prop, slot)) {
         return {};
     }
     RETURN_IF_EXCEPTION(scope, {});

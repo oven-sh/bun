@@ -46,7 +46,8 @@ function refresh(useSpawn = false) {
 }
 
 function onexit(useSpawn) {
-  return;
+  if (process.env.KEEP_TEMP) return;
+
   // Change directory to avoid possible EBUSY
   if (isMainThread)
     process.chdir(testRoot);

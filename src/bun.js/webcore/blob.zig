@@ -4359,9 +4359,8 @@ pub const Blob = struct {
             const vm = globalThis.bunVM();
             const fd: bun.FileDescriptor = if (pathlike == .fd) pathlike.fd else brk: {
                 var file_path: bun.PathBuffer = undefined;
-                const path = pathlike.path.sliceZ(&file_path);
                 switch (bun.sys.open(
-                    path,
+                    pathlike.path.sliceZ(&file_path),
                     bun.O.WRONLY | bun.O.CREAT | bun.O.NONBLOCK,
                     write_permissions,
                 )) {

@@ -147,7 +147,7 @@ pub const O = switch (Environment.os) {
 
         pub const CREAT = 0o100;
         pub const EXCL = 0o200;
-        pub const NOCTTY = 0o400;
+        pub const NOCTTY = 0;
         pub const TRUNC = 0o1000;
         pub const APPEND = 0o2000;
         pub const NONBLOCK = 0o4000;
@@ -1315,6 +1315,126 @@ pub fn openFileAtWindowsNtPath(
     }
 }
 
+// Delete: this doesnt apply to NtCreateFile :(
+// pub const WindowsOpenFlags = struct {
+//     access: w.DWORD,
+//     share: w.DWORD,
+//     disposition: w.DWORD,
+//     attributes: w.DWORD,
+
+//     pub fn fromLibUV(flags_in: c_int) error{EINVAL}!WindowsOpenFlags {
+//         const uv = bun.windows.libuv;
+
+//         var flags = flags_in;
+
+//         // Adjust flags to be compatible with the memory file mapping. Save the
+//         // original flags to emulate the correct behavior
+//         if (flags & uv.UV_FS_O_FILEMAP != 0) {
+//             if (flags & (O.RDONLY | O.WRONLY | O.RDWR) != 0) {
+//                 flags = (flags & ~@as(c_int, O.WRONLY)) | O.RDWR;
+//             }
+//             if (flags & O.APPEND != 0) {
+//                 flags &= ~@as(c_int, O.APPEND);
+//                 flags &= ~@as(c_int, O.RDONLY | O.WRONLY | O.RDWR);
+//                 flags |= O.RDWR;
+//             }
+//         }
+
+//         var access_flag: w.DWORD = switch (flags & (uv.UV_FS_O_RDONLY | uv.UV_FS_O_WRONLY | uv.UV_FS_O_RDWR)) {
+//             uv.UV_FS_O_RDONLY => w.FILE_GENERIC_READ,
+//             uv.UV_FS_O_WRONLY => w.FILE_GENERIC_WRITE,
+//             uv.UV_FS_O_RDWR => w.FILE_GENERIC_READ | w.FILE_GENERIC_WRITE,
+//             else => return error.EINVAL,
+//         };
+//         if (flags & O.APPEND != 0) {
+//             access_flag &= ~@as(u32, w.FILE_WRITE_DATA);
+//             access_flag |= w.FILE_APPEND_DATA;
+//         }
+//         access_flag |= w.SYNCHRONIZE;
+
+//         const share: w.DWORD = if (flags & uv.UV_FS_O_EXLOCK != 0) 0 else FILE_SHARE;
+
+//         const disposition: w.DWORD = switch (flags & uv.UV_FS_O_CREAT | uv.UV_FS_O_EXCL | uv.UV_FS_O_TRUNC) {
+//             0,
+//             uv.UV_FS_O_EXCL,
+//             => w.OPEN_EXISTING,
+//             uv.UV_FS_O_CREAT,
+//             => w.OPEN_ALWAYS,
+//             uv.UV_FS_O_CREAT | uv.UV_FS_O_EXCL,
+//             uv.UV_FS_O_CREAT | uv.UV_FS_O_EXCL | uv.UV_FS_O_TRUNC,
+//             => w.CREATE_NEW,
+//             uv.UV_FS_O_TRUNC,
+//             uv.UV_FS_O_TRUNC | uv.UV_FS_O_EXCL,
+//             => w.TRUNCATE_EXISTING,
+//             uv.UV_FS_O_CREAT | uv.UV_FS_O_TRUNC,
+//             => w.TRUNCATE_EXISTING,
+//             else => return error.EINVAL,
+//         };
+//         var attributes: w.DWORD = w.FILE_ATTRIBUTE_NORMAL;
+//         if (flags & uv.UV_FS_O_CREAT != 0) {
+//             // if (!((req->fs.info.mode & ~current_umask) & _S_IWRITE)) {
+//         }
+//         if (flags & uv.UV_FS_O_TEMPORARY != 0) {
+//             attributes |= w.FILE_DELETE_ON_CLOSE;
+//             access_flag |= w.DELETE;
+//         }
+//         if (flags & uv.UV_FS_O_SHORT_LIVED != 0) {
+//             attributes |= w.FILE_ATTRIBUTE_TEMPORARY;
+//         }
+
+//         switch (flags & (uv.UV_FS_O_SEQUENTIAL | uv.UV_FS_O_RANDOM)) {
+//             0 => {},
+//             uv.UV_FS_O_SEQUENTIAL => attributes |= w.FILE_FLAG_SEQUENTIAL_SCAN,
+//             uv.UV_FS_O_RANDOM => attributes |= w.FILE_FLAG_SEQUENTIAL_SCAN,
+//             else => return error.EINVAL,
+//         }
+
+//         if (flags & uv.UV_FS_O_DIRECT != 0) {
+//             // FILE_APPEND_DATA and FILE_FLAG_NO_BUFFERING are mutually exclusive.
+//             // Windows returns 87, ERROR_INVALID_PARAMETER if these are combined.
+//             //
+//             // FILE_APPEND_DATA is included in FILE_GENERIC_WRITE:
+//             //
+//             // FILE_GENERIC_WRITE = STANDARD_RIGHTS_WRITE |
+//             //                      FILE_WRITE_DATA |
+//             //                      FILE_WRITE_ATTRIBUTES |
+//             //                      FILE_WRITE_EA |
+//             //                      FILE_APPEND_DATA |
+//             //                      SYNCHRONIZE
+//             //
+//             // Note: Appends are also permitted by FILE_WRITE_DATA.
+//             //
+//             // In order for direct writes and direct appends to succeed, we therefore
+//             // exclude FILE_APPEND_DATA if FILE_WRITE_DATA is specified, and otherwise
+//             // fail if the user's sole permission is a direct append, since this
+//             // particular combination is invalid.
+//             if (access_flag & w.FILE_APPEND_DATA != 0) {
+//                 if (access_flag & w.FILE_WRITE_DATA != 0) {
+//                     access_flag &= @as(u32, w.FILE_APPEND_DATA);
+//                 } else {
+//                     return error.EINVAL;
+//                 }
+//             }
+//             attributes |= w.FILE_FLAG_NO_BUFFERING;
+//         }
+
+//         switch (flags & uv.UV_FS_O_DSYNC | uv.UV_FS_O_SYNC) {
+//             0 => {},
+//             else => attributes |= w.FILE_FLAG_WRITE_THROUGH,
+//         }
+
+//         // Setting this flag makes it possible to open a directory.
+//         attributes |= w.FILE_FLAG_BACKUP_SEMANTICS;
+
+//         return .{
+//             .access = access_flag,
+//             .share = share,
+//             .disposition = disposition,
+//             .attributes = attributes,
+//         };
+//     }
+// };
+
 pub fn openFileAtWindowsT(
     comptime T: type,
     dirFd: bun.FileDescriptor,
@@ -1358,18 +1478,7 @@ pub fn openatWindowsT(comptime T: type, dir: bun.FileDescriptor, path: []const T
     return openatWindowsTMaybeNormalize(T, dir, path, flags, true);
 }
 
-fn openatWindowsTMaybeNormalize(comptime T: type, dir: bun.FileDescriptor, path: []const T, flags_in: bun.Mode, comptime normalize: bool) Maybe(bun.FileDescriptor) {
-    var flags = flags_in;
-    if (flags & bun.windows.libuv.UV_FS_O_FILEMAP != 0) {
-        if (flags & (O.RDONLY | O.WRONLY | O.RDWR) != 0) {
-            flags = (flags & ~@as(c_int, O.WRONLY)) | O.RDWR;
-        }
-        if (flags & O.APPEND != 0) {
-            flags &= ~@as(c_int, O.APPEND);
-            flags &= ~@as(c_int, O.RDONLY | O.WRONLY | O.RDWR);
-            flags |= O.RDWR;
-        }
-    }
+fn openatWindowsTMaybeNormalize(comptime T: type, dir: bun.FileDescriptor, path: []const T, flags: bun.Mode, comptime normalize: bool) Maybe(bun.FileDescriptor) {
     if (flags & O.DIRECTORY != 0) {
         const windows_options: WindowsOpenDirOptions = .{
             .iterable = flags & O.PATH == 0,
@@ -1402,8 +1511,6 @@ fn openatWindowsTMaybeNormalize(comptime T: type, dir: bun.FileDescriptor, path:
     } else {
         access_mask |= w.GENERIC_READ;
     }
-
-    // TODO: UV_FS_O_EXLOCK must set share access to 0.
 
     const creation: w.ULONG = blk: {
         if (flags & O.CREAT != 0) {
@@ -1511,6 +1618,20 @@ pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: bun.Mod
     }
 }
 
+pub fn openatFileWithLibuvFlags(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: bun.JSC.Node.FileSystemFlags, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+    if (comptime Environment.isWindows) {
+        const f = flags.toWindows() catch return .{ .err = .{
+            .errno = @intFromEnum(bun.C.E.INVAL),
+            .syscall = .open,
+            .path = file_path,
+        } };
+        // TODO: pass f.share
+        return openFileAtWindowsT(u8, dirfd, file_path, f.access, f.disposition, f.attributes);
+    } else {
+        return openatOSPath(dirfd, file_path, flags.asPosix(), perm);
+    }
+}
+
 pub fn openatA(dirfd: bun.FileDescriptor, file_path: []const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isWindows) {
         return openatWindowsT(u8, dirfd, file_path, flags);
@@ -1537,13 +1658,15 @@ pub fn openA(file_path: []const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.F
 }
 
 pub fn open(file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
-    // TODO(@paperdave): this should not need to use libuv
+    // TODO(@paperclover): this should not use libuv; when the libuv path is
+    // removed here, the call sites in node_fs.zig should make sure they parse
+    // the libuv specific file flags using the WindowsOpenFlags structure.
     if (comptime Environment.isWindows) {
         return sys_uv.open(file_path, flags, perm);
     }
 
     // this is what open() does anyway.
-    return openat(bun.toFD((std.fs.cwd().fd)), file_path, flags, perm);
+    return openat(bun.toFD(std.posix.AT.FDCWD), file_path, flags, perm);
 }
 
 /// This function will prevent stdout and stderr from being closed.
@@ -2916,7 +3039,6 @@ pub fn directoryExistsAt(dir: anytype, subpath: anytype) JSC.Maybe(bool) {
             bun.strings.addNTPathPrefixIfNeeded(wbuf, subpath)
         else
             bun.strings.toNTPath(wbuf, subpath);
-        bun.path.dangerouslyConvertPathToWindowsInPlace(u16, path);
 
         const path_len_bytes: u16 = @truncate(path.len * 2);
         var nt_name = w.UNICODE_STRING{

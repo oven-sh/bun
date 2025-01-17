@@ -244,10 +244,11 @@ pub const MultiPartUpload = struct {
         this.available.unset(index);
         defer this.currentPartNumber += 1;
         const data = if (needs_clone) bun.default_allocator.dupe(u8, chunk) catch bun.outOfMemory() else chunk;
+        const allocated_len = if (needs_clone) data.len else allocated_size;
         if (this.queue.items.len <= index) {
             this.queue.append(bun.default_allocator, .{
                 .data = data,
-                .allocated_size = allocated_size,
+                .allocated_size = allocated_len,
                 .partNumber = this.currentPartNumber,
                 .ctx = this,
                 .index = @truncate(index),
@@ -258,7 +259,7 @@ pub const MultiPartUpload = struct {
         }
         this.queue.items[index] = .{
             .data = data,
-            .allocated_size = allocated_size,
+            .allocated_size = allocated_len,
             .partNumber = this.currentPartNumber,
             .ctx = this,
             .index = @truncate(index),

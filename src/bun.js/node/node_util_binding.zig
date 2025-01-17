@@ -132,7 +132,20 @@ pub fn extractedSplitNewLinesFastPathStringsOnly(globalThis: *JSC.JSGlobalObject
     };
 }
 
-fn split(comptime encoding: bun.strings.EncodingNonAscii, globalThis: *JSC.JSGlobalObject, allocator: Allocator, str: *const bun.String) bun.JSError!JSC.JSValue {
+extern fn Bun__util__isInsideNodeModules(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bool;
+/// Walks the call stack from bottom to top, returning `true` when it finds a
+/// frame within a `node_modules` directory.
+pub fn isInsideNodeModules(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const res = Bun__util__isInsideNodeModules(globalObject, callframe);
+    return JSC.JSValue.jsBoolean(res);
+}
+
+fn split(
+    comptime encoding: bun.strings.EncodingNonAscii,
+    globalThis: *JSC.JSGlobalObject,
+    allocator: Allocator,
+    str: *const bun.String,
+) bun.JSError!JSC.JSValue {
     var fallback = std.heap.stackFallback(1024, allocator);
     const alloc = fallback.get();
     const Char = switch (encoding) {

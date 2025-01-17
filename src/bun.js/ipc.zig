@@ -339,7 +339,7 @@ const SocketIPCData = struct {
         const bytes = getVersionPacket(this.mode);
         if (bytes.len > 0) {
             const n = this.socket.write(bytes, false);
-            if (n != bytes.len) {
+            if (n >= 0 and n < @as(i32, @intCast(bytes.len))) {
                 this.outgoing.write(bytes[@intCast(n)..]) catch bun.outOfMemory();
             }
         }

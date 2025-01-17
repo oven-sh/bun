@@ -351,10 +351,7 @@ JSC_DEFINE_HOST_FUNCTION(jsEventTargetGetEventListenersCount, (JSC::JSGlobalObje
     JSC::VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* thisValue = jsDynamicCast<WebCore::JSEventTarget*>(callFrame->argument(0));
-    if (!thisValue) {
-        return JSC::JSValue::encode(JSC::jsNumber(0));
-    }
-
+    if (!thisValue) return JSC::JSValue::encode(JSC::jsUndefined());
     JSC::JSString* eventName = callFrame->argument(1).toString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     String str = eventName->value(lexicalGlobalObject);

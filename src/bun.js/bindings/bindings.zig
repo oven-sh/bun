@@ -2979,8 +2979,20 @@ pub const JSGlobalObject = opaque {
         argname: []const u8,
         value: JSValue,
     ) bun.JSError {
-        var formatter = JSC.ConsoleObject.Formatter{ .globalThis = this };
-        return this.ERR_INVALID_ARG_VALUE("The \"{s}\" argument is invalid. Received {}", .{ argname, value.toFmt(&formatter) }).throw();
+        const actual_string_value = try determineSpecificType(this, value);
+        defer actual_string_value.deref();
+        return this.ERR_INVALID_ARG_VALUE("The \"{s}\" argument is invalid. Received {}", .{ argname, actual_string_value }).throw();
+    }
+
+    extern "C" fn Bun__ErrorCode__determineSpecificType(*JSGlobalObject, JSValue) String;
+
+    pub fn determineSpecificType(global: *JSGlobalObject, value: JSValue) JSError!String {
+        const str = Bun__ErrorCode__determineSpecificType(global, value);
+        errdefer str.deref();
+        if (global.hasException()) {
+            return error.JSError;
+        }
+        return str;
     }
 
     /// "The <argname> argument must be of type <typename>. Received <value>"
@@ -2990,8 +3002,9 @@ pub const JSGlobalObject = opaque {
         typename: []const u8,
         value: JSValue,
     ) bun.JSError {
-        var formatter = JSC.ConsoleObject.Formatter{ .globalThis = this };
-        return this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be of type {s}. Received {}", .{ argname, typename, value.toFmt(&formatter) }).throw();
+        const actual_string_value = try determineSpecificType(this, value);
+        defer actual_string_value.deref();
+        return this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be of type {s}. Received {}", .{ argname, typename, actual_string_value }).throw();
     }
 
     pub fn throwInvalidArgumentRangeValue(
@@ -4322,12 +4335,12 @@ pub const JSValue = enum(i64) {
     }
 
     pub fn protect(this: JSValue) void {
-        if (this.isEmptyOrUndefinedOrNull() or this.isNumber()) return;
+        if (!this.isCell()) return;
         JSC.C.JSValueProtect(JSC.VirtualMachine.get().global, this.asObjectRef());
     }
 
     pub fn unprotect(this: JSValue) void {
-        if (this.isEmptyOrUndefinedOrNull() or this.isNumber()) return;
+        if (!this.isCell()) return;
         JSC.C.JSValueUnprotect(JSC.VirtualMachine.get().global, this.asObjectRef());
     }
 

@@ -1,5 +1,3 @@
-
-
 #include "root.h"
 
 #include "JavaScriptCore/ErrorType.h"
@@ -4562,14 +4560,14 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     } else {
         getFromSourceURL = true;
     }
-    except->code = (unsigned char)err->errorType();
+    except->type = (unsigned char)err->errorType();
     if (err->isStackOverflowError()) {
-        except->code = 253;
+        except->type = 253;
     }
     if (err->isOutOfMemoryError()) {
-        except->code = 8;
+        except->type = 8;
     }
-    if (except->code == SYNTAX_ERROR_CODE) {
+    if (except->type == SYNTAX_ERROR_CODE) {
         except->message = Bun::toStringRef(err->sanitizedMessageString(global));
     } else if (JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message)) {
         except->message = Bun::toStringRef(global, message);
@@ -4586,7 +4584,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     except->runtime_type = err->runtimeTypeForCause();
 
     const auto& names = builtinNames(vm);
-    if (except->code != SYNTAX_ERROR_CODE) {
+    if (except->type != SYNTAX_ERROR_CODE) {
 
         if (JSC::JSValue syscall = getNonObservable(vm, global, obj, names.syscallPublicName())) {
             if (syscall.isString()) {
@@ -4600,7 +4598,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
 
         if (JSC::JSValue code = getNonObservable(vm, global, obj, names.codePublicName())) {
             if (code.isString() || code.isNumber()) {
-                except->code_ = Bun::toStringRef(global, code);
+                except->system_code = Bun::toStringRef(global, code);
             }
         }
 
@@ -4760,21 +4758,21 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
                 auto name_str = name_value.toWTFString(global);
                 except->name = Bun::toStringRef(name_str);
                 if (name_str == "Error"_s) {
-                    except->code = JSErrorCodeError;
+                    except->type = JSErrorCodeError;
                 } else if (name_str == "EvalError"_s) {
-                    except->code = JSErrorCodeEvalError;
+                    except->type = JSErrorCodeEvalError;
                 } else if (name_str == "RangeError"_s) {
-                    except->code = JSErrorCodeRangeError;
+                    except->type = JSErrorCodeRangeError;
                 } else if (name_str == "ReferenceError"_s) {
-                    except->code = JSErrorCodeReferenceError;
+                    except->type = JSErrorCodeReferenceError;
                 } else if (name_str == "SyntaxError"_s) {
-                    except->code = JSErrorCodeSyntaxError;
+                    except->type = JSErrorCodeSyntaxError;
                 } else if (name_str == "TypeError"_s) {
-                    except->code = JSErrorCodeTypeError;
+                    except->type = JSErrorCodeTypeError;
                 } else if (name_str == "URIError"_s) {
-                    except->code = JSErrorCodeURIError;
+                    except->type = JSErrorCodeURIError;
                 } else if (name_str == "AggregateError"_s) {
-                    except->code = JSErrorCodeAggregateError;
+                    except->type = JSErrorCodeAggregateError;
                 }
             }
         }
@@ -5000,7 +4998,7 @@ void JSC__JSValue__toZigException(JSC__JSValue jsException, JSC__JSGlobalObject*
 {
     JSC::JSValue value = JSC::JSValue::decode(jsException);
     if (value == JSC::JSValue {}) {
-        exception->code = JSErrorCodeError;
+        exception->type = JSErrorCodeError;
         exception->name = Bun::toStringRef("Error"_s);
         exception->message = Bun::toStringRef("Unknown error"_s);
         return;

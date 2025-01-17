@@ -60,7 +60,7 @@ public:
     // FIXME: https://bugs.webkit.org/show_bug.cgi?id=169395
     using VectorCallback = Function<void(const Vector<uint8_t>&)>;
     using VoidCallback = Function<void()>;
-    using ExceptionCallback = Function<void(ExceptionCode)>;
+    using ExceptionCallback = Function<void(ExceptionCode, const String&)>;
     using KeyDataCallback = Function<void(CryptoKeyFormat, KeyData&&)>;
 
     virtual void encrypt(const CryptoAlgorithmParameters&, Ref<CryptoKey>&&, Vector<uint8_t>&&, VectorCallback&&, ExceptionCallback&&, ScriptExecutionContext&, WorkQueue&);

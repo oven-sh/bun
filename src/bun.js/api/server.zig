@@ -3074,11 +3074,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         const HeaderResponseSizePair = struct { this: *RequestContext, size: usize };
         pub fn doRenderHeadResponseAfterS3SizeResolved(pair: *HeaderResponseSizePair) void {
             var this = pair.this;
+            this.renderMetadata();
 
             if (this.resp) |resp| {
                 resp.writeHeaderInt("content-length", pair.size);
             }
-            this.renderMetadata();
             this.endWithoutBody(this.shouldCloseConnection());
             this.deref();
         }
@@ -3099,83 +3099,97 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         fn doRenderHeadResponse(pair: *HeaderResponsePair) void {
             var this = pair.this;
             var response = pair.response;
-            this.flags.needs_content_length = false;
             if (this.resp == null) {
                 return;
             }
+            // we will render the content-length header later manually so we set this to false
+            this.flags.needs_content_length = false;
+            // Always this.renderMetadata() before sending the content-length or transfer-encoding header so status is sent first
+
             const resp = this.resp.?;
             this.response_ptr = response;
             const server = this.server orelse {
                 // server detached?
-                resp.writeHeaderInt("content-length", 0);
                 this.renderMetadata();
+                resp.writeHeaderInt("content-length", 0);
                 this.endWithoutBody(this.shouldCloseConnection());
                 return;
             };
             const globalThis = server.globalThis;
-            var has_content_length_or_transfer_encoding = false;
             if (response.getFetchHeaders()) |headers| {
                 // first respect the headers
                 if (headers.fastGet(.TransferEncoding)) |transfer_encoding| {
                     const transfer_encoding_str = transfer_encoding.toSlice(server.allocator);
                     defer transfer_encoding_str.deinit();
+                    this.renderMetadata();
                     resp.writeHeader("transfer-encoding", transfer_encoding_str.slice());
-                    has_content_length_or_transfer_encoding = true;
-                } else if (headers.fastGet(.ContentLength)) |content_length| {
+                    this.endWithoutBody(this.shouldCloseConnection());
+
+                    return;
+                }
+                if (headers.fastGet(.ContentLength)) |content_length| {
                     const content_length_str = content_length.toSlice(server.allocator);
                     defer content_length_str.deinit();
+                    this.renderMetadata();
+
                     const len = std.fmt.parseInt(usize, content_length_str.slice(), 10) catch 0;
                     resp.writeHeaderInt("content-length", len);
-                    has_content_length_or_transfer_encoding = true;
+                    this.endWithoutBody(this.shouldCloseConnection());
+                    return;
                 }
             }
-            if (!has_content_length_or_transfer_encoding) {
-                // then respect the body
-                response.body.value.toBlobIfPossible();
-                switch (response.body.value) {
-                    .InternalBlob, .WTFStringImpl => {
-                        var blob = response.body.value.useAsAnyBlobAllowNonUTF8String();
-                        defer blob.detach();
-                        const size = blob.size();
-                        if (size == Blob.max_size) {
-                            resp.writeHeaderInt("content-length", 0);
-                        } else {
-                            resp.writeHeaderInt("content-length", size);
-                        }
-                    },
+            // not content-length or transfer-encoding so we need to respect the body
+            response.body.value.toBlobIfPossible();
+            switch (response.body.value) {
+                .InternalBlob, .WTFStringImpl => {
+                    var blob = response.body.value.useAsAnyBlobAllowNonUTF8String();
+                    defer blob.detach();
+                    const size = blob.size();
+                    this.renderMetadata();
 
-                    .Blob => |*blob| {
-                        if (blob.isS3()) {
-                            // we need to read the size asynchronously
-                            // in this case should always be a redirect so should not hit this path, but in case we change it in the future lets handle it
-                            this.ref();
-
-                            const credentials = blob.store.?.data.s3.getCredentials();
-                            const path = blob.store.?.data.s3.path();
-                            const env = globalThis.bunVM().transpiler.env;
-
-                            S3.stat(credentials, path, @ptrCast(&onS3SizeResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
-
-                            return;
-                        }
-                        blob.resolveSize();
-                        if (blob.size == Blob.max_size) {
-                            resp.writeHeaderInt("content-length", 0);
-                        } else {
-                            resp.writeHeaderInt("content-length", blob.size);
-                        }
-                    },
-                    .Locked => {
-                        resp.writeHeader("transfer-encoding", "chunked");
-                    },
-                    .Used, .Null, .Empty, .Error => {
+                    if (size == Blob.max_size) {
                         resp.writeHeaderInt("content-length", 0);
-                    },
-                }
-            }
+                    } else {
+                        resp.writeHeaderInt("content-length", size);
+                    }
+                    this.endWithoutBody(this.shouldCloseConnection());
+                },
 
-            this.renderMetadata();
-            this.endWithoutBody(this.shouldCloseConnection());
+                .Blob => |*blob| {
+                    if (blob.isS3()) {
+                        // we need to read the size asynchronously
+                        // in this case should always be a redirect so should not hit this path, but in case we change it in the future lets handle it
+                        this.ref();
+
+                        const credentials = blob.store.?.data.s3.getCredentials();
+                        const path = blob.store.?.data.s3.path();
+                        const env = globalThis.bunVM().transpiler.env;
+
+                        S3.stat(credentials, path, @ptrCast(&onS3SizeResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+
+                        return;
+                    }
+                    this.renderMetadata();
+
+                    blob.resolveSize();
+                    if (blob.size == Blob.max_size) {
+                        resp.writeHeaderInt("content-length", 0);
+                    } else {
+                        resp.writeHeaderInt("content-length", blob.size);
+                    }
+                    this.endWithoutBody(this.shouldCloseConnection());
+                },
+                .Locked => {
+                    this.renderMetadata();
+                    resp.writeHeader("transfer-encoding", "chunked");
+                    this.endWithoutBody(this.shouldCloseConnection());
+                },
+                .Used, .Null, .Empty, .Error => {
+                    this.renderMetadata();
+                    resp.writeHeaderInt("content-length", 0);
+                    this.endWithoutBody(this.shouldCloseConnection());
+                },
+            }
         }
 
         // Each HTTP request or TCP socket connection is effectively a "task".

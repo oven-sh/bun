@@ -2404,15 +2404,12 @@ pub const VirtualMachine = struct {
             return builtin;
         }
 
-        const display_specifier = _specifier.toUTF8(bun.default_allocator);
-        defer display_specifier.deinit();
         const specifier_clone = _specifier.toUTF8(bun.default_allocator);
         defer specifier_clone.deinit();
-        var display_slice = display_specifier.slice();
-        const specifier = ModuleLoader.normalizeSpecifier(jsc_vm, specifier_clone.slice(), &display_slice);
+        const normalized_file_path_from_specifier, const specifier = ModuleLoader.normalizeSpecifier(jsc_vm, specifier_clone.slice());
         const referrer_clone = referrer.toUTF8(bun.default_allocator);
         defer referrer_clone.deinit();
-        var path = Fs.Path.init(specifier_clone.slice());
+        var path = Fs.Path.init(normalized_file_path_from_specifier);
 
         // For blobs.
         var blob_source: ?JSC.WebCore.Blob = null;
@@ -2505,8 +2502,7 @@ pub const VirtualMachine = struct {
 
         return try ModuleLoader.transpileSourceCode(
             jsc_vm,
-            specifier_clone.slice(),
-            display_slice,
+            specifier,
             referrer_clone.slice(),
             _specifier,
             path,

@@ -2145,7 +2145,7 @@ pub const Arguments = struct {
 
     pub const Readdir = struct {
         path: PathLike,
-        encoding: Encoding = Encoding.utf8,
+        encoding: Encoding = .utf8,
         with_file_types: bool = false,
         recursive: bool = false,
 
@@ -2177,7 +2177,7 @@ pub const Arguments = struct {
             };
             errdefer path.deinit();
 
-            var encoding = Encoding.utf8;
+            var encoding: Encoding = .utf8;
             var with_file_types = false;
             var recursive = false;
 
@@ -2207,7 +2207,7 @@ pub const Arguments = struct {
                 }
             }
 
-            return Readdir{
+            return .{
                 .path = path,
                 .encoding = encoding,
                 .with_file_types = with_file_types,
@@ -4267,7 +4267,7 @@ pub const NodeFS = struct {
         }) |current| : (entry = iterator.next()) {
             if (ExpectedType == Dirent) {
                 if (dirent_path.isEmpty()) {
-                    dirent_path = bun.String.createUTF8(basename);
+                    dirent_path = JSC.WebCore.Encoder.toBunString(basename, args.encoding);
                 }
             }
             if (comptime !is_u16) {
@@ -4276,7 +4276,7 @@ pub const NodeFS = struct {
                     Dirent => {
                         dirent_path.ref();
                         entries.append(.{
-                            .name = bun.String.createUTF8(utf8_name),
+                            .name = JSC.WebCore.Encoder.toBunString(utf8_name, args.encoding),
                             .path = dirent_path,
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
@@ -4285,7 +4285,7 @@ pub const NodeFS = struct {
                         entries.append(Buffer.fromString(utf8_name, bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
                     },
                     bun.String => {
-                        entries.append(bun.String.createUTF8(utf8_name)) catch bun.outOfMemory();
+                        entries.append(JSC.WebCore.Encoder.toBunString(utf8_name, args.encoding)) catch bun.outOfMemory();
                     },
                     else => @compileError("unreachable"),
                 }
@@ -4565,11 +4565,11 @@ pub const NodeFS = struct {
                         const path_u8 = bun.path.dirname(bun.path.join(&[_]string{ root_basename, name_to_copy }, .auto), .auto);
                         if (dirent_path_prev.isEmpty() or !bun.strings.eql(dirent_path_prev.byteSlice(), path_u8)) {
                             dirent_path_prev.deref();
-                            dirent_path_prev = bun.String.createUTF8(path_u8);
+                            dirent_path_prev = JSC.WebCore.Encoder.toBunString(path_u8, args.encoding);
                         }
                         dirent_path_prev.ref();
                         entries.append(.{
-                            .name = bun.String.createUTF8(utf8_name),
+                            .name = JSC.WebCore.Encoder.toBunString(utf8_name, args.encoding),
                             .path = dirent_path_prev,
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
@@ -4578,7 +4578,7 @@ pub const NodeFS = struct {
                         entries.append(Buffer.fromString(name_to_copy, bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
                     },
                     bun.String => {
-                        entries.append(bun.String.createUTF8(name_to_copy)) catch bun.outOfMemory();
+                        entries.append(JSC.WebCore.Encoder.toBunString(name_to_copy, args.encoding)) catch bun.outOfMemory();
                     },
                     else => @compileError("Impossible"),
                 }
@@ -4872,7 +4872,7 @@ pub const NodeFS = struct {
                         if (comptime string_type == .default) {
                             return .{
                                 .result = .{
-                                    .transcoded_string = JSC.WebCore.Encoder.toWTFString(temporary_read_buffer, args.encoding),
+                                    .transcoded_string = JSC.WebCore.Encoder.toBunString(temporary_read_buffer, args.encoding),
                                 },
                             };
                         } else {

@@ -661,6 +661,7 @@ pub const ErrorCode = @import("./nodejs_error_code.zig").Code;
 // and various issues with std.posix that make it too unstable for arbitrary user input (e.g. how .BADF is marked as unreachable)
 
 /// https://github.com/nodejs/node/blob/master/lib/buffer.js#L587
+/// See `JSC.WebCore.Encoder` for encoding and decoding functions
 pub const Encoding = enum(u8) {
     utf8,
     ucs2,
@@ -754,11 +755,10 @@ pub const Encoding = enum(u8) {
                 return JSC.ArrayBuffer.createBuffer(globalObject, input);
             },
             inline else => |enc| {
-                const res = JSC.WebCore.Encoder.toString(input.ptr, size, globalObject, enc);
+                const res = JSC.WebCore.Encoder.toStringComptime(input, globalObject, enc);
                 if (res.isError()) {
                     return globalObject.throwValue(res) catch .zero;
                 }
-
                 return res;
             },
         }
@@ -790,7 +790,7 @@ pub const Encoding = enum(u8) {
                 return JSC.ArrayBuffer.createBuffer(globalObject, input);
             },
             inline else => |enc| {
-                const res = JSC.WebCore.Encoder.toString(input.ptr, input.len, globalObject, enc);
+                const res = JSC.WebCore.Encoder.toStringComptime(input, globalObject, enc);
                 if (res.isError()) {
                     return globalObject.throwValue(res) catch .zero;
                 }

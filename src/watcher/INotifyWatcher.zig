@@ -1,6 +1,7 @@
 //! Bun's filesystem watcher implementation for linux using inotify
 //! https://man7.org/linux/man-pages/man7/inotify.7.html
 const INotifyWatcher = @This();
+const log = Output.scoped(.inotify, false);
 
 // inotify events are variable-sized, so a byte buffer is used (also needed
 // since communication is done via the `read` syscall). what is notable about
@@ -63,54 +64,28 @@ pub fn watchPath(this: *INotifyWatcher, pathname: [:0]const u8) bun.JSC.Maybe(Ev
     bun.assert(this.loaded);
     const old_count = this.watch_count.fetchAdd(1, .release);
     defer if (old_count == 0) Futex.wake(&this.watch_count, 10);
-    const watch_file_mask = std.os.linux.IN.EXCL_UNLINK | std.os.linux.IN.MOVE_SELF | std.os.linux.IN.DELETE_SELF | std.os.linux.IN.MOVED_TO | std.os.linux.IN.MODIFY;
-    return .{
-        .result = std.posix.inotify_add_watchZ(this.fd.cast(), pathname, watch_file_mask) catch |err| return .{
-            .err = .{
-                .errno = @truncate(@intFromEnum(switch (err) {
-                    error.FileNotFound => bun.C.E.NOENT,
-                    error.AccessDenied => bun.C.E.ACCES,
-                    error.SystemResources => bun.C.E.NOMEM,
-                    error.Unexpected => bun.C.E.INVAL,
-                    error.NotDir => bun.C.E.NOTDIR,
-                    error.NameTooLong => bun.C.E.NAMETOOLONG,
-                    error.UserResourceLimitReached => bun.C.E.MFILE,
-                    error.WatchAlreadyExists => bun.C.E.EXIST,
-                })),
-                .syscall = .watch,
-            },
-        },
-    };
+    const watch_file_mask = IN.EXCL_UNLINK | IN.MOVE_SELF | IN.DELETE_SELF | IN.MOVED_TO | IN.MODIFY;
+    const rc = system.inotify_add_watch(this.fd.cast(), pathname, watch_file_mask);
+    log("inotify_add_watch({}) = {}", .{ this.fd, rc });
+    return bun.JSC.Maybe(EventListIndex).errnoSysP(rc, .watch, pathname) orelse
+        .{ .result = rc };
 }
 
 pub fn watchDir(this: *INotifyWatcher, pathname: [:0]const u8) bun.JSC.Maybe(EventListIndex) {
     bun.assert(this.loaded);
     const old_count = this.watch_count.fetchAdd(1, .release);
     defer if (old_count == 0) Futex.wake(&this.watch_count, 10);
-    const watch_dir_mask = std.os.linux.IN.EXCL_UNLINK | std.os.linux.IN.DELETE | std.os.linux.IN.DELETE_SELF | std.os.linux.IN.CREATE | std.os.linux.IN.MOVE_SELF | std.os.linux.IN.ONLYDIR | std.os.linux.IN.MOVED_TO;
-    return .{
-        .result = std.posix.inotify_add_watchZ(this.fd.cast(), pathname, watch_dir_mask) catch |err| return .{
-            .err = .{
-                .errno = @truncate(@intFromEnum(switch (err) {
-                    error.FileNotFound => bun.C.E.NOENT,
-                    error.AccessDenied => bun.C.E.ACCES,
-                    error.SystemResources => bun.C.E.NOMEM,
-                    error.Unexpected => bun.C.E.INVAL,
-                    error.NotDir => bun.C.E.NOTDIR,
-                    error.NameTooLong => bun.C.E.NAMETOOLONG,
-                    error.UserResourceLimitReached => bun.C.E.MFILE,
-                    error.WatchAlreadyExists => bun.C.E.EXIST,
-                })),
-                .syscall = .watch,
-            },
-        },
-    };
+    const watch_dir_mask = IN.EXCL_UNLINK | IN.DELETE | IN.DELETE_SELF | IN.CREATE | IN.MOVE_SELF | IN.ONLYDIR | IN.MOVED_TO;
+    const rc = system.inotify_add_watch(this.fd.cast(), pathname, watch_dir_mask);
+    log("inotify_add_watch({}) = {}", .{ this.fd, rc });
+    return bun.JSC.Maybe(EventListIndex).errnoSysP(rc, .watch, pathname) orelse
+        .{ .result = rc };
 }
 
 pub fn unwatch(this: *INotifyWatcher, wd: EventListIndex) void {
     bun.assert(this.loaded);
     _ = this.watch_count.fetchSub(1, .release);
-    std.os.inotify_rm_watch(this.fd, wd);
+    _ = system.inotify_rm_watch(this.fd, wd);
 }
 
 pub fn init(this: *INotifyWatcher, _: []const u8) !void {
@@ -121,7 +96,10 @@ pub fn init(this: *INotifyWatcher, _: []const u8) !void {
         this.coalesce_interval = std.fmt.parseInt(isize, env, 10) catch 100_000;
     }
 
-    this.fd = bun.toFD(try std.posix.inotify_init1(std.os.linux.IN.CLOEXEC));
+    // TODO: convert to bun.sys.Error
+    this.fd = bun.toFD(try std.posix.inotify_init1(IN.CLOEXEC));
+
+    log("{} init", .{this.fd});
 }
 
 pub fn read(this: *INotifyWatcher) bun.JSC.Maybe([]const *Event) {
@@ -152,6 +130,7 @@ pub fn read(this: *INotifyWatcher) bun.JSC.Maybe([]const *Event) {
         switch (errno) {
             .SUCCESS => {
                 var read_eventlist_bytes = this.eventlist_bytes[0..@intCast(rc)];
+                log("{} read {} bytes", .{ this.fd, read_eventlist_bytes.len });
                 if (read_eventlist_bytes.len == 0) return .{ .result = &.{} };
 
                 // IN_MODIFY is very noisy
@@ -214,6 +193,14 @@ pub fn read(this: *INotifyWatcher) bun.JSC.Maybe([]const *Event) {
         i += event.size();
         count += 1;
 
+        log("{} read event {} {} {} {}", .{
+            this.fd,
+            event.watch_descriptor,
+            event.cookie,
+            event.mask,
+            bun.fmt.quote(event.name()),
+        });
+
         // when under high load with short file paths, it is very easy to
         // overrun the watcher's event buffer.
         if (count == max_count) {
@@ -221,6 +208,7 @@ pub fn read(this: *INotifyWatcher) bun.JSC.Maybe([]const *Event) {
                 .i = i,
                 .len = @intCast(read_eventlist_bytes.len),
             };
+            log("{} read buffer filled up", .{this.fd});
             return .{ .result = &this.eventlist_ptrs };
         }
     }
@@ -229,6 +217,7 @@ pub fn read(this: *INotifyWatcher) bun.JSC.Maybe([]const *Event) {
 }
 
 pub fn stop(this: *INotifyWatcher) void {
+    log("{} stop", .{this.fd});
     if (this.fd != bun.invalid_fd) {
         _ = bun.sys.close(this.fd);
         this.fd = bun.invalid_fd;
@@ -316,10 +305,10 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.JSC.Maybe(void) {
 pub fn watchEventFromInotifyEvent(event: *const INotifyWatcher.Event, index: WatchItemIndex) WatchEvent {
     return .{
         .op = .{
-            .delete = (event.mask & std.os.linux.IN.DELETE_SELF) > 0 or (event.mask & std.os.linux.IN.DELETE) > 0,
-            .rename = (event.mask & std.os.linux.IN.MOVE_SELF) > 0,
-            .move_to = (event.mask & std.os.linux.IN.MOVED_TO) > 0,
-            .write = (event.mask & std.os.linux.IN.MODIFY) > 0,
+            .delete = (event.mask & IN.DELETE_SELF) > 0 or (event.mask & IN.DELETE) > 0,
+            .rename = (event.mask & IN.MOVE_SELF) > 0,
+            .move_to = (event.mask & IN.MOVED_TO) > 0,
+            .write = (event.mask & IN.MODIFY) > 0,
         },
         .index = index,
     };
@@ -329,8 +318,9 @@ const std = @import("std");
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 const Output = bun.Output;
-const log = Output.scoped(.watcher, false);
 const Futex = bun.Futex;
+const system = std.posix.system;
+const IN = std.os.linux.IN;
 
 const WatchItemIndex = bun.Watcher.WatchItemIndex;
 const WatchEvent = bun.Watcher.Event;

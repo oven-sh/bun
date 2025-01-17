@@ -13946,14 +13946,14 @@ pub const PackageManager = struct {
             new_node_modules = true;
 
             // Attempt to create a new node_modules folder
-            bun.sys.mkdir("node_modules", 0o755).unwrap() catch |err| {
-                if (err != error.EEXIST) {
-                    Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating <b>node_modules<r> folder", .{@errorName(err)});
+            if (bun.sys.mkdir("node_modules", 0o755).asErr()) |err| {
+                if (err.errno != @intFromEnum(bun.C.E.EXIST)) {
+                    Output.err(err, "could not create the <b>\"node_modules\"<r> directory", .{});
                     Global.crash();
                 }
-            };
+            }
             break :brk bun.openDir(cwd, "node_modules") catch |err| {
-                Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> opening <b>node_modules<r> folder", .{@errorName(err)});
+                Output.err(err, "could not open the <b>\"node_modules\"<r> directory", .{});
                 Global.crash();
             };
         };

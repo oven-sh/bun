@@ -3611,7 +3611,8 @@ pub const FFIObject = struct {
                 return err;
             },
             .slice => |slice| {
-                return WebCore.Encoder.toString(slice.ptr, slice.len, globalThis, .utf8);
+                var str = bun.String.createUTF8(slice);
+                return str.toJS(globalThis);
             },
         }
     }

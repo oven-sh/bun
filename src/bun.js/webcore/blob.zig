@@ -4369,10 +4369,10 @@ pub const Blob = struct {
                         break :brk result;
                     },
                     .err => |err| {
-                        return globalThis.throwValue(err.withPath(path).toJSC(globalThis));
+                        return globalThis.throwValue(err.withPath(pathlike.path.slice()).toJSC(globalThis));
                     },
                 }
-                unreachable;
+                @compileError(unreachable);
             };
 
             const is_stdout_or_stderr = brk: {

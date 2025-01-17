@@ -162,28 +162,15 @@ pub const UDPSocketConfig = struct {
         };
         defer if (globalThis.hasException()) default_allocator.free(hostname);
 
-        const port: u16 = brk: {
-            if (try options.getTruthy(globalThis, "port")) |value| {
-                const number = value.coerceToInt32(globalThis);
-                if (number < 0 or number > 0xffff) {
-                    return globalThis.throwInvalidArguments("Expected \"port\" to be an integer between 0 and 65535", .{});
-                }
-                break :brk @intCast(number);
-            } else {
-                break :brk 0;
-            }
-        };
+        const port: u16 = if (try options.getTruthy(globalThis, "port")) |value|
+            @intCast(try bun.validators.validateInteger(globalThis, value, "port", .{}, 0, 65535))
+        else
+            0;
 
-        const flags: i32 = brk: {
-            if (try options.getTruthy(globalThis, "flags")) |value| {
-                if (!value.isAnyInt()) {
-                    return globalThis.throwInvalidArguments("Expected \"flags\" to be a number", .{});
-                }
-                break :brk value.asInt32();
-            } else {
-                break :brk 0;
-            }
-        };
+        const flags: i32 = if (try options.getTruthy(globalThis, "flags")) |value|
+            try bun.validators.validateInt32(globalThis, value, "flags", .{}, null, null)
+        else
+            0;
 
         var config = This{
             .hostname = hostname,

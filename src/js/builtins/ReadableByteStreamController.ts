@@ -31,7 +31,7 @@ export function initializeReadableByteStreamController(this, stream, underlyingB
 }
 
 export function enqueue(this, chunk) {
-  if (!$isReadableByteStreamController(this)) throw $makeThisTypeError("ReadableByteStreamController", "enqueue");
+  if (!$isReadableByteStreamController(this)) throw $ERR_INVALID_THIS("ReadableByteStreamController");
 
   if ($getByIdDirectPrivate(this, "closeRequested"))
     throw new TypeError("ReadableByteStreamController is requested to close");
@@ -45,7 +45,7 @@ export function enqueue(this, chunk) {
 }
 
 export function error(this, error) {
-  if (!$isReadableByteStreamController(this)) throw $makeThisTypeError("ReadableByteStreamController", "error");
+  if (!$isReadableByteStreamController(this)) throw $ERR_INVALID_THIS("ReadableByteStreamController");
 
   if ($getByIdDirectPrivate($getByIdDirectPrivate(this, "controlledReadableStream"), "state") !== $streamReadable)
     throw new TypeError("ReadableStream is not readable");
@@ -54,7 +54,7 @@ export function error(this, error) {
 }
 
 export function close(this) {
-  if (!$isReadableByteStreamController(this)) throw $makeThisTypeError("ReadableByteStreamController", "close");
+  if (!$isReadableByteStreamController(this)) throw $ERR_INVALID_THIS("ReadableByteStreamController");
 
   if ($getByIdDirectPrivate(this, "closeRequested")) throw new TypeError("Close has already been requested");
 

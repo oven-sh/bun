@@ -654,6 +654,7 @@ pub const ErrorCode = @import("./nodejs_error_code.zig").Code;
 // and various issues with std.posix that make it too unstable for arbitrary user input (e.g. how .BADF is marked as unreachable)
 
 /// https://github.com/nodejs/node/blob/master/lib/buffer.js#L587
+/// must match src/bun.js/bindings/BufferEncodingType.h
 pub const Encoding = enum(u8) {
     utf8,
     ucs2,
@@ -790,6 +791,11 @@ pub const Encoding = enum(u8) {
                 return res;
             },
         }
+    }
+
+    extern fn WebCore_BufferEncodingType_toJS(globalObject: *JSC.JSGlobalObject, encoding: Encoding) JSC.JSValue;
+    pub fn toJS(encoding: Encoding, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        return WebCore_BufferEncodingType_toJS(globalObject, encoding);
     }
 };
 
@@ -1527,13 +1533,13 @@ pub const FileSystemFlags = enum(Mode) {
         if (value.isInt32()) {
             const int: i32 = value.asInt32();
             if (int < min or int > max) {
-                return global.ERR_OUT_OF_RANGE(comptime std.fmt.comptimePrint("mode is out of range: >= {d} && <= {d}", .{ min, max }), .{}).throw();
+                return global.ERR_OUT_OF_RANGE(comptime std.fmt.comptimePrint("mode is out of range: >= {d} and <= {d}", .{ min, max }), .{}).throw();
             }
             return @enumFromInt(int);
         } else {
             const float = value.asNumber();
             if (std.math.isNan(float) or std.math.isInf(float) or float < min or float > max) {
-                return global.ERR_OUT_OF_RANGE(comptime std.fmt.comptimePrint("mode is out of range: >= {d} && <= {d}", .{ min, max }), .{}).throw();
+                return global.ERR_OUT_OF_RANGE(comptime std.fmt.comptimePrint("mode is out of range: >= {d} and <= {d}", .{ min, max }), .{}).throw();
             }
             return @enumFromInt(@as(i32, @intFromFloat(float)));
         }

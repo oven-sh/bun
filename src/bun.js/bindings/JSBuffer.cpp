@@ -1,6 +1,8 @@
 
+
 #include "root.h"
 
+#include "ZigGlobalObject.h"
 #include "JavaScriptCore/ExceptionHelpers.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/Error.h"
@@ -108,6 +110,24 @@ static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap64);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_toString);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_write);
 #pragma clang diagnostic pop
+
+extern "C" EncodedJSValue WebCore_BufferEncodingType_toJS(JSC::JSGlobalObject* lexicalGlobalObject, WebCore::BufferEncodingType encoding)
+{
+    // clang-format off
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    switch (encoding) {
+    case WebCore::BufferEncodingType::utf8:      return JSC::JSValue::encode(globalObject->commonStrings().utf8String(globalObject));
+    case WebCore::BufferEncodingType::ucs2:      return JSC::JSValue::encode(globalObject->commonStrings().ucs2String(globalObject));
+    case WebCore::BufferEncodingType::utf16le:   return JSC::JSValue::encode(globalObject->commonStrings().utf16leString(globalObject));
+    case WebCore::BufferEncodingType::latin1:    return JSC::JSValue::encode(globalObject->commonStrings().latin1String(globalObject));
+    case WebCore::BufferEncodingType::ascii:     return JSC::JSValue::encode(globalObject->commonStrings().asciiString(globalObject));
+    case WebCore::BufferEncodingType::base64:    return JSC::JSValue::encode(globalObject->commonStrings().base64String(globalObject));
+    case WebCore::BufferEncodingType::base64url: return JSC::JSValue::encode(globalObject->commonStrings().base64urlString(globalObject));
+    case WebCore::BufferEncodingType::hex:       return JSC::JSValue::encode(globalObject->commonStrings().hexString(globalObject));
+    case WebCore::BufferEncodingType::buffer:    return JSC::JSValue::encode(globalObject->commonStrings().bufferString(globalObject));
+    }
+    // clang-format on
+}
 
 namespace Bun {
 
@@ -354,6 +374,12 @@ static inline JSC::EncodedJSValue writeToBuffer(JSC::JSGlobalObject* lexicalGlob
     }
 
     return JSC::JSValue::encode(JSC::jsNumber(written));
+}
+
+JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, Ref<JSC::ArrayBuffer>&& backingStore)
+{
+    size_t length = backingStore->byteLength();
+    return JSC::JSUint8Array::create(lexicalGlobalObject, defaultGlobalObject(lexicalGlobalObject)->JSBufferSubclassStructure(), WTFMove(backingStore), 0, length);
 }
 
 JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const uint8_t* ptr, size_t length)

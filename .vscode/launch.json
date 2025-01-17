@@ -160,14 +160,14 @@
       "request": "launch",
       "name": "bun run [file]",
       "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["--eval", "console.warn(new Error(\"hello\"))"],
+      "args": ["${file}"],
       "cwd": "${fileDirname}",
       "env": {
         "FORCE_COLOR": "0",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
-      "console": "integratedTerminal",
+      "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
       "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },

@@ -50,10 +50,10 @@ function testGid(input, errObj) {
     code: 'ERR_OUT_OF_RANGE',
     name: 'RangeError',
     message: 'The value of "fd" is out of range. It must be ' +
-             `>= 0 && <= 2147483647. Received ${input}`
+             `>= 0 and <= 2147483647. Received ${input}`
   };
   testFd(input, errObj);
-  errObj.message = 'The value of "uid" is out of range. It must be >= -1 && ' +
+  errObj.message = 'The value of "uid" is out of range. It must be >= -1 and ' +
     `<= 4294967295. Received ${input}`;
   testUid(input, errObj);
   errObj.message = errObj.message.replace('uid', 'gid');

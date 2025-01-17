@@ -210,14 +210,6 @@ class ERR_USE_AFTER_CLOSE extends NodeError {
   }
 }
 
-class AbortError extends Error {
-  code;
-  constructor() {
-    super("The operation was aborted");
-    this.code = "ABORT_ERR";
-  }
-}
-
 // ----------------------------------------------------------------------------
 // Section: Utils
 // ----------------------------------------------------------------------------
@@ -2337,14 +2329,14 @@ Interface.prototype.question[promisify.custom] = function question(query, option
   var signal = options?.signal;
 
   if (signal && signal.aborted) {
-    return PromiseReject(new AbortError(undefined, { cause: signal.reason }));
+    return PromiseReject($makeAbortError(undefined, { cause: signal.reason }));
   }
 
   return new Promise((resolve, reject) => {
     var cb = resolve;
     if (signal) {
       var onAbort = () => {
-        reject(new AbortError(undefined, { cause: signal.reason }));
+        reject($makeAbortError(undefined, { cause: signal.reason }));
       };
       signal.addEventListener("abort", onAbort, { once: true });
       cb = answer => {
@@ -2806,7 +2798,7 @@ var PromisesInterface = class Interface extends _Interface {
     if (signal) {
       validateAbortSignal(signal, "options.signal");
       if (signal.aborted) {
-        return PromiseReject(new AbortError(undefined, { cause: signal.reason }));
+        return PromiseReject($makeAbortError(undefined, { cause: signal.reason }));
       }
     }
     const { promise, resolve, reject } = $newPromiseCapability(Promise);
@@ -2814,7 +2806,7 @@ var PromisesInterface = class Interface extends _Interface {
     if (options?.signal) {
       var onAbort = () => {
         this[kQuestionCancel]();
-        reject(new AbortError(undefined, { cause: signal.reason }));
+        reject($makeAbortError(undefined, { cause: signal.reason }));
       };
       signal.addEventListener("abort", onAbort, { once: true });
       cb = answer => {

@@ -174,6 +174,28 @@ static const HashTableValue JSCryptoKeyPrototypeTableValues[] = {
 
 const ClassInfo JSCryptoKeyPrototype::s_info = { "CryptoKey"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCryptoKeyPrototype) };
 
+JSCryptoKey* JSCryptoKey::fromJS(JSGlobalObject* globalObject, JSValue value)
+{
+    if (value.inherits<JSCryptoKey>()) {
+        return jsCast<JSCryptoKey*>(value);
+    }
+
+    JSObject* object = value.getObject();
+    if (!object) {
+        return nullptr;
+    }
+
+    auto& vm = globalObject->vm();
+
+    auto& names = WebCore::builtinNames(vm);
+
+    if (auto nativeValue = object->getIfPropertyExists(globalObject, names.bunNativePtrPrivateName())) {
+        return jsDynamicCast<JSCryptoKey*>(nativeValue);
+    }
+
+    return nullptr;
+}
+
 void JSCryptoKeyPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);

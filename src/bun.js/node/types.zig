@@ -1379,8 +1379,8 @@ pub const PathOrFileDescriptor = union(Tag) {
     }
 };
 
-/// On windows, this uses the libuv specific mode flags.
-pub const FileSystemFlags = enum(c_int) {
+pub const FileSystemFlags = enum(if (Environment.isWindows) c_int else c_uint) {
+    pub const tag_type = @typeInfo(FileSystemFlags).Enum.tag_type;
     const O = bun.O;
 
     /// Open file for appending. The file is created if it does not exist.
@@ -1548,11 +1548,7 @@ pub const FileSystemFlags = enum(c_int) {
         }
     }
 
-    /// On Windows this is a libuv-styled O_* flags, on posix it is libc-style.
-    ///
-    /// On Windows, this does not perfectly line up with bun.O, as libuv doesnt
-    /// define O_DIRECTORY for example.
-    pub fn asInt(flags: FileSystemFlags) c_int {
+    pub fn asInt(flags: FileSystemFlags) tag_type {
         return @intFromEnum(flags);
     }
 };

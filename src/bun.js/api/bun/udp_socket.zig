@@ -108,7 +108,6 @@ fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) c
 
             break :blk bun.String.createFormat("{s}%{d}", .{ span, id }) catch bun.outOfMemory();
         } else bun.String.init(span);
-        defer hostname_string.deref();
 
         _ = callback.call(globalThis, udpSocket.thisValue, &.{
             udpSocket.thisValue,
@@ -341,8 +340,6 @@ pub const UDPSocket = struct {
                     .code = bun.String.static(code),
                     .message = bun.String.createFormat("bind {s} {s}", .{ code, config.hostname }) catch bun.outOfMemory(),
                 };
-                const address = bun.String.createUTF8(config.hostname);
-                defer address.deref();
                 const error_value = sys_err.toErrorInstance(globalThis);
                 error_value.put(globalThis, "address", bun.String.createUTF8ForJS(globalThis, config.hostname));
                 return globalThis.throwValue(error_value);

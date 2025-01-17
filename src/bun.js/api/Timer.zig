@@ -28,7 +28,7 @@ const TimerHeap = heap.Intrusive(EventLoopTimer, void, EventLoopTimer.less);
 
 pub const All = struct {
     last_id: i32 = 1,
-    lock: bun.Lock = .{},
+    lock: bun.Mutex = .{},
     thread_id: std.Thread.Id,
     timers: TimerHeap = .{
         .context = {},
@@ -936,7 +936,7 @@ pub const WTFTimer = struct {
     event_loop_timer: EventLoopTimer,
     imminent: *std.atomic.Value(?*WTFTimer),
     repeat: bool,
-    lock: bun.Lock = .{},
+    lock: bun.Mutex = .{},
 
     pub usingnamespace bun.New(@This());
 

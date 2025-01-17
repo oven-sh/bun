@@ -1,11 +1,5 @@
 #!/bin/sh
 
-# How to use this script:
-# 1. Pick a module from node's standard library (e.g. 'assert', 'fs')
-# 2. Copy over relevant tests from node's parallel test suite into test/js/node/test/parallel
-# 3. Run this script, e.g. `./scripts/check-node.sh fs`
-# 4. Tests that passed get staged for commit
-
 i=0
 j=0
 
@@ -25,16 +19,15 @@ esac
 
 export BUN_DEBUG_QUIET_LOGS=1
 
-for x in $(find test/js/node/test/parallel -type f -name "test-$1*.js")
+for x in $(find test/js/node/test/parallel -type f -name "test-$1*.js" | sort)
 do
   i=$((i+1))
   echo ./$x
   if timeout 2 $PWD/build/debug/bun-debug ./$x
   then
     j=$((j+1))
-    git add ./$x
+    git add $x
   fi
-  echo
 done
 
 echo $i tests tested

@@ -206,11 +206,9 @@ pub const LifecycleScriptSubprocess = struct {
                 },
             .cwd = cwd,
 
-            .windows = if (Environment.isWindows)
-                .{
-                    .loop = JSC.EventLoopHandle.init(&manager.event_loop),
-                }
-            else {},
+            .windows = if (Environment.isWindows) .{
+                .loop = JSC.EventLoopHandle.init(&manager.event_loop),
+            },
 
             .stream = false,
         };

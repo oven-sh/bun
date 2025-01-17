@@ -41,7 +41,7 @@ const JSPrinter = bun.js_printer;
 const picohttp = bun.picohttp;
 const StringJoiner = bun.StringJoiner;
 const uws = bun.uws;
-const Mutex = @import("../../lock.zig").Lock;
+const Mutex = bun.Mutex;
 
 const InlineBlob = JSC.WebCore.InlineBlob;
 const AnyBlob = JSC.WebCore.AnyBlob;
@@ -55,7 +55,7 @@ const Async = bun.Async;
 const BoringSSL = bun.BoringSSL;
 const X509 = @import("../api/bun/x509.zig");
 const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
-const s3 = @import("../../s3.zig");
+const s3 = bun.S3;
 
 pub const Response = struct {
     const ResponseMixin = BodyMixin(@This());
@@ -529,11 +529,13 @@ pub const Response = struct {
                         .url = bun.String.empty,
                     };
 
-                    const result = blob.store.?.data.s3.getCredentials().signRequest(.{
+                    const credentials = blob.store.?.data.s3.getCredentials();
+
+                    const result = credentials.signRequest(.{
                         .path = blob.store.?.data.s3.path(),
                         .method = .GET,
                     }, .{ .expires = 15 * 60 }) catch |sign_err| {
-                        return s3.AWSCredentials.throwSignError(sign_err, globalThis);
+                        return s3.throwSignError(sign_err, globalThis);
                     };
                     defer result.deinit();
                     response.init.headers = response.getOrCreateHeaders(globalThis);
@@ -1173,8 +1175,6 @@ pub const Fetch = struct {
                 }
 
                 if (!assignment_result.isEmptyOrUndefinedOrNull()) {
-                    this.javascript_vm.drainMicrotasks();
-
                     assignment_result.ensureStillAlive();
                     // it returns a Promise when it goes through ReadableStreamDefaultReader
                     if (assignment_result.asAnyPromise()) |promise| {
@@ -1522,8 +1522,8 @@ pub const Fetch = struct {
                     const cert = certificate_info.cert;
                     var cert_ptr = cert.ptr;
                     if (BoringSSL.d2i_X509(null, &cert_ptr, @intCast(cert.len))) |x509| {
-                        defer BoringSSL.X509_free(x509);
                         const globalObject = this.global_this;
+                        defer x509.free();
                         const js_cert = X509.toJS(x509, globalObject) catch |err| {
                             switch (err) {
                                 error.JSError => {},
@@ -2513,7 +2513,7 @@ pub const Fetch = struct {
             return .zero;
         }
 
-        // "decompression: boolean"
+        // "decompress: boolean"
         disable_decompression = extract_disable_decompression: {
             const objects_to_try = [_]JSValue{
                 options_object orelse .zero,
@@ -3143,7 +3143,7 @@ pub const Fetch = struct {
             prepare_body: {
                 // is a S3 file we can use chunked here
 
-                if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlob(globalThis, &body.AnyBlob.Blob, s3.MultiPartUpload.DefaultPartSize), globalThis)) |stream| {
+                if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlob(globalThis, &body.AnyBlob.Blob, s3.MultiPartUploadOptions.DefaultPartSize), globalThis)) |stream| {
                     var old = body;
                     defer old.detach();
                     body = .{ .ReadableStream = JSC.WebCore.ReadableStream.Strong.init(stream, globalThis) };
@@ -3252,8 +3252,8 @@ pub const Fetch = struct {
 
         if (url.isS3()) {
             // get ENV config
-            var credentialsWithOptions: s3.AWSCredentials.AWSCredentialsWithOptions = .{
-                .credentials = globalThis.bunVM().transpiler.env.getAWSCredentials(),
+            var credentialsWithOptions: s3.S3CredentialsWithOptions = .{
+                .credentials = globalThis.bunVM().transpiler.env.getS3Credentials(),
                 .options = .{},
                 .acl = null,
             };
@@ -3265,7 +3265,7 @@ pub const Fetch = struct {
                 if (try options.getTruthyComptime(globalThis, "s3")) |s3_options| {
                     if (s3_options.isObject()) {
                         s3_options.ensureStillAlive();
-                        credentialsWithOptions = try s3.AWSCredentials.getCredentialsWithOptions(credentialsWithOptions.credentials, .{}, s3_options, null, globalThis);
+                        credentialsWithOptions = try s3.S3Credentials.getCredentialsWithOptions(credentialsWithOptions.credentials, .{}, s3_options, null, globalThis);
                     }
                 }
             }
@@ -3279,7 +3279,7 @@ pub const Fetch = struct {
                     url_proxy_buffer: []const u8,
                     pub usingnamespace bun.New(@This());
 
-                    pub fn resolve(result: s3.AWSCredentials.S3UploadResult, self: *@This()) void {
+                    pub fn resolve(result: s3.S3UploadResult, self: *@This()) void {
                         if (self.promise.globalObject()) |global| {
                             switch (result) {
                                 .success => {
@@ -3334,7 +3334,8 @@ pub const Fetch = struct {
 
                 const promise_value = promise.value();
                 const proxy_url = if (proxy) |p| p.href else "";
-                _ = credentialsWithOptions.credentials.dupe().s3UploadStream(
+                _ = bun.S3.uploadStream(
+                    credentialsWithOptions.credentials.dupe(),
                     url.s3Path(),
                     body.ReadableStream.get().?,
                     globalThis,
@@ -3358,7 +3359,7 @@ pub const Fetch = struct {
                 .method = method,
             }, null) catch |sign_err| {
                 is_error = true;
-                return JSPromise.rejectedPromiseValue(globalThis, s3.AWSCredentials.getJSSignError(sign_err, globalThis));
+                return JSPromise.rejectedPromiseValue(globalThis, s3.getJSSignError(sign_err, globalThis));
             };
             defer result.deinit();
             if (proxy) |proxy_| {
@@ -3481,6 +3482,39 @@ pub const Headers = struct {
     entries: Headers.Entries = .{},
     buf: std.ArrayListUnmanaged(u8) = .{},
     allocator: std.mem.Allocator,
+
+    pub fn memoryCost(this: *const Headers) usize {
+        return this.buf.items.len + this.entries.memoryCost();
+    }
+
+    pub fn clone(this: *Headers) !Headers {
+        return Headers{
+            .entries = try this.entries.clone(this.allocator),
+            .buf = try this.buf.clone(this.allocator),
+            .allocator = this.allocator,
+        };
+    }
+
+    pub fn append(this: *Headers, name: []const u8, value: []const u8) !void {
+        var offset: u32 = @truncate(this.buf.items.len);
+        try this.buf.ensureUnusedCapacity(this.allocator, name.len + value.len);
+        const name_ptr = Api.StringPointer{
+            .offset = offset,
+            .length = @truncate(name.len),
+        };
+        this.buf.appendSliceAssumeCapacity(name);
+        offset = @truncate(this.buf.items.len);
+        this.buf.appendSliceAssumeCapacity(value);
+
+        const value_ptr = Api.StringPointer{
+            .offset = offset,
+            .length = @truncate(value.len),
+        };
+        try this.entries.append(this.allocator, .{
+            .name = name_ptr,
+            .value = value_ptr,
+        });
+    }
 
     pub fn deinit(this: *Headers) void {
         this.entries.deinit(this.allocator);

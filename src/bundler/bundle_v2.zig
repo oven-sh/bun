@@ -71,7 +71,7 @@ const Ref = @import("../ast/base.zig").Ref;
 const Define = @import("../defines.zig").Define;
 const DebugOptions = @import("../cli.zig").Command.DebugOptions;
 const ThreadPoolLib = @import("../thread_pool.zig");
-const ThreadlocalArena = @import("../mimalloc_arena.zig").Arena;
+const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
 const BabyList = @import("../baby_list.zig").BabyList;
 const Fs = @import("../fs.zig");
 const schema = @import("../api/schema.zig");
@@ -93,7 +93,7 @@ const OOM = bun.OOM;
 const HTMLScanner = @import("../HTMLScanner.zig");
 const Router = @import("../router.zig");
 const isPackagePath = _resolver.isPackagePath;
-const Lock = @import("../lock.zig").Lock;
+const Lock = bun.Mutex;
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const CacheEntry = @import("../cache.zig").Fs.Entry;
 const Analytics = @import("../analytics/analytics_thread.zig");
@@ -141,7 +141,7 @@ fn tracer(comptime src: std.builtin.SourceLocation, comptime name: [:0]const u8)
 pub const ThreadPool = struct {
     pool: *ThreadPoolLib = undefined,
     workers_assignments: std.AutoArrayHashMap(std.Thread.Id, *Worker) = std.AutoArrayHashMap(std.Thread.Id, *Worker).init(bun.default_allocator),
-    workers_assignments_lock: bun.Lock = .{},
+    workers_assignments_lock: bun.Mutex = .{},
 
     v2: *BundleV2 = undefined,
 
@@ -327,10 +327,15 @@ fn genericPathWithPrettyInitialized(path: Fs.Path, target: options.Target, top_l
     // TODO: outbase
     var buf: bun.PathBuffer = undefined;
 
+    const is_node = bun.strings.eqlComptime(path.namespace, "node");
+    if (is_node and bun.strings.hasPrefixComptime(path.text, NodeFallbackModules.import_path)) {
+        return path;
+    }
+
     // "file" namespace should use the relative file path for its display name.
     // the "node" namespace is also put through this code path so that the
     // "node:" prefix is not emitted.
-    if (path.isFile() or bun.strings.eqlComptime(path.namespace, "node")) {
+    if (path.isFile() or is_node) {
         const rel = bun.path.relativePlatform(top_level_dir, path.text, .loose, false);
         var path_clone = path;
         // stack-allocated temporary is not leaked because dupeAlloc on the path will
@@ -1578,25 +1583,25 @@ pub const BundleV2 = struct {
 
     pub const JSBundleThread = BundleThread(JSBundleCompletionTask);
 
-    pub fn generateFromJavaScript(
+    pub fn createAndScheduleCompletionTask(
         config: bun.JSC.API.JSBundler.Config,
         plugins: ?*bun.JSC.API.JSBundler.Plugin,
         globalThis: *JSC.JSGlobalObject,
         event_loop: *bun.JSC.EventLoop,
         allocator: std.mem.Allocator,
-    ) OOM!bun.JSC.JSValue {
-        var completion = try allocator.create(JSBundleCompletionTask);
-        completion.* = JSBundleCompletionTask{
+    ) OOM!*JSBundleCompletionTask {
+        _ = allocator; // autofix
+        const completion = JSBundleCompletionTask.new(.{
             .config = config,
             .jsc_event_loop = event_loop,
-            .promise = JSC.JSPromise.Strong.init(globalThis),
             .globalThis = globalThis,
             .poll_ref = Async.KeepAlive.init(),
             .env = globalThis.bunVM().transpiler.env,
             .plugins = plugins,
             .log = Logger.Log.init(bun.default_allocator),
-            .task = JSBundleCompletionTask.TaskCompletion.init(completion),
-        };
+            .task = undefined,
+        });
+        completion.task = JSBundleCompletionTask.TaskCompletion.init(completion);
 
         if (plugins) |plugin| {
             plugin.setConfig(completion);
@@ -1610,17 +1615,46 @@ pub const BundleV2 = struct {
 
         completion.poll_ref.ref(globalThis.bunVM());
 
+        return completion;
+    }
+
+    pub fn generateFromJavaScript(
+        config: bun.JSC.API.JSBundler.Config,
+        plugins: ?*bun.JSC.API.JSBundler.Plugin,
+        globalThis: *JSC.JSGlobalObject,
+        event_loop: *bun.JSC.EventLoop,
+        allocator: std.mem.Allocator,
+    ) OOM!bun.JSC.JSValue {
+        const completion = try createAndScheduleCompletionTask(config, plugins, globalThis, event_loop, allocator);
+        completion.promise = JSC.JSPromise.Strong.init(globalThis);
         return completion.promise.value();
     }
 
     pub const BuildResult = struct {
         output_files: std.ArrayList(options.OutputFile),
+
+        pub fn deinit(this: *BuildResult) void {
+            for (this.output_files.items) |*output_file| {
+                output_file.deinit();
+            }
+
+            this.output_files.clearAndFree();
+        }
     };
 
     pub const Result = union(enum) {
         pending: void,
         err: anyerror,
         value: BuildResult,
+
+        pub fn deinit(this: *Result) void {
+            switch (this.*) {
+                .value => |*value| {
+                    value.deinit();
+                },
+                else => {},
+            }
+        }
     };
 
     pub const JSBundleCompletionTask = struct {
@@ -1628,10 +1662,13 @@ pub const BundleV2 = struct {
         jsc_event_loop: *bun.JSC.EventLoop,
         task: bun.JSC.AnyTask,
         globalThis: *JSC.JSGlobalObject,
-        promise: JSC.JSPromise.Strong,
+        promise: JSC.JSPromise.Strong = .{},
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
         env: *bun.DotEnv.Loader,
         log: Logger.Log,
+        cancelled: bool = false,
+
+        html_build_task: ?*JSC.API.HTMLBundle.HTMLBundleRoute = null,
 
         result: Result = .{ .pending = {} },
 
@@ -1639,6 +1676,9 @@ pub const BundleV2 = struct {
         transpiler: *BundleV2 = undefined,
         plugins: ?*bun.JSC.API.JSBundler.Plugin = null,
         ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
+        started_at_ns: u64 = 0,
+
+        pub usingnamespace bun.NewThreadSafeRefCounted(JSBundleCompletionTask, @This().deinit);
 
         pub fn configureBundler(
             completion: *JSBundleCompletionTask,
@@ -1655,7 +1695,7 @@ pub const BundleV2 = struct {
                     .entry_points = config.entry_points.keys(),
                     .target = config.target.toAPI(),
                     .absolute_working_dir = if (config.dir.list.items.len > 0)
-                        config.dir.slice()
+                        config.dir.sliceWithSentinel()
                     else
                         null,
                     .inject = &.{},
@@ -1718,16 +1758,16 @@ pub const BundleV2 = struct {
 
         pub const TaskCompletion = bun.JSC.AnyTask.New(JSBundleCompletionTask, onComplete);
 
-        pub fn deref(this: *JSBundleCompletionTask) void {
-            if (this.ref_count.fetchSub(1, .monotonic) == 1) {
-                this.config.deinit(bun.default_allocator);
-                debug("Deinit JSBundleCompletionTask(0{x})", .{@intFromPtr(this)});
-                bun.default_allocator.destroy(this);
+        pub fn deinit(this: *JSBundleCompletionTask) void {
+            this.result.deinit();
+            this.log.deinit();
+            this.poll_ref.disable();
+            if (this.plugins) |plugin| {
+                plugin.deinit();
             }
-        }
-
-        pub fn ref(this: *JSBundleCompletionTask) void {
-            _ = this.ref_count.fetchAdd(1, .monotonic);
+            this.config.deinit(bun.default_allocator);
+            this.promise.deinit();
+            this.destroy();
         }
 
         pub fn onComplete(this: *JSBundleCompletionTask) void {
@@ -1735,6 +1775,15 @@ pub const BundleV2 = struct {
             defer this.deref();
 
             this.poll_ref.unref(globalThis.bunVM());
+            if (this.cancelled) {
+                return;
+            }
+
+            if (this.html_build_task) |html_build_task| {
+                html_build_task.onComplete(this);
+                return;
+            }
+
             const promise = this.promise.swap();
 
             switch (this.result) {
@@ -1767,11 +1816,8 @@ pub const BundleV2 = struct {
                         @panic("Unexpected pending JavaScript exception in JSBundleCompletionTask.onComplete. This is a bug in Bun.");
                     }
 
-                    defer build.output_files.deinit();
                     var to_assign_on_sourcemap: JSC.JSValue = .zero;
                     for (output_files, 0..) |*output_file, i| {
-                        defer bun.default_allocator.free(output_file.src_path.text);
-                        defer bun.default_allocator.free(output_file.dest_path);
                         const result = output_file.toJS(
                             if (!this.config.outdir.isEmpty())
                                 if (std.fs.path.isAbsolute(this.config.outdir.list.items))
@@ -3464,10 +3510,12 @@ pub const ParseTask = struct {
         // and then that is either replaced with the module itself, or an import to the
         // runtime here.
         const runtime_require = switch (target) {
-            // __require is intentionally not implemented here, as we
-            // always inline 'import.meta.require' and 'import.meta.require.resolve'
-            // Omitting it here acts as an extra assertion.
-            .bun, .bun_macro => "",
+            // Previously, Bun inlined `import.meta.require` at all usages. This broke
+            // code that called `fn.toString()` and parsed the code outside a module
+            // context.
+            .bun, .bun_macro =>
+            \\export var __require = import.meta.require;
+            ,
 
             .node =>
             \\import { createRequire } from "node:module";
@@ -4406,10 +4454,9 @@ pub const ParseTask = struct {
         opts.macro_context = &this.data.macro_context;
         opts.package_version = task.package_version;
 
-        opts.features.auto_polyfill_require = output_format == .esm and !target.isBun();
+        opts.features.auto_polyfill_require = output_format == .esm;
         opts.features.allow_runtime = !source.index.isRuntime();
         opts.features.unwrap_commonjs_to_esm = output_format == .esm and FeatureFlags.unwrap_commonjs_to_esm;
-        opts.features.use_import_meta_require = target.isBun();
         opts.features.top_level_await = output_format == .esm or output_format == .internal_bake_dev;
         opts.features.auto_import_jsx = task.jsx.parse and transpiler.options.auto_import_jsx;
         opts.features.trim_unused_imports = loader.isTypeScript() or (transpiler.options.trim_unused_imports orelse false);
@@ -7000,18 +7047,17 @@ pub const LinkerContext = struct {
                 try this.graph.generateSymbolImportAndUse(source_index, 0, module_ref, 1, Index.init(source_index));
 
                 // If this is a .napi addon and it's not node, we need to generate a require() call to the runtime
-                if (expr.data == .e_call and expr.data.e_call.target.data == .e_require_call_target and
+                if (expr.data == .e_call and
+                    expr.data.e_call.target.data == .e_require_call_target and
                     // if it's commonjs, use require()
-                    this.options.output_format != .cjs and
-                    // if it's esm and bun, use import.meta.require(). the code for __require is not injected into the bundle.
-                    !this.options.target.isBun())
+                    this.options.output_format != .cjs)
                 {
-                    this.graph.generateRuntimeSymbolImportAndUse(
+                    try this.graph.generateRuntimeSymbolImportAndUse(
                         source_index,
                         Index.part(1),
                         "__require",
                         1,
-                    ) catch {};
+                    );
                 }
             },
             else => {
@@ -7752,11 +7798,9 @@ pub const LinkerContext = struct {
 
                                     continue;
                                 } else {
-
                                     // We should use "__require" instead of "require" if we're not
                                     // generating a CommonJS output file, since it won't exist otherwise.
-                                    // Disabled for target bun because `import.meta.require` will be inlined.
-                                    if (shouldCallRuntimeRequire(output_format) and !this.resolver.opts.target.isBun()) {
+                                    if (shouldCallRuntimeRequire(output_format)) {
                                         runtime_require_uses += 1;
                                     }
 
@@ -9386,7 +9430,7 @@ pub const LinkerContext = struct {
         var runtime_members = &runtime_scope.members;
         const toCommonJSRef = c.graph.symbols.follow(runtime_members.get("__toCommonJS").?.ref);
         const toESMRef = c.graph.symbols.follow(runtime_members.get("__toESM").?.ref);
-        const runtimeRequireRef = if (c.resolver.opts.target.isBun()) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
+        const runtimeRequireRef = if (c.options.output_format == .cjs) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
         const result = c.generateCodeForFileInChunkJS(
             &buffer_writer,
@@ -9855,10 +9899,11 @@ pub const LinkerContext = struct {
         var runtime_members = &runtime_scope.members;
         const toCommonJSRef = c.graph.symbols.follow(runtime_members.get("__toCommonJS").?.ref);
         const toESMRef = c.graph.symbols.follow(runtime_members.get("__toESM").?.ref);
-        const runtimeRequireRef = if (c.resolver.opts.target.isBun() or c.options.output_format == .cjs) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
+        const runtimeRequireRef = if (c.options.output_format == .cjs) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
         {
             const print_options = js_printer.Options{
+                .bundling = true,
                 .indent = .{},
                 .has_run_symbol_renamer = true,
 
@@ -10015,7 +10060,7 @@ pub const LinkerContext = struct {
 
         switch (c.options.output_format) {
             .internal_bake_dev => {
-                const start = bun.bake.getHmrRuntime(if (c.options.target.isBun()) .server else .client);
+                const start = bun.bake.getHmrRuntime(if (c.options.target.isServerSide()) .server else .client);
                 j.pushStatic(start);
                 line_offset.advance(start);
             },
@@ -12513,6 +12558,7 @@ pub const LinkerContext = struct {
         };
 
         const print_options = js_printer.Options{
+            .bundling = true,
             // TODO: IIFE
             .indent = .{},
             .commonjs_named_exports = ast.commonjs_named_exports,
@@ -12961,7 +13007,7 @@ pub const LinkerContext = struct {
                     chunk,
                     chunks,
                     &display_size,
-                    c.options.source_maps != .none,
+                    chunk.content.sourcemap(c.options.source_maps) != .none,
                 );
                 var code_result = _code_result catch @panic("Failed to allocate memory for output file");
 
@@ -12974,7 +13020,7 @@ pub const LinkerContext = struct {
                         chunk.final_rel_path,
                 );
 
-                switch (c.options.source_maps) {
+                switch (chunk.content.sourcemap(c.options.source_maps)) {
                     .external, .linked => |tag| {
                         const output_source_map = chunk.output_source_map.finalize(bun.default_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
                         var source_map_final_rel_path = default_allocator.alloc(u8, chunk.final_rel_path.len + ".map".len) catch unreachable;
@@ -13280,7 +13326,7 @@ pub const LinkerContext = struct {
                 chunk,
                 chunks,
                 &display_size,
-                c.options.source_maps != .none,
+                chunk.content.sourcemap(c.options.source_maps) != .none,
             ) catch |err| bun.Output.panic("Failed to create output chunk: {s}", .{@errorName(err)});
 
             var source_map_output_file: ?options.OutputFile = null;
@@ -13293,7 +13339,7 @@ pub const LinkerContext = struct {
                     chunk.final_rel_path,
             );
 
-            switch (c.options.source_maps) {
+            switch (chunk.content.sourcemap(c.options.source_maps)) {
                 .external, .linked => |tag| {
                     const output_source_map = chunk.output_source_map.finalize(source_map_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
                     const source_map_final_rel_path = strings.concat(default_allocator, &.{
@@ -13341,12 +13387,9 @@ pub const LinkerContext = struct {
                         },
                     )) {
                         .err => |err| {
-                            var message = err.toSystemError().message.toUTF8(bun.default_allocator);
-                            defer message.deinit();
-                            c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing sourcemap for chunk {}", .{
-                                bun.fmt.quote(message.slice()),
+                            try c.log.addSysError(bun.default_allocator, err, "writing sourcemap for chunk {}", .{
                                 bun.fmt.quote(chunk.final_rel_path),
-                            }) catch unreachable;
+                            });
                             return error.WriteFailed;
                         },
                         .result => {},
@@ -13492,12 +13535,9 @@ pub const LinkerContext = struct {
                 },
             )) {
                 .err => |err| {
-                    var message = err.toSystemError().message.toUTF8(bun.default_allocator);
-                    defer message.deinit();
-                    c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing chunk {}", .{
-                        bun.fmt.quote(message.slice()),
+                    try c.log.addSysError(bun.default_allocator, err, "writing chunk {}", .{
                         bun.fmt.quote(chunk.final_rel_path),
-                    }) catch unreachable;
+                    });
                     return error.WriteFailed;
                 },
                 .result => {},
@@ -13612,10 +13652,7 @@ pub const LinkerContext = struct {
                     },
                 )) {
                     .err => |err| {
-                        const utf8 = err.toSystemError().message.toUTF8(bun.default_allocator);
-                        defer utf8.deinit();
-                        c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing file {}", .{
-                            bun.fmt.quote(utf8.slice()),
+                        c.log.addSysError(bun.default_allocator, err, "writing file {}", .{
                             bun.fmt.quote(src.src_path.text),
                         }) catch unreachable;
                         return error.WriteFailed;
@@ -14099,7 +14136,7 @@ pub const LinkerContext = struct {
                                 },
                             ) catch unreachable;
                         }
-                    } else if (c.resolver.opts.target == .browser and JSC.HardcodedModule.Aliases.has(next_source.path.pretty, .browser)) {
+                    } else if (c.resolver.opts.target == .browser and bun.strings.hasPrefixComptime(next_source.path.text, NodeFallbackModules.import_path)) {
                         c.log.addRangeErrorFmtWithNote(
                             source,
                             r,
@@ -15463,6 +15500,18 @@ pub const Chunk = struct {
         javascript: JavaScriptChunk,
         css: CssChunk,
         html: HtmlChunk,
+
+        pub fn sourcemap(this: *const Content, default: options.SourceMapOption) options.SourceMapOption {
+            return switch (this.*) {
+                .javascript => default,
+                // TODO:
+                .css => options.SourceMapOption.none,
+
+                // probably never
+                .html => options.SourceMapOption.none,
+            };
+        }
+
         pub fn loader(this: *const Content) Loader {
             return switch (this.*) {
                 .javascript => .js,

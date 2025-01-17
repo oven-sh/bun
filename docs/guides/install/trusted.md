@@ -23,8 +23,6 @@ To allow Bun to execute lifecycle scripts for a specific package, add the packag
 Note that this only allows lifecycle scripts for the specific package listed in `trustedDependencies`, _not_ the dependencies of that dependency!
 {% /callout %}
 
-<!-- Bun maintains an allow-list of popular packages containing `postinstall` scripts that are known to be safe. To run lifecycle scripts for packages that aren't on this list, add the package to `trustedDependencies` in your package.json. -->
-
 ```json-diff
   {
     "name": "my-app",

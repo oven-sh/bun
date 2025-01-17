@@ -30,7 +30,7 @@ const net = require('net');
 // Do not require 'os' until needed so that test-os-checked-function can
 // monkey patch it. If 'os' is required here, that test will fail.
 const path = require('path');
-const { inspect } = require('util');
+const { inspect, getCallSites } = require('util');
 const { isMainThread } = require('worker_threads');
 const { isModuleNamespaceObject } = require('util/types');
 
@@ -64,6 +64,9 @@ const opensslVersionNumber = (major = 0, minor = 0, patch = 0) => {
   assert(patch >= 0 && patch <= 0xff);
   return (major << 28) | (minor << 20) | (patch << 4);
 };
+
+// https://github.com/electron/electron/blob/5680c628b6718385bbd975b51ec2640aa7df226b/patches/node/fix_crypto_tests_to_run_with_bssl.patch#L21
+const openSSLIsBoringSSL = process.versions.boringssl !== undefined;
 
 let OPENSSL_VERSION_NUMBER;
 const hasOpenSSL = (major = 0, minor = 0, patch = 0) => {
@@ -107,7 +110,7 @@ function parseTestFlags(filename = process.argv[1]) {
 // `worker_threads`) and child processes.
 // If the binary was built without-ssl then the crypto flags are
 // invalid (bad option). The test itself should handle this case.
-if (process.argv.length === 2 &&
+if ((process.argv.length === 2 || process.argv.length === 3) &&
     !process.env.NODE_SKIP_FLAG_CHECK &&
     isMainThread &&
     hasCrypto &&
@@ -123,6 +126,10 @@ if (process.argv.length === 2 &&
         globalThis.gc ??= () => Bun.gc(true);
         break;
       }
+      if (flag === "--expose-internals" && process.versions.bun) {
+        process.env.SKIP_FLAG_CHECK = "1";
+        break;
+      }
       console.log(
         'NOTE: The test started as a child_process using these flags:',
         inspect(flags),
@@ -132,11 +139,9 @@ if (process.argv.length === 2 &&
       const options = { encoding: 'utf8', stdio: 'inherit' };
       const result = spawnSync(process.execPath, args, options);
       if (result.signal) {
-        process.kill(0, result.signal);
+        process.kill(process.pid, result.signal);
       } else {
-        // Ensure we don't call the "exit" callbacks, as that will cause the
-        // test to fail when it may have passed in the child process.
-        process.kill(process.pid, result.status);
+        process.exit(result.status);
       }
     }
   }
@@ -149,6 +154,8 @@ const isOpenBSD = process.platform === 'openbsd';
 const isLinux = process.platform === 'linux';
 const isMacOS = process.platform === 'darwin';
 const isASan = process.config.variables.asan === 1;
+const isRiscv64 = process.arch === 'riscv64';
+const isDebug = process.features.debug;
 const isPi = (() => {
   try {
     // Normal Raspberry Pi detection is to find the `Raspberry Pi` string in
@@ -178,8 +185,7 @@ if (process.env.NODE_TEST_WITH_ASYNC_HOOKS) {
   const destroydIdsList = {};
   const destroyListList = {};
   const initHandles = {};
-  const { internalBinding } = require('internal/test/binding');
-  const async_wrap = internalBinding('async_wrap');
+  const async_wrap = process.binding('async_wrap');
 
   process.on('exit', () => {
     // Iterate through handles to make sure nothing crashes
@@ -286,7 +292,7 @@ function platformTimeout(ms) {
   const multipliers = typeof ms === 'bigint' ?
     { two: 2n, four: 4n, seven: 7n } : { two: 2, four: 4, seven: 7 };
 
-  if (process.features.debug)
+  if (isDebug)
     ms = multipliers.two * ms;
 
   if (exports.isAIX || exports.isIBMi)
@@ -294,6 +300,10 @@ function platformTimeout(ms) {
 
   if (isPi)
     return multipliers.two * ms;  // Raspberry Pi devices
+
+  if (isRiscv64) {
+    return multipliers.four * ms;
+  }
 
   return ms;
 }
@@ -566,8 +576,7 @@ function _mustCallInner(fn, criteria = 1, field) {
 }
 
 function hasMultiLocalhost() {
-  const { internalBinding } = require('internal/test/binding');
-  const { TCP, constants: TCPConstants } = internalBinding('tcp_wrap');
+  const { TCP, constants: TCPConstants } = process.binding('tcp_wrap');
   const t = new TCP(TCPConstants.SOCKET);
   const ret = t.bind('127.0.0.2', 0);
   t.close();
@@ -900,6 +909,7 @@ function invalidArgTypeHelper(input) {
   let inspected = inspect(input, { colors: false });
   if (inspected.length > 28) { inspected = `${inspected.slice(inspected, 0, 25)}...`; }
 
+  if (inspected.startsWith("'") && inspected.endsWith("'")) inspected = `"${inspected.slice(1, inspected.length - 1)}"`; // BUN: util.inspect uses ' but bun uses " for strings
   return ` Received type ${typeof input} (${inspected})`;
 }
 
@@ -977,6 +987,32 @@ function spawnPromisified(...args) {
   });
 }
 
+/**
+ * Escape values in a string template literal. On Windows, this function
+ * does not escape anything (which is fine for paths, as `"` is not a valid char
+ * in a path on Windows), so you should use it only to escape paths – or other
+ * values on tests which are skipped on Windows.
+ * This function is meant to be used for tagged template strings.
+ * @returns {[string, object | undefined]} An array that can be passed as
+ *                                         arguments to `exec` or `execSync`.
+ */
+function escapePOSIXShell(cmdParts, ...args) {
+  if (common.isWindows) {
+    // On Windows, paths cannot contain `"`, so we can return the string unchanged.
+    return [String.raw({ raw: cmdParts }, ...args)];
+  }
+  // On POSIX shells, we can pass values via the env, as there's a standard way for referencing a variable.
+  const env = { ...process.env };
+  let cmd = cmdParts[0];
+  for (let i = 0; i < args.length; i++) {
+    const envVarName = `ESCAPED_${i}`;
+    env[envVarName] = args[i];
+    cmd += '${' + envVarName + '}' + cmdParts[i + 1];
+  }
+
+  return [cmd, { env }];
+};
+
 function getPrintedStackTrace(stderr) {
   const lines = stderr.split('\n');
 
@@ -1040,6 +1076,7 @@ const common = {
   childShouldThrowAndAbort,
   createZeroFilledFile,
   defaultAutoSelectFamilyAttemptTimeout,
+  escapePOSIXShell,
   expectsError,
   expectRequiredModule,
   expectWarning,
@@ -1057,6 +1094,7 @@ const common = {
   invalidArgTypeHelper,
   isAlive,
   isASan,
+  isDebug,
   isDumbTerminal,
   isFreeBSD,
   isLinux,
@@ -1073,6 +1111,7 @@ const common = {
   mustNotMutateObjectDeep,
   mustSucceed,
   nodeProcessAborted,
+  openSSLIsBoringSSL,
   PIPE,
   parseTestFlags,
   platformTimeout,
@@ -1208,6 +1247,15 @@ const common = {
   get checkoutEOL() {
     return fs.readFileSync(__filename).includes('\r\n') ? '\r\n' : '\n';
   },
+
+  get isInsideDirWithUnusualChars() {
+    return __dirname.includes('%') ||
+           (!isWindows && __dirname.includes('\\')) ||
+           __dirname.includes('$') ||
+           __dirname.includes('\n') ||
+           __dirname.includes('\r') ||
+           __dirname.includes('\t');
+  },
 };
 
 const validProperties = new Set(Object.keys(common));
@@ -1218,5 +1266,3 @@ module.exports = new Proxy(common, {
     return obj[prop];
   },
 });
-
-

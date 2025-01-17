@@ -17,6 +17,8 @@ declare module "bun" {
   import type { FFIFunctionCallableSymbol } from "bun:ffi";
   import type { Encoding as CryptoEncoding } from "crypto";
   import type { CipherNameAndProtocol, EphemeralKeyInfo, PeerCertificate } from "tls";
+  import type { Stats } from "node:fs";
+  import type { X509Certificate } from "node:crypto";
   interface Env {
     NODE_ENV?: string;
     /**
@@ -175,6 +177,8 @@ declare module "bun" {
      * ```
      */
     blob(): Blob;
+
+    bytes(): Uint8Array;
   }
 
   class ShellPromise extends Promise<ShellOutput> {
@@ -1034,6 +1038,10 @@ declare module "bun" {
       errors: number;
       totalCount: number;
     };
+
+    ADDRCONFIG: number;
+    ALL: number;
+    V4MAPPED: number;
   };
 
   interface DNSLookup {
@@ -1225,6 +1233,16 @@ declare module "bun" {
      * Deletes the file.
      */
     unlink(): Promise<void>;
+
+    /**
+     * Deletes the file. ( same as unlink )
+     */
+    delete(): Promise<void>;
+
+    /**
+     *  Provides useful information about the file.
+     */
+    stat(): Promise<Stats>;
   }
   interface NetworkSink extends FileSink {
     /**
@@ -1241,82 +1259,205 @@ declare module "bun" {
      * Finish the upload. This also flushes the internal buffer.
      */
     end(error?: Error): number | Promise<number>;
+
+    /**
+     * Get the stat of the file.
+     */
+    stat(): Promise<Stats>;
   }
 
+  var S3Client: S3Client;
+
+  /**
+   * Creates a new S3File instance for working with a single file.
+   *
+   * @param path The path or key of the file
+   * @param options S3 configuration options
+   * @returns `S3File` instance for the specified path
+   *
+   * @example
+   *    import { s3 } from "bun";
+   *    const file = s3("my-file.txt", {
+   *      bucket: "my-bucket",
+   *      accessKeyId: "your-access-key",
+   *      secretAccessKey: "your-secret-key"
+   *    });
+   *
+   *    // Read the file
+   *    const content = await file.text();
+   *
+   * @example
+   *    // Using s3:// protocol
+   *    const file = s3("s3://my-bucket/my-file.txt", {
+   *      accessKeyId: "your-access-key",
+   *      secretAccessKey: "your-secret-key"
+   *    });
+   */
+  function s3(path: string | URL, options?: S3Options): S3File;
+
+  /**
+   * Configuration options for S3 operations
+   */
   interface S3Options extends BlobPropertyBag {
     /**
-     * The ACL to used to write the file to S3. by default will omit the ACL header/parameter.
+     * The Access Control List (ACL) policy for the file.
+     * Controls who can access the file and what permissions they have.
+     *
+     * @example
+     *     // Setting public read access
+     *     const file = s3("public-file.txt", {
+     *       acl: "public-read",
+     *       bucket: "my-bucket"
+     *     });
+     *
+     * @example
+     *     // Using with presigned URLs
+     *     const url = file.presign({
+     *       acl: "public-read",
+     *       expiresIn: 3600
+     *     });
      */
-    acl?: /**
-     * Owner gets FULL_CONTROL. No one else has access rights (default).
-     */
-    | "private"
-      /**
-       * Owner gets FULL_CONTROL. The AllUsers group (see Who is a grantee?) gets READ access.
-       */
+    acl?:
+      | "private"
       | "public-read"
-      /**
-       * Owner gets FULL_CONTROL. The AllUsers group gets READ and WRITE access. Granting this on a bucket is generally not recommended.
-       */
       | "public-read-write"
-      /**
-       * Owner gets FULL_CONTROL. Amazon EC2 gets READ access to GET an Amazon Machine Image (AMI) bundle from Amazon S3.
-       */
       | "aws-exec-read"
-      /**
-       * Owner gets FULL_CONTROL. The AuthenticatedUsers group gets READ access.
-       */
       | "authenticated-read"
-      /**
-       * Object owner gets FULL_CONTROL. Bucket owner gets READ access. If you specify this canned ACL when creating a bucket, Amazon S3 ignores it.
-       */
       | "bucket-owner-read"
-      /**
-       * Both the object owner and the bucket owner get FULL_CONTROL over the object. If you specify this canned ACL when creating a bucket, Amazon S3 ignores it.
-       */
       | "bucket-owner-full-control"
       | "log-delivery-write";
+
     /**
-     * The bucket to use for the S3 client. by default will use the `S3_BUCKET` and `AWS_BUCKET` environment variable, or deduce as first part of the path.
+     * The S3 bucket name. Can be set via `S3_BUCKET` or `AWS_BUCKET` environment variables.
+     *
+     * @example
+     *     // Using explicit bucket
+     *     const file = s3("my-file.txt", { bucket: "my-bucket" });
+     *
+     * @example
+     *     // Using environment variables
+     *     // With S3_BUCKET=my-bucket in .env
+     *     const file = s3("my-file.txt");
      */
     bucket?: string;
+
     /**
-     * The region to use for the S3 client. By default, it will use the `S3_REGION` and `AWS_REGION` environment variable.
+     * The AWS region. Can be set via `S3_REGION` or `AWS_REGION` environment variables.
+     *
+     * @example
+     *     const file = s3("my-file.txt", {
+     *       bucket: "my-bucket",
+     *       region: "us-west-2"
+     *     });
      */
     region?: string;
+
     /**
-     * The access key ID to use for the S3 client. By default, it will use the `S3_ACCESS_KEY_ID` and `AWS_ACCESS_KEY_ID` environment variable.
+     * The access key ID for authentication.
+     * Can be set via `S3_ACCESS_KEY_ID` or `AWS_ACCESS_KEY_ID` environment variables.
      */
     accessKeyId?: string;
+
     /**
-     * The secret access key to use for the S3 client. By default, it will use the `S3_SECRET_ACCESS_KEY and `AWS_SECRET_ACCESS_KEY` environment variable.
+     * The secret access key for authentication.
+     * Can be set via `S3_SECRET_ACCESS_KEY` or `AWS_SECRET_ACCESS_KEY` environment variables.
      */
     secretAccessKey?: string;
+
     /**
-     * The session token to use for the S3 client. By default, it will use the `S3_SESSION_TOKEN` and `AWS_SESSION_TOKEN` environment variable.
+     * Optional session token for temporary credentials.
+     * Can be set via `S3_SESSION_TOKEN` or `AWS_SESSION_TOKEN` environment variables.
+     *
+     * @example
+     *     // Using temporary credentials
+     *     const file = s3("my-file.txt", {
+     *       accessKeyId: tempAccessKey,
+     *       secretAccessKey: tempSecretKey,
+     *       sessionToken: tempSessionToken
+     *     });
      */
     sessionToken?: string;
 
     /**
-     * The endpoint to use for the S3 client. Defaults to `https://s3.{region}.amazonaws.com`, it will also use the `S3_ENDPOINT` and `AWS_ENDPOINT`  environment variable.
+     * The S3-compatible service endpoint URL.
+     * Can be set via `S3_ENDPOINT` or `AWS_ENDPOINT` environment variables.
+     *
+     * @example
+     *     // AWS S3
+     *     const file = s3("my-file.txt", {
+     *       endpoint: "https://s3.us-east-1.amazonaws.com"
+     *     });
+     *
+     * @example
+     *     // Cloudflare R2
+     *     const file = s3("my-file.txt", {
+     *       endpoint: "https://<account-id>.r2.cloudflarestorage.com"
+     *     });
+     *
+     * @example
+     *     // DigitalOcean Spaces
+     *     const file = s3("my-file.txt", {
+     *       endpoint: "https://<region>.digitaloceanspaces.com"
+     *     });
+     *
+     * @example
+     *     // MinIO (local development)
+     *     const file = s3("my-file.txt", {
+     *       endpoint: "http://localhost:9000"
+     *     });
      */
     endpoint?: string;
 
     /**
-     * The size of each part in MiB. Minimum and Default is 5 MiB and maximum is 5120 MiB.
+     * The size of each part in multipart uploads (in bytes).
+     * - Minimum: 5 MiB
+     * - Maximum: 5120 MiB
+     * - Default: 5 MiB
+     *
+     * @example
+     *     // Configuring multipart uploads
+     *     const file = s3("large-file.dat", {
+     *       partSize: 10 * 1024 * 1024, // 10 MiB parts
+     *       queueSize: 4  // Upload 4 parts in parallel
+     *     });
+     *
+     *     const writer = file.writer();
+     *     // ... write large file in chunks
      */
     partSize?: number;
+
     /**
-     * The number of parts to upload in parallel. Default is 5 and maximum is 255. This can speed up the upload of large files but will also use more memory.
+     * Number of parts to upload in parallel for multipart uploads.
+     * - Default: 5
+     * - Maximum: 255
+     *
+     * Increasing this value can improve upload speeds for large files
+     * but will use more memory.
      */
     queueSize?: number;
+
     /**
-     * The number of times to retry the upload if it fails. Default is 3 and maximum is 255.
+     * Number of retry attempts for failed uploads.
+     * - Default: 3
+     * - Maximum: 255
+     *
+     * @example
+     *    // Setting retry attempts
+     *     const file = s3("my-file.txt", {
+     *       retry: 5 // Retry failed uploads up to 5 times
+     *     });
      */
     retry?: number;
 
     /**
-     * The Content-Type of the file. If not provided, it is automatically set based on the file extension when possible.
+     * The Content-Type of the file.
+     * Automatically set based on file extension when possible.
+     *
+     * @example
+     *    // Setting explicit content type
+     *     const file = s3("data.bin", {
+     *       type: "application/octet-stream"
+     *     });
      */
     type?: string;
 
@@ -1326,93 +1467,260 @@ declare module "bun" {
     highWaterMark?: number;
   }
 
+  /**
+   * Options for generating presigned URLs
+   */
   interface S3FilePresignOptions extends S3Options {
     /**
-     * The number of seconds the presigned URL will be valid for. Defaults to 86400 (1 day).
+     * Number of seconds until the presigned URL expires.
+     * - Default: 86400 (1 day)
+     *
+     * @example
+     *     // Short-lived URL
+     *     const url = file.presign({
+     *       expiresIn: 3600 // 1 hour
+     *     });
+     *
+     * @example
+     *     // Long-lived public URL
+     *     const url = file.presign({
+     *       expiresIn: 7 * 24 * 60 * 60, // 7 days
+     *       acl: "public-read"
+     *     });
      */
     expiresIn?: number;
+
     /**
-     * The HTTP method to use for the presigned URL. Defaults to GET.
+     * The HTTP method allowed for the presigned URL.
+     *
+     * @example
+     *     // GET URL for downloads
+     *     const downloadUrl = file.presign({
+     *       method: "GET",
+     *       expiresIn: 3600
+     *     });
+     *
+     * @example
+     *     // PUT URL for uploads
+     *     const uploadUrl = file.presign({
+     *       method: "PUT",
+     *       expiresIn: 3600,
+     *       type: "application/json"
+     *     });
      */
-    method?: string;
+    method?: "GET" | "POST" | "PUT" | "DELETE" | "HEAD";
   }
 
-  interface S3File extends BunFile {
-    /**
-     * @param path - The path to the file. If bucket options is not provided or set in the path, it will be deduced from the path.
-     * @param options - The options to use for the S3 client.
-     */
-    new (path: string | URL, options?: S3Options): S3File;
+  interface S3Stats {
+    size: number;
+    lastModified: Date;
+    etag: string;
+    type: string;
+  }
+
+  /**
+   * Represents a file in an S3-compatible storage service.
+   * Extends the Blob interface for compatibility with web APIs.
+   */
+  interface S3File extends Blob {
     /**
      * The size of the file in bytes.
+     * This is a Promise because it requires a network request to determine the size.
+     *
+     * @example
+     *     // Getting file size
+     *     const size = await file.size;
+     *     console.log(`File size: ${size} bytes`);
+     *
+     * @example
+     *     // Check if file is larger than 1MB
+     *     if (await file.size > 1024 * 1024) {
+     *       console.log("Large file detected");
+     *     }
      */
-    size: Promise<number>;
     /**
-     * Offset any operation on the file starting at `begin` and ending at `end`. `end` is relative to 0
+     * TODO: figure out how to get the typescript types to not error for this property.
+     */
+    // size: Promise<number>;
+
+    /**
+     * Creates a new S3File representing a slice of the original file.
+     * Uses HTTP Range headers for efficient partial downloads.
      *
-     * Similar to [`TypedArray.subarray`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray/subarray). Does not copy the file, open the file, or modify the file.
+     * @param begin - Starting byte offset
+     * @param end - Ending byte offset (exclusive)
+     * @param contentType - Optional MIME type for the slice
+     * @returns A new S3File representing the specified range
      *
-     * It will use [`range`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Range) to download only the bytes you need.
+     * @example
+     *  // Reading file header
+     *     const header = file.slice(0, 1024);
+     *     const headerText = await header.text();
      *
-     * @param begin - start offset in bytes
-     * @param end - absolute offset in bytes (relative to 0)
-     * @param contentType - MIME type for the new S3File
+     * @example
+     *     // Reading with content type
+     *     const jsonSlice = file.slice(1024, 2048, "application/json");
+     *     const data = await jsonSlice.json();
+     *
+     * @example
+     *     // Reading from offset to end
+     *     const remainder = file.slice(1024);
+     *     const content = await remainder.text();
      */
     slice(begin?: number, end?: number, contentType?: string): S3File;
-
-    /** */
-    /**
-     * Offset any operation on the file starting at `begin`
-     *
-     * Similar to [`TypedArray.subarray`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray/subarray). Does not copy the file, open the file, or modify the file.
-     *
-     * It will use [`range`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Range) to download only the bytes you need.
-     *
-     * @param begin - start offset in bytes
-     * @param contentType - MIME type for the new S3File
-     */
     slice(begin?: number, contentType?: string): S3File;
-
-    /**
-     * @param contentType - MIME type for the new S3File
-     */
     slice(contentType?: string): S3File;
 
     /**
-     * Incremental writer to stream writes to the network, this is equivalent of using MultipartUpload and is suitable for large files.
+     * Creates a writable stream for uploading data.
+     * Suitable for large files as it uses multipart upload.
+     *
+     * @param options - Configuration for the upload
+     * @returns A NetworkSink for writing data
+     *
+     * @example
+     *     // Basic streaming write
+     *     const writer = file.writer({
+     *       type: "application/json"
+     *     });
+     *     writer.write('{"hello": ');
+     *     writer.write('"world"}');
+     *     await writer.end();
+     *
+     * @example
+     *     // Optimized large file upload
+     *     const writer = file.writer({
+     *       partSize: 10 * 1024 * 1024, // 10MB parts
+     *       queueSize: 4, // Upload 4 parts in parallel
+     *       retry: 3 // Retry failed parts
+     *     });
+     *
+     *     // Write large chunks of data efficiently
+     *     for (const chunk of largeDataChunks) {
+     *       await writer.write(chunk);
+     *     }
+     *     await writer.end();
+     *
+     * @example
+     *     // Error handling
+     *     const writer = file.writer();
+     *     try {
+     *       await writer.write(data);
+     *       await writer.end();
+     *     } catch (err) {
+     *       console.error('Upload failed:', err);
+     *       // Writer will automatically abort multipart upload on error
+     *     }
      */
     writer(options?: S3Options): NetworkSink;
 
     /**
-     * The readable stream of the file.
+     * Gets a readable stream of the file's content.
+     * Useful for processing large files without loading them entirely into memory.
+     *
+     * @returns A ReadableStream for the file content
+     *
+     * @example
+     *     // Basic streaming read
+     *     const stream = file.stream();
+     *     for await (const chunk of stream) {
+     *       console.log('Received chunk:', chunk);
+     *     }
+     *
+     * @example
+     *     // Piping to response
+     *     const stream = file.stream();
+     *     return new Response(stream, {
+     *       headers: { 'Content-Type': file.type }
+     *     });
+     *
+     * @example
+     *     // Processing large files
+     *     const stream = file.stream();
+     *     const textDecoder = new TextDecoder();
+     *     for await (const chunk of stream) {
+     *       const text = textDecoder.decode(chunk);
+     *       // Process text chunk by chunk
+     *     }
      */
     readonly readable: ReadableStream;
-
-    /**
-     * Get a readable stream of the file.
-     */
     stream(): ReadableStream;
 
     /**
-     * The name or path of the file, as specified in the constructor.
+     * The name or path of the file in the bucket.
+     *
+     * @example
+     * const file = s3("folder/image.jpg");
+     * console.log(file.name); // "folder/image.jpg"
      */
     readonly name?: string;
 
     /**
-     * The bucket name of the file.
+     * The bucket name containing the file.
+     *
+     * @example
+     *    const file = s3("s3://my-bucket/file.txt");
+     *    console.log(file.bucket); // "my-bucket"
      */
     readonly bucket?: string;
 
     /**
-     * Does the file exist?
-     * It will use [`head`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Methods/HEAD) to check if the file exists.
+     * Checks if the file exists in S3.
+     * Uses HTTP HEAD request to efficiently check existence without downloading.
+     *
+     * @returns Promise resolving to true if file exists, false otherwise
+     *
+     * @example
+     *     // Basic existence check
+     *    if (await file.exists()) {
+     *      console.log("File exists in S3");
+     *    }
+     *
+     * @example
+     *  // With error handling
+     *  try {
+     *    const exists = await file.exists();
+     *    if (!exists) {
+     *      console.log("File not found");
+     *    }
+     *  } catch (err) {
+     *    console.error("Error checking file:", err);
+     *  }
      */
     exists(): Promise<boolean>;
 
     /**
-     * Uploads the data to S3. This is equivalent of using {@link S3File.upload} with a {@link S3File}.
-     * @param data - The data to write.
-     * @param options - The options to use for the S3 client.
+     * Uploads data to S3.
+     * Supports various input types and automatically handles large files.
+     *
+     * @param data - The data to upload
+     * @param options - Upload configuration options
+     * @returns Promise resolving to number of bytes written
+     *
+     * @example
+     *     // Writing string data
+     *     await file.write("Hello World", {
+     *       type: "text/plain"
+     *     });
+     *
+     * @example
+     *     // Writing JSON
+     *     const data = { hello: "world" };
+     *     await file.write(JSON.stringify(data), {
+     *       type: "application/json"
+     *     });
+     *
+     * @example
+     *     // Writing from Response
+     *     const response = await fetch("https://example.com/data");
+     *     await file.write(response);
+     *
+     * @example
+     *     // Writing with ACL
+     *     await file.write(data, {
+     *       acl: "public-read",
+     *       type: "application/octet-stream"
+     *     });
      */
     write(
       data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile | S3File | Blob,
@@ -1420,55 +1728,273 @@ declare module "bun" {
     ): Promise<number>;
 
     /**
-     * Returns a presigned URL for the file.
-     * @param options - The options to use for the presigned URL.
+     * Generates a presigned URL for the file.
+     * Allows temporary access to the file without exposing credentials.
+     *
+     * @param options - Configuration for the presigned URL
+     * @returns Presigned URL string
+     *
+     * @example
+     *     // Basic download URL
+     *     const url = file.presign({
+     *       expiresIn: 3600 // 1 hour
+     *     });
+     *
+     * @example
+     *     // Upload URL with specific content type
+     *     const uploadUrl = file.presign({
+     *       method: "PUT",
+     *       expiresIn: 3600,
+     *       type: "image/jpeg",
+     *       acl: "public-read"
+     *     });
+     *
+     * @example
+     *     // URL with custom permissions
+     *     const url = file.presign({
+     *       method: "GET",
+     *       expiresIn: 7 * 24 * 60 * 60, // 7 days
+     *       acl: "public-read"
+     *     });
      */
     presign(options?: S3FilePresignOptions): string;
 
     /**
      * Deletes the file from S3.
+     *
+     * @returns Promise that resolves when deletion is complete
+     *
+     * @example
+     *     // Basic deletion
+     *     await file.delete();
+     *
+     * @example
+     *     // With error handling
+     *     try {
+     *       await file.delete();
+     *       console.log("File deleted successfully");
+     *     } catch (err) {
+     *       console.error("Failed to delete file:", err);
+     *     }
      */
-    unlink(): Promise<void>;
+    delete(): Promise<void>;
+
+    /**
+     * Alias for delete() method.
+     * Provided for compatibility with Node.js fs API naming.
+     *
+     * @example
+     * await file.unlink();
+     */
+    unlink: S3File["delete"];
+
+    /**
+     * Get the stat of a file in an S3-compatible storage service.
+     *
+     * @returns Promise resolving to S3Stat
+     */
+    stat(): Promise<S3Stats>;
   }
 
-  interface S3Bucket {
+  /**
+   * A configured S3 bucket instance for managing files.
+   * The instance is callable to create S3File instances and provides methods
+   * for common operations.
+   *
+   * @example
+   *     // Basic bucket setup
+   *     const bucket = new S3Client({
+   *       bucket: "my-bucket",
+   *       accessKeyId: "key",
+   *       secretAccessKey: "secret"
+   *     });
+   *
+   *     // Get file instance
+   *     const file = bucket("image.jpg");
+   *
+   *     // Common operations
+   *     await bucket.write("data.json", JSON.stringify({hello: "world"}));
+   *     const url = bucket.presign("file.pdf");
+   *     await bucket.unlink("old.txt");
+   */
+  type S3Client = {
     /**
-     * Get a file from the bucket.
-     * @param path - The path to the file.
+     * Create a new instance of an S3 bucket so that credentials can be managed
+     * from a single instance instead of being passed to every method.
+     *
+     * @param options The default options to use for the S3 client. Can be
+     * overriden by passing options to the methods.
+     *
+     * ## Keep S3 credentials in a single instance
+     *
+     * @example
+     *     const bucket = new Bun.S3Client({
+     *       accessKeyId: "your-access-key",
+     *       secretAccessKey: "your-secret-key",
+     *       bucket: "my-bucket",
+     *       endpoint: "https://s3.us-east-1.amazonaws.com",
+     *       sessionToken: "your-session-token",
+     *     });
+     *
+     *     // S3Client is callable, so you can do this:
+     *     const file = bucket.file("my-file.txt");
+     *
+     *     // or this:
+     *     await file.write("Hello Bun!");
+     *     await file.text();
+     *
+     *     // To delete the file:
+     *     await bucket.delete("my-file.txt");
+     *
+     *     // To write a file without returning the instance:
+     *     await bucket.write("my-file.txt", "Hello Bun!");
+     *
      */
-    (path: string, options?: S3Options): S3File;
+    new (options?: S3Options): S3Client;
+
     /**
-     * Uploads the data to S3. This will overwrite the file if it already exists.
-     * @param data - The data to write.
-     * @param options - The options to use for the S3 client.
+     * Creates an S3File instance for the given path.
+     *
+     * @example
+     * const file = bucket.file("image.jpg");
+     * await file.write(imageData);
+     * const configFile = bucket("config.json", {
+     *   type: "application/json",
+     *   acl: "private"
+     * });
+     */
+    file(path: string, options?: S3Options): S3File;
+
+    /**
+     * Writes data directly to a path in the bucket.
+     * Supports strings, buffers, streams, and web API types.
+     *
+     * @example
+     *     // Write string
+     *     await bucket.write("hello.txt", "Hello World");
+     *
+     *     // Write JSON with type
+     *     await bucket.write(
+     *       "data.json",
+     *       JSON.stringify({hello: "world"}),
+     *       {type: "application/json"}
+     *     );
+     *
+     *     // Write from fetch
+     *     const res = await fetch("https://example.com/data");
+     *     await bucket.write("data.bin", res);
+     *
+     *     // Write with ACL
+     *     await bucket.write("public.html", html, {
+     *       acl: "public-read",
+     *       type: "text/html"
+     *     });
      */
     write(
       path: string,
-      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile | S3File,
+      data:
+        | string
+        | ArrayBufferView
+        | ArrayBuffer
+        | SharedArrayBuffer
+        | Request
+        | Response
+        | BunFile
+        | S3File
+        | Blob
+        | File,
       options?: S3Options,
     ): Promise<number>;
 
     /**
-     * Returns a presigned URL for the file.
-     * @param options - The options to use for the presigned URL.
+     * Generate a presigned URL for temporary access to a file.
+     * Useful for generating upload/download URLs without exposing credentials.
+     *
+     * @example
+     *     // Download URL
+     *     const downloadUrl = bucket.presign("file.pdf", {
+     *       expiresIn: 3600 // 1 hour
+     *     });
+     *
+     *     // Upload URL
+     *     const uploadUrl = bucket.presign("uploads/image.jpg", {
+     *       method: "PUT",
+     *       expiresIn: 3600,
+     *       type: "image/jpeg",
+     *       acl: "public-read"
+     *     });
+     *
+     *     // Long-lived public URL
+     *     const publicUrl = bucket.presign("public/doc.pdf", {
+     *       expiresIn: 7 * 24 * 60 * 60, // 7 days
+     *       acl: "public-read"
+     *     });
      */
     presign(path: string, options?: S3FilePresignOptions): string;
 
     /**
-     * Deletes the file from S3.
+     * Delete a file from the bucket.
+     *
+     * @example
+     *     // Simple delete
+     *     await bucket.unlink("old-file.txt");
+     *
+     *     // With error handling
+     *     try {
+     *       await bucket.unlink("file.dat");
+     *       console.log("File deleted");
+     *     } catch (err) {
+     *       console.error("Delete failed:", err);
+     *     }
      */
     unlink(path: string, options?: S3Options): Promise<void>;
+    delete: S3Client["unlink"];
 
     /**
-     * The size of the file in bytes.
+     * Get the size of a file in bytes.
+     * Uses HEAD request to efficiently get size.
+     *
+     * @example
+     *     // Get size
+     *     const bytes = await bucket.size("video.mp4");
+     *     console.log(`Size: ${bytes} bytes`);
+     *
+     *     // Check if file is large
+     *     if (await bucket.size("data.zip") > 100 * 1024 * 1024) {
+     *       console.log("File is larger than 100MB");
+     *     }
      */
     size(path: string, options?: S3Options): Promise<number>;
 
     /**
-     * Does the file exist?
+     * Check if a file exists in the bucket.
+     * Uses HEAD request to check existence.
+     *
+     * @example
+     *     // Check existence
+     *     if (await bucket.exists("config.json")) {
+     *       const file = bucket("config.json");
+     *       const config = await file.json();
+     *     }
+     *
+     *     // With error handling
+     *     try {
+     *       if (!await bucket.exists("required.txt")) {
+     *         throw new Error("Required file missing");
+     *       }
+     *     } catch (err) {
+     *       console.error("Check failed:", err);
+     *     }
      */
     exists(path: string, options?: S3Options): Promise<boolean>;
-  }
+    /**
+     * Get the stat of a file in an S3-compatible storage service.
+     *
+     * @param path The path to the file.
+     * @param options The options to use for the S3 client.
+     */
+    stat(path: string, options?: S3Options): Promise<S3Stats>;
+  };
 
   /**
    *   This lets you use macros as regular imports
@@ -1502,6 +2028,9 @@ declare module "bun" {
     crc32: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer) => number;
     cityHash32: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer) => number;
     cityHash64: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: bigint) => bigint;
+    xxHash32: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: number) => number;
+    xxHash64: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: bigint) => bigint;
+    xxHash3: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: bigint) => bigint;
     murmur32v3: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: number) => number;
     murmur32v2: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: number) => number;
     murmur64v2: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: bigint) => bigint;
@@ -2153,8 +2682,230 @@ declare module "bun" {
     logs: Array<BuildMessage | ResolveMessage>;
   }
 
-  function build(config: BuildConfig): Promise<BuildOutput>;
+  /**
+   * Bundles JavaScript, TypeScript, CSS, HTML and other supported files into optimized outputs.
+   *
+   * @param {Object} config - Build configuration options
+   * @returns {Promise<BuildOutput>} Promise that resolves to build output containing generated artifacts and build status
+   * @throws {AggregateError} When build fails and config.throw is true (default in Bun 1.2+)
+   * 
+   * @example Basic usage - Bundle a single entrypoint and check results
+   ```ts
+   const result = await Bun.build({
+     entrypoints: ['./src/index.tsx'],
+     outdir: './dist'
+   });
 
+    if (!result.success) {
+      console.error('Build failed:', result.logs);
+      process.exit(1);
+    }
+   ```
+    * 
+    * @example Set up multiple entrypoints with code splitting enabled
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/app.tsx', './src/admin.tsx'],
+      outdir: './dist',
+      splitting: true,
+      sourcemap: "external"
+    });
+    ```
+    * 
+    * @example Configure minification and optimization settings
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      minify: {
+        whitespace: true,
+        identifiers: true,
+        syntax: true
+      },
+      drop: ['console', 'debugger']
+    });
+    ```
+    *
+    * @example Set up custom loaders and mark packages as external
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      loader: {
+        '.png': 'dataurl',
+        '.svg': 'file',
+        '.txt': 'text',
+        '.json': 'json'
+      },
+      external: ['react', 'react-dom']
+    });
+    ```
+    *
+    * @example Configure environment variable handling with different modes
+    ```ts
+    // Inline all environment variables
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      env: 'inline'
+    });
+
+    // Only include specific env vars
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      env: 'PUBLIC_*'
+    });
+    ```
+    *
+    * @example Set up custom naming patterns for all output types
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      naming: {
+        entry: '[dir]/[name]-[hash].[ext]',
+        chunk: 'chunks/[name]-[hash].[ext]',
+        asset: 'assets/[name]-[hash].[ext]'
+      }
+    });
+    ```
+    @example Work with build artifacts in different formats
+    ```ts
+    const result = await Bun.build({
+      entrypoints: ['./src/index.tsx']
+    });
+
+    for (const artifact of result.outputs) {
+      const text = await artifact.text();
+      const buffer = await artifact.arrayBuffer();
+      const bytes = await artifact.bytes();
+
+      new Response(artifact);
+      await Bun.write(artifact.path, artifact);
+    }
+    ```
+    @example Implement comprehensive error handling with position info
+    ```ts
+    try {
+      const result = await Bun.build({
+        entrypoints: ['./src/index.tsx'],
+        throw: true
+      });
+    } catch (e) {
+      const error = e as AggregateError;
+      console.error('Build failed:');
+      for (const msg of error.errors) {
+        if ('position' in msg) {
+          console.error(
+            `${msg.message} at ${msg.position?.file}:${msg.position?.line}:${msg.position?.column}`
+          );
+        } else {
+          console.error(msg.message);
+        }
+      }
+    }
+    ```
+    @example Set up Node.js target with specific configurations
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/server.ts'],
+      outdir: './dist',
+      target: 'node',
+      format: 'cjs',
+      sourcemap: 'external',
+      minify: false,
+      packages: 'external'
+    });
+    ```
+    *
+    * @example Configure experimental CSS bundling with multiple themes
+    ```ts
+    await Bun.build({
+      entrypoints: [
+        './src/styles.css',
+        './src/themes/dark.css',
+        './src/themes/light.css'
+      ],
+      outdir: './dist/css',
+      experimentalCss: true
+    });
+    ```
+    @example Define compile-time constants and version information
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      define: {
+        'process.env.NODE_ENV': JSON.stringify('production'),
+        'CONSTANTS.VERSION': JSON.stringify('1.0.0'),
+        'CONSTANTS.BUILD_TIME': JSON.stringify(new Date().toISOString())
+      }
+    });
+    ```
+    @example Create a custom plugin for handling special file types
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      plugins: [
+        {
+          name: 'my-plugin',
+          setup(build) {
+            build.onLoad({ filter: /\.custom$/ }, async (args) => {
+              const content = await Bun.file(args.path).text();
+              return {
+                contents: `export default ${JSON.stringify(content)}`,
+                loader: 'js'
+              };
+            });
+          }
+        }
+      ]
+    });
+    ```
+    @example Enable bytecode generation for faster startup
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/server.ts'],
+      outdir: './dist',
+      target: 'bun',
+      format: 'cjs',
+      bytecode: true
+    });
+    ```
+    @example Add custom banner and footer to output files
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      banner: '"use client";\n// Built with Bun',
+      footer: '// Generated on ' + new Date().toISOString()
+    });
+    ```
+    @example Configure CDN public path for asset loading
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      publicPath: 'https://cdn.example.com/assets/',
+      loader: {
+        '.png': 'file',
+        '.svg': 'file'
+      }
+    });
+    ```
+    @example Set up package export conditions for different environments
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      conditions: ['production', 'browser', 'module'],
+      packages: 'external'
+    });
+    ```
+  */
+  function build(config: BuildConfig): Promise<BuildOutput>;
   /**
    * A status that represents the outcome of a sent message.
    *
@@ -3321,18 +4072,6 @@ declare module "bun" {
   function file(fileDescriptor: number, options?: BlobPropertyBag): BunFile;
 
   /**
-   * Lazily load/upload a file from S3.
-   * @param path - The path to the file. If bucket options is not provided or set in the path, it will be deduced from the path.
-   * @param options - The options to use for the S3 client.
-   */
-  function s3(path: string | URL, options?: S3Options): S3File;
-  /**
-   * Create a configured S3 bucket reference.
-   * @param options - The options to use for the S3 client.
-   */
-  function S3(options?: S3Options): S3Bucket;
-
-  /**
    * Allocate a new [`Uint8Array`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) without zeroing the bytes.
    *
    * This can be 3.5x faster than `new Uint8Array(size)`, but if you send uninitialized memory to your users (even unintentionally), it can potentially leak anything recently in memory.
@@ -4451,6 +5190,21 @@ declare module "bun" {
    */
   const isMainThread: boolean;
 
+  /**
+   * Used when importing an HTML file at runtime.
+   *
+   * @example
+   *
+   * ```ts
+   * import app from "./index.html";
+   * ```
+   *
+   * Bun.build support for this isn't imlpemented yet.
+   */
+  interface HTMLBundle {
+    index: string;
+  }
+
   interface Socket<Data = undefined> extends Disposable {
     /**
      * Write `data` to the socket
@@ -4619,6 +5373,7 @@ declare module "bun" {
      * socket has been destroyed, `null` will be returned.
      */
     getCertificate(): PeerCertificate | object | null;
+    getX509Certificate(): X509Certificate | undefined;
 
     /**
      * Returns an object containing information on the negotiated cipher suite.
@@ -4657,6 +5412,7 @@ declare module "bun" {
      * @return A certificate object.
      */
     getPeerCertificate(): PeerCertificate;
+    getPeerX509Certificate(): X509Certificate;
 
     /**
      * See [SSL\_get\_shared\_sigalgs](https://www.openssl.org/docs/man1.1.1/man3/SSL_get_shared_sigalgs.html) for more information.
@@ -5920,9 +6676,67 @@ declare module "bun" {
      */
     timestamp?: number | Date,
   ): Buffer;
-}
 
-// extends lib.dom.d.ts
-interface BufferEncodingOption {
-  encoding?: BufferEncoding;
+  /**
+   * Types for `bun.lock`
+   */
+  type BunLockFile = {
+    lockfileVersion: 0;
+    workspaces: {
+      [workspace: string]: BunLockFileWorkspacePackage;
+    };
+    overrides?: Record<string, string>;
+    patchedDependencies?: Record<string, string>;
+    trustedDependencies?: string[];
+
+    /**
+     * ```
+     * INFO = { prod/dev/optional/peer dependencies, os, cpu, libc (TODO), bin, binDir }
+     *
+     * npm         -> [ "name@version", registry (TODO: remove if default), INFO, integrity]
+     * symlink     -> [ "name@link:path", INFO ]
+     * folder      -> [ "name@file:path", INFO ]
+     * workspace   -> [ "name@workspace:path", INFO ]
+     * tarball     -> [ "name@tarball", INFO ]
+     * root        -> [ "name@root:", { bin, binDir } ]
+     * git         -> [ "name@git+repo", INFO, .bun-tag string (TODO: remove this) ]
+     * github      -> [ "name@github:user/repo", INFO, .bun-tag string (TODO: remove this) ]
+     * ```
+     * */
+    packages: {
+      [pkg: string]: BunLockFilePackageArray;
+    };
+  };
+
+  type BunLockFileBasePackageInfo = {
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+    optionalDependencies?: Record<string, string>;
+    peerDependencies?: Record<string, string>;
+    optionalPeers?: string[];
+  };
+
+  type BunLockFileWorkspacePackage = BunLockFileBasePackageInfo & {
+    name?: string;
+    version?: string;
+  };
+
+  type BunLockFilePackageInfo = BunLockFileBasePackageInfo & {
+    os?: string | string[];
+    cpu?: string | string[];
+    bin?: Record<string, string>;
+    binDir?: string;
+    bundled?: true;
+  };
+
+  /** @see {@link BunLockFile.packages} for more info */
+  type BunLockFilePackageArray =
+    /** npm */
+    | [pkg: string, registry: string, info: BunLockFilePackageInfo, integrity: string]
+    /** symlink, folder, tarball, workspace */
+    | [pkg: string, info: BunLockFilePackageInfo]
+    /** git, github */
+    | [pkg: string, info: BunLockFilePackageInfo, bunTag: string]
+    /** root */
+    | [pkg: string, info: Pick<BunLockFilePackageInfo, "bin" | "binDir">];
 }

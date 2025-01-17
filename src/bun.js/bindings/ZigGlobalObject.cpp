@@ -1,6 +1,5 @@
 #include "root.h"
 
-#include "JavaScriptCore/PropertySlot.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 #include "JavaScriptCore/ArgList.h"
@@ -60,6 +59,7 @@
 #include "AsyncContextFrame.h"
 #include "BunClientData.h"
 #include "BunObject.h"
+#include "GeneratedBunObject.h"
 #include "BunPlugin.h"
 #include "BunProcess.h"
 #include "BunWorkerGlobalScope.h"
@@ -158,8 +158,7 @@
 #include "JSPerformanceServerTiming.h"
 #include "JSPerformanceResourceTiming.h"
 #include "JSPerformanceTiming.h"
-
-#include "JSS3Bucket.h"
+#include "JSX509Certificate.h"
 #include "JSS3File.h"
 #include "S3Error.h"
 #if ENABLE(REMOTE_INSPECTOR)
@@ -183,6 +182,8 @@ BUN_DECLARE_HOST_FUNCTION(Bun__NodeUtil__jsParseArgs);
 BUN_DECLARE_HOST_FUNCTION(BUN__HTTP2__getUnpackedSettings);
 BUN_DECLARE_HOST_FUNCTION(BUN__HTTP2_getPackedSettings);
 BUN_DECLARE_HOST_FUNCTION(BUN__HTTP2_assertSettings);
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionMakeAbortError, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame));
 
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
@@ -243,6 +244,9 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         JSC::Options::useConcurrentJIT() = true;
         // JSC::Options::useSigillCrashAnalyzer() = true;
         JSC::Options::useWasm() = true;
+        // remove when we have landed https://github.com/WebKit/WebKit/pull/39029 or WebKit no
+        // longer disables IPInt by default
+        JSC::Options::useWasmIPInt() = false;
         JSC::Options::useSourceProviderCache() = true;
         // JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
         JSC::Options::exposeInternalModuleLoader() = true;
@@ -490,99 +494,40 @@ WTF::String Bun::formatStackTrace(
 
     for (size_t i = 0; i < framesCount; i++) {
         StackFrame& frame = stackTrace.at(i);
-        WTF::String functionName;
-        bool isBuiltinFunction = false;
+        unsigned int flags = static_cast<unsigned int>(FunctionNameFlags::AddNewKeyword);
 
-        sb.append("    at "_s);
-
-        if (auto codeblock = frame.codeBlock()) {
-
-            if (codeblock->isConstructor()) {
-                sb.append("new "_s);
-            }
-
-            // We cannot run this in FinalizeUnconditionally, as we cannot call getters there
-            // We check the errorInstance to see if we are allowed to access this memory.
-            if (errorInstance) {
-                switch (codeblock->codeType()) {
-                case JSC::CodeType::FunctionCode:
-                case JSC::CodeType::EvalCode: {
-                    if (auto* callee = frame.callee()) {
-                        if (auto* object = callee->getObject()) {
-                            JSValue functionNameValue = object->getDirect(vm, vm.propertyNames->name);
-                            if (functionNameValue && functionNameValue.isString()) {
-                                functionName = functionNameValue.toWTFString(lexicalGlobalObject);
-                            }
-
-                            if (functionName.isEmpty()) {
-                                auto catchScope = DECLARE_CATCH_SCOPE(vm);
-                                functionName = JSC::getCalculatedDisplayName(vm, object);
-                                if (catchScope.exception()) {
-                                    catchScope.clearException();
-                                }
-                            }
-
-                            if (auto* unlinkedCodeBlock = codeblock->unlinkedCodeBlock()) {
-                                if (unlinkedCodeBlock->isBuiltinFunction()) {
-                                    isBuiltinFunction = true;
-                                }
-                            }
-                        }
-                    }
-                    break;
-                }
-                default: {
-                    break;
-                }
+        // -- get the data we need to render the text --
+        JSC::JSGlobalObject* globalObjectForFrame = lexicalGlobalObject;
+        if (frame.hasLineAndColumnInfo()) {
+            auto* callee = frame.callee();
+            if (callee) {
+                if (auto* object = callee->getObject()) {
+                    globalObjectForFrame = object->globalObject();
                 }
             }
         }
 
-        if (functionName.isEmpty()) {
-            functionName = frame.functionName(vm);
-        }
-
-        if (functionName.isEmpty()) {
-            sb.append("<anonymous>"_s);
-        } else {
-            sb.append(functionName);
-        }
+        WTF::String functionName = Zig::functionName(vm, globalObjectForFrame, frame, !errorInstance, &flags);
+        OrdinalNumber originalLine = {};
+        OrdinalNumber originalColumn = {};
+        OrdinalNumber displayLine = {};
+        OrdinalNumber displayColumn = {};
+        WTF::String sourceURLForFrame;
 
         if (frame.hasLineAndColumnInfo()) {
             ZigStackFrame remappedFrame = {};
             LineColumn lineColumn = frame.computeLineAndColumn();
-            OrdinalNumber originalLine = OrdinalNumber::fromOneBasedInt(lineColumn.line);
-            OrdinalNumber originalColumn = OrdinalNumber::fromOneBasedInt(lineColumn.column);
+            originalLine = OrdinalNumber::fromOneBasedInt(lineColumn.line);
+            originalColumn = OrdinalNumber::fromOneBasedInt(lineColumn.column);
+            displayLine = originalLine;
+            displayColumn = originalColumn;
 
             remappedFrame.position.line_zero_based = originalLine.zeroBasedInt();
             remappedFrame.position.column_zero_based = originalColumn.zeroBasedInt();
 
-            String sourceURLForFrame = frame.sourceURL(vm);
+            sourceURLForFrame = Zig::sourceURL(vm, frame);
 
-            // Sometimes, the sourceURL is empty.
-            // For example, pages in Next.js.
-            if (sourceURLForFrame.isEmpty()) {
-                // hasLineAndColumnInfo() checks codeBlock(), so this is safe to access here.
-                const auto& source = frame.codeBlock()->source();
-
-                // source.isNull() is true when the SourceProvider is a null pointer.
-                if (!source.isNull()) {
-                    auto* provider = source.provider();
-                    // I'm not 100% sure we should show sourceURLDirective here.
-                    if (!provider->sourceURLDirective().isEmpty()) {
-                        sourceURLForFrame = provider->sourceURLDirective();
-                    } else if (!provider->sourceURL().isEmpty()) {
-                        sourceURLForFrame = provider->sourceURL();
-                    } else {
-                        const auto& origin = provider->sourceOrigin();
-                        if (!origin.isNull()) {
-                            sourceURLForFrame = origin.string();
-                        }
-                    }
-                }
-            }
-
-            bool isDefinitelyNotRunninginNodeVMGlobalObject = (globalObject == lexicalGlobalObject && globalObject);
+            bool isDefinitelyNotRunninginNodeVMGlobalObject = globalObject == globalObjectForFrame;
 
             bool isDefaultGlobalObjectInAFinalizer = (globalObject && !lexicalGlobalObject && !errorInstance);
             if (isDefinitelyNotRunninginNodeVMGlobalObject || isDefaultGlobalObjectInAFinalizer) {
@@ -597,11 +542,14 @@ WTF::String Bun::formatStackTrace(
                 }
             }
 
+            displayLine = remappedFrame.position.line();
+            displayColumn = remappedFrame.position.column();
+
             if (!hasSet) {
                 hasSet = true;
                 line = remappedFrame.position.line();
                 column = remappedFrame.position.column();
-                sourceURL = frame.sourceURL(vm);
+                sourceURL = sourceURLForFrame;
 
                 if (remappedFrame.remapped) {
                     if (errorInstance) {
@@ -610,24 +558,46 @@ WTF::String Bun::formatStackTrace(
                     }
                 }
             }
+        }
 
-            sb.append(" ("_s);
-            if (sourceURLForFrame.isEmpty()) {
-                if (isBuiltinFunction) {
-                    sb.append("native"_s);
-                } else {
-                    sb.append("unknown"_s);
-                }
-            } else {
-                sb.append(sourceURLForFrame);
+        if (functionName.isEmpty()) {
+            if (flags & (static_cast<unsigned int>(FunctionNameFlags::Eval) | static_cast<unsigned int>(FunctionNameFlags::Function))) {
+                functionName = "<anonymous>"_s;
             }
-            sb.append(":"_s);
-            sb.append(remappedFrame.position.line().oneBasedInt());
-            sb.append(":"_s);
-            sb.append(remappedFrame.position.column().oneBasedInt());
+        }
+
+        if (sourceURLForFrame.isEmpty()) {
+            if (flags & static_cast<unsigned int>(FunctionNameFlags::Builtin)) {
+                sourceURLForFrame = "native"_s;
+            } else {
+                sourceURLForFrame = "unknown"_s;
+            }
+        }
+
+        // --- actually render the text ---
+
+        sb.append("    at "_s);
+
+        if (!functionName.isEmpty()) {
+            sb.append(functionName);
+            sb.append(" ("_s);
+        }
+
+        if (!sourceURLForFrame.isEmpty()) {
+            sb.append(sourceURLForFrame);
+            if (displayLine.zeroBasedInt() > 0) {
+                sb.append(":"_s);
+                sb.append(displayLine.oneBasedInt());
+
+                if (displayColumn.zeroBasedInt() > 0) {
+                    sb.append(":"_s);
+                    sb.append(displayColumn.oneBasedInt());
+                }
+            }
+        }
+
+        if (!functionName.isEmpty()) {
             sb.append(")"_s);
-        } else {
-            sb.append(" (native)"_s);
         }
 
         if (i != framesCount - 1) {
@@ -684,31 +654,51 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     GlobalObject::createCallSitesFromFrames(globalObject, lexicalGlobalObject, stackTrace, callSites);
 
     // We need to sourcemap it if it's a GlobalObject.
-    if (globalObject == lexicalGlobalObject) {
-        size_t framesCount = stackTrace.size();
-        ZigStackFrame remappedFrames[64];
-        framesCount = framesCount > 64 ? 64 : framesCount;
-        for (int i = 0; i < framesCount; i++) {
-            remappedFrames[i] = {};
-            remappedFrames[i].source_url = Bun::toStringRef(lexicalGlobalObject, stackTrace.at(i).sourceURL());
-            if (JSCStackFrame::SourcePositions* sourcePositions = stackTrace.at(i).getSourcePositions()) {
-                remappedFrames[i].position.line_zero_based = sourcePositions->line.zeroBasedInt();
-                remappedFrames[i].position.column_zero_based = sourcePositions->column.zeroBasedInt();
-            } else {
-                remappedFrames[i].position.line_zero_based = -1;
-                remappedFrames[i].position.column_zero_based = -1;
+
+    for (int i = 0; i < stackTrace.size(); i++) {
+        ZigStackFrame frame = {};
+
+        String sourceURLForFrame = Zig::sourceURL(vm, stackFrames.at(i));
+
+        // When you use node:vm, the global object can be different on a
+        // per-frame basis. We should sourcemap the frames which are in Bun's
+        // global object, and not sourcemap the frames which are in a different
+        // global object.
+        JSGlobalObject* globalObjectForFrame = lexicalGlobalObject;
+        if (stackFrames.at(i).hasLineAndColumnInfo()) {
+            auto* callee = stackFrames.at(i).callee();
+            if (auto* object = callee->getObject()) {
+                globalObjectForFrame = object->globalObject();
             }
         }
 
-        Bun__remapStackFramePositions(globalObject, remappedFrames, framesCount);
-
-        for (size_t i = 0; i < framesCount; i++) {
-            JSC::JSValue callSiteValue = callSites.at(i);
-            if (remappedFrames[i].remapped) {
-                CallSite* callSite = JSC::jsCast<CallSite*>(callSiteValue);
-                callSite->setColumnNumber(remappedFrames[i].position.column());
-                callSite->setLineNumber(remappedFrames[i].position.line());
+        if (globalObjectForFrame == globalObject) {
+            if (JSCStackFrame::SourcePositions* sourcePositions = stackTrace.at(i).getSourcePositions()) {
+                frame.position.line_zero_based = sourcePositions->line.zeroBasedInt();
+                frame.position.column_zero_based = sourcePositions->column.zeroBasedInt();
+            } else {
+                frame.position.line_zero_based = -1;
+                frame.position.column_zero_based = -1;
             }
+
+            if (!sourceURLForFrame.isEmpty()) {
+                frame.source_url = Bun::toStringRef(sourceURLForFrame);
+
+                // This ensures the lifetime of the sourceURL is accounted for correctly
+                Bun__remapStackFramePositions(globalObject, &frame, 1);
+
+                sourceURLForFrame = frame.source_url.toWTFString();
+            }
+        }
+
+        auto* callsite = jsCast<CallSite*>(callSites.at(i));
+
+        if (!sourceURLForFrame.isEmpty())
+            callsite->setSourceURL(vm, jsString(vm, sourceURLForFrame));
+
+        if (frame.remapped) {
+            callsite->setLineNumber(frame.position.line());
+            callsite->setColumnNumber(frame.position.column());
         }
     }
 
@@ -869,6 +859,9 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
     }
 }
 
+// executionContextId: -1 for main thread
+// executionContextId: maxInt32 for macros
+// executionContextId: >-1 for workers
 extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
 {
     auto heapSize = miniMode ? JSC::HeapType::Small : JSC::HeapType::Large;
@@ -885,7 +878,7 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     WebCore::JSVMClientData::create(&vm, Bun__getVM());
 
     const auto createGlobalObject = [&]() -> Zig::GlobalObject* {
-        if (UNLIKELY(executionContextId > -1)) {
+        if (UNLIKELY(executionContextId == std::numeric_limits<int32_t>::max() || executionContextId > -1)) {
             auto* structure = Zig::GlobalObject::createStructure(vm);
             if (UNLIKELY(!structure)) {
                 return nullptr;
@@ -1224,6 +1217,7 @@ GlobalObject::~GlobalObject()
 
     if (auto* ctx = scriptExecutionContext()) {
         ctx->removeFromContextsMap();
+        ctx->deref();
     }
 }
 
@@ -1982,27 +1976,11 @@ JSC_DEFINE_CUSTOM_SETTER(setterSubtleCrypto,
     return true;
 }
 
-JSC_DECLARE_HOST_FUNCTION(makeThisTypeErrorForBuiltins);
 JSC_DECLARE_HOST_FUNCTION(makeGetterTypeErrorForBuiltins);
 JSC_DECLARE_HOST_FUNCTION(makeDOMExceptionForBuiltins);
 JSC_DECLARE_HOST_FUNCTION(createWritableStreamFromInternal);
 JSC_DECLARE_HOST_FUNCTION(getInternalWritableStream);
 JSC_DECLARE_HOST_FUNCTION(isAbortSignal);
-
-JSC_DEFINE_HOST_FUNCTION(makeThisTypeErrorForBuiltins, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    ASSERT(callFrame);
-    ASSERT(callFrame->argumentCount() == 2);
-    VM& vm = globalObject->vm();
-    DeferTermination deferScope(vm);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
-
-    auto interfaceName = callFrame->uncheckedArgument(0).getString(globalObject);
-    scope.assertNoException();
-    auto functionName = callFrame->uncheckedArgument(1).getString(globalObject);
-    scope.assertNoException();
-    return JSValue::encode(createTypeError(globalObject, makeThisTypeErrorMessage(interfaceName.utf8().data(), functionName.utf8().data())));
-}
 
 JSC_DEFINE_HOST_FUNCTION(makeGetterTypeErrorForBuiltins, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
@@ -2792,7 +2770,6 @@ JSC_DEFINE_CUSTOM_SETTER(moduleNamespacePrototypeSetESModuleMarker, (JSGlobalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = JSValue::decode(encodedValue);
     WTF::TriState triState = value.toBoolean(globalObject) ? WTF::TriState::True : WTF::TriState::False;
-    RETURN_IF_EXCEPTION(scope, false);
     moduleNamespaceObject->m_hasESModuleMarker = triState;
     return true;
 }
@@ -2806,7 +2783,9 @@ void GlobalObject::finishCreation(VM& vm)
     m_http2_commongStrings.initialize();
 
     Bun::addNodeModuleConstructorProperties(vm, this);
-
+    m_JSX509CertificateClassStructure.initLater([](LazyClassStructure::Initializer& init) {
+        setupX509CertificateClassStructure(init);
+    });
     m_lazyStackCustomGetterSetter.initLater(
         [](const Initializer<CustomGetterSetter>& init) {
             init.set(CustomGetterSetter::create(init.vm, errorInstanceLazyStackCustomGetter, errorInstanceLazyStackCustomSetter));
@@ -2865,10 +2844,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(result.toObject(init.owner));
         });
 
-    m_JSS3BucketStructure.initLater(
-        [](const Initializer<Structure>& init) {
-            init.set(Bun::createJSS3BucketStructure(init.vm, init.owner));
-        });
     m_JSS3FileStructure.initLater(
         [](const Initializer<Structure>& init) {
             init.set(Bun::createJSS3FileStructure(init.vm, init.owner));
@@ -3605,7 +3580,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
             JSC::JSFunction::create(vm, this, 0, "@lazy"_s, JS2Native::jsDollarLazy, ImplementationVisibility::Public),
             PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0 },
 
-        GlobalPropertyInfo(builtinNames.makeThisTypeErrorPrivateName(), JSFunction::create(vm, this, 2, String(), makeThisTypeErrorForBuiltins, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.makeGetterTypeErrorPrivateName(), JSFunction::create(vm, this, 2, String(), makeGetterTypeErrorForBuiltins, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.makeDOMExceptionPrivateName(), JSFunction::create(vm, this, 2, String(), makeDOMExceptionForBuiltins, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.addAbortAlgorithmToSignalPrivateName(), JSFunction::create(vm, this, 2, String(), addAbortAlgorithmToSignal, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
@@ -3624,6 +3598,8 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         GlobalPropertyInfo(builtinNames.TextEncoderStreamEncoderPrivateName(), JSTextEncoderStreamEncoderConstructor(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0),
         GlobalPropertyInfo(builtinNames.makeErrorWithCodePrivateName(), JSFunction::create(vm, this, 2, String(), jsFunctionMakeErrorWithCode, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.toClassPrivateName(), JSFunction::create(vm, this, 1, String(), jsFunctionToClass, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
+        GlobalPropertyInfo(builtinNames.inheritsPrivateName(), JSFunction::create(vm, this, 1, String(), jsFunctionInherits, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
+        GlobalPropertyInfo(builtinNames.makeAbortErrorPrivateName(), JSFunction::create(vm, this, 1, String(), jsFunctionMakeAbortError, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
     };
     addStaticGlobals(staticGlobals, std::size(staticGlobals));
 
@@ -3706,6 +3682,30 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stdout"_s), CustomGetterSetter::create(vm, getConsoleStdout, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue | 0);
     consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stderr"_s), CustomGetterSetter::create(vm, getConsoleStderr, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue | 0);
 }
+
+// ===================== start conditional builtin globals =====================
+// These functions register globals based on runtime conditions (e.g. CLI flags,
+// environment variables, etc.). See `Run.addConditionalGlobals()` in bun_js.zig
+// for where these are called.
+
+/// `globalThis.gc()` is an alias for `Bun.gc(true)`
+/// Note that `vm` is a `VirtualMachine*`
+extern "C" size_t Bun__gc(void* vm, bool sync);
+JSC_DEFINE_HOST_FUNCTION(functionJsGc,
+    (JSC::JSGlobalObject * global, JSC::CallFrame* callFrame))
+{
+    Zig::GlobalObject* globalObject = defaultGlobalObject(global);
+    Bun__gc(globalObject->bunVM(), true);
+    return JSValue::encode(jsUndefined());
+}
+
+extern "C" void JSC__JSGlobalObject__addGc(JSC__JSGlobalObject* globalObject)
+{
+    JSC::VM& vm = globalObject->vm();
+    globalObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "gc"_s), 0, functionJsGc, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
+}
+
+// ====================== end conditional builtin globals ======================
 
 extern "C" bool JSC__JSGlobalObject__startRemoteInspector(JSC__JSGlobalObject* globalObject, unsigned char* host, uint16_t arg1)
 {
@@ -3806,7 +3806,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSCryptoKey.visit(visitor);
     thisObject->m_lazyStackCustomGetterSetter.visit(visitor);
     thisObject->m_JSDOMFileConstructor.visit(visitor);
-    thisObject->m_JSS3BucketStructure.visit(visitor);
     thisObject->m_JSS3FileStructure.visit(visitor);
     thisObject->m_S3ErrorStructure.visit(visitor);
     thisObject->m_JSFFIFunctionStructure.visit(visitor);
@@ -3861,6 +3860,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->mockModule.mockResultStructure.visit(visitor);
     thisObject->mockModule.mockWithImplementationCleanupDataStructure.visit(visitor);
     thisObject->mockModule.withImplementationCleanupFunction.visit(visitor);
+
+    thisObject->m_JSX509CertificateClassStructure.visit(visitor);
 
     thisObject->m_nodeErrorCache.visit(visitor);
 

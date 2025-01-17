@@ -1115,7 +1115,7 @@ pub const PackageManifest = struct {
             else
                 tmp_path;
 
-            var is_using_o_tmpfile = if (Environment.isLinux) false else {};
+            var is_using_o_tmpfile = if (Environment.isLinux) false;
             const file = brk: {
                 const flags = bun.O.WRONLY;
                 const mask = if (Environment.isPosix) 0o664 else 0;

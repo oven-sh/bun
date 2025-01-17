@@ -43,9 +43,9 @@ error
 error
 Uint8Array(1) [ 0 ]
 error
-Uint8Array(0) [  ]
+Uint8Array(0) []
 error
-ArrayBuffer(0) [  ]
+ArrayBuffer(0) []
 error
 ArrayBuffer(1) [ 0 ]
 error: string

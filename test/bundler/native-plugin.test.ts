@@ -74,6 +74,11 @@ values;`,
     await Bun.$`${bunExe()} i && ${bunExe()} build:napi`.env(bunEnv).cwd(tempdir);
   });
 
+  beforeEach(() => {
+    const tempdir2 = tempDirWithFiles("native-plugins", {});
+    process.chdir(tempdir2);
+  });
+
   afterEach(async () => {
     await Bun.$`rm -rf ${outdir}`;
     process.chdir(cwd);
@@ -543,7 +548,9 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
       });
       expect.unreachable();
     } catch (e) {
-      expect(e.toString()).toContain('TypeError: Could not find the symbol "OOGA_BOOGA_420" in the given napi module.');
+      expect(e.toString()).toContain(
+        'TypeError [ERR_INVALID_ARG_TYPE]: Could not find the symbol "OOGA_BOOGA_420" in the given napi module.',
+      );
     }
   });
 
@@ -672,6 +679,7 @@ console.log(JSON.stringify(json))
             },
           },
         ],
+        throw: true,
       });
 
       expect(result.success).toBeTrue();

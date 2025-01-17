@@ -55,7 +55,7 @@ pub const ShellErr = union(enum) {
     pub fn newSys(e: anytype) @This() {
         return .{
             .sys = switch (@TypeOf(e)) {
-                Syscall.Error => e.toSystemError(),
+                Syscall.Error => e.toShellSystemError(),
                 JSC.SystemError => e,
                 else => @compileError("Invalid `e`: " ++ @typeName(e)),
             },
@@ -3566,7 +3566,7 @@ fn isValidVarNameAscii(var_name: []const u8) bool {
     return true;
 }
 
-var stderr_mutex = std.Thread.Mutex{};
+var stderr_mutex = bun.Mutex{};
 
 pub fn hasEqSign(str: []const u8) ?u32 {
     if (isAllAscii(str)) {

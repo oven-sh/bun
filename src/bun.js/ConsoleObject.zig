@@ -21,7 +21,6 @@ const default_allocator = bun.default_allocator;
 const JestPrettyFormat = @import("./test/pretty_format.zig").JestPrettyFormat;
 const JSPromise = JSC.JSPromise;
 const EventType = JSC.EventType;
-const S3Bucket = @import("./webcore/S3Bucket.zig");
 pub const shim = Shimmer("Bun", "ConsoleObject", @This());
 pub const Type = *anyopaque;
 pub const name = "Bun::ConsoleObject";
@@ -73,8 +72,8 @@ pub const MessageType = enum(u32) {
     _,
 };
 
-var stderr_mutex: bun.Lock = .{};
-var stdout_mutex: bun.Lock = .{};
+var stderr_mutex: bun.Mutex = .{};
+var stdout_mutex: bun.Mutex = .{};
 
 threadlocal var stderr_lock_count: u16 = 0;
 threadlocal var stdout_lock_count: u16 = 0;
@@ -186,6 +185,11 @@ fn messageWithTypeAndLevel_(
         .add_newline = true,
         .flush = true,
         .default_indent = console.default_indent,
+        .error_display_level = switch (level) {
+            .Error => .full,
+            else => .normal,
+            .Warning => .warn,
+        },
     };
 
     if (message_type == .Table and len >= 1) {
@@ -677,6 +681,7 @@ pub fn writeTrace(comptime Writer: type, writer: Writer, global: *JSGlobalObject
         null,
         &holder.need_to_clear_parser_arena_on_deinit,
         &source_code_slice,
+        false,
     );
 
     if (Output.enable_ansi_colors_stderr)
@@ -704,6 +709,59 @@ pub const FormatOptions = struct {
     max_depth: u16 = 2,
     single_line: bool = false,
     default_indent: u16 = 0,
+    error_display_level: ErrorDisplayLevel = .full,
+    pub const ErrorDisplayLevel = enum {
+        normal,
+        warn,
+        full,
+
+        const Formatter = struct {
+            name: bun.String,
+            level: ErrorDisplayLevel,
+            enable_colors: bool,
+            colon: Colon,
+            pub fn format(this: @This(), comptime _: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+                if (this.enable_colors) {
+                    switch (this.level) {
+                        .normal => try writer.writeAll(Output.prettyFmt("<r>", true)),
+                        .warn => try writer.writeAll(Output.prettyFmt("<r><yellow>", true)),
+                        .full => try writer.writeAll(Output.prettyFmt("<r><red>", true)),
+                    }
+                }
+
+                if (!this.name.isEmpty()) {
+                    try this.name.format("", opts, writer);
+                } else if (this.level == .warn) {
+                    try writer.writeAll("warn");
+                } else {
+                    try writer.writeAll("error");
+                }
+
+                if (this.colon == .exclude_colon) {
+                    if (this.enable_colors) {
+                        try writer.writeAll(Output.prettyFmt("<r>", true));
+                    }
+                    return;
+                }
+
+                if (this.enable_colors) {
+                    try writer.writeAll(Output.prettyFmt("<r><d>:<r> ", true));
+                } else {
+                    try writer.writeAll(": ");
+                }
+            }
+        };
+
+        pub const Colon = enum { include_colon, exclude_colon };
+        pub fn formatter(this: ErrorDisplayLevel, error_name: bun.String, enable_colors: bool, colon: Colon) ErrorDisplayLevel.Formatter {
+            return .{
+                .name = error_name,
+                .level = this,
+                .enable_colors = enable_colors,
+                .colon = colon,
+            };
+        }
+    };
 
     pub fn fromJS(formatOptions: *FormatOptions, globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSValue) bun.JSError!void {
         const arg1 = arguments[0];
@@ -786,6 +844,7 @@ pub fn format2(
             .indent = options.default_indent,
             .stack_check = bun.StackCheck.init(),
             .can_throw_stack_overflow = true,
+            .error_display_level = options.error_display_level,
         };
         defer fmt.deinit();
         const tag = ConsoleObject.Formatter.Tag.get(vals[0], global);
@@ -869,6 +928,7 @@ pub fn format2(
         .indent = options.default_indent,
         .stack_check = bun.StackCheck.init(),
         .can_throw_stack_overflow = true,
+        .error_display_level = options.error_display_level,
     };
     defer fmt.deinit();
     var tag: ConsoleObject.Formatter.Tag.Result = undefined;
@@ -950,6 +1010,7 @@ pub const Formatter = struct {
     disable_inspect_custom: bool = false,
     stack_check: bun.StackCheck = .{ .cached_stack_end = std.math.maxInt(usize) },
     can_throw_stack_overflow: bool = false,
+    error_display_level: FormatOptions.ErrorDisplayLevel = .full,
 
     pub fn deinit(this: *Formatter) void {
         if (bun.take(&this.map_node)) |node| {
@@ -2217,10 +2278,6 @@ pub const Formatter = struct {
                 );
             },
             .Class => {
-                if (S3Bucket.fromJS(value)) |s3bucket| {
-                    S3Bucket.writeFormat(s3bucket, ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
-                    return;
-                }
                 var printable = ZigString.init(&name_buf);
                 value.getClassName(this.globalThis, &printable);
                 this.addForNewLine(printable.len);
@@ -2490,6 +2547,9 @@ pub const Formatter = struct {
                     return;
                 } else if (value.as(JSC.WebCore.Blob)) |blob| {
                     blob.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
+                    return;
+                } else if (value.as(JSC.WebCore.S3Client)) |s3client| {
+                    s3client.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
                     return;
                 } else if (value.as(JSC.FetchHeaders) != null) {
                     if (value.get_unsafe(this.globalThis, "toJSON")) |toJSONFunction| {
@@ -3264,86 +3324,88 @@ pub const Formatter = struct {
                     else
                         bun.asByteSlice(@tagName(arrayBuffer.typed_array_type)),
                 );
+                if (slice.len == 0) {
+                    writer.print("({d}) []", .{arrayBuffer.len});
+                    return;
+                }
                 writer.print("({d}) [ ", .{arrayBuffer.len});
 
-                if (slice.len > 0) {
-                    switch (jsType) {
-                        .Int8Array => this.writeTypedArray(
+                switch (jsType) {
+                    .Int8Array => this.writeTypedArray(
+                        *@TypeOf(writer),
+                        &writer,
+                        i8,
+                        @alignCast(std.mem.bytesAsSlice(i8, slice)),
+                        enable_ansi_colors,
+                    ),
+                    .Int16Array => this.writeTypedArray(
+                        *@TypeOf(writer),
+                        &writer,
+                        i16,
+                        @alignCast(std.mem.bytesAsSlice(i16, slice)),
+                        enable_ansi_colors,
+                    ),
+                    .Uint16Array => this.writeTypedArray(
+                        *@TypeOf(writer),
+                        &writer,
+                        u16,
+                        @alignCast(std.mem.bytesAsSlice(u16, slice)),
+                        enable_ansi_colors,
+                    ),
+                    .Int32Array => this.writeTypedArray(
+                        *@TypeOf(writer),
+                        &writer,
+                        i32,
+                        @alignCast(std.mem.bytesAsSlice(i32, slice)),
+                        enable_ansi_colors,
+                    ),
+                    .Uint32Array => this.writeTypedArray(
+                        *@TypeOf(writer),
+                        &writer,
+                        u32,
+                        @alignCast(std.mem.bytesAsSlice(u32, slice)),
+                        enable_ansi_colors,
+                    ),
+                    .Float16Array => this.writeTypedArray(
+                        *@TypeOf(writer),
+                        &writer,
+                        f16,
+                        @alignCast(std.mem.bytesAsSlice(f16, slice)),
+                        enable_ansi_colors,
+                    ),
+                    .Float32Array => this.writeTypedArray(
+                        *@TypeOf(writer),
+                        &writer,
+                        f32,
+                        @alignCast(std.mem.bytesAsSlice(f32, slice)),
+                        enable_ansi_colors,
+                    ),
+                    .Float64Array => this.writeTypedArray(
+                        *@TypeOf(writer),
+                        &writer,
+                        f64,
+                        @alignCast(std.mem.bytesAsSlice(f64, slice)),
+                        enable_ansi_colors,
+                    ),
+                    .BigInt64Array => this.writeTypedArray(
+                        *@TypeOf(writer),
+                        &writer,
+                        i64,
+                        @alignCast(std.mem.bytesAsSlice(i64, slice)),
+                        enable_ansi_colors,
+                    ),
+                    .BigUint64Array => {
+                        this.writeTypedArray(
                             *@TypeOf(writer),
                             &writer,
-                            i8,
-                            @as([]align(std.meta.alignment([]i8)) i8, @alignCast(std.mem.bytesAsSlice(i8, slice))),
+                            u64,
+                            @as([]align(std.meta.alignment([]u64)) u64, @alignCast(std.mem.bytesAsSlice(u64, slice))),
                             enable_ansi_colors,
-                        ),
-                        .Int16Array => this.writeTypedArray(
-                            *@TypeOf(writer),
-                            &writer,
-                            i16,
-                            @as([]align(std.meta.alignment([]i16)) i16, @alignCast(std.mem.bytesAsSlice(i16, slice))),
-                            enable_ansi_colors,
-                        ),
-                        .Uint16Array => this.writeTypedArray(
-                            *@TypeOf(writer),
-                            &writer,
-                            u16,
-                            @as([]align(std.meta.alignment([]u16)) u16, @alignCast(std.mem.bytesAsSlice(u16, slice))),
-                            enable_ansi_colors,
-                        ),
-                        .Int32Array => this.writeTypedArray(
-                            *@TypeOf(writer),
-                            &writer,
-                            i32,
-                            @as([]align(std.meta.alignment([]i32)) i32, @alignCast(std.mem.bytesAsSlice(i32, slice))),
-                            enable_ansi_colors,
-                        ),
-                        .Uint32Array => this.writeTypedArray(
-                            *@TypeOf(writer),
-                            &writer,
-                            u32,
-                            @as([]align(std.meta.alignment([]u32)) u32, @alignCast(std.mem.bytesAsSlice(u32, slice))),
-                            enable_ansi_colors,
-                        ),
-                        .Float16Array => this.writeTypedArray(
-                            *@TypeOf(writer),
-                            &writer,
-                            f16,
-                            @as([]align(std.meta.alignment([]f16)) f16, @alignCast(std.mem.bytesAsSlice(f16, slice))),
-                            enable_ansi_colors,
-                        ),
-                        .Float32Array => this.writeTypedArray(
-                            *@TypeOf(writer),
-                            &writer,
-                            f32,
-                            @as([]align(std.meta.alignment([]f32)) f32, @alignCast(std.mem.bytesAsSlice(f32, slice))),
-                            enable_ansi_colors,
-                        ),
-                        .Float64Array => this.writeTypedArray(
-                            *@TypeOf(writer),
-                            &writer,
-                            f64,
-                            @as([]align(std.meta.alignment([]f64)) f64, @alignCast(std.mem.bytesAsSlice(f64, slice))),
-                            enable_ansi_colors,
-                        ),
-                        .BigInt64Array => this.writeTypedArray(
-                            *@TypeOf(writer),
-                            &writer,
-                            i64,
-                            @as([]align(std.meta.alignment([]i64)) i64, @alignCast(std.mem.bytesAsSlice(i64, slice))),
-                            enable_ansi_colors,
-                        ),
-                        .BigUint64Array => {
-                            this.writeTypedArray(
-                                *@TypeOf(writer),
-                                &writer,
-                                u64,
-                                @as([]align(std.meta.alignment([]u64)) u64, @alignCast(std.mem.bytesAsSlice(u64, slice))),
-                                enable_ansi_colors,
-                            );
-                        },
+                        );
+                    },
 
-                        // Uint8Array, Uint8ClampedArray, DataView, ArrayBuffer
-                        else => this.writeTypedArray(*@TypeOf(writer), &writer, u8, slice, enable_ansi_colors),
-                    }
+                    // Uint8Array, Uint8ClampedArray, DataView, ArrayBuffer
+                    else => this.writeTypedArray(*@TypeOf(writer), &writer, u8, slice, enable_ansi_colors),
                 }
 
                 writer.writeAll(" ]");

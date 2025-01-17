@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { bunExe, bunEnv, getSecret, tempDirWithFiles } from "harness";
-import type { S3FileOptions } from "bun";
+import type { S3Options } from "bun";
 import path from "path";
-const s3Options: S3FileOptions = {
+const s3Options: S3Options = {
   accessKeyId: getSecret("S3_R2_ACCESS_KEY"),
   secretAccessKey: getSecret("S3_R2_SECRET_KEY"),
   endpoint: getSecret("S3_R2_ENDPOINT"),

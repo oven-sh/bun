@@ -494,6 +494,32 @@ if (expect.extend)
         };
       }
     },
+    toBeLatin1String(actual: unknown) {
+      if ((actual as string).isLatin1()) {
+        return {
+          pass: true,
+          message: () => `Expected ${actual} to be a Latin1 string`,
+        };
+      }
+
+      return {
+        pass: false,
+        message: () => `Expected ${actual} to be a Latin1 string`,
+      };
+    },
+    toBeUTF16String(actual: unknown) {
+      if ((actual as string).isUTF16()) {
+        return {
+          pass: true,
+          message: () => `Expected ${actual} to be a UTF16 string`,
+        };
+      }
+
+      return {
+        pass: false,
+        message: () => `Expected ${actual} to be a UTF16 string`,
+      };
+    },
   });
 
 export function ospath(path: string) {
@@ -1143,36 +1169,6 @@ String.prototype.isUTF16 = function () {
   return require("bun:internal-for-testing").jscInternals.isUTF16String(this);
 };
 
-if (expect.extend)
-  expect.extend({
-    toBeLatin1String(actual: unknown) {
-      if ((actual as string).isLatin1()) {
-        return {
-          pass: true,
-          message: () => `Expected ${actual} to be a Latin1 string`,
-        };
-      }
-
-      return {
-        pass: false,
-        message: () => `Expected ${actual} to be a Latin1 string`,
-      };
-    },
-    toBeUTF16String(actual: unknown) {
-      if ((actual as string).isUTF16()) {
-        return {
-          pass: true,
-          message: () => `Expected ${actual} to be a UTF16 string`,
-        };
-      }
-
-      return {
-        pass: false,
-        message: () => `Expected ${actual} to be a UTF16 string`,
-      };
-    },
-  });
-
 interface BunHarnessTestMatchers {
   toBeLatin1String(): void;
   toBeUTF16String(): void;
@@ -1389,9 +1385,9 @@ Object.defineProperty(globalThis, "gc", {
   configurable: true,
 });
 
-export function waitForFileToExist(path: string, interval: number) {
+export function waitForFileToExist(path: string, interval_ms: number) {
   while (!fs.existsSync(path)) {
-    sleepSync(interval);
+    sleepSync(interval_ms);
   }
 }
 

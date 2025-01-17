@@ -7,7 +7,7 @@
 // supported macros that aren't json value -> json value. Otherwise, I'd use a real JS parser/ast
 // library, instead of RegExp hacks.
 //
-// For explanation on this, please nag @paperdave to write documentation on how everything works.
+// For explanation on this, please nag @paperclover to write documentation on how everything works.
 //
 // The output is intended to be similar to what WebCore does internally with a couple differences:
 //
@@ -21,6 +21,7 @@ import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeDTS } from "./generate-js2native";
 import { addCPPCharArray, cap, low, writeIfNotChanged } from "./helpers";
 import { applyGlobalReplacements, define } from "./replacements";
+import assert from "assert";
 
 const PARALLEL = false;
 const KEEP_TMP = true;
@@ -142,22 +143,55 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
       }
       contents = contents.slice(directive[0].length);
     } else if (match[1] === "export function" || match[1] === "export async function") {
-      const declaration = contents.match(
-        /^export\s+(async\s+)?function\s+([a-zA-Z0-9]+)\s*\(([^)]*)\)(?:\s*:\s*([^{\n]+))?\s*{?/,
-      );
-      if (!declaration)
-        throw new SyntaxError("Could not parse function declaration:\n" + contents.slice(0, contents.indexOf("\n")));
+      // consume async token and function name
+      const nameMatch = contents.match(/^export\s+(async\s+)?function\s([a-zA-Z0-9]+)\s*/);
+      if (!nameMatch)
+        throw new SyntaxError("Could not parse function name:\n" + contents.slice(0, contents.indexOf("\n")));
+      const async = Boolean(nameMatch[1]);
+      const name = nameMatch[2];
+      var remaining = contents.slice(nameMatch[0].length);
 
-      const async = !!declaration[1];
-      const name = declaration[2];
-      const paramString = declaration[3];
+      // remove type parameters
+      if (remaining.startsWith("<")) {
+        var cursor = 1; // skip peeked '<'
+        var depth = 1; // already entered first bracket pair
+        for (; depth > 0 && cursor < remaining.length; cursor++) {
+          switch (remaining[cursor]) {
+            case "<":
+              depth++;
+              break;
+            case ">":
+              depth--;
+              break;
+          }
+        }
+
+        if (depth > 0) {
+          throw new SyntaxError(
+            `Function ${name} has an unclosed generic type. Missing ${depth} closing angle bracket(s).`,
+          );
+        }
+        remaining = remaining.slice(cursor).trimStart();
+      }
+
+      // parse function parameters
+      assert(
+        remaining.startsWith("("),
+        new SyntaxError(`Function ${name} is missing parameter list start. Found:\n\n\t${remaining.slice(0, 100)}`),
+      );
+      const paramMatch = remaining.match(/^\(([^)]*)\)(?:\s*:\s*([^{\n]+))?\s*{?/);
+      if (!paramMatch)
+        throw new SyntaxError(
+          `Could not parse parameters for function ${name}:\n` + contents.slice(0, contents.indexOf("\n")),
+        );
+      const paramString = paramMatch[1];
       const params =
         paramString.trim().length === 0 ? [] : paramString.split(",").map(x => x.replace(/:.+$/, "").trim());
       if (params[0] === "this") {
         params.shift();
       }
 
-      const { result, rest } = sliceSourceCode(contents.slice(declaration[0].length - 1), true, x =>
+      const { result, rest } = sliceSourceCode(remaining.slice(paramMatch[0].length - 1), true, x =>
         globalThis.requireTransformer(x, SRC_DIR + "/" + basename),
       );
 

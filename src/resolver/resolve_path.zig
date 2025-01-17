@@ -2,7 +2,7 @@ const tester = @import("../test/tester.zig");
 const std = @import("std");
 const strings = @import("../string_immutable.zig");
 const FeatureFlags = @import("../feature_flags.zig");
-const default_allocator = @import("../memory_allocator.zig").c_allocator;
+const default_allocator = @import("../allocators/memory_allocator.zig").c_allocator;
 const bun = @import("root").bun;
 const Fs = @import("../fs.zig");
 
@@ -682,13 +682,16 @@ pub fn windowsFilesystemRootT(comptime T: type, path: []const T) []const T {
         }
     }
 
-    // UNC
+    // UNC and device paths
     if (path.len >= 5 and
         Platform.windows.isSeparatorT(T, path[0]) and
         Platform.windows.isSeparatorT(T, path[1]) and
-        !Platform.windows.isSeparatorT(T, path[2]) and
-        path[2] != '.')
+        !Platform.windows.isSeparatorT(T, path[2]))
     {
+        // device path
+        if (path[2] == '.' and Platform.windows.isSeparatorT(T, path[3])) return path[0..4];
+
+        // UNC
         if (bun.strings.indexOfAnyT(T, path[3..], "/\\")) |idx| {
             if (bun.strings.indexOfAnyT(T, path[4 + idx ..], "/\\")) |idx_second| {
                 return path[0 .. idx + idx_second + 4 + 1]; // +1 to skip second separator
@@ -1252,9 +1255,11 @@ pub fn joinAbs(cwd: []const u8, comptime _platform: Platform, part: []const u8) 
     return joinAbsString(cwd, &.{part}, _platform);
 }
 
-// Convert parts of potentially invalid file paths into a single valid filpeath
-// without querying the filesystem
-// This is the equivalent of path.resolve
+/// Convert parts of potentially invalid file paths into a single valid filpeath
+/// without querying the filesystem
+/// This is the equivalent of path.resolve
+///
+/// Returned path is stored in a temporary buffer. It must be copied if it needs to be stored.
 pub fn joinAbsString(_cwd: []const u8, parts: anytype, comptime _platform: Platform) []const u8 {
     return joinAbsStringBuf(
         _cwd,
@@ -1264,6 +1269,11 @@ pub fn joinAbsString(_cwd: []const u8, parts: anytype, comptime _platform: Platf
     );
 }
 
+/// Convert parts of potentially invalid file paths into a single valid filpeath
+/// without querying the filesystem
+/// This is the equivalent of path.resolve
+///
+/// Returned path is stored in a temporary buffer. It must be copied if it needs to be stored.
 pub fn joinAbsStringZ(_cwd: []const u8, parts: anytype, comptime _platform: Platform) [:0]const u8 {
     return joinAbsStringBufZ(
         _cwd,

@@ -1626,6 +1626,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             if (callback == .zero) {
                 if (handlers.promise.trySwap()) |promise| {
+                    handlers.promise.deinit();
                     if (this.this_value != .zero) {
                         this.this_value = .zero;
                     }
@@ -1633,7 +1634,7 @@ fn NewSocket(comptime ssl: bool) type {
 
                     // reject the promise on connect() error
                     const err_value = err.toErrorInstance(globalObject);
-                    promise.asPromise().?.rejectOnNextTick(globalObject, err_value);
+                    promise.asPromise().?.reject(globalObject, err_value);
                 }
 
                 return;
@@ -1657,7 +1658,7 @@ fn NewSocket(comptime ssl: bool) type {
                 // The error is effectively handled, but we should still reject the promise.
                 var promise = val.asPromise().?;
                 const err_ = err.toErrorInstance(globalObject);
-                promise.rejectOnNextTickAsHandled(globalObject, err_);
+                promise.rejectAsHandled(globalObject, err_);
             }
         }
         pub fn onConnectError(this: *This, _: Socket, errno: c_int) void {
@@ -3213,6 +3214,39 @@ fn NewSocket(comptime ssl: bool) type {
 
             if (cert) |x509| {
                 return X509.toJS(x509, globalObject);
+            }
+            return JSValue.jsUndefined();
+        }
+
+        pub fn getPeerX509Certificate(
+            this: *This,
+            globalObject: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
+        ) bun.JSError!JSValue {
+            if (comptime ssl == false) {
+                return JSValue.jsUndefined();
+            }
+            const ssl_ptr = this.socket.ssl() orelse return JSValue.jsUndefined();
+            const cert = BoringSSL.SSL_get_peer_certificate(ssl_ptr);
+            if (cert) |x509| {
+                return X509.toJSObject(x509, globalObject);
+            }
+            return JSValue.jsUndefined();
+        }
+
+        pub fn getX509Certificate(
+            this: *This,
+            globalObject: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
+        ) bun.JSError!JSValue {
+            if (comptime ssl == false) {
+                return JSValue.jsUndefined();
+            }
+
+            const ssl_ptr = this.socket.ssl() orelse return JSValue.jsUndefined();
+            const cert = BoringSSL.SSL_get_certificate(ssl_ptr);
+            if (cert) |x509| {
+                return X509.toJSObject(x509.ref(), globalObject);
             }
             return JSValue.jsUndefined();
         }

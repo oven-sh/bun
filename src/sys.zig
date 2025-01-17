@@ -3099,7 +3099,7 @@ pub fn directoryExistsAt(dir: anytype, subpath: anytype) JSC.Maybe(bool) {
     return switch (fstatat(dir_fd, subpath)) {
         .err => |err| {
             if (err.getErrno() == .EXIST) return .{ .result = false };
-            return err;
+            return .{ .err = err };
         },
         .result => |result| .{ .result = S.ISDIR(result.mode) },
     };

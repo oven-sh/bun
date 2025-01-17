@@ -123,8 +123,7 @@ pub const MultiPartUpload = struct {
                 },
                 .etag => |etag| {
                     log("onPartResponse {} success", .{this.partNumber});
-
-                    bun.default_allocator.free(this.allocatedSlice());
+                    this.freeAllocatedSlice();
                     // we will need to order this
                     this.ctx.multipart_etags.append(bun.default_allocator, .{
                         .number = this.partNumber,

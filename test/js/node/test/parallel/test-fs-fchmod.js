@@ -36,7 +36,7 @@ assert.throws(() => fs.fchmod(1, '123x', common.mustNotCall()), {
   const errObj = {
     code: 'ERR_OUT_OF_RANGE',
     name: 'RangeError',
-    message: 'The value of "fd" is out of range. It must be >= 0 && <= ' +
+    message: 'The value of "fd" is out of range. It must be >= 0 and <= ' +
              `2147483647. Received ${input}`
   };
   assert.throws(() => fs.fchmod(input, 0o666, () => {}), errObj);
@@ -47,7 +47,7 @@ assert.throws(() => fs.fchmod(1, '123x', common.mustNotCall()), {
   const errObj = {
     code: 'ERR_OUT_OF_RANGE',
     name: 'RangeError',
-    message: 'The value of "mode" is out of range. It must be >= 0 && <= ' +
+    message: 'The value of "mode" is out of range. It must be >= 0 and <= ' +
              `4294967295. Received ${input}`
   };
 

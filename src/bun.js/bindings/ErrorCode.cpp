@@ -24,7 +24,7 @@
 #include "JavaScriptCore/ErrorInstanceInlines.h"
 #include "JavaScriptCore/JSInternalFieldObjectImplInlines.h"
 #include "JSDOMException.h"
-
+#include <openssl/err.h>
 #include "ErrorCode.h"
 
 JSC_DEFINE_HOST_FUNCTION(NodeError_proto_toString, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -341,6 +341,13 @@ WTF::String determineSpecificType(JSC::JSGlobalObject* globalObject, JSValue val
     return str;
 }
 
+extern "C" BunString Bun__ErrorCode__determineSpecificType(JSC::JSGlobalObject* globalObject, EncodedJSValue value)
+{
+    JSValue jsValue = JSValue::decode(value);
+    WTF::String typeString = determineSpecificType(globalObject, jsValue);
+    return Bun::toStringRef(typeString);
+}
+
 namespace Message {
 
 WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const StringView& arg_name, const StringView& expected_type, JSValue actual_value)
@@ -634,6 +641,20 @@ JSC::EncodedJSValue ASSERTION(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* 
     return {};
 }
 
+JSC::EncodedJSValue CRYPTO_INVALID_CURVE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    auto message = "Invalid EC curve name"_s;
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_CURVE, message));
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_JWK_UNSUPPORTED_CURVE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& curve)
+{
+    auto message = makeString("Unsupported JWK EC curve: "_s, curve);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_JWK_UNSUPPORTED_CURVE, message));
+    return {};
+}
+
 }
 
 static JSC::JSValue ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue arg0, JSValue arg1, JSValue arg2)
@@ -678,6 +699,19 @@ static JSValue ERR_INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
 extern "C" JSC::EncodedJSValue Bun__createErrorWithCode(JSC::JSGlobalObject* globalObject, ErrorCode code, BunString* message)
 {
     return JSValue::encode(createError(globalObject, code, message->toWTFString(BunString::ZeroCopy)));
+}
+
+void throwBoringSSLError(JSC::VM& vm, JSC::ThrowScope& scope, JSGlobalObject* globalObject, int errorCode)
+{
+    char buf[256] = { 0 };
+    ERR_error_string_n(static_cast<uint32_t>(errorCode), buf, sizeof(buf));
+    auto message = String::fromUTF8(buf);
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_STATE, message));
+}
+
+void throwCryptoOperationFailed(JSGlobalObject* globalObject, JSC::ThrowScope& scope)
+{
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Crypto operation failed"_s));
 }
 
 } // namespace Bun
@@ -740,7 +774,8 @@ JSC::JSObject* Bun::createInvalidThisError(JSC::JSGlobalObject* globalObject, JS
 
 JSC::EncodedJSValue Bun::throwError(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, Bun::ErrorCode code, const WTF::String& message)
 {
-    return JSC::JSValue::encode(scope.throwException(globalObject, createError(globalObject, code, message)));
+    scope.throwException(globalObject, createError(globalObject, code, message));
+    return {};
 }
 
 JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

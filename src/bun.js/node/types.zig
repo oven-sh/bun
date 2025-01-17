@@ -1533,13 +1533,13 @@ pub const FileSystemFlags = enum(Mode) {
         if (value.isInt32()) {
             const int: i32 = value.asInt32();
             if (int < min or int > max) {
-                return global.ERR_OUT_OF_RANGE(comptime std.fmt.comptimePrint("mode is out of range: >= {d} && <= {d}", .{ min, max }), .{}).throw();
+                return global.ERR_OUT_OF_RANGE(comptime std.fmt.comptimePrint("mode is out of range: >= {d} and <= {d}", .{ min, max }), .{}).throw();
             }
             return @enumFromInt(int);
         } else {
             const float = value.asNumber();
             if (std.math.isNan(float) or std.math.isInf(float) or float < min or float > max) {
-                return global.ERR_OUT_OF_RANGE(comptime std.fmt.comptimePrint("mode is out of range: >= {d} && <= {d}", .{ min, max }), .{}).throw();
+                return global.ERR_OUT_OF_RANGE(comptime std.fmt.comptimePrint("mode is out of range: >= {d} and <= {d}", .{ min, max }), .{}).throw();
             }
             return @enumFromInt(@as(i32, @intFromFloat(float)));
         }

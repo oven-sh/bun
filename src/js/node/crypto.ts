@@ -3126,11 +3126,7 @@ var require_decrypter = __commonJS({
 var require_browser5 = __commonJS({
   "node_modules/browserify-aes/browser.js"(exports) {
     var ciphers = require_encrypter(),
-      deciphers = require_decrypter(),
-      modes = require_list();
-    function getCiphers() {
-      return Object.keys(modes);
-    }
+      deciphers = require_decrypter();
     exports.createCipher = exports.Cipher = ciphers.createCipher;
     exports.createCipheriv = exports.Cipheriv = ciphers.createCipheriv;
     exports.createDecipher = exports.Decipher = deciphers.createDecipher;
@@ -3204,9 +3200,6 @@ var require_browser6 = __commonJS({
       if (((suite = suite.toLowerCase()), aesModes[suite])) return aes.createDecipheriv(suite, key, iv);
       if (desModes[suite]) return new DES({ key, iv, mode: suite, decrypt: !0 });
       throw new TypeError("invalid suite type");
-    }
-    function getCiphers() {
-      return Object.keys(desModes).concat(aes.getCiphers());
     }
     exports.createCipher = exports.Cipher = createCipher;
     exports.createCipheriv = exports.Cipheriv = createCipheriv;

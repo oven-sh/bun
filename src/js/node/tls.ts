@@ -1,5 +1,5 @@
 // Hardcoded module "node:tls"
-const { isArrayBufferView, isTypedArray } = require("node:util/types");
+const { isArrayBufferView, isArrayBuffer, isTypedArray } = require("node:util/types");
 const { addServerName } = require("../internal/net");
 const net = require("node:net");
 const { Duplex } = require("node:stream");
@@ -38,12 +38,11 @@ function parseCertString() {
 const rejectUnauthorizedDefault =
   process.env.NODE_TLS_REJECT_UNAUTHORIZED !== "0" && process.env.NODE_TLS_REJECT_UNAUTHORIZED !== "false";
 function isValidTLSArray(obj) {
-  if (typeof obj === "string" || isTypedArray(obj) || obj instanceof ArrayBuffer || obj instanceof Blob) return true;
+  if (typeof obj === "string" || isTypedArray(obj) || isArrayBuffer(obj) || $inheritsBlob(obj)) return true;
   if (Array.isArray(obj)) {
     for (var i = 0; i < obj.length; i++) {
       const item = obj[i];
-      if (typeof item !== "string" && !isTypedArray(item) && !(item instanceof ArrayBuffer) && !(item instanceof Blob))
-        return false;
+      if (typeof item !== "string" && !isTypedArray(item) && !isArrayBuffer(item) && !$inheritsBlob(item)) return false;
     }
     return true;
   }

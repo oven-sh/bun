@@ -1563,7 +1563,7 @@ function abortChildProcess(child, killSignal, reason) {
   if (!child) return;
   try {
     if (child.kill(killSignal)) {
-      child.emit("error", new AbortError(undefined, { cause: reason }));
+      child.emit("error", $makeAbortError(undefined, { cause: reason }));
     }
   } catch (err) {
     child.emit("error", err);
@@ -1610,7 +1610,7 @@ class ShimmedStdioOutStream extends EventEmitter {
 
 function validateMaxBuffer(maxBuffer) {
   if (maxBuffer != null && !(typeof maxBuffer === "number" && maxBuffer >= 0)) {
-    throw ERR_OUT_OF_RANGE("options.maxBuffer", "a positive number", maxBuffer);
+    throw $ERR_OUT_OF_RANGE("options.maxBuffer", "a positive number", maxBuffer);
   }
 }
 
@@ -1628,7 +1628,7 @@ function validateArgumentsNullCheck(args, propName) {
 
 function validateTimeout(timeout) {
   if (timeout != null && !(NumberIsInteger(timeout) && timeout >= 0)) {
-    throw ERR_OUT_OF_RANGE("timeout", "an unsigned integer", timeout);
+    throw $ERR_OUT_OF_RANGE("timeout", "an unsigned integer", timeout);
   }
 }
 
@@ -1697,18 +1697,6 @@ function toPathIfFileURL(fileURLOrPath) {
 var Error = globalThis.Error;
 var TypeError = globalThis.TypeError;
 var RangeError = globalThis.RangeError;
-
-// Node uses a slightly different abort error than standard DOM. See: https://github.com/nodejs/node/blob/main/lib/internal/errors.js
-class AbortError extends Error {
-  code = "ABORT_ERR";
-  name = "AbortError";
-  constructor(message = "The operation was aborted", options = undefined) {
-    if (options !== undefined && typeof options !== "object") {
-      throw $ERR_INVALID_ARG_TYPE("options", "object", options);
-    }
-    super(message, options);
-  }
-}
 
 function genericNodeError(message, options) {
   const err = new Error(message);
@@ -1848,29 +1836,6 @@ function genericNodeError(message, options) {
 //   },
 //   TypeError
 // );
-
-function ERR_OUT_OF_RANGE(str, range, input, replaceDefaultBoolean = false) {
-  // Node implementation:
-  // assert(range, 'Missing "range" argument');
-  // let msg = replaceDefaultBoolean
-  //   ? str
-  //   : `The value of "${str}" is out of range.`;
-  // let received;
-  // if (NumberIsInteger(input) && MathAbs(input) > 2 ** 32) {
-  //   received = addNumericalSeparator(String(input));
-  // } else if (typeof input === "bigint") {
-  //   received = String(input);
-  //   if (input > 2n ** 32n || input < -(2n ** 32n)) {
-  //     received = addNumericalSeparator(received);
-  //   }
-  //   received += "n";
-  // } else {
-  //   received = lazyInternalUtilInspect().inspect(input);
-  // }
-  // msg += ` It must be ${range}. Received ${received}`;
-  // return new RangeError(msg);
-  return new RangeError(`The value of ${str} is out of range. It must be ${range}. Received ${input}`);
-}
 
 function ERR_CHILD_PROCESS_STDIO_MAXBUFFER(stdio) {
   const err = Error(`${stdio} maxBuffer length exceeded`);

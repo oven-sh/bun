@@ -132,12 +132,7 @@ pub fn extractedSplitNewLinesFastPathStringsOnly(globalThis: *JSC.JSGlobalObject
     };
 }
 
-fn split(
-    comptime encoding: bun.strings.EncodingNonAscii,
-    globalThis: *JSC.JSGlobalObject,
-    allocator: Allocator,
-    str: *const bun.String,
-) bun.JSError!JSC.JSValue {
+fn split(comptime encoding: bun.strings.EncodingNonAscii, globalThis: *JSC.JSGlobalObject, allocator: Allocator, str: *const bun.String) bun.JSError!JSC.JSValue {
     var fallback = std.heap.stackFallback(1024, allocator);
     const alloc = fallback.get();
     const Char = switch (encoding) {
@@ -193,4 +188,14 @@ pub fn SplitNewlineIterator(comptime T: type) type {
             }
         }
     };
+}
+
+pub fn normalizeEncoding(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const input = callframe.argument(0);
+    const str = bun.String.fromJS(input, globalThis);
+    bun.assert(str.tag != .Dead);
+    defer str.deref();
+    if (str.length() == 0) return JSC.Node.Encoding.utf8.toJS(globalThis);
+    if (str.inMapCaseInsensitive(JSC.Node.Encoding.map)) |enc| return enc.toJS(globalThis);
+    return JSC.JSValue.jsUndefined();
 }

@@ -6,11 +6,13 @@ type ErrorCodeMapping = Array<
     /** Constructor **/
     typeof TypeError | typeof RangeError | typeof Error | typeof SyntaxError,
     /** error.name. Defaults to `Constructor.name` (that is, mapping[1].name  */
-    string,
+    string?,
+    (typeof TypeError | typeof RangeError | typeof Error | typeof SyntaxError)?,
+    (typeof TypeError | typeof RangeError | typeof Error | typeof SyntaxError)?,
   ]
 >;
 
-export default [
+const errors: ErrorCodeMapping = [
   ["ABORT_ERR", Error, "AbortError"],
   ["ERR_CRYPTO_INVALID_DIGEST", TypeError],
   ["ERR_ENCODING_INVALID_ENCODED_DATA", TypeError],
@@ -29,11 +31,11 @@ export default [
   ["ERR_PARSE_ARGS_UNKNOWN_OPTION", TypeError],
   ["ERR_SERVER_NOT_RUNNING", Error],
   ["ERR_SOCKET_BAD_TYPE", TypeError],
-  ["ERR_STREAM_ALREADY_FINISHED", TypeError],
-  ["ERR_STREAM_CANNOT_PIPE", TypeError],
-  ["ERR_STREAM_DESTROYED", TypeError],
+  ["ERR_STREAM_ALREADY_FINISHED", Error],
+  ["ERR_STREAM_CANNOT_PIPE", Error],
+  ["ERR_STREAM_DESTROYED", Error],
   ["ERR_STREAM_NULL_VALUES", TypeError],
-  ["ERR_STREAM_WRITE_AFTER_END", TypeError],
+  ["ERR_STREAM_WRITE_AFTER_END", Error],
   ["ERR_ZLIB_INITIALIZATION_FAILED", Error],
   ["ERR_STRING_TOO_LONG", Error],
   ["ERR_CRYPTO_SCRYPT_INVALID_PARAMETER", Error],
@@ -44,7 +46,7 @@ export default [
   ["ERR_BUFFER_TOO_LARGE", RangeError],
   ["ERR_BROTLI_INVALID_PARAM", RangeError],
   ["ERR_UNKNOWN_ENCODING", TypeError],
-  ["ERR_INVALID_STATE", Error],
+  ["ERR_INVALID_STATE", Error, undefined, TypeError, RangeError],
   ["ERR_BUFFER_OUT_OF_BOUNDS", RangeError],
   ["ERR_UNKNOWN_SIGNAL", TypeError],
   ["ERR_SOCKET_BAD_PORT", RangeError],
@@ -67,6 +69,12 @@ export default [
   ["ERR_SOCKET_DGRAM_NOT_CONNECTED", Error],
   ["ERR_SOCKET_DGRAM_NOT_RUNNING", Error],
   ["ERR_INVALID_CURSOR_POS", TypeError],
+  ["ERR_MULTIPLE_CALLBACK", Error],
+  ["ERR_STREAM_PREMATURE_CLOSE", Error],
+  ["ERR_METHOD_NOT_IMPLEMENTED", Error],
+  ["ERR_STREAM_UNSHIFT_AFTER_END_EVENT", Error],
+  ["ERR_STREAM_PUSH_AFTER_EOF", Error],
+  ["ERR_STREAM_UNABLE_TO_PIPE", Error],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError],
@@ -155,4 +163,5 @@ export default [
   ["ERR_S3_INVALID_ENDPOINT", Error],
   ["ERR_S3_INVALID_SIGNATURE", Error],
   ["ERR_S3_INVALID_SESSION_TOKEN", Error],
-] as ErrorCodeMapping;
+] as const;
+export default errors;

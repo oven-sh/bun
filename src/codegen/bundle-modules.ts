@@ -19,6 +19,7 @@ import { getJS2NativeCPP, getJS2NativeZig } from "./generate-js2native";
 import { cap, declareASCIILiteral, writeIfNotChanged } from "./helpers";
 import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
 import { define } from "./replacements";
+import jsclasses from "./../bun.js/bindings/js_classes";
 
 const BASE = path.join(import.meta.dir, "../js");
 const debug = process.argv[2] === "--debug=ON";
@@ -457,16 +458,33 @@ writeIfNotChanged(
 `;
 
     for (let i = 0; i < ErrorCode.length; i++) {
-      const [code, _, name] = ErrorCode[i];
+      const [code, constructor, name, ...other_constructors] = ErrorCode[i];
       dts += `
 /**
- * Generate a ${name} error with the \`code\` property set to ${code}.
+ * Generate a ${name ?? constructor.name} error with the \`code\` property set to ${code}.
  *
  * @param msg The error message
  * @param args Additional arguments
  */
 declare function $${code}(msg: string, ...args: any[]): ${name};
 `;
+
+      for (const con of other_constructors) {
+        if (con == null) continue;
+        dts += `
+/**
+ * Generate a ${con.name} error with the \`code\` property set to ${code}.
+ *
+ * @param msg The error message
+ * @param args Additional arguments
+ */
+declare function $${code}_${con.name}(msg: string, ...args: any[]): ${name};
+`;
+      }
+    }
+
+    for (const [name] of jsclasses) {
+      dts += `\ndeclare function $inherits${name}(value: any): boolean;`;
     }
 
     return dts;

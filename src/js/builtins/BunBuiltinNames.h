@@ -115,6 +115,7 @@ using namespace JSC;
     macro(inFlightCloseRequest) \
     macro(inFlightWriteRequest) \
     macro(initializeWith) \
+    macro(inherits) \
     macro(internalModuleRegistry) \
     macro(internalRequire) \
     macro(internalStream) \
@@ -133,10 +134,10 @@ using namespace JSC;
     macro(Loader) \
     macro(localStreams) \
     macro(main) \
+    macro(makeAbortError) \
     macro(makeDOMException) \
     macro(makeErrorWithCode) \
     macro(makeGetterTypeError) \
-    macro(makeThisTypeError) \
     macro(method) \
     macro(mockedFunction) \
     macro(nextTick) \

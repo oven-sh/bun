@@ -183,11 +183,11 @@ typedef struct ZigStackTrace {
 } ZigStackTrace;
 
 typedef struct ZigException {
-    unsigned char code;
+    unsigned char type;
     uint16_t runtime_type;
     int errno_;
     BunString syscall;
-    BunString code_;
+    BunString system_code;
     BunString path;
     BunString name;
     BunString message;

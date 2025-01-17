@@ -674,7 +674,7 @@ endif
 .PHONY: assert-deps
 assert-deps:
 	@echo "Checking if the required utilities are available..."
-	@if [ $(CLANG_VERSION) -lt "15" ]; then echo -e "ERROR: clang version >=15 required, found: $(CLANG_VERSION). Install with:\n\n    $(POSIX_PKG_MANAGER) install llvm@18"; exit 1; fi
+	@if [ $(CLANG_VERSION) -lt "18" ]; then echo -e "ERROR: clang version >=18 required, found: $(CLANG_VERSION). Install with:\n\n    $(POSIX_PKG_MANAGER) install llvm@18"; exit 1; fi
 	@cmake --version >/dev/null 2>&1 || (echo -e "ERROR: cmake is required."; exit 1)
 	@$(PYTHON) --version >/dev/null 2>&1 || (echo -e "ERROR: python is required."; exit 1)
 	@$(ESBUILD) --version >/dev/null 2>&1 || (echo -e "ERROR: esbuild is required."; exit 1)

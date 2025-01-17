@@ -20,6 +20,13 @@ function linklocal() {
     }
   }
 
+  // Prefer en0
+  for (const candidate of candidates) {
+    if (candidate.ifname === "en0") {
+      return candidate;
+    }
+  }
+
   // Prefer non-loopback interfaces
   for (const candidate of candidates) {
     if (!candidate.ifname.startsWith("lo")) {

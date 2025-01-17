@@ -15,6 +15,7 @@ const ArrayList = std.ArrayListUnmanaged;
 pub const DeclarationList = ArrayList(css.Property);
 
 const BackgroundHandler = css.css_properties.background.BackgroundHandler;
+const BorderHandler = css.css_properties.border.BorderHandler;
 const FallbackHandler = css.css_properties.prefix_handler.FallbackHandler;
 const MarginHandler = css.css_properties.margin_padding.MarginHandler;
 const PaddingHandler = css.css_properties.margin_padding.PaddingHandler;
@@ -330,6 +331,7 @@ pub fn parse_declaration(
 
 pub const DeclarationHandler = struct {
     background: BackgroundHandler = .{},
+    border: BorderHandler = .{},
     size: SizeHandler = .{},
     margin: MarginHandler = .{},
     padding: PaddingHandler = .{},
@@ -353,6 +355,7 @@ pub const DeclarationHandler = struct {
         // }
 
         this.background.finalize(&this.decls, context);
+        this.border.finalize(&this.decls, context);
         this.size.finalize(&this.decls, context);
         this.margin.finalize(&this.decls, context);
         this.padding.finalize(&this.decls, context);
@@ -365,6 +368,7 @@ pub const DeclarationHandler = struct {
     pub fn handleProperty(this: *DeclarationHandler, property: *const css.Property, context: *css.PropertyHandlerContext) bool {
         // return this.background.handleProperty(property, &this.decls, context);
         return this.background.handleProperty(property, &this.decls, context) or
+            this.border.handleProperty(property, &this.decls, context) or
             this.size.handleProperty(property, &this.decls, context) or
             this.margin.handleProperty(property, &this.decls, context) or
             this.padding.handleProperty(property, &this.decls, context) or

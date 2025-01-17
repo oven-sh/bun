@@ -4147,6 +4147,16 @@ pub inline fn take(val: anytype) ?bun.meta.OptionalChild(@TypeOf(val)) {
     return null;
 }
 
+/// `val` must be a pointer to an optional type (e.g. `*?T`)
+///
+/// This function deinitializes the value and sets the optional to null.
+pub inline fn clear(val: anytype, allocator: std.mem.Allocator) void {
+    if (val.*) |*v| {
+        v.deinit(allocator);
+        val.* = null;
+    }
+}
+
 pub inline fn wrappingNegation(val: anytype) @TypeOf(val) {
     return 0 -% val;
 }

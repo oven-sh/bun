@@ -25,6 +25,17 @@ const DashedIdentFns = css.DashedIdentFns;
 const Ident = css.Ident;
 const IdentFns = css.IdentFns;
 
+pub fn slice(comptime T: type, val: *const T) []const bun.meta.looksLikeListContainerType(T).?.child {
+    if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
+        return switch (result.list) {
+            .array_list => val.items,
+            .baby_list => val.sliceConst(),
+            .small_list => val.slice(),
+        };
+    }
+    @compileError("Unsupported type for `slice`: " ++ @typeName(T));
+}
+
 pub fn isCompatible(comptime T: type, val: *const T, browsers: bun.css.targets.Browsers) bool {
     if (@hasDecl(T, "isCompatible")) return T.isCompatible(val, browsers);
     const tyinfo = @typeInfo(T);
@@ -33,17 +44,17 @@ pub fn isCompatible(comptime T: type, val: *const T, browsers: bun.css.targets.B
         return isCompatible(TT, val.*, browsers);
     }
     if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
-        const slice = switch (result.list) {
+        const slc = switch (result.list) {
             .array_list => val.items,
             .baby_list => val.sliceConst(),
             .small_list => val.sliceConst(),
         };
-        for (slice) |*item| {
+        for (slc) |*item| {
             if (!isCompatible(result.child, item, browsers)) return false;
         }
         return true;
     }
-    @compileError("Unsupported type: " ++ @typeName(T));
+    @compileError("Unsupported type for `isCompatible`: " ++ @typeName(T));
 }
 
 pub inline fn parseWithOptions(comptime T: type, input: *Parser, options: *const ParserOptions) Result(T) {
@@ -235,15 +246,15 @@ pub inline fn deepClone(comptime T: type, this: *const T, allocator: Allocator) 
             return bun.create(allocator, TT, deepClone(TT, this.*, allocator));
         }
         if (comptime tyinfo.Pointer.size == .Slice) {
-            var slice = allocator.alloc(tyinfo.Pointer.child, this.len) catch bun.outOfMemory();
+            var slc = allocator.alloc(tyinfo.Pointer.child, this.len) catch bun.outOfMemory();
             if (comptime bun.meta.isSimpleCopyType(tyinfo.Pointer.child) or tyinfo.Pointer.child == []const u8) {
-                @memcpy(slice, this.*);
+                @memcpy(slc, this.*);
             } else {
                 for (this.*, 0..) |*e, i| {
-                    slice[i] = deepClone(tyinfo.Pointer.child, e, allocator);
+                    slc[i] = deepClone(tyinfo.Pointer.child, e, allocator);
                 }
             }
-            return slice;
+            return slc;
         }
         @compileError("Deep clone not supported for this kind of pointer: " ++ @tagName(tyinfo.Pointer.size) ++ " (" ++ @typeName(T) ++ ")");
     }

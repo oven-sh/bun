@@ -703,12 +703,14 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
         setsockopt(listenFd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, &optval2, sizeof(optval2));
 #endif
     } else {
-#if defined(SO_REUSEPORT)
         if((options & LIBUS_LISTEN_REUSE_PORT)) {
             int optval2 = 1;
+#if defined(SO_REUSEPORT)
             setsockopt(listenFd, SOL_SOCKET, SO_REUSEPORT, &optval2, sizeof(optval2));
-        }
+#else
+            setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, &optval2, sizeof(optval2));
 #endif
+        }
     }
 
 #if defined(SO_REUSEADDR)
@@ -997,12 +999,14 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
         setsockopt(listenFd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, &optval2, sizeof(optval2));
 #endif
     } else {
-#if defined(SO_REUSEPORT)
         if((options & LIBUS_LISTEN_REUSE_PORT)) {
             int optval2 = 1;
+#if defined(SO_REUSEPORT)
             setsockopt(listenFd, SOL_SOCKET, SO_REUSEPORT, &optval2, sizeof(optval2));
-        }
+#else
+            setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, &optval2, sizeof(optval2));
 #endif
+        }
     }
 
 #ifdef IPV6_V6ONLY

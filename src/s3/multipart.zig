@@ -469,14 +469,17 @@ pub const MultiPartUpload = struct {
             }
             // if is one big chunk we can pass ownership and avoid dupe
             const can_pass_ownership = len == this.buffered.items.len;
+            // we need to know the allocated size to free the memory later
             var allocated_size = len;
             const slice = brk: {
                 if (can_pass_ownership) {
+                    log("processMultiPart {s} {d} pass ownership", .{ this.path, part_size });
                     allocated_size = this.buffered.capacity;
                     this.buffered = .{};
                     // pass ownership
                     break :brk buffer[0..len];
                 } else {
+                    log("processMultiPart {s} {d} dupe", .{ this.path, part_size });
                     // dupe the buffer and reuse the buffer for new parts
                     break :brk bun.default_allocator.dupe(u8, buffer[0..len]) catch bun.outOfMemory();
                 }

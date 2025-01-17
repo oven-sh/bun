@@ -2505,7 +2505,8 @@ pub const Arguments = struct {
             if (arguments.next()) |current| {
                 arguments.eat();
                 if (current.isNumber() or current.isBigInt()) {
-                    args.offset = current.to(u52);
+                    const buf_len = buffer.slice().len;
+                    args.offset = @intCast(try JSC.Node.validators.validateInteger(ctx, current, "offset", .{}, 0, @intCast(buf_len)));
 
                     if (arguments.remaining.len < 1) {
                         return ctx.throwInvalidArguments("length is required", .{});
@@ -2516,16 +2517,15 @@ pub const Arguments = struct {
                     defined_length = true;
 
                     if (arg_length.isNumber() or arg_length.isBigInt()) {
-                        args.length = arg_length.to(u52);
+                        args.length = @intCast(try JSC.Node.validators.validateInteger(ctx, arg_length, "length", .{}, 0, @intCast(buf_len - args.offset)));
                     }
 
                     if (arguments.next()) |arg_position| {
                         arguments.eat();
-                        if (arg_position.isNumber() or arg_position.isBigInt()) {
-                            const num = arg_position.to(i52);
-                            if (num >= 0)
-                                args.position = @as(ReadPosition, @intCast(num));
-                        }
+                        const num: i64 = try JSC.Node.validators.validateIntegerOrBigInt(ctx, arg_position, "position", .{}, -1, 9007199254740991);
+
+                        if (num >= 0)
+                            args.position = @as(ReadPosition, @intCast(num));
                     }
                 } else if (current.isObject()) {
                     if (try current.getTruthy(ctx, "offset")) |num| {
@@ -2561,6 +2561,12 @@ pub const Arguments = struct {
                     return ctx.throwRangeError(
                         @as(f64, @floatFromInt(args.length)),
                         .{ .field_name = "length", .max = @intCast(@min(buf_length, std.math.maxInt(i64))) },
+                    );
+                }
+                if (args.offset +| args.length > buf_length) {
+                    return ctx.throwRangeError(
+                        @as(f64, @floatFromInt(args.offset + args.length)),
+                        .{ .field_name = "length", .max = @intCast(buf_length -| args.offset) },
                     );
                 }
             }

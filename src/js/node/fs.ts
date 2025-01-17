@@ -1397,6 +1397,7 @@ function encodeRealpathResult(result, encoding) {
   return asBuffer.toString(encoding);
 }
 
+let assertEncodingForWindows: any = undefined;
 const realpathSync: any =
   process.platform !== "win32"
     ? fs.realpathSync.bind(fs)
@@ -1405,6 +1406,7 @@ const realpathSync: any =
         if (options) {
           if (typeof options === "string") encoding = options;
           else encoding = options?.encoding;
+          encoding && (assertEncodingForWindows ?? $newZigFunction('types.zig', 'jsAssertEncodingValid', 1))(encoding)
         }
         // This function is ported 1:1 from node.js, to emulate how it is unable to
         // resolve subst drives to their underlying location. The native call is
@@ -1523,6 +1525,7 @@ const realpath: any =
         if (options) {
           if (typeof options === "string") encoding = options;
           else encoding = options?.encoding;
+          encoding && (assertEncodingForWindows ?? $newZigFunction('types.zig', 'jsAssertEncodingValid', 1))(encoding)
         }
         p = getValidatedPath(p);
         throwIfNullBytesInFileName(p);

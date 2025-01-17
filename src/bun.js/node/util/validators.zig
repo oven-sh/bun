@@ -70,6 +70,31 @@ pub fn validateInteger(globalThis: *JSGlobalObject, value: JSValue, comptime nam
     return num;
 }
 
+pub fn validateIntegerOrBigInt(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, min_value: ?i64, max_value: ?i64) bun.JSError!i64 {
+    const min = min_value orelse JSC.MIN_SAFE_INTEGER;
+    const max = max_value orelse JSC.MAX_SAFE_INTEGER;
+
+    if (value.isBigInt()) {
+        const num = value.to(i64);
+        if (num < min or num > max) {
+            return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} && <= {d}. Received {}", name_args ++ .{ min, max, num });
+        }
+        return num;
+    }
+
+    if (!value.isNumber())
+        return throwErrInvalidArgType(globalThis, name_fmt, name_args, "number", value);
+    if (!value.isAnyInt()) {
+        return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be an integer. Received {}", name_args ++ .{bun.fmt.double(value.asNumber())});
+    }
+
+    const num = value.asInt52();
+    if (num < min or num > max) {
+        return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} && <= {d}. Received {}", name_args ++ .{ min, max, num });
+    }
+    return num;
+}
+
 pub fn validateInt32(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, min_value: ?i32, max_value: ?i32) bun.JSError!i32 {
     const min = min_value orelse std.math.minInt(i32);
     const max = max_value orelse std.math.maxInt(i32);

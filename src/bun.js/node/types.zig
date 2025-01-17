@@ -793,6 +793,13 @@ pub const Encoding = enum(u8) {
     }
 };
 
+/// This is used on the windows implementation of realpath, which is in javascript
+pub fn jsAssertEncodingValid(global: *JSC.JSGlobalObject, call_frame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const value = call_frame.argument(0);
+    _ = try Encoding.assert(value, global, .utf8);
+    return .undefined;
+}
+
 const PathOrBuffer = union(Tag) {
     path: bun.PathString,
     buffer: Buffer,

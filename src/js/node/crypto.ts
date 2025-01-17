@@ -4,6 +4,7 @@ var __getOwnPropNames = Object.getOwnPropertyNames;
 const StreamModule = require("node:stream");
 const BufferModule = require("node:buffer");
 const StringDecoder = require("node:string_decoder").StringDecoder;
+const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 const { CryptoHasher } = Bun;
 const {
   symmetricKeySize,
@@ -33,6 +34,7 @@ const {
   certExportPublicKey,
   certExportChallenge,
   getCiphers,
+  _getCipherInfo,
 } = $cpp("NodeCrypto.cpp", "createNodeCryptoBinding");
 
 const { POINT_CONVERSION_COMPRESSED, POINT_CONVERSION_HYBRID, POINT_CONVERSION_UNCOMPRESSED } =
@@ -44,7 +46,7 @@ const {
   pbkdf2Sync: pbkdf2Sync_,
 } = $zig("node_crypto_binding.zig", "createNodeCryptoBindingZig");
 
-const { validateObject, validateString } = require("internal/validators");
+const { validateObject, validateString, validateInt32 } = require("internal/validators");
 
 function verifySpkac(spkac, encoding) {
   return certVerifySpkac(getArrayBufferOrView(spkac, "spkac", encoding));
@@ -69,6 +71,27 @@ Certificate.prototype = {};
 Certificate.verifySpkac = verifySpkac;
 Certificate.exportPublicKey = exportPublicKey;
 Certificate.exportChallenge = exportChallenge;
+
+function getCipherInfo(nameOrNid, options) {
+  if (typeof nameOrNid !== "string" && typeof nameOrNid !== "number") {
+    throw $ERR_INVALID_ARG_TYPE("nameOrNid", ["string", "number"], nameOrNid);
+  }
+  if (typeof nameOrNid === "number") validateInt32(nameOrNid, "nameOrNid");
+  let keyLength, ivLength;
+  if (options !== undefined) {
+    validateObject(options, "options");
+    ({ keyLength, ivLength } = options);
+    if (keyLength !== undefined) validateInt32(keyLength, "options.keyLength");
+    if (ivLength !== undefined) validateInt32(ivLength, "options.ivLength");
+  }
+
+  const ret = _getCipherInfo({}, nameOrNid, keyLength, ivLength);
+  if (ret !== undefined) {
+    ret.name &&= ret.name;
+    ret.type &&= StringPrototypeToLowerCase.$call(ret.type);
+  }
+  return ret;
+}
 
 function randomInt(min, max, callback) {
   if (max == null) {
@@ -12118,6 +12141,7 @@ crypto_exports.getRandomValues = getRandomValues;
 crypto_exports.randomUUID = randomUUID;
 crypto_exports.randomInt = randomInt;
 crypto_exports.getCurves = getCurves;
+crypto_exports.getCipherInfo = getCipherInfo;
 crypto_exports.scrypt = scrypt;
 crypto_exports.scryptSync = scryptSync;
 crypto_exports.timingSafeEqual = timingSafeEqual;

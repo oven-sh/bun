@@ -299,6 +299,118 @@ JSC_DEFINE_HOST_FUNCTION(jsCertExportChallenge, (JSC::JSGlobalObject * lexicalGl
     return JSValue::encode(bufferResult);
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ncrypto::MarkPopErrorOnReturn mark_pop_error_on_return;
+
+    if (callFrame->argumentCount() < 2) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    if (!callFrame->argument(0).isObject()) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    JSObject* info = callFrame->argument(0).getObject();
+
+    // Get cipher from name or nid
+    ncrypto::Cipher cipher;
+    if (callFrame->argument(1).isString()) {
+        auto cipherName = callFrame->argument(1).toWTFString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        cipher = ncrypto::Cipher::FromName(cipherName.utf8().data());
+    } else if (callFrame->argument(1).isInt32()) {
+        int nid = callFrame->argument(1).asInt32();
+        cipher = ncrypto::Cipher::FromNid(nid);
+    }
+
+    if (!cipher) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    int iv_length = cipher.getIvLength();
+    int key_length = cipher.getKeyLength();
+    int block_length = cipher.getBlockSize();
+
+    // Test key and IV lengths if provided
+    if (callFrame->argumentCount() >= 3 && (callFrame->argument(2).isInt32() || callFrame->argument(3).isInt32())) {
+        auto ctx = ncrypto::CipherCtxPointer::New();
+        if (!ctx.init(cipher, true)) {
+            return JSValue::encode(jsUndefined());
+        }
+
+        if (callFrame->argument(2).isInt32()) {
+            int check_len = callFrame->argument(2).asInt32();
+            if (!ctx.setKeyLength(check_len)) {
+                return JSValue::encode(jsUndefined());
+            }
+            key_length = check_len;
+        }
+
+        if (callFrame->argument(3).isInt32()) {
+            int check_len = callFrame->argument(3).asInt32();
+            switch (cipher.getMode()) {
+            case EVP_CIPH_CCM_MODE:
+                if (check_len < 7 || check_len > 13)
+                    return JSValue::encode(jsUndefined());
+                break;
+            case EVP_CIPH_GCM_MODE:
+            case EVP_CIPH_OCB_MODE:
+                if (!ctx.setIvLength(check_len)) {
+                    return JSValue::encode(jsUndefined());
+                }
+                break;
+            default:
+                if (check_len != iv_length)
+                    return JSValue::encode(jsUndefined());
+            }
+            iv_length = check_len;
+        }
+    }
+
+    // Set mode if available
+    auto mode_label = cipher.getModeLabel();
+    if (!mode_label.empty()) {
+        info->putDirect(vm, PropertyName(Identifier::fromString(vm, "mode"_s)),
+            jsString(vm, String::fromUTF8({ mode_label.data(), mode_label.length() })));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    // Set name
+    auto name = cipher.getName();
+    info->putDirect(vm, PropertyName(Identifier::fromString(vm, "name"_s)),
+        jsString(vm, String::fromUTF8({ name.data(), name.length() })));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // Set nid
+    info->putDirect(vm, PropertyName(Identifier::fromString(vm, "nid"_s)),
+        jsNumber(cipher.getNid()));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // Set blockSize for non-stream ciphers
+    if (cipher.getMode() != EVP_CIPH_STREAM_CIPHER) {
+        info->putDirect(vm, PropertyName(Identifier::fromString(vm, "blockSize"_s)),
+            jsNumber(block_length));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    // Set ivLength if cipher uses IV
+    if (iv_length != 0) {
+        info->putDirect(vm, PropertyName(Identifier::fromString(vm, "ivLength"_s)),
+            jsNumber(iv_length));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    // Set keyLength
+    info->putDirect(vm, PropertyName(Identifier::fromString(vm, "keyLength"_s)),
+        jsNumber(key_length));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    return JSValue::encode(info);
+}
+
 JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -320,6 +432,8 @@ JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
         JSFunction::create(vm, globalObject, 0, "getCurves"_s, jsGetCurves, ImplementationVisibility::Public, NoIntrinsic), 0);
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "getCiphers"_s)),
         JSFunction::create(vm, globalObject, 0, "getCiphers"_s, jsGetCiphers, ImplementationVisibility::Public, NoIntrinsic), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "_getCipherInfo"_s)),
+        JSFunction::create(vm, globalObject, 1, "_getCipherInfo"_s, jsGetCipherInfo, ImplementationVisibility::Public, NoIntrinsic), 4);
 
     return obj;
 }

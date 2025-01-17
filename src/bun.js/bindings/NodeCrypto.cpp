@@ -96,7 +96,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStatelessDH, (JSC::JSGlobalObject * lexicalGlobalObje
     return JSC::JSValue::encode(result);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsConvertKey, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     VM& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -306,8 +306,8 @@ JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "statelessDH"_s)),
         JSFunction::create(vm, globalObject, 2, "statelessDH"_s, jsStatelessDH, ImplementationVisibility::Public, NoIntrinsic), 0);
-    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "convertKey"_s)),
-        JSFunction::create(vm, globalObject, 3, "convertKey"_s, jsConvertKey, ImplementationVisibility::Public, NoIntrinsic), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "ecdhConvertKey"_s)),
+        JSFunction::create(vm, globalObject, 3, "ecdhConvertKey"_s, jsECDHConvertKey, ImplementationVisibility::Public, NoIntrinsic), 0);
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "certVerifySpkac"_s)),
         JSFunction::create(vm, globalObject, 1, "verifySpkac"_s, jsCertVerifySpkac, ImplementationVisibility::Public, NoIntrinsic), 1);

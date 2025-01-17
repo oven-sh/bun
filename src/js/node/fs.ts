@@ -1410,6 +1410,7 @@ const realpathSync: any =
         // resolve subst drives to their underlying location. The native call is
         // able to see through that.
         p = getValidatedPath(p);
+        throwIfNullBytesInFileName(p);
         const knownHard = new Set();
 
         // Current character position in p
@@ -1524,6 +1525,7 @@ const realpath: any =
           else encoding = options?.encoding;
         }
         p = getValidatedPath(p);
+        throwIfNullBytesInFileName(p);
 
         const knownHard = new Set();
         const pathModule = require("node:path");

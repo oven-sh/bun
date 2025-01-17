@@ -2107,7 +2107,7 @@ const GENERATED_CLASSES_HEADER = [
 
 namespace Zig {
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionInherits, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame));
+JSC_DECLARE_HOST_FUNCTION(jsFunctionInherits);
 
 }
 

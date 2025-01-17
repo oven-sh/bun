@@ -2,6 +2,7 @@
 // - Usage of JSC.Strong here is likely to cause memory leaks.
 // - These sequence numbers and ACKs shouldn't exist from JavaScript's perspective
 //   at all. It should happen in the protocol before it reaches JS.
+// - We should not be creating JSFunction's in process.nextTick.
 const std = @import("std");
 const bun = @import("root").bun;
 const Environment = bun.Environment;

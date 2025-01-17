@@ -60,6 +60,7 @@ pub const MultiPartUpload = struct {
 
     pub const UploadPart = struct {
         data: []const u8,
+        ctx: *MultiPartUpload,
         allocated_size: usize,
         state: enum {
             pending,
@@ -67,11 +68,9 @@ pub const MultiPartUpload = struct {
             completed,
             canceled,
         },
-        owns_data: bool,
         partNumber: u16, // max is 10,000
         retry: u8, // auto retry, decrement until 0 and fail after this
         index: u8,
-        ctx: *MultiPartUpload,
 
         pub const UploadPartResult = struct {
             number: u16,
@@ -81,10 +80,26 @@ pub const MultiPartUpload = struct {
             return a.number < b.number;
         }
 
+        fn freeAllocatedSlice(this: *@This()) void {
+            const slice = this.allocatedSlice();
+            if (slice.len > 0) {
+                bun.default_allocator.free(slice);
+            }
+            this.data = "";
+            this.allocated_size = 0;
+        }
+
+        fn allocatedSlice(this: *@This()) []const u8 {
+            if (this.allocated_size > 0) {
+                return this.data.ptr[0..this.allocated_size];
+            }
+            return "";
+        }
+
         pub fn onPartResponse(result: S3SimpleRequest.S3PartResult, this: *@This()) void {
             if (this.state == .canceled or this.ctx.state == .finished) {
                 log("onPartResponse {} canceled", .{this.partNumber});
-                if (this.owns_data) bun.default_allocator.free(this.data);
+                this.freeAllocatedSlice();
                 this.ctx.deref();
                 return;
             }
@@ -101,7 +116,7 @@ pub const MultiPartUpload = struct {
                         return;
                     } else {
                         log("onPartResponse {} failed", .{this.partNumber});
-                        if (this.owns_data) bun.default_allocator.free(this.data[0..this.allocated_size]);
+                        this.freeAllocatedSlice();
                         defer this.ctx.deref();
                         return this.ctx.fail(err);
                     }
@@ -109,7 +124,7 @@ pub const MultiPartUpload = struct {
                 .etag => |etag| {
                     log("onPartResponse {} success", .{this.partNumber});
 
-                    if (this.owns_data) bun.default_allocator.free(this.data[0..this.allocated_size]);
+                    bun.default_allocator.free(this.allocatedSlice());
                     // we will need to order this
                     this.ctx.multipart_etags.append(bun.default_allocator, .{
                         .number = this.partNumber,
@@ -151,7 +166,7 @@ pub const MultiPartUpload = struct {
 
             switch (state) {
                 .pending => {
-                    if (this.owns_data) bun.default_allocator.free(this.data);
+                    this.freeAllocatedSlice();
                 },
                 // if is not pending we will free later or is already freed
                 else => {},
@@ -217,7 +232,7 @@ pub const MultiPartUpload = struct {
         }
     }
 
-    fn getCreatePart(this: *@This(), chunk: []const u8, allocated_size: usize, owns_data: bool) ?*UploadPart {
+    fn getCreatePart(this: *@This(), chunk: []const u8, allocated_size: usize, needs_clone: bool) ?*UploadPart {
         const index = this.available.findFirstSet() orelse {
             // this means that the queue is full and we cannot flush it
             return null;
@@ -229,13 +244,12 @@ pub const MultiPartUpload = struct {
         }
         this.available.unset(index);
         defer this.currentPartNumber += 1;
-
+        const data = if (needs_clone) bun.default_allocator.dupe(u8, chunk) catch bun.outOfMemory() else chunk;
         if (this.queue.items.len <= index) {
             this.queue.append(bun.default_allocator, .{
-                .data = chunk,
+                .data = data,
                 .allocated_size = allocated_size,
                 .partNumber = this.currentPartNumber,
-                .owns_data = owns_data,
                 .ctx = this,
                 .index = @truncate(index),
                 .retry = this.options.retry,
@@ -244,10 +258,9 @@ pub const MultiPartUpload = struct {
             return &this.queue.items[index];
         }
         this.queue.items[index] = .{
-            .data = chunk,
+            .data = data,
             .allocated_size = allocated_size,
             .partNumber = this.currentPartNumber,
-            .owns_data = owns_data,
             .ctx = this,
             .index = @truncate(index),
             .retry = this.options.retry,
@@ -429,8 +442,8 @@ pub const MultiPartUpload = struct {
             .search_params = search_params,
         }, .{ .upload = @ptrCast(&onRollbackMultiPartRequest) }, this);
     }
-    fn enqueuePart(this: *@This(), chunk: []const u8, allocated_size: usize, owns_data: bool) bool {
-        const part = this.getCreatePart(chunk, allocated_size, owns_data) orelse return false;
+    fn enqueuePart(this: *@This(), chunk: []const u8, allocated_size: usize, needs_clone: bool) bool {
+        const part = this.getCreatePart(chunk, allocated_size, needs_clone) orelse return false;
 
         if (this.state == .not_started) {
             // will auto start later
@@ -455,45 +468,49 @@ pub const MultiPartUpload = struct {
         log("processMultiPart {s} {d}", .{ this.path, part_size });
         // need to split in multiple parts because of the size
         var buffer = this.buffered.items[this.offset..];
-        var queue_full = false;
-        defer if (!this.ended and queue_full == false and buffer.len == 0) {
-            this.buffered.items.len = 0;
+        defer if (this.offset >= this.buffered.items.len) {
+            this.buffered.clearRetainingCapacity();
             this.offset = 0;
         };
+
         while (buffer.len > 0) {
             const len = @min(part_size, buffer.len);
             if (len < part_size and !this.ended) {
-                log("processMultiPart {s} {d} slice too small", .{ this.path, part_size });
+                log("processMultiPart {s} {d} slice too small", .{ this.path, len });
                 //slice is too small, we need to wait for more data
                 break;
             }
             // if is one big chunk we can pass ownership and avoid dupe
-            const can_pass_ownership = len == this.buffered.items.len;
-            // we need to know the allocated size to free the memory later
-            var allocated_size = len;
-            const slice = brk: {
-                if (can_pass_ownership) {
-                    log("processMultiPart {s} {d} pass ownership", .{ this.path, part_size });
-                    allocated_size = this.buffered.capacity;
+            if (len == this.buffered.items.len) {
+                // we need to know the allocated size to free the memory later
+                const allocated_size = this.buffered.capacity;
+                const slice = this.buffered.items;
+
+                // we dont care about the result because we are sending everything
+                if (this.enqueuePart(slice, allocated_size, false)) {
+                    log("processMultiPart {s} {d} full buffer enqueued", .{ this.path, slice.len });
+
+                    // queue is not full, we can clear the buffer part now owns the data
+                    // if its full we will retry later
                     this.buffered = .{};
-                    // pass ownership
-                    break :brk buffer[0..len];
-                } else {
-                    log("processMultiPart {s} {d} dupe", .{ this.path, part_size });
-                    // dupe the buffer and reuse the buffer for new parts
-                    break :brk bun.default_allocator.dupe(u8, buffer[0..len]) catch bun.outOfMemory();
+                    this.offset = 0;
+                    return;
                 }
-            };
+                log("processMultiPart {s} {d} queue full", .{ this.path, slice.len });
 
+                return;
+            }
+
+            const slice = buffer[0..len];
             buffer = buffer[len..];
-
-            log("processMultiPart {s} {d} slice {d}", .{ this.path, part_size, slice.len });
-            // part always owns the data
-            if (this.enqueuePart(slice, allocated_size, true)) {
+            // allocated size is the slice len because we dupe the buffer
+            if (this.enqueuePart(slice, slice.len, true)) {
+                log("processMultiPart {s} {d} slice enqueued", .{ this.path, slice.len });
+                // queue is not full, we can set the offset
                 this.offset += len;
             } else {
-                log("processMultiPart {s} {d} queue full", .{ this.path, part_size });
-                queue_full = true;
+                log("processMultiPart {s} {d} queue full", .{ this.path, slice.len });
+                // queue is full stop enqueue and retry later
                 break;
             }
         }

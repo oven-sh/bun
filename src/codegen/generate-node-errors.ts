@@ -11,9 +11,11 @@ const extra_count = NodeErrors.map(x => x.slice(3))
   .reduce((ac, cv) => ac + cv.length, 0);
 const count = NodeErrors.length + extra_count;
 
-if (count > 265) {
-  console.error("NodeError count exceeds u8");
-  process.exit(1);
+if (count > 256) {
+  // increase size of enum's to have more tags
+  // src/bun.js/node/types.zig#Encoding
+  // src/bun.js/bindings/BufferEncodingType.h
+  throw new Error("NodeError count exceeds u8");
 }
 
 let enumHeader = ``;

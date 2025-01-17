@@ -43,7 +43,6 @@
 #include "JSEvent.h"
 #include "JSEventListener.h"
 #include "JSEventListenerOptions.h"
-#include "JavaScriptCore/JSCJSValue.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/FunctionPrototype.h>

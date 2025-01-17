@@ -75,21 +75,15 @@ function isNodeStream(obj) {
 }
 
 function isReadableStream(obj) {
-  return !!(
-    obj &&
-    !isNodeStream(obj) &&
-    typeof obj.pipeThrough === "function" &&
-    typeof obj.getReader === "function" &&
-    typeof obj.cancel === "function"
-  );
+  return $inheritsReadableStream(obj);
 }
 
 function isWritableStream(obj) {
-  return !!(obj && !isNodeStream(obj) && typeof obj.getWriter === "function" && typeof obj.abort === "function");
+  return $inheritsWritableStream(obj);
 }
 
 function isTransformStream(obj) {
-  return !!(obj && !isNodeStream(obj) && typeof obj.readable === "object" && typeof obj.writable === "object");
+  return $inheritsTransformStream(obj);
 }
 
 function isWebStream(obj) {

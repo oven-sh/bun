@@ -31,7 +31,6 @@ JSC_DEFINE_HOST_FUNCTION(NodeError_proto_toString, (JSC::JSGlobalObject * global
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-
     auto thisVal = callFrame->thisValue();
 
     auto name = thisVal.get(globalObject, vm.propertyNames->name);
@@ -814,9 +813,9 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
 
     case Bun::ErrorCode::ERR_METHOD_NOT_IMPLEMENTED: {
         auto arg0 = callFrame->argument(1);
-        auto method = arg0.toWTFString(globalObject);
+        auto str0 = arg0.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        return JSC::JSValue::encode(createError(globalObject, error, makeString("The "_s, method, " method is not implemented"_s)));
+        return JSC::JSValue::encode(createError(globalObject, error, makeString("The "_s, str0, " method is not implemented"_s)));
     }
 
     case Bun::ErrorCode::ERR_STREAM_ALREADY_FINISHED: {

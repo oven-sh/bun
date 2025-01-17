@@ -3,13 +3,11 @@
 
 #include "root.h"
 #include "helpers.h"
+#include "ExceptionOr.h"
 
 namespace WebCore {
 
-JSC_DECLARE_HOST_FUNCTION(jsStatelessDH);
-JSC_DECLARE_HOST_FUNCTION(jsConvertKey);
-JSC_DECLARE_HOST_FUNCTION(jsGetCurves);
-
-JSC::JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject);
+ExceptionOr<Vector<uint8_t>> KeyObject__GetBuffer(JSC::JSValue bufferArg);
+JSC::JSValue createKeyObjectBinding(Zig::GlobalObject* globalObject);
 
 } // namespace WebCore

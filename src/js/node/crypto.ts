@@ -23,11 +23,12 @@ const {
   privateEncrypt,
   publicDecrypt,
   X509Certificate,
-} = $cpp("KeyObject.cpp", "createNodeCryptoBinding");
+} = $cpp("KeyObject.cpp", "createKeyObjectBinding");
 
-const statelessDH = $newCppFunction("KeyObject.cpp", "jsStatelessDH", 2);
-const ecdhConvertKey = $newCppFunction("KeyObject.cpp", "jsConvertKey", 1);
-const getCurves = $newCppFunction("KeyObject.cpp", "jsGetCurves", 0);
+const { statelessDH, ecdhConvertKey, getCurves, certVerifySpkac, certExportPublicKey, certExportChallenge } = $cpp(
+  "NodeCrypto.cpp",
+  "createNodeCryptoBinding",
+);
 
 const { POINT_CONVERSION_COMPRESSED, POINT_CONVERSION_HYBRID, POINT_CONVERSION_UNCOMPRESSED } =
   $processBindingConstants.crypto;
@@ -39,6 +40,30 @@ const {
 } = $zig("node_crypto_binding.zig", "createNodeCryptoBindingZig");
 
 const { validateObject, validateString } = require("internal/validators");
+
+function verifySpkac(spkac, encoding) {
+  return certVerifySpkac(getArrayBufferOrView(spkac, "spkac", encoding));
+}
+function exportPublicKey(spkac, encoding) {
+  return certExportPublicKey(getArrayBufferOrView(spkac, "spkac", encoding));
+}
+function exportChallenge(spkac, encoding) {
+  return certExportChallenge(getArrayBufferOrView(spkac, "spkac", encoding));
+}
+
+function Certificate(): void {
+  if (!(this instanceof Certificate)) {
+    return new Certificate();
+  }
+
+  this.verifySpkac = verifySpkac;
+  this.exportPublicKey = exportPublicKey;
+  this.exportChallenge = exportChallenge;
+}
+Certificate.prototype = {};
+Certificate.verifySpkac = verifySpkac;
+Certificate.exportPublicKey = exportPublicKey;
+Certificate.exportChallenge = exportChallenge;
 
 function randomInt(min, max, callback) {
   if (max == null) {
@@ -12102,5 +12127,6 @@ crypto_exports.timingSafeEqual = timingSafeEqual;
 crypto_exports.webcrypto = webcrypto;
 crypto_exports.subtle = _subtle;
 crypto_exports.X509Certificate = X509Certificate;
+crypto_exports.Certificate = Certificate;
 export default crypto_exports;
 /*! safe-buffer. MIT License. Feross Aboukhadijeh <https://feross.org/opensource> */

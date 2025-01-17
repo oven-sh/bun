@@ -1317,7 +1317,7 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__createSecretKey, (JSC::JSGlobalObject * lexi
     return {};
 }
 
-static ExceptionOr<Vector<uint8_t>> KeyObject__GetBuffer(JSValue bufferArg)
+ExceptionOr<Vector<uint8_t>> KeyObject__GetBuffer(JSValue bufferArg)
 {
     if (!bufferArg.isCell()) {
         return Exception { OperationError };
@@ -2779,137 +2779,6 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__generateKeySync, (JSC::JSGlobalObject * lexi
     }
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsStatelessDH, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
-    JSC::VM& vm = lexicalGlobalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (callFrame->argumentCount() < 2) {
-        return Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "diffieHellman"_s, jsUndefined(), "requires 2 arguments"_s);
-    }
-
-    auto* privateKeyObj = JSC::jsDynamicCast<JSCryptoKey*>(callFrame->argument(0));
-    auto* publicKeyObj = JSC::jsDynamicCast<JSCryptoKey*>(callFrame->argument(1));
-
-    if (!privateKeyObj || !publicKeyObj) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "diffieHellman"_s, "CryptoKey"_s, !privateKeyObj ? callFrame->argument(0) : callFrame->argument(1));
-    }
-
-    auto& privateKey = privateKeyObj->wrapped();
-    auto& publicKey = publicKeyObj->wrapped();
-
-    // Create AsymmetricKeyValue objects to access the EVP_PKEY pointers
-    WebCore::AsymmetricKeyValue ourKeyValue(privateKey);
-    WebCore::AsymmetricKeyValue theirKeyValue(publicKey);
-
-    // Get the EVP_PKEY from both keys
-    EVP_PKEY* ourKey = ourKeyValue.key;
-    EVP_PKEY* theirKey = theirKeyValue.key;
-
-    if (!ourKey || !theirKey) {
-        return Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "key"_s, jsUndefined(), "is invalid"_s);
-    }
-
-    // Create EVPKeyPointers to wrap the keys
-    ncrypto::EVPKeyPointer ourKeyPtr(ourKey);
-    ncrypto::EVPKeyPointer theirKeyPtr(theirKey);
-
-    // Use DHPointer::stateless to compute the shared secret
-    auto secret = ncrypto::DHPointer::stateless(ourKeyPtr, theirKeyPtr).release();
-
-    auto buffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(secret.data), secret.len }, createSharedTask<void(void*)>([](void* p) {
-        OPENSSL_free(p);
-    }));
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto* result = JSC::JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(buffer), 0, secret.len);
-    if (!result) {
-        return Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "diffieHellman"_s, jsUndefined(), "failed to allocate result buffer"_s);
-    }
-
-    return JSC::JSValue::encode(result);
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsConvertKey, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
-    VM& vm = lexicalGlobalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
-
-    if (callFrame->argumentCount() < 3)
-        return throwVMError(lexicalGlobalObject, scope, "ECDH.convertKey requires 3 arguments"_s);
-
-    auto keyBuffer = KeyObject__GetBuffer(callFrame->argument(0));
-    if (keyBuffer.hasException())
-        return JSValue::encode(jsUndefined());
-
-    if (keyBuffer.returnValue().isEmpty())
-        return JSValue::encode(JSC::jsEmptyString(vm));
-
-    auto curveName = callFrame->argument(1).toWTFString(lexicalGlobalObject);
-    if (scope.exception())
-        return encodedJSValue();
-
-    int nid = OBJ_sn2nid(curveName.utf8().data());
-    if (nid == NID_undef)
-        return Bun::ERR::CRYPTO_INVALID_CURVE(scope, lexicalGlobalObject);
-
-    auto group = ncrypto::ECGroupPointer::NewByCurveName(nid);
-    if (!group)
-        return throwVMError(lexicalGlobalObject, scope, "Failed to get EC_GROUP"_s);
-
-    auto point = ncrypto::ECPointPointer::New(group);
-    if (!point)
-        return throwVMError(lexicalGlobalObject, scope, "Failed to create EC_POINT"_s);
-
-    const unsigned char* key_data = keyBuffer.returnValue().data();
-    size_t key_length = keyBuffer.returnValue().size();
-
-    if (!EC_POINT_oct2point(group, point, key_data, key_length, nullptr))
-        return throwVMError(lexicalGlobalObject, scope, "Failed to convert Buffer to EC_POINT"_s);
-
-    uint32_t form = callFrame->argument(2).toUInt32(lexicalGlobalObject);
-    if (scope.exception())
-        return encodedJSValue();
-
-    size_t size = EC_POINT_point2oct(group, point, static_cast<point_conversion_form_t>(form), nullptr, 0, nullptr);
-    if (size == 0)
-        return throwVMError(lexicalGlobalObject, scope, "Failed to calculate buffer size"_s);
-
-    auto buf = ArrayBuffer::createUninitialized(size, 1);
-    if (!EC_POINT_point2oct(group, point, static_cast<point_conversion_form_t>(form), reinterpret_cast<uint8_t*>(buf->data()), size, nullptr))
-        return throwVMError(lexicalGlobalObject, scope, "Failed to convert EC_POINT to Buffer"_s);
-
-    auto* result = JSC::JSUint8Array::create(lexicalGlobalObject, reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject)->JSBufferSubclassStructure(), WTFMove(buf), 0, size);
-
-    if (!result)
-        return throwVMError(lexicalGlobalObject, scope, "Failed to allocate result buffer"_s);
-
-    return JSValue::encode(result);
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsGetCurves, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
-    VM& vm = lexicalGlobalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    const size_t numCurves = EC_get_builtin_curves(nullptr, 0);
-    Vector<EC_builtin_curve> curves(numCurves);
-    EC_get_builtin_curves(curves.data(), numCurves);
-
-    JSArray* result = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, numCurves);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    for (size_t i = 0; i < numCurves; i++) {
-        const char* curveName = OBJ_nid2sn(curves[i].nid);
-        auto curveWTFStr = WTF::String::fromUTF8(curveName);
-        JSString* curveStr = JSC::jsString(vm, curveWTFStr);
-        result->putDirectIndex(lexicalGlobalObject, i, curveStr);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-
-    return JSValue::encode(result);
-}
-
 JSC_DEFINE_HOST_FUNCTION(KeyObject__AsymmetricKeyType, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     ncrypto::ClearErrorOnReturn clearErrorOnReturn;
@@ -3318,7 +3187,7 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__publicDecrypt, (JSGlobalObject * globalObjec
     return doAsymmetricSign(globalObject, callFrame, false);
 }
 
-JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
+JSValue createKeyObjectBinding(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto* obj = constructEmptyObject(globalObject);

@@ -32,7 +32,7 @@ const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
-const Analytics = @import("../analytics/analytics_thread.zig");
+const analytics = bun.analytics;
 const ZigString = bun.JSC.ZigString;
 const Runtime = @import("../runtime.zig");
 const Router = @import("./api/filesystem_router.zig");
@@ -2475,7 +2475,7 @@ pub const ModuleLoader = struct {
                 .hash = Runtime.Runtime.versionHash(),
             };
         } else if (HardcodedModule.Map.getWithEql(specifier, bun.String.eqlComptime)) |hardcoded| {
-            Analytics.Features.builtin_modules.insert(hardcoded);
+            analytics.Features.builtin_modules.insert(hardcoded);
 
             switch (hardcoded) {
                 .@"bun:main" => {
@@ -2691,7 +2691,7 @@ pub const ModuleLoader = struct {
                 return true;
             },
         );
-        Analytics.Features.virtual_modules += 1;
+        analytics.Features.virtual_modules += 1;
         return true;
     }
 

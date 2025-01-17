@@ -10,17 +10,17 @@ const default_allocator = bun.default_allocator;
 const FeatureFlags = bun.FeatureFlags;
 const C = bun.C;
 
-const sync = @import("../sync.zig");
+const sync = @import("./sync.zig");
 const std = @import("std");
 const HTTP = bun.http;
 
-const URL = @import("../url.zig").URL;
-const Fs = @import("../fs.zig");
-const Analytics = @import("./analytics_schema.zig").analytics;
-const Writer = @import("./analytics_schema.zig").Writer;
+const URL = @import("./url.zig").URL;
+const Fs = @import("./fs.zig");
 const Headers = bun.http.Headers;
-const Futex = @import("../futex.zig");
-const Semver = @import("../install/semver.zig");
+const Futex = @import("./futex.zig");
+const Semver = @import("./install/semver.zig");
+
+pub const Schema = @import("./analytics/Schema.zig");
 
 /// Enables analytics. This is used by:
 /// - crash_handler.zig's `report` function to anonymously report crashes
@@ -265,9 +265,9 @@ pub const EventName = enum(u8) {
 };
 
 var random: std.rand.DefaultPrng = undefined;
-const DotEnv = @import("../env_loader.zig");
+const DotEnv = @import("./env_loader.zig");
 
-const platform_arch = if (Environment.isAarch64) Analytics.Architecture.arm else Analytics.Architecture.x64;
+const platform_arch = if (Environment.isAarch64) Schema.analytics.Architecture.arm else Schema.analytics.Architecture.x64;
 
 // TODO: move this code somewhere more appropriate, and remove it from "analytics"
 // The following code is not currently even used for analytics, just feature-detection
@@ -275,10 +275,10 @@ const platform_arch = if (Environment.isAarch64) Analytics.Architecture.arm else
 pub const GenerateHeader = struct {
     pub const GeneratePlatform = struct {
         var osversion_name: [32]u8 = undefined;
-        fn forMac() Analytics.Platform {
+        fn forMac() Schema.analytics.Platform {
             @memset(&osversion_name, 0);
 
-            var platform = Analytics.Platform{ .os = Analytics.OperatingSystem.macos, .version = &[_]u8{}, .arch = platform_arch };
+            var platform = Schema.analytics.Platform{ .os = Schema.OperatingSystem.macos, .version = &[_]u8{}, .arch = platform_arch };
             var len = osversion_name.len - 1;
             // this previously used "kern.osrelease", which was the darwin xnu kernel version
             // That is less useful than "kern.osproductversion", which is the macOS version
@@ -289,8 +289,7 @@ pub const GenerateHeader = struct {
         }
 
         pub var linux_os_name: std.c.utsname = undefined;
-        var platform_: Analytics.Platform = undefined;
-        pub const Platform = Analytics.Platform;
+        var platform_: Schema.analytics.Platform = undefined;
         var linux_kernel_version: Semver.Version = undefined;
         var run_once = std.once(struct {
             fn run() void {
@@ -304,8 +303,8 @@ pub const GenerateHeader = struct {
                     const result = Semver.Version.parse(sliced_string);
                     linux_kernel_version = result.version.min();
                 } else if (Environment.isWindows) {
-                    platform_ = Platform{
-                        .os = Analytics.OperatingSystem.windows,
+                    platform_ = Schema.analytics.Platform{
+                        .os = Schema.OperatingSystem.windows,
                         .version = &[_]u8{},
                         .arch = platform_arch,
                     };
@@ -313,7 +312,7 @@ pub const GenerateHeader = struct {
             }
         }.run);
 
-        pub fn forOS() Analytics.Platform {
+        pub fn forOS() Schema.analytics.Platform {
             run_once.call();
             return platform_;
         }
@@ -363,7 +362,7 @@ pub const GenerateHeader = struct {
             };
         }
 
-        fn forLinux() Analytics.Platform {
+        fn forLinux() Schema.analytics.Platform {
             linux_os_name = std.mem.zeroes(@TypeOf(linux_os_name));
 
             _ = std.c.uname(&linux_os_name);
@@ -373,10 +372,10 @@ pub const GenerateHeader = struct {
 
             // Linux DESKTOP-P4LCIEM 5.10.16.3-microsoft-standard-WSL2 #1 SMP Fri Apr 2 22:23:49 UTC 2021 x86_64 x86_64 x86_64 GNU/Linux
             if (std.mem.indexOf(u8, release, "microsoft") != null) {
-                return Analytics.Platform{ .os = Analytics.OperatingSystem.wsl, .version = release, .arch = platform_arch };
+                return Schema.analytics.Platform{ .os = Schema.analytics.OperatingSystem.wsl, .version = release, .arch = platform_arch };
             }
 
-            return Analytics.Platform{ .os = Analytics.OperatingSystem.linux, .version = release, .arch = platform_arch };
+            return Schema.analytics.Platform{ .os = Schema.analytics.OperatingSystem.linux, .version = release, .arch = platform_arch };
         }
     };
 };

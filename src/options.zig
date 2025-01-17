@@ -24,7 +24,7 @@ const C = bun.C;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const JSC = bun.JSC;
 const Runtime = @import("./runtime.zig").Runtime;
-const Analytics = @import("./analytics/analytics_thread.zig");
+const analytics = bun.analytics;
 const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
 const DotEnv = @import("./env_loader.zig");
 
@@ -1734,8 +1734,8 @@ pub const BundleOptions = struct {
             .drop = transform.drop,
         };
 
-        Analytics.Features.define += @as(usize, @intFromBool(transform.define != null));
-        Analytics.Features.loaders += @as(usize, @intFromBool(transform.loaders != null));
+        analytics.Features.define += @as(usize, @intFromBool(transform.define != null));
+        analytics.Features.loaders += @as(usize, @intFromBool(transform.loaders != null));
 
         if (transform.env_files.len > 0) {
             opts.env.files = transform.env_files;
@@ -1809,8 +1809,8 @@ pub const BundleOptions = struct {
 
         opts.polyfill_node_globals = opts.target == .browser;
 
-        Analytics.Features.macros += @as(usize, @intFromBool(opts.target == .bun_macro));
-        Analytics.Features.external += @as(usize, @intFromBool(transform.external.len > 0));
+        analytics.Features.macros += @as(usize, @intFromBool(opts.target == .bun_macro));
+        analytics.Features.external += @as(usize, @intFromBool(transform.external.len > 0));
         return opts;
     }
 };

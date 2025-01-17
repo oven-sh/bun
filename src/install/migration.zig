@@ -148,7 +148,7 @@ pub fn migrateNPMLockfile(
         return error.InvalidNPMLockfile;
     }
 
-    bun.Analytics.Features.lockfile_migration_from_package_lock += 1;
+    bun.analytics.Features.lockfile_migration_from_package_lock += 1;
 
     // Count pass
 

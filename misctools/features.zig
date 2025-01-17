@@ -11,16 +11,16 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
-const Features = @import("../src/analytics/analytics_thread.zig").Features;
+const Features = bun.analytics.Features;
 
 // zig run --main-pkg-path ../ ./features.zig
 pub fn main() anyerror!void {
-    var stdout_ = std.io.getStdOut();
-    var stderr_ = std.io.getStdErr();
+    const stdout_ = std.io.getStdOut();
+    const stderr_ = std.io.getStdErr();
     var output_source = Output.Source.init(stdout_, stderr_);
     Output.Source.set(&output_source);
     defer Output.flush();
 
-    var writer = Output.writer();
+    const writer = Output.writer();
     try Features.Serializer.writeAll(@TypeOf(writer), writer);
 }

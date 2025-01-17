@@ -27,7 +27,7 @@ const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
 const NodeFallbackModules = @import("../../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
-const Analytics = @import("../../analytics/analytics_thread.zig");
+const analytics = bun.analytics;
 const ZigString = bun.JSC.ZigString;
 const Runtime = @import("../../runtime.zig");
 const ImportRecord = ast.ImportRecord;
@@ -6684,9 +6684,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             server.request_pool_allocator = RequestContext.pool.?;
 
             if (comptime ssl_enabled_) {
-                Analytics.Features.https_server += 1;
+                analytics.Features.https_server += 1;
             } else {
-                Analytics.Features.http_server += 1;
+                analytics.Features.http_server += 1;
             }
 
             return server;

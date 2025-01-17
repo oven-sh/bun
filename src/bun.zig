@@ -726,7 +726,7 @@ pub const Bunfig = @import("./bunfig.zig").Bunfig;
 pub const HTTPThread = @import("./http.zig").HTTPThread;
 pub const http = @import("./http.zig");
 
-pub const Analytics = @import("./analytics/analytics_thread.zig");
+pub const analytics = @import("./analytics.zig");
 
 pub usingnamespace @import("./tagged_pointer.zig");
 
@@ -800,7 +800,6 @@ pub const uws = @import("./deps/uws.zig");
 pub const BoringSSL = @import("./boringssl.zig");
 pub const LOLHTML = @import("./deps/lol-html.zig");
 pub const clap = @import("./deps/zig-clap/clap.zig");
-pub const analytics = @import("./analytics/analytics_thread.zig");
 pub const zlib = @import("./zlib.zig");
 
 pub var start_time: i128 = 0;
@@ -1315,7 +1314,7 @@ pub fn isMissingIOUring() bool {
     };
 
     return Missing.is_missing_io_uring orelse brk: {
-        const kernel = Analytics.GenerateHeader.GeneratePlatform.kernelVersion();
+        const kernel = analytics.GenerateHeader.GeneratePlatform.kernelVersion();
         // io_uring was introduced in earlier versions of Linux, but it was not
         // really usable for us until 5.3
         const result = kernel.major < 5 or (kernel.major == 5 and kernel.minor < 3);
@@ -3042,7 +3041,7 @@ pub noinline fn outOfMemory() noreturn {
 
 pub fn todoPanic(src: std.builtin.SourceLocation, comptime format: string, args: anytype) noreturn {
     @setCold(true);
-    bun.Analytics.Features.todo_panic = 1;
+    bun.analytics.Features.todo_panic = 1;
     Output.panic("TODO: " ++ format ++ " ({s}:{d})", args ++ .{ src.file, src.line });
 }
 

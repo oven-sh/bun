@@ -1832,8 +1832,8 @@ picohttp:
 	 $(CC) $(CFLAGS) $(OPTIMIZATION_LEVEL) -g -fPIC -c $(BUN_DEPS_DIR)/picohttpparser/picohttpparser.c -I$(BUN_DEPS_DIR) -o $(BUN_DEPS_OUT_DIR)/picohttpparser.o; cd ../../
 
 analytics:
-	./node_modules/.bin/peechy --schema src/analytics/schema.peechy --zig src/analytics/analytics_schema.zig
-	$(ZIG) fmt src/analytics/analytics_schema.zig
+	./node_modules/.bin/peechy --schema src/analytics/schema.peechy --zig src/analytics/Schema.zig
+	$(ZIG) fmt src/analytics/Schema.zig
 
 analytics-features:
 	@cd misctools; $(ZIG) run --main-pkg-path ../ ./features.zig

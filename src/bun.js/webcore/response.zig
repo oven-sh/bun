@@ -2270,7 +2270,7 @@ pub const Fetch = struct {
         JSC.markBinding(@src());
         const globalThis = ctx;
         const arguments = callframe.arguments_old(2);
-        bun.Analytics.Features.fetch += 1;
+        bun.analytics.Features.fetch += 1;
         const vm = JSC.VirtualMachine.get();
 
         var memory_reporter = bun.default_allocator.create(JSC.MemoryReportingAllocator) catch bun.outOfMemory();

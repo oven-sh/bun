@@ -12,7 +12,7 @@ const default_allocator = bun.default_allocator;
 const CodePoint = bun.CodePoint;
 const C = bun.C;
 const CodepointIterator = @import("./string_immutable.zig").CodepointIterator;
-const Analytics = @import("./analytics/analytics_thread.zig");
+const analytics = bun.analytics;
 const Fs = @import("./fs.zig");
 const URL = @import("./url.zig").URL;
 const Api = @import("./api/schema.zig").Api;
@@ -583,7 +583,7 @@ pub const Loader = struct {
                 while (iter.next()) |file_path| {
                     if (file_path.len > 0) {
                         try this.loadEnvFileDynamic(file_path, false);
-                        Analytics.Features.dotenv += 1;
+                        analytics.Features.dotenv += 1;
                     }
                 }
             }
@@ -605,19 +605,19 @@ pub const Loader = struct {
             .development => {
                 if (dir.hasComptimeQuery(".env.development.local")) {
                     try this.loadEnvFile(dir_handle, ".env.development.local", false);
-                    Analytics.Features.dotenv += 1;
+                    analytics.Features.dotenv += 1;
                 }
             },
             .production => {
                 if (dir.hasComptimeQuery(".env.production.local")) {
                     try this.loadEnvFile(dir_handle, ".env.production.local", false);
-                    Analytics.Features.dotenv += 1;
+                    analytics.Features.dotenv += 1;
                 }
             },
             .@"test" => {
                 if (dir.hasComptimeQuery(".env.test.local")) {
                     try this.loadEnvFile(dir_handle, ".env.test.local", false);
-                    Analytics.Features.dotenv += 1;
+                    analytics.Features.dotenv += 1;
                 }
             },
         }
@@ -625,7 +625,7 @@ pub const Loader = struct {
         if (comptime suffix != .@"test") {
             if (dir.hasComptimeQuery(".env.local")) {
                 try this.loadEnvFile(dir_handle, ".env.local", false);
-                Analytics.Features.dotenv += 1;
+                analytics.Features.dotenv += 1;
             }
         }
 
@@ -633,26 +633,26 @@ pub const Loader = struct {
             .development => {
                 if (dir.hasComptimeQuery(".env.development")) {
                     try this.loadEnvFile(dir_handle, ".env.development", false);
-                    Analytics.Features.dotenv += 1;
+                    analytics.Features.dotenv += 1;
                 }
             },
             .production => {
                 if (dir.hasComptimeQuery(".env.production")) {
                     try this.loadEnvFile(dir_handle, ".env.production", false);
-                    Analytics.Features.dotenv += 1;
+                    analytics.Features.dotenv += 1;
                 }
             },
             .@"test" => {
                 if (dir.hasComptimeQuery(".env.test")) {
                     try this.loadEnvFile(dir_handle, ".env.test", false);
-                    Analytics.Features.dotenv += 1;
+                    analytics.Features.dotenv += 1;
                 }
             },
         }
 
         if (dir.hasComptimeQuery(".env")) {
             try this.loadEnvFile(dir_handle, ".env", false);
-            Analytics.Features.dotenv += 1;
+            analytics.Features.dotenv += 1;
         }
     }
 

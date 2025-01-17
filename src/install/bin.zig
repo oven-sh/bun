@@ -575,7 +575,7 @@ pub const Bin = extern struct {
                 return;
             }
 
-            bun.Analytics.Features.binlinks += 1;
+            bun.analytics.Features.binlinks += 1;
 
             if (comptime !Environment.isWindows)
                 this.createSymlink(abs_target, abs_dest, global)

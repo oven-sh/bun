@@ -819,7 +819,7 @@ pub const ParsedShellScript = struct {
         parsed_shell_script.this_jsvalue = JSC.Codegen.JSParsedShellScript.toJS(parsed_shell_script, globalThis);
         log("ParsedShellScript(0x{x}) create", .{@intFromPtr(parsed_shell_script)});
 
-        bun.Analytics.Features.shell += 1;
+        bun.analytics.Features.shell += 1;
         return parsed_shell_script.this_jsvalue;
     }
 };
@@ -1235,7 +1235,7 @@ pub const Interpreter = struct {
         JSC.Codegen.JSShellInterpreter.resolveSetCached(js_value, globalThis, resolve);
         JSC.Codegen.JSShellInterpreter.rejectSetCached(js_value, globalThis, reject);
         interpreter.keep_alive.ref(globalThis.bunVM());
-        bun.Analytics.Features.shell += 1;
+        bun.analytics.Features.shell += 1;
         return js_value;
     }
 
@@ -1474,7 +1474,7 @@ pub const Interpreter = struct {
     }
 
     pub fn initAndRunFromSource(ctx: bun.CLI.Command.Context, mini: *JSC.MiniEventLoop, path_for_errors: []const u8, src: []const u8) !ExitCode {
-        bun.Analytics.Features.standalone_shell += 1;
+        bun.analytics.Features.standalone_shell += 1;
         var shargs = ShellArgs.init();
         defer shargs.deinit();
 

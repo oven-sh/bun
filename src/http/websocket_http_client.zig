@@ -316,7 +316,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     client.deref();
                     return null;
                 }
-                bun.Analytics.Features.WebSocket += 1;
+                bun.analytics.Features.WebSocket += 1;
 
                 if (comptime ssl) {
                     if (!strings.isIPAddress(host_.slice())) {

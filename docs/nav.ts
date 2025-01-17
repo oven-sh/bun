@@ -217,6 +217,9 @@ export default {
     page("bundler/html", "HTML", {
       description: `Bundle html files with Bun's native bundler.`,
     }),
+    page("bundler/fullstack", "Fullstack Dev Server", {
+      description: "Serve your frontend and backend from the same app with Bun's dev server.",
+    }),
     page("bundler/loaders", "Loaders", {
       description: "Bun's built-in loaders for the bundler and runtime",
     }),

@@ -57,16 +57,24 @@ describe("bun.connect", () => {
     });
     using server = await defer.promise;
     using client = await defer2.promise;
-    const x509: import("node:crypto").X509Certificate = server.getX509Certificate();
-    const peerX509: import("node:crypto").X509Certificate = client.getPeerX509Certificate();
-    expect(x509.checkHost("localhost")).toBe("localhost");
-    expect(peerX509.checkHost("localhost")).toBe("localhost");
+    function check() {
+      const x509: import("node:crypto").X509Certificate = server.getX509Certificate();
+      const peerX509: import("node:crypto").X509Certificate = client.getPeerX509Certificate();
+      expect(x509.checkHost("localhost")).toBe("localhost");
+      expect(peerX509.checkHost("localhost")).toBe("localhost");
+    }
+    check();
+    Bun.gc(true);
 
     // GC test:
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < 1000; i++) {
       server.getX509Certificate();
       client.getPeerX509Certificate();
+      if (i % 100 === 0 && i > 0) {
+        Bun.gc(true);
+      }
     }
+
     Bun.gc(true);
     listener.stop();
   });

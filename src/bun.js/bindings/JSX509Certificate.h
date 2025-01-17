@@ -26,6 +26,7 @@ class JSX509Certificate final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
+    static constexpr bool needsDestruction = true;
 
     // The underlying X509 certificate
     ncrypto::X509Pointer m_x509;

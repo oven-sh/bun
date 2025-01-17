@@ -3213,7 +3213,7 @@ fn NewSocket(comptime ssl: bool) type {
             const cert = BoringSSL.SSL_get_certificate(ssl_ptr);
 
             if (cert) |x509| {
-                return X509.toJS(x509.dup() orelse return JSValue.jsUndefined(), globalObject);
+                return X509.toJS(x509, globalObject);
             }
             return JSValue.jsUndefined();
         }
@@ -3246,7 +3246,7 @@ fn NewSocket(comptime ssl: bool) type {
             const ssl_ptr = this.socket.ssl() orelse return JSValue.jsUndefined();
             const cert = BoringSSL.SSL_get_certificate(ssl_ptr);
             if (cert) |x509| {
-                return X509.toJSObject(x509.dup() orelse return JSValue.jsUndefined(), globalObject);
+                return X509.toJSObject(x509.ref(), globalObject);
             }
             return JSValue.jsUndefined();
         }

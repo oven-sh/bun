@@ -158,6 +158,12 @@ pub const struct_x509_st = opaque {
     pub fn dup(this: *X509) ?*X509 {
         return X509_dup(this);
     }
+
+    pub fn ref(this: *X509) *X509 {
+        _ = X509_up_ref(this);
+        return this;
+    }
+
     pub fn free(this: *X509) void {
         X509_free(this);
     }

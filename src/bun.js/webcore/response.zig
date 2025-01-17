@@ -1523,6 +1523,7 @@ pub const Fetch = struct {
                     var cert_ptr = cert.ptr;
                     if (BoringSSL.d2i_X509(null, &cert_ptr, @intCast(cert.len))) |x509| {
                         const globalObject = this.global_this;
+                        defer x509.free();
                         const js_cert = X509.toJS(x509, globalObject) catch |err| {
                             switch (err) {
                                 error.JSError => {},

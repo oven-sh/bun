@@ -207,14 +207,14 @@ pub fn link(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
         .{ .result = {} };
 }
 
-pub fn symlinkUV(from: [:0]const u8, to: [:0]const u8, flags: c_int) Maybe(void) {
-    assertIsValidWindowsPath(u8, from);
-    assertIsValidWindowsPath(u8, to);
+pub fn symlinkUV(target: [:0]const u8, new_path: [:0]const u8, flags: c_int) Maybe(void) {
+    assertIsValidWindowsPath(u8, target);
+    assertIsValidWindowsPath(u8, new_path);
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
-    const rc = uv.uv_fs_symlink(uv.Loop.get(), &req, from.ptr, to.ptr, flags, null);
+    const rc = uv.uv_fs_symlink(uv.Loop.get(), &req, target.ptr, new_path.ptr, flags, null);
 
-    log("uv symlink({s}, {s}) = {d}", .{ from, to, rc.int() });
+    log("uv symlink({s}, {s}) = {d}", .{ target, new_path, rc.int() });
     return if (rc.errno()) |errno|
         .{ .err = .{ .errno = errno, .syscall = .symlink } }
     else

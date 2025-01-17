@@ -5543,7 +5543,7 @@ pub const NodeFS = struct {
             // - junctions: make absolute with long path prefix
             // - absolute paths: add long path prefix
             // - all: no forward slashes
-            const processed_target = target: {
+            const processed_target: [:0]u8 = target: {
                 if (resolved_link_type == .junction) {
                     // this is similar to the `const src` above, but these cases
                     // are mutually exclusive, so it isn't repeating any work.
@@ -5560,7 +5560,15 @@ pub const NodeFS = struct {
                     this.sync_error_buf[4 + target.len] = 0;
                     break :target this.sync_error_buf[0 .. 4 + target.len :0];
                 }
-                break :target args.target_path.sliceZWithForceCopy(&this.sync_error_buf, true);
+                if (std.fs.path.isAbsolute(target_path)) {
+                    // This normalizes slashes and adds the long path prefix
+                    break :target args.target_path.sliceZWithForceCopy(&this.sync_error_buf, true);
+                }
+                @memcpy(this.sync_error_buf[0..target_path.len], target_path);
+                this.sync_error_buf[target_path.len] = 0;
+                const target_path_z = this.sync_error_buf[0..target_path.len :0];
+                bun.path.dangerouslyConvertPathToWindowsInPlace(u8, target_path_z);
+                break :target target_path_z;
             };
             return switch (Syscall.symlinkUV(
                 processed_target,

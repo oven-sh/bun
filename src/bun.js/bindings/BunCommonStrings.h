@@ -12,7 +12,16 @@
 // If we don't use it as an identifier name, but we want to avoid allocating the string frequently, put it in this list.
 #define BUN_COMMON_STRINGS_EACH_NAME_NOT_BUILTIN_NAMES(macro) \
     macro(SystemError) \
-    macro(S3Error)
+    macro(S3Error) \
+    macro(utf8) \
+    macro(ucs2) \
+    macro(utf16le) \
+    macro(latin1) \
+    macro(ascii) \
+    macro(base64) \
+    macro(base64url) \
+    macro(hex) \
+    macro(buffer)
 // clang-format on
 
 #define BUN_COMMON_STRINGS_ACCESSOR_DEFINITION(name)                           \

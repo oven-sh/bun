@@ -548,7 +548,9 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
       });
       expect.unreachable();
     } catch (e) {
-      expect(e.toString()).toContain('TypeError: Could not find the symbol "OOGA_BOOGA_420" in the given napi module.');
+      expect(e.toString()).toContain(
+        'TypeError [ERR_INVALID_ARG_TYPE]: Could not find the symbol "OOGA_BOOGA_420" in the given napi module.',
+      );
     }
   });
 

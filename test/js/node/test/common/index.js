@@ -126,6 +126,10 @@ if ((process.argv.length === 2 || process.argv.length === 3) &&
         globalThis.gc ??= () => Bun.gc(true);
         break;
       }
+      if (flag === "--expose-internals" && process.versions.bun) {
+        process.env.SKIP_FLAG_CHECK = "1";
+        break;
+      }
       console.log(
         'NOTE: The test started as a child_process using these flags:',
         inspect(flags),

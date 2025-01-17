@@ -5,8 +5,8 @@ const promises = require("node:fs/promises");
 const Stream = require("node:stream");
 const types = require("node:util/types");
 
-const { ERR_INVALID_ARG_TYPE, ERR_OUT_OF_RANGE } = require("internal/errors");
 const { validateInteger } = require("internal/validators");
+const { kGetNativeReadableProto } = require("internal/shared");
 
 const NumberIsFinite = Number.isFinite;
 const DatePrototypeGetTime = Date.prototype.getTime;
@@ -24,9 +24,7 @@ var _fs = Symbol.for("#fs");
 
 function ensureCallback(callback) {
   if (!$isCallable(callback)) {
-    const err = new TypeError('The "cb" argument must be of type function. Received ' + typeof callback);
-    err.code = "ERR_INVALID_ARG_TYPE";
-    throw err;
+    throw $ERR_INVALID_ARG_TYPE("cb", "function", callback);
   }
 
   return callback;
@@ -722,7 +720,7 @@ function createReadStream(path, options) {
   return new ReadStream(path, options);
 }
 
-const NativeReadable = Stream._getNativeReadableStreamPrototype(2, Stream.Readable);
+const NativeReadable = Stream[kGetNativeReadableProto](2);
 const NativeReadablePrototype = NativeReadable.prototype;
 const kFs = Symbol("kFs");
 const kHandle = Symbol("kHandle");
@@ -830,7 +828,7 @@ function ReadStream(this: typeof ReadStream, pathOrFd, options) {
   } else if (end !== Infinity) {
     validateInteger(end, "end", 0);
     if (start !== undefined && start > end) {
-      throw new ERR_OUT_OF_RANGE("start", `<= "end" (here: ${end})`, start);
+      throw $ERR_OUT_OF_RANGE("start", `<= "end" (here: ${end})`, start);
     }
   }
 

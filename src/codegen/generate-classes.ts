@@ -2,6 +2,7 @@
 import path from "path";
 import type { ClassDefinition, Field } from "./class-definitions";
 import { camelCase, pascalCase, writeIfNotChanged } from "./helpers";
+import jsclasses from "./../bun.js/bindings/js_classes";
 
 if (process.env.BUN_SILENT === "1") {
   console.log = () => {};
@@ -910,6 +911,7 @@ function renderStaticDecls(symbolName, typeName, fields, supportsObjectCreate = 
 
   return rows.join("\n");
 }
+
 function writeBarrier(symbolName, typeName, name, cacheName) {
   return `
 
@@ -928,6 +930,7 @@ extern JSC_CALLCONV JSC::EncodedJSValue ${symbolName(typeName, name)}GetCachedVa
 
   `.trim();
 }
+
 function renderFieldsImpl(
   symbolName: (typeName: string, name: string) => string,
   typeName: string,
@@ -1176,6 +1179,7 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
 
   return rows.map(a => a.trim()).join("\n");
 }
+
 function allCachedValues(obj: ClassDefinition) {
   let values = (obj.values ?? []).slice().map(name => [name, `m_${name}`]);
   for (const name in obj.proto) {
@@ -1193,6 +1197,7 @@ function allCachedValues(obj: ClassDefinition) {
 
   return values;
 }
+
 var extraIncludes = [];
 function generateClassHeader(typeName, obj: ClassDefinition) {
   var { klass, proto, JSType = "ObjectType", values = [], callbacks = {}, zigOnly = false } = obj;
@@ -2101,6 +2106,9 @@ const GENERATED_CLASSES_HEADER = [
 #include "root.h"
 
 namespace Zig {
+
+JSC_DECLARE_HOST_FUNCTION(jsFunctionInherits);
+
 }
 
 #include "JSDOMWrapper.h"
@@ -2167,6 +2175,30 @@ const GENERATED_CLASSES_IMPL_FOOTER = `
 } // namespace WebCore
 
 `;
+
+function jsInheritsCppImpl() {
+  return `
+${jsclasses
+  .map(v => v[1])
+  .filter(v => v?.length > 0)
+  .map((v, i) => `#include "${v}"`)
+  .join("\n")}
+
+JSC_DEFINE_HOST_FUNCTION(Zig::jsFunctionInherits, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto id = callFrame->argument(0).toInt32(globalObject);
+    auto value = callFrame->argument(1);
+    if (!value.isCell()) return JSValue::encode(jsBoolean(false));
+    auto cell = value.asCell();
+    switch (id) {
+${jsclasses
+  .map(v => v[0])
+  .map((v, i) => `    case ${i}: return JSValue::encode(jsBoolean(cell->inherits<WebCore::JS${v}>()));`)
+  .join("\n")}
+    }
+    return JSValue::encode(jsBoolean(false));
+}`;
+}
 
 function initLazyClasses(initLaterFunctions) {
   return `
@@ -2342,6 +2374,7 @@ comptime {
 
   `,
 ]);
+
 if (!process.env.ONLY_ZIG) {
   const allHeaders = classes.map(a => generateHeader(a.name, a));
   await writeIfNotChanged(`${outBase}/ZigGeneratedClasses.h`, [
@@ -2360,7 +2393,9 @@ if (!process.env.ONLY_ZIG) {
     allImpls.join("\n"),
     writeCppSerializers(classes),
     GENERATED_CLASSES_IMPL_FOOTER,
+    jsInheritsCppImpl(),
   ]);
+
   await writeIfNotChanged(
     `${outBase}/ZigGeneratedClasses+lazyStructureHeader.h`,
     classes.map(a => generateLazyClassStructureHeader(a.name, a)).join("\n"),

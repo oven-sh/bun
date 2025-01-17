@@ -443,8 +443,12 @@ static CryptoKeyUsageBitmap toCryptoKeyUsageBitmap(const Vector<CryptoKeyUsage>&
 }
 
 // Maybe we want more specific error messages?
-static void rejectWithException(Ref<DeferredPromise>&& passedPromise, ExceptionCode ec)
+static void rejectWithException(Ref<DeferredPromise>&& passedPromise, ExceptionCode ec, const String& msg)
 {
+    if (!msg.isEmpty()) {
+        passedPromise->reject(ec, msg);
+        return;
+    }
     switch (ec) {
     case NotSupportedError:
         passedPromise->reject(ec, "The algorithm is not supported"_s);
@@ -613,9 +617,9 @@ void SubtleCrypto::encrypt(JSC::JSGlobalObject& state, AlgorithmIdentifier&& alg
         if (auto promise = getPromise(index, weakThis))
             fulfillPromiseWithArrayBuffer(promise.releaseNonNull(), cipherText.data(), cipherText.size());
     };
-    auto exceptionCallback = [index, weakThis](ExceptionCode ec) mutable {
+    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
         if (auto promise = getPromise(index, weakThis))
-            rejectWithException(promise.releaseNonNull(), ec);
+            rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
     algorithm->encrypt(*params, key, WTFMove(data), WTFMove(callback), WTFMove(exceptionCallback), *scriptExecutionContext(), m_workQueue);
@@ -653,9 +657,9 @@ void SubtleCrypto::decrypt(JSC::JSGlobalObject& state, AlgorithmIdentifier&& alg
         if (auto promise = getPromise(index, weakThis))
             fulfillPromiseWithArrayBuffer(promise.releaseNonNull(), plainText.data(), plainText.size());
     };
-    auto exceptionCallback = [index, weakThis](ExceptionCode ec) mutable {
+    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
         if (auto promise = getPromise(index, weakThis))
-            rejectWithException(promise.releaseNonNull(), ec);
+            rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
     algorithm->decrypt(*params, key, WTFMove(data), WTFMove(callback), WTFMove(exceptionCallback), *scriptExecutionContext(), m_workQueue);
@@ -691,9 +695,9 @@ void SubtleCrypto::sign(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algori
         if (auto promise = getPromise(index, weakThis))
             fulfillPromiseWithArrayBuffer(promise.releaseNonNull(), signature.data(), signature.size());
     };
-    auto exceptionCallback = [index, weakThis](ExceptionCode ec) mutable {
+    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
         if (auto promise = getPromise(index, weakThis))
-            rejectWithException(promise.releaseNonNull(), ec);
+            rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
     algorithm->sign(*params, key, WTFMove(data), WTFMove(callback), WTFMove(exceptionCallback), *scriptExecutionContext(), m_workQueue);
@@ -730,9 +734,9 @@ void SubtleCrypto::verify(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algo
         if (auto promise = getPromise(index, weakThis))
             promise->resolve<IDLBoolean>(result);
     };
-    auto exceptionCallback = [index, weakThis](ExceptionCode ec) mutable {
+    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
         if (auto promise = getPromise(index, weakThis))
-            rejectWithException(promise.releaseNonNull(), ec);
+            rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
     algorithm->verify(*params, key, WTFMove(signature), WTFMove(data), WTFMove(callback), WTFMove(exceptionCallback), *scriptExecutionContext(), m_workQueue);
@@ -742,7 +746,7 @@ void SubtleCrypto::digest(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algo
 {
     auto paramsOrException = normalizeCryptoAlgorithmParameters(state, WTFMove(algorithmIdentifier), Operations::Digest);
     if (paramsOrException.hasException()) {
-        promise->reject(paramsOrException.releaseException());
+        promise->reject(paramsOrException.releaseException().code(), "Unrecognized algorithm name"_s);
         return;
     }
     auto params = paramsOrException.releaseReturnValue();
@@ -758,9 +762,9 @@ void SubtleCrypto::digest(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algo
         if (auto promise = getPromise(index, weakThis))
             fulfillPromiseWithArrayBuffer(promise.releaseNonNull(), digest.data(), digest.size());
     };
-    auto exceptionCallback = [index, weakThis](ExceptionCode ec) mutable {
+    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
         if (auto promise = getPromise(index, weakThis))
-            rejectWithException(promise.releaseNonNull(), ec);
+            rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
     algorithm->digest(WTFMove(data), WTFMove(callback), WTFMove(exceptionCallback), *scriptExecutionContext(), m_workQueue);
@@ -788,23 +792,23 @@ void SubtleCrypto::generateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&&
                 keyOrKeyPair,
                 [&promise](RefPtr<CryptoKey>& key) {
                     if ((key->type() == CryptoKeyType::Private || key->type() == CryptoKeyType::Secret) && !key->usagesBitmap()) {
-                        rejectWithException(promise.releaseNonNull(), SyntaxError);
+                        rejectWithException(promise.releaseNonNull(), SyntaxError, ""_s);
                         return;
                     }
                     promise->resolve<IDLInterface<CryptoKey>>(*key);
                 },
                 [&promise](CryptoKeyPair& keyPair) {
                     if (!keyPair.privateKey->usagesBitmap()) {
-                        rejectWithException(promise.releaseNonNull(), SyntaxError);
+                        rejectWithException(promise.releaseNonNull(), SyntaxError, ""_s);
                         return;
                     }
                     promise->resolve<IDLDictionary<CryptoKeyPair>>(keyPair);
                 });
         }
     };
-    auto exceptionCallback = [index, weakThis](ExceptionCode ec) mutable {
+    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
         if (auto promise = getPromise(index, weakThis))
-            rejectWithException(promise.releaseNonNull(), ec);
+            rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
     // The 26 January 2017 version of the specification suggests we should perform the following task asynchronously
@@ -869,22 +873,22 @@ void SubtleCrypto::deriveKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& a
         auto callback = [index, weakThis](CryptoKey& key) mutable {
             if (auto promise = getPromise(index, weakThis)) {
                 if ((key.type() == CryptoKeyType::Private || key.type() == CryptoKeyType::Secret) && !key.usagesBitmap()) {
-                    rejectWithException(promise.releaseNonNull(), SyntaxError);
+                    rejectWithException(promise.releaseNonNull(), SyntaxError, ""_s);
                     return;
                 }
                 promise->resolve<IDLInterface<CryptoKey>>(key);
             }
         };
-        auto exceptionCallback = [index, weakThis](ExceptionCode ec) mutable {
+        auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
             if (auto promise = getPromise(index, weakThis))
-                rejectWithException(promise.releaseNonNull(), ec);
+                rejectWithException(promise.releaseNonNull(), ec, msg);
         };
 
         importAlgorithm->importKey(SubtleCrypto::KeyFormat::Raw, WTFMove(data), *importParams, extractable, keyUsagesBitmap, WTFMove(callback), WTFMove(exceptionCallback));
     };
-    auto exceptionCallback = [index, weakThis](ExceptionCode ec) mutable {
+    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
         if (auto promise = getPromise(index, weakThis))
-            rejectWithException(promise.releaseNonNull(), ec);
+            rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
     algorithm->deriveBits(*params, baseKey, length, WTFMove(callback), WTFMove(exceptionCallback), *scriptExecutionContext(), m_workQueue);
@@ -918,9 +922,9 @@ void SubtleCrypto::deriveBits(JSC::JSGlobalObject& state, AlgorithmIdentifier&& 
         if (auto promise = getPromise(index, weakThis))
             fulfillPromiseWithArrayBuffer(promise.releaseNonNull(), derivedKey.data(), derivedKey.size());
     };
-    auto exceptionCallback = [index, weakThis](ExceptionCode ec) mutable {
+    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
         if (auto promise = getPromise(index, weakThis))
-            rejectWithException(promise.releaseNonNull(), ec);
+            rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
     algorithm->deriveBits(*params, baseKey, length, WTFMove(callback), WTFMove(exceptionCallback), *scriptExecutionContext(), m_workQueue);
@@ -952,15 +956,15 @@ void SubtleCrypto::importKey(JSC::JSGlobalObject& state, KeyFormat format, KeyDa
     auto callback = [index, weakThis](CryptoKey& key) mutable {
         if (auto promise = getPromise(index, weakThis)) {
             if ((key.type() == CryptoKeyType::Private || key.type() == CryptoKeyType::Secret) && !key.usagesBitmap()) {
-                rejectWithException(promise.releaseNonNull(), SyntaxError);
+                rejectWithException(promise.releaseNonNull(), SyntaxError, ""_s);
                 return;
             }
             promise->resolve<IDLInterface<CryptoKey>>(key);
         }
     };
-    auto exceptionCallback = [index, weakThis](ExceptionCode ec) mutable {
+    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
         if (auto promise = getPromise(index, weakThis))
-            rejectWithException(promise.releaseNonNull(), ec);
+            rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
     // The 11 December 2014 version of the specification suggests we should perform the following task asynchronously:
@@ -1003,9 +1007,9 @@ void SubtleCrypto::exportKey(KeyFormat format, CryptoKey& key, Ref<DeferredPromi
             ASSERT_NOT_REACHED();
         }
     };
-    auto exceptionCallback = [index, weakThis](ExceptionCode ec) mutable {
+    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
         if (auto promise = getPromise(index, weakThis))
-            rejectWithException(promise.releaseNonNull(), ec);
+            rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
     // The 11 December 2014 version of the specification suggests we should perform the following task asynchronously:
@@ -1083,9 +1087,9 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
                     if (auto promise = getPromise(index, weakThis))
                         fulfillPromiseWithArrayBuffer(promise.releaseNonNull(), wrappedKey.data(), wrappedKey.size());
                 };
-                auto exceptionCallback = [index, weakThis](ExceptionCode ec) mutable {
+                auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
                     if (auto promise = getPromise(index, weakThis))
-                        rejectWithException(promise.releaseNonNull(), ec);
+                        rejectWithException(promise.releaseNonNull(), ec, msg);
                 };
 
                 if (!isEncryption) {
@@ -1100,9 +1104,9 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
             }
         }
     };
-    auto exceptionCallback = [index, weakThis](ExceptionCode ec) mutable {
+    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
         if (auto promise = getPromise(index, weakThis))
-            rejectWithException(promise.releaseNonNull(), ec);
+            rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
     // The following operation should be performed synchronously.
@@ -1195,15 +1199,15 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
                 auto callback = [index, weakThis](CryptoKey& key) mutable {
                     if (auto promise = getPromise(index, weakThis)) {
                         if ((key.type() == CryptoKeyType::Private || key.type() == CryptoKeyType::Secret) && !key.usagesBitmap()) {
-                            rejectWithException(promise.releaseNonNull(), SyntaxError);
+                            rejectWithException(promise.releaseNonNull(), SyntaxError, ""_s);
                             return;
                         }
                         promise->resolve<IDLInterface<CryptoKey>>(key);
                     }
                 };
-                auto exceptionCallback = [index, weakThis](ExceptionCode ec) mutable {
+                auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
                     if (auto promise = getPromise(index, weakThis))
-                        rejectWithException(promise.releaseNonNull(), ec);
+                        rejectWithException(promise.releaseNonNull(), ec, msg);
                 };
 
                 // The following operation should be performed synchronously.
@@ -1211,9 +1215,9 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
             }
         }
     };
-    auto exceptionCallback = [index, weakThis](ExceptionCode ec) mutable {
+    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
         if (auto promise = getPromise(index, weakThis))
-            rejectWithException(promise.releaseNonNull(), ec);
+            rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
     if (!isDecryption) {

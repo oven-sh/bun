@@ -4,6 +4,7 @@ var __getOwnPropNames = Object.getOwnPropertyNames;
 const StreamModule = require("node:stream");
 const BufferModule = require("node:buffer");
 const StringDecoder = require("node:string_decoder").StringDecoder;
+const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 const { CryptoHasher } = Bun;
 const {
   symmetricKeySize,
@@ -22,13 +23,75 @@ const {
   privateDecrypt,
   privateEncrypt,
   publicDecrypt,
-} = $cpp("KeyObject.cpp", "createNodeCryptoBinding");
+  X509Certificate,
+} = $cpp("KeyObject.cpp", "createKeyObjectBinding");
+
+const {
+  statelessDH,
+  ecdhConvertKey,
+  getCurves,
+  certVerifySpkac,
+  certExportPublicKey,
+  certExportChallenge,
+  getCiphers,
+  _getCipherInfo,
+} = $cpp("NodeCrypto.cpp", "createNodeCryptoBinding");
+
+const { POINT_CONVERSION_COMPRESSED, POINT_CONVERSION_HYBRID, POINT_CONVERSION_UNCOMPRESSED } =
+  $processBindingConstants.crypto;
 
 const {
   randomInt: _randomInt,
   pbkdf2: pbkdf2_,
   pbkdf2Sync: pbkdf2Sync_,
 } = $zig("node_crypto_binding.zig", "createNodeCryptoBindingZig");
+
+const { validateObject, validateString, validateInt32 } = require("internal/validators");
+
+function verifySpkac(spkac, encoding) {
+  return certVerifySpkac(getArrayBufferOrView(spkac, "spkac", encoding));
+}
+function exportPublicKey(spkac, encoding) {
+  return certExportPublicKey(getArrayBufferOrView(spkac, "spkac", encoding));
+}
+function exportChallenge(spkac, encoding) {
+  return certExportChallenge(getArrayBufferOrView(spkac, "spkac", encoding));
+}
+
+function Certificate(): void {
+  if (!(this instanceof Certificate)) {
+    return new Certificate();
+  }
+
+  this.verifySpkac = verifySpkac;
+  this.exportPublicKey = exportPublicKey;
+  this.exportChallenge = exportChallenge;
+}
+Certificate.prototype = {};
+Certificate.verifySpkac = verifySpkac;
+Certificate.exportPublicKey = exportPublicKey;
+Certificate.exportChallenge = exportChallenge;
+
+function getCipherInfo(nameOrNid, options) {
+  if (typeof nameOrNid !== "string" && typeof nameOrNid !== "number") {
+    throw $ERR_INVALID_ARG_TYPE("nameOrNid", ["string", "number"], nameOrNid);
+  }
+  if (typeof nameOrNid === "number") validateInt32(nameOrNid, "nameOrNid");
+  let keyLength, ivLength;
+  if (options !== undefined) {
+    validateObject(options, "options");
+    ({ keyLength, ivLength } = options);
+    if (keyLength !== undefined) validateInt32(keyLength, "options.keyLength");
+    if (ivLength !== undefined) validateInt32(ivLength, "options.ivLength");
+  }
+
+  const ret = _getCipherInfo({}, nameOrNid, keyLength, ivLength);
+  if (ret !== undefined) {
+    ret.name &&= ret.name;
+    ret.type &&= StringPrototypeToLowerCase.$call(ret.type);
+  }
+  return ret;
+}
 
 function randomInt(min, max, callback) {
   if (max == null) {
@@ -1620,7 +1683,12 @@ var require_algos = __commonJS({
   },
 });
 function pbkdf2(password, salt, iterations, keylen, digest, callback) {
-  const promise = pbkdf2_(password, salt, iterations, keylen, digest);
+  if (typeof digest === "function") {
+    callback = digest;
+    digest = undefined;
+  }
+
+  const promise = pbkdf2_(password, salt, iterations, keylen, digest, callback);
   if (callback) {
     promise.then(
       result => callback(null, result),
@@ -3081,11 +3149,7 @@ var require_decrypter = __commonJS({
 var require_browser5 = __commonJS({
   "node_modules/browserify-aes/browser.js"(exports) {
     var ciphers = require_encrypter(),
-      deciphers = require_decrypter(),
-      modes = require_list();
-    function getCiphers() {
-      return Object.keys(modes);
-    }
+      deciphers = require_decrypter();
     exports.createCipher = exports.Cipher = ciphers.createCipher;
     exports.createCipheriv = exports.Cipheriv = ciphers.createCipheriv;
     exports.createDecipher = exports.Decipher = deciphers.createDecipher;
@@ -3159,9 +3223,6 @@ var require_browser6 = __commonJS({
       if (((suite = suite.toLowerCase()), aesModes[suite])) return aes.createDecipheriv(suite, key, iv);
       if (desModes[suite]) return new DES({ key, iv, mode: suite, decrypt: !0 });
       throw new TypeError("invalid suite type");
-    }
-    function getCiphers() {
-      return Object.keys(desModes).concat(aes.getCiphers());
     }
     exports.createCipher = exports.Cipher = createCipher;
     exports.createCipheriv = exports.Cipheriv = createCipheriv;
@@ -5514,6 +5575,39 @@ var require_browser7 = __commonJS({
     }
     exports.DiffieHellmanGroup = exports.createDiffieHellmanGroup = exports.getDiffieHellman = getDiffieHellman;
     exports.createDiffieHellman = exports.DiffieHellman = createDiffieHellman;
+
+    exports.diffieHellman = function diffieHellman(options) {
+      validateObject(options);
+
+      const { privateKey, publicKey } = options;
+
+      if (!(privateKey instanceof KeyObject)) {
+        throw $ERR_INVALID_ARG_VALUE("options.privateKey", privateKey);
+      }
+
+      if (!(publicKey instanceof KeyObject)) {
+        throw $ERR_INVALID_ARG_VALUE("options.publicKey", publicKey);
+      }
+
+      if (privateKey.type !== "private") {
+        throw $ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE(privateKey.type, "private");
+      }
+
+      const publicKeyType = publicKey.type;
+      if (publicKeyType !== "public" && publicKeyType !== "private") {
+        throw $ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE(publicKeyType, "private or public");
+      }
+
+      const privateType = privateKey.asymmetricKeyType;
+      const publicType = publicKey.asymmetricKeyType;
+      if (privateType !== publicType || !["dh", "ec", "x448", "x25519"].includes(privateType)) {
+        throw $ERR_CRYPTO_INCOMPATIBLE_KEY(
+          `Incompatible key types for Diffie-Hellman: ${privateType} and ${publicType}`,
+        );
+      }
+
+      return statelessDH(privateKey.$bunNativePtr, publicKey.$bunNativePtr);
+    };
   },
 });
 
@@ -5896,7 +5990,7 @@ var require_base = __commonJS({
         return res;
       } else if ((bytes[0] === 2 || bytes[0] === 3) && bytes.length - 1 === len)
         return this.pointFromX(bytes.slice(1, 1 + len), bytes[0] === 3);
-      throw new Error("Unknown point format");
+      throw $ERR_CRYPTO_ECDH_INVALID_PUBLIC_KEY("Public key is not valid for specified curve");
     };
     BasePoint.prototype.encodeCompressed = function (enc) {
       return this.encode(enc, !0);
@@ -8914,8 +9008,7 @@ var require_signature = __commonJS({
     function Signature(options, enc) {
       if (options instanceof Signature) return options;
       this._importDER(options, enc) ||
-        (assert(options.r && options.s, "Signature without r or s"),
-        (this.r = new BN(options.r, 16)),
+        ((this.r = new BN(options.r, 16)),
         (this.s = new BN(options.s, 16)),
         options.recoveryParam === void 0 ? (this.recoveryParam = null) : (this.recoveryParam = options.recoveryParam));
     }
@@ -9212,7 +9305,7 @@ var require_signature2 = __commonJS({
             R: sig.slice(0, eddsa.encodingLength),
             S: sig.slice(eddsa.encodingLength),
           }),
-        assert(sig.R && sig.S, "Signature without R or S"),
+        // assert(sig.R && sig.S, "Signature without R or S"),
         eddsa.isPoint(sig.R) && (this._R = sig.R),
         sig.S instanceof BN && (this._S = sig.S),
         (this._Rencoded = Array.isArray(sig.R) ? sig.R : sig.Rencoded),
@@ -11355,9 +11448,6 @@ var require_browser9 = __commonJS({
   "node_modules/create-ecdh/browser.js"(exports, module) {
     var elliptic = require_elliptic(),
       BN = require_bn6();
-    module.exports = function (curve) {
-      return new ECDH(curve);
-    };
     var aliases = {
       secp256k1: {
         name: "secp256k1",
@@ -11430,6 +11520,29 @@ var require_browser9 = __commonJS({
       (enc = enc || "utf8"), Buffer.isBuffer(priv) || (priv = new Buffer(priv, enc));
       var _priv = new BN(priv);
       return (_priv = _priv.toString(16)), (this.keys = this.curve.genKeyPair()), this.keys._importPrivate(_priv), this;
+    };
+    function getFormat(format) {
+      if (format) {
+        if (format === "compressed") return POINT_CONVERSION_COMPRESSED;
+        if (format === "hybrid") return POINT_CONVERSION_HYBRID;
+        if (format !== "uncompressed") throw $ERR_CRYPTO_ECDH_INVALID_FORMAT("Invalid ECDH format: " + format);
+      }
+      return POINT_CONVERSION_UNCOMPRESSED;
+    }
+    function encode(buffer, encoding) {
+      if (encoding && encoding !== "buffer") buffer = buffer.toString(encoding);
+      return buffer;
+    }
+    ECDH.convertKey = function convertKey(key, curve, inEnc, outEnc, format) {
+      validateString(curve, "curve");
+      key = getArrayBufferOrView(key, "key", inEnc);
+      const f = getFormat(format);
+      const convertedKey = ecdhConvertKey(key, curve, f);
+      return encode(convertedKey, outEnc);
+    };
+    module.exports.ECDH = ECDH;
+    module.exports.createECDH = function (curve) {
+      return new ECDH(curve);
     };
     function formatReturnValue(bn, enc, len) {
       Array.isArray(bn) || (bn = bn.toArray());
@@ -11523,7 +11636,7 @@ var require_crypto_browserify2 = __commonJS({
     exports.createDecipher = aes.createDecipher;
     exports.Decipheriv = aes.Decipheriv;
     exports.createDecipheriv = aes.createDecipheriv;
-    exports.getCiphers = aes.getCiphers;
+    exports.getCiphers = getCiphers;
     exports.listCiphers = aes.listCiphers;
     var dh = require_browser7();
     exports.DiffieHellmanGroup = dh.DiffieHellmanGroup;
@@ -11531,12 +11644,15 @@ var require_crypto_browserify2 = __commonJS({
     exports.getDiffieHellman = dh.getDiffieHellman;
     exports.createDiffieHellman = dh.createDiffieHellman;
     exports.DiffieHellman = dh.DiffieHellman;
+    exports.diffieHellman = dh.diffieHellman;
     var sign = require_browser8();
     exports.createSign = sign.createSign;
     exports.Sign = sign.Sign;
     exports.createVerify = sign.createVerify;
     exports.Verify = sign.Verify;
-    exports.createECDH = require_browser9();
+    const ecdh = require_browser9();
+    exports.ECDH = ecdh.ECDH;
+    exports.createECDH = ecdh.createECDH;
     exports.getRandomValues = values => crypto.getRandomValues(values);
     var rf = require_browser11();
     exports.randomFill = rf.randomFill;
@@ -11605,26 +11721,6 @@ timingSafeEqual &&
   Object.defineProperty(scryptSync, "name", {
     value: "::bunternal::",
   }));
-
-const harcoded_curves = [
-  "p192",
-  "p224",
-  "p256",
-  "p384",
-  "p521",
-  "curve25519",
-  "ed25519",
-  "secp256k1",
-  "secp224r1",
-  "prime256v1",
-  "prime192v1",
-  "secp384r1",
-  "secp521r1",
-];
-
-function getCurves() {
-  return harcoded_curves;
-}
 
 class KeyObject {
   // we use $bunNativePtr so that util.types.isKeyObject can detect it
@@ -12045,11 +12141,13 @@ crypto_exports.getRandomValues = getRandomValues;
 crypto_exports.randomUUID = randomUUID;
 crypto_exports.randomInt = randomInt;
 crypto_exports.getCurves = getCurves;
+crypto_exports.getCipherInfo = getCipherInfo;
 crypto_exports.scrypt = scrypt;
 crypto_exports.scryptSync = scryptSync;
 crypto_exports.timingSafeEqual = timingSafeEqual;
 crypto_exports.webcrypto = webcrypto;
 crypto_exports.subtle = _subtle;
-
+crypto_exports.X509Certificate = X509Certificate;
+crypto_exports.Certificate = Certificate;
 export default crypto_exports;
 /*! safe-buffer. MIT License. Feross Aboukhadijeh <https://feross.org/opensource> */

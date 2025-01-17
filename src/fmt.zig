@@ -1760,38 +1760,45 @@ pub const js_bindings = struct {
     }
 };
 
+// Equivalent to ERR_OUT_OF_RANGE from
 fn NewOutOfRangeFormatter(comptime T: type) type {
     return struct {
         value: T,
         min: i64 = std.math.maxInt(i64),
         max: i64 = std.math.maxInt(i64),
         field_name: []const u8,
+        msg: []const u8 = "",
 
         pub fn format(self: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
             try writer.writeAll("The value of \"");
             try writer.writeAll(self.field_name);
-            try writer.writeAll("\" ");
+            try writer.writeAll("\" is out of range. It must be ");
+
             const min = self.min;
             const max = self.max;
+            const msg = self.msg;
 
             if (min != std.math.maxInt(i64) and max != std.math.maxInt(i64)) {
-                try std.fmt.format(writer, "must be >= {d} and <= {d}.", .{ min, max });
+                try std.fmt.format(writer, ">= {d} and <= {d}.", .{ min, max });
             } else if (min != std.math.maxInt(i64)) {
-                try std.fmt.format(writer, "must be >= {d}.", .{min});
+                try std.fmt.format(writer, ">= {d}.", .{min});
             } else if (max != std.math.maxInt(i64)) {
-                try std.fmt.format(writer, "must be <= {d}.", .{max});
+                try std.fmt.format(writer, "<= {d}.", .{max});
+            } else if (msg.len > 0) {
+                try writer.writeAll(msg);
+                try writer.writeByte('.');
             } else {
-                try writer.writeAll("must be within the range of values for type ");
+                try writer.writeAll("within the range of values for type ");
                 try writer.writeAll(comptime @typeName(T));
                 try writer.writeAll(".");
             }
 
             if (comptime T == f64 or T == f32) {
-                try std.fmt.format(writer, " Received: {}", .{double(self.value)});
+                try std.fmt.format(writer, " Received {}", .{double(self.value)});
             } else if (comptime T == []const u8) {
-                try std.fmt.format(writer, " Received: {s}", .{self.value});
+                try std.fmt.format(writer, " Received {s}", .{self.value});
             } else {
-                try std.fmt.format(writer, " Received: {d}", .{self.value});
+                try std.fmt.format(writer, " Received {d}", .{self.value});
             }
         }
     };
@@ -1815,10 +1822,11 @@ pub const OutOfRangeOptions = struct {
     min: i64 = std.math.maxInt(i64),
     max: i64 = std.math.maxInt(i64),
     field_name: []const u8,
+    msg: []const u8 = "",
 };
 
 pub fn outOfRange(value: anytype, options: OutOfRangeOptions) OutOfRangeFormatter(@TypeOf(value)) {
-    return .{ .value = value, .min = options.min, .max = options.max, .field_name = options.field_name };
+    return .{ .value = value, .min = options.min, .max = options.max, .field_name = options.field_name, .msg = options.msg };
 }
 
 /// esbuild has an 8 character truncation of a base32 encoded bytes. this

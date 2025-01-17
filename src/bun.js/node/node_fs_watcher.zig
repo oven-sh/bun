@@ -427,12 +427,7 @@ pub const FSWatcher = struct {
             };
         }
 
-        pub fn createFSWatcher(this: Arguments) JSC.Maybe(JSC.JSValue) {
-            return switch (FSWatcher.init(this)) {
-                .result => |result| .{ .result = result.js_this },
-                .err => |err| .{ .err = err },
-            };
-        }
+        pub const createFSWatcher = FSWatcher.init;
     };
 
     pub fn initJS(this: *FSWatcher, listener: JSC.JSValue) void {

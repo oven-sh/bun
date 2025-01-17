@@ -236,12 +236,12 @@ pub const Arguments = struct {
         clap.parseParam("--conditions <STR>...             Pass custom conditions to resolve") catch unreachable,
         clap.parseParam("--fetch-preconnect <STR>...       Preconnect to a URL while code is loading") catch unreachable,
         clap.parseParam("--max-http-header-size <INT>      Set the maximum size of HTTP headers in bytes. Default is 16KiB") catch unreachable,
-        clap.parseParam("--expose-internals                Expose internals used for testing Bun itself. Usage of these APIs is completely unsupported.") catch unreachable,
         clap.parseParam("--dns-result-order <STR>          Set the default order of DNS lookup results. Valid orders: verbatim (default), ipv4first, ipv6first") catch unreachable,
         clap.parseParam("--expose-gc                       Expose gc() on the global object. Has no effect on Bun.gc().") catch unreachable,
         clap.parseParam("--no-deprecation                  Suppress all reporting of the custom deprecation.") catch unreachable,
         clap.parseParam("--throw-deprecation               Determine whether or not deprecation warnings result in errors.") catch unreachable,
         clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
+        clap.parseParam("--experimental-html               Bundle .html imports as JavaScript & CSS") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -807,9 +807,6 @@ pub const Arguments = struct {
                 bun.JSC.RuntimeTranspilerCache.is_disabled = true;
             }
 
-            if (args.flag("--expose-internals")) {
-                bun.JSC.ModuleLoader.is_allowed_to_use_internal_testing_apis = true;
-            }
             if (args.flag("--no-deprecation")) {
                 Bun__Node__ProcessNoDeprecation = true;
             }
@@ -1167,6 +1164,7 @@ pub const Arguments = struct {
         }
 
         opts.resolve = Api.ResolveMode.lazy;
+        ctx.bundler_options.experimental.html = args.flag("--experimental-html");
 
         if (jsx_factory != null or
             jsx_fragment != null or
@@ -1409,7 +1407,10 @@ pub const HelpCommand = struct {
 pub const ReservedCommand = struct {
     pub fn exec(_: std.mem.Allocator) !void {
         @setCold(true);
-        const command_name = bun.argv[1];
+        const command_name = for (bun.argv[1..]) |arg| {
+            if (arg.len > 1 and arg[0] == '-') continue;
+            break arg;
+        } else bun.argv[1];
         Output.prettyError(
             \\<r><red>Uh-oh<r>. <b><yellow>bun {s}<r> is a subcommand reserved for future use by Bun.
             \\

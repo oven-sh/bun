@@ -61,8 +61,7 @@ export function initializeTextEncoderStream() {
 
 $getter;
 export function encoding() {
-  if (!$getByIdDirectPrivate(this, "textEncoderStreamTransform"))
-    throw $makeThisTypeError("TextEncoderStream", "encoding");
+  if (!$getByIdDirectPrivate(this, "textEncoderStreamTransform")) throw $ERR_INVALID_THIS("TextEncoderStream");
 
   return "utf-8";
 }
@@ -70,7 +69,7 @@ export function encoding() {
 $getter;
 export function readable() {
   const transform = $getByIdDirectPrivate(this, "textEncoderStreamTransform");
-  if (!transform) throw $makeThisTypeError("TextEncoderStream", "readable");
+  if (!transform) throw $ERR_INVALID_THIS("TextEncoderStream");
 
   return $getByIdDirectPrivate(transform, "readable");
 }
@@ -78,7 +77,7 @@ export function readable() {
 $getter;
 export function writable() {
   const transform = $getByIdDirectPrivate(this, "textEncoderStreamTransform");
-  if (!transform) throw $makeThisTypeError("TextEncoderStream", "writable");
+  if (!transform) throw $ERR_INVALID_THIS("TextEncoderStream");
 
   return $getByIdDirectPrivate(transform, "writable");
 }

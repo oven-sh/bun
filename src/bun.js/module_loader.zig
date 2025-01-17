@@ -249,16 +249,18 @@ pub const RuntimeTranspilerStore = struct {
         this: *RuntimeTranspilerStore,
         vm: *JSC.VirtualMachine,
         globalObject: *JSC.JSGlobalObject,
+        input_specifier: bun.String,
         path: Fs.Path,
-        referrer: []const u8,
+        referrer: bun.String,
     ) *anyopaque {
         var job: *TranspilerJob = this.store.get();
         const owned_path = Fs.Path.init(bun.default_allocator.dupe(u8, path.text) catch unreachable);
         const promise = JSC.JSInternalPromise.create(globalObject);
         job.* = TranspilerJob{
+            .non_threadsafe_input_specifier = input_specifier,
             .path = owned_path,
             .globalThis = globalObject,
-            .referrer = bun.default_allocator.dupe(u8, referrer) catch unreachable,
+            .non_threadsafe_referrer = referrer,
             .vm = vm,
             .log = logger.Log.init(bun.default_allocator),
             .loader = vm.transpiler.options.loader(owned_path.name.ext),
@@ -276,7 +278,8 @@ pub const RuntimeTranspilerStore = struct {
 
     pub const TranspilerJob = struct {
         path: Fs.Path,
-        referrer: []const u8,
+        non_threadsafe_input_specifier: String,
+        non_threadsafe_referrer: String,
         loader: options.Loader,
         promise: JSC.Strong = .{},
         vm: *JSC.VirtualMachine,
@@ -305,11 +308,12 @@ pub const RuntimeTranspilerStore = struct {
 
         pub fn deinit(this: *TranspilerJob) void {
             bun.default_allocator.free(this.path.text);
-            bun.default_allocator.free(this.referrer);
 
             this.poll_ref.disable();
             this.fetcher.deinit();
             this.loader = options.Loader.file;
+            this.non_threadsafe_input_specifier.deref();
+            this.non_threadsafe_referrer.deref();
             this.path = Fs.Path.empty;
             this.log.deinit();
             this.promise.deinit();
@@ -330,7 +334,8 @@ pub const RuntimeTranspilerStore = struct {
             const globalThis = this.globalThis;
             this.poll_ref.unref(vm);
 
-            const referrer = bun.String.createUTF8(this.referrer);
+            const referrer = this.non_threadsafe_referrer;
+            this.non_threadsafe_referrer = String.empty;
             var log = this.log;
             this.log = logger.Log.init(bun.default_allocator);
             var resolved_source = this.resolved_source;
@@ -339,7 +344,14 @@ pub const RuntimeTranspilerStore = struct {
                     break :brk bun.String.createUTF8(this.path.text);
                 }
 
-                break :brk resolved_source.specifier;
+                const out = this.non_threadsafe_input_specifier;
+                this.non_threadsafe_input_specifier = String.empty;
+
+                bun.debugAssert(resolved_source.source_url.isEmpty());
+                bun.debugAssert(resolved_source.specifier.isEmpty());
+                resolved_source.source_url = out.createIfDifferent(this.path.text);
+                resolved_source.specifier = out.dupeRef();
+                break :brk out;
             };
 
             resolved_source.tag = brk: {
@@ -544,7 +556,6 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             if (cache.entry) |*entry| {
-                const duped = String.createUTF8(specifier);
                 vm.source_mappings.putMappings(parse_result.source, .{
                     .list = .{ .items = @constCast(entry.sourcemap), .capacity = entry.sourcemap.len },
                     .allocator = bun.default_allocator,
@@ -565,8 +576,6 @@ pub const RuntimeTranspilerStore = struct {
                             break :brk result;
                         },
                     },
-                    .specifier = duped,
-                    .source_url = duped.createIfDifferent(path.text),
                     .hash = 0,
                     .is_commonjs_module = entry.metadata.module_type == .cjs,
                 };
@@ -575,13 +584,10 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             if (parse_result.already_bundled != .none) {
-                const duped = String.createUTF8(specifier);
                 const bytecode_slice = parse_result.already_bundled.bytecodeSlice();
                 this.resolved_source = ResolvedSource{
                     .allocator = null,
                     .source_code = bun.String.createLatin1(parse_result.source.contents),
-                    .specifier = duped,
-                    .source_url = duped.createIfDifferent(path.text),
                     .already_bundled = true,
                     .hash = 0,
                     .bytecode_cache = if (bytecode_slice.len > 0) bytecode_slice.ptr else null,
@@ -658,7 +664,6 @@ pub const RuntimeTranspilerStore = struct {
                 dumpSource(this.vm, specifier, &printer);
             }
 
-            const duped = String.createUTF8(specifier);
             const source_code = brk: {
                 const written = printer.ctx.getWritten();
 
@@ -684,8 +689,6 @@ pub const RuntimeTranspilerStore = struct {
             this.resolved_source = ResolvedSource{
                 .allocator = null,
                 .source_code = source_code,
-                .specifier = duped,
-                .source_url = duped.createIfDifferent(path.text),
                 .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
                 .hash = 0,
             };
@@ -1490,7 +1493,6 @@ pub const ModuleLoader = struct {
     pub fn transpileSourceCode(
         jsc_vm: *VirtualMachine,
         specifier: string,
-        display_specifier: string,
         referrer: string,
         input_specifier: String,
         path: Fs.Path,
@@ -1699,7 +1701,6 @@ pub const ModuleLoader = struct {
                     return transpileSourceCode(
                         jsc_vm,
                         specifier,
-                        display_specifier,
                         referrer,
                         input_specifier,
                         path,
@@ -2034,7 +2035,6 @@ pub const ModuleLoader = struct {
                 return transpileSourceCode(
                     jsc_vm,
                     specifier,
-                    display_specifier,
                     referrer,
                     input_specifier,
                     path,
@@ -2088,6 +2088,33 @@ pub const ModuleLoader = struct {
                     .source_url = input_specifier.createIfDifferent(path.text),
                     .tag = .esm,
                     .hash = 0,
+                };
+            },
+
+            .html => {
+                if (flags.disableTranspiling()) {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = bun.String.empty,
+                        .specifier = input_specifier,
+                        .source_url = input_specifier.createIfDifferent(path.text),
+                        .hash = 0,
+                        .tag = .esm,
+                    };
+                }
+
+                if (globalObject == null) {
+                    return error.NotSupported;
+                }
+
+                const html_bundle = try JSC.API.HTMLBundle.init(globalObject.?, path.text);
+                return ResolvedSource{
+                    .allocator = &jsc_vm.allocator,
+                    .jsvalue_for_export = html_bundle.toJS(globalObject.?),
+                    .specifier = input_specifier,
+                    .source_url = input_specifier.createIfDifferent(path.text),
+                    .hash = 0,
+                    .tag = .export_default_object,
                 };
             },
 
@@ -2174,9 +2201,12 @@ pub const ModuleLoader = struct {
         }
     }
 
-    pub fn normalizeSpecifier(jsc_vm: *VirtualMachine, slice_: string, string_to_use_for_source: *[]const u8) string {
+    pub fn normalizeSpecifier(
+        jsc_vm: *VirtualMachine,
+        slice_: string,
+    ) struct { string, string } {
         var slice = slice_;
-        if (slice.len == 0) return slice;
+        if (slice.len == 0) return .{ slice, slice };
 
         if (strings.hasPrefix(slice, jsc_vm.origin.host)) {
             slice = slice[jsc_vm.origin.host.len..];
@@ -2188,13 +2218,13 @@ pub const ModuleLoader = struct {
             }
         }
 
-        string_to_use_for_source.* = slice;
+        const specifier = slice;
 
         if (strings.indexOfChar(slice, '?')) |i| {
             slice = slice[0..i];
         }
 
-        return slice;
+        return .{ slice, specifier };
     }
 
     pub export fn Bun__fetchBuiltinModule(
@@ -2229,8 +2259,8 @@ pub const ModuleLoader = struct {
     pub export fn Bun__transpileFile(
         jsc_vm: *VirtualMachine,
         globalObject: *JSC.JSGlobalObject,
-        specifier_ptr: *const bun.String,
-        referrer: *const bun.String,
+        specifier_ptr: *bun.String,
+        referrer: *bun.String,
         type_attribute: ?*const bun.String,
         ret: *ErrorableResolvedSource,
         allow_promise: bool,
@@ -2243,13 +2273,11 @@ pub const ModuleLoader = struct {
         var referrer_slice = referrer.toUTF8(jsc_vm.allocator);
         defer _specifier.deinit();
         defer referrer_slice.deinit();
-        var display_specifier: []const u8 = "";
-        const specifier = normalizeSpecifier(
+        const normalized_file_path_from_specifier, const specifier = normalizeSpecifier(
             jsc_vm,
             _specifier.slice(),
-            &display_specifier,
         );
-        var path = Fs.Path.init(specifier);
+        var path = Fs.Path.init(normalized_file_path_from_specifier);
 
         var virtual_source: ?*logger.Source = null;
         var virtual_source_to_use: ?logger.Source = null;
@@ -2326,11 +2354,16 @@ pub const ModuleLoader = struct {
                 loader = .ts;
             } else if (attribute.eqlComptime("tsx")) {
                 loader = .tsx;
+            } else if (jsc_vm.transpiler.options.experimental.html and attribute.eqlComptime("html")) {
+                loader = .html;
             }
         }
 
-        if (strings.eqlComptime(path.name.filename, "bun.lock")) {
-            loader = .json;
+        // If we were going to choose file loader, see if it's a bun.lock
+        if (loader == null) {
+            if (strings.eqlComptime(path.name.filename, "bun.lock")) {
+                loader = .json;
+            }
         }
 
         // We only run the transpiler concurrently when we can.
@@ -2350,8 +2383,9 @@ pub const ModuleLoader = struct {
                     return jsc_vm.transpiler_store.transpile(
                         jsc_vm,
                         globalObject,
+                        specifier_ptr.dupeRef(),
                         path,
-                        referrer_slice.slice(),
+                        referrer.dupeRef(),
                     );
                 }
             }
@@ -2383,7 +2417,6 @@ pub const ModuleLoader = struct {
             ModuleLoader.transpileSourceCode(
                 jsc_vm,
                 specifier,
-                display_specifier,
                 referrer_slice.slice(),
                 specifier_ptr.*,
                 path,
@@ -2479,15 +2512,6 @@ pub const ModuleLoader = struct {
                     return jsSyntheticModule(.InternalForTesting, specifier);
                 },
 
-                .@"internal/test/binding" => {
-                    if (!Environment.isDebug) {
-                        if (!is_allowed_to_use_internal_testing_apis)
-                            return null;
-                    }
-
-                    return jsSyntheticModule(.@"internal:test/binding", specifier);
-                },
-
                 // These are defined in src/js/*
                 .@"bun:ffi" => return jsSyntheticModule(.@"bun:ffi", specifier),
                 .@"bun:sql" => {
@@ -2553,6 +2577,12 @@ pub const ModuleLoader = struct {
                 .@"abort-controller" => return jsSyntheticModule(.@"abort-controller", specifier),
                 .undici => return jsSyntheticModule(.undici, specifier),
                 .ws => return jsSyntheticModule(.ws, specifier),
+                .@"node:_stream_duplex" => return jsSyntheticModule(.@"node:_stream_duplex", specifier),
+                .@"node:_stream_passthrough" => return jsSyntheticModule(.@"node:_stream_passthrough", specifier),
+                .@"node:_stream_readable" => return jsSyntheticModule(.@"node:_stream_readable", specifier),
+                .@"node:_stream_transform" => return jsSyntheticModule(.@"node:_stream_transform", specifier),
+                .@"node:_stream_wrap" => return jsSyntheticModule(.@"node:_stream_wrap", specifier),
+                .@"node:_stream_writable" => return jsSyntheticModule(.@"node:_stream_writable", specifier),
             }
         } else if (specifier.hasPrefixComptime(js_ast.Macro.namespaceWithColon)) {
             const spec = specifier.toUTF8(bun.default_allocator);
@@ -2648,7 +2678,6 @@ pub const ModuleLoader = struct {
         ret.* = ErrorableResolvedSource.ok(
             ModuleLoader.transpileSourceCode(
                 jsc_vm,
-                specifier_slice.slice(),
                 specifier_slice.slice(),
                 referrer_slice.slice(),
                 specifier_ptr.*,
@@ -2765,7 +2794,13 @@ pub const HardcodedModule = enum {
     @"node:cluster",
     // these are gated behind '--expose-internals'
     @"bun:internal-for-testing",
-    @"internal/test/binding",
+    //
+    @"node:_stream_duplex",
+    @"node:_stream_passthrough",
+    @"node:_stream_readable",
+    @"node:_stream_transform",
+    @"node:_stream_wrap",
+    @"node:_stream_writable",
 
     /// Already resolved modules go in here.
     /// This does not remap the module name, it is just a hash table.
@@ -2842,13 +2877,18 @@ pub const HardcodedModule = enum {
             .{ "worker_threads", HardcodedModule.@"node:worker_threads" },
             .{ "zlib", HardcodedModule.@"node:zlib" },
 
+            .{ "_stream_duplex", .@"node:_stream_duplex" },
+            .{ "_stream_passthrough", .@"node:_stream_passthrough" },
+            .{ "_stream_readable", .@"node:_stream_readable" },
+            .{ "_stream_transform", .@"node:_stream_transform" },
+            .{ "_stream_wrap", .@"node:_stream_wrap" },
+            .{ "_stream_writable", .@"node:_stream_writable" },
+
             .{ "undici", HardcodedModule.undici },
             .{ "ws", HardcodedModule.ws },
             .{ "@vercel/fetch", HardcodedModule.@"@vercel/fetch" },
             .{ "utf-8-validate", HardcodedModule.@"utf-8-validate" },
             .{ "abort-controller", HardcodedModule.@"abort-controller" },
-
-            .{ "internal/test/binding", HardcodedModule.@"internal/test/binding" },
         },
     );
 
@@ -2921,12 +2961,12 @@ pub const HardcodedModule = enum {
             .{ "node:_http_incoming", .{ .path = "http" } },
             .{ "node:_http_outgoing", .{ .path = "http" } },
             .{ "node:_http_server", .{ .path = "http" } },
-            .{ "node:_stream_duplex", .{ .path = "stream" } },
-            .{ "node:_stream_passthrough", .{ .path = "stream" } },
-            .{ "node:_stream_readable", .{ .path = "stream" } },
-            .{ "node:_stream_transform", .{ .path = "stream" } },
-            .{ "node:_stream_writable", .{ .path = "stream" } },
-            .{ "node:_stream_wrap", .{ .path = "stream" } },
+            .{ "node:_stream_duplex", .{ .path = "_stream_duplex" } },
+            .{ "node:_stream_passthrough", .{ .path = "_stream_passthrough" } },
+            .{ "node:_stream_readable", .{ .path = "_stream_readable" } },
+            .{ "node:_stream_transform", .{ .path = "_stream_transform" } },
+            .{ "node:_stream_wrap", .{ .path = "_stream_wrap" } },
+            .{ "node:_stream_writable", .{ .path = "_stream_writable" } },
             .{ "node:_tls_wrap", .{ .path = "tls" } },
             .{ "node:_tls_common", .{ .path = "tls" } },
 
@@ -2996,20 +3036,18 @@ pub const HardcodedModule = enum {
             .{ "_http_incoming", .{ .path = "http" } },
             .{ "_http_outgoing", .{ .path = "http" } },
             .{ "_http_server", .{ .path = "http" } },
-            .{ "_stream_duplex", .{ .path = "stream" } },
-            .{ "_stream_passthrough", .{ .path = "stream" } },
-            .{ "_stream_readable", .{ .path = "stream" } },
-            .{ "_stream_transform", .{ .path = "stream" } },
-            .{ "_stream_writable", .{ .path = "stream" } },
-            .{ "_stream_wrap", .{ .path = "stream" } },
+            .{ "_stream_duplex", .{ .path = "_stream_duplex" } },
+            .{ "_stream_passthrough", .{ .path = "_stream_passthrough" } },
+            .{ "_stream_readable", .{ .path = "_stream_readable" } },
+            .{ "_stream_transform", .{ .path = "_stream_transform" } },
+            .{ "_stream_wrap", .{ .path = "_stream_wrap" } },
+            .{ "_stream_writable", .{ .path = "_stream_writable" } },
             .{ "_tls_wrap", .{ .path = "tls" } },
             .{ "_tls_common", .{ .path = "tls" } },
 
             .{ "next/dist/compiled/ws", .{ .path = "ws" } },
             .{ "next/dist/compiled/node-fetch", .{ .path = "node-fetch" } },
             .{ "next/dist/compiled/undici", .{ .path = "undici" } },
-
-            .{ "internal/test/binding", .{ .path = "internal/test/binding" } },
         };
 
         const bun_extra_alias_kvs = [_]struct { string, Alias }{

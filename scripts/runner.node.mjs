@@ -199,7 +199,7 @@ async function runTests() {
       failure ||= result;
       flaky ||= true;
 
-      if (attempt >= maxAttempts) {
+      if (attempt >= maxAttempts || isAlwaysFailure(error)) {
         flaky = false;
         failedResults.push(failure);
       }
@@ -1550,6 +1550,13 @@ function getExitCode(outcome) {
     return 3;
   }
   return 1;
+}
+
+// A flaky segfault, sigtrap, or sigill must never be ignored.
+// If it happens in CI, it will happen to our users.
+function isAlwaysFailure(error) {
+  error = ((error || "") + "").toLowerCase().trim();
+  return error.includes("segmentation fault") || error.includes("sigill") || error.includes("sigtrap");
 }
 
 /**

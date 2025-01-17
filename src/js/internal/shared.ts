@@ -1,3 +1,5 @@
+const ObjectFreeze = Object.freeze;
+
 class NotImplementedError extends Error {
   code: string;
   constructor(feature: string, issue?: number, extra?: string) {
@@ -47,11 +49,12 @@ const fileSinkSymbol = Symbol("fileSink");
 
 //
 
-let util;
+let util: typeof import("node:util");
 class ExceptionWithHostPort extends Error {
   errno: number;
   syscall: string;
   port?: number;
+  address;
 
   constructor(err, syscall, address, port) {
     // TODO(joyeecheung): We have to use the type-checked
@@ -79,6 +82,20 @@ class ExceptionWithHostPort extends Error {
   }
 }
 
+function once(callback, { preserveReturnValue = false } = kEmptyObject) {
+  let called = false;
+  let returnValue;
+  return function (...args) {
+    if (called) return returnValue;
+    called = true;
+    const result = callback.$apply(this, args);
+    returnValue = preserveReturnValue ? result : undefined;
+    return result;
+  };
+}
+
+const kEmptyObject = ObjectFreeze({ __proto__: null });
+
 //
 
 export default {
@@ -88,6 +105,13 @@ export default {
   warnNotImplementedOnce,
   fileSinkSymbol,
   ExceptionWithHostPort,
+  once,
+
   kHandle: Symbol("kHandle"),
   kAutoDestroyed: Symbol("kAutoDestroyed"),
+  kResistStopPropagation: Symbol("kResistStopPropagation"),
+  kWeakHandler: Symbol("kWeak"),
+  kEnsureConstructed: Symbol("kEnsureConstructed"),
+  kGetNativeReadableProto: Symbol("kGetNativeReadableProto"),
+  kEmptyObject,
 };

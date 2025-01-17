@@ -755,7 +755,7 @@ Socket.prototype.addMembership = function (multicastAddress, interfaceAddress) {
   throwNotImplemented("addMembership", 10381);
   /*
   if (!multicastAddress) {
-    throw new ERR_MISSING_ARGS('multicastAddress');
+    throw $ERR_MISSING_ARGS('multicastAddress');
   }
 
   const { handle } = this[kStateSymbol];
@@ -770,7 +770,7 @@ Socket.prototype.dropMembership = function (multicastAddress, interfaceAddress) 
   throwNotImplemented("dropMembership", 10381);
   /*
   if (!multicastAddress) {
-    throw new ERR_MISSING_ARGS('multicastAddress');
+    throw $ERR_MISSING_ARGS('multicastAddress');
   }
 
   const { handle } = this[kStateSymbol];

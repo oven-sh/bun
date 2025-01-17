@@ -3467,3 +3467,8 @@ it("fs.mkdirSync recursive should not error when the directory already exists, b
   expect(() => mkdirSync(import.meta.dir, { recursive: true })).not.toThrowError();
   expect(() => mkdirSync(import.meta.file, { recursive: true })).toThrowError();
 });
+
+it("fs.mkdirSync recursive: false should error when the directory already exists, regardless if its a file or dir", () => {
+  expect(() => mkdirSync(import.meta.dir, { recursive: false })).toThrowError();
+  expect(() => mkdirSync(import.meta.file, { recursive: false })).toThrowError();
+});

@@ -664,11 +664,27 @@ function setMaxListeners(n = defaultMaxListeners, ...eventTargets) {
 }
 Object.defineProperty(setMaxListeners, "name", { value: "setMaxListeners" });
 
+const jsEventTargetGetEventListenersCount = $newCppFunction(
+  "JSEventTarget.cpp",
+  "jsEventTargetGetEventListenersCount",
+  2,
+);
+
 function listenerCount(emitter, type) {
   if ($isCallable(emitter.listenerCount)) {
     return emitter.listenerCount(type);
   }
 
+  // EventTarget
+  const evt_count = jsEventTargetGetEventListenersCount(emitter, type);
+  if (evt_count !== undefined) return evt_count;
+
+  // EventEmitter's with no `.listenerCount`
+  return listenerCountSlow(emitter, type);
+}
+Object.defineProperty(listenerCount, "name", { value: "listenerCount" });
+
+function listenerCountSlow(emitter, type) {
   const events = emitter._events;
   if (events !== undefined) {
     const evlistener = events[type];
@@ -680,7 +696,6 @@ function listenerCount(emitter, type) {
   }
   return 0;
 }
-Object.defineProperty(listenerCount, "name", { value: "listenerCount" });
 
 function eventTargetAgnosticRemoveListener(emitter, name, listener, flags) {
   if (typeof emitter.removeListener === "function") {

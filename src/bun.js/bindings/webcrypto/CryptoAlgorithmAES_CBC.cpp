@@ -63,7 +63,7 @@ void CryptoAlgorithmAES_CBC::encrypt(const CryptoAlgorithmParameters& parameters
 
     auto& aesParameters = downcast<CryptoAlgorithmAesCbcCfbParams>(parameters);
     if (aesParameters.ivVector().size() != IVSIZE) {
-        exceptionCallback(OperationError, ""_s);
+        exceptionCallback(OperationError, "algorithm.iv must contain exactly 16 bytes"_s);
         return;
     }
 
@@ -79,7 +79,7 @@ void CryptoAlgorithmAES_CBC::decrypt(const CryptoAlgorithmParameters& parameters
 
     auto& aesParameters = downcast<CryptoAlgorithmAesCbcCfbParams>(parameters);
     if (aesParameters.ivVector().size() != IVSIZE) {
-        exceptionCallback(OperationError, ""_s);
+        exceptionCallback(OperationError, "algorithm.iv must contain exactly 16 bytes"_s);
         return;
     }
 

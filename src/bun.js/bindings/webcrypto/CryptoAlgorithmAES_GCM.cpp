@@ -94,7 +94,7 @@ void CryptoAlgorithmAES_GCM::encrypt(const CryptoAlgorithmParameters& parameters
 
     aesParameters.tagLength = aesParameters.tagLength ? aesParameters.tagLength : DefaultTagLength;
     if (!tagLengthIsValid(*(aesParameters.tagLength))) {
-        exceptionCallback(OperationError, ""_s);
+        exceptionCallback(OperationError, makeString(aesParameters.tagLength.value(), " is not a valid AES-GCM tag length"_s));
         return;
     }
 
@@ -112,7 +112,7 @@ void CryptoAlgorithmAES_GCM::decrypt(const CryptoAlgorithmParameters& parameters
 
     aesParameters.tagLength = aesParameters.tagLength ? aesParameters.tagLength : DefaultTagLength;
     if (!tagLengthIsValid(*(aesParameters.tagLength))) {
-        exceptionCallback(OperationError, ""_s);
+        exceptionCallback(OperationError, makeString(aesParameters.tagLength.value(), " is not a valid AES-GCM tag length"_s));
         return;
     }
     if (cipherText.size() < *(aesParameters.tagLength) / 8) {

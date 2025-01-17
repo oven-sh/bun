@@ -20,7 +20,7 @@
 const std = @import("std");
 const bun = @import("root").bun;
 const builtin = @import("builtin");
-const mimalloc = @import("allocators/mimalloc.zig");
+const mimalloc = bun.heap.Mimalloc;
 const SourceMap = @import("./sourcemap/sourcemap.zig");
 const windows = std.os.windows;
 const Output = bun.Output;
@@ -411,8 +411,8 @@ pub fn crashHandler(
                 });
                 Output.flush();
 
-                comptime bun.assert(void == @TypeOf(bun.reloadProcess(bun.default_allocator, false, true)));
-                bun.reloadProcess(bun.default_allocator, false, true);
+                comptime bun.assert(void == @TypeOf(bun.reloadProcess(bun.heap.default_allocator, false, true)));
+                bun.reloadProcess(bun.heap.default_allocator, false, true);
             }
         },
         inline 1, 2 => |t| {
@@ -922,7 +922,7 @@ pub fn printMetadata(writer: anytype) !void {
     }
     try writer.print("\n{}", .{bun.Analytics.Features.formatter()});
 
-    if (bun.use_mimalloc) {
+    if (bun.heap.use_mimalloc) {
         var elapsed_msecs: usize = 0;
         var user_msecs: usize = 0;
         var system_msecs: usize = 0;
@@ -1582,7 +1582,7 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
                 stderr.print("Unable to dump stack trace: Unable to open debug info: {s}\n", .{@errorName(err)}) catch return;
                 break :attempt_dump;
             };
-            var arena = bun.ArenaAllocator.init(bun.default_allocator);
+            var arena = std.heap.ArenaAllocator.init(bun.heap.default_allocator);
             defer arena.deinit();
             debug.writeStackTrace(trace, stderr, arena.allocator(), debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch |err| {
                 stderr.print("Unable to dump stack trace: {s}\nFallback trace:\n", .{@errorName(err)}) catch return;
@@ -1600,7 +1600,7 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
         },
     }
 
-    var arena = bun.ArenaAllocator.init(bun.default_allocator);
+    var arena = std.heap.ArenaAllocator.init(bun.heap.default_allocator);
     defer arena.deinit();
     var sfa = std.heap.stackFallback(16384, arena.allocator());
     const alloc = sfa.get();
@@ -1807,7 +1807,7 @@ pub fn appendPreCrashHandler(comptime T: type, ptr: *T, comptime handler: fn (*T
 
     before_crash_handlers_mutex.lock();
     defer before_crash_handlers_mutex.unlock();
-    try before_crash_handlers.append(bun.default_allocator, .{ ptr, wrap.onCrash });
+    try before_crash_handlers.append(bun.heap.default_allocator, .{ ptr, wrap.onCrash });
 }
 
 pub fn removePreCrashHandler(ptr: *anyopaque) void {

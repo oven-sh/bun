@@ -7,7 +7,7 @@ const Resolver = @import("../resolver//resolver.zig").Resolver;
 const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const strings = bun.strings;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const ZigString = JSC.ZigString;
 const JSValue = JSC.JSValue;
 
@@ -27,13 +27,13 @@ pub const BuildMessage = struct {
         const notes = this.msg.notes;
         const array = JSC.JSValue.createEmptyArray(globalThis, notes.len);
         for (notes, 0..) |note, i| {
-            const cloned = note.clone(bun.default_allocator) catch {
+            const cloned = note.clone(bun.heap.default_allocator) catch {
                 return globalThis.throwOutOfMemoryValue();
             };
             array.putIndex(
                 globalThis,
                 @intCast(i),
-                BuildMessage.create(globalThis, bun.default_allocator, logger.Msg{ .data = cloned, .kind = .note }),
+                BuildMessage.create(globalThis, bun.heap.default_allocator, logger.Msg{ .data = cloned, .kind = .note }),
             );
         }
 
@@ -195,6 +195,6 @@ pub const BuildMessage = struct {
     }
 
     pub fn finalize(this: *BuildMessage) void {
-        this.msg.deinit(bun.default_allocator);
+        this.msg.deinit(bun.heap.default_allocator);
     }
 };

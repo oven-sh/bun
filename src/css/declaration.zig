@@ -45,9 +45,9 @@ pub const DeclarationBlock = struct {
             _ = fmt; // autofix
             _ = options; // autofix
             var arraylist = ArrayList(u8){};
-            const w = arraylist.writer(bun.default_allocator);
-            defer arraylist.deinit(bun.default_allocator);
-            var printer = css.Printer(@TypeOf(w)).new(bun.default_allocator, std.ArrayList(u8).init(bun.default_allocator), w, css.PrinterOptions.default(), null);
+            const w = arraylist.writer(bun.heap.default_allocator);
+            defer arraylist.deinit(bun.heap.default_allocator);
+            var printer = css.Printer(@TypeOf(w)).new(bun.heap.default_allocator, std.ArrayList(u8).init(bun.heap.default_allocator), w, css.PrinterOptions.default(), null);
             defer printer.deinit();
             this.self.toCss(@TypeOf(w), &printer) catch |e| return try writer.print("<error writing declaration block: {s}>\n", .{@errorName(e)});
             try writer.writeAll(arraylist.items);

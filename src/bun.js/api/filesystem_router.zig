@@ -42,7 +42,7 @@ pub const FileSystemRouter = struct {
     origin: ?*JSC.RefString = null,
     base_dir: ?*JSC.RefString = null,
     router: Router,
-    arena: *bun.ArenaAllocator = undefined,
+    arena: *std.heap.ArenaAllocator = undefined,
     allocator: std.mem.Allocator = undefined,
     asset_prefix: ?*JSC.RefString = null,
 
@@ -93,8 +93,8 @@ pub const FileSystemRouter = struct {
             // dir is not optional
             return globalThis.throwInvalidArguments("Expected dir to be a string", .{});
         }
-        var arena = globalThis.allocator().create(bun.ArenaAllocator) catch unreachable;
-        arena.* = bun.ArenaAllocator.init(globalThis.allocator());
+        var arena = globalThis.allocator().create(std.heap.ArenaAllocator) catch unreachable;
+        arena.* = std.heap.ArenaAllocator.init(globalThis.allocator());
         const allocator = arena.allocator();
         var extensions = std.ArrayList(string).init(allocator);
         if (try argument.get(globalThis, "fileExtensions")) |file_extensions| {
@@ -243,8 +243,8 @@ pub const FileSystemRouter = struct {
     pub fn reload(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const this_value = callframe.this();
 
-        var arena = globalThis.allocator().create(bun.ArenaAllocator) catch unreachable;
-        arena.* = bun.ArenaAllocator.init(globalThis.allocator());
+        var arena = globalThis.allocator().create(std.heap.ArenaAllocator) catch unreachable;
+        arena.* = std.heap.ArenaAllocator.init(globalThis.allocator());
 
         var allocator = arena.allocator();
         var vm = globalThis.bunVM();
@@ -361,8 +361,8 @@ pub const FileSystemRouter = struct {
     pub fn getRoutes(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject) JSValue {
         const paths = this.router.getEntryPoints() catch unreachable;
         const names = this.router.getNames() catch unreachable;
-        var name_strings = bun.default_allocator.alloc(ZigString, names.len * 2) catch unreachable;
-        defer bun.default_allocator.free(name_strings);
+        var name_strings = bun.heap.default_allocator.alloc(ZigString, names.len * 2) catch unreachable;
+        defer bun.heap.default_allocator.free(name_strings);
         var paths_strings = name_strings[names.len..];
         for (names, 0..) |name, i| {
             name_strings[i] = ZigString.init(name).withEncoding();
@@ -464,11 +464,11 @@ pub const MatchedRoute = struct {
             map.deinit();
         }
         if (this.needs_deinit) {
-            if (this.route.pathname.len > 0 and bun.Mimalloc.mi_is_in_heap_region(this.route.pathname.ptr)) {
-                bun.Mimalloc.mi_free(@constCast(this.route.pathname.ptr));
+            if (this.route.pathname.len > 0 and bun.heap.Mimalloc.mi_is_in_heap_region(this.route.pathname.ptr)) {
+                bun.heap.Mimalloc.mi_free(@constCast(this.route.pathname.ptr));
             }
 
-            this.params_list_holder.deinit(bun.default_allocator);
+            this.params_list_holder.deinit(bun.heap.default_allocator);
             this.params_list_holder = .{};
         }
 
@@ -483,7 +483,7 @@ pub const MatchedRoute = struct {
         if (this.base_dir) |base|
             base.deref();
 
-        bun.default_allocator.destroy(this);
+        bun.heap.default_allocator.destroy(this);
     }
 
     pub fn getFilePath(

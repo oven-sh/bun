@@ -27,7 +27,7 @@ const Output = bun.Output;
 const MutableString = bun.MutableString;
 const strings = bun.strings;
 const string = bun.string;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const FeatureFlags = bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
@@ -299,7 +299,7 @@ pub const Jest = struct {
                 }
 
                 function.protect();
-                @field(the_runner.global_callbacks, name).append(bun.default_allocator, function) catch unreachable;
+                @field(the_runner.global_callbacks, name).append(bun.heap.default_allocator, function) catch unreachable;
                 return .undefined;
             }
         }.appendGlobalFunctionCallback;
@@ -528,7 +528,7 @@ pub const Jest = struct {
         if (arguments.len < 1 or !arguments[0].isString()) {
             return globalObject.throw("Bun.jest() expects a string filename", .{});
         }
-        var str = arguments[0].toSlice(globalObject, bun.default_allocator);
+        var str = arguments[0].toSlice(globalObject, bun.heap.default_allocator);
         defer str.deinit();
         const slice = str.slice();
 

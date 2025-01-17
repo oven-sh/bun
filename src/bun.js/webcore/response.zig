@@ -16,7 +16,7 @@ const Output = bun.Output;
 const MutableString = bun.MutableString;
 const strings = bun.strings;
 const string = bun.string;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const FeatureFlags = bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
@@ -30,7 +30,7 @@ const IdentityContext = @import("../../identity_context.zig").IdentityContext;
 const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const NullableAllocator = bun.NullableAllocator;
+const NullableAllocator = bun.heap.NullableAllocator;
 const DataURL = @import("../../resolver/data_url.zig").DataURL;
 
 const SSLConfig = @import("../api/server.zig").ServerConfig.SSLConfig;
@@ -86,7 +86,7 @@ pub const Response = struct {
         var content_type_slice: ZigString.Slice = this.getContentType() orelse return null;
         defer content_type_slice.deinit();
         const encoding = bun.FormData.Encoding.get(content_type_slice.slice()) orelse return null;
-        return bun.FormData.AsyncFormData.init(bun.default_allocator, encoding) catch bun.outOfMemory();
+        return bun.FormData.AsyncFormData.init(bun.heap.default_allocator, encoding) catch bun.outOfMemory();
     }
 
     pub fn estimatedSize(this: *Response) callconv(.C) usize {
@@ -318,8 +318,8 @@ pub const Response = struct {
     }
 
     fn destroy(this: *Response) void {
-        this.init.deinit(bun.default_allocator);
-        this.body.deinit(bun.default_allocator);
+        this.init.deinit(bun.heap.default_allocator);
+        this.body.deinit(bun.heap.default_allocator);
         this.url.deref();
 
         bun.destroy(this);
@@ -349,7 +349,7 @@ pub const Response = struct {
     ) ?ZigString.Slice {
         if (this.init.headers) |headers| {
             if (headers.fastGet(.ContentType)) |value| {
-                return value.toSlice(bun.default_allocator);
+                return value.toSlice(bun.heap.default_allocator);
             }
         }
 
@@ -381,8 +381,8 @@ pub const Response = struct {
         var did_succeed = false;
         defer {
             if (!did_succeed) {
-                response.body.deinit(bun.default_allocator);
-                response.init.deinit(bun.default_allocator);
+                response.body.deinit(bun.heap.default_allocator);
+                response.init.deinit(bun.heap.default_allocator);
             }
         }
         const json_value = args.nextEat() orelse JSC.JSValue.zero;
@@ -398,11 +398,11 @@ pub const Response = struct {
             }
 
             if (!str.isEmpty()) {
-                if (str.value.WTFStringImpl.toUTF8IfNeeded(bun.default_allocator)) |bytes| {
+                if (str.value.WTFStringImpl.toUTF8IfNeeded(bun.heap.default_allocator)) |bytes| {
                     defer str.deref();
                     response.body.value = .{
                         .InternalBlob = InternalBlob{
-                            .bytes = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, @constCast(bytes.slice())),
+                            .bytes = std.ArrayList(u8).fromOwnedSlice(bun.heap.default_allocator, @constCast(bytes.slice())),
                             .was_string = true,
                         },
                     };
@@ -460,8 +460,8 @@ pub const Response = struct {
             var did_succeed = false;
             defer {
                 if (!did_succeed) {
-                    response.body.deinit(bun.default_allocator);
-                    response.init.deinit(bun.default_allocator);
+                    response.body.deinit(bun.heap.default_allocator);
+                    response.init.deinit(bun.heap.default_allocator);
                 }
             }
 
@@ -561,7 +561,7 @@ pub const Response = struct {
             }
             return error.JSError;
         });
-        errdefer init.deinit(bun.default_allocator);
+        errdefer init.deinit(bun.heap.default_allocator);
 
         if (globalThis.hasException()) {
             return error.JSError;
@@ -575,7 +575,7 @@ pub const Response = struct {
             }
             break :brk try Body.extract(globalThis, arguments[0]);
         };
-        errdefer body.deinit(bun.default_allocator);
+        errdefer body.deinit(bun.heap.default_allocator);
 
         if (globalThis.hasException()) {
             return error.JSError;
@@ -619,7 +619,7 @@ pub const Response = struct {
         pub fn init(globalThis: *JSGlobalObject, response_init: JSC.JSValue) bun.JSError!?Init {
             var result = Init{ .status_code = 200 };
             errdefer {
-                result.deinit(bun.default_allocator);
+                result.deinit(bun.heap.default_allocator);
             }
 
             if (!response_init.isCell())
@@ -1012,7 +1012,7 @@ pub const Fetch = struct {
             }
 
             if (this.result.certificate_info) |*certificate| {
-                certificate.deinit(bun.default_allocator);
+                certificate.deinit(bun.heap.default_allocator);
                 this.result.certificate_info = null;
             }
 
@@ -1065,7 +1065,7 @@ pub const Fetch = struct {
             }
             allocator.destroy(this);
             // reporter.assert();
-            bun.default_allocator.destroy(reporter);
+            bun.heap.default_allocator.destroy(reporter);
         }
 
         fn getCurrentResponse(this: *FetchTasklet) ?*Response {
@@ -1242,7 +1242,7 @@ pub const Fetch = struct {
                             .{
                                 .err = .{ .JSValue = err.toJS(globalThis) },
                             },
-                            bun.default_allocator,
+                            bun.heap.default_allocator,
                         );
                     }
                 }
@@ -1274,7 +1274,7 @@ pub const Fetch = struct {
                             .{
                                 .temporary = bun.ByteList.initConst(chunk),
                             },
-                            bun.default_allocator,
+                            bun.heap.default_allocator,
                         );
                     } else {
                         var prev = this.readable_stream_ref;
@@ -1283,7 +1283,7 @@ pub const Fetch = struct {
                         buffer_reset = false;
                         this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
                         this.scheduled_response_buffer = .{
-                            .allocator = bun.default_allocator,
+                            .allocator = bun.heap.default_allocator,
                             .list = .{
                                 .items = &.{},
                                 .capacity = 0,
@@ -1293,7 +1293,7 @@ pub const Fetch = struct {
                             .{
                                 .owned_and_done = bun.ByteList.initConst(chunk),
                             },
-                            bun.default_allocator,
+                            bun.heap.default_allocator,
                         );
                     }
                     return;
@@ -1316,7 +1316,7 @@ pub const Fetch = struct {
                                     .{
                                         .temporary = bun.ByteList.initConst(chunk),
                                     },
-                                    bun.default_allocator,
+                                    bun.heap.default_allocator,
                                 );
                             } else {
                                 var prev = body.value.Locked.readable;
@@ -1328,7 +1328,7 @@ pub const Fetch = struct {
                                     .{
                                         .temporary_and_done = bun.ByteList.initConst(chunk),
                                     },
-                                    bun.default_allocator,
+                                    bun.heap.default_allocator,
                                 );
                             }
 
@@ -1347,7 +1347,7 @@ pub const Fetch = struct {
                         var old = body.value;
                         const body_value = Body.Value{
                             .InternalBlob = .{
-                                .bytes = scheduled_response_buffer.toManaged(bun.default_allocator),
+                                .bytes = scheduled_response_buffer.toManaged(bun.heap.default_allocator),
                             },
                         };
                         response.body.value = body_value;
@@ -1423,7 +1423,7 @@ pub const Fetch = struct {
 
             if (this.result.certificate_info) |certificate_info| {
                 this.result.certificate_info = null;
-                defer certificate_info.deinit(bun.default_allocator);
+                defer certificate_info.deinit(bun.heap.default_allocator);
 
                 // we receive some error
                 if (this.reject_unauthorized and !this.checkServerIdentity(certificate_info)) {
@@ -1475,7 +1475,7 @@ pub const Fetch = struct {
 
                 pub fn resolve(self: *@This()) void {
                     // cleanup
-                    defer bun.default_allocator.destroy(self);
+                    defer bun.heap.default_allocator.destroy(self);
                     defer self.held.deinit();
                     defer self.promise.deinit();
                     // resolve the promise
@@ -1487,7 +1487,7 @@ pub const Fetch = struct {
 
                 pub fn reject(self: *@This()) void {
                     // cleanup
-                    defer bun.default_allocator.destroy(self);
+                    defer bun.heap.default_allocator.destroy(self);
                     defer self.held.deinit();
                     defer self.promise.deinit();
 
@@ -1498,7 +1498,7 @@ pub const Fetch = struct {
                     prom.reject(self.globalObject, res);
                 }
             };
-            var holder = bun.default_allocator.create(Holder) catch bun.outOfMemory();
+            var holder = bun.heap.default_allocator.create(Holder) catch bun.outOfMemory();
             holder.* = .{
                 .held = result,
                 // we need the promise to be alive until the task is done
@@ -1744,7 +1744,7 @@ pub const Fetch = struct {
 
                 return .{
                     .owned = .{
-                        .list = scheduled_response_buffer.toManaged(bun.default_allocator),
+                        .list = scheduled_response_buffer.toManaged(bun.heap.default_allocator),
                         .size_hint = size_hint,
                     },
                 };
@@ -1784,7 +1784,7 @@ pub const Fetch = struct {
             this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
             const response = Body.Value{
                 .InternalBlob = .{
-                    .bytes = scheduled_response_buffer.toManaged(bun.default_allocator),
+                    .bytes = scheduled_response_buffer.toManaged(bun.heap.default_allocator),
                 },
             };
             this.scheduled_response_buffer = .{
@@ -2022,7 +2022,7 @@ pub const Fetch = struct {
             if (this.http) |http_| {
                 http.http_thread.scheduleRequestWrite(http_, data, ended);
             } else if (data.len != 3) {
-                bun.default_allocator.free(data);
+                bun.heap.default_allocator.free(data);
             }
         }
 
@@ -2227,19 +2227,19 @@ pub const Fetch = struct {
             return globalObject.ERR_INVALID_ARG_TYPE(fetch_error_blank_url, .{}).throw();
         }
 
-        const url = ZigURL.parse(url_str.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory());
+        const url = ZigURL.parse(url_str.toOwnedSlice(bun.heap.default_allocator) catch bun.outOfMemory());
         if (!url.isHTTP() and !url.isHTTPS() and !url.isS3()) {
-            bun.default_allocator.free(url.href);
+            bun.heap.default_allocator.free(url.href);
             return globalObject.throwInvalidArguments("URL must be HTTP or HTTPS", .{});
         }
 
         if (url.hostname.len == 0) {
-            bun.default_allocator.free(url.href);
+            bun.heap.default_allocator.free(url.href);
             return globalObject.ERR_INVALID_ARG_TYPE(fetch_error_blank_url, .{}).throw();
         }
 
         if (!url.hasValidPort()) {
-            bun.default_allocator.free(url.href);
+            bun.heap.default_allocator.free(url.href);
             return globalObject.throwInvalidArguments("Invalid port", .{});
         }
 
@@ -2273,15 +2273,15 @@ pub const Fetch = struct {
         bun.Analytics.Features.fetch += 1;
         const vm = JSC.VirtualMachine.get();
 
-        var memory_reporter = bun.default_allocator.create(JSC.MemoryReportingAllocator) catch bun.outOfMemory();
+        var memory_reporter = bun.heap.default_allocator.create(JSC.MemoryReportingAllocator) catch bun.outOfMemory();
         // used to clean up dynamically allocated memory on error (a poor man's errdefer)
         var is_error = false;
-        var allocator = memory_reporter.wrap(bun.default_allocator);
-        errdefer bun.default_allocator.destroy(memory_reporter);
+        var allocator = memory_reporter.wrap(bun.heap.default_allocator);
+        errdefer bun.heap.default_allocator.destroy(memory_reporter);
         defer {
             memory_reporter.report(globalThis.vm());
 
-            if (is_error) bun.default_allocator.destroy(memory_reporter);
+            if (is_error) bun.heap.default_allocator.destroy(memory_reporter);
         }
 
         if (arguments.len == 0) {
@@ -2355,18 +2355,18 @@ pub const Fetch = struct {
 
             // clean hostname if any
             if (hostname) |hn| {
-                bun.default_allocator.free(hn);
+                bun.heap.default_allocator.free(hn);
                 hostname = null;
             }
             if (range) |range_| {
-                bun.default_allocator.free(range_);
+                bun.heap.default_allocator.free(range_);
                 range = null;
             }
 
             if (ssl_config) |conf| {
                 ssl_config = null;
                 conf.deinit();
-                bun.default_allocator.destroy(conf);
+                bun.heap.default_allocator.destroy(conf);
             }
         }
 
@@ -2584,7 +2584,7 @@ pub const Fetch = struct {
                                 is_error = true;
                                 return .zero;
                             }) |config| {
-                                const ssl_config_object = bun.default_allocator.create(SSLConfig) catch bun.outOfMemory();
+                                const ssl_config_object = bun.heap.default_allocator.create(SSLConfig) catch bun.outOfMemory();
                                 ssl_config_object.* = config;
                                 break :extract_ssl_config ssl_config_object;
                             }
@@ -3092,7 +3092,7 @@ pub const Fetch = struct {
 
                 var pathlike: JSC.Node.PathOrFileDescriptor = .{
                     .path = .{
-                        .encoded_slice = ZigString.Slice.init(bun.default_allocator, try bun.default_allocator.dupe(u8, temp_file_path)),
+                        .encoded_slice = ZigString.Slice.init(bun.heap.default_allocator, try bun.heap.default_allocator.dupe(u8, temp_file_path)),
                     },
                 };
 
@@ -3298,7 +3298,7 @@ pub const Fetch = struct {
                                         .body = .{
                                             .value = .{
                                                 .InternalBlob = .{
-                                                    .bytes = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, bun.default_allocator.dupe(u8, err.message) catch bun.outOfMemory()),
+                                                    .bytes = std.ArrayList(u8).fromOwnedSlice(bun.heap.default_allocator, bun.heap.default_allocator.dupe(u8, err.message) catch bun.outOfMemory()),
                                                     .was_string = true,
                                                 },
                                             },
@@ -3317,7 +3317,7 @@ pub const Fetch = struct {
                                 },
                             }
                         }
-                        bun.default_allocator.free(self.url_proxy_buffer);
+                        bun.heap.default_allocator.free(self.url_proxy_buffer);
                         self.destroy();
                     }
                 };

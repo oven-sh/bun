@@ -8,7 +8,7 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const C = bun.C;
 
 const lex = bun.js_lexer;
@@ -57,10 +57,10 @@ pub const BuildCommand = struct {
         if (ctx.bundler_options.compile) {
             const compile_define_values = compile_target.defineValues();
             if (ctx.args.define) |*define| {
-                var keys = try std.ArrayList(string).initCapacity(bun.default_allocator, compile_define_keys.len + define.keys.len);
+                var keys = try std.ArrayList(string).initCapacity(bun.heap.default_allocator, compile_define_keys.len + define.keys.len);
                 keys.appendSliceAssumeCapacity(compile_define_keys);
                 keys.appendSliceAssumeCapacity(define.keys);
-                var values = try std.ArrayList(string).initCapacity(bun.default_allocator, compile_define_values.len + define.values.len);
+                var values = try std.ArrayList(string).initCapacity(bun.heap.default_allocator, compile_define_values.len + define.values.len);
                 values.appendSliceAssumeCapacity(compile_define_values);
                 values.appendSliceAssumeCapacity(define.values);
 

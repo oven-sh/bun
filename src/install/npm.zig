@@ -22,7 +22,7 @@ const Environment = bun.Environment;
 const Aligner = @import("./install.zig").Aligner;
 const HTTPClient = bun.http;
 const JSON = bun.JSON;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
 const SlicedString = Semver.SlicedString;
@@ -732,7 +732,7 @@ pub const OperatingSystem = enum(u16) {
         var operating_system = negatable(.none);
         var iter = args.ptr[0].arrayIterator(globalObject);
         while (iter.next()) |item| {
-            const slice = item.toSlice(globalObject, bun.default_allocator);
+            const slice = item.toSlice(globalObject, bun.heap.default_allocator);
             defer slice.deinit();
             operating_system.apply(slice.slice());
             if (globalObject.hasException()) return .zero;
@@ -774,7 +774,7 @@ pub const Libc = enum(u8) {
         var libc = negatable(.none);
         var iter = args.ptr[0].arrayIterator(globalObject);
         while (iter.next()) |item| {
-            const slice = item.toSlice(globalObject, bun.default_allocator);
+            const slice = item.toSlice(globalObject, bun.heap.default_allocator);
             defer slice.deinit();
             libc.apply(slice.slice());
             if (globalObject.hasException()) return .zero;
@@ -849,7 +849,7 @@ pub const Architecture = enum(u16) {
         var architecture = negatable(.none);
         var iter = args.ptr[0].arrayIterator(globalObject);
         while (iter.next()) |item| {
-            const slice = item.toSlice(globalObject, bun.default_allocator);
+            const slice = item.toSlice(globalObject, bun.heap.default_allocator);
             defer slice.deinit();
             architecture.apply(slice.slice());
             if (globalObject.hasException()) return .zero;
@@ -1081,7 +1081,7 @@ pub const PackageManifest = struct {
             outpath: [:0]const u8,
         ) !void {
             // 64 KB sounds like a lot but when you consider that this is only about 6 levels deep in the stack, it's not that much.
-            var stack_fallback = std.heap.stackFallback(64 * 1024, bun.default_allocator);
+            var stack_fallback = std.heap.stackFallback(64 * 1024, bun.heap.default_allocator);
 
             const allocator = stack_fallback.get();
             var buffer = try std.ArrayList(u8).initCapacity(allocator, this.byteLength(scope) + 64);
@@ -1372,13 +1372,13 @@ pub const PackageManifest = struct {
             const manifest_filename_str = args[0].toBunString(global);
             defer manifest_filename_str.deref();
 
-            const manifest_filename = manifest_filename_str.toUTF8(bun.default_allocator);
+            const manifest_filename = manifest_filename_str.toUTF8(bun.heap.default_allocator);
             defer manifest_filename.deinit();
 
             const registry_str = args[1].toBunString(global);
             defer registry_str.deref();
 
-            const registry = registry_str.toUTF8(bun.default_allocator);
+            const registry = registry_str.toUTF8(bun.heap.default_allocator);
             defer registry.deinit();
 
             const manifest_file = std.fs.openFileAbsolute(manifest_filename.slice(), .{}) catch |err| {
@@ -1397,7 +1397,7 @@ pub const PackageManifest = struct {
                 },
             };
 
-            const maybe_package_manifest = Serializer.loadByFile(bun.default_allocator, &scope, File.from(manifest_file)) catch |err| {
+            const maybe_package_manifest = Serializer.loadByFile(bun.heap.default_allocator, &scope, File.from(manifest_file)) catch |err| {
                 return global.throw("failed to load manifest file: {s}", .{@errorName(err)});
             };
 
@@ -1406,7 +1406,7 @@ pub const PackageManifest = struct {
             };
 
             var buf: std.ArrayListUnmanaged(u8) = .{};
-            const writer = buf.writer(bun.default_allocator);
+            const writer = buf.writer(bun.heap.default_allocator);
 
             // TODO: we can add more information. for now just versions is fine
 
@@ -1562,7 +1562,7 @@ pub const PackageManifest = struct {
         const source = logger.Source.initPathString(expected_name, json_buffer);
         initializeStore();
         defer bun.JSAst.Stmt.Data.Store.memory_allocator.?.pop();
-        var arena = bun.ArenaAllocator.init(allocator);
+        var arena = std.heap.ArenaAllocator.init(allocator);
         defer arena.deinit();
         const json = JSON.parseUTF8(
             &source,
@@ -2359,15 +2359,15 @@ pub const PackageManifest = struct {
                     }
                 };
 
-                var all_indices = try bun.default_allocator.alloc(Int, max_versions_count);
-                defer bun.default_allocator.free(all_indices);
+                var all_indices = try bun.heap.default_allocator.alloc(Int, max_versions_count);
+                defer bun.heap.default_allocator.free(all_indices);
                 const releases_list = .{ &result.pkg.releases, &result.pkg.prereleases };
 
-                var all_cloned_versions = try bun.default_allocator.alloc(Semver.Version, max_versions_count);
-                defer bun.default_allocator.free(all_cloned_versions);
+                var all_cloned_versions = try bun.heap.default_allocator.alloc(Semver.Version, max_versions_count);
+                defer bun.heap.default_allocator.free(all_cloned_versions);
 
-                var all_cloned_packages = try bun.default_allocator.alloc(PackageVersion, max_versions_count);
-                defer bun.default_allocator.free(all_cloned_packages);
+                var all_cloned_packages = try bun.heap.default_allocator.alloc(PackageVersion, max_versions_count);
+                defer bun.heap.default_allocator.free(all_cloned_packages);
 
                 inline for (0..2) |release_i| {
                     var release = releases_list[release_i];

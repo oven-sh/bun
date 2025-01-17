@@ -1,13 +1,13 @@
-const mem = @import("std").mem;
-const builtin = @import("std").builtin;
 const std = @import("std");
+const mem = std.mem;
+const builtin = std.builtin;
+const bun = @import("root").bun;
 
-const mimalloc = @import("./mimalloc.zig");
-const Environment = @import("../env.zig");
-const FeatureFlags = @import("../feature_flags.zig");
+const mimalloc = bun.heap.Mimalloc;
+const Environment = bun.Environment;
+const FeatureFlags = bun.FeatureFlags;
 const Allocator = mem.Allocator;
 const assert = bun.assert;
-const bun = @import("root").bun;
 const log = bun.Output.scoped(.mimalloc, true);
 
 pub const GlobalArena = struct {
@@ -75,7 +75,7 @@ pub const GlobalArena = struct {
 };
 
 const ArenaRegistry = struct {
-    arenas: std.AutoArrayHashMap(?*mimalloc.Heap, std.Thread.Id) = std.AutoArrayHashMap(?*mimalloc.Heap, std.Thread.Id).init(bun.default_allocator),
+    arenas: std.AutoArrayHashMap(?*mimalloc.Heap, std.Thread.Id) = std.AutoArrayHashMap(?*mimalloc.Heap, std.Thread.Id).init(bun.heap.default_allocator),
     mutex: bun.Mutex = .{},
 
     var registry = ArenaRegistry{};
@@ -200,7 +200,7 @@ pub const Arena = struct {
     pub inline fn helpCatchMemoryIssues(this: Arena) void {
         if (comptime FeatureFlags.help_catch_memory_issues) {
             this.gc(true);
-            bun.Mimalloc.mi_collect(true);
+            bun.heap.Mimalloc.mi_collect(true);
         }
     }
 

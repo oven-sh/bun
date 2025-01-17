@@ -23,7 +23,7 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = @import("./string_mutable.zig").MutableString;
 const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const C = bun.C;
 const G = js_ast.G;
 const Define = @import("./defines.zig").Define;
@@ -3209,14 +3209,14 @@ pub const Parser = struct {
 
         defer p.lexer.deinit();
 
-        var binary_expression_stack_heap = std.heap.stackFallback(42 * @sizeOf(ParserType.BinaryExpressionVisitor), bun.default_allocator);
+        var binary_expression_stack_heap = std.heap.stackFallback(42 * @sizeOf(ParserType.BinaryExpressionVisitor), bun.heap.default_allocator);
         p.binary_expression_stack = std.ArrayList(ParserType.BinaryExpressionVisitor).initCapacity(
             binary_expression_stack_heap.get(),
             41, // one less in case of unlikely alignment between the stack buffer and reality
         ) catch unreachable; // stack allocation cannot fail
         defer p.binary_expression_stack.clearAndFree();
 
-        var binary_expression_simplify_stack_heap = std.heap.stackFallback(48 * @sizeOf(SideEffects.BinaryExpressionSimplifyVisitor), bun.default_allocator);
+        var binary_expression_simplify_stack_heap = std.heap.stackFallback(48 * @sizeOf(SideEffects.BinaryExpressionSimplifyVisitor), bun.heap.default_allocator);
         p.binary_expression_simplify_stack = std.ArrayList(SideEffects.BinaryExpressionSimplifyVisitor).initCapacity(
             binary_expression_simplify_stack_heap.get(),
             47,
@@ -4786,7 +4786,7 @@ fn NewParser_(
         fn_or_arrow_data_visit: FnOrArrowDataVisit = FnOrArrowDataVisit{},
         fn_only_data_visit: FnOnlyDataVisit = FnOnlyDataVisit{},
         allocated_names: List(string) = .{},
-        // allocated_names: ListManaged(string) = ListManaged(string).init(bun.default_allocator),
+        // allocated_names: ListManaged(string) = ListManaged(string).init(bun.heap.default_allocator),
         // allocated_names_pool: ?*AllocatedNamesPool.Node = null,
         latest_arrow_arg_loc: logger.Loc = logger.Loc.Empty,
         forbid_suffix_after_as_loc: logger.Loc = logger.Loc.Empty,
@@ -17812,7 +17812,7 @@ fn NewParser_(
             // functions which have simple parameter lists and which are not defined in
             // strict mode code."
             if (opts.is_unique_formal_parameters or strict_loc != null or !has_simple_args or p.isStrictMode()) {
-                duplicate_args_check = StringVoidMap.get(bun.default_allocator);
+                duplicate_args_check = StringVoidMap.get(bun.heap.default_allocator);
             }
 
             const duplicate_args_check_ptr: ?*StringVoidMap = if (duplicate_args_check != null)

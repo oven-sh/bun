@@ -516,14 +516,14 @@ pub const IniTestingAPIs = struct {
         const arg = callframe.argument(0);
         const npmrc_contents = arg.toBunString(globalThis);
         defer npmrc_contents.deref();
-        const npmrc_utf8 = npmrc_contents.toUTF8(bun.default_allocator);
+        const npmrc_utf8 = npmrc_contents.toUTF8(bun.heap.default_allocator);
         defer npmrc_utf8.deinit();
         const source = bun.logger.Source.initPathString("<js>", npmrc_utf8.slice());
 
-        var log = bun.logger.Log.init(bun.default_allocator);
+        var log = bun.logger.Log.init(bun.heap.default_allocator);
         defer log.deinit();
 
-        var arena = bun.ArenaAllocator.init(bun.default_allocator);
+        var arena = std.heap.ArenaAllocator.init(bun.heap.default_allocator);
         const allocator = arena.allocator();
         defer arena.deinit();
 
@@ -608,15 +608,15 @@ pub const IniTestingAPIs = struct {
         const jsstr = arguments[0];
         const bunstr = jsstr.toBunString(globalThis);
         defer bunstr.deref();
-        const utf8str = bunstr.toUTF8(bun.default_allocator);
+        const utf8str = bunstr.toUTF8(bun.heap.default_allocator);
         defer utf8str.deinit();
 
-        var parser = Parser.init(bun.default_allocator, "<src>", utf8str.slice(), globalThis.bunVM().transpiler.env);
+        var parser = Parser.init(bun.heap.default_allocator, "<src>", utf8str.slice(), globalThis.bunVM().transpiler.env);
         defer parser.deinit();
 
         try parser.parse(parser.arena.allocator());
 
-        return parser.out.toJS(bun.default_allocator, globalThis) catch |e| {
+        return parser.out.toJS(bun.heap.default_allocator, globalThis) catch |e| {
             return globalThis.throwError(e, "failed to turn AST into JS");
         };
     }

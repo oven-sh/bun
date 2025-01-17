@@ -24,7 +24,7 @@ pub const WebWorker = struct {
     specifier: []const u8 = "",
     preloads: [][]const u8 = &.{},
     store_fd: bool = false,
-    arena: ?bun.MimallocArena = null,
+    arena: ?bun.heap.MimallocArena = null,
     name: [:0]const u8 = "Worker",
     cpp_worker: *anyopaque,
     mini: bool = false,
@@ -153,7 +153,7 @@ pub const WebWorker = struct {
         }
 
         var resolved_entry_point: bun.resolver.Result = parent.transpiler.resolveEntryPoint(str) catch {
-            const out = logger.toJS(parent.global, bun.default_allocator, "Error resolving Worker entry point").toBunString(parent.global);
+            const out = logger.toJS(parent.global, bun.heap.default_allocator, "Error resolving Worker entry point").toBunString(parent.global);
             error_message.* = out;
             return null;
         };
@@ -184,10 +184,10 @@ pub const WebWorker = struct {
     ) callconv(.C) ?*WebWorker {
         JSC.markBinding(@src());
         log("[{d}] WebWorker.create", .{this_context_id});
-        var spec_slice = specifier_str.toUTF8(bun.default_allocator);
+        var spec_slice = specifier_str.toUTF8(bun.heap.default_allocator);
         defer spec_slice.deinit();
         const prev_log = parent.transpiler.log;
-        var temp_log = bun.logger.Log.init(bun.default_allocator);
+        var temp_log = bun.logger.Log.init(bun.heap.default_allocator);
         parent.transpiler.setLog(&temp_log);
         defer parent.transpiler.setLog(prev_log);
         defer temp_log.deinit();
@@ -201,35 +201,35 @@ pub const WebWorker = struct {
             return null;
         };
 
-        var preloads = std.ArrayList([]const u8).initCapacity(bun.default_allocator, preload_modules_len) catch bun.outOfMemory();
+        var preloads = std.ArrayList([]const u8).initCapacity(bun.heap.default_allocator, preload_modules_len) catch bun.outOfMemory();
         for (preload_modules) |module| {
-            const utf8_slice = module.toUTF8(bun.default_allocator);
+            const utf8_slice = module.toUTF8(bun.heap.default_allocator);
             defer utf8_slice.deinit();
             if (resolveEntryPointSpecifier(parent, utf8_slice.slice(), error_message, &temp_log)) |preload| {
-                preloads.append(bun.default_allocator.dupe(u8, preload) catch bun.outOfMemory()) catch bun.outOfMemory();
+                preloads.append(bun.heap.default_allocator.dupe(u8, preload) catch bun.outOfMemory()) catch bun.outOfMemory();
             }
 
             if (!error_message.isEmpty()) {
                 for (preloads.items) |preload| {
-                    bun.default_allocator.free(preload);
+                    bun.heap.default_allocator.free(preload);
                 }
                 preloads.deinit();
                 return null;
             }
         }
 
-        var worker = bun.default_allocator.create(WebWorker) catch bun.outOfMemory();
+        var worker = bun.heap.default_allocator.create(WebWorker) catch bun.outOfMemory();
         worker.* = WebWorker{
             .cpp_worker = cpp_worker,
             .parent = parent,
             .parent_context_id = parent_context_id,
             .execution_context_id = this_context_id,
             .mini = mini,
-            .specifier = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
+            .specifier = bun.heap.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
             .store_fd = parent.transpiler.resolver.store_fd,
             .name = brk: {
                 if (!name_str.isEmpty()) {
-                    break :brk std.fmt.allocPrintZ(bun.default_allocator, "{}", .{name_str}) catch bun.outOfMemory();
+                    break :brk std.fmt.allocPrintZ(bun.heap.default_allocator, "{}", .{name_str}) catch bun.outOfMemory();
                 }
                 break :brk "";
             },
@@ -271,7 +271,7 @@ pub const WebWorker = struct {
         assert(this.status.load(.acquire) == .start);
         assert(this.vm == null);
 
-        this.arena = try bun.MimallocArena.init();
+        this.arena = try bun.heap.MimallocArena.init();
         var vm = try JSC.VirtualMachine.initWorker(this, .{
             .allocator = this.arena.?.allocator(),
             .args = this.parent.transpiler.options.transform_options,
@@ -315,19 +315,19 @@ pub const WebWorker = struct {
     fn deinit(this: *WebWorker) void {
         log("[{d}] deinit", .{this.execution_context_id});
         this.parent_poll_ref.unrefConcurrently(this.parent);
-        bun.default_allocator.free(this.specifier);
+        bun.heap.default_allocator.free(this.specifier);
         for (this.preloads) |preload| {
-            bun.default_allocator.free(preload);
+            bun.heap.default_allocator.free(preload);
         }
-        bun.default_allocator.free(this.preloads);
-        bun.default_allocator.destroy(this);
+        bun.heap.default_allocator.free(this.preloads);
+        bun.heap.default_allocator.destroy(this);
     }
 
     fn flushLogs(this: *WebWorker) void {
         JSC.markBinding(@src());
         var vm = this.vm orelse return;
         if (vm.log.msgs.items.len == 0) return;
-        const err = vm.log.toJS(vm.global, bun.default_allocator, "Error in worker");
+        const err = vm.log.toJS(vm.global, bun.heap.default_allocator, "Error in worker");
         const str = err.toBunString(vm.global);
         defer str.deref();
         WebWorker__dispatchError(vm.global, this.cpp_worker, str, err);
@@ -339,7 +339,7 @@ pub const WebWorker = struct {
 
         var error_instance = error_instance_or_exception.toError() orelse error_instance_or_exception;
 
-        var array = bun.MutableString.init(bun.default_allocator, 0) catch unreachable;
+        var array = bun.MutableString.init(bun.heap.default_allocator, 0) catch unreachable;
         defer array.deinit();
 
         var buffered_writer_ = bun.MutableString.BufferedWriter{ .context = &array };

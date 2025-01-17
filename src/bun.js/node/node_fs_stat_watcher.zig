@@ -108,11 +108,11 @@ pub const StatWatcherScheduler = struct {
             task: JSC.AnyTask,
 
             pub fn updateTimer(self: *@This()) void {
-                defer bun.default_allocator.destroy(self);
+                defer bun.heap.default_allocator.destroy(self);
                 self.scheduler.setTimer(self.scheduler.getInterval());
             }
         };
-        const holder = bun.default_allocator.create(Holder) catch bun.outOfMemory();
+        const holder = bun.heap.default_allocator.create(Holder) catch bun.outOfMemory();
         holder.* = .{
             .scheduler = this,
             .task = JSC.AnyTask.New(Holder, Holder.updateTimer).init(holder),
@@ -220,8 +220,8 @@ pub const StatWatcher = struct {
         this.closed = true;
         this.last_jsvalue.clear();
 
-        bun.default_allocator.free(this.path);
-        bun.default_allocator.destroy(this);
+        bun.heap.default_allocator.free(this.path);
+        bun.heap.default_allocator.destroy(this);
     }
 
     pub const Arguments = struct {
@@ -236,7 +236,7 @@ pub const StatWatcher = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Arguments {
             const vm = ctx.vm();
-            const path = try PathLike.fromJSWithAllocator(ctx, arguments, bun.default_allocator) orelse {
+            const path = try PathLike.fromJSWithAllocator(ctx, arguments, bun.heap.default_allocator) orelse {
                 return ctx.throwInvalidArguments("filename must be a string or TypedArray", .{});
             };
 
@@ -344,14 +344,14 @@ pub const StatWatcher = struct {
         pub fn createAndSchedule(
             watcher: *StatWatcher,
         ) void {
-            var task = bun.default_allocator.create(InitialStatTask) catch bun.outOfMemory();
+            var task = bun.heap.default_allocator.create(InitialStatTask) catch bun.outOfMemory();
             task.* = .{ .watcher = watcher };
             JSC.WorkPool.schedule(&task.task);
         }
 
         fn workPoolCallback(task: *JSC.WorkPoolTask) void {
             const initial_stat_task: *InitialStatTask = @fieldParentPtr("task", task);
-            defer bun.default_allocator.destroy(initial_stat_task);
+            defer bun.heap.default_allocator.destroy(initial_stat_task);
             const this = initial_stat_task.watcher;
 
             if (this.closed) {
@@ -468,11 +468,11 @@ pub const StatWatcher = struct {
             .auto,
         );
 
-        const alloc_file_path = try bun.default_allocator.allocSentinel(u8, file_path.len, 0);
-        errdefer bun.default_allocator.free(alloc_file_path);
+        const alloc_file_path = try bun.heap.default_allocator.allocSentinel(u8, file_path.len, 0);
+        errdefer bun.heap.default_allocator.free(alloc_file_path);
         @memcpy(alloc_file_path, file_path);
 
-        var this = try bun.default_allocator.create(StatWatcher);
+        var this = try bun.heap.default_allocator.create(StatWatcher);
         const vm = args.global_this.bunVM();
         this.* = .{
             .ctx = vm,

@@ -131,12 +131,12 @@ pub const StandaloneModuleGraph = struct {
 
         pub fn blob(this: *File, globalObject: *bun.JSC.JSGlobalObject) *bun.JSC.WebCore.Blob {
             if (this.cached_blob == null) {
-                const store = bun.JSC.WebCore.Blob.Store.init(@constCast(this.contents), bun.default_allocator);
+                const store = bun.JSC.WebCore.Blob.Store.init(@constCast(this.contents), bun.heap.default_allocator);
                 // make it never free
                 store.ref();
 
                 const b = bun.JSC.WebCore.Blob.initWithStore(store, globalObject).new();
-                b.allocator = bun.default_allocator;
+                b.allocator = bun.heap.default_allocator;
 
                 if (bun.http.MimeType.byExtensionNoDefault(bun.strings.trimLeadingChar(std.fs.path.extension(this.name), '.'))) |mime| {
                     store.mime_type = mime;
@@ -179,7 +179,7 @@ pub const StandaloneModuleGraph = struct {
                 .parsed => |map| map,
                 .serialized => |serialized| {
                     var stored = switch (SourceMap.Mapping.parse(
-                        bun.default_allocator,
+                        bun.heap.default_allocator,
                         serialized.mappingVLQ(),
                         null,
                         std.math.maxInt(i32),
@@ -193,7 +193,7 @@ pub const StandaloneModuleGraph = struct {
                     };
 
                     const source_files = serialized.sourceFileNames();
-                    const slices = bun.default_allocator.alloc(?[]u8, source_files.len * 2) catch bun.outOfMemory();
+                    const slices = bun.heap.default_allocator.alloc(?[]u8, source_files.len * 2) catch bun.outOfMemory();
 
                     const file_names: [][]const u8 = @ptrCast(slices[0..source_files.len]);
                     const decompressed_contents_slice = slices[source_files.len..][0..source_files.len];
@@ -331,7 +331,7 @@ pub const StandaloneModuleGraph = struct {
         defer source_map_header_list.deinit();
         var source_map_string_list = std.ArrayList(u8).init(allocator);
         defer source_map_string_list.deinit();
-        var source_map_arena = bun.ArenaAllocator.init(allocator);
+        var source_map_arena = std.heap.ArenaAllocator.init(allocator);
         defer source_map_arena.deinit();
 
         for (output_files) |output_file| {
@@ -519,7 +519,7 @@ pub const StandaloneModuleGraph = struct {
                                 // but we only do that once because otherwise it's just silly
                                 if (!tried_changing_abs_dir) {
                                     tried_changing_abs_dir = true;
-                                    const zname_z = bun.strings.concat(bun.default_allocator, &.{
+                                    const zname_z = bun.strings.concat(bun.heap.default_allocator, &.{
                                         bun.fs.FileSystem.instance.fs.tmpdirPath(),
                                         std.fs.path.sep_str,
                                         zname,
@@ -746,7 +746,7 @@ pub const StandaloneModuleGraph = struct {
                         "--remove-signature",
                         temp_location,
                     },
-                    bun.default_allocator,
+                    bun.heap.default_allocator,
                 );
                 if (bun.logger.Log.default_log_level.atLeast(.verbose)) {
                     signer.stdout_behavior = .Inherit;
@@ -830,7 +830,7 @@ pub const StandaloneModuleGraph = struct {
             return null;
         }
 
-        var to_read = try bun.default_allocator.alloc(u8, offsets.byte_count);
+        var to_read = try bun.heap.default_allocator.alloc(u8, offsets.byte_count);
         var to_read_from = to_read;
 
         // Reading the data and making sure it's page-aligned + won't crash due
@@ -845,7 +845,7 @@ pub const StandaloneModuleGraph = struct {
             if (comptime Environment.allow_assert) {
                 // actually we just want to verify this logic is correct in development
                 if (offsets.byte_count <= 1024 * 3) {
-                    to_read_from = try bun.default_allocator.alloc(u8, offsets.byte_count);
+                    to_read_from = try bun.heap.default_allocator.alloc(u8, offsets.byte_count);
                 }
             }
 
@@ -858,7 +858,7 @@ pub const StandaloneModuleGraph = struct {
                         remain = remain[read..];
                     },
                     .err => {
-                        bun.default_allocator.free(to_read);
+                        bun.heap.default_allocator.free(to_read);
                         return null;
                     },
                 }
@@ -1033,12 +1033,12 @@ pub const StandaloneModuleGraph = struct {
                 const compressed_file = compressed_codes[@intCast(index)].slice(this.map.bytes);
                 const size = bun.zstd.getDecompressedSize(compressed_file);
 
-                const bytes = bun.default_allocator.alloc(u8, size) catch bun.outOfMemory();
+                const bytes = bun.heap.default_allocator.alloc(u8, size) catch bun.outOfMemory();
                 const result = bun.zstd.decompress(bytes, compressed_file);
 
                 if (result == .err) {
                     bun.Output.warn("Source map decompression error: {s}", .{result.err});
-                    bun.default_allocator.free(bytes);
+                    bun.heap.default_allocator.free(bytes);
                     this.decompressed_files[index] = "";
                     return null;
                 }

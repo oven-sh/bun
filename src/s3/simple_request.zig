@@ -67,7 +67,7 @@ pub const S3HttpSimpleTask = struct {
     callback_context: *anyopaque,
     callback: Callback,
     response_buffer: bun.MutableString = .{
-        .allocator = bun.default_allocator,
+        .allocator = bun.heap.default_allocator,
         .list = .{
             .items = &.{},
             .capacity = 0,
@@ -120,7 +120,7 @@ pub const S3HttpSimpleTask = struct {
     };
     pub fn deinit(this: *@This()) void {
         if (this.result.certificate_info) |*certificate| {
-            certificate.deinit(bun.default_allocator);
+            certificate.deinit(bun.heap.default_allocator);
         }
         this.poll_ref.unref(this.vm);
         this.response_buffer.deinit();
@@ -128,10 +128,10 @@ pub const S3HttpSimpleTask = struct {
         this.sign_result.deinit();
         this.http.clearData();
         if (this.range) |range| {
-            bun.default_allocator.free(range);
+            bun.heap.default_allocator.free(range);
         }
         if (this.result.metadata) |*metadata| {
-            metadata.deinit(bun.default_allocator);
+            metadata.deinit(bun.heap.default_allocator);
         }
         this.destroy();
     }
@@ -268,7 +268,7 @@ pub const S3HttpSimpleTask = struct {
                     200, 204, 206 => {
                         const body = this.response_buffer;
                         this.response_buffer = .{
-                            .allocator = bun.default_allocator,
+                            .allocator = bun.heap.default_allocator,
                             .list = .{
                                 .items = &.{},
                                 .capacity = 0,
@@ -348,7 +348,7 @@ pub fn executeSimpleS3Request(
         .content_disposition = options.content_disposition,
         .acl = options.acl,
     }, null) catch |sign_err| {
-        if (options.range) |range_| bun.default_allocator.free(range_);
+        if (options.range) |range_| bun.heap.default_allocator.free(range_);
         const error_code_and_message = getSignErrorCodeAndMessage(sign_err);
         callback.fail(error_code_and_message.code, error_code_and_message.message, callback_context);
         return;
@@ -358,16 +358,16 @@ pub fn executeSimpleS3Request(
         var header_buffer: [10]picohttp.Header = undefined;
         if (options.range) |range_| {
             const _headers = result.mixWithHeader(&header_buffer, .{ .name = "range", .value = range_ });
-            break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(_headers, bun.default_allocator) catch bun.outOfMemory();
+            break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(_headers, bun.heap.default_allocator) catch bun.outOfMemory();
         } else {
             if (options.content_type) |content_type| {
                 if (content_type.len > 0) {
                     const _headers = result.mixWithHeader(&header_buffer, .{ .name = "Content-Type", .value = content_type });
-                    break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(_headers, bun.default_allocator) catch bun.outOfMemory();
+                    break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(_headers, bun.heap.default_allocator) catch bun.outOfMemory();
                 }
             }
 
-            break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(result.headers(), bun.default_allocator) catch bun.outOfMemory();
+            break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(result.headers(), bun.heap.default_allocator) catch bun.outOfMemory();
         }
     };
     const task = S3HttpSimpleTask.new(.{
@@ -384,7 +384,7 @@ pub fn executeSimpleS3Request(
     const url = bun.URL.parse(result.url);
     const proxy = options.proxy_url orelse "";
     task.http = bun.http.AsyncHTTP.init(
-        bun.default_allocator,
+        bun.heap.default_allocator,
         options.method,
         url,
         task.headers.entries,
@@ -405,6 +405,6 @@ pub fn executeSimpleS3Request(
     // queue http request
     bun.http.HTTPThread.init(&.{});
     var batch = bun.ThreadPool.Batch{};
-    task.http.schedule(bun.default_allocator, &batch);
+    task.http.schedule(bun.heap.default_allocator, &batch);
     bun.http.http_thread.schedule(batch);
 }

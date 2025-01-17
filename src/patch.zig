@@ -78,7 +78,7 @@ pub const PatchFile = struct {
     pub fn apply(this: *const PatchFile, allocator: Allocator, patch_dir: bun.FileDescriptor) ?bun.sys.Error {
         var state: ApplyState = .{};
         var sfb = std.heap.stackFallback(1024, allocator);
-        var arena = bun.ArenaAllocator.init(sfb.get());
+        var arena = std.heap.ArenaAllocator.init(sfb.get());
 
         for (this.parts.items) |*part| {
             defer _ = arena.reset(.retain_capacity);
@@ -158,7 +158,7 @@ pub const PatchFile = struct {
                         break :count total;
                     };
 
-                    const file_alloc = if (count <= PAGE_SIZE) arena.allocator() else bun.default_allocator;
+                    const file_alloc = if (count <= PAGE_SIZE) arena.allocator() else bun.heap.default_allocator;
 
                     // TODO: this additional allocation is probably not necessary in all cases and should be avoided or use stack buffer
                     const file_contents = brk: {
@@ -230,7 +230,7 @@ pub const PatchFile = struct {
     /// - If file size > PAGE_SIZE, rather than making a list of lines, make a list of chunks
     fn applyPatch(
         patch: *const FilePatch,
-        arena: *bun.ArenaAllocator,
+        arena: *std.heap.ArenaAllocator,
         patch_dir: bun.FileDescriptor,
         state: *ApplyState,
     ) JSC.Maybe(void) {
@@ -251,13 +251,13 @@ pub const PatchFile = struct {
             .result => |stat| stat,
         };
 
-        // Purposefully use `bun.default_allocator` here because if the file size is big like
+        // Purposefully use `bun.heap.default_allocator` here because if the file size is big like
         // 1gb we don't want to have 1gb hanging around in memory until arena is cleared
         //
         // But if the file size is small, like less than a single page, it's probably ok
         // to use the arena
         const use_arena: bool = stat.size <= PAGE_SIZE;
-        const file_alloc = if (use_arena) arena.allocator() else bun.default_allocator;
+        const file_alloc = if (use_arena) arena.allocator() else bun.heap.default_allocator;
         const filebuf = patch_dir.asDir().readFileAlloc(file_alloc, file_path, 1024 * 1024 * 1024 * 4) catch return .{ .err = bun.sys.Error.fromCode(.INVAL, .read).withPath(file_path) };
         defer file_alloc.free(filebuf);
 
@@ -290,13 +290,13 @@ pub const PatchFile = struct {
         };
 
         // TODO: i hate this
-        var lines = std.ArrayListUnmanaged([]const u8).initCapacity(bun.default_allocator, lines_count) catch bun.outOfMemory();
-        defer lines.deinit(bun.default_allocator);
+        var lines = std.ArrayListUnmanaged([]const u8).initCapacity(bun.heap.default_allocator, lines_count) catch bun.outOfMemory();
+        defer lines.deinit(bun.heap.default_allocator);
         {
             var iter = std.mem.splitScalar(u8, filebuf, '\n');
             var i: usize = 0;
             while (iter.next()) |line| : (i += 1) {
-                lines.append(bun.default_allocator, line) catch bun.outOfMemory();
+                lines.append(bun.heap.default_allocator, line) catch bun.outOfMemory();
             }
             bun.debugAssert(i == file_line_count);
         }
@@ -311,7 +311,7 @@ pub const PatchFile = struct {
                         line_cursor += @intCast(part.lines.items.len);
                     },
                     .insertion => {
-                        const lines_to_insert = lines.addManyAt(bun.default_allocator, line_cursor, part.lines.items.len) catch bun.outOfMemory();
+                        const lines_to_insert = lines.addManyAt(bun.heap.default_allocator, line_cursor, part.lines.items.len) catch bun.outOfMemory();
                         @memcpy(lines_to_insert, part.lines.items);
                         line_cursor += @intCast(part.lines.items.len);
                         if (part.no_newline_at_end_of_file) {
@@ -320,9 +320,9 @@ pub const PatchFile = struct {
                     },
                     .deletion => {
                         // TODO: check if the lines match in the original file?
-                        lines.replaceRange(bun.default_allocator, line_cursor, part.lines.items.len, &.{}) catch bun.outOfMemory();
+                        lines.replaceRange(bun.heap.default_allocator, line_cursor, part.lines.items.len, &.{}) catch bun.outOfMemory();
                         if (part.no_newline_at_end_of_file) {
-                            lines.append(bun.default_allocator, "") catch bun.outOfMemory();
+                            lines.append(bun.heap.default_allocator, "") catch bun.outOfMemory();
                         }
                         // line_cursor -= part.lines.items.len;
                     },
@@ -343,8 +343,8 @@ pub const PatchFile = struct {
             _ = bun.sys.close(file_fd);
         }
 
-        const contents = std.mem.join(bun.default_allocator, "\n", lines.items) catch bun.outOfMemory();
-        defer bun.default_allocator.free(contents);
+        const contents = std.mem.join(bun.heap.default_allocator, "\n", lines.items) catch bun.outOfMemory();
+        defer bun.heap.default_allocator.free(contents);
 
         var written: usize = 0;
         while (written < contents.len) {
@@ -553,12 +553,12 @@ const ParseErr = error{
 /// NOTE: the returned `PatchFile` struct will contain pointers to original file text so make sure to not deallocate `file`
 pub fn parsePatchFile(file: []const u8) ParseErr!PatchFile {
     var lines_parser = PatchLinesParser{};
-    defer lines_parser.deinit(bun.default_allocator, false);
+    defer lines_parser.deinit(bun.heap.default_allocator, false);
 
     lines_parser.parse(file, .{}) catch |err| brk: {
         // TODO: the parser can be refactored to remove this as it is a hacky workaround, like detecting while parsing if legacy diffs are used
         if (err == ParseErr.hunk_header_integrity_check_failed) {
-            lines_parser.reset(bun.default_allocator);
+            lines_parser.reset(bun.heap.default_allocator);
             break :brk try lines_parser.parse(file, .{ .support_legacy_diffs = true });
         }
         return err;
@@ -590,7 +590,7 @@ fn patchFileSecondPass(files: []FileDeets) ParseErr!PatchFile {
                 if (file.rename_from == null or file.rename_to == null) return ParseErr.rename_from_and_to_not_give;
 
                 result.parts.append(
-                    bun.default_allocator,
+                    bun.heap.default_allocator,
                     .{
                         .file_rename = bun.new(
                             FileRename,
@@ -608,7 +608,7 @@ fn patchFileSecondPass(files: []FileDeets) ParseErr!PatchFile {
                 const path = file.diff_line_from_path orelse file.from_path orelse {
                     return ParseErr.no_path_given_for_file_deletion;
                 };
-                result.parts.append(bun.default_allocator, .{
+                result.parts.append(bun.heap.default_allocator, .{
                     .file_deletion = bun.new(FileDeletion, FileDeletion{
                         .hunk = if (file.hunks.items.len > 0) brk: {
                             const value = file.hunks.items[0];
@@ -629,7 +629,7 @@ fn patchFileSecondPass(files: []FileDeets) ParseErr!PatchFile {
                 const path = file.diff_line_to_path orelse file.to_path orelse {
                     return ParseErr.no_path_given_for_file_creation;
                 };
-                result.parts.append(bun.default_allocator, .{
+                result.parts.append(bun.heap.default_allocator, .{
                     .file_creation = bun.new(FileCreation, FileCreation{
                         .hunk = if (file.hunks.items.len > 0) brk: {
                             const value = file.hunks.items[0];
@@ -652,7 +652,7 @@ fn patchFileSecondPass(files: []FileDeets) ParseErr!PatchFile {
         }
 
         if (destination_file_path != null and file.old_mode != null and file.new_mode != null and !std.mem.eql(u8, file.old_mode.?, file.new_mode.?)) {
-            result.parts.append(bun.default_allocator, .{
+            result.parts.append(bun.heap.default_allocator, .{
                 .file_mode_change = bun.new(FileModeChange, FileModeChange{
                     .path = destination_file_path.?,
                     .old_mode = parseFileMode(file.old_mode.?) orelse {
@@ -666,7 +666,7 @@ fn patchFileSecondPass(files: []FileDeets) ParseErr!PatchFile {
         }
 
         if (destination_file_path != null and file.hunks.items.len > 0) {
-            result.parts.append(bun.default_allocator, .{
+            result.parts.append(bun.heap.default_allocator, .{
                 .file_patch = bun.new(FilePatch, FilePatch{
                     .path = destination_file_path.?,
                     .hunks = file.takeHunks(),
@@ -866,7 +866,7 @@ const PatchLinesParser = struct {
                                 return ParseErr.hunk_lines_encountered_before_hunk_header;
                             }
                             if (this.current_hunk_mutation_part != null and @intFromEnum(this.current_hunk_mutation_part.?.type) != @intFromEnum(hunk_line_type)) {
-                                this.current_hunk.?.parts.append(bun.default_allocator, this.current_hunk_mutation_part.?) catch unreachable;
+                                this.current_hunk.?.parts.append(bun.heap.default_allocator, this.current_hunk_mutation_part.?) catch unreachable;
                                 this.current_hunk_mutation_part = null;
                             }
 
@@ -876,7 +876,7 @@ const PatchLinesParser = struct {
                                 };
                             }
 
-                            this.current_hunk_mutation_part.?.lines.append(bun.default_allocator, line[@min(1, line.len)..]) catch unreachable;
+                            this.current_hunk_mutation_part.?.lines.append(bun.heap.default_allocator, line[@min(1, line.len)..]) catch unreachable;
                         },
                     }
                 },
@@ -897,10 +897,10 @@ const PatchLinesParser = struct {
     fn commitHunk(this: *PatchLinesParser) void {
         if (this.current_hunk) |*hunk| {
             if (this.current_hunk_mutation_part) |mutation_part| {
-                hunk.parts.append(bun.default_allocator, mutation_part) catch unreachable;
+                hunk.parts.append(bun.heap.default_allocator, mutation_part) catch unreachable;
                 this.current_hunk_mutation_part = null;
             }
-            this.current_file_patch.hunks.append(bun.default_allocator, hunk.*) catch unreachable;
+            this.current_file_patch.hunks.append(bun.heap.default_allocator, hunk.*) catch unreachable;
             this.current_hunk = null;
         }
     }
@@ -908,7 +908,7 @@ const PatchLinesParser = struct {
     fn commitFilePatch(this: *PatchLinesParser) void {
         this.commitHunk();
         this.current_file_patch.nullifyEmptyStrings();
-        this.result.append(bun.default_allocator, this.current_file_patch) catch unreachable;
+        this.result.append(bun.heap.default_allocator, this.current_file_patch) catch unreachable;
         this.current_file_patch = .{};
     }
 
@@ -1110,13 +1110,13 @@ pub const TestingAPIs = struct {
         const new_folder_bunstr = new_folder_jsval.toBunString(globalThis);
         defer new_folder_bunstr.deref();
 
-        const old_folder = old_folder_bunstr.toUTF8(bun.default_allocator);
+        const old_folder = old_folder_bunstr.toUTF8(bun.heap.default_allocator);
         defer old_folder.deinit();
 
-        const new_folder = new_folder_bunstr.toUTF8(bun.default_allocator);
+        const new_folder = new_folder_bunstr.toUTF8(bun.heap.default_allocator);
         defer new_folder.deinit();
 
-        return switch (gitDiffInternal(bun.default_allocator, old_folder.slice(), new_folder.slice()) catch |e| {
+        return switch (gitDiffInternal(bun.heap.default_allocator, old_folder.slice(), new_folder.slice()) catch |e| {
             return globalThis.throwError(e, "failed to make diff");
         }) {
             .result => |s| {
@@ -1136,7 +1136,7 @@ pub const TestingAPIs = struct {
 
         pub fn deinit(this: *ApplyArgs) void {
             this.patchfile_txt.deinit();
-            this.patchfile.deinit(bun.default_allocator);
+            this.patchfile.deinit(bun.heap.default_allocator);
             if (bun.FileDescriptor.cwd().eq(this.dirfd)) {
                 _ = bun.sys.close(this.dirfd);
             }
@@ -1149,7 +1149,7 @@ pub const TestingAPIs = struct {
         };
         defer args.deinit();
 
-        if (args.patchfile.apply(bun.default_allocator, args.dirfd)) |err| {
+        if (args.patchfile.apply(bun.heap.default_allocator, args.dirfd)) |err| {
             return globalThis.throwValue(err.toJSC(globalThis));
         }
 
@@ -1164,7 +1164,7 @@ pub const TestingAPIs = struct {
             return globalThis.throw("TestingAPIs.parse: expected at least 1 argument, got 0", .{});
         };
         const patchfile_src_bunstr = patchfile_src_js.toBunString(globalThis);
-        const patchfile_src = patchfile_src_bunstr.toUTF8(bun.default_allocator);
+        const patchfile_src = patchfile_src_bunstr.toUTF8(bun.heap.default_allocator);
 
         var patchfile = parsePatchFile(patchfile_src.slice()) catch |e| {
             if (e == error.hunk_header_integrity_check_failed) {
@@ -1173,9 +1173,9 @@ pub const TestingAPIs = struct {
                 return globalThis.throwError(e, "failed to parse patch file");
             }
         };
-        defer patchfile.deinit(bun.default_allocator);
+        defer patchfile.deinit(bun.heap.default_allocator);
 
-        const str = try std.json.stringifyAlloc(bun.default_allocator, patchfile, .{});
+        const str = try std.json.stringifyAlloc(bun.heap.default_allocator, patchfile, .{});
         const outstr = bun.String.fromUTF8(str);
         return outstr.toJS(globalThis);
     }
@@ -1192,8 +1192,8 @@ pub const TestingAPIs = struct {
         const dir_fd = if (arguments.nextEat()) |dir_js| brk: {
             var bunstr = dir_js.toBunString(globalThis);
             defer bunstr.deref();
-            const path = bunstr.toOwnedSliceZ(bun.default_allocator) catch unreachable;
-            defer bun.default_allocator.free(path);
+            const path = bunstr.toOwnedSliceZ(bun.heap.default_allocator) catch unreachable;
+            defer bun.heap.default_allocator.free(path);
 
             break :brk switch (bun.sys.open(path, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
                 .err => |e| {
@@ -1206,7 +1206,7 @@ pub const TestingAPIs = struct {
 
         const patchfile_bunstr = patchfile_js.toBunString(globalThis);
         defer patchfile_bunstr.deref();
-        const patchfile_src = patchfile_bunstr.toUTF8(bun.default_allocator);
+        const patchfile_src = patchfile_bunstr.toUTF8(bun.heap.default_allocator);
 
         const patch_file = parsePatchFile(patchfile_src.slice()) catch |e| {
             if (bun.FileDescriptor.cwd().eq(dir_fd)) {
@@ -1248,7 +1248,7 @@ pub fn spawnOpts(
             "--full-index",
             "--no-index",
         };
-        const argv_buf = bun.default_allocator.alloc([]const u8, ARGV.len + 2) catch bun.outOfMemory();
+        const argv_buf = bun.heap.default_allocator.alloc([]const u8, ARGV.len + 2) catch bun.outOfMemory();
         argv_buf[0] = git;
         for (1..ARGV.len) |i| {
             argv_buf[i] = ARGV[i];
@@ -1266,7 +1266,7 @@ pub fn spawnOpts(
             "USERPROFILE",
         };
         const PATH = bun.getenvZ("PATH");
-        const envp_buf = bun.default_allocator.allocSentinel(?[*:0]const u8, env_arr.len + @as(usize, if (PATH != null) 1 else 0), null) catch bun.outOfMemory();
+        const envp_buf = bun.heap.default_allocator.allocSentinel(?[*:0]const u8, env_arr.len + @as(usize, if (PATH != null) 1 else 0), null) catch bun.outOfMemory();
         for (0..env_arr.len) |i| {
             envp_buf[i] = env_arr[i].ptr;
         }
@@ -1290,8 +1290,8 @@ pub fn spawnOpts(
 }
 
 pub fn diffPostProcess(result: *bun.spawn.sync.Result, old_folder: []const u8, new_folder: []const u8) !bun.JSC.Node.Maybe(std.ArrayList(u8), std.ArrayList(u8)) {
-    var stdout = std.ArrayList(u8).init(bun.default_allocator);
-    var stderr = std.ArrayList(u8).init(bun.default_allocator);
+    var stdout = std.ArrayList(u8).init(bun.heap.default_allocator);
+    var stderr = std.ArrayList(u8).init(bun.heap.default_allocator);
 
     std.mem.swap(std.ArrayList(u8), &stdout, &result.stdout);
     std.mem.swap(std.ArrayList(u8), &stderr, &result.stderr);

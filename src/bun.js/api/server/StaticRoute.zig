@@ -6,7 +6,7 @@ blob: AnyBlob,
 cached_blob_size: u64 = 0,
 has_content_disposition: bool = false,
 headers: Headers = .{
-    .allocator = bun.default_allocator,
+    .allocator = bun.heap.default_allocator,
 },
 ref_count: u32 = 1,
 
@@ -56,7 +56,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSErro
                 .Null, .Empty => {
                     break :brk AnyBlob{
                         .InternalBlob = JSC.WebCore.InternalBlob{
-                            .bytes = std.ArrayList(u8).init(bun.default_allocator),
+                            .bytes = std.ArrayList(u8).init(bun.heap.default_allocator),
                         },
                     };
                 },
@@ -84,7 +84,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSErro
         }
 
         const headers: Headers = if (response.init.headers) |headers|
-            Headers.from(headers, bun.default_allocator, .{
+            Headers.from(headers, bun.heap.default_allocator, .{
                 .body = &blob,
             }) catch {
                 blob.detach();
@@ -93,7 +93,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSErro
             }
         else
             .{
-                .allocator = bun.default_allocator,
+                .allocator = bun.heap.default_allocator,
             };
 
         return StaticRoute.new(.{

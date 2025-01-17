@@ -9,7 +9,7 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const C = bun.C;
 const JSC = bun.JSC;
 
@@ -1069,7 +1069,7 @@ pub const FormData = struct {
                 if (field.is_file) {
                     const filename_str = field.filename.slice(buf);
 
-                    var blob = JSC.WebCore.Blob.create(value_str, bun.default_allocator, wrap.globalThis, false);
+                    var blob = JSC.WebCore.Blob.create(value_str, bun.heap.default_allocator, wrap.globalThis, false);
                     defer blob.detach();
                     var filename = JSC.ZigString.initUTF8(filename_str);
                     const content_type: []const u8 = brk: {
@@ -1095,7 +1095,7 @@ pub const FormData = struct {
                     if (content_type.len > 0) {
                         if (!field.content_type.isEmpty()) {
                             blob.content_type_allocated = true;
-                            blob.content_type = bun.default_allocator.dupe(u8, content_type) catch @panic("failed to allocate memory for blob content type");
+                            blob.content_type = bun.heap.default_allocator.dupe(u8, content_type) catch @panic("failed to allocate memory for blob content type");
                             blob.content_type_was_set = true;
                         } else {
                             blob.content_type = content_type;

@@ -7,7 +7,7 @@ const Resolver = @import("../resolver//resolver.zig");
 const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const strings = bun.strings;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const ZigString = JSC.ZigString;
 
 pub const ResolveMessage = struct {
@@ -209,6 +209,6 @@ pub const ResolveMessage = struct {
     }
 
     pub fn finalize(this: *ResolveMessage) callconv(.C) void {
-        this.msg.deinit(bun.default_allocator);
+        this.msg.deinit(bun.heap.default_allocator);
     }
 };

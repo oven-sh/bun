@@ -73,23 +73,23 @@ pub fn toNPMRegistryURLWithURL(this: *const CompileTarget, buf: []u8, registry_u
     return switch (this.os) {
         inline else => |os| switch (this.arch) {
             inline else => |arch| switch (this.libc) {
-              inline else => |libc| switch (this.baseline) {
-                  // https://registry.npmjs.org/@oven/bun-linux-x64/-/bun-linux-x64-0.1.6.tgz
-                  inline else => |is_baseline| try std.fmt.bufPrint(buf, comptime "{s}/@oven/bun-" ++
-                      os.npmName() ++ "-" ++ arch.npmName() ++
-                      libc.npmName() ++
-                      (if (is_baseline) "-baseline" else "") ++
-                      "/-/bun-" ++
-                      os.npmName() ++ "-" ++ arch.npmName() ++
-                      libc.npmName() ++
-                      (if (is_baseline) "-baseline" else "") ++
-                      "-" ++
-                      "{d}.{d}.{d}.tgz", .{
-                      registry_url,
-                      this.version.major,
-                      this.version.minor,
-                      this.version.patch,
-                  }),
+                inline else => |libc| switch (this.baseline) {
+                    // https://registry.npmjs.org/@oven/bun-linux-x64/-/bun-linux-x64-0.1.6.tgz
+                    inline else => |is_baseline| try std.fmt.bufPrint(buf, comptime "{s}/@oven/bun-" ++
+                        os.npmName() ++ "-" ++ arch.npmName() ++
+                        libc.npmName() ++
+                        (if (is_baseline) "-baseline" else "") ++
+                        "/-/bun-" ++
+                        os.npmName() ++ "-" ++ arch.npmName() ++
+                        libc.npmName() ++
+                        (if (is_baseline) "-baseline" else "") ++
+                        "-" ++
+                        "{d}.{d}.{d}.tgz", .{
+                        registry_url,
+                        this.version.major,
+                        this.version.minor,
+                        this.version.patch,
+                    }),
                 },
             },
         },
@@ -160,7 +160,7 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
         var compressed_archive_bytes = try allocator.create(MutableString);
         compressed_archive_bytes.* = try MutableString.init(allocator, 24 * 1024 * 1024);
         var url_buffer: [2048]u8 = undefined;
-        const url_str = try bun.default_allocator.dupe(u8, try this.toNPMRegistryURL(&url_buffer));
+        const url_str = try bun.heap.default_allocator.dupe(u8, try this.toNPMRegistryURL(&url_buffer));
         const url = bun.URL.parse(url_str);
         {
             var progress = refresher.start("Downloading", 0);

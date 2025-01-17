@@ -16,7 +16,7 @@ const JSC = bun.JSC;
 const Shimmer = JSC.Shimmer;
 const ConsoleObject = JSC.ConsoleObject;
 const FFI = @import("./FFI.zig");
-const NullableAllocator = bun.NullableAllocator;
+const NullableAllocator = bun.heap.NullableAllocator;
 const MutableString = bun.MutableString;
 const JestPrettyFormat = @import("../test/pretty_format.zig").JestPrettyFormat;
 const String = bun.String;
@@ -270,7 +270,7 @@ pub const ZigString = extern struct {
     }
 
     pub fn encode(this: ZigString, encoding: JSC.Node.Encoding) []u8 {
-        return this.encodeWithAllocator(bun.default_allocator, encoding);
+        return this.encodeWithAllocator(bun.heap.default_allocator, encoding);
     }
 
     pub fn encodeWithAllocator(this: ZigString, allocator: std.mem.Allocator, encoding: JSC.Node.Encoding) []u8 {
@@ -305,7 +305,7 @@ pub const ZigString = extern struct {
 
     /// This function is not optimized!
     pub fn eqlCaseInsensitive(this: ZigString, other: ZigString) bool {
-        var fallback = std.heap.stackFallback(1024, bun.default_allocator);
+        var fallback = std.heap.stackFallback(1024, bun.heap.default_allocator);
         const fallback_allocator = fallback.get();
 
         var utf16_slice = this.toSliceLowercase(fallback_allocator);
@@ -369,8 +369,8 @@ pub const ZigString = extern struct {
         }
 
         // slow path
-        var utf16_slice = utf16.toSlice(bun.default_allocator);
-        var latin1_slice = latin1.toSlice(bun.default_allocator);
+        var utf16_slice = utf16.toSlice(bun.heap.default_allocator);
+        var latin1_slice = latin1.toSlice(bun.heap.default_allocator);
         defer utf16_slice.deinit();
         defer latin1_slice.deinit();
         return strings.eqlLong(utf16_slice.slice(), latin1_slice.slice(), true);
@@ -765,7 +765,7 @@ pub const ZigString = extern struct {
         text: ZigString,
 
         pub fn format(this: GithubActionFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            var bytes = this.text.toSlice(bun.default_allocator);
+            var bytes = this.text.toSlice(bun.heap.default_allocator);
             defer bytes.deinit();
             try bun.fmt.githubActionWriter(writer, bytes.slice());
         }
@@ -828,7 +828,7 @@ pub const ZigString = extern struct {
 
     pub fn toExternalU16(ptr: [*]const u16, len: usize, global: *JSGlobalObject) JSValue {
         if (len > String.max_length()) {
-            bun.default_allocator.free(ptr[0..len]);
+            bun.heap.default_allocator.free(ptr[0..len]);
             global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
             return .zero;
         }
@@ -857,7 +857,7 @@ pub const ZigString = extern struct {
     }
 
     pub inline fn deinitGlobal(this: ZigString) void {
-        bun.default_allocator.free(this.slice());
+        bun.heap.default_allocator.free(this.slice());
     }
 
     pub const mark = markGlobal;
@@ -1006,15 +1006,15 @@ pub const ZigString = extern struct {
     inline fn assertGlobal(this: *const ZigString) void {
         if (comptime bun.Environment.allow_assert) {
             bun.assert(this.len == 0 or
-                bun.Mimalloc.mi_is_in_heap_region(untagged(this._unsafe_ptr_do_not_use)) or
-                bun.Mimalloc.mi_check_owned(untagged(this._unsafe_ptr_do_not_use)));
+                bun.heap.Mimalloc.mi_is_in_heap_region(untagged(this._unsafe_ptr_do_not_use)) or
+                bun.heap.Mimalloc.mi_check_owned(untagged(this._unsafe_ptr_do_not_use)));
         }
     }
 
     pub fn toExternalValue(this: *const ZigString, global: *JSGlobalObject) JSValue {
         this.assertGlobal();
         if (this.len > String.max_length()) {
-            bun.default_allocator.free(@constCast(this.byteSlice()));
+            bun.heap.default_allocator.free(@constCast(this.byteSlice()));
             global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
             return .zero;
         }
@@ -1876,7 +1876,7 @@ pub const JSUint8Array = opaque {
     }
 
     extern fn JSUint8Array__fromDefaultAllocator(*JSC.JSGlobalObject, ptr: [*]u8, len: usize) JSC.JSValue;
-    /// *bytes* must come from bun.default_allocator
+    /// *bytes* must come from bun.heap.default_allocator
     pub fn fromBytes(globalThis: *JSGlobalObject, bytes: []u8) JSC.JSValue {
         return JSUint8Array__fromDefaultAllocator(globalThis, bytes.ptr, bytes.len);
     }
@@ -3009,7 +3009,7 @@ pub const JSGlobalObject = opaque {
         typename: []const u8,
         value: JSValue,
     ) bun.JSError {
-        const ty_str = value.jsTypeString(this).toSlice(this, bun.default_allocator);
+        const ty_str = value.jsTypeString(this).toSlice(this, bun.heap.default_allocator);
         defer ty_str.deinit();
         return this.ERR_INVALID_ARG_TYPE("The \"{s}\" property must be of type {s}. Received {s}", .{ field, typename, ty_str.slice() }).throw();
     }
@@ -3219,7 +3219,7 @@ pub const JSGlobalObject = opaque {
         bun.debugAssert(err != error.JSError);
 
         // Avoid tiny extra allocation
-        var stack = std.heap.stackFallback(128, bun.default_allocator);
+        var stack = std.heap.stackFallback(128, bun.heap.default_allocator);
         const allocator_ = stack.get();
         const buffer = try std.fmt.allocPrint(allocator_, comptime "{s} " ++ fmt, .{@errorName(err)});
         defer allocator_.free(buffer);
@@ -5015,7 +5015,7 @@ pub const JSValue = enum(i64) {
     pub fn toSliceOrNull(this: JSValue, globalThis: *JSGlobalObject) bun.JSError!ZigString.Slice {
         const str = try bun.String.fromJS2(this, globalThis);
         defer str.deref();
-        return str.toUTF8(bun.default_allocator);
+        return str.toUTF8(bun.heap.default_allocator);
     }
 
     /// Call `toString()` on the JSValue and clone the result.
@@ -5030,7 +5030,7 @@ pub const JSValue = enum(i64) {
     ///
     /// Remember that `Symbol` throws an exception when you call `toString()`.
     pub fn toSliceClone(this: JSValue, globalThis: *JSGlobalObject) ?ZigString.Slice {
-        return this.toSliceCloneWithAllocator(globalThis, bun.default_allocator);
+        return this.toSliceCloneWithAllocator(globalThis, bun.heap.default_allocator);
     }
 
     /// Call `toString()` on the JSValue and clone the result.
@@ -5039,7 +5039,7 @@ pub const JSValue = enum(i64) {
     /// Remember that `Symbol` throws an exception when you call `toString()`.
     pub fn toSliceCloneZ(this: JSValue, globalThis: *JSGlobalObject) ?[:0]u8 {
         var str = bun.String.tryFromJS(this, globalThis) orelse return null;
-        return str.toOwnedSliceZ(bun.default_allocator) catch return null;
+        return str.toOwnedSliceZ(bun.heap.default_allocator) catch return null;
     }
 
     /// On exception or out of memory, this returns null, to make exception checks clearer.

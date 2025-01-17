@@ -8,7 +8,7 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const FeatureFlags = bun.FeatureFlags;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const C = bun.C;
 
 const js_ast = bun.JSAst;
@@ -99,9 +99,9 @@ pub const Fs = struct {
     /// The caller must
     pub fn resetSharedBuffer(this: *Fs, buffer: *MutableString) void {
         if (buffer == &this.shared_buffer) {
-            this.shared_buffer = MutableString.initEmpty(bun.default_allocator);
+            this.shared_buffer = MutableString.initEmpty(bun.heap.default_allocator);
         } else if (buffer == &this.macro_shared_buffer) {
-            this.macro_shared_buffer = MutableString.initEmpty(bun.default_allocator);
+            this.macro_shared_buffer = MutableString.initEmpty(bun.heap.default_allocator);
         } else {
             bun.unreachablePanic("resetSharedBuffer: invalid buffer", .{});
         }
@@ -165,7 +165,7 @@ pub const Fs = struct {
         comptime use_shared_buffer: bool,
         _file_handle: ?StoredFileDescriptorType,
     ) !Entry {
-        return c.readFileWithAllocator(bun.fs_allocator, _fs, path, dirname_fd, use_shared_buffer, _file_handle);
+        return c.readFileWithAllocator(bun.heap.fs_allocator, _fs, path, dirname_fd, use_shared_buffer, _file_handle);
     }
 
     pub fn readFileWithAllocator(

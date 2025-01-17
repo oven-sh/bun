@@ -26,7 +26,7 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
     bun.JSAst.Expr.Data.Store.create();
     bun.JSAst.Stmt.Data.Store.create();
 
-    var arena = try bun.MimallocArena.init();
+    var arena = try bun.heap.MimallocArena.init();
     defer arena.deinit();
 
     const vm = try VirtualMachine.initBake(.{
@@ -100,7 +100,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     // Load and evaluate the configuration module
     const global = vm.global;
     const b = &vm.transpiler;
-    const allocator = bun.default_allocator;
+    const allocator = bun.heap.default_allocator;
 
     Output.prettyErrorln("Loading configuration", .{});
     Output.flush();
@@ -627,7 +627,7 @@ fn BakeRegisterProductionChunk(global: *JSC.JSGlobalObject, key: bun.String, sou
 }
 
 export fn BakeProdResolve(global: *JSC.JSGlobalObject, a_str: bun.String, specifier_str: bun.String) callconv(.C) bun.String {
-    var sfa = std.heap.stackFallback(@sizeOf(bun.PathBuffer) * 2, bun.default_allocator);
+    var sfa = std.heap.stackFallback(@sizeOf(bun.PathBuffer) * 2, bun.heap.default_allocator);
     const alloc = sfa.get();
 
     const specifier = specifier_str.toUTF8(alloc);
@@ -837,7 +837,7 @@ pub const PerThread = struct {
 
 /// Given a key, returns the source code to load.
 export fn BakeProdLoad(pt: *PerThread, key: bun.String) bun.String {
-    var sfa = std.heap.stackFallback(4096, bun.default_allocator);
+    var sfa = std.heap.stackFallback(4096, bun.heap.default_allocator);
     const allocator = sfa.get();
     const utf8 = key.toUTF8(allocator);
     defer utf8.deinit();

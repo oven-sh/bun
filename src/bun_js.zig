@@ -6,7 +6,7 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const C = bun.C;
 const std = @import("std");
 
@@ -29,7 +29,7 @@ const DotEnv = @import("env_loader.zig");
 const which = @import("which.zig").which;
 const JSC = bun.JSC;
 const AsyncHTTP = bun.http.AsyncHTTP;
-const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
+const Arena = bun.heap.MimallocArena;
 const DNSResolver = @import("bun.js/api/bun/dns_resolver.zig").DNSResolver;
 
 const OpaqueWrap = JSC.OpaqueWrap;
@@ -48,7 +48,7 @@ pub const Run = struct {
         bun.JSC.initialize(false);
         bun.Analytics.Features.standalone_executable += 1;
 
-        const graph_ptr = try bun.default_allocator.create(bun.StandaloneModuleGraph);
+        const graph_ptr = try bun.heap.default_allocator.create(bun.StandaloneModuleGraph);
         graph_ptr.* = graph;
 
         js_ast.Expr.Data.Store.create();
@@ -217,7 +217,7 @@ pub const Run = struct {
         vm.allocator = arena.allocator();
 
         if (ctx.runtime_options.eval.script.len > 0) {
-            const script_source = try bun.default_allocator.create(logger.Source);
+            const script_source = try bun.heap.default_allocator.create(logger.Source);
             script_source.* = logger.Source.initPathString(entry_path, ctx.runtime_options.eval.script);
             vm.module_loader.eval_source = script_source;
 

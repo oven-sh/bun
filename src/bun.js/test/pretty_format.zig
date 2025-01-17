@@ -5,7 +5,7 @@ const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
 const is_bindgen: bool = false;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const CAPI = JSC.C;
 const ZigString = JSC.ZigString;
 const strings = bun.strings;
@@ -933,7 +933,7 @@ pub const JestPrettyFormat = struct {
 
             switch (comptime Format) {
                 .StringPossiblyFormatted => {
-                    var str = value.toSlice(this.globalThis, bun.default_allocator);
+                    var str = value.toSlice(this.globalThis, bun.heap.default_allocator);
                     defer str.deinit();
                     this.addForNewLine(str.len);
                     const slice = str.slice();
@@ -1026,9 +1026,9 @@ pub const JestPrettyFormat = struct {
                         writer.writeAll(str.slice());
                     } else if (str.len > 0) {
                         // slow path
-                        const buf = strings.allocateLatin1IntoUTF8(bun.default_allocator, []const u8, str.slice()) catch &[_]u8{};
+                        const buf = strings.allocateLatin1IntoUTF8(bun.heap.default_allocator, []const u8, str.slice()) catch &[_]u8{};
                         if (buf.len > 0) {
-                            defer bun.default_allocator.free(buf);
+                            defer bun.heap.default_allocator.free(buf);
                             writer.writeAll(buf);
                         }
                     }

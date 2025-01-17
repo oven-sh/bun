@@ -6,7 +6,7 @@ const bun = @import("root").bun;
 
 const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
 const fd_t = bun.FileDescriptor;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const kernel32 = bun.windows;
 const linux = posix.linux;
 const uv = bun.windows.libuv;

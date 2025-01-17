@@ -17,7 +17,7 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const C = bun.C;
 const Ref = @import("ast/base.zig").Ref;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
@@ -1250,13 +1250,13 @@ fn NewPrinter(
                         p.temporary_bindings = .{};
                         defer {
                             if (p.temporary_bindings.capacity > 0) {
-                                temp_bindings.deinit(bun.default_allocator);
+                                temp_bindings.deinit(bun.heap.default_allocator);
                             } else {
                                 temp_bindings.clearRetainingCapacity();
                                 p.temporary_bindings = temp_bindings;
                             }
                         }
-                        temp_bindings.ensureUnusedCapacity(bun.default_allocator, 2) catch unreachable;
+                        temp_bindings.ensureUnusedCapacity(bun.heap.default_allocator, 2) catch unreachable;
                         temp_bindings.appendAssumeCapacity(.{
                             .key = Expr.init(E.String, E.String.init(target_e_dot.name), target_e_dot.name_loc),
                             .value = decls[0].binding,
@@ -1284,7 +1284,7 @@ fn NewPrinter(
                                 break;
                             }
 
-                            temp_bindings.append(bun.default_allocator, .{
+                            temp_bindings.append(bun.heap.default_allocator, .{
                                 .key = Expr.init(E.String, E.String.init(e_dot.name), e_dot.name_loc),
                                 .value = decl.binding,
                             }) catch unreachable;
@@ -5765,7 +5765,7 @@ pub fn printAst(
             printer.source_map_builder.line_offset_tables.deinit(opts.allocator);
         }
     }
-    var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
+    var bin_stack_heap = std.heap.stackFallback(1024, bun.heap.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();
     defer {
@@ -5852,7 +5852,7 @@ pub fn printJSON(
         renamer.toRenamer(),
         undefined,
     );
-    var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
+    var bin_stack_heap = std.heap.stackFallback(1024, bun.heap.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();
 
@@ -5958,11 +5958,11 @@ pub fn printWithWriterAndPlatform(
         renamer,
         getSourceMapBuilder(if (generate_source_maps) .eager else .disable, is_bun_platform, opts, source, &ast),
     );
-    var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
+    var bin_stack_heap = std.heap.stackFallback(1024, bun.heap.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();
 
-    defer printer.temporary_bindings.deinit(bun.default_allocator);
+    defer printer.temporary_bindings.deinit(bun.heap.default_allocator);
     defer _writer.* = printer.writer.*;
     defer {
         imported_module_ids_list = printer.imported_module_ids;
@@ -6060,7 +6060,7 @@ pub fn printCommonJS(
         renamer.toRenamer(),
         getSourceMapBuilder(if (generate_source_map) .lazy else .disable, false, opts, source, &tree),
     );
-    var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
+    var bin_stack_heap = std.heap.stackFallback(1024, bun.heap.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();
     defer {

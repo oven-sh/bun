@@ -52,7 +52,7 @@ const SloppyGlobalGitConfig = struct {
 
         var config_file_path_buf: bun.PathBuffer = undefined;
         const config_file_path = bun.path.joinAbsStringBufZ(home_dir_path, &config_file_path_buf, &.{".gitconfig"}, .auto);
-        var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
+        var stack_fallback = std.heap.stackFallback(4096, bun.heap.default_allocator);
         const allocator = stack_fallback.get();
         var source = File.toSource(config_file_path, allocator).unwrap() catch {
             return;

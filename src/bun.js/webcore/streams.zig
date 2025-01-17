@@ -15,7 +15,7 @@ const Output = bun.Output;
 const MutableString = bun.MutableString;
 const strings = bun.strings;
 const string = bun.string;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const FeatureFlags = bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
@@ -706,8 +706,8 @@ pub const StreamResult = union(Tag) {
 
     pub fn deinit(this: *StreamResult) void {
         switch (this.*) {
-            .owned => |*owned| owned.deinitWithAllocator(bun.default_allocator),
-            .owned_and_done => |*owned_and_done| owned_and_done.deinitWithAllocator(bun.default_allocator),
+            .owned => |*owned| owned.deinitWithAllocator(bun.heap.default_allocator),
+            .owned_and_done => |*owned_and_done| owned_and_done.deinitWithAllocator(bun.heap.default_allocator),
             .err => |err| {
                 if (err == .JSValue) {
                     err.JSValue.unprotect();
@@ -1230,7 +1230,7 @@ pub const Sink = struct {
             }
 
             {
-                var slice = bun.default_allocator.alloc(u8, str.len) catch return .{ .err = Syscall.Error.oom };
+                var slice = bun.heap.default_allocator.alloc(u8, str.len) catch return .{ .err = Syscall.Error.oom };
                 @memcpy(slice[0..str.len], str);
 
                 strings.replaceLatin1WithUTF8(slice[0..str.len]);
@@ -1260,7 +1260,7 @@ pub const Sink = struct {
             }
 
             {
-                const allocated = strings.toUTF8Alloc(bun.default_allocator, str) catch return .{ .err = Syscall.Error.oom };
+                const allocated = strings.toUTF8Alloc(bun.heap.default_allocator, str) catch return .{ .err = Syscall.Error.oom };
                 if (input.isDone()) {
                     return writeFn(ctx, .{ .owned_and_done = bun.ByteList.init(allocated) });
                 } else {
@@ -2613,7 +2613,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             if (this.pooled_buffer) |pooled| {
                 this.buffer.len = 0;
                 if (this.buffer.cap > 64 * 1024) {
-                    this.buffer.deinitWithAllocator(bun.default_allocator);
+                    this.buffer.deinitWithAllocator(bun.heap.default_allocator);
                     this.buffer = bun.ByteList.init("");
                 }
                 pooled.data = this.buffer;
@@ -2780,10 +2780,10 @@ pub const NetworkSink = struct {
 
                 // chunk encoding is really simple
                 if (is_last) {
-                    const chunk = std.fmt.allocPrint(bun.default_allocator, "{x}\r\n{s}\r\n0\r\n\r\n", .{ data.len, data }) catch return error.OOM;
+                    const chunk = std.fmt.allocPrint(bun.heap.default_allocator, "{x}\r\n{s}\r\n0\r\n\r\n", .{ data.len, data }) catch return error.OOM;
                     sendRequestData(task, chunk, true);
                 } else {
-                    const chunk = std.fmt.allocPrint(bun.default_allocator, "{x}\r\n{s}\r\n", .{ data.len, data }) catch return error.OOM;
+                    const chunk = std.fmt.allocPrint(bun.heap.default_allocator, "{x}\r\n{s}\r\n", .{ data.len, data }) catch return error.OOM;
                     sendRequestData(task, chunk, false);
                 }
             } else {
@@ -4198,7 +4198,7 @@ pub const FileReader = struct {
     }
 
     pub fn deinit(this: *FileReader) void {
-        this.buffered.deinit(bun.default_allocator);
+        this.buffered.deinit(bun.heap.default_allocator);
         this.reader.updateRef(false);
         this.reader.deinit();
         this.pending_value.deinit();
@@ -4248,12 +4248,12 @@ pub const FileReader = struct {
                     } else if (in_progress.len > 0 and !hasMore) {
                         this.read_inside_on_pull = .{ .temporary = buf };
                     } else if (hasMore and !bun.isSliceInBuffer(buf, this.buffered.allocatedSlice())) {
-                        this.buffered.appendSlice(bun.default_allocator, buf) catch bun.outOfMemory();
+                        this.buffered.appendSlice(bun.heap.default_allocator, buf) catch bun.outOfMemory();
                         this.read_inside_on_pull = .{ .use_buffered = buf.len };
                     }
                 },
                 .use_buffered => |original| {
-                    this.buffered.appendSlice(bun.default_allocator, buf) catch bun.outOfMemory();
+                    this.buffered.appendSlice(bun.heap.default_allocator, buf) catch bun.outOfMemory();
                     this.read_inside_on_pull = .{ .use_buffered = buf.len + original };
                 },
                 .none => unreachable,
@@ -4264,7 +4264,7 @@ pub const FileReader = struct {
                 {
                     if (this.buffered.items.len == 0) {
                         if (this.buffered.capacity > 0) {
-                            this.buffered.clearAndFree(bun.default_allocator);
+                            this.buffered.clearAndFree(bun.heap.default_allocator);
                         }
 
                         if (this.reader.buffer().items.len != 0) {
@@ -4273,7 +4273,7 @@ pub const FileReader = struct {
                     }
 
                     var buffer = &this.buffered;
-                    defer buffer.clearAndFree(bun.default_allocator);
+                    defer buffer.clearAndFree(bun.heap.default_allocator);
                     if (buffer.items.len > 0) {
                         if (this.pending_view.len >= buffer.items.len) {
                             @memcpy(this.pending_view[0..buffer.items.len], buffer.items);
@@ -4324,7 +4324,7 @@ pub const FileReader = struct {
             if (!bun.isSliceInBuffer(buf, this.buffered.allocatedSlice())) {
                 if (this.reader.isDone()) {
                     if (bun.isSliceInBuffer(buf, this.reader.buffer().allocatedSlice())) {
-                        this.reader.buffer().* = std.ArrayList(u8).init(bun.default_allocator);
+                        this.reader.buffer().* = std.ArrayList(u8).init(bun.heap.default_allocator);
                     }
                     this.pending.result = .{
                         .temporary_and_done = bun.ByteList.init(buf),
@@ -4360,7 +4360,7 @@ pub const FileReader = struct {
             this.pending.run();
             return !was_done;
         } else if (!bun.isSliceInBuffer(buf, this.buffered.allocatedSlice())) {
-            this.buffered.appendSlice(bun.default_allocator, buf) catch bun.outOfMemory();
+            this.buffered.appendSlice(bun.heap.default_allocator, buf) catch bun.outOfMemory();
             if (bun.isSliceInBuffer(buf, this.reader.buffer().allocatedSlice())) {
                 this.reader.buffer().clearRetainingCapacity();
             }
@@ -4387,7 +4387,7 @@ pub const FileReader = struct {
 
             if (buffer.len >= @as(usize, drained.len)) {
                 @memcpy(buffer[0..drained.len], drained.slice());
-                this.buffered.clearAndFree(bun.default_allocator);
+                this.buffered.clearAndFree(bun.heap.default_allocator);
 
                 if (this.reader.isDone()) {
                     return .{ .into_array_and_done = .{ .value = array, .len = drained.len } };
@@ -4481,7 +4481,7 @@ pub const FileReader = struct {
         }
 
         const out = this.reader.buffer().*;
-        this.reader.buffer().* = std.ArrayList(u8).init(bun.default_allocator);
+        this.reader.buffer().* = std.ArrayList(u8).init(bun.heap.default_allocator);
         return bun.ByteList.fromList(out);
     }
 
@@ -4698,7 +4698,7 @@ pub const ByteBlobLoader = struct {
         temporary = temporary[this.offset..];
         temporary = temporary[0..@min(16384, @min(temporary.len, this.remain))];
 
-        const cloned = bun.ByteList.init(temporary).listManaged(bun.default_allocator).clone() catch bun.outOfMemory();
+        const cloned = bun.ByteList.init(temporary).listManaged(bun.heap.default_allocator).clone() catch bun.outOfMemory();
         this.offset +|= @as(Blob.SizeType, @truncate(cloned.items.len));
         this.remain -|= @as(Blob.SizeType, @truncate(cloned.items.len));
 
@@ -4769,7 +4769,7 @@ pub const Pipe = struct {
 
 pub const ByteStream = struct {
     buffer: std.ArrayList(u8) = .{
-        .allocator = bun.default_allocator,
+        .allocator = bun.heap.default_allocator,
         .items = &.{},
         .capacity = 0,
     },
@@ -4939,7 +4939,7 @@ pub const ByteStream = struct {
                 if (this.buffer.capacity == 0 and stream == .owned_and_done) {
                     log("ByteStream.onData owned_and_done and action.fulfill()", .{});
 
-                    this.buffer = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, @constCast(chunk));
+                    this.buffer = std.ArrayList(u8).fromOwnedSlice(bun.heap.default_allocator, @constCast(chunk));
                     var blob = this.toAnyBlob().?;
                     action.fulfill(&blob);
                     return;
@@ -5043,7 +5043,7 @@ pub const ByteStream = struct {
                     this.offset += offset;
                 },
                 .temporary_and_done, .temporary => {
-                    this.buffer = try std.ArrayList(u8).initCapacity(bun.default_allocator, chunk.len);
+                    this.buffer = try std.ArrayList(u8).initCapacity(bun.heap.default_allocator, chunk.len);
                     this.buffer.appendSliceAssumeCapacity(chunk);
                 },
                 .err => {
@@ -5191,7 +5191,7 @@ pub const ByteStream = struct {
         if (this.buffer.items.len > 0) {
             const out = bun.ByteList.fromList(this.buffer);
             this.buffer = .{
-                .allocator = bun.default_allocator,
+                .allocator = bun.heap.default_allocator,
                 .items = &.{},
                 .capacity = 0,
             };
@@ -5206,7 +5206,7 @@ pub const ByteStream = struct {
         if (this.has_received_last_chunk) {
             const buffer = this.buffer;
             this.buffer = .{
-                .allocator = bun.default_allocator,
+                .allocator = bun.heap.default_allocator,
                 .items = &.{},
                 .capacity = 0,
             };

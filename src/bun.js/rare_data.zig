@@ -1,6 +1,6 @@
 const EditorContext = @import("../open.zig").EditorContext;
 const Blob = JSC.WebCore.Blob;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const Output = bun.Output;
 const RareData = @This();
 const Syscall = bun.sys;
@@ -53,13 +53,13 @@ aws_signature_cache: AWSSignatureCache = .{},
 const PipeReadBuffer = [256 * 1024]u8;
 const DIGESTED_HMAC_256_LEN = 32;
 pub const AWSSignatureCache = struct {
-    cache: bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8) = bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8).init(bun.default_allocator),
+    cache: bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8) = bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8).init(bun.heap.default_allocator),
     date: u64 = 0,
     lock: bun.Mutex = .{},
 
     pub fn clean(this: *@This()) void {
         for (this.cache.keys()) |cached_key| {
-            bun.default_allocator.free(cached_key);
+            bun.heap.default_allocator.free(cached_key);
         }
         this.cache.clearRetainingCapacity();
     }
@@ -82,13 +82,13 @@ pub const AWSSignatureCache = struct {
         this.lock.lock();
         defer this.lock.unlock();
         if (this.date == 0) {
-            this.cache = bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8).init(bun.default_allocator);
+            this.cache = bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8).init(bun.heap.default_allocator);
         } else if (this.date != numeric_day) {
             // day changed so we clean the old cache
             this.clean();
         }
         this.date = numeric_day;
-        this.cache.put(bun.default_allocator.dupe(u8, key) catch bun.outOfMemory(), value) catch bun.outOfMemory();
+        this.cache.put(bun.heap.default_allocator.dupe(u8, key) catch bun.outOfMemory(), value) catch bun.outOfMemory();
     }
     pub fn deinit(this: *@This()) void {
         this.date = 0;
@@ -111,7 +111,7 @@ pub fn pipeReadBuffer(this: *RareData) *PipeReadBuffer {
 pub fn addListeningSocketForWatchMode(this: *RareData, socket: bun.FileDescriptor) void {
     this.listening_sockets_for_watch_mode_lock.lock();
     defer this.listening_sockets_for_watch_mode_lock.unlock();
-    this.listening_sockets_for_watch_mode.append(bun.default_allocator, socket) catch {};
+    this.listening_sockets_for_watch_mode.append(bun.heap.default_allocator, socket) catch {};
 }
 
 pub fn removeListeningSocketForWatchMode(this: *RareData, socket: bun.FileDescriptor) void {
@@ -198,7 +198,7 @@ pub const HotMap = struct {
 
     pub fn remove(this: *HotMap, key: []const u8) void {
         const entry = this._map.getEntry(key) orelse return;
-        bun.default_allocator.free(entry.key_ptr.*);
+        bun.heap.default_allocator.free(entry.key_ptr.*);
         _ = this._map.orderedRemove(key);
     }
 };
@@ -303,7 +303,7 @@ pub fn pushCleanupHook(
     ctx: ?*anyopaque,
     func: CleanupHook.Function,
 ) void {
-    this.cleanup_hooks.append(bun.default_allocator, CleanupHook.init(globalThis, ctx, func)) catch bun.outOfMemory();
+    this.cleanup_hooks.append(bun.heap.default_allocator, CleanupHook.init(globalThis, ctx, func)) catch bun.outOfMemory();
 }
 
 pub fn boringEngine(rare: *RareData) *BoringSSL.ENGINE {
@@ -438,7 +438,7 @@ pub fn nodeFSStatWatcherScheduler(rare: *RareData, vm: *JSC.VirtualMachine) *Sta
 pub fn deinit(this: *RareData) void {
     if (this.temp_pipe_read_buffer) |pipe| {
         this.temp_pipe_read_buffer = null;
-        bun.default_allocator.destroy(pipe);
+        bun.heap.default_allocator.destroy(pipe);
     }
 
     this.aws_signature_cache.deinit();
@@ -447,5 +447,5 @@ pub fn deinit(this: *RareData) void {
         _ = bun.BoringSSL.ENGINE_free(engine);
     }
 
-    this.cleanup_hooks.clearAndFree(bun.default_allocator);
+    this.cleanup_hooks.clearAndFree(bun.heap.default_allocator);
 }

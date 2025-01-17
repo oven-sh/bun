@@ -101,7 +101,7 @@ pub const PathWatcherManager = struct {
                         .err => |file_err| return .{ .err = file_err.withPath(path) },
                         .result => |r| r,
                     };
-                    const cloned_path = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory();
+                    const cloned_path = bun.heap.default_allocator.dupeZ(u8, path) catch bun.outOfMemory();
                     const result = PathInfo{
                         .fd = file,
                         .is_file = true,
@@ -117,7 +117,7 @@ pub const PathWatcherManager = struct {
                 return .{ .err = e.withPath(path) };
             },
             .result => |iterable_dir| {
-                const cloned_path = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory();
+                const cloned_path = bun.heap.default_allocator.dupeZ(u8, path) catch bun.outOfMemory();
                 const result = PathInfo{
                     .fd = iterable_dir,
                     .is_file = false,
@@ -139,20 +139,20 @@ pub const PathWatcherManager = struct {
         std.Thread.SpawnError;
 
     pub fn init(vm: *JSC.VirtualMachine) PathWatcherManagerError!*PathWatcherManager {
-        const this = bun.default_allocator.create(PathWatcherManager) catch bun.outOfMemory();
-        errdefer bun.default_allocator.destroy(this);
-        var watchers = bun.BabyList(?*PathWatcher).initCapacity(bun.default_allocator, 1) catch bun.outOfMemory();
-        errdefer watchers.deinitWithAllocator(bun.default_allocator);
+        const this = bun.heap.default_allocator.create(PathWatcherManager) catch bun.outOfMemory();
+        errdefer bun.heap.default_allocator.destroy(this);
+        var watchers = bun.BabyList(?*PathWatcher).initCapacity(bun.heap.default_allocator, 1) catch bun.outOfMemory();
+        errdefer watchers.deinitWithAllocator(bun.heap.default_allocator);
 
         const manager = PathWatcherManager{
-            .file_paths = bun.StringHashMap(PathInfo).init(bun.default_allocator),
-            .current_fd_task = bun.FDHashMap(*DirectoryRegisterTask).init(bun.default_allocator),
+            .file_paths = bun.StringHashMap(PathInfo).init(bun.heap.default_allocator),
+            .current_fd_task = bun.FDHashMap(*DirectoryRegisterTask).init(bun.heap.default_allocator),
             .watchers = watchers,
             .main_watcher = try Watcher.init(
                 PathWatcherManager,
                 this,
                 vm.transpiler.fs,
-                bun.default_allocator,
+                bun.heap.default_allocator,
             ),
             .vm = vm,
             .watcher_count = 0,
@@ -377,7 +377,7 @@ pub const PathWatcherManager = struct {
                     routine = entry.value_ptr.*;
 
                     if (watcher.refPendingDirectory()) {
-                        routine.watcher_list.push(bun.default_allocator, watcher) catch |err| {
+                        routine.watcher_list.push(bun.heap.default_allocator, watcher) catch |err| {
                             watcher.unrefPendingDirectory();
                             return err;
                         };
@@ -387,18 +387,18 @@ pub const PathWatcherManager = struct {
                     return;
                 }
 
-                routine = try bun.default_allocator.create(DirectoryRegisterTask);
+                routine = try bun.heap.default_allocator.create(DirectoryRegisterTask);
                 routine.* = DirectoryRegisterTask{
                     .manager = manager,
                     .path = path,
-                    .watcher_list = bun.BabyList(*PathWatcher).initCapacity(bun.default_allocator, 1) catch |err| {
-                        bun.default_allocator.destroy(routine);
+                    .watcher_list = bun.BabyList(*PathWatcher).initCapacity(bun.heap.default_allocator, 1) catch |err| {
+                        bun.heap.default_allocator.destroy(routine);
                         return err;
                     },
                 };
                 errdefer routine.deinit();
                 if (watcher.refPendingDirectory()) {
-                    routine.watcher_list.push(bun.default_allocator, watcher) catch |err| {
+                    routine.watcher_list.push(bun.heap.default_allocator, watcher) catch |err| {
                         watcher.unrefPendingDirectory();
                         return err;
                     };
@@ -477,7 +477,7 @@ pub const PathWatcherManager = struct {
                 {
                     watcher.mutex.lock();
                     defer watcher.mutex.unlock();
-                    watcher.file_paths.push(bun.default_allocator, child_path.path) catch |err| {
+                    watcher.file_paths.push(bun.heap.default_allocator, child_path.path) catch |err| {
                         manager._decrementPathRef(entry_path_z);
                         return switch (err) {
                             error.OutOfMemory => .{ .err = .{
@@ -538,7 +538,7 @@ pub const PathWatcherManager = struct {
         }
 
         fn deinit(this: *DirectoryRegisterTask) void {
-            bun.default_allocator.destroy(this);
+            bun.heap.default_allocator.destroy(this);
         }
     };
 
@@ -570,7 +570,7 @@ pub const PathWatcherManager = struct {
 
             if (this.watcher_count == this.watchers.len) {
                 this.watcher_count += 1;
-                this.watchers.push(bun.default_allocator, watcher) catch |err| {
+                this.watchers.push(bun.heap.default_allocator, watcher) catch |err| {
                     this.watcher_count -= 1;
                     return err;
                 };
@@ -619,7 +619,7 @@ pub const PathWatcherManager = struct {
                     const path_ = path.path;
                     this.main_watcher.remove(path.hash);
                     _ = this.file_paths.remove(path_);
-                    bun.default_allocator.free(path_);
+                    bun.heap.default_allocator.free(path_);
                 }
             }
         }
@@ -712,16 +712,16 @@ pub const PathWatcherManager = struct {
         while (it.next()) |*entry| {
             const path = entry.value_ptr.*;
             _ = bun.sys.close(path.fd);
-            bun.default_allocator.free(path.path);
+            bun.heap.default_allocator.free(path.path);
         }
 
         this.file_paths.deinit();
 
-        this.watchers.deinitWithAllocator(bun.default_allocator);
+        this.watchers.deinitWithAllocator(bun.heap.default_allocator);
 
         this.current_fd_task.deinit();
 
-        bun.default_allocator.destroy(this);
+        bun.heap.default_allocator.destroy(this);
     }
 };
 
@@ -765,17 +765,17 @@ pub const PathWatcher = struct {
     const UpdateEndCallback = *const fn (ctx: ?*anyopaque) void;
 
     pub fn init(manager: *PathWatcherManager, path: PathWatcherManager.PathInfo, recursive: bool, callback: Callback, updateEndCallback: UpdateEndCallback, ctx: ?*anyopaque) !*PathWatcher {
-        var this = try bun.default_allocator.create(PathWatcher);
+        var this = try bun.heap.default_allocator.create(PathWatcher);
 
         if (comptime Environment.isMac) {
             if (!path.is_file) {
                 var buffer: bun.PathBuffer = undefined;
                 const resolved_path_temp = std.os.getFdPath(path.fd.cast(), &buffer) catch |err| {
-                    bun.default_allocator.destroy(this);
+                    bun.heap.default_allocator.destroy(this);
                     return err;
                 };
-                const resolved_path = bun.default_allocator.dupeZ(u8, resolved_path_temp) catch |err| {
-                    bun.default_allocator.destroy(this);
+                const resolved_path = bun.heap.default_allocator.dupeZ(u8, resolved_path_temp) catch |err| {
+                    bun.heap.default_allocator.destroy(this);
                     return err;
                 };
                 this.resolved_path = resolved_path;
@@ -789,7 +789,7 @@ pub const PathWatcher = struct {
                         updateEndCallback,
                         bun.cast(*anyopaque, ctx),
                     ) catch |err| {
-                        bun.default_allocator.destroy(this);
+                        bun.heap.default_allocator.destroy(this);
                         return err;
                     },
                     .manager = manager,
@@ -818,8 +818,8 @@ pub const PathWatcher = struct {
             .flushCallback = updateEndCallback,
             .ctx = ctx,
             .mutex = .{},
-            .file_paths = bun.BabyList([:0]const u8).initCapacity(bun.default_allocator, 1) catch |err| {
-                bun.default_allocator.destroy(this);
+            .file_paths = bun.BabyList([:0]const u8).initCapacity(bun.heap.default_allocator, 1) catch |err| {
+                bun.heap.default_allocator.destroy(this);
                 return err;
             },
         };
@@ -921,21 +921,21 @@ pub const PathWatcher = struct {
                     manager.unregisterWatcher(this);
                 } else {
                     manager.unregisterWatcher(this);
-                    this.file_paths.deinitWithAllocator(bun.default_allocator);
+                    this.file_paths.deinitWithAllocator(bun.heap.default_allocator);
                 }
             } else {
                 manager.unregisterWatcher(this);
-                this.file_paths.deinitWithAllocator(bun.default_allocator);
+                this.file_paths.deinitWithAllocator(bun.heap.default_allocator);
             }
         }
 
         if (comptime Environment.isMac) {
             if (this.resolved_path) |path| {
-                bun.default_allocator.free(path);
+                bun.heap.default_allocator.free(path);
             }
         }
 
-        bun.default_allocator.destroy(this);
+        bun.heap.default_allocator.destroy(this);
     }
 };
 

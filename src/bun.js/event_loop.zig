@@ -204,13 +204,13 @@ pub const ManagedTask = struct {
         const callback = this.callback;
         const ctx = this.ctx;
         callback(ctx.?);
-        bun.default_allocator.destroy(this);
+        bun.heap.default_allocator.destroy(this);
     }
 
     pub fn New(comptime Type: type, comptime Callback: anytype) type {
         return struct {
             pub fn init(ctx: *Type) Task {
-                var managed = bun.default_allocator.create(ManagedTask) catch bun.outOfMemory();
+                var managed = bun.heap.default_allocator.create(ManagedTask) catch bun.outOfMemory();
                 managed.* = ManagedTask{
                     .callback = wrap,
                     .ctx = ctx,
@@ -232,7 +232,7 @@ pub const AnyTaskWithExtraContext = struct {
 
     pub fn fromCallbackAutoDeinit(of: anytype, comptime callback: anytype) *AnyTaskWithExtraContext {
         const TheTask = NewManaged(std.meta.Child(@TypeOf(of)), void, @field(std.meta.Child(@TypeOf(of)), callback));
-        const task = bun.default_allocator.create(AnyTaskWithExtraContext) catch bun.outOfMemory();
+        const task = bun.heap.default_allocator.create(AnyTaskWithExtraContext) catch bun.outOfMemory();
         task.* = TheTask.init(of);
         return task;
     }
@@ -291,7 +291,7 @@ pub const AnyTaskWithExtraContext = struct {
                     },
                 );
                 const anytask: *AnyTaskWithExtraContext = @fieldParentPtr("ctx", @as(*?*anyopaque, @ptrCast(@alignCast(this.?))));
-                bun.default_allocator.destroy(anytask);
+                bun.heap.default_allocator.destroy(anytask);
             }
         };
     }
@@ -733,7 +733,7 @@ pub const DeferredTaskQueue = struct {
     map: std.AutoArrayHashMapUnmanaged(?*anyopaque, DeferredRepeatingTask) = .{},
 
     pub fn postTask(this: *DeferredTaskQueue, ctx: ?*anyopaque, task: DeferredRepeatingTask) bool {
-        const existing = this.map.getOrPutValue(bun.default_allocator, ctx, task) catch bun.outOfMemory();
+        const existing = this.map.getOrPutValue(bun.heap.default_allocator, ctx, task) catch bun.outOfMemory();
         return existing.found_existing;
     }
 
@@ -761,7 +761,7 @@ pub const DeferredTaskQueue = struct {
     }
 
     pub fn deinit(this: *DeferredTaskQueue) void {
-        this.map.deinit(bun.default_allocator);
+        this.map.deinit(bun.heap.default_allocator);
     }
 };
 pub const EventLoop = struct {
@@ -1824,16 +1824,16 @@ pub const MiniEventLoop = struct {
 
     pub fn initGlobal(env: ?*bun.DotEnv.Loader) *MiniEventLoop {
         if (globalInitialized) return global;
-        const loop = MiniEventLoop.init(bun.default_allocator);
-        global = bun.default_allocator.create(MiniEventLoop) catch bun.outOfMemory();
+        const loop = MiniEventLoop.init(bun.heap.default_allocator);
+        global = bun.heap.default_allocator.create(MiniEventLoop) catch bun.outOfMemory();
         global.* = loop;
         global.loop.internal_loop_data.setParentEventLoop(bun.JSC.EventLoopHandle.init(global));
         global.env = env orelse bun.DotEnv.instance orelse env_loader: {
-            const map = bun.default_allocator.create(bun.DotEnv.Map) catch bun.outOfMemory();
-            map.* = bun.DotEnv.Map.init(bun.default_allocator);
+            const map = bun.heap.default_allocator.create(bun.DotEnv.Map) catch bun.outOfMemory();
+            map.* = bun.DotEnv.Map.init(bun.heap.default_allocator);
 
-            const loader = bun.default_allocator.create(bun.DotEnv.Loader) catch bun.outOfMemory();
-            loader.* = bun.DotEnv.Loader.init(map, bun.default_allocator);
+            const loader = bun.heap.default_allocator.create(bun.DotEnv.Loader) catch bun.outOfMemory();
+            loader.* = bun.DotEnv.Loader.init(map, bun.heap.default_allocator);
             break :env_loader loader;
         };
         globalInitialized = true;
@@ -2017,7 +2017,7 @@ pub const MiniEventLoop = struct {
 
             const store = JSC.WebCore.Blob.Store.new(.{
                 .ref_count = std.atomic.Value(u32).init(2),
-                .allocator = bun.default_allocator,
+                .allocator = bun.heap.default_allocator,
                 .data = .{
                     .file = JSC.WebCore.Blob.FileStore{
                         .pathlike = .{
@@ -2048,7 +2048,7 @@ pub const MiniEventLoop = struct {
 
             const store = JSC.WebCore.Blob.Store.new(.{
                 .ref_count = std.atomic.Value(u32).init(2),
-                .allocator = bun.default_allocator,
+                .allocator = bun.heap.default_allocator,
                 .data = .{
                     .file = JSC.WebCore.Blob.FileStore{
                         .pathlike = .{
@@ -2163,7 +2163,7 @@ pub const AnyEventLoop = union(enum) {
                 bun.todoPanic(@src(), "AnyEventLoop.enqueueTaskConcurrent", .{});
                 // const TaskType = AnyTask.New(Context, Callback);
                 // @field(ctx, field) = TaskType.init(ctx);
-                // var concurrent = bun.default_allocator.create(ConcurrentTask) catch unreachable;
+                // var concurrent = bun.heap.default_allocator.create(ConcurrentTask) catch unreachable;
                 // _ = concurrent.from(JSC.Task.init(&@field(ctx, field)));
                 // concurrent.auto_delete = true;
                 // this.virtual_machine.jsc.enqueueTaskConcurrent(concurrent);

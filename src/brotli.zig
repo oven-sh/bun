@@ -7,7 +7,7 @@ pub const c = struct {
 const BrotliDecoder = c.BrotliDecoder;
 const BrotliEncoder = c.BrotliEncoder;
 
-const mimalloc = bun.Mimalloc;
+const mimalloc = bun.heap.Mimalloc;
 
 pub const BrotliAllocator = struct {
     pub fn alloc(_: ?*anyopaque, len: usize) callconv(.C) *anyopaque {

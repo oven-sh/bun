@@ -32,7 +32,7 @@ fn alert(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSErr
 
     // 2. If the method was invoked with no arguments, then let message be the empty string; otherwise, let message be the method's first argument.
     if (has_message) {
-        var state = std.heap.stackFallback(2048, bun.default_allocator);
+        var state = std.heap.stackFallback(2048, bun.heap.default_allocator);
         const allocator = state.get();
         const message = arguments[0].toSlice(globalObject, allocator);
         defer message.deinit();
@@ -81,7 +81,7 @@ fn confirm(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     const has_message = arguments.len != 0;
 
     if (has_message) {
-        var state = std.heap.stackFallback(1024, bun.default_allocator);
+        var state = std.heap.stackFallback(1024, bun.heap.default_allocator);
         const allocator = state.get();
         // 2. Set message to the result of normalizing newlines given message.
         // *  Not pertinent to a server runtime so we will just let the terminal handle this.
@@ -215,7 +215,7 @@ pub const Prompt = struct {
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(3).slice();
-        var state = std.heap.stackFallback(2048, bun.default_allocator);
+        var state = std.heap.stackFallback(2048, bun.heap.default_allocator);
         const allocator = state.get();
         var output = bun.Output.writer();
         const has_message = arguments.len != 0;
@@ -720,7 +720,7 @@ pub const Crypto = struct {
     pub export fn CryptoObject__create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding(@src());
 
-        var ptr = bun.default_allocator.create(Crypto) catch {
+        var ptr = bun.heap.default_allocator.create(Crypto) catch {
             return globalThis.throwOutOfMemoryValue();
         };
 

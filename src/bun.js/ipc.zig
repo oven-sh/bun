@@ -253,7 +253,7 @@ const json = struct {
         if (out.tag == .Dead) return IPCSerializationError.SerializationFailed;
 
         // TODO: it would be cool to have a 'toUTF8Into' which can write directly into 'ipc_data.outgoing.list'
-        const str = out.toUTF8(bun.default_allocator);
+        const str = out.toUTF8(bun.heap.default_allocator);
         defer str.deinit();
 
         const slice = str.slice();
@@ -274,7 +274,7 @@ const json = struct {
         if (out.tag == .Dead) return IPCSerializationError.SerializationFailed;
 
         // TODO: it would be cool to have a 'toUTF8Into' which can write directly into 'ipc_data.outgoing.list'
-        const str = out.toUTF8(bun.default_allocator);
+        const str = out.toUTF8(bun.heap.default_allocator);
         defer str.deinit();
 
         const slice = str.slice();
@@ -441,7 +441,7 @@ const NamedPipeIPCData = struct {
 
     fn onServerPipeClose(this: *uv.Pipe) callconv(.C) void {
         // safely free the pipes
-        bun.default_allocator.destroy(this);
+        bun.heap.default_allocator.destroy(this);
     }
 
     fn detach(this: *NamedPipeIPCData) void {
@@ -458,7 +458,7 @@ const NamedPipeIPCData = struct {
             return;
         }
         // server will be destroyed by the process that created it
-        defer bun.default_allocator.destroy(source.pipe);
+        defer bun.heap.default_allocator.destroy(source.pipe);
         this.writer.source = null;
         this.onPipeClose();
     }
@@ -614,13 +614,13 @@ const NamedPipeIPCData = struct {
 
     pub fn configureClient(this: *NamedPipeIPCData, comptime Context: type, instance: *Context, pipe_fd: bun.FileDescriptor) !void {
         log("configureClient", .{});
-        const ipc_pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory();
+        const ipc_pipe = bun.heap.default_allocator.create(uv.Pipe) catch bun.outOfMemory();
         ipc_pipe.init(uv.Loop.get(), true).unwrap() catch |err| {
-            bun.default_allocator.destroy(ipc_pipe);
+            bun.heap.default_allocator.destroy(ipc_pipe);
             return err;
         };
         ipc_pipe.open(pipe_fd).unwrap() catch |err| {
-            bun.default_allocator.destroy(ipc_pipe);
+            bun.heap.default_allocator.destroy(ipc_pipe);
             return err;
         };
         ipc_pipe.unref();
@@ -650,7 +650,7 @@ const NamedPipeIPCData = struct {
     fn deinit(this: *NamedPipeIPCData) void {
         log("deinit", .{});
         this.writer.deinit();
-        this.incoming.deinitWithAllocator(bun.default_allocator);
+        this.incoming.deinitWithAllocator(bun.heap.default_allocator);
     }
 };
 
@@ -713,7 +713,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                 while (true) {
                     const result = decodeIPCMessage(ipc.mode, data, globalThis) catch |e| switch (e) {
                         error.NotEnoughBytes => {
-                            _ = ipc.incoming.write(bun.default_allocator, data) catch bun.outOfMemory();
+                            _ = ipc.incoming.write(bun.heap.default_allocator, data) catch bun.outOfMemory();
                             log("hit NotEnoughBytes", .{});
                             return;
                         },
@@ -735,7 +735,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                 }
             }
 
-            _ = ipc.incoming.write(bun.default_allocator, data) catch bun.outOfMemory();
+            _ = ipc.incoming.write(bun.heap.default_allocator, data) catch bun.outOfMemory();
 
             var slice = ipc.incoming.slice();
             while (true) {
@@ -817,7 +817,7 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
             const ipc = this.ipc() orelse return "";
             var available = ipc.incoming.available();
             if (available.len < suggested_size) {
-                ipc.incoming.ensureUnusedCapacity(bun.default_allocator, suggested_size) catch bun.outOfMemory();
+                ipc.incoming.ensureUnusedCapacity(bun.heap.default_allocator, suggested_size) catch bun.outOfMemory();
                 available = ipc.incoming.available();
             }
             log("NewNamedPipeIPCHandler#onReadAlloc {d}", .{suggested_size});

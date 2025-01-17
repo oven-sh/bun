@@ -233,9 +233,9 @@ pub fn constructS3FileWithS3CredentialsAndOptions(
 
     const store = brk: {
         if (aws_options.changed_credentials) {
-            break :brk Blob.Store.initS3(path, null, aws_options.credentials, bun.default_allocator) catch bun.outOfMemory();
+            break :brk Blob.Store.initS3(path, null, aws_options.credentials, bun.heap.default_allocator) catch bun.outOfMemory();
         } else {
-            break :brk Blob.Store.initS3WithReferencedCredentials(path, null, default_credentials, bun.default_allocator) catch bun.outOfMemory();
+            break :brk Blob.Store.initS3WithReferencedCredentials(path, null, default_credentials, bun.heap.default_allocator) catch bun.outOfMemory();
         }
     };
     errdefer store.deinit();
@@ -247,8 +247,8 @@ pub fn constructS3FileWithS3CredentialsAndOptions(
             if (try opts.getTruthyComptime(globalObject, "type")) |file_type| {
                 inner: {
                     if (file_type.isString()) {
-                        var allocator = bun.default_allocator;
-                        var str = file_type.toSlice(globalObject, bun.default_allocator);
+                        var allocator = bun.heap.default_allocator;
+                        var str = file_type.toSlice(globalObject, bun.heap.default_allocator);
                         defer str.deinit();
                         const slice = str.slice();
                         if (!strings.isAllASCII(slice)) {
@@ -278,7 +278,7 @@ pub fn constructS3FileWithS3Credentials(
 ) bun.JSError!Blob {
     var aws_options = try S3.S3Credentials.getCredentialsWithOptions(existing_credentials, .{}, options, null, globalObject);
     defer aws_options.deinit();
-    const store = Blob.Store.initS3(path, null, aws_options.credentials, bun.default_allocator) catch bun.outOfMemory();
+    const store = Blob.Store.initS3(path, null, aws_options.credentials, bun.heap.default_allocator) catch bun.outOfMemory();
     errdefer store.deinit();
     store.data.s3.options = aws_options.options;
     store.data.s3.acl = aws_options.acl;
@@ -288,8 +288,8 @@ pub fn constructS3FileWithS3Credentials(
             if (try opts.getTruthyComptime(globalObject, "type")) |file_type| {
                 inner: {
                     if (file_type.isString()) {
-                        var allocator = bun.default_allocator;
-                        var str = file_type.toSlice(globalObject, bun.default_allocator);
+                        var allocator = bun.heap.default_allocator;
+                        var str = file_type.toSlice(globalObject, bun.heap.default_allocator);
                         defer str.deinit();
                         const slice = str.slice();
                         if (!strings.isAllASCII(slice)) {
@@ -316,7 +316,7 @@ fn constructS3FileInternal(
     options: ?JSC.JSValue,
 ) bun.JSError!*Blob {
     var ptr = Blob.new(try constructS3FileInternalStore(globalObject, path, options));
-    ptr.allocator = bun.default_allocator;
+    ptr.allocator = bun.heap.default_allocator;
     return ptr;
 }
 

@@ -46,7 +46,7 @@ pub const Loop = struct {
             }
         }
         var thread = std.Thread.spawn(.{
-            .allocator = bun.default_allocator,
+            .allocator = bun.heap.default_allocator,
 
             // smaller thread, since it's not doing much.
             .stack_size = 1024 * 1024 * 2,
@@ -196,7 +196,7 @@ pub const Loop = struct {
         this.updateNow();
 
         while (true) {
-            var stack_fallback = std.heap.stackFallback(@sizeOf([256]EventType), bun.default_allocator);
+            var stack_fallback = std.heap.stackFallback(@sizeOf([256]EventType), bun.heap.default_allocator);
             var events_list: std.ArrayList(EventType) = std.ArrayList(EventType).initCapacity(stack_fallback.get(), 256) catch unreachable;
             defer events_list.deinit();
 

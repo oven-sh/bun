@@ -955,7 +955,7 @@ pub export fn napi_create_promise(env: napi_env, deferred_: ?*napi_deferred, pro
     const promise = promise_ orelse {
         return env.invalidArg();
     };
-    deferred.* = bun.default_allocator.create(JSC.JSPromise.Strong) catch @panic("failed to allocate napi_deferred");
+    deferred.* = bun.heap.default_allocator.create(JSC.JSPromise.Strong) catch @panic("failed to allocate napi_deferred");
     deferred.*.* = JSC.JSPromise.Strong.init(env.toJS());
     promise.set(env, deferred.*.get().asValue(env.toJS()));
     return env.ok();
@@ -966,7 +966,7 @@ pub export fn napi_resolve_deferred(env: napi_env, deferred: napi_deferred, reso
     var prom = deferred.get();
     prom.resolve(env.toJS(), resolution);
     deferred.deinit();
-    bun.default_allocator.destroy(deferred);
+    bun.heap.default_allocator.destroy(deferred);
     return env.ok();
 }
 pub export fn napi_reject_deferred(env: napi_env, deferred: napi_deferred, rejection_: napi_value) napi_status {
@@ -975,7 +975,7 @@ pub export fn napi_reject_deferred(env: napi_env, deferred: napi_deferred, rejec
     var prom = deferred.get();
     prom.reject(env.toJS(), rejection);
     deferred.deinit();
-    bun.default_allocator.destroy(deferred);
+    bun.heap.default_allocator.destroy(deferred);
     return env.ok();
 }
 pub export fn napi_is_promise(env: napi_env, value_: napi_value, is_promise_: ?*bool) napi_status {
@@ -1068,7 +1068,7 @@ pub const napi_async_work = struct {
     };
 
     pub fn create(global: *JSC.JSGlobalObject, execute: napi_async_execute_callback, complete: napi_async_complete_callback, ctx: ?*anyopaque) !*napi_async_work {
-        const work = try bun.default_allocator.create(napi_async_work);
+        const work = try bun.heap.default_allocator.create(napi_async_work);
         work.* = .{
             .global = global,
             .execute = execute,
@@ -1089,7 +1089,7 @@ pub const napi_async_work = struct {
             if (state == @intFromEnum(Status.cancelled)) {
                 if (this.wait_for_deinit) {
                     // this might cause a segfault due to Task using a linked list!
-                    bun.default_allocator.destroy(this);
+                    bun.heap.default_allocator.destroy(this);
                 }
             }
             return;
@@ -1116,7 +1116,7 @@ pub const napi_async_work = struct {
         this.ref.unref(this.global.bunVM());
 
         if (this.can_deinit) {
-            bun.default_allocator.destroy(this);
+            bun.heap.default_allocator.destroy(this);
             return;
         }
         this.wait_for_deinit = true;
@@ -1428,7 +1428,7 @@ pub const ThreadSafeFunction = struct {
     finalizer: Finalizer = Finalizer{ .fun = null, .data = null },
     has_queued_finalizer: bool = false,
     queue: Queue = .{
-        .data = std.fifo.LinearFifo(?*anyopaque, .Dynamic).init(bun.default_allocator),
+        .data = std.fifo.LinearFifo(?*anyopaque, .Dynamic).init(bun.heap.default_allocator),
         .max_queue_size = 0,
     },
 
@@ -1740,7 +1740,7 @@ pub export fn napi_create_threadsafe_function(
             .js = if (func == .zero) .{} else JSC.Strong.create(func.withAsyncContextIfNeeded(global), vm.global),
         },
         .ctx = context,
-        .queue = ThreadSafeFunction.Queue.init(max_queue_size, bun.default_allocator),
+        .queue = ThreadSafeFunction.Queue.init(max_queue_size, bun.heap.default_allocator),
         .thread_count = .{ .raw = @intCast(initial_thread_count) },
         .poll_ref = Async.KeepAlive.init(),
         .tracker = JSC.AsyncTaskTracker.init(vm),

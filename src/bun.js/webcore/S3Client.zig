@@ -139,7 +139,7 @@ pub const S3Client = struct {
         errdefer path.deinit();
         const options = args.nextEat();
         var blob = Blob.new(try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl));
-        blob.allocator = bun.default_allocator;
+        blob.allocator = bun.heap.default_allocator;
         return blob.toJS(globalThis);
     }
 

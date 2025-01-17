@@ -650,7 +650,7 @@ pub const TimerObject = struct {
         if (!this.has_accessed_primitive) {
             this.has_accessed_primitive = true;
             const vm = VirtualMachine.get();
-            vm.timer.maps.get(this.kind).put(bun.default_allocator, this.id, &this.event_loop_timer) catch bun.outOfMemory();
+            vm.timer.maps.get(this.kind).put(bun.heap.default_allocator, this.id, &this.event_loop_timer) catch bun.outOfMemory();
         }
         return JSValue.jsNumber(this.id);
     }
@@ -679,7 +679,7 @@ pub const TimerObject = struct {
                 const allocated_bytes = map.capacity() * @sizeOf(TimeoutMap.Data);
                 const used_bytes = map.count() * @sizeOf(TimeoutMap.Data);
                 if (allocated_bytes - used_bytes > 256 * 1024) {
-                    map.shrinkAndFree(bun.default_allocator, map.count() + 8);
+                    map.shrinkAndFree(bun.heap.default_allocator, map.count() + 8);
                 }
             }
         }

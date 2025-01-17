@@ -17,7 +17,7 @@ const JSValue = JSC.JSValue;
 /// declare function myersDiff(actual: string, expected: string): Diff[];
 /// ```
 pub fn myersDiff(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    var stack_fallback = std.heap.stackFallback(1024 * 2, bun.default_allocator);
+    var stack_fallback = std.heap.stackFallback(1024 * 2, bun.heap.default_allocator);
     var arena = std.heap.ArenaAllocator.init(stack_fallback.get());
     defer arena.deinit();
     const allocator = arena.allocator();

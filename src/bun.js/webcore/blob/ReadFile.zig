@@ -58,7 +58,7 @@ const ClosingState = Blob.ClosingState;
 
 pub const ReadFile = struct {
     file_store: FileStore,
-    byte_store: ByteStore = ByteStore{ .allocator = bun.default_allocator },
+    byte_store: ByteStore = ByteStore{ .allocator = bun.heap.default_allocator },
     store: ?*Store = null,
     offset: SizeType = 0,
     max_length: SizeType = Blob.max_size,
@@ -402,7 +402,7 @@ pub const ReadFile = struct {
         // so we should check specifically that its a regular file before trusting the size.
         if (this.size == 0 and bun.isRegularFile(this.file_store.mode)) {
             this.buffer = .{};
-            this.byte_store = ByteStore.init(this.buffer.items, bun.default_allocator);
+            this.byte_store = ByteStore.init(this.buffer.items, bun.heap.default_allocator);
 
             this.onFinish();
             return;
@@ -410,7 +410,7 @@ pub const ReadFile = struct {
 
         // add an extra 16 bytes to the buffer to avoid having to resize it for trailing extra data
         if (!this.could_block or (this.size > 0 and this.size != Blob.max_size))
-            this.buffer = std.ArrayListUnmanaged(u8).initCapacity(bun.default_allocator, this.size + 16) catch |err| {
+            this.buffer = std.ArrayListUnmanaged(u8).initCapacity(bun.heap.default_allocator, this.size + 16) catch |err| {
                 this.errno = err;
                 this.onFinish();
                 return;
@@ -466,9 +466,9 @@ pub const ReadFile = struct {
                         // We need to allocate a new buffer
                         // In this case, we want to use `ensureTotalCapacityPrecis` so that it's an exact amount
                         // We want to avoid over-allocating incase it's a large amount of data sent in a single chunk followed by a 0 byte chunk.
-                        this.buffer.ensureTotalCapacityPrecise(bun.default_allocator, read.len) catch bun.outOfMemory();
+                        this.buffer.ensureTotalCapacityPrecise(bun.heap.default_allocator, read.len) catch bun.outOfMemory();
                     } else {
-                        this.buffer.ensureUnusedCapacity(bun.default_allocator, read.len) catch bun.outOfMemory();
+                        this.buffer.ensureUnusedCapacity(bun.heap.default_allocator, read.len) catch bun.outOfMemory();
                     }
                     this.buffer.appendSliceAssumeCapacity(read);
                 } else {
@@ -531,14 +531,14 @@ pub const ReadFile = struct {
         }
 
         if (this.system_error != null) {
-            this.buffer.clearAndFree(bun.default_allocator);
+            this.buffer.clearAndFree(bun.heap.default_allocator);
         }
 
         // If we over-allocated by a lot, we should shrink the buffer to conserve memory.
         if (this.buffer.items.len + 16_000 < this.buffer.capacity) {
-            this.buffer.shrinkAndFree(bun.default_allocator, this.buffer.items.len);
+            this.buffer.shrinkAndFree(bun.heap.default_allocator, this.buffer.items.len);
         }
-        this.byte_store = ByteStore.init(this.buffer.items, bun.default_allocator);
+        this.byte_store = ByteStore.init(this.buffer.items, bun.heap.default_allocator);
         this.onFinish();
     }
 };
@@ -549,7 +549,7 @@ pub const ReadFileUV = struct {
 
     loop: *libuv.Loop,
     file_store: FileStore,
-    byte_store: ByteStore = ByteStore{ .allocator = bun.default_allocator },
+    byte_store: ByteStore = ByteStore{ .allocator = bun.heap.default_allocator },
     store: *Store,
     offset: SizeType = 0,
     max_length: SizeType = Blob.max_size,
@@ -705,7 +705,7 @@ pub const ReadFileUV = struct {
         // Special files might report a size of > 0, and be wrong.
         // so we should check specifically that its a regular file before trusting the size.
         if (this.size == 0 and this.is_regular_file) {
-            this.byte_store = ByteStore.init(this.buffer.items, bun.default_allocator);
+            this.byte_store = ByteStore.init(this.buffer.items, bun.heap.default_allocator);
             this.onFinish();
             return;
         }
@@ -781,7 +781,7 @@ pub const ReadFileUV = struct {
                     this.onFinish();
                     return;
                 },
-                bun.default_allocator,
+                bun.heap.default_allocator,
             );
             this.onFinish();
         }
@@ -807,7 +807,7 @@ pub const ReadFileUV = struct {
                     this.onFinish();
                     return;
                 },
-                bun.default_allocator,
+                bun.heap.default_allocator,
             );
             this.onFinish();
             return;

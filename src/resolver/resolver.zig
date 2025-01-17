@@ -8,7 +8,7 @@ const MutableString = bun.MutableString;
 const FeatureFlags = bun.FeatureFlags;
 const PathString = bun.PathString;
 const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const C = bun.C;
 const ast = @import("../import_record.zig");
@@ -569,7 +569,7 @@ pub const Resolver = struct {
                 this.opts.install,
 
                 // This cannot be the threadlocal allocator. It goes to the HTTP thread.
-                bun.default_allocator,
+                bun.heap.default_allocator,
 
                 .{},
                 this.env_loader.?,
@@ -612,7 +612,7 @@ pub const Resolver = struct {
 
         return ThisResolver{
             .allocator = allocator,
-            .dir_cache = DirInfo.HashMap.init(bun.default_allocator),
+            .dir_cache = DirInfo.HashMap.init(bun.heap.default_allocator),
             .mutex = &resolver_Mutex,
             .caches = CacheSet.init(allocator),
             .opts = opts,
@@ -2108,7 +2108,7 @@ pub const Resolver = struct {
         }
 
         if (needs_iter) {
-            const allocator = bun.fs_allocator;
+            const allocator = bun.heap.fs_allocator;
             var new_entry = Fs.FileSystem.DirEntry.init(
                 if (in_place) |existing| existing.dir else Fs.FileSystem.DirnameStore.instance.append(string, dir_path) catch unreachable,
                 r.generation,
@@ -2426,7 +2426,7 @@ pub const Resolver = struct {
         // Since tsconfig.json is cached permanently, in our DirEntries cache
         // we must use the global allocator
         var entry = try r.caches.fs.readFileWithAllocator(
-            bun.fs_allocator,
+            bun.heap.fs_allocator,
             r.fs,
             file,
             dirname_fd,
@@ -2443,7 +2443,7 @@ pub const Resolver = struct {
         const source = logger.Source.initPathString(key_path.text, entry.contents);
         const file_dir = source.path.sourceDir();
 
-        var result = (try TSConfigJSON.parse(bun.default_allocator, r.log, source, &r.caches.json)) orelse return null;
+        var result = (try TSConfigJSON.parse(bun.heap.default_allocator, r.log, source, &r.caches.json)) orelse return null;
 
         if (result.hasBaseURL()) {
 
@@ -2798,7 +2798,7 @@ pub const Resolver = struct {
             }
 
             if (needs_iter) {
-                const allocator = bun.fs_allocator;
+                const allocator = bun.heap.fs_allocator;
                 var new_entry = Fs.FileSystem.DirEntry.init(
                     if (in_place) |existing| existing.dir else Fs.FileSystem.DirnameStore.instance.append(string, dir_path) catch unreachable,
                     r.generation,
@@ -3324,10 +3324,10 @@ pub const Resolver = struct {
         in_str: bun.String,
         globalObject: *bun.JSC.JSGlobalObject,
     ) bun.JSC.JSValue {
-        var list = std.ArrayList(bun.String).init(bun.default_allocator);
+        var list = std.ArrayList(bun.String).init(bun.heap.default_allocator);
         defer list.deinit();
 
-        const sliced = in_str.toUTF8(bun.default_allocator);
+        const sliced = in_str.toUTF8(bun.heap.default_allocator);
         defer sliced.deinit();
 
         const str = brk: {
@@ -3345,7 +3345,7 @@ pub const Resolver = struct {
             const dir_path_buf = bufs(.node_modules_paths_buf);
             break :brk bun.path.joinStringBuf(dir_path_buf, &[_]string{ r.fs.top_level_dir, sliced.slice() }, .auto);
         };
-        var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+        var arena = std.heap.ArenaAllocator.init(bun.heap.default_allocator);
         defer arena.deinit();
         var stack_fallback_allocator = std.heap.stackFallback(1024, arena.allocator());
         const alloc = stack_fallback_allocator.get();

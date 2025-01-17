@@ -175,8 +175,8 @@ pub const LifecycleScriptSubprocess = struct {
             null,
         };
         if (Environment.isWindows) {
-            this.stdout.source = .{ .pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() };
-            this.stderr.source = .{ .pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() };
+            this.stdout.source = .{ .pipe = bun.heap.default_allocator.create(uv.Pipe) catch bun.outOfMemory() };
+            this.stderr.source = .{ .pipe = bun.heap.default_allocator.create(uv.Pipe) catch bun.outOfMemory() };
         }
         const spawn_options = bun.spawn.SpawnOptions{
             .stdin = if (this.foreground)
@@ -284,7 +284,7 @@ pub const LifecycleScriptSubprocess = struct {
             // Reuse the memory
             if (stdout.items.len == 0 and stdout.capacity > 0 and this.stderr.buffer().capacity == 0) {
                 this.stderr.buffer().* = stdout.*;
-                stdout.* = std.ArrayList(u8).init(bun.default_allocator);
+                stdout.* = std.ArrayList(u8).init(bun.heap.default_allocator);
             }
 
             var stderr = this.stderr.finalBuffer();

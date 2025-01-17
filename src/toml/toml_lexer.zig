@@ -11,7 +11,7 @@ const strings = bun.strings;
 const CodePoint = bun.CodePoint;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 
 pub const T = enum {
     t_end_of_file,

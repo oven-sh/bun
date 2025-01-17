@@ -8,7 +8,7 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const C = bun.C;
 const JavaScript = @import("./javascript.zig");
 const JSC = bun.JSC;
@@ -66,7 +66,7 @@ pub fn toJS(globalObject: *JSC.JSGlobalObject, comptime ValueType: type, value: 
                 for (value) |out| {
                     out.deref();
                 }
-                bun.default_allocator.free(value);
+                bun.heap.default_allocator.free(value);
             }
             return bun.String.toJSArray(globalObject, value);
         },
@@ -469,7 +469,7 @@ pub const ArrayBuffer = extern struct {
                 this.ptr,
                 this.byte_len,
                 MarkedArrayBuffer_deallocator,
-                @as(*anyopaque, @ptrFromInt(@intFromPtr(&bun.default_allocator))),
+                @as(*anyopaque, @ptrFromInt(@intFromPtr(&bun.heap.default_allocator))),
                 exception,
             ));
         }
@@ -480,7 +480,7 @@ pub const ArrayBuffer = extern struct {
             this.ptr,
             this.byte_len,
             MarkedArrayBuffer_deallocator,
-            @as(*anyopaque, @ptrFromInt(@intFromPtr(&bun.default_allocator))),
+            @as(*anyopaque, @ptrFromInt(@intFromPtr(&bun.heap.default_allocator))),
             exception,
         ));
     }
@@ -493,7 +493,7 @@ pub const ArrayBuffer = extern struct {
         }
 
         // If it's not a mimalloc heap buffer, we're not going to call a deallocator
-        if (this.len > 0 and !bun.Mimalloc.mi_is_in_heap_region(this.ptr)) {
+        if (this.len > 0 and !bun.heap.Mimalloc.mi_is_in_heap_region(this.ptr)) {
             log("toJS but will never free: {d} bytes", .{this.len});
 
             if (this.typed_array_type == .ArrayBuffer) {
@@ -759,7 +759,7 @@ comptime {
 }
 
 pub export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, _: *anyopaque) void {
-    const mimalloc = @import("../allocators/mimalloc.zig");
+    const mimalloc = bun.heap.Mimalloc;
     // zig's memory allocator interface won't work here
     // mimalloc knows the size of things
     // but we don't

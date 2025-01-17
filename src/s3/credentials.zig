@@ -61,7 +61,7 @@ pub const S3Credentials = struct {
                             const str = bun.String.fromJS(js_value, globalObject);
                             defer str.deref();
                             if (str.tag != .Empty and str.tag != .Dead) {
-                                new_credentials._accessKeyIdSlice = str.toUTF8(bun.default_allocator);
+                                new_credentials._accessKeyIdSlice = str.toUTF8(bun.heap.default_allocator);
                                 new_credentials.credentials.accessKeyId = new_credentials._accessKeyIdSlice.?.slice();
                                 new_credentials.changed_credentials = true;
                             }
@@ -76,7 +76,7 @@ pub const S3Credentials = struct {
                             const str = bun.String.fromJS(js_value, globalObject);
                             defer str.deref();
                             if (str.tag != .Empty and str.tag != .Dead) {
-                                new_credentials._secretAccessKeySlice = str.toUTF8(bun.default_allocator);
+                                new_credentials._secretAccessKeySlice = str.toUTF8(bun.heap.default_allocator);
                                 new_credentials.credentials.secretAccessKey = new_credentials._secretAccessKeySlice.?.slice();
                                 new_credentials.changed_credentials = true;
                             }
@@ -91,7 +91,7 @@ pub const S3Credentials = struct {
                             const str = bun.String.fromJS(js_value, globalObject);
                             defer str.deref();
                             if (str.tag != .Empty and str.tag != .Dead) {
-                                new_credentials._regionSlice = str.toUTF8(bun.default_allocator);
+                                new_credentials._regionSlice = str.toUTF8(bun.heap.default_allocator);
                                 new_credentials.credentials.region = new_credentials._regionSlice.?.slice();
                                 new_credentials.changed_credentials = true;
                             }
@@ -106,7 +106,7 @@ pub const S3Credentials = struct {
                             const str = bun.String.fromJS(js_value, globalObject);
                             defer str.deref();
                             if (str.tag != .Empty and str.tag != .Dead) {
-                                new_credentials._endpointSlice = str.toUTF8(bun.default_allocator);
+                                new_credentials._endpointSlice = str.toUTF8(bun.heap.default_allocator);
                                 const endpoint = new_credentials._endpointSlice.?.slice();
                                 const url = bun.URL.parse(endpoint);
                                 const normalized_endpoint = url.host;
@@ -134,7 +134,7 @@ pub const S3Credentials = struct {
                             const str = bun.String.fromJS(js_value, globalObject);
                             defer str.deref();
                             if (str.tag != .Empty and str.tag != .Dead) {
-                                new_credentials._bucketSlice = str.toUTF8(bun.default_allocator);
+                                new_credentials._bucketSlice = str.toUTF8(bun.heap.default_allocator);
                                 new_credentials.credentials.bucket = new_credentials._bucketSlice.?.slice();
                                 new_credentials.changed_credentials = true;
                             }
@@ -150,7 +150,7 @@ pub const S3Credentials = struct {
                             const str = bun.String.fromJS(js_value, globalObject);
                             defer str.deref();
                             if (str.tag != .Empty and str.tag != .Dead) {
-                                new_credentials._sessionTokenSlice = str.toUTF8(bun.default_allocator);
+                                new_credentials._sessionTokenSlice = str.toUTF8(bun.heap.default_allocator);
                                 new_credentials.credentials.sessionToken = new_credentials._sessionTokenSlice.?.slice();
                                 new_credentials.changed_credentials = true;
                             }
@@ -204,32 +204,32 @@ pub const S3Credentials = struct {
     pub fn dupe(this: *const @This()) *S3Credentials {
         return S3Credentials.new(.{
             .accessKeyId = if (this.accessKeyId.len > 0)
-                bun.default_allocator.dupe(u8, this.accessKeyId) catch bun.outOfMemory()
+                bun.heap.default_allocator.dupe(u8, this.accessKeyId) catch bun.outOfMemory()
             else
                 "",
 
             .secretAccessKey = if (this.secretAccessKey.len > 0)
-                bun.default_allocator.dupe(u8, this.secretAccessKey) catch bun.outOfMemory()
+                bun.heap.default_allocator.dupe(u8, this.secretAccessKey) catch bun.outOfMemory()
             else
                 "",
 
             .region = if (this.region.len > 0)
-                bun.default_allocator.dupe(u8, this.region) catch bun.outOfMemory()
+                bun.heap.default_allocator.dupe(u8, this.region) catch bun.outOfMemory()
             else
                 "",
 
             .endpoint = if (this.endpoint.len > 0)
-                bun.default_allocator.dupe(u8, this.endpoint) catch bun.outOfMemory()
+                bun.heap.default_allocator.dupe(u8, this.endpoint) catch bun.outOfMemory()
             else
                 "",
 
             .bucket = if (this.bucket.len > 0)
-                bun.default_allocator.dupe(u8, this.bucket) catch bun.outOfMemory()
+                bun.heap.default_allocator.dupe(u8, this.bucket) catch bun.outOfMemory()
             else
                 "",
 
             .sessionToken = if (this.sessionToken.len > 0)
-                bun.default_allocator.dupe(u8, this.sessionToken) catch bun.outOfMemory()
+                bun.heap.default_allocator.dupe(u8, this.sessionToken) catch bun.outOfMemory()
             else
                 "",
 
@@ -238,22 +238,22 @@ pub const S3Credentials = struct {
     }
     pub fn deinit(this: *@This()) void {
         if (this.accessKeyId.len > 0) {
-            bun.default_allocator.free(this.accessKeyId);
+            bun.heap.default_allocator.free(this.accessKeyId);
         }
         if (this.secretAccessKey.len > 0) {
-            bun.default_allocator.free(this.secretAccessKey);
+            bun.heap.default_allocator.free(this.secretAccessKey);
         }
         if (this.region.len > 0) {
-            bun.default_allocator.free(this.region);
+            bun.heap.default_allocator.free(this.region);
         }
         if (this.endpoint.len > 0) {
-            bun.default_allocator.free(this.endpoint);
+            bun.heap.default_allocator.free(this.endpoint);
         }
         if (this.bucket.len > 0) {
-            bun.default_allocator.free(this.bucket);
+            bun.heap.default_allocator.free(this.bucket);
         }
         if (this.sessionToken.len > 0) {
-            bun.default_allocator.free(this.sessionToken);
+            bun.heap.default_allocator.free(this.sessionToken);
         }
         this.destroy();
     }
@@ -340,27 +340,27 @@ pub const S3Credentials = struct {
 
         pub fn deinit(this: *const @This()) void {
             if (this.amz_date.len > 0) {
-                bun.default_allocator.free(this.amz_date);
+                bun.heap.default_allocator.free(this.amz_date);
             }
 
             if (this.session_token.len > 0) {
-                bun.default_allocator.free(this.session_token);
+                bun.heap.default_allocator.free(this.session_token);
             }
 
             if (this.content_disposition.len > 0) {
-                bun.default_allocator.free(this.content_disposition);
+                bun.heap.default_allocator.free(this.content_disposition);
             }
 
             if (this.host.len > 0) {
-                bun.default_allocator.free(this.host);
+                bun.heap.default_allocator.free(this.host);
             }
 
             if (this.authorization.len > 0) {
-                bun.default_allocator.free(this.authorization);
+                bun.heap.default_allocator.free(this.authorization);
             }
 
             if (this.url.len > 0) {
-                bun.default_allocator.free(this.url);
+                bun.heap.default_allocator.free(this.url);
             }
         }
     };
@@ -513,9 +513,9 @@ pub const S3Credentials = struct {
         path = encodeURIComponent(path, &path_buffer, false) catch return error.InvalidPath;
         const normalizedPath = std.fmt.bufPrint(&normalized_path_buffer, "/{s}/{s}", .{ bucket, path }) catch return error.InvalidPath;
 
-        const date_result = getAMZDate(bun.default_allocator);
+        const date_result = getAMZDate(bun.heap.default_allocator);
         const amz_date = date_result.date;
-        errdefer bun.default_allocator.free(amz_date);
+        errdefer bun.heap.default_allocator.free(amz_date);
 
         const amz_day = amz_date[0..8];
         const signed_headers = if (signQuery) "host" else brk: {
@@ -557,14 +557,14 @@ pub const S3Credentials = struct {
         const host = brk_host: {
             if (this.endpoint.len > 0) {
                 if (this.endpoint.len >= 512) return error.InvalidEndpoint;
-                break :brk_host try bun.default_allocator.dupe(u8, this.endpoint);
+                break :brk_host try bun.heap.default_allocator.dupe(u8, this.endpoint);
             } else {
-                break :brk_host try std.fmt.allocPrint(bun.default_allocator, "s3.{s}.amazonaws.com", .{region});
+                break :brk_host try std.fmt.allocPrint(bun.heap.default_allocator, "s3.{s}.amazonaws.com", .{region});
             }
         };
         const service_name = "s3";
 
-        errdefer bun.default_allocator.free(host);
+        errdefer bun.heap.default_allocator.free(host);
 
         const aws_content_hash = if (content_hash) |hash| hash else ("UNSIGNED-PAYLOAD");
         var tmp_buffer: [4096]u8 = undefined;
@@ -619,13 +619,13 @@ pub const S3Credentials = struct {
                 if (acl) |acl_value| {
                     if (encoded_session_token) |token| {
                         break :brk try std.fmt.allocPrint(
-                            bun.default_allocator,
+                            bun.heap.default_allocator,
                             "{s}://{s}{s}?X-Amz-Acl={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
                             .{ protocol, host, normalizedPath, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
                         );
                     } else {
                         break :brk try std.fmt.allocPrint(
-                            bun.default_allocator,
+                            bun.heap.default_allocator,
                             "{s}://{s}{s}?X-Amz-Acl={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
                             .{ protocol, host, normalizedPath, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
                         );
@@ -633,13 +633,13 @@ pub const S3Credentials = struct {
                 } else {
                     if (encoded_session_token) |token| {
                         break :brk try std.fmt.allocPrint(
-                            bun.default_allocator,
+                            bun.heap.default_allocator,
                             "{s}://{s}{s}?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
                             .{ protocol, host, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
                         );
                     } else {
                         break :brk try std.fmt.allocPrint(
-                            bun.default_allocator,
+                            bun.heap.default_allocator,
                             "{s}://{s}{s}?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
                             .{ protocol, host, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
                         );
@@ -687,17 +687,17 @@ pub const S3Credentials = struct {
                 const signature = bun.hmac.generate(sigDateRegionServiceReq, signValue, .sha256, &hmac_sig_service) orelse return error.FailedToGenerateSignature;
 
                 break :brk try std.fmt.allocPrint(
-                    bun.default_allocator,
+                    bun.heap.default_allocator,
                     "AWS4-HMAC-SHA256 Credential={s}/{s}/{s}/{s}/aws4_request, SignedHeaders={s}, Signature={s}",
                     .{ this.accessKeyId, amz_day, region, service_name, signed_headers, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
                 );
             }
         };
-        errdefer bun.default_allocator.free(authorization);
+        errdefer bun.heap.default_allocator.free(authorization);
 
         if (signQuery) {
-            defer bun.default_allocator.free(host);
-            defer bun.default_allocator.free(amz_date);
+            defer bun.heap.default_allocator.free(host);
+            defer bun.heap.default_allocator.free(amz_date);
 
             return SignResult{
                 .amz_date = "",
@@ -713,7 +713,7 @@ pub const S3Credentials = struct {
             .host = host,
             .authorization = authorization,
             .acl = signOptions.acl,
-            .url = try std.fmt.allocPrint(bun.default_allocator, "{s}://{s}{s}{s}", .{ protocol, host, normalizedPath, if (search_params) |s| s else "" }),
+            .url = try std.fmt.allocPrint(bun.heap.default_allocator, "{s}://{s}{s}{s}", .{ protocol, host, normalizedPath, if (search_params) |s| s else "" }),
             ._headers = [_]picohttp.Header{
                 .{ .name = "x-amz-content-sha256", .value = aws_content_hash },
                 .{ .name = "x-amz-date", .value = amz_date },
@@ -732,14 +732,14 @@ pub const S3Credentials = struct {
         }
 
         if (session_token) |token| {
-            const session_token_value = bun.default_allocator.dupe(u8, token) catch bun.outOfMemory();
+            const session_token_value = bun.heap.default_allocator.dupe(u8, token) catch bun.outOfMemory();
             result.session_token = session_token_value;
             result._headers[result._headers_len] = .{ .name = "x-amz-security-token", .value = session_token_value };
             result._headers_len += 1;
         }
 
         if (content_disposition) |cd| {
-            const content_disposition_value = bun.default_allocator.dupe(u8, cd) catch bun.outOfMemory();
+            const content_disposition_value = bun.heap.default_allocator.dupe(u8, cd) catch bun.outOfMemory();
             result.content_disposition = content_disposition_value;
             result._headers[result._headers_len] = .{ .name = "Content-Disposition", .value = content_disposition_value };
             result._headers_len += 1;

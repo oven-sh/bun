@@ -15,7 +15,7 @@ const Output = bun.Output;
 const MutableString = bun.MutableString;
 const strings = bun.strings;
 const string = bun.string;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const FeatureFlags = bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
@@ -27,7 +27,7 @@ const IdentityContext = @import("../../identity_context.zig").IdentityContext;
 const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const NullableAllocator = bun.NullableAllocator;
+const NullableAllocator = bun.heap.NullableAllocator;
 
 const VirtualMachine = JSC.VirtualMachine;
 const Task = JSC.Task;
@@ -111,7 +111,7 @@ pub const Blob = struct {
         var content_type_slice: ZigString.Slice = this.getContentType() orelse return null;
         defer content_type_slice.deinit();
         const encoding = bun.FormData.Encoding.get(content_type_slice.slice()) orelse return null;
-        return bun.FormData.AsyncFormData.init(this.allocator orelse bun.default_allocator, encoding) catch bun.outOfMemory();
+        return bun.FormData.AsyncFormData.init(this.allocator orelse bun.heap.default_allocator, encoding) catch bun.outOfMemory();
     }
 
     pub fn hasContentTypeFromUser(this: *const Blob) bool {
@@ -175,7 +175,7 @@ pub const Blob = struct {
         }
 
         const file_read = ReadFile.create(
-            bun.default_allocator,
+            bun.heap.default_allocator,
             this.store.?,
             this.offset,
             this.size,
@@ -183,7 +183,7 @@ pub const Blob = struct {
             handler,
             Handler.run,
         ) catch bun.outOfMemory();
-        var read_file_task = ReadFile.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read) catch bun.outOfMemory();
+        var read_file_task = ReadFile.ReadFileTask.createOnJSThread(bun.heap.default_allocator, global, file_read) catch bun.outOfMemory();
 
         // Create the Promise only after the store has been ref()'d.
         // The garbage collector runs on memory allocations
@@ -214,14 +214,14 @@ pub const Blob = struct {
             return ReadFileUV.start(libuv.Loop.get(), this.store.?, this.offset, this.size, ReadFileHandler, ctx);
         }
         const file_read = ReadFile.createWithCtx(
-            bun.default_allocator,
+            bun.heap.default_allocator,
             this.store.?,
             ctx,
             NewInternalReadFileHandler(Handler, Function).run,
             this.offset,
             this.size,
         ) catch bun.outOfMemory();
-        var read_file_task = ReadFile.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read) catch bun.outOfMemory();
+        var read_file_task = ReadFile.ReadFileTask.createOnJSThread(bun.heap.default_allocator, global, file_read) catch bun.outOfMemory();
         read_file_task.schedule();
     }
 
@@ -426,7 +426,7 @@ pub const Blob = struct {
         comptime Reader: type,
         reader: Reader,
     ) !JSValue {
-        const allocator = bun.default_allocator;
+        const allocator = bun.heap.default_allocator;
 
         const version = try reader.readInt(u8, .little);
 
@@ -574,7 +574,7 @@ pub const Blob = struct {
         allocator: std.mem.Allocator,
         form_data: *JSC.DOMFormData,
     ) Blob {
-        var arena = bun.ArenaAllocator.init(allocator);
+        var arena = std.heap.ArenaAllocator.init(allocator);
         defer arena.deinit();
         var stack_allocator = std.heap.stackFallback(1024, arena.allocator());
         const stack_mem_all = stack_allocator.get();
@@ -631,7 +631,7 @@ pub const Blob = struct {
         if (this.store) |store| {
             if (store.data == .bytes) {
                 if (store.data.bytes.stored_name.len == 0) {
-                    var utf8 = path_str.toUTF8WithoutRef(bun.default_allocator).clone(bun.default_allocator) catch unreachable;
+                    var utf8 = path_str.toUTF8WithoutRef(bun.heap.default_allocator).clone(bun.heap.default_allocator) catch unreachable;
                     store.data.bytes.stored_name = bun.PathString.init(utf8.slice());
                 }
             }
@@ -643,7 +643,7 @@ pub const Blob = struct {
     export fn Blob__dupe(ptr: *anyopaque) *Blob {
         var this = bun.cast(*Blob, ptr);
         var new = Blob.new(this.dupeWithContentType(true));
-        new.allocator = bun.default_allocator;
+        new.allocator = bun.heap.default_allocator;
         return new;
     }
 
@@ -972,7 +972,7 @@ pub const Blob = struct {
                 WriteFilePromise.run,
                 options.mkdirp_if_not_exists orelse true,
             ) catch unreachable;
-            var task = WriteFile.WriteFileTask.createOnJSThread(bun.default_allocator, ctx, file_copier) catch bun.outOfMemory();
+            var task = WriteFile.WriteFileTask.createOnJSThread(bun.heap.default_allocator, ctx, file_copier) catch bun.outOfMemory();
             // Defer promise creation until we're just about to schedule the task
             var promise = JSC.JSPromise.create(ctx);
             const promise_value = promise.asValue(ctx);
@@ -993,7 +993,7 @@ pub const Blob = struct {
                 );
             }
             var file_copier = Store.CopyFile.create(
-                bun.default_allocator,
+                bun.heap.default_allocator,
                 destination_blob.store.?,
                 source_blob.store.?,
 
@@ -1021,9 +1021,9 @@ pub const Blob = struct {
             // it will happen if someone did Bun.write(new Blob([123]), new Blob([456]))
             // eventually, this could be like Buffer.concat
             var clone = source_blob.dupe();
-            clone.allocator = bun.default_allocator;
+            clone.allocator = bun.heap.default_allocator;
             const cloned = Blob.new(clone);
-            cloned.allocator = bun.default_allocator;
+            cloned.allocator = bun.heap.default_allocator;
             return JSPromise.resolvedPromiseValue(ctx, cloned.toJS(ctx));
         } else if (destination_type == .bytes and (source_type == .file or source_type == .s3)) {
             const blob_value = source_blob.getSliceFrom(ctx, 0, 0, "", false);
@@ -1642,7 +1642,7 @@ pub const Blob = struct {
     }
     pub fn JSDOMFile__construct_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*Blob {
         JSC.markBinding(@src());
-        const allocator = bun.default_allocator;
+        const allocator = bun.heap.default_allocator;
         var blob: Blob = undefined;
         var arguments = callframe.arguments_old(3);
         const args = arguments.slice();
@@ -1669,7 +1669,7 @@ pub const Blob = struct {
                 switch (store_.data) {
                     .bytes => |*bytes| {
                         bytes.stored_name = bun.PathString.init(
-                            (name_value_str.toUTF8WithoutRef(bun.default_allocator).clone(bun.default_allocator) catch unreachable).slice(),
+                            (name_value_str.toUTF8WithoutRef(bun.heap.default_allocator).clone(bun.heap.default_allocator) catch unreachable).slice(),
                         );
                     },
                     .s3, .file => {
@@ -1691,7 +1691,7 @@ pub const Blob = struct {
                 if (try options.get(globalThis, "type")) |content_type| {
                     inner: {
                         if (content_type.isString()) {
-                            var content_type_str = content_type.toSlice(globalThis, bun.default_allocator);
+                            var content_type_str = content_type.toSlice(globalThis, bun.heap.default_allocator);
                             defer content_type_str.deinit();
                             const slice = content_type_str.slice();
                             if (!strings.isAllASCII(slice)) {
@@ -1773,7 +1773,7 @@ pub const Blob = struct {
         var args = JSC.Node.ArgumentsSlice.init(vm, arguments);
         defer args.deinit();
 
-        var path = (try JSC.Node.PathOrFileDescriptor.fromJS(globalObject, &args, bun.default_allocator)) orelse {
+        var path = (try JSC.Node.PathOrFileDescriptor.fromJS(globalObject, &args, bun.heap.default_allocator)) orelse {
             return globalObject.throwInvalidArguments("Expected file path string or file descriptor", .{});
         };
         const options = if (arguments.len >= 2) arguments[1] else null;
@@ -1792,8 +1792,8 @@ pub const Blob = struct {
                 if (try opts.getTruthy(globalObject, "type")) |file_type| {
                     inner: {
                         if (file_type.isString()) {
-                            var allocator = bun.default_allocator;
-                            var str = file_type.toSlice(globalObject, bun.default_allocator);
+                            var allocator = bun.heap.default_allocator;
+                            var str = file_type.toSlice(globalObject, bun.heap.default_allocator);
                             defer str.deinit();
                             const slice = str.slice();
                             if (!strings.isAllASCII(slice)) {
@@ -1817,13 +1817,13 @@ pub const Blob = struct {
         }
 
         var ptr = Blob.new(blob);
-        ptr.allocator = bun.default_allocator;
+        ptr.allocator = bun.heap.default_allocator;
         return ptr.toJS(globalObject);
     }
 
     pub fn findOrCreateFileFromPath(path_or_fd: *JSC.Node.PathOrFileDescriptor, globalThis: *JSGlobalObject, comptime check_s3: bool) Blob {
         var vm = globalThis.bunVM();
-        const allocator = bun.default_allocator;
+        const allocator = bun.heap.default_allocator;
         if (check_s3) {
             if (path_or_fd.* == .path) {
                 if (strings.startsWith(path_or_fd.path.slice(), "s3://")) {
@@ -2870,7 +2870,7 @@ pub const Blob = struct {
 
                 if (this.err) |err| {
                     this.throw(err);
-                    bun.default_allocator.free(err.path);
+                    bun.heap.default_allocator.free(err.path);
                     return;
                 }
 
@@ -2953,7 +2953,7 @@ pub const Blob = struct {
             pub fn deinit(this: *CopyFile) void {
                 if (this.source_file_store.pathlike == .path) {
                     if (this.source_file_store.pathlike.path == .string and this.system_error == null) {
-                        bun.default_allocator.free(@constCast(this.source_file_store.pathlike.path.slice()));
+                        bun.heap.default_allocator.free(@constCast(this.source_file_store.pathlike.path.slice()));
                     }
                 }
                 this.store.?.deref();
@@ -3478,7 +3478,7 @@ pub const Blob = struct {
         pub fn unlink(this: *const FileStore, globalThis: *JSC.JSGlobalObject) JSValue {
             return switch (this.pathlike) {
                 .path => |path_like| JSC.Node.Async.unlink.create(globalThis, undefined, .{
-                    .path = .{ .encoded_slice = ZigString.init(path_like.slice()).toSliceClone(bun.default_allocator) },
+                    .path = .{ .encoded_slice = ZigString.init(path_like.slice()).toSliceClone(bun.heap.default_allocator) },
                 }, globalThis.bunVM()),
                 .fd => JSC.JSPromise.resolvedPromiseValue(globalThis, globalThis.createInvalidArgs("Is not possible to unlink a file descriptor", .{})),
             };
@@ -3641,7 +3641,7 @@ pub const Blob = struct {
                 },
             };
 
-            this.allocator = bun.default_allocator;
+            this.allocator = bun.heap.default_allocator;
             this.len = 0;
             this.cap = 0;
             return result;
@@ -3655,7 +3655,7 @@ pub const Blob = struct {
         }
 
         pub fn deinit(this: *ByteStore) void {
-            bun.default_allocator.free(this.stored_name.slice());
+            bun.heap.default_allocator.free(this.stored_name.slice());
             this.allocator.free(this.ptr[0..this.cap]);
         }
 
@@ -3969,19 +3969,19 @@ pub const Blob = struct {
                     if (!content_type.isString()) {
                         return globalThis.throwInvalidArgumentType("write", "options.type", "string");
                     }
-                    var content_type_str = content_type.toSlice(globalThis, bun.default_allocator);
+                    var content_type_str = content_type.toSlice(globalThis, bun.heap.default_allocator);
                     defer content_type_str.deinit();
                     const slice = content_type_str.slice();
                     if (strings.isAllASCII(slice)) {
                         if (this.content_type_allocated) {
-                            bun.default_allocator.free(this.content_type);
+                            bun.heap.default_allocator.free(this.content_type);
                         }
                         this.content_type_was_set = true;
 
                         if (globalThis.bunVM().mimeType(slice)) |mime| {
                             this.content_type = mime.value;
                         } else {
-                            const content_type_buf = bun.default_allocator.alloc(u8, slice.len) catch bun.outOfMemory();
+                            const content_type_buf = bun.heap.default_allocator.alloc(u8, slice.len) catch bun.outOfMemory();
                             this.content_type = strings.copyLowercase(slice, content_type_buf);
                             this.content_type_allocated = true;
                         }
@@ -4187,7 +4187,7 @@ pub const Blob = struct {
                         .path = ZigString.Slice.fromUTF8NeverFree(
                             store.data.file.pathlike.path.slice(),
                         ).clone(
-                            bun.default_allocator,
+                            bun.heap.default_allocator,
                         ) catch bun.outOfMemory(),
                     };
                 }
@@ -4312,19 +4312,19 @@ pub const Blob = struct {
                         if (!content_type.isString()) {
                             return globalThis.throwInvalidArgumentType("write", "options.type", "string");
                         }
-                        var content_type_str = content_type.toSlice(globalThis, bun.default_allocator);
+                        var content_type_str = content_type.toSlice(globalThis, bun.heap.default_allocator);
                         defer content_type_str.deinit();
                         const slice = content_type_str.slice();
                         if (strings.isAllASCII(slice)) {
                             if (this.content_type_allocated) {
-                                bun.default_allocator.free(this.content_type);
+                                bun.heap.default_allocator.free(this.content_type);
                             }
                             this.content_type_was_set = true;
 
                             if (globalThis.bunVM().mimeType(slice)) |mime| {
                                 this.content_type = mime.value;
                             } else {
-                                const content_type_buf = bun.default_allocator.alloc(u8, slice.len) catch bun.outOfMemory();
+                                const content_type_buf = bun.heap.default_allocator.alloc(u8, slice.len) catch bun.outOfMemory();
                                 this.content_type = strings.copyLowercase(slice, content_type_buf);
                                 this.content_type_allocated = true;
                             }
@@ -4478,7 +4478,7 @@ pub const Blob = struct {
         blob.content_type_was_set = this.content_type_was_set or content_type_was_allocated;
 
         var blob_ = Blob.new(blob);
-        blob_.allocator = bun.default_allocator;
+        blob_.allocator = bun.heap.default_allocator;
         return blob_.toJS(globalThis);
     }
 
@@ -4492,7 +4492,7 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        const allocator = bun.default_allocator;
+        const allocator = bun.heap.default_allocator;
         var arguments_ = callframe.arguments_old(3);
         var args = arguments_.ptr[0..arguments_.len];
 
@@ -4554,7 +4554,7 @@ pub const Blob = struct {
             inner: {
                 if (content_type_.isString()) {
                     var zig_str = content_type_.getZigString(globalThis);
-                    var slicer = zig_str.toSlice(bun.default_allocator);
+                    var slicer = zig_str.toSlice(bun.heap.default_allocator);
                     defer slicer.deinit();
                     const slice = slicer.slice();
                     if (!strings.isAllASCII(slice)) {
@@ -4741,7 +4741,7 @@ pub const Blob = struct {
             .file => |*file| {
                 return switch (file.pathlike) {
                     .path => |path_like| JSC.Node.Async.stat.create(globalThis, undefined, .{
-                        .path = .{ .encoded_slice = ZigString.init(path_like.slice()).toSliceClone(bun.default_allocator) },
+                        .path = .{ .encoded_slice = ZigString.init(path_like.slice()).toSliceClone(bun.heap.default_allocator) },
                     }, globalThis.bunVM()),
                     .fd => |fd| JSC.Node.Async.fstat.create(globalThis, undefined, .{ .fd = fd }, globalThis.bunVM()),
                 };
@@ -4838,7 +4838,7 @@ pub const Blob = struct {
     }
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*Blob {
-        const allocator = bun.default_allocator;
+        const allocator = bun.heap.default_allocator;
         var blob: Blob = undefined;
         var arguments = callframe.arguments_old(2);
         const args = arguments.slice();
@@ -4864,7 +4864,7 @@ pub const Blob = struct {
                         if (try options.get(globalThis, "type")) |content_type| {
                             inner: {
                                 if (content_type.isString()) {
-                                    var content_type_str = content_type.toSlice(globalThis, bun.default_allocator);
+                                    var content_type_str = content_type.toSlice(globalThis, bun.heap.default_allocator);
                                     defer content_type_str.deinit();
                                     const slice = content_type_str.slice();
                                     if (!strings.isAllASCII(slice)) {
@@ -4958,8 +4958,8 @@ pub const Blob = struct {
         was_string: bool,
     ) !Blob {
         if (comptime Environment.isLinux) {
-            if (bun.linux.memfd_allocator.shouldUse(bytes_)) {
-                switch (bun.linux.memfd_allocator.create(bytes_)) {
+            if (bun.heap.MemFdAllocator.shouldUse(bytes_)) {
+                switch (bun.heap.MemFdAllocator.create(bytes_)) {
                     .err => {},
                     .result => |result| {
                         const store = Store.new(
@@ -4967,7 +4967,7 @@ pub const Blob = struct {
                                 .data = .{
                                     .bytes = result,
                                 },
-                                .allocator = bun.default_allocator,
+                                .allocator = bun.heap.default_allocator,
                                 .ref_count = std.atomic.Value(u32).init(1),
                             },
                         );
@@ -5056,7 +5056,7 @@ pub const Blob = struct {
                 duped.content_type_was_set = duped.content_type.len > 0;
             }
         } else if (duped.content_type_allocated and duped.allocator != null and include_content_type) {
-            duped.content_type = bun.default_allocator.dupe(u8, this.content_type) catch bun.outOfMemory();
+            duped.content_type = bun.heap.default_allocator.dupe(u8, this.content_type) catch bun.outOfMemory();
         }
         duped.name = duped.name.dupeRef();
 
@@ -5085,7 +5085,7 @@ pub const Blob = struct {
         // TODO: remove this field, make it a boolean.
         if (this.allocator) |alloc| {
             this.allocator = null;
-            bun.debugAssert(alloc.vtable == bun.default_allocator.vtable);
+            bun.debugAssert(alloc.vtable == bun.heap.default_allocator.vtable);
             this.destroy();
         }
     }
@@ -5121,12 +5121,12 @@ pub const Blob = struct {
 
         if (buf.len == 0) {
             // If all it contained was the bom, we need to free the bytes
-            if (lifetime == .temporary) bun.default_allocator.free(raw_bytes);
+            if (lifetime == .temporary) bun.heap.default_allocator.free(raw_bytes);
             return ZigString.Empty.toJS(global);
         }
 
         if (bom == .utf16_le) {
-            defer if (lifetime == .temporary) bun.default_allocator.free(raw_bytes);
+            defer if (lifetime == .temporary) bun.heap.default_allocator.free(raw_bytes);
             var out = bun.String.createUTF16(bun.reinterpretSlice(u16, buf));
             defer out.deref();
             return out.toJS(global);
@@ -5139,7 +5139,7 @@ pub const Blob = struct {
         if (could_be_all_ascii == null or !could_be_all_ascii.?) {
             // if toUTF16Alloc returns null, it means there are no non-ASCII characters
             // instead of erroring, invalid characters will become a U+FFFD replacement character
-            if (strings.toUTF16Alloc(bun.default_allocator, buf, false, false) catch return global.throwOutOfMemory()) |external| {
+            if (strings.toUTF16Alloc(bun.heap.default_allocator, buf, false, false) catch return global.throwOutOfMemory()) |external| {
                 if (lifetime != .temporary)
                     this.setIsASCIIFlag(false);
 
@@ -5148,7 +5148,7 @@ pub const Blob = struct {
                 }
 
                 if (lifetime == .temporary) {
-                    bun.default_allocator.free(raw_bytes);
+                    bun.heap.default_allocator.free(raw_bytes);
                 }
 
                 return ZigString.toExternalU16(external.ptr, external.len, global);
@@ -5185,7 +5185,7 @@ pub const Blob = struct {
                 if (buf.len != raw_bytes.len) {
                     var out = bun.String.createLatin1(buf);
                     defer {
-                        bun.default_allocator.free(raw_bytes);
+                        bun.heap.default_allocator.free(raw_bytes);
                         out.deref();
                     }
 
@@ -5237,7 +5237,7 @@ pub const Blob = struct {
 
         if (bom == .utf16_le) {
             var out = bun.String.createUTF16(bun.reinterpretSlice(u16, buf));
-            defer if (lifetime == .temporary) bun.default_allocator.free(raw_bytes);
+            defer if (lifetime == .temporary) bun.heap.default_allocator.free(raw_bytes);
             defer if (lifetime == .transfer) this.detach();
             defer out.deref();
             return out.toJSByParseJSON(global);
@@ -5245,10 +5245,10 @@ pub const Blob = struct {
         // null == unknown
         // false == can't be
         const could_be_all_ascii = this.is_all_ascii orelse this.store.?.is_all_ascii;
-        defer if (comptime lifetime == .temporary) bun.default_allocator.free(@constCast(buf));
+        defer if (comptime lifetime == .temporary) bun.heap.default_allocator.free(@constCast(buf));
 
         if (could_be_all_ascii == null or !could_be_all_ascii.?) {
-            var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
+            var stack_fallback = std.heap.stackFallback(4096, bun.heap.default_allocator);
             const allocator = stack_fallback.get();
             // if toUTF16Alloc returns null, it means there are no non-ASCII characters
             if (strings.toUTF16Alloc(allocator, buf, false, false) catch null) |external| {
@@ -5299,7 +5299,7 @@ pub const Blob = struct {
                         if (store.data == .bytes) {
                             const allocated_slice = store.data.bytes.allocatedSlice();
                             if (bun.isSliceInBuffer(buf, allocated_slice)) {
-                                if (bun.linux.memfd_allocator.from(store.data.bytes.allocator)) |allocator| {
+                                if (bun.heap.MemFdAllocator.from(store.data.bytes.allocator)) |allocator| {
                                     allocator.ref();
                                     defer allocator.deref();
 
@@ -5356,7 +5356,7 @@ pub const Blob = struct {
             },
             .temporary => {
                 if (buf.len > JSC.synthetic_allocation_limit and TypedArrayView != .ArrayBuffer) {
-                    bun.default_allocator.free(buf);
+                    bun.heap.default_allocator.free(buf);
                     return global.throwOutOfMemory();
                 }
 
@@ -5501,8 +5501,8 @@ pub const Blob = struct {
                     if (!fail_if_top_value_is_not_typed_array_like) {
                         var str = top_value.toBunString(global);
                         defer str.deref();
-                        const bytes, const ascii = try str.toOwnedSliceReturningAllASCII(bun.default_allocator);
-                        return Blob.initWithAllASCII(bytes, bun.default_allocator, global, ascii);
+                        const bytes, const ascii = try str.toOwnedSliceReturningAllASCII(bun.heap.default_allocator);
+                        return Blob.initWithAllASCII(bytes, bun.heap.default_allocator, global, ascii);
                     }
                 },
 
@@ -5521,7 +5521,7 @@ pub const Blob = struct {
                 JSC.JSValue.JSType.BigUint64Array,
                 JSC.JSValue.JSType.DataView,
                 => {
-                    return try Blob.tryCreate(top_value.asArrayBuffer(global).?.byteSlice(), bun.default_allocator, global, false);
+                    return try Blob.tryCreate(top_value.asArrayBuffer(global).?.byteSlice(), bun.heap.default_allocator, global, false);
                 },
 
                 .DOMWrapper => {
@@ -5562,7 +5562,7 @@ pub const Blob = struct {
             }
         }
 
-        var stack_allocator = std.heap.stackFallback(1024, bun.default_allocator);
+        var stack_allocator = std.heap.stackFallback(1024, bun.heap.default_allocator);
         const stack_mem_all = stack_allocator.get();
         var stack: std.ArrayList(JSValue) = std.ArrayList(JSValue).init(stack_mem_all);
         var joiner = StringJoiner{ .allocator = stack_mem_all };
@@ -5577,7 +5577,7 @@ pub const Blob = struct {
                 JSC.JSValue.JSType.StringObject,
                 JSC.JSValue.JSType.DerivedStringObject,
                 => {
-                    var sliced = current.toSlice(global, bun.default_allocator);
+                    var sliced = current.toSlice(global, bun.heap.default_allocator);
                     const allocator = sliced.allocator.get();
                     could_have_non_ascii = could_have_non_ascii or !sliced.allocator.isWTFAllocator();
                     joiner.push(sliced.slice(), allocator);
@@ -5603,7 +5603,7 @@ pub const Blob = struct {
                                 .StringObject,
                                 .DerivedStringObject,
                                 => {
-                                    var sliced = item.toSlice(global, bun.default_allocator);
+                                    var sliced = item.toSlice(global, bun.heap.default_allocator);
                                     const allocator = sliced.allocator.get();
                                     could_have_non_ascii = could_have_non_ascii or !sliced.allocator.isWTFAllocator();
                                     joiner.push(sliced.slice(), allocator);
@@ -5686,10 +5686,10 @@ pub const Blob = struct {
                 },
 
                 else => {
-                    var sliced = current.toSlice(global, bun.default_allocator);
+                    var sliced = current.toSlice(global, bun.heap.default_allocator);
                     if (global.hasException()) {
-                        const end_result = try joiner.done(bun.default_allocator);
-                        bun.default_allocator.free(end_result);
+                        const end_result = try joiner.done(bun.heap.default_allocator);
+                        bun.heap.default_allocator.free(end_result);
                         return error.JSError;
                     }
                     could_have_non_ascii = could_have_non_ascii or !sliced.allocator.isWTFAllocator();
@@ -5699,12 +5699,12 @@ pub const Blob = struct {
             current = stack.popOrNull() orelse break;
         }
 
-        const joined = try joiner.done(bun.default_allocator);
+        const joined = try joiner.done(bun.heap.default_allocator);
 
         if (!could_have_non_ascii) {
-            return Blob.initWithAllASCII(joined, bun.default_allocator, global, true);
+            return Blob.initWithAllASCII(joined, bun.heap.default_allocator, global, true);
         }
-        return Blob.init(joined, bun.default_allocator, global);
+        return Blob.init(joined, bun.heap.default_allocator, global);
     }
 };
 
@@ -5789,7 +5789,7 @@ pub const AnyBlob = union(enum) {
             },
             .blob => {
                 const result = Blob.new(this.toBlob(globalThis));
-                result.allocator = bun.default_allocator;
+                result.allocator = bun.heap.default_allocator;
                 result.globalThis = globalThis;
                 return result.toJS(globalThis);
             },
@@ -5880,7 +5880,7 @@ pub const AnyBlob = union(enum) {
         }
 
         if (this.* == .WTFStringImpl) {
-            const blob = Blob.create(this.slice(), bun.default_allocator, global, true);
+            const blob = Blob.create(this.slice(), bun.heap.default_allocator, global, true);
             this.* = .{ .Blob = .{} };
             return blob;
         }
@@ -5963,7 +5963,7 @@ pub const AnyBlob = union(enum) {
                 this.* = .{ .Blob = .{} };
                 defer str.deref();
 
-                const out_bytes = str.toUTF8WithoutRef(bun.default_allocator);
+                const out_bytes = str.toUTF8WithoutRef(bun.heap.default_allocator);
                 if (out_bytes.isAllocated()) {
                     return JSC.ArrayBuffer.fromDefaultAllocator(
                         global,

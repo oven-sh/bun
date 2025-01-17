@@ -6,7 +6,7 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const C = bun.C;
 const std = @import("std");
 const Progress = bun.Progress;
@@ -60,7 +60,7 @@ pub const Version = struct {
                 const Cli = @import("../cli.zig");
 
                 return std.fmt.allocPrint(
-                    bun.default_allocator,
+                    bun.heap.default_allocator,
                     "bun-canary-timestamp-{any}",
                     .{
                         bun.fmt.hexIntLower(
@@ -497,7 +497,7 @@ pub const UpgradeCommand = struct {
             .tag = "canary",
             .zip_url = "https://github.com/oven-sh/bun/releases/download/canary/" ++ Version.zip_filename,
             .size = 0,
-            .buf = MutableString.initEmpty(bun.default_allocator),
+            .buf = MutableString.initEmpty(bun.heap.default_allocator),
         };
 
         const zip_url = URL.parse(version.zip_url);

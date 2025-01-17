@@ -134,7 +134,7 @@ pub const Async = struct {
             );
             switch (result) {
                 .err => |err| {
-                    this.completion(this.completion_ctx, .{ .err = err.withPath(bun.default_allocator.dupe(u8, err.path) catch bun.outOfMemory()) });
+                    this.completion(this.completion_ctx, .{ .err = err.withPath(bun.heap.default_allocator.dupe(u8, err.path) catch bun.outOfMemory()) });
                 },
                 .result => {
                     this.completion(this.completion_ctx, JSC.Maybe(void).success);
@@ -281,7 +281,7 @@ pub const Async = struct {
                 this.result = @field(NodeFS, "uv_" ++ @tagName(FunctionEnum))(&node_fs, this.args, @intFromEnum(req.result));
 
                 if (this.result == .err) {
-                    this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
+                    this.result.err.path = bun.heap.default_allocator.dupe(u8, this.result.err.path) catch "";
                     std.mem.doNotOptimizeAway(&node_fs);
                 }
 
@@ -321,7 +321,7 @@ pub const Async = struct {
 
             pub fn deinit(this: *Task) void {
                 if (this.result == .err) {
-                    bun.default_allocator.free(this.result.err.path);
+                    bun.heap.default_allocator.free(this.result.err.path);
                 }
 
                 this.ref.unref(this.globalObject.bunVM());
@@ -381,7 +381,7 @@ pub const Async = struct {
                 this.result = Function(&node_fs, this.args, .@"async");
 
                 if (this.result == .err) {
-                    this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
+                    this.result.err.path = bun.heap.default_allocator.dupe(u8, this.result.err.path) catch "";
                     std.mem.doNotOptimizeAway(&node_fs);
                 }
 
@@ -421,7 +421,7 @@ pub const Async = struct {
 
             pub fn deinit(this: *Task) void {
                 if (this.result == .err) {
-                    bun.default_allocator.free(this.result.err.path);
+                    bun.heap.default_allocator.free(this.result.err.path);
                 }
 
                 this.ref.unref(this.globalObject.bunVM());
@@ -453,7 +453,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
         /// it is not threadsafe and is unnecessary as the process will be kept
         /// alive by the shell instance
         ref: if (!is_shell) bun.Async.KeepAlive else struct {} = .{},
-        arena: bun.ArenaAllocator,
+        arena: std.heap.ArenaAllocator,
         tracker: JSC.AsyncTaskTracker,
         has_result: std.atomic.Value(bool),
         /// On each creation of a `AsyncCpSingleFileTask`, this is incremented.
@@ -531,7 +531,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
 
             pub fn deinit(this: *ThisSingleTask) void {
                 // There is only one path buffer for both paths. 2 extra bytes are the nulls at the end of each
-                bun.default_allocator.free(this.src.ptr[0 .. this.src.len + this.dest.len + 2]);
+                bun.heap.default_allocator.free(this.src.ptr[0 .. this.src.len + this.dest.len + 2]);
 
                 bun.destroy(this);
             }
@@ -554,7 +554,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             _: *JSC.Node.NodeJSFS,
             cp_args: Arguments.Cp,
             vm: *JSC.VirtualMachine,
-            arena: bun.ArenaAllocator,
+            arena: std.heap.ArenaAllocator,
         ) JSC.JSValue {
             const task = createWithShellTask(globalObject, cp_args, vm, arena, 0, true);
             return task.promise.value();
@@ -564,7 +564,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             globalObject: *JSC.JSGlobalObject,
             cp_args: Arguments.Cp,
             vm: *JSC.VirtualMachine,
-            arena: bun.ArenaAllocator,
+            arena: std.heap.ArenaAllocator,
             shelltask: ShellTaskT,
             comptime enable_promise: bool,
         ) *ThisAsyncCpTask {
@@ -595,7 +595,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
         pub fn createMini(
             cp_args: Arguments.Cp,
             mini: *JSC.MiniEventLoop,
-            arena: bun.ArenaAllocator,
+            arena: std.heap.ArenaAllocator,
             shelltask: *ShellTask,
         ) *ThisAsyncCpTask {
             var task = bun.new(
@@ -636,7 +636,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             this.result = result;
 
             if (this.result == .err) {
-                this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
+                this.result.err.path = bun.heap.default_allocator.dupe(u8, this.result.err.path) catch "";
             }
 
             if (this.evtloop == .js) {
@@ -894,7 +894,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                         const cname = current.name.slice();
 
                         // Allocate a path buffer for the path data
-                        var path_buf = bun.default_allocator.alloc(
+                        var path_buf = bun.heap.default_allocator.alloc(
                             bun.OSPathChar,
                             src_dir_len + 1 + cname.len + 1 + dest_dir_len + 1 + cname.len + 1,
                         ) catch bun.outOfMemory();
@@ -974,7 +974,7 @@ pub const AsyncReaddirRecursiveTask = struct {
                     },
                     .buffers => |*res| {
                         for (res.items) |item| {
-                            bun.default_allocator.free(item.buffer.byteSlice());
+                            bun.heap.default_allocator.free(item.buffer.byteSlice());
                         }
                         res.clearAndFree();
                     },
@@ -1004,7 +1004,7 @@ pub const AsyncReaddirRecursiveTask = struct {
         pub fn call(task: *JSC.WorkPoolTask) void {
             var this: *Subtask = @alignCast(@fieldParentPtr("task", task));
             defer {
-                bun.default_allocator.free(this.basename.sliceAssumeZ());
+                bun.heap.default_allocator.free(this.basename.sliceAssumeZ());
                 this.destroy();
             }
             var buf: bun.PathBuffer = undefined;
@@ -1019,7 +1019,7 @@ pub const AsyncReaddirRecursiveTask = struct {
         var task = Subtask.new(
             .{
                 .readdir_task = readdir_task,
-                .basename = bun.PathString.init(bun.default_allocator.dupeZ(u8, basename) catch bun.outOfMemory()),
+                .basename = bun.PathString.init(bun.heap.default_allocator.dupeZ(u8, basename) catch bun.outOfMemory()),
             },
         );
         bun.assert(readdir_task.subtask_count.fetchAdd(1, .monotonic) > 0);
@@ -1038,11 +1038,11 @@ pub const AsyncReaddirRecursiveTask = struct {
             .globalObject = globalObject,
             .tracker = JSC.AsyncTaskTracker.init(vm),
             .subtask_count = .{ .raw = 1 },
-            .root_path = PathString.init(bun.default_allocator.dupeZ(u8, args.path.slice()) catch bun.outOfMemory()),
+            .root_path = PathString.init(bun.heap.default_allocator.dupeZ(u8, args.path.slice()) catch bun.outOfMemory()),
             .result_list = switch (args.tag()) {
-                .files => .{ .files = std.ArrayList(bun.String).init(bun.default_allocator) },
-                .with_file_types => .{ .with_file_types = std.ArrayList(Dirent).init(bun.default_allocator) },
-                .buffers => .{ .buffers = std.ArrayList(Buffer).init(bun.default_allocator) },
+                .files => .{ .files = std.ArrayList(bun.String).init(bun.heap.default_allocator) },
+                .with_file_types => .{ .with_file_types = std.ArrayList(Dirent).init(bun.heap.default_allocator) },
+                .buffers => .{ .buffers = std.ArrayList(Buffer).init(bun.heap.default_allocator) },
             },
         });
         task.ref.ref(vm);
@@ -1062,7 +1062,7 @@ pub const AsyncReaddirRecursiveTask = struct {
                     .with_file_types => Dirent,
                     .buffers => Buffer,
                 };
-                var stack = std.heap.stackFallback(8192, bun.default_allocator);
+                var stack = std.heap.stackFallback(8192, bun.heap.default_allocator);
 
                 // This is a stack-local copy to avoid resizing heap-allocated arrays in the common case of a small directory
                 var entries = std.ArrayList(ResultType).init(stack.get());
@@ -1083,7 +1083,7 @@ pub const AsyncReaddirRecursiveTask = struct {
                             switch (ResultType) {
                                 bun.String => item.deref(),
                                 Dirent => item.deref(),
-                                Buffer => bun.default_allocator.free(item.buffer.byteSlice()),
+                                Buffer => bun.heap.default_allocator.free(item.buffer.byteSlice()),
                                 else => @compileError("unreachable"),
                             }
                         }
@@ -1093,7 +1093,7 @@ pub const AsyncReaddirRecursiveTask = struct {
                             defer this.pending_err_mutex.unlock();
                             if (this.pending_err == null) {
                                 const err_path = if (err.path.len > 0) err.path else this.args.path.slice();
-                                this.pending_err = err.withPath(bun.default_allocator.dupe(u8, err_path) catch "");
+                                this.pending_err = err.withPath(bun.heap.default_allocator.dupe(u8, err_path) catch "");
                             }
                         }
 
@@ -1123,11 +1123,11 @@ pub const AsyncReaddirRecursiveTask = struct {
                 Buffer => .buffers,
                 else => @compileError("unreachable"),
             };
-            const list = bun.default_allocator.create(ResultListEntry) catch bun.outOfMemory();
+            const list = bun.heap.default_allocator.create(ResultListEntry) catch bun.outOfMemory();
             errdefer {
-                bun.default_allocator.destroy(list);
+                bun.heap.default_allocator.destroy(list);
             }
-            var clone = std.ArrayList(ResultType).initCapacity(bun.default_allocator, result.items.len) catch bun.outOfMemory();
+            var clone = std.ArrayList(ResultType).initCapacity(bun.heap.default_allocator, result.items.len) catch bun.outOfMemory();
             clone.appendSliceAssumeCapacity(result.items);
             _ = this.result_list_count.fetchAdd(clone.items.len, .monotonic);
             list.* = ResultListEntry{ .next = null, .value = @unionInit(ResultListEntry.Value, @tagName(Field), clone) };
@@ -1151,7 +1151,7 @@ pub const AsyncReaddirRecursiveTask = struct {
         if (root_fd != bun.invalid_fd) {
             this.root_fd = bun.invalid_fd;
             _ = Syscall.close(root_fd);
-            bun.default_allocator.free(this.root_path.slice());
+            bun.heap.default_allocator.free(this.root_path.slice());
             this.root_path = PathString.empty;
         }
 
@@ -1173,7 +1173,7 @@ pub const AsyncReaddirRecursiveTask = struct {
                     results.ensureTotalCapacityPrecise(this.result_list_count.swap(0, .monotonic)) catch bun.outOfMemory();
                     while (iter.next()) |val| {
                         if (to_destroy) |dest| {
-                            bun.default_allocator.destroy(dest);
+                            bun.heap.default_allocator.destroy(dest);
                         }
                         to_destroy = val;
 
@@ -1183,7 +1183,7 @@ pub const AsyncReaddirRecursiveTask = struct {
                     }
 
                     if (to_destroy) |dest| {
-                        bun.default_allocator.destroy(dest);
+                        bun.heap.default_allocator.destroy(dest);
                     }
                 },
             }
@@ -1201,12 +1201,12 @@ pub const AsyncReaddirRecursiveTask = struct {
         while (iter.next()) |val| {
             val.value.deinit();
             if (to_destroy) |dest| {
-                bun.default_allocator.destroy(dest);
+                bun.heap.default_allocator.destroy(dest);
             }
             to_destroy = val;
         }
         if (to_destroy) |dest| {
-            bun.default_allocator.destroy(dest);
+            bun.heap.default_allocator.destroy(dest);
         }
         this.result_list_count.store(0, .monotonic);
     }
@@ -1249,12 +1249,12 @@ pub const AsyncReaddirRecursiveTask = struct {
     pub fn deinit(this: *AsyncReaddirRecursiveTask) void {
         bun.assert(this.root_fd == bun.invalid_fd); // should already have closed it
         if (this.pending_err) |*err| {
-            bun.default_allocator.free(err.path);
+            bun.heap.default_allocator.free(err.path);
         }
 
         this.ref.unref(this.globalObject.bunVM());
         this.args.deinit();
-        bun.default_allocator.free(this.root_path.slice());
+        bun.heap.default_allocator.free(this.root_path.slice());
         this.clearResultList();
         this.promise.deinit();
         this.destroy();
@@ -1317,7 +1317,7 @@ pub const Arguments = struct {
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Truncate {
-            const path = try PathOrFileDescriptor.fromJS(ctx, arguments, bun.default_allocator) orelse {
+            const path = try PathOrFileDescriptor.fromJS(ctx, arguments, bun.heap.default_allocator) orelse {
                 return ctx.throwInvalidArguments("path must be a string or TypedArray", .{});
             };
 
@@ -1351,11 +1351,11 @@ pub const Arguments = struct {
         pub fn toThreadSafe(this: *@This()) void {
             this.buffers.value.protect();
 
-            const clone = bun.default_allocator.dupe(bun.PlatformIOVec, this.buffers.buffers.items) catch bun.outOfMemory();
+            const clone = bun.heap.default_allocator.dupe(bun.PlatformIOVec, this.buffers.buffers.items) catch bun.outOfMemory();
             this.buffers.buffers.deinit();
             this.buffers.buffers.items = clone;
             this.buffers.buffers.capacity = clone.len;
-            this.buffers.buffers.allocator = bun.default_allocator;
+            this.buffers.buffers.allocator = bun.heap.default_allocator;
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Writev {
@@ -1405,11 +1405,11 @@ pub const Arguments = struct {
         pub fn toThreadSafe(this: *@This()) void {
             this.buffers.value.protect();
 
-            const clone = bun.default_allocator.dupe(bun.PlatformIOVec, this.buffers.buffers.items) catch bun.outOfMemory();
+            const clone = bun.heap.default_allocator.dupe(bun.PlatformIOVec, this.buffers.buffers.items) catch bun.outOfMemory();
             this.buffers.buffers.deinit();
             this.buffers.buffers.items = clone;
             this.buffers.buffers.capacity = clone.len;
-            this.buffers.buffers.allocator = bun.default_allocator;
+            this.buffers.buffers.allocator = bun.heap.default_allocator;
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Readv {
@@ -2112,7 +2112,7 @@ pub const Arguments = struct {
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!MkdirTemp {
             const prefix_value = arguments.next() orelse return MkdirTemp{};
 
-            const prefix = StringOrBuffer.fromJS(ctx, bun.default_allocator, prefix_value) orelse {
+            const prefix = StringOrBuffer.fromJS(ctx, bun.heap.default_allocator, prefix_value) orelse {
                 return ctx.throwInvalidArguments("prefix must be a string or TypedArray", .{});
             };
             errdefer prefix.deinit();
@@ -2388,7 +2388,7 @@ pub const Arguments = struct {
             };
 
             const buffer_value = arguments.next();
-            const buffer = StringOrBuffer.fromJS(ctx, bun.default_allocator, buffer_value orelse {
+            const buffer = StringOrBuffer.fromJS(ctx, bun.heap.default_allocator, buffer_value orelse {
                 return ctx.throwInvalidArguments("data is required", .{});
             }) orelse {
                 return ctx.throwInvalidArgumentTypeValue("buffer", "string or TypedArray", buffer_value.?);
@@ -2601,7 +2601,7 @@ pub const Arguments = struct {
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!ReadFile {
-            const path = try PathOrFileDescriptor.fromJS(ctx, arguments, bun.default_allocator) orelse {
+            const path = try PathOrFileDescriptor.fromJS(ctx, arguments, bun.heap.default_allocator) orelse {
                 return ctx.throwInvalidArguments("path must be a string or a file descriptor", .{});
             };
             errdefer path.deinit();
@@ -2662,7 +2662,7 @@ pub const Arguments = struct {
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!WriteFile {
-            const path = try PathOrFileDescriptor.fromJS(ctx, arguments, bun.default_allocator) orelse {
+            const path = try PathOrFileDescriptor.fromJS(ctx, arguments, bun.heap.default_allocator) orelse {
                 return ctx.throwInvalidArguments("path must be a string or a file descriptor", .{});
             };
             errdefer path.deinit();
@@ -2698,7 +2698,7 @@ pub const Arguments = struct {
                 }
             }
 
-            const data = try StringOrBuffer.fromJSWithEncodingMaybeAsync(ctx, bun.default_allocator, data_value, encoding, arguments.will_be_async) orelse {
+            const data = try StringOrBuffer.fromJSWithEncodingMaybeAsync(ctx, bun.heap.default_allocator, data_value, encoding, arguments.will_be_async) orelse {
                 return ctx.ERR_INVALID_ARG_TYPE("The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView", .{}).throw();
             };
 
@@ -3136,11 +3136,11 @@ const Return = struct {
         pub fn toJS(this: Readdir, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
             switch (this) {
                 .with_file_types => {
-                    defer bun.default_allocator.free(this.with_file_types);
+                    defer bun.heap.default_allocator.free(this.with_file_types);
                     return JSC.toJS(globalObject, []Dirent, this.with_file_types, .temporary);
                 },
                 .buffers => {
-                    defer bun.default_allocator.free(this.buffers);
+                    defer bun.heap.default_allocator.free(this.buffers);
                     return JSC.toJS(globalObject, []Buffer, this.buffers, .temporary);
                 },
                 .files => {
@@ -3264,14 +3264,14 @@ pub const NodeFS = struct {
                 // Don't allocate more than 8 MB at a time
                 const clamped_size: usize = @min(stat_size, 8 * 1024 * 1024);
 
-                const buf_ = bun.default_allocator.alloc(u8, clamped_size) catch break :maybe_allocate_large_temp_buf;
+                const buf_ = bun.heap.default_allocator.alloc(u8, clamped_size) catch break :maybe_allocate_large_temp_buf;
                 buf = buf_;
                 buf_to_free = buf_;
             }
         }
 
         defer {
-            if (buf_to_free.len > 0) bun.default_allocator.free(buf_to_free);
+            if (buf_to_free.len > 0) bun.heap.default_allocator.free(buf_to_free);
         }
 
         var remain = @as(u64, @intCast(@max(stat_size, 0)));
@@ -3965,14 +3965,14 @@ pub const NodeFS = struct {
                 } };
             }
             return .{
-                .result = JSC.ZigString.dupeForJS(bun.sliceTo(req.path, 0), bun.default_allocator) catch bun.outOfMemory(),
+                .result = JSC.ZigString.dupeForJS(bun.sliceTo(req.path, 0), bun.heap.default_allocator) catch bun.outOfMemory(),
             };
         }
 
         const rc = C.mkdtemp(prefix_buf);
         if (rc) |ptr| {
             return .{
-                .result = JSC.ZigString.dupeForJS(bun.sliceTo(ptr, 0), bun.default_allocator) catch bun.outOfMemory(),
+                .result = JSC.ZigString.dupeForJS(bun.sliceTo(ptr, 0), bun.heap.default_allocator) catch bun.outOfMemory(),
             };
         }
 
@@ -4294,7 +4294,7 @@ pub const NodeFS = struct {
                         }) catch bun.outOfMemory();
                     },
                     Buffer => {
-                        entries.append(Buffer.fromString(utf8_name, bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
+                        entries.append(Buffer.fromString(utf8_name, bun.heap.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
                     },
                     bun.String => {
                         entries.append(bun.String.createUTF8(utf8_name)) catch bun.outOfMemory();
@@ -4447,7 +4447,7 @@ pub const NodeFS = struct {
                     }) catch bun.outOfMemory();
                 },
                 Buffer => {
-                    entries.append(Buffer.fromString(name_to_copy, bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
+                    entries.append(Buffer.fromString(name_to_copy, bun.heap.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
                 },
                 bun.String => {
                     entries.append(bun.String.createUTF8(name_to_copy)) catch bun.outOfMemory();
@@ -4466,9 +4466,9 @@ pub const NodeFS = struct {
         comptime ExpectedType: type,
         entries: *std.ArrayList(ExpectedType),
     ) Maybe(void) {
-        var iterator_stack = std.heap.stackFallback(128, bun.default_allocator);
+        var iterator_stack = std.heap.stackFallback(128, bun.heap.default_allocator);
         var stack = std.fifo.LinearFifo([:0]const u8, .{ .Dynamic = {} }).init(iterator_stack.get());
-        var basename_stack = std.heap.stackFallback(8192 * 2, bun.default_allocator);
+        var basename_stack = std.heap.stackFallback(8192 * 2, bun.heap.default_allocator);
         const basename_allocator = basename_stack.get();
         defer {
             while (stack.readItem()) |name| {
@@ -4513,7 +4513,7 @@ pub const NodeFS = struct {
                         else => {
                             const path_parts = [_]string{ args.path.slice(), basename };
                             return .{
-                                .err = err.withPath(bun.default_allocator.dupe(u8, bun.path.joinZBuf(buf, &path_parts, .auto)) catch ""),
+                                .err = err.withPath(bun.heap.default_allocator.dupe(u8, bun.path.joinZBuf(buf, &path_parts, .auto)) catch ""),
                             };
                         },
                     }
@@ -4587,7 +4587,7 @@ pub const NodeFS = struct {
                         }) catch bun.outOfMemory();
                     },
                     Buffer => {
-                        entries.append(Buffer.fromString(name_to_copy, bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
+                        entries.append(Buffer.fromString(name_to_copy, bun.heap.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
                     },
                     bun.String => {
                         entries.append(bun.String.createUTF8(name_to_copy)) catch bun.outOfMemory();
@@ -4642,7 +4642,7 @@ pub const NodeFS = struct {
         if (comptime recursive and flavor == .sync) {
             var buf_to_pass: bun.PathBuffer = undefined;
 
-            var entries = std.ArrayList(ExpectedType).init(bun.default_allocator);
+            var entries = std.ArrayList(ExpectedType).init(bun.heap.default_allocator);
             return switch (readdirWithEntriesRecursiveSync(&buf_to_pass, args, path, ExpectedType, &entries)) {
                 .err => |err| {
                     for (entries.items) |*result| {
@@ -4688,7 +4688,7 @@ pub const NodeFS = struct {
 
         defer _ = Syscall.close(fd);
 
-        var entries = std.ArrayList(ExpectedType).init(bun.default_allocator);
+        var entries = std.ArrayList(ExpectedType).init(bun.heap.default_allocator);
         return switch (readdirWithEntries(args, fd, path, ExpectedType, &entries)) {
             .err => |err| return .{
                 .err = err,
@@ -4751,8 +4751,8 @@ pub const NodeFS = struct {
                                 return .{
                                     .result = .{
                                         .buffer = Buffer.fromBytes(
-                                            bun.default_allocator.dupe(u8, file.contents) catch bun.outOfMemory(),
-                                            bun.default_allocator,
+                                            bun.heap.default_allocator.dupe(u8, file.contents) catch bun.outOfMemory(),
+                                            bun.heap.default_allocator,
                                             .Uint8Array,
                                         ),
                                     },
@@ -4760,13 +4760,13 @@ pub const NodeFS = struct {
                             } else if (comptime string_type == .default)
                                 return .{
                                     .result = .{
-                                        .string = bun.default_allocator.dupe(u8, file.contents) catch bun.outOfMemory(),
+                                        .string = bun.heap.default_allocator.dupe(u8, file.contents) catch bun.outOfMemory(),
                                     },
                                 }
                             else
                                 return .{
                                     .result = .{
-                                        .null_terminated = bun.default_allocator.dupeZ(u8, file.contents) catch bun.outOfMemory(),
+                                        .null_terminated = bun.heap.default_allocator.dupeZ(u8, file.contents) catch bun.outOfMemory(),
                                     },
                                 };
                         }
@@ -4871,10 +4871,10 @@ pub const NodeFS = struct {
                         return .{
                             .result = .{
                                 .buffer = Buffer.fromBytes(
-                                    bun.default_allocator.dupe(u8, temporary_read_buffer) catch return .{
+                                    bun.heap.default_allocator.dupe(u8, temporary_read_buffer) catch return .{
                                         .err = Syscall.Error.fromCode(.NOMEM, .read).withPathLike(args.path),
                                     },
-                                    bun.default_allocator,
+                                    bun.heap.default_allocator,
                                     .Uint8Array,
                                 ),
                             },
@@ -4890,7 +4890,7 @@ pub const NodeFS = struct {
                         } else {
                             return .{
                                 .result = .{
-                                    .null_terminated = bun.default_allocator.dupeZ(u8, temporary_read_buffer) catch return .{
+                                    .null_terminated = bun.heap.default_allocator.dupeZ(u8, temporary_read_buffer) catch return .{
                                         .err = Syscall.Error.fromCode(.NOMEM, .read).withPathLike(args.path),
                                     },
                                 },
@@ -4938,7 +4938,7 @@ pub const NodeFS = struct {
             }
         }
 
-        var buf = std.ArrayList(u8).init(bun.default_allocator);
+        var buf = std.ArrayList(u8).init(bun.heap.default_allocator);
         defer if (!did_succeed) buf.clearAndFree();
         buf.ensureTotalCapacityPrecise(
             @min(
@@ -5049,7 +5049,7 @@ pub const NodeFS = struct {
         return switch (args.encoding) {
             .buffer => .{
                 .result = .{
-                    .buffer = Buffer.fromBytes(buf.items, bun.default_allocator, .Uint8Array),
+                    .buffer = Buffer.fromBytes(buf.items, bun.heap.default_allocator, .Uint8Array),
                 },
             },
             else => brk: {
@@ -5182,7 +5182,7 @@ pub const NodeFS = struct {
         return .{
             .result = switch (args.encoding) {
                 .buffer => .{
-                    .buffer = Buffer.fromString(link_path, bun.default_allocator) catch unreachable,
+                    .buffer = Buffer.fromString(link_path, bun.heap.default_allocator) catch unreachable,
                 },
                 else => if (args.path == .slice_with_underlying_string and
                     strings.eqlLong(args.path.slice_with_underlying_string.slice(), link_path, true))
@@ -5245,7 +5245,7 @@ pub const NodeFS = struct {
             return .{
                 .result = switch (args.encoding) {
                     .buffer => .{
-                        .buffer = Buffer.fromString(buf, bun.default_allocator) catch unreachable,
+                        .buffer = Buffer.fromString(buf, bun.heap.default_allocator) catch unreachable,
                     },
                     else => if (args.path == .slice_with_underlying_string and
                         strings.eqlLong(args.path.slice_with_underlying_string.slice(), buf, true))
@@ -5294,7 +5294,7 @@ pub const NodeFS = struct {
         return .{
             .result = switch (args.encoding) {
                 .buffer => .{
-                    .buffer = Buffer.fromString(buf, bun.default_allocator) catch unreachable,
+                    .buffer = Buffer.fromString(buf, bun.heap.default_allocator) catch unreachable,
                 },
                 else => if (args.path == .slice_with_underlying_string and
                     strings.eqlLong(args.path.slice_with_underlying_string.slice(), buf, true))
@@ -5563,8 +5563,8 @@ pub const NodeFS = struct {
         bun.assert(flavor == .sync);
 
         const watcher = args.createStatWatcher() catch |err| {
-            const buf = std.fmt.allocPrint(bun.default_allocator, "Failed to watch file {}", .{bun.fmt.QuotedFormatter{ .text = args.path.slice() }}) catch bun.outOfMemory();
-            defer bun.default_allocator.free(buf);
+            const buf = std.fmt.allocPrint(bun.heap.default_allocator, "Failed to watch file {}", .{bun.fmt.QuotedFormatter{ .text = args.path.slice() }}) catch bun.outOfMemory();
+            defer bun.heap.default_allocator.free(buf);
             args.global_this.throwValue((JSC.SystemError{
                 .message = bun.String.init(buf),
                 .code = bun.String.init(@errorName(err)),

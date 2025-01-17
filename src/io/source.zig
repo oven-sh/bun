@@ -104,7 +104,7 @@ pub const Source = union(enum) {
 
     pub fn openPipe(loop: *uv.Loop, fd: bun.FileDescriptor) bun.JSC.Maybe(*Source.Pipe) {
         log("openPipe (fd = {})", .{fd});
-        const pipe = bun.default_allocator.create(Source.Pipe) catch bun.outOfMemory();
+        const pipe = bun.heap.default_allocator.create(Source.Pipe) catch bun.outOfMemory();
         // we should never init using IPC here see ipc.zig
         switch (pipe.init(loop, false)) {
             .err => |err| {
@@ -143,7 +143,7 @@ pub const Source = union(enum) {
             return .{ .result = &stdin_tty };
         }
 
-        const tty = bun.default_allocator.create(Source.Tty) catch bun.outOfMemory();
+        const tty = bun.heap.default_allocator.create(Source.Tty) catch bun.outOfMemory();
         return switch (tty.init(loop, uv_fd)) {
             .err => |err| .{ .err = err },
             .result => .{ .result = tty },
@@ -153,7 +153,7 @@ pub const Source = union(enum) {
     pub fn openFile(fd: bun.FileDescriptor) *Source.File {
         bun.assert(fd.isValid() and bun.uvfdcast(fd) != -1);
         log("openFile (fd = {})", .{fd});
-        const file = bun.default_allocator.create(Source.File) catch bun.outOfMemory();
+        const file = bun.heap.default_allocator.create(Source.File) catch bun.outOfMemory();
 
         file.* = std.mem.zeroes(Source.File);
         file.file = bun.uvfdcast(fd);

@@ -92,12 +92,12 @@ pub const OutdatedCommand = struct {
                 if (manager.options.filter_patterns.len > 0) {
                     const filters = manager.options.filter_patterns;
                     const workspace_pkg_ids = findMatchingWorkspaces(
-                        bun.default_allocator,
+                        bun.heap.default_allocator,
                         original_cwd,
                         manager,
                         filters,
                     ) catch bun.outOfMemory();
-                    defer bun.default_allocator.free(workspace_pkg_ids);
+                    defer bun.heap.default_allocator.free(workspace_pkg_ids);
 
                     try updateManifestsIfNecessary(manager, log_level, workspace_pkg_ids);
                     try printOutdatedInfoTable(manager, workspace_pkg_ids, true, enable_ansi_colors);
@@ -228,7 +228,7 @@ pub const OutdatedCommand = struct {
 
             var at_least_one_greater_than_zero = false;
 
-            const patterns_buf = bun.default_allocator.alloc(FilterType, args.len) catch bun.outOfMemory();
+            const patterns_buf = bun.heap.default_allocator.alloc(FilterType, args.len) catch bun.outOfMemory();
             for (args, patterns_buf) |arg, *converted| {
                 if (arg.len == 0) {
                     converted.* = FilterType.init(&.{}, false);
@@ -242,7 +242,7 @@ pub const OutdatedCommand = struct {
                 }
 
                 const length = bun.simdutf.length.utf32.from.utf8.le(arg);
-                const convert_buf = bun.default_allocator.alloc(u32, length) catch bun.outOfMemory();
+                const convert_buf = bun.heap.default_allocator.alloc(u32, length) catch bun.outOfMemory();
 
                 const convert_result = bun.simdutf.convert.utf8.to.utf32.with_errors.le(arg, convert_buf);
                 if (!convert_result.isSuccessful()) {
@@ -262,9 +262,9 @@ pub const OutdatedCommand = struct {
         defer {
             if (package_patterns) |patterns| {
                 for (patterns) |pattern| {
-                    pattern.deinit(bun.default_allocator);
+                    pattern.deinit(bun.heap.default_allocator);
                 }
-                bun.default_allocator.free(patterns);
+                bun.heap.default_allocator.free(patterns);
             }
         }
 
@@ -282,7 +282,7 @@ pub const OutdatedCommand = struct {
         const pkg_resolutions = packages.items(.resolution);
         const pkg_dependencies = packages.items(.dependencies);
 
-        var version_buf = std.ArrayList(u8).init(bun.default_allocator);
+        var version_buf = std.ArrayList(u8).init(bun.heap.default_allocator);
         defer version_buf.deinit();
         const version_writer = version_buf.writer();
 
@@ -369,7 +369,7 @@ pub const OutdatedCommand = struct {
                 if (workspace_name.len > max_workspace) max_workspace = workspace_name.len;
 
                 outdated_ids.append(
-                    bun.default_allocator,
+                    bun.heap.default_allocator,
                     .{
                         .package_id = package_id,
                         .dep_id = @intCast(dep_id),

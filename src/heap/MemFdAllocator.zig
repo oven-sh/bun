@@ -17,20 +17,20 @@ const std = @import("std");
 /// often we will re-use virtual memory within the process. This does not reuse
 /// the virtual memory. So we should only really use this for large blobs of
 /// data that we expect to be cloned multiple times. Such as Blob in FormData.
-pub const LinuxMemFdAllocator = struct {
+pub const MemFdAllocator = struct {
     fd: bun.FileDescriptor = .zero,
     ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     size: usize = 0,
 
     var memfd_counter = std.atomic.Value(usize).init(0);
 
-    pub usingnamespace bun.New(LinuxMemFdAllocator);
+    pub usingnamespace bun.New(MemFdAllocator);
 
-    pub fn ref(this: *LinuxMemFdAllocator) void {
+    pub fn ref(this: *MemFdAllocator) void {
         _ = this.ref_count.fetchAdd(1, .monotonic);
     }
 
-    pub fn deref(this: *LinuxMemFdAllocator) void {
+    pub fn deref(this: *MemFdAllocator) void {
         switch (this.ref_count.fetchSub(1, .monotonic)) {
             1 => {
                 _ = bun.sys.close(this.fd);
@@ -46,14 +46,14 @@ pub const LinuxMemFdAllocator = struct {
         }
     }
 
-    pub fn allocator(this: *LinuxMemFdAllocator) std.mem.Allocator {
+    pub fn allocator(this: *MemFdAllocator) std.mem.Allocator {
         return .{
             .ptr = this,
             .vtable = AllocatorInterface.VTable,
         };
     }
 
-    pub fn from(allocator_: std.mem.Allocator) ?*LinuxMemFdAllocator {
+    pub fn from(allocator_: std.mem.Allocator) ?*MemFdAllocator {
         if (allocator_.vtable == AllocatorInterface.VTable) {
             return @alignCast(@ptrCast(allocator_.ptr));
         }
@@ -77,7 +77,7 @@ pub const LinuxMemFdAllocator = struct {
             _: u8,
             _: usize,
         ) void {
-            var this: *LinuxMemFdAllocator = @alignCast(@ptrCast(ptr));
+            var this: *MemFdAllocator = @alignCast(@ptrCast(ptr));
             defer this.deref();
             bun.sys.munmap(@alignCast(@ptrCast(buf))).unwrap() catch |err| {
                 bun.Output.debugWarn("Failed to munmap memfd: {}", .{err});
@@ -91,7 +91,7 @@ pub const LinuxMemFdAllocator = struct {
         };
     };
 
-    pub fn alloc(this: *LinuxMemFdAllocator, len: usize, offset: usize, flags: std.posix.MAP) bun.JSC.Maybe(bun.JSC.WebCore.Blob.ByteStore) {
+    pub fn alloc(this: *MemFdAllocator, len: usize, offset: usize, flags: std.posix.MAP) bun.JSC.Maybe(bun.JSC.WebCore.Blob.ByteStore) {
         var size = len;
 
         // size rounded up to nearest page
@@ -183,7 +183,7 @@ pub const LinuxMemFdAllocator = struct {
             }
         }
 
-        var linux_memfd_allocator = LinuxMemFdAllocator.new(.{
+        var linux_memfd_allocator = MemFdAllocator.new(.{
             .fd = fd,
             .ref_count = std.atomic.Value(u32).init(1),
             .size = bytes.len,

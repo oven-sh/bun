@@ -6,7 +6,7 @@ const assert = bun.assert;
 const ObjectURLRegistry = @This();
 
 lock: bun.Mutex = .{},
-map: std.AutoHashMap(UUID, *RegistryEntry) = std.AutoHashMap(UUID, *RegistryEntry).init(bun.default_allocator),
+map: std.AutoHashMap(UUID, *RegistryEntry) = std.AutoHashMap(UUID, *RegistryEntry).init(bun.heap.default_allocator),
 
 pub const RegistryEntry = struct {
     blob: JSC.WebCore.Blob,
@@ -70,7 +70,7 @@ pub fn resolveAndDupe(this: *ObjectURLRegistry, pathname: []const u8) ?JSC.WebCo
 
 pub fn resolveAndDupeToJS(this: *ObjectURLRegistry, pathname: []const u8, globalObject: *JSC.JSGlobalObject) ?JSC.JSValue {
     var blob = JSC.WebCore.Blob.new(this.resolveAndDupe(pathname) orelse return null);
-    blob.allocator = bun.default_allocator;
+    blob.allocator = bun.heap.default_allocator;
     return blob.toJS(globalObject);
 }
 
@@ -124,7 +124,7 @@ fn Bun__revokeObjectURL_(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Call
         return JSC.JSValue.undefined;
     }
 
-    const slice = str.toUTF8WithoutRef(bun.default_allocator);
+    const slice = str.toUTF8WithoutRef(bun.heap.default_allocator);
     defer slice.deinit();
     defer str.deref();
 
@@ -160,7 +160,7 @@ fn jsFunctionResolveObjectURL_(globalObject: *JSC.JSGlobalObject, callframe: *JS
         return JSC.JSValue.undefined;
     }
 
-    const slice = str.toUTF8WithoutRef(bun.default_allocator);
+    const slice = str.toUTF8WithoutRef(bun.heap.default_allocator);
     defer slice.deinit();
     const sliced = slice.slice();
 

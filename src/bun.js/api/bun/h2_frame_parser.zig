@@ -2922,7 +2922,7 @@ pub const H2FrameParser = struct {
         while (try iter.next()) |header_name| {
             if (header_name.length() == 0) continue;
 
-            const name_slice = header_name.toUTF8(bun.default_allocator);
+            const name_slice = header_name.toUTF8(bun.heap.default_allocator);
             defer name_slice.deinit();
             const name = name_slice.slice();
 
@@ -2958,7 +2958,7 @@ pub const H2FrameParser = struct {
 
                     const never_index = try sensitive_arg.getTruthy(globalObject, "neverIndex") != null;
 
-                    const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
+                    const value_slice = value_str.toSlice(globalObject, bun.heap.default_allocator);
                     defer value_slice.deinit();
                     const value = value_slice.slice();
                     log("encode header {s} {s}", .{ name, value });
@@ -2980,7 +2980,7 @@ pub const H2FrameParser = struct {
 
                 const never_index = try sensitive_arg.getTruthy(globalObject, "neverIndex") != null;
 
-                const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
+                const value_slice = value_str.toSlice(globalObject, bun.heap.default_allocator);
                 defer value_slice.deinit();
                 const value = value_slice.slice();
                 log("encode header {s} {s}", .{ name, value });
@@ -3058,7 +3058,7 @@ pub const H2FrameParser = struct {
 
         var buffer: JSC.Node.StringOrBuffer = try JSC.Node.StringOrBuffer.fromJSWithEncoding(
             globalObject,
-            bun.default_allocator,
+            bun.heap.default_allocator,
             data_arg,
             encoding,
         ) orelse {
@@ -3256,7 +3256,7 @@ pub const H2FrameParser = struct {
             while (try iter.next()) |header_name| {
                 if (header_name.length() == 0) continue;
 
-                const name_slice = header_name.toUTF8(bun.default_allocator);
+                const name_slice = header_name.toUTF8(bun.heap.default_allocator);
                 defer name_slice.deinit();
                 const name = name_slice.slice();
 
@@ -3336,7 +3336,7 @@ pub const H2FrameParser = struct {
 
                         const never_index = try sensitive_arg.getTruthy(globalObject, name) != null;
 
-                        const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
+                        const value_slice = value_str.toSlice(globalObject, bun.heap.default_allocator);
                         defer value_slice.deinit();
                         const value = value_slice.slice();
                         log("encode header {s} {s}", .{ name, value });
@@ -3364,7 +3364,7 @@ pub const H2FrameParser = struct {
 
                     const never_index = try sensitive_arg.getTruthy(globalObject, name) != null;
 
-                    const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
+                    const value_slice = value_str.toSlice(globalObject, bun.heap.default_allocator);
                     defer value_slice.deinit();
                     const value = value_slice.slice();
                     log("encode header {s} {s}", .{ name, value });
@@ -3673,38 +3673,38 @@ pub const H2FrameParser = struct {
         var this = brk: {
             if (ENABLE_ALLOCATOR_POOL) {
                 if (H2FrameParser.pool == null) {
-                    H2FrameParser.pool = bun.default_allocator.create(H2FrameParser.H2FrameParserHiveAllocator) catch bun.outOfMemory();
-                    H2FrameParser.pool.?.* = H2FrameParser.H2FrameParserHiveAllocator.init(bun.default_allocator);
+                    H2FrameParser.pool = bun.heap.default_allocator.create(H2FrameParser.H2FrameParserHiveAllocator) catch bun.outOfMemory();
+                    H2FrameParser.pool.?.* = H2FrameParser.H2FrameParserHiveAllocator.init(bun.heap.default_allocator);
                 }
                 const self = H2FrameParser.pool.?.tryGet() catch bun.outOfMemory();
 
                 self.* = H2FrameParser{
                     .handlers = handlers,
                     .globalThis = globalObject,
-                    .allocator = bun.default_allocator,
+                    .allocator = bun.heap.default_allocator,
                     .readBuffer = .{
-                        .allocator = bun.default_allocator,
+                        .allocator = bun.heap.default_allocator,
                         .list = .{
                             .items = &.{},
                             .capacity = 0,
                         },
                     },
-                    .streams = bun.U32HashMap(Stream).init(bun.default_allocator),
+                    .streams = bun.U32HashMap(Stream).init(bun.heap.default_allocator),
                 };
                 break :brk self;
             } else {
                 break :brk H2FrameParser.new(.{
                     .handlers = handlers,
                     .globalThis = globalObject,
-                    .allocator = bun.default_allocator,
+                    .allocator = bun.heap.default_allocator,
                     .readBuffer = .{
-                        .allocator = bun.default_allocator,
+                        .allocator = bun.heap.default_allocator,
                         .list = .{
                             .items = &.{},
                             .capacity = 0,
                         },
                     },
-                    .streams = bun.U32HashMap(Stream).init(bun.default_allocator),
+                    .streams = bun.U32HashMap(Stream).init(bun.heap.default_allocator),
                 });
             }
         };
@@ -3812,7 +3812,7 @@ pub const H2FrameParser = struct {
         }
         var streams = this.streams;
         defer streams.deinit();
-        this.streams = bun.U32HashMap(Stream).init(bun.default_allocator);
+        this.streams = bun.U32HashMap(Stream).init(bun.heap.default_allocator);
     }
 
     pub fn deinit(this: *H2FrameParser) void {

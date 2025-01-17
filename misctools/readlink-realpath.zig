@@ -9,22 +9,22 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
+const default_allocator = bun.heap.default_allocator;
 const C = bun.C;
 
 // zig build-exe -Doptimize=ReleaseFast --main-pkg-path ../ ./readlink-getfd.zig
 pub fn main() anyerror!void {
-    var stdout_ = std.io.getStdOut();
-    var stderr_ = std.io.getStdErr();
+    const stdout_ = std.io.getStdOut();
+    const stderr_ = std.io.getStdErr();
     var output_source = Output.Source.init(stdout_, stderr_);
     Output.Source.set(&output_source);
     defer Output.flush();
 
     var args_buffer: [8192 * 2]u8 = undefined;
     var fixed_buffer = std.heap.FixedBufferAllocator.init(&args_buffer);
-    var allocator = fixed_buffer.allocator();
+    const allocator = fixed_buffer.allocator();
 
-    var args = std.mem.bytesAsSlice([]u8, try std.process.argsAlloc(allocator));
+    const args = std.mem.bytesAsSlice([]u8, try std.process.argsAlloc(allocator));
 
     const to_resolve = args[args.len - 1];
     var out_buffer: bun.PathBuffer = undefined;

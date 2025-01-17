@@ -67,7 +67,7 @@ fn cpusImplLinux(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
     const values = JSC.JSValue.createEmptyArray(globalThis, 0);
     var num_cpus: u32 = 0;
 
-    var stack_fallback = std.heap.stackFallback(1024 * 8, bun.default_allocator);
+    var stack_fallback = std.heap.stackFallback(1024 * 8, bun.heap.default_allocator);
     var file_buf = std.ArrayList(u8).init(stack_fallback.get());
     defer file_buf.deinit();
 
@@ -331,7 +331,7 @@ pub fn homedir(global: *JSC.JSGlobalObject) !bun.String {
         var stack_string_bytes: [4096]u8 = undefined;
         var string_bytes: []u8 = &stack_string_bytes;
         defer if (string_bytes.ptr != &stack_string_bytes)
-            bun.default_allocator.free(string_bytes);
+            bun.heap.default_allocator.free(string_bytes);
 
         var pw: bun.C.passwd = undefined;
         var result: ?*bun.C.passwd = null;
@@ -351,9 +351,9 @@ pub fn homedir(global: *JSC.JSGlobalObject) !bun.String {
             // If the system call wants more memory, double it.
             if (ret == @intFromEnum(bun.C.E.RANGE)) {
                 const len = string_bytes.len;
-                bun.default_allocator.free(string_bytes);
+                bun.heap.default_allocator.free(string_bytes);
                 string_bytes = "";
-                string_bytes = try bun.default_allocator.alloc(u8, len * 2);
+                string_bytes = try bun.heap.default_allocator.alloc(u8, len * 2);
                 continue;
             }
 

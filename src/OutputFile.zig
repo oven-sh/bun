@@ -27,9 +27,9 @@ pub const Index = bun.GenericIndex(u32, OutputFile);
 pub fn deinit(this: *OutputFile) void {
     this.value.deinit();
 
-    bun.default_allocator.free(this.src_path.text);
-    bun.default_allocator.free(this.dest_path);
-    bun.default_allocator.free(this.referenced_css_files);
+    bun.heap.default_allocator.free(this.src_path.text);
+    bun.heap.default_allocator.free(this.dest_path);
+    bun.heap.default_allocator.free(this.referenced_css_files);
 }
 
 // Depending on:
@@ -128,16 +128,16 @@ pub const SavedFile = struct {
                 },
             },
             mime_type,
-            bun.default_allocator,
+            bun.heap.default_allocator,
         ) catch unreachable;
 
-        var blob = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
+        var blob = bun.heap.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
         blob.* = JSC.WebCore.Blob.initWithStore(store, globalThis);
         if (mime_type) |mime| {
             blob.content_type = mime.value;
         }
         blob.size = @as(JSC.WebCore.Blob.SizeType, @truncate(byte_size));
-        blob.allocator = bun.default_allocator;
+        blob.allocator = bun.heap.default_allocator;
         return blob.toJS(globalThis);
     }
 };
@@ -378,12 +378,12 @@ pub fn toJS(
                 .hash = this.hash,
                 .loader = this.input_loader,
                 .output_kind = this.output_kind,
-                .path = bun.default_allocator.dupe(u8, copy.pathname) catch @panic("Failed to allocate path"),
+                .path = bun.heap.default_allocator.dupe(u8, copy.pathname) catch @panic("Failed to allocate path"),
             });
 
             this.value = .{
                 .buffer = .{
-                    .allocator = bun.default_allocator,
+                    .allocator = bun.heap.default_allocator,
                     .bytes = &.{},
                 },
             };
@@ -391,12 +391,12 @@ pub fn toJS(
             break :brk build_output.toJS(globalObject);
         },
         .saved => brk: {
-            var build_output = bun.default_allocator.create(JSC.API.BuildArtifact) catch @panic("Unable to allocate Artifact");
+            var build_output = bun.heap.default_allocator.create(JSC.API.BuildArtifact) catch @panic("Unable to allocate Artifact");
             const path_to_use = owned_pathname orelse this.src_path.text;
 
             const file_blob = JSC.WebCore.Blob.Store.initFile(
                 JSC.Node.PathOrFileDescriptor{
-                    .path = JSC.Node.PathLike{ .string = bun.PathString.init(owned_pathname orelse (bun.default_allocator.dupe(u8, this.src_path.text) catch unreachable)) },
+                    .path = JSC.Node.PathLike{ .string = bun.PathString.init(owned_pathname orelse (bun.heap.default_allocator.dupe(u8, this.src_path.text) catch unreachable)) },
                 },
                 this.loader.toMimeType(),
                 globalObject.allocator(),
@@ -406,7 +406,7 @@ pub fn toJS(
 
             this.value = .{
                 .buffer = .{
-                    .allocator = bun.default_allocator,
+                    .allocator = bun.heap.default_allocator,
                     .bytes = &.{},
                 },
             };
@@ -416,7 +416,7 @@ pub fn toJS(
                 .hash = this.hash,
                 .loader = this.input_loader,
                 .output_kind = this.output_kind,
-                .path = bun.default_allocator.dupe(u8, path_to_use) catch @panic("Failed to allocate path"),
+                .path = bun.heap.default_allocator.dupe(u8, path_to_use) catch @panic("Failed to allocate path"),
             };
 
             break :brk build_output.toJS(globalObject);
@@ -432,18 +432,18 @@ pub fn toJS(
 
             blob.size = @as(JSC.WebCore.Blob.SizeType, @truncate(buffer.bytes.len));
 
-            var build_output = bun.default_allocator.create(JSC.API.BuildArtifact) catch @panic("Unable to allocate Artifact");
+            var build_output = bun.heap.default_allocator.create(JSC.API.BuildArtifact) catch @panic("Unable to allocate Artifact");
             build_output.* = JSC.API.BuildArtifact{
                 .blob = blob,
                 .hash = this.hash,
                 .loader = this.input_loader,
                 .output_kind = this.output_kind,
-                .path = owned_pathname orelse bun.default_allocator.dupe(u8, this.src_path.text) catch unreachable,
+                .path = owned_pathname orelse bun.heap.default_allocator.dupe(u8, this.src_path.text) catch unreachable,
             };
 
             this.value = .{
                 .buffer = .{
-                    .allocator = bun.default_allocator,
+                    .allocator = bun.heap.default_allocator,
                     .bytes = &.{},
                 },
             };
@@ -477,7 +477,7 @@ pub fn toBlob(
 
             this.value = .{
                 .buffer = .{
-                    .allocator = bun.default_allocator,
+                    .allocator = bun.heap.default_allocator,
                     .bytes = &.{},
                 },
             };
@@ -495,7 +495,7 @@ pub fn toBlob(
 
             this.value = .{
                 .buffer = .{
-                    .allocator = bun.default_allocator,
+                    .allocator = bun.heap.default_allocator,
                     .bytes = &.{},
                 },
             };
@@ -513,7 +513,7 @@ pub fn toBlob(
 
             this.value = .{
                 .buffer = .{
-                    .allocator = bun.default_allocator,
+                    .allocator = bun.heap.default_allocator,
                     .bytes = &.{},
                 },
             };

@@ -37,7 +37,7 @@ pub const MultiPartUpload = struct {
     proxy: []const u8,
     content_type: ?[]const u8 = null,
     upload_id: []const u8 = "",
-    uploadid_buffer: bun.MutableString = .{ .allocator = bun.default_allocator, .list = .{} },
+    uploadid_buffer: bun.MutableString = .{ .allocator = bun.heap.default_allocator, .list = .{} },
 
     multipart_etags: std.ArrayListUnmanaged(UploadPart.UploadPartResult) = .{},
     multipart_upload_list: bun.ByteList = .{},
@@ -83,7 +83,7 @@ pub const MultiPartUpload = struct {
         pub fn onPartResponse(result: S3SimpleRequest.S3PartResult, this: *@This()) void {
             if (this.state == .canceled or this.ctx.state == .finished) {
                 log("onPartResponse {} canceled", .{this.partNumber});
-                if (this.owns_data) bun.default_allocator.free(this.data);
+                if (this.owns_data) bun.heap.default_allocator.free(this.data);
                 this.ctx.deref();
                 return;
             }
@@ -100,7 +100,7 @@ pub const MultiPartUpload = struct {
                         return;
                     } else {
                         log("onPartResponse {} failed", .{this.partNumber});
-                        if (this.owns_data) bun.default_allocator.free(this.data);
+                        if (this.owns_data) bun.heap.default_allocator.free(this.data);
                         defer this.ctx.deref();
                         return this.ctx.fail(err);
                     }
@@ -108,11 +108,11 @@ pub const MultiPartUpload = struct {
                 .etag => |etag| {
                     log("onPartResponse {} success", .{this.partNumber});
 
-                    if (this.owns_data) bun.default_allocator.free(this.data);
+                    if (this.owns_data) bun.heap.default_allocator.free(this.data);
                     // we will need to order this
-                    this.ctx.multipart_etags.append(bun.default_allocator, .{
+                    this.ctx.multipart_etags.append(bun.heap.default_allocator, .{
                         .number = this.partNumber,
-                        .etag = bun.default_allocator.dupe(u8, etag) catch bun.outOfMemory(),
+                        .etag = bun.heap.default_allocator.dupe(u8, etag) catch bun.outOfMemory(),
                     }) catch bun.outOfMemory();
 
                     defer this.ctx.deref();
@@ -150,7 +150,7 @@ pub const MultiPartUpload = struct {
 
             switch (state) {
                 .pending => {
-                    if (this.owns_data) bun.default_allocator.free(this.data);
+                    if (this.owns_data) bun.heap.default_allocator.free(this.data);
                 },
                 // if is not pending we will free later or is already freed
                 else => {},
@@ -161,26 +161,26 @@ pub const MultiPartUpload = struct {
     fn deinit(this: *@This()) void {
         log("deinit", .{});
         if (this.queue.capacity > 0)
-            this.queue.deinit(bun.default_allocator);
+            this.queue.deinit(bun.heap.default_allocator);
         this.poll_ref.unref(this.vm);
-        bun.default_allocator.free(this.path);
+        bun.heap.default_allocator.free(this.path);
         if (this.proxy.len > 0) {
-            bun.default_allocator.free(this.proxy);
+            bun.heap.default_allocator.free(this.proxy);
         }
         if (this.content_type) |ct| {
             if (ct.len > 0) {
-                bun.default_allocator.free(ct);
+                bun.heap.default_allocator.free(ct);
             }
         }
         this.credentials.deref();
         this.uploadid_buffer.deinit();
         for (this.multipart_etags.items) |tag| {
-            bun.default_allocator.free(tag.etag);
+            bun.heap.default_allocator.free(tag.etag);
         }
         if (this.multipart_etags.capacity > 0)
-            this.multipart_etags.deinit(bun.default_allocator);
+            this.multipart_etags.deinit(bun.heap.default_allocator);
         if (this.multipart_upload_list.cap > 0)
-            this.multipart_upload_list.deinitWithAllocator(bun.default_allocator);
+            this.multipart_upload_list.deinitWithAllocator(bun.heap.default_allocator);
         this.destroy();
     }
 
@@ -230,7 +230,7 @@ pub const MultiPartUpload = struct {
         defer this.currentPartNumber += 1;
 
         if (this.queue.items.len <= index) {
-            this.queue.append(bun.default_allocator, .{
+            this.queue.append(bun.heap.default_allocator, .{
                 .data = chunk,
                 .partNumber = this.currentPartNumber,
                 .owns_data = owns_data,
@@ -301,15 +301,15 @@ pub const MultiPartUpload = struct {
             this.state = .finished;
 
             std.sort.block(UploadPart.UploadPartResult, this.multipart_etags.items, this, UploadPart.sortEtags);
-            this.multipart_upload_list.append(bun.default_allocator, "<?xml version=\"1.0\" encoding=\"UTF-8\"?><CompleteMultipartUpload xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">") catch bun.outOfMemory();
+            this.multipart_upload_list.append(bun.heap.default_allocator, "<?xml version=\"1.0\" encoding=\"UTF-8\"?><CompleteMultipartUpload xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">") catch bun.outOfMemory();
             for (this.multipart_etags.items) |tag| {
-                this.multipart_upload_list.appendFmt(bun.default_allocator, "<Part><PartNumber>{}</PartNumber><ETag>{s}</ETag></Part>", .{ tag.number, tag.etag }) catch bun.outOfMemory();
+                this.multipart_upload_list.appendFmt(bun.heap.default_allocator, "<Part><PartNumber>{}</PartNumber><ETag>{s}</ETag></Part>", .{ tag.number, tag.etag }) catch bun.outOfMemory();
 
-                bun.default_allocator.free(tag.etag);
+                bun.heap.default_allocator.free(tag.etag);
             }
-            this.multipart_etags.deinit(bun.default_allocator);
+            this.multipart_etags.deinit(bun.heap.default_allocator);
             this.multipart_etags = .{};
-            this.multipart_upload_list.append(bun.default_allocator, "</CompleteMultipartUpload>") catch bun.outOfMemory();
+            this.multipart_upload_list.append(bun.heap.default_allocator, "</CompleteMultipartUpload>") catch bun.outOfMemory();
             // will deref and ends after commit
             this.commitMultiPartRequest();
         } else {
@@ -517,13 +517,13 @@ pub const MultiPartUpload = struct {
         if (is_last) {
             this.ended = true;
             if (chunk.len > 0) {
-                this.buffered.appendSlice(bun.default_allocator, chunk) catch bun.outOfMemory();
+                this.buffered.appendSlice(bun.heap.default_allocator, chunk) catch bun.outOfMemory();
             }
             this.processBuffered(this.partSizeInBytes());
         } else {
             // still have more data and receive empty, nothing todo here
             if (chunk.len == 0) return;
-            this.buffered.appendSlice(bun.default_allocator, chunk) catch bun.outOfMemory();
+            this.buffered.appendSlice(bun.heap.default_allocator, chunk) catch bun.outOfMemory();
             const partSize = this.partSizeInBytes();
             if (this.buffered.items.len >= partSize) {
                 // send the part we have enough data

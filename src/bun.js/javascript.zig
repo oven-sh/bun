@@ -1916,7 +1916,7 @@ pub const VirtualMachine = struct {
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = .{},
             .standalone_module_graph = opts.graph.?,
-            .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
+            .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
         };
         vm.source_mappings.init(&vm.saved_source_map_table);
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -2032,7 +2032,7 @@ pub const VirtualMachine = struct {
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = .{},
-            .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
+            .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
         };
         vm.source_mappings.init(&vm.saved_source_map_table);
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -2188,7 +2188,7 @@ pub const VirtualMachine = struct {
             .ref_strings_mutex = .{},
             .standalone_module_graph = worker.parent.standalone_module_graph,
             .worker = worker,
-            .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
+            .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
         };
         vm.source_mappings.init(&vm.saved_source_map_table);
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -2278,7 +2278,7 @@ pub const VirtualMachine = struct {
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = .{},
-            .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
+            .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
         };
         vm.source_mappings.init(&vm.saved_source_map_table);
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -2983,6 +2983,7 @@ pub const VirtualMachine = struct {
                 .quote_strings = false,
                 .single_line = false,
                 .stack_check = bun.StackCheck.init(),
+                .error_display_level = .full,
             };
             defer formatter.deinit();
             switch (Output.enable_ansi_colors) {
@@ -3579,8 +3580,22 @@ pub const VirtualMachine = struct {
         exception_list: ?*ExceptionList,
         must_reset_parser_arena_later: *bool,
         source_code_slice: *?ZigString.Slice,
+        allow_source_code_preview: bool,
     ) void {
         error_instance.toZigException(this.global, exception);
+        const enable_source_code_preview = allow_source_code_preview and
+            !(bun.getRuntimeFeatureFlag("BUN_DISABLE_SOURCE_CODE_PREVIEW") or
+            bun.getRuntimeFeatureFlag("BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW"));
+
+        defer {
+            if (Environment.isDebug) {
+                if (!enable_source_code_preview and source_code_slice.* != null) {
+                    Output.panic("Do not collect source code when we don't need to", .{});
+                } else if (!enable_source_code_preview and exception.stack.source_lines_numbers[0] != -1) {
+                    Output.panic("Do not collect source code when we don't need to", .{});
+                }
+            }
+        }
 
         // defer this so that it copies correctly
         defer {
@@ -3696,7 +3711,10 @@ pub const VirtualMachine = struct {
             }
 
             const code = code: {
-                if (bun.getRuntimeFeatureFlag("BUN_DISABLE_SOURCE_CODE_PREVIEW") or bun.getRuntimeFeatureFlag("BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW")) break :code ZigString.Slice.empty;
+                if (!enable_source_code_preview) {
+                    break :code ZigString.Slice.empty;
+                }
+
                 if (!top.remapped and lookup.source_map != null and lookup.source_map.?.isExternal()) {
                     if (lookup.getSourceCode(top_source_url.slice())) |src| {
                         break :code src;
@@ -3715,7 +3733,13 @@ pub const VirtualMachine = struct {
                 must_reset_parser_arena_later.* = true;
                 break :code original_source.source_code.toUTF8(bun.default_allocator);
             };
-            source_code_slice.* = code;
+
+            if (enable_source_code_preview and code.len == 0) {
+                exception.collectSourceLines(error_instance, this.global);
+            }
+
+            if (code.len > 0)
+                source_code_slice.* = code;
 
             top.position.line = Ordinal.fromZeroBased(mapping.original.lines);
             top.position.column = Ordinal.fromZeroBased(mapping.original.columns);
@@ -3747,6 +3771,8 @@ pub const VirtualMachine = struct {
 
                 exception.stack.source_lines_len = @as(u8, @truncate(lines.len));
             }
+        } else if (enable_source_code_preview) {
+            exception.collectSourceLines(error_instance, this.global);
         }
 
         if (frames.len > 1) {
@@ -3792,6 +3818,7 @@ pub const VirtualMachine = struct {
             exception_list,
             &exception_holder.need_to_clear_parser_arena_on_deinit,
             &source_code_slice,
+            formatter.error_display_level != .warn,
         );
         const prev_had_errors = this.had_errors;
         this.had_errors = true;
@@ -3913,7 +3940,7 @@ pub const VirtualMachine = struct {
                     );
                 }
 
-                try this.printErrorNameAndMessage(name, message, code, Writer, writer, allow_ansi_color);
+                try this.printErrorNameAndMessage(name, message, code, Writer, writer, allow_ansi_color, formatter.error_display_level);
             } else if (top_frame) |top| {
                 defer did_print_name = true;
                 const display_line = source.line + 1;
@@ -3958,12 +3985,12 @@ pub const VirtualMachine = struct {
                     }
                 }
 
-                try this.printErrorNameAndMessage(name, message, code, Writer, writer, allow_ansi_color);
+                try this.printErrorNameAndMessage(name, message, code, Writer, writer, allow_ansi_color, formatter.error_display_level);
             }
         }
 
         if (!did_print_name) {
-            try this.printErrorNameAndMessage(name, message, code, Writer, writer, allow_ansi_color);
+            try this.printErrorNameAndMessage(name, message, code, Writer, writer, allow_ansi_color, formatter.error_display_level);
         }
 
         // This is usually unsafe to do, but we are protecting them each time first
@@ -4126,6 +4153,7 @@ pub const VirtualMachine = struct {
         comptime Writer: type,
         writer: Writer,
         comptime allow_ansi_color: bool,
+        error_display_level: ConsoleObject.FormatOptions.ErrorDisplayLevel,
     ) !void {
         if (!name.isEmpty() and !message.isEmpty()) {
             const display_name, const display_message = if (name.eqlComptime("Error")) brk: {
@@ -4156,19 +4184,15 @@ pub const VirtualMachine = struct {
                     };
                 };
 
-                break :brk .{ String.static("error"), message };
+                break :brk .{ String.empty, message };
             } else .{ name, message };
-            try writer.print(comptime Output.prettyFmt("<r><red>{}<r><d>:<r> <b>{s}<r>\n", allow_ansi_color), .{ display_name, display_message });
+            try writer.print(comptime Output.prettyFmt("{}<b>{}<r>\n", allow_ansi_color), .{ error_display_level.formatter(display_name, allow_ansi_color, .include_colon), display_message });
         } else if (!name.isEmpty()) {
-            if (!name.hasPrefixComptime("error")) {
-                try writer.print(comptime Output.prettyFmt("<r><red>error<r><d>:<r> <b>{}<r>\n", allow_ansi_color), .{name});
-            } else {
-                try writer.print(comptime Output.prettyFmt("<r><red>{}<r>\n", allow_ansi_color), .{name});
-            }
+            try writer.print("{}\n", .{error_display_level.formatter(name, allow_ansi_color, .include_colon)});
         } else if (!message.isEmpty()) {
-            try writer.print(comptime Output.prettyFmt("<r><red>error<r><d>:<r> <b>{}<r>\n", allow_ansi_color), .{message});
+            try writer.print(comptime Output.prettyFmt("{}<b>{}<r>\n", allow_ansi_color), .{ error_display_level.formatter(bun.String.empty, allow_ansi_color, .include_colon), message });
         } else {
-            try writer.print(comptime Output.prettyFmt("<r><red>error<r>\n", allow_ansi_color), .{});
+            try writer.print(comptime Output.prettyFmt("{}\n", allow_ansi_color), .{error_display_level.formatter(bun.String.empty, allow_ansi_color, .exclude_colon)});
         }
     }
 

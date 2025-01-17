@@ -3061,6 +3061,7 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
             &config,
             &args,
             callframe.isFromBunMain(globalObject.vm()),
+            true,
         );
 
         if (globalObject.hasException()) {
@@ -4621,9 +4622,7 @@ const InternalTestingAPIs = struct {
             return globalThis.throwError(err, "Error formatting code");
         };
 
-        var str = bun.String.createUTF8(buffer.list.items);
-        defer str.deref();
-        return str.toJS(globalThis);
+        return bun.String.createUTF8ForJS(globalThis, buffer.list.items);
     }
 };
 

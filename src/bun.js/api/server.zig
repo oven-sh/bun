@@ -1048,6 +1048,7 @@ pub const ServerConfig = struct {
         args: *ServerConfig,
         arguments: *JSC.Node.ArgumentsSlice,
         allow_bake_config: bool,
+        is_fetch_required: bool,
     ) bun.JSError!void {
         const vm = arguments.vm;
         const env = vm.transpiler.env;
@@ -1311,7 +1312,7 @@ pub const ServerConfig = struct {
                 const onRequest = onRequest_.withAsyncContextIfNeeded(global);
                 JSC.C.JSValueProtect(global, onRequest.asObjectRef());
                 args.onRequest = onRequest;
-            } else if (args.bake == null) {
+            } else if (args.bake == null and is_fetch_required) {
                 if (global.hasException()) return error.JSError;
                 return global.throwInvalidArguments("Expected fetch() to be a function", .{});
             } else {
@@ -1565,7 +1566,7 @@ fn NewFlags(comptime debug_mode: bool) type {
         is_waiting_for_request_body: bool = false,
         /// Used in renderMissing in debug mode to show the user an HTML page
         /// Used to avoid looking at the uws.Request struct after it's been freed
-        is_web_browser_navigation: if (debug_mode) bool else void = if (debug_mode) false else {},
+        is_web_browser_navigation: if (debug_mode) bool else void = if (debug_mode) false,
         has_written_status: bool = false,
         response_protected: bool = false,
         aborted: bool = false,
@@ -3073,11 +3074,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         const HeaderResponseSizePair = struct { this: *RequestContext, size: usize };
         pub fn doRenderHeadResponseAfterS3SizeResolved(pair: *HeaderResponseSizePair) void {
             var this = pair.this;
+            this.renderMetadata();
 
             if (this.resp) |resp| {
                 resp.writeHeaderInt("content-length", pair.size);
             }
-            this.renderMetadata();
             this.endWithoutBody(this.shouldCloseConnection());
             this.deref();
         }
@@ -3098,83 +3099,97 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         fn doRenderHeadResponse(pair: *HeaderResponsePair) void {
             var this = pair.this;
             var response = pair.response;
-            this.flags.needs_content_length = false;
             if (this.resp == null) {
                 return;
             }
+            // we will render the content-length header later manually so we set this to false
+            this.flags.needs_content_length = false;
+            // Always this.renderMetadata() before sending the content-length or transfer-encoding header so status is sent first
+
             const resp = this.resp.?;
             this.response_ptr = response;
             const server = this.server orelse {
                 // server detached?
-                resp.writeHeaderInt("content-length", 0);
                 this.renderMetadata();
+                resp.writeHeaderInt("content-length", 0);
                 this.endWithoutBody(this.shouldCloseConnection());
                 return;
             };
             const globalThis = server.globalThis;
-            var has_content_length_or_transfer_encoding = false;
             if (response.getFetchHeaders()) |headers| {
                 // first respect the headers
                 if (headers.fastGet(.TransferEncoding)) |transfer_encoding| {
                     const transfer_encoding_str = transfer_encoding.toSlice(server.allocator);
                     defer transfer_encoding_str.deinit();
+                    this.renderMetadata();
                     resp.writeHeader("transfer-encoding", transfer_encoding_str.slice());
-                    has_content_length_or_transfer_encoding = true;
-                } else if (headers.fastGet(.ContentLength)) |content_length| {
+                    this.endWithoutBody(this.shouldCloseConnection());
+
+                    return;
+                }
+                if (headers.fastGet(.ContentLength)) |content_length| {
                     const content_length_str = content_length.toSlice(server.allocator);
                     defer content_length_str.deinit();
+                    this.renderMetadata();
+
                     const len = std.fmt.parseInt(usize, content_length_str.slice(), 10) catch 0;
                     resp.writeHeaderInt("content-length", len);
-                    has_content_length_or_transfer_encoding = true;
+                    this.endWithoutBody(this.shouldCloseConnection());
+                    return;
                 }
             }
-            if (!has_content_length_or_transfer_encoding) {
-                // then respect the body
-                response.body.value.toBlobIfPossible();
-                switch (response.body.value) {
-                    .InternalBlob, .WTFStringImpl => {
-                        var blob = response.body.value.useAsAnyBlobAllowNonUTF8String();
-                        defer blob.detach();
-                        const size = blob.size();
-                        if (size == Blob.max_size) {
-                            resp.writeHeaderInt("content-length", 0);
-                        } else {
-                            resp.writeHeaderInt("content-length", size);
-                        }
-                    },
+            // not content-length or transfer-encoding so we need to respect the body
+            response.body.value.toBlobIfPossible();
+            switch (response.body.value) {
+                .InternalBlob, .WTFStringImpl => {
+                    var blob = response.body.value.useAsAnyBlobAllowNonUTF8String();
+                    defer blob.detach();
+                    const size = blob.size();
+                    this.renderMetadata();
 
-                    .Blob => |*blob| {
-                        if (blob.isS3()) {
-                            // we need to read the size asynchronously
-                            // in this case should always be a redirect so should not hit this path, but in case we change it in the future lets handle it
-                            this.ref();
-
-                            const credentials = blob.store.?.data.s3.getCredentials();
-                            const path = blob.store.?.data.s3.path();
-                            const env = globalThis.bunVM().transpiler.env;
-
-                            S3.stat(credentials, path, @ptrCast(&onS3SizeResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
-
-                            return;
-                        }
-                        blob.resolveSize();
-                        if (blob.size == Blob.max_size) {
-                            resp.writeHeaderInt("content-length", 0);
-                        } else {
-                            resp.writeHeaderInt("content-length", blob.size);
-                        }
-                    },
-                    .Locked => {
-                        resp.writeHeader("transfer-encoding", "chunked");
-                    },
-                    .Used, .Null, .Empty, .Error => {
+                    if (size == Blob.max_size) {
                         resp.writeHeaderInt("content-length", 0);
-                    },
-                }
-            }
+                    } else {
+                        resp.writeHeaderInt("content-length", size);
+                    }
+                    this.endWithoutBody(this.shouldCloseConnection());
+                },
 
-            this.renderMetadata();
-            this.endWithoutBody(this.shouldCloseConnection());
+                .Blob => |*blob| {
+                    if (blob.isS3()) {
+                        // we need to read the size asynchronously
+                        // in this case should always be a redirect so should not hit this path, but in case we change it in the future lets handle it
+                        this.ref();
+
+                        const credentials = blob.store.?.data.s3.getCredentials();
+                        const path = blob.store.?.data.s3.path();
+                        const env = globalThis.bunVM().transpiler.env;
+
+                        S3.stat(credentials, path, @ptrCast(&onS3SizeResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+
+                        return;
+                    }
+                    this.renderMetadata();
+
+                    blob.resolveSize();
+                    if (blob.size == Blob.max_size) {
+                        resp.writeHeaderInt("content-length", 0);
+                    } else {
+                        resp.writeHeaderInt("content-length", blob.size);
+                    }
+                    this.endWithoutBody(this.shouldCloseConnection());
+                },
+                .Locked => {
+                    this.renderMetadata();
+                    resp.writeHeader("transfer-encoding", "chunked");
+                    this.endWithoutBody(this.shouldCloseConnection());
+                },
+                .Used, .Null, .Empty, .Error => {
+                    this.renderMetadata();
+                    resp.writeHeaderInt("content-length", 0);
+                    this.endWithoutBody(this.shouldCloseConnection());
+                },
+            }
         }
 
         // Each HTTP request or TCP socket connection is effectively a "task".
@@ -6140,12 +6155,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             this.app.?.clearRoutes();
 
-            // only reload those two
-            if (this.config.onRequest != new_config.onRequest) {
+            // only reload those two, but ignore if they're not specified.
+            if (this.config.onRequest != new_config.onRequest and (new_config.onRequest != .zero and new_config.onRequest != .undefined)) {
                 this.config.onRequest.unprotect();
                 this.config.onRequest = new_config.onRequest;
             }
-            if (this.config.onError != new_config.onError) {
+            if (this.config.onError != new_config.onError and (new_config.onError != .zero and new_config.onError != .undefined)) {
                 this.config.onError.unprotect();
                 this.config.onError = new_config.onError;
             }
@@ -6192,7 +6207,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             defer args_slice.deinit();
 
             var new_config: ServerConfig = .{};
-            try ServerConfig.fromJS(globalThis, &new_config, &args_slice, false);
+            try ServerConfig.fromJS(globalThis, &new_config, &args_slice, false, false);
             if (globalThis.hasException()) {
                 new_config.deinit();
                 return error.JSError;
@@ -6366,9 +6381,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this: *ThisServer,
             globalThis: *JSC.JSGlobalObject,
         ) JSC.JSValue {
-            var str = bun.String.createUTF8(this.config.id);
-            defer str.deref();
-            return str.toJS(globalThis);
+            return bun.String.createUTF8ForJS(globalThis, this.config.id);
         }
 
         pub fn getPendingRequests(

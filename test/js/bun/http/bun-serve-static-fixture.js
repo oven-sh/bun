@@ -18,13 +18,9 @@ process.on("message", async message => {
   }
 
   server.reload({
+    // omit "fetch" to check we can do server.reload without passing fetch
     static: routes,
     development: true,
-    fetch(req) {
-      return new Response("Hello World", {
-        status: 404,
-      });
-    },
   });
 });
 

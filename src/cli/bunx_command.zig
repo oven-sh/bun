@@ -715,7 +715,7 @@ pub const BunxCommand = struct {
 
             .windows = if (Environment.isWindows) .{
                 .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(this_transpiler.env)),
-            } else {},
+            },
         }) catch |err| {
             Output.prettyErrorln("<r><red>error<r>: bunx failed to install <b>{s}<r> due to error <b>{s}<r>", .{ install_param, @errorName(err) });
             Global.exit(1);

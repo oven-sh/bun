@@ -2512,7 +2512,7 @@ pub const Fetch = struct {
             return .zero;
         }
 
-        // "decompression: boolean"
+        // "decompress: boolean"
         disable_decompression = extract_disable_decompression: {
             const objects_to_try = [_]JSValue{
                 options_object orelse .zero,

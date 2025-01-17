@@ -214,8 +214,7 @@ pub fn link(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
 
     log("uv link({s}, {s}) = {d}", .{ from, to, rc.int() });
     return if (rc.errno()) |errno|
-        // which one goes in the .path field?
-        .{ .err = .{ .errno = errno, .syscall = .link } }
+        .{ .err = .{ .errno = errno, .syscall = .link, .path = from, .dest = to } }
     else
         .{ .result = {} };
 }

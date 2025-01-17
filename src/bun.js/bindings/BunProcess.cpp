@@ -1122,9 +1122,9 @@ Process::~Process()
 {
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunction_emitWarning, (Zig::JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsFunction_emitWarning, (JSC::JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* process = jsCast<Process*>(globalObject->processObject());
@@ -1163,6 +1163,20 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, 
     abort();
 }
 
+static bool isJSValueEqualToASCIILiteral(JSC::JSGlobalObject* globalObject, JSC::JSValue value, const ASCIILiteral literal)
+{
+    if (!value.isString()) {
+        return false;
+    }
+
+    auto* str = value.toStringOrNull(globalObject);
+    if (!str) {
+        return false;
+    }
+    auto view = str->view(globalObject);
+    return view == literal;
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -1176,9 +1190,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObj
     auto ctor = callFrame->argument(3);
     auto detail = jsUndefined();
 
-    auto dep_warning = jsString(vm, String("DeprecationWarning"_s));
-
-    if (Bun__Node__ProcessNoDeprecation && JSC::JSValue::strictEqual(globalObject, type, dep_warning)) {
+    if (Bun__Node__ProcessNoDeprecation && isJSValueEqualToASCIILiteral(globalObject, type, "DeprecationWarning"_s)) {
         return JSValue::encode(jsUndefined());
     }
 
@@ -1233,7 +1245,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObj
     if (!detail.isUndefined()) errorInstance->putDirect(vm, vm.propertyNames->detail, detail, JSC::PropertyAttribute::DontEnum | 0);
     // ErrorCaptureStackTrace(warning, ctor || process.emitWarning);
 
-    if (JSC::JSValue::strictEqual(globalObject, type, dep_warning)) {
+    if (isJSValueEqualToASCIILiteral(globalObject, type, "DeprecationWarning"_s)) {
         if (Bun__Node__ProcessNoDeprecation) {
             return JSValue::encode(jsUndefined());
         }
@@ -1910,7 +1922,7 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
         return report;
     }
 #else // !OS(WINDOWS)
-    return jsString(vm, String("Not implemented. blame @paperdave"_s));
+    return jsString(vm, String("Not implemented. blame @paperclover"_s));
 #endif
 }
 

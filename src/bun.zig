@@ -1855,6 +1855,17 @@ pub const StringSet = struct {
 
     pub const Map = StringArrayHashMap(void);
 
+    pub fn clone(self: StringSet) !StringSet {
+        var new_map = Map.init(self.map.allocator);
+        try new_map.ensureTotalCapacity(self.map.count());
+        for (self.map.keys()) |key| {
+            new_map.putAssumeCapacity(try self.map.allocator.dupe(u8, key), {});
+        }
+        return StringSet{
+            .map = new_map,
+        };
+    }
+
     pub fn init(allocator: std.mem.Allocator) StringSet {
         return StringSet{
             .map = Map.init(allocator),
@@ -1896,6 +1907,13 @@ pub const StringMap = struct {
     dupe_keys: bool = false,
 
     pub const Map = StringArrayHashMap(string);
+
+    pub fn clone(self: StringMap) !StringMap {
+        return StringMap{
+            .map = try self.map.clone(),
+            .dupe_keys = self.dupe_keys,
+        };
+    }
 
     pub fn init(allocator: std.mem.Allocator, dupe_keys: bool) StringMap {
         return StringMap{
@@ -3353,12 +3371,23 @@ pub inline fn resolveSourcePath(
 }
 
 const RuntimeEmbedRoot = enum {
+    /// Relative to `<build>/codegen`.
     codegen,
+    /// Relative to `src`
     src,
+    /// Reallocates the slice at every call. Avoid this if possible.  An example
+    /// using this reasonably is referencing incremental_visualizer.html, which
+    /// is reloaded from disk for each request, but more importantly allows
+    /// maintaining the DevServer state while hacking on the visualizer.
     src_eager,
+    /// Avoid this if possible. See `.src_eager`.
     codegen_eager,
 };
 
+/// Load a file at runtime. This is only to be used in debug builds,
+/// specifically when `Environment.codegen_embed` is false. This allows quick
+/// iteration on files, as this skips the Zig compiler. Once Zig gains good
+/// incremental support, the non-eager cases can be deleted.
 pub fn runtimeEmbedFile(
     comptime root: RuntimeEmbedRoot,
     comptime sub_path: []const u8,
@@ -3901,7 +3930,7 @@ pub fn WeakPtr(comptime T: type, comptime weakable_field: std.meta.FieldEnum(T))
 
 pub const DebugThreadLock = if (Environment.allow_assert)
     struct {
-        owning_thread: ?std.Thread.Id = null,
+        owning_thread: ?std.Thread.Id,
         locked_at: crash_handler.StoredTrace,
 
         pub const unlocked: DebugThreadLock = .{
@@ -4225,3 +4254,113 @@ pub const WPathBufferPool = if (Environment.isWindows) PathBufferPoolT(bun.WPath
 pub const OSPathBufferPool = if (Environment.isWindows) WPathBufferPool else PathBufferPool;
 
 pub const S3 = @import("./s3/client.zig");
+
+const CowString = CowSlice(u8);
+
+/// "Copy on write" slice. There are many instances when it is desired to re-use
+/// a slice, but doing so would make it unknown if that slice should be freed.
+/// This structure, in release builds, is the same size as `[]const T`, but
+/// stores one bit for if deinitialziation should free the underlying memory.
+///
+///     const str = CowSlice(u8).initOwned(try alloc.dupe(u8, "hello!"), alloc);
+///     const borrow = str.borrow();
+///     assert(borrow.slice().ptr == str.slice().ptr)
+///     borrow.deinit(alloc); // knows it is borrowed, no free
+///     str.deinit(alloc); // calls free
+///
+/// In a debug build, there are aggressive assertions to ensure unintentional
+/// frees do not happen. But in a release build, the developer is expected to
+/// keep slice owners alive beyond the lifetimes of the borrowed instances.
+///
+/// CowSlice does not support slices longer than 2^(@bitSizeOf(usize)-1).
+pub fn CowSlice(T: type) type {
+    const DebugData = if (Environment.allow_assert) struct {
+        mutex: std.Thread.Mutex,
+        allocator: Allocator,
+        borrows: usize,
+    };
+    return struct {
+        ptr: [*]const T,
+        flags: packed struct(usize) {
+            len: @Type(.{ .Int = .{
+                .bits = @bitSizeOf(usize) - 1,
+                .signedness = .unsigned,
+            } }),
+            is_owned: bool,
+        },
+        debug: if (Environment.allow_assert) ?*DebugData else void,
+
+        const cow_str_assertions = Environment.isDebug;
+
+        /// `data` is transferred into the returned string, and must be freed with
+        /// `.deinit()` when the string and its borrows are done being used.
+        pub fn initOwned(data: []const T, allocator: Allocator) @This() {
+            return .{
+                .ptr = data.ptr,
+                .flags = .{
+                    .is_owned = true,
+                    .len = @intCast(data.len),
+                },
+                .debug = if (cow_str_assertions)
+                    bun.new(DebugData(.{
+                        .mutex = .{},
+                        .allocator = allocator,
+                        .borrows = 0,
+                    })),
+            };
+        }
+
+        /// `.deinit` will not free memory from this slice.
+        pub fn initNeverFree(data: []const T) @This() {
+            return .{
+                .ptr = data.ptr,
+                .flags = .{
+                    .is_owned = false,
+                    .len = @intCast(data.len),
+                },
+                .debug = null,
+            };
+        }
+
+        pub fn slice(str: @This()) []const T {
+            return str.ptr[0..str.flags.len];
+        }
+
+        /// Returns a new string. The borrowed string should be deinitialized
+        /// so that debug assertions that perform.
+        pub fn borrow(str: @This()) @This() {
+            if (cow_str_assertions) if (str.debug) |debug| {
+                debug.mutex.lock();
+                defer debug.mutex.unlock();
+                debug.borrows += 1;
+            };
+            return .{
+                .ptr = str.ptr,
+                .flags = .{
+                    .is_owned = false,
+                    .len = str.flags.len,
+                },
+                .debug = str.debug,
+            };
+        }
+
+        pub fn deinit(str: @This(), allocator: Allocator) void {
+            if (cow_str_assertions) if (str.debug) |debug| {
+                debug.mutex.lock();
+                defer debug.mutex.unlock();
+                bun.assert(debug.allocator == allocator);
+                if (str.flags.is_owned) {
+                    bun.assert(debug.borrows == 0); // active borrows become invalid data
+                } else {
+                    debug.borrows -= 1; // double deinit of a borrowed string
+                }
+                bun.destroy(debug);
+            };
+            if (str.flags.is_owned) {
+                allocator.free(str.slice());
+            }
+        }
+    };
+}
+
+const Allocator = std.mem.Allocator;

@@ -21,44 +21,27 @@
 
 'use strict';
 const common = require('../common');
-const fixtures = require('../common/fixtures');
-const assert = require('assert');
+
+// Make sure the deletion event gets reported in the following scenario:
+// 1. Watch a file.
+// 2. The initial stat() goes okay.
+// 3. Something deletes the watched file.
+// 4. The second stat() fails with ENOENT.
+
+// The second stat() translates into the first 'change' event but a logic error
+// stopped it from getting emitted.
+// https://github.com/nodejs/node-v0.x-archive/issues/4027
+
 const fs = require('fs');
 
 const tmpdir = require('../common/tmpdir');
-
-// Test creating and reading symbolic link
-const linkData = fixtures.path('cycles/');
-const linkPath = tmpdir.resolve('cycles_link');
-
 tmpdir.refresh();
 
-fs.symlink(linkData, linkPath, 'junction', common.mustSucceed(() => {
-  fs.lstat(linkPath, common.mustSucceed((stats) => {
-    assert.ok(stats.isSymbolicLink());
+const filename = tmpdir.resolve('watched');
+fs.writeFileSync(filename, 'quis custodiet ipsos custodes');
 
-    fs.readlink(linkPath, common.mustSucceed((destination) => {
-      assert.strictEqual(destination, linkData);
-
-      fs.unlink(linkPath, common.mustSucceed(() => {
-        assert(!fs.existsSync(linkPath));
-        assert(fs.existsSync(linkData));
-      }));
-    }));
-  }));
+fs.watchFile(filename, { interval: 50 }, common.mustCall(function(curr, prev) {
+  fs.unwatchFile(filename);
 }));
 
-// Test invalid symlink
-{
-  const linkData = fixtures.path('/not/exists/dir');
-  const linkPath = tmpdir.resolve('invalid_junction_link');
-
-  fs.symlink(linkData, linkPath, 'junction', common.mustSucceed(() => {
-    if (!common.isWindows) // TODO: BUN
-    assert(!fs.existsSync(linkPath));
-
-    fs.unlink(linkPath, common.mustSucceed(() => {
-      assert(!fs.existsSync(linkPath));
-    }));
-  }));
-}
+fs.unlinkSync(filename);

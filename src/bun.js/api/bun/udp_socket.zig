@@ -461,8 +461,10 @@ pub const UDPSocket = struct {
 
             if (comptime use_wsa) {
                 if (bun.windows.WSAGetLastError()) |wsa| {
-                    std.os.windows.ws2_32.WSASetLastError(0);
-                    return bun.JSC.Maybe(void).errno(wsa.toE(), tag);
+                    if (wsa != .SUCCESS) {
+                        std.os.windows.ws2_32.WSASetLastError(0);
+                        return bun.JSC.Maybe(void).errno(wsa.toE(), tag);
+                    }
                 }
             }
 

@@ -1790,33 +1790,32 @@ pub const Arguments = struct {
     };
 
     pub const Symlink = struct {
-        old_path: PathLike,
+        /// Where the symbolic link is targetting.
+        target_path: PathLike,
+        /// The path to create the symbolic link at.
         new_path: PathLike,
+        /// Windows has multiple link types. By default, only junctions can be created by non-admin.
         link_type: LinkType,
 
-        const LinkType = if (!Environment.isWindows)
-            u0
-        else
-            LinkTypeEnum;
-
-        const LinkTypeEnum = enum {
+        const LinkType = if (Environment.isWindows) enum {
+            unspecified,
             file,
             dir,
             junction,
-        };
+        } else enum { unspecified };
 
         pub fn deinit(this: Symlink) void {
-            this.old_path.deinit();
+            this.target_path.deinit();
             this.new_path.deinit();
         }
 
         pub fn deinitAndUnprotect(this: Symlink) void {
-            this.old_path.deinitAndUnprotect();
+            this.target_path.deinitAndUnprotect();
             this.new_path.deinitAndUnprotect();
         }
 
         pub fn toThreadSafe(this: *@This()) void {
-            this.old_path.toThreadSafe();
+            this.target_path.toThreadSafe();
             this.new_path.toThreadSafe();
         }
 
@@ -1829,18 +1828,18 @@ pub const Arguments = struct {
                 return ctx.throwInvalidArguments("newPath must be a string or TypedArray", .{});
             };
 
+            // The type argument is only available on Windows and
+            // ignored on other platforms. It can be set to 'dir',
+            // 'file', or 'junction'. If the type argument is not set,
+            // Node.js will autodetect target type and use 'file' or
+            // 'dir'. If the target does not exist, 'file' will be used.
+            // Windows junction points require the destination path to
+            // be absolute. When using 'junction', the target argument
+            // will automatically be normalized to absolute path.
             const link_type: LinkType = if (!Environment.isWindows)
-                0
+                .unspecified
             else link_type: {
                 if (arguments.next()) |next_val| {
-                    // The type argument is only available on Windows and
-                    // ignored on other platforms. It can be set to 'dir',
-                    // 'file', or 'junction'. If the type argument is not set,
-                    // Node.js will autodetect target type and use 'file' or
-                    // 'dir'. If the target does not exist, 'file' will be used.
-                    // Windows junction points require the destination path to
-                    // be absolute. When using 'junction', the target argument
-                    // will automatically be normalized to absolute path.
                     if (next_val.isString()) {
                         arguments.eat();
                         var str = next_val.toBunString(ctx);
@@ -1850,19 +1849,13 @@ pub const Arguments = struct {
                         if (str.eqlComptime("junction")) break :link_type .junction;
                         return ctx.throwInvalidArguments("Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{}\"", .{str});
                     }
-
                     // not a string. fallthrough to auto detect.
                 }
-
-                var buf: bun.PathBuffer = undefined;
-                const stat = bun.sys.stat(old_path.sliceZ(&buf));
-
-                // if there's an error node defaults to file.
-                break :link_type if (stat == .result and bun.C.S.ISDIR(@intCast(stat.result.mode))) .dir else .file;
+                break :link_type .unspecified;
             };
 
             return Symlink{
-                .old_path = old_path,
+                .target_path = old_path,
                 .new_path = new_path,
                 .link_type = link_type,
             };
@@ -3937,7 +3930,7 @@ pub const NodeFS = struct {
         };
     }
 
-    pub fn mkdtemp(this: *NodeFS, args: Arguments.MkdirTemp, comptime _: Flavor) Maybe(Return.Mkdtemp) {
+    pub fn mkdtemp(this: *NodeFS, args: Arguments.MkdirTemp, _: Flavor) Maybe(Return.Mkdtemp) {
         var prefix_buf = &this.sync_error_buf;
         const prefix_slice = args.prefix.slice();
         const len = @min(prefix_slice.len, prefix_buf.len -| 7);
@@ -3985,7 +3978,7 @@ pub const NodeFS = struct {
         };
     }
 
-    pub fn open(this: *NodeFS, args: Arguments.Open, comptime _: Flavor) Maybe(Return.Open) {
+    pub fn open(this: *NodeFS, args: Arguments.Open, _: Flavor) Maybe(Return.Open) {
         const path = if (Environment.isWindows and bun.strings.eqlComptime(args.path.slice(), "/dev/null"))
             "\\\\.\\NUL"
         else
@@ -4014,7 +4007,7 @@ pub const NodeFS = struct {
         return Maybe(Return.Open).initResult(FDImpl.decode(bun.toFD(@as(u32, @intCast(rc)))));
     }
 
-    pub fn openDir(_: *NodeFS, _: Arguments.OpenDir, comptime _: Flavor) Maybe(Return.OpenDir) {
+    pub fn openDir(_: *NodeFS, _: Arguments.OpenDir, _: Flavor) Maybe(Return.OpenDir) {
         return Maybe(Return.OpenDir).todo();
     }
 
@@ -5161,11 +5154,11 @@ pub const NodeFS = struct {
         return Maybe(Return.WriteFile).success;
     }
 
-    pub fn writeFile(this: *NodeFS, args: Arguments.WriteFile, comptime _: Flavor) Maybe(Return.WriteFile) {
+    pub fn writeFile(this: *NodeFS, args: Arguments.WriteFile, _: Flavor) Maybe(Return.WriteFile) {
         return writeFileWithPathBuffer(&this.sync_error_buf, args);
     }
 
-    pub fn readlink(this: *NodeFS, args: Arguments.Readlink, comptime _: Flavor) Maybe(Return.Readlink) {
+    pub fn readlink(this: *NodeFS, args: Arguments.Readlink, _: Flavor) Maybe(Return.Readlink) {
         var outbuf: bun.PathBuffer = undefined;
         const inbuf = &this.sync_error_buf;
 
@@ -5194,7 +5187,7 @@ pub const NodeFS = struct {
         };
     }
 
-    pub fn realpathNonNative(this: *NodeFS, args: Arguments.Realpath, comptime _: Flavor) Maybe(Return.Realpath) {
+    pub fn realpathNonNative(this: *NodeFS, args: Arguments.Realpath, _: Flavor) Maybe(Return.Realpath) {
         return switch (this.realpathInner(args, .emulated)) {
             .result => |res| .{ .result = res },
             .err => |err| .{ .err = .{
@@ -5205,7 +5198,7 @@ pub const NodeFS = struct {
         };
     }
 
-    pub fn realpath(this: *NodeFS, args: Arguments.Realpath, comptime _: Flavor) Maybe(Return.Realpath) {
+    pub fn realpath(this: *NodeFS, args: Arguments.Realpath, _: Flavor) Maybe(Return.Realpath) {
         return switch (this.realpathInner(args, .native)) {
             .result => |res| .{ .result = res },
             .err => |err| .{
@@ -5326,7 +5319,7 @@ pub const NodeFS = struct {
         };
     }
 
-    pub fn rmdir(this: *NodeFS, args: Arguments.RmDir, comptime _: Flavor) Maybe(Return.Rmdir) {
+    pub fn rmdir(this: *NodeFS, args: Arguments.RmDir, _: Flavor) Maybe(Return.Rmdir) {
         if (args.recursive) {
             std.fs.cwd().deleteTree(args.path.slice()) catch |err| {
                 const errno: bun.C.E = switch (err) {
@@ -5371,7 +5364,7 @@ pub const NodeFS = struct {
             Maybe(Return.Rmdir).success;
     }
 
-    pub fn rm(this: *NodeFS, args: Arguments.RmDir, comptime _: Flavor) Maybe(Return.Rm) {
+    pub fn rm(this: *NodeFS, args: Arguments.RmDir, _: Flavor) Maybe(Return.Rm) {
         // We cannot use removefileat() on macOS because it does not handle write-protected files as expected.
         if (args.recursive) {
             // TODO: switch to an implementation which does not use any "unreachable"
@@ -5482,7 +5475,7 @@ pub const NodeFS = struct {
         return Maybe(Return.Rm).success;
     }
 
-    pub fn stat(this: *NodeFS, args: Arguments.Stat, comptime _: Flavor) Maybe(Return.Stat) {
+    pub fn stat(this: *NodeFS, args: Arguments.Stat, _: Flavor) Maybe(Return.Stat) {
         const path = args.path.sliceZ(&this.sync_error_buf);
         return switch (Syscall.stat(path)) {
             .result => |result| .{
@@ -5497,32 +5490,81 @@ pub const NodeFS = struct {
         };
     }
 
-    pub fn symlink(this: *NodeFS, args: Arguments.Symlink, comptime _: Flavor) Maybe(Return.Symlink) {
+    pub fn symlink(this: *NodeFS, args: Arguments.Symlink, _: Flavor) Maybe(Return.Symlink) {
         var to_buf: bun.PathBuffer = undefined;
 
         if (Environment.isWindows) {
-            const target: [:0]u8 = args.old_path.sliceZWithForceCopy(&this.sync_error_buf, true);
-            // UV does not normalize slashes in symlink targets, but Node does
-            // See https://github.com/oven-sh/bun/issues/8273
-            bun.path.dangerouslyConvertPathToWindowsInPlace(u8, target);
+            const target_path = args.target_path.slice();
+            const new_path = args.new_path.slice();
+            // Note: to_buf and sync_error_buf hold intermediate states, but the
+            // ending state is:
+            //    - new_path is in &sync_error_buf
+            //    - target_path is in &to_buf
 
-            return Syscall.symlinkUV(
-                target,
+            // Stat target if unspecified.
+            const resolved_link_type: enum { file, dir, junction } = switch (args.link_type) {
+                .unspecified => auto_detect: {
+                    const src = bun.path.joinAbsStringBuf(
+                        bun.getcwd(&to_buf) catch @panic("failed to resolve current working directory"),
+                        &this.sync_error_buf,
+                        &.{
+                            bun.Dirname.dirname(u8, new_path) orelse new_path,
+                            target_path,
+                        },
+                        .windows,
+                    );
+                    break :auto_detect switch (bun.sys.directoryExistsAt(bun.invalid_fd, src)) {
+                        .err => .file,
+                        .result => |is_dir| if (is_dir) .dir else .file,
+                    };
+                },
+                .file => .file,
+                .dir => .dir,
+                .junction => .junction,
+            };
+            // preprocessSymlinkDestination
+            // - junctions: make absolute with long path prefix
+            // - absolute paths: add long path prefix
+            // - all: no forward slashes
+            const processed_target = target: {
+                if (resolved_link_type == .junction) {
+                    // this is similar to the `const src` above, but these cases
+                    // are mutually exclusive, so it isn't repeating any work.
+                    const target = bun.path.joinAbsStringBuf(
+                        bun.getcwd(&to_buf) catch @panic("failed to resolve current working directory"),
+                        this.sync_error_buf[4..],
+                        &.{
+                            bun.Dirname.dirname(u8, new_path) orelse new_path,
+                            target_path,
+                        },
+                        .windows,
+                    );
+                    this.sync_error_buf[0..4].* = bun.windows.nt_maxpath_prefix_u8;
+                    this.sync_error_buf[4 + target.len] = 0;
+                    break :target this.sync_error_buf[0 .. 4 + target.len :0];
+                }
+                break :target args.target_path.sliceZWithForceCopy(&this.sync_error_buf, true);
+            };
+            return switch (Syscall.symlinkUV(
+                processed_target,
                 args.new_path.sliceZ(&to_buf),
-                switch (args.link_type) {
+                switch (resolved_link_type) {
                     .file => 0,
                     .dir => uv.UV_FS_SYMLINK_DIR,
                     .junction => uv.UV_FS_SYMLINK_JUNCTION,
                 },
-            );
+            )) {
+                .err => |err| .{ .err = err.withPathDest(args.target_path.slice(), args.new_path.slice()) },
+                .result => |result| .{ .result = result },
+            };
         }
 
         return switch (Syscall.symlink(
-            args.old_path.sliceZ(&this.sync_error_buf),
+            args.target_path.sliceZ(&this.sync_error_buf),
             args.new_path.sliceZ(&to_buf),
         )) {
             .result => |result| .{ .result = result },
-            .err => |err| .{ .err = err.withPathDest(args.old_path.slice(), args.new_path.slice()) },
+            .err => |err| .{ .err = err.withPathDest(args.target_path.slice(), args.new_path.slice()) },
         };
     }
 
@@ -5554,7 +5596,7 @@ pub const NodeFS = struct {
         };
     }
 
-    pub fn unlink(this: *NodeFS, args: Arguments.Unlink, comptime _: Flavor) Maybe(Return.Unlink) {
+    pub fn unlink(this: *NodeFS, args: Arguments.Unlink, _: Flavor) Maybe(Return.Unlink) {
         if (Environment.isWindows) {
             return Syscall.unlink(args.path.sliceZ(&this.sync_error_buf));
         }
@@ -5578,11 +5620,11 @@ pub const NodeFS = struct {
         return Maybe(Return.Watch){ .result = watcher };
     }
 
-    pub fn unwatchFile(_: *NodeFS, _: Arguments.UnwatchFile, comptime _: Flavor) Maybe(Return.UnwatchFile) {
+    pub fn unwatchFile(_: *NodeFS, _: Arguments.UnwatchFile, _: Flavor) Maybe(Return.UnwatchFile) {
         return Maybe(Return.UnwatchFile).todo();
     }
 
-    pub fn utimes(this: *NodeFS, args: Arguments.Utimes, comptime _: Flavor) Maybe(Return.Utimes) {
+    pub fn utimes(this: *NodeFS, args: Arguments.Utimes, _: Flavor) Maybe(Return.Utimes) {
         if (comptime Environment.isWindows) {
             var req: uv.fs_t = uv.fs_t.uninitialized;
             defer req.deinit();
@@ -5622,7 +5664,7 @@ pub const NodeFS = struct {
             Maybe(Return.Utimes).success;
     }
 
-    pub fn lutimes(this: *NodeFS, args: Arguments.Lutimes, comptime _: Flavor) Maybe(Return.Lutimes) {
+    pub fn lutimes(this: *NodeFS, args: Arguments.Lutimes, _: Flavor) Maybe(Return.Lutimes) {
         if (comptime Environment.isWindows) {
             var req: uv.fs_t = uv.fs_t.uninitialized;
             defer req.deinit();
@@ -5662,7 +5704,7 @@ pub const NodeFS = struct {
             Maybe(Return.Lutimes).success;
     }
 
-    pub fn watch(_: *NodeFS, args: Arguments.Watch, comptime _: Flavor) Maybe(Return.Watch) {
+    pub fn watch(_: *NodeFS, args: Arguments.Watch, _: Flavor) Maybe(Return.Watch) {
         return switch (args.createFSWatcher()) {
             .result => |result| .{ .result = result.js_this },
             .err => |err| .{ .err = .{

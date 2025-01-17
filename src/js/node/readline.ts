@@ -37,6 +37,7 @@ const {
   validateBoolean,
   validateInteger,
   validateUint32,
+  validateNumber,
 } = require("internal/validators");
 
 const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetStringWidth", 1);
@@ -1216,9 +1217,7 @@ function InterfaceConstructor(input, output, completer, terminal) {
     historySize = kHistorySize;
   }
 
-  if (typeof historySize !== "number" || NumberIsNaN(historySize) || historySize < 0) {
-    throw $ERR_INVALID_ARG_VALUE("historySize", historySize);
-  }
+  validateNumber(historySize, "historySize", 0);
 
   // Backwards compat; check the isTTY prop of the output stream
   //  when `terminal` was not specified

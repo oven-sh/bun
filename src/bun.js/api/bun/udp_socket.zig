@@ -449,7 +449,7 @@ pub const UDPSocket = struct {
         if (comptime bun.Environment.isWindows) {
             // setsockopt returns 0 on success, but errnoSys considers 0 to be failure on Windows.
             // This applies to some other usockets functions too.
-            if (res == 0) {
+            if (res >= 0) {
                 return null;
             }
 

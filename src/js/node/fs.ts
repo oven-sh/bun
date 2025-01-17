@@ -1400,7 +1400,7 @@ function encodeRealpathResult(result, encoding) {
 const realpathSync: any =
   process.platform !== "win32"
     ? fs.realpathSync.bind(fs)
-    : function (p, options) {
+    : function realpathSync(p, options) {
         let encoding;
         if (options) {
           if (typeof options === "string") encoding = options;
@@ -1460,30 +1460,21 @@ const realpathSync: any =
           }
 
           let resolvedLink;
-          // const maybeCachedResolved = cache?.get(base);
-          // if (maybeCachedResolved) {
-          //   resolvedLink = maybeCachedResolved;
-          // } else {
-          lastStat = fs.lstatSync(base, true, undefined, true /* throwIfNoEntry */);
+          lastStat = fs.lstatSync(base, { throwIfNoEntry: true });
           if (lastStat === undefined) return;
 
           if (!lastStat.isSymbolicLink()) {
             knownHard.$add(base);
-            // cache?.set(base, base);
             continue;
           }
 
-          // Read the link if it wasn't read before
-          // dev/ino always return 0 on windows, so skip the check.
-          let linkTarget = null;
-          if (linkTarget === null) {
-            lastStat = fs.statSync(base, { throwIfNoEntry: true });
-            linkTarget = fs.readlink(base);
-          }
+          lastStat = fs.statSync(base, { throwIfNoEntry: true });
+          const linkTarget = fs.readlinkSync(base);
+          console.log({ previous, linkTarget });
           resolvedLink = pathModule.resolve(previous, linkTarget);
-          // }
 
           // Resolve the link, then start over
+          console.log({ resolvedLink, p, pos });
           p = pathModule.resolve(resolvedLink, p.slice(pos));
 
           // Skip over roots
@@ -1513,7 +1504,7 @@ const realpath: any =
           callback(null, resolvedPath);
         }, callback);
       }
-    : function (p, options, callback) {
+    : function realpath(p, options, callback) {
         if ($isCallable(options)) {
           callback = options;
           options = undefined;

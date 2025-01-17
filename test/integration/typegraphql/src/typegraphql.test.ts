@@ -51,7 +51,10 @@ test("correct reflect.metadata types for getters", () => {
   expect(Reflect.getMetadata("design:type", User.prototype, "lastName")).toBe(String);
   expect(Reflect.getMetadata("design:type", User.prototype, "fullName")).toBe(String);
   expect(Reflect.getMetadata("design:returntype", User.prototype, "fullName")).toBe(undefined);
-  expect(Reflect.getMetadata("design:type", User.prototype, "enum1")).toBe(String);
-  expect(Reflect.getMetadata("design:type", User.prototype, "enum2")).toBe(String);
-  expect(Reflect.getMetadata("design:type", User.prototype, "enum3")).toBe(String);
+  // in typescript, these would be String. but since enums have both a runtime and a type value, bun can't
+  // know that if the enum comes from an import statement. type-graphql doesn't care because the field type
+  // is manually specified.
+  expect(Reflect.getMetadata("design:type", User.prototype, "enum1")).toBe(Enum1);
+  expect(Reflect.getMetadata("design:type", User.prototype, "enum2")).toBe(Enum2);
+  expect(Reflect.getMetadata("design:type", User.prototype, "enum3")).toBe(Enum3);
 });

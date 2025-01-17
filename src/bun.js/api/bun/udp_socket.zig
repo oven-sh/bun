@@ -671,7 +671,7 @@ pub const UDPSocket = struct {
 
             if (str.indexOfAsciiChar('%')) |percent| {
                 if (percent + 1 < str.length()) {
-                    const iface_id: ?u32 = blk: {
+                    const iface_id: u32 = blk: {
                         if (comptime bun.Environment.isWindows) {
                             if (str.substring(percent + 1).toInt32()) |signed| {
                                 if (std.math.cast(u32, signed)) |id| {
@@ -679,20 +679,20 @@ pub const UDPSocket = struct {
                                 }
                             }
                         } else {
-                            const index = std.c.if_nametoindex(address_slice[percent + 1 ..]);
+                            const index = std.c.if_nametoindex(address_slice[percent + 1 .. :0]);
                             if (index > 0) {
                                 if (std.math.cast(u32, index)) |id| {
                                     break :blk id;
                                 }
                             }
                         }
-                        break :blk null;
+                        // "an invalid Scope gets turned into #0 (default selection)"
+                        // (test-dgram-multicast-set-interface.js)
+                        break :blk 0;
                     };
 
-                    if (iface_id) |id| {
-                        address_slice[percent] = '\x00';
-                        addr6.scope_id = id;
-                    }
+                    address_slice[percent] = '\x00';
+                    addr6.scope_id = iface_id;
                 }
             }
 

@@ -783,7 +783,7 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           resolve();
         });
         await promise;
-        // expect(response_headers[":status"]).toBe(200); // TODO:
+        expect(response_headers[":status"]).toBe(200);
         const settings = client.remoteSettings;
         const localSettings = client.localSettings;
         assertSettings(settings);

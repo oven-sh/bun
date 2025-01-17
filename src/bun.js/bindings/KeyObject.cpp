@@ -1656,7 +1656,11 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__Verify, (JSC::JSGlobalObject * globalObject,
         const auto& hmac = downcast<WebCore::CryptoKeyHMAC>(wrapped);
         auto result = (customHash) ? WebCore::CryptoAlgorithmHMAC::platformVerifyWithAlgorithm(hmac, hash, signatureData, vectorData) : WebCore::CryptoAlgorithmHMAC::platformVerify(hmac, signatureData, vectorData);
         if (result.hasException()) {
-            WebCore::propagateException(*globalObject, scope, result.releaseException());
+            Exception exception = result.releaseException();
+            if (exception.code() == WebCore::ExceptionCode::OperationError) {
+                return JSValue::encode(jsBoolean(false));
+            }
+            WebCore::propagateException(*globalObject, scope, WTFMove(exception));
             return JSC::JSValue::encode(JSC::JSValue {});
         }
         return JSC::JSValue::encode(jsBoolean(result.releaseReturnValue()));
@@ -1665,7 +1669,11 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__Verify, (JSC::JSGlobalObject * globalObject,
         const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(wrapped);
         auto result = WebCore::CryptoAlgorithmEd25519::platformVerify(okpKey, signatureData, vectorData);
         if (result.hasException()) {
-            WebCore::propagateException(*globalObject, scope, result.releaseException());
+            Exception exception = result.releaseException();
+            if (exception.code() == WebCore::ExceptionCode::OperationError) {
+                return JSValue::encode(jsBoolean(false));
+            }
+            WebCore::propagateException(*globalObject, scope, WTFMove(exception));
             return JSC::JSValue::encode(JSC::JSValue {});
         }
         return JSC::JSValue::encode(jsBoolean(result.releaseReturnValue()));
@@ -1699,7 +1707,11 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__Verify, (JSC::JSGlobalObject * globalObject,
         }
         auto result = WebCore::CryptoAlgorithmECDSA::platformVerify(params, ec, signatureData, vectorData);
         if (result.hasException()) {
-            WebCore::propagateException(*globalObject, scope, result.releaseException());
+            Exception exception = result.releaseException();
+            if (exception.code() == WebCore::ExceptionCode::OperationError) {
+                return JSValue::encode(jsBoolean(false));
+            }
+            WebCore::propagateException(*globalObject, scope, WTFMove(exception));
             return JSC::JSValue::encode(JSC::JSValue {});
         }
         return JSC::JSValue::encode(jsBoolean(result.releaseReturnValue()));
@@ -1716,7 +1728,11 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__Verify, (JSC::JSGlobalObject * globalObject,
         case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5: {
             auto result = (customHash) ? WebCore::CryptoAlgorithmRSASSA_PKCS1_v1_5::platformVerifyWithAlgorithm(rsa, hash, signatureData, vectorData) : CryptoAlgorithmRSASSA_PKCS1_v1_5::platformVerify(rsa, signatureData, vectorData);
             if (result.hasException()) {
-                WebCore::propagateException(*globalObject, scope, result.releaseException());
+                Exception exception = result.releaseException();
+                if (exception.code() == WebCore::ExceptionCode::OperationError) {
+                    return JSValue::encode(jsBoolean(false));
+                }
+                WebCore::propagateException(*globalObject, scope, WTFMove(exception));
                 return JSC::JSValue::encode(JSC::JSValue {});
             }
             return JSC::JSValue::encode(jsBoolean(result.releaseReturnValue()));
@@ -1760,7 +1776,11 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__Verify, (JSC::JSGlobalObject * globalObject,
             params.identifier = CryptoAlgorithmIdentifier::RSA_PSS;
             auto result = (customHash) ? WebCore::CryptoAlgorithmRSA_PSS::platformVerifyWithAlgorithm(params, hash, rsa, signatureData, vectorData) : CryptoAlgorithmRSA_PSS::platformVerify(params, rsa, signatureData, vectorData);
             if (result.hasException()) {
-                WebCore::propagateException(*globalObject, scope, result.releaseException());
+                Exception exception = result.releaseException();
+                if (exception.code() == WebCore::ExceptionCode::OperationError) {
+                    return JSValue::encode(jsBoolean(false));
+                }
+                WebCore::propagateException(*globalObject, scope, WTFMove(exception));
                 return JSC::JSValue::encode(JSC::JSValue {});
             }
             return JSC::JSValue::encode(jsBoolean(result.releaseReturnValue()));

@@ -8992,8 +8992,7 @@ var require_signature = __commonJS({
     function Signature(options, enc) {
       if (options instanceof Signature) return options;
       this._importDER(options, enc) ||
-        (assert(options.r && options.s, "Signature without r or s"),
-        (this.r = new BN(options.r, 16)),
+        ((this.r = new BN(options.r, 16)),
         (this.s = new BN(options.s, 16)),
         options.recoveryParam === void 0 ? (this.recoveryParam = null) : (this.recoveryParam = options.recoveryParam));
     }
@@ -9290,7 +9289,7 @@ var require_signature2 = __commonJS({
             R: sig.slice(0, eddsa.encodingLength),
             S: sig.slice(eddsa.encodingLength),
           }),
-        assert(sig.R && sig.S, "Signature without R or S"),
+        // assert(sig.R && sig.S, "Signature without R or S"),
         eddsa.isPoint(sig.R) && (this._R = sig.R),
         sig.S instanceof BN && (this._S = sig.S),
         (this._Rencoded = Array.isArray(sig.R) ? sig.R : sig.Rencoded),

@@ -2,7 +2,6 @@
 // https://github.com/niksy/isomorphic-timers-promises/blob/master/index.js
 
 const { validateBoolean, validateAbortSignal, validateObject } = require("internal/validators");
-const { AbortError } = require("internal/errors");
 
 const symbolAsyncIterator = Symbol.asyncIterator;
 
@@ -40,7 +39,7 @@ function setTimeoutPromise(after = 1, value, options = {}) {
     return Promise.reject(error);
   }
   if (signal?.aborted) {
-    return Promise.reject(new AbortError());
+    return Promise.reject($makeAbortError());
   }
   let onCancel;
   const returnValue = new Promise((resolve, reject) => {
@@ -51,7 +50,7 @@ function setTimeoutPromise(after = 1, value, options = {}) {
     if (signal) {
       onCancel = () => {
         clearTimeout(timeout);
-        reject(new AbortError());
+        reject($makeAbortError());
       };
       signal.addEventListener("abort", onCancel);
     }
@@ -79,7 +78,7 @@ function setImmediatePromise(value, options = {}) {
     return Promise.reject(error);
   }
   if (signal?.aborted) {
-    return Promise.reject(new AbortError());
+    return Promise.reject($makeAbortError());
   }
   let onCancel;
   const returnValue = new Promise((resolve, reject) => {
@@ -90,7 +89,7 @@ function setImmediatePromise(value, options = {}) {
     if (signal) {
       onCancel = () => {
         clearImmediate(immediate);
-        reject(new AbortError());
+        reject($makeAbortError());
       };
       signal.addEventListener("abort", onCancel);
     }
@@ -133,7 +132,7 @@ function setIntervalPromise(after = 1, value, options = {}) {
   if (signal?.aborted) {
     return asyncIterator({
       next: function () {
-        return Promise.reject(new AbortError());
+        return Promise.reject($makeAbortError());
       },
     });
   }
@@ -174,7 +173,7 @@ function setIntervalPromise(after = 1, value, options = {}) {
               resolve();
             }
           } else if (notYielded === 0) {
-            reject(new AbortError());
+            reject($makeAbortError());
           } else {
             resolve();
           }

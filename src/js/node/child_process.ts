@@ -3,7 +3,6 @@ const EventEmitter = require("node:events");
 const StreamModule = require("node:stream");
 const OsModule = require("node:os");
 const { kHandle } = require("internal/shared");
-const { AbortError } = require("internal/errors");
 const {
   validateBoolean,
   validateFunction,
@@ -1564,7 +1563,7 @@ function abortChildProcess(child, killSignal, reason) {
   if (!child) return;
   try {
     if (child.kill(killSignal)) {
-      child.emit("error", new AbortError(undefined, { cause: reason }));
+      child.emit("error", $makeAbortError(undefined, { cause: reason }));
     }
   } catch (err) {
     child.emit("error", err);

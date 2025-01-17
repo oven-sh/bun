@@ -12,7 +12,6 @@ const {
   isWritableStream,
 } = require("internal/streams/utils");
 const eos = require("internal/streams/end-of-stream");
-const { AbortError } = require("internal/errors");
 const { destroyer } = require("internal/streams/destroy");
 const Duplex = require("internal/streams/duplex");
 const Readable = require("internal/streams/readable");
@@ -208,7 +207,7 @@ function fromAsyncGen(fn) {
         const { chunk, done, cb } = await _promise;
         process.nextTick(cb);
         if (done) return;
-        if (signal.aborted) throw new AbortError(undefined, { cause: signal.reason });
+        if (signal.aborted) throw $makeAbortError(undefined, { cause: signal.reason });
         ({ promise, resolve } = PromiseWithResolvers());
         yield chunk;
       }
@@ -348,7 +347,7 @@ function _duplexify(pair) {
 
   d._destroy = function (err, callback) {
     if (!err && onclose !== null) {
-      err = new AbortError();
+      err = $makeAbortError();
     }
 
     onreadable = null;

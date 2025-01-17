@@ -14,7 +14,6 @@ const Duplex = require("internal/streams/duplex");
 const { destroyer } = require("internal/streams/destroy");
 const { isDestroyed, isReadable, isWritable, isWritableEnded } = require("internal/streams/utils");
 const { Buffer } = require("node:buffer");
-const { AbortError } = require("internal/errors");
 const { kEmptyObject, kGetNativeReadableProto } = require("internal/shared");
 const { validateBoolean, validateObject } = require("internal/validators");
 const finished = require("internal/streams/end-of-stream");
@@ -195,7 +194,7 @@ const ZLIB_FAILURES = new SafeSet([
 function handleKnownInternalErrors(cause: Error | null): Error | null {
   switch (true) {
     case cause?.code === "ERR_STREAM_PREMATURE_CLOSE": {
-      return new AbortError(undefined, { cause });
+      return $makeAbortError(undefined, { cause });
     }
     case ZLIB_FAILURES.has(cause?.code): {
       const error = new TypeError(undefined, { cause });
@@ -262,7 +261,7 @@ function newWritableStreamFromStreamWritable(streamWritable) {
       closed = undefined;
       return;
     }
-    controller.error(new AbortError());
+    controller.error($makeAbortError());
     controller = undefined;
   });
 

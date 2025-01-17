@@ -3,7 +3,6 @@
 
 "use strict";
 
-const { AbortError } = require("internal/errors");
 const { kEmptyObject, once } = require("internal/shared");
 const { validateAbortSignal, validateFunction, validateObject, validateBoolean } = require("internal/validators");
 const {
@@ -224,7 +223,7 @@ function eos(stream, options, callback) {
       // Keep it because cleanup removes it.
       const endCallback = callback;
       cleanup();
-      endCallback.$call(stream, new AbortError(undefined, { cause: options.signal.reason }));
+      endCallback.$call(stream, $makeAbortError(undefined, { cause: options.signal.reason }));
     };
     if (options.signal.aborted) {
       process.nextTick(abort);
@@ -248,7 +247,7 @@ function eosWeb(stream, options, callback) {
   if (options.signal) {
     abort = () => {
       isAborted = true;
-      callback.$call(stream, new AbortError(undefined, { cause: options.signal.reason }));
+      callback.$call(stream, $makeAbortError(undefined, { cause: options.signal.reason }));
     };
     if (options.signal.aborted) {
       process.nextTick(abort);

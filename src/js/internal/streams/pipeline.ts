@@ -7,7 +7,7 @@ const eos = require("internal/streams/end-of-stream");
 const { once } = require("internal/shared");
 const destroyImpl = require("internal/streams/destroy");
 const Duplex = require("internal/streams/duplex");
-const { AbortError, aggregateTwoErrors } = require("internal/errors");
+const { aggregateTwoErrors } = require("internal/errors");
 const { validateFunction, validateAbortSignal } = require("internal/validators");
 const {
   isIterable,
@@ -183,7 +183,7 @@ function pipelineImpl(streams, callback, opts?) {
   validateAbortSignal(outerSignal, "options.signal");
 
   function abort() {
-    finishImpl(new AbortError(undefined, { cause: outerSignal?.reason }));
+    finishImpl($makeAbortError(undefined, { cause: outerSignal?.reason }));
   }
 
   addAbortListener ??= require("internal/abort_listener").addAbortListener;

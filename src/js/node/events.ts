@@ -23,7 +23,6 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-const { AbortError } = require("internal/errors");
 const {
   validateObject,
   validateInteger,
@@ -424,7 +423,7 @@ function once(emitter, type, options = kEmptyObject) {
   var signal = options?.signal;
   validateAbortSignal(signal, "options.signal");
   if (signal?.aborted) {
-    throw new AbortError(undefined, { cause: signal?.reason });
+    throw $makeAbortError(undefined, { cause: signal?.reason });
   }
   const { resolve, reject, promise } = $newPromiseCapability(Promise);
   const errorListener = err => {
@@ -452,7 +451,7 @@ function once(emitter, type, options = kEmptyObject) {
   function abortListener() {
     eventTargetAgnosticRemoveListener(emitter, type, resolver);
     eventTargetAgnosticRemoveListener(emitter, "error", errorListener);
-    reject(new AbortError(undefined, { cause: signal?.reason }));
+    reject($makeAbortError(undefined, { cause: signal?.reason }));
   }
   if (signal != null) {
     eventTargetAgnosticAddListener(signal, "abort", abortListener, { once: true });
@@ -471,7 +470,7 @@ function on(emitter, event, options = kEmptyObject) {
   validateObject(options, "options");
   const signal = options.signal;
   validateAbortSignal(signal, "options.signal");
-  if (signal?.aborted) throw new AbortError(undefined, { cause: signal?.reason });
+  if (signal?.aborted) throw $makeAbortError(undefined, { cause: signal?.reason });
   // Support both highWaterMark and highWatermark for backward compatibility
   const highWatermark = options.highWaterMark ?? options.highWatermark ?? Number.MAX_SAFE_INTEGER;
   validateInteger(highWatermark, "options.highWaterMark", 1);
@@ -578,7 +577,7 @@ function on(emitter, event, options = kEmptyObject) {
   return iterator;
 
   function abortListener() {
-    errorHandler(new AbortError(undefined, { cause: signal?.reason }));
+    errorHandler($makeAbortError(undefined, { cause: signal?.reason }));
   }
 
   function eventHandler(value) {

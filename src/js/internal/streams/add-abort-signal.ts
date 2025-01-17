@@ -1,6 +1,5 @@
 "use strict";
 
-const { AbortError } = require("internal/errors");
 const { isNodeStream, isWebStream, kControllerErrorFunction } = require("internal/streams/utils");
 const eos = require("internal/streams/end-of-stream");
 
@@ -31,10 +30,10 @@ function addAbortSignalNoValidate(signal, stream) {
   }
   const onAbort = isNodeStream(stream)
     ? () => {
-        stream.destroy(new AbortError(undefined, { cause: signal.reason }));
+        stream.destroy($makeAbortError(undefined, { cause: signal.reason }));
       }
     : () => {
-        stream[kControllerErrorFunction](new AbortError(undefined, { cause: signal.reason }));
+        stream[kControllerErrorFunction]($makeAbortError(undefined, { cause: signal.reason }));
       };
   if (signal.aborted) {
     onAbort();

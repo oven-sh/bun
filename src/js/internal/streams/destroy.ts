@@ -1,6 +1,6 @@
 "use strict";
 
-const { AbortError, aggregateTwoErrors } = require("internal/errors");
+const { aggregateTwoErrors } = require("internal/errors");
 const {
   kIsDestroyed,
   isDestroyed,
@@ -304,7 +304,7 @@ function destroyer(stream, err) {
   }
 
   if (!err && !isFinished(stream)) {
-    err = new AbortError();
+    err = $makeAbortError();
   }
 
   // TODO: Remove isRequest branches.

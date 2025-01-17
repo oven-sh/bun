@@ -134,6 +134,7 @@ using namespace JSC;
     macro(Loader) \
     macro(localStreams) \
     macro(main) \
+    macro(makeAbortError) \
     macro(makeDOMException) \
     macro(makeErrorWithCode) \
     macro(makeGetterTypeError) \

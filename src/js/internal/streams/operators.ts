@@ -1,6 +1,5 @@
 "use strict";
 
-const { AbortError } = require("internal/errors");
 const { validateAbortSignal, validateInteger, validateObject } = require("internal/validators");
 const { kWeakHandler, kResistStopPropagation } = require("internal/shared");
 const { finished } = require("internal/streams/end-of-stream");
@@ -103,7 +102,7 @@ function map(fn, options) {
           }
 
           if (signal.aborted) {
-            throw new AbortError();
+            throw $makeAbortError();
           }
 
           try {
@@ -160,7 +159,7 @@ function map(fn, options) {
           }
 
           if (signal.aborted) {
-            throw new AbortError();
+            throw $makeAbortError();
           }
 
           if (val !== kEmpty) {
@@ -261,7 +260,7 @@ async function reduce(reducer, initialValue, options) {
 
   let hasInitialValue = arguments.length > 1;
   if (options?.signal?.aborted) {
-    const err = new AbortError(undefined, { cause: options.signal.reason });
+    const err = $makeAbortError(undefined, { cause: options.signal.reason });
     this.once("error", () => {}); // The error is already propagated
     await finished(this.destroy(err));
     throw err;
@@ -277,7 +276,7 @@ async function reduce(reducer, initialValue, options) {
     for await (const value of this) {
       gotAnyItemFromStream = true;
       if (options?.signal?.aborted) {
-        throw new AbortError();
+        throw $makeAbortError();
       }
       if (!hasInitialValue) {
         initialValue = value;
@@ -306,7 +305,7 @@ async function toArray(options) {
   const result = [];
   for await (const val of this) {
     if (options?.signal?.aborted) {
-      throw new AbortError(undefined, { cause: options.signal.reason });
+      throw $makeAbortError(undefined, { cause: options.signal.reason });
     }
     ArrayPrototypePush.$call(result, val);
   }
@@ -347,11 +346,11 @@ function drop(number, options = undefined) {
   number = toIntegerOrInfinity(number);
   return async function* drop() {
     if (options?.signal?.aborted) {
-      throw new AbortError();
+      throw $makeAbortError();
     }
     for await (const val of this) {
       if (options?.signal?.aborted) {
-        throw new AbortError();
+        throw $makeAbortError();
       }
       if (number-- <= 0) {
         yield val;
@@ -372,11 +371,11 @@ function take(number, options?: { signal: AbortSignal }) {
   number = toIntegerOrInfinity(number);
   return async function* take() {
     if (options?.signal?.aborted) {
-      throw new AbortError();
+      throw $makeAbortError();
     }
     for await (const val of this) {
       if (options?.signal?.aborted) {
-        throw new AbortError();
+        throw $makeAbortError();
       }
       if (number-- > 0) {
         yield val;

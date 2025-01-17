@@ -567,6 +567,8 @@ declare interface Error {
   code?: string;
 }
 
+declare function $makeAbortError(message?: string, options?: { cause: Error }): Error;
+
 /**
  * -- Error Codes with manual messages
  */

@@ -11,7 +11,6 @@ const destroyImpl = require("internal/streams/destroy");
 const eos = require("internal/streams/end-of-stream");
 const { addAbortSignal } = require("internal/streams/add-abort-signal");
 const { getHighWaterMark, getDefaultHighWaterMark } = require("internal/streams/state");
-const { AbortError } = require("internal/errors");
 const {
   kOnConstructed,
   kState,
@@ -1113,7 +1112,7 @@ Writable.toWeb = function (streamWritable) {
 Writable.prototype[SymbolAsyncDispose] = function () {
   let error;
   if (!this.destroyed) {
-    error = this.writableFinished ? null : new AbortError();
+    error = this.writableFinished ? null : $makeAbortError();
     this.destroy(error);
   }
   return new Promise((resolve, reject) =>

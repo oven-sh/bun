@@ -21,7 +21,7 @@ const {
   kErrored,
   kConstructed,
 } = require("internal/streams/utils");
-const { AbortError, aggregateTwoErrors } = require("internal/errors");
+const { aggregateTwoErrors } = require("internal/errors");
 const { validateObject } = require("internal/validators");
 const { StringDecoder } = require("node:string_decoder");
 const from = require("internal/streams/from");
@@ -315,7 +315,7 @@ Readable.prototype[EE.captureRejectionSymbol] = function (err) {
 Readable.prototype[SymbolAsyncDispose] = function () {
   let error;
   if (!this.destroyed) {
-    error = this.readableEnded ? null : new AbortError();
+    error = this.readableEnded ? null : $makeAbortError();
     this.destroy(error);
   }
   return new Promise((resolve, reject) => eos(this, err => (err && err !== error ? reject(err) : resolve(null))));

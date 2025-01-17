@@ -13,7 +13,6 @@ const {
   isReadableStream,
 } = require("internal/streams/utils");
 const eos = require("internal/streams/end-of-stream");
-const { AbortError } = require("internal/errors");
 
 const ArrayPrototypeSlice = Array.prototype.slice;
 
@@ -200,7 +199,7 @@ export default function compose(...streams) {
 
   d._destroy = function (err, callback) {
     if (!err && onclose !== null) {
-      err = new AbortError();
+      err = $makeAbortError();
     }
 
     onreadable = null;

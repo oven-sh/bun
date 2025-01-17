@@ -390,12 +390,11 @@ for (let credentials of allCredentials) {
             it("should be able to upload large files using writer()", async () => {
               const s3file = file(tmp_filename, options);
               const writer = s3file.writer();
-              writer.write(bigishPayload);
-              writer.write(bigishPayload);
+              writer.write(bigPayload);
               writer.write(bigishPayload);
 
               await writer.end();
-              expect(await s3file.text()).toBe(bigishPayload.repeat(3));
+              expect(await s3file.text()).toBe(bigPayload + bigishPayload);
             });
             it("should be able to upload large files in one go using Bun.write", async () => {
               {

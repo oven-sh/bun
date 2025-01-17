@@ -56,7 +56,7 @@ pub const MultiPartUpload = struct {
 
     pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
 
-    const log = bun.Output.scoped(.S3MultiPartUpload, false);
+    const log = bun.Output.scoped(.S3MultiPartUpload, true);
 
     pub const UploadPart = struct {
         data: []const u8,

@@ -56,10 +56,11 @@ pub const MultiPartUpload = struct {
 
     pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
 
-    const log = bun.Output.scoped(.S3MultiPartUpload, true);
+    const log = bun.Output.scoped(.S3MultiPartUpload, false);
 
     pub const UploadPart = struct {
         data: []const u8,
+        allocated_size: usize,
         state: enum {
             pending,
             started,
@@ -100,7 +101,7 @@ pub const MultiPartUpload = struct {
                         return;
                     } else {
                         log("onPartResponse {} failed", .{this.partNumber});
-                        if (this.owns_data) bun.default_allocator.free(this.data);
+                        if (this.owns_data) bun.default_allocator.free(this.data[0..this.allocated_size]);
                         defer this.ctx.deref();
                         return this.ctx.fail(err);
                     }
@@ -108,7 +109,7 @@ pub const MultiPartUpload = struct {
                 .etag => |etag| {
                     log("onPartResponse {} success", .{this.partNumber});
 
-                    if (this.owns_data) bun.default_allocator.free(this.data);
+                    if (this.owns_data) bun.default_allocator.free(this.data[0..this.allocated_size]);
                     // we will need to order this
                     this.ctx.multipart_etags.append(bun.default_allocator, .{
                         .number = this.partNumber,
@@ -216,7 +217,7 @@ pub const MultiPartUpload = struct {
         }
     }
 
-    fn getCreatePart(this: *@This(), chunk: []const u8, owns_data: bool) ?*UploadPart {
+    fn getCreatePart(this: *@This(), chunk: []const u8, allocated_size: usize, owns_data: bool) ?*UploadPart {
         const index = this.available.findFirstSet() orelse {
             // this means that the queue is full and we cannot flush it
             return null;
@@ -232,6 +233,7 @@ pub const MultiPartUpload = struct {
         if (this.queue.items.len <= index) {
             this.queue.append(bun.default_allocator, .{
                 .data = chunk,
+                .allocated_size = allocated_size,
                 .partNumber = this.currentPartNumber,
                 .owns_data = owns_data,
                 .ctx = this,
@@ -243,6 +245,7 @@ pub const MultiPartUpload = struct {
         }
         this.queue.items[index] = .{
             .data = chunk,
+            .allocated_size = allocated_size,
             .partNumber = this.currentPartNumber,
             .owns_data = owns_data,
             .ctx = this,
@@ -426,8 +429,8 @@ pub const MultiPartUpload = struct {
             .search_params = search_params,
         }, .{ .upload = @ptrCast(&onRollbackMultiPartRequest) }, this);
     }
-    fn enqueuePart(this: *@This(), chunk: []const u8, owns_data: bool) bool {
-        const part = this.getCreatePart(chunk, owns_data) orelse return false;
+    fn enqueuePart(this: *@This(), chunk: []const u8, allocated_size: usize, owns_data: bool) bool {
+        const part = this.getCreatePart(chunk, allocated_size, owns_data) orelse return false;
 
         if (this.state == .not_started) {
             // will auto start later
@@ -449,26 +452,44 @@ pub const MultiPartUpload = struct {
     }
 
     fn processMultiPart(this: *@This(), part_size: usize) void {
+        log("processMultiPart {s} {d}", .{ this.path, part_size });
         // need to split in multiple parts because of the size
         var buffer = this.buffered.items[this.offset..];
         var queue_full = false;
-        defer if (!this.ended and queue_full == false) {
-            this.buffered = .{};
+        defer if (!this.ended and queue_full == false and buffer.len == 0) {
+            this.buffered.items.len = 0;
             this.offset = 0;
         };
-
         while (buffer.len > 0) {
             const len = @min(part_size, buffer.len);
-            const slice = buffer[0..len];
-            buffer = buffer[len..];
-            if (slice.len < part_size and !this.ended) {
+            if (len < part_size and !this.ended) {
+                log("processMultiPart {s} {d} slice too small", .{ this.path, part_size });
                 //slice is too small, we need to wait for more data
                 break;
             }
-            // its one big buffer lets free after we are done with everything, part dont own the data
-            if (this.enqueuePart(slice, this.ended)) {
+            // if is one big chunk we can pass ownership and avoid dupe
+            const can_pass_ownership = len == this.buffered.items.len;
+            var allocated_size = len;
+            const slice = brk: {
+                if (can_pass_ownership) {
+                    allocated_size = this.buffered.capacity;
+                    this.buffered = .{};
+                    // pass ownership
+                    break :brk buffer[0..len];
+                } else {
+                    // dupe the buffer and reuse the buffer for new parts
+                    break :brk bun.default_allocator.dupe(u8, buffer[0..len]) catch bun.outOfMemory();
+                }
+            };
+
+            buffer = buffer[len..];
+
+            log("processMultiPart {s} {d} slice {d}", .{ this.path, part_size, slice.len });
+            // part always owns the data
+            if (this.enqueuePart(slice, allocated_size, true)) {
                 this.offset += len;
             } else {
+                log("processMultiPart {s} {d} queue full", .{ this.path, part_size });
                 queue_full = true;
                 break;
             }
@@ -516,6 +537,9 @@ pub const MultiPartUpload = struct {
         if (this.state == .wait_stream_check and chunk.len == 0 and is_last) {
             // we do this because stream will close if the file dont exists and we dont wanna to send an empty part in this case
             this.ended = true;
+            if (this.buffered.items.len > 0) {
+                this.processBuffered(this.partSizeInBytes());
+            }
             return;
         }
         if (is_last) {

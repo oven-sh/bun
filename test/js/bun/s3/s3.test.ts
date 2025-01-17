@@ -31,8 +31,7 @@ const allCredentials = [
   },
 ];
 
-// TODO: figure out why minio is not creating a bucket on Linux, works on macOS and windows
-if (isDockerEnabled() && !isLinux) {
+if (isDockerEnabled()) {
   const minio_dir = tempDirWithFiles("minio", {});
   const result = child_process.spawnSync(
     "docker",
@@ -70,7 +69,7 @@ if (isDockerEnabled() && !isLinux) {
   await Bun.sleep(1_000);
 
   /// create a bucket
-  child_process.spawnSync(dockerCLI, [`exec`, `minio`, `mc`, `mb`, `http://localhost:9000/buntest`], {
+  child_process.spawnSync(dockerCLI, [`exec`, `minio`, `mc`, `mb`, `data/buntest`], {
     stdio: "ignore",
   });
 

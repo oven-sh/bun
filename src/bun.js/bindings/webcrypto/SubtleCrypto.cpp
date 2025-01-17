@@ -746,7 +746,7 @@ void SubtleCrypto::digest(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algo
 {
     auto paramsOrException = normalizeCryptoAlgorithmParameters(state, WTFMove(algorithmIdentifier), Operations::Digest);
     if (paramsOrException.hasException()) {
-        promise->reject(paramsOrException.releaseException());
+        promise->reject(paramsOrException.releaseException().code(), "Unrecognized algorithm name"_s);
         return;
     }
     auto params = paramsOrException.releaseReturnValue();

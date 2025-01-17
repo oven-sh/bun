@@ -499,137 +499,140 @@ const TLSSocket = (function (InternalTLSSocket) {
 );
 let CLIENT_RENEG_LIMIT = 3,
   CLIENT_RENEG_WINDOW = 600;
-function Server(options, secureConnectionListener) {
-  const server = new NetServer(options, secureConnectionListener);
 
-  server.key = undefined;
-  server.cert = undefined;
-  server.ca = undefined;
-  server.passphrase = undefined;
-  server.secureOptions = undefined;
-  server._rejectUnauthorized = rejectUnauthorizedDefault;
-  server._requestCert = undefined;
-  server.servername = undefined;
-  server.ALPNProtocols = undefined;
-  let contexts = null;
+function Server(options, secureConnectionListener): void {
+  if (!(this instanceof Server)) {
+    return new Server(options, secureConnectionListener);
+  }
 
-  server.addContext = function (hostname, context) {
-    if (typeof hostname !== "string") {
-      throw new TypeError("hostname must be a string");
-    }
-    if (!(context instanceof InternalSecureContext)) {
-      context = createSecureContext(context);
-    }
-    if (this._handle) {
-      addServerName(this._handle, hostname, context);
-    } else {
-      if (!contexts) contexts = new Map();
-      contexts.set(hostname, context);
-    }
-  };
+  NetServer.$apply(this, [options, secureConnectionListener]);
 
-  server.setSecureContext = function (options) {
-    if (options instanceof InternalSecureContext) {
-      options = options.context;
-    }
-    if (options) {
-      const { ALPNProtocols } = options;
-
-      if (ALPNProtocols) {
-        convertALPNProtocols(ALPNProtocols, this);
-      }
-
-      let key = options.key;
-      if (key) {
-        if (!isValidTLSArray(key)) {
-          throw new TypeError(
-            "key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-          );
-        }
-        this.key = key;
-      }
-      let cert = options.cert;
-      if (cert) {
-        if (!isValidTLSArray(cert)) {
-          throw new TypeError(
-            "cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-          );
-        }
-        this.cert = cert;
-      }
-
-      let ca = options.ca;
-      if (ca) {
-        if (!isValidTLSArray(ca)) {
-          throw new TypeError(
-            "ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-          );
-        }
-        this.ca = ca;
-      }
-
-      let passphrase = options.passphrase;
-      if (passphrase && typeof passphrase !== "string") {
-        throw new TypeError("passphrase argument must be an string");
-      }
-      this.passphrase = passphrase;
-
-      let servername = options.servername;
-      if (servername && typeof servername !== "string") {
-        throw new TypeError("servername argument must be an string");
-      }
-      this.servername = servername;
-
-      let secureOptions = options.secureOptions || 0;
-      if (secureOptions && typeof secureOptions !== "number") {
-        throw new TypeError("secureOptions argument must be an number");
-      }
-      this.secureOptions = secureOptions;
-
-      const requestCert = options.requestCert || false;
-
-      if (requestCert) this._requestCert = requestCert;
-      else this._requestCert = undefined;
-
-      const rejectUnauthorized = options.rejectUnauthorized;
-
-      if (typeof rejectUnauthorized !== "undefined") {
-        this._rejectUnauthorized = rejectUnauthorized;
-      } else this._rejectUnauthorized = rejectUnauthorizedDefault;
-    }
-  };
-
-  server.getTicketKeys = function () {
-    throw Error("Not implented in Bun yet");
-  };
-
-  server.setTicketKeys = function () {
-    throw Error("Not implented in Bun yet");
-  };
-
-  server[buntls] = function (port, host, isClient) {
-    return [
-      {
-        serverName: this.servername || host || "localhost",
-        key: this.key,
-        cert: this.cert,
-        ca: this.ca,
-        passphrase: this.passphrase,
-        secureOptions: this.secureOptions,
-        rejectUnauthorized: this._rejectUnauthorized,
-        requestCert: isClient ? true : this._requestCert,
-        ALPNProtocols: this.ALPNProtocols,
-        clientRenegotiationLimit: CLIENT_RENEG_LIMIT,
-        clientRenegotiationWindow: CLIENT_RENEG_WINDOW,
-        contexts: contexts,
-      },
-      SocketClass,
-    ];
-  };
-
-  server.setSecureContext(options);
-  return server;
+  this.key = undefined;
+  this.cert = undefined;
+  this.ca = undefined;
+  this.passphrase = undefined;
+  this.secureOptions = undefined;
+  this._rejectUnauthorized = rejectUnauthorizedDefault;
+  this._requestCert = undefined;
+  this.servername = undefined;
+  this.ALPNProtocols = undefined;
+  this._contexts = undefined;
 }
+$toClass(Server, "Server", NetServer);
+
+Server.prototype.addContext = function (hostname, context) {
+  if (typeof hostname !== "string") {
+    throw new TypeError("hostname must be a string");
+  }
+  if (!(context instanceof InternalSecureContext)) {
+    context = createSecureContext(context);
+  }
+  if (this._handle) {
+    addServerName(this._handle, hostname, context);
+  } else {
+    if (!this._contexts) this._contexts = new Map();
+    this._contexts.set(hostname, context);
+  }
+};
+
+Server.prototype.setSecureContext = function (options) {
+  if (options instanceof InternalSecureContext) {
+    options = options.context;
+  }
+  if (options) {
+    const { ALPNProtocols } = options;
+
+    if (ALPNProtocols) {
+      convertALPNProtocols(ALPNProtocols, this);
+    }
+
+    let key = options.key;
+    if (key) {
+      if (!isValidTLSArray(key)) {
+        throw new TypeError(
+          "key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+        );
+      }
+      this.key = key;
+    }
+    let cert = options.cert;
+    if (cert) {
+      if (!isValidTLSArray(cert)) {
+        throw new TypeError(
+          "cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+        );
+      }
+      this.cert = cert;
+    }
+
+    let ca = options.ca;
+    if (ca) {
+      if (!isValidTLSArray(ca)) {
+        throw new TypeError(
+          "ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+        );
+      }
+      this.ca = ca;
+    }
+
+    let passphrase = options.passphrase;
+    if (passphrase && typeof passphrase !== "string") {
+      throw new TypeError("passphrase argument must be an string");
+    }
+    this.passphrase = passphrase;
+
+    let servername = options.servername;
+    if (servername && typeof servername !== "string") {
+      throw new TypeError("servername argument must be an string");
+    }
+    this.servername = servername;
+
+    let secureOptions = options.secureOptions || 0;
+    if (secureOptions && typeof secureOptions !== "number") {
+      throw new TypeError("secureOptions argument must be an number");
+    }
+    this.secureOptions = secureOptions;
+
+    const requestCert = options.requestCert || false;
+
+    if (requestCert) this._requestCert = requestCert;
+    else this._requestCert = undefined;
+
+    const rejectUnauthorized = options.rejectUnauthorized;
+
+    if (typeof rejectUnauthorized !== "undefined") {
+      this._rejectUnauthorized = rejectUnauthorized;
+    } else this._rejectUnauthorized = rejectUnauthorizedDefault;
+  }
+};
+
+Server.prototype.getTicketKeys = function () {
+  throw Error("Not implented in Bun yet");
+};
+
+Server.prototype.setTicketKeys = function () {
+  throw Error("Not implented in Bun yet");
+};
+
+Server.prototype[buntls] = function (port, host, isClient) {
+  return [
+    {
+      serverName: this.servername || host || "localhost",
+      key: this.key,
+      cert: this.cert,
+      ca: this.ca,
+      passphrase: this.passphrase,
+      secureOptions: this.secureOptions,
+      rejectUnauthorized: this._rejectUnauthorized,
+      requestCert: isClient ? true : this._requestCert,
+      ALPNProtocols: this.ALPNProtocols,
+      clientRenegotiationLimit: CLIENT_RENEG_LIMIT,
+      clientRenegotiationWindow: CLIENT_RENEG_WINDOW,
+      contexts: this._contexts,
+    },
+    SocketClass,
+  ];
+};
 
 function createServer(options, connectionListener) {
   return new Server(options, connectionListener);

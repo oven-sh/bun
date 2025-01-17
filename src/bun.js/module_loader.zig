@@ -2184,7 +2184,7 @@ pub const ModuleLoader = struct {
                 } else {
                     // search keywords: "export default \"{}\";"
                     writer.writeAll("export default ") catch bun.outOfMemory();
-                    buf = js_printer.quoteForJSON(specifier, buf, true) catch bun.outOfMemory();
+                    buf = js_printer.quoteForJSON(path.text, buf, true) catch bun.outOfMemory();
                     writer = buf.writer();
                     writer.writeAll(";\n") catch bun.outOfMemory();
                 }

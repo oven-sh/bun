@@ -3465,5 +3465,5 @@ it("open mode verification", async () => {
 
 it("fs.mkdirSync recursive should not error when the directory already exists, but should error when its a file", () => {
   expect(() => mkdirSync(import.meta.dir, { recursive: true })).not.toThrowError();
-  expect(() => mkdirSync(import.meta.file, { recursive: true })).not.toThrowError();
+  expect(() => mkdirSync(import.meta.file, { recursive: true })).toThrowError();
 });

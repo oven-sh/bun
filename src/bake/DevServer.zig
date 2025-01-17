@@ -1118,7 +1118,7 @@ pub const HotUpdateContext = struct {
     pub fn getCachedIndex(
         rc: *const HotUpdateContext,
         comptime side: bake.Side,
-        i: bun.JSAst.Index,
+        i: bun.ast.Index,
     ) *IncrementalGraph(side).FileIndex {
         const start = switch (side) {
             .client => 0,
@@ -1193,7 +1193,7 @@ pub fn finalizeBundle(
     }
 
     for (result.cssChunks(), result.css_file_list.values()) |*chunk, metadata| {
-        const index = bun.JSAst.Index.init(chunk.entry_point.source_index);
+        const index = bun.ast.Index.init(chunk.entry_point.source_index);
 
         const code = try chunk.intermediate_output.code(
             dev.allocator,
@@ -1243,7 +1243,7 @@ pub fn finalizeBundle(
         }
     }
     for (result.cssChunks(), result.css_file_list.values()) |*chunk, metadata| {
-        const index = bun.JSAst.Index.init(chunk.entry_point.source_index);
+        const index = bun.ast.Index.init(chunk.entry_point.source_index);
         // TODO: index css deps
         _ = index;
         _ = metadata;
@@ -2035,7 +2035,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
         pub fn receiveChunk(
             g: *@This(),
             ctx: *HotUpdateContext,
-            index: bun.JSAst.Index,
+            index: bun.ast.Index,
             code: []const u8,
             kind: FileKind,
             is_ssr_graph: bool,
@@ -2207,7 +2207,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
         pub fn processChunkDependencies(
             g: *@This(),
             ctx: *HotUpdateContext,
-            bundle_graph_index: bun.JSAst.Index,
+            bundle_graph_index: bun.ast.Index,
             temp_alloc: Allocator,
         ) bun.OOM!void {
             const log = bun.Output.scoped(.processChunkDependencies, false);
@@ -2249,7 +2249,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     // const ssr_index = ctx.scbs.getSSRIndex(bundle_graph_index.get()) orelse {
                     //     @panic("Unexpected missing server-component-boundary entry");
                     // };
-                    // try g.processChunkImportRecords(ctx, &quick_lookup, &new_imports, file_index, bun.JSAst.Index.init(ssr_index));
+                    // try g.processChunkImportRecords(ctx, &quick_lookup, &new_imports, file_index, bun.ast.Index.init(ssr_index));
                 }
             }
 
@@ -2306,7 +2306,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             quick_lookup: *TempLookup.HashTable,
             new_imports: *EdgeIndex.Optional,
             file_index: FileIndex,
-            index: bun.JSAst.Index,
+            index: bun.ast.Index,
         ) !void {
             const log = bun.Output.scoped(.processChunkDependencies, false);
             for (ctx.import_records[index.get()].slice()) |import_record| {
@@ -2554,7 +2554,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
         /// Server CSS files are just used to be targets for graph traversal.
         /// Its content lives only on the client.
-        pub fn insertCssFileOnServer(g: *@This(), ctx: *HotUpdateContext, index: bun.JSAst.Index, abs_path: []const u8) bun.OOM!void {
+        pub fn insertCssFileOnServer(g: *@This(), ctx: *HotUpdateContext, index: bun.ast.Index, abs_path: []const u8) bun.OOM!void {
             g.owner().graph_safety_lock.assertLocked();
 
             debug.log("Insert stale: {s}", .{abs_path});

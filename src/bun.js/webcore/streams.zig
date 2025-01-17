@@ -444,7 +444,7 @@ pub const ReadableStream = struct {
         return ReadableStream__used(globalThis);
     }
 
-    const Base = @import("../../ast/base.zig");
+    const Base = bun.ast;
     pub const StreamTag = enum(usize) {
         invalid = 0,
         _,

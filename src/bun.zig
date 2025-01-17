@@ -114,6 +114,7 @@ pub const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 pub const fmt = @import("./fmt.zig");
 pub const allocators = @import("./allocators.zig");
 pub const bun_js = @import("./bun_js.zig");
+pub const ast = @import("ast.zig");
 
 /// All functions and interfaces provided from Bun's `bindgen` utility.
 pub const gen = @import("bun.js/bindings/GeneratedBindings.zig");

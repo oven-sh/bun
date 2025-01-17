@@ -735,13 +735,13 @@ pub fn addImportMetaDefines(
 pub const server_virtual_source: bun.logger.Source = .{
     .path = bun.fs.Path.initForKitBuiltIn("bun", "bake/server"),
     .contents = "", // Virtual
-    .index = bun.JSAst.Index.bake_server_data,
+    .index = bun.ast.Index.bake_server_data,
 };
 
 pub const client_virtual_source: bun.logger.Source = .{
     .path = bun.fs.Path.initForKitBuiltIn("bun", "bake/client"),
     .contents = "", // Virtual
-    .index = bun.JSAst.Index.bake_client_data,
+    .index = bun.ast.Index.bake_client_data,
 };
 
 /// Stack-allocated structure that is written to from end to start.

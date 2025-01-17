@@ -11,7 +11,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const FileDescriptorType = bun.FileDescriptor;
 const C = bun.C;
-const Ref = @import("./ast/base.zig").Ref;
+const Ref = bun.ast.Ref;
 
 const std = @import("std");
 const lex = bun.js_lexer;

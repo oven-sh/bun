@@ -2683,7 +2683,7 @@ pub const BundlerCssRule = CssRule(BundlerAtRule);
 pub const BundlerLayerBlockRule = css_rules.layer.LayerBlockRule(BundlerAtRule);
 pub const BundlerTailwindState = struct {
     source: []const u8,
-    index: bun.bundle_v2.Index,
+    index: bun.ast.Index,
     output_from_tailwind: ?[]const u8 = null,
 };
 

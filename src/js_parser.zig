@@ -43,7 +43,7 @@ pub const StmtNodeList = js_ast.StmtNodeList;
 pub const BindingNodeList = js_ast.BindingNodeList;
 const DeclaredSymbol = js_ast.DeclaredSymbol;
 const JSC = bun.JSC;
-const Index = @import("./ast/base.zig").Index;
+const Index = bun.ast.Index;
 
 fn _disabledAssert(_: bool) void {
     if (!Environment.allow_assert) @compileError("assert is missing an if (Environment.allow_assert)");
@@ -69,8 +69,8 @@ pub const Level = js_ast.Op.Level;
 pub const Op = js_ast.Op;
 pub const Scope = js_ast.Scope;
 pub const locModuleScope = logger.Loc{ .start = -100 };
-const Ref = @import("./ast/base.zig").Ref;
-const RefHashCtx = @import("./ast/base.zig").RefHashCtx;
+const Ref = bun.ast.Ref;
+const RefHashCtx = bun.ast.RefHashCtx;
 
 pub const StringHashMap = bun.StringHashMap;
 pub const AutoHashMap = std.AutoHashMap;
@@ -2652,12 +2652,12 @@ pub const StringVoidMap = struct {
     pub const Pool = ObjectPool(StringVoidMap, init, true, 32);
     pub const Node = Pool.Node;
 };
-const RefCtx = @import("./ast/base.zig").RefCtx;
+const RefCtx = bun.ast.RefCtx;
 const SymbolUseMap = js_ast.Part.SymbolUseMap;
 const SymbolPropertyUseMap = js_ast.Part.SymbolPropertyUseMap;
 const StringBoolMap = bun.StringHashMapUnmanaged(bool);
 const RefMap = std.HashMapUnmanaged(Ref, void, RefCtx, 80);
-const RefArrayMap = std.ArrayHashMapUnmanaged(Ref, void, @import("./ast/base.zig").RefHashCtx, false);
+const RefArrayMap = std.ArrayHashMapUnmanaged(Ref, void, bun.ast.RefHashCtx, false);
 
 const RefRefMap = std.HashMapUnmanaged(Ref, Ref, RefCtx, 80);
 const ImportRecord = importRecord.ImportRecord;

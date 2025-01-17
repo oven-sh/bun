@@ -42,7 +42,7 @@ const Mimalloc = @import("../../allocators/mimalloc_arena.zig");
 const Runtime = @import("../../runtime.zig").Runtime;
 const JSLexer = bun.js_lexer;
 const Expr = JSAst.Expr;
-const Index = @import("../../ast/base.zig").Index;
+const Index = bun.ast.Index;
 
 const debug = bun.Output.scoped(.Transpiler, false);
 

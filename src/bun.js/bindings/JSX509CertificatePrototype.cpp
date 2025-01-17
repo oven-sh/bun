@@ -263,13 +263,12 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckEmail, (JSGlobalObject *
     auto emailString = arg0.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     auto view = emailString->view(globalObject);
+    WTF::CString email = view->utf8();
 
     uint32_t flags = getFlags(vm, globalObject, scope, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
 
-    Bun::UTF8View emailView(view);
-
-    if (!thisObject->checkEmail(globalObject, emailView.span(), flags))
+    if (!thisObject->checkEmail(globalObject, email.spanIncludingNullTerminator(), flags))
         return JSValue::encode(jsUndefined());
     return JSValue::encode(emailString);
 }
@@ -299,10 +298,9 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckHost, (JSGlobalObject * 
     auto hostString = arg0.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     auto view = hostString->view(globalObject);
+    WTF::CString host = view->utf8();
 
-    Bun::UTF8View hostView(view);
-
-    if (!thisObject->checkHost(globalObject, hostView.span(), flags))
+    if (!thisObject->checkHost(globalObject, host.spanIncludingNullTerminator(), flags))
         return JSValue::encode(jsUndefined());
     return JSValue::encode(hostString);
 }
@@ -329,9 +327,13 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckIP, (JSGlobalObject * gl
     auto ipString = arg0.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     auto view = ipString->view(globalObject);
+    WTF::CString ip = view->utf8();
 
-    Bun::UTF8View ipView(view);
-    if (!thisObject->checkIP(globalObject, ipView.span()))
+    // ignore flags
+    // uint32_t flags = getFlags(vm, globalObject, scope, callFrame->argument(1));
+    // RETURN_IF_EXCEPTION(scope, {});
+
+    if (!thisObject->checkIP(globalObject, ip.spanIncludingNullTerminator()))
         return JSValue::encode(jsUndefined());
     return JSValue::encode(ipString);
 }

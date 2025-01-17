@@ -975,18 +975,22 @@ function isInstanceof(object, proto) {
 }
 
 // Special-case for some builtin prototypes in case their `constructor` property has been tampered.
-const wellKnownPrototypes = new SafeMap();
-wellKnownPrototypes.set(Array.prototype, { name: "Array", constructor: Array });
-wellKnownPrototypes.set(ArrayBuffer.prototype, { name: "ArrayBuffer", constructor: ArrayBuffer });
-wellKnownPrototypes.set(Function.prototype, { name: "Function", constructor: Function });
-wellKnownPrototypes.set(Map.prototype, { name: "Map", constructor: Map });
-wellKnownPrototypes.set(Object.prototype, { name: "Object", constructor: Object });
-wellKnownPrototypes.set(Set.prototype, { name: "Set", constructor: Set });
-// wellKnownPrototypes.set(TypedArray.prototype, { name: "TypedArray", constructor: TypedArray });
+let wellKnownPrototypes;
+function initializeWellKnownPrototypes() {
+  wellKnownPrototypes = new SafeMap();
+  wellKnownPrototypes.set(Array.prototype, { name: "Array", constructor: Array });
+  wellKnownPrototypes.set(ArrayBuffer.prototype, { name: "ArrayBuffer", constructor: ArrayBuffer });
+  wellKnownPrototypes.set(Function.prototype, { name: "Function", constructor: Function });
+  wellKnownPrototypes.set(Map.prototype, { name: "Map", constructor: Map });
+  wellKnownPrototypes.set(Object.prototype, { name: "Object", constructor: Object });
+  wellKnownPrototypes.set(Set.prototype, { name: "Set", constructor: Set });
+  // wellKnownPrototypes.set(TypedArray.prototype, { name: "TypedArray", constructor: TypedArray });
+}
 
 function getConstructorName(obj, ctx, recurseTimes, protoProps) {
   let firstProto;
   const tmp = obj;
+  wellKnownPrototypes ?? initializeWellKnownPrototypes();
   while (obj || isUndetectableObject(obj)) {
     const wellKnownPrototypeNameAndConstructor = wellKnownPrototypes.get(obj);
     if (wellKnownPrototypeNameAndConstructor != null) {

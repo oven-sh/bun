@@ -1,4 +1,3 @@
-
 #include "NodeCrypto.h"
 #include "KeyObject.h"
 #include "ErrorCode.h"
@@ -178,6 +177,50 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCurves, (JSC::JSGlobalObject * lexicalGlobalObject
     return JSValue::encode(result);
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsGetCiphers, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ncrypto::MarkPopErrorOnReturn mark_pop_error_on_return;
+
+    // Create an array to store cipher names
+    JSC::JSArray* result = JSC::constructEmptyArray(lexicalGlobalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    struct CipherPushContext {
+        JSC::JSGlobalObject* globalObject;
+        JSC::JSArray* array;
+        int index;
+        JSC::VM& vm;
+        bool hasException;
+    };
+
+    CipherPushContext ctx = {
+        lexicalGlobalObject,
+        result,
+        0,
+        vm,
+        false
+    };
+
+    auto callback = [](const EVP_CIPHER* cipher, const char* name, const char* /*unused*/, void* arg) {
+        auto* ctx = static_cast<CipherPushContext*>(arg);
+        if (ctx->hasException)
+            return;
+
+        auto cipherStr = JSC::jsString(ctx->vm, String::fromUTF8(name));
+        if (!ctx->array->putDirectIndex(ctx->globalObject, ctx->index++, cipherStr))
+            ctx->hasException = true;
+    };
+
+    EVP_CIPHER_do_all_sorted(callback, &ctx);
+
+    if (ctx.hasException)
+        return JSValue::encode({});
+
+    return JSValue::encode(result);
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsCertVerifySpkac, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = lexicalGlobalObject->vm();
@@ -272,6 +315,11 @@ JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
         JSFunction::create(vm, globalObject, 1, "certExportPublicKey"_s, jsCertExportPublicKey, ImplementationVisibility::Public, NoIntrinsic), 1);
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "certExportChallenge"_s)),
         JSFunction::create(vm, globalObject, 1, "certExportChallenge"_s, jsCertExportChallenge, ImplementationVisibility::Public, NoIntrinsic), 1);
+
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "getCurves"_s)),
+        JSFunction::create(vm, globalObject, 0, "getCurves"_s, jsGetCurves, ImplementationVisibility::Public, NoIntrinsic), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "getCiphers"_s)),
+        JSFunction::create(vm, globalObject, 0, "getCiphers"_s, jsGetCiphers, ImplementationVisibility::Public, NoIntrinsic), 0);
 
     return obj;
 }

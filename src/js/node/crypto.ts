@@ -25,10 +25,15 @@ const {
   X509Certificate,
 } = $cpp("KeyObject.cpp", "createKeyObjectBinding");
 
-const { statelessDH, ecdhConvertKey, getCurves, certVerifySpkac, certExportPublicKey, certExportChallenge } = $cpp(
-  "NodeCrypto.cpp",
-  "createNodeCryptoBinding",
-);
+const {
+  statelessDH,
+  ecdhConvertKey,
+  getCurves,
+  certVerifySpkac,
+  certExportPublicKey,
+  certExportChallenge,
+  getCiphers,
+} = $cpp("NodeCrypto.cpp", "createNodeCryptoBinding");
 
 const { POINT_CONVERSION_COMPRESSED, POINT_CONVERSION_HYBRID, POINT_CONVERSION_UNCOMPRESSED } =
   $processBindingConstants.crypto;
@@ -11616,7 +11621,7 @@ var require_crypto_browserify2 = __commonJS({
     exports.createDecipher = aes.createDecipher;
     exports.Decipheriv = aes.Decipheriv;
     exports.createDecipheriv = aes.createDecipheriv;
-    exports.getCiphers = aes.getCiphers;
+    exports.getCiphers = getCiphers;
     exports.listCiphers = aes.listCiphers;
     var dh = require_browser7();
     exports.DiffieHellmanGroup = dh.DiffieHellmanGroup;

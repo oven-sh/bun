@@ -1583,25 +1583,25 @@ pub const BundleV2 = struct {
 
     pub const JSBundleThread = BundleThread(JSBundleCompletionTask);
 
-    pub fn generateFromJavaScript(
+    pub fn createAndScheduleCompletionTask(
         config: bun.JSC.API.JSBundler.Config,
         plugins: ?*bun.JSC.API.JSBundler.Plugin,
         globalThis: *JSC.JSGlobalObject,
         event_loop: *bun.JSC.EventLoop,
         allocator: std.mem.Allocator,
-    ) OOM!bun.JSC.JSValue {
-        var completion = try allocator.create(JSBundleCompletionTask);
-        completion.* = JSBundleCompletionTask{
+    ) OOM!*JSBundleCompletionTask {
+        _ = allocator; // autofix
+        const completion = JSBundleCompletionTask.new(.{
             .config = config,
             .jsc_event_loop = event_loop,
-            .promise = JSC.JSPromise.Strong.init(globalThis),
             .globalThis = globalThis,
             .poll_ref = Async.KeepAlive.init(),
             .env = globalThis.bunVM().transpiler.env,
             .plugins = plugins,
             .log = Logger.Log.init(bun.default_allocator),
-            .task = JSBundleCompletionTask.TaskCompletion.init(completion),
-        };
+            .task = undefined,
+        });
+        completion.task = JSBundleCompletionTask.TaskCompletion.init(completion);
 
         if (plugins) |plugin| {
             plugin.setConfig(completion);
@@ -1615,17 +1615,46 @@ pub const BundleV2 = struct {
 
         completion.poll_ref.ref(globalThis.bunVM());
 
+        return completion;
+    }
+
+    pub fn generateFromJavaScript(
+        config: bun.JSC.API.JSBundler.Config,
+        plugins: ?*bun.JSC.API.JSBundler.Plugin,
+        globalThis: *JSC.JSGlobalObject,
+        event_loop: *bun.JSC.EventLoop,
+        allocator: std.mem.Allocator,
+    ) OOM!bun.JSC.JSValue {
+        const completion = try createAndScheduleCompletionTask(config, plugins, globalThis, event_loop, allocator);
+        completion.promise = JSC.JSPromise.Strong.init(globalThis);
         return completion.promise.value();
     }
 
     pub const BuildResult = struct {
         output_files: std.ArrayList(options.OutputFile),
+
+        pub fn deinit(this: *BuildResult) void {
+            for (this.output_files.items) |*output_file| {
+                output_file.deinit();
+            }
+
+            this.output_files.clearAndFree();
+        }
     };
 
     pub const Result = union(enum) {
         pending: void,
         err: anyerror,
         value: BuildResult,
+
+        pub fn deinit(this: *Result) void {
+            switch (this.*) {
+                .value => |*value| {
+                    value.deinit();
+                },
+                else => {},
+            }
+        }
     };
 
     pub const JSBundleCompletionTask = struct {
@@ -1633,10 +1662,13 @@ pub const BundleV2 = struct {
         jsc_event_loop: *bun.JSC.EventLoop,
         task: bun.JSC.AnyTask,
         globalThis: *JSC.JSGlobalObject,
-        promise: JSC.JSPromise.Strong,
+        promise: JSC.JSPromise.Strong = .{},
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
         env: *bun.DotEnv.Loader,
         log: Logger.Log,
+        cancelled: bool = false,
+
+        html_build_task: ?*JSC.API.HTMLBundle.HTMLBundleRoute = null,
 
         result: Result = .{ .pending = {} },
 
@@ -1644,6 +1676,9 @@ pub const BundleV2 = struct {
         transpiler: *BundleV2 = undefined,
         plugins: ?*bun.JSC.API.JSBundler.Plugin = null,
         ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
+        started_at_ns: u64 = 0,
+
+        pub usingnamespace bun.NewThreadSafeRefCounted(JSBundleCompletionTask, @This().deinit);
 
         pub fn configureBundler(
             completion: *JSBundleCompletionTask,
@@ -1723,16 +1758,16 @@ pub const BundleV2 = struct {
 
         pub const TaskCompletion = bun.JSC.AnyTask.New(JSBundleCompletionTask, onComplete);
 
-        pub fn deref(this: *JSBundleCompletionTask) void {
-            if (this.ref_count.fetchSub(1, .monotonic) == 1) {
-                this.config.deinit(bun.default_allocator);
-                debug("Deinit JSBundleCompletionTask(0{x})", .{@intFromPtr(this)});
-                bun.default_allocator.destroy(this);
+        pub fn deinit(this: *JSBundleCompletionTask) void {
+            this.result.deinit();
+            this.log.deinit();
+            this.poll_ref.disable();
+            if (this.plugins) |plugin| {
+                plugin.deinit();
             }
-        }
-
-        pub fn ref(this: *JSBundleCompletionTask) void {
-            _ = this.ref_count.fetchAdd(1, .monotonic);
+            this.config.deinit(bun.default_allocator);
+            this.promise.deinit();
+            this.destroy();
         }
 
         pub fn onComplete(this: *JSBundleCompletionTask) void {
@@ -1740,6 +1775,15 @@ pub const BundleV2 = struct {
             defer this.deref();
 
             this.poll_ref.unref(globalThis.bunVM());
+            if (this.cancelled) {
+                return;
+            }
+
+            if (this.html_build_task) |html_build_task| {
+                html_build_task.onComplete(this);
+                return;
+            }
+
             const promise = this.promise.swap();
 
             switch (this.result) {
@@ -1772,11 +1816,8 @@ pub const BundleV2 = struct {
                         @panic("Unexpected pending JavaScript exception in JSBundleCompletionTask.onComplete. This is a bug in Bun.");
                     }
 
-                    defer build.output_files.deinit();
                     var to_assign_on_sourcemap: JSC.JSValue = .zero;
                     for (output_files, 0..) |*output_file, i| {
-                        defer bun.default_allocator.free(output_file.src_path.text);
-                        defer bun.default_allocator.free(output_file.dest_path);
                         const result = output_file.toJS(
                             if (!this.config.outdir.isEmpty())
                                 if (std.fs.path.isAbsolute(this.config.outdir.list.items))
@@ -13346,12 +13387,9 @@ pub const LinkerContext = struct {
                         },
                     )) {
                         .err => |err| {
-                            var message = err.toSystemError().message.toUTF8(bun.default_allocator);
-                            defer message.deinit();
-                            c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing sourcemap for chunk {}", .{
-                                bun.fmt.quote(message.slice()),
+                            try c.log.addSysError(bun.default_allocator, err, "writing sourcemap for chunk {}", .{
                                 bun.fmt.quote(chunk.final_rel_path),
-                            }) catch unreachable;
+                            });
                             return error.WriteFailed;
                         },
                         .result => {},
@@ -13497,12 +13535,9 @@ pub const LinkerContext = struct {
                 },
             )) {
                 .err => |err| {
-                    var message = err.toSystemError().message.toUTF8(bun.default_allocator);
-                    defer message.deinit();
-                    c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing chunk {}", .{
-                        bun.fmt.quote(message.slice()),
+                    try c.log.addSysError(bun.default_allocator, err, "writing chunk {}", .{
                         bun.fmt.quote(chunk.final_rel_path),
-                    }) catch unreachable;
+                    });
                     return error.WriteFailed;
                 },
                 .result => {},
@@ -13617,10 +13652,7 @@ pub const LinkerContext = struct {
                     },
                 )) {
                     .err => |err| {
-                        const utf8 = err.toSystemError().message.toUTF8(bun.default_allocator);
-                        defer utf8.deinit();
-                        c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing file {}", .{
-                            bun.fmt.quote(utf8.slice()),
+                        c.log.addSysError(bun.default_allocator, err, "writing file {}", .{
                             bun.fmt.quote(src.src_path.text),
                         }) catch unreachable;
                         return error.WriteFailed;

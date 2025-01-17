@@ -1,4 +1,3 @@
-/// <reference path="../builtins.d.ts" />
 // Copied from Node.js (src/lib/assert.js)
 // Originally from narwhal.js (http://narwhaljs.org)
 // Copyright (c) 2009 Thomas Robinson <280north.com>
@@ -22,36 +21,29 @@
 
 "use strict";
 
-const {
-  ArrayFrom,
-  ArrayPrototypeIndexOf,
-  ArrayPrototypeJoin,
-  ArrayPrototypePush,
-  ArrayPrototypeSlice,
-  Error,
-  FunctionPrototypeCall,
-  NumberIsNaN,
-  ObjectAssign,
-  ObjectIs,
-  ObjectKeys,
-  ObjectPrototypeIsPrototypeOf,
-  ReflectHas,
-  ReflectOwnKeys,
-  RegExpPrototypeExec,
-  SafeMap,
-  SafeSet,
-  SafeWeakSet,
-  StringPrototypeIndexOf,
-  StringPrototypeSlice,
-  StringPrototypeSplit,
-  SymbolIterator,
-} = require("internal/primordials");
-
+const { SafeMap, SafeSet, SafeWeakSet } = require("internal/primordials");
 const { Buffer } = require("node:buffer");
 const { isKeyObject, isPromise, isRegExp, isMap, isSet, isDate, isWeakSet, isWeakMap } = require("node:util/types");
 const { innerOk } = require("internal/assert/utils");
-
 const { validateFunction } = require("internal/validators");
+
+const ArrayFrom = Array.from;
+const ArrayPrototypeIndexOf = Array.prototype.indexOf;
+const ArrayPrototypeJoin = Array.prototype.join;
+const ArrayPrototypePush = Array.prototype.push;
+const ArrayPrototypeSlice = Array.prototype.slice;
+const NumberIsNaN = Number.isNaN;
+const ObjectAssign = Object.assign;
+const ObjectIs = Object.is;
+const ObjectKeys = Object.keys;
+const ObjectPrototypeIsPrototypeOf = Object.prototype.isPrototypeOf;
+const ReflectHas = Reflect.has;
+const ReflectOwnKeys = Reflect.ownKeys;
+const RegExpPrototypeExec = RegExp.prototype.exec;
+const StringPrototypeIndexOf = String.prototype.indexOf;
+const StringPrototypeSlice = String.prototype.slice;
+const StringPrototypeSplit = String.prototype.split;
+const SymbolIterator = Symbol.iterator;
 
 type nodeAssert = typeof import("node:assert");
 
@@ -375,6 +367,7 @@ function isSpecial(obj) {
 }
 
 const typesToCallDeepStrictEqualWith = [isKeyObject, isWeakSet, isWeakMap, Buffer.isBuffer];
+const SafeSetPrototypeIterator = SafeSet.prototype[SymbolIterator];
 
 /**
  * Compares two objects or values recursively to check if they are equal.
@@ -403,8 +396,8 @@ function compareBranch(actual, expected, comparedObjects) {
       return false; // `expected` can't be a subset if it has more elements
     }
 
-    const actualArray = ArrayFrom(FunctionPrototypeCall(SafeSet.prototype[SymbolIterator], actual));
-    const expectedIterator = FunctionPrototypeCall(SafeSet.prototype[SymbolIterator], expected);
+    const actualArray = ArrayFrom(SafeSetPrototypeIterator.$call(actual));
+    const expectedIterator = SafeSetPrototypeIterator.$call(expected);
     const usedIndices = new SafeSet();
 
     expectedIteration: for (const expectedItem of expectedIterator) {
@@ -523,7 +516,7 @@ class Comparison {
           actual !== undefined &&
           typeof actual[key] === "string" &&
           isRegExp(obj[key]) &&
-          RegExpPrototypeExec(obj[key], actual[key]) !== null
+          RegExpPrototypeExec.$call(obj[key], actual[key]) !== null
         ) {
           this[key] = actual[key];
         } else {
@@ -571,7 +564,7 @@ function expectedException(actual, expected, message, fn) {
     // Handle regular expressions.
     if (isRegExp(expected)) {
       const str = String(actual);
-      if (RegExpPrototypeExec(expected, str) !== null) return;
+      if (RegExpPrototypeExec.$call(expected, str) !== null) return;
       const inspect = lazyInspect();
 
       if (!message) {
@@ -598,7 +591,7 @@ function expectedException(actual, expected, message, fn) {
       // Special handle errors to make sure the name and the message are
       // compared as well.
       if (expected instanceof Error) {
-        ArrayPrototypePush(keys, "name", "message");
+        ArrayPrototypePush.$call(keys, "name", "message");
       } else if (keys.length === 0) {
         throw $ERR_INVALID_ARG_VALUE("error", expected, "may not be an empty object");
       }
@@ -606,7 +599,7 @@ function expectedException(actual, expected, message, fn) {
         if (
           typeof actual[key] === "string" &&
           isRegExp(expected[key]) &&
-          RegExpPrototypeExec(expected[key], actual[key]) !== null
+          RegExpPrototypeExec.$call(expected[key], actual[key]) !== null
         ) {
           continue;
         }
@@ -618,7 +611,7 @@ function expectedException(actual, expected, message, fn) {
     // Check for matching Error classes.
   } else if (expected.prototype !== undefined && actual instanceof expected) {
     return;
-  } else if (ObjectPrototypeIsPrototypeOf(Error, expected)) {
+  } else if (ObjectPrototypeIsPrototypeOf.$call(Error, expected)) {
     if (!message) {
       generatedMessage = true;
       message = "The error is expected to be an instance of " + `"${expected.name}". Received `;
@@ -762,7 +755,7 @@ function hasMatchingError(actual, expected) {
   if (typeof expected !== "function") {
     if (isRegExp(expected)) {
       const str = String(actual);
-      return RegExpPrototypeExec(expected, str) !== null;
+      return RegExpPrototypeExec.$call(expected, str) !== null;
     }
     throw $ERR_INVALID_ARG_TYPE("expected", ["Function", "RegExp"], expected);
   }
@@ -770,7 +763,7 @@ function hasMatchingError(actual, expected) {
   if (expected.prototype !== undefined && actual instanceof expected) {
     return true;
   }
-  if (ObjectPrototypeIsPrototypeOf(Error, expected)) {
+  if (ObjectPrototypeIsPrototypeOf.$call(Error, expected)) {
     return false;
   }
   return expected.$apply({}, [actual]) === true;
@@ -879,22 +872,25 @@ assert.ifError = function ifError(err: unknown): void {
       // This will remove any duplicated frames from the error frames taken
       // from within `ifError` and add the original error frames to the newly
       // created ones.
-      const origStackStart = StringPrototypeIndexOf(origStack, "\n    at");
+      const origStackStart = StringPrototypeIndexOf.$call(origStack, "\n    at");
       if (origStackStart !== -1) {
-        const originalFrames = StringPrototypeSplit(StringPrototypeSlice(origStack, origStackStart + 1), "\n");
+        const originalFrames = StringPrototypeSplit.$call(
+          StringPrototypeSlice.$call(origStack, origStackStart + 1),
+          "\n",
+        );
         // Filter all frames existing in err.stack.
-        let newFrames = StringPrototypeSplit(newErr.stack, "\n");
+        let newFrames = StringPrototypeSplit.$call(newErr.stack, "\n");
         for (const errFrame of originalFrames) {
           // Find the first occurrence of the frame.
-          const pos = ArrayPrototypeIndexOf(newFrames, errFrame);
+          const pos = ArrayPrototypeIndexOf.$call(newFrames, errFrame);
           if (pos !== -1) {
             // Only keep new frames.
-            newFrames = ArrayPrototypeSlice(newFrames, 0, pos);
+            newFrames = ArrayPrototypeSlice.$call(newFrames, 0, pos);
             break;
           }
         }
-        const stackStart = ArrayPrototypeJoin(newFrames, "\n");
-        const stackEnd = ArrayPrototypeJoin(originalFrames, "\n");
+        const stackStart = ArrayPrototypeJoin.$call(newFrames, "\n");
+        const stackEnd = ArrayPrototypeJoin.$call(originalFrames, "\n");
         newErr.stack = `${stackStart}\n${stackEnd}`;
       }
     }
@@ -908,7 +904,7 @@ function internalMatch(string, regexp, message, fn) {
     throw $ERR_INVALID_ARG_TYPE("regexp", "RegExp", regexp);
   }
   const match = fn === assert.match;
-  if (typeof string !== "string" || (RegExpPrototypeExec(regexp, string) !== null) !== match) {
+  if (typeof string !== "string" || (RegExpPrototypeExec.$call(regexp, string) !== null) !== match) {
     if (message instanceof Error) {
       throw message;
     }

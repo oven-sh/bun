@@ -1799,9 +1799,7 @@ pub const sync = struct {
                 .use_execve_on_macos = this.use_execve_on_macos,
                 .stream = false,
                 .argv0 = this.argv0,
-                .windows = if (Environment.isWindows)
-                    this.windows
-                else {},
+                .windows = if (Environment.isWindows) this.windows,
             };
         }
     };

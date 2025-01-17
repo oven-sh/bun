@@ -3039,6 +3039,7 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
             &config,
             &args,
             callframe.isFromBunMain(globalObject.vm()),
+            true,
         );
 
         if (globalObject.hasException()) {
@@ -3286,6 +3287,27 @@ const HashObject = struct {
     pub const crc32 = hashWrap(std.hash.Crc32);
     pub const cityHash32 = hashWrap(std.hash.CityHash32);
     pub const cityHash64 = hashWrap(std.hash.CityHash64);
+    pub const xxHash32 = hashWrap(struct {
+        pub fn hash(seed: u32, bytes: []const u8) u32 {
+            // sidestep .hash taking in anytype breaking ArgTuple
+            // downstream by forcing a type signature on the input
+            return std.hash.XxHash32.hash(seed, bytes);
+        }
+    });
+    pub const xxHash64 = hashWrap(struct {
+        pub fn hash(seed: u32, bytes: []const u8) u64 {
+            // sidestep .hash taking in anytype breaking ArgTuple
+            // downstream by forcing a type signature on the input
+            return std.hash.XxHash64.hash(seed, bytes);
+        }
+    });
+    pub const xxHash3 = hashWrap(struct {
+        pub fn hash(seed: u32, bytes: []const u8) u64 {
+            // sidestep .hash taking in anytype breaking ArgTuple
+            // downstream by forcing a type signature on the input
+            return std.hash.XxHash3.hash(seed, bytes);
+        }
+    });
     pub const murmur32v2 = hashWrap(std.hash.murmur.Murmur2_32);
     pub const murmur32v3 = hashWrap(std.hash.murmur.Murmur3_32);
     pub const murmur64v2 = hashWrap(std.hash.murmur.Murmur2_64);
@@ -3298,6 +3320,9 @@ const HashObject = struct {
             "crc32",
             "cityHash32",
             "cityHash64",
+            "xxHash32",
+            "xxHash64",
+            "xxHash3",
             "murmur32v2",
             "murmur32v3",
             "murmur64v2",
@@ -4575,9 +4600,7 @@ const InternalTestingAPIs = struct {
             return globalThis.throwError(err, "Error formatting code");
         };
 
-        var str = bun.String.createUTF8(buffer.list.items);
-        defer str.deref();
-        return str.toJS(globalThis);
+        return bun.String.createUTF8ForJS(globalThis, buffer.list.items);
     }
 };
 

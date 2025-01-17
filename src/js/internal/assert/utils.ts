@@ -1,22 +1,6 @@
 /* prettier-ignore */
 'use strict';
 
-// const {
-//   ArrayPrototypeShift,
-//   Error,
-// ErrorCaptureStackTrace,
-//   FunctionPrototypeBind,
-//   RegExpPrototypeSymbolReplace,
-//   SafeMap,
-//   StringPrototypeCharCodeAt,
-//   StringPrototypeIncludes,
-//   StringPrototypeIndexOf,
-//   StringPrototypeReplace,
-//   StringPrototypeSlice,
-//   StringPrototypeSplit,
-//   StringPrototypeStartsWith,
-// } = require("internal/primordials");
-
 var AssertionError;
 function loadAssertionError() {
   if (AssertionError === undefined) {

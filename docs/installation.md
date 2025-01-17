@@ -14,7 +14,7 @@ Kernel version 5.6 or higher is strongly recommended, but the minimum is 5.1. Us
 ```bash#macOS/Linux_(curl)
 $ curl -fsSL https://bun.sh/install | bash # for macOS, Linux, and WSL
 # to install a specific version
-$ curl -fsSL https://bun.sh/install | bash -s "bun-v1.0.0"
+$ curl -fsSL https://bun.sh/install | bash -s "bun-v$BUN_LATEST_VERSION"
 ```
 
 ```bash#npm
@@ -166,10 +166,10 @@ Since Bun is a single binary, you can install older versions of Bun by re-runnin
 
 ### Installing a specific version of Bun on Linux/Mac
 
-To install a specific version of Bun, you can pass the git tag of the version you want to install to the install script, such as `bun-v1.1.6` or `bun-v1.1.1`.
+To install a specific version of Bun, you can pass the git tag of the version you want to install to the install script, such as `bun-v1.2.0` or `bun-v$BUN_LATEST_VERSION`.
 
 ```sh
-$ curl -fsSL https://bun.sh/install | bash -s "bun-v1.1.6"
+$ curl -fsSL https://bun.sh/install | bash -s "bun-v$BUN_LATEST_VERSION"
 ```
 
 ### Installing a specific version of Bun on Windows
@@ -178,7 +178,7 @@ On Windows, you can install a specific version of Bun by passing the version num
 
 ```sh
 # PowerShell:
-$ iex "& {$(irm https://bun.sh/install.ps1)} -Version 1.1.6"
+$ iex "& {$(irm https://bun.sh/install.ps1)} -Version $BUN_LATEST_VERSION"
 ```
 
 ## Downloading Bun binaries directly

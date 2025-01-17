@@ -208,6 +208,11 @@ using namespace JSC;
 
 using namespace WebCore;
 
+enum PopulateStackTraceFlags {
+    OnlyPosition,
+    OnlySourceLines,
+};
+
 typedef uint8_t ExpectFlags;
 
 // Note: keep this in sync with Expect.Flags implementation in zig (at expect.zig)
@@ -4216,7 +4221,7 @@ static void populateStackFrameMetadata(JSC::VM& vm, JSC::JSGlobalObject* globalO
 
 static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunString* source_lines,
     OrdinalNumber* source_line_numbers, uint8_t source_lines_count,
-    ZigStackFramePosition* position, JSC::SourceProvider** referenced_source_provider)
+    ZigStackFramePosition* position, JSC::SourceProvider** referenced_source_provider, PopulateStackTraceFlags flags)
 {
     auto code = stackFrame->codeBlock();
     if (!code)
@@ -4244,6 +4249,8 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
 
     auto location = Bun::getAdjustedPositionForBytecode(code, stackFrame->bytecodeIndex());
     *position = location;
+    if (flags == PopulateStackTraceFlags::OnlyPosition)
+        return;
 
     if (source_lines_count > 1 && source_lines != nullptr && sourceString.is8Bit()) {
         // Search for the beginning of the line
@@ -4310,12 +4317,18 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
 }
 
 static void populateStackFrame(JSC::VM& vm, ZigStackTrace* trace, const JSC::StackFrame* stackFrame,
-    ZigStackFrame* frame, bool is_top, JSC::SourceProvider** referenced_source_provider, JSC::JSGlobalObject* globalObject)
+    ZigStackFrame* frame, bool is_top, JSC::SourceProvider** referenced_source_provider, JSC::JSGlobalObject* globalObject, PopulateStackTraceFlags flags)
 {
-    populateStackFrameMetadata(vm, globalObject, stackFrame, frame);
-    populateStackFramePosition(stackFrame, is_top ? trace->source_lines_ptr : nullptr,
-        is_top ? trace->source_lines_numbers : nullptr,
-        is_top ? trace->source_lines_to_collect : 0, &frame->position, referenced_source_provider);
+    if (flags == PopulateStackTraceFlags::OnlyPosition) {
+        populateStackFrameMetadata(vm, globalObject, stackFrame, frame);
+        populateStackFramePosition(stackFrame, nullptr,
+            nullptr,
+            0, &frame->position, referenced_source_provider, flags);
+    } else if (flags == PopulateStackTraceFlags::OnlySourceLines) {
+        populateStackFramePosition(stackFrame, is_top ? trace->source_lines_ptr : nullptr,
+            is_top ? trace->source_lines_numbers : nullptr,
+            is_top ? trace->source_lines_to_collect : 0, &frame->position, referenced_source_provider, flags);
+    }
 }
 
 class V8StackTraceIterator {
@@ -4485,7 +4498,7 @@ public:
     }
 };
 
-static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& frames, ZigStackTrace* trace, JSC::JSGlobalObject* globalObject)
+static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& frames, ZigStackTrace* trace, JSC::JSGlobalObject* globalObject, PopulateStackTraceFlags flags)
 {
     uint8_t frame_i = 0;
     size_t stack_frame_i = 0;
@@ -4501,7 +4514,7 @@ static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& 
             break;
 
         ZigStackFrame* frame = &trace->frames_ptr[frame_i];
-        populateStackFrame(vm, trace, &frames[stack_frame_i], frame, frame_i == 0, &trace->referenced_source_provider, globalObject);
+        populateStackFrame(vm, trace, &frames[stack_frame_i], frame, frame_i == 0, &trace->referenced_source_provider, globalObject, flags);
         stack_frame_i++;
         frame_i++;
     }
@@ -4529,7 +4542,7 @@ static JSC::JSValue getNonObservable(JSC::VM& vm, JSC::JSGlobalObject* global, J
 
 static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     JSC::ErrorInstance* err, const Vector<JSC::StackFrame>* stackTrace,
-    JSC::JSValue val)
+    JSC::JSValue val, PopulateStackTraceFlags flags)
 {
     JSC::JSObject* obj = JSC::jsDynamicCast<JSC::JSObject*>(val);
     JSC::VM& vm = global->vm();
@@ -4537,12 +4550,12 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
 
     bool getFromSourceURL = false;
     if (stackTrace != nullptr && stackTrace->size() > 0) {
-        populateStackTrace(vm, *stackTrace, &except->stack, global);
+        populateStackTrace(vm, *stackTrace, &except->stack, global, flags);
         if (UNLIKELY(scope.exception())) {
             scope.clearExceptionExceptTermination();
         }
     } else if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
-        populateStackTrace(vm, *err->stackTrace(), &except->stack, global);
+        populateStackTrace(vm, *err->stackTrace(), &except->stack, global, flags);
         if (UNLIKELY(scope.exception())) {
             scope.clearExceptionExceptTermination();
         }
@@ -4998,12 +5011,12 @@ void JSC__JSValue__toZigException(JSC__JSValue jsException, JSC__JSGlobalObject*
         JSValue unwrapped = jscException->value();
 
         if (JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(unwrapped)) {
-            fromErrorInstance(exception, global, error, &jscException->stack(), unwrapped);
+            fromErrorInstance(exception, global, error, &jscException->stack(), unwrapped, PopulateStackTraceFlags::OnlyPosition);
             return;
         }
 
         if (jscException->stack().size() > 0) {
-            populateStackTrace(global->vm(), jscException->stack(), &exception->stack, global);
+            populateStackTrace(global->vm(), jscException->stack(), &exception->stack, global, PopulateStackTraceFlags::OnlyPosition);
         }
 
         exceptionFromString(exception, unwrapped, global);
@@ -5011,11 +5024,38 @@ void JSC__JSValue__toZigException(JSC__JSValue jsException, JSC__JSGlobalObject*
     }
 
     if (JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(value)) {
-        fromErrorInstance(exception, global, error, nullptr, value);
+        fromErrorInstance(exception, global, error, nullptr, value, PopulateStackTraceFlags::OnlyPosition);
         return;
     }
 
     exceptionFromString(exception, value, global);
+}
+
+void ZigException__collectSourceLines(JSC__JSValue jsException, JSC__JSGlobalObject* global, ZigException* exception)
+{
+    JSC::JSValue value = JSC::JSValue::decode(jsException);
+    if (value == JSC::JSValue {}) {
+        return;
+    }
+
+    if (value.classInfoOrNull() == JSC::Exception::info()) {
+        auto* jscException = jsCast<JSC::Exception*>(value);
+        JSValue unwrapped = jscException->value();
+
+        if (jscException->stack().size() > 0) {
+            populateStackTrace(global->vm(), jscException->stack(), &exception->stack, global, PopulateStackTraceFlags::OnlySourceLines);
+        }
+
+        exceptionFromString(exception, unwrapped, global);
+        return;
+    }
+
+    if (JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(value)) {
+        if (error->stackTrace() != nullptr && error->stackTrace()->size() > 0) {
+            populateStackTrace(global->vm(), *error->stackTrace(), &exception->stack, global, PopulateStackTraceFlags::OnlySourceLines);
+        }
+        return;
+    }
 }
 
 #pragma mark - JSC::VM
@@ -5078,7 +5118,7 @@ bool JSC__JSValue__isTerminationException(JSC__JSValue JSValue0, JSC__VM* arg1)
 
 extern "C" void JSC__Exception__getStackTrace(JSC::Exception* arg0, JSC::JSGlobalObject* global, ZigStackTrace* trace)
 {
-    populateStackTrace(arg0->vm(), arg0->stack(), trace, global);
+    populateStackTrace(arg0->vm(), arg0->stack(), trace, global, PopulateStackTraceFlags::OnlyPosition);
 }
 
 void JSC__VM__shrinkFootprint(JSC__VM* arg0) { arg0->shrinkFootprintWhenIdle(); };
@@ -6279,4 +6319,32 @@ CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JS
     *outSourceURL = Bun::toStringRef(sourceURL);
     *outLine = lineColumn.line;
     *outColumn = lineColumn.column;
+}
+
+extern "C" EncodedJSValue Bun__JSObject__getCodePropertyVMInquiry(JSC::JSGlobalObject* global, JSC::JSObject* object)
+{
+    if (UNLIKELY(!object)) {
+        return {};
+    }
+
+    auto& vm = global->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (UNLIKELY(object->type() == JSC::ProxyObjectType)) {
+        return {};
+    }
+
+    auto& builtinNames = WebCore::builtinNames(vm);
+
+    PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    ASSERT(!scope.exception());
+    if (!object->getNonIndexPropertySlot(global, builtinNames.codePublicName(), slot)) {
+        ASSERT(!scope.exception());
+        return {};
+    }
+
+    if (slot.isAccessor() || slot.isCustom()) {
+        return {};
+    }
+
+    return JSValue::encode(slot.getPureResult());
 }

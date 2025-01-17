@@ -349,7 +349,7 @@ pub const RunCommand = struct {
 
             .windows = if (Environment.isWindows) .{
                 .loop = JSC.EventLoopHandle.init(JSC.MiniEventLoop.initGlobal(env)),
-            } else {},
+            },
         }) catch |err| {
             if (!silent) {
                 Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
@@ -513,7 +513,7 @@ pub const RunCommand = struct {
 
             .windows = if (Environment.isWindows) .{
                 .loop = JSC.EventLoopHandle.init(JSC.MiniEventLoop.initGlobal(env)),
-            } else {},
+            },
         }) catch |err| {
             bun.handleErrorReturnTrace(err, @errorReturnTrace());
 

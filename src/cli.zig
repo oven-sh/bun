@@ -236,12 +236,12 @@ pub const Arguments = struct {
         clap.parseParam("--conditions <STR>...             Pass custom conditions to resolve") catch unreachable,
         clap.parseParam("--fetch-preconnect <STR>...       Preconnect to a URL while code is loading") catch unreachable,
         clap.parseParam("--max-http-header-size <INT>      Set the maximum size of HTTP headers in bytes. Default is 16KiB") catch unreachable,
-        clap.parseParam("--expose-internals                Expose internals used for testing Bun itself. Usage of these APIs is completely unsupported.") catch unreachable,
         clap.parseParam("--dns-result-order <STR>          Set the default order of DNS lookup results. Valid orders: verbatim (default), ipv4first, ipv6first") catch unreachable,
         clap.parseParam("--expose-gc                       Expose gc() on the global object. Has no effect on Bun.gc().") catch unreachable,
         clap.parseParam("--no-deprecation                  Suppress all reporting of the custom deprecation.") catch unreachable,
         clap.parseParam("--throw-deprecation               Determine whether or not deprecation warnings result in errors.") catch unreachable,
         clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
+        clap.parseParam("--experimental-html               Bundle .html imports as JavaScript & CSS") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -807,9 +807,6 @@ pub const Arguments = struct {
                 bun.JSC.RuntimeTranspilerCache.is_disabled = true;
             }
 
-            if (args.flag("--expose-internals")) {
-                bun.JSC.ModuleLoader.is_allowed_to_use_internal_testing_apis = true;
-            }
             if (args.flag("--no-deprecation")) {
                 Bun__Node__ProcessNoDeprecation = true;
             }
@@ -1167,6 +1164,7 @@ pub const Arguments = struct {
         }
 
         opts.resolve = Api.ResolveMode.lazy;
+        ctx.bundler_options.experimental.html = args.flag("--experimental-html");
 
         if (jsx_factory != null or
             jsx_fragment != null or
@@ -1409,7 +1407,10 @@ pub const HelpCommand = struct {
 pub const ReservedCommand = struct {
     pub fn exec(_: std.mem.Allocator) !void {
         @setCold(true);
-        const command_name = bun.argv[1];
+        const command_name = for (bun.argv[1..]) |arg| {
+            if (arg.len > 1 and arg[0] == '-') continue;
+            break arg;
+        } else bun.argv[1];
         Output.prettyError(
             \\<r><red>Uh-oh<r>. <b><yellow>bun {s}<r> is a subcommand reserved for future use by Bun.
             \\
@@ -2255,7 +2256,7 @@ pub const Command = struct {
                 try HelpCommand.exec(allocator);
             },
             .ExecCommand => {
-                const ctx = try Command.init(allocator, log, .RunCommand);
+                const ctx = try Command.init(allocator, log, .ExecCommand);
 
                 if (ctx.positionals.len > 1) {
                     try ExecCommand.exec(ctx);
@@ -2430,6 +2431,11 @@ pub const Command = struct {
         pub fn printHelp(comptime cmd: Tag, show_all_flags: bool) void {
             switch (cmd) {
 
+                // the output of --help uses the following syntax highlighting
+                // template: <b>Usage<r>: <b><green>bun <command><r> <cyan>[flags]<r> <blue>[arguments]<r>
+                // use [foo] for multiple arguments or flags for foo.
+                // use <bar> to emphasize 'bar'
+
                 // these commands do not use Context
                 // .DiscordCommand => return try DiscordCommand.exec(allocator),
                 // .HelpCommand => return try HelpCommand.exec(allocator),
@@ -2454,7 +2460,7 @@ pub const Command = struct {
 
                 .InitCommand => {
                     const intro_text =
-                        \\<b>Usage<r>: <b><green>bun init<r> <cyan>[...flags]<r> <blue>[\<entrypoint\> ...]<r>
+                        \\<b>Usage<r>: <b><green>bun init<r> <cyan>[flags]<r> <blue>[\<entrypoints\>]<r>
                         \\  Initialize a Bun project in the current directory.
                         \\  Creates a package.json, tsconfig.json, and bunfig.toml if they don't exist.
                         \\
@@ -2464,7 +2470,7 @@ pub const Command = struct {
                         \\
                         \\<b>Examples:<r>
                         \\  <b><green>bun init<r>
-                        \\  <b><green>bun init <cyan>--yes<r>
+                        \\  <b><green>bun init<r> <cyan>--yes<r>
                     ;
 
                     Output.pretty(intro_text ++ "\n", .{});
@@ -2473,16 +2479,16 @@ pub const Command = struct {
 
                 Command.Tag.BunxCommand => {
                     Output.prettyErrorln(
-                        \\<b>Usage: bunx <r><cyan>[...flags]<r> \<package\><d>[@version] [...flags and arguments]<r>
+                        \\<b>Usage<r>: <b><green>bunx<r> <cyan>[flags]<r> <blue>\<package\><r><d>\<@version\><r> [flags and arguments for the package]<r>
                         \\Execute an npm package executable (CLI), automatically installing into a global shared cache if not installed in node_modules.
                         \\
                         \\Flags:
                         \\  <cyan>--bun<r>      Force the command to run with Bun instead of Node.js
                         \\
                         \\Examples<d>:<r>
-                        \\  <b>bunx prisma migrate<r>
-                        \\  <b>bunx prettier foo.js<r>
-                        \\  <b>bunx<r> <cyan>--bun<r> <b>vite dev foo.js<r>
+                        \\  <b><green>bunx<r> <blue>prisma<r> migrate<r>
+                        \\  <b><green>bunx<r> <blue>prettier<r> foo.js<r>
+                        \\  <b><green>bunx<r> <cyan>--bun<r> <blue>vite<r> dev foo.js<r>
                         \\
                     , .{});
                 },
@@ -2490,20 +2496,20 @@ pub const Command = struct {
                     const intro_text =
                         \\<b>Usage<r>:
                         \\  Transpile and bundle one or more files.
-                        \\  <b><green>bun build<r> <cyan>[...flags]<r> [...entrypoints]
+                        \\  <b><green>bun build<r> <cyan>[flags]<r> <blue>\<entrypoint\><r>
                     ;
 
                     const outro_text =
                         \\<b>Examples:<r>
                         \\  <d>Frontend web apps:<r>
-                        \\  <b><green>bun build<r> <blue>./src/index.ts<r> <cyan>--outfile=bundle.js<r>
-                        \\  <b><green>bun build<r> <blue>./index.jsx ./lib/worker.ts<r> <cyan>--minify --splitting --outdir=out<r>
+                        \\  <b><green>bun build<r> <cyan>--outfile=bundle.js<r> <blue>./src/index.ts<r>
+                        \\  <b><green>bun build<r> <cyan>--minify --splitting --outdir=out<r> <blue>./index.jsx ./lib/worker.ts<r>
                         \\
                         \\  <d>Bundle code to be run in Bun (reduces server startup time)<r>
-                        \\  <b><green>bun build<r> <blue>./server.ts<r> <cyan>--target=bun --outfile=server.js<r>
+                        \\  <b><green>bun build<r> <cyan>--target=bun --outfile=server.js<r> <blue>./server.ts<r>
                         \\
                         \\  <d>Creating a standalone executable (see https://bun.sh/docs/bundler/executables)<r>
-                        \\  <b><green>bun build<r> <blue>./cli.ts<r> <cyan>--compile --outfile=my-app<r>
+                        \\  <b><green>bun build<r> <cyan>--compile --outfile=my-app<r> <blue>./cli.ts<r>
                         \\
                         \\A full list of flags is available at <magenta>https://bun.sh/docs/bundler<r>
                         \\
@@ -2519,24 +2525,24 @@ pub const Command = struct {
                 },
                 Command.Tag.TestCommand => {
                     const intro_text =
-                        \\<b>Usage<r>: <b><green>bun test<r> <cyan>[...flags]<r> <blue>[\<pattern\>...]<r>
+                        \\<b>Usage<r>: <b><green>bun test<r> <cyan>[flags]<r> <blue>[\<patterns\>]<r>
                         \\  Run all matching test files and print the results to stdout
                     ;
                     const outro_text =
                         \\<b>Examples:<r>
-                        \\  <d>Run all test files <r>
+                        \\  <d>Run all test files<r>
                         \\  <b><green>bun test<r>
                         \\
                         \\  <d>Run all test files with "foo" or "bar" in the file name<r>
-                        \\  <b><green>bun test foo bar<r>
+                        \\  <b><green>bun test<r> <blue>foo bar<r>
                         \\
                         \\  <d>Run all test files, only including tests whose names includes "baz"<r>
-                        \\  <b><green>bun test<r> <cyan>--test-name-pattern<r> baz<r>
+                        \\  <b><green>bun test<r> <cyan>--test-name-pattern<r> <blue>baz<r>
                         \\
                         \\Full documentation is available at <magenta>https://bun.sh/docs/cli/test<r>
                         \\
                     ;
-                    // Output.pretty("\n", .{});
+
                     Output.pretty(intro_text, .{});
                     Output.flush();
                     Output.pretty("\n\n<b>Flags:<r>", .{});
@@ -2549,8 +2555,8 @@ pub const Command = struct {
                 Command.Tag.CreateCommand => {
                     const intro_text =
                         \\<b>Usage<r>:
-                        \\  <b><green>bun create<r> <blue>\<template\><r> <cyan>[...flags]<r> <blue>[dest]<r>
-                        \\  <b><green>bun create<r> <blue>\<username/repo\><r> <cyan>[...flags]<r> <blue>[dest]<r>
+                        \\  <b><green>bun create<r> <magenta>\<template\><r> <cyan>[...flags]<r> <blue>dest<r>
+                        \\  <b><green>bun create<r> <magenta>\<username/repo\><r> <cyan>[...flags]<r> <blue>dest<r>
                         \\
                         \\<b>Environment variables:<r>
                         \\  <cyan>GITHUB_TOKEN<r>             <d>Supply a token to download code from GitHub with a higher rate limit<r>
@@ -2576,7 +2582,7 @@ pub const Command = struct {
                 },
                 Command.Tag.UpgradeCommand => {
                     const intro_text =
-                        \\<b>Usage<r>: <b><green>bun upgrade<r> <cyan>[...flags]<r>
+                        \\<b>Usage<r>: <b><green>bun upgrade<r> <cyan>[flags]<r>
                         \\  Upgrade Bun
                     ;
                     const outro_text =
@@ -2604,7 +2610,7 @@ pub const Command = struct {
                 },
                 Command.Tag.ReplCommand => {
                     const intro_text =
-                        \\<b>Usage<r>: <b><green>bun repl<r> <cyan>[...flags]<r>
+                        \\<b>Usage<r>: <b><green>bun repl<r> <cyan>[flags]<r>
                         \\  Open a Bun REPL
                         \\
                     ;

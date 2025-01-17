@@ -1760,6 +1760,7 @@ pub const js_bindings = struct {
     }
 };
 
+// Equivalent to ERR_OUT_OF_RANGE from
 fn NewOutOfRangeFormatter(comptime T: type) type {
     return struct {
         value: T,
@@ -1770,12 +1771,12 @@ fn NewOutOfRangeFormatter(comptime T: type) type {
         pub fn format(self: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
             try writer.writeAll("The value of \"");
             try writer.writeAll(self.field_name);
-            try writer.writeAll("\" ");
+            try writer.writeAll("\" is out of range. It ");
             const min = self.min;
             const max = self.max;
 
             if (min != std.math.maxInt(i64) and max != std.math.maxInt(i64)) {
-                try std.fmt.format(writer, "must be >= {d} and <= {d}.", .{ min, max });
+                try std.fmt.format(writer, "must be >= {d} && <= {d}.", .{ min, max });
             } else if (min != std.math.maxInt(i64)) {
                 try std.fmt.format(writer, "must be >= {d}.", .{min});
             } else if (max != std.math.maxInt(i64)) {
@@ -1787,11 +1788,11 @@ fn NewOutOfRangeFormatter(comptime T: type) type {
             }
 
             if (comptime T == f64 or T == f32) {
-                try std.fmt.format(writer, " Received: {}", .{double(self.value)});
+                try std.fmt.format(writer, " Received {}", .{double(self.value)});
             } else if (comptime T == []const u8) {
-                try std.fmt.format(writer, " Received: {s}", .{self.value});
+                try std.fmt.format(writer, " Received {s}", .{self.value});
             } else {
-                try std.fmt.format(writer, " Received: {d}", .{self.value});
+                try std.fmt.format(writer, " Received {d}", .{self.value});
             }
         }
     };

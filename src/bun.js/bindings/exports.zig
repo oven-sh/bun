@@ -205,7 +205,6 @@ pub fn Errorable(comptime Type: type) type {
     };
 }
 
-/// must be kept in sync with `ResolvedSource` in `headers-handwritten.h`
 pub const ResolvedSource = extern struct {
     pub const shim = Shimmer("Zig", "ResolvedSource", @This());
     pub const name = "ResolvedSource";
@@ -234,14 +233,6 @@ pub const ResolvedSource = extern struct {
     already_bundled: bool = false,
     bytecode_cache: ?[*]u8 = null,
     bytecode_cache_size: usize = 0,
-
-    /// - for esm: null means to use jsc's regular parsing step. more info: https://github.com/oven-sh/bun/pull/15758
-    /// - for cjs: must be null
-    module_info: ?*@import("../../analyze_transpiled_module.zig").ModuleInfoDeserialized,
-
-    pub const unfilled = ResolvedSource{
-        .module_info = null,
-    };
 
     pub const Tag = @import("ResolvedSourceTag").ResolvedSourceTag;
 };
@@ -819,6 +810,12 @@ pub const ZigException = extern struct {
     remapped: bool = false,
 
     fd: i32 = -1,
+
+    pub extern fn ZigException__collectSourceLines(jsValue: JSValue, global: *JSGlobalObject, exception: *ZigException) void;
+
+    pub fn collectSourceLines(this: *ZigException, value: JSValue, global: *JSGlobalObject) void {
+        ZigException__collectSourceLines(value, global, this);
+    }
 
     pub fn deinit(this: *ZigException) void {
         this.syscall.deref();

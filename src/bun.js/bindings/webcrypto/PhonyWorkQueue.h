@@ -1,8 +1,8 @@
 #pragma once
 
+#include "root.h"
 #include <wtf/RefCounted.h>
 #include <wtf/Ref.h>
-#include <wtf/Function.h>
 
 namespace Bun {
 

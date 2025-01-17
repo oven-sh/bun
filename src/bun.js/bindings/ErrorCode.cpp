@@ -51,7 +51,7 @@ JSC_DEFINE_HOST_FUNCTION(NodeError_proto_toString, (JSC::JSGlobalObject * global
     return JSC::JSValue::encode(JSC::jsString(vm, WTF::makeString(name_s, " ["_s, code_s, "]: "_s, message_s)));
 }
 
-static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name, WTF::ASCIILiteral code, bool isDOMExceptionPrototype = false)
+static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name, WTF::ASCIILiteral code, bool isDOMExceptionPrototype)
 {
     JSC::JSObject* prototype;
 
@@ -180,7 +180,7 @@ JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, c
 JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code, JSValue message, bool isDOMExceptionPrototype)
 {
     if (auto* zigGlobalObject = jsDynamicCast<Zig::GlobalObject*>(globalObject))
-        return createError(vm, zigGlobalObject, code, message, jsUndefined());
+        return createError(vm, zigGlobalObject, code, message, jsUndefined(), isDOMExceptionPrototype);
 
     auto* structure = createErrorStructure(vm, globalObject, errors[static_cast<size_t>(code)].type, errors[static_cast<size_t>(code)].name, errors[static_cast<size_t>(code)].code, isDOMExceptionPrototype);
     return JSC::ErrorInstance::create(globalObject, structure, message, jsUndefined(), nullptr, JSC::RuntimeType::TypeNothing, errors[static_cast<size_t>(code)].type, true);

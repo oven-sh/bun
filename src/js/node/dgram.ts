@@ -784,15 +784,14 @@ Socket.prototype.setMulticastLoopback = function (arg) {
 };
 
 Socket.prototype.setMulticastInterface = function (interfaceAddress) {
-  throwNotImplemented("setMulticastInterface", 10381);
-  /*
-  validateString(interfaceAddress, 'interfaceAddress');
-
-  const err = this[kStateSymbol].handle.setMulticastInterface(interfaceAddress);
-  if (err) {
-    throw new ErrnoException(err, 'setMulticastInterface');
+  validateString(interfaceAddress, "interfaceAddress");
+  const handle = this[kStateSymbol].handle;
+  if (!handle?.socket) {
+    throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
   }
-  */
+  if (!handle.socket.setMulticastInterface(interfaceAddress)) {
+    throw new Error("setMulticastInterface EINVAL");
+  }
 };
 
 Socket.prototype.addMembership = function (multicastAddress, interfaceAddress) {

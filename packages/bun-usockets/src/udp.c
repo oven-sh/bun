@@ -130,6 +130,10 @@ int us_udp_socket_set_multicast_loopback(struct us_udp_socket_t *s, int enabled)
     return bsd_socket_multicast_loopback(us_poll_fd(&s->p), enabled);
 }
 
+int us_udp_socket_set_multicast_interface(struct us_udp_socket_t *s, const struct sockaddr_storage *addr) {
+    return bsd_socket_multicast_interface(us_poll_fd(&s->p), addr);
+}
+
 struct us_udp_socket_t *us_create_udp_socket(
     struct us_loop_t *loop,
     void (*data_cb)(struct us_udp_socket_t *, void *, int),

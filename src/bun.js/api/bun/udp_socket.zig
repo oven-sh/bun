@@ -437,6 +437,31 @@ pub const UDPSocket = struct {
         return arguments[0];
     }
 
+    pub fn setMulticastInterface(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
+        if (this.closed) {
+            return globalThis.throwValue(bun.JSC.Maybe(void).errnoSys(@as(i32, @intCast(@intFromEnum(std.posix.E.BADF))), .setsockopt).?.toJS(globalThis));
+        }
+
+        const arguments = callframe.arguments();
+        if (arguments.len < 1) {
+            return globalThis.throwInvalidArguments("Expected 1 argument, got {}", .{arguments.len});
+        }
+
+        var addr: std.posix.sockaddr.storage = undefined;
+
+        if (!parseAddr(this, globalThis, JSC.jsNumber(0), arguments[0], &addr)) {
+            return .false;
+        }
+
+        const res = this.socket.setMulticastInterface(&addr);
+
+        if (getUSError(res, .setsockopt, true)) |err| {
+            return globalThis.throwValue(err.toJS(globalThis));
+        }
+
+        return .true;
+    }
+
     pub fn setTTL(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
         return setAnyTTL(this, globalThis, callframe, uws.udp.Socket.setUnicastTTL);
     }
@@ -645,6 +670,7 @@ pub const UDPSocket = struct {
             addr4.family = std.posix.AF.INET;
         } else {
             var addr6: *std.posix.sockaddr.in6 = @ptrCast(storage);
+            addr6.scope_id = 0;
 
             if (str.indexOfAsciiChar('%')) |percent| {
                 if (percent + 1 < str.length()) {
@@ -676,7 +702,6 @@ pub const UDPSocket = struct {
             if (inet_pton(std.posix.AF.INET6, address_slice.ptr, &addr6.addr) == 1) {
                 addr6.port = htons(@truncate(port));
                 addr6.family = std.posix.AF.INET6;
-                addr6.scope_id = 0;
             } else {
                 return false;
             }

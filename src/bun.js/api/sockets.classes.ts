@@ -335,6 +335,10 @@ export default [
         fn: "setMulticastLoopback",
         length: 1,
       },
+      setMulticastInterface: {
+        fn: "setMulticastInterface",
+        length: 1,
+      },
     },
     klass: {},
   }),

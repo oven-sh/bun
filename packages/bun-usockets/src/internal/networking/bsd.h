@@ -182,6 +182,7 @@ int bsd_socket_broadcast(LIBUS_SOCKET_DESCRIPTOR fd, int enabled);
 int bsd_socket_ttl_unicast(LIBUS_SOCKET_DESCRIPTOR fd, int ttl);
 int bsd_socket_ttl_multicast(LIBUS_SOCKET_DESCRIPTOR fd, int ttl);
 int bsd_socket_multicast_loopback(LIBUS_SOCKET_DESCRIPTOR fd, int enabled);
+int bsd_socket_multicast_interface(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_storage *addr);
 int bsd_socket_keepalive(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay);
 void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd);
 LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, int *err);

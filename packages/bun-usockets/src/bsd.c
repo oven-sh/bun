@@ -353,6 +353,24 @@ int bsd_socket_multicast_loopback(LIBUS_SOCKET_DESCRIPTOR fd, int enabled) {
     return setsockopt_6_or_4(fd, IP_MULTICAST_LOOP, IPV6_MULTICAST_LOOP, &enabled, sizeof(enabled));
 }
 
+int bsd_socket_multicast_interface(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_storage *addr) {
+    if (addr->ss_family == AF_INET) {
+        const struct sockaddr_in *addr4 = (const struct sockaddr_in*) addr;
+        return setsockopt(fd, IPPROTO_IP, IP_MULTICAST_IF, &addr4->sin_addr, sizeof(addr4->sin_addr));
+    }
+
+    if (addr->ss_family == AF_INET6) {
+        const struct sockaddr_in6 *addr6 = (const struct sockaddr_in6*) addr;
+        return setsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_IF, &addr6->sin6_scope_id, sizeof(addr6->sin6_scope_id));
+    }
+
+#ifdef _WIN32
+    WSASetLastError(WSAEINVAL);
+#endif
+    errno = EINVAL;
+    return -1;
+}
+
 static int bsd_socket_ttl_any(LIBUS_SOCKET_DESCRIPTOR fd, int ttl, int ipv4, int ipv6) {
     if (ttl < 1 || ttl > 255) {
 #ifdef _WIN32

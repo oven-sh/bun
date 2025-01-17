@@ -380,7 +380,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
 
     // Set name
     auto name = cipher.getName();
-    info->putDirect(vm, PropertyName(Identifier::fromString(vm, "name"_s)),
+    info->putDirect(vm, vm.propertyNames->name,
         jsString(vm, String::fromUTF8({ name.data(), name.length() })));
     RETURN_IF_EXCEPTION(scope, {});
 

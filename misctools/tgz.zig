@@ -26,12 +26,12 @@ var buf: [32 * 1024 * 1024]u8 = undefined;
 // zig build-exe -Doptimize=ReleaseFast --main-pkg-path ../ ./tgz.zig ../src/deps/zlib/libz.a ../src/deps/libarchive.a -lc -liconv
 // zig build-exe -Doptimize=ReleaseFast --main-pkg-path ../ ./tgz.zig ../src/deps/zlib/libz.a ../src/deps/libarchive.a -lc -liconv
 pub fn main() anyerror!void {
-    var stdout_ = std.io.getStdOut();
-    var stderr_ = std.io.getStdErr();
+    const stdout_ = std.io.getStdOut();
+    const stderr_ = std.io.getStdErr();
     var output_source = Output.Source.init(stdout_, stderr_);
     Output.Source.set(&output_source);
     defer Output.flush();
-    var args = try std.process.argsAlloc(std.heap.c_allocator);
+    const args = try std.process.argsAlloc(std.heap.c_allocator);
     if (args.len < 2) {
         Output.prettyErrorln("<r><b>usage<r>: tgz ./tar.gz", .{});
         Global.exit(1);
@@ -49,7 +49,7 @@ pub fn main() anyerror!void {
 
     const tarball_path = path_handler.joinAbsStringBuf(try bun.getcwdAlloc(std.heap.c_allocator), &tarball_path_buf, &parts, .auto);
     Output.prettyErrorln("Tarball Path: {s}", .{tarball_path});
-    var folder = basename;
+    const folder = basename;
 
     // var dir = try std.fs.cwd().makeOpenPath(folder, .{ .iterate = true });
 
@@ -57,7 +57,7 @@ pub fn main() anyerror!void {
 
     var tarball_buf_list = std.ArrayListUnmanaged(u8){};
 
-    var file_size = try tarball.getEndPos();
+    const file_size = try tarball.getEndPos();
     var file_buf: []u8 = undefined;
     var file_buf_cap: usize = 0;
 

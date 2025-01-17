@@ -737,16 +737,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_UNHANDLED_ERROR, (JSC::JSGlobalObject * 
     return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_UNHANDLED_ERROR, makeString("Unhandled error. ("_s, err_str, ")"_s)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_INVALID_IP_ADDRESS, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    EXPECT_ARG_COUNT(1);
-    auto param = callFrame->argument(0).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_IP_ADDRESS, makeString("Invalid IP address: "_s, param)));
-}
-
 } // namespace Bun
 
 JSC::JSValue WebCore::toJS(JSC::JSGlobalObject* globalObject, CommonAbortReason abortReason)

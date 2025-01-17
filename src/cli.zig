@@ -770,10 +770,6 @@ pub const Arguments = struct {
                 ctx.runtime_options.dns_result_order = order;
             }
 
-            if (args.option("--dns-result-order")) |order| {
-                ctx.runtime_options.dns_result_order = order;
-            }
-
             if (args.option("--inspect")) |inspect_flag| {
                 ctx.runtime_options.debugger = if (inspect_flag.len == 0)
                     Command.Debugger{ .enable = .{} }

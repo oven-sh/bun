@@ -94,7 +94,7 @@ fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) c
         defer _ = udpSocket.js_refcount.fetchSub(1, .monotonic);
 
         const span = std.mem.span(hostname.?);
-        const hostname_string = if (scope_id) |id| blk: {
+        var hostname_string = if (scope_id) |id| blk: {
             if (comptime !bun.Environment.isWindows) {
                 const net_if = @cImport({
                     @cInclude("net/if.h");
@@ -114,7 +114,7 @@ fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) c
             udpSocket.thisValue,
             udpSocket.config.binary_type.toJS(slice, globalThis),
             JSC.jsNumber(port),
-            hostname_string.toJS(globalThis),
+            hostname_string.transferToJS(globalThis),
         }) catch |err| {
             _ = udpSocket.callErrorHandler(.zero, &.{udpSocket.globalThis.takeException(err)});
         };
@@ -176,7 +176,7 @@ pub const UDPSocketConfig = struct {
 
         const flags: i32 = brk: {
             if (try options.getTruthy(globalThis, "flags")) |value| {
-                if (!value.isInt32()) {
+                if (!value.isAnyInt()) {
                     return globalThis.throwInvalidArguments("Expected \"flags\" to be a number", .{});
                 }
                 break :brk value.asInt32();
@@ -350,7 +350,7 @@ pub const UDPSocket = struct {
                 const address = bun.String.createUTF8(config.hostname);
                 defer address.deref();
                 const error_value = sys_err.toErrorInstance(globalThis);
-                error_value.put(globalThis, "address", address.toJS(globalThis));
+                error_value.put(globalThis, "address", bun.String.createUTF8ForJS(globalThis, config.hostname));
                 return globalThis.throwValue(error_value);
             }
             return globalThis.throw("Failed to bind socket", .{});

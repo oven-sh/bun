@@ -2576,6 +2576,12 @@ pub const ModuleLoader = struct {
                 .@"abort-controller" => return jsSyntheticModule(.@"abort-controller", specifier),
                 .undici => return jsSyntheticModule(.undici, specifier),
                 .ws => return jsSyntheticModule(.ws, specifier),
+                .@"node:_stream_duplex" => return jsSyntheticModule(.@"node:_stream_duplex", specifier),
+                .@"node:_stream_passthrough" => return jsSyntheticModule(.@"node:_stream_passthrough", specifier),
+                .@"node:_stream_readable" => return jsSyntheticModule(.@"node:_stream_readable", specifier),
+                .@"node:_stream_transform" => return jsSyntheticModule(.@"node:_stream_transform", specifier),
+                .@"node:_stream_wrap" => return jsSyntheticModule(.@"node:_stream_wrap", specifier),
+                .@"node:_stream_writable" => return jsSyntheticModule(.@"node:_stream_writable", specifier),
             }
         } else if (specifier.hasPrefixComptime(js_ast.Macro.namespaceWithColon)) {
             const spec = specifier.toUTF8(bun.default_allocator);
@@ -2788,6 +2794,13 @@ pub const HardcodedModule = enum {
     @"node:cluster",
     // these are gated behind '--expose-internals'
     @"bun:internal-for-testing",
+    //
+    @"node:_stream_duplex",
+    @"node:_stream_passthrough",
+    @"node:_stream_readable",
+    @"node:_stream_transform",
+    @"node:_stream_wrap",
+    @"node:_stream_writable",
 
     /// Already resolved modules go in here.
     /// This does not remap the module name, it is just a hash table.
@@ -2863,6 +2876,13 @@ pub const HardcodedModule = enum {
             .{ "wasi", HardcodedModule.@"node:wasi" },
             .{ "worker_threads", HardcodedModule.@"node:worker_threads" },
             .{ "zlib", HardcodedModule.@"node:zlib" },
+
+            .{ "_stream_duplex", .@"node:_stream_duplex" },
+            .{ "_stream_passthrough", .@"node:_stream_passthrough" },
+            .{ "_stream_readable", .@"node:_stream_readable" },
+            .{ "_stream_transform", .@"node:_stream_transform" },
+            .{ "_stream_wrap", .@"node:_stream_wrap" },
+            .{ "_stream_writable", .@"node:_stream_writable" },
 
             .{ "undici", HardcodedModule.undici },
             .{ "ws", HardcodedModule.ws },
@@ -2941,12 +2961,12 @@ pub const HardcodedModule = enum {
             .{ "node:_http_incoming", .{ .path = "http" } },
             .{ "node:_http_outgoing", .{ .path = "http" } },
             .{ "node:_http_server", .{ .path = "http" } },
-            .{ "node:_stream_duplex", .{ .path = "stream" } },
-            .{ "node:_stream_passthrough", .{ .path = "stream" } },
-            .{ "node:_stream_readable", .{ .path = "stream" } },
-            .{ "node:_stream_transform", .{ .path = "stream" } },
-            .{ "node:_stream_writable", .{ .path = "stream" } },
-            .{ "node:_stream_wrap", .{ .path = "stream" } },
+            .{ "node:_stream_duplex", .{ .path = "_stream_duplex" } },
+            .{ "node:_stream_passthrough", .{ .path = "_stream_passthrough" } },
+            .{ "node:_stream_readable", .{ .path = "_stream_readable" } },
+            .{ "node:_stream_transform", .{ .path = "_stream_transform" } },
+            .{ "node:_stream_wrap", .{ .path = "_stream_wrap" } },
+            .{ "node:_stream_writable", .{ .path = "_stream_writable" } },
             .{ "node:_tls_wrap", .{ .path = "tls" } },
             .{ "node:_tls_common", .{ .path = "tls" } },
 
@@ -3016,12 +3036,12 @@ pub const HardcodedModule = enum {
             .{ "_http_incoming", .{ .path = "http" } },
             .{ "_http_outgoing", .{ .path = "http" } },
             .{ "_http_server", .{ .path = "http" } },
-            .{ "_stream_duplex", .{ .path = "stream" } },
-            .{ "_stream_passthrough", .{ .path = "stream" } },
-            .{ "_stream_readable", .{ .path = "stream" } },
-            .{ "_stream_transform", .{ .path = "stream" } },
-            .{ "_stream_writable", .{ .path = "stream" } },
-            .{ "_stream_wrap", .{ .path = "stream" } },
+            .{ "_stream_duplex", .{ .path = "_stream_duplex" } },
+            .{ "_stream_passthrough", .{ .path = "_stream_passthrough" } },
+            .{ "_stream_readable", .{ .path = "_stream_readable" } },
+            .{ "_stream_transform", .{ .path = "_stream_transform" } },
+            .{ "_stream_wrap", .{ .path = "_stream_wrap" } },
+            .{ "_stream_writable", .{ .path = "_stream_writable" } },
             .{ "_tls_wrap", .{ .path = "tls" } },
             .{ "_tls_common", .{ .path = "tls" } },
 

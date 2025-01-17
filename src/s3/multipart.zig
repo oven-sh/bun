@@ -461,6 +461,10 @@ pub const MultiPartUpload = struct {
             const len = @min(part_size, buffer.len);
             const slice = buffer[0..len];
             buffer = buffer[len..];
+            if (slice.len < part_size and !this.ended) {
+                //slice is too small, we need to wait for more data
+                break;
+            }
             // its one big buffer lets free after we are done with everything, part dont own the data
             if (this.enqueuePart(slice, this.ended)) {
                 this.offset += len;

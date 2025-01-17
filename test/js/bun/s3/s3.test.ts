@@ -101,7 +101,6 @@ for (let credentials of allCredentials) {
     // 10 MiB big enough to Multipart upload in more than one part
     const bigPayload = makePayLoadFrom("Bun is the best runtime ever", 10 * 1024 * 1024);
     const bigishPayload = makePayLoadFrom("Bun is the best runtime ever", 1 * 1024 * 1024);
-
     describe.skipIf(!s3Options.accessKeyId)("s3", () => {
       for (let bucketInName of [true, false]) {
         describe("fetch", () => {
@@ -388,7 +387,16 @@ for (let credentials of allCredentials) {
                 expect(response.headers.get("content-type")).toStartWith("application/json");
               }
             });
+            it("should be able to upload large files using writer()", async () => {
+              const s3file = file(tmp_filename, options);
+              const writer = s3file.writer();
+              writer.write(bigishPayload);
+              writer.write(bigishPayload);
+              writer.write(bigishPayload);
 
+              await writer.end();
+              expect(await s3file.text()).toBe(bigishPayload.repeat(3));
+            });
             it("should be able to upload large files in one go using Bun.write", async () => {
               {
                 await Bun.write(file(tmp_filename, options), bigPayload);

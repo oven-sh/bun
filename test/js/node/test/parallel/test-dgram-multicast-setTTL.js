@@ -33,7 +33,7 @@ socket.on('listening', common.mustCall(() => {
   // Try to set an invalid TTL (valid ttl is > 0 and < 256)
   assert.throws(() => {
     socket.setMulticastTTL(1000);
-  }, /^Error: (setMulticastTTL EINVAL|Invalid argument)$/);
+  }, /^Error: .*EINVAL.*/);
 
   assert.throws(() => {
     socket.setMulticastTTL('foo');

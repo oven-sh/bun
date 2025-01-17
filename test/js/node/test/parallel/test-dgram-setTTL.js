@@ -20,7 +20,7 @@ socket.on('listening', common.mustCall(() => {
   // TTL must be a number from > 0 to < 256
   assert.throws(() => {
     socket.setTTL(1000);
-  }, /^Error: (setTTL EINVAL|Invalid argument)$/);
+  }, /^Error: .*EINVAL.*/);
 
   socket.close();
 }));

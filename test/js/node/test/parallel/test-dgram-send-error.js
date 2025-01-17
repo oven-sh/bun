@@ -3,8 +3,6 @@
 const common = require('../common');
 const assert = require('assert');
 const dgram = require('dgram');
-const { internalBinding } = require('internal/test/binding');
-const { UV_UNKNOWN } = internalBinding('uv');
 const { getSystemErrorName } = require('util');
 const mockError = new Error('mock DNS error');
 

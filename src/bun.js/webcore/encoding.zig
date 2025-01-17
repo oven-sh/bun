@@ -1128,6 +1128,7 @@ pub const Encoder = struct {
 
     pub fn toStringComptime(input: []const u8, global: *JSGlobalObject, comptime encoding: JSC.Node.Encoding) JSValue {
         var bun_string = toBunStringComptime(input, encoding);
+        defer bun_string.deref();
         return bun_string.transferToJS(global);
     }
 
@@ -1143,16 +1144,12 @@ pub const Encoder = struct {
 
         switch (comptime encoding) {
             .ascii => {
-                var str, const chars = bun.String.createUninitialized(.latin1, input.len);
-                defer str.deref();
-
+                const str, const chars = bun.String.createUninitialized(.latin1, input.len);
                 strings.copyLatin1IntoASCII(chars, input);
                 return str;
             },
             .latin1 => {
-                var str, const chars = bun.String.createUninitialized(.latin1, input.len);
-                defer str.deref();
-
+                const str, const chars = bun.String.createUninitialized(.latin1, input.len);
                 @memcpy(chars, input);
                 return str;
             },
@@ -1163,18 +1160,16 @@ pub const Encoder = struct {
                 // Avoid incomplete characters
                 if (input.len / 2 == 0) return bun.String.empty;
 
-                var output, const chars = bun.String.createUninitialized(.utf16, input.len / 2);
-                defer output.deref();
+                const str, const chars = bun.String.createUninitialized(.utf16, input.len / 2);
                 var output_bytes = std.mem.sliceAsBytes(chars);
                 output_bytes[output_bytes.len - 1] = 0;
 
                 @memcpy(output_bytes, input[0..output_bytes.len]);
-                return output;
+                return str;
             },
 
             .hex => {
-                var str, const chars = bun.String.createUninitialized(.latin1, input.len * 2);
-                defer str.deref();
+                const str, const chars = bun.String.createUninitialized(.latin1, input.len * 2);
 
                 const wrote = strings.encodeBytesToHex(chars, input);
                 bun.assert(wrote == chars.len);
@@ -1182,18 +1177,16 @@ pub const Encoder = struct {
             },
 
             .base64url => {
-                var out, const chars = bun.String.createUninitialized(.latin1, bun.base64.urlSafeEncodeLen(input));
-                defer out.deref();
+                const str, const chars = bun.String.createUninitialized(.latin1, bun.base64.urlSafeEncodeLen(input));
                 _ = bun.base64.encodeURLSafe(chars, input);
-                return out;
+                return str;
             },
 
             .base64 => {
                 const to_len = bun.base64.encodeLen(input);
-                var out, const chars = bun.String.createUninitialized(.latin1, to_len);
-                defer out.deref();
+                const str, const chars = bun.String.createUninitialized(.latin1, to_len);
                 _ = bun.base64.encode(chars, input);
-                return out;
+                return str;
             },
         }
     }

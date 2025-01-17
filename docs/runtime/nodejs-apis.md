@@ -80,7 +80,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:async_hooks`](https://nodejs.org/api/async_hooks.html)
 
-🟡 `AsyncLocalStorage`, and `AsyncResource` are implemented. `AsyncResource` is missing `bind`. v8 hooks are stubbed.
+🟡 `AsyncLocalStorage`, and `AsyncResource` are implemented. v8 promise hooks are not called, and its usage is [strongly discouraged](https://nodejs.org/docs/latest/api/async_hooks.html#async-hooks).
 
 ### [`node:child_process`](https://nodejs.org/api/child_process.html)
 

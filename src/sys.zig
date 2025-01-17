@@ -3088,6 +3088,7 @@ pub fn directoryExistsAt(dir: anytype, subpath: anytype) JSC.Maybe(bool) {
             &statx,
         ), .statx)) |err| {
             if (err.err.getErrno() == .NOSYS) break :brk; // Linux < 4.11
+            if (err.err.getErrno() == .EXIST) return .{ .result = false };
             return err;
         }
         return .{ .result = S.ISDIR(statx.mode) };
@@ -3096,7 +3097,10 @@ pub fn directoryExistsAt(dir: anytype, subpath: anytype) JSC.Maybe(bool) {
     // TODO: on macOS, try getattrlist
 
     return switch (fstatat(dir_fd, subpath)) {
-        .err => |err| .{ .err = err },
+        .err => |err| {
+            if (err.getErrno() == .EXIST) return .{ .result = false };
+            return err;
+        },
         .result => |result| .{ .result = S.ISDIR(result.mode) },
     };
 }

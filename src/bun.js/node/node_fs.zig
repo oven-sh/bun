@@ -1309,7 +1309,7 @@ pub const Arguments = struct {
     pub const Truncate = struct {
         /// Passing a file descriptor is deprecated and may result in an error being thrown in the future.
         path: PathOrFileDescriptor,
-        len: JSC.WebCore.Blob.SizeType,
+        len: u63 = 0,
         flags: i32 = 0,
 
         pub fn deinit(this: @This()) void {
@@ -1328,19 +1328,11 @@ pub const Arguments = struct {
             const path = try PathOrFileDescriptor.fromJS(ctx, arguments, bun.default_allocator) orelse {
                 return ctx.throwInvalidArguments("path must be a string or TypedArray", .{});
             };
-
-            const len: JSC.WebCore.Blob.SizeType = brk: {
+            const len: u63 = brk: {
                 const len_value = arguments.next() orelse break :brk 0;
-
-                if (len_value.isNumber()) {
-                    arguments.eat();
-                    break :brk len_value.to(JSC.WebCore.Blob.SizeType);
-                }
-
-                break :brk 0;
+                break :brk @max(0, try JSC.Node.validators.validateInteger(ctx, len_value, "len", .{}, null, null));
             };
-
-            return Truncate{ .path = path, .len = len };
+            return .{ .path = path, .len = len };
         }
     };
 
@@ -1906,7 +1898,7 @@ pub const Arguments = struct {
 
     pub const Realpath = struct {
         path: PathLike,
-        encoding: Encoding = Encoding.utf8,
+        encoding: Encoding = .utf8,
 
         pub fn deinit(this: Realpath) void {
             this.path.deinit();
@@ -1931,7 +1923,10 @@ pub const Arguments = struct {
                 arguments.eat();
 
                 switch (val.jsType()) {
-                    JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject => {
+                    JSC.JSValue.JSType.String,
+                    JSC.JSValue.JSType.StringObject,
+                    JSC.JSValue.JSType.DerivedStringObject,
+                    => {
                         encoding = try Encoding.assert(val, ctx, encoding);
                     },
                     else => {
@@ -4081,10 +4076,16 @@ pub const NodeFS = struct {
     }
 
     pub fn readv(this: *NodeFS, args: Arguments.Readv, _: Flavor) Maybe(Return.Readv) {
+        if (args.buffers.buffers.items.len == 0) {
+            return .{ .result = .{ .bytes_read = 0 } };
+        }
         return if (args.position != null) preadvInner(this, args) else readvInner(this, args);
     }
 
     pub fn writev(this: *NodeFS, args: Arguments.Writev, _: Flavor) Maybe(Return.Writev) {
+        if (args.buffers.buffers.items.len == 0) {
+            return .{ .result = .{ .bytes_written = 0 } };
+        }
         return if (args.position != null) pwritevInner(this, args) else writevInner(this, args);
     }
 
@@ -5243,15 +5244,20 @@ pub const NodeFS = struct {
                     .buffer => .{
                         .buffer = Buffer.fromString(buf, bun.default_allocator) catch unreachable,
                     },
-                    else => if (args.path == .slice_with_underlying_string and
-                        strings.eqlLong(args.path.slice_with_underlying_string.slice(), buf, true))
-                        .{
-                            .string = args.path.slice_with_underlying_string.dupeRef(),
+                    .utf8 => utf8: {
+                        if (args.path == .slice_with_underlying_string) {
+                            const slice = args.path.slice_with_underlying_string;
+                            if (strings.eqlLong(slice.slice(), buf, true)) {
+                                return .{ .result = .{ .string = slice.dupeRef() } };
+                            }
                         }
-                    else
-                        .{
+                        break :utf8 .{
                             .string = .{ .utf8 = .{}, .underlying = bun.String.createUTF8(buf) },
-                        },
+                        };
+                    },
+                    else => |enc| .{
+                        .string = .{ .utf8 = .{}, .underlying = JSC.WebCore.Encoder.toBunString(buf, enc) },
+                    },
                 },
             };
         }
@@ -5292,15 +5298,20 @@ pub const NodeFS = struct {
                 .buffer => .{
                     .buffer = Buffer.fromString(buf, bun.default_allocator) catch unreachable,
                 },
-                else => if (args.path == .slice_with_underlying_string and
-                    strings.eqlLong(args.path.slice_with_underlying_string.slice(), buf, true))
-                    .{
-                        .string = args.path.slice_with_underlying_string.dupeRef(),
+                .utf8 => utf8: {
+                    if (args.path == .slice_with_underlying_string) {
+                        const slice = args.path.slice_with_underlying_string;
+                        if (strings.eqlLong(slice.slice(), buf, true)) {
+                            return .{ .result = .{ .string = slice.dupeRef() } };
+                        }
                     }
-                else
-                    .{
+                    break :utf8 .{
                         .string = .{ .utf8 = .{}, .underlying = bun.String.createUTF8(buf) },
-                    },
+                    };
+                },
+                else => |enc| .{
+                    .string = .{ .utf8 = .{}, .underlying = JSC.WebCore.Encoder.toBunString(buf, enc) },
+                },
             },
         };
     }
@@ -5568,7 +5579,7 @@ pub const NodeFS = struct {
         };
     }
 
-    fn truncateInner(this: *NodeFS, path: PathLike, len: JSC.WebCore.Blob.SizeType, flags: i32) Maybe(Return.Truncate) {
+    fn truncateInner(this: *NodeFS, path: PathLike, len: u63, flags: i32) Maybe(Return.Truncate) {
         if (comptime Environment.isWindows) {
             const file = bun.sys.open(
                 path.sliceZ(&this.sync_error_buf),

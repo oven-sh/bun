@@ -1691,7 +1691,7 @@ function _toUnixTimestamp(time: any, name = "time") {
     // Convert to 123.456 UNIX timestamp
     return time.getTime() / 1000;
   }
-  throw new TypeError(`Expected ${name} to be a number or Date`);
+  throw $ERR_INVALID_ARG_TYPE(name, "number or Date", time);
 }
 
 export default {

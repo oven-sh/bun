@@ -974,10 +974,20 @@ pub const PathLike = union(enum) {
             },
             else => {
                 if (arg.as(JSC.DOMURL)) |domurl| {
-                    var str: bun.String = domurl.fileSystemPath();
+                    var str: bun.String = domurl.fileSystemPath() catch |err| switch (err) {
+                        error.NotFileUrl => {
+                            return ctx.ERR_INVALID_URL_SCHEME("URL must be a non-empty \"file:\" path", .{}).throw();
+                        },
+                        error.InvalidPath => {
+                            return ctx.ERR_INVALID_FILE_URL_PATH("URL must be a non-empty \"file:\" path", .{}).throw();
+                        },
+                        error.InvalidHost => {
+                            return ctx.ERR_INVALID_FILE_URL_HOST("URL must be a non-empty \"file:\" path", .{}).throw();
+                        },
+                    };
                     defer str.deref();
                     if (str.isEmpty()) {
-                        return ctx.throwInvalidArguments("URL must be a non-empty \"file:\" path", .{});
+                        return ctx.ERR_INVALID_ARG_VALUE("URL must be a non-empty \"file:\" path", .{}).throw();
                     }
                     arguments.eat();
 

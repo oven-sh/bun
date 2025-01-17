@@ -1883,14 +1883,30 @@ void WebCore__DOMURL__pathname_(WebCore__DOMURL* domURL, ZigString* arg1)
     *arg1 = Zig::toZigString(pathname);
 }
 
-BunString WebCore__DOMURL__fileSystemPath(WebCore__DOMURL* arg0)
+BunString WebCore__DOMURL__fileSystemPath(WebCore__DOMURL* arg0, int* errorCode)
 {
     const WTF::URL& url = arg0->href();
     if (url.protocolIsFile()) {
+#if !OS(WINDOWS)
+        if (!url.host().isEmpty()) {
+            *errorCode = 1;
+            return BunString { BunStringTag::Dead, nullptr };
+        }
+#endif
+        if (url.path().containsIgnoringASCIICase("%2f"_s)) {
+            *errorCode = 2;
+            return BunString { BunStringTag::Dead, nullptr };
+        }
+#if OS(WINDOWS)
+        if (url.path().containsIgnoringASCIICase("%5c"_s)) {
+            *errorCode = 2;
+            return BunString { BunStringTag::Dead, nullptr };
+        }
+#endif
         return Bun::toStringRef(url.fileSystemPath());
     }
-
-    return BunStringEmpty;
+    *errorCode = 3;
+    return BunString { BunStringTag::Dead, nullptr };
 }
 
 extern "C" JSC__JSValue ZigString__toJSONObject(const ZigString* strPtr, JSC::JSGlobalObject* globalObject)

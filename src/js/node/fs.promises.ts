@@ -250,6 +250,7 @@ const exports = {
 };
 export default exports;
 
+// TODO: remove this in favor of just returning js functions that don't check `this`
 function asyncWrap(fn: any, name: string) {
   const wrapped = async function (...args) {
     return fn.$apply(fs, args);

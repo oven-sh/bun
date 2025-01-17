@@ -67,6 +67,9 @@ export default [
   ["ERR_SOCKET_DGRAM_NOT_CONNECTED", Error],
   ["ERR_SOCKET_DGRAM_NOT_RUNNING", Error],
   ["ERR_INVALID_CURSOR_POS", TypeError],
+  ["ERR_INVALID_URL_SCHEME", TypeError],
+  ["ERR_INVALID_FILE_URL_PATH", TypeError],
+  ["ERR_INVALID_FILE_URL_HOST", TypeError],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError],

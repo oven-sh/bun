@@ -153,10 +153,10 @@ static void sqlite_free_typed_array(void* ctx, void* buf)
     sqlite3_free((void*)buf);
 }
 
-static int DEFAULT_SQLITE_FLAGS
+static constexpr int DEFAULT_SQLITE_FLAGS
     = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
-static unsigned int DEFAULT_SQLITE_PREPARE_FLAGS = SQLITE_PREPARE_PERSISTENT;
-static int MAX_SQLITE_PREPARE_FLAG = SQLITE_PREPARE_PERSISTENT | SQLITE_PREPARE_NORMALIZE | SQLITE_PREPARE_NO_VTAB;
+static constexpr unsigned int DEFAULT_SQLITE_PREPARE_FLAGS = SQLITE_PREPARE_PERSISTENT;
+static constexpr int MAX_SQLITE_PREPARE_FLAG = SQLITE_PREPARE_PERSISTENT | SQLITE_PREPARE_NORMALIZE | SQLITE_PREPARE_NO_VTAB;
 
 static inline JSC::JSValue jsNumberFromSQLite(sqlite3_stmt* stmt, unsigned int i)
 {
@@ -785,18 +785,18 @@ static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3
             return false;
         }
 
-        String roped = str->tryGetValue(lexicalGlobalObject);
-        if (UNLIKELY(!roped)) {
+        const auto roped = str->view(lexicalGlobalObject);
+        if (UNLIKELY(roped->isNull())) {
             throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Out of memory :("_s));
             return false;
         }
 
-        if (roped.is8Bit() && roped.containsOnlyASCII()) {
-            CHECK_BIND(sqlite3_bind_text(stmt, i, reinterpret_cast<const char*>(roped.span8().data()), roped.length(), transientOrStatic));
-        } else if (!roped.is8Bit()) {
-            CHECK_BIND(sqlite3_bind_text16(stmt, i, roped.span16().data(), roped.length() * 2, transientOrStatic));
+        if (roped->is8Bit() && roped->containsOnlyASCII()) {
+            CHECK_BIND(sqlite3_bind_text(stmt, i, reinterpret_cast<const char*>(roped->span8().data()), roped->length(), transientOrStatic));
+        } else if (!roped->is8Bit()) {
+            CHECK_BIND(sqlite3_bind_text16(stmt, i, roped->span16().data(), roped->length() * 2, transientOrStatic));
         } else {
-            auto utf8 = roped.utf8();
+            auto utf8 = roped->utf8();
             CHECK_BIND(sqlite3_bind_text(stmt, i, utf8.data(), utf8.length(), SQLITE_TRANSIENT));
         }
 
@@ -1670,7 +1670,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObj
     }
 
     bool shouldThrowOnError = (throwOnError.isEmpty() || throwOnError.isUndefined()) ? false : throwOnError.toBoolean(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, {});
 
     sqlite3* db = databases()[dbIndex]->db;
     // no-op if already closed
@@ -2368,7 +2367,6 @@ JSC_DEFINE_CUSTOM_SETTER(jsSqlStatementSetSafeIntegers, (JSGlobalObject * lexica
     CHECK_PREPARED
 
     bool value = JSValue::decode(encodedValue).toBoolean(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, false);
     castedThis->useBigInt64 = value;
 
     return true;

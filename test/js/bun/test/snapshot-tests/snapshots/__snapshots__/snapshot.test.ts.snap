@@ -368,3 +368,242 @@ exports[`most types: testing 7 2`] = `9`;
 exports[`most types: testing 7 3`] = `8`;
 
 exports[`most types: undefined 1`] = `undefined`;
+
+exports[`snapshots dollars 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`"$"\`;
+"
+`;
+
+exports[`snapshots backslash 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`"\\\\"\`;
+"
+`;
+
+exports[`snapshots dollars curly 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`"\\\${}"\`;
+"
+`;
+
+exports[`snapshots dollars curly 2 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`"\\\${"\`;
+"
+`;
+
+exports[`snapshots stuff 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`
+"æ™
+
+!!!!*5897yhduN"'\\\`Il"
+\`;
+"
+`;
+
+exports[`snapshots stuff 2 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`
+"æ™
+
+!!!!*5897yh!uN"'\\\`Il"
+\`;
+"
+`;
+
+exports[`snapshots regexp 1 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`/\\\${1..}/\`;
+"
+`;
+
+exports[`snapshots regexp 2 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`/\\\${2..}/\`;
+"
+`;
+
+exports[`snapshots string 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`"abc"\`;
+"
+`;
+
+exports[`snapshots string with newline 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`
+"qwerty
+ioup"
+\`;
+"
+`;
+
+exports[`snapshots null byte 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`"1 \\x00"\`;
+"
+`;
+
+exports[`snapshots null byte 2 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`"2 \\x00"\`;
+"
+`;
+
+exports[`snapshots backticks 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`"This is \\\`wrong\\\`"\`;
+"
+`;
+
+exports[`snapshots unicode 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`"😊abc\\\`\\\${def} �, � "\`;
+"
+`;
+
+exports[`snapshots jest newline oddity 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`
+"
+"
+\`;
+"
+`;
+
+exports[`snapshots grow file for new snapshot 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`"hello"\`;
+"
+`;
+
+exports[`snapshots grow file for new snapshot 2`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`"hello"\`;
+
+exports[\`def 1\`] = \`"hello"\`;
+"
+`;
+
+exports[`snapshots grow file for new snapshot 3`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`"goodbye"\`;
+
+exports[\`def 1\`] = \`"hello"\`;
+"
+`;
+
+exports[`snapshots backtick in test name 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`\\\` 1\`] = \`"abc"\`;
+"
+`;
+
+exports[`snapshots dollars curly in test name 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`\\\${} 1\`] = \`"abc"\`;
+"
+`;
+
+exports[`snapshots #15283 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`Should work 1\`] = \`"This is \\\`wrong\\\`"\`;
+"
+`;
+
+exports[`snapshots #15283 unicode 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`Should work 1\`] = \`"😊This is \\\`wrong\\\`"\`;
+"
+`;
+
+exports[`snapshots replaces file that fails to parse when update flag is used 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`t1 1\`] = \`"abc def ghi jkl"\`;
+
+exports[\`t2 1\`] = \`"abc\\\`def"\`;
+
+exports[\`t3 1\`] = \`"abc def ghi"\`;
+"
+`;
+
+exports[`snapshots property matchers 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`
+{
+  "createdAt": Any<Date>,
+  "id": Any<Number>,
+  "name": "LeBron James",
+}
+\`;
+"
+`;
+
+exports[`inline snapshots grow file for new snapshot 1`] = `
+"
+      test("abc", () => { expect("hello").toMatchInlineSnapshot(\`"hello"\`) });
+    "
+`;
+
+exports[`inline snapshots backtick in test name 1`] = `"test("\`", () => {expect("abc").toMatchInlineSnapshot(\`"abc"\`);})"`;
+
+exports[`inline snapshots dollars curly in test name 1`] = `"test("\${}", () => {expect("abc").toMatchInlineSnapshot(\`"abc"\`);})"`;
+
+exports[`inline snapshots #15283 1`] = `
+"it("Should work", () => {
+      expect(\`This is \\\`wrong\\\`\`).toMatchInlineSnapshot(\`"This is \\\`wrong\\\`"\`);
+    });"
+`;
+
+exports[`snapshots unicode surrogate halves 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`"😊abc\\\`\\\${def} �, � "\`;
+"
+`;
+
+exports[`error inline snapshots 1`] = `"hello"`;
+
+exports[`error inline snapshots 2`] = `undefined`;
+
+exports[`error inline snapshots 3`] = `undefined`;
+
+exports[`error inline snapshots 4`] = `undefined`;
+
+exports[`error inline snapshots: hint 1`] = `undefined`;
+
+exports[`snapshot numbering 1`] = `"item one"`;
+
+exports[`snapshot numbering 2`] = `"snap"`;
+
+exports[`snapshot numbering 4`] = `"snap"`;
+
+exports[`snapshot numbering 6`] = `"hello"`;
+
+exports[`snapshot numbering: hinted 1`] = `"hello"`;

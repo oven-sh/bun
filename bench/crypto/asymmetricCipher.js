@@ -1,4 +1,4 @@
-import { bench, run } from "mitata";
+import { bench, run } from "../runner.mjs";
 const crypto = require("node:crypto");
 
 const keyPair = crypto.generateKeyPairSync("rsa", {

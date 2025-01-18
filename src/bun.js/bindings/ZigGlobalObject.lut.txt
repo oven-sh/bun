@@ -66,6 +66,9 @@
   PerformanceMeasure              PerformanceMeasureConstructorCallback                PropertyCallback
   PerformanceObserver             PerformanceObserverConstructorCallback               PropertyCallback
   PerformanceObserverEntryList    PerformanceObserverEntryListConstructorCallback      PropertyCallback
+  PerformanceResourceTiming       PerformanceResourceTimingConstructorCallback         PropertyCallback
+  PerformanceServerTiming         PerformanceServerTimingConstructorCallback           PropertyCallback
+  PerformanceTiming               PerformanceTimingConstructorCallback                 PropertyCallback
   ReadableByteStreamController    ReadableByteStreamControllerConstructorCallback      PropertyCallback
   ReadableStream                  ReadableStreamConstructorCallback                    PropertyCallback
   ReadableStreamBYOBReader        ReadableStreamBYOBReaderConstructorCallback          PropertyCallback
@@ -73,9 +76,9 @@
   ReadableStreamDefaultController ReadableStreamDefaultControllerConstructorCallback   PropertyCallback
   ReadableStreamDefaultReader     ReadableStreamDefaultReaderConstructorCallback       PropertyCallback
   SubtleCrypto                    SubtleCryptoConstructorCallback                      PropertyCallback
+  TextDecoderStream               TextDecoderStreamConstructorCallback                 PropertyCallback
   TextEncoder                     TextEncoderConstructorCallback                       PropertyCallback
   TextEncoderStream               TextEncoderStreamConstructorCallback                 PropertyCallback
-  TextDecoderStream               TextDecoderStreamConstructorCallback                 PropertyCallback
   TransformStream                 TransformStreamConstructorCallback                   PropertyCallback
   TransformStreamDefaultController TransformStreamDefaultControllerConstructorCallback PropertyCallback
   URL                             DOMURLConstructorCallback                            PropertyCallback

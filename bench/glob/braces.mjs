@@ -1,5 +1,5 @@
 import braces from "braces";
-import { bench, group, run } from "mitata";
+import { bench, group, run } from "../runner.mjs";
 
 // const iterations = 1000;
 const iterations = 100;
@@ -10,15 +10,16 @@ const veryComplexPattern = "{a,b,HI{c,e,LMAO{d,f}Q}}{1,2,{3,4},5}";
 
 console.log(braces(complexPattern, { expand: true }));
 function benchPattern(pattern, name) {
-  group({ name: `${name} pattern: "${pattern}"`, summary: true }, () => {
+  const _name = `${name} pattern: "${pattern}"`;
+  group({ name: _name, summary: true }, () => {
     if (typeof Bun !== "undefined")
-      bench("Bun", () => {
+      bench(`Bun (${_name})`, () => {
         for (let i = 0; i < iterations; i++) {
           Bun.$.braces(pattern);
         }
       });
 
-    bench("micromatch/braces", () => {
+    bench(`micromatch/braces ${_name}`, () => {
       for (let i = 0; i < iterations; i++) {
         braces(pattern, { expand: true });
       }

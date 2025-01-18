@@ -1,4 +1,3 @@
-const Output = @This();
 const bun = @import("root").bun;
 const std = @import("std");
 const Environment = @import("./env.zig");
@@ -89,6 +88,7 @@ pub const Source = struct {
         if (source_set) return;
         bun.debugAssert(stdout_stream_set);
         source = Source.init(stdout_stream, stderr_stream);
+        bun.StackCheck.configureThread();
     }
 
     pub fn configureNamedThread(name: StringTypes.stringZ) void {
@@ -252,7 +252,7 @@ pub const Source = struct {
             const stdout = bun.sys.File.from(std.io.getStdOut());
             const stderr = bun.sys.File.from(std.io.getStdErr());
 
-            Output.Source.init(stdout, stderr)
+            Source.init(stdout, stderr)
                 .set();
 
             if (comptime Environment.isDebug or Environment.enable_logs) {
@@ -310,19 +310,18 @@ pub const Source = struct {
         }
 
         if (bun.getenvZ("TERM_PROGRAM")) |term_program| {
-            if (strings.eqlComptime(term_program, "iTerm.app")) {
-                lazy_color_depth = .@"16m";
-                return;
-            }
-
-            if (strings.eqlComptime(term_program, "WezTerm")) {
-                lazy_color_depth = .@"16m";
-                return;
-            }
-
-            if (strings.eqlComptime(term_program, "ghostty")) {
-                lazy_color_depth = .@"16m";
-                return;
+            const use_16m = .{
+                "ghostty",
+                "MacTerm",
+                "WezTerm",
+                "HyperTerm",
+                "iTerm.app",
+            };
+            inline for (use_16m) |program| {
+                if (strings.eqlComptime(term_program, program)) {
+                    lazy_color_depth = .@"16m";
+                    return;
+                }
             }
         }
 
@@ -469,42 +468,49 @@ pub fn isVerbose() bool {
     return false;
 }
 
-var _source_for_test: if (Environment.isTest) Output.Source else void = undefined;
-var _source_for_test_set = false;
-pub fn initTest() void {
-    if (_source_for_test_set) return;
-    _source_for_test_set = true;
-    const in = std.io.getStdErr();
-    const out = std.io.getStdOut();
-    _source_for_test = Output.Source.init(File.from(out), File.from(in));
-    Output.Source.set(&_source_for_test);
-}
+// var _source_for_test: if (Environment.isTest) Source else void = undefined;
+// var _source_for_test_set = false;
+// pub fn initTest() void {
+//     if (_source_for_test_set) return;
+//     _source_for_test_set = true;
+//     const in = std.io.getStdErr();
+//     const out = std.io.getStdOut();
+//     _source_for_test = Source.init(File.from(out), File.from(in));
+//     Source.set(&_source_for_test);
+// }
 pub fn enableBuffering() void {
     if (comptime Environment.isNative) enable_buffering = true;
 }
 
 pub fn disableBuffering() void {
-    Output.flush();
+    flush();
     if (comptime Environment.isNative) enable_buffering = false;
 }
 
 pub fn panic(comptime fmt: string, args: anytype) noreturn {
     @setCold(true);
 
-    if (Output.isEmojiEnabled()) {
-        std.debug.panic(comptime Output.prettyFmt(fmt, true), args);
+    if (isEmojiEnabled()) {
+        std.debug.panic(comptime prettyFmt(fmt, true), args);
     } else {
-        std.debug.panic(comptime Output.prettyFmt(fmt, false), args);
+        std.debug.panic(comptime prettyFmt(fmt, false), args);
     }
 }
 
 pub const WriterType: type = @TypeOf(Source.StreamType.quietWriter(undefined));
 
+// TODO: investigate migrating this to the buffered one.
 pub fn errorWriter() WriterType {
     bun.debugAssert(source_set);
     return source.error_stream.quietWriter();
 }
 
+pub fn errorWriterBuffered() Source.BufferedStream.Writer {
+    bun.debugAssert(source_set);
+    return source.buffered_error_stream.writer();
+}
+
+// TODO: investigate returning the buffered_error_stream
 pub fn errorStream() Source.StreamType {
     bun.debugAssert(source_set);
     return source.error_stream;
@@ -605,11 +611,11 @@ pub noinline fn printElapsedTo(elapsed: f64, comptime printerFn: anytype, ctx: a
 }
 
 pub fn printElapsed(elapsed: f64) void {
-    printElapsedToWithCtx(elapsed, Output.prettyError, false, {});
+    printElapsedToWithCtx(elapsed, prettyError, false, {});
 }
 
 pub fn printElapsedStdout(elapsed: f64) void {
-    printElapsedToWithCtx(elapsed, Output.pretty, false, {});
+    printElapsedToWithCtx(elapsed, pretty, false, {});
 }
 
 pub fn printElapsedStdoutTrim(elapsed: f64) void {
@@ -668,7 +674,7 @@ pub noinline fn println(comptime fmt: string, args: anytype) void {
 /// Print to stdout, but only in debug builds.
 /// Text automatically buffers
 pub fn debug(comptime fmt: string, args: anytype) void {
-    if (comptime Environment.isRelease) return;
+    if (!Environment.isDebug) return;
     prettyErrorln("<d>DEBUG:<r> " ++ fmt, args);
     flush();
 }
@@ -704,13 +710,25 @@ pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.
 /// To enable all logs, set the environment variable
 ///   BUN_DEBUG_ALL=1
 pub const LogFunction = fn (comptime fmt: string, args: anytype) callconv(bun.callconv_inline) void;
+
 pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
-    const tagname = switch (@TypeOf(tag)) {
-        @Type(.EnumLiteral) => @tagName(tag),
-        else => tag,
+    const tagname = comptime brk: {
+        const input = switch (@TypeOf(tag)) {
+            @Type(.EnumLiteral) => @tagName(tag),
+            else => tag,
+        };
+        var ascii_slice: [input.len]u8 = undefined;
+        for (input, &ascii_slice) |in, *out| {
+            out.* = std.ascii.toLower(in);
+        }
+        break :brk ascii_slice;
     };
 
-    if (comptime !Environment.isDebug and !Environment.enable_logs) {
+    return ScopedLogger(&tagname, disabled);
+}
+
+fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
+    if (comptime !Environment.enable_logs) {
         return struct {
             pub inline fn isVisible() bool {
                 return false;
@@ -727,17 +745,27 @@ pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
         var out_set = false;
         var really_disable = disabled;
         var evaluated_disable = false;
-        var lock = std.Thread.Mutex{};
+        var lock = bun.Mutex{};
 
         pub fn isVisible() bool {
             if (!evaluated_disable) {
                 evaluated_disable = true;
-                if (bun.getenvZ("BUN_DEBUG_" ++ tagname)) |val| {
+                if (bun.getenvZAnyCase("BUN_DEBUG_" ++ tagname)) |val| {
                     really_disable = strings.eqlComptime(val, "0");
-                } else if (bun.getenvZ("BUN_DEBUG_ALL")) |val| {
+                } else if (bun.getenvZAnyCase("BUN_DEBUG_ALL")) |val| {
                     really_disable = strings.eqlComptime(val, "0");
-                } else if (bun.getenvZ("BUN_DEBUG_QUIET_LOGS")) |val| {
+                } else if (bun.getenvZAnyCase("BUN_DEBUG_QUIET_LOGS")) |val| {
                     really_disable = really_disable or !strings.eqlComptime(val, "0");
+                } else {
+                    for (bun.argv) |arg| {
+                        if (strings.eqlCaseInsensitiveASCII(arg, comptime "--debug-" ++ tagname, true)) {
+                            really_disable = false;
+                            break;
+                        } else if (strings.eqlCaseInsensitiveASCII(arg, comptime "--debug-all", true)) {
+                            really_disable = false;
+                            break;
+                        }
+                    }
                 }
             }
             return !really_disable;
@@ -779,7 +807,7 @@ pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
             lock.lock();
             defer lock.unlock();
 
-            if (Output.enable_ansi_colors_stdout and source_set and buffered_writer.unbuffered_writer.context.handle == writer().context.handle) {
+            if (enable_ansi_colors_stdout and source_set and buffered_writer.unbuffered_writer.context.handle == writer().context.handle) {
                 out.print(comptime prettyFmt("<r><d>[" ++ tagname ++ "]<r> " ++ fmt, true), args) catch {
                     really_disable = true;
                     return;
@@ -803,7 +831,10 @@ pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
 }
 
 pub fn scoped(comptime tag: anytype, comptime disabled: bool) LogFunction {
-    return Scoped(tag, disabled).log;
+    return Scoped(
+        tag,
+        disabled,
+    ).log;
 }
 
 // Valid "colors":
@@ -811,27 +842,31 @@ pub fn scoped(comptime tag: anytype, comptime disabled: bool) LogFunction {
 // <blue>
 // <cyan>
 // <green>
+// <bggreen>
 // <magenta>
 // <red>
+// <bgred>
 // <white>
 // <yellow>
 // <b> - bold
 // <d> - dim
 // </r> - reset
 // <r> - reset
-const ED = "\x1b[";
+const CSI = "\x1b[";
 pub const color_map = ComptimeStringMap(string, .{
-    &.{ "black", ED ++ "30m" },
-    &.{ "blue", ED ++ "34m" },
-    &.{ "b", ED ++ "1m" },
-    &.{ "d", ED ++ "2m" },
-    &.{ "i", ED ++ "3m" },
-    &.{ "cyan", ED ++ "36m" },
-    &.{ "green", ED ++ "32m" },
-    &.{ "magenta", ED ++ "35m" },
-    &.{ "red", ED ++ "31m" },
-    &.{ "white", ED ++ "37m" },
-    &.{ "yellow", ED ++ "33m" },
+    &.{ "b", CSI ++ "1m" },
+    &.{ "d", CSI ++ "2m" },
+    &.{ "i", CSI ++ "3m" },
+    &.{ "black", CSI ++ "30m" },
+    &.{ "red", CSI ++ "31m" },
+    &.{ "green", CSI ++ "32m" },
+    &.{ "yellow", CSI ++ "33m" },
+    &.{ "blue", CSI ++ "34m" },
+    &.{ "magenta", CSI ++ "35m" },
+    &.{ "cyan", CSI ++ "36m" },
+    &.{ "white", CSI ++ "37m" },
+    &.{ "bgred", CSI ++ "41m" },
+    &.{ "bggreen", CSI ++ "42m" },
 });
 const RESET: string = "\x1b[0m";
 pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) [:0]const u8 {
@@ -1014,7 +1049,7 @@ pub inline fn warn(comptime fmt: []const u8, args: anytype) void {
     prettyErrorln("<yellow>warn<r><d>:<r> " ++ fmt, args);
 }
 
-const debugWarnScope = Scoped("debug warn", false);
+const debugWarnScope = Scoped("debug_warn", false);
 
 /// Print a yellow warning message, only in debug mode
 pub inline fn debugWarn(comptime fmt: []const u8, args: anytype) void {
@@ -1032,12 +1067,20 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
     const info = @typeInfo(T);
 
     if (comptime T == bun.sys.Error or info == .Pointer and info.Pointer.child == bun.sys.Error) {
-        prettyErrorln("<r><red>error:<r><d>:<r> " ++ fmt, args ++ .{error_name});
+        const e: bun.sys.Error = error_name;
+        const tag_name, const sys_errno = e.getErrorCodeTagName() orelse {
+            err("unknown error", fmt, args);
+            return;
+        };
+        if (bun.sys.coreutils_error_map.get(sys_errno)) |label| {
+            prettyErrorln("<r><red>{s}<r><d>:<r> {s}: " ++ fmt ++ " <d>({s})<r>", .{ tag_name, label } ++ args ++ .{@tagName(e.syscall)});
+        } else {
+            prettyErrorln("<r><red>{s}<r><d>:<r> " ++ fmt ++ " <d>({s})<r>", .{tag_name} ++ args ++ .{@tagName(e.syscall)});
+        }
         return;
     }
 
     const display_name, const is_comptime_name = display_name: {
-
         // Zig string literals are of type *const [n:0]u8
         // we assume that no one will pass this type from not using a string literal.
         if (info == .Pointer and info.Pointer.size == .One and info.Pointer.is_const) {
@@ -1125,7 +1168,7 @@ pub fn initScopedDebugWriterAtStartup() void {
             const fd = std.fs.cwd().createFile(path_fmt, .{
                 .mode = if (Environment.isPosix) 0o644 else 0,
             }) catch |open_err| {
-                Output.panic("Failed to open file for debug output: {s} ({s})", .{ @errorName(open_err), path });
+                panic("Failed to open file for debug output: {s} ({s})", .{ @errorName(open_err), path });
             };
             _ = bun.sys.ftruncate(bun.toFD(fd), 0); // windows
             ScopedDebugWriter.scoped_file_writer = File.from(fd).quietWriter();

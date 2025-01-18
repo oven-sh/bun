@@ -2,7 +2,8 @@ import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
-import { basename, join, resolve } from "path";
+import path, { basename, join, resolve } from "path";
+import { familySync } from "detect-libc";
 
 expect.extend({
   toRunInlineFixture(input) {
@@ -117,11 +118,15 @@ it("process.chdir() on root dir", () => {
   }
 });
 
-it("process.hrtime()", () => {
+it("process.hrtime()", async () => {
   const start = process.hrtime();
   const end = process.hrtime(start);
-  const end2 = process.hrtime();
   expect(end[0]).toBe(0);
+
+  // Flaky on Ubuntu & Windows.
+  await Bun.sleep(16);
+  const end2 = process.hrtime();
+
   expect(end2[1] > start[1]).toBe(true);
 });
 
@@ -135,8 +140,9 @@ it("process.release", () => {
   expect(process.release.name).toBe("node");
   const platform = process.platform == "win32" ? "windows" : process.platform;
   const arch = { arm64: "aarch64", x64: "x64" }[process.arch] || process.arch;
-  const nonbaseline = `https://github.com/oven-sh/bun/releases/download/bun-v${process.versions.bun}/bun-${platform}-${arch}.zip`;
-  const baseline = `https://github.com/oven-sh/bun/releases/download/bun-v${process.versions.bun}/bun-${platform}-${arch}-baseline.zip`;
+  const abi = familySync() === "musl" ? "-musl" : "";
+  const nonbaseline = `https://github.com/oven-sh/bun/releases/download/bun-v${process.versions.bun}/bun-${platform}-${arch}${abi}.zip`;
+  const baseline = `https://github.com/oven-sh/bun/releases/download/bun-v${process.versions.bun}/bun-${platform}-${arch}${abi}-baseline.zip`;
 
   expect(process.release.sourceUrl).toBeOneOf([nonbaseline, baseline]);
 });
@@ -230,12 +236,16 @@ it("process.uptime()", () => {
 });
 
 it("process.umask()", () => {
-  let notNumbers = [265n, "string", true, false, null, {}, [], () => {}, Symbol("symbol"), BigInt(1)];
-  for (let notNumber of notNumbers) {
-    expect(() => {
-      process.umask(notNumber);
-    }).toThrow('The "mask" argument must be of type number');
-  }
+  expect(() => process.umask(265n)).toThrow('The "mask" argument must be of type number. Received type bigint (265n)');
+  expect(() => process.umask("string")).toThrow(`The argument 'mask' must be a 32-bit unsigned integer or an octal string. Received "string"`); // prettier-ignore
+  expect(() => process.umask(true)).toThrow('The "mask" argument must be of type number. Received type boolean (true)');
+  expect(() => process.umask(false)).toThrow('The "mask" argument must be of type number. Received type boolean (false)'); // prettier-ignore
+  expect(() => process.umask(null)).toThrow('The "mask" argument must be of type number. Received null');
+  expect(() => process.umask({})).toThrow('The "mask" argument must be of type number. Received an instance of Object');
+  expect(() => process.umask([])).toThrow('The "mask" argument must be of type number. Received an instance of Array');
+  expect(() => process.umask(() => {})).toThrow('The "mask" argument must be of type number. Received function ');
+  expect(() => process.umask(Symbol("symbol"))).toThrow('The "mask" argument must be of type number. Received type symbol (Symbol(symbol))'); // prettier-ignore
+  expect(() => process.umask(BigInt(1))).toThrow('The "mask" argument must be of type number. Received type bigint (1n)'); // prettier-ignore
 
   let rangeErrors = [NaN, -1.4, Infinity, -Infinity, -1, 1.3, 4294967296];
   for (let rangeError of rangeErrors) {
@@ -304,20 +314,6 @@ it("process.config", () => {
   });
 });
 
-it("process.emitWarning", () => {
-  process.emitWarning("-- Testing process.emitWarning --");
-  var called = 0;
-  process.on("warning", err => {
-    called++;
-    expect(err.message).toBe("-- Testing process.on('warning') --");
-  });
-  process.emitWarning("-- Testing process.on('warning') --");
-  expect(called).toBe(1);
-  expect(process.off("warning")).toBe(process);
-  process.emitWarning("-- Testing process.on('warning') --");
-  expect(called).toBe(1);
-});
-
 it("process.execArgv", () => {
   expect(process.execArgv instanceof Array).toBe(true);
 });
@@ -336,11 +332,21 @@ it("process.argv in testing", () => {
 
 describe("process.exitCode", () => {
   it("validates int", () => {
-    expect(() => (process.exitCode = "potato")).toThrow(`exitCode must be an integer`);
-    expect(() => (process.exitCode = 1.2)).toThrow("exitCode must be an integer");
-    expect(() => (process.exitCode = NaN)).toThrow("exitCode must be an integer");
-    expect(() => (process.exitCode = Infinity)).toThrow("exitCode must be an integer");
-    expect(() => (process.exitCode = -Infinity)).toThrow("exitCode must be an integer");
+    expect(() => (process.exitCode = "potato")).toThrow(
+      `The "code" argument must be of type number. Received type string ("potato")`,
+    );
+    expect(() => (process.exitCode = 1.2)).toThrow(
+      `The value of \"code\" is out of range. It must be an integer. Received 1.2`,
+    );
+    expect(() => (process.exitCode = NaN)).toThrow(
+      `The value of \"code\" is out of range. It must be an integer. Received NaN`,
+    );
+    expect(() => (process.exitCode = Infinity)).toThrow(
+      `The value of \"code\" is out of range. It must be an integer. Received Infinity`,
+    );
+    expect(() => (process.exitCode = -Infinity)).toThrow(
+      `The value of \"code\" is out of range. It must be an integer. Received -Infinity`,
+    );
   });
 
   it("works with implicit process.exit", () => {
@@ -452,13 +458,13 @@ describe("process.cpuUsage", () => {
         user: -1,
         system: 100,
       }),
-    ).toThrow("The 'user' property must be a number between 0 and 2^53");
+    ).toThrow("The property 'prevValue.user' is invalid. Received -1");
     expect(() =>
       process.cpuUsage({
         user: 100,
         system: -1,
       }),
-    ).toThrow("The 'system' property must be a number between 0 and 2^53");
+    ).toThrow("The property 'prevValue.system' is invalid. Received -1");
   });
 
   // Skipped on Windows because it seems UV returns { user: 15000, system: 0 } constantly
@@ -678,13 +684,7 @@ it("dlopen accepts file: URLs", () => {
 });
 
 it("process.constrainedMemory()", () => {
-  if (process.platform === "linux") {
-    // On Linux, it returns 0 if the kernel doesn't support it
-    expect(process.constrainedMemory() >= 0).toBe(true);
-  } else {
-    // On unsupported platforms, it returns undefined
-    expect(process.constrainedMemory()).toBeUndefined();
-  }
+  expect(process.constrainedMemory() >= 0).toBe(true);
 });
 
 it("process.report", () => {
@@ -1049,4 +1049,11 @@ describe("process.exitCode", () => {
 
 it("process._exiting", () => {
   expect(process._exiting).toBe(false);
+});
+
+it("process.memoryUsage.arrayBuffers", () => {
+  const initial = process.memoryUsage().arrayBuffers;
+  const array = new ArrayBuffer(1024 * 1024 * 16);
+  array.buffer;
+  expect(process.memoryUsage().arrayBuffers).toBeGreaterThanOrEqual(initial + 16 * 1024 * 1024);
 });

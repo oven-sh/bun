@@ -613,7 +613,9 @@ namespace uWS
             * ought to be handled as an error. */
             std::string_view transferEncodingString = req->getHeader("transfer-encoding");
             std::string_view contentLengthString = req->getHeader("content-length");
-            if (transferEncodingString.length() && contentLengthString.length()) {
+            auto transferEncodingStringLen = transferEncodingString.length();
+            auto contentLengthStringLen = contentLengthString.length();
+            if (transferEncodingStringLen && contentLengthStringLen) {
                 /* Returning fullptr is the same as calling the errorHandler */
                 /* We could be smart and set an error in the context along with this, to indicate what 
                  * http error response we might want to return */
@@ -623,6 +625,15 @@ namespace uWS
             /* Parse query */
             const char *querySeparatorPtr = (const char *) memchr(req->headers->value.data(), '?', req->headers->value.length());
             req->querySeparator = (unsigned int) ((querySeparatorPtr ? querySeparatorPtr : req->headers->value.data() + req->headers->value.length()) - req->headers->value.data());
+            
+            // lets check if content len is valid before calling requestHandler
+            if(contentLengthStringLen) {
+                remainingStreamingBytes = toUnsignedInteger(contentLengthString);
+                if (remainingStreamingBytes == UINT64_MAX) {
+                    /* Parser error */
+                    return {HTTP_ERROR_400_BAD_REQUEST, FULLPTR};
+                }
+            }
 
             /* If returned socket is not what we put in we need
              * to break here as we either have upgraded to
@@ -642,7 +653,7 @@ namespace uWS
             /* RFC 9112 6.3
              * If a message is received with both a Transfer-Encoding and a Content-Length header field,
              * the Transfer-Encoding overrides the Content-Length. */
-            if (transferEncodingString.length()) {
+            if (transferEncodingStringLen) {
 
                 /* If a proxy sent us the transfer-encoding header that 100% means it must be chunked or else the proxy is
                  * not RFC 9112 compliant. Therefore it is always better to assume this is the case, since that entirely eliminates 
@@ -665,6 +676,7 @@ namespace uWS
                         dataHandler(user, chunk, chunk.length() == 0);
                     }
                     if (isParsingInvalidChunkedEncoding(remainingStreamingBytes)) {
+                        // TODO: what happen if we already responded?
                         return {HTTP_ERROR_400_BAD_REQUEST, FULLPTR};
                     }
                     unsigned int consumed = (length - (unsigned int) dataToConsume.length());
@@ -672,13 +684,8 @@ namespace uWS
                     length = (unsigned int) dataToConsume.length();
                     consumedTotal += consumed;
                 }
-            } else if (contentLengthString.length()) {
-                remainingStreamingBytes = toUnsignedInteger(contentLengthString);
-                if (remainingStreamingBytes == UINT64_MAX) {
-                    /* Parser error */
-                    return {HTTP_ERROR_400_BAD_REQUEST, FULLPTR};
-                }
-
+            } else if (contentLengthStringLen) {
+              
                 if (!CONSUME_MINIMALLY) {
                     unsigned int emittable = (unsigned int) std::min<uint64_t>(remainingStreamingBytes, length);
                     dataHandler(user, std::string_view(data, emittable), emittable == remainingStreamingBytes);

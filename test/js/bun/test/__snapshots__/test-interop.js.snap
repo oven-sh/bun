@@ -2,10 +2,6 @@
 
 exports[`expect() toMatchSnapshot to return undefined 1`] = `"abc"`;
 
-exports[`expect() toMatchSnapshot to return undefined 1`] = `"abc"`;
+exports[`expect() toThrowErrorMatchingSnapshot to return undefined 1`] = `undefined`;
 
-exports[`expect() toMatchSnapshot to return undefined 1`] = `"abc"`;
-
-exports[`expect() toMatchSnapshot to return undefined 1`] = `"abc"`;
-
-exports[`expect() toMatchSnapshot to return undefined 1`] = `"abc"`;
+exports[`expect() toThrowErrorMatchingSnapshot to return undefined: undefined 1`] = `undefined`;

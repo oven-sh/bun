@@ -4,6 +4,7 @@
 import * as vscode from "vscode";
 import { debugCommand } from "../debug";
 import { BunTask } from "./tasks";
+import { getConfig } from "../../extension";
 
 /**
  * Parses tasks defined in the package.json.

@@ -26,8 +26,6 @@ const isOptionLikeValue = utils.isOptionLikeValue;
 
 const log = bun.Output.scoped(.parseArgs, true);
 
-const ParseArgsError = error{ParseError};
-
 /// Represents a slice of a JSValue array
 const ArgsSlice = struct {
     array: JSValue,
@@ -185,7 +183,7 @@ fn getDefaultArgs(globalThis: *JSGlobalObject) !ArgsSlice {
 }
 
 /// In strict mode, throw for possible usage errors like "--foo --bar" where foo was defined as a string-valued arg
-fn checkOptionLikeValue(globalThis: *JSGlobalObject, token: OptionToken) ParseArgsError!void {
+fn checkOptionLikeValue(globalThis: *JSGlobalObject, token: OptionToken) bun.JSError!void {
     if (!token.inline_value and isOptionLikeValue(token.value.asBunString(globalThis))) {
         const raw_name = OptionToken.RawNameFormatter{ .token = token, .globalThis = globalThis };
 
@@ -207,13 +205,12 @@ fn checkOptionLikeValue(globalThis: *JSGlobalObject, token: OptionToken) ParseAr
                 globalThis,
             );
         }
-        globalThis.vm().throwError(globalThis, err);
-        return error.ParseError;
+        return globalThis.throwValue(err);
     }
 }
 
 /// In strict mode, throw for usage errors.
-fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefinition, allow_positionals: bool, token: OptionToken) ParseArgsError!void {
+fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefinition, allow_positionals: bool, token: OptionToken) bun.JSError!void {
     if (token.option_idx) |option_idx| {
         const option = options[option_idx];
         switch (option.type) {
@@ -229,8 +226,7 @@ fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefiniti
                     },
                     globalThis,
                 );
-                globalThis.vm().throwError(globalThis, err);
-                return error.ParseError;
+                return globalThis.throwValue(err);
             },
             .boolean => if (token.value != .jsvalue or !token.value.jsvalue.isUndefined()) {
                 const err = JSC.toTypeError(
@@ -244,8 +240,7 @@ fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefiniti
                     },
                     globalThis,
                 );
-                globalThis.vm().throwError(globalThis, err);
-                return error.ParseError;
+                return globalThis.throwValue(err);
             },
         }
     } else {
@@ -262,8 +257,7 @@ fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefiniti
             .{raw_name},
             globalThis,
         ));
-        globalThis.vm().throwError(globalThis, err);
-        return error.ParseError;
+        return globalThis.throwValue(err);
     }
 }
 
@@ -303,16 +297,16 @@ fn storeOption(globalThis: *JSGlobalObject, option_name: ValueRef, option_value:
     }
 }
 
-fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, option_definitions: *std.ArrayList(OptionDefinition)) !void {
+fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, option_definitions: *std.ArrayList(OptionDefinition)) bun.JSError!void {
     try validateObject(globalThis, options_obj, "options", .{}, .{});
 
-    var iter = JSC.JSPropertyIterator(.{
+    var iter = try JSC.JSPropertyIterator(.{
         .skip_empty_name = false,
         .include_value = true,
     }).init(globalThis, options_obj);
     defer iter.deinit();
 
-    while (iter.next()) |long_option| {
+    while (try iter.next()) |long_option| {
         var option = OptionDefinition{
             .long_name = String.init(long_option),
         };
@@ -329,8 +323,7 @@ fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, opt
             var short_option_str = short_option.toBunString(globalThis);
             if (short_option_str.length() != 1) {
                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "options.{s}.short must be a single character", .{option.long_name}, globalThis);
-                globalThis.vm().throwError(globalThis, err);
-                return error.ParseError;
+                return globalThis.throwValue(err);
             }
             option.short_name = short_option_str;
         }
@@ -385,8 +378,8 @@ fn tokenizeArgs(
     args: ArgsSlice,
     options: []const OptionDefinition,
     ctx: *T,
-    emitToken: fn (ctx: *T, token: Token) ParseArgsError!void,
-) !void {
+    emitToken: fn (ctx: *T, token: Token) bun.JSError!void,
+) bun.JSError!void {
     const num_args: u32 = args.end - args.start;
     var index: u32 = 0;
     while (index < num_args) : (index += 1) {
@@ -578,7 +571,7 @@ const ParseArgsState = struct {
     /// To reuse JSValue for the "kind" field in the output tokens array ("positional", "option", "option-terminator")
     kinds_jsvalues: [TokenKind.COUNT]?JSValue = [_]?JSValue{null} ** TokenKind.COUNT,
 
-    pub fn handleToken(this: *ParseArgsState, token_generic: Token) ParseArgsError!void {
+    pub fn handleToken(this: *ParseArgsState, token_generic: Token) bun.JSError!void {
         var globalThis = this.globalThis;
 
         switch (token_generic) {
@@ -597,8 +590,7 @@ const ParseArgsState = struct {
                         .{token.value.asBunString(globalThis)},
                         globalThis,
                     );
-                    globalThis.vm().throwError(globalThis, err);
-                    return error.ParseError;
+                    return globalThis.throwValue(err);
                 }
                 const value = token.value.asJSValue(globalThis);
                 this.positionals.push(globalThis, value);
@@ -652,17 +644,10 @@ const ParseArgsState = struct {
 pub fn parseArgs(
     globalThis: *JSGlobalObject,
     callframe: *JSC.CallFrame,
-) JSValue {
+) bun.JSError!JSValue {
     JSC.markBinding(@src());
-    const arguments = callframe.arguments(1).slice();
-    const config = if (arguments.len > 0) arguments[0] else JSValue.undefined;
-    return parseArgsImpl(globalThis, config) catch |err| {
-        // these two types of error will already throw their own js exception
-        if (err != error.ParseError and err != error.InvalidArgument) {
-            globalThis.throwOutOfMemory();
-        }
-        return JSValue.undefined;
-    };
+    const arguments = callframe.argumentsAsArray(1);
+    return parseArgsImpl(globalThis, arguments[0]);
 }
 
 comptime {
@@ -670,7 +655,7 @@ comptime {
     @export(parseArgsFn, .{ .name = "Bun__NodeUtil__jsParseArgs" });
 }
 
-pub fn parseArgsImpl(globalThis: *JSGlobalObject, config_obj: JSValue) !JSValue {
+pub fn parseArgsImpl(globalThis: *JSGlobalObject, config_obj: JSValue) bun.JSError!JSValue {
     //
     // Phase 0: parse the config object
     //

@@ -66,12 +66,28 @@ pub const COPYFILE_CONTINUE = @as(c_int, 0);
 pub const COPYFILE_SKIP = @as(c_int, 1);
 pub const COPYFILE_QUIT = @as(c_int, 2);
 
+pub extern "C" fn memmem(haystack: [*]const u8, haystacklen: usize, needle: [*]const u8, needlelen: usize) ?[*]const u8;
+
 // int clonefileat(int src_dirfd, const char * src, int dst_dirfd, const char * dst, int flags);
 pub extern "c" fn clonefileat(c_int, [*:0]const u8, c_int, [*:0]const u8, uint32_t: c_int) c_int;
 // int fclonefileat(int srcfd, int dst_dirfd, const char * dst, int flags);
 pub extern "c" fn fclonefileat(c_int, c_int, [*:0]const u8, uint32_t: c_int) c_int;
 // int clonefile(const char * src, const char * dst, int flags);
 pub extern "c" fn clonefile(src: [*:0]const u8, dest: [*:0]const u8, flags: c_int) c_int;
+
+pub const lstat = blk: {
+    const T = *const fn ([*c]const u8, [*c]std.c.Stat) callconv(.C) c_int;
+    break :blk @extern(T, .{ .name = "lstat64" });
+};
+
+pub const fstat = blk: {
+    const T = *const fn ([*c]const u8, [*c]std.c.Stat) callconv(.C) c_int;
+    break :blk @extern(T, .{ .name = "fstat64" });
+};
+pub const stat = blk: {
+    const T = *const fn ([*c]const u8, [*c]std.c.Stat) callconv(.C) c_int;
+    break :blk @extern(T, .{ .name = "stat64" });
+};
 
 // pub fn stat_absolute(path: [:0]const u8) StatError!Stat {
 //     if (builtin.os.tag == .windows) {
@@ -297,122 +313,6 @@ pub const SystemErrno = enum(u8) {
         if (code >= max) return null;
         return @enumFromInt(code);
     }
-
-    pub fn label(this: SystemErrno) ?[:0]const u8 {
-        return labels.get(this) orelse null;
-    }
-
-    const LabelMap = std.EnumMap(SystemErrno, [:0]const u8);
-    pub const labels: LabelMap = brk: {
-        var map: LabelMap = LabelMap.initFull("");
-        map.put(.E2BIG, "Argument list too long");
-        map.put(.EACCES, "Permission denied");
-        map.put(.EADDRINUSE, "Address already in use");
-        map.put(.EADDRNOTAVAIL, "Can't assign requested address");
-        map.put(.EAFNOSUPPORT, "Address family not supported by protocol family");
-        map.put(.EAGAIN, "non-blocking and interrupt i/o. Resource temporarily unavailable");
-        map.put(.EALREADY, "Operation already in progress");
-        map.put(.EAUTH, "Authentication error");
-        map.put(.EBADARCH, "Bad CPU type in executable");
-        map.put(.EBADEXEC, "Program loading errors. Bad executable");
-        map.put(.EBADF, "Bad file descriptor");
-        map.put(.EBADMACHO, "Malformed Macho file");
-        map.put(.EBADMSG, "Bad message");
-        map.put(.EBADRPC, "RPC struct is bad");
-        map.put(.EBUSY, "Device / Resource busy");
-        map.put(.ECANCELED, "Operation canceled");
-        map.put(.ECHILD, "No child processes");
-        map.put(.ECONNABORTED, "Software caused connection abort");
-        map.put(.ECONNREFUSED, "Connection refused");
-        map.put(.ECONNRESET, "Connection reset by peer");
-        map.put(.EDEADLK, "Resource deadlock avoided");
-        map.put(.EDESTADDRREQ, "Destination address required");
-        map.put(.EDEVERR, "Device error, for example paper out");
-        map.put(.EDOM, "math software. Numerical argument out of domain");
-        map.put(.EDQUOT, "Disc quota exceeded");
-        map.put(.EEXIST, "File or folder exists");
-        map.put(.EFAULT, "Bad address");
-        map.put(.EFBIG, "File too large");
-        map.put(.EFTYPE, "Inappropriate file type or format");
-        map.put(.EHOSTDOWN, "Host is down");
-        map.put(.EHOSTUNREACH, "No route to host");
-        map.put(.EIDRM, "Identifier removed");
-        map.put(.EILSEQ, "Illegal byte sequence");
-        map.put(.EINPROGRESS, "Operation now in progress");
-        map.put(.EINTR, "Interrupted system call");
-        map.put(.EINVAL, "Invalid argument");
-        map.put(.EIO, "Input/output error");
-        map.put(.EISCONN, "Socket is already connected");
-        map.put(.EISDIR, "Is a directory");
-        map.put(.ELOOP, "Too many levels of symbolic links");
-        map.put(.EMFILE, "Too many open files");
-        map.put(.EMLINK, "Too many links");
-        map.put(.EMSGSIZE, "Message too long");
-        map.put(.EMULTIHOP, "Reserved");
-        map.put(.ENAMETOOLONG, "File name too long");
-        map.put(.ENEEDAUTH, "Need authenticator");
-        map.put(.ENETDOWN, "ipc/network software - operational errors Network is down");
-        map.put(.ENETRESET, "Network dropped connection on reset");
-        map.put(.ENETUNREACH, "Network is unreachable");
-        map.put(.ENFILE, "Too many open files in system");
-        map.put(.ENOATTR, "Attribute not found");
-        map.put(.ENOBUFS, "No buffer space available");
-        map.put(.ENODATA, "No message available on STREAM");
-        map.put(.ENODEV, "Operation not supported by device");
-        map.put(.ENOENT, "No such file or directory");
-        map.put(.ENOEXEC, "Exec format error");
-        map.put(.ENOLCK, "No locks available");
-        map.put(.ENOLINK, "Reserved");
-        map.put(.ENOMEM, "Out of memory");
-        map.put(.ENOMSG, "No message of desired type");
-        map.put(.ENOPOLICY, "No such policy registered");
-        map.put(.ENOPROTOOPT, "Protocol not available");
-        map.put(.ENOSPC, "No space left on device");
-        map.put(.ENOSR, "No STREAM resources");
-        map.put(.ENOSTR, "Not a STREAM");
-        map.put(.ENOSYS, "Function not implemented");
-        map.put(.ENOTBLK, "Block device required");
-        map.put(.ENOTCONN, "Socket is not connected");
-        map.put(.ENOTDIR, "Not a directory");
-        map.put(.ENOTEMPTY, "Directory not empty");
-        map.put(.ENOTRECOVERABLE, "State not recoverable");
-        map.put(.ENOTSOCK, "ipc/network software - argument errors. Socket operation on non-socket");
-        map.put(.ENOTSUP, "Operation not supported");
-        map.put(.ENOTTY, "Inappropriate ioctl for device");
-        map.put(.ENXIO, "Device not configured");
-        map.put(.EOVERFLOW, "Value too large to be stored in data type");
-        map.put(.EOWNERDEAD, "Previous owner died");
-        map.put(.EPERM, "Operation not permitted");
-        map.put(.EPFNOSUPPORT, "Protocol family not supported");
-        map.put(.EPIPE, "Broken pipe");
-        map.put(.EPROCLIM, "quotas & mush. Too many processes");
-        map.put(.EPROCUNAVAIL, "Bad procedure for program");
-        map.put(.EPROGMISMATCH, "Program version wrong");
-        map.put(.EPROGUNAVAIL, "RPC prog. not avail");
-        map.put(.EPROTO, "Protocol error");
-        map.put(.EPROTONOSUPPORT, "Protocol not supported");
-        map.put(.EPROTOTYPE, "Protocol wrong type for socket");
-        map.put(.EPWROFF, "Intelligent device errors. Device power is off");
-        map.put(.EQFULL, "Interface output queue is full");
-        map.put(.ERANGE, "Result too large");
-        map.put(.EREMOTE, "Too many levels of remote in path");
-        map.put(.EROFS, "Read-only file system");
-        map.put(.ERPCMISMATCH, "RPC version wrong");
-        map.put(.ESHLIBVERS, "Shared library version mismatch");
-        map.put(.ESHUTDOWN, "Can’t send after socket shutdown");
-        map.put(.ESOCKTNOSUPPORT, "Socket type not supported");
-        map.put(.ESPIPE, "Illegal seek");
-        map.put(.ESRCH, "No such process");
-        map.put(.ESTALE, "Network File System. Stale NFS file handle");
-        map.put(.ETIME, "STREAM ioctl timeout");
-        map.put(.ETIMEDOUT, "Operation timed out");
-        map.put(.ETOOMANYREFS, "Too many references: can't splice");
-        map.put(.ETXTBSY, "Text file busy");
-        map.put(.EUSERS, "Too many users");
-        // map.put(.EWOULDBLOCK, "Operation would block");
-        map.put(.EXDEV, "Cross-device link");
-        break :brk map;
-    };
 };
 
 pub const UV_E2BIG: i32 = @intFromEnum(SystemErrno.E2BIG);
@@ -637,9 +537,6 @@ pub extern fn host_processor_info(host: std.c.host_t, flavor: processor_flavor_t
 
 pub extern fn getuid(...) std.posix.uid_t;
 pub extern fn getgid(...) std.posix.gid_t;
-
-pub extern fn get_process_priority(pid: c_uint) i32;
-pub extern fn set_process_priority(pid: c_uint, priority: c_int) i32;
 
 pub fn get_version(buf: []u8) []const u8 {
     @memset(buf, 0);

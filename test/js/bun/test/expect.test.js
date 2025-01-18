@@ -233,6 +233,31 @@ describe("expect()", () => {
     expect([, 1]).toEqual([undefined, 1]);
   });
 
+  describe("toEqual() with DOM types", () => {
+    test("URLSearchParams", () => {
+      expect(new URLSearchParams("a=1")).not.toEqual(new URLSearchParams("b=1"));
+      expect(new URLSearchParams("a=1")).toEqual(new URLSearchParams("a=1"));
+      expect(new URLSearchParams("a=1&b=2")).not.toEqual(new URLSearchParams("a=1&"));
+    });
+
+    if (isBun) {
+      test("URL", () => {
+        expect(new URL("https://example.com")).toEqual(new URL("https://example.com"));
+        expect(new URL("http://wat")).not.toStrictEqual(new URL("http://huh"));
+      });
+    }
+
+    test("Headers", () => {
+      expect(new Headers({ "a": "1" })).toEqual(new Headers({ "a": "1" }));
+      expect(new Headers({ "a": "1" })).not.toEqual(new Headers({ "b": "1" }));
+      expect(new Headers({ "a": "1" })).not.toEqual(new Headers({ "a": "2" }));
+      expect(new Headers({ "a": "1" })).not.toEqual(new Headers({ "a": "1", "b": "2" }));
+    });
+
+    // TODO: FormData
+    // It would need to compare Blob, which is tricky.
+  });
+
   describe("BigInt", () => {
     it("compares correctly (literal)", () => {
       expect(42n).toBe(42n);
@@ -4719,7 +4744,7 @@ describe("expect()", () => {
     expect(expect("abc").toMatch("a")).toBeUndefined();
   });
   test.todo("toMatchInlineSnapshot to return undefined", () => {
-    expect(expect("abc").toMatchInlineSnapshot()).toBeUndefined();
+    expect(expect("abc").toMatchInlineSnapshot('"abc"')).toBeUndefined();
   });
   test("toMatchObject to return undefined", () => {
     expect(expect({}).toMatchObject({})).toBeUndefined();
@@ -4743,11 +4768,19 @@ describe("expect()", () => {
       }).toThrow(),
     ).toBeUndefined();
   });
-  test.todo("toThrowErrorMatchingInlineSnapshot to return undefined", () => {
-    expect(expect(() => {}).toThrowErrorMatchingInlineSnapshot()).toBeUndefined();
+  test("toThrowErrorMatchingInlineSnapshot to return undefined", () => {
+    expect(
+      expect(() => {
+        throw 0;
+      }).toThrowErrorMatchingInlineSnapshot("undefined"),
+    ).toBeUndefined();
   });
-  test.todo("toThrowErrorMatchingSnapshot to return undefined", () => {
-    expect(expect(() => {}).toThrowErrorMatchingSnapshot()).toBeUndefined();
+  test("toThrowErrorMatchingSnapshot to return undefined", () => {
+    expect(
+      expect(() => {
+        throw 0;
+      }).toThrowErrorMatchingSnapshot("undefined"),
+    ).toBeUndefined();
   });
 
   test(' " " to contain ""', () => {

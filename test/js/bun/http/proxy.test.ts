@@ -51,6 +51,8 @@ async function createProxyServer(is_tls: boolean) {
           serverSocket.pipe(clientSocket);
         }
       });
+      // ignore client errors (can happen because of happy eye balls and now we error on write when not connected for node.js compatibility)
+      clientSocket.on("error", () => {});
 
       serverSocket.on("error", err => {
         clientSocket.end();

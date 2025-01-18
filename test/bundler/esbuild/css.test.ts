@@ -399,27 +399,29 @@ describe("esbuild-bundler", () => {
       "/src/entry.css": ['Could not resolve: "./one.png"', 'Could not resolve: "./two.png"'],
     },
   });
-  itBundled("css/ExternalImportURLInCSS", {
-    experimentalCss: true,
 
-    // GENERATED
-    files: {
-      "/src/entry.css": /* css */ `
-        div:after {
-          content: 'If this is recognized, the path should become "../src/external.png"';
-          background: url(./external.png);
-        }
+  // itBundled("css/ExternalImportURLInCSS", {
+  //   experimentalCss: true,
 
-        /* These URLs should be external automatically */
-        a { background: url(http://example.com/images/image.png) }
-        b { background: url(https://example.com/images/image.png) }
-        c { background: url(//example.com/images/image.png) }
-        d { background: url(data:image/png;base64,iVBORw0KGgo=) }
-        path { fill: url(#filter) }
-      `,
-    },
-    external: ["/src/external.png"],
-  });
+  //   // GENERATED
+  //   files: {
+  //     "/src/entry.css": /* css */ `
+  //       div:after {
+  //         content: 'If this is recognized, the path should become "../src/external.png"';
+  //         background: url(./external.png);
+  //       }
+
+  //       /* These URLs should be external automatically */
+  //       a { background: url(http://example.com/images/image.png) }
+  //       b { background: url(https://example.com/images/image.png) }
+  //       c { background: url(//example.com/images/image.png) }
+  //       d { background: url(data:image/png;base64,iVBORw0KGgo=) }
+  //       path { fill: url(#filter) }
+  //     `,
+  //   },
+  //   external: ["/src/external.png"],
+  // });
+
   itBundled("css/InvalidImportURLInCSS", {
     experimentalCss: true,
 

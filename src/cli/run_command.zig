@@ -1387,7 +1387,7 @@ pub const RunCommand = struct {
         } else if (cfg.allow_fast_run_for_extensions) {
             const ext = std.fs.path.extension(target_name);
             const default_loader = options.defaultLoaders.get(ext);
-            if (default_loader != null) {
+            if (default_loader != null and default_loader.?.canBeRunByBun()) {
                 try_fast_run = true;
             }
         }

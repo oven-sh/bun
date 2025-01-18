@@ -8,25 +8,25 @@ const Api = @import("./api/schema.zig").Api;
 
 pub const ImportKind = enum(u8) {
     /// An entry point provided to `bun run` or `bun`
-    entry_point_run,
+    entry_point_run = 0,
     /// An entry point provided to `bun build` or `Bun.build`
-    entry_point_build,
+    entry_point_build = 1,
     /// An ES6 import or re-export statement
-    stmt,
+    stmt = 2,
     /// A call to "require()"
-    require,
+    require = 3,
     /// An "import()" expression with a string argument
-    dynamic,
+    dynamic = 4,
     /// A call to "require.resolve()"
-    require_resolve,
+    require_resolve = 5,
     /// A CSS "@import" rule
-    at,
+    at = 6,
     /// A CSS "@import" rule with import conditions
-    at_conditional,
+    at_conditional = 7,
     /// A CSS "url(...)" token
-    url,
+    url = 8,
 
-    internal,
+    internal = 9,
 
     pub const Label = std.EnumArray(ImportKind, []const u8);
     pub const all_labels: Label = brk: {

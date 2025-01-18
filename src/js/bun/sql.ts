@@ -399,6 +399,7 @@ class ConnectionPool {
 
   poolStarted: boolean = false;
   closed: boolean = false;
+  onAllQueriesFinished: (() => void) | null = null;
   constructor(connectionInfo) {
     this.connectionInfo = connectionInfo;
     this.connections = new Array(connectionInfo.max);
@@ -456,6 +457,12 @@ class ConnectionPool {
     const was_reserved = connection.flags & PooledConnectionFlags.reserved;
     connection.flags &= ~PooledConnectionFlags.reserved;
     connection.flags &= ~PooledConnectionFlags.preReserved;
+    if (this.onAllQueriesFinished) {
+      // we are waiting for all queries to finish, lets check if we can call it
+      if (!this.hasPendingQueries()) {
+        this.onAllQueriesFinished();
+      }
+    }
     if (connection.state !== PooledConnectionState.connected) {
       // connection is not ready
       return;
@@ -522,7 +529,19 @@ class ConnectionPool {
     }
     return false;
   }
-
+  hasPendingQueries() {
+    if (this.waitingQueue.length > 0 || this.reservedQueue.length > 0) return true;
+    if (this.poolStarted) {
+      const pollSize = this.connections.length;
+      for (let i = 0; i < pollSize; i++) {
+        const connection = this.connections[i];
+        if (connection.queryCount > 0) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
   isConnected() {
     if (this.readyConnections.size > 0) {
       return true;
@@ -552,22 +571,8 @@ class ConnectionPool {
       }
     }
   }
-  async close(options?: { timeout?: number }) {
-    if (this.closed) {
-      return Promise.reject(connectionClosedError());
-    }
-    let timeout = options?.timeout;
-    if (timeout) {
-      timeout = Number(timeout);
-      if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
-        throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
-      }
-      this.closed = true;
-      // TODO: check queryCount to this logic
-      // await Bun.sleep(timeout * 1000);
-    } else {
-      this.closed = true;
-    }
+
+  async #close() {
     let pending;
     while ((pending = this.waitingQueue.shift())) {
       pending(connectionClosedError(), null);
@@ -603,6 +608,38 @@ class ConnectionPool {
     this.readyConnections.clear();
     this.waitingQueue.length = 0;
     return Promise.all(promises);
+  }
+  async close(options?: { timeout?: number }) {
+    if (this.closed) {
+      return Promise.reject(connectionClosedError());
+    }
+    let timeout = options?.timeout;
+    if (timeout) {
+      timeout = Number(timeout);
+      if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
+        throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
+      }
+      this.closed = true;
+      if (timeout > 0 && this.hasPendingQueries()) {
+        const { promise, resolve } = Promise.withResolvers();
+        const timer = setTimeout(() => {
+          // timeout is reached, lets close and probably fail some queries
+          this.#close().finally(resolve);
+        }, timeout * 1000);
+        timer.unref(); // dont block the event loop
+        this.onAllQueriesFinished = () => {
+          clearTimeout(timer);
+          // everything is closed, lets close the pool
+          this.#close().finally(resolve);
+        };
+
+        return promise;
+      }
+    } else {
+      this.closed = true;
+    }
+
+    await this.#close();
   }
 
   /**
@@ -1033,6 +1070,16 @@ function loadOptions(o) {
   return ret;
 }
 
+enum ReservedConnectionState {
+  acceptQueries = 1 << 0,
+  closed = 1 << 1,
+}
+
+function assertValidTransactionName(name: string) {
+  if (name.indexOf("'") !== -1) {
+    throw Error(`Distributed transaction name cannot contain single quotes.`);
+  }
+}
 function SQL(o) {
   var connectionInfo = loadOptions(o);
   var pool = new ConnectionPool(connectionInfo);
@@ -1134,15 +1181,7 @@ function SQL(o) {
   }
   function onTransactionDisconnected(err) {
     const reject = this.reject;
-    this.closed = true;
-    if (err) {
-      return reject(err);
-    }
-  }
-
-  function onReserveDisconnected(err) {
-    const reject = this.reject;
-    this.closed = true;
+    this.connectionState |= ReservedConnectionState.closed;
     if (err) {
       return reject(err);
     }
@@ -1155,15 +1194,20 @@ function SQL(o) {
     }
 
     const state = {
-      closed: false,
+      connectionState: ReservedConnectionState.acceptQueries,
       reject,
     };
-    const onClose = onReserveDisconnected.bind(state);
+    const onClose = onTransactionDisconnected.bind(state);
     pooledConnection.onClose(onClose);
 
     let reserveQueries = new Set();
+    let reservedTransaction = new Set();
+
     function reserved_sql(strings, ...values) {
-      if (state.closed) {
+      if (
+        state.connectionState & ReservedConnectionState.closed ||
+        !(state.connectionState & ReservedConnectionState.acceptQueries)
+      ) {
         return Promise.reject(connectionClosedError());
       }
       if ($isJSArray(strings) && strings[0] && typeof strings[0] === "object") {
@@ -1173,20 +1217,15 @@ function SQL(o) {
       return queryFromTransaction(strings, values, pooledConnection, reserveQueries);
     }
     reserved_sql.connect = () => {
-      if (state.closed) {
+      if (state.connectionState & ReservedConnectionState.closed) {
         return Promise.reject(connectionClosedError());
       }
       return Promise.resolve(reserved_sql);
     };
 
     reserved_sql.commitDistributed = async function (name: string) {
-      if (state.closed) {
-        throw connectionClosedError();
-      }
       const adapter = connectionInfo.adapter;
-      if (name.indexOf("'") !== -1) {
-        throw Error(`Distributed transaction name cannot contain single quotes.`);
-      }
+      assertValidTransactionName(name);
       switch (adapter) {
         case "postgres":
           return await reserved_sql(`COMMIT PREPARED '${name}'`);
@@ -1201,9 +1240,7 @@ function SQL(o) {
       }
     };
     reserved_sql.rollbackDistributed = async function (name: string) {
-      if (state.closed) {
-        throw connectionClosedError();
-      }
+      assertValidTransactionName(name);
       const adapter = connectionInfo.adapter;
       switch (adapter) {
         case "postgres":
@@ -1222,10 +1259,12 @@ function SQL(o) {
     // reserve is allowed to be called inside reserved connection but will return a new reserved connection from the pool
     // this matchs the behavior of the postgres package
     reserved_sql.reserve = () => sql.reserve();
-
+    function onTransactionFinished(transaction_promise: Promise<any>) {
+      reservedTransaction.delete(transaction_promise);
+    }
     reserved_sql.beginDistributed = (name: string, fn: TransactionCallback) => {
       // begin is allowed the difference is that we need to make sure to use the same connection and never release it
-      if (state.closed) {
+      if (state.connectionState & ReservedConnectionState.closed) {
         return Promise.reject(connectionClosedError());
       }
       let callback = fn;
@@ -1240,11 +1279,16 @@ function SQL(o) {
       const { promise, resolve, reject } = Promise.withResolvers();
       // lets just reuse the same code path as the transaction begin
       onTransactionConnected(callback, name, resolve, reject, true, true, null, pooledConnection);
+      reservedTransaction.add(promise);
+      promise.finally(onTransactionFinished.bind(null, promise));
       return promise;
     };
     reserved_sql.begin = (options_or_fn: string | TransactionCallback, fn?: TransactionCallback) => {
       // begin is allowed the difference is that we need to make sure to use the same connection and never release it
-      if (state.closed) {
+      if (
+        state.connectionState & ReservedConnectionState.closed ||
+        !(state.connectionState & ReservedConnectionState.acceptQueries)
+      ) {
         return Promise.reject(connectionClosedError());
       }
       let callback = fn;
@@ -1261,33 +1305,58 @@ function SQL(o) {
       const { promise, resolve, reject } = Promise.withResolvers();
       // lets just reuse the same code path as the transaction begin
       onTransactionConnected(callback, options, resolve, reject, true, false, null, pooledConnection);
+      reservedTransaction.add(promise);
+      promise.finally(onTransactionFinished.bind(null, promise));
       return promise;
     };
 
     reserved_sql.flush = () => {
-      if (state.closed) {
+      if (state.connectionState & ReservedConnectionState.closed) {
         throw connectionClosedError();
       }
       return pooledConnection.flush();
     };
     reserved_sql.close = async (options?: { timeout?: number }) => {
-      if (state.closed) {
+      if (
+        state.connectionState & ReservedConnectionState.closed ||
+        !(state.connectionState & ReservedConnectionState.acceptQueries)
+      ) {
         return Promise.reject(connectionClosedError());
       }
+      state.connectionState &= ~ReservedConnectionState.acceptQueries;
       let timeout = options?.timeout;
       if (timeout) {
         timeout = Number(timeout);
         if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
           throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
         }
-        state.closed = true;
-        // no new queries will be allowed
-        // TODO: check queryCount to this logic
-        // await Bun.sleep(timeout * 1000);
-      } else {
-        // close will release the connection back to the pool but will actually close the connection if its open
-        state.closed = true;
+        if (timeout > 0 && reserveQueries.size > 0) {
+          const { promise, resolve } = Promise.withResolvers();
+          // race all queries vs timeout
+          const pending_queries = Array.from(reserveQueries);
+          const pending_transactions = Array.from(reservedTransaction);
+          const timer = setTimeout(() => {
+            state.connectionState |= ReservedConnectionState.closed;
+            for (const query of reserveQueries) {
+              (query as Query).cancel();
+            }
+            state.connectionState |= ReservedConnectionState.closed;
+            pooledConnection.queries.delete(onClose);
+            pooledConnection.close();
+            pool.release(pooledConnection);
+
+            resolve();
+          }, timeout * 1000);
+          timer.unref(); // dont block the event loop
+          Promise.all([Promise.all(pending_queries), Promise.all(pending_transactions)]).finally(() => {
+            clearTimeout(timer);
+            resolve();
+          });
+          return promise;
+        }
       }
+      state.connectionState |= ReservedConnectionState.closed;
+
       pooledConnection.queries.delete(onClose);
 
       pooledConnection.close();
@@ -1297,7 +1366,7 @@ function SQL(o) {
     };
     reserved_sql.release = () => {
       // just release the connection back to the pool
-      state.closed = true;
+      state.connectionState |= ReservedConnectionState.closed;
       pooledConnection.queries.delete(onClose);
       pool.release(pooledConnection);
       return Promise.resolve(undefined);
@@ -1348,12 +1417,13 @@ function SQL(o) {
       return reject(err);
     }
     const state = {
-      closed: false,
+      connectionState: ReservedConnectionState.acceptQueries,
       reject,
     };
 
     let savepoints = 0;
     let transactionQueries = new Set();
+    let transactionSavepoints = new Set();
     const adapter = connectionInfo.adapter;
     let BEGIN_COMMAND: string = "BEGIN";
     let ROLLBACK_COMMAND: string = "COMMIT";
@@ -1434,8 +1504,18 @@ function SQL(o) {
     }
     const onClose = onTransactionDisconnected.bind(state);
     pooledConnection.onClose(onClose);
+
+    function run_internal_transaction_sql(strings, ...values) {
+      if (state.connectionState & ReservedConnectionState.closed) {
+        return Promise.reject(connectionClosedError());
+      }
+      return queryFromTransaction(strings, values, pooledConnection, transactionQueries);
+    }
     function transaction_sql(strings, ...values) {
-      if (state.closed) {
+      if (
+        state.connectionState & ReservedConnectionState.closed ||
+        !(state.connectionState & ReservedConnectionState.acceptQueries)
+      ) {
         return Promise.reject(connectionClosedError());
       }
       if ($isJSArray(strings) && strings[0] && typeof strings[0] === "object") {
@@ -1449,19 +1529,14 @@ function SQL(o) {
     transaction_sql.reserve = () => sql.reserve();
 
     transaction_sql.connect = () => {
-      if (state.closed) {
+      if (state.connectionState & ReservedConnectionState.closed) {
         return Promise.reject(connectionClosedError());
       }
 
       return Promise.resolve(transaction_sql);
     };
     transaction_sql.commitDistributed = async function (name: string) {
-      if (state.closed) {
-        throw connectionClosedError();
-      }
-      if (name.indexOf("'") !== -1) {
-        throw Error(`Distributed transaction name cannot contain single quotes.`);
-      }
+      assertValidTransactionName(name);
       switch (adapter) {
         case "postgres":
           return await transaction_sql(`COMMIT PREPARED '${name}'`);
@@ -1476,12 +1551,7 @@ function SQL(o) {
       }
     };
     transaction_sql.rollbackDistributed = async function (name: string) {
-      if (state.closed) {
-        throw connectionClosedError();
-      }
-      if (name.indexOf("'") !== -1) {
-        throw Error(`Distributed transaction name cannot contain single quotes.`);
-      }
+      assertValidTransactionName(name);
       switch (adapter) {
         case "postgres":
           return await transaction_sql(`ROLLBACK PREPARED '${name}'`);
@@ -1513,32 +1583,56 @@ function SQL(o) {
     };
 
     transaction_sql.flush = function () {
-      if (state.closed) {
+      if (state.connectionState & ReservedConnectionState.closed) {
         throw connectionClosedError();
       }
       return pooledConnection.flush();
     };
     transaction_sql.close = async function (options?: { timeout?: number }) {
       // we dont actually close the connection here, we just set the state to closed and rollback the transaction
-      if (state.closed) {
+      if (
+        state.connectionState & ReservedConnectionState.closed ||
+        !(state.connectionState & ReservedConnectionState.acceptQueries)
+      ) {
         return Promise.reject(connectionClosedError());
       }
+      state.connectionState &= ~ReservedConnectionState.acceptQueries;
+
       let timeout = options?.timeout;
       if (timeout) {
         timeout = Number(timeout);
         if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
           throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
         }
-        // TODO: check queryCount to this logic
-        // await Bun.sleep(timeout * 1000);
-      }
-      if (!state.closed) {
-        if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
-          await transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
+        if (timeout > 0 && (transactionQueries.size > 0 || transactionSavepoints.size > 0)) {
+          const { promise, resolve } = Promise.withResolvers();
+          // race all queries vs timeout
+          const pending_queries = Array.from(transactionQueries);
+          const pending_savepoints = Array.from(transactionSavepoints);
+          const timer = setTimeout(async () => {
+            for (const query of transactionQueries) {
+              (query as Query).cancel();
+            }
+            if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
+              await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
+            }
+            await run_internal_transaction_sql(ROLLBACK_COMMAND);
+            state.connectionState |= ReservedConnectionState.closed;
+            resolve();
+          }, timeout * 1000);
+          timer.unref(); // dont block the event loop
+          Promise.all([Promise.all(pending_queries), Promise.all(pending_savepoints)]).finally(() => {
+            clearTimeout(timer);
+            resolve();
+          });
+          return promise;
         }
-        await transaction_sql(ROLLBACK_COMMAND);
-        state.closed = true;
       }
+      if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
+        await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
+      }
+      await run_internal_transaction_sql(ROLLBACK_COMMAND);
+      state.connectionState |= ReservedConnectionState.closed;
     };
     transaction_sql[Symbol.asyncDispose] = () => transaction_sql.close();
     transaction_sql.options = sql.options;
@@ -1546,7 +1640,29 @@ function SQL(o) {
     transaction_sql.transaction = transaction_sql.begin;
     transaction_sql.distributed = transaction_sql.beginDistributed;
     transaction_sql.end = transaction_sql.close;
+    function onSavepointFinished(savepoint_promise: Promise<any>) {
+      transactionSavepoints.delete(savepoint_promise);
+    }
+    async function run_internal_savepoint(save_point_name: string, savepoint_callback: TransactionCallback) {
+      await run_internal_transaction_sql(`${SAVEPOINT_COMMAND} ${save_point_name}`);
 
+      try {
+        let result = await savepoint_callback(transaction_sql);
+        if (RELEASE_SAVEPOINT_COMMAND) {
+          // mssql dont have release savepoint
+          await run_internal_transaction_sql(`${RELEASE_SAVEPOINT_COMMAND} ${save_point_name}`);
+        }
+        if (Array.isArray(result)) {
+          result = await Promise.all(result);
+        }
+        return result;
+      } catch (err) {
+        if (!(state.connectionState & ReservedConnectionState.closed)) {
+          await run_internal_transaction_sql(`${ROLLBACK_TO_SAVEPOINT_COMMAND} ${save_point_name}`);
+        }
+        throw err;
+      }
+    }
     if (distributed) {
       transaction_sql.savepoint = async (fn: TransactionCallback, name?: string): Promise<any> => {
         throw $ERR_POSTGRES_INVALID_TRANSACTION_STATE("cannot call savepoint inside a distributed transaction");
@@ -1555,9 +1671,13 @@ function SQL(o) {
       transaction_sql.savepoint = async (fn: TransactionCallback, name?: string): Promise<any> => {
         let savepoint_callback = fn;
 
-        if (state.closed) {
+        if (
+          state.connectionState & ReservedConnectionState.closed ||
+          !(state.connectionState & ReservedConnectionState.acceptQueries)
+        ) {
           throw connectionClosedError();
         }
+
         if ($isCallable(name)) {
           savepoint_callback = name as unknown as TransactionCallback;
           name = "";
@@ -1567,29 +1687,15 @@ function SQL(o) {
         }
         // matchs the format of the savepoint name in postgres package
         const save_point_name = `s${savepoints++}${name ? `_${name}` : ""}`;
-        await transaction_sql(`${SAVEPOINT_COMMAND} ${save_point_name}`);
-
-        try {
-          let result = await savepoint_callback(transaction_sql);
-          if (RELEASE_SAVEPOINT_COMMAND) {
-            // mssql dont have release savepoint
-            await transaction_sql(`${RELEASE_SAVEPOINT_COMMAND} ${save_point_name}`);
-          }
-          if (Array.isArray(result)) {
-            result = await Promise.all(result);
-          }
-          return result;
-        } catch (err) {
-          if (!state.closed) {
-            await transaction_sql(`${ROLLBACK_TO_SAVEPOINT_COMMAND} ${save_point_name}`);
-          }
-          throw err;
-        }
+        const promise = run_internal_savepoint(save_point_name, savepoint_callback);
+        transactionSavepoints.add(promise);
+        promise.finally(onSavepointFinished.bind(null, promise));
+        return await promise;
       };
     }
     let needs_rollback = false;
     try {
-      await transaction_sql(BEGIN_COMMAND);
+      await run_internal_transaction_sql(BEGIN_COMMAND);
       needs_rollback = true;
       let transaction_result = await callback(transaction_sql);
       if (Array.isArray(transaction_result)) {
@@ -1598,24 +1704,24 @@ function SQL(o) {
       // at this point we dont need to rollback anymore
       needs_rollback = false;
       if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
-        await transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
+        await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
       }
-      await transaction_sql(COMMIT_COMMAND);
+      await run_internal_transaction_sql(COMMIT_COMMAND);
       return resolve(transaction_result);
     } catch (err) {
       try {
-        if (!state.closed && needs_rollback) {
+        if (!(state.connectionState & ReservedConnectionState.closed) && needs_rollback) {
           if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
-            await transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
+            await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
           }
-          await transaction_sql(ROLLBACK_COMMAND);
+          await run_internal_transaction_sql(ROLLBACK_COMMAND);
         }
       } catch (err) {
         return reject(err);
       }
       return reject(err);
     } finally {
-      state.closed = true;
+      state.connectionState |= ReservedConnectionState.closed;
       pooledConnection.queries.delete(onClose);
       if (!dontRelease) {
         pool.release(pooledConnection);
@@ -1656,9 +1762,7 @@ function SQL(o) {
     if (pool.closed) {
       throw connectionClosedError();
     }
-    if (name.indexOf("'") !== -1) {
-      throw Error(`Distributed transaction name cannot contain single quotes.`);
-    }
+    assertValidTransactionName(name);
     const adapter = connectionInfo.adapter;
     switch (adapter) {
       case "postgres":
@@ -1678,9 +1782,7 @@ function SQL(o) {
     if (pool.closed) {
       throw connectionClosedError();
     }
-    if (name.indexOf("'") !== -1) {
-      throw Error(`Distributed transaction name cannot contain single quotes.`);
-    }
+    assertValidTransactionName(name);
     const adapter = connectionInfo.adapter;
     switch (adapter) {
       case "postgres":

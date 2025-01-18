@@ -706,7 +706,7 @@ describe("'bun run' priority", async () => {
     { command: ["consume/index.js"], stdout: "consume/index.js", stderr: "" },
 
     { command: ["./test"], stdout: "test/index.js", stderr: "" },
-    { command: ["./build"], stdout: "", stderr: /error: Module not found '\.(\/|\\|\\\\)build'/, exitCode: 1 },
+    { command: ["./build"], stdout: "", stderr: /error: Module not found "\.(\/|\\|\\\\)build"/, exitCode: 1 },
     { command: ["./consume"], stdout: "consume/index.js", stderr: "" },
 
     { command: ["index.js"], stdout: "index.js", stderr: "" },
@@ -724,14 +724,16 @@ describe("'bun run' priority", async () => {
     { command: ["typescript"], stdout: "typescript.ts", stderr: "" },
     { command: ["./typescript"], stdout: "typescript.ts", stderr: "" },
 
-    { command: ["sample.js"], stdout: "scripts/sample.js", stderr: "$ echo scripts/sample.js" },
+    { command: ["sample.js"], stdout: "scripts/sample.js", stderr: "$ echo scripts/sample.js", req_run: true },
+    { command: ["sample.js"], stdout: "sample.js", stderr: "", req_run: false },
     { command: ["./sample.js"], stdout: "sample.js", stderr: "" },
     { command: ["sample"], stdout: "sample.js", stderr: "" },
     { command: ["./sample"], stdout: "sample.js", stderr: "" },
 
     { command: ["test.todo"], stdout: "scripts/test.todo", stderr: "$ echo scripts/test.todo" },
 
-    { command: ["§'.js"], stdout: "scripts/§'.js", stderr: '$ echo "scripts/§\'.js"' },
+    { command: ["§'.js"], stdout: "scripts/§'.js", stderr: '$ echo "scripts/§\'.js"', req_run: true },
+    { command: ["§'.js"], stdout: "§'.js", stderr: "", req_run: false },
     { command: ["./§'.js"], stdout: "§'.js", stderr: "" },
     { command: ["§'"], stdout: "§'.js", stderr: "" },
     { command: ["./§'"], stdout: "§'.js", stderr: "" },
@@ -763,8 +765,8 @@ describe("'bun run' priority", async () => {
     { command: ["./.secretscript"], stdout: ".secretscript.js", stderr: "" },
     { command: [dir + "/.secretscript"], stdout: ".secretscript.js", stderr: "" },
 
-    { command: ["/absolute"], stdout: "", stderr: /error: Module not found '(\/|\\|\\\\)absolute'/, exitCode: 1 },
-    { command: ["./relative"], stdout: "", stderr: /error: Module not found '.(\/|\\|\\\\)relative'/, exitCode: 1 },
+    { command: ["/absolute"], stdout: "", stderr: /error: Module not found "(\/|\\|\\\\)absolute"/, exitCode: 1 },
+    { command: ["./relative"], stdout: "", stderr: /error: Module not found ".(\/|\\|\\\\)relative"/, exitCode: 1 },
 
     ...(isWindows
       ? [

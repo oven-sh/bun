@@ -197,7 +197,7 @@ This causes the garbage collector to run more frequently, which can slow down ex
 
 ## Resolution order
 
-Absolute paths and paths starting with `./` or `.\\` are always executed as source files.
+Absolute paths and paths starting with `./` or `.\\` are always executed as source files. Unless using `bun run`, running a file with an allowed extension will prefer the file over a package.json script.
 
 When there is a package.json script and a file with the same name, `bun run` prioritizes the package.json script. The full resolution order is:
 

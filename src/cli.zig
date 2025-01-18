@@ -1436,8 +1436,6 @@ pub var pretend_to_be_node = false;
 pub var is_bunx_exe = false;
 
 pub const Command = struct {
-    var script_name_buf: bun.PathBuffer = undefined;
-
     pub fn get() Context {
         return global_cli_ctx;
     }
@@ -2158,7 +2156,7 @@ pub const Command = struct {
                 }
 
                 if (ctx.positionals.len > 0) {
-                    if (try RunCommand.exec(ctx, .{ .bin_dirs_only = false, .log_errors = true })) {
+                    if (try RunCommand.exec(ctx, .{ .bin_dirs_only = false, .log_errors = true, .allow_fast_run_for_extensions = false })) {
                         return;
                     }
 
@@ -2246,7 +2244,7 @@ pub const Command = struct {
                     if (ctx.filters.len > 0) {
                         Output.prettyln("<r><yellow>warn<r>: Filters are ignored for auto command", .{});
                     }
-                    if (try RunCommand.exec(ctx, .{ .bin_dirs_only = true, .log_errors = !ctx.runtime_options.if_present })) {
+                    if (try RunCommand.exec(ctx, .{ .bin_dirs_only = true, .log_errors = !ctx.runtime_options.if_present, .allow_fast_run_for_extensions = true })) {
                         return;
                     }
                     return;
@@ -2263,94 +2261,6 @@ pub const Command = struct {
                 } else Tag.printHelp(.ExecCommand, true);
             },
         }
-    }
-
-    fn maybeOpenWithBunJS(ctx: Command.Context) bool {
-        if (ctx.args.entry_points.len == 0)
-            return false;
-
-        const script_name_to_search = ctx.args.entry_points[0];
-
-        var absolute_script_path: ?string = null;
-
-        // TODO: optimize this pass for Windows. we can make better use of system apis available
-        var file_path = script_name_to_search;
-        {
-            const file = bun.toLibUVOwnedFD(((brk: {
-                if (std.fs.path.isAbsolute(script_name_to_search)) {
-                    var win_resolver = resolve_path.PosixToWinNormalizer{};
-                    var resolved = win_resolver.resolveCWD(script_name_to_search) catch @panic("Could not resolve path");
-                    if (comptime Environment.isWindows) {
-                        resolved = resolve_path.normalizeString(resolved, false, .windows);
-                    }
-                    break :brk bun.openFile(
-                        resolved,
-                        .{ .mode = .read_only },
-                    );
-                } else if (!strings.hasPrefix(script_name_to_search, "..") and script_name_to_search[0] != '~') {
-                    const file_pathZ = brk2: {
-                        @memcpy(script_name_buf[0..file_path.len], file_path);
-                        script_name_buf[file_path.len] = 0;
-                        break :brk2 script_name_buf[0..file_path.len :0];
-                    };
-
-                    break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
-                } else {
-                    var path_buf: bun.PathBuffer = undefined;
-                    const cwd = bun.getcwd(&path_buf) catch return false;
-                    path_buf[cwd.len] = std.fs.path.sep;
-                    var parts = [_]string{script_name_to_search};
-                    file_path = resolve_path.joinAbsStringBuf(
-                        path_buf[0 .. cwd.len + 1],
-                        &script_name_buf,
-                        &parts,
-                        .auto,
-                    );
-                    if (file_path.len == 0) return false;
-                    script_name_buf[file_path.len] = 0;
-                    const file_pathZ = script_name_buf[0..file_path.len :0];
-                    break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
-                }
-            }) catch return false).handle) catch return false;
-            defer _ = bun.sys.close(file);
-
-            switch (bun.sys.fstat(file)) {
-                .result => |stat| {
-                    // directories cannot be run. if only there was a faster way to check this
-                    if (bun.S.ISDIR(@intCast(stat.mode))) return false;
-                },
-                .err => return false,
-            }
-
-            Global.configureAllocator(.{ .long_running = true });
-
-            absolute_script_path = brk: {
-                if (comptime !Environment.isWindows) break :brk bun.getFdPath(file, &script_name_buf) catch return false;
-
-                var fd_path_buf: bun.PathBuffer = undefined;
-                break :brk bun.getFdPath(file, &fd_path_buf) catch return false;
-            };
-        }
-
-        if (!ctx.debug.loaded_bunfig) {
-            bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
-        }
-
-        BunJS.Run.boot(
-            ctx,
-            absolute_script_path.?,
-        ) catch |err| {
-            bun.handleErrorReturnTrace(err, @errorReturnTrace());
-
-            ctx.log.print(Output.errorWriter()) catch {};
-
-            Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
-                std.fs.path.basename(file_path),
-                @errorName(err),
-            });
-            Global.exit(1);
-        };
-        return true;
     }
 
     pub const Tag = enum {

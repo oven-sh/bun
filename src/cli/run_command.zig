@@ -1276,11 +1276,87 @@ pub const RunCommand = struct {
         };
         return true;
     }
+    fn maybeOpenWithBunJS(ctx: Command.Context) bool {
+        if (ctx.args.entry_points.len == 0)
+            return false;
+        var script_name_buf: bun.PathBuffer = undefined;
+
+        const script_name_to_search = ctx.args.entry_points[0];
+
+        var absolute_script_path: ?string = null;
+
+        // TODO: optimize this pass for Windows. we can make better use of system apis available
+        var file_path = script_name_to_search;
+        {
+            const file = bun.toLibUVOwnedFD(((brk: {
+                if (std.fs.path.isAbsolute(script_name_to_search)) {
+                    var win_resolver = resolve_path.PosixToWinNormalizer{};
+                    var resolved = win_resolver.resolveCWD(script_name_to_search) catch @panic("Could not resolve path");
+                    if (comptime Environment.isWindows) {
+                        resolved = resolve_path.normalizeString(resolved, false, .windows);
+                    }
+                    break :brk bun.openFile(
+                        resolved,
+                        .{ .mode = .read_only },
+                    );
+                } else if (!strings.hasPrefix(script_name_to_search, "..") and script_name_to_search[0] != '~') {
+                    const file_pathZ = brk2: {
+                        @memcpy(script_name_buf[0..file_path.len], file_path);
+                        script_name_buf[file_path.len] = 0;
+                        break :brk2 script_name_buf[0..file_path.len :0];
+                    };
+
+                    break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
+                } else {
+                    var path_buf_2: bun.PathBuffer = undefined;
+                    const cwd = bun.getcwd(&path_buf_2) catch return false;
+                    path_buf_2[cwd.len] = std.fs.path.sep;
+                    var parts = [_]string{script_name_to_search};
+                    file_path = resolve_path.joinAbsStringBuf(
+                        path_buf_2[0 .. cwd.len + 1],
+                        &script_name_buf,
+                        &parts,
+                        .auto,
+                    );
+                    if (file_path.len == 0) return false;
+                    script_name_buf[file_path.len] = 0;
+                    const file_pathZ = script_name_buf[0..file_path.len :0];
+                    break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
+                }
+            }) catch return false).handle) catch return false;
+            defer _ = bun.sys.close(file);
+
+            switch (bun.sys.fstat(file)) {
+                .result => |stat| {
+                    // directories cannot be run. if only there was a faster way to check this
+                    if (bun.S.ISDIR(@intCast(stat.mode))) return false;
+                },
+                .err => return false,
+            }
+
+            Global.configureAllocator(.{ .long_running = true });
+
+            absolute_script_path = brk: {
+                if (comptime !Environment.isWindows) break :brk bun.getFdPath(file, &script_name_buf) catch return false;
+
+                var fd_path_buf: bun.PathBuffer = undefined;
+                break :brk bun.getFdPath(file, &fd_path_buf) catch return false;
+            };
+        }
+
+        if (!ctx.debug.loaded_bunfig) {
+            bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
+        }
+
+        _ = _bootAndHandleError(ctx, absolute_script_path.?);
+        return true;
+    }
     pub fn exec(
         ctx: Command.Context,
         cfg: struct {
             bin_dirs_only: bool,
             log_errors: bool,
+            allow_fast_run_for_extensions: bool,
         },
     ) !bool {
         const bin_dirs_only = cfg.bin_dirs_only;
@@ -1300,33 +1376,24 @@ pub const RunCommand = struct {
         }
         const passthrough = ctx.passthrough; // unclear why passthrough is an escaped string, it should probably be []const []const u8 and allow its users to escape it.
 
-        var should_force_run_direct = false;
-        if (target_name.len == 1 and target_name[0] == '.') {
-            should_force_run_direct = true;
-        } else if (target_name.len > 1 and target_name[0] == '.' and (target_name[1] == std.fs.path.sep_posix or target_name[1] == std.fs.path.sep_windows)) {
-            should_force_run_direct = true;
+        var try_fast_run = false;
+        var skip_script_check = false;
+        if (target_name.len > 0 and target_name[0] == '.') {
+            try_fast_run = true;
+            skip_script_check = true;
         } else if (std.fs.path.isAbsolute(target_name)) {
-            should_force_run_direct = true;
+            try_fast_run = true;
+            skip_script_check = true;
+        } else if (cfg.allow_fast_run_for_extensions) {
+            const ext = std.fs.path.extension(target_name);
+            const default_loader = options.defaultLoaders.get(ext);
+            if (default_loader != null) {
+                try_fast_run = true;
+            }
         }
-        if (should_force_run_direct) {
-            const cwd = bun.getcwd(&path_buf) catch |e| {
-                Output.prettyErrorln("<r><red>error<r>: Failed to get CWD due to error: <b>{s}<r>", .{
-                    @errorName(e),
-                });
-                return false;
-            };
-            path_buf[cwd.len] = std.fs.path.sep_posix;
-            var parts = [_]string{target_name};
-            const file_path = resolve_path.joinAbsStringBuf(
-                path_buf[0 .. cwd.len + 1],
-                &path_buf2,
-                &parts,
-                .auto,
-            );
-            log("Resolved to: `{s}`", .{file_path});
-            const out_path = ctx.allocator.dupe(u8, file_path) catch unreachable;
-            return _bootAndHandleError(ctx, out_path);
-        }
+
+        // try fast run (check if the file exists and is not a folder, then run it)
+        if (try_fast_run and maybeOpenWithBunJS(ctx)) return true;
 
         // setup
 
@@ -1389,7 +1456,7 @@ pub const RunCommand = struct {
 
         // run script with matching name
 
-        if (root_dir_info.enclosing_package_json) |package_json| {
+        if (!skip_script_check) if (root_dir_info.enclosing_package_json) |package_json| {
             if (package_json.scripts) |scripts| {
                 if (scripts.get(target_name)) |script_content| {
                     log("Found matching script `{s}`", .{script_content});
@@ -1449,7 +1516,7 @@ pub const RunCommand = struct {
                     return true;
                 }
             }
-        }
+        };
 
         // load module and run that module
         // TODO: run module resolution here - try the next condition if the module can't be found
@@ -1530,7 +1597,7 @@ pub const RunCommand = struct {
         if (comptime log_errors) {
             const ext = std.fs.path.extension(target_name);
             const default_loader = options.defaultLoaders.get(ext);
-            if (default_loader != null and default_loader.?.isJavaScriptLikeOrJSON()) {
+            if (default_loader != null and default_loader.?.isJavaScriptLikeOrJSON() or target_name.len > 0 and (target_name[0] == '.' or target_name[0] == '/' or std.fs.path.isAbsolute(target_name))) {
                 Output.prettyError("<r><red>error<r><d>:<r> <b>Module not found \"<b>{s}<r>\"\n", .{target_name});
             } else if (ext.len > 0) {
                 Output.prettyError("<r><red>error<r><d>:<r> <b>File not found \"<b>{s}<r>\"\n", .{target_name});

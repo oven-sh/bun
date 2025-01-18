@@ -411,8 +411,11 @@ class ConnectionPool {
     }
     while (this.waitingQueue.length > 0) {
       let endReached = true;
-
-      const nonReservedConnections = Array.from(this.readyConnections).filter(c => !c.preReserved);
+      // no need to filter for reserved connections because there are not in the readyConnections
+      // preReserved only shows that we wanna avoiding adding more queries to it
+      const nonReservedConnections = Array.from(this.readyConnections).filter(
+        c => !(c.flags & PooledConnectionFlags.preReserved),
+      );
       if (nonReservedConnections.length === 0) {
         return;
       }

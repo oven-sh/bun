@@ -225,7 +225,9 @@ it("TypedArray prints", () => {
     expect(input).toBe(`${TypedArray.name}(${buffer.length}) [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ]`);
     for (let i = 1; i < buffer.length + 1; i++) {
       expect(Bun.inspect(buffer.subarray(i))).toBe(
-        `${TypedArray.name}(${buffer.length - i}) [ ` + [...buffer.subarray(i)].join(", ") + " ]",
+        buffer.length - i === 0
+          ? `${TypedArray.name}(${buffer.length - i}) []`
+          : `${TypedArray.name}(${buffer.length - i}) [ ` + [...buffer.subarray(i)].join(", ") + " ]",
       );
     }
   }
@@ -239,9 +241,11 @@ it("BigIntArray", () => {
     expect(input).toBe(`${TypedArray.name}(${buffer.length}) [ 1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n, 10n ]`);
     for (let i = 1; i < buffer.length + 1; i++) {
       expect(Bun.inspect(buffer.subarray(i))).toBe(
-        `${TypedArray.name}(${buffer.length - i}) [ ` +
-          [...buffer.subarray(i)].map(a => a.toString(10) + "n").join(", ") +
-          " ]",
+        buffer.length - i === 0
+          ? `${TypedArray.name}(${buffer.length - i}) []`
+          : `${TypedArray.name}(${buffer.length - i}) [ ` +
+              [...buffer.subarray(i)].map(a => a.toString(10) + "n").join(", ") +
+              " ]",
       );
     }
   }
@@ -255,7 +259,9 @@ for (let TypedArray of [Float32Array, Float64Array]) {
     expect(input).toBe(`${TypedArray.name}(${buffer.length}) [ ${[Math.fround(42.68)].join(", ")} ]`);
     for (let i = 1; i < buffer.length + 1; i++) {
       expect(Bun.inspect(buffer.subarray(i))).toBe(
-        `${TypedArray.name}(${buffer.length - i}) [ ` + [...buffer.subarray(i)].join(", ") + " ]",
+        buffer.length - i === 0
+          ? `${TypedArray.name}(${buffer.length - i}) []`
+          : `${TypedArray.name}(${buffer.length - i}) [ ` + [...buffer.subarray(i)].join(", ") + " ]",
       );
     }
   });
@@ -269,7 +275,9 @@ for (let TypedArray of [Float32Array, Float64Array]) {
     );
     for (let i = 1; i < buffer.length + 1; i++) {
       expect(Bun.inspect(buffer.subarray(i))).toBe(
-        `${TypedArray.name}(${buffer.length - i}) [ ` + [...buffer.subarray(i)].join(", ") + " ]",
+        buffer.length - i === 0
+          ? `${TypedArray.name}(${buffer.length - i}) []`
+          : `${TypedArray.name}(${buffer.length - i}) [ ` + [...buffer.subarray(i)].join(", ") + " ]",
       );
     }
   });
@@ -553,12 +561,7 @@ describe("console.logging class displays names and extends", async () => {
   class A {}
   const cases = [A, class B extends A {}, class extends A {}, class {}];
 
-  const expected_logs = [
-    "[class A]",
-    "[class B extends A]",
-    "[class (anonymous) extends A]",
-    "[class (anonymous)]",
-  ];
+  const expected_logs = ["[class A]", "[class B extends A]", "[class (anonymous) extends A]", "[class (anonymous)]"];
 
   for (let i = 0; i < cases.length; i++) {
     it(expected_logs[i], () => {

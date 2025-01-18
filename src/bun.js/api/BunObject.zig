@@ -1126,6 +1126,7 @@ pub const Crypto = struct {
             sha512,
             @"sha512-224",
             @"sha512-256",
+
             @"sha3-224",
             @"sha3-256",
             @"sha3-384",
@@ -1139,6 +1140,7 @@ pub const Crypto = struct {
                     .blake2b512 => BoringSSL.EVP_blake2b512(),
                     .md4 => BoringSSL.EVP_md4(),
                     .md5 => BoringSSL.EVP_md5(),
+                    .ripemd160 => BoringSSL.EVP_ripemd160(),
                     .sha1 => BoringSSL.EVP_sha1(),
                     .sha224 => BoringSSL.EVP_sha224(),
                     .sha256 => BoringSSL.EVP_sha256(),
@@ -1359,28 +1361,37 @@ pub const Crypto = struct {
                     return globalThis.throwNotEnoughArguments("pbkdf2", 5, arguments.len);
                 }
 
-                if (!arguments[3].isAnyInt()) {
-                    return globalThis.throwInvalidArgumentTypeValue("keylen", "integer", arguments[3]);
+                if (!arguments[3].isNumber()) {
+                    return globalThis.throwInvalidArgumentTypeValue("keylen", "number", arguments[3]);
                 }
 
-                const length = arguments[3].coerce(i64, globalThis);
+                const keylen_num = arguments[3].asNumber();
 
-                if (!globalThis.hasException() and (length < 0 or length > std.math.maxInt(i32))) {
-                    return globalThis.throwInvalidArguments("keylen must be > 0 and < {d}", .{std.math.maxInt(i32)});
+                if (std.math.isInf(keylen_num) or std.math.isNan(keylen_num)) {
+                    return globalThis.throwRangeError(keylen_num, .{
+                        .field_name = "keylen",
+                        .msg = "an integer",
+                    });
                 }
+
+                if (keylen_num < 0 or keylen_num > std.math.maxInt(i32)) {
+                    return globalThis.throwRangeError(keylen_num, .{ .field_name = "keylen", .min = 0, .max = std.math.maxInt(i32) });
+                }
+
+                const keylen: i32 = @intFromFloat(keylen_num);
 
                 if (globalThis.hasException()) {
                     return error.JSError;
                 }
 
                 if (!arguments[2].isAnyInt()) {
-                    return globalThis.throwInvalidArgumentTypeValue("iteration count", "integer", arguments[2]);
+                    return globalThis.throwInvalidArgumentTypeValue("iterations", "number", arguments[2]);
                 }
 
                 const iteration_count = arguments[2].coerce(i64, globalThis);
 
-                if (!globalThis.hasException() and (iteration_count < 1 or iteration_count > std.math.maxInt(u32))) {
-                    return globalThis.throwInvalidArguments("iteration count must be >= 1 and <= maxInt", .{});
+                if (!globalThis.hasException() and (iteration_count < 1 or iteration_count > std.math.maxInt(i32))) {
+                    return globalThis.throwRangeError(iteration_count, .{ .field_name = "iterations", .min = 1, .max = std.math.maxInt(i32) + 1 });
                 }
 
                 if (globalThis.hasException()) {
@@ -1389,23 +1400,28 @@ pub const Crypto = struct {
 
                 const algorithm = brk: {
                     if (!arguments[4].isString()) {
-                        return globalThis.throwInvalidArgumentTypeValue("algorithm", "string", arguments[4]);
+                        return globalThis.throwInvalidArgumentTypeValue("digest", "string", arguments[4]);
                     }
 
-                    break :brk EVP.Algorithm.map.fromJSCaseInsensitive(globalThis, arguments[4]) orelse {
-                        if (!globalThis.hasException()) {
-                            const slice = arguments[4].toSlice(globalThis, bun.default_allocator);
-                            defer slice.deinit();
-                            const name = slice.slice();
-                            return globalThis.ERR_CRYPTO_INVALID_DIGEST("Unsupported algorithm \"{s}\"", .{name}).throw();
+                    invalid: {
+                        switch (EVP.Algorithm.map.fromJSCaseInsensitive(globalThis, arguments[4]) orelse break :invalid) {
+                            .shake128, .shake256, .@"sha3-224", .@"sha3-256", .@"sha3-384", .@"sha3-512" => break :invalid,
+                            else => |alg| break :brk alg,
                         }
-                        return error.JSError;
-                    };
+                    }
+
+                    if (!globalThis.hasException()) {
+                        const slice = arguments[4].toSlice(globalThis, bun.default_allocator);
+                        defer slice.deinit();
+                        const name = slice.slice();
+                        return globalThis.ERR_CRYPTO_INVALID_DIGEST("Invalid digest: {s}", .{name}).throw();
+                    }
+                    return error.JSError;
                 };
 
                 var out = PBKDF2{
                     .iteration_count = @intCast(iteration_count),
-                    .length = @truncate(length),
+                    .length = keylen,
                     .algorithm = algorithm,
                 };
                 defer {
@@ -1434,6 +1450,12 @@ pub const Crypto = struct {
 
                 if (out.password.slice().len > std.math.maxInt(i32)) {
                     return globalThis.throwInvalidArguments("password is too long", .{});
+                }
+
+                if (is_async) {
+                    if (!arguments[5].isFunction()) {
+                        return globalThis.throwInvalidArgumentTypeValue("callback", "function", arguments[5]);
+                    }
                 }
 
                 return out;
@@ -3039,6 +3061,7 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
             &config,
             &args,
             callframe.isFromBunMain(globalObject.vm()),
+            true,
         );
 
         if (globalObject.hasException()) {
@@ -3286,6 +3309,27 @@ const HashObject = struct {
     pub const crc32 = hashWrap(std.hash.Crc32);
     pub const cityHash32 = hashWrap(std.hash.CityHash32);
     pub const cityHash64 = hashWrap(std.hash.CityHash64);
+    pub const xxHash32 = hashWrap(struct {
+        pub fn hash(seed: u32, bytes: []const u8) u32 {
+            // sidestep .hash taking in anytype breaking ArgTuple
+            // downstream by forcing a type signature on the input
+            return std.hash.XxHash32.hash(seed, bytes);
+        }
+    });
+    pub const xxHash64 = hashWrap(struct {
+        pub fn hash(seed: u32, bytes: []const u8) u64 {
+            // sidestep .hash taking in anytype breaking ArgTuple
+            // downstream by forcing a type signature on the input
+            return std.hash.XxHash64.hash(seed, bytes);
+        }
+    });
+    pub const xxHash3 = hashWrap(struct {
+        pub fn hash(seed: u32, bytes: []const u8) u64 {
+            // sidestep .hash taking in anytype breaking ArgTuple
+            // downstream by forcing a type signature on the input
+            return std.hash.XxHash3.hash(seed, bytes);
+        }
+    });
     pub const murmur32v2 = hashWrap(std.hash.murmur.Murmur2_32);
     pub const murmur32v3 = hashWrap(std.hash.murmur.Murmur3_32);
     pub const murmur64v2 = hashWrap(std.hash.murmur.Murmur2_64);
@@ -3298,6 +3342,9 @@ const HashObject = struct {
             "crc32",
             "cityHash32",
             "cityHash64",
+            "xxHash32",
+            "xxHash64",
+            "xxHash3",
             "murmur32v2",
             "murmur32v3",
             "murmur64v2",
@@ -4575,9 +4622,7 @@ const InternalTestingAPIs = struct {
             return globalThis.throwError(err, "Error formatting code");
         };
 
-        var str = bun.String.createUTF8(buffer.list.items);
-        defer str.deref();
-        return str.toJS(globalThis);
+        return bun.String.createUTF8ForJS(globalThis, buffer.list.items);
     }
 };
 

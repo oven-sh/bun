@@ -104,8 +104,11 @@
 #include <wtf/Vector.h>
 #include <wtf/threads/BinarySemaphore.h>
 
+#include "ZigGlobalObject.h"
 #include "blob.h"
 #include "ZigGeneratedClasses.h"
+#include "JSX509Certificate.h"
+#include "ncrypto.h"
 
 #if USE(CG)
 #include <CoreGraphics/CoreGraphics.h>
@@ -233,6 +236,7 @@ enum SerializationTag {
 
     Bun__BlobTag = 254,
     // bun types start at 254 and decrease with each addition
+    Bun__X509CertificateTag = 253,
 
     ErrorTag = 255
 };
@@ -1612,14 +1616,6 @@ private:
             //     return true;
             // }
 
-            // write bun types
-            if (auto _cloneable = StructuredCloneableSerialize::fromJS(value)) {
-                StructuredCloneableSerialize cloneable = WTFMove(_cloneable.value());
-                write(cloneable.tag);
-                cloneable.write(this, m_lexicalGlobalObject);
-                return true;
-            }
-
             // if (auto* blob = JSBlob::toWrapped(vm, obj)) {
             //     write(BlobTag);
             //     m_blobHandles.append(blob->handle().isolatedCopy());
@@ -1928,6 +1924,40 @@ private:
                 return dumpWebCodecsVideoFrame(obj);
             }
 #endif
+
+            // write bun types
+            if (auto _cloneable = StructuredCloneableSerialize::fromJS(value)) {
+                StructuredCloneableSerialize cloneable = WTFMove(_cloneable.value());
+                write(cloneable.tag);
+                cloneable.write(this, m_lexicalGlobalObject);
+                return true;
+            }
+
+            if (auto* x509 = jsDynamicCast<Bun::JSX509Certificate*>(obj)) {
+                write(Bun__X509CertificateTag);
+                X509* cert = x509->m_x509.get();
+
+                // Get the size needed for the DER encoding
+                int size = i2d_X509(cert, nullptr);
+                if (size <= 0)
+                    return false;
+
+                Vector<uint8_t> der;
+                der.reserveInitialCapacity(size);
+                der.grow(size);
+
+                // Get pointer to where we should write
+                unsigned char* der_ptr = der.begin();
+
+                // Write the DER encoding
+                if (i2d_X509(cert, &der_ptr) != size) {
+                    return false;
+                }
+
+                write(der);
+
+                return true;
+            }
 
             return false;
         }
@@ -4368,6 +4398,36 @@ private:
     //     return getJSValue(bitmap);
     // }
 
+    JSValue readX509Certificate()
+    {
+        Vector<uint8_t> buffer;
+
+        if (!read(buffer)) {
+            fail();
+            return JSValue();
+        }
+
+        if (buffer.size() == 0) {
+            return Bun::JSX509Certificate::create(m_lexicalGlobalObject->vm(), defaultGlobalObject(m_globalObject)->m_JSX509CertificateClassStructure.get(m_globalObject));
+        }
+        ncrypto::ClearErrorOnReturn clear_error_on_return;
+        X509* ptr = nullptr;
+        const uint8_t* data = buffer.data();
+
+        auto cert = d2i_X509(&ptr, &data, buffer.size());
+        if (!cert) {
+            fail();
+            return JSValue();
+        }
+
+        auto cert_ptr = ncrypto::X509Pointer(cert);
+        auto* domGlobalObject = defaultGlobalObject(m_globalObject);
+        auto* cert_obj = Bun::JSX509Certificate::create(m_lexicalGlobalObject->vm(), domGlobalObject->m_JSX509CertificateClassStructure.get(domGlobalObject), m_globalObject, WTFMove(cert_ptr));
+        m_gcBuffer.appendWithCrashOnOverflow(cert_obj);
+
+        return cert_obj;
+    }
+
     JSValue readDOMException()
     {
         CachedStringRef message;
@@ -4922,6 +4982,9 @@ private:
 #endif
         case DOMExceptionTag:
             return readDOMException();
+
+        case Bun__X509CertificateTag:
+            return readX509Certificate();
 
         default:
             m_ptr--; // Push the tag back

@@ -5,20 +5,18 @@ const promises = require("node:fs/promises");
 const Stream = require("node:stream");
 const types = require("node:util/types");
 
-const { ERR_INVALID_ARG_TYPE, ERR_OUT_OF_RANGE } = require("internal/errors");
 const { validateInteger } = require("internal/validators");
+const { kGetNativeReadableProto } = require("internal/shared");
 
 const NumberIsFinite = Number.isFinite;
-const DateNow = Date.now;
 const DatePrototypeGetTime = Date.prototype.getTime;
 const isDate = types.isDate;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
 // Private exports
+// `fs` points to the return value of `node_fs_binding.zig`'s `createBinding` function.
 const { FileHandle, kRef, kUnref, kFd, fs } = promises.$data;
 
-// reusing a different private symbol
-// this points to `node_fs_binding.zig`'s `createBinding` function.
 const constants = $processBindingConstants.fs;
 
 var _writeStreamPathFastPathSymbol = Symbol.for("Bun.NodeWriteStreamFastPath");
@@ -26,9 +24,7 @@ var _fs = Symbol.for("#fs");
 
 function ensureCallback(callback) {
   if (!$isCallable(callback)) {
-    const err = new TypeError('The "cb" argument must be of type function. Received ' + typeof callback);
-    err.code = "ERR_INVALID_ARG_TYPE";
-    throw err;
+    throw $ERR_INVALID_ARG_TYPE("cb", "function", callback);
   }
 
   return callback;
@@ -112,18 +108,18 @@ class FSWatcher extends EventEmitter {
 }
 
 /** Implemented in `node_fs_stat_watcher.zig` */
-// interface StatWatcherHandle {
-//   ref();
-//   unref();
-//   close();
-// }
+interface StatWatcherHandle {
+  ref();
+  unref();
+  close();
+}
 
 function openAsBlob(path, options) {
   return Promise.$resolve(Bun.file(path, options));
 }
 
 class StatWatcher extends EventEmitter {
-  // _handle: StatWatcherHandle;
+  _handle: StatWatcherHandle | null;
 
   constructor(path, options) {
     super();
@@ -158,8 +154,7 @@ var access = function access(path, mode, callback) {
     }
 
     ensureCallback(callback);
-
-    fs.access(path, mode).then(nullcallback(callback), callback);
+    fs.access(path, mode).then(callback, callback);
   },
   appendFile = function appendFile(path, data, options, callback) {
     if (!$isCallable(callback)) {
@@ -173,8 +168,8 @@ var access = function access(path, mode, callback) {
   },
   close = function close(fd, callback) {
     if ($isCallable(callback)) {
-      fs.close(fd).then(() => callback(), callback);
-    } else if (callback == undefined) {
+      fs.close(fd).then(() => callback(null), callback);
+    } else if (callback === undefined) {
       fs.close(fd).then(() => {});
     } else {
       callback = ensureCallback(callback);
@@ -269,11 +264,11 @@ var access = function access(path, mode, callback) {
 
     fs.futimes(fd, atime, mtime).then(nullcallback(callback), callback);
   },
-  lchmod = function lchmod(path, mode, callback) {
+  lchmod = constants.O_SYMLINK !== undefined ? function lchmod(path, mode, callback) {
     ensureCallback(callback);
 
     fs.lchmod(path, mode).then(nullcallback(callback), callback);
-  },
+  } : undefined, // lchmod is only available on macOS
   lchown = function lchown(path, uid, gid, callback) {
     ensureCallback(callback);
 
@@ -430,7 +425,7 @@ var access = function access(path, mode, callback) {
 
     ensureCallback(callback);
 
-    fs.realpath(p, options).then(function (resolvedPath) {
+    fs.realpath(p, options, false).then(function (resolvedPath) {
       callback(null, resolvedPath);
     }, callback);
   },
@@ -523,7 +518,7 @@ var access = function access(path, mode, callback) {
   fsyncSync = fs.fsyncSync.bind(fs),
   ftruncateSync = fs.ftruncateSync.bind(fs),
   futimesSync = fs.futimesSync.bind(fs),
-  lchmodSync = fs.lchmodSync.bind(fs),
+  lchmodSync = constants.O_SYMLINK !== undefined ? fs.lchmodSync.bind(fs) : undefined, // lchmod is only available on macOS
   lchownSync = fs.lchownSync.bind(fs),
   linkSync = fs.linkSync.bind(fs),
   lstatSync = fs.lstatSync.bind(fs),
@@ -587,11 +582,8 @@ var access = function access(path, mode, callback) {
     }, callback);
   };
 
-// TODO: make symbols a separate export somewhere
 var kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
-
 exists[kCustomPromisifiedSymbol] = path => new Promise(resolve => exists(path, resolve));
-
 read[kCustomPromisifiedSymbol] = async function (fd, bufferOrOptions, ...rest) {
   const { isArrayBufferView } = require("node:util/types");
   let buffer;
@@ -610,11 +602,12 @@ read[kCustomPromisifiedSymbol] = async function (fd, bufferOrOptions, ...rest) {
 
   return { bytesRead, buffer };
 };
-
 write[kCustomPromisifiedSymbol] = async function (fd, stringOrBuffer, ...rest) {
   const bytesWritten = await fs.write(fd, stringOrBuffer, ...rest);
   return { bytesWritten, buffer: stringOrBuffer };
 };
+writev[kCustomPromisifiedSymbol] = promises.writev;
+readv[kCustomPromisifiedSymbol] = promises.readv;
 
 // TODO: move this entire thing into native code.
 // the reason it's not done right now is because there isnt a great way to have multiple
@@ -651,7 +644,7 @@ function unwatchFile(filename, listener) {
   filename = getValidatedPath(filename);
 
   var stat = statWatchers.get(filename);
-  if (!stat) return;
+  if (!stat) return throwIfNullBytesInFileName(filename);
   if (listener) {
     stat.removeListener("change", listener);
     if (stat.listenerCount("change") !== 0) {
@@ -664,20 +657,9 @@ function unwatchFile(filename, listener) {
   statWatchers.delete(filename);
 }
 
-function callbackify(fsFunction, args) {
-  const callback = args[args.length - 1];
-  try {
-    var result = fsFunction.$apply(fs, args.slice(0, args.length - 1));
-    result.then(
-      (...args) => callback(null, ...args),
-      err => callback(err),
-    );
-  } catch (e) {
-    if (typeof callback === "function") {
-      callback(e);
-    } else {
-      throw e;
-    }
+function throwIfNullBytesInFileName(filename: string) {
+  if (filename.indexOf("\u0000") !== -1) {
+    throw $ERR_INVALID_ARG_VALUE("path", "string without null bytes", filename);
   }
 }
 
@@ -738,7 +720,7 @@ function createReadStream(path, options) {
   return new ReadStream(path, options);
 }
 
-const NativeReadable = Stream._getNativeReadableStreamPrototype(2, Stream.Readable);
+const NativeReadable = Stream[kGetNativeReadableProto](2);
 const NativeReadablePrototype = NativeReadable.prototype;
 const kFs = Symbol("kFs");
 const kHandle = Symbol("kHandle");
@@ -780,6 +762,11 @@ function ReadStream(this: typeof ReadStream, pathOrFd, options) {
     highWaterMark = defaultReadStreamOptions.highWaterMark,
     fd = defaultReadStreamOptions.fd,
   }: Partial<typeof defaultReadStreamOptions> = options;
+
+  if (encoding && !Buffer.isEncoding(encoding)) {
+    const reason = "is invalid encoding";
+    throw $ERR_INVALID_ARG_VALUE("encoding", encoding, reason);
+  }
 
   if (pathOrFd?.constructor?.name === "URL") {
     pathOrFd = Bun.fileURLToPath(pathOrFd);
@@ -841,7 +828,7 @@ function ReadStream(this: typeof ReadStream, pathOrFd, options) {
   } else if (end !== Infinity) {
     validateInteger(end, "end", 0);
     if (start !== undefined && start > end) {
-      throw new ERR_OUT_OF_RANGE("start", `<= "end" (here: ${end})`, start);
+      throw $ERR_OUT_OF_RANGE("start", `<= "end" (here: ${end})`, start);
     }
   }
 
@@ -1061,9 +1048,13 @@ var defaultWriteStreamOptions = {
   },
 };
 
-var WriteStreamClass = (WriteStream = function WriteStream(path, options = defaultWriteStreamOptions) {
+var WriteStreamClass = (WriteStream = function WriteStream(path, options: any = defaultWriteStreamOptions) {
   if (!(this instanceof WriteStream)) {
-    return new WriteStream(path, options);
+    return new (WriteStream as any)(path, options);
+  }
+
+  if (typeof options === "string") {
+    options = { encoding: options };
   }
 
   if (!options) {
@@ -1086,6 +1077,11 @@ var WriteStreamClass = (WriteStream = function WriteStream(path, options = defau
   if (start !== undefined) {
     validateInteger(start, "start", 0);
     options.pos = start;
+  }
+
+  if (encoding && !Buffer.isEncoding(encoding)) {
+    const reason = "is invalid encoding";
+    throw $ERR_INVALID_ARG_VALUE("encoding", encoding, reason);
   }
 
   var tempThis = {};
@@ -1386,9 +1382,20 @@ Object.defineProperties(fs, {
   },
 });
 
-// lol
-realpath.native = realpath;
-realpathSync.native = realpathSync;
+// @ts-ignore
+realpath.native = function realpath(p, options, callback) {
+  if ($isCallable(options)) {
+    callback = options;
+    options = undefined;
+  }
+
+  ensureCallback(callback);
+
+  fs.realpathNative(p, options).then(function (resolvedPath) {
+    callback(null, resolvedPath);
+  }, callback);
+};
+realpathSync.native = fs.realpathNativeSync.bind(fs);
 
 // attempt to use the native code version if possible
 // and on MacOS, simple cases of recursive directory trees can be done in a single `clonefile()`
@@ -1415,19 +1422,21 @@ function cp(src, dest, options, callback) {
   promises.cp(src, dest, options).then(() => callback(), callback);
 }
 
-function _toUnixTimestamp(time, name = "time") {
+function _toUnixTimestamp(time: any, name = "time") {
+  // @ts-ignore
   if (typeof time === "string" && +time == time) {
     return +time;
   }
-  if (NumberIsFinite(time)) {
+  // @ts-ignore
+  if ($isFinite(time)) {
     if (time < 0) {
-      return DateNow() / 1000;
+      return Date.now() / 1000;
     }
     return time;
   }
   if (isDate(time)) {
     // Convert to 123.456 UNIX timestamp
-    return DatePrototypeGetTime(time) / 1000;
+    return time.getTime() / 1000;
   }
   throw new TypeError(`Expected ${name} to be a number or Date`);
 }
@@ -1583,8 +1592,8 @@ setName(ftruncate, "ftruncate");
 setName(ftruncateSync, "ftruncateSync");
 setName(futimes, "futimes");
 setName(futimesSync, "futimesSync");
-setName(lchmod, "lchmod");
-setName(lchmodSync, "lchmodSync");
+if (lchmod) setName(lchmod, "lchmod");
+if (lchmodSync) setName(lchmodSync, "lchmodSync");
 setName(lchown, "lchown");
 setName(lchownSync, "lchownSync");
 setName(link, "link");

@@ -81,7 +81,7 @@ for (let [gcTick, label] of [
             cmd: ["node", "-e", "console.log('hi')"],
             cwd: "./this-should-not-exist",
           });
-        }).toThrow("No such file or directory");
+        }).toThrow("no such file or directory");
       });
     });
 
@@ -525,7 +525,7 @@ for (let [gcTick, label] of [
             cmd: ["node", "-e", "console.log('hi')"],
             cwd: "./this-should-not-exist",
           });
-        }).toThrow("No such file or directory");
+        }).toThrow("no such file or directory");
       });
     });
   });

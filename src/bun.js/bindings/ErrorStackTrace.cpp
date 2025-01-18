@@ -630,18 +630,23 @@ String sourceURL(const JSC::SourceCode& sourceCode)
     return sourceURL(sourceCode.provider());
 }
 
+String sourceURL(JSC::CodeBlock& codeBlock)
+{
+    if (!codeBlock.ownerExecutable()) {
+        return String();
+    }
+
+    const auto& source = codeBlock.source();
+    return sourceURL(source);
+}
+
 String sourceURL(JSC::CodeBlock* codeBlock)
 {
     if (UNLIKELY(!codeBlock)) {
         return String();
     }
 
-    if (!codeBlock->ownerExecutable()) {
-        return String();
-    }
-
-    const auto& source = codeBlock->source();
-    return sourceURL(source);
+    return Zig::sourceURL(*codeBlock);
 }
 
 String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame)
@@ -650,7 +655,7 @@ String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame)
         return "[wasm code]"_s;
     }
 
-    if (UNLIKELY(!frame.codeBlock())) {
+    if (UNLIKELY(!frame.hasLineAndColumnInfo())) {
         return "[native code]"_s;
     }
 
@@ -833,7 +838,8 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
         return functionName;
     }
 
-    if (auto codeblock = frame.codeBlock()) {
+    if (frame.hasLineAndColumnInfo()) {
+        auto* codeblock = frame.codeBlock();
         if (codeblock->isConstructor()) {
             isConstructor = true;
         }

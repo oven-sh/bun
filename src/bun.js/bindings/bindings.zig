@@ -156,6 +156,15 @@ pub const JSObject = extern struct {
     pub fn putRecord(this: *JSObject, global: *JSGlobalObject, key: *ZigString, values: []ZigString) void {
         return cppFn("putRecord", .{ this, global, key, values.ptr, values.len });
     }
+
+    extern fn Bun__JSObject__getCodePropertyVMInquiry(*JSGlobalObject, *JSObject) JSValue;
+
+    /// This will not call getters or be observable from JavaScript.
+    pub fn getCodePropertyVMInquiry(obj: *JSObject, global: *JSGlobalObject) ?JSValue {
+        const v = Bun__JSObject__getCodePropertyVMInquiry(global, obj);
+        if (v == .zero) return null;
+        return v;
+    }
 };
 
 pub const CachedBytecode = opaque {
@@ -563,6 +572,10 @@ pub const ZigString = extern struct {
                     vm.reportExtraMemory(this.len);
                 }
             }
+        }
+
+        pub fn isWTFAllocated(this: *const Slice) bool {
+            return bun.String.isWTFAllocator(this.allocator.get() orelse return false);
         }
 
         pub fn init(allocator: std.mem.Allocator, input: []const u8) Slice {
@@ -1731,6 +1744,7 @@ pub const SystemError = extern struct {
     message: String = String.empty,
     path: String = String.empty,
     syscall: String = String.empty,
+    hostname: String = String.empty,
     fd: bun.FileDescriptor = bun.toFD(-1),
     dest: String = String.empty,
 
@@ -1756,6 +1770,7 @@ pub const SystemError = extern struct {
         this.code.deref();
         this.message.deref();
         this.syscall.deref();
+        this.hostname.deref();
         this.dest.deref();
     }
 
@@ -1764,17 +1779,11 @@ pub const SystemError = extern struct {
         this.code.ref();
         this.message.ref();
         this.syscall.ref();
-        this.dest.ref();
+        this.hostname.ref();
     }
 
     pub fn toErrorInstance(this: *const SystemError, global: *JSGlobalObject) JSValue {
-        defer {
-            this.path.deref();
-            this.code.deref();
-            this.message.deref();
-            this.syscall.deref();
-            this.dest.deref();
-        }
+        defer this.deref();
 
         return shim.cppFn("toErrorInstance", .{ this, global });
     }
@@ -2965,14 +2974,37 @@ pub const JSGlobalObject = opaque {
         return this.throwValue(this.createInvalidArgumentType(name_, field, typename));
     }
 
+    pub fn throwInvalidArgumentValue(
+        this: *JSGlobalObject,
+        argname: []const u8,
+        value: JSValue,
+    ) bun.JSError {
+        const actual_string_value = try determineSpecificType(this, value);
+        defer actual_string_value.deref();
+        return this.ERR_INVALID_ARG_VALUE("The \"{s}\" argument is invalid. Received {}", .{ argname, actual_string_value }).throw();
+    }
+
+    extern "C" fn Bun__ErrorCode__determineSpecificType(*JSGlobalObject, JSValue) String;
+
+    pub fn determineSpecificType(global: *JSGlobalObject, value: JSValue) JSError!String {
+        const str = Bun__ErrorCode__determineSpecificType(global, value);
+        errdefer str.deref();
+        if (global.hasException()) {
+            return error.JSError;
+        }
+        return str;
+    }
+
+    /// "The <argname> argument must be of type <typename>. Received <value>"
     pub fn throwInvalidArgumentTypeValue(
         this: *JSGlobalObject,
         argname: []const u8,
         typename: []const u8,
         value: JSValue,
     ) bun.JSError {
-        var formatter = JSC.ConsoleObject.Formatter{ .globalThis = this };
-        return this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be of type {s}. Received {}", .{ argname, typename, value.toFmt(&formatter) }).throw();
+        const actual_string_value = try determineSpecificType(this, value);
+        defer actual_string_value.deref();
+        return this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be of type {s}. Received {}", .{ argname, typename, actual_string_value }).throw();
     }
 
     pub fn throwInvalidArgumentRangeValue(
@@ -3004,6 +3036,7 @@ pub const JSGlobalObject = opaque {
         return JSC.toTypeError(.ERR_MISSING_ARGS, "Not enough arguments to '" ++ name_ ++ "'. Expected {d}, got {d}.", .{ expected, got }, this);
     }
 
+    /// Not enough arguments passed to function named `name_`
     pub fn throwNotEnoughArguments(
         this: *JSGlobalObject,
         comptime name_: []const u8,
@@ -4052,6 +4085,25 @@ pub const JSValue = enum(i64) {
         };
     }
 
+    pub fn toPortNumber(this: JSValue, global: *JSGlobalObject) bun.JSError!u16 {
+        if (this.isNumber()) {
+            // const double = try this.toNumber(global);
+            const double = this.coerceToDouble(global);
+            if (std.math.isNan(double)) {
+                return JSC.Error.ERR_SOCKET_BAD_PORT.throw(global, "Invalid port number", .{});
+            }
+
+            const port = this.to(i64);
+            if (0 <= port and port <= 65535) {
+                return @as(u16, @truncate(@max(0, port)));
+            } else {
+                return JSC.Error.ERR_SOCKET_BAD_PORT.throw(global, "Port number out of range: {d}", .{port});
+            }
+        }
+
+        return JSC.Error.ERR_SOCKET_BAD_PORT.throw(global, "Invalid port number", .{});
+    }
+
     pub fn isInstanceOf(this: JSValue, global: *JSGlobalObject, constructor: JSValue) bool {
         if (!this.isCell())
             return false;
@@ -4283,12 +4335,12 @@ pub const JSValue = enum(i64) {
     }
 
     pub fn protect(this: JSValue) void {
-        if (this.isEmptyOrUndefinedOrNull() or this.isNumber()) return;
+        if (!this.isCell()) return;
         JSC.C.JSValueProtect(JSC.VirtualMachine.get().global, this.asObjectRef());
     }
 
     pub fn unprotect(this: JSValue) void {
-        if (this.isEmptyOrUndefinedOrNull() or this.isNumber()) return;
+        if (!this.isCell()) return;
         JSC.C.JSValueUnprotect(JSC.VirtualMachine.get().global, this.asObjectRef());
     }
 
@@ -5492,12 +5544,12 @@ pub const JSValue = enum(i64) {
     }
 
     /// Many Node.js APIs use `validateBoolean`
-    /// Missing value, null, and undefined return `null`
+    /// Missing value and undefined return `null`
     pub inline fn getBooleanStrict(this: JSValue, global: *JSGlobalObject, comptime property_name: []const u8) JSError!?bool {
         const prop = try this.get(global, property_name) orelse return null;
 
         return switch (prop) {
-            .null, .undefined => null,
+            .undefined => null,
             .false, .true => prop == .true,
             else => {
                 return JSC.Node.validators.throwErrInvalidArgType(global, property_name, .{}, "boolean", prop);

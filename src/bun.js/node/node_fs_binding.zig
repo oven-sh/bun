@@ -14,95 +14,69 @@ const NodeFSFunction = fn (this: *JSC.Node.NodeJSFS, globalObject: *JSC.JSGlobal
 
 const NodeFSFunctionEnum = std.meta.DeclEnum(JSC.Node.NodeFS);
 
-fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
-    const Function = @field(JSC.Node.NodeFS, @tagName(FunctionEnum));
-    const FunctionType = @TypeOf(Function);
+/// Returns bindings to call JSC.Node.NodeFS.<function>.
+/// Async calls use a thread pool.
+fn Bindings(comptime function_name: NodeFSFunctionEnum) type {
+    const function = @field(JSC.Node.NodeFS, @tagName(function_name));
+    const fn_info = @typeInfo(@TypeOf(function)).Fn;
+    if (fn_info.params.len != 3) {
+        @compileError("Expected fn(NodeFS, Arguments) Return for NodeFS." ++ @tagName(function_name));
+    }
+    const Arguments = fn_info.params[1].type.?;
 
-    const function: std.builtin.Type.Fn = comptime @typeInfo(FunctionType).Fn;
-    comptime if (function.params.len != 3) @compileError("Expected 3 arguments");
-    const Arguments = comptime function.params[1].type.?;
-    const FormattedName = comptime [1]u8{std.ascii.toUpper(@tagName(FunctionEnum)[0])} ++ @tagName(FunctionEnum)[1..];
-    const Result = comptime JSC.Maybe(@field(JSC.Node.NodeFS.ReturnType, FormattedName));
-    _ = Result;
-
-    const NodeBindingClosure = struct {
-        pub fn bind(this: *JSC.Node.NodeJSFS, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-            var arguments = callframe.arguments_old(8);
-
-            var slice = ArgumentsSlice.init(globalObject.bunVM(), arguments.slice());
+    return struct {
+        pub fn runSync(this: *JSC.Node.NodeJSFS, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+            var slice = ArgumentsSlice.init(globalObject.bunVM(), callframe.arguments());
             defer slice.deinit();
 
-            const args = if (comptime Arguments != void)
-                (try Arguments.fromJS(globalObject, &slice))
-            else
-                Arguments{};
-            defer {
-                if (comptime Arguments != void and @hasDecl(Arguments, "deinit")) args.deinit();
-            }
+            const args = if (Arguments != void)
+                try Arguments.fromJS(globalObject, &slice);
+
+            defer if (comptime Arguments != void and @hasDecl(Arguments, "deinit"))
+                args.deinit();
 
             if (globalObject.hasException()) {
                 return .zero;
             }
-            var result = Function(
-                &this.node_fs,
-                args,
-                comptime Flavor.sync,
-            );
-            switch (result) {
-                .err => |err| {
-                    return globalObject.throwValue(JSC.JSValue.c(err.toJS(globalObject)));
-                },
-                .result => |*res| {
-                    return globalObject.toJS(res, .temporary);
-                },
-            }
+
+            var result = function(&this.node_fs, args, .sync);
+            return switch (result) {
+                .err => |err| globalObject.throwValue(JSC.JSValue.c(err.toJS(globalObject))),
+                .result => |*res| globalObject.toJS(res, .temporary),
+            };
         }
-    };
 
-    return NodeBindingClosure.bind;
-}
-
-fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
-    const Function = @field(JSC.Node.NodeFS, @tagName(FunctionEnum));
-    const FunctionType = @TypeOf(Function);
-
-    const function: std.builtin.Type.Fn = comptime @typeInfo(FunctionType).Fn;
-    comptime if (function.params.len != 3) @compileError("Expected 3 arguments");
-    const Arguments = comptime function.params[1].type.?;
-    const NodeBindingClosure = struct {
-        pub fn bind(this: *JSC.Node.NodeJSFS, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-            var arguments = callframe.arguments_old(8);
-
-            var slice = ArgumentsSlice.init(globalObject.bunVM(), arguments.slice());
+        pub fn runAsync(this: *JSC.Node.NodeJSFS, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+            var slice = ArgumentsSlice.init(globalObject.bunVM(), callframe.arguments());
             slice.will_be_async = true;
-            const args = if (comptime Arguments != void)
-                (Arguments.fromJS(globalObject, &slice) catch {
+
+            const args = if (Arguments != void)
+                Arguments.fromJS(globalObject, &slice) catch |err| {
                     slice.deinit();
-                    return .zero;
-                })
-            else
-                Arguments{};
+                    return err;
+                };
 
             if (globalObject.hasException()) {
                 slice.deinit();
                 return .zero;
             }
 
-            const Task = @field(JSC.Node.Async, @tagName(FunctionEnum));
-            if (comptime FunctionEnum == .cp) {
-                return Task.create(globalObject, this, args, globalObject.bunVM(), slice.arena);
-            } else {
-                if (comptime FunctionEnum == .readdir) {
-                    if (args.recursive) {
-                        return JSC.Node.Async.readdir_recursive.create(globalObject, args, globalObject.bunVM());
-                    }
-                }
-
-                return Task.create(globalObject, this, args, globalObject.bunVM());
+            const Task = @field(JSC.Node.Async, @tagName(function_name));
+            switch (comptime function_name) {
+                .cp => return Task.create(globalObject, this, args, globalObject.bunVM(), slice.arena),
+                .readdir => if (args.recursive) return JSC.Node.Async.readdir_recursive.create(globalObject, args, globalObject.bunVM()),
+                else => {},
             }
+            return Task.create(globalObject, this, args, globalObject.bunVM());
         }
     };
-    return NodeBindingClosure.bind;
+}
+
+fn callAsync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
+    return Bindings(FunctionEnum).runAsync;
+}
+fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
+    return Bindings(FunctionEnum).runSync;
 }
 
 pub const NodeJSFS = struct {
@@ -121,43 +95,52 @@ pub const NodeJSFS = struct {
         this.destroy();
     }
 
-    pub const access = call(.access);
-    pub const appendFile = call(.appendFile);
-    pub const close = call(.close);
-    pub const copyFile = call(.copyFile);
-    pub const cp = call(.cp);
-    pub const exists = call(.exists);
-    pub const chown = call(.chown);
-    pub const chmod = call(.chmod);
-    pub const fchmod = call(.fchmod);
-    pub const fchown = call(.fchown);
-    pub const fstat = call(.fstat);
-    pub const fsync = call(.fsync);
-    pub const ftruncate = call(.ftruncate);
-    pub const futimes = call(.futimes);
-    pub const lchmod = call(.lchmod);
-    pub const lchown = call(.lchown);
-    pub const link = call(.link);
-    pub const lstat = call(.lstat);
-    pub const mkdir = call(.mkdir);
-    pub const mkdtemp = call(.mkdtemp);
-    pub const open = call(.open);
-    pub const read = call(.read);
-    pub const write = call(.write);
-    pub const readdir = call(.readdir);
-    pub const readFile = call(.readFile);
-    pub const writeFile = call(.writeFile);
-    pub const readlink = call(.readlink);
-    pub const rm = call(.rm);
-    pub const rmdir = call(.rmdir);
-    pub const realpath = call(.realpath);
-    pub const rename = call(.rename);
-    pub const stat = call(.stat);
-    pub const symlink = call(.symlink);
-    pub const truncate = call(.truncate);
-    pub const unlink = call(.unlink);
-    pub const utimes = call(.utimes);
-    pub const lutimes = call(.lutimes);
+    pub fn getDirent(_: *NodeJSFS, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        return JSC.Node.Dirent.getConstructor(globalThis);
+    }
+
+    pub fn getStats(_: *NodeJSFS, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        return JSC.Node.StatsSmall.getConstructor(globalThis);
+    }
+
+    pub const access = callAsync(.access);
+    pub const appendFile = callAsync(.appendFile);
+    pub const close = callAsync(.close);
+    pub const copyFile = callAsync(.copyFile);
+    pub const cp = callAsync(.cp);
+    pub const exists = callAsync(.exists);
+    pub const chown = callAsync(.chown);
+    pub const chmod = callAsync(.chmod);
+    pub const fchmod = callAsync(.fchmod);
+    pub const fchown = callAsync(.fchown);
+    pub const fstat = callAsync(.fstat);
+    pub const fsync = callAsync(.fsync);
+    pub const ftruncate = callAsync(.ftruncate);
+    pub const futimes = callAsync(.futimes);
+    pub const lchmod = callAsync(.lchmod);
+    pub const lchown = callAsync(.lchown);
+    pub const link = callAsync(.link);
+    pub const lstat = callAsync(.lstat);
+    pub const mkdir = callAsync(.mkdir);
+    pub const mkdtemp = callAsync(.mkdtemp);
+    pub const open = callAsync(.open);
+    pub const read = callAsync(.read);
+    pub const write = callAsync(.write);
+    pub const readdir = callAsync(.readdir);
+    pub const readFile = callAsync(.readFile);
+    pub const writeFile = callAsync(.writeFile);
+    pub const readlink = callAsync(.readlink);
+    pub const rm = callAsync(.rm);
+    pub const rmdir = callAsync(.rmdir);
+    pub const realpath = callAsync(.realpathNonNative);
+    pub const realpathNative = callAsync(.realpath);
+    pub const rename = callAsync(.rename);
+    pub const stat = callAsync(.stat);
+    pub const symlink = callAsync(.symlink);
+    pub const truncate = callAsync(.truncate);
+    pub const unlink = callAsync(.unlink);
+    pub const utimes = callAsync(.utimes);
+    pub const lutimes = callAsync(.lutimes);
     pub const accessSync = callSync(.access);
     pub const appendFileSync = callSync(.appendFile);
     pub const closeSync = callSync(.close);
@@ -185,7 +168,8 @@ pub const NodeJSFS = struct {
     pub const readFileSync = callSync(.readFile);
     pub const writeFileSync = callSync(.writeFile);
     pub const readlinkSync = callSync(.readlink);
-    pub const realpathSync = callSync(.realpath);
+    pub const realpathSync = callSync(.realpathNonNative);
+    pub const realpathNativeSync = callSync(.realpath);
     pub const renameSync = callSync(.rename);
     pub const statSync = callSync(.stat);
     pub const symlinkSync = callSync(.symlink);
@@ -195,30 +179,15 @@ pub const NodeJSFS = struct {
     pub const lutimesSync = callSync(.lutimes);
     pub const rmSync = callSync(.rm);
     pub const rmdirSync = callSync(.rmdir);
-    pub const writev = call(.writev);
+    pub const writev = callAsync(.writev);
     pub const writevSync = callSync(.writev);
-    pub const readv = call(.readv);
+    pub const readv = callAsync(.readv);
     pub const readvSync = callSync(.readv);
-
     pub const fdatasyncSync = callSync(.fdatasync);
-    pub const fdatasync = call(.fdatasync);
-
-    pub fn getDirent(_: *NodeJSFS, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        return JSC.Node.Dirent.getConstructor(globalThis);
-    }
-
-    pub fn getStats(_: *NodeJSFS, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        return JSC.Node.StatsSmall.getConstructor(globalThis);
-    }
-
+    pub const fdatasync = callAsync(.fdatasync);
     pub const watch = callSync(.watch);
     pub const watchFile = callSync(.watchFile);
     pub const unwatchFile = callSync(.unwatchFile);
-
-    // Not implemented yet:
-    const notimpl = fdatasync;
-    pub const opendir = notimpl;
-    pub const opendirSync = notimpl;
 };
 
 pub fn createBinding(globalObject: *JSC.JSGlobalObject) JSC.JSValue {

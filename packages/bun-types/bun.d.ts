@@ -18,6 +18,7 @@ declare module "bun" {
   import type { Encoding as CryptoEncoding } from "crypto";
   import type { CipherNameAndProtocol, EphemeralKeyInfo, PeerCertificate } from "tls";
   import type { Stats } from "node:fs";
+  import type { X509Certificate } from "node:crypto";
   interface Env {
     NODE_ENV?: string;
     /**
@@ -176,6 +177,8 @@ declare module "bun" {
      * ```
      */
     blob(): Blob;
+
+    bytes(): Uint8Array;
   }
 
   class ShellPromise extends Promise<ShellOutput> {
@@ -1035,6 +1038,10 @@ declare module "bun" {
       errors: number;
       totalCount: number;
     };
+
+    ADDRCONFIG: number;
+    ALL: number;
+    V4MAPPED: number;
   };
 
   interface DNSLookup {
@@ -1226,6 +1233,16 @@ declare module "bun" {
      * Deletes the file.
      */
     unlink(): Promise<void>;
+
+    /**
+     * Deletes the file. ( same as unlink )
+     */
+    delete(): Promise<void>;
+
+    /**
+     *  Provides useful information about the file.
+     */
+    stat(): Promise<Stats>;
   }
   interface NetworkSink extends FileSink {
     /**
@@ -2011,6 +2028,9 @@ declare module "bun" {
     crc32: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer) => number;
     cityHash32: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer) => number;
     cityHash64: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: bigint) => bigint;
+    xxHash32: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: number) => number;
+    xxHash64: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: bigint) => bigint;
+    xxHash3: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: bigint) => bigint;
     murmur32v3: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: number) => number;
     murmur32v2: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: number) => number;
     murmur64v2: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: bigint) => bigint;
@@ -2258,7 +2278,8 @@ declare module "bun" {
     | "import-rule"
     | "url-token"
     | "internal"
-    | "entry-point";
+    | "entry-point-run"
+    | "entry-point-build";
 
   interface Import {
     path: string;
@@ -2662,8 +2683,230 @@ declare module "bun" {
     logs: Array<BuildMessage | ResolveMessage>;
   }
 
-  function build(config: BuildConfig): Promise<BuildOutput>;
+  /**
+   * Bundles JavaScript, TypeScript, CSS, HTML and other supported files into optimized outputs.
+   *
+   * @param {Object} config - Build configuration options
+   * @returns {Promise<BuildOutput>} Promise that resolves to build output containing generated artifacts and build status
+   * @throws {AggregateError} When build fails and config.throw is true (default in Bun 1.2+)
+   * 
+   * @example Basic usage - Bundle a single entrypoint and check results
+   ```ts
+   const result = await Bun.build({
+     entrypoints: ['./src/index.tsx'],
+     outdir: './dist'
+   });
 
+    if (!result.success) {
+      console.error('Build failed:', result.logs);
+      process.exit(1);
+    }
+   ```
+    * 
+    * @example Set up multiple entrypoints with code splitting enabled
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/app.tsx', './src/admin.tsx'],
+      outdir: './dist',
+      splitting: true,
+      sourcemap: "external"
+    });
+    ```
+    * 
+    * @example Configure minification and optimization settings
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      minify: {
+        whitespace: true,
+        identifiers: true,
+        syntax: true
+      },
+      drop: ['console', 'debugger']
+    });
+    ```
+    *
+    * @example Set up custom loaders and mark packages as external
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      loader: {
+        '.png': 'dataurl',
+        '.svg': 'file',
+        '.txt': 'text',
+        '.json': 'json'
+      },
+      external: ['react', 'react-dom']
+    });
+    ```
+    *
+    * @example Configure environment variable handling with different modes
+    ```ts
+    // Inline all environment variables
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      env: 'inline'
+    });
+
+    // Only include specific env vars
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      env: 'PUBLIC_*'
+    });
+    ```
+    *
+    * @example Set up custom naming patterns for all output types
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      naming: {
+        entry: '[dir]/[name]-[hash].[ext]',
+        chunk: 'chunks/[name]-[hash].[ext]',
+        asset: 'assets/[name]-[hash].[ext]'
+      }
+    });
+    ```
+    @example Work with build artifacts in different formats
+    ```ts
+    const result = await Bun.build({
+      entrypoints: ['./src/index.tsx']
+    });
+
+    for (const artifact of result.outputs) {
+      const text = await artifact.text();
+      const buffer = await artifact.arrayBuffer();
+      const bytes = await artifact.bytes();
+
+      new Response(artifact);
+      await Bun.write(artifact.path, artifact);
+    }
+    ```
+    @example Implement comprehensive error handling with position info
+    ```ts
+    try {
+      const result = await Bun.build({
+        entrypoints: ['./src/index.tsx'],
+        throw: true
+      });
+    } catch (e) {
+      const error = e as AggregateError;
+      console.error('Build failed:');
+      for (const msg of error.errors) {
+        if ('position' in msg) {
+          console.error(
+            `${msg.message} at ${msg.position?.file}:${msg.position?.line}:${msg.position?.column}`
+          );
+        } else {
+          console.error(msg.message);
+        }
+      }
+    }
+    ```
+    @example Set up Node.js target with specific configurations
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/server.ts'],
+      outdir: './dist',
+      target: 'node',
+      format: 'cjs',
+      sourcemap: 'external',
+      minify: false,
+      packages: 'external'
+    });
+    ```
+    *
+    * @example Configure experimental CSS bundling with multiple themes
+    ```ts
+    await Bun.build({
+      entrypoints: [
+        './src/styles.css',
+        './src/themes/dark.css',
+        './src/themes/light.css'
+      ],
+      outdir: './dist/css',
+      experimentalCss: true
+    });
+    ```
+    @example Define compile-time constants and version information
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      define: {
+        'process.env.NODE_ENV': JSON.stringify('production'),
+        'CONSTANTS.VERSION': JSON.stringify('1.0.0'),
+        'CONSTANTS.BUILD_TIME': JSON.stringify(new Date().toISOString())
+      }
+    });
+    ```
+    @example Create a custom plugin for handling special file types
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      plugins: [
+        {
+          name: 'my-plugin',
+          setup(build) {
+            build.onLoad({ filter: /\.custom$/ }, async (args) => {
+              const content = await Bun.file(args.path).text();
+              return {
+                contents: `export default ${JSON.stringify(content)}`,
+                loader: 'js'
+              };
+            });
+          }
+        }
+      ]
+    });
+    ```
+    @example Enable bytecode generation for faster startup
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/server.ts'],
+      outdir: './dist',
+      target: 'bun',
+      format: 'cjs',
+      bytecode: true
+    });
+    ```
+    @example Add custom banner and footer to output files
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      banner: '"use client";\n// Built with Bun',
+      footer: '// Generated on ' + new Date().toISOString()
+    });
+    ```
+    @example Configure CDN public path for asset loading
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      publicPath: 'https://cdn.example.com/assets/',
+      loader: {
+        '.png': 'file',
+        '.svg': 'file'
+      }
+    });
+    ```
+    @example Set up package export conditions for different environments
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      conditions: ['production', 'browser', 'module'],
+      packages: 'external'
+    });
+    ```
+  */
+  function build(config: BuildConfig): Promise<BuildOutput>;
   /**
    * A status that represents the outcome of a sent message.
    *
@@ -4948,6 +5191,21 @@ declare module "bun" {
    */
   const isMainThread: boolean;
 
+  /**
+   * Used when importing an HTML file at runtime.
+   *
+   * @example
+   *
+   * ```ts
+   * import app from "./index.html";
+   * ```
+   *
+   * Bun.build support for this isn't imlpemented yet.
+   */
+  interface HTMLBundle {
+    index: string;
+  }
+
   interface Socket<Data = undefined> extends Disposable {
     /**
      * Write `data` to the socket
@@ -5116,6 +5374,7 @@ declare module "bun" {
      * socket has been destroyed, `null` will be returned.
      */
     getCertificate(): PeerCertificate | object | null;
+    getX509Certificate(): X509Certificate | undefined;
 
     /**
      * Returns an object containing information on the negotiated cipher suite.
@@ -5154,6 +5413,7 @@ declare module "bun" {
      * @return A certificate object.
      */
     getPeerCertificate(): PeerCertificate;
+    getPeerX509Certificate(): X509Certificate;
 
     /**
      * See [SSL\_get\_shared\_sigalgs](https://www.openssl.org/docs/man1.1.1/man3/SSL_get_shared_sigalgs.html) for more information.
@@ -6417,9 +6677,67 @@ declare module "bun" {
      */
     timestamp?: number | Date,
   ): Buffer;
-}
 
-// extends lib.dom.d.ts
-interface BufferEncodingOption {
-  encoding?: BufferEncoding;
+  /**
+   * Types for `bun.lock`
+   */
+  type BunLockFile = {
+    lockfileVersion: 0;
+    workspaces: {
+      [workspace: string]: BunLockFileWorkspacePackage;
+    };
+    overrides?: Record<string, string>;
+    patchedDependencies?: Record<string, string>;
+    trustedDependencies?: string[];
+
+    /**
+     * ```
+     * INFO = { prod/dev/optional/peer dependencies, os, cpu, libc (TODO), bin, binDir }
+     *
+     * npm         -> [ "name@version", registry (TODO: remove if default), INFO, integrity]
+     * symlink     -> [ "name@link:path", INFO ]
+     * folder      -> [ "name@file:path", INFO ]
+     * workspace   -> [ "name@workspace:path", INFO ]
+     * tarball     -> [ "name@tarball", INFO ]
+     * root        -> [ "name@root:", { bin, binDir } ]
+     * git         -> [ "name@git+repo", INFO, .bun-tag string (TODO: remove this) ]
+     * github      -> [ "name@github:user/repo", INFO, .bun-tag string (TODO: remove this) ]
+     * ```
+     * */
+    packages: {
+      [pkg: string]: BunLockFilePackageArray;
+    };
+  };
+
+  type BunLockFileBasePackageInfo = {
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+    optionalDependencies?: Record<string, string>;
+    peerDependencies?: Record<string, string>;
+    optionalPeers?: string[];
+  };
+
+  type BunLockFileWorkspacePackage = BunLockFileBasePackageInfo & {
+    name?: string;
+    version?: string;
+  };
+
+  type BunLockFilePackageInfo = BunLockFileBasePackageInfo & {
+    os?: string | string[];
+    cpu?: string | string[];
+    bin?: Record<string, string>;
+    binDir?: string;
+    bundled?: true;
+  };
+
+  /** @see {@link BunLockFile.packages} for more info */
+  type BunLockFilePackageArray =
+    /** npm */
+    | [pkg: string, registry: string, info: BunLockFilePackageInfo, integrity: string]
+    /** symlink, folder, tarball, workspace */
+    | [pkg: string, info: BunLockFilePackageInfo]
+    /** git, github */
+    | [pkg: string, info: BunLockFilePackageInfo, bunTag: string]
+    /** root */
+    | [pkg: string, info: Pick<BunLockFilePackageInfo, "bin" | "binDir">];
 }

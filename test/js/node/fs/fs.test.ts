@@ -584,8 +584,8 @@ describe("mkdirSync", () => {
   });
 
   it("should throw ENOENT for empty string", () => {
-    expect(() => mkdirSync("", { recursive: true })).toThrow("No such file or directory");
-    expect(() => mkdirSync("")).toThrow("No such file or directory");
+    expect(() => mkdirSync("", { recursive: true })).toThrow("no such file or directory");
+    expect(() => mkdirSync("")).toThrow("no such file or directory");
   });
 
   it("throws for invalid options", () => {
@@ -673,7 +673,7 @@ it("promises.readFile", async () => {
       expect.unreachable();
     } catch (e: any) {
       expect(e).toBeInstanceOf(Error);
-      expect(e.message).toBe("No such file or directory");
+      expect(e.message).toBe("ENOENT: no such file or directory, open '/i-dont-exist'");
       expect(e.code).toBe("ENOENT");
       expect(e.errno).toBe(-2);
       expect(e.path).toBe("/i-dont-exist");
@@ -1004,10 +1004,10 @@ it("statSync throwIfNoEntry", () => {
 
 it("statSync throwIfNoEntry: true", () => {
   const path = join(tmpdirSync(), "does", "not", "exist");
-  expect(() => statSync(path, { throwIfNoEntry: true })).toThrow("No such file or directory");
-  expect(() => statSync(path)).toThrow("No such file or directory");
-  expect(() => lstatSync(path, { throwIfNoEntry: true })).toThrow("No such file or directory");
-  expect(() => lstatSync(path)).toThrow("No such file or directory");
+  expect(() => statSync(path, { throwIfNoEntry: true })).toThrow("no such file or directory");
+  expect(() => statSync(path)).toThrow("no such file or directory");
+  expect(() => lstatSync(path, { throwIfNoEntry: true })).toThrow("no such file or directory");
+  expect(() => lstatSync(path)).toThrow("no such file or directory");
 });
 
 it("stat == statSync", async () => {
@@ -2425,9 +2425,9 @@ describe("fs/promises", () => {
     const text = await new Response(subprocess.stdout).text();
     const node = JSON.parse(text);
     expect(bun.length).toEqual(node.length);
-    expect([...new Set(node.map(v => v.path))]).toEqual([full]);
-    expect([...new Set(bun.map(v => v.path))]).toEqual([full]);
-    expect(bun.map(v => join(v.path, v.name)).sort()).toEqual(node.map(v => join(v.path, v.name)).sort());
+    expect([...new Set(node.map(v => v.parentPath))]).toEqual([full]);
+    expect([...new Set(bun.map(v => v.parentPath))]).toEqual([full]);
+    expect(bun.map(v => join(v.parentPath, v.name)).sort()).toEqual(node.map(v => join(v.path, v.name)).sort());
   }, 100000);
 
   it("readdir(path, {withFileTypes: true, recursive: true}) produces the same result as Node.js", async () => {
@@ -2695,7 +2695,7 @@ it("fstatSync(decimal)", () => {
   expect(() => fstatSync(eval("-1.0"))).toThrow();
   expect(() => fstatSync(eval("Infinity"))).toThrow();
   expect(() => fstatSync(eval("-Infinity"))).toThrow();
-  expect(() => fstatSync(2147483647 + 1)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" })); // > max int32 is not valid in most C APIs still.
+  expect(() => fstatSync(2147483647 + 1)).toThrow(expect.objectContaining({ code: "ERR_OUT_OF_RANGE" })); // > max int32 is not valid in most C APIs still.
   expect(() => fstatSync(2147483647)).toThrow(expect.objectContaining({ code: "EBADF" })); // max int32 is a valid fd
 });
 
@@ -3279,26 +3279,26 @@ it("new Stats", () => {
 
 it("test syscall errno, issue#4198", () => {
   const path = `${tmpdir()}/non-existent-${Date.now()}.txt`;
-  expect(() => openSync(path, "r")).toThrow("No such file or directory");
-  expect(() => readSync(2147483640, Buffer.alloc(1))).toThrow("Bad file descriptor");
-  expect(() => readlinkSync(path)).toThrow("No such file or directory");
-  expect(() => realpathSync(path)).toThrow("No such file or directory");
-  expect(() => readFileSync(path)).toThrow("No such file or directory");
-  expect(() => renameSync(path, `${path}.2`)).toThrow("No such file or directory");
-  expect(() => statSync(path)).toThrow("No such file or directory");
-  expect(() => unlinkSync(path)).toThrow("No such file or directory");
-  expect(() => rmSync(path)).toThrow("No such file or directory");
-  expect(() => rmdirSync(path)).toThrow("No such file or directory");
-  expect(() => closeSync(2147483640)).toThrow("Bad file descriptor");
+  expect(() => openSync(path, "r")).toThrow("no such file or directory");
+  expect(() => readSync(2147483640, Buffer.alloc(1))).toThrow("bad file descriptor");
+  expect(() => readlinkSync(path)).toThrow("no such file or directory");
+  expect(() => realpathSync(path)).toThrow("no such file or directory");
+  expect(() => readFileSync(path)).toThrow("no such file or directory");
+  expect(() => renameSync(path, `${path}.2`)).toThrow("no such file or directory");
+  expect(() => statSync(path)).toThrow("no such file or directory");
+  expect(() => unlinkSync(path)).toThrow("no such file or directory");
+  expect(() => rmSync(path)).toThrow("no such file or directory");
+  expect(() => rmdirSync(path)).toThrow("no such file or directory");
+  expect(() => closeSync(2147483640)).toThrow("bad file descriptor");
 
   mkdirSync(path);
-  expect(() => mkdirSync(path)).toThrow("File or folder exists");
+  expect(() => mkdirSync(path)).toThrow("file already exists");
   expect(() => unlinkSync(path)).toThrow(
     (
       {
-        "darwin": "Operation not permitted",
-        "linux": "Is a directory",
-        "win32": "Operation not permitted",
+        "darwin": "operation not permitted",
+        "linux": "illegal operation on a directory",
+        "win32": "operation not permitted",
       } as any
     )[process.platform],
   );
@@ -3461,4 +3461,14 @@ it("open mode verification", async () => {
   expect(() => fs.open(__filename, 0, 4294967298.5, () => {})).toThrow(
     RangeError(`The value of "mode" is out of range. It must be an integer. Received 4294967298.5`),
   );
+});
+
+it("fs.mkdirSync recursive should not error when the directory already exists, but should error when its a file", () => {
+  expect(() => mkdirSync(import.meta.dir, { recursive: true })).not.toThrowError();
+  expect(() => mkdirSync(import.meta.path, { recursive: true })).toThrowError();
+});
+
+it("fs.mkdirSync recursive: false should error when the directory already exists, regardless if its a file or dir", () => {
+  expect(() => mkdirSync(import.meta.dir, { recursive: false })).toThrowError();
+  expect(() => mkdirSync(import.meta.path, { recursive: false })).toThrowError();
 });

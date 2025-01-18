@@ -13,7 +13,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const sync = @import("sync.zig");
-const Mutex = @import("./lock.zig").Lock;
+const Mutex = bun.Mutex;
 const Semaphore = sync.Semaphore;
 const Fs = @This();
 const path_handler = @import("./resolver/resolve_path.zig");
@@ -1713,15 +1713,20 @@ pub const Path = struct {
 
     pub fn isJSONCFile(this: *const Path) bool {
         const str = this.name.filename;
-        if (strings.eqlComptime(str, "package.json")) {
+
+        if (strings.eqlComptime(str, "package.json") or strings.eqlComptime(str, "bun.lock")) {
             return true;
         }
 
-        if (!(strings.hasPrefixComptime(str, "tsconfig.") or strings.hasPrefixComptime(str, "jsconfig."))) {
-            return false;
+        if (strings.hasSuffixComptime(str, ".jsonc")) {
+            return true;
         }
 
-        return strings.hasSuffixComptime(str, ".json");
+        if (strings.hasPrefixComptime(str, "tsconfig.") or strings.hasPrefixComptime(str, "jsconfig.")) {
+            return strings.hasSuffixComptime(str, ".json");
+        }
+
+        return false;
     }
 
     pub const PackageRelative = struct {

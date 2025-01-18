@@ -3,7 +3,6 @@
 #include "root.h"
 #include "ActiveDOMObject.h"
 #include "ContextDestructionObserver.h"
-#include "BunBroadcastChannelRegistry.h"
 #include <wtf/CrossThreadTask.h>
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
@@ -12,7 +11,9 @@
 #include <wtf/text/WTFString.h>
 #include <wtf/CompletionHandler.h>
 #include "CachedScript.h"
+#include "wtf/ThreadSafeWeakPtr.h"
 #include <wtf/URL.h>
+#include <wtf/LazyRef.h>
 
 namespace uWS {
 template<bool isServer, bool isClient, typename UserData>
@@ -26,34 +27,25 @@ struct us_loop_t;
 namespace WebCore {
 
 class WebSocket;
+class BunBroadcastChannelRegistry;
 class MessagePort;
 
 class ScriptExecutionContext;
 class EventLoopTask;
 
 using ScriptExecutionContextIdentifier = uint32_t;
+DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ScriptExecutionContext);
 
-class ScriptExecutionContext : public CanMakeWeakPtr<ScriptExecutionContext> {
+class ScriptExecutionContext : public CanMakeWeakPtr<ScriptExecutionContext>, public RefCounted<ScriptExecutionContext> {
+#if ENABLE(MALLOC_BREAKDOWN)
+    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(ScriptExecutionContext);
+#else
     WTF_MAKE_ISO_ALLOCATED(ScriptExecutionContext);
+#endif
 
 public:
-    ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject)
-        : m_vm(vm)
-        , m_globalObject(globalObject)
-        , m_identifier(0)
-        , m_broadcastChannelRegistry(BunBroadcastChannelRegistry::create())
-    {
-        regenerateIdentifier();
-    }
-
-    ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject, ScriptExecutionContextIdentifier identifier)
-        : m_vm(vm)
-        , m_globalObject(globalObject)
-        , m_identifier(identifier)
-        , m_broadcastChannelRegistry(BunBroadcastChannelRegistry::create())
-    {
-        addToContextsMap();
-    }
+    ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject);
+    ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject, ScriptExecutionContextIdentifier identifier);
 
     ~ScriptExecutionContext();
 
@@ -77,6 +69,8 @@ public:
     static ScriptExecutionContext* getScriptExecutionContext(ScriptExecutionContextIdentifier identifier);
     void refEventLoop();
     void unrefEventLoop();
+    using RefCounted::deref;
+    using RefCounted::ref;
 
     const WTF::URL& url() const
     {
@@ -156,7 +150,7 @@ public:
         m_vm = &globalObject->vm();
     }
 
-    BunBroadcastChannelRegistry& broadcastChannelRegistry() { return m_broadcastChannelRegistry; }
+    BunBroadcastChannelRegistry& broadcastChannelRegistry() { return m_broadcastChannelRegistry.get(*this); }
 
     static ScriptExecutionContext* getMainThreadScriptExecutionContext();
 
@@ -166,10 +160,10 @@ private:
     WTF::URL m_url = WTF::URL();
     ScriptExecutionContextIdentifier m_identifier;
 
-    HashSet<MessagePort*> m_messagePorts;
-    HashSet<ContextDestructionObserver*> m_destructionObservers;
+    UncheckedKeyHashSet<MessagePort*> m_messagePorts;
+    UncheckedKeyHashSet<ContextDestructionObserver*> m_destructionObservers;
     Vector<CompletionHandler<void()>> m_processMessageWithMessagePortsSoonHandlers;
-    Ref<BunBroadcastChannelRegistry> m_broadcastChannelRegistry;
+    LazyRef<ScriptExecutionContext, BunBroadcastChannelRegistry> m_broadcastChannelRegistry;
 
     bool m_willProcessMessageWithMessagePortsSoon { false };
 
@@ -202,6 +196,10 @@ public:
             return m_connected_client_websockets_ctx;
         }
     }
+
+#if ASSERT_ENABLED
+    bool m_inScriptExecutionContextDestructor = false;
+#endif
 };
 
 ScriptExecutionContext* executionContext(JSC::JSGlobalObject*);

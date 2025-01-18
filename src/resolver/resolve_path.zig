@@ -2,7 +2,7 @@ const tester = @import("../test/tester.zig");
 const std = @import("std");
 const strings = @import("../string_immutable.zig");
 const FeatureFlags = @import("../feature_flags.zig");
-const default_allocator = @import("../memory_allocator.zig").c_allocator;
+const default_allocator = @import("../allocators/memory_allocator.zig").c_allocator;
 const bun = @import("root").bun;
 const Fs = @import("../fs.zig");
 
@@ -682,13 +682,16 @@ pub fn windowsFilesystemRootT(comptime T: type, path: []const T) []const T {
         }
     }
 
-    // UNC
+    // UNC and device paths
     if (path.len >= 5 and
         Platform.windows.isSeparatorT(T, path[0]) and
         Platform.windows.isSeparatorT(T, path[1]) and
-        !Platform.windows.isSeparatorT(T, path[2]) and
-        path[2] != '.')
+        !Platform.windows.isSeparatorT(T, path[2]))
     {
+        // device path
+        if (path[2] == '.' and Platform.windows.isSeparatorT(T, path[3])) return path[0..4];
+
+        // UNC
         if (bun.strings.indexOfAnyT(T, path[3..], "/\\")) |idx| {
             if (bun.strings.indexOfAnyT(T, path[4 + idx ..], "/\\")) |idx_second| {
                 return path[0 .. idx + idx_second + 4 + 1]; // +1 to skip second separator

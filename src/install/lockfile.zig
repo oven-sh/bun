@@ -41,7 +41,7 @@ const Run = @import("../bun_js.zig").Run;
 const HeaderBuilder = bun.http.HeaderBuilder;
 const Fs = @import("../fs.zig");
 const FileSystem = Fs.FileSystem;
-const Lock = @import("../lock.zig").Lock;
+const Lock = bun.Mutex;
 const URL = @import("../url.zig").URL;
 const AsyncHTTP = bun.http.AsyncHTTP;
 const HTTPChannel = bun.http.HTTPChannel;
@@ -51,7 +51,7 @@ const clap = bun.clap;
 const ExtractTarball = @import("./extract_tarball.zig");
 const Npm = @import("./npm.zig");
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const z_allocator = @import("../memory_allocator.zig").z_allocator;
+const z_allocator = @import("../allocators/memory_allocator.zig").z_allocator;
 const Lockfile = @This();
 
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
@@ -689,7 +689,7 @@ pub const Tree = struct {
             lockfile: *const Lockfile,
             manager: if (method == .filter) *const PackageManager else void,
             sort_buf: std.ArrayListUnmanaged(DependencyID) = .{},
-            workspace_filters: if (method == .filter) []const WorkspaceFilter else void = if (method == .filter) &.{} else {},
+            workspace_filters: if (method == .filter) []const WorkspaceFilter else void = if (method == .filter) &.{},
             install_root_dependencies: if (method == .filter) bool else void,
             path_buf: []u8,
 
@@ -1300,7 +1300,7 @@ pub fn cleanWithLogger(
     exact_versions: bool,
     comptime log_level: PackageManager.Options.LogLevel,
 ) !*Lockfile {
-    var timer: if (log_level.isVerbose()) std.time.Timer else void = if (comptime log_level.isVerbose()) try std.time.Timer.start() else {};
+    var timer: if (log_level.isVerbose()) std.time.Timer else void = if (comptime log_level.isVerbose()) try std.time.Timer.start();
 
     const old_trusted_dependencies = old.trusted_dependencies;
     const old_scripts = old.scripts;
@@ -1616,7 +1616,7 @@ pub fn hoist(
         Tree.invalid_id,
         method,
         &builder,
-        if (method == .filter) manager.options.log_level else {},
+        if (method == .filter) manager.options.log_level,
     );
 
     // This goes breadth-first
@@ -1626,7 +1626,7 @@ pub fn hoist(
             item.hoist_root_id,
             method,
             &builder,
-            if (method == .filter) manager.options.log_level else {},
+            if (method == .filter) manager.options.log_level,
         );
     }
 
@@ -2508,7 +2508,7 @@ pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbo
 
     const file = switch (File.openat(std.fs.cwd(), tmpname, bun.O.CREAT | bun.O.WRONLY, 0o777)) {
         .err => |err| {
-            Output.err(err, "failed to create temporary file to save lockfile\n{}", .{});
+            Output.err(err, "failed to create temporary file to save lockfile", .{});
             Global.crash();
         },
         .result => |f| f,
@@ -2518,7 +2518,7 @@ pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbo
         .err => |e| {
             file.close();
             _ = bun.sys.unlink(tmpname);
-            Output.err(e, "failed to write lockfile\n{}", .{});
+            Output.err(e, "failed to write lockfile", .{});
             Global.crash();
         },
         .result => {},
@@ -2534,7 +2534,7 @@ pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbo
             .err => |err| {
                 file.close();
                 _ = bun.sys.unlink(tmpname);
-                Output.err(err, "failed to change lockfile permissions\n{}", .{});
+                Output.err(err, "failed to change lockfile permissions", .{});
                 Global.crash();
             },
             .result => {},

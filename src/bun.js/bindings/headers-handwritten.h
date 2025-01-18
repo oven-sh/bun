@@ -124,6 +124,7 @@ typedef struct SystemError {
     BunString message;
     BunString path;
     BunString syscall;
+    BunString hostname;
     int fd;
     BunString dest;
 } SystemError;
@@ -182,11 +183,11 @@ typedef struct ZigStackTrace {
 } ZigStackTrace;
 
 typedef struct ZigException {
-    unsigned char code;
+    unsigned char type;
     uint16_t runtime_type;
     int errno_;
     BunString syscall;
-    BunString code_;
+    BunString system_code;
     BunString path;
     BunString name;
     BunString message;
@@ -336,8 +337,8 @@ extern "C" JSC::EncodedJSValue Bun__runVirtualModule(
 extern "C" JSC::JSInternalPromise* Bun__transpileFile(
     void* bunVM,
     JSC::JSGlobalObject* global,
-    const BunString* specifier,
-    const BunString* referrer,
+    BunString* specifier,
+    BunString* referrer,
     const BunString* typeAttribute,
     ErrorableResolvedSource* result, bool allowPromise);
 

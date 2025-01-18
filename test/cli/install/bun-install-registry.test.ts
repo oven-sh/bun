@@ -329,6 +329,7 @@ ${iniInner.join("\n")}
 
     const ini = /* ini */ `
 registry = http://localhost:${port}/
+@needs-auth:registry=http://localhost:${port}/
 //localhost:${port}/:_authToken=${await generateRegistryUser("bilbo_swaggins", "verysecure")}
 `;
 
@@ -338,6 +339,7 @@ registry = http://localhost:${port}/
       main: "index.js",
       version: "1.0.0",
       dependencies: {
+        "no-deps": "1.0.0",
         "@needs-auth/test-pkg": "1.0.0",
       },
       "publishConfig": {
@@ -1968,6 +1970,25 @@ test("--lockfile-only", async () => {
   expect((await Bun.file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234")).toBe(
     firstLockfile,
   );
+
+  // --silent works
+  const {
+    stdout,
+    stderr,
+    exited: exited2,
+  } = spawn({
+    cmd: [bunExe(), "install", "--lockfile-only", "--silent"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  expect(await exited2).toBe(0);
+  const out = await Bun.readableStreamToText(stdout);
+  const err = await Bun.readableStreamToText(stderr);
+  expect(out).toBe("");
+  expect(err).toBe("");
 });
 
 describe("bundledDependencies", () => {

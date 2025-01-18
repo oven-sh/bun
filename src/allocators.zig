@@ -267,7 +267,7 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
     };
 }
 
-const Mutex = @import("./lock.zig").Lock;
+const Mutex = bun.Mutex;
 
 /// Append-only list.
 /// Stores an initial count in .bss section of the object file

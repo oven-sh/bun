@@ -95,8 +95,8 @@ public:
     Vector<RefPtr<PerformanceEntry>> getEntriesByName(const String& name, const String& entryType) const;
     void appendBufferedEntriesByType(const String& entryType, Vector<RefPtr<PerformanceEntry>>&, PerformanceObserver&) const;
 
-    // void clearResourceTimings();
-    // void setResourceTimingBufferSize(unsigned);
+    void clearResourceTimings();
+    void setResourceTimingBufferSize(unsigned);
 
     ExceptionOr<Ref<PerformanceMark>> mark(JSC::JSGlobalObject&, const String& markName, std::optional<PerformanceMarkOptions>&&);
     void clearMarks(const String& markName);
@@ -107,9 +107,11 @@ public:
 
     // void addNavigationTiming(DocumentLoader&, Document&, CachedResource&, const DocumentLoadTiming&, const NetworkLoadMetrics&);
     // void navigationFinished(const NetworkLoadMetrics&);
-    // void addResourceTiming(ResourceTiming&&);
+    void addResourceTiming(ResourceTiming&&);
 
     // void reportFirstContentfulPaint();
+
+    size_t memoryCost() const;
 
     void removeAllObservers();
     void registerPerformanceObserver(PerformanceObserver&);
@@ -145,7 +147,7 @@ private:
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
 
-    // bool isResourceTimingBufferFull() const;
+    bool isResourceTimingBufferFull() const;
     // void resourceTimingBufferFullTimerFired();
 
     void queueEntry(PerformanceEntry&);
@@ -155,14 +157,14 @@ private:
     mutable RefPtr<PerformanceTiming> m_timing;
 
     // https://w3c.github.io/resource-timing/#extensions-performance-interface recommends size of 150.
-    // Vector<RefPtr<PerformanceEntry>> m_resourceTimingBuffer;
-    // unsigned m_resourceTimingBufferSize { 150 };
+    Vector<RefPtr<PerformanceEntry>> m_resourceTimingBuffer;
+    unsigned m_resourceTimingBufferSize { 150 };
 
     // Timer m_resourceTimingBufferFullTimer;
-    // Vector<RefPtr<PerformanceEntry>> m_backupResourceTimingBuffer;
+    Vector<RefPtr<PerformanceEntry>> m_backupResourceTimingBuffer;
 
     // https://w3c.github.io/resource-timing/#dfn-resource-timing-buffer-full-flag
-    // bool m_resourceTimingBufferFullFlag { false };
+    bool m_resourceTimingBufferFullFlag { false };
     bool m_waitingForBackupBufferToBeProcessed { false };
     bool m_hasScheduledTimingBufferDeliveryTask { false };
 

@@ -3,6 +3,12 @@ const std = @import("std");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 
+const netdb = if (bun.Environment.isWindows) .{
+    .AI_V4MAPPED = @as(c_int, 2048),
+    .AI_ADDRCONFIG = @as(c_int, 1024),
+    .AI_ALL = @as(c_int, 256),
+} else @cImport(@cInclude("netdb.h"));
+
 pub const GetAddrInfo = struct {
     name: []const u8 = "",
     port: u16 = 0,
@@ -74,27 +80,30 @@ pub const GetAddrInfo = struct {
             if (value.isObject()) {
                 var options = Options{};
 
-                if (value.getOwn(globalObject, "family")) |family| {
+                if (try value.get(globalObject, "family")) |family| {
                     options.family = try Family.fromJS(family, globalObject);
                 }
 
-                if (value.getOwn(globalObject, "socketType") orelse value.getOwn(globalObject, "socktype")) |socktype| {
+                if (try value.get(globalObject, "socketType") orelse try value.get(globalObject, "socktype")) |socktype| {
                     options.socktype = try SocketType.fromJS(socktype, globalObject);
                 }
 
-                if (value.getOwn(globalObject, "protocol")) |protocol| {
+                if (try value.get(globalObject, "protocol")) |protocol| {
                     options.protocol = try Protocol.fromJS(protocol, globalObject);
                 }
 
-                if (value.getOwn(globalObject, "backend")) |backend| {
+                if (try value.get(globalObject, "backend")) |backend| {
                     options.backend = try Backend.fromJS(backend, globalObject);
                 }
 
-                if (value.getOwn(globalObject, "flags")) |flags| {
+                if (try value.get(globalObject, "flags")) |flags| {
                     if (!flags.isNumber())
                         return error.InvalidFlags;
 
                     options.flags = flags.coerce(i32, globalObject);
+
+                    if (options.flags & ~(netdb.AI_ALL | netdb.AI_ADDRCONFIG | netdb.AI_V4MAPPED) != 0)
+                        return error.InvalidFlags;
                 }
 
                 return options;
@@ -346,7 +355,10 @@ pub const GetAddrInfo = struct {
 
         pub fn toJS(this: *const Result, globalThis: *JSC.JSGlobalObject) JSValue {
             const obj = JSC.JSValue.createEmptyObject(globalThis, 3);
-            obj.put(globalThis, JSC.ZigString.static("address"), addressToJS(&this.address, globalThis));
+            obj.put(globalThis, JSC.ZigString.static("address"), addressToJS(&this.address, globalThis) catch |err| return switch (err) {
+                error.JSError => .zero,
+                error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
+            });
             obj.put(globalThis, JSC.ZigString.static("family"), switch (this.address.any.family) {
                 std.posix.AF.INET => JSValue.jsNumber(4),
                 std.posix.AF.INET6 => JSValue.jsNumber(6),
@@ -359,9 +371,7 @@ pub const GetAddrInfo = struct {
 };
 const String = bun.String;
 const default_allocator = bun.default_allocator;
-pub fn addressToString(
-    address: *const std.net.Address,
-) !bun.String {
+pub fn addressToString(address: *const std.net.Address) bun.OOM!bun.String {
     switch (address.any.family) {
         std.posix.AF.INET => {
             var self = address.in;
@@ -394,16 +404,9 @@ pub fn addressToString(
     }
 }
 
-pub fn addressToJS(
-    address: *const std.net.Address,
-    globalThis: *JSC.JSGlobalObject,
-) JSC.JSValue {
-    const str = addressToString(address) catch {
-        globalThis.throwOutOfMemory();
-        return .zero;
-    };
-    defer str.deref();
-    return str.toJS(globalThis);
+pub fn addressToJS(address: *const std.net.Address, globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
+    var str = addressToString(address) catch return globalThis.throwOutOfMemory();
+    return str.transferToJS(globalThis);
 }
 
 fn addrInfoCount(addrinfo: *std.c.addrinfo) u32 {

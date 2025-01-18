@@ -33,19 +33,16 @@ pub const Resolution = css.css_values.resolution.Resolution;
 pub const AnimationName = css.css_properties.animation.AnimationName;
 const ComponentParser = css.css_values.color.ComponentParser;
 
+const SupportsCondition = css.SupportsCondition;
+const ColorFallbackKind = css.ColorFallbackKind;
+
 const ArrayList = std.ArrayListUnmanaged;
 
 /// PERF: nullable optimization
 pub const TokenList = struct {
-    v: std.ArrayListUnmanaged(TokenOrValue),
+    v: std.ArrayListUnmanaged(TokenOrValue) = .{},
 
     const This = @This();
-
-    pub fn deepClone(this: *const TokenList, allocator: Allocator) TokenList {
-        return .{
-            .v = css.deepClone(TokenOrValue, allocator, &this.v),
-        };
-    }
 
     pub fn deinit(this: *TokenList, allocator: Allocator) void {
         for (this.v.items) |*token_or_value| {
@@ -76,9 +73,9 @@ pub const TokenList = struct {
                     has_whitespace = false;
                 },
                 .url => |url| {
-                    if (dest.dependencies != null and is_custom_property and !url.isAbsolute()) {
+                    if (dest.dependencies != null and is_custom_property and !url.isAbsolute(try dest.getImportRecords())) {
                         return dest.newError(css.PrinterErrorKind{
-                            .ambiguous_url_in_custom_property = .{ .url = url.url },
+                            .ambiguous_url_in_custom_property = .{ .url = (try dest.getImportRecords()).at(url.import_record_idx).path.pretty },
                         }, url.loc);
                     }
                     try url.toCss(W, dest);
@@ -179,10 +176,10 @@ pub const TokenList = struct {
     ) PrintErr!bool {
         if (!dest.minify and
             i != this.v.items.len - 1 and
-            this.v.items[i + 1] == .token and switch (this.v.items[i + 1].token) {
+            !(this.v.items[i + 1] == .token and switch (this.v.items[i + 1].token) {
             .comma, .close_paren => true,
             else => false,
-        }) {
+        })) {
             // Whitespace is removed during parsing, so add it back if we aren't minifying.
             try dest.writeChar(' ');
             return true;
@@ -603,6 +600,113 @@ pub const TokenList = struct {
 
         return .{ .result = {} };
     }
+
+    pub fn getFallback(this: *const TokenList, allocator: Allocator, kind: ColorFallbackKind) @This() {
+        var tokens = TokenList{};
+        tokens.v.ensureTotalCapacity(allocator, this.v.items.len) catch bun.outOfMemory();
+        for (this.v.items, tokens.v.items[0..this.v.items.len]) |*old, *new| {
+            new.* = switch (old.*) {
+                .color => |*color| TokenOrValue{ .color = color.getFallback(allocator, kind) },
+                .function => |*f| TokenOrValue{ .function = f.getFallback(allocator, kind) },
+                .@"var" => |*v| TokenOrValue{ .@"var" = v.getFallback(allocator, kind) },
+                .env => |*e| TokenOrValue{ .env = e.getFallback(allocator, kind) },
+                else => old.deepClone(allocator),
+            };
+        }
+        tokens.v.items.len = this.v.items.len;
+        return tokens;
+    }
+
+    pub const Fallbacks = struct { SupportsCondition, TokenList };
+    pub fn getFallbacks(this: *const TokenList, allocator: Allocator, targets: css.targets.Targets) css.SmallList(Fallbacks, 2) {
+        // Get the full list of possible fallbacks, and remove the lowest one, which will replace
+        // the original declaration. The remaining fallbacks need to be added as @supports rules.
+        var fallbacks = this.getNecessaryFallbacks(targets);
+        const lowest_fallback = fallbacks.lowest();
+        fallbacks.remove(lowest_fallback);
+
+        var res = css.SmallList(Fallbacks, 2){};
+        if (fallbacks.contains(ColorFallbackKind.P3)) {
+            res.appendAssumeCapacity(.{
+                ColorFallbackKind.P3.supportsCondition(),
+                this.getFallback(allocator, ColorFallbackKind.P3),
+            });
+        }
+
+        if (fallbacks.contains(ColorFallbackKind.LAB)) {
+            res.appendAssumeCapacity(.{
+                ColorFallbackKind.LAB.supportsCondition(),
+                this.getFallback(allocator, ColorFallbackKind.LAB),
+            });
+        }
+
+        if (!lowest_fallback.isEmpty()) {
+            for (this.v.items) |*token_or_value| {
+                switch (token_or_value.*) {
+                    .color => |*color| {
+                        color.* = color.getFallback(allocator, lowest_fallback);
+                    },
+                    .function => |*f| {
+                        f.* = f.getFallback(allocator, lowest_fallback);
+                    },
+                    .@"var" => |*v| {
+                        if (v.fallback) |*fallback| {
+                            fallback.* = fallback.getFallback(allocator, lowest_fallback);
+                        }
+                    },
+                    .env => |*v| {
+                        if (v.fallback) |*fallback| {
+                            fallback.* = fallback.getFallback(allocator, lowest_fallback);
+                        }
+                    },
+                    else => {},
+                }
+            }
+        }
+
+        return res;
+    }
+
+    pub fn getNecessaryFallbacks(this: *const TokenList, targets: css.targets.Targets) ColorFallbackKind {
+        var fallbacks = ColorFallbackKind.empty();
+        for (this.v.items) |*token_or_value| {
+            switch (token_or_value.*) {
+                .color => |*color| {
+                    fallbacks.insert(color.getPossibleFallbacks(targets));
+                },
+                .function => |*f| {
+                    fallbacks.insert(f.arguments.getNecessaryFallbacks(targets));
+                },
+                .@"var" => |*v| {
+                    if (v.fallback) |*fallback| {
+                        fallbacks.insert(fallback.getNecessaryFallbacks(targets));
+                    }
+                },
+                .env => |*v| {
+                    if (v.fallback) |*fallback| {
+                        fallbacks.insert(fallback.getNecessaryFallbacks(targets));
+                    }
+                },
+                else => {},
+            }
+        }
+
+        return fallbacks;
+    }
+
+    pub fn eql(lhs: *const TokenList, rhs: *const TokenList) bool {
+        return css.generic.eqlList(TokenOrValue, &lhs.v, &rhs.v);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
+
+    pub fn deepClone(this: *const TokenList, allocator: Allocator) TokenList {
+        return .{
+            .v = css.deepClone(TokenOrValue, allocator, &this.v),
+        };
+    }
 };
 pub const TokenListFns = TokenList;
 
@@ -621,6 +725,10 @@ pub const UnresolvedColor = union(enum) {
         b: f32,
         /// The unresolved alpha component.
         alpha: TokenList,
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
+        pub fn __generateHash() void {}
     },
     /// An hsl() color.
     HSL: struct {
@@ -632,6 +740,10 @@ pub const UnresolvedColor = union(enum) {
         l: f32,
         /// The unresolved alpha component.
         alpha: TokenList,
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
+        pub fn __generateHash() void {}
     },
     /// The light-dark() function.
     light_dark: struct {
@@ -639,8 +751,22 @@ pub const UnresolvedColor = union(enum) {
         light: TokenList,
         /// The dark value.
         dark: TokenList,
+
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
+
+        pub fn __generateHash() void {}
     },
     const This = @This();
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
 
     pub fn deepClone(this: *const This, allocator: Allocator) This {
         return switch (this.*) {
@@ -893,13 +1019,6 @@ pub const Variable = struct {
 
     const This = @This();
 
-    pub fn deepClone(this: *const Variable, allocator: Allocator) Variable {
-        return .{
-            .name = this.name,
-            .fallback = if (this.fallback) |*fallback| fallback.deepClone(allocator) else null,
-        };
-    }
-
     pub fn deinit(this: *Variable, allocator: Allocator) void {
         if (this.fallback) |*fallback| {
             fallback.deinit(allocator);
@@ -941,6 +1060,28 @@ pub const Variable = struct {
         }
         return try dest.writeChar(')');
     }
+
+    pub fn getFallback(this: *const Variable, allocator: Allocator, kind: ColorFallbackKind) @This() {
+        return Variable{
+            .name = this.name,
+            .fallback = if (this.fallback) |*fallback| fallback.getFallback(allocator, kind) else null,
+        };
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
+
+    pub fn deepClone(this: *const Variable, allocator: Allocator) Variable {
+        return .{
+            .name = this.name,
+            .fallback = if (this.fallback) |*fallback| fallback.deepClone(allocator) else null,
+        };
+    }
 };
 
 /// A CSS environment variable reference.
@@ -952,14 +1093,6 @@ pub const EnvironmentVariable = struct {
     indices: ArrayList(CSSInteger) = ArrayList(CSSInteger){},
     /// A fallback value in case the variable is not defined.
     fallback: ?TokenList,
-
-    pub fn deepClone(this: *const EnvironmentVariable, allocator: Allocator) EnvironmentVariable {
-        return .{
-            .name = this.name,
-            .indices = this.indices.clone(allocator) catch bun.outOfMemory(),
-            .fallback = if (this.fallback) |*fallback| fallback.deepClone(allocator) else null,
-        };
-    }
 
     pub fn deinit(this: *EnvironmentVariable, allocator: Allocator) void {
         this.indices.deinit(allocator);
@@ -1036,6 +1169,30 @@ pub const EnvironmentVariable = struct {
 
         return try dest.writeChar(')');
     }
+
+    pub fn getFallback(this: *const EnvironmentVariable, allocator: Allocator, kind: ColorFallbackKind) @This() {
+        return EnvironmentVariable{
+            .name = this.name,
+            .indices = this.indices.clone(allocator) catch bun.outOfMemory(),
+            .fallback = if (this.fallback) |*fallback| fallback.getFallback(allocator, kind) else null,
+        };
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
+
+    pub fn deepClone(this: *const EnvironmentVariable, allocator: Allocator) EnvironmentVariable {
+        return .{
+            .name = this.name,
+            .indices = this.indices.clone(allocator) catch bun.outOfMemory(),
+            .fallback = if (this.fallback) |*fallback| fallback.deepClone(allocator) else null,
+        };
+    }
 };
 
 /// A CSS environment variable name.
@@ -1046,6 +1203,13 @@ pub const EnvironmentVariableName = union(enum) {
     custom: DashedIdentReference,
     /// An unknown environment variable.
     unknown: CustomIdent,
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
 
     pub fn parse(input: *css.Parser) Result(EnvironmentVariableName) {
         if (input.tryParse(UAEnvironmentVariable.parse, .{}).asValue()) |ua| {
@@ -1101,6 +1265,10 @@ pub const UAEnvironmentVariable = enum {
     @"viewport-segment-right",
 
     pub usingnamespace css.DefineEnumProperty(@This());
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
 /// A custom CSS function.
@@ -1111,13 +1279,6 @@ pub const Function = struct {
     arguments: TokenList,
 
     const This = @This();
-
-    pub fn deepClone(this: *const Function, allocator: Allocator) Function {
-        return .{
-            .name = this.name,
-            .arguments = this.arguments.deepClone(allocator),
-        };
-    }
 
     pub fn deinit(this: *Function, allocator: Allocator) void {
         this.arguments.deinit(allocator);
@@ -1133,6 +1294,28 @@ pub const Function = struct {
         try dest.writeChar('(');
         try this.arguments.toCss(W, dest, is_custom_property);
         return try dest.writeChar(')');
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
+
+    pub fn deepClone(this: *const Function, allocator: Allocator) Function {
+        return .{
+            .name = this.name,
+            .arguments = this.arguments.deepClone(allocator),
+        };
+    }
+
+    pub fn getFallback(this: *const Function, allocator: Allocator, kind: ColorFallbackKind) @This() {
+        return Function{
+            .name = this.name.deepClone(allocator),
+            .arguments = this.arguments.getFallback(allocator, kind),
+        };
     }
 };
 
@@ -1164,6 +1347,14 @@ pub const TokenOrValue = union(enum) {
     dashed_ident: DashedIdent,
     /// An animation name.
     animation_name: AnimationName,
+
+    pub fn eql(lhs: *const TokenOrValue, rhs: *const TokenOrValue) bool {
+        return css.implementEql(TokenOrValue, lhs, rhs);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
 
     pub fn deepClone(this: *const TokenOrValue, allocator: Allocator) TokenOrValue {
         return switch (this.*) {
@@ -1233,6 +1424,19 @@ pub const UnparsedProperty = struct {
 
         return .{ .result = .{ .property_id = property_id, .value = value } };
     }
+
+    /// Returns a new UnparsedProperty with the same value and the given property id.
+    pub fn withPropertyId(this: *const @This(), allocator: Allocator, property_id: css.PropertyId) UnparsedProperty {
+        return UnparsedProperty{ .property_id = property_id, .value = this.value.deepClone(allocator) };
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
 /// A CSS custom property, representing any unknown property.
@@ -1273,6 +1477,14 @@ pub const CustomProperty = struct {
             .value = value,
         } };
     }
+
+    pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
 /// A CSS custom property name.
@@ -1299,6 +1511,14 @@ pub const CustomPropertyName = union(enum) {
             .custom => |custom| return custom.v,
             .unknown => |unknown| return unknown.v,
         }
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
     }
 };
 

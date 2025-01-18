@@ -128,6 +128,7 @@ optionx(CACHE_PATH FILEPATH "The path to the cache directory" DEFAULT ${BUILD_PA
 optionx(CACHE_STRATEGY "read-write|read-only|write-only|none" "The strategy to use for caching" DEFAULT "read-write")
 
 optionx(CI BOOL "If CI is enabled" DEFAULT OFF)
+optionx(ENABLE_ANALYSIS BOOL "If static analysis targets should be enabled" DEFAULT OFF)
 
 if(CI)
   set(WARNING FATAL_ERROR)
@@ -144,9 +145,6 @@ endif()
 
 optionx(VENDOR_PATH FILEPATH "The path to the vendor directory" DEFAULT ${CWD}/vendor)
 optionx(TMP_PATH FILEPATH "The path to the temporary directory" DEFAULT ${BUILD_PATH}/tmp)
-
-optionx(FRESH BOOL "Set when --fresh is used" DEFAULT OFF)
-optionx(CLEAN BOOL "Set when --clean is used" DEFAULT OFF)
 
 # --- Helper functions ---
 
@@ -293,7 +291,7 @@ function(find_command)
       set_property(GLOBAL PROPERTY ${FIND_NAME} "${exe}: ${reason}" APPEND)
 
       if(version)
-        satisfies_range(${version} ${${FIND_VERSION_VARIABLE}} ${variable})
+        satisfies_range(${version} ${FIND_VERSION} ${variable})
         set(${variable} ${${variable}} PARENT_SCOPE)
       endif()
     endfunction()
@@ -371,7 +369,7 @@ function(register_command)
   if(CMD_ENVIRONMENT)
     set(CMD_COMMAND ${CMAKE_COMMAND} -E env ${CMD_ENVIRONMENT} ${CMD_COMMAND})
   endif()
-  
+
   if(NOT CMD_COMMENT)
     string(JOIN " " CMD_COMMENT ${CMD_COMMAND})
   endif()
@@ -521,7 +519,7 @@ function(parse_package_json)
     set(NPM_NODE_MODULES)
     set(NPM_NODE_MODULES_PATH ${NPM_CWD}/node_modules)
     set(NPM_NODE_MODULES_PROPERTIES "devDependencies" "dependencies")
-    
+
     foreach(property ${NPM_NODE_MODULES_PROPERTIES})
       string(JSON NPM_${property} ERROR_VARIABLE error GET "${NPM_PACKAGE_JSON}" "${property}")
       if(error MATCHES "not found")
@@ -877,7 +875,7 @@ function(register_compiler_flags)
       if(NOT COMPILER_TARGETS)
         add_compile_options($<$<COMPILE_LANGUAGE:${lang}>:${flag}>)
       endif()
-      
+
       foreach(target ${COMPILER_TARGETS})
         get_target_property(type ${target} TYPE)
         if(type MATCHES "EXECUTABLE|LIBRARY")
@@ -889,7 +887,7 @@ function(register_compiler_flags)
 endfunction()
 
 function(register_compiler_definitions)
-  
+
 endfunction()
 
 # register_linker_flags()

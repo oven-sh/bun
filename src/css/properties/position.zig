@@ -44,4 +44,64 @@ pub const Position = union(enum) {
     sticky: css.VendorPrefix,
     /// The box is taken out of the document flow and positioned in reference to the page viewport.
     fixed,
+
+    pub fn parse(input: *css.Parser) css.Result(Position) {
+        const location = input.currentSourceLocation();
+        const ident = switch (input.expectIdent()) {
+            .err => |e| return .{ .err = e },
+            .result => |v| v,
+        };
+
+        const PositionKeyword = enum {
+            static,
+            relative,
+            absolute,
+            fixed,
+            sticky,
+            @"-webkit-sticky",
+        };
+
+        const keyword_map = bun.ComptimeStringMap(PositionKeyword, .{
+            .{ "static", .static },
+            .{ "relative", .relative },
+            .{ "absolute", .absolute },
+            .{ "fixed", .fixed },
+            .{ "sticky", .sticky },
+            .{ "-webkit-sticky", .@"-webkit-sticky" },
+        });
+
+        const keyword = keyword_map.get(ident) orelse {
+            return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
+        };
+
+        return .{ .result = switch (keyword) {
+            .static => .static,
+            .relative => .relative,
+            .absolute => .absolute,
+            .fixed => .fixed,
+            .sticky => .{ .sticky = css.VendorPrefix{ .none = true } },
+            .@"-webkit-sticky" => .{ .sticky = css.VendorPrefix{ .webkit = true } },
+        } };
+    }
+
+    pub fn toCss(this: *const Position, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+        return switch (this.*) {
+            .static => dest.writeStr("static"),
+            .relative => dest.writeStr("relative"),
+            .absolute => dest.writeStr("absolute"),
+            .fixed => dest.writeStr("fixed"),
+            .sticky => |prefix| {
+                try prefix.toCss(W, dest);
+                return dest.writeStr("sticky");
+            },
+        };
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };

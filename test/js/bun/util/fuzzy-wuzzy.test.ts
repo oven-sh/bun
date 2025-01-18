@@ -21,6 +21,7 @@ const ENABLE_LOGGING = false;
 
 import { describe, test } from "bun:test";
 import { isWindows } from "harness";
+import { EventEmitter } from "events";
 
 const Promise = globalThis.Promise;
 globalThis.Promise = function (...args) {
@@ -219,6 +220,9 @@ function callAllMethods(object) {
   for (const methodName of allThePropertyNames(object, callBanned)) {
     try {
       try {
+        if (object instanceof EventEmitter) {
+          object?.on?.("error", () => {});
+        }
         const returnValue = wrap(Reflect.apply(object?.[methodName], object, []));
         Bun.inspect?.(returnValue), queue.push(returnValue);
       } catch (e) {
@@ -245,6 +249,9 @@ function callAllMethods(object) {
             continue;
           }
           seen.add(method);
+          if (value instanceof EventEmitter) {
+            value?.on?.("error", () => {});
+          }
           const returnValue = wrap(Reflect?.apply?.(method, value, []));
           if (returnValue?.then) {
             continue;

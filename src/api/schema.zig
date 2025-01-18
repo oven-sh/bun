@@ -1,6 +1,7 @@
 const std = @import("std");
 const bun = @import("root").bun;
 const js_ast = bun.JSAst;
+const OOM = bun.OOM;
 
 pub const Reader = struct {
     const Self = @This();
@@ -341,7 +342,7 @@ pub const Api = struct {
         dataurl,
         text,
         sqlite,
-
+        html,
         _,
 
         pub fn jsonStringify(self: @This(), writer: anytype) !void {
@@ -1630,10 +1631,12 @@ pub const Api = struct {
         origin: ?[]const u8 = null,
 
         /// absolute_working_dir
-        absolute_working_dir: ?[]const u8 = null,
+        absolute_working_dir: ?[:0]const u8 = null,
 
         /// define
         define: ?StringMap = null,
+
+        drop: []const []const u8 = &.{},
 
         /// preserve_symlinks
         preserve_symlinks: ?bool = null,
@@ -1749,9 +1752,7 @@ pub const Api = struct {
                     15 => {
                         this.target = try reader.readValue(Target);
                     },
-                    16 => {
-                        this.serve = try reader.readValue(bool);
-                    },
+                    16 => {},
                     17 => {
                         this.env_files = try reader.readArray([]const u8);
                     },
@@ -2815,7 +2816,7 @@ pub const Api = struct {
 
             fn expectString(this: *Parser, expr: js_ast.Expr) !void {
                 switch (expr.data) {
-                    .e_string, .e_utf8_string => {},
+                    .e_string => {},
                     else => {
                         this.log.addErrorFmt(this.source, expr.loc, this.allocator, "expected string but received {}", .{
                             @as(js_ast.Expr.Tag, expr.data),
@@ -2825,11 +2826,11 @@ pub const Api = struct {
                 }
             }
 
-            pub fn parseRegistryURLString(this: *Parser, str: *js_ast.E.String) !Api.NpmRegistry {
+            pub fn parseRegistryURLString(this: *Parser, str: *js_ast.E.String) OOM!Api.NpmRegistry {
                 return try this.parseRegistryURLStringImpl(str.data);
             }
 
-            pub fn parseRegistryURLStringImpl(this: *Parser, str: []const u8) !Api.NpmRegistry {
+            pub fn parseRegistryURLStringImpl(this: *Parser, str: []const u8) OOM!Api.NpmRegistry {
                 const url = bun.URL.parse(str);
                 var registry = std.mem.zeroes(Api.NpmRegistry);
 
@@ -2975,6 +2976,15 @@ pub const Api = struct {
 
         /// concurrent_scripts
         concurrent_scripts: ?u32 = null,
+
+        cafile: ?[]const u8 = null,
+
+        save_text_lockfile: ?bool = null,
+
+        ca: ?union(enum) {
+            str: []const u8,
+            list: []const []const u8,
+        } = null,
 
         pub fn decode(reader: anytype) anyerror!BunInstall {
             var this = std.mem.zeroes(BunInstall);

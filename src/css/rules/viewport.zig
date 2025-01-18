@@ -31,4 +31,8 @@ pub const ViewportRule = struct {
         try dest.writeStr("viewport");
         try this.declarations.toCssBlock(W, dest);
     }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };

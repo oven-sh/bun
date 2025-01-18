@@ -387,9 +387,9 @@ declare module "bun:test" {
     /**
      * Marks this test as to be written or to be fixed.
      *
-     * When a test function is passed, it will be marked as `todo` in the test results
-     * as long the test does not pass. When the test passes, the test will be marked as
-     * `fail` in the results; you will have to remove the `.todo` or check that your test
+     * These tests will not be executed unless the `--todo` flag is passed. With the flag,
+     * if the test passes, the test will be marked as `fail` in the results; you will have to
+     * remove the `.todo` or check that your test
      * is implemented correctly.
      *
      * @param label the label for the test
@@ -1050,7 +1050,7 @@ declare module "bun:test" {
      *
      * @example
      * const o = { a: 'foo', b: 'bar', c: 'baz' };
-  `  * expect(o).toContainAnyValues(['qux', 'foo']);
+     * expect(o).toContainAnyValues(['qux', 'foo']);
      * expect(o).toContainAnyValues(['qux', 'bar']);
      * expect(o).toContainAnyValues(['qux', 'baz']);
      * expect(o).not.toContainAnyValues(['qux']);
@@ -1060,6 +1060,8 @@ declare module "bun:test" {
 
     /**
      * Asserts that an `object` contains all the provided keys.
+     * 
+     * @example
      * expect({ a: 'foo', b: 'bar', c: 'baz' }).toContainKeys(['a', 'b']);
      * expect({ a: 'foo', b: 'bar', c: 'baz' }).toContainKeys(['a', 'b', 'c']);
      * expect({ a: 'foo', b: 'bar', c: 'baz' }).not.toContainKeys(['a', 'b', 'e']);
@@ -1295,6 +1297,57 @@ declare module "bun:test" {
      * @param hint Hint used to identify the snapshot in the snapshot file.
      */
     toMatchSnapshot(propertyMatchers?: object, hint?: string): void;
+    /**
+     * Asserts that a value matches the most recent inline snapshot.
+     *
+     * @example
+     * expect("Hello").toMatchInlineSnapshot();
+     * expect("Hello").toMatchInlineSnapshot(`"Hello"`);
+     *
+     * @param value The latest automatically-updated snapshot value.
+     */
+    toMatchInlineSnapshot(value?: string): void;
+    /**
+     * Asserts that a value matches the most recent inline snapshot.
+     *
+     * @example
+     * expect({ c: new Date() }).toMatchInlineSnapshot({ c: expect.any(Date) });
+     * expect({ c: new Date() }).toMatchInlineSnapshot({ c: expect.any(Date) }, `
+     * {
+     *   "v": Any<Date>,
+     * }
+     * `);
+     *
+     * @param propertyMatchers Object containing properties to match against the value.
+     * @param value The latest automatically-updated snapshot value.
+     */
+    toMatchInlineSnapshot(propertyMatchers?: object, value?: string): void;
+    /**
+     * Asserts that a function throws an error matching the most recent snapshot.
+     *
+     * @example
+     * function fail() {
+     *   throw new Error("Oops!");
+     * }
+     * expect(fail).toThrowErrorMatchingSnapshot();
+     * expect(fail).toThrowErrorMatchingSnapshot("This one should say Oops!");
+     *
+     * @param value The latest automatically-updated snapshot value.
+     */
+    toThrowErrorMatchingSnapshot(hint?: string): void;
+    /**
+     * Asserts that a function throws an error matching the most recent snapshot.
+     *
+     * @example
+     * function fail() {
+     *   throw new Error("Oops!");
+     * }
+     * expect(fail).toThrowErrorMatchingInlineSnapshot();
+     * expect(fail).toThrowErrorMatchingInlineSnapshot(`"Oops!"`);
+     *
+     * @param value The latest automatically-updated snapshot value.
+     */
+    toThrowErrorMatchingInlineSnapshot(value?: string): void;
     /**
      * Asserts that an object matches a subset of properties.
      *

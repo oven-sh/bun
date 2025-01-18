@@ -46,7 +46,7 @@ pub const CssModule = struct {
                     allocator,
                     "{s}",
                     .{source},
-                    config.pattern.segments.items[0] == .hash,
+                    config.pattern.segments.at(0).* == .hash,
                 ));
             }
             break :hashes hashes;
@@ -67,20 +67,74 @@ pub const CssModule = struct {
 
     pub fn deinit(this: *CssModule) void {
         _ = this; // autofix
-        @panic(css.todo_stuff.depth);
+        // TODO: deinit
+    }
+
+    pub fn getReference(this: *CssModule, allocator: Allocator, name: []const u8, source_index: u32) void {
+        const gop = this.exports_by_source_index.items[source_index].getOrPut(allocator, name) catch bun.outOfMemory();
+        if (gop.found_existing) {
+            gop.value_ptr.is_referenced = true;
+        } else {
+            gop.value_ptr.* = CssModuleExport{
+                .name = this.config.pattern.writeToString(allocator, .{}, this.hashes.items[source_index], this.sources.items[source_index], name),
+                .composes = .{},
+                .is_referenced = true,
+            };
+        }
     }
 
     pub fn referenceDashed(
         this: *CssModule,
+        allocator: std.mem.Allocator,
         name: []const u8,
         from: *const ?css.css_properties.css_modules.Specifier,
         source_index: u32,
     ) ?[]const u8 {
-        _ = this; // autofix
-        _ = name; // autofix
-        _ = from; // autofix
-        _ = source_index; // autofix
-        @panic(css.todo_stuff.depth);
+        const reference, const key = if (from.*) |specifier| switch (specifier) {
+            .global => return name[2..],
+            .file => |file| .{
+                CssModuleReference{ .dependency = .{ .name = name[2..], .specifier = file } },
+                file,
+            },
+            .source_index => |dep_source_index| return this.config.pattern.writeToString(
+                allocator,
+                .{},
+                this.hashes.items[dep_source_index],
+                this.sources.items[dep_source_index],
+                name[2..],
+            ),
+        } else {
+            // Local export. Mark as used.
+            const gop = this.exports_by_source_index.items[source_index].getOrPut(allocator, name) catch bun.outOfMemory();
+            if (gop.found_existing) {
+                gop.value_ptr.is_referenced = true;
+            } else {
+                var res = ArrayList(u8){};
+                res.appendSlice(allocator, "--") catch bun.outOfMemory();
+                gop.value_ptr.* = CssModuleExport{
+                    .name = this.config.pattern.writeToString(
+                        allocator,
+                        res,
+                        this.hashes.items[source_index],
+                        this.sources.items[source_index],
+                        name[2..],
+                    ),
+                    .composes = .{},
+                    .is_referenced = true,
+                };
+            }
+            return null;
+        };
+
+        const the_hash = hash(allocator, "{s}_{s}_{s}", .{ this.hashes.items[source_index], name, key }, false);
+
+        this.references.put(
+            allocator,
+            std.fmt.allocPrint(allocator, "--{s}", .{the_hash}) catch bun.outOfMemory(),
+            reference,
+        ) catch bun.outOfMemory();
+
+        return the_hash;
     }
 
     pub fn handleComposes(
@@ -90,12 +144,12 @@ pub const CssModule = struct {
         composes: *const css.css_properties.css_modules.Composes,
         source_index: u32,
     ) css.Maybe(void, css.PrinterErrorKind) {
-        for (selectors.v.items) |*sel| {
+        for (selectors.v.slice()) |*sel| {
             if (sel.len() == 1) {
                 const component: *const css.selector.parser.Component = &sel.components.items[0];
                 switch (component.*) {
                     .class => |id| {
-                        for (composes.names.items) |name| {
+                        for (composes.names.slice()) |name| {
                             const reference: CssModuleReference = if (composes.from) |*specifier|
                                 switch (specifier.*) {
                                     .source_index => |dep_source_index| {
@@ -231,7 +285,7 @@ pub const Pattern = struct {
         closure: anytype,
         comptime writefn: *const fn (@TypeOf(closure), []const u8, replace_dots: bool) void,
     ) void {
-        for (this.segments.items) |*segment| {
+        for (this.segments.slice()) |*segment| {
             switch (segment.*) {
                 .literal => |s| {
                     writefn(closure, s, false);
@@ -397,10 +451,33 @@ pub const CssModuleReference = union(enum) {
 
 // TODO: replace with bun's hash
 pub fn hash(allocator: Allocator, comptime fmt: []const u8, args: anytype, at_start: bool) []const u8 {
-    _ = fmt; // autofix
-    _ = args; // autofix
-    _ = allocator; // autofix
-    _ = at_start; // autofix
-    // @compileError(css.todo_stuff.depth);
-    @panic(css.todo_stuff.depth);
+    const count = std.fmt.count(fmt, args);
+    var stack_fallback = std.heap.stackFallback(128, allocator);
+    const fmt_alloc = if (count <= 128) stack_fallback.get() else allocator;
+    var hasher = bun.Wyhash11.init(0);
+    var fmt_str = std.fmt.allocPrint(fmt_alloc, fmt, args) catch bun.outOfMemory();
+    hasher.update(fmt_str);
+
+    const h: u32 = @truncate(hasher.final());
+    var h_bytes: [4]u8 = undefined;
+    std.mem.writeInt(u32, &h_bytes, h, .little);
+
+    const encode_len = bun.base64.encodeLen(h_bytes[0..]);
+
+    var slice_to_write = if (encode_len <= 128 - @as(usize, @intFromBool(at_start)))
+        allocator.alloc(u8, encode_len + @as(usize, @intFromBool(at_start))) catch bun.outOfMemory()
+    else
+        fmt_str[0..];
+
+    const base64_encoded_hash_len = bun.base64.encode(slice_to_write, &h_bytes);
+
+    const base64_encoded_hash = slice_to_write[0..base64_encoded_hash_len];
+
+    if (at_start and base64_encoded_hash.len > 0 and base64_encoded_hash[0] >= '0' and base64_encoded_hash[0] <= '9') {
+        std.mem.copyBackwards(u8, slice_to_write[1..][0..base64_encoded_hash_len], base64_encoded_hash);
+        slice_to_write[0] = '_';
+        return slice_to_write[0 .. base64_encoded_hash_len + 1];
+    }
+
+    return base64_encoded_hash;
 }

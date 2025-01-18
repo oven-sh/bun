@@ -34,6 +34,27 @@ pub const Resolution = union(enum) {
     // ~toCssImpl
     const This = @This();
 
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
+
+    pub fn eql(this: *const Resolution, other: *const Resolution) bool {
+        return switch (this.*) {
+            .dpi => |*a| switch (other.*) {
+                .dpi => a.* == other.dpi,
+                else => false,
+            },
+            .dpcm => |*a| switch (other.*) {
+                .dpcm => a.* == other.dpcm,
+                else => false,
+            },
+            .dppx => |*a| switch (other.*) {
+                .dppx => a.* == other.dppx,
+                else => false,
+            },
+        };
+    }
+
     pub fn parse(input: *css.Parser) Result(Resolution) {
         // TODO: calc?
         const location = input.currentSourceLocation();

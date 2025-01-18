@@ -13,7 +13,28 @@ pub fn BabyList(comptime Type: type) type {
         cap: u32 = 0,
 
         pub const Elem = Type;
+        pub fn parse(input: *bun.css.Parser) bun.css.Result(ListType) {
+            return switch (input.parseCommaSeparated(Type, bun.css.generic.parseFor(Type))) {
+                .result => |v| return .{ .result = ListType{
+                    .ptr = v.items.ptr,
+                    .len = @intCast(v.items.len),
+                    .cap = @intCast(v.capacity),
+                } },
+                .err => |e| return .{ .err = e },
+            };
+        }
 
+        pub fn toCss(this: *const ListType, comptime W: type, dest: *bun.css.Printer(W)) bun.css.PrintErr!void {
+            return bun.css.to_css.fromBabyList(Type, this, W, dest);
+        }
+
+        pub fn eql(lhs: *const ListType, rhs: *const ListType) bool {
+            if (lhs.len != rhs.len) return false;
+            for (lhs.sliceConst(), rhs.sliceConst()) |*a, *b| {
+                if (!bun.css.generic.eql(Type, a, b)) return false;
+            }
+            return true;
+        }
         pub fn set(this: *@This(), slice_: []Type) void {
             this.ptr = slice_.ptr;
             this.len = @as(u32, @truncate(slice_.len));
@@ -29,6 +50,12 @@ pub fn BabyList(comptime Type: type) type {
             this.* = .{};
         }
 
+        pub fn shrinkAndFree(this: *@This(), allocator: std.mem.Allocator, size: usize) void {
+            var list_ = this.listManaged(allocator);
+            list_.shrinkAndFree(size);
+            this.update(list_);
+        }
+
         pub fn orderedRemove(this: *@This(), index: usize) Type {
             var l = this.list();
             defer this.update(l);
@@ -39,6 +66,12 @@ pub fn BabyList(comptime Type: type) type {
             var l = this.list();
             defer this.update(l);
             return l.swapRemove(index);
+        }
+
+        pub fn sortAsc(
+            this: *@This(),
+        ) void {
+            bun.strings.sortAsc(this.slice());
         }
 
         pub fn contains(this: @This(), item: []const Type) bool {
@@ -77,11 +110,31 @@ pub fn BabyList(comptime Type: type) type {
             };
         }
 
+        fn assertValidDeepClone(comptime T: type) void {
+            return switch (T) {
+                bun.JSAst.Expr, bun.JSAst.G.Property, bun.css.ImportConditions => {},
+                else => {
+                    @compileError("Unsupported type for BabyList.deepClone(): " ++ @typeName(Type));
+                },
+            };
+        }
+
         pub fn deepClone(this: @This(), allocator: std.mem.Allocator) !@This() {
-            if (comptime Type != bun.JSAst.Expr and Type != bun.JSAst.G.Property) @compileError("Unsupported type for BabyList.deepClone()");
+            assertValidDeepClone(Type);
             var list_ = try initCapacity(allocator, this.len);
             for (this.slice()) |item| {
                 list_.appendAssumeCapacity(try item.deepClone(allocator));
+            }
+
+            return list_;
+        }
+
+        /// Same as `deepClone` but doesn't return an error
+        pub fn deepClone2(this: @This(), allocator: std.mem.Allocator) @This() {
+            assertValidDeepClone(Type);
+            var list_ = initCapacity(allocator, this.len) catch bun.outOfMemory();
+            for (this.slice()) |item| {
+                list_.appendAssumeCapacity(item.deepClone(allocator));
             }
 
             return list_;
@@ -251,6 +304,8 @@ pub fn BabyList(comptime Type: type) type {
             var list__ = this.listManaged(allocator);
             const writer = list__.writer();
             try writer.print(fmt, args);
+
+            this.update(list__);
         }
 
         pub fn append(this: *@This(), allocator: std.mem.Allocator, value: []const Type) !void {
@@ -260,6 +315,11 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         pub fn slice(this: ListType) callconv(bun.callconv_inline) []Type {
+            @setRuntimeSafety(false);
+            return this.ptr[0..this.len];
+        }
+
+        pub fn sliceConst(this: *const ListType) callconv(bun.callconv_inline) []const Type {
             @setRuntimeSafety(false);
             return this.ptr[0..this.len];
         }

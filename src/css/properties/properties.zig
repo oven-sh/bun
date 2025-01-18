@@ -31,6 +31,7 @@ pub const masking = @import("./masking.zig");
 pub const outline = @import("./outline.zig");
 pub const overflow = @import("./overflow.zig");
 pub const position = @import("./position.zig");
+pub const prefix_handler = @import("./prefix_handler.zig");
 pub const shape = @import("./shape.zig");
 pub const size = @import("./size.zig");
 pub const svg = @import("./svg.zig");

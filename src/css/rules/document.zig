@@ -51,5 +51,9 @@ pub fn MozDocumentRule(comptime R: type) type {
             try dest.newline();
             try dest.writeChar('}');
         }
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
     };
 }

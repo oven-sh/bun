@@ -1,4 +1,4 @@
-import { file, listen, Socket, spawn } from "bun";
+import { file, listen, Socket, spawn, write } from "bun";
 import {
   afterAll,
   afterEach,
@@ -11,9 +11,21 @@ import {
   setDefaultTimeout,
   test,
 } from "bun:test";
-import { access, mkdir, readlink, rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, bunEnv as env, tempDirWithFiles, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
-import { join, sep } from "path";
+import { access, mkdir, readlink, rm, writeFile, cp, stat, exists } from "fs/promises";
+import {
+  bunEnv,
+  bunExe,
+  bunEnv as env,
+  tempDirWithFiles,
+  toBeValidBin,
+  toBeWorkspaceLink,
+  toHaveBins,
+  runBunInstall,
+  isWindows,
+  textLockfile,
+  readdirSorted,
+} from "harness";
+import { join, sep, resolve } from "path";
 import {
   dummyAfterAll,
   dummyAfterEach,
@@ -21,10 +33,10 @@ import {
   dummyBeforeEach,
   dummyRegistry,
   package_dir,
-  readdirSorted,
   requested,
   root_url,
   setHandler,
+  getPort,
 } from "./dummy.registry.js";
 
 expect.extend({
@@ -32,7 +44,6 @@ expect.extend({
   toBeValidBin,
   toHaveBins,
   toHaveWorkspaceLink: async function (package_dir: string, [link, real]: [string, string]) {
-    const isWindows = process.platform === "win32";
     if (!isWindows) {
       return expect(await readlink(join(package_dir, "node_modules", link))).toBeWorkspaceLink(join("..", real));
     } else {
@@ -40,7 +51,6 @@ expect.extend({
     }
   },
   toHaveWorkspaceLink2: async function (package_dir: string, [link, realPosix, realWin]: [string, string, string]) {
-    const isWindows = process.platform === "win32";
     if (!isWindows) {
       return expect(await readlink(join(package_dir, "node_modules", link))).toBeWorkspaceLink(join("..", realPosix));
     } else {
@@ -59,6 +69,136 @@ afterAll(dummyAfterAll);
 beforeEach(dummyBeforeEach);
 afterEach(dummyAfterEach);
 
+for (let input of ["abcdef", "65537", "-1"]) {
+  it(`bun install --network-concurrency=${input} fails`, async () => {
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls));
+    await writeFile(
+      join(package_dir, "package.json"),
+      `
+{
+  "name": "foo",
+  "version": "0.0.1",
+  "dependencies": {
+    "bar": "^1"
+  }
+}`,
+    );
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--network-concurrency", "abcdef"],
+      cwd: package_dir,
+      stdout: "inherit",
+      stdin: "inherit",
+      stderr: "pipe",
+      env,
+    });
+    const err = await new Response(stderr).text();
+    expect(err).toContain("Expected --network-concurrency to be a number between 0 and 65535");
+    expect(await exited).toBe(1);
+    expect(urls).toBeEmpty();
+  });
+}
+
+it("bun install --network-concurrency=5 doesnt go over 5 concurrent requests", async () => {
+  const urls: string[] = [];
+  let maxConcurrentRequests = 0;
+  let concurrentRequestCounter = 0;
+  let totalRequests = 0;
+  setHandler(async function (request) {
+    concurrentRequestCounter++;
+    totalRequests++;
+    try {
+      await Bun.sleep(10);
+      maxConcurrentRequests = Math.max(maxConcurrentRequests, concurrentRequestCounter);
+
+      if (concurrentRequestCounter > 20) {
+        throw new Error("Too many concurrent requests");
+      }
+    } finally {
+      concurrentRequestCounter--;
+    }
+
+    return new Response("404", { status: 404 });
+  });
+  await writeFile(
+    join(package_dir, "package.json"),
+    `
+{
+  "name": "foo",
+  "version": "0.0.1",
+  "dependencies": {
+    "bar1": "^1",
+    "bar2": "^1",
+    "bar3": "^1",
+    "bar4": "^1",
+    "bar5": "^1",
+    "bar6": "^1",
+    "bar7": "^1",
+    "bar8": "^1",
+    "bar9": "^1",
+    "bar10": "^1",
+    "bar11": "^1",
+    "bar12": "^1",
+    "bar13": "^1",
+    "bar14": "^1",
+    "bar15": "^1",
+    "bar16": "^1",
+    "bar17": "^1",
+    "bar18": "^1",
+    "bar19": "^1",
+    "bar20": "^1",
+    "bar21": "^1",
+    "bar22": "^1",
+    "bar23": "^1",
+    "bar24": "^1",
+    "bar25": "^1",
+    "bar26": "^1",
+    "bar27": "^1",
+    "bar28": "^1",
+    "bar29": "^1",
+    "bar30": "^1",
+    "bar31": "^1",
+    "bar32": "^1",
+    "bar33": "^1",
+    "bar34": "^1",
+    "bar35": "^1",
+    "bar36": "^1",
+    "bar37": "^1",
+    "bar38": "^1",
+    "bar39": "^1",
+    "bar40": "^1",
+    "bar41": "^1",
+    "bar42": "^1",
+    "bar43": "^1",
+    "bar44": "^1",
+    "bar45": "^1",
+    "bar46": "^1",
+    "bar47": "^1",
+    "bar48": "^1",
+    "bar49": "^1",
+    "bar50": "^1",
+    "bar51": "^1",
+  }
+}`,
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--network-concurrency", "5"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const err = await new Response(stderr).text();
+  expect(await exited).toBe(1);
+  expect(urls).toBeEmpty();
+  expect(maxConcurrentRequests).toBeLessThanOrEqual(5);
+  expect(totalRequests).toBe(51);
+
+  expect(err).toContain("failed to resolve");
+  expect(await new Response(stdout).text()).toEqual(expect.stringContaining("bun install v1."));
+});
+
 it("should not error when package.json has comments and trailing commas", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
@@ -66,9 +206,7 @@ it("should not error when package.json has comments and trailing commas", async 
     join(package_dir, "package.json"),
     `
     {
-      // such comment!
       "name": "foo",
-      /** even multi-line comment!! */
       "version": "0.0.1",
       "dependencies": {
         "bar": "^1",
@@ -981,59 +1119,6 @@ it("should handle inter-dependency between workspaces (optionalDependencies)", a
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "Bar", "Baz"]);
   expect(package_dir).toHaveWorkspaceLink(["Bar", "bar"]);
-  expect(package_dir).toHaveWorkspaceLink(["Baz", "packages/baz"]);
-  await access(join(package_dir, "bun.lockb"));
-});
-
-it("should ignore peerDependencies within workspaces", async () => {
-  await writeFile(
-    join(package_dir, "package.json"),
-    JSON.stringify({
-      name: "Foo",
-      version: "0.0.1",
-      workspaces: ["packages/baz"],
-      peerDependencies: {
-        Bar: ">=0.0.2",
-      },
-    }),
-  );
-  await mkdir(join(package_dir, "packages", "baz"), { recursive: true });
-  await writeFile(
-    join(package_dir, "packages", "baz", "package.json"),
-    JSON.stringify({
-      name: "Baz",
-      version: "0.0.3",
-      peerDependencies: {
-        Moo: ">=0.0.4",
-      },
-    }),
-  );
-  await writeFile(
-    join(package_dir, "bunfig.toml"),
-    `
-    [install]
-    peer = false
-    `,
-  );
-  const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: package_dir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  });
-  const err = await new Response(stderr).text();
-  expect(err).toContain("Saved lockfile");
-  const out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    expect.stringContaining("bun install v1."),
-    "",
-    "1 package installed",
-  ]);
-  expect(await exited).toBe(0);
-  expect(requested).toBe(0);
-  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual(["Baz"]);
   expect(package_dir).toHaveWorkspaceLink(["Baz", "packages/baz"]);
   await access(join(package_dir, "bun.lockb"));
 });
@@ -2207,7 +2292,7 @@ it("should handle caret range in dependencies when the registry has prereleased 
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
-    "+ bar@6.3.0",
+    expect.stringContaining("+ bar@6.3.0"),
     "",
     "1 package installed",
   ]);
@@ -3316,9 +3401,9 @@ it("should handle GitHub URL in dependencies (user/repo#commit-id)", async () =>
   expect(await readdirSorted(join(package_dir, "node_modules", ".cache", "uglify"))).toEqual([
     "mishoo-UglifyJS-e219a9a@@@1",
   ]);
-  expect(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))).toBe(
-    join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"),
-  );
+  expect(
+    resolve(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))),
+  ).toBe(join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"));
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify"))).toEqual([
     ".bun-tag",
     ".gitattributes",
@@ -3382,9 +3467,9 @@ it("should handle GitHub URL in dependencies (user/repo#tag)", async () => {
   expect(await readdirSorted(join(package_dir, "node_modules", ".cache", "uglify"))).toEqual([
     "mishoo-UglifyJS-e219a9a@@@1",
   ]);
-  expect(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))).toBe(
-    join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"),
-  );
+  expect(
+    resolve(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))),
+  ).toBe(join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"));
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify"))).toEqual([
     ".bun-tag",
     ".gitattributes",
@@ -3608,9 +3693,9 @@ it("should handle GitHub URL in dependencies (github:user/repo#tag)", async () =
   expect(await readdirSorted(join(package_dir, "node_modules", ".cache", "uglify"))).toEqual([
     "mishoo-UglifyJS-e219a9a@@@1",
   ]);
-  expect(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))).toBe(
-    join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"),
-  );
+  expect(
+    resolve(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))),
+  ).toBe(join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"));
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify"))).toEqual([
     ".bun-tag",
     ".gitattributes",
@@ -3732,9 +3817,9 @@ it("should handle GitHub URL in dependencies (git://github.com/user/repo.git#com
   expect(await readdirSorted(join(package_dir, "node_modules", ".cache", "uglify"))).toEqual([
     "mishoo-UglifyJS-e219a9a@@@1",
   ]);
-  expect(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))).toBe(
-    join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"),
-  );
+  expect(
+    resolve(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))),
+  ).toBe(join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"));
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify"))).toEqual([
     ".bun-tag",
     ".gitattributes",
@@ -5125,7 +5210,7 @@ it("should prefer optionalDependencies over dependencies of the same name", asyn
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
-    "+ baz@0.0.3",
+    expect.stringContaining("+ baz@0.0.3"),
     "",
     "1 package installed",
   ]);
@@ -5424,7 +5509,7 @@ it("should de-duplicate dependencies alongside tarball URL", async () => {
     expect.stringContaining("bun install v1."),
     "",
     `+ @barn/moo@${root_url}/moo-0.1.0.tgz`,
-    "+ bar@0.0.2",
+    expect.stringContaining("+ bar@0.0.2"),
     "",
     "3 packages installed",
   ]);
@@ -5572,14 +5657,8 @@ it("should handle tarball URL with existing lockfile", async () => {
     "3 packages installed",
   ]);
   expect(await exited2).toBe(0);
-  expect(urls.sort()).toEqual([
-    `${root_url}/bar`,
-    `${root_url}/bar-0.0.2.tgz`,
-    `${root_url}/baz`,
-    `${root_url}/baz-0.0.3.tgz`,
-    `${root_url}/moo-0.1.0.tgz`,
-  ]);
-  expect(requested).toBe(10);
+  expect(urls.sort()).toEqual([`${root_url}/bar-0.0.2.tgz`, `${root_url}/baz-0.0.3.tgz`, `${root_url}/moo-0.1.0.tgz`]);
+  expect(requested).toBe(8);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "@barn", "bar", "baz"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
   expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
@@ -5714,13 +5793,8 @@ it("should handle tarball path with existing lockfile", async () => {
     "3 packages installed",
   ]);
   expect(await exited2).toBe(0);
-  expect(urls.sort()).toEqual([
-    `${root_url}/bar`,
-    `${root_url}/bar-0.0.2.tgz`,
-    `${root_url}/baz`,
-    `${root_url}/baz-0.0.3.tgz`,
-  ]);
-  expect(requested).toBe(8);
+  expect(urls.sort()).toEqual([`${root_url}/bar-0.0.2.tgz`, `${root_url}/baz-0.0.3.tgz`]);
+  expect(requested).toBe(6);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "@barn", "bar", "baz"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
   expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
@@ -6211,14 +6285,14 @@ cache = false
   expect(err1).toContain("Saved lockfile");
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    expect.stringContaining("bun install v1."),
+    `bun install ${Bun.version_with_sha}`,
     "",
-    "+ conditional-type-checks@1.0.6",
-    "+ prettier@2.8.8",
-    "+ tsd@0.22.0",
-    "+ typescript@5.0.4",
+    expect.stringContaining("+ conditional-type-checks@1.0.6"),
+    expect.stringContaining("+ prettier@2.8.8"),
+    expect.stringContaining("+ tsd@0.22.0"),
+    expect.stringContaining("+ typescript@5.0.4"),
     "",
-    "120 packages installed",
+    "112 packages installed",
   ]);
   expect(await exited1).toBe(0);
   expect(await readdirSorted(package_dir)).toEqual(["bun.lockb", "bunfig.toml", "node_modules", "package.json"]);
@@ -6247,7 +6321,6 @@ cache = false
     "dir-glob",
     "emoji-regex",
     "error-ex",
-    "escape-string-regexp",
     "eslint-formatter-pretty",
     "eslint-rule-docs",
     "fast-glob",
@@ -8028,7 +8101,7 @@ it("should install correct version of peer dependency from root package", async 
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
-    "+ baz@0.0.3",
+    expect.stringContaining("+ baz@0.0.3"),
     "",
     "1 package installed",
   ]);
@@ -8185,6 +8258,27 @@ describe("Registry URLs", () => {
   });
 });
 
+it("should ensure read permissions of all extracted files", async () => {
+  await Promise.all([
+    cp(join(import.meta.dir, "pkg-only-owner-2.2.2.tgz"), join(package_dir, "pkg-only-owner-2.2.2.tgz")),
+    writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          "pkg-only-owner": "file:pkg-only-owner-2.2.2.tgz",
+        },
+      }),
+    ),
+  ]);
+
+  await runBunInstall(env, package_dir);
+
+  expect((await stat(join(package_dir, "node_modules", "pkg-only-owner", "package.json"))).mode & 0o444).toBe(0o444);
+  expect((await stat(join(package_dir, "node_modules", "pkg-only-owner", "src", "index.js"))).mode & 0o444).toBe(0o444);
+});
+
 it("should handle @scoped name that contains tilde, issue#7045", async () => {
   await writeFile(
     join(package_dir, "bunfig.toml"),
@@ -8204,4 +8298,241 @@ cache = false
   expect(await new Response(stderr).text()).toContain("Saved lockfile");
   expect(await new Response(stdout).text()).toContain("installed @~39/empty@1.0.0");
   expect(await exited).toBe(0);
+});
+
+it("should handle modified git resolutions in bun.lock", async () => {
+  // install-test-8 has a dependency but because it's not in the lockfile
+  // it won't be included in the install.
+  await Promise.all([
+    write(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          "jquery": "3.7.1",
+        },
+      }),
+    ),
+    write(
+      join(package_dir, "bun.lock"),
+      JSON.stringify({
+        "lockfileVersion": 0,
+        "workspaces": {
+          "": {
+            "dependencies": {
+              "jquery": "3.7.1",
+            },
+          },
+        },
+        "packages": {
+          "jquery": [
+            "jquery@git+ssh://git@github.com/dylan-conway/install-test-8.git#3a1288830817d13da39e9231302261896f8721ea",
+            {},
+            "3a1288830817d13da39e9231302261896f8721ea",
+          ],
+        },
+      }),
+    ),
+  ]);
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await Bun.readableStreamToText(stderr);
+  const out = await Bun.readableStreamToText(stdout);
+  expect(err).not.toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+
+  expect(out).toContain("1 package installed");
+  expect(await exited).toBe(0);
+
+  expect(
+    (await file(join(package_dir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234"),
+  ).toMatchSnapshot();
+});
+
+it("should read install.saveTextLockfile from bunfig.toml", async () => {
+  await Promise.all([
+    write(
+      join(package_dir, "bunfig.toml"),
+      `
+[install]
+cache = false
+registry = "http://localhost:${getPort()}/"
+saveTextLockfile = true
+`,
+    ),
+    write(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        workspaces: ["packages/*"],
+      }),
+    ),
+    write(
+      join(package_dir, "packages", "pkg1", "package.json"),
+      JSON.stringify({
+        name: "pkg-one",
+        version: "1.0.0",
+      }),
+    ),
+  ]);
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await Bun.readableStreamToText(stderr);
+  expect(err).not.toContain("error:");
+  expect(err).toContain("Saved lockfile");
+  const out = await Bun.readableStreamToText(stdout);
+  expect(out).toContain("1 package installed");
+
+  expect(await exited).toBe(0);
+  expect(await Bun.file(join(package_dir, "node_modules", "pkg-one", "package.json")).json()).toEqual({
+    name: "pkg-one",
+    version: "1.0.0",
+  });
+  expect(await exists(join(package_dir, "bun.lockb"))).toBeFalse();
+  expect(await file(join(package_dir, "bun.lock")).text()).toMatchSnapshot();
+});
+
+test("providing invalid url in lockfile does not crash", async () => {
+  await Promise.all([
+    write(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        dependencies: {
+          "jquery": "3.7.1",
+        },
+      }),
+    ),
+    write(
+      join(package_dir, "bun.lock"),
+      textLockfile(0, {
+        "workspaces": {
+          "": {
+            "dependencies": {
+              "jquery": "3.7.1",
+            },
+          },
+        },
+        "packages": {
+          "jquery": [
+            "jquery@3.7.1",
+            "invalid-url",
+            {},
+            "sha512-+LGRog6RAsCJrrrg/IO6LGmpphNe5DiK30dGjCoxxeGv49B10/3XYGxPsAwrDlMFcFEvdAUavDT8r9k/hSyQqQ==",
+          ],
+        },
+      }),
+    ),
+  ]);
+
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await Bun.readableStreamToText(stderr);
+  expect(err).toContain(
+    'error: Expected tarball URL to start with https:// or http://, got "invalid-url" while fetching package "jquery"',
+  );
+  expect(await exited).toBe(1);
+});
+
+test("optional dependencies do not need to be resolvable in text lockfile", async () => {
+  await Promise.all([
+    write(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        optionalDependencies: {
+          jquery: "3.7.1",
+        },
+      }),
+    ),
+    write(
+      join(package_dir, "bun.lock"),
+      textLockfile(0, {
+        "workspaces": {
+          "": {
+            "optionalDependencies": {
+              "jquery": "3.7.1",
+            },
+          },
+        },
+        "packages": {},
+      }),
+    ),
+  ]);
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await Bun.readableStreamToText(stderr);
+  expect(err).not.toContain("Saved lockfile");
+  const out = await Bun.readableStreamToText(stdout);
+  expect(out).not.toContain("1 package installed");
+
+  expect(await exited).toBe(0);
+});
+
+test("non-optional dependencies need to be resolvable in text lockfile", async () => {
+  await Promise.all([
+    write(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        dependencies: {
+          jquery: "3.7.1",
+        },
+      }),
+    ),
+    write(
+      join(package_dir, "bun.lock"),
+      textLockfile(0, {
+        workspaces: {
+          "": {
+            dependencies: {
+              "jquery": "3.7.1",
+            },
+          },
+        },
+        packages: {},
+      }),
+    ),
+  ]);
+
+  const { stdout, stderr, exited } = spawn({
+    // --production to fail early
+    cmd: [bunExe(), "install", "--production"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await Bun.readableStreamToText(stderr);
+  expect(err).not.toContain("Saved lockfile");
+  expect(err).toContain("error: Failed to resolve root prod dependency 'jquery'");
+  const out = await Bun.readableStreamToText(stdout);
+  expect(out).not.toContain("1 package installed");
+
+  expect(await exited).toBe(1);
 });

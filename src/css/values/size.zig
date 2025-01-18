@@ -67,6 +67,10 @@ pub fn Size2D(comptime T: type) type {
             };
         }
 
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
+
         pub inline fn valEql(lhs: *const T, rhs: *const T) bool {
             return switch (T) {
                 f32 => lhs.* == rhs.*,

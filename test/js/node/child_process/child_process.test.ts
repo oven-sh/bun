@@ -96,7 +96,7 @@ describe("spawn()", () => {
   it("should disallow invalid filename", () => {
     // @ts-ignore
     expect(() => spawn(123)).toThrow({
-      message: 'The "file" argument must be of type string. Received 123',
+      message: 'The "file" argument must be of type string. Received type number (123)',
       code: "ERR_INVALID_ARG_TYPE",
     });
   });
@@ -195,8 +195,8 @@ describe("spawn()", () => {
   it("should allow us to set env", async () => {
     async function getChildEnv(env: any): Promise<object> {
       const result: string = await new Promise(resolve => {
-        const child = spawn(bunExe(), ["-e", "process.stdout.write(JSON.stringify(process.env))"], { env });
-        child.stdout.on("data", data => {
+        const child = spawn(bunExe(), ["-e", "process.stderr.write(JSON.stringify(process.env))"], { env });
+        child.stderr.on("data", data => {
           resolve(data.toString());
         });
       });
@@ -231,6 +231,7 @@ describe("spawn()", () => {
       {
         argv0: bun,
         stdio: ["inherit", "pipe", "inherit"],
+        env: bunEnv,
       },
     );
     delete process.env.NO_COLOR;
@@ -278,6 +279,33 @@ describe("spawn()", () => {
   it("should spawn a process synchronously", () => {
     const { stdout } = spawnSync("bun", ["-v"], { encoding: "utf8" });
     expect(isValidSemver(stdout.trim())).toBe(true);
+  });
+
+  describe("stdio", () => {
+    it("ignore", () => {
+      const child = spawn(bunExe(), ["-v"], { stdio: "ignore" });
+      expect(!!child).toBe(true);
+      expect(child.stdout).toBeNull();
+      expect(child.stderr).toBeNull();
+    });
+    it("inherit", () => {
+      const child = spawn(bunExe(), ["-v"], { stdio: "inherit" });
+      expect(!!child).toBe(true);
+      expect(child.stdout).toBeNull();
+      expect(child.stderr).toBeNull();
+    });
+    it("pipe", () => {
+      const child = spawn(bunExe(), ["-v"], { stdio: "pipe" });
+      expect(!!child).toBe(true);
+      expect(child.stdout).not.toBeNull();
+      expect(child.stderr).not.toBeNull();
+    });
+    it.todo("overlapped", () => {
+      const child = spawn(bunExe(), ["-v"], { stdio: "overlapped" });
+      expect(!!child).toBe(true);
+      expect(child.stdout).not.toBeNull();
+      expect(child.stderr).not.toBeNull();
+    });
   });
 });
 
@@ -417,3 +445,23 @@ it("it accepts stdio passthrough", async () => {
     throw e;
   }
 }, 10000);
+
+it.if(!isWindows)("spawnSync correctly reports signal codes", () => {
+  const trapCode = `
+    process.kill(process.pid, "SIGTRAP");
+  `;
+
+  const { signal } = spawnSync(bunExe(), ["-e", trapCode]);
+
+  expect(signal).toBe("SIGTRAP");
+});
+
+it("spawnSync(does-not-exist)", () => {
+  const x = spawnSync("does-not-exist");
+  expect(x.error?.code).toEqual("ENOENT");
+  expect(x.error.path).toEqual("does-not-exist");
+  expect(x.signal).toEqual(null);
+  expect(x.output).toEqual([null, null, null]);
+  expect(x.stdout).toEqual(null);
+  expect(x.stderr).toEqual(null);
+});

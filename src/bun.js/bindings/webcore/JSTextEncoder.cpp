@@ -19,6 +19,7 @@
 */
 
 #include "root.h"
+#include "JavaScriptCore/ExceptionScope.h"
 
 #include "JSTextEncoder.h"
 
@@ -378,9 +379,13 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeBody(JSC:
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     EnsureStillAliveScope argument0 = callFrame->argument(0);
+    if (argument0.value().isUndefined()) {
+        auto res = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), 0);
+        RELEASE_AND_RETURN(throwScope, JSValue::encode(res));
+    }
     JSC::JSString* input = argument0.value().toStringOrNull(lexicalGlobalObject);
     JSC::EncodedJSValue res;
-    String str;
+    StringView str;
     if (input->is8Bit()) {
         if (input->isRope()) {
             GCDeferralContext gcDeferralContext(vm);
@@ -388,14 +393,20 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeBody(JSC:
             if (!JSC::JSValue::decode(encodedValue).isUndefined()) {
                 RELEASE_AND_RETURN(throwScope, encodedValue);
             }
+
+            RETURN_IF_EXCEPTION(throwScope, {});
         }
 
-        str = input->value(lexicalGlobalObject);
+        str = input->view(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
         res = TextEncoder__encode8(lexicalGlobalObject, str.span8().data(), str.length());
     } else {
-        str = input->value(lexicalGlobalObject);
+        str = input->view(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
         res = TextEncoder__encode16(lexicalGlobalObject, str.span16().data(), str.length());
     }
+
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     if (UNLIKELY(JSC::JSValue::decode(res).isObject() && JSC::JSValue::decode(res).getObject()->isErrorInstance())) {
         throwScope.throwException(lexicalGlobalObject, JSC::JSValue::decode(res));

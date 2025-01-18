@@ -43,11 +43,11 @@ using namespace JSC;
 static JSValue processBindingConstantsGetOs(VM& vm, JSObject* bindingObject)
 {
     auto globalObject = bindingObject->globalObject();
-    auto osObj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
-    auto dlopenObj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
-    auto errnoObj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
-    auto signalsObj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
-    auto priorityObj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
+    auto osObj = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    auto dlopenObj = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    auto errnoObj = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    auto signalsObj = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    auto priorityObj = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
     osObj->putDirect(vm, Identifier::fromString(vm, "UV_UDP_REUSEADDR"_s), jsNumber(4));
     osObj->putDirect(vm, Identifier::fromString(vm, "dlopen"_s), dlopenObj);
     osObj->putDirect(vm, Identifier::fromString(vm, "errno"_s), errnoObj);
@@ -602,7 +602,7 @@ static JSValue processBindingConstantsGetOs(VM& vm, JSObject* bindingObject)
 static JSValue processBindingConstantsGetTrace(VM& vm, JSObject* bindingObject)
 {
     auto globalObject = bindingObject->globalObject();
-    auto object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 26);
+    auto object = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TRACE_EVENT_PHASE_BEGIN"_s)), jsNumber(66));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TRACE_EVENT_PHASE_END"_s)), jsNumber(69));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TRACE_EVENT_PHASE_COMPLETE"_s)), jsNumber(88));
@@ -635,7 +635,7 @@ static JSValue processBindingConstantsGetTrace(VM& vm, JSObject* bindingObject)
 static JSValue processBindingConstantsGetFs(VM& vm, JSObject* bindingObject)
 {
     auto globalObject = bindingObject->globalObject();
-    auto object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 26);
+    auto object = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "UV_FS_SYMLINK_DIR"_s)), jsNumber(1));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "UV_FS_SYMLINK_JUNCTION"_s)), jsNumber(2));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "O_RDONLY"_s)), jsNumber(O_RDONLY));
@@ -775,7 +775,7 @@ static JSValue processBindingConstantsGetFs(VM& vm, JSObject* bindingObject)
 static JSValue processBindingConstantsGetCrypto(VM& vm, JSObject* bindingObject)
 {
     auto globalObject = bindingObject->globalObject();
-    auto object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype());
+    auto object = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
 #ifdef OPENSSL_VERSION_NUMBER
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "OPENSSL_VERSION_NUMBER"_s)), jsNumber(OPENSSL_VERSION_NUMBER));
 #endif
@@ -978,7 +978,7 @@ static JSValue processBindingConstantsGetCrypto(VM& vm, JSObject* bindingObject)
 static JSValue processBindingConstantsGetZlib(VM& vm, JSObject* bindingObject)
 {
     auto globalObject = bindingObject->globalObject();
-    auto object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype());
+    auto object = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_NO_FLUSH"_s)), jsNumber(Z_NO_FLUSH));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_PARTIAL_FLUSH"_s)), jsNumber(Z_PARTIAL_FLUSH));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_SYNC_FLUSH"_s)), jsNumber(Z_SYNC_FLUSH));

@@ -47,5 +47,5 @@ try {
     throw new Error(result);
   }
 } catch (e) {
-  console.log("synchronously threw:", e.name);
+  console.log(`synchronously threw ${e.name}: message ${JSON.stringify(e.message)}, code ${JSON.stringify(e.code)}`);
 }

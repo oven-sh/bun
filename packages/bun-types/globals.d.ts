@@ -1,5 +1,3 @@
-export {};
-
 type _ReadableStream<T> = typeof globalThis extends {
   onerror: any;
   ReadableStream: infer T;
@@ -137,19 +135,10 @@ type _Body = typeof globalThis extends { onerror: any }
       readonly text: () => Promise<string>;
     };
 
+import { S3FileOptions } from "bun";
 import type { TextDecoder as NodeTextDecoder, TextEncoder as NodeTextEncoder } from "util";
 import type { MessagePort } from "worker_threads";
 import type { WebSocket as _WebSocket } from "ws";
-
-declare module "*.txt" {
-  var text: string;
-  export = text;
-}
-
-declare module "*.toml" {
-  var contents: any;
-  export = contents;
-}
 
 declare global {
   var Bun: typeof import("bun");
@@ -595,8 +584,16 @@ declare global {
        * @default true
        */
       // trackUnmanagedFds?: boolean;
-
       // resourceLimits?: import("worker_threads").ResourceLimits;
+
+      /**
+       * An array of module specifiers to preload in the worker.
+       *
+       * These modules load before the worker's entry point is executed.
+       *
+       * Equivalent to passing the `--preload` CLI argument, but only for this Worker.
+       */
+      preload?: string[] | string | undefined;
     }
 
     interface Worker extends EventTarget, AbstractWorker {
@@ -819,6 +816,11 @@ declare global {
       rejectUnauthorized?: boolean | undefined; // Defaults to true
       checkServerIdentity?: any; // TODO: change `any` to `checkServerIdentity`
     };
+
+    /**
+     * Override the default S3 options
+     */
+    s3?: S3FileOptions;
   }
 
   /**
@@ -1673,7 +1675,36 @@ declare global {
     groupEnd(): void;
     info(...data: any[]): void;
     log(...data: any[]): void;
-    /** Does nothing currently */
+    /**
+     * Try to construct a table with the columns of the properties of `tabularData` (or use `properties`) and rows of `tabularData` and log it. Falls back to just
+     * logging the argument if it can't be parsed as tabular.
+     *
+     * ```js
+     * // These can't be parsed as tabular data
+     * console.table(Symbol());
+     * // Symbol()
+     *
+     * console.table(undefined);
+     * // undefined
+     *
+     * console.table([{ a: 1, b: 'Y' }, { a: 'Z', b: 2 }]);
+     * // ┌────┬─────┬─────┐
+     * // │    │  a  │  b  │
+     * // ├────┼─────┼─────┤
+     * // │  0 │  1  │ 'Y' │
+     * // │  1 │ 'Z' │  2  │
+     * // └────┴─────┴─────┘
+     *
+     * console.table([{ a: 1, b: 'Y' }, { a: 'Z', b: 2 }], ['a']);
+     * // ┌────┬─────┐
+     * // │    │  a  │
+     * // ├────┼─────┤
+     * // │ 0  │  1  │
+     * // │ 1  │ 'Z' │
+     * // └────┴─────┘
+     * ```
+     * @param properties Alternate properties for constructing the table.
+     */
     table(tabularData?: any, properties?: string[]): void;
     /**
      * Begin a timer to log with {@link console.timeEnd}
@@ -1798,10 +1829,10 @@ declare global {
     readonly main: boolean;
 
     /** Alias of `import.meta.dir`. Exists for Node.js compatibility */
-    readonly dirname: string;
+    dirname: string;
 
     /** Alias of `import.meta.path`. Exists for Node.js compatibility */
-    readonly filename: string;
+    filename: string;
   }
 
   /**
@@ -1837,14 +1868,6 @@ declare global {
   interface EventSourceInit {
     withCredentials?: boolean;
   }
-
-  interface EventSource extends Bun.EventSource {}
-  var EventSource: typeof globalThis extends {
-    onerror: any;
-    EventSource: infer T;
-  }
-    ? T
-    : EventSource;
 
   interface PromiseConstructor {
     /**

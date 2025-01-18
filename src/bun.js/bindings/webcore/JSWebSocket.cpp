@@ -212,7 +212,8 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
     int rejectUnauthorized = -1;
     auto headersInit = std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>::ReturnType>();
     if (JSC::JSObject* options = optionsObjectValue.getObject()) {
-        if (JSValue headersValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "headers"_s)))) {
+        const auto& builtinnames = WebCore::builtinNames(vm);
+        if (JSValue headersValue = options->getIfPropertyExists(globalObject, builtinnames.headersPublicName())) {
             if (!headersValue.isUndefinedOrNull()) {
                 headersInit = convert<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>(*lexicalGlobalObject, headersValue);
                 RETURN_IF_EXCEPTION(throwScope, {});
@@ -893,6 +894,12 @@ JSC::GCClient::IsoSubspace* JSWebSocket::subspaceForImpl(JSC::VM& vm)
         [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWebSocket = std::forward<decltype(space)>(space); },
         [](auto& spaces) { return spaces.m_subspaceForWebSocket.get(); },
         [](auto& spaces, auto&& space) { spaces.m_subspaceForWebSocket = std::forward<decltype(space)>(space); });
+}
+
+size_t JSWebSocket::estimatedSize(JSCell* cell, JSC::VM& vm)
+{
+    auto* thisObject = jsCast<JSWebSocket*>(cell);
+    return Base::estimatedSize(cell, vm) + thisObject->wrapped().memoryCost();
 }
 
 void JSWebSocket::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

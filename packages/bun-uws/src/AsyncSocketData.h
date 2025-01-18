@@ -48,6 +48,7 @@ struct BackPressure {
     void clear() {
         pendingRemoval = 0;
         buffer.clear();
+        buffer.shrink_to_fit();
     }
     void reserve(size_t length) {
         buffer.reserve(length + pendingRemoval);

@@ -14,6 +14,14 @@ const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
 pub const DeclarationList = ArrayList(css.Property);
 
+const BackgroundHandler = css.css_properties.background.BackgroundHandler;
+const FallbackHandler = css.css_properties.prefix_handler.FallbackHandler;
+const MarginHandler = css.css_properties.margin_padding.MarginHandler;
+const PaddingHandler = css.css_properties.margin_padding.PaddingHandler;
+const ScrollMarginHandler = css.css_properties.margin_padding.ScrollMarginHandler;
+const InsetHandler = css.css_properties.margin_padding.InsetHandler;
+const SizeHandler = css.css_properties.size.SizeHandler;
+
 /// A CSS declaration block.
 ///
 /// Properties are separated into a list of `!important` declararations,
@@ -29,6 +37,30 @@ pub const DeclarationBlock = struct {
     declarations: ArrayList(css.Property) = .{},
 
     const This = @This();
+
+    const DebugFmt = struct {
+        self: *const DeclarationBlock,
+
+        pub fn format(this: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt; // autofix
+            _ = options; // autofix
+            var arraylist = ArrayList(u8){};
+            const w = arraylist.writer(bun.default_allocator);
+            defer arraylist.deinit(bun.default_allocator);
+            var printer = css.Printer(@TypeOf(w)).new(bun.default_allocator, std.ArrayList(u8).init(bun.default_allocator), w, css.PrinterOptions.default(), null);
+            defer printer.deinit();
+            this.self.toCss(@TypeOf(w), &printer) catch |e| return try writer.print("<error writing declaration block: {s}>\n", .{@errorName(e)});
+            try writer.writeAll(arraylist.items);
+        }
+    };
+
+    pub fn debug(this: *const @This()) DebugFmt {
+        return DebugFmt{ .self = this };
+    }
+
+    pub fn isEmpty(this: *const This) bool {
+        return this.declarations.items.len == 0 and this.important_declarations.items.len == 0;
+    }
 
     pub fn parse(input: *css.Parser, options: *const css.ParserOptions) Result(DeclarationBlock) {
         var important_declarations = DeclarationList{};
@@ -112,6 +144,72 @@ pub const DeclarationBlock = struct {
         dest.dedent();
         try dest.newline();
         return dest.writeChar('}');
+    }
+
+    pub fn minify(
+        this: *This,
+        handler: *DeclarationHandler,
+        important_handler: *DeclarationHandler,
+        context: *css.PropertyHandlerContext,
+    ) void {
+        const handle = struct {
+            inline fn handle(
+                self: *This,
+                ctx: *css.PropertyHandlerContext,
+                hndlr: *DeclarationHandler,
+                comptime decl_field: []const u8,
+                comptime important: bool,
+            ) void {
+                for (@field(self, decl_field).items) |*prop| {
+                    ctx.is_important = important;
+
+                    const handled = hndlr.handleProperty(prop, ctx);
+
+                    if (!handled) {
+                        hndlr.decls.append(ctx.allocator, prop.*) catch bun.outOfMemory();
+                        // replacing with a property which does not require allocation
+                        // to "delete"
+                        prop.* = css.Property{ .all = .@"revert-layer" };
+                    }
+                }
+            }
+        }.handle;
+
+        handle(this, context, important_handler, "important_declarations", true);
+        handle(this, context, handler, "declarations", false);
+
+        handler.finalize(context);
+        important_handler.finalize(context);
+        var old_import = this.important_declarations;
+        var old_declarations = this.declarations;
+        this.important_declarations = .{};
+        this.declarations = .{};
+        defer {
+            old_import.deinit(context.allocator);
+            old_declarations.deinit(context.allocator);
+        }
+        this.important_declarations = important_handler.decls;
+        this.declarations = handler.decls;
+        important_handler.decls = .{};
+        handler.decls = .{};
+    }
+
+    pub fn hashPropertyIds(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        for (this.declarations.items) |*decl| {
+            decl.propertyId().hash(hasher);
+        }
+
+        for (this.important_declarations.items) |*decl| {
+            decl.propertyId().hash(hasher);
+        }
+    }
+
+    pub fn eql(this: *const This, other: *const This) bool {
+        return css.implementEql(@This(), this, other);
+    }
+
+    pub fn deepClone(this: *const This, allocator: std.mem.Allocator) This {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };
 
@@ -200,16 +298,16 @@ pub fn parse_declaration(
     const Closure = struct {
         property_id: css.PropertyId,
         options: *const css.ParserOptions,
-
-        pub fn parsefn(this: *@This(), input2: *css.Parser) Result(css.Property) {
-            return css.Property.parse(this.property_id, input2, this.options);
-        }
     };
     var closure = Closure{
         .property_id = property_id,
         .options = options,
     };
-    const property = switch (input.parseUntilBefore(delimiters, css.Property, &closure, Closure.parsefn)) {
+    const property = switch (input.parseUntilBefore(delimiters, css.Property, &closure, struct {
+        pub fn parseFn(this: *Closure, input2: *css.Parser) Result(css.Property) {
+            return css.Property.parse(this.property_id, input2, this.options);
+        }
+    }.parseFn)) {
         .err => |e| return .{ .err = e },
         .result => |v| v,
     };
@@ -230,7 +328,52 @@ pub fn parse_declaration(
 }
 
 pub const DeclarationHandler = struct {
+    background: BackgroundHandler = .{},
+    size: SizeHandler = .{},
+    margin: MarginHandler = .{},
+    padding: PaddingHandler = .{},
+    scroll_margin: ScrollMarginHandler = .{},
+    inset: InsetHandler = .{},
+    fallback: FallbackHandler = .{},
+    direction: ?css.css_properties.text.Direction,
+    decls: DeclarationList,
+
+    pub fn finalize(this: *DeclarationHandler, context: *css.PropertyHandlerContext) void {
+        const allocator = context.allocator;
+        _ = allocator; // autofix
+        if (this.direction) |direction| {
+            this.direction = null;
+            this.decls.append(context.allocator, css.Property{ .direction = direction }) catch bun.outOfMemory();
+        }
+        // if (this.unicode_bidi) |unicode_bidi| {
+        //     this.unicode_bidi = null;
+        //     this.decls.append(context.allocator, css.Property{ .unicode_bidi = unicode_bidi }) catch bun.outOfMemory();
+        // }
+
+        this.background.finalize(&this.decls, context);
+        this.size.finalize(&this.decls, context);
+        this.margin.finalize(&this.decls, context);
+        this.padding.finalize(&this.decls, context);
+        this.scroll_margin.finalize(&this.decls, context);
+        this.inset.finalize(&this.decls, context);
+        this.fallback.finalize(&this.decls, context);
+    }
+
+    pub fn handleProperty(this: *DeclarationHandler, property: *const css.Property, context: *css.PropertyHandlerContext) bool {
+        // return this.background.handleProperty(property, &this.decls, context);
+        return this.background.handleProperty(property, &this.decls, context) or
+            this.size.handleProperty(property, &this.decls, context) or
+            this.margin.handleProperty(property, &this.decls, context) or
+            this.padding.handleProperty(property, &this.decls, context) or
+            this.scroll_margin.handleProperty(property, &this.decls, context) or
+            this.inset.handleProperty(property, &this.decls, context) or
+            this.fallback.handleProperty(property, &this.decls, context);
+    }
+
     pub fn default() DeclarationHandler {
-        return .{};
+        return .{
+            .decls = .{},
+            .direction = null,
+        };
     }
 };

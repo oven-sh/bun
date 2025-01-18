@@ -1,0 +1,7 @@
+process handle -p true -s false -n false SIGUSR1
+
+command script import misctools/lldb/lldb_pretty_printers.py
+type category enable zig.lang
+type category enable zig.std
+
+command script import misctools/lldb/lldb_webkit.py

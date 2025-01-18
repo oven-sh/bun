@@ -89,26 +89,26 @@ pub fn SelectorBuilder(comptime Impl: type) type {
 
         /// Returns true if combinators have ever been pushed to this builder.
         pub inline fn hasCombinators(this: *This) bool {
-            return this.combinators.items.len > 0;
+            return this.combinators.len() > 0;
         }
 
         /// Completes the current compound selector and starts a new one, delimited
         /// by the given combinator.
         pub inline fn pushCombinator(this: *This, combinator: Combinator) void {
-            this.combinators.append(this.allocator, .{ combinator, this.current_len }) catch unreachable;
+            this.combinators.append(this.allocator, .{ combinator, this.current_len });
             this.current_len = 0;
         }
 
         /// Pushes a simple selector onto the current compound selector.
         pub fn pushSimpleSelector(this: *This, ss: GenericComponent(Impl)) void {
             bun.assert(!ss.isCombinator());
-            this.simple_selectors.append(this.allocator, ss) catch unreachable;
+            this.simple_selectors.append(this.allocator, ss);
             this.current_len += 1;
         }
 
         pub fn addNestingPrefix(this: *This) void {
-            this.combinators.insert(this.allocator, 0, .{ Combinator.descendant, 1 }) catch unreachable;
-            this.simple_selectors.insert(this.allocator, 0, .nesting) catch bun.outOfMemory();
+            this.combinators.insert(this.allocator, 0, .{ Combinator.descendant, 1 });
+            this.simple_selectors.insert(this.allocator, 0, .nesting);
         }
 
         pub fn deinit(this: *This) void {
@@ -125,7 +125,7 @@ pub fn SelectorBuilder(comptime Impl: type) type {
             parsed_slotted: bool,
             parsed_part: bool,
         ) BuildResult {
-            const specifity = compute_specifity(Impl, this.simple_selectors.items);
+            const specifity = compute_specifity(Impl, this.simple_selectors.slice());
             var flags = SelectorFlags.empty();
             // PERF: is it faster to do these ORs all at once
             if (parsed_pseudo) {
@@ -155,8 +155,8 @@ pub fn SelectorBuilder(comptime Impl: type) type {
         ///     as the source.
         pub fn buildWithSpecificityAndFlags(this: *This, spec: SpecifityAndFlags) BuildResult {
             const T = GenericComponent(Impl);
-            const rest: []const T, const current: []const T = splitFromEnd(T, this.simple_selectors.items, this.current_len);
-            const combinators = this.combinators.items;
+            const rest: []const T, const current: []const T = splitFromEnd(T, this.simple_selectors.slice(), this.current_len);
+            const combinators = this.combinators.slice();
             defer {
                 // This function should take every component from `this.simple_selectors`
                 // and place it into `components` and return it.
@@ -165,14 +165,14 @@ pub fn SelectorBuilder(comptime Impl: type) type {
                 // it is safe to just set the length to 0.
                 //
                 // Combinators don't need to be deinitialized because they are simple enums.
-                this.simple_selectors.items.len = 0;
-                this.combinators.items.len = 0;
+                this.simple_selectors.setLen(0);
+                this.combinators.setLen(0);
             }
 
             var components = ArrayList(T){};
 
             var current_simple_selectors_i: usize = 0;
-            var combinator_i: i64 = @as(i64, @intCast(this.combinators.items.len)) - 1;
+            var combinator_i: i64 = @as(i64, @intCast(this.combinators.len())) - 1;
             var rest_of_simple_selectors = rest;
             var current_simple_selectors = current;
 

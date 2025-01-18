@@ -5,14 +5,23 @@ if(NOT ENABLE_CCACHE OR CACHE_STRATEGY STREQUAL "none")
   return()
 endif()
 
+if (CI AND NOT APPLE)
+  setenv(CCACHE_DISABLE 1)
+  return()
+endif()
+
 find_command(
   VARIABLE
     CCACHE_PROGRAM
   COMMAND
     ccache
   REQUIRED
-    ON
+    ${CI}
 )
+
+if(NOT CCACHE_PROGRAM)
+  return()
+endif()
 
 set(CCACHE_ARGS CMAKE_C_COMPILER_LAUNCHER CMAKE_CXX_COMPILER_LAUNCHER)
 foreach(arg ${CCACHE_ARGS})
@@ -34,7 +43,8 @@ setenv(CCACHE_FILECLONE 1)
 setenv(CCACHE_STATSLOG ${BUILD_PATH}/ccache.log)
 
 if(CI)
-  setenv(CCACHE_SLOPPINESS "pch_defines,time_macros,locale,clang_index_store,gcno_cwd,include_file_ctime,include_file_mtime")
+  # FIXME: Does not work on Ubuntu 18.04
+  # setenv(CCACHE_SLOPPINESS "pch_defines,time_macros,locale,clang_index_store,gcno_cwd,include_file_ctime,include_file_mtime")
 else()
   setenv(CCACHE_SLOPPINESS "pch_defines,time_macros,locale,random_seed,clang_index_store,gcno_cwd")
 endif()

@@ -36,6 +36,20 @@ pub const LayerName = struct {
         }, false);
     }
 
+    pub fn deepClone(this: *const LayerName, allocator: std.mem.Allocator) LayerName {
+        return LayerName{
+            .v = this.v.clone(allocator),
+        };
+    }
+
+    pub fn eql(lhs: *const LayerName, rhs: *const LayerName) bool {
+        if (lhs.v.len() != rhs.v.len()) return false;
+        for (lhs.v.slice(), 0..) |part, i| {
+            if (!bun.strings.eql(part, rhs.v.at(@intCast(i)).*)) return false;
+        }
+        return true;
+    }
+
     pub fn parse(input: *css.Parser) Result(LayerName) {
         var parts: css.SmallList([]const u8, 1) = .{};
         const ident = switch (input.expectIdent()) {
@@ -45,7 +59,7 @@ pub const LayerName = struct {
         parts.append(
             input.allocator(),
             ident,
-        ) catch bun.outOfMemory();
+        );
 
         while (true) {
             const Fn = struct {
@@ -59,7 +73,7 @@ pub const LayerName = struct {
                                 .err => |e| return .{ .err = e },
                                 .result => |vvv| vvv,
                             };
-                            if (tok.* == .delim or tok.delim == '.') {
+                            if (tok.* == .delim and tok.delim == '.') {
                                 break :out;
                             }
                             return .{ .err = start_location.newBasicUnexpectedTokenError(tok.*) };
@@ -87,7 +101,7 @@ pub const LayerName = struct {
                 parts.append(
                     input.allocator(),
                     name,
-                ) catch bun.outOfMemory();
+                );
             }
 
             return .{ .result = LayerName{ .v = parts } };
@@ -96,7 +110,7 @@ pub const LayerName = struct {
 
     pub fn toCss(this: *const LayerName, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
         var first = true;
-        for (this.v.items) |name| {
+        for (this.v.slice()) |name| {
             if (first) {
                 first = false;
             } else {
@@ -140,6 +154,10 @@ pub fn LayerBlockRule(comptime R: type) type {
             try dest.newline();
             try dest.writeChar('}');
         }
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
     };
 }
 
@@ -160,5 +178,9 @@ pub const LayerStatementRule = struct {
         try dest.writeStr("@layer ");
         try css.to_css.fromList(LayerName, &this.names, W, dest);
         try dest.writeChar(';');
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };

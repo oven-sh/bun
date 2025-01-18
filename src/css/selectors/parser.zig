@@ -13,6 +13,7 @@ pub const PrintErr = css.PrintErr;
 
 const Result = css.Result;
 const PrintResult = css.PrintResult;
+const SmallList = css.SmallList;
 const ArrayList = std.ArrayListUnmanaged;
 
 const impl = css.selector.impl;
@@ -53,6 +54,18 @@ pub const attrs = struct {
         return struct {
             prefix: Impl.SelectorImpl.NamespacePrefix,
             url: Impl.SelectorImpl.NamespaceUrl,
+
+            pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+                return css.implementEql(@This(), lhs, rhs);
+            }
+
+            pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
+                return css.implementDeepClone(@This(), this, allocator);
+            }
+
+            pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+                return css.implementHash(@This(), this, hasher);
+            }
         };
     }
 
@@ -95,6 +108,18 @@ pub const attrs = struct {
                 }
                 return dest.writeChar(']');
             }
+
+            pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+                return css.implementEql(@This(), lhs, rhs);
+            }
+
+            pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
+                return css.implementDeepClone(@This(), this, allocator);
+            }
+
+            pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+                return css.implementHash(@This(), this, hasher);
+            }
         };
     }
 
@@ -103,6 +128,18 @@ pub const attrs = struct {
             any,
             /// Empty string for no namespace
             specific: NamespaceUrl_,
+
+            pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+                return css.implementEql(@This(), lhs, rhs);
+            }
+
+            pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+                return css.implementHash(@This(), this, hasher);
+            }
+
+            pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
+                return css.implementDeepClone(@This(), this, allocator);
+            }
         };
     }
 
@@ -113,7 +150,23 @@ pub const attrs = struct {
                 operator: AttrSelectorOperator,
                 case_sensitivity: ParsedCaseSensitivity,
                 expected_value: AttrValue,
+
+                pub fn __generateEql() void {}
+                pub fn __generateDeepClone() void {}
+                pub fn __generateHash() void {}
             },
+
+            pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
+                return css.implementDeepClone(@This(), this, allocator);
+            }
+
+            pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+                return css.implementEql(@This(), lhs, rhs);
+            }
+
+            pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+                return css.implementHash(@This(), this, hasher);
+            }
         };
     }
 
@@ -137,6 +190,10 @@ pub const attrs = struct {
                 .substring => "*=",
                 .suffix => "$=",
             });
+        }
+
+        pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+            return css.implementHash(@This(), this, hasher);
         }
     };
 
@@ -339,6 +396,10 @@ fn parse_selector(
         }
 
         if (state.intersects(SelectorParsingState.AFTER_PSEUDO)) {
+            const source_location = input.currentSourceLocation();
+            if (input.next().asValue()) |next| {
+                return .{ .err = source_location.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{ .unexpected_selector_after_pseudo_element = next.* })) };
+            }
             break;
         }
 
@@ -658,6 +719,10 @@ pub const Direction = enum {
     /// Right to left
     rtl,
 
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
+
     pub fn asStr(this: *const @This()) []const u8 {
         return css.enum_property_util.asStr(@This(), this);
     }
@@ -678,11 +743,19 @@ pub const PseudoClass = union(enum) {
     lang: struct {
         /// A list of language codes.
         languages: ArrayList([]const u8),
+
+        pub fn __generateEql() void {}
+        pub fn __generateDeepClone() void {}
+        pub fn __generateHash() void {}
     },
     /// The [:dir()](https://drafts.csswg.org/selectors-4/#the-dir-pseudo) pseudo class.
     dir: struct {
         /// A direction.
         direction: Direction,
+
+        pub fn __generateEql() void {}
+        pub fn __generateDeepClone() void {}
+        pub fn __generateHash() void {}
     },
 
     // https://drafts.csswg.org/selectors-4/#useraction-pseudos
@@ -799,11 +872,19 @@ pub const PseudoClass = union(enum) {
     local: struct {
         /// A local selector.
         selector: *Selector,
+
+        pub fn __generateEql() void {}
+        pub fn __generateDeepClone() void {}
+        pub fn __generateHash() void {}
     },
     /// The CSS modules :global() pseudo class.
     global: struct {
         /// A global selector.
         selector: *Selector,
+
+        pub fn __generateEql() void {}
+        pub fn __generateDeepClone() void {}
+        pub fn __generateHash() void {}
     },
 
     /// A [webkit scrollbar](https://webkit.org/blog/363/styling-scrollbars/) pseudo class.
@@ -813,6 +894,10 @@ pub const PseudoClass = union(enum) {
     custom: struct {
         /// The pseudo class name.
         name: []const u8,
+
+        pub fn __generateEql() void {}
+        pub fn __generateDeepClone() void {}
+        pub fn __generateHash() void {}
     },
     /// An unknown functional pseudo class.
     custom_function: struct {
@@ -820,7 +905,21 @@ pub const PseudoClass = union(enum) {
         name: []const u8,
         /// The arguments of the pseudo class function.
         arguments: css.TokenList,
+
+        pub fn __generateEql() void {}
+        pub fn __generateDeepClone() void {}
+        pub fn __generateHash() void {}
     },
+
+    pub fn isEquivalent(this: *const PseudoClass, other: *const PseudoClass) bool {
+        if (this.* == .fullscreen and other.* == .fullscreen) return true;
+        if (this.* == .any_link and other.* == .any_link) return true;
+        if (this.* == .read_only and other.* == .read_only) return true;
+        if (this.* == .read_write and other.* == .read_write) return true;
+        if (this.* == .placeholder_shown and other.* == .placeholder_shown) return true;
+        if (this.* == .autofill and other.* == .autofill) return true;
+        return this.eql(other);
+    }
 
     pub fn toCss(this: *const PseudoClass, comptime W: type, dest: *Printer(W)) PrintErr!void {
         var s = ArrayList(u8){};
@@ -828,14 +927,48 @@ pub const PseudoClass = union(enum) {
         const writer = s.writer(dest.allocator);
         const W2 = @TypeOf(writer);
         const scratchbuf = std.ArrayList(u8).init(dest.allocator);
-        var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions{});
+        var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions.default(), dest.import_records);
         try serialize.serializePseudoClass(this, W2, &printer, null);
         return dest.writeStr(s.items);
     }
 
+    pub fn eql(lhs: *const PseudoClass, rhs: *const PseudoClass) bool {
+        return css.implementEql(PseudoClass, lhs, rhs);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn getPrefix(this: *const PseudoClass) css.VendorPrefix {
+        return switch (this.*) {
+            inline .fullscreen, .any_link, .read_only, .read_write, .placeholder_shown, .autofill => |p| p,
+            else => css.VendorPrefix.empty(),
+        };
+    }
+
+    pub fn getNecessaryPrefixes(this: *PseudoClass, targets: css.targets.Targets) css.VendorPrefix {
+        const F = css.prefixes.Feature;
+        const p: *css.VendorPrefix, const feature: F = switch (this.*) {
+            .fullscreen => |*p| .{ p, F.pseudo_class_fullscreen },
+            .any_link => |*p| .{ p, F.pseudo_class_any_link },
+            .read_only => |*p| .{ p, F.pseudo_class_read_only },
+            .read_write => |*p| .{ p, F.pseudo_class_read_write },
+            .placeholder_shown => |*p| .{ p, F.pseudo_class_placeholder_shown },
+            .autofill => |*p| .{ p, F.pseudo_class_autofill },
+            else => return css.VendorPrefix.empty(),
+        };
+        p.* = targets.prefixes(p.*, feature);
+        return p.*;
+    }
+
     pub fn isUserActionState(this: *const PseudoClass) bool {
         return switch (this.*) {
-            .active, .hover => true,
+            .active, .hover, .focus, .focus_within, .focus_visible => true,
             else => false,
         };
     }
@@ -897,6 +1030,10 @@ pub const WebKitScrollbarPseudoElement = enum {
     corner,
     /// ::-webkit-resizer
     resizer,
+
+    pub inline fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return lhs.* == rhs.*;
+    }
 };
 
 pub const SelectorParser = struct {
@@ -913,9 +1050,7 @@ pub const SelectorParser = struct {
 
     pub fn parseFunctionalPseudoElement(this: *SelectorParser, name: []const u8, input: *css.Parser) Result(Impl.SelectorImpl.PseudoElement) {
         _ = this; // autofix
-        _ = name; // autofix
-        _ = input; // autofix
-        @panic(css.todo_stuff.depth);
+        return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{ .unsupported_pseudo_class_or_element = name })) };
     }
 
     fn parseIsAndWhere(this: *const SelectorParser) bool {
@@ -924,10 +1059,13 @@ pub const SelectorParser = struct {
     }
 
     /// Whether the given function name is an alias for the `:is()` function.
-    fn parseAnyPrefix(this: *const SelectorParser, name: []const u8) ?css.VendorPrefix {
-        _ = this; // autofix
-        _ = name; // autofix
-        return null;
+    fn parseAnyPrefix(_: *const SelectorParser, name: []const u8) ?css.VendorPrefix {
+        const Map = comptime bun.ComptimeStringMap(css.VendorPrefix, .{
+            .{ "-webkit-any", css.VendorPrefix{ .webkit = true } },
+            .{ "-moz-any", css.VendorPrefix{ .moz = true } },
+        });
+
+        return Map.getAnyCase(name);
     }
 
     pub fn parseNonTsPseudoClass(
@@ -1152,6 +1290,10 @@ pub const SelectorParser = struct {
         return .{ .result = pseudo_class };
     }
 
+    pub fn parseHost(_: *SelectorParser) bool {
+        return true;
+    }
+
     pub fn parseNonTsFunctionalPseudoClass(
         this: *SelectorParser,
         name: []const u8,
@@ -1300,9 +1442,51 @@ pub fn GenericSelectorList(comptime Impl: type) type {
     const SelectorT = GenericSelector(Impl);
     return struct {
         // PERF: make this equivalent to SmallVec<[Selector; 1]>
-        v: ArrayList(SelectorT) = .{},
+        v: css.SmallList(SelectorT, 1) = .{},
 
         const This = @This();
+
+        const DebugFmt = struct {
+            this: *const This,
+
+            pub fn format(this: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+                if (comptime !bun.Environment.isDebug) return;
+                _ = fmt; // autofix
+                _ = options; // autofix
+                try writer.print("SelectorList[\n", .{});
+                const last = this.this.v.len() -| 1;
+                for (this.this.v.slice(), 0..) |*sel, i| {
+                    if (i != last) {
+                        try writer.print(" {}\n", .{sel.debug()});
+                    } else {
+                        try writer.print(" {},\n", .{sel.debug()});
+                    }
+                }
+                try writer.print("]\n", .{});
+            }
+        };
+
+        pub fn debug(this: *const @This()) DebugFmt {
+            return DebugFmt{ .this = this };
+        }
+
+        pub fn anyHasPseudoElement(this: *const This) bool {
+            for (this.v.slice()) |*sel| {
+                if (sel.hasPseudoElement()) return true;
+            }
+            return false;
+        }
+
+        pub fn specifitiesAllEqual(this: *const This) bool {
+            if (this.v.len() == 0) return true;
+            if (this.v.len() == 1) return true;
+
+            const value = this.v.at(0).specifity();
+            for (this.v.slice()[1..]) |*sel| {
+                if (sel.specifity() != value) return false;
+            }
+            return true;
+        }
 
         pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
             _ = this; // autofix
@@ -1347,7 +1531,7 @@ pub fn GenericSelectorList(comptime Impl: type) type {
         ) Result(This) {
             const original_state = state.*;
             // TODO: Think about deinitialization in error cases
-            var values = ArrayList(SelectorT){};
+            var values = SmallList(SelectorT, 1){};
 
             while (true) {
                 const Closure = struct {
@@ -1376,7 +1560,7 @@ pub fn GenericSelectorList(comptime Impl: type) type {
                 const was_ok = selector.isOk();
                 switch (selector) {
                     .result => |sel| {
-                        values.append(input.allocator(), sel) catch bun.outOfMemory();
+                        values.append(input.allocator(), sel);
                     },
                     .err => |e| {
                         switch (recovery) {
@@ -1407,7 +1591,7 @@ pub fn GenericSelectorList(comptime Impl: type) type {
         ) Result(This) {
             const original_state = state.*;
             // TODO: Think about deinitialization in error cases
-            var values = ArrayList(SelectorT){};
+            var values = SmallList(SelectorT, 1){};
 
             while (true) {
                 const Closure = struct {
@@ -1436,7 +1620,7 @@ pub fn GenericSelectorList(comptime Impl: type) type {
                 const was_ok = selector.isOk();
                 switch (selector) {
                     .result => |sel| {
-                        values.append(input.allocator(), sel) catch bun.outOfMemory();
+                        values.append(input.allocator(), sel);
                     },
                     .err => |e| {
                         switch (recovery) {
@@ -1459,8 +1643,20 @@ pub fn GenericSelectorList(comptime Impl: type) type {
 
         pub fn fromSelector(allocator: Allocator, selector: GenericSelector(Impl)) This {
             var result = This{};
-            result.v.append(allocator, selector) catch unreachable;
+            result.v.append(allocator, selector);
             return result;
+        }
+
+        pub fn deepClone(this: *const @This(), allocator: Allocator) This {
+            return .{ .v = this.v.deepClone(allocator) };
+        }
+
+        pub fn eql(lhs: *const This, rhs: *const This) bool {
+            return lhs.v.eql(&rhs.v);
+        }
+
+        pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+            return css.implementHash(@This(), this, hasher);
         }
     };
 }
@@ -1489,10 +1685,70 @@ pub fn GenericSelector(comptime Impl: type) type {
 
         const This = @This();
 
+        const DebugFmt = struct {
+            this: *const This,
+
+            pub fn format(this: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+                if (comptime !bun.Environment.isDebug) return;
+                _ = fmt; // autofix
+                _ = options; // autofix
+                try writer.print("Selector(", .{});
+                var arraylist = ArrayList(u8){};
+                const w = arraylist.writer(bun.default_allocator);
+                defer arraylist.deinit(bun.default_allocator);
+                var printer = css.Printer(@TypeOf(w)).new(bun.default_allocator, std.ArrayList(u8).init(bun.default_allocator), w, css.PrinterOptions.default(), null);
+                defer printer.deinit();
+                css.selector.tocss_servo.toCss_Selector(this.this, @TypeOf(w), &printer) catch |e| return try writer.print("<error writing selector: {s}>\n", .{@errorName(e)});
+                try writer.writeAll(arraylist.items);
+            }
+        };
+
+        pub fn debug(this: *const This) DebugFmt {
+            return DebugFmt{ .this = this };
+        }
+
+        /// Parse a selector, without any pseudo-element.
+        pub fn parse(parser: *SelectorParser, input: *css.Parser) Result(This) {
+            var state = SelectorParsingState.empty();
+            return parse_selector(Impl, parser, input, &state, .none);
+        }
+
         pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
             _ = this; // autofix
             _ = dest; // autofix
             @compileError("Do not call this! Use `serializer.serializeSelector()` or `tocss_servo.toCss_Selector()` instead.");
+        }
+
+        pub fn append(this: *This, allocator: Allocator, component: GenericComponent(Impl)) void {
+            const index = index: {
+                for (this.components.items, 0..) |*comp, i| {
+                    switch (comp.*) {
+                        .combinator, .pseudo_element => break :index i,
+                        else => {},
+                    }
+                }
+                break :index this.components.items.len;
+            };
+            this.components.insert(allocator, index, component) catch bun.outOfMemory();
+        }
+
+        pub fn deepClone(this: *const @This(), allocator: Allocator) This {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
+
+        pub fn eql(this: *const This, other: *const This) bool {
+            return css.implementEql(This, this, other);
+        }
+
+        pub fn hasCombinator(this: *const This) bool {
+            for (this.components.items) |*c| {
+                if (c.* == .combinator and c.combinator.isTreeCombinator()) return true;
+            }
+            return false;
+        }
+
+        pub fn hasPseudoElement(this: *const This) bool {
+            return this.specifity_and_flags.hasPseudoElement();
         }
 
         /// Returns count of simple selectors and combinators in the Selector.
@@ -1516,12 +1772,6 @@ pub fn GenericSelector(comptime Impl: type) type {
 
         pub fn specifity(this: *const This) u32 {
             return this.specifity_and_flags.specificity;
-        }
-
-        /// Parse a selector, without any pseudo-element.
-        pub fn parse(parser: *SelectorParser, input: *css.Parser) Result(This) {
-            var state = SelectorParsingState.empty();
-            return parse_selector(Impl, parser, input, &state, .none);
         }
 
         pub fn parseWithOptions(input: *css.Parser, options: *const css.ParserOptions) Result(This) {
@@ -1552,6 +1802,10 @@ pub fn GenericSelector(comptime Impl: type) type {
                 return result;
             }
         };
+
+        pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+            return css.implementHash(@This(), this, hasher);
+        }
     };
 }
 
@@ -1571,6 +1825,10 @@ pub fn GenericComponent(comptime Impl: type) type {
         namespace: struct {
             prefix: Impl.SelectorImpl.NamespacePrefix,
             url: Impl.SelectorImpl.NamespaceUrl,
+
+            pub fn __generateEql() void {}
+            pub fn __generateDeepClone() void {}
+            pub fn __generateHash() void {}
         },
 
         explicit_universal_type,
@@ -1582,6 +1840,10 @@ pub fn GenericComponent(comptime Impl: type) type {
         attribute_in_no_namespace_exists: struct {
             local_name: Impl.SelectorImpl.LocalName,
             local_name_lower: Impl.SelectorImpl.LocalName,
+
+            pub fn __generateEql() void {}
+            pub fn __generateDeepClone() void {}
+            pub fn __generateHash() void {}
         },
         /// Used only when local_name is already lowercase.
         attribute_in_no_namespace: struct {
@@ -1590,6 +1852,10 @@ pub fn GenericComponent(comptime Impl: type) type {
             value: Impl.SelectorImpl.AttrValue,
             case_sensitivity: attrs.ParsedCaseSensitivity,
             never_matches: bool,
+
+            pub fn __generateEql() void {}
+            pub fn __generateDeepClone() void {}
+            pub fn __generateHash() void {}
         },
         /// Use a Box in the less common cases with more data to keep size_of::<Component>() small.
         attribute_other: *attrs.AttrSelectorWithOptionalNamespace(Impl),
@@ -1643,6 +1909,10 @@ pub fn GenericComponent(comptime Impl: type) type {
         any: struct {
             vendor_prefix: Impl.SelectorImpl.VendorPrefix,
             selectors: []GenericSelector(Impl),
+
+            pub fn __generateEql() void {}
+            pub fn __generateDeepClone() void {}
+            pub fn __generateHash() void {}
         },
         /// The `:has` pseudo-class.
         ///
@@ -1659,10 +1929,19 @@ pub fn GenericComponent(comptime Impl: type) type {
 
         const This = @This();
 
+        pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
+
+        pub fn eql(lhs: *const This, rhs: *const This) bool {
+            return css.implementEql(This, lhs, rhs);
+        }
+
         pub fn format(this: *const This, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             switch (this.*) {
                 .local_name => return try writer.print("local_name={s}", .{this.local_name.name.v}),
                 .combinator => return try writer.print("combinator={}", .{this.combinator}),
+                .pseudo_element => return try writer.print("pseudo_element={}", .{this.pseudo_element}),
                 else => {},
             }
             return writer.print("{s}", .{@tagName(this.*)});
@@ -1699,6 +1978,10 @@ pub fn GenericComponent(comptime Impl: type) type {
             _ = this; // autofix
             _ = dest; // autofix
             @compileError("Do not call this! Use `serializer.serializeComponent()` or `tocss_servo.toCss_Component()` instead.");
+        }
+
+        pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+            return css.implementHash(@This(), this, hasher);
         }
     };
 }
@@ -1786,6 +2069,14 @@ pub const NthSelectorData = struct {
             try dest.writeFmt("{}n{s}{d}", .{ this.a, numberSign(this.b), this.b });
         }
     }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
 };
 
 /// The properties that comprise an :nth- pseudoclass as of Selectors 4 (e.g.,
@@ -1795,6 +2086,18 @@ pub fn NthOfSelectorData(comptime Impl: type) type {
     return struct {
         data: NthSelectorData,
         selectors: []GenericSelector(Impl),
+
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
+
+        pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+            return css.implementHash(@This(), this, hasher);
+        }
+
+        pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
 
         pub fn nthData(this: *const @This()) NthSelectorData {
             return this.data;
@@ -1894,6 +2197,22 @@ pub const SpecifityAndFlags = struct {
     specificity: u32,
     /// There's padding after this field due to the size of the flags.
     flags: SelectorFlags,
+
+    pub fn eql(this: *const SpecifityAndFlags, other: *const SpecifityAndFlags) bool {
+        return this.specificity == other.specificity and this.flags.eql(other.flags);
+    }
+
+    pub fn hasPseudoElement(this: *const SpecifityAndFlags) bool {
+        return this.flags.intersects(SelectorFlags{ .has_pseudo = true });
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 pub const SelectorFlags = packed struct(u8) {
@@ -1952,10 +2271,21 @@ pub const Combinator = enum {
     /// And still supported as an alias for >>> by Vue.
     deep,
 
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return lhs.* == rhs.*;
+    }
+
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
         _ = this; // autofix
         _ = dest; // autofix
         @compileError("Do not call this! Use `serializer.serializeCombinator()` or `tocss_servo.toCss_Combinator()` instead.");
+    }
+
+    pub fn isTreeCombinator(this: *const @This()) bool {
+        return switch (this.*) {
+            .child, .descendant, .next_sibling, .later_sibling => true,
+            else => false,
+        };
     }
 
     pub fn format(this: *const Combinator, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
@@ -1976,6 +2306,7 @@ pub const SelectorParseErrorKind = union(enum) {
     unsupported_pseudo_class_or_element: []const u8,
     no_qualified_name_in_attribute_selector: css.Token,
     unexpected_token_in_attribute_selector: css.Token,
+    unexpected_selector_after_pseudo_element: css.Token,
     invalid_qual_name_in_attr: css.Token,
     expected_bar_in_attr: css.Token,
     empty_selector,
@@ -2017,6 +2348,7 @@ pub const SelectorParseErrorKind = union(enum) {
             .bad_value_in_attr => |token| .{ .bad_value_in_attr = token },
             .explicit_namespace_unexpected_token => |token| .{ .explicit_namespace_unexpected_token = token },
             .unexpected_ident => |ident| .{ .unexpected_ident = ident },
+            .unexpected_selector_after_pseudo_element => |tok| .{ .unexpected_selector_after_pseudo_element = tok },
         };
     }
 };
@@ -2063,11 +2395,19 @@ pub const PseudoElement = union(enum) {
     cue_function: struct {
         /// The selector argument.
         selector: *Selector,
+
+        pub fn __generateEql() void {}
+        pub fn __generateDeepClone() void {}
+        pub fn __generateHash() void {}
     },
     /// The [::cue-region()](https://w3c.github.io/webvtt/#cue-region-selector) functional pseudo element.
     cue_region_function: struct {
         /// The selector argument.
         selector: *Selector,
+
+        pub fn __generateEql() void {}
+        pub fn __generateDeepClone() void {}
+        pub fn __generateHash() void {}
     },
     /// The [::view-transition](https://w3c.github.io/csswg-drafts/css-view-transitions-1/#view-transition) pseudo element.
     view_transition,
@@ -2075,26 +2415,46 @@ pub const PseudoElement = union(enum) {
     view_transition_group: struct {
         /// A part name selector.
         part_name: ViewTransitionPartName,
+
+        pub fn __generateEql() void {}
+        pub fn __generateDeepClone() void {}
+        pub fn __generateHash() void {}
     },
     /// The [::view-transition-image-pair()](https://w3c.github.io/csswg-drafts/css-view-transitions-1/#view-transition-image-pair-pt-name-selector) functional pseudo element.
     view_transition_image_pair: struct {
         /// A part name selector.
         part_name: ViewTransitionPartName,
+
+        pub fn __generateEql() void {}
+        pub fn __generateDeepClone() void {}
+        pub fn __generateHash() void {}
     },
     /// The [::view-transition-old()](https://w3c.github.io/csswg-drafts/css-view-transitions-1/#view-transition-old-pt-name-selector) functional pseudo element.
     view_transition_old: struct {
         /// A part name selector.
         part_name: ViewTransitionPartName,
+
+        pub fn __generateEql() void {}
+        pub fn __generateDeepClone() void {}
+        pub fn __generateHash() void {}
     },
     /// The [::view-transition-new()](https://w3c.github.io/csswg-drafts/css-view-transitions-1/#view-transition-new-pt-name-selector) functional pseudo element.
     view_transition_new: struct {
         /// A part name selector.
         part_name: ViewTransitionPartName,
+
+        pub fn __generateEql() void {}
+        pub fn __generateDeepClone() void {}
+        pub fn __generateHash() void {}
     },
     /// An unknown pseudo element.
     custom: struct {
         /// The name of the pseudo element.
         name: []const u8,
+
+        pub fn __generateEql() void {}
+        pub fn __generateDeepClone() void {}
+        pub fn __generateHash() void {}
     },
     /// An unknown functional pseudo element.
     custom_function: struct {
@@ -2102,7 +2462,57 @@ pub const PseudoElement = union(enum) {
         name: []const u8,
         /// The arguments of the pseudo element function.
         arguments: css.TokenList,
+
+        pub fn __generateEql() void {}
+        pub fn __generateDeepClone() void {}
+        pub fn __generateHash() void {}
     },
+
+    pub fn isEquivalent(this: *const PseudoElement, other: *const PseudoElement) bool {
+        if (this.* == .selection and other.* == .selection) return true;
+        if (this.* == .placeholder and other.* == .placeholder) return true;
+        if (this.* == .backdrop and other.* == .backdrop) return true;
+        if (this.* == .file_selector_button and other.* == .file_selector_button) return true;
+        return this.eql(other);
+    }
+
+    pub fn eql(this: *const PseudoElement, other: *const PseudoElement) bool {
+        return css.implementEql(PseudoElement, this, other);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn getNecessaryPrefixes(this: *PseudoElement, targets: css.targets.Targets) css.VendorPrefix {
+        const F = css.prefixes.Feature;
+        const p: *css.VendorPrefix, const feature: F = switch (this.*) {
+            .selection => |*p| .{ p, F.pseudo_element_selection },
+            .placeholder => |*p| .{ p, F.pseudo_element_placeholder },
+            .backdrop => |*p| .{ p, F.pseudo_element_backdrop },
+            .file_selector_button => |*p| .{ p, F.pseudo_element_file_selector_button },
+            else => return css.VendorPrefix.empty(),
+        };
+
+        p.* = targets.prefixes(p.*, feature);
+
+        return p.*;
+    }
+
+    pub fn getPrefix(this: *const PseudoElement) css.VendorPrefix {
+        return switch (this.*) {
+            .selection, .placeholder, .backdrop, .file_selector_button => |p| p,
+            else => css.VendorPrefix.empty(),
+        };
+    }
+
+    pub fn format(this: *const PseudoElement, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try writer.print("{s}", .{@tagName(this.*)});
+    }
 
     pub fn validAfterSlotted(this: *const PseudoElement) bool {
         return switch (this.*) {
@@ -2141,7 +2551,7 @@ pub const PseudoElement = union(enum) {
         const writer = s.writer(dest.allocator);
         const W2 = @TypeOf(writer);
         const scratchbuf = std.ArrayList(u8).init(dest.allocator);
-        var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions{});
+        var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions.default(), dest.import_records);
         try serialize.serializePseudoElement(this, W2, &printer, null);
         return dest.writeStr(s.items);
     }
@@ -2286,6 +2696,7 @@ pub fn parse_one_simple_selector(
     const S = SimpleSelectorParseResult(Impl);
 
     const start = input.state();
+    const token_location = input.currentSourceLocation();
     const token = switch (input.nextIncludingWhitespace()) {
         .result => |v| v.*,
         .err => {
@@ -2297,7 +2708,7 @@ pub fn parse_one_simple_selector(
     switch (token) {
         .idhash => |id| {
             if (state.intersects(SelectorParsingState.AFTER_PSEUDO)) {
-                return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_state)) };
+                return .{ .err = token_location.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{ .unexpected_selector_after_pseudo_element = .{ .idhash = id } })) };
             }
             const component: GenericComponent(Impl) = .{ .id = .{ .v = id } };
             return .{ .result = S{
@@ -2306,18 +2717,20 @@ pub fn parse_one_simple_selector(
         },
         .open_square => {
             if (state.intersects(SelectorParsingState.AFTER_PSEUDO)) {
-                return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_state)) };
+                return .{ .err = token_location.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{ .unexpected_selector_after_pseudo_element = .open_square })) };
             }
             const Closure = struct {
                 parser: *SelectorParser,
-                pub fn parsefn(this: *@This(), input2: *css.Parser) Result(GenericComponent(Impl)) {
-                    return parse_attribute_selector(Impl, this.parser, input2);
-                }
             };
             var closure = Closure{
                 .parser = parser,
             };
-            const attr = switch (input.parseNestedBlock(GenericComponent(Impl), &closure, Closure.parsefn)) {
+            const attr = switch (input.parseNestedBlock(GenericComponent(Impl), &closure, struct {
+                pub fn parsefn(this: *Closure, input2: *css.Parser) Result(GenericComponent(Impl)) {
+                    return parse_attribute_selector(Impl, this.parser, input2);
+                }
+            }
+                .parsefn)) {
                 .err => |e| return .{ .err = e },
                 .result => |v| v,
             };
@@ -2475,7 +2888,7 @@ pub fn parse_one_simple_selector(
             switch (d) {
                 '.' => {
                     if (state.intersects(SelectorParsingState.AFTER_PSEUDO)) {
-                        return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_state)) };
+                        return .{ .err = token_location.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{ .unexpected_selector_after_pseudo_element = .{ .delim = '.' } })) };
                     }
                     const location = input.currentSourceLocation();
                     const class = switch ((switch (input.nextIncludingWhitespace()) {
@@ -2709,39 +3122,43 @@ pub fn parse_functional_pseudo_class(
     name: []const u8,
     state: *SelectorParsingState,
 ) Result(GenericComponent(Impl)) {
-    // todo_stuff.match_ignore_ascii_case
-    if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "nth-child")) {
-        return parse_nth_pseudo_class(Impl, parser, input, state.*, .child);
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "nth-of-type")) {
-        return parse_nth_pseudo_class(Impl, parser, input, state.*, .of_type);
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "nth-last-child")) {
-        return parse_nth_pseudo_class(Impl, parser, input, state.*, .last_child);
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "nth-last-of-type")) {
-        return parse_nth_pseudo_class(Impl, parser, input, state.*, .last_of_type);
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "nth-col")) {
-        return parse_nth_pseudo_class(Impl, parser, input, state.*, .col);
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "nth-last-col")) {
-        return parse_nth_pseudo_class(Impl, parser, input, state.*, .last_col);
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "is") and parser.parseIsAndWhere()) {
-        return parse_is_or_where(Impl, parser, input, state, GenericComponent(Impl).convertHelper_is, .{});
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "where") and parser.parseIsAndWhere()) {
-        return parse_is_or_where(Impl, parser, input, state, GenericComponent(Impl).convertHelper_where, .{});
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "has")) {
-        return parse_has(Impl, parser, input, state);
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "host")) {
-        if (!state.allowsTreeStructuralPseudoClasses()) {
-            return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_state)) };
+    const FunctionalPseudoClass = enum {
+        @"nth-child",
+        @"nth-of-type",
+        @"nth-last-child",
+        @"nth-last-of-type",
+        @"nth-col",
+        @"nth-last-col",
+        is,
+        where,
+        has,
+        host,
+        not,
+    };
+    const Map = bun.ComptimeEnumMap(FunctionalPseudoClass);
+
+    if (Map.getASCIIICaseInsensitive(name)) |functional_pseudo_class| {
+        switch (functional_pseudo_class) {
+            .@"nth-child" => return parse_nth_pseudo_class(Impl, parser, input, state.*, .child),
+            .@"nth-of-type" => return parse_nth_pseudo_class(Impl, parser, input, state.*, .of_type),
+            .@"nth-last-child" => return parse_nth_pseudo_class(Impl, parser, input, state.*, .last_child),
+            .@"nth-last-of-type" => return parse_nth_pseudo_class(Impl, parser, input, state.*, .last_of_type),
+            .@"nth-col" => return parse_nth_pseudo_class(Impl, parser, input, state.*, .col),
+            .@"nth-last-col" => return parse_nth_pseudo_class(Impl, parser, input, state.*, .last_col),
+            .is => if (parser.parseIsAndWhere()) return parse_is_or_where(Impl, parser, input, state, GenericComponent(Impl).convertHelper_is, .{}),
+            .where => if (parser.parseIsAndWhere()) return parse_is_or_where(Impl, parser, input, state, GenericComponent(Impl).convertHelper_where, .{}),
+            .has => return parse_has(Impl, parser, input, state),
+            .host => if (!state.allowsTreeStructuralPseudoClasses())
+                return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_state)) }
+            else
+                return .{ .result = .{
+                    .host = switch (parse_inner_compound_selector(Impl, parser, input, state)) {
+                        .err => |e| return .{ .err = e },
+                        .result => |v| v,
+                    },
+                } },
+            .not => return parse_negation(Impl, parser, input, state),
         }
-        return .{ .result = .{
-            .host = switch (parse_inner_compound_selector(Impl, parser, input, state)) {
-                .err => |e| return .{ .err = e },
-                .result => |v| v,
-            },
-        } };
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "not")) {
-        return parse_negation(Impl, parser, input, state);
-    } else {
-        //
     }
 
     if (parser.parseAnyPrefix(name)) |prefix| {
@@ -2760,6 +3177,9 @@ pub fn parse_functional_pseudo_class(
     return .{ .result = .{ .non_ts_pseudo_class = result } };
 }
 
+const TreeStructuralPseudoClass = enum { @"first-child", @"last-child", @"only-child", root, empty, scope, host, @"first-of-type", @"last-of-type", @"only-of-type" };
+const TreeStructuralPseudoClassMap = bun.ComptimeEnumMap(TreeStructuralPseudoClass);
+
 pub fn parse_simple_pseudo_class(
     comptime Impl: type,
     parser: *SelectorParser,
@@ -2772,28 +3192,20 @@ pub fn parse_simple_pseudo_class(
     }
 
     if (state.allowsTreeStructuralPseudoClasses()) {
-        // css.todo_stuff.match_ignore_ascii_case
-        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "first-child")) {
-            return .{ .result = .{ .nth = NthSelectorData.first(false) } };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "last-child")) {
-            return .{ .result = .{ .nth = NthSelectorData.last(false) } };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "only-child")) {
-            return .{ .result = .{ .nth = NthSelectorData.only(false) } };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "root")) {
-            return .{ .result = .root };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "empty")) {
-            return .{ .result = .empty };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "scope")) {
-            return .{ .result = .scope };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "host")) {
-            return .{ .result = .{ .host = null } };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "first-of-type")) {
-            return .{ .result = .{ .nth = NthSelectorData.first(true) } };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "last-of-type")) {
-            return .{ .result = .{ .nth = NthSelectorData.last(true) } };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "only-of-type")) {
-            return .{ .result = .{ .nth = NthSelectorData.only(true) } };
-        } else {}
+        if (TreeStructuralPseudoClassMap.getAnyCase(name)) |pseudo_class| {
+            switch (pseudo_class) {
+                .@"first-child" => return .{ .result = .{ .nth = NthSelectorData.first(false) } },
+                .@"last-child" => return .{ .result = .{ .nth = NthSelectorData.last(false) } },
+                .@"only-child" => return .{ .result = .{ .nth = NthSelectorData.only(false) } },
+                .root => return .{ .result = .root },
+                .empty => return .{ .result = .empty },
+                .scope => return .{ .result = .scope },
+                .host => if (parser.parseHost()) return .{ .result = .{ .host = null } },
+                .@"first-of-type" => return .{ .result = .{ .nth = NthSelectorData.first(true) } },
+                .@"last-of-type" => return .{ .result = .{ .nth = NthSelectorData.last(true) } },
+                .@"only-of-type" => return .{ .result = .{ .nth = NthSelectorData.only(true) } },
+            }
+        }
     }
 
     // The view-transition pseudo elements accept the :only-child pseudo class.
@@ -2877,7 +3289,7 @@ pub fn parse_nth_pseudo_class(
     return .{ .result = .{
         .nth_of = NthOfSelectorData(Impl){
             .data = nth_data,
-            .selectors = selectors.v.items,
+            .selectors = selectors.v.toOwnedSlice(input.allocator()),
         },
     } };
 }
@@ -2912,7 +3324,7 @@ pub fn parse_is_or_where(
         state.after_nesting = true;
     }
 
-    const selector_slice = inner.v.items;
+    const selector_slice = inner.v.toOwnedSlice(input.allocator());
 
     const result = result: {
         const args = brk: {
@@ -2953,7 +3365,7 @@ pub fn parse_has(
     if (child_state.after_nesting) {
         state.after_nesting = true;
     }
-    return .{ .result = .{ .has = inner.v.items } };
+    return .{ .result = .{ .has = inner.v.toOwnedSlice(input.allocator()) } };
 }
 
 /// Level 3: Parse **one** simple_selector.  (Though we might insert a second
@@ -2977,7 +3389,7 @@ pub fn parse_negation(
         state.after_nesting = true;
     }
 
-    return .{ .result = .{ .negation = list.v.items } };
+    return .{ .result = .{ .negation = list.v.toOwnedSlice(input.allocator()) } };
 }
 
 pub fn OptionalQName(comptime Impl: type) type {
@@ -3127,6 +3539,10 @@ pub fn LocalName(comptime Impl: type) type {
         pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
             return css.IdentFns.toCss(&this.name, W, dest);
         }
+
+        pub fn __generateEql() void {}
+        pub fn __generateDeepClone() void {}
+        pub fn __generateHash() void {}
     };
 }
 
@@ -3213,6 +3629,18 @@ pub const ViewTransitionPartName = union(enum) {
             .all => try dest.writeStr("*"),
             .name => |name| try css.CustomIdentFns.toCss(&name, W, dest),
         };
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };
 

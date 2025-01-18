@@ -20,10 +20,11 @@ pub fn PropertyIdImpl() type {
             var first = true;
             const name = this.name(this);
             const prefix_value = this.prefix().orNone();
-            inline for (std.meta.fields(VendorPrefix)) |field| {
-                if (@field(prefix_value, field.name)) {
+
+            inline for (VendorPrefix.FIELDS) |field| {
+                if (@field(prefix_value, field)) {
                     var prefix: VendorPrefix = .{};
-                    @field(prefix, field.name) = true;
+                    @field(prefix, field) = true;
 
                     if (first) {
                         first = false;
@@ -93,27 +94,24 @@ pub fn PropertyImpl() type {
             const name, const prefix = this.__toCssHelper();
             var first = true;
 
-            inline for (std.meta.fields(VendorPrefix)) |field| {
-                if (comptime !std.mem.eql(u8, field.name, "__unused")) {
-                    if (@field(prefix, field.name)) {
-                        var p: VendorPrefix = .{};
-                        @field(p, field.name) = true;
+            inline for (VendorPrefix.FIELDS) |field| {
+                if (@field(prefix, field)) {
+                    var p: VendorPrefix = .{};
+                    @field(p, field) = true;
 
-                        if (first) {
-                            first = false;
-                        } else {
-                            try dest.writeChar(';');
-                            try dest.newline();
-                        }
-                        try p.toCss(W, dest);
-                        try dest.writeStr(name);
-                        try dest.delim(':', false);
-                        try this.valueToCss(W, dest);
-                        if (important) {
-                            try dest.whitespace();
-                            try dest.writeStr("!important");
-                        }
-                        return;
+                    if (first) {
+                        first = false;
+                    } else {
+                        try dest.writeChar(';');
+                        try dest.newline();
+                    }
+                    try p.toCss(W, dest);
+                    try dest.writeStr(name);
+                    try dest.delim(':', false);
+                    try this.valueToCss(W, dest);
+                    if (important) {
+                        try dest.whitespace();
+                        try dest.writeStr("!important");
                     }
                 }
             }

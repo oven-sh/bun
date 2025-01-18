@@ -1,19 +1,28 @@
-if(CMAKE_HOST_WIN32 OR CMAKE_HOST_APPLE)
-  set(DEFAULT_LLVM_VERSION "18.1.8")
-else()
-  set(DEFAULT_LLVM_VERSION "16.0.6")
+
+set(DEFAULT_ENABLE_LLVM ON)
+
+# if target is bun-zig, set ENABLE_LLVM to OFF
+if(TARGET bun-zig)
+  set(DEFAULT_ENABLE_LLVM OFF)
 endif()
+
+optionx(ENABLE_LLVM BOOL "If LLVM should be used for compilation" DEFAULT ${DEFAULT_ENABLE_LLVM})
+
+if(NOT ENABLE_LLVM)
+  return()
+endif()
+
+set(DEFAULT_LLVM_VERSION "18.1.8")
 
 optionx(LLVM_VERSION STRING "The version of LLVM to use" DEFAULT ${DEFAULT_LLVM_VERSION})
 
-string(REGEX MATCH "([0-9]+)\\.([0-9]+)\\.([0-9]+)" match ${LLVM_VERSION})
-if(NOT match)
-  return()
+string(REGEX MATCH "([0-9]+)\\.([0-9]+)\\.([0-9]+)" USE_LLVM_VERSION ${LLVM_VERSION})
+if(USE_LLVM_VERSION)
+  set(LLVM_VERSION_MAJOR ${CMAKE_MATCH_1})
+  set(LLVM_VERSION_MINOR ${CMAKE_MATCH_2})
+  set(LLVM_VERSION_PATCH ${CMAKE_MATCH_3})
 endif()
-  
-set(LLVM_VERSION_MAJOR ${CMAKE_MATCH_1})
-set(LLVM_VERSION_MINOR ${CMAKE_MATCH_2})
-set(LLVM_VERSION_PATCH ${CMAKE_MATCH_3})
+
 set(LLVM_PATHS)
 
 if(APPLE)
@@ -32,39 +41,63 @@ if(APPLE)
     endif()
   endif()
 
-  list(APPEND LLVM_PATHS
-    ${HOMEBREW_PREFIX}/opt/llvm@${LLVM_VERSION_MAJOR}/bin
-    ${HOMEBREW_PREFIX}/opt/llvm/bin
-  )
+  if(USE_LLVM_VERSION)
+    list(APPEND LLVM_PATHS ${HOMEBREW_PREFIX}/opt/llvm@${LLVM_VERSION_MAJOR}/bin)
+  endif()
+
+  list(APPEND LLVM_PATHS ${HOMEBREW_PREFIX}/opt/llvm/bin)
 endif()
 
 if(UNIX)
-  list(APPEND LLVM_PATHS
-    /usr/lib/llvm-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.${LLVM_VERSION_PATCH}/bin
-    /usr/lib/llvm-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}/bin
-    /usr/lib/llvm-${LLVM_VERSION_MAJOR}/bin
-    /usr/lib/llvm/bin
-  )
+  list(APPEND LLVM_PATHS /usr/lib/llvm/bin)
+
+  if(USE_LLVM_VERSION)
+    list(APPEND LLVM_PATHS
+      /usr/lib/llvm-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.${LLVM_VERSION_PATCH}/bin
+      /usr/lib/llvm-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}/bin
+      /usr/lib/llvm-${LLVM_VERSION_MAJOR}/bin
+      /usr/lib/llvm${LLVM_VERSION_MAJOR}/bin
+    )
+  endif()
 endif()
 
 macro(find_llvm_command variable command)
+  set(commands ${command})
+
+  if(USE_LLVM_VERSION)
+    list(APPEND commands
+      ${command}-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.${LLVM_VERSION_PATCH}
+      ${command}-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}
+      ${command}-${LLVM_VERSION_MAJOR}
+    )
+  endif()
+
   find_command(
     VARIABLE ${variable}
     VERSION_VARIABLE LLVM_VERSION
-    COMMAND ${command} ${command}-${LLVM_VERSION_MAJOR}
+    COMMAND ${commands}
     PATHS ${LLVM_PATHS}
-    VERSION ${LLVM_VERSION}
+    VERSION >=${LLVM_VERSION_MAJOR}.1.0
   )
   list(APPEND CMAKE_ARGS -D${variable}=${${variable}})
 endmacro()
 
 macro(find_llvm_command_no_version variable command)
+  set(commands ${command})
+
+  if(USE_LLVM_VERSION)
+    list(APPEND commands
+      ${command}-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.${LLVM_VERSION_PATCH}
+      ${command}-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}
+      ${command}-${LLVM_VERSION_MAJOR}
+    )
+  endif()
+
   find_command(
     VARIABLE ${variable}
     VERSION_VARIABLE LLVM_VERSION
-    COMMAND ${command} ${command}-${LLVM_VERSION_MAJOR}
+    COMMAND ${commands}
     PATHS ${LLVM_PATHS}
-    REQUIRED ON
   )
   list(APPEND CMAKE_ARGS -D${variable}=${${variable}})
 endmacro()
@@ -80,9 +113,29 @@ else()
   find_llvm_command(CMAKE_CXX_COMPILER clang++)
   find_llvm_command(CMAKE_LINKER llvm-link)
   find_llvm_command(CMAKE_AR llvm-ar)
-  find_llvm_command(CMAKE_STRIP llvm-strip)
+  if (LINUX)
+    # On Linux, strip ends up being more useful for us.
+    find_command(
+      VARIABLE
+        CMAKE_STRIP
+      COMMAND
+        strip
+      REQUIRED
+        ON
+    )
+  else()
+    find_llvm_command(CMAKE_STRIP llvm-strip)
+  endif()
   find_llvm_command(CMAKE_RANLIB llvm-ranlib)
+  if(LINUX)
+    find_llvm_command(LLD_PROGRAM ld.lld)
+  endif()
   if(APPLE)
     find_llvm_command(CMAKE_DSYMUTIL dsymutil)
   endif()
+endif()
+
+if(ENABLE_ANALYSIS)
+  find_llvm_command(CLANG_FORMAT_PROGRAM clang-format)
+  find_llvm_command(CLANG_TIDY_PROGRAM clang-tidy)
 endif()

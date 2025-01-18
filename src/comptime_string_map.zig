@@ -173,7 +173,8 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
                 }
             }
 
-            const str = bun.String.tryFromJS(input, globalThis) orelse return null;
+            const str = bun.String.fromJS(input, globalThis);
+            bun.assert(str.tag != .Dead);
             defer str.deref();
             return getWithEql(str, bun.String.eqlComptime);
         }
@@ -186,13 +187,14 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
                 }
             }
 
-            const str = bun.String.tryFromJS(input, globalThis) orelse return null;
+            const str = bun.String.fromJS(input, globalThis);
+            bun.assert(str.tag != .Dead);
             defer str.deref();
             return str.inMapCaseInsensitive(@This());
         }
 
         pub fn getASCIIICaseInsensitive(input: anytype) ?V {
-            return getWithEqlLowercase(input, bun.strings.eqlComptime);
+            return getWithEqlLowercase(input, bun.strings.eqlComptimeIgnoreLen);
         }
 
         pub fn getWithEqlLowercase(input: anytype, comptime eql: anytype) ?V {
@@ -204,9 +206,9 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             comptime var i: usize = precomputed.min_len;
             inline while (i <= precomputed.max_len) : (i += 1) {
                 if (length == i) {
-                    const lowerbuf: [length]u8 = brk: {
-                        var buf: [length]u8 = undefined;
-                        for (input[0..length].*, &buf) |c, *j| {
+                    const lowerbuf: [i]u8 = brk: {
+                        var buf: [i]u8 = undefined;
+                        for (input, &buf) |c, *j| {
                             j.* = std.ascii.toLower(c);
                         }
                         break :brk buf;

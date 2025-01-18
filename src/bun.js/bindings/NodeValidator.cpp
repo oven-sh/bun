@@ -12,6 +12,7 @@
 #include <cmath>
 #include <limits>
 
+#include "JSAbortSignal.h"
 #include "JSBufferEncodingType.h"
 #include "BunProcess.h"
 #include "ErrorCode.h"
@@ -30,10 +31,31 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateInteger, (JSC::JSGlobalObject * glob
     auto name = callFrame->argument(1);
     auto min = callFrame->argument(2);
     auto max = callFrame->argument(3);
-
+    return Bun::V::validateInteger(scope, globalObject, value, name, min, max);
+}
+JSC::EncodedJSValue V::validateInteger(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, JSC::JSValue name, JSC::JSValue min, JSC::JSValue max)
+{
     if (!value.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
-    if (min.isUndefined()) min = jsNumber(-9007199254740991); // Number.MIN_SAFE_INTEGER
-    if (max.isUndefined()) max = jsNumber(9007199254740991); // Number.MAX_SAFE_INTEGER
+    if (min.isUndefined()) min = jsDoubleNumber(JSC::minSafeInteger());
+    if (max.isUndefined()) max = jsDoubleNumber(JSC::maxSafeInteger());
+
+    auto value_num = value.asNumber();
+    auto min_num = min.toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto max_num = max.toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    max_num = std::max(min_num, max_num);
+
+    if (std::fmod(value_num, 1.0) != 0) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
+    if (value_num < min_num || value_num > max_num) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min_num, max_num, value);
+
+    return JSValue::encode(jsUndefined());
+}
+JSC::EncodedJSValue V::validateInteger(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, ASCIILiteral name, JSC::JSValue min, JSC::JSValue max)
+{
+    if (!value.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
+    if (min.isUndefined()) min = jsDoubleNumber(JSC::minSafeInteger());
+    if (max.isUndefined()) max = jsDoubleNumber(JSC::maxSafeInteger());
 
     auto value_num = value.asNumber();
     auto min_num = min.toNumber(globalObject);
@@ -81,6 +103,28 @@ JSC::EncodedJSValue V::validateNumber(JSC::ThrowScope& scope, JSC::JSGlobalObjec
 
     return JSValue::encode(jsUndefined());
 }
+JSC::EncodedJSValue V::validateNumber(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name, JSValue min, JSValue max)
+{
+    if (!value.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
+
+    auto value_num = value.asNumber();
+    auto min_num = min.toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto max_num = max.toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto min_isnonnull = !min.isUndefinedOrNull();
+    auto max_isnonnull = !max.isUndefinedOrNull();
+
+    if ((min_isnonnull && value_num < min_num) || (max_isnonnull && value_num > max_num) || ((min_isnonnull || max_isnonnull) && std::isnan(value_num))) {
+        if (min_isnonnull && max_isnonnull) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min_num, max_num, value);
+        if (min_isnonnull) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min_num, Bun::LOWER, value);
+        if (max_isnonnull) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, max_num, Bun::UPPER, value);
+        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, ""_s, value);
+    }
+
+    return JSValue::encode(jsUndefined());
+}
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateString, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -91,6 +135,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateString, (JSC::JSGlobalObject * globa
     auto name = callFrame->argument(1);
     return V::validateString(scope, globalObject, value, name);
 }
+
+JSC::EncodedJSValue V::validateString(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name)
+{
+    if (!value.isString()) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "string"_s, value);
+    }
+    return JSValue::encode(jsUndefined());
+}
+
 JSC::EncodedJSValue V::validateString(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, JSValue name)
 {
     if (!value.isString()) {
@@ -135,12 +188,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_checkRangesOrGetDefault, (JSC::JSGlobalObjec
     auto name = callFrame->argument(1);
     auto lower = callFrame->argument(2);
     auto upper = callFrame->argument(3);
-    auto def = callFrame->argument(4);
 
     auto finite = Bun::V::validateFiniteNumber(scope, globalObject, number, name);
     RETURN_IF_EXCEPTION(scope, {});
     auto finite_real = JSValue::decode(finite).asBoolean();
     if (!finite_real) {
+        auto def = callFrame->argument(4);
         return JSValue::encode(def);
     }
 
@@ -198,8 +251,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validatePort, (JSC::JSGlobalObject * globalO
     if (allowZero.isUndefined()) allowZero = jsBoolean(true);
 
     auto allowZero_b = allowZero.toBoolean(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
     if (!port.isNumber() && !port.isString()) return Bun::ERR::SOCKET_BAD_PORT(scope, globalObject, name, port, allowZero_b);
 
     if (port.isString()) {
@@ -262,10 +313,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateAbortSignal, (JSC::JSGlobalObject * 
     auto name = callFrame->argument(1);
 
     if (!signal.isUndefined()) {
-        if (signal.isNull()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "AbortSignal"_s, signal);
-        if (!signal.isObject()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "AbortSignal"_s, signal);
+        auto* object = signal.getObject();
+        if (!object) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "AbortSignal"_s, signal);
+        if (object->inherits<WebCore::JSAbortSignal>()) {
+            return JSValue::encode(jsUndefined());
+        }
 
-        auto propin = signal.getObject()->hasProperty(globalObject, Identifier::fromString(vm, "aborted"_s));
+        auto propin = object->hasProperty(globalObject, Identifier::fromString(vm, "aborted"_s));
         RETURN_IF_EXCEPTION(scope, {});
         if (!propin) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "AbortSignal"_s, signal);
     }
@@ -281,6 +335,30 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateArray, (JSC::JSGlobalObject * global
     auto value = callFrame->argument(0);
     auto name = callFrame->argument(1);
     auto minLength = callFrame->argument(2);
+    return V::validateArray(scope, globalObject, value, name, minLength);
+}
+JSC::EncodedJSValue V::validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, JSValue name, JSValue minLength)
+{
+    JSC::VM& vm = globalObject->vm();
+
+    if (minLength.isUndefined()) minLength = jsNumber(0);
+
+    if (!JSC::isArray(globalObject, value)) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Array"_s, value);
+
+    auto length = value.get(globalObject, Identifier::fromString(vm, "length"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    auto length_num = length.toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto minLength_num = minLength.toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (length_num < minLength_num) {
+        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, name, value, makeString("must be longer than "_s, minLength_num));
+    }
+    return JSValue::encode(jsUndefined());
+}
+JSC::EncodedJSValue V::validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name, JSValue minLength)
+{
+    JSC::VM& vm = globalObject->vm();
 
     if (minLength.isUndefined()) minLength = jsNumber(0);
 
@@ -332,7 +410,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateUint32, (JSC::JSGlobalObject * globa
     auto value = callFrame->argument(0);
     auto name = callFrame->argument(1);
     auto positive = callFrame->argument(2);
-
+    return V::validateUint32(scope, globalObject, value, name, positive);
+}
+JSC::EncodedJSValue V::validateUint32(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, JSValue name, JSValue positive)
+{
     if (!value.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
     if (positive.isUndefined()) positive = jsBoolean(false);
 
@@ -340,7 +421,21 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateUint32, (JSC::JSGlobalObject * globa
     if (std::fmod(value_num, 1.0) != 0) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
 
     auto positive_b = positive.toBoolean(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
+    auto min = positive_b ? 1 : 0;
+    auto max = std::numeric_limits<uint32_t>().max();
+    if (value_num < min || value_num > max) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min, max, value);
+
+    return JSValue::encode(jsUndefined());
+}
+JSC::EncodedJSValue V::validateUint32(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name, JSValue positive)
+{
+    if (!value.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
+    if (positive.isUndefined()) positive = jsBoolean(false);
+
+    auto value_num = value.asNumber();
+    if (std::fmod(value_num, 1.0) != 0) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
+
+    auto positive_b = positive.toBoolean(globalObject);
     auto min = positive_b ? 1 : 0;
     auto max = std::numeric_limits<uint32_t>().max();
     if (value_num < min || value_num > max) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min, max, value);
@@ -375,19 +470,32 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateEncoding, (JSC::JSGlobalObject * glo
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto data = callFrame->argument(0);
     auto encoding = callFrame->argument(1);
 
     auto normalized = WebCore::parseEnumeration<BufferEncodingType>(*globalObject, encoding);
-    // no check to throw ERR_UNKNOWN_ENCODING ? it's not in node but feels like it would be apt here
+    if (normalized == BufferEncodingType::hex) {
+        auto data = callFrame->argument(0);
 
-    auto length = data.get(globalObject, Identifier::fromString(vm, "length"_s));
-    RETURN_IF_EXCEPTION(scope, {});
-    auto length_num = length.toNumber(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (normalized == BufferEncodingType::hex && std::fmod(length_num, 2.0) != 0) {
-        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "encoding"_s, encoding, makeString("is invalid for data of length "_s, length_num));
+        size_t length = 0;
+        if (data.isString()) {
+            length = data.toString(globalObject)->length();
+        } else if (auto* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(data)) {
+            length = view->length();
+        } else if (auto* buffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(data)) {
+            if (auto* impl = buffer->impl()) {
+                length = impl->byteLength();
+            }
+        } else if (auto* object = data.getObject()) {
+            JSValue lengthValue = object->getIfPropertyExists(globalObject, vm.propertyNames->length);
+            RETURN_IF_EXCEPTION(scope, {});
+            length = lengthValue.toLength(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        if (length % 2 != 0) {
+            return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "encoding"_s, encoding, makeString("is invalid for data of length "_s, length));
+        }
     }
+
     return JSValue::encode(jsUndefined());
 }
 
@@ -397,9 +505,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validatePlainFunction, (JSC::JSGlobalObject 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto value = callFrame->argument(0);
-    auto name = callFrame->argument(1);
 
     if (!value.isCallable()) {
+        auto name = callFrame->argument(1);
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "function"_s, value);
     }
     return JSValue::encode(jsUndefined());
@@ -430,7 +538,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateBuffer, (JSC::JSGlobalObject * globa
     auto ty = buffer.asCell()->type();
 
     if (JSC::typedArrayType(ty) == NotTypedArray) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Buffer, TypedArray, or DataView"_s, buffer, true);
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Buffer, TypedArray, or DataView"_s, buffer);
     }
     return JSValue::encode(jsUndefined());
 }

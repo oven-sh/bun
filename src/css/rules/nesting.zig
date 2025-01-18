@@ -30,5 +30,9 @@ pub fn NestingRule(comptime R: type) type {
             }
             return try this.style.toCss(W, dest);
         }
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
     };
 }

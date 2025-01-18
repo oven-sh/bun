@@ -16,6 +16,10 @@
 #include "JavaScriptCore/AggregateError.h"
 #include "JavaScriptCore/JSFunction.h"
 #include "JSDOMFile.h"
+#include "JSWebSocket.h"
+#include "JSCloseEvent.h"
+#include "JSErrorEvent.h"
+#include "JSMessageEvent.h"
 
 namespace Bun {
 
@@ -27,7 +31,7 @@ JSC::JSValue createUndiciInternalBinding(Zig::GlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
 
-    auto* obj = constructEmptyObject(globalObject);
+    auto* obj = constructEmptyObject(globalObject, globalObject->objectPrototype(), 11);
     obj->putDirectIndex(
         globalObject, 0,
         globalObject->JSResponseConstructor());
@@ -52,6 +56,18 @@ JSC::JSValue createUndiciInternalBinding(Zig::GlobalObject* globalObject)
     obj->putDirectIndex(
         globalObject, 7,
         JSURLSearchParams::getConstructor(vm, globalObject));
+    obj->putDirectIndex(
+        globalObject, 8,
+        JSWebSocket::getConstructor(vm, globalObject));
+    obj->putDirectIndex(
+        globalObject, 9,
+        JSCloseEvent::getConstructor(vm, globalObject));
+    obj->putDirectIndex(
+        globalObject, 10,
+        JSErrorEvent::getConstructor(vm, globalObject));
+    obj->putDirectIndex(
+        globalObject, 11,
+        JSMessageEvent::getConstructor(vm, globalObject));
 
     return obj;
 }

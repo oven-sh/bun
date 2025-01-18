@@ -32,15 +32,15 @@ const ImportKind = _import_record.ImportKind;
 const allocators = @import("./allocators.zig");
 const MimeType = @import("./http/mime_type.zig");
 const resolve_path = @import("./resolver/resolve_path.zig");
-const _bundler = bun.bundler;
-const Bundler = _bundler.Bundler;
-const ResolveQueue = _bundler.ResolveQueue;
+const _transpiler = bun.transpiler;
+const Transpiler = _transpiler.Transpiler;
+const ResolveQueue = _transpiler.ResolveQueue;
 const ResolverType = Resolver.Resolver;
 const ESModule = @import("./resolver/package_json.zig").ESModule;
 const Runtime = @import("./runtime.zig").Runtime;
 const URL = @import("url.zig").URL;
 const JSC = bun.JSC;
-const PluginRunner = bun.bundler.PluginRunner;
+const PluginRunner = bun.transpiler.PluginRunner;
 pub const CSSResolveError = error{ResolveMessage};
 
 pub const OnImportCallback = *const fn (resolve_result: *const Resolver.Result, import_record: *ImportRecord, origin: URL) void;
@@ -54,7 +54,7 @@ pub const Linker = struct {
     log: *logger.Log,
     resolve_queue: *ResolveQueue,
     resolver: *ResolverType,
-    resolve_results: *_bundler.ResolveResults,
+    resolve_results: *_transpiler.ResolveResults,
     any_needs_runtime: bool = false,
     runtime_import_record: ?ImportRecord = null,
     hashed_filenames: HashedFileNameMap,
@@ -80,7 +80,7 @@ pub const Linker = struct {
         resolve_queue: *ResolveQueue,
         options: *Options.BundleOptions,
         resolver: *ResolverType,
-        resolve_results: *_bundler.ResolveResults,
+        resolve_results: *_transpiler.ResolveResults,
         fs: *Fs.FileSystem,
     ) ThisLinker {
         relative_paths_list = ImportPathsList.init(allocator);
@@ -116,7 +116,7 @@ pub const Linker = struct {
         file_path: Fs.Path,
         fd: ?FileDescriptorType,
     ) !string {
-        if (Bundler.isCacheEnabled) {
+        if (Transpiler.isCacheEnabled) {
             const hashed = bun.hash(file_path.text);
             const hashed_result = try this.hashed_filenames.getOrPut(hashed);
             if (hashed_result.found_existing) {
@@ -127,7 +127,7 @@ pub const Linker = struct {
         const modkey = try this.getModKey(file_path, fd);
         const hash_name = modkey.hashName(file_path.text);
 
-        if (Bundler.isCacheEnabled) {
+        if (Transpiler.isCacheEnabled) {
             const hashed = bun.hash(file_path.text);
             try this.hashed_filenames.put(hashed, try this.allocator.dupe(u8, hash_name));
         }
@@ -183,7 +183,7 @@ pub const Linker = struct {
     pub fn link(
         linker: *ThisLinker,
         file_path: Fs.Path,
-        result: *_bundler.ParseResult,
+        result: *_transpiler.ParseResult,
         origin: URL,
         comptime import_path_format: Options.BundleOptions.ImportPathFormat,
         comptime ignore_runtime: bool,
@@ -289,7 +289,7 @@ pub const Linker = struct {
 
                     if (linker.plugin_runner) |runner| {
                         if (PluginRunner.couldBePlugin(import_record.path.text)) {
-                            if (runner.onResolve(
+                            if (try runner.onResolve(
                                 import_record.path.text,
                                 file_path.text,
                                 linker.log,
@@ -603,7 +603,7 @@ pub const Linker = struct {
     fn whenModuleNotFound(
         linker: *ThisLinker,
         import_record: *ImportRecord,
-        result: *_bundler.ParseResult,
+        result: *_transpiler.ParseResult,
         comptime is_bun: bool,
     ) !bool {
         if (import_record.handles_import_errors) {
@@ -743,19 +743,6 @@ pub const Linker = struct {
 
                     if (use_hashed_name) {
                         const basepath = Fs.Path.init(source_path);
-
-                        if (linker.options.serve) {
-                            var hash_buf: [64]u8 = undefined;
-                            const modkey = try linker.getModKey(basepath, null);
-                            return Fs.Path.init(try origin.joinAlloc(
-                                linker.allocator,
-                                std.fmt.bufPrint(&hash_buf, "hash:{any}/", .{bun.fmt.hexIntLower(modkey.hash())}) catch unreachable,
-                                dirname,
-                                basename,
-                                absolute_pathname.ext,
-                                source_path,
-                            ));
-                        }
 
                         basename = try linker.getHashedFilename(basepath, null);
                     }

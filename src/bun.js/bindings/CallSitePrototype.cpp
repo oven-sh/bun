@@ -13,42 +13,39 @@
 #include <JavaScriptCore/CodeBlock.h>
 #include <JavaScriptCore/Operations.h>
 #include <JavaScriptCore/JSCInlines.h>
-
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/JSBoundFunction.h>
 using namespace JSC;
 
 namespace Zig {
 
-static JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetThis);
-static JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetTypeName);
-static JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetFunction);
-static JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetFunctionName);
-static JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetMethodName);
-static JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetFileName);
-static JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetLineNumber);
-static JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetColumnNumber);
-static JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetEvalOrigin);
-static JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetScriptNameOrSourceURL);
-static JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncIsToplevel);
-static JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncIsEval);
-static JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncIsNative);
-static JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncIsConstructor);
-static JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncIsAsync);
-static JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncIsPromiseAll);
-static JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetPromiseIndex);
-static JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncToString);
+JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetThis);
+JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetTypeName);
+JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetFunction);
+JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetFunctionName);
+JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetMethodName);
+JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetFileName);
+JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetLineNumber);
+JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetColumnNumber);
+JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetEvalOrigin);
+JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetScriptNameOrSourceURL);
+JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncIsToplevel);
+JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncIsEval);
+JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncIsNative);
+JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncIsConstructor);
+JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncIsAsync);
+JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncIsPromiseAll);
+JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetPromiseIndex);
+JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncToString);
+JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncToJSON);
 
 ALWAYS_INLINE static CallSite* getCallSite(JSGlobalObject* globalObject, JSC::JSValue thisValue)
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (UNLIKELY(!thisValue.isCell())) {
-        JSC::throwVMError(globalObject, scope, createNotAnObjectError(globalObject, thisValue));
-        return nullptr;
-    }
-
-    if (LIKELY(thisValue.asCell()->inherits(CallSite::info()))) {
-        return JSC::jsCast<CallSite*>(thisValue);
+    if (auto* callSite = JSC::jsDynamicCast<CallSite*>(thisValue)) {
+        return callSite;
     }
 
     throwTypeError(globalObject, scope, "CallSite operation called on non-CallSite object"_s);
@@ -84,6 +81,7 @@ static const HashTableValue CallSitePrototypeTableValues[]
           { "isPromiseAll"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncIsPromiseAll, 0 } },
           { "getPromiseIndex"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetPromiseIndex, 0 } },
           { "toString"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncToString, 0 } },
+          { "toJSON"_s, JSC::PropertyAttribute::Function | 0, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncToJSON, 0 } },
       };
 
 const JSC::ClassInfo CallSitePrototype::s_info = { "CallSite"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(CallSitePrototype) };
@@ -165,10 +163,29 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsToplevel, (JSGlobalObject * globalOb
 {
     ENTER_PROTO_FUNC();
 
+    if (JSValue functionValue = callSite->function()) {
+        if (JSObject* fn = functionValue.getObject()) {
+            if (JSFunction* function = jsDynamicCast<JSFunction*>(fn)) {
+                if (function->inherits<JSC::JSBoundFunction>()) {
+                    return JSC::JSValue::encode(JSC::jsBoolean(false));
+                }
+
+                if (function->isHostFunction()) {
+                    return JSC::JSValue::encode(JSC::jsBoolean(true));
+                }
+
+                if (auto* executable = function->jsExecutable()) {
+                    return JSValue::encode(jsBoolean(executable->isProgramExecutable() || executable->isModuleProgramExecutable()));
+                }
+            } else if (auto* function = jsDynamicCast<InternalFunction*>(functionValue)) {
+                return JSC::JSValue::encode(JSC::jsBoolean(true));
+            }
+        }
+    }
+
     JSC::JSValue thisValue = callSite->thisValue();
 
     // This is what v8 does (JSStackFrame::IsToplevel in messages.cc):
-
     if (thisValue.isUndefinedOrNull()) {
         return JSC::JSValue::encode(JSC::jsBoolean(true));
     }
@@ -235,6 +252,17 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncToString, (JSGlobalObject * globalObje
     WTF::StringBuilder sb;
     callSite->formatAsString(vm, globalObject, sb);
     return JSC::JSValue::encode(JSC::JSValue(jsString(vm, sb.toString())));
+}
+
+JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncToJSON, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    ENTER_PROTO_FUNC();
+    JSObject* obj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
+    obj->putDirect(vm, JSC::Identifier::fromString(vm, "sourceURL"_s), callSite->sourceURL());
+    obj->putDirect(vm, JSC::Identifier::fromString(vm, "lineNumber"_s), jsNumber(callSite->lineNumber().oneBasedInt()));
+    obj->putDirect(vm, JSC::Identifier::fromString(vm, "columnNumber"_s), jsNumber(callSite->columnNumber().zeroBasedInt()));
+    obj->putDirect(vm, JSC::Identifier::fromString(vm, "functionName"_s), callSite->functionName());
+    return JSC::JSValue::encode(obj);
 }
 
 }

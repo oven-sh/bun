@@ -17,6 +17,7 @@ const Fs = @import("./fs.zig");
 const URL = @import("./url.zig").URL;
 const Api = @import("./api/schema.zig").Api;
 const which = @import("./which.zig").which;
+const s3 = bun.S3;
 
 const DotEnvFileSuffix = enum {
     development,
@@ -37,13 +38,15 @@ pub const Loader = struct {
     @".env.test.local": ?logger.Source = null,
     @".env": ?logger.Source = null,
 
-    // only populated with files specified explicitely (e.g. --env-file arg)
+    // only populated with files specified explicitly (e.g. --env-file arg)
     custom_files_loaded: bun.StringArrayHashMap(logger.Source),
 
     quiet: bool = false,
 
     did_load_process: bool = false,
     reject_unauthorized: ?bool = null,
+
+    aws_credentials: ?s3.S3Credentials = null,
 
     pub fn iterator(this: *const Loader) Map.HashTable.Iterator {
         return this.map.iterator();
@@ -112,6 +115,60 @@ pub const Loader = struct {
         }
     }
 
+    pub fn getS3Credentials(this: *Loader) s3.S3Credentials {
+        if (this.aws_credentials) |credentials| {
+            return credentials;
+        }
+
+        var accessKeyId: []const u8 = "";
+        var secretAccessKey: []const u8 = "";
+        var region: []const u8 = "";
+        var endpoint: []const u8 = "";
+        var bucket: []const u8 = "";
+        var session_token: []const u8 = "";
+
+        if (this.get("S3_ACCESS_KEY_ID")) |access_key| {
+            accessKeyId = access_key;
+        } else if (this.get("AWS_ACCESS_KEY_ID")) |access_key| {
+            accessKeyId = access_key;
+        }
+        if (this.get("S3_SECRET_ACCESS_KEY")) |access_key| {
+            secretAccessKey = access_key;
+        } else if (this.get("AWS_SECRET_ACCESS_KEY")) |access_key| {
+            secretAccessKey = access_key;
+        }
+
+        if (this.get("S3_REGION")) |region_| {
+            region = region_;
+        } else if (this.get("AWS_REGION")) |region_| {
+            region = region_;
+        }
+        if (this.get("S3_ENDPOINT")) |endpoint_| {
+            endpoint = bun.URL.parse(endpoint_).host;
+        } else if (this.get("AWS_ENDPOINT")) |endpoint_| {
+            endpoint = bun.URL.parse(endpoint_).host;
+        }
+        if (this.get("S3_BUCKET")) |bucket_| {
+            bucket = bucket_;
+        } else if (this.get("AWS_BUCKET")) |bucket_| {
+            bucket = bucket_;
+        }
+        if (this.get("S3_SESSION_TOKEN")) |token| {
+            session_token = token;
+        } else if (this.get("AWS_SESSION_TOKEN")) |token| {
+            session_token = token;
+        }
+        this.aws_credentials = .{
+            .accessKeyId = accessKeyId,
+            .secretAccessKey = secretAccessKey,
+            .region = region,
+            .endpoint = endpoint,
+            .bucket = bucket,
+            .sessionToken = session_token,
+        };
+
+        return this.aws_credentials.?;
+    }
     /// Checks whether `NODE_TLS_REJECT_UNAUTHORIZED` is set to `0` or `false`.
     ///
     /// **Prefer VirtualMachine.getTLSRejectUnauthorized()** for JavaScript, as individual workers could have different settings.
@@ -134,11 +191,15 @@ pub const Loader = struct {
         return true;
     }
 
-    pub fn getHttpProxy(this: *Loader, url: URL) ?URL {
+    pub fn getHttpProxyFor(this: *Loader, url: URL) ?URL {
+        return this.getHttpProxy(url.isHTTP(), url.hostname);
+    }
+
+    pub fn getHttpProxy(this: *Loader, is_http: bool, hostname: ?[]const u8) ?URL {
         // TODO: When Web Worker support is added, make sure to intern these strings
         var http_proxy: ?URL = null;
 
-        if (url.isHTTP()) {
+        if (is_http) {
             if (this.get("http_proxy") orelse this.get("HTTP_PROXY")) |proxy| {
                 if (proxy.len > 0 and !strings.eqlComptime(proxy, "\"\"") and !strings.eqlComptime(proxy, "''")) {
                     http_proxy = URL.parse(proxy);
@@ -154,7 +215,7 @@ pub const Loader = struct {
 
         // NO_PROXY filter
         // See the syntax at https://about.gitlab.com/blog/2021/01/27/we-need-to-talk-no-proxy/
-        if (http_proxy != null) {
+        if (http_proxy != null and hostname != null) {
             if (this.get("no_proxy") orelse this.get("NO_PROXY")) |no_proxy_text| {
                 if (no_proxy_text.len == 0 or strings.eqlComptime(no_proxy_text, "\"\"") or strings.eqlComptime(no_proxy_text, "''")) {
                     return http_proxy;
@@ -172,7 +233,7 @@ pub const Loader = struct {
                         host = host[1..];
                     }
                     //hostname ends with suffix
-                    if (strings.endsWith(url.hostname, host)) {
+                    if (strings.endsWith(hostname.?, host)) {
                         return null;
                     }
                     next = no_proxy_list.next();
@@ -291,7 +352,7 @@ pub const Loader = struct {
     /// **lower priority** so that users may override defaults. Unlike regular
     /// defines, environment variables are loaded as JavaScript string literals.
     ///
-    /// Empty enivronment variables become empty strings.
+    /// Empty environment variables become empty strings.
     pub fn copyForDefine(
         this: *Loader,
         comptime JSONStore: type,
@@ -1189,6 +1250,20 @@ pub const Map = struct {
             bun.assert(bun.strings.indexOfChar(key, '\x00') == null);
         }
         try this.map.put(key, .{
+            .value = value,
+            .conditional = false,
+        });
+    }
+
+    pub fn ensureUnusedCapacity(this: *Map, additional_count: usize) !void {
+        return this.map.ensureUnusedCapacity(additional_count);
+    }
+
+    pub fn putAssumeCapacity(this: *Map, key: string, value: string) void {
+        if (Environment.isWindows and Environment.allow_assert) {
+            bun.assert(bun.strings.indexOfChar(key, '\x00') == null);
+        }
+        this.map.putAssumeCapacity(key, .{
             .value = value,
             .conditional = false,
         });

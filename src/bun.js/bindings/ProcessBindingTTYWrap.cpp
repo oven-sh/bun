@@ -199,7 +199,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, Call
 
     Zig::GlobalObject* global = jsCast<Zig::GlobalObject*>(globalObject);
 
-    return Source__setRawModeStdin(raw);
+    return JSValue::encode(jsNumber(Source__setRawModeStdin(raw)));
 #else
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

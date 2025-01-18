@@ -462,7 +462,13 @@ pub const Archiver = struct {
                             }
                         },
                         .file => {
-                            const mode: bun.Mode = if (comptime Environment.isWindows) 0 else @intCast(entry.perm());
+                            // first https://github.com/npm/cli/blob/feb54f7e9a39bd52519221bae4fafc8bc70f235e/node_modules/pacote/lib/fetcher.js#L65-L66
+                            // this.fmode = opts.fmode || 0o666
+                            //
+                            // then https://github.com/npm/cli/blob/feb54f7e9a39bd52519221bae4fafc8bc70f235e/node_modules/pacote/lib/fetcher.js#L402-L411
+                            //
+                            // we simplify and turn it into `entry.mode || 0o666` because we aren't accepting a umask or fmask option.
+                            const mode: bun.Mode = if (comptime Environment.isWindows) 0 else @intCast(entry.perm() | 0o666);
 
                             const file_handle_native = brk: {
                                 if (Environment.isWindows) {

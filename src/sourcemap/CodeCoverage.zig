@@ -673,8 +673,7 @@ pub const ByteRangeMapping = struct {
         var url_slice = source_url.toUTF8(bun.default_allocator);
         defer url_slice.deinit();
         var report = this.generateReportFromBlocks(bun.default_allocator, url_slice, blocks, function_blocks, ignore_sourcemap) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
+            return globalThis.throwOutOfMemoryValue();
         };
         defer report.deinit(bun.default_allocator);
 
@@ -686,18 +685,15 @@ pub const ByteRangeMapping = struct {
         var writer = buffered_writer.writer();
 
         CodeCoverageReport.Text.writeFormat(&report, source_url.utf8ByteLength(), &coverage_fraction, "", &writer, false) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
+            return globalThis.throwOutOfMemoryValue();
         };
 
         buffered_writer.flush() catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
+            return globalThis.throwOutOfMemoryValue();
         };
 
-        var str = bun.String.createUTF8(mutable_str.toOwnedSliceLeaky());
-        defer str.deref();
-        return str.toJS(globalThis);
+        var str = bun.String.createUTF8(mutable_str.slice());
+        return str.transferToJS(globalThis);
     }
 
     pub fn compute(source_contents: []const u8, source_id: i32, source_url: bun.JSC.ZigString.Slice) ByteRangeMapping {

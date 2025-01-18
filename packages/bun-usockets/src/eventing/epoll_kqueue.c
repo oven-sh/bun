@@ -113,6 +113,9 @@ struct us_loop_t *us_timer_loop(struct us_timer_t *t) {
 #if defined(LIBUS_USE_EPOLL) 
 
 #include <sys/syscall.h>
+#include <signal.h>
+#include <errno.h>
+
 static int has_epoll_pwait2 = -1;
 
 #ifndef SYS_epoll_pwait2
@@ -122,18 +125,21 @@ static int has_epoll_pwait2 = -1;
 #define SYS_epoll_pwait2 441
 #endif
 
-static ssize_t sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents, const struct timespec *timeout, const sigset_t *sigmask, size_t sigsetsize) {
-    return syscall(SYS_epoll_pwait2, epfd, events, maxevents, timeout, sigmask, sigsetsize);
-}
+extern ssize_t sys_epoll_pwait2(int epfd, struct epoll_event* events, int maxevents,
+                              const struct timespec* timeout, const sigset_t* sigmask);
+
 
 static int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents, const struct timespec *timeout) {
     int ret;
+    sigset_t mask;  
+    sigemptyset(&mask);
+  
     if (has_epoll_pwait2 != 0) {
         do {
-            ret = sys_epoll_pwait2(epfd, events, maxevents, timeout, NULL, 0);
-        } while (IS_EINTR(ret));
+            ret = sys_epoll_pwait2(epfd, events, maxevents, timeout, &mask);
+        } while (ret == -EINTR);
 
-        if (LIKELY(ret != -1 || errno != ENOSYS)) {
+        if (LIKELY(ret != -ENOSYS && ret != -EPERM && ret != -EOPNOTSUPP)) {
             return ret;
         }
 
@@ -146,11 +152,13 @@ static int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
     }
 
     do {
-        ret = epoll_wait(epfd, events, maxevents, timeoutMs);
+        ret = epoll_pwait(epfd, events, maxevents, timeoutMs, &mask);
     } while (IS_EINTR(ret));
 
     return ret;
 }
+
+extern int Bun__isEpollPwait2SupportedOnLinuxKernel();
 
 #endif
 
@@ -166,6 +174,13 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
 
 #ifdef LIBUS_USE_EPOLL
     loop->fd = epoll_create1(EPOLL_CLOEXEC);
+
+    if (has_epoll_pwait2 == -1) {
+        if (Bun__isEpollPwait2SupportedOnLinuxKernel() == 0) {
+            has_epoll_pwait2 = 0;
+        } 
+    }
+
 #else
     loop->fd = kqueue();
 #endif
@@ -202,7 +217,8 @@ void us_loop_run(struct us_loop_t *loop) {
                 }
 #ifdef LIBUS_USE_EPOLL
                 int events = loop->ready_polls[loop->current_ready_poll].events;
-                const int error = events & (EPOLLERR | EPOLLHUP);
+                const int error = events & EPOLLERR;
+                const int eof = events & EPOLLHUP;
 #else
                 const struct kevent64_s* current_kevent = &loop->ready_polls[loop->current_ready_poll];
                 const int16_t filter = current_kevent->filter;
@@ -215,12 +231,13 @@ void us_loop_run(struct us_loop_t *loop) {
                 int events = 0
                     | ((filter & EVFILT_READ) ? LIBUS_SOCKET_READABLE : 0)
                     | ((filter & EVFILT_WRITE) ? LIBUS_SOCKET_WRITABLE : 0);
-                const int error = (flags & (EV_ERROR | EV_EOF)) ? ((int)fflags || 1) : 0;
+                const int error = (flags & (EV_ERROR)) ? ((int)fflags || 1) : 0;
+                const int eof = (flags & (EV_EOF));
 #endif
                 /* Always filter all polls by what they actually poll for (callback polls always poll for readable) */
                 events &= us_poll_events(poll);
-                if (events || error) {
-                    us_internal_dispatch_ready_poll(poll, error, events);
+                if (events || error || eof) {
+                    us_internal_dispatch_ready_poll(poll, error, eof, events);
                 }
             }
         }
@@ -230,6 +247,8 @@ void us_loop_run(struct us_loop_t *loop) {
     }
 }
 
+extern int Bun__JSC_onBeforeWait(void*);
+extern void Bun__JSC_onAfterWait(void*);
 
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout) {
     if (loop->num_polls == 0)
@@ -246,6 +265,11 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     /* Emit pre callback */
     us_internal_loop_pre(loop);
 
+    int needs_after_wait = 0;
+    if (loop->data.jsc_vm) {
+        needs_after_wait = Bun__JSC_onBeforeWait(loop->data.jsc_vm);
+    }
+
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
     
@@ -255,6 +279,10 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
         loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, timeout);
     } while (IS_EINTR(loop->num_ready_polls));
 #endif
+
+    if (needs_after_wait) {
+        Bun__JSC_onAfterWait(loop->data.jsc_vm);
+    }
 
     /* Iterate ready polls, dispatching them by type */
     for (loop->current_ready_poll = 0; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {
@@ -267,7 +295,8 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
             }
 #ifdef LIBUS_USE_EPOLL
             int events = loop->ready_polls[loop->current_ready_poll].events;
-            const int error = events & (EPOLLERR | EPOLLHUP);
+            const int error = events & EPOLLERR;
+            const int eof = events & EPOLLHUP;
 #else
             const struct kevent64_s* current_kevent = &loop->ready_polls[loop->current_ready_poll];
             const int16_t filter = current_kevent->filter;
@@ -281,12 +310,14 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
                 | ((filter & EVFILT_WRITE) ? LIBUS_SOCKET_WRITABLE : 0);
 
             // Note: EV_ERROR only sets the error in data as part of changelist. Not in this call!
-            const int error = (flags & (EV_ERROR | EV_EOF)) ? ((int)fflags || 1) : 0;
+            const int error = (flags & (EV_ERROR)) ? ((int)fflags || 1) : 0;
+            const int eof = (flags & (EV_EOF));
+
 #endif
             /* Always filter all polls by what they actually poll for (callback polls always poll for readable) */
             events &= us_poll_events(poll);
-            if (events || error) {
-                us_internal_dispatch_ready_poll(poll, error, events);
+            if (events || error || eof) {
+                us_internal_dispatch_ready_poll(poll, error, eof, events);
             }
         }
     }

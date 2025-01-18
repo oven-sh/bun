@@ -5,15 +5,10 @@
 // In a debug build, the import is always allowed.
 // It is disallowed in release builds unless run in Bun's CI.
 
-/// <reference path="./private.d.ts" />
+const fmtBinding = $bindgenFn("fmt.bind.ts", "fmtString");
 
-const fmtBinding = $newZigFunction("fmt.zig", "fmt_js_test_bindings.jsFunctionStringFormatter", 2) as (
-  code: string,
-  id: number,
-) => string;
-
-export const quickAndDirtyJavaScriptSyntaxHighlighter = (code: string) => fmtBinding(code, 0);
-export const escapePowershell = (code: string) => fmtBinding(code, 1);
+export const highlightJavaScript = (code: string) => fmtBinding(code, "highlight-javascript");
+export const escapePowershell = (code: string) => fmtBinding(code, "escape-powershell");
 
 export const TLSBinding = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
 
@@ -113,6 +108,7 @@ export const npm_manifest_test_helpers = $zig("npm.zig", "PackageManifest.bindin
 };
 
 // Like npm-package-arg, sort of https://www.npmjs.com/package/npm-package-arg
+export type Dependency = any;
 export const npa: (name: string) => Dependency = $newZigFunction("dependency.zig", "fromJS", 1);
 
 export const npmTag: (
@@ -135,3 +131,24 @@ export const isOperatingSystemMatch: (operatingSystem: string[]) => boolean = $n
 );
 
 export const createSocketPair: () => [number, number] = $newZigFunction("socket.zig", "jsCreateSocketPair", 0);
+
+export const isModuleResolveFilenameSlowPathEnabled: () => boolean = $newCppFunction(
+  "NodeModuleModule.cpp",
+  "jsFunctionIsModuleResolveFilenameSlowPathEnabled",
+  0,
+);
+
+export const frameworkRouterInternals = $zig("FrameworkRouter.zig", "JSFrameworkRouter.getBindings") as {
+  parseRoutePattern: (style: string, pattern: string) => null | { kind: string; pattern: string };
+  FrameworkRouter: {
+    new (opts: any): any;
+  };
+};
+
+export const bindgen = $zig("bindgen_test.zig", "getBindgenTestFunctions") as {
+  add: (a: any, b: any) => number;
+  requiredAndOptionalArg: (a: any, b?: any, c?: any, d?: any) => number;
+};
+
+export const noOpForTesting = $cpp("NoOpForTesting.cpp", "createNoOpForTesting");
+export const Dequeue = require("internal/fifo");

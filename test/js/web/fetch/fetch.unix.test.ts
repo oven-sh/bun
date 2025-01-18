@@ -48,7 +48,7 @@ it("throws an error when the directory is not found", () => {
         return new Response("hello");
       },
     }),
-  ).toThrow("No such file or directory");
+  ).toThrow("no such file or directory");
 });
 
 if (process.platform === "linux") {

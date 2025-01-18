@@ -44,10 +44,17 @@ test.todo("unimplemented feature", () => {
 
 ---
 
-If an implementation is provided, it will be executed and _expected to fail_ by test runner! If a todo test passes, the `bun test` run will return a non-zero exit code to signal the failure.
+If an implementation is provided, it will not be run unless the `--todo` flag is passed. If the `--todo` flag is passed, the test will be executed and _expected to fail_ by test runner! If a todo test passes, the `bun test` run will return a non-zero exit code to signal the failure.
 
 ```sh
-$ bun test
+$ bun test --todo
+my.test.ts:
+✗ unimplemented feature
+  ^ this test is marked as todo but passes. Remove `.todo` or check that test is correct.
+
+ 0 pass
+ 1 fail
+ 1 expect() calls
 $ echo $?
 1 # this is the exit code of the previous command
 ```

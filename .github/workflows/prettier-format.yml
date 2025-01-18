@@ -7,9 +7,10 @@ on:
   workflow_call:
   workflow_dispatch:
   pull_request:
+  merge_group:
 
 env:
-  BUN_VERSION: "1.1.27"
+  BUN_VERSION: "1.1.44"
 
 jobs:
   prettier-format:
@@ -28,9 +29,6 @@ jobs:
         run: |
           bun install
       - name: Prettier Format
-        env:
-          ENABLE_CCACHE: OFF
-          LLVM_VERSION: "ignore"
         run: |
           bun run prettier:diff
       - name: Commit

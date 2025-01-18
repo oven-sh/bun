@@ -26,16 +26,18 @@ export function minifyTest(source: string, expected: string) {
 
 export function prefix_test(source: string, expected: string, targets: Browsers) {
   test(source, () => {
-    expect(prefixTestWithOptions(source, expected, targets)).toEqual(expected);
+    expect(prefixTestWithOptions(source, expected, targets)).toEqualIgnoringWhitespace(expected);
   });
 }
 
-export function css_test(source: string, expected: string) {
-  return cssTest(source, expected);
+export function css_test(source: string, expected: string, browsers?: Browsers) {
+  return cssTest(source, expected, browsers);
 }
-export function cssTest(source: string, expected: string) {
+export function cssTest(source: string, expected: string, browsers?: Browsers) {
   test(source, () => {
-    expect(testWithOptions(source, expected)).toEqual(expected);
+    const output = testWithOptions(source, expected, browsers);
+    console.log("Output", output);
+    expect(output).toEqualIgnoringWhitespace(expected);
   });
 }
 

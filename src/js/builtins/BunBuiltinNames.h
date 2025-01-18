@@ -21,7 +21,6 @@ namespace WebCore {
 using namespace JSC;
 
 #define BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(macro) \
-    macro(__esModule) \
     macro(_events) \
     macro(abortAlgorithm) \
     macro(AbortSignal) \
@@ -72,6 +71,7 @@ using namespace JSC;
     macro(dataView) \
     macro(decode) \
     macro(delimiter) \
+    macro(dest) \
     macro(destroy) \
     macro(dir) \
     macro(direct) \
@@ -82,7 +82,6 @@ using namespace JSC;
     macro(encoding) \
     macro(end) \
     macro(errno) \
-    macro(makeErrorWithCode) \
     macro(errorSteps) \
     macro(evaluateCommonJSModule) \
     macro(evaluated) \
@@ -116,6 +115,7 @@ using namespace JSC;
     macro(inFlightCloseRequest) \
     macro(inFlightWriteRequest) \
     macro(initializeWith) \
+    macro(inherits) \
     macro(internalModuleRegistry) \
     macro(internalRequire) \
     macro(internalStream) \
@@ -134,9 +134,10 @@ using namespace JSC;
     macro(Loader) \
     macro(localStreams) \
     macro(main) \
+    macro(makeAbortError) \
     macro(makeDOMException) \
+    macro(makeErrorWithCode) \
     macro(makeGetterTypeError) \
-    macro(makeThisTypeError) \
     macro(method) \
     macro(mockedFunction) \
     macro(nextTick) \
@@ -153,8 +154,8 @@ using namespace JSC;
     macro(password) \
     macro(patch) \
     macro(path) \
-    macro(paths) \
     macro(pathname) \
+    macro(paths) \
     macro(pause) \
     macro(pendingAbortRequest) \
     macro(pendingPullIntos) \
@@ -228,6 +229,7 @@ using namespace JSC;
     macro(textEncoderStreamEncoder) \
     macro(TextEncoderStreamEncoder) \
     macro(textEncoderStreamTransform) \
+    macro(toClass) \
     macro(toNamespacedPath) \
     macro(trace) \
     macro(transformAlgorithm) \
@@ -244,6 +246,7 @@ using namespace JSC;
     macro(version) \
     macro(versions) \
     macro(view) \
+    macro(warning) \
     macro(writable) \
     macro(WritableStream) \
     macro(WritableStreamDefaultController) \
@@ -254,6 +257,8 @@ using namespace JSC;
     macro(writeRequests) \
     macro(writing) \
     macro(written) \
+    macro(napiDlopenHandle) \
+    macro(napiWrappedContents) \
     BUN_ADDITIONAL_BUILTIN_NAMES(macro)
 // --- END of BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME ---
 

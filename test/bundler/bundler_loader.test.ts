@@ -1,6 +1,6 @@
-import { fileURLToPath } from "bun";
-import { describe } from "bun:test";
-import fs from "node:fs";
+import { fileURLToPath, Loader } from "bun";
+import { describe, expect } from "bun:test";
+import fs, { readdirSync } from "node:fs";
 import { join } from "path";
 import { itBundled } from "./expectBundled";
 
@@ -56,6 +56,7 @@ describe("bundler", async () => {
       });
     });
   }
+
   itBundled("bun/loader-text-file", {
     target: "bun",
     outfile: "",
@@ -114,4 +115,65 @@ describe("bundler", async () => {
       stdout: moon,
     },
   });
+
+  const loaders: Loader[] = ["wasm", "css", "json", "file" /* "napi" */, "text"];
+  const exts = ["wasm", "css", "json", ".lmao" /*  ".node" */, ".txt"];
+  for (let i = 0; i < loaders.length; i++) {
+    const loader = loaders[i];
+    const ext = exts[i];
+    itBundled(`bun/loader-copy-file-entry-point-with-onLoad-${loader}`, {
+      target: "bun",
+      outdir: "/out",
+      experimentalCss: false,
+      files: {
+        [`/entry.${ext}`]: /* js */ `{ "hello": "friends" }`,
+      },
+      entryNaming: "[dir]/[name]-[hash].[ext]",
+      plugins(builder) {
+        builder.onLoad({ filter: new RegExp(`.${loader}$`) }, async ({ path }) => {
+          const result = await Bun.file(path).text();
+          return { contents: result, loader };
+        });
+      },
+      onAfterBundle(api) {
+        const jsFile = readdirSync(api.outdir).find(x => x.endsWith(".js"))!;
+        const module = require(join(api.outdir, jsFile));
+
+        if (loader === "json") {
+          expect(module.default).toStrictEqual({ hello: "friends" });
+        } else if (loader === "text") {
+          expect(module.default).toStrictEqual('{ "hello": "friends" }');
+        } else {
+          api.assertFileExists(join("out", module.default));
+        }
+      },
+    });
+  }
+
+  for (let i = 0; i < loaders.length; i++) {
+    const loader = loaders[i];
+    const ext = exts[i];
+    itBundled(`bun/loader-copy-file-entry-point-${loader}`, {
+      target: "bun",
+      outfile: "",
+      outdir: "/out",
+      experimentalCss: false,
+      files: {
+        [`/entry.${ext}`]: /* js */ `{ "hello": "friends" }`,
+      },
+      entryNaming: "[dir]/[name]-[hash].[ext]",
+      onAfterBundle(api) {
+        const jsFile = readdirSync(api.outdir).find(x => x.endsWith(".js"))!;
+        const module = require(join(api.outdir, jsFile));
+
+        if (loader === "json") {
+          expect(module.default).toStrictEqual({ hello: "friends" });
+        } else if (loader === "text") {
+          expect(module.default).toStrictEqual('{ "hello": "friends" }');
+        } else {
+          api.assertFileExists(join("out", module.default));
+        }
+      },
+    });
+  }
 });

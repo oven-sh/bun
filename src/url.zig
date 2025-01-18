@@ -93,6 +93,10 @@ pub const URL = struct {
         return strings.eqlComptime(this.protocol, "https");
     }
 
+    pub inline fn isS3(this: *const URL) bool {
+        return strings.eqlComptime(this.protocol, "s3");
+    }
+
     pub inline fn isHTTP(this: *const URL) bool {
         return strings.eqlComptime(this.protocol, "http");
     }
@@ -103,6 +107,12 @@ pub const URL = struct {
         }
 
         return "localhost";
+    }
+
+    pub fn s3Path(this: *const URL) string {
+        // we need to remove protocol if exists and ignore searchParams, should be host + pathname
+        const href = if (this.protocol.len > 0 and this.href.len > this.protocol.len + 2) this.href[this.protocol.len + 2 ..] else this.href;
+        return href[0 .. href.len - (this.search.len + this.hash.len)];
     }
 
     pub fn displayHost(this: *const URL) bun.fmt.HostFormatter {
@@ -488,7 +498,7 @@ pub const QueryStringMap = struct {
     pub const Iterator = struct {
         // Assume no query string param map will exceed 2048 keys
         // Browsers typically limit URL lengths to around 64k
-        const VisitedMap = std.bit_set.ArrayBitSet(usize, 2048);
+        const VisitedMap = bun.bit_set.ArrayBitSet(usize, 2048);
 
         i: usize = 0,
         map: *const QueryStringMap,
@@ -977,13 +987,13 @@ pub const FormData = struct {
         }
     }
 
-    pub fn jsFunctionFromMultipartData(
+    pub fn fromMultipartData(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(JSC.conv) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
 
-        const args_ = callframe.arguments(2);
+        const args_ = callframe.arguments_old(2);
 
         const args = args_.ptr[0..2];
 
@@ -997,8 +1007,7 @@ pub const FormData = struct {
         };
 
         if (input_value.isEmptyOrUndefinedOrNull()) {
-            globalThis.throwInvalidArguments("input must not be empty", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("input must not be empty", .{});
         }
 
         if (!boundary_value.isEmptyOrUndefinedOrNull()) {
@@ -1006,13 +1015,12 @@ pub const FormData = struct {
                 if (array_buffer.byteSlice().len > 0)
                     encoding = .{ .Multipart = array_buffer.byteSlice() };
             } else if (boundary_value.isString()) {
-                boundary_slice = boundary_value.toSliceOrNull(globalThis) orelse return .zero;
+                boundary_slice = try boundary_value.toSliceOrNull(globalThis);
                 if (boundary_slice.len > 0) {
                     encoding = .{ .Multipart = boundary_slice.slice() };
                 }
             } else {
-                globalThis.throwInvalidArguments("boundary must be a string or ArrayBufferView", .{});
-                return .zero;
+                return globalThis.throwInvalidArguments("boundary must be a string or ArrayBufferView", .{});
             }
         }
         var input_slice = JSC.ZigString.Slice{};
@@ -1022,22 +1030,19 @@ pub const FormData = struct {
         if (input_value.asArrayBuffer(globalThis)) |array_buffer| {
             input = array_buffer.byteSlice();
         } else if (input_value.isString()) {
-            input_slice = input_value.toSliceOrNull(globalThis) orelse return .zero;
+            input_slice = try input_value.toSliceOrNull(globalThis);
             input = input_slice.slice();
         } else if (input_value.as(JSC.WebCore.Blob)) |blob| {
             input = blob.sharedView();
         } else {
-            globalThis.throwInvalidArguments("input must be a string or ArrayBufferView", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("input must be a string or ArrayBufferView", .{});
         }
 
-        return FormData.toJS(globalThis, input, encoding) catch |err| {
-            globalThis.throwError(err, "while parsing FormData");
-            return .zero;
-        };
+        return FormData.toJS(globalThis, input, encoding) catch |err| return globalThis.throwError(err, "while parsing FormData");
     }
 
     comptime {
+        const jsFunctionFromMultipartData = JSC.toJSHostFunction(fromMultipartData);
         if (!JSC.is_bindgen)
             @export(jsFunctionFromMultipartData, .{ .name = "FormData__jsFunctionFromMultipartData" });
     }

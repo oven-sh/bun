@@ -1,4 +1,4 @@
-import { spawn } from "bun";
+import { spawn, stderr } from "bun";
 import { beforeEach, expect, it } from "bun:test";
 import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isDebug, tmpdirSync, waitForFileToExist } from "harness";
@@ -15,6 +15,21 @@ beforeEach(() => {
   rmSync(hotPath, { recursive: true, force: true });
   cpSync(import.meta.dir, hotPath, { recursive: true, force: true });
   cwd = hotPath;
+});
+
+it("preload not found should exit with code 1 and not time out", async () => {
+  const root = hotRunnerRoot;
+  const runner = spawn({
+    cmd: [bunExe(), "--preload=/dev/foobarbarbar", "--hot", root],
+    env: bunEnv,
+    stdout: "inherit",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  await runner.exited;
+  expect(runner.signalCode).toBe(null);
+  expect(runner.exitCode).toBe(1);
+  expect(await new Response(runner.stderr).text()).toContain("preload not found");
 });
 
 it(
@@ -435,7 +450,7 @@ ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
       let it = str.split("\n");
       let line;
       while ((line = it.shift())) {
-        if (!line.includes("error")) continue;
+        if (!line.includes("error:")) continue;
         str = "";
 
         if (reloadCounter === 50) {
@@ -515,7 +530,7 @@ ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
       let it = str.split("\n");
       let line;
       while ((line = it.shift())) {
-        if (!line.includes("error")) continue;
+        if (!line.includes("error:")) continue;
         str = "";
 
         if (reloadCounter === 50) {

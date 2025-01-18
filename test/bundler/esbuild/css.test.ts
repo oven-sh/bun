@@ -6,6 +6,185 @@ import { itBundled } from "../expectBundled";
 
 // For debug, all files are written to $TEMP/bun-bundle-tests/css
 
+describe("bundler", () => {
+  itBundled("css/CSSEntryPoint", {
+    experimentalCss: true,
+    files: {
+      "/entry.css": /* css */ `
+        body {
+          background: white;
+          color: black }
+      `,
+    },
+    outfile: "/out.js",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toEqualIgnoringWhitespace(`
+/* entry.css */
+body {
+        color: #000;
+        background: #fff;
+}`);
+    },
+  });
+
+  itBundled("css/CSSEntryPointEmpty", {
+    experimentalCss: true,
+    files: {
+      "/entry.css": /* css */ `\n`,
+    },
+    outfile: "/out.js",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toEqualIgnoringWhitespace(`
+/* entry.css */`);
+    },
+  });
+
+  itBundled("css/CSSNesting", {
+    experimentalCss: true,
+    target: "bun",
+    files: {
+      "/entry.css": /* css */ `
+body {
+	h1 {
+		color: white;
+	}
+}`,
+    },
+    outfile: "/out.js",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toEqualIgnoringWhitespace(`
+/* entry.css */
+body {
+	&h1 {
+		color: #fff;
+	}
+}
+`);
+    },
+  });
+
+  itBundled("css/CSSAtImportMissing", {
+    experimentalCss: true,
+    files: {
+      "/entry.css": `@import "./missing.css";`,
+    },
+    bundleErrors: {
+      "/entry.css": ['Could not resolve: "./missing.css"'],
+    },
+  });
+
+  itBundled("css/CSSAtImportSimple", {
+    experimentalCss: true,
+    // GENERATED
+    files: {
+      "/entry.css": /* css */ `
+        @import "./internal.css";
+      `,
+      "/internal.css": /* css */ `
+        .before { color: red }
+      `,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+/* internal.css */
+.before {
+  color: red;
+}
+/* entry.css */
+`);
+    },
+  });
+
+  itBundled("css/CSSAtImportDiamond", {
+    experimentalCss: true,
+    // GENERATED
+    files: {
+      "/a.css": /* css */ `
+        @import "./b.css";
+        @import "./c.css";
+        .last { color: red }
+      `,
+      "/b.css": /* css */ `
+        @import "./d.css";
+        .first { color: red }
+      `,
+      "/c.css": /* css */ `
+        @import "./d.css";
+        .third { color: red }
+      `,
+      "/d.css": /* css */ `
+        .second { color: red }
+      `,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+/* b.css */
+.first {
+  color: red;
+}
+/* d.css */
+.second {
+  color: red;
+}
+/* c.css */
+.third {
+  color: red;
+}
+/* a.css */
+.last {
+  color: red;
+}
+`);
+    },
+  });
+
+  itBundled("css/CSSAtImportCycle", {
+    experimentalCss: true,
+    files: {
+      "/a.css": /* css */ `
+        @import "./a.css";
+        .hehe { color: red }
+      `,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+/* a.css */
+.hehe {
+  color: red;
+}
+`);
+    },
+  });
+
+  itBundled("css/CSSUrlImport", {
+    experimentalCss: true,
+    files: {
+      "/a.css": /* css */ `
+        .hello {
+          background-image: url(./hi.svg)
+        }
+      `,
+      "/hi.svg": /* svg */ `
+<svg width="100" height="100" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="50" cy="50" r="40" fill="blue" />
+</svg>
+      `,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/a.css").toEqualIgnoringWhitespace(`
+/* a.css */
+.hello {
+  background-image: url("data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICA8Y2lyY2xlIGN4PSI1MCIgY3k9IjUwIiByPSI0MCIgZmlsbD0iYmx1ZSIgLz4KPC9zdmc+");
+}
+`);
+    },
+  });
+});
+
 describe.todo("bundler", () => {
   itBundled("css/CSSEntryPoint", {
     // GENERATED

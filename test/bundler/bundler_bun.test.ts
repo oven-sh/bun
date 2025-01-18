@@ -93,4 +93,60 @@ error: Hello World`,
       },
     },
   });
+  itBundled("bun/unicode comment", {
+    target: "bun",
+    files: {
+      "/a.ts": /* js */ `
+        /* æ */
+      `,
+    },
+    run: { stdout: "" },
+  });
+  if (Bun.version.startsWith("1.2")) {
+    throw new Error("TODO: enable these tests please");
+    for (const backend of ["api", "cli"] as const) {
+      itBundled("bun/ExportsConditionsDevelopment" + backend.toUpperCase(), {
+        files: {
+          "src/entry.js": `import 'pkg1'`,
+          "node_modules/pkg1/package.json": /* json */ `
+        {
+          "exports": {
+            "development": "./custom1.js",
+            "default": "./default.js"
+          }
+        }
+      `,
+          "node_modules/pkg1/custom1.js": `console.log('SUCCESS')`,
+          "node_modules/pkg1/default.js": `console.log('FAIL')`,
+        },
+        backend,
+        outfile: "out.js",
+        define: { "process.env.NODE_ENV": '"development"' },
+        run: {
+          stdout: "SUCCESS",
+        },
+      });
+      itBundled("bun/ExportsConditionsDevelopmentInProduction" + backend.toUpperCase(), {
+        files: {
+          "src/entry.js": `import 'pkg1'`,
+          "node_modules/pkg1/package.json": /* json */ `
+        {
+          "exports": {
+            "development": "./custom1.js",
+            "default": "./default.js"
+          }
+        }
+      `,
+          "node_modules/pkg1/custom1.js": `console.log('FAIL')`,
+          "node_modules/pkg1/default.js": `console.log('SUCCESS')`,
+        },
+        backend,
+        outfile: "/Users/user/project/out.js",
+        define: { "process.env.NODE_ENV": '"production"' },
+        run: {
+          stdout: "SUCCESS",
+        },
+      });
+    }
+  }
 });

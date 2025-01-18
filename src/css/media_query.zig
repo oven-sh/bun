@@ -43,7 +43,7 @@ pub fn ValidQueryCondition(comptime T: type) void {
 /// A [media query list](https://drafts.csswg.org/mediaqueries/#mq-list).
 pub const MediaList = struct {
     /// The list of media queries.
-    media_queries: ArrayList(MediaQuery),
+    media_queries: ArrayList(MediaQuery) = .{},
 
     /// Parse a media query list from CSS.
     pub fn parse(input: *css.Parser) Result(MediaList) {
@@ -85,9 +85,13 @@ pub const MediaList = struct {
     }
 
     pub fn eql(lhs: *const MediaList, rhs: *const MediaList) bool {
-        _ = lhs; // autofix
-        _ = rhs; // autofix
-        @panic(css.todo_stuff.depth);
+        return css.implementEql(@This(), lhs, rhs);
+    }
+
+    pub fn deepClone(this: *const MediaList, allocator: std.mem.Allocator) MediaList {
+        return MediaList{
+            .media_queries = css.deepClone(MediaQuery, allocator, &this.media_queries),
+        };
     }
 
     /// Returns whether the media query list always matches.
@@ -133,6 +137,18 @@ pub const MediaQuery = struct {
     condition: ?MediaCondition,
     // ~toCssImpl
     const This = @This();
+
+    pub fn deepClone(this: *const MediaQuery, allocator: std.mem.Allocator) MediaQuery {
+        return MediaQuery{
+            .qualifier = if (this.qualifier) |q| q else null,
+            .media_type = this.media_type,
+            .condition = if (this.condition) |*c| c.deepClone(allocator) else null,
+        };
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 
     /// Returns whether the media query is guaranteed to always match.
     pub fn alwaysMatches(this: *const MediaQuery) bool {
@@ -195,7 +211,7 @@ pub const MediaQuery = struct {
                 //
                 // Otherwise, we'd serialize media queries like "(min-width:
                 // 40px)" in "all (min-width: 40px)", which is unexpected.
-                if (this.qualifier != null or this.condition != null) {
+                if (this.qualifier != null or this.condition == null) {
                     try dest.writeStr("all");
                 }
             },
@@ -213,6 +229,7 @@ pub const MediaQuery = struct {
         const condition = if (this.condition) |*cond| cond else return;
 
         const needs_parens = if (this.media_type != .all or this.qualifier != null) needs_parens: {
+            try dest.writeStr(" and ");
             break :needs_parens condition.* == .operation and condition.operation.operator != .@"and";
         } else false;
 
@@ -288,11 +305,18 @@ pub const MediaType = union(enum) {
     }
 
     pub fn fromStr(name: []const u8) MediaType {
-        // css.todo_stuff.match_ignore_ascii_case
-        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "all")) return .all;
-        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "print")) return .print;
-        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "screen")) return .print;
+        const Enumerations = enum { all, print, screen };
+        const Map = comptime bun.ComptimeEnumMap(Enumerations);
+        if (Map.getASCIIICaseInsensitive(name)) |x| return switch (x) {
+            .all => .all,
+            .print => .print,
+            .screen => .screen,
+        };
         return .{ .custom = name };
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
     }
 };
 
@@ -319,9 +343,30 @@ pub const MediaCondition = union(enum) {
     operation: struct {
         operator: Operator,
         conditions: ArrayList(MediaCondition),
+
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
     },
 
     const This = @This();
+
+    pub fn deepClone(this: *const MediaCondition, allocator: std.mem.Allocator) MediaCondition {
+        return switch (this.*) {
+            .feature => |*f| MediaCondition{ .feature = f.deepClone(allocator) },
+            .not => |c| MediaCondition{ .not = bun.create(allocator, MediaCondition, c.deepClone(allocator)) },
+            .operation => |op| MediaCondition{
+                .operation = .{
+                    .operator = op.operator,
+                    .conditions = css.deepClone(MediaCondition, allocator, &op.conditions),
+                },
+            },
+        };
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 
     pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
         switch (this.*) {
@@ -540,7 +585,7 @@ fn parseParenBlock(
 /// A [media feature](https://drafts.csswg.org/mediaqueries/#typedef-media-feature)
 pub const MediaFeature = QueryFeature(MediaFeatureId);
 
-const MediaFeatureId = enum {
+pub const MediaFeatureId = enum {
     /// The [width](https://w3c.github.io/csswg-drafts/mediaqueries-5/#width) media feature.
     width,
     /// The [height](https://w3c.github.io/csswg-drafts/mediaqueries-5/#height) media feature.
@@ -703,12 +748,20 @@ pub fn QueryFeature(comptime FeatureId: type) type {
             name: MediaFeatureName(FeatureId),
             /// The feature value.
             value: MediaFeatureValue,
+
+            pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+                return css.implementEql(@This(), lhs, rhs);
+            }
         },
 
         /// A boolean feature, e.g. `(hover)`.
         boolean: struct {
             /// The name of the feature.
             name: MediaFeatureName(FeatureId),
+
+            pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+                return css.implementEql(@This(), lhs, rhs);
+            }
         },
 
         /// A range, e.g. `(width > 240px)`.
@@ -719,6 +772,10 @@ pub fn QueryFeature(comptime FeatureId: type) type {
             operator: MediaFeatureComparison,
             /// The feature value.
             value: MediaFeatureValue,
+
+            pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+                return css.implementEql(@This(), lhs, rhs);
+            }
         },
 
         /// An interval, e.g. `(120px < width < 240px)`.
@@ -733,9 +790,49 @@ pub fn QueryFeature(comptime FeatureId: type) type {
             end: MediaFeatureValue,
             /// A comparator for the end value.
             end_operator: MediaFeatureComparison,
+
+            pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+                return css.implementEql(@This(), lhs, rhs);
+            }
         },
 
         const This = @This();
+
+        pub fn deepClone(this: *const This, allocator: std.mem.Allocator) This {
+            return switch (this.*) {
+                .plain => .{
+                    .plain = .{
+                        .name = this.plain.name,
+                        .value = this.plain.value.deepClone(allocator),
+                    },
+                },
+                .boolean => .{
+                    .boolean = .{
+                        .name = this.boolean.name,
+                    },
+                },
+                .range => .{
+                    .range = .{
+                        .name = this.range.name,
+                        .operator = this.range.operator,
+                        .value = this.range.value.deepClone(allocator),
+                    },
+                },
+                .interval => .{
+                    .interval = .{
+                        .name = this.interval.name,
+                        .start = this.interval.start.deepClone(allocator),
+                        .start_operator = this.interval.start_operator,
+                        .end = this.interval.end.deepClone(allocator),
+                        .end_operator = this.interval.end_operator,
+                    },
+                },
+            };
+        }
+
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
 
         pub fn needsParens(this: *const This, parent_operator: ?Operator, targets: *const css.Targets) bool {
             return parent_operator != .@"and" and
@@ -1011,12 +1108,28 @@ pub const MediaFeatureComparison = enum(u8) {
         return css.enum_property_util.asStr(@This(), this);
     }
 
-    pub fn parse(input: *css.Parser) Result(@This()) {
-        return css.enum_property_util.parse(@This(), input);
-    }
-
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
-        return css.enum_property_util.toCss(@This(), this, W, dest);
+        switch (this.*) {
+            .equal => {
+                try dest.delim('-', true);
+            },
+            .@"greater-than" => {
+                try dest.delim('>', true);
+            },
+            .@"greater-than-equal" => {
+                try dest.whitespace();
+                try dest.writeStr(">=");
+                try dest.whitespace();
+            },
+            .@"less-than" => {
+                try dest.delim('<', true);
+            },
+            .@"less-than-equal" => {
+                try dest.whitespace();
+                try dest.writeStr("<=");
+                try dest.whitespace();
+            },
+        }
     }
 
     pub fn opposite(self: @This()) @This() {
@@ -1050,6 +1163,10 @@ pub const MediaFeatureValue = union(enum) {
     ident: Ident,
     /// An environment variable reference.
     env: EnvironmentVariable,
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 
     pub fn deepClone(this: *const MediaFeatureValue, allocator: std.mem.Allocator) MediaFeatureValue {
         return switch (this.*) {

@@ -9,7 +9,7 @@ const stringZ = bun.stringZ;
 const FeatureFlags = bun.FeatureFlags;
 const options = @import("./options.zig");
 
-const Mutex = @import("./lock.zig").Lock;
+const Mutex = bun.Mutex;
 const Futex = @import("./futex.zig");
 pub const WatchItemIndex = u16;
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
@@ -117,9 +117,7 @@ const INotify = struct {
         bun.assert(this.loaded_inotify);
 
         restart: while (true) {
-            Futex.wait(&this.watch_count, 0, null) catch |err| switch (err) {
-                error.TimedOut => unreachable, // timeout is infinite
-            };
+            Futex.waitForever(&this.watch_count, 0);
 
             const rc = std.posix.system.read(
                 this.inotify_fd,
@@ -510,6 +508,31 @@ pub const WatchEvent = struct {
         rename: bool = false,
         write: bool = false,
         move_to: bool = false,
+
+        pub fn merge(before: Op, after: Op) Op {
+            return .{
+                .delete = before.delete or after.delete,
+                .write = before.write or after.write,
+                .metadata = before.metadata or after.metadata,
+                .rename = before.rename or after.rename,
+                .move_to = before.move_to or after.move_to,
+            };
+        }
+
+        pub fn format(op: Op, comptime _: []const u8, _: std.fmt.FormatOptions, w: anytype) !void {
+            try w.writeAll("{");
+            var first = true;
+            inline for (comptime std.meta.fieldNames(Op)) |name| {
+                if (@field(op, name)) {
+                    if (!first) {
+                        try w.writeAll(",");
+                    }
+                    first = false;
+                    try w.writeAll(name);
+                }
+            }
+            try w.writeAll("}");
+        }
     };
 };
 
@@ -542,6 +565,10 @@ pub const NewWatcher = if (true)
     struct {
         const Watcher = @This();
 
+        pub const Event = WatchEvent;
+        pub const Item = WatchItem;
+        pub const ItemList = WatchList;
+
         watchlist: WatchList,
         watched_count: usize = 0,
         mutex: Mutex,
@@ -567,6 +594,8 @@ pub const NewWatcher = if (true)
         evict_list: [WATCHER_MAX_LIST]WatchItemIndex = undefined,
         evict_list_i: WatchItemIndex = 0,
 
+        thread_lock: bun.DebugThreadLock = bun.DebugThreadLock.unlocked,
+
         const no_watch_item: WatchItemIndex = std.math.maxInt(WatchItemIndex);
 
         pub fn init(comptime T: type, ctx: *T, fs: *bun.fs.FileSystem, allocator: std.mem.Allocator) !*Watcher {
@@ -575,7 +604,11 @@ pub const NewWatcher = if (true)
                     T.onFileUpdate(@alignCast(@ptrCast(ctx_opaque)), events, changed_files, watchlist);
                 }
                 fn onErrorWrapped(ctx_opaque: *anyopaque, err: bun.sys.Error) void {
-                    T.onError(@alignCast(@ptrCast(ctx_opaque)), err);
+                    if (@hasDecl(T, "onWatchError")) {
+                        T.onWatchError(@alignCast(@ptrCast(ctx_opaque)), err);
+                    } else {
+                        T.onError(@alignCast(@ptrCast(ctx_opaque)), err);
+                    }
                 }
             };
 
@@ -612,9 +645,6 @@ pub const NewWatcher = if (true)
                 this.close_descriptors = close_descriptors;
                 this.running = false;
             } else {
-                // if the mutex is locked, then that's now a UAF.
-                this.mutex.releaseAssertUnlocked("Watcher mutex is locked when it should not be.");
-
                 if (close_descriptors and this.running) {
                     const fds = this.watchlist.items(.fd);
                     for (fds) |fd| {
@@ -630,6 +660,7 @@ pub const NewWatcher = if (true)
         // This must only be called from the watcher thread
         pub fn watchLoop(this: *Watcher) !void {
             this.watchloop_handle = std.Thread.getCurrentId();
+            this.thread_lock.lock();
             Output.Source.configureNamedThread("File Watcher");
 
             defer Output.flush();
@@ -1218,20 +1249,17 @@ pub const NewWatcher = if (true)
             file_path: string,
             hash: HashType,
             comptime copy_file_path: bool,
-        ) bun.JSC.Maybe(void) {
+        ) bun.JSC.Maybe(WatchItemIndex) {
             this.mutex.lock();
             defer this.mutex.unlock();
 
-            if (this.indexOf(hash) != null) {
-                return .{ .result = {} };
+            if (this.indexOf(hash)) |idx| {
+                return .{ .result = @truncate(idx) };
             }
 
             this.watchlist.ensureUnusedCapacity(this.allocator, 1) catch bun.outOfMemory();
 
-            return switch (this.appendDirectoryAssumeCapacity(fd, file_path, hash, copy_file_path)) {
-                .err => |err| .{ .err = err },
-                .result => .{ .result = {} },
-            };
+            return this.appendDirectoryAssumeCapacity(fd, file_path, hash, copy_file_path);
         }
 
         pub fn addFile(

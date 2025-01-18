@@ -21,6 +21,7 @@ const js_ast = bun.JSAst;
 const linker = @import("linker.zig");
 const RegularExpression = bun.RegularExpression;
 const builtin = @import("builtin");
+const File = bun.sys.File;
 
 const debug = Output.scoped(.CLI, true);
 
@@ -31,7 +32,7 @@ const configureTransformOptionsForBun = @import("./bun.js/config.zig").configure
 const clap = bun.clap;
 const BunJS = @import("./bun_js.zig");
 const Install = @import("./install/install.zig");
-const bundler = bun.bundler;
+const transpiler = bun.transpiler;
 const DotEnv = @import("./env_loader.zig");
 const RunCommand_ = @import("./cli/run_command.zig").RunCommand;
 const CreateCommand_ = @import("./cli/create_command.zig").CreateCommand;
@@ -45,6 +46,11 @@ const TestCommand = @import("./cli/test_command.zig").TestCommand;
 pub var start_time: i128 = undefined;
 const Bunfig = @import("./bunfig.zig").Bunfig;
 const OOM = bun.OOM;
+
+export var Bun__Node__ProcessNoDeprecation = false;
+export var Bun__Node__ProcessThrowDeprecation = false;
+
+pub var Bun__Node__ProcessTitle: ?string = null;
 
 pub const Cli = struct {
     pub const CompileTarget = @import("./compile_target.zig");
@@ -61,7 +67,7 @@ pub const Cli = struct {
         // var panicker = MainPanicHandler.init(log);
         // MainPanicHandler.Singleton = &panicker;
         Command.start(allocator, log) catch |err| {
-            log.printForLogLevel(Output.errorWriter()) catch {};
+            log.print(Output.errorWriter()) catch {};
 
             bun.crash_handler.handleRootError(err, @errorReturnTrace());
         };
@@ -73,10 +79,23 @@ pub const Cli = struct {
 
 pub const debug_flags = if (Environment.isDebug) struct {
     var resolve_breakpoints: []const []const u8 = &.{};
+    var print_breakpoints: []const []const u8 = &.{};
 
     pub fn hasResolveBreakpoint(str: []const u8) bool {
         for (resolve_breakpoints) |bp| {
             if (strings.contains(str, bp)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    pub fn hasPrintBreakpoint(path: fs.Path) bool {
+        for (print_breakpoints) |bp| {
+            if (strings.contains(path.pretty, bp)) {
+                return true;
+            }
+            if (strings.contains(path.text, bp)) {
                 return true;
             }
         }
@@ -169,21 +188,24 @@ pub const Arguments = struct {
         clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
         clap.parseParam("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml") catch unreachable,
         clap.parseParam("-h, --help                        Display this menu and exit") catch unreachable,
-        clap.parseParam("<POS>...") catch unreachable,
-    } ++ if (builtin.have_error_return_tracing) [_]ParamType{
+    } ++ (if (builtin.have_error_return_tracing) [_]ParamType{
         // This will print more error return traces, as a debug aid
-        clap.parseParam("--verbose-error-trace") catch unreachable,
-    } else [_]ParamType{};
+        clap.parseParam("--verbose-error-trace             Dump error return traces") catch unreachable,
+    } else [_]ParamType{}) ++ [_]ParamType{
+        clap.parseParam("<POS>...") catch unreachable,
+    };
 
     const debug_params = [_]ParamType{
         clap.parseParam("--breakpoint-resolve <STR>...     DEBUG MODE: breakpoint when resolving something that includes this string") catch unreachable,
+        clap.parseParam("--breakpoint-print <STR>...       DEBUG MODE: breakpoint when printing something that includes this string") catch unreachable,
     };
 
     const transpiler_params_ = [_]ParamType{
-        clap.parseParam("--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --target dependent") catch unreachable,
+        clap.parseParam("--main-fields <STR>...             Main fields to lookup in package.json. Defaults to --target dependent") catch unreachable,
         clap.parseParam("--extension-order <STR>...        Defaults to: .tsx,.ts,.jsx,.js,.json ") catch unreachable,
-        clap.parseParam("--tsconfig-override <STR>         Specify custom tsconfig.json. Default <d>$cwd<r>/tsconfig.json") catch unreachable,
-        clap.parseParam("-d, --define <STR>...             Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\". Values are parsed as JSON.") catch unreachable,
+        clap.parseParam("--tsconfig-override <STR>          Specify custom tsconfig.json. Default <d>$cwd<r>/tsconfig.json") catch unreachable,
+        clap.parseParam("-d, --define <STR>...              Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\". Values are parsed as JSON.") catch unreachable,
+        clap.parseParam("--drop <STR>...                   Remove function calls, e.g. --drop=console removes all console.* calls.") catch unreachable,
         clap.parseParam("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: js, jsx, ts, tsx, json, toml, text, file, wasm, napi") catch unreachable,
         clap.parseParam("--no-macros                       Disable macros from being executed in the bundler, transpiler and runtime") catch unreachable,
         clap.parseParam("--jsx-factory <STR>               Changes the function called when compiling JSX elements using the classic JSX runtime") catch unreachable,
@@ -206,18 +228,24 @@ pub const Arguments = struct {
         clap.parseParam("--install <STR>                   Configure auto-install behavior. One of \"auto\" (default, auto-installs when no node_modules), \"fallback\" (missing packages only), \"force\" (always).") catch unreachable,
         clap.parseParam("-i                                Auto-install dependencies during execution. Equivalent to --install=fallback.") catch unreachable,
         clap.parseParam("-e, --eval <STR>                  Evaluate argument as a script") catch unreachable,
-        clap.parseParam("--print <STR>                     Evaluate argument as a script and print the result") catch unreachable,
+        clap.parseParam("-p, --print <STR>                 Evaluate argument as a script and print the result") catch unreachable,
         clap.parseParam("--prefer-offline                  Skip staleness checks for packages in the Bun runtime and resolve from disk") catch unreachable,
         clap.parseParam("--prefer-latest                   Use the latest matching versions of packages in the Bun runtime, always checking npm") catch unreachable,
-        clap.parseParam("-p, --port <STR>                  Set the default port for Bun.serve") catch unreachable,
+        clap.parseParam("--port <STR>                      Set the default port for Bun.serve") catch unreachable,
         clap.parseParam("-u, --origin <STR>") catch unreachable,
         clap.parseParam("--conditions <STR>...             Pass custom conditions to resolve") catch unreachable,
         clap.parseParam("--fetch-preconnect <STR>...       Preconnect to a URL while code is loading") catch unreachable,
         clap.parseParam("--max-http-header-size <INT>      Set the maximum size of HTTP headers in bytes. Default is 16KiB") catch unreachable,
+        clap.parseParam("--dns-result-order <STR>          Set the default order of DNS lookup results. Valid orders: verbatim (default), ipv4first, ipv6first") catch unreachable,
+        clap.parseParam("--expose-gc                       Expose gc() on the global object. Has no effect on Bun.gc().") catch unreachable,
+        clap.parseParam("--no-deprecation                  Suppress all reporting of the custom deprecation.") catch unreachable,
+        clap.parseParam("--throw-deprecation               Determine whether or not deprecation warnings result in errors.") catch unreachable,
+        clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
+        clap.parseParam("--experimental-html               Bundle .html imports as JavaScript & CSS") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
-        clap.parseParam("--filter <STR>...                 Run a script in all workspace packages matching the pattern") catch unreachable,
+        clap.parseParam("-F, --filter <STR>...             Run a script in all workspace packages matching the pattern") catch unreachable,
         clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
         clap.parseParam("--shell <STR>                     Control the shell used for package.json scripts. Supports either 'bun' or 'system'") catch unreachable,
     };
@@ -225,6 +253,7 @@ pub const Arguments = struct {
     const auto_only_params = [_]ParamType{
         // clap.parseParam("--all") catch unreachable,
         clap.parseParam("--silent                          Don't print the script command") catch unreachable,
+        clap.parseParam("--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines.") catch unreachable,
         clap.parseParam("-v, --version                     Print version and exit") catch unreachable,
         clap.parseParam("--revision                        Print version with revision and exit") catch unreachable,
     } ++ auto_or_run_params;
@@ -232,6 +261,7 @@ pub const Arguments = struct {
 
     const run_only_params = [_]ParamType{
         clap.parseParam("--silent                          Don't print the script command") catch unreachable,
+        clap.parseParam("--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines.") catch unreachable,
     } ++ auto_or_run_params;
     pub const run_params = run_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -248,6 +278,8 @@ pub const Arguments = struct {
         clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
         clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
         clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'linked', 'inline', 'external', or 'none'") catch unreachable,
+        clap.parseParam("--banner <STR>                   Add a banner to the bundled output such as \"use client\"; for a bundle being used with RSCs") catch unreachable,
+        clap.parseParam("--footer <STR>                   Add a footer to the bundled output such as // built with bun!") catch unreachable,
         clap.parseParam("--format <STR>                   Specifies the module format to build to. Only \"esm\" is supported.") catch unreachable,
         clap.parseParam("--root <STR>                     Root directory used for multiple entry points") catch unreachable,
         clap.parseParam("--splitting                      Enable code splitting") catch unreachable,
@@ -258,17 +290,26 @@ pub const Arguments = struct {
         clap.parseParam("--chunk-naming <STR>             Customize chunk filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
         clap.parseParam("--asset-naming <STR>             Customize asset filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
         clap.parseParam("--react-fast-refresh             Enable React Fast Refresh transform (does not emit hot-module code, use this for testing)") catch unreachable,
-        clap.parseParam("--server-components              Enable Server Components (experimental)") catch unreachable,
-        clap.parseParam("--define-client <STR>...         When --server-components is set, these defines are applied to client components. Same format as --define") catch unreachable,
         clap.parseParam("--no-bundle                      Transpile file only, do not bundle") catch unreachable,
         clap.parseParam("--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed.") catch unreachable,
         clap.parseParam("--minify                         Enable all minification flags") catch unreachable,
         clap.parseParam("--minify-syntax                  Minify syntax and inline data") catch unreachable,
         clap.parseParam("--minify-whitespace              Minify whitespace") catch unreachable,
         clap.parseParam("--minify-identifiers             Minify identifiers") catch unreachable,
+        clap.parseParam("--experimental-css               Enable experimental CSS bundling") catch unreachable,
+        clap.parseParam("--experimental-css-chunking      Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an affect when multiple entrypoints import CSS") catch unreachable,
+        clap.parseParam("--experimental-html              Use .html files as entry points for JavaScript & CSS") catch unreachable,
         clap.parseParam("--dump-environment-variables") catch unreachable,
         clap.parseParam("--conditions <STR>...            Pass custom conditions to resolve") catch unreachable,
-    };
+        clap.parseParam("--app                            (EXPERIMENTAL) Build a web app for production using Bun Bake.") catch unreachable,
+        clap.parseParam("--server-components              (EXPERIMENTAL) Enable server components") catch unreachable,
+        clap.parseParam("--env <inline|prefix*|disable>   Inline environment variables into the bundle as process.env.${name}. Defaults to 'inline'. To inline environment variables matching a prefix, use my prefix like 'FOO_PUBLIC_*'. To disable, use 'disable'. In Bun v1.2+, the default is 'disable'.") catch unreachable,
+        clap.parseParam("--windows-hide-console           When using --compile targeting Windows, prevent a Command prompt from opening alongside the executable") catch unreachable,
+        clap.parseParam("--windows-icon <STR>             When using --compile targeting Windows, assign an executable icon") catch unreachable,
+    } ++ if (FeatureFlags.bake_debugging_features) [_]ParamType{
+        clap.parseParam("--debug-dump-server-files        When --app is set, dump all server files to disk even when building statically") catch unreachable,
+        clap.parseParam("--debug-no-minify                When --app is set, do not minify anything") catch unreachable,
+    } else .{};
     pub const build_params = build_only_params ++ transpiler_params_ ++ base_params_;
 
     // TODO: update test completions
@@ -283,6 +324,8 @@ pub const Arguments = struct {
         clap.parseParam("--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'.") catch unreachable,
         clap.parseParam("--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.") catch unreachable,
         clap.parseParam("-t, --test-name-pattern <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
+        clap.parseParam("--reporter <STR>                 Specify the test reporter. Currently --reporter=junit is the only supported format.") catch unreachable,
+        clap.parseParam("--reporter-outfile <STR>         The output file used for the format from --reporter.") catch unreachable,
     };
     pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -340,11 +383,7 @@ pub const Arguments = struct {
                 if (getHomeConfigPath(&config_buf)) |path| {
                     loadConfigPath(allocator, true, path, ctx, comptime cmd) catch |err| {
                         if (ctx.log.hasAny()) {
-                            switch (Output.enable_ansi_colors) {
-                                inline else => |enable_ansi_colors| {
-                                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
-                                },
-                            }
+                            ctx.log.print(Output.errorWriter()) catch {};
                         }
                         if (ctx.log.hasAny()) Output.printError("\n", .{});
                         Output.err(err, "failed to load bunfig", .{});
@@ -383,7 +422,7 @@ pub const Arguments = struct {
                 var secondbuf: bun.PathBuffer = undefined;
                 const cwd = bun.getcwd(&secondbuf) catch return;
 
-                ctx.args.absolute_working_dir = try allocator.dupe(u8, cwd);
+                ctx.args.absolute_working_dir = try allocator.dupeZ(u8, cwd);
             }
 
             var parts = [_]string{ ctx.args.absolute_working_dir.?, config_path_ };
@@ -399,11 +438,7 @@ pub const Arguments = struct {
 
         loadConfigPath(allocator, auto_loaded, config_path, ctx, comptime cmd) catch |err| {
             if (ctx.log.hasAny()) {
-                switch (Output.enable_ansi_colors) {
-                    inline else => |enable_ansi_colors| {
-                        ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
-                    },
-                }
+                ctx.log.print(Output.errorWriter()) catch {};
             }
             if (ctx.log.hasAny()) Output.printError("\n", .{});
             Output.err(err, "failed to load bunfig", .{});
@@ -462,16 +497,16 @@ pub const Arguments = struct {
             }
         }
 
-        var cwd: []u8 = undefined;
+        var cwd: [:0]u8 = undefined;
         if (args.option("--cwd")) |cwd_arg| {
             cwd = brk: {
                 var outbuf: bun.PathBuffer = undefined;
                 const out = bun.path.joinAbs(try bun.getcwd(&outbuf), .loose, cwd_arg);
-                bun.sys.chdir(out).unwrap() catch |err| {
+                bun.sys.chdir("", out).unwrap() catch |err| {
                     Output.err(err, "Could not change directory to \"{s}\"\n", .{cwd_arg});
                     Global.exit(1);
                 };
-                break :brk try allocator.dupe(u8, out);
+                break :brk try allocator.dupeZ(u8, out);
             };
         } else {
             cwd = try bun.getcwdAlloc(allocator);
@@ -479,6 +514,15 @@ pub const Arguments = struct {
 
         if (cmd == .RunCommand or cmd == .AutoCommand) {
             ctx.filters = args.options("--filter");
+
+            if (args.option("--elide-lines")) |elide_lines| {
+                if (elide_lines.len > 0) {
+                    ctx.bundler_options.elide_lines = std.fmt.parseInt(usize, elide_lines, 10) catch {
+                        Output.prettyErrorln("<r><red>error<r>: Invalid elide-lines: \"{s}\"", .{elide_lines});
+                        Global.exit(1);
+                    };
+                }
+            }
         }
 
         if (cmd == .TestCommand) {
@@ -506,6 +550,23 @@ pub const Arguments = struct {
                         Output.prettyErrorln("<r><red>error<r>: --coverage-reporter received invalid reporter: \"{s}\"", .{reporter});
                         Global.exit(1);
                     }
+                }
+            }
+
+            if (args.option("--reporter-outfile")) |reporter_outfile| {
+                ctx.test_options.reporter_outfile = reporter_outfile;
+            }
+
+            if (args.option("--reporter")) |reporter| {
+                if (strings.eqlComptime(reporter, "junit")) {
+                    if (ctx.test_options.reporter_outfile == null) {
+                        Output.errGeneric("--reporter=junit expects an output file from --reporter-outfile", .{});
+                        Global.crash();
+                    }
+                    ctx.test_options.file_reporter = .junit;
+                } else {
+                    Output.errGeneric("unrecognized reporter format: '{s}'. Currently, only 'junit' is supported", .{reporter});
+                    Global.crash();
                 }
             }
 
@@ -573,6 +634,8 @@ pub const Arguments = struct {
             };
         }
 
+        opts.drop = args.options("--drop");
+
         const loader_tuple = try LoaderColonList.resolve(allocator, args.options("--loader"));
 
         if (loader_tuple.keys.len > 0) {
@@ -587,7 +650,6 @@ pub const Arguments = struct {
         else
             null;
 
-        opts.serve = false; // TODO
         opts.main_fields = args.options("--main-fields");
         // we never actually supported inject.
         // opts.inject = args.options("--inject");
@@ -702,6 +764,11 @@ pub const Arguments = struct {
             ctx.runtime_options.if_present = args.flag("--if-present");
             ctx.runtime_options.smol = args.flag("--smol");
             ctx.runtime_options.preconnect = args.options("--fetch-preconnect");
+            ctx.runtime_options.expose_gc = args.flag("--expose-gc");
+
+            if (args.option("--dns-result-order")) |order| {
+                ctx.runtime_options.dns_result_order = order;
+            }
 
             if (args.option("--inspect")) |inspect_flag| {
                 ctx.runtime_options.debugger = if (inspect_flag.len == 0)
@@ -739,6 +806,16 @@ pub const Arguments = struct {
 
                 bun.JSC.RuntimeTranspilerCache.is_disabled = true;
             }
+
+            if (args.flag("--no-deprecation")) {
+                Bun__Node__ProcessNoDeprecation = true;
+            }
+            if (args.flag("--throw-deprecation")) {
+                Bun__Node__ProcessThrowDeprecation = true;
+            }
+            if (args.option("--title")) |title| {
+                Bun__Node__ProcessTitle = title;
+            }
         }
 
         if (opts.port != null and opts.origin == null) {
@@ -754,6 +831,19 @@ pub const Arguments = struct {
             ctx.bundler_options.transform_only = args.flag("--no-bundle");
             ctx.bundler_options.bytecode = args.flag("--bytecode");
 
+            if (args.flag("--app")) {
+                if (!bun.FeatureFlags.bake()) {
+                    Output.errGeneric("To use the experimental \"--app\" option, upgrade to the canary build of bun via \"bun upgrade --canary\"", .{});
+                    Global.crash();
+                }
+
+                ctx.bundler_options.bake = true;
+                ctx.bundler_options.bake_debug_dump_server = bun.FeatureFlags.bake_debugging_features and
+                    args.flag("--debug-dump-server-files");
+                ctx.bundler_options.bake_debug_disable_minify = bun.FeatureFlags.bake_debugging_features and
+                    args.flag("--debug-no-minify");
+            }
+
             // TODO: support --format=esm
             if (ctx.bundler_options.bytecode) {
                 ctx.bundler_options.output_format = .cjs;
@@ -763,6 +853,20 @@ pub const Arguments = struct {
             if (args.option("--public-path")) |public_path| {
                 ctx.bundler_options.public_path = public_path;
             }
+
+            if (args.option("--banner")) |banner| {
+                ctx.bundler_options.banner = banner;
+            }
+
+            if (args.option("--footer")) |footer| {
+                ctx.bundler_options.footer = footer;
+            }
+
+            const experimental_css = args.flag("--experimental-css");
+            const experimental_html = args.flag("--experimental-html");
+            ctx.bundler_options.experimental.css = experimental_css;
+            ctx.bundler_options.experimental.html = experimental_html;
+            ctx.bundler_options.css_chunking = args.flag("--experimental-css-chunking");
 
             const minify_flag = args.flag("--minify");
             ctx.bundler_options.minify_syntax = minify_flag or args.flag("--minify-syntax");
@@ -791,6 +895,24 @@ pub const Arguments = struct {
                 }
             }
 
+            if (args.option("--env")) |env| {
+                if (strings.indexOfChar(env, '*')) |asterisk| {
+                    if (asterisk == 0) {
+                        ctx.bundler_options.env_behavior = .load_all;
+                    } else {
+                        ctx.bundler_options.env_behavior = .prefix;
+                        ctx.bundler_options.env_prefix = env[0..asterisk];
+                    }
+                } else if (strings.eqlComptime(env, "inline") or strings.eqlComptime(env, "1")) {
+                    ctx.bundler_options.env_behavior = .load_all;
+                } else if (strings.eqlComptime(env, "disable") or strings.eqlComptime(env, "0")) {
+                    ctx.bundler_options.env_behavior = .load_all_without_inlining;
+                } else {
+                    Output.prettyErrorln("<r><red>error<r>: Expected 'env' to be 'inline', 'disable', or a prefix with a '*' character", .{});
+                    Global.crash();
+                }
+            }
+
             const TargetMatcher = strings.ExactSizeMatcher(8);
             if (args.option("--target")) |_target| brk: {
                 if (comptime cmd == .BuildCommand) {
@@ -815,12 +937,17 @@ pub const Arguments = struct {
                     else => invalidTarget(&diag, _target),
                 };
 
-                if (opts.target.? == .bun)
+                if (opts.target.? == .bun) {
                     ctx.debug.run_in_bun = opts.target.? == .bun;
+                } else {
+                    if (ctx.bundler_options.bytecode) {
+                        Output.errGeneric("target must be 'bun' when bytecode is true. Received: {s}", .{@tagName(opts.target.?)});
+                        Global.exit(1);
+                    }
 
-                if (opts.target.? != .bun and ctx.bundler_options.bytecode) {
-                    Output.errGeneric("target must be 'bun' when bytecode is true. Received: {s}", .{@tagName(opts.target.?)});
-                    Global.exit(1);
+                    if (ctx.bundler_options.bake) {
+                        Output.errGeneric("target must be 'bun' when using --app. Received: {s}", .{@tagName(opts.target.?)});
+                    }
                 }
             }
 
@@ -836,6 +963,31 @@ pub const Arguments = struct {
             if (args.flag("--compile")) {
                 ctx.bundler_options.compile = true;
                 ctx.bundler_options.inline_entrypoint_import_meta_main = true;
+            }
+
+            if (args.flag("--windows-hide-console")) {
+                // --windows-hide-console technically doesnt depend on WinAPI, but since since --windows-icon
+                // does, all of these customization options have been gated to windows-only
+                if (!Environment.isWindows) {
+                    Output.errGeneric("Using --windows-hide-console is only available when compiling on Windows", .{});
+                    Global.crash();
+                }
+                if (!ctx.bundler_options.compile) {
+                    Output.errGeneric("--windows-hide-console requires --compile", .{});
+                    Global.crash();
+                }
+                ctx.bundler_options.windows_hide_console = true;
+            }
+            if (args.option("--windows-icon")) |path| {
+                if (!Environment.isWindows) {
+                    Output.errGeneric("Using --windows-icon is only available when compiling on Windows", .{});
+                    Global.crash();
+                }
+                if (!ctx.bundler_options.compile) {
+                    Output.errGeneric("--windows-icon requires --compile", .{});
+                    Global.crash();
+                }
+                ctx.bundler_options.windows_icon = path;
             }
 
             if (args.option("--outdir")) |outdir| {
@@ -861,7 +1013,7 @@ pub const Arguments = struct {
                 };
 
                 switch (format) {
-                    .internal_kit_dev => {
+                    .internal_bake_dev => {
                         bun.Output.warn("--format={s} is for debugging only, and may experience breaking changes at any moment", .{format_str});
                         bun.Output.flush();
                     },
@@ -897,18 +1049,14 @@ pub const Arguments = struct {
             }
 
             if (args.flag("--server-components")) {
-                if (!bun.FeatureFlags.cli_server_components) {
-                    // TODO: i want to disable this in non-canary
-                    // but i also want to have tests that can run for PRs
-                }
                 ctx.bundler_options.server_components = true;
                 if (opts.target) |target| {
                     if (!bun.options.Target.from(target).isServerSide()) {
                         bun.Output.errGeneric("Cannot use client-side --target={s} with --server-components", .{@tagName(target)});
                         Global.crash();
+                    } else {
+                        opts.target = .bun;
                     }
-                } else {
-                    opts.target = .bun;
                 }
             }
 
@@ -993,6 +1141,15 @@ pub const Arguments = struct {
                 ctx.debug.silent = true;
             }
 
+            if (args.option("--elide-lines")) |elide_lines| {
+                if (elide_lines.len > 0) {
+                    ctx.bundler_options.elide_lines = std.fmt.parseInt(usize, elide_lines, 10) catch {
+                        Output.prettyErrorln("<r><red>error<r>: Invalid elide-lines: \"{s}\"", .{elide_lines});
+                        Global.exit(1);
+                    };
+                }
+            }
+
             if (opts.define) |define| {
                 if (define.keys.len > 0)
                     bun.JSC.RuntimeTranspilerCache.is_disabled = true;
@@ -1007,6 +1164,7 @@ pub const Arguments = struct {
         }
 
         opts.resolve = Api.ResolveMode.lazy;
+        ctx.bundler_options.experimental.html = args.flag("--experimental-html");
 
         if (jsx_factory != null or
             jsx_fragment != null or
@@ -1039,7 +1197,7 @@ pub const Arguments = struct {
         }
 
         if (cmd == .BuildCommand) {
-            if (opts.entry_points.len == 0) {
+            if (opts.entry_points.len == 0 and !ctx.bundler_options.bake) {
                 Output.prettyln("<r><b>bun build <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
                 Output.pretty("<r><red>error: Missing entrypoints. What would you like to bundle?<r>\n\n", .{});
                 Output.flush();
@@ -1083,6 +1241,7 @@ pub const Arguments = struct {
 
         if (Environment.isDebug) {
             debug_flags.resolve_breakpoints = args.options("--breakpoint-resolve");
+            debug_flags.print_breakpoints = args.options("--breakpoint-print");
         }
 
         return opts;
@@ -1248,7 +1407,10 @@ pub const HelpCommand = struct {
 pub const ReservedCommand = struct {
     pub fn exec(_: std.mem.Allocator) !void {
         @setCold(true);
-        const command_name = bun.argv[1];
+        const command_name = for (bun.argv[1..]) |arg| {
+            if (arg.len > 1 and arg[0] == '-') continue;
+            break arg;
+        } else bun.argv[1];
         Output.prettyError(
             \\<r><red>Uh-oh<r>. <b><yellow>bun {s}<r> is a subcommand reserved for future use by Bun.
             \\
@@ -1274,7 +1436,9 @@ pub var pretend_to_be_node = false;
 pub var is_bunx_exe = false;
 
 pub const Command = struct {
-    var script_name_buf: bun.PathBuffer = undefined;
+    pub fn get() Context {
+        return global_cli_ctx;
+    }
 
     pub const DebugOptions = struct {
         dump_environment_variables: bool = false,
@@ -1315,6 +1479,9 @@ pub const Command = struct {
         bail: u32 = 0,
         coverage: TestCommand.CodeCoverageOptions = .{},
         test_filter_regex: ?*RegularExpression = null,
+
+        file_reporter: ?TestCommand.FileReporter = null,
+        reporter_outfile: ?[]const u8 = null,
     };
 
     pub const Debugger = union(enum) {
@@ -1335,6 +1502,10 @@ pub const Command = struct {
             eval_and_print: bool = false,
         } = .{},
         preconnect: []const []const u8 = &[_][]const u8{},
+        dns_result_order: []const u8 = "verbatim",
+        /// `--expose-gc` makes `globalThis.gc()` available. Added for Node
+        /// compatibility.
+        expose_gc: bool = false,
     };
 
     var global_cli_ctx: Context = undefined;
@@ -1347,24 +1518,21 @@ pub const Command = struct {
         args: Api.TransformOptions,
         log: *logger.Log,
         allocator: std.mem.Allocator,
-        positionals: []const string = &[_]string{},
-        passthrough: []const string = &[_]string{},
+        positionals: []const string = &.{},
+        passthrough: []const string = &.{},
         install: ?*Api.BunInstall = null,
 
-        debug: DebugOptions = DebugOptions{},
-        test_options: TestOptions = TestOptions{},
-        bundler_options: BundlerOptions = BundlerOptions{},
-        runtime_options: RuntimeOptions = RuntimeOptions{},
+        debug: DebugOptions = .{},
+        test_options: TestOptions = .{},
+        bundler_options: BundlerOptions = .{},
+        runtime_options: RuntimeOptions = .{},
 
-        filters: []const []const u8 = &[_][]const u8{},
+        filters: []const []const u8 = &.{},
 
-        preloads: []const string = &[_]string{},
+        preloads: []const string = &.{},
         has_loaded_global_config: bool = false,
 
         pub const BundlerOptions = struct {
-            compile: bool = false,
-            compile_target: Cli.CompileTarget = .{},
-
             outdir: []const u8 = "",
             outfile: []const u8 = "",
             root_dir: []const u8 = "",
@@ -1384,6 +1552,23 @@ pub const Command = struct {
             emit_dce_annotations: bool = true,
             output_format: options.Format = .esm,
             bytecode: bool = false,
+            banner: []const u8 = "",
+            footer: []const u8 = "",
+            experimental: options.Loader.Experimental = .{},
+            css_chunking: bool = false,
+
+            bake: bool = false,
+            bake_debug_dump_server: bool = false,
+            bake_debug_disable_minify: bool = false,
+
+            env_behavior: Api.DotEnvBehavior = .disable,
+            env_prefix: []const u8 = "",
+            elide_lines: ?usize = null,
+            // Compile options
+            compile: bool = false,
+            compile_target: Cli.CompileTarget = .{},
+            windows_hide_console: bool = false,
+            windows_icon: ?[]const u8 = null,
         };
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
@@ -1783,7 +1968,6 @@ pub const Command = struct {
                     completions = try RunCommand.completions(ctx, null, &reject_list, .script_and_descriptions);
                 } else if (strings.eqlComptime(filter[0], "a")) {
                     const FirstLetter = AddCompletions.FirstLetter;
-                    const index = AddCompletions.index;
 
                     outer: {
                         if (filter.len > 1 and filter[1].len > 0) {
@@ -1816,7 +2000,8 @@ pub const Command = struct {
                                 'z' => FirstLetter.z,
                                 else => break :outer,
                             };
-                            const results = index.get(first_letter);
+                            AddCompletions.init(bun.default_allocator) catch bun.outOfMemory();
+                            const results = AddCompletions.getPackages(first_letter);
 
                             var prefilled_i: usize = 0;
                             for (results) |cur| {
@@ -1961,6 +2146,7 @@ pub const Command = struct {
             .RunCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RunCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .RunCommand);
+                ctx.args.target = .bun;
 
                 if (ctx.filters.len > 0) {
                     FilterRun.runScriptsWithFilter(ctx) catch |err| {
@@ -1970,7 +2156,7 @@ pub const Command = struct {
                 }
 
                 if (ctx.positionals.len > 0) {
-                    if (try RunCommand.exec(ctx, false, true, false)) {
+                    if (try RunCommand.exec(ctx, .{ .bin_dirs_only = false, .log_errors = true, .allow_fast_run_for_extensions = false })) {
                         return;
                     }
 
@@ -2003,6 +2189,7 @@ pub const Command = struct {
                         },
                     }
                 };
+                ctx.args.target = .bun;
 
                 if (ctx.filters.len > 0) {
                     FilterRun.runScriptsWithFilter(ctx) catch |err| {
@@ -2029,7 +2216,15 @@ pub const Command = struct {
                     if (strings.eqlComptime(extension, ".lockb")) {
                         for (bun.argv) |arg| {
                             if (strings.eqlComptime(arg, "--hash")) {
-                                try PackageManagerCommand.printHash(ctx, ctx.args.entry_points[0]);
+                                var path_buf: bun.PathBuffer = undefined;
+                                @memcpy(path_buf[0..ctx.args.entry_points[0].len], ctx.args.entry_points[0]);
+                                path_buf[ctx.args.entry_points[0].len] = 0;
+                                const lockfile_path = path_buf[0..ctx.args.entry_points[0].len :0];
+                                const file = File.open(lockfile_path, bun.O.RDONLY, 0).unwrap() catch |err| {
+                                    Output.err(err, "failed to open lockfile", .{});
+                                    Global.crash();
+                                };
+                                try PackageManagerCommand.printHash(ctx, file);
                                 return;
                             }
                         }
@@ -2045,194 +2240,27 @@ pub const Command = struct {
                     }
                 }
 
-                var was_js_like = false;
-                // If we start bun with:
-                // 1. `bun foo.js`, assume it's a JavaScript file.
-                // 2. `bun /absolute/path/to/bin/foo` assume its a JavaScript file.
-                //                                  ^ no file extension
-                //
-                // #!/usr/bin/env bun
-                // will pass us an absolute path to the script.
-                // This means a non-standard file extension will not work, but that is better than the current state
-                // which is file extension-less doesn't work
-                const default_loader = options.defaultLoaders.get(extension) orelse brk: {
-                    if (extension.len == 0 and ctx.args.entry_points.len > 0 and ctx.args.entry_points[0].len > 0 and std.fs.path.isAbsolute(ctx.args.entry_points[0])) {
-                        break :brk options.Loader.js;
-                    }
-
-                    if (extension.len > 0) {
-                        if (strings.endsWithComptime(ctx.args.entry_points[0], ".sh")) {
-                            break :brk options.Loader.bunsh;
-                        }
-
-                        if (!ctx.debug.loaded_bunfig) {
-                            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
-                        }
-
-                        if (ctx.preloads.len > 0)
-                            break :brk options.Loader.js;
-                    }
-
-                    break :brk null;
-                };
-
-                const force_using_bun = ctx.debug.run_in_bun;
-                var did_check = false;
-                if (default_loader) |loader| {
-                    if (loader.canBeRunByBun()) {
-                        was_js_like = true;
-                        if (maybeOpenWithBunJS(ctx)) {
-                            return;
-                        }
-                        did_check = true;
-                    }
-                }
-
-                if (force_using_bun and !did_check) {
-                    if (maybeOpenWithBunJS(ctx)) {
-                        return;
-                    }
-                }
-
-                if (ctx.positionals.len > 0 and extension.len == 0) {
+                if (ctx.positionals.len > 0) {
                     if (ctx.filters.len > 0) {
                         Output.prettyln("<r><yellow>warn<r>: Filters are ignored for auto command", .{});
                     }
-                    if (try RunCommand.exec(ctx, true, false, true)) {
+                    if (try RunCommand.exec(ctx, .{ .bin_dirs_only = true, .log_errors = !ctx.runtime_options.if_present, .allow_fast_run_for_extensions = true })) {
                         return;
                     }
-
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> <b>Script not found \"{s}\"<r>", .{
-                        ctx.positionals[0],
-                    });
-
-                    Global.exit(1);
-                }
-
-                if (ctx.runtime_options.if_present) {
                     return;
                 }
 
-                if (was_js_like) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> <b>Module not found \"{s}\"<r>", .{
-                        ctx.positionals[0],
-                    });
-                    Global.exit(1);
-                } else if (ctx.positionals.len > 0) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> <b>File not found: \"{s}\"<r>", .{
-                        ctx.positionals[0],
-                    });
-                    Global.exit(1);
-                }
-
-                // if we get here, the command was not parsed
-                // or the user just ran `bun` with no arguments
-                if (ctx.positionals.len > 0) {
-                    Output.warn("failed to parse command\n", .{});
-                }
                 Output.flush();
                 try HelpCommand.exec(allocator);
             },
             .ExecCommand => {
-                const ctx = try Command.init(allocator, log, .RunCommand);
+                const ctx = try Command.init(allocator, log, .ExecCommand);
 
                 if (ctx.positionals.len > 1) {
                     try ExecCommand.exec(ctx);
                 } else Tag.printHelp(.ExecCommand, true);
             },
         }
-    }
-
-    fn maybeOpenWithBunJS(ctx: Command.Context) bool {
-        if (ctx.args.entry_points.len == 0)
-            return false;
-
-        const script_name_to_search = ctx.args.entry_points[0];
-
-        var absolute_script_path: ?string = null;
-
-        // TODO: optimize this pass for Windows. we can make better use of system apis available
-        var file_path = script_name_to_search;
-        {
-            const file = bun.toLibUVOwnedFD(((brk: {
-                if (std.fs.path.isAbsolute(script_name_to_search)) {
-                    var win_resolver = resolve_path.PosixToWinNormalizer{};
-                    var resolved = win_resolver.resolveCWD(script_name_to_search) catch @panic("Could not resolve path");
-                    if (comptime Environment.isWindows) {
-                        resolved = resolve_path.normalizeString(resolved, false, .windows);
-                    }
-                    break :brk bun.openFile(
-                        resolved,
-                        .{ .mode = .read_only },
-                    );
-                } else if (!strings.hasPrefix(script_name_to_search, "..") and script_name_to_search[0] != '~') {
-                    const file_pathZ = brk2: {
-                        @memcpy(script_name_buf[0..file_path.len], file_path);
-                        script_name_buf[file_path.len] = 0;
-                        break :brk2 script_name_buf[0..file_path.len :0];
-                    };
-
-                    break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
-                } else {
-                    var path_buf: bun.PathBuffer = undefined;
-                    const cwd = bun.getcwd(&path_buf) catch return false;
-                    path_buf[cwd.len] = std.fs.path.sep;
-                    var parts = [_]string{script_name_to_search};
-                    file_path = resolve_path.joinAbsStringBuf(
-                        path_buf[0 .. cwd.len + 1],
-                        &script_name_buf,
-                        &parts,
-                        .auto,
-                    );
-                    if (file_path.len == 0) return false;
-                    script_name_buf[file_path.len] = 0;
-                    const file_pathZ = script_name_buf[0..file_path.len :0];
-                    break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
-                }
-            }) catch return false).handle) catch return false;
-            defer _ = bun.sys.close(file);
-
-            switch (bun.sys.fstat(file)) {
-                .result => |stat| {
-                    // directories cannot be run. if only there was a faster way to check this
-                    if (bun.S.ISDIR(@intCast(stat.mode))) return false;
-                },
-                .err => return false,
-            }
-
-            Global.configureAllocator(.{ .long_running = true });
-
-            absolute_script_path = brk: {
-                if (comptime !Environment.isWindows) break :brk bun.getFdPath(file, &script_name_buf) catch return false;
-
-                var fd_path_buf: bun.PathBuffer = undefined;
-                break :brk bun.getFdPath(file, &fd_path_buf) catch return false;
-            };
-        }
-
-        if (!ctx.debug.loaded_bunfig) {
-            bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
-        }
-
-        BunJS.Run.boot(
-            ctx,
-            absolute_script_path.?,
-        ) catch |err| {
-            bun.handleErrorReturnTrace(err, @errorReturnTrace());
-
-            if (Output.enable_ansi_colors) {
-                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-            } else {
-                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-            }
-
-            Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
-                std.fs.path.basename(file_path),
-                @errorName(err),
-            });
-            Global.exit(1);
-        };
-        return true;
     }
 
     pub const Tag = enum {
@@ -2313,6 +2341,11 @@ pub const Command = struct {
         pub fn printHelp(comptime cmd: Tag, show_all_flags: bool) void {
             switch (cmd) {
 
+                // the output of --help uses the following syntax highlighting
+                // template: <b>Usage<r>: <b><green>bun <command><r> <cyan>[flags]<r> <blue>[arguments]<r>
+                // use [foo] for multiple arguments or flags for foo.
+                // use <bar> to emphasize 'bar'
+
                 // these commands do not use Context
                 // .DiscordCommand => return try DiscordCommand.exec(allocator),
                 // .HelpCommand => return try HelpCommand.exec(allocator),
@@ -2337,7 +2370,7 @@ pub const Command = struct {
 
                 .InitCommand => {
                     const intro_text =
-                        \\<b>Usage<r>: <b><green>bun init<r> <cyan>[...flags]<r> <blue>[\<entrypoint\> ...]<r>
+                        \\<b>Usage<r>: <b><green>bun init<r> <cyan>[flags]<r> <blue>[\<entrypoints\>]<r>
                         \\  Initialize a Bun project in the current directory.
                         \\  Creates a package.json, tsconfig.json, and bunfig.toml if they don't exist.
                         \\
@@ -2347,7 +2380,7 @@ pub const Command = struct {
                         \\
                         \\<b>Examples:<r>
                         \\  <b><green>bun init<r>
-                        \\  <b><green>bun init <cyan>--yes<r>
+                        \\  <b><green>bun init<r> <cyan>--yes<r>
                     ;
 
                     Output.pretty(intro_text ++ "\n", .{});
@@ -2356,16 +2389,16 @@ pub const Command = struct {
 
                 Command.Tag.BunxCommand => {
                     Output.prettyErrorln(
-                        \\<b>Usage: bunx <r><cyan>[...flags]<r> \<package\><d>[@version] [...flags and arguments]<r>
+                        \\<b>Usage<r>: <b><green>bunx<r> <cyan>[flags]<r> <blue>\<package\><r><d>\<@version\><r> [flags and arguments for the package]<r>
                         \\Execute an npm package executable (CLI), automatically installing into a global shared cache if not installed in node_modules.
                         \\
                         \\Flags:
                         \\  <cyan>--bun<r>      Force the command to run with Bun instead of Node.js
                         \\
                         \\Examples<d>:<r>
-                        \\  <b>bunx prisma migrate<r>
-                        \\  <b>bunx prettier foo.js<r>
-                        \\  <b>bunx<r> <cyan>--bun<r> <b>vite dev foo.js<r>
+                        \\  <b><green>bunx<r> <blue>prisma<r> migrate<r>
+                        \\  <b><green>bunx<r> <blue>prettier<r> foo.js<r>
+                        \\  <b><green>bunx<r> <cyan>--bun<r> <blue>vite<r> dev foo.js<r>
                         \\
                     , .{});
                 },
@@ -2373,20 +2406,20 @@ pub const Command = struct {
                     const intro_text =
                         \\<b>Usage<r>:
                         \\  Transpile and bundle one or more files.
-                        \\  <b><green>bun build<r> <cyan>[...flags]<r> [...entrypoints]
+                        \\  <b><green>bun build<r> <cyan>[flags]<r> <blue>\<entrypoint\><r>
                     ;
 
                     const outro_text =
                         \\<b>Examples:<r>
                         \\  <d>Frontend web apps:<r>
-                        \\  <b><green>bun build<r> <blue>./src/index.ts<r> <cyan>--outfile=bundle.js<r>
-                        \\  <b><green>bun build<r> <blue>./index.jsx ./lib/worker.ts<r> <cyan>--minify --splitting --outdir=out<r>
+                        \\  <b><green>bun build<r> <cyan>--outfile=bundle.js<r> <blue>./src/index.ts<r>
+                        \\  <b><green>bun build<r> <cyan>--minify --splitting --outdir=out<r> <blue>./index.jsx ./lib/worker.ts<r>
                         \\
                         \\  <d>Bundle code to be run in Bun (reduces server startup time)<r>
-                        \\  <b><green>bun build<r> <blue>./server.ts<r> <cyan>--target=bun --outfile=server.js<r>
+                        \\  <b><green>bun build<r> <cyan>--target=bun --outfile=server.js<r> <blue>./server.ts<r>
                         \\
                         \\  <d>Creating a standalone executable (see https://bun.sh/docs/bundler/executables)<r>
-                        \\  <b><green>bun build<r> <blue>./cli.ts<r> <cyan>--compile --outfile=my-app<r>
+                        \\  <b><green>bun build<r> <cyan>--compile --outfile=my-app<r> <blue>./cli.ts<r>
                         \\
                         \\A full list of flags is available at <magenta>https://bun.sh/docs/bundler<r>
                         \\
@@ -2402,24 +2435,24 @@ pub const Command = struct {
                 },
                 Command.Tag.TestCommand => {
                     const intro_text =
-                        \\<b>Usage<r>: <b><green>bun test<r> <cyan>[...flags]<r> <blue>[\<pattern\>...]<r>
+                        \\<b>Usage<r>: <b><green>bun test<r> <cyan>[flags]<r> <blue>[\<patterns\>]<r>
                         \\  Run all matching test files and print the results to stdout
                     ;
                     const outro_text =
                         \\<b>Examples:<r>
-                        \\  <d>Run all test files <r>
+                        \\  <d>Run all test files<r>
                         \\  <b><green>bun test<r>
                         \\
                         \\  <d>Run all test files with "foo" or "bar" in the file name<r>
-                        \\  <b><green>bun test foo bar<r>
+                        \\  <b><green>bun test<r> <blue>foo bar<r>
                         \\
                         \\  <d>Run all test files, only including tests whose names includes "baz"<r>
-                        \\  <b><green>bun test<r> <cyan>--test-name-pattern<r> baz<r>
+                        \\  <b><green>bun test<r> <cyan>--test-name-pattern<r> <blue>baz<r>
                         \\
                         \\Full documentation is available at <magenta>https://bun.sh/docs/cli/test<r>
                         \\
                     ;
-                    // Output.pretty("\n", .{});
+
                     Output.pretty(intro_text, .{});
                     Output.flush();
                     Output.pretty("\n\n<b>Flags:<r>", .{});
@@ -2432,8 +2465,8 @@ pub const Command = struct {
                 Command.Tag.CreateCommand => {
                     const intro_text =
                         \\<b>Usage<r>:
-                        \\  <b><green>bun create<r> <blue>\<template\><r> <cyan>[...flags]<r> <blue>[dest]<r>
-                        \\  <b><green>bun create<r> <blue>\<username/repo\><r> <cyan>[...flags]<r> <blue>[dest]<r>
+                        \\  <b><green>bun create<r> <magenta>\<template\><r> <cyan>[...flags]<r> <blue>dest<r>
+                        \\  <b><green>bun create<r> <magenta>\<username/repo\><r> <cyan>[...flags]<r> <blue>dest<r>
                         \\
                         \\<b>Environment variables:<r>
                         \\  <cyan>GITHUB_TOKEN<r>             <d>Supply a token to download code from GitHub with a higher rate limit<r>
@@ -2459,29 +2492,35 @@ pub const Command = struct {
                 },
                 Command.Tag.UpgradeCommand => {
                     const intro_text =
-                        \\<b>Usage<r>: <b><green>bun upgrade<r> <cyan>[...flags]<r>
+                        \\<b>Usage<r>: <b><green>bun upgrade<r> <cyan>[flags]<r>
                         \\  Upgrade Bun
                     ;
                     const outro_text =
                         \\<b>Examples:<r>
-                        \\  <d>Install the latest stable version<r>
+                        \\  <d>Install the latest {s} version<r>
                         \\  <b><green>bun upgrade<r>
                         \\
-                        \\  <d>Install the most recent canary version of Bun<r>
-                        \\  <b><green>bun upgrade --canary<r>
+                        \\  <d>{s}<r>
+                        \\  <b><green>bun upgrade<r> <cyan>--{s}<r>
                         \\
                         \\Full documentation is available at <magenta>https://bun.sh/docs/installation#upgrading<r>
                         \\
                     ;
+
+                    const args = comptime switch (Environment.is_canary) {
+                        true => .{ "canary", "Switch from the canary version back to the latest stable release", "stable" },
+                        false => .{ "stable", "Install the most recent canary version of Bun", "canary" },
+                    };
+
                     Output.pretty(intro_text, .{});
                     Output.pretty("\n\n", .{});
                     Output.flush();
-                    Output.pretty(outro_text, .{});
+                    Output.pretty(outro_text, args);
                     Output.flush();
                 },
                 Command.Tag.ReplCommand => {
                     const intro_text =
-                        \\<b>Usage<r>: <b><green>bun repl<r> <cyan>[...flags]<r>
+                        \\<b>Usage<r>: <b><green>bun repl<r> <cyan>[flags]<r>
                         \\  Open a Bun REPL
                         \\
                     ;

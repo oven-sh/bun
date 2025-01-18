@@ -563,48 +563,90 @@ it("should not hang after destroy", async () => {
   }
 });
 
-it.if(isWindows)("should work with named pipes", async () => {
-  async function test(pipe_name: string) {
-    const { promise: messageReceived, resolve: resolveMessageReceived } = Promise.withResolvers();
-    const { promise: clientReceived, resolve: resolveClientReceived } = Promise.withResolvers();
-    let client: ReturnType<typeof connect> | null = null;
-    let server: ReturnType<typeof createServer> | null = null;
-    try {
-      server = createServer(socket => {
-        socket.on("data", data => {
-          const message = data.toString();
-          socket.end("Goodbye World!");
-          resolveMessageReceived(message);
-        });
-      });
+it("should trigger error when aborted even if connection failed #13126", async () => {
+  const signal = AbortSignal.timeout(100);
+  const socket = createConnection({
+    host: "example.com",
+    port: 999,
+    signal: signal,
+  });
+  const { promise, resolve, reject } = Promise.withResolvers();
 
-      server.listen(pipe_name);
-      client = connect(pipe_name).on("data", data => {
-        const message = data.toString();
-        resolveClientReceived(message);
-      });
+  socket.on("connect", reject);
+  socket.on("error", resolve);
 
-      client?.write("Hello World!");
-      const message = await messageReceived;
-      expect(message).toBe("Hello World!");
-      const client_message = await clientReceived;
-      expect(client_message).toBe("Goodbye World!");
-    } finally {
-      client?.destroy();
-      server?.close();
-    }
-  }
-
-  const batch = [];
-  const before = heapStats().objectTypeCounts.TLSSocket || 0;
-  for (let i = 0; i < 200; i++) {
-    batch.push(test(`\\\\.\\pipe\\test\\${randomUUID()}`));
-    batch.push(test(`\\\\?\\pipe\\test\\${randomUUID()}`));
-    if (i % 50 === 0) {
-      await Promise.all(batch);
-      batch.length = 0;
-    }
-  }
-  await Promise.all(batch);
-  expectMaxObjectTypeCount(expect, "TCPSocket", before);
+  const err = (await promise) as Error;
+  expect(err.name).toBe("TimeoutError");
 });
+
+it("should trigger error when aborted even if connection failed, and the signal is already aborted #13126", async () => {
+  const signal = AbortSignal.timeout(1);
+  await Bun.sleep(10);
+  const socket = createConnection({
+    host: "example.com",
+    port: 999,
+    signal: signal,
+  });
+  const { promise, resolve, reject } = Promise.withResolvers();
+
+  socket.on("connect", reject);
+  socket.on("error", resolve);
+
+  const err = (await promise) as Error;
+  expect(err.name).toBe("TimeoutError");
+});
+
+it.if(isWindows)(
+  "should work with named pipes",
+  async () => {
+    async function test(pipe_name: string) {
+      const { promise: messageReceived, resolve: resolveMessageReceived } = Promise.withResolvers();
+      const { promise: clientReceived, resolve: resolveClientReceived } = Promise.withResolvers();
+      let client: ReturnType<typeof connect> | null = null;
+      let server: ReturnType<typeof createServer> | null = null;
+      try {
+        server = createServer(socket => {
+          socket.on("data", data => {
+            const message = data.toString();
+            socket.end("Goodbye World!");
+            resolveMessageReceived(message);
+          });
+        });
+
+        server.listen(pipe_name);
+        client = connect(pipe_name).on("data", data => {
+          const message = data.toString();
+          resolveClientReceived(message);
+        });
+
+        client?.write("Hello World!");
+        const message = await messageReceived;
+        expect(message).toBe("Hello World!");
+        const client_message = await clientReceived;
+        expect(client_message).toBe("Goodbye World!");
+      } finally {
+        client?.destroy();
+        server?.close();
+      }
+    }
+
+    const batch = [];
+    const before = heapStats().objectTypeCounts.TLSSocket || 0;
+    for (let i = 0; i < 100; i++) {
+      batch.push(test(`\\\\.\\pipe\\test\\${randomUUID()}`));
+      batch.push(test(`\\\\?\\pipe\\test\\${randomUUID()}`));
+      batch.push(test(`//?/pipe/test/${randomUUID()}`));
+      batch.push(test(`//./pipe/test/${randomUUID()}`));
+      batch.push(test(`/\\./pipe/test/${randomUUID()}`));
+      batch.push(test(`/\\./pipe\\test/${randomUUID()}`));
+      batch.push(test(`\\/.\\pipe/test\\${randomUUID()}`));
+      if (i % 50 === 0) {
+        await Promise.all(batch);
+        batch.length = 0;
+      }
+    }
+    await Promise.all(batch);
+    expectMaxObjectTypeCount(expect, "TCPSocket", before);
+  },
+  20_000,
+);

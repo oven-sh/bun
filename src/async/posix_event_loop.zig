@@ -55,11 +55,11 @@ pub const KeepAlive = struct {
         this.status = .inactive;
 
         if (comptime @TypeOf(event_loop_ctx_) == JSC.EventLoopHandle) {
-            event_loop_ctx_.loop().subActive(1);
+            event_loop_ctx_.loop().unref();
             return;
         }
         const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
-        event_loop_ctx.platformEventLoop().subActive(1);
+        event_loop_ctx.platformEventLoop().unref();
     }
 
     /// From another thread, Prevent a poll from keeping the process alive.
@@ -162,6 +162,7 @@ pub const FilePoll = struct {
     const Request = JSC.DNS.InternalDNS.Request;
     const LifecycleScriptSubprocessOutputReader = bun.install.LifecycleScriptSubprocess.OutputReader;
     const BufferedReader = bun.io.BufferedReader;
+
     pub const Owner = bun.TaggedPointerUnion(.{
         FileSink,
 
@@ -386,6 +387,7 @@ pub const FilePoll = struct {
                 var handler: *BufferedReader = ptr.as(BufferedReader);
                 handler.onPoll(size_or_offset, poll.flags.contains(.hup));
             },
+
             @field(Owner.Tag, bun.meta.typeBaseName(@typeName(Process))) => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) Process", .{poll.fd});
                 var loader = ptr.as(Process);

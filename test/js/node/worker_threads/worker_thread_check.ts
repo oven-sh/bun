@@ -28,6 +28,7 @@ if (isMainThread) {
           action,
           port: server.port,
         },
+        env: process.env,
       });
       worker.ref();
       const { promise, resolve } = Promise.withResolvers();

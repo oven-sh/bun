@@ -16,15 +16,23 @@ const File = bindings[4];
 const URL = bindings[5];
 const AbortSignal = bindings[6];
 const URLSearchParams = bindings[7];
+const WebSocket = bindings[8];
+const CloseEvent = bindings[9];
+const ErrorEvent = bindings[10];
+const MessageEvent = bindings[11];
 
 class FileReader extends EventTarget {
   constructor() {
-    throw new Error("Not implemented yet!");
+    super();
   }
+
+  static EMPTY = 0;
+  static LOADING = 1;
+  static DONE = 2;
 }
 
 function notImplemented() {
-  throw new Error("Not implemented in bun");
+  throw new Error("This function is not yet implemented in Bun");
 }
 
 /**
@@ -230,102 +238,271 @@ async function request(
 }
 
 function stream() {
-  throw new Error("Not implemented in bun");
+  notImplemented();
 }
 function pipeline() {
-  throw new Error("Not implemented in bun");
+  notImplemented();
 }
 function connect() {
-  throw new Error("Not implemented in bun");
+  notImplemented();
 }
 function upgrade() {
-  throw new Error("Not implemented in bun");
+  notImplemented();
 }
 
 class MockClient {
-  constructor() {
-    throw new Error("Not implemented in bun");
-  }
+  constructor() {}
 }
 class MockPool {
-  constructor() {
-    throw new Error("Not implemented in bun");
-  }
+  constructor() {}
 }
 class MockAgent {
-  constructor() {
-    throw new Error("Not implemented in bun");
-  }
+  constructor() {}
 }
 
-function mockErrors() {
-  throw new Error("Not implemented in bun");
-}
-
-function Undici() {
-  throw new Error("Not implemented in bun");
-}
+function mockErrors() {}
 
 class Dispatcher extends EventEmitter {}
 class Agent extends Dispatcher {}
 class Pool extends Dispatcher {
-  request() {
-    throw new Error("Not implemented in bun");
-  }
+  request() {}
 }
 class BalancedPool extends Dispatcher {}
 class Client extends Dispatcher {
-  request() {
-    throw new Error("Not implemented in bun");
+  request() {}
+}
+
+class DispatcherBase extends EventEmitter {}
+
+class ProxyAgent extends DispatcherBase {
+  constructor() {
+    super();
   }
 }
 
-Undici.Dispatcher = Dispatcher;
-Undici.Pool = Pool;
-Undici.BalancedPool = BalancedPool;
-Undici.Client = Client;
-Undici.Agent = Agent;
+class EnvHttpProxyAgent extends DispatcherBase {
+  constructor() {
+    super();
+  }
+}
 
-Undici.buildConnector =
-  Undici.errors =
-  Undici.setGlobalDispatcher =
-  Undici.getGlobalDispatcher =
-  Undici.request =
-  Undici.stream =
-  Undici.pipeline =
-  Undici.connect =
-  Undici.upgrade =
-  Undici.MockClient =
-  Undici.MockPool =
-  Undici.MockAgent =
-  Undici.mockErrors =
-    notImplemented;
+class RetryAgent extends Dispatcher {
+  constructor() {
+    super();
+  }
+}
 
-Undici.fetch = fetch;
+class RetryHandler {
+  constructor() {}
+}
 
-export default {
+class DecoratorHandler {
+  constructor() {}
+}
+
+class RedirectHandler {
+  constructor() {}
+}
+
+function createRedirectInterceptor() {
+  return new RedirectHandler();
+}
+
+const interceptors = {
+  redirect: () => {},
+  retry: () => {},
+  dump: () => {},
+};
+
+// Error classes
+class UndiciError extends Error {}
+class AbortError extends UndiciError {}
+class HTTPParserError extends Error {}
+class HeadersTimeoutError extends UndiciError {}
+class HeadersOverflowError extends UndiciError {}
+class BodyTimeoutError extends UndiciError {}
+class RequestContentLengthMismatchError extends UndiciError {}
+class ConnectTimeoutError extends UndiciError {}
+class ResponseStatusCodeError extends UndiciError {}
+class InvalidArgumentError extends UndiciError {}
+class InvalidReturnValueError extends UndiciError {}
+class RequestAbortedError extends AbortError {}
+class ClientDestroyedError extends UndiciError {}
+class ClientClosedError extends UndiciError {}
+class InformationalError extends UndiciError {}
+class SocketError extends UndiciError {}
+class NotSupportedError extends UndiciError {}
+class ResponseContentLengthMismatchError extends UndiciError {}
+class BalancedPoolMissingUpstreamError extends UndiciError {}
+class ResponseExceededMaxSizeError extends UndiciError {}
+class RequestRetryError extends UndiciError {}
+class SecureProxyConnectionError extends UndiciError {}
+class MockNotMatchedError extends UndiciError {}
+
+const errors = {
+  AbortError,
+  HTTPParserError,
+  UndiciError,
+  HeadersTimeoutError,
+  HeadersOverflowError,
+  BodyTimeoutError,
+  RequestContentLengthMismatchError,
+  ConnectTimeoutError,
+  ResponseStatusCodeError,
+  InvalidArgumentError,
+  InvalidReturnValueError,
+  RequestAbortedError,
+  ClientDestroyedError,
+  ClientClosedError,
+  InformationalError,
+  SocketError,
+  NotSupportedError,
+  ResponseContentLengthMismatchError,
+  BalancedPoolMissingUpstreamError,
+  ResponseExceededMaxSizeError,
+  RequestRetryError,
+  SecureProxyConnectionError,
+};
+
+const util = {
+  parseHeaders: () => {
+    notImplemented();
+  },
+  headerNameToString: () => {
+    notImplemented();
+  },
+};
+
+class EventSource extends EventTarget {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSED = 2;
+
+  constructor() {
+    super();
+  }
+}
+
+// Add missing cookie functions
+function deleteCookie() {
+  notImplemented();
+}
+
+function getCookies() {
+  notImplemented();
+}
+
+function getSetCookies() {
+  notImplemented();
+}
+
+function setCookie() {
+  notImplemented();
+}
+
+// Add missing MIME type functions
+function parseMIMEType() {
+  notImplemented();
+}
+
+function serializeAMimeType() {
+  notImplemented();
+}
+
+let globalDispatcher;
+
+// Add missing dispatcher functions
+function setGlobalDispatcher(dispatcher) {
+  globalDispatcher = dispatcher;
+}
+
+function getGlobalDispatcher() {
+  return (globalDispatcher ??= new Dispatcher());
+}
+
+// Add missing origin functions
+function setGlobalOrigin() {}
+
+function getGlobalOrigin() {}
+
+// Create empty CacheStorage
+const caches = {};
+
+/**
+ * Builds a connector function for making network connections
+ * @param {Object} [options] Configuration options for the connector
+ * @param {boolean} [options.rejectUnauthorized] Whether to reject unauthorized SSL/TLS connections
+ * @param {number} [options.connectTimeout] Connection timeout in milliseconds
+ * @param {number} [options.maxCachedSessions] Maximum number of cached TLS sessions
+ * @param {boolean} [options.allowH2] Whether to allow HTTP/2 connections
+ * @returns {function} A connector function
+ */
+function buildConnector(options = {}) {
+  const { rejectUnauthorized = true, connectTimeout, maxCachedSessions = 100, allowH2 = false } = options;
+
+  /**
+   * @param {Object} options
+   * @param {string} options.hostname
+   * @param {number} options.port
+   * @param {string} [options.servername]
+   * @param {AbortSignal} [options.signal]
+   */
+  return function connect({ hostname, port, servername, signal }) {
+    notImplemented();
+  };
+}
+
+// Update the exports to match the exact structure
+const moduleExports = {
   Agent,
   BalancedPool,
+  buildConnector,
+  caches,
   Client,
+  CloseEvent,
   connect,
+  createRedirectInterceptor,
+  DecoratorHandler,
+  deleteCookie,
   Dispatcher,
+  EnvHttpProxyAgent,
+  ErrorEvent,
+  errors,
+  EventSource,
   fetch,
   File,
   FileReader,
   FormData,
+  getCookies,
+  getGlobalDispatcher,
+  getGlobalOrigin,
+  getSetCookies,
   Headers,
+  interceptors,
+  MessageEvent,
   MockAgent,
   MockClient,
   mockErrors,
   MockPool,
+  parseMIMEType,
   pipeline,
   Pool,
-  request,
+  ProxyAgent,
+  RedirectHandler,
   Request,
+  request,
   Response,
+  RetryAgent,
+  RetryHandler,
+  serializeAMimeType,
+  setCookie,
+  setGlobalDispatcher,
+  setGlobalOrigin,
   stream,
-  Undici,
   upgrade,
-  URL,
-  URLSearchParams,
+  util,
+  WebSocket,
 };
+
+moduleExports.default = moduleExports;
+export default moduleExports;

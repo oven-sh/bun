@@ -21,4 +21,5 @@ test("doesn't throw", () => {
   expect(() => performance.getEntriesByType("measure")).not.toThrow();
   expect(() => performance.now()).not.toThrow();
   expect(() => performance.timeOrigin).not.toThrow();
+  expect(() => performance.markResourceTiming()).not.toThrow();
 });

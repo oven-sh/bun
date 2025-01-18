@@ -1,5 +1,5 @@
 import { lookup, resolve } from "node:dns/promises";
-import { bench, run } from "./runner.mjs";
+import { bench, run } from "../runner.mjs";
 
 bench("(cached) dns.lookup remote x 50", async () => {
   var tld = "example.com";

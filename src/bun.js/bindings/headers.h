@@ -1,11 +1,5 @@
 // clang-format off
-//-- GENERATED FILE. Do not edit --
-//
-//   To regenerate this file, run:
-//   
-//      make headers
-// 
-//-- GENERATED FILE. Do not edit --
+// This file used to be generated but now in hard coded.
 #pragma once
 
 #include <stddef.h>
@@ -283,6 +277,7 @@ CPP_DECL JSC__JSValue JSC__JSGlobalObject__generateHeapSnapshot(JSC__JSGlobalObj
 CPP_DECL JSC__JSValue JSC__JSGlobalObject__getCachedObject(JSC__JSGlobalObject* arg0, const ZigString* arg1);
 CPP_DECL void JSC__JSGlobalObject__handleRejectedPromises(JSC__JSGlobalObject* arg0);
 CPP_DECL JSC__JSValue JSC__JSGlobalObject__putCachedObject(JSC__JSGlobalObject* arg0, const ZigString* arg1, JSC__JSValue JSValue2);
+CPP_DECL void JSC__JSGlobalObject__addGc(JSC__JSGlobalObject* globalObject);
 CPP_DECL void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue JSValue2, JSC__JSValue JSValue3);
 CPP_DECL void JSC__JSGlobalObject__reload(JSC__JSGlobalObject* arg0);
 CPP_DECL bool JSC__JSGlobalObject__startRemoteInspector(JSC__JSGlobalObject* arg0, unsigned char* arg1, uint16_t arg2);
@@ -323,7 +318,7 @@ CPP_DECL bool JSC__JSValue__deepEquals(JSC__JSValue JSValue0, JSC__JSValue JSVal
 CPP_DECL bool JSC__JSValue__deepMatch(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* arg2, bool arg3);
 CPP_DECL bool JSC__JSValue__eqlCell(JSC__JSValue JSValue0, JSC__JSCell* arg1);
 CPP_DECL bool JSC__JSValue__eqlValue(JSC__JSValue JSValue0, JSC__JSValue JSValue1);
-CPP_DECL JSC__JSValue JSC__JSValue__fastGet_(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, unsigned char arg2);
+CPP_DECL JSC__JSValue JSC__JSValue__fastGet(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, unsigned char arg2);
 CPP_DECL JSC__JSValue JSC__JSValue__fastGetDirect_(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, unsigned char arg2);
 CPP_DECL void JSC__JSValue__forEach(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, void* arg2, void(* ArgFn3)(JSC__VM* arg0, JSC__JSGlobalObject* arg1, void* arg2, JSC__JSValue JSValue3));
 CPP_DECL void JSC__JSValue__forEachProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, void* arg2, void(* ArgFn3)(JSC__JSGlobalObject* arg0, void* arg1, ZigString* arg2, JSC__JSValue JSValue3, bool arg4, bool arg5));
@@ -394,7 +389,6 @@ CPP_DECL bool JSC__JSValue__stringIncludes(JSC__JSValue JSValue0, JSC__JSGlobalO
 CPP_DECL JSC__JSValue JSC__JSValue__symbolFor(JSC__JSGlobalObject* arg0, ZigString* arg1);
 CPP_DECL bool JSC__JSValue__symbolKeyFor(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, ZigString* arg2);
 CPP_DECL bool JSC__JSValue__toBoolean(JSC__JSValue JSValue0);
-CPP_DECL bool JSC__JSValue__toBooleanSlow(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1);
 CPP_DECL JSC__JSValue JSC__JSValue__toError_(JSC__JSValue JSValue0);
 CPP_DECL int32_t JSC__JSValue__toInt32(JSC__JSValue JSValue0);
 CPP_DECL int64_t JSC__JSValue__toInt64(JSC__JSValue JSValue0);
@@ -409,7 +403,6 @@ CPP_DECL void JSC__JSValue__toZigString(JSC__JSValue JSValue0, ZigString* arg1, 
 #pragma mark - JSC::Exception
 
 CPP_DECL JSC__Exception* JSC__Exception__create(JSC__JSGlobalObject* arg0, JSC__JSObject* arg1, unsigned char StackCaptureAction2);
-CPP_DECL void JSC__Exception__getStackTrace(JSC__Exception* arg0, ZigStackTrace* arg1);
 CPP_DECL JSC__JSValue JSC__Exception__value(JSC__Exception* arg0);
 
 #pragma mark - JSC::VM
@@ -433,7 +426,7 @@ CPP_DECL void JSC__VM__notifyNeedShellTimeoutCheck(JSC__VM* arg0);
 CPP_DECL void JSC__VM__notifyNeedTermination(JSC__VM* arg0);
 CPP_DECL void JSC__VM__notifyNeedWatchdogCheck(JSC__VM* arg0);
 CPP_DECL void JSC__VM__releaseWeakRefs(JSC__VM* arg0);
-CPP_DECL JSC__JSValue JSC__VM__runGC(JSC__VM* arg0, bool arg1);
+CPP_DECL size_t JSC__VM__runGC(JSC__VM* arg0, bool arg1);
 CPP_DECL void JSC__VM__setControlFlowProfiler(JSC__VM* arg0, bool arg1);
 CPP_DECL void JSC__VM__setExecutionForbidden(JSC__VM* arg0, bool arg1);
 CPP_DECL void JSC__VM__setExecutionTimeLimit(JSC__VM* arg0, double arg1);
@@ -693,13 +686,32 @@ ZIG_DECL void FileSink__updateRef(void* arg0, bool arg1);
 BUN_DECLARE_HOST_FUNCTION(FileSink__write);
 
 #endif
+CPP_DECL JSC__JSValue NetworkSink__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, void* arg2, void** arg3);
+CPP_DECL JSC__JSValue NetworkSink__createObject(JSC__JSGlobalObject* arg0, void* arg1, uintptr_t destructor);
+CPP_DECL void NetworkSink__detachPtr(JSC__JSValue JSValue0);
+CPP_DECL void* NetworkSink__fromJS(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
+CPP_DECL void NetworkSink__onClose(JSC__JSValue JSValue0, JSC__JSValue JSValue1);
+CPP_DECL void NetworkSink__onReady(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSValue JSValue2);
+
+#ifdef __cplusplus
+
+ZIG_DECL JSC__JSValue NetworkSink__close(JSC__JSGlobalObject* arg0, void* arg1);
+BUN_DECLARE_HOST_FUNCTION(NetworkSink__construct);
+BUN_DECLARE_HOST_FUNCTION(NetworkSink__end);
+ZIG_DECL JSC__JSValue SYSV_ABI SYSV_ABI NetworkSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
+ZIG_DECL void NetworkSink__finalize(void* arg0);
+BUN_DECLARE_HOST_FUNCTION(NetworkSink__flush);
+BUN_DECLARE_HOST_FUNCTION(NetworkSink__start);
+ZIG_DECL void NetworkSink__updateRef(void* arg0, bool arg1);
+BUN_DECLARE_HOST_FUNCTION(NetworkSink__write);
+#endif
 
 #ifdef __cplusplus
 
 ZIG_DECL void Bun__WebSocketHTTPClient__cancel(WebSocketHTTPClient* arg0);
 ZIG_DECL WebSocketHTTPClient* Bun__WebSocketHTTPClient__connect(JSC__JSGlobalObject* arg0, void* arg1, CppWebSocket* arg2, const ZigString* arg3, uint16_t arg4, const ZigString* arg5, const ZigString* arg6, ZigString* arg7, ZigString* arg8, size_t arg9);
 ZIG_DECL void Bun__WebSocketHTTPClient__register(JSC__JSGlobalObject* arg0, void* arg1, void* arg2);
-
+ZIG_DECL size_t Bun__WebSocketHTTPClient__memoryCost(WebSocketHTTPClient* arg0);
 #endif
 
 #ifdef __cplusplus
@@ -707,7 +719,7 @@ ZIG_DECL void Bun__WebSocketHTTPClient__register(JSC__JSGlobalObject* arg0, void
 ZIG_DECL void Bun__WebSocketHTTPSClient__cancel(WebSocketHTTPSClient* arg0);
 ZIG_DECL WebSocketHTTPSClient* Bun__WebSocketHTTPSClient__connect(JSC__JSGlobalObject* arg0, void* arg1, CppWebSocket* arg2, const ZigString* arg3, uint16_t arg4, const ZigString* arg5, const ZigString* arg6, ZigString* arg7, ZigString* arg8, size_t arg9);
 ZIG_DECL void Bun__WebSocketHTTPSClient__register(JSC__JSGlobalObject* arg0, void* arg1, void* arg2);
-
+ZIG_DECL size_t Bun__WebSocketHTTPSClient__memoryCost(WebSocketHTTPSClient* arg0);
 #endif
 
 #ifdef __cplusplus
@@ -719,6 +731,7 @@ ZIG_DECL void* Bun__WebSocketClient__init(CppWebSocket* arg0, void* arg1, void* 
 ZIG_DECL void Bun__WebSocketClient__register(JSC__JSGlobalObject* arg0, void* arg1, void* arg2);
 ZIG_DECL void Bun__WebSocketClient__writeBinaryData(WebSocketClient* arg0, const unsigned char* arg1, size_t arg2, unsigned char arg3);
 ZIG_DECL void Bun__WebSocketClient__writeString(WebSocketClient* arg0, const ZigString* arg1, unsigned char arg2);
+ZIG_DECL size_t Bun__WebSocketClient__memoryCost(WebSocketClient* arg0);
 
 #endif
 
@@ -731,7 +744,7 @@ ZIG_DECL void* Bun__WebSocketClientTLS__init(CppWebSocket* arg0, void* arg1, voi
 ZIG_DECL void Bun__WebSocketClientTLS__register(JSC__JSGlobalObject* arg0, void* arg1, void* arg2);
 ZIG_DECL void Bun__WebSocketClientTLS__writeBinaryData(WebSocketClientTLS* arg0, const unsigned char* arg1, size_t arg2, unsigned char arg3);
 ZIG_DECL void Bun__WebSocketClientTLS__writeString(WebSocketClientTLS* arg0, const ZigString* arg1, unsigned char arg2);
-
+ZIG_DECL size_t Bun__WebSocketClientTLS__memoryCost(WebSocketClientTLS* arg0);
 #endif
 
 #ifdef __cplusplus
@@ -852,5 +865,15 @@ CPP_DECL bool JSC__CustomGetterSetter__isSetterNull(JSC__CustomGetterSetter *arg
 
 BUN_DECLARE_HOST_FUNCTION(Bun__onResolveEntryPointResult);
 BUN_DECLARE_HOST_FUNCTION(Bun__onRejectEntryPointResult);
+
+BUN_DECLARE_HOST_FUNCTION(Bun__FetchTasklet__onResolveRequestStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__FetchTasklet__onRejectRequestStream);
+
+BUN_DECLARE_HOST_FUNCTION(Bun__S3UploadStream__onResolveRequestStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__S3UploadStream__onRejectRequestStream);
+
+BUN_DECLARE_HOST_FUNCTION(Bun__FileStreamWrapper__onResolveRequestStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__FileStreamWrapper__onRejectRequestStream);
+
 
 #endif

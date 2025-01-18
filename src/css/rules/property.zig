@@ -45,7 +45,7 @@ pub const PropertyRule = struct {
         const initial_value = switch (syntax) {
             .universal => if (parser.initial_value) |val| brk: {
                 var i = css.ParserInput.new(input.allocator(), val);
-                var p2 = css.Parser.new(&i);
+                var p2 = css.Parser.new(&i, null);
 
                 if (p2.isExhausted()) {
                     break :brk ParsedComponent{
@@ -62,7 +62,7 @@ pub const PropertyRule = struct {
             else => brk: {
                 const val = parser.initial_value orelse return .{ .err = input.newCustomError(css.ParserError.at_rule_body_invalid) };
                 var i = css.ParserInput.new(input.allocator(), val);
-                var p2 = css.Parser.new(&i);
+                var p2 = css.Parser.new(&i, null);
                 break :brk switch (syntax.parseValue(&p2)) {
                     .result => |vv| vv,
                     .err => |e| return .{ .err = e },
@@ -123,7 +123,11 @@ pub const PropertyRule = struct {
 
         dest.dedent();
         try dest.newline();
-        try dest.writeChar(';');
+        try dest.writeChar('}');
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };
 

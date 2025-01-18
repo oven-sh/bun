@@ -25,7 +25,7 @@ const sync = @import("../sync.zig");
 const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
-const bundler = bun.bundler;
+const transpiler = bun.transpiler;
 
 const DotEnv = @import("../env_loader.zig");
 
@@ -36,6 +36,7 @@ pub const BuildCommand = struct {
     const compile_define_keys = &.{
         "process.platform",
         "process.arch",
+        "process.versions.bun",
     };
 
     pub fn exec(ctx: Command.Context) !void {
@@ -45,6 +46,10 @@ pub const BuildCommand = struct {
         if (ctx.bundler_options.compile or ctx.bundler_options.bytecode) {
             // set this early so that externals are set up correctly and define is right
             ctx.args.target = .bun;
+        }
+
+        if (ctx.bundler_options.bake) {
+            return bun.bake.production.buildCommand(ctx);
         }
 
         const compile_target = &ctx.bundler_options.compile_target;
@@ -69,42 +74,52 @@ pub const BuildCommand = struct {
             }
         }
 
-        var this_bundler = try bundler.Bundler.init(allocator, log, ctx.args, null);
+        var this_transpiler = try transpiler.Transpiler.init(allocator, log, ctx.args, null);
 
-        this_bundler.options.source_map = options.SourceMapOption.fromApi(ctx.args.source_map);
+        this_transpiler.options.source_map = options.SourceMapOption.fromApi(ctx.args.source_map);
 
-        this_bundler.options.compile = ctx.bundler_options.compile;
+        this_transpiler.options.compile = ctx.bundler_options.compile;
 
-        if (this_bundler.options.source_map == .external and ctx.bundler_options.outdir.len == 0 and !ctx.bundler_options.compile) {
+        if (this_transpiler.options.source_map == .external and ctx.bundler_options.outdir.len == 0 and !ctx.bundler_options.compile) {
             Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use an external source map without --outdir", .{});
             Global.exit(1);
             return;
         }
 
         var outfile = ctx.bundler_options.outfile;
+        const output_to_stdout = !ctx.bundler_options.compile and outfile.len == 0 and ctx.bundler_options.outdir.len == 0;
 
-        this_bundler.options.public_path = ctx.bundler_options.public_path;
-        this_bundler.options.entry_naming = ctx.bundler_options.entry_naming;
-        this_bundler.options.chunk_naming = ctx.bundler_options.chunk_naming;
-        this_bundler.options.asset_naming = ctx.bundler_options.asset_naming;
-        this_bundler.options.server_components = ctx.bundler_options.server_components;
-        this_bundler.options.react_fast_refresh = ctx.bundler_options.react_fast_refresh;
-        this_bundler.options.inline_entrypoint_import_meta_main = ctx.bundler_options.inline_entrypoint_import_meta_main;
-        this_bundler.options.code_splitting = ctx.bundler_options.code_splitting;
-        this_bundler.options.minify_syntax = ctx.bundler_options.minify_syntax;
-        this_bundler.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
-        this_bundler.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
-        this_bundler.options.emit_dce_annotations = ctx.bundler_options.emit_dce_annotations;
-        this_bundler.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
+        this_transpiler.options.supports_multiple_outputs = !(output_to_stdout or outfile.len > 0);
 
-        this_bundler.options.output_dir = ctx.bundler_options.outdir;
-        this_bundler.options.output_format = ctx.bundler_options.output_format;
+        this_transpiler.options.public_path = ctx.bundler_options.public_path;
+        this_transpiler.options.entry_naming = ctx.bundler_options.entry_naming;
+        this_transpiler.options.chunk_naming = ctx.bundler_options.chunk_naming;
+        this_transpiler.options.asset_naming = ctx.bundler_options.asset_naming;
+        this_transpiler.options.server_components = ctx.bundler_options.server_components;
+        this_transpiler.options.react_fast_refresh = ctx.bundler_options.react_fast_refresh;
+        this_transpiler.options.inline_entrypoint_import_meta_main = ctx.bundler_options.inline_entrypoint_import_meta_main;
+        this_transpiler.options.code_splitting = ctx.bundler_options.code_splitting;
+        this_transpiler.options.minify_syntax = ctx.bundler_options.minify_syntax;
+        this_transpiler.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
+        this_transpiler.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
+        this_transpiler.options.emit_dce_annotations = ctx.bundler_options.emit_dce_annotations;
+        this_transpiler.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
 
-        if (ctx.bundler_options.output_format == .internal_kit_dev) {
-            this_bundler.options.tree_shaking = false;
+        this_transpiler.options.banner = ctx.bundler_options.banner;
+        this_transpiler.options.footer = ctx.bundler_options.footer;
+        this_transpiler.options.drop = ctx.args.drop;
+
+        this_transpiler.options.experimental = ctx.bundler_options.experimental;
+        this_transpiler.options.css_chunking = ctx.bundler_options.css_chunking;
+
+        this_transpiler.options.output_dir = ctx.bundler_options.outdir;
+        this_transpiler.options.output_format = ctx.bundler_options.output_format;
+
+        if (ctx.bundler_options.output_format == .internal_bake_dev) {
+            this_transpiler.options.tree_shaking = false;
         }
 
-        this_bundler.options.bytecode = ctx.bundler_options.bytecode;
+        this_transpiler.options.bytecode = ctx.bundler_options.bytecode;
 
         if (ctx.bundler_options.compile) {
             if (ctx.bundler_options.code_splitting) {
@@ -121,21 +136,21 @@ pub const BuildCommand = struct {
 
             const base_public_path = bun.StandaloneModuleGraph.targetBasePublicPath(compile_target.os, "root/");
 
-            this_bundler.options.public_path = base_public_path;
+            this_transpiler.options.public_path = base_public_path;
 
             if (outfile.len == 0) {
-                outfile = std.fs.path.basename(this_bundler.options.entry_points[0]);
+                outfile = std.fs.path.basename(this_transpiler.options.entry_points[0]);
                 const ext = std.fs.path.extension(outfile);
                 if (ext.len > 0) {
                     outfile = outfile[0 .. outfile.len - ext.len];
                 }
 
                 if (strings.eqlComptime(outfile, "index")) {
-                    outfile = std.fs.path.basename(std.fs.path.dirname(this_bundler.options.entry_points[0]) orelse "index");
+                    outfile = std.fs.path.basename(std.fs.path.dirname(this_transpiler.options.entry_points[0]) orelse "index");
                 }
 
                 if (strings.eqlComptime(outfile, "bun")) {
-                    outfile = std.fs.path.basename(std.fs.path.dirname(this_bundler.options.entry_points[0]) orelse "bun");
+                    outfile = std.fs.path.basename(std.fs.path.dirname(this_transpiler.options.entry_points[0]) orelse "bun");
                 }
             }
 
@@ -154,12 +169,12 @@ pub const BuildCommand = struct {
         }
 
         if (ctx.bundler_options.outdir.len == 0 and !ctx.bundler_options.compile) {
-            if (this_bundler.options.entry_points.len > 1) {
+            if (this_transpiler.options.entry_points.len > 1) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> Must use <b>--outdir<r> when specifying more than one entry point.", .{});
                 Global.exit(1);
                 return;
             }
-            if (this_bundler.options.code_splitting) {
+            if (this_transpiler.options.code_splitting) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> Must use <b>--outdir<r> when code splitting is enabled", .{});
                 Global.exit(1);
                 return;
@@ -173,11 +188,11 @@ pub const BuildCommand = struct {
                     break :brk2 ctx.bundler_options.root_dir;
                 }
 
-                if (this_bundler.options.entry_points.len == 1) {
-                    break :brk2 std.fs.path.dirname(this_bundler.options.entry_points[0]) orelse ".";
+                if (this_transpiler.options.entry_points.len == 1) {
+                    break :brk2 std.fs.path.dirname(this_transpiler.options.entry_points[0]) orelse ".";
                 }
 
-                break :brk2 resolve_path.getIfExistsLongestCommonPath(this_bundler.options.entry_points) orelse ".";
+                break :brk2 resolve_path.getIfExistsLongestCommonPath(this_transpiler.options.entry_points) orelse ".";
             };
 
             var dir = bun.openDirForPath(&(try std.posix.toPosixPath(path))) catch |err| {
@@ -192,36 +207,47 @@ pub const BuildCommand = struct {
             };
         };
 
-        this_bundler.options.root_dir = src_root_dir;
-        this_bundler.options.code_splitting = ctx.bundler_options.code_splitting;
-        this_bundler.options.transform_only = ctx.bundler_options.transform_only;
+        this_transpiler.options.root_dir = src_root_dir;
+        this_transpiler.options.code_splitting = ctx.bundler_options.code_splitting;
+        this_transpiler.options.transform_only = ctx.bundler_options.transform_only;
 
-        try this_bundler.configureDefines();
-        this_bundler.configureLinker();
+        this_transpiler.options.env.behavior = ctx.bundler_options.env_behavior;
+        this_transpiler.options.env.prefix = ctx.bundler_options.env_prefix;
 
-        this_bundler.resolver.opts = this_bundler.options;
-        this_bundler.options.jsx.development = !this_bundler.options.production;
-        this_bundler.resolver.opts.jsx.development = this_bundler.options.jsx.development;
+        try this_transpiler.configureDefines();
+        this_transpiler.configureLinker();
+
+        if (bun.FeatureFlags.breaking_changes_1_2) {
+            // This is currently done in DevServer by default, but not in Bun.build
+            if (!this_transpiler.options.production) {
+                try this_transpiler.options.conditions.appendSlice(&.{"development"});
+            }
+        }
+
+        this_transpiler.resolver.opts = this_transpiler.options;
+        this_transpiler.options.jsx.development = !this_transpiler.options.production;
+        this_transpiler.resolver.opts.jsx.development = this_transpiler.options.jsx.development;
 
         switch (ctx.debug.macros) {
             .disable => {
-                this_bundler.options.no_macros = true;
+                this_transpiler.options.no_macros = true;
             },
             .map => |macros| {
-                this_bundler.options.macro_remap = macros;
+                this_transpiler.options.macro_remap = macros;
             },
             .unspecified => {},
         }
 
-        var client_bundler: bundler.Bundler = undefined;
-        if (this_bundler.options.server_components) {
-            client_bundler = try bundler.Bundler.init(allocator, log, ctx.args, null);
-            client_bundler.options = this_bundler.options;
+        var client_bundler: transpiler.Transpiler = undefined;
+        if (this_transpiler.options.server_components) {
+            client_bundler = try transpiler.Transpiler.init(allocator, log, ctx.args, null);
+            client_bundler.options = this_transpiler.options;
             client_bundler.options.target = .browser;
             client_bundler.options.server_components = true;
-            try this_bundler.options.conditions.appendSlice(&.{"react-server"});
-            this_bundler.options.react_fast_refresh = false;
-            this_bundler.options.minify_syntax = true;
+            client_bundler.options.conditions = try this_transpiler.options.conditions.clone();
+            try this_transpiler.options.conditions.appendSlice(&.{"react-server"});
+            this_transpiler.options.react_fast_refresh = false;
+            this_transpiler.options.minify_syntax = true;
             client_bundler.options.minify_syntax = true;
             client_bundler.options.define = try options.Define.init(
                 allocator,
@@ -231,23 +257,24 @@ pub const BuildCommand = struct {
                         allocator,
                         user_defines.keys,
                         user_defines.values,
-                    ), log, allocator)
+                    ), ctx.args.drop, log, allocator)
                 else
                     null,
                 null,
+                this_transpiler.options.define.drop_debugger,
             );
 
-            try bun.kit.addImportMetaDefines(allocator, this_bundler.options.define, .development, .server);
-            try bun.kit.addImportMetaDefines(allocator, client_bundler.options.define, .development, .client);
+            try bun.bake.addImportMetaDefines(allocator, this_transpiler.options.define, .development, .server);
+            try bun.bake.addImportMetaDefines(allocator, client_bundler.options.define, .development, .client);
 
-            this_bundler.resolver.opts = this_bundler.options;
+            this_transpiler.resolver.opts = this_transpiler.options;
             client_bundler.resolver.opts = client_bundler.options;
         }
 
-        // var env_loader = this_bundler.env;
+        // var env_loader = this_transpiler.env;
 
         if (ctx.debug.dump_environment_variables) {
-            this_bundler.dumpEnvironmentVariables();
+            this_transpiler.dumpEnvironmentVariables();
             return;
         }
 
@@ -257,19 +284,19 @@ pub const BuildCommand = struct {
 
         const output_files: []options.OutputFile = brk: {
             if (ctx.bundler_options.transform_only) {
-                this_bundler.options.import_path_format = .relative;
-                this_bundler.options.allow_runtime = false;
-                this_bundler.resolver.opts.allow_runtime = false;
+                this_transpiler.options.import_path_format = .relative;
+                this_transpiler.options.allow_runtime = false;
+                this_transpiler.resolver.opts.allow_runtime = false;
 
                 // TODO: refactor this .transform function
-                const result = try this_bundler.transform(
+                const result = try this_transpiler.transform(
                     ctx.allocator,
                     ctx.log,
                     ctx.args,
                 );
 
                 if (log.hasErrors()) {
-                    try log.printForLogLevel(Output.errorWriter());
+                    try log.print(Output.errorWriter());
 
                     if (result.errors.len > 0 or result.output_files.len == 0) {
                         Output.flush();
@@ -282,18 +309,16 @@ pub const BuildCommand = struct {
             }
 
             break :brk (BundleV2.generateFromCLI(
-                &this_bundler,
-                if (this_bundler.options.server_components) @panic("TODO") else null,
+                &this_transpiler,
                 allocator,
                 bun.JSC.AnyEventLoop.init(ctx.allocator),
-                std.crypto.random.int(u64),
                 ctx.debug.hot_reload == .watch,
                 &reachable_file_count,
                 &minify_duration,
                 &input_code_length,
             ) catch |err| {
                 if (log.msgs.items.len > 0) {
-                    try log.printForLogLevel(Output.errorWriter());
+                    try log.print(Output.errorWriter());
                 } else {
                     try Output.errorWriter().print("error: {s}", .{@errorName(err)});
                 }
@@ -310,7 +335,7 @@ pub const BuildCommand = struct {
                 dump: {
                     defer Output.flush();
                     var writer = Output.writer();
-                    var output_dir = this_bundler.options.output_dir;
+                    var output_dir = this_transpiler.options.output_dir;
 
                     const will_be_one_file =
                         // --outdir is not supported with --compile
@@ -366,7 +391,7 @@ pub const BuildCommand = struct {
                         printSummary(
                             bundled_end,
                             minify_duration,
-                            this_bundler.options.minify_identifiers or this_bundler.options.minify_whitespace or this_bundler.options.minify_syntax,
+                            this_transpiler.options.minify_identifiers or this_transpiler.options.minify_whitespace or this_transpiler.options.minify_syntax,
                             input_code_length,
                             reachable_file_count,
                             output_files,
@@ -389,10 +414,12 @@ pub const BuildCommand = struct {
                             allocator,
                             output_files,
                             root_dir,
-                            this_bundler.options.public_path,
+                            this_transpiler.options.public_path,
                             outfile,
-                            this_bundler.env,
-                            this_bundler.options.output_format,
+                            this_transpiler.env,
+                            this_transpiler.options.output_format,
+                            ctx.bundler_options.windows_hide_console,
+                            ctx.bundler_options.windows_icon,
                         );
                         const compiled_elapsed = @divTrunc(@as(i64, @truncate(std.time.nanoTimestamp() - bundled_end)), @as(i64, std.time.ns_per_ms));
                         const compiled_elapsed_digit_count: isize = switch (compiled_elapsed) {
@@ -427,79 +454,11 @@ pub const BuildCommand = struct {
                     // So don't do that unless we actually need to.
                     // const do_we_need_to_close = !FeatureFlags.store_file_descriptors or (@intCast(usize, root_dir.fd) + open_file_limit) < output_files.len;
 
-                    var filepath_buf: bun.PathBuffer = undefined;
-                    filepath_buf[0] = '.';
-                    filepath_buf[1] = '/';
-
                     for (output_files) |f| {
-                        var rel_path: []const u8 = undefined;
-                        switch (f.value) {
-                            // Nothing to do in this case
-                            .saved => {
-                                rel_path = f.dest_path;
-                                if (f.dest_path.len > from_path.len) {
-                                    rel_path = resolve_path.relative(from_path, f.dest_path);
-                                }
-                            },
-
-                            // easy mode: write the buffer
-                            .buffer => |value| {
-                                rel_path = f.dest_path;
-                                if (f.dest_path.len > from_path.len) {
-                                    rel_path = resolve_path.relative(from_path, f.dest_path);
-                                    if (std.fs.path.dirname(rel_path)) |parent| {
-                                        if (parent.len > root_path.len) {
-                                            try root_dir.makePath(parent);
-                                        }
-                                    }
-                                }
-                                const JSC = bun.JSC;
-                                var path_buf: bun.PathBuffer = undefined;
-                                switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
-                                    &path_buf,
-                                    JSC.Node.Arguments.WriteFile{
-                                        .data = JSC.Node.StringOrBuffer{
-                                            .buffer = JSC.Buffer{
-                                                .buffer = .{
-                                                    .ptr = @constCast(value.bytes.ptr),
-                                                    // TODO: handle > 4 GB files
-                                                    .len = @as(u32, @truncate(value.bytes.len)),
-                                                    .byte_len = @as(u32, @truncate(value.bytes.len)),
-                                                },
-                                            },
-                                        },
-                                        .encoding = .buffer,
-                                        .mode = if (f.is_executable) 0o755 else 0o644,
-                                        .dirfd = bun.toFD(root_dir.fd),
-                                        .file = .{
-                                            .path = JSC.Node.PathLike{
-                                                .string = JSC.PathString.init(rel_path),
-                                            },
-                                        },
-                                    },
-                                )) {
-                                    .err => |err| {
-                                        Output.prettyErrorln("<r><red>error<r><d>:<r> failed to write file <b>{}<r>\n{}", .{ bun.fmt.quote(rel_path), err });
-                                    },
-                                    .result => {},
-                                }
-                            },
-                            .move => |value| {
-                                const primary = f.dest_path[from_path.len..];
-                                bun.copy(u8, filepath_buf[2..], primary);
-                                rel_path = filepath_buf[0 .. primary.len + 2];
-                                rel_path = value.pathname;
-
-                                try f.moveTo(root_path, @constCast(rel_path), bun.toFD(root_dir.fd));
-                            },
-                            .copy => |value| {
-                                rel_path = value.pathname;
-
-                                try f.copyTo(root_path, @constCast(rel_path), bun.toFD(root_dir.fd));
-                            },
-                            .noop => {},
-                            .pending => unreachable,
-                        }
+                        const rel_path = f.writeToDisk(root_dir, from_path) catch |err| {
+                            Output.err(err, "failed to write file '{}'", .{bun.fmt.quote(f.dest_path)});
+                            continue;
+                        };
 
                         // Print summary
                         _ = try writer.write("\n");
@@ -519,7 +478,7 @@ pub const BuildCommand = struct {
                     Output.printElapsedStdoutTrim(
                         @as(f64, @floatFromInt((@divTrunc(@as(i64, @truncate(std.time.nanoTimestamp() - bun.CLI.start_time)), @as(i64, std.time.ns_per_ms))))),
                     );
-                    if (this_bundler.options.transform_only) {
+                    if (this_transpiler.options.transform_only) {
                         Output.prettyln(" <green>transpile<r>", .{});
                     } else {
                         Output.prettyln(" <green>bundle<r> {d} modules", .{
@@ -529,7 +488,7 @@ pub const BuildCommand = struct {
                 }
             }
 
-            try log.printForLogLevel(Output.errorWriter());
+            try log.print(Output.errorWriter());
             exitOrWatch(0, ctx.debug.hot_reload == .watch);
         }
     }

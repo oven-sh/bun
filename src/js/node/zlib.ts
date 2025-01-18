@@ -24,13 +24,6 @@ const isArrayBufferView = ArrayBufferIsView;
 const isAnyArrayBuffer = b => b instanceof ArrayBuffer || b instanceof SharedArrayBuffer;
 const kMaxLength = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModule.kMaxLength;
 
-const {
-  ERR_BROTLI_INVALID_PARAM,
-  ERR_BUFFER_TOO_LARGE,
-  ERR_INVALID_ARG_TYPE,
-  ERR_OUT_OF_RANGE,
-  ERR_ZLIB_INITIALIZATION_FAILED,
-} = require("internal/errors");
 const { Transform, finished } = require("node:stream");
 const owner_symbol = Symbol("owner_symbol");
 const {
@@ -97,7 +90,7 @@ function zlibBufferOnData(chunk) {
   if (this.nread > this._maxOutputLength) {
     this.close();
     this.removeAllListeners("end");
-    this.cb(ERR_BUFFER_TOO_LARGE(this._maxOutputLength));
+    this.cb($ERR_BUFFER_TOO_LARGE(this._maxOutputLength));
   }
 }
 
@@ -126,7 +119,7 @@ function zlibBufferSync(engine, buffer) {
     if (isAnyArrayBuffer(buffer)) {
       buffer = Buffer.from(buffer);
     } else {
-      throw ERR_INVALID_ARG_TYPE("buffer", "string, Buffer, TypedArray, DataView, or ArrayBuffer", buffer);
+      throw $ERR_INVALID_ARG_TYPE("buffer", "string, Buffer, TypedArray, DataView, or ArrayBuffer", buffer);
     }
   }
   buffer = processChunkSync(engine, buffer, engine._finishFlushFlag);
@@ -171,7 +164,7 @@ function ZlibBase(opts, mode, handle, { flush, finishFlush, fullFlush }) {
     if (!validateFiniteNumber(chunkSize, "options.chunkSize")) {
       chunkSize = Z_DEFAULT_CHUNK;
     } else if (chunkSize < Z_MIN_CHUNK) {
-      throw ERR_OUT_OF_RANGE("options.chunkSize", `>= ${Z_MIN_CHUNK}`, chunkSize);
+      throw $ERR_OUT_OF_RANGE("options.chunkSize", `>= ${Z_MIN_CHUNK}`, chunkSize);
     }
 
     // prettier-ignore
@@ -206,7 +199,7 @@ function ZlibBase(opts, mode, handle, { flush, finishFlush, fullFlush }) {
   this._info = opts && opts.info;
   this._maxOutputLength = maxOutputLength;
 }
-ZlibBase.prototype = Object.create(Transform.prototype);
+$toClass(ZlibBase, "ZlibBase", Transform);
 
 ObjectDefineProperty(ZlibBase.prototype, "_closed", {
   configurable: true,
@@ -364,7 +357,7 @@ function processChunkSync(self, chunk, flushFlag) {
 
       if (nread > self._maxOutputLength) {
         _close(self);
-        throw ERR_BUFFER_TOO_LARGE(self._maxOutputLength);
+        throw $ERR_BUFFER_TOO_LARGE(self._maxOutputLength);
       }
     } else {
       assert(have === 0, "have should not go down");
@@ -562,7 +555,7 @@ function Zlib(opts, mode) {
       if (isAnyArrayBuffer(dictionary)) {
         dictionary = Buffer.from(dictionary);
       } else {
-        throw ERR_INVALID_ARG_TYPE("options.dictionary", "Buffer, TypedArray, DataView, or ArrayBuffer", dictionary);
+        throw $ERR_INVALID_ARG_TYPE("options.dictionary", "Buffer, TypedArray, DataView, or ArrayBuffer", dictionary);
       }
     }
   }
@@ -576,7 +569,7 @@ function Zlib(opts, mode) {
   this._level = level;
   this._strategy = strategy;
 }
-Zlib.prototype = Object.create(ZlibBase.prototype);
+$toClass(Zlib, "Zlib", ZlibBase);
 
 // This callback is used by `.params()` to wait until a full flush happened before adjusting the parameters.
 // In particular, the call to the native `params()` function should not happen while a write is currently in progress on the threadpool.
@@ -605,58 +598,63 @@ function Deflate(opts) {
   if (!(this instanceof Deflate)) return new Deflate(opts);
   Zlib.$apply(this, [opts, DEFLATE]);
 }
-Deflate.prototype = Object.create(Zlib.prototype);
+$toClass(Deflate, "Deflate", Zlib);
 
 function Inflate(opts) {
   if (!(this instanceof Inflate)) return new Inflate(opts);
   Zlib.$apply(this, [opts, INFLATE]);
 }
-Inflate.prototype = Object.create(Zlib.prototype);
+$toClass(Inflate, "Inflate", Zlib);
 
 function Gzip(opts) {
   if (!(this instanceof Gzip)) return new Gzip(opts);
   Zlib.$apply(this, [opts, GZIP]);
 }
-Gzip.prototype = Object.create(Zlib.prototype);
+$toClass(Gzip, "Gzip", Zlib);
 
 function Gunzip(opts) {
   if (!(this instanceof Gunzip)) return new Gunzip(opts);
   Zlib.$apply(this, [opts, GUNZIP]);
 }
-Gunzip.prototype = Object.create(Zlib.prototype);
+$toClass(Gunzip, "Gunzip", Zlib);
 
 function DeflateRaw(opts) {
   if (opts && opts.windowBits === 8) opts.windowBits = 9;
   if (!(this instanceof DeflateRaw)) return new DeflateRaw(opts);
   Zlib.$apply(this, [opts, DEFLATERAW]);
 }
-DeflateRaw.prototype = Object.create(Zlib.prototype);
+$toClass(DeflateRaw, "DeflateRaw", Zlib);
 
 function InflateRaw(opts) {
   if (!(this instanceof InflateRaw)) return new InflateRaw(opts);
   Zlib.$apply(this, [opts, INFLATERAW]);
 }
-InflateRaw.prototype = Object.create(Zlib.prototype);
+$toClass(InflateRaw, "InflateRaw", Zlib);
 
 function Unzip(opts) {
   if (!(this instanceof Unzip)) return new Unzip(opts);
   Zlib.$apply(this, [opts, UNZIP]);
 }
-Unzip.prototype = Object.create(Zlib.prototype);
+$toClass(Unzip, "Unzip", Zlib);
 
-function createConvenienceMethod(ctor, sync) {
+function createConvenienceMethod(ctor, sync, methodName) {
   if (sync) {
-    return function syncBufferWrapper(buffer, opts) {
+    const fn = function (buffer, opts) {
       return zlibBufferSync(new ctor(opts), buffer);
     };
+    ObjectDefineProperty(fn, "name", { value: methodName });
+    return fn;
+  } else {
+    const fn = function (buffer, opts, callback) {
+      if (typeof opts === "function") {
+        callback = opts;
+        opts = {};
+      }
+      return zlibBuffer(new ctor(opts), buffer, callback);
+    };
+    ObjectDefineProperty(fn, "name", { value: methodName });
+    return fn;
   }
-  return function asyncBufferWrapper(buffer, opts, callback) {
-    if (typeof opts === "function") {
-      callback = opts;
-      opts = {};
-    }
-    return zlibBuffer(new ctor(opts), buffer, callback);
-  };
 }
 
 const kMaxBrotliParam = 9;
@@ -676,12 +674,12 @@ function Brotli(opts, mode) {
     ArrayPrototypeForEach.$call(ObjectKeys(opts.params), origKey => {
       const key = +origKey;
       if (NumberIsNaN(key) || key < 0 || key > kMaxBrotliParam || (brotliInitParamsArray[key] | 0) !== -1) {
-        throw ERR_BROTLI_INVALID_PARAM(origKey);
+        throw $ERR_BROTLI_INVALID_PARAM(origKey);
       }
 
       const value = opts.params[origKey];
       if (typeof value !== "number" && typeof value !== "boolean") {
-        throw ERR_INVALID_ARG_TYPE("options.params[key]", "number", opts.params[origKey]);
+        throw $ERR_INVALID_ARG_TYPE("options.params[key]", "number", opts.params[origKey]);
       }
       brotliInitParamsArray[key] = value;
     });
@@ -691,34 +689,24 @@ function Brotli(opts, mode) {
 
   this._writeState = new Uint32Array(2);
   if (!handle.init(brotliInitParamsArray, this._writeState, processCallback)) {
-    throw ERR_ZLIB_INITIALIZATION_FAILED();
+    throw $ERR_ZLIB_INITIALIZATION_FAILED();
   }
 
   ZlibBase.$apply(this, [opts, mode, handle, brotliDefaultOpts]);
 }
-Brotli.prototype = Object.create(Zlib.prototype);
+$toClass(Brotli, "Brotli", Zlib);
 
 function BrotliCompress(opts) {
   if (!(this instanceof BrotliCompress)) return new BrotliCompress(opts);
   Brotli.$apply(this, [opts, BROTLI_ENCODE]);
 }
-BrotliCompress.prototype = Object.create(Brotli.prototype);
+$toClass(BrotliCompress, "BrotliCompress", Brotli);
 
 function BrotliDecompress(opts) {
   if (!(this instanceof BrotliDecompress)) return new BrotliDecompress(opts);
   Brotli.$apply(this, [opts, BROTLI_DECODE]);
 }
-BrotliDecompress.prototype = Object.create(Brotli.prototype);
-
-function createProperty(ctor) {
-  return {
-    configurable: true,
-    enumerable: true,
-    value: function (options) {
-      return new ctor(options);
-    },
-  };
-}
+$toClass(BrotliDecompress, "BrotliDecompress", Brotli);
 
 // Legacy alias on the C++ wrapper object.
 ObjectDefineProperty(NativeZlib.prototype, "jsref", {
@@ -743,36 +731,55 @@ const zlib = {
   BrotliCompress,
   BrotliDecompress,
 
-  deflate: createConvenienceMethod(Deflate, false),
-  deflateSync: createConvenienceMethod(Deflate, true),
-  gzip: createConvenienceMethod(Gzip, false),
-  gzipSync: createConvenienceMethod(Gzip, true),
-  deflateRaw: createConvenienceMethod(DeflateRaw, false),
-  deflateRawSync: createConvenienceMethod(DeflateRaw, true),
-  unzip: createConvenienceMethod(Unzip, false),
-  unzipSync: createConvenienceMethod(Unzip, true),
-  inflate: createConvenienceMethod(Inflate, false),
-  inflateSync: createConvenienceMethod(Inflate, true),
-  gunzip: createConvenienceMethod(Gunzip, false),
-  gunzipSync: createConvenienceMethod(Gunzip, true),
-  inflateRaw: createConvenienceMethod(InflateRaw, false),
-  inflateRawSync: createConvenienceMethod(InflateRaw, true),
-  brotliCompress: createConvenienceMethod(BrotliCompress, false),
-  brotliCompressSync: createConvenienceMethod(BrotliCompress, true),
-  brotliDecompress: createConvenienceMethod(BrotliDecompress, false),
-  brotliDecompressSync: createConvenienceMethod(BrotliDecompress, true),
+  deflate: createConvenienceMethod(Deflate, false, "deflate"),
+  deflateSync: createConvenienceMethod(Deflate, true, "deflateSync"),
+  gzip: createConvenienceMethod(Gzip, false, "gzip"),
+  gzipSync: createConvenienceMethod(Gzip, true, "gzipSync"),
+  deflateRaw: createConvenienceMethod(DeflateRaw, false, "deflateRaw"),
+  deflateRawSync: createConvenienceMethod(DeflateRaw, true, "deflateRawSync"),
+  unzip: createConvenienceMethod(Unzip, false, "unzip"),
+  unzipSync: createConvenienceMethod(Unzip, true, "unzipSync"),
+  inflate: createConvenienceMethod(Inflate, false, "inflate"),
+  inflateSync: createConvenienceMethod(Inflate, true, "inflateSync"),
+  gunzip: createConvenienceMethod(Gunzip, false, "gunzip"),
+  gunzipSync: createConvenienceMethod(Gunzip, true, "gunzipSync"),
+  inflateRaw: createConvenienceMethod(InflateRaw, false, "inflateRaw"),
+  inflateRawSync: createConvenienceMethod(InflateRaw, true, "inflateRawSync"),
+  brotliCompress: createConvenienceMethod(BrotliCompress, false, "brotliCompress"),
+  brotliCompressSync: createConvenienceMethod(BrotliCompress, true, "brotliCompressSync"),
+  brotliDecompress: createConvenienceMethod(BrotliDecompress, false, "brotliDecompress"),
+  brotliDecompressSync: createConvenienceMethod(BrotliDecompress, true, "brotliDecompressSync"),
+
+  createDeflate: function (options) {
+    return new Deflate(options);
+  },
+  createInflate: function (options) {
+    return new Inflate(options);
+  },
+  createDeflateRaw: function (options) {
+    return new DeflateRaw(options);
+  },
+  createInflateRaw: function (options) {
+    return new InflateRaw(options);
+  },
+  createGzip: function (options) {
+    return new Gzip(options);
+  },
+  createGunzip: function (options) {
+    return new Gunzip(options);
+  },
+  createUnzip: function (options) {
+    return new Unzip(options);
+  },
+  createBrotliCompress: function (options) {
+    return new BrotliCompress(options);
+  },
+  createBrotliDecompress: function (options) {
+    return new BrotliDecompress(options);
+  },
 };
 
 ObjectDefineProperties(zlib, {
-  createDeflate: createProperty(Deflate),
-  createInflate: createProperty(Inflate),
-  createDeflateRaw: createProperty(DeflateRaw),
-  createInflateRaw: createProperty(InflateRaw),
-  createGzip: createProperty(Gzip),
-  createGunzip: createProperty(Gunzip),
-  createUnzip: createProperty(Unzip),
-  createBrotliCompress: createProperty(BrotliCompress),
-  createBrotliDecompress: createProperty(BrotliDecompress),
   constants: {
     enumerable: true,
     value: ObjectFreeze(constants),

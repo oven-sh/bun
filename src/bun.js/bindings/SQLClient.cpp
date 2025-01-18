@@ -48,6 +48,7 @@ typedef union DataCellValue {
     int64_t bigint;
     uint8_t boolean;
     double date;
+    double date_with_time_zone;
     size_t bytea[2];
     WTF::StringImpl* json;
     DataCellArray array;
@@ -62,17 +63,38 @@ enum class DataCellTag : uint8_t {
     Bigint = 4,
     Boolean = 5,
     Date = 6,
-    Bytea = 7,
-    Json = 8,
-    Array = 9,
-    TypedArray = 10,
+    DateWithTimeZone = 7,
+    Bytea = 8,
+    Json = 9,
+    Array = 10,
+    TypedArray = 11,
 };
 
 typedef struct DataCell {
     DataCellTag tag;
     DataCellValue value;
     uint8_t freeValue;
+    uint8_t _indexedColumnFlag;
+    uint32_t index;
+
+    bool isIndexedColumn() const { return _indexedColumnFlag == 1; }
+    bool isNamedColumn() const { return _indexedColumnFlag == 0; }
+    bool isDuplicateColumn() const { return _indexedColumnFlag == 2; }
 } DataCell;
+
+class BunStructureFlags {
+public:
+    uint32_t flags;
+
+    BunStructureFlags(uint32_t flags)
+        : flags(flags)
+    {
+    }
+
+    bool hasIndexedColumns() const { return flags & (1 << 0); }
+    bool hasNamedColumns() const { return flags & (1 << 1); }
+    bool hasDuplicateColumns() const { return flags & (1 << 2); }
+};
 
 static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCell& cell)
 {
@@ -96,9 +118,11 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
     case DataCellTag::Boolean:
         return jsBoolean(cell.value.boolean);
         break;
-    case DataCellTag::Date:
+    case DataCellTag::DateWithTimeZone:
+    case DataCellTag::Date: {
         return JSC::DateInstance::create(vm, globalObject->dateStructure(), cell.value.date);
         break;
+    }
     case DataCellTag::Bytea: {
         Zig::GlobalObject* zigGlobal = jsCast<Zig::GlobalObject*>(globalObject);
         auto* subclassStructure = zigGlobal->JSBufferSubclassStructure();
@@ -226,25 +250,79 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
     }
 }
 
-static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, unsigned count, JSC::JSGlobalObject* globalObject)
+static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, unsigned count, JSC::JSGlobalObject* globalObject, Bun::BunStructureFlags flags)
 {
     auto& vm = globalObject->vm();
     auto* object = JSC::constructEmptyObject(vm, structure);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    for (unsigned i = 0; i < count; i++) {
-        auto& cell = cells[i];
-        JSValue value = toJS(vm, globalObject, cell);
-        RETURN_IF_EXCEPTION(scope, {});
-        object->putDirectOffset(vm, i, value);
+    // TODO: once we have more tests for this, let's add another branch for
+    // "only mixed names and mixed indexed columns, no duplicates"
+    // then we cna remove this sort and instead do two passes.
+    if (flags.hasIndexedColumns() && flags.hasNamedColumns()) {
+        // sort the cells by if they're named or indexed, put named first.
+        // this is to conform to the Structure offsets from earlier.
+        std::sort(cells, cells + count, [](DataCell& a, DataCell& b) {
+            return a.isNamedColumn() && !b.isNamedColumn();
+        });
     }
 
+    // Fast path: named columns only, no duplicate columns
+    if (flags.hasNamedColumns() && !flags.hasDuplicateColumns() && !flags.hasIndexedColumns()) {
+        for (unsigned i = 0; i < count; i++) {
+            auto& cell = cells[i];
+            JSValue value = toJS(vm, globalObject, cell);
+            RETURN_IF_EXCEPTION(scope, {});
+            ASSERT(!cell.isDuplicateColumn());
+            ASSERT(!cell.isIndexedColumn());
+            ASSERT(cell.isNamedColumn());
+            object->putDirectOffset(vm, i, value);
+        }
+    } else if (flags.hasIndexedColumns() && !flags.hasNamedColumns() && !flags.hasDuplicateColumns()) {
+        for (unsigned i = 0; i < count; i++) {
+            auto& cell = cells[i];
+            JSValue value = toJS(vm, globalObject, cell);
+            RETURN_IF_EXCEPTION(scope, {});
+            ASSERT(!cell.isDuplicateColumn());
+            ASSERT(cell.isIndexedColumn());
+            ASSERT(!cell.isNamedColumn());
+            // cell.index can be > count
+            // for example:
+            //   select 1 as "8", 2 as "2", 3 as "3"
+            //   -> { "8": 1, "2": 2, "3": 3 }
+            //  8 > count
+            object->putDirectIndex(globalObject, cell.index, value);
+        }
+    } else {
+        unsigned structureOffsetIndex = 0;
+        // slow path: named columns with duplicate columns or indexed columns
+        for (unsigned i = 0; i < count; i++) {
+            auto& cell = cells[i];
+            if (cell.isIndexedColumn()) {
+                JSValue value = toJS(vm, globalObject, cell);
+                RETURN_IF_EXCEPTION(scope, {});
+                ASSERT(cell.index < count);
+                ASSERT(!cell.isNamedColumn());
+                ASSERT(!cell.isDuplicateColumn());
+                object->putDirectIndex(globalObject, cell.index, value);
+            } else if (cell.isNamedColumn()) {
+                JSValue value = toJS(vm, globalObject, cell);
+                RETURN_IF_EXCEPTION(scope, {});
+                ASSERT(!cell.isIndexedColumn());
+                ASSERT(!cell.isDuplicateColumn());
+                ASSERT(cell.index < count);
+                object->putDirectOffset(vm, structureOffsetIndex++, value);
+            } else if (cell.isDuplicateColumn()) {
+                // skip it!
+            }
+        }
+    }
     return object;
 }
 
-static JSC::JSValue toJS(JSC::JSArray* array, JSC::Structure* structure, DataCell* cells, unsigned count, JSC::JSGlobalObject* globalObject)
+static JSC::JSValue toJS(JSC::JSArray* array, JSC::Structure* structure, DataCell* cells, unsigned count, JSC::JSGlobalObject* globalObject, Bun::BunStructureFlags flags)
 {
-    JSValue value = toJS(structure, cells, count, globalObject);
+    JSValue value = toJS(structure, cells, count, globalObject, flags);
     if (value.isEmpty())
         return {};
 
@@ -264,20 +342,44 @@ static JSC::JSValue toJS(JSC::JSArray* array, JSC::Structure* structure, DataCel
 extern "C" EncodedJSValue JSC__constructObjectFromDataCell(
     JSC::JSGlobalObject* globalObject,
     EncodedJSValue encodedArrayValue,
-    EncodedJSValue encodedStructureValue, DataCell* cells, unsigned count)
+    EncodedJSValue encodedStructureValue, DataCell* cells, unsigned count, unsigned flags)
 {
     JSValue arrayValue = JSValue::decode(encodedArrayValue);
     JSValue structureValue = JSValue::decode(encodedStructureValue);
     auto* array = arrayValue ? jsDynamicCast<JSC::JSArray*>(arrayValue) : nullptr;
     auto* structure = jsDynamicCast<JSC::Structure*>(structureValue);
 
-    return JSValue::encode(toJS(array, structure, cells, count, globalObject));
+    return JSValue::encode(toJS(array, structure, cells, count, globalObject, Bun::BunStructureFlags(flags)));
 }
 
-extern "C" EncodedJSValue JSC__createStructure(JSC::JSGlobalObject* globalObject, JSC::JSCell* owner, unsigned int inlineCapacity, BunString* names)
+typedef struct ExternColumnIdentifier {
+    uint8_t tag;
+    union {
+        uint32_t index;
+        BunString name;
+    };
+
+    bool isIndexedColumn() const { return tag == 1; }
+    bool isNamedColumn() const { return tag == 2; }
+    bool isDuplicateColumn() const { return tag == 0; }
+} ExternColumnIdentifier;
+
+extern "C" EncodedJSValue JSC__createStructure(JSC::JSGlobalObject* globalObject, JSC::JSCell* owner, unsigned int inlineCapacity, ExternColumnIdentifier* namesPtr)
 {
     auto& vm = globalObject->vm();
-    Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), inlineCapacity);
+
+    PropertyNameArray propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    std::span<ExternColumnIdentifier> names(namesPtr, inlineCapacity);
+    unsigned nonDuplicateCount = 0;
+    for (unsigned i = 0; i < inlineCapacity; i++) {
+        ExternColumnIdentifier& name = names[i];
+        if (name.isNamedColumn()) {
+            propertyNames.add(Identifier::fromString(vm, name.name.toWTFString()));
+        }
+        nonDuplicateCount += !name.isDuplicateColumn();
+    }
+
+    Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), std::min(nonDuplicateCount, JSFinalObject::maxInlineCapacity));
     if (owner) {
         vm.writeBarrier(owner, structure);
     } else {
@@ -285,14 +387,15 @@ extern "C" EncodedJSValue JSC__createStructure(JSC::JSGlobalObject* globalObject
     }
     ensureStillAliveHere(structure);
 
-    PropertyNameArray propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-    for (unsigned i = 0; i < inlineCapacity; i++) {
-        propertyNames.add(Identifier::fromString(vm, names[i].toWTFString()));
-    }
-
-    PropertyOffset offset = 0;
-    for (unsigned i = 0; i < inlineCapacity; i++) {
-        structure = structure->addPropertyTransition(vm, structure, propertyNames[i], 0, offset);
+    if (names.size() > 0) {
+        PropertyOffset offset = 0;
+        unsigned indexInPropertyNamesArray = 0;
+        for (unsigned i = 0; i < inlineCapacity; i++) {
+            ExternColumnIdentifier& name = names[i];
+            if (name.isNamedColumn()) {
+                structure = structure->addPropertyTransition(vm, structure, propertyNames[indexInPropertyNamesArray++], 0, offset);
+            }
+        }
     }
 
     return JSValue::encode(structure);
@@ -313,5 +416,4 @@ extern "C" void JSC__putDirectOffset(JSC::VM* vm, JSC::EncodedJSValue object, un
 {
     JSValue::decode(object).getObject()->putDirectOffset(*vm, offset, JSValue::decode(value));
 }
-
 }

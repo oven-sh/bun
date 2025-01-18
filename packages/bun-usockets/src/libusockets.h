@@ -36,9 +36,9 @@
 #define LIBUSOCKETS_H
 
 #ifdef BUN_DEBUG
-#define nonnull_arg _Nonnull
-#else
 #define nonnull_arg
+#else
+#define nonnull_arg _Nonnull
 #endif
 
 #ifdef BUN_DEBUG
@@ -91,9 +91,15 @@ extern "C" {
 
 enum {
     /* No meaning, default listen option */
-    LIBUS_LISTEN_DEFAULT,
+    LIBUS_LISTEN_DEFAULT = 0,
     /* We exclusively own this port, do not share it */
-    LIBUS_LISTEN_EXCLUSIVE_PORT
+    LIBUS_LISTEN_EXCLUSIVE_PORT = 1,
+    /* Allow socket to keep writing after readable side closes */
+    LIBUS_SOCKET_ALLOW_HALF_OPEN = 2,
+    /* Setting reusePort allows multiple sockets on the same host to bind to the same port. Incoming connections are distributed by the operating system to listening sockets. This option is available only on some platforms, such as Linux 3.9+, DragonFlyBSD 3.6+, FreeBSD 12.0+, Solaris 11.4, and AIX 7.2.5+*/
+    LIBUS_LISTEN_REUSE_PORT = 4,
+    /* etting ipv6Only will disable dual-stack support, i.e., binding to host :: won't make 0.0.0.0 be bound.*/
+    LIBUS_SOCKET_IPV6_ONLY = 8,
 };
 
 /* Library types publicly available */
@@ -188,7 +194,7 @@ struct us_socket_context_options_t {
 };
 
 struct us_bun_verify_error_t {
-    long error;
+    int error;
     const char* code;
     const char* reason;
 };
@@ -234,7 +240,7 @@ unsigned short us_socket_context_timestamp(int ssl, us_socket_context_r context)
 
 /* Adds SNI domain and cert in asn1 format */
 void us_socket_context_add_server_name(int ssl, us_socket_context_r context, const char *hostname_pattern, struct us_socket_context_options_t options, void *user);
-void us_bun_socket_context_add_server_name(int ssl, us_socket_context_r context, const char *hostname_pattern, struct us_bun_socket_context_options_t options, void *user);
+int us_bun_socket_context_add_server_name(int ssl, us_socket_context_r context, const char *hostname_pattern, struct us_bun_socket_context_options_t options, void *user);
 void us_socket_context_remove_server_name(int ssl, us_socket_context_r context, const char *hostname_pattern);
 void us_socket_context_on_server_name(int ssl, us_socket_context_r context, void (*cb)(us_socket_context_r context, const char *hostname));
 void *us_socket_server_name_userdata(int ssl, us_socket_r s);
@@ -246,8 +252,16 @@ void *us_socket_context_get_native_handle(int ssl, us_socket_context_r context);
 /* A socket context holds shared callbacks and user data extension for associated sockets */
 struct us_socket_context_t *us_create_socket_context(int ssl, us_loop_r loop,
     int ext_size, struct us_socket_context_options_t options) nonnull_fn_decl;
+
+enum create_bun_socket_error_t {
+  CREATE_BUN_SOCKET_ERROR_NONE = 0,
+  CREATE_BUN_SOCKET_ERROR_LOAD_CA_FILE,
+  CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE,
+  CREATE_BUN_SOCKET_ERROR_INVALID_CA,
+};
+
 struct us_socket_context_t *us_create_bun_socket_context(int ssl, struct us_loop_t *loop,
-    int ext_size, struct us_bun_socket_context_options_t options);
+    int ext_size, struct us_bun_socket_context_options_t options, enum create_bun_socket_error_t *err);
 
 /* Delete resources allocated at creation time (will call unref now and only free when ref count == 0). */
 void us_socket_context_free(int ssl, us_socket_context_r context) nonnull_fn_decl;
@@ -287,10 +301,10 @@ void us_socket_context_close(int ssl, us_socket_context_r context);
 
 /* Listen for connections. Acts as the main driving cog in a server. Will call set async callbacks. */
 struct us_listen_socket_t *us_socket_context_listen(int ssl, us_socket_context_r context,
-    const char *host, int port, int options, int socket_ext_size);
+    const char *host, int port, int options, int socket_ext_size, int* error);
 
 struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, us_socket_context_r context,
-    const char *path, size_t pathlen, int options, int socket_ext_size);
+    const char *path, size_t pathlen, int options, int socket_ext_size, int* error);
 
 /* listen_socket.c/.h */
 void us_listen_socket_close(int ssl, struct us_listen_socket_t *ls) nonnull_fn_decl;
@@ -327,6 +341,8 @@ struct us_loop_t *us_socket_context_loop(int ssl, us_socket_context_r context) n
 /* Invalidates passed socket, returning a new resized socket which belongs to a different socket context.
  * Used mainly for "socket upgrades" such as when transitioning from HTTP to WebSocket. */
 struct us_socket_t *us_socket_context_adopt_socket(int ssl, us_socket_context_r context, us_socket_r s, int ext_size);
+
+struct us_socket_t *us_socket_upgrade_to_tls(us_socket_r s, us_socket_context_r new_context, const char *sni);
 
 /* Create a child socket context which acts much like its own socket context with its own callbacks yet still relies on the
  * parent socket context for some shared resources. Child socket contexts should be used together with socket adoptions and nothing else. */
@@ -456,6 +472,11 @@ int us_socket_get_error(int ssl, us_socket_r s);
 
 void us_socket_ref(us_socket_r s);
 void us_socket_unref(us_socket_r s);
+
+void us_socket_nodelay(us_socket_r s, int enabled);
+int us_socket_keepalive(us_socket_r s, int enabled, unsigned int delay);
+void us_socket_resume(int ssl, us_socket_r s);
+void us_socket_pause(int ssl, us_socket_r s);
 
 #ifdef __cplusplus
 }

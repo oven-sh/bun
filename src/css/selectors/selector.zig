@@ -16,6 +16,14 @@ const PrintResult = css.PrintResult;
 
 const ArrayList = std.ArrayListUnmanaged;
 
+pub const Selector = parser.Selector;
+pub const SelectorList = parser.SelectorList;
+pub const Component = parser.Component;
+pub const PseudoClass = parser.PseudoClass;
+pub const PseudoElement = parser.PseudoElement;
+
+const debug = bun.Output.scoped(.CSS_SELECTORS, false);
+
 /// Our implementation of the `SelectorImpl` interface
 ///
 pub const impl = struct {
@@ -38,6 +46,436 @@ pub const impl = struct {
 };
 
 pub const parser = @import("./parser.zig");
+
+/// Returns whether two selector lists are equivalent, i.e. the same minus any vendor prefix differences.
+pub fn isEquivalent(selectors: []const Selector, other: []const Selector) bool {
+    if (selectors.len != other.len) return false;
+
+    for (selectors, 0..) |*a, i| {
+        const b = &other[i];
+        if (a.len() != b.len()) return false;
+
+        for (a.components.items, b.components.items) |*a_comp, *b_comp| {
+            const is_equivalent = blk: {
+                if (a_comp.* == .non_ts_pseudo_class and b_comp.* == .non_ts_pseudo_class) {
+                    break :blk a_comp.non_ts_pseudo_class.isEquivalent(&b_comp.non_ts_pseudo_class);
+                } else if (a_comp.* == .pseudo_element and b_comp.* == .pseudo_element) {
+                    break :blk a_comp.pseudo_element.isEquivalent(&b_comp.pseudo_element);
+                } else if ((a_comp.* == .any and b_comp.* == .is) or
+                    (a_comp.* == .is and b_comp.* == .any) or
+                    (a_comp.* == .any and b_comp.* == .any) or
+                    (a_comp.* == .is and b_comp.* == .is))
+                {
+                    const a_selectors = switch (a_comp.*) {
+                        .any => |v| v.selectors,
+                        .is => |v| v,
+                        else => unreachable,
+                    };
+                    const b_selectors = switch (b_comp.*) {
+                        .any => |v| v.selectors,
+                        .is => |v| v,
+                        else => unreachable,
+                    };
+                    break :blk isEquivalent(a_selectors, b_selectors);
+                } else {
+                    break :blk Component.eql(a_comp, b_comp);
+                }
+            };
+
+            if (!is_equivalent) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+/// Downlevels the given selectors to be compatible with the given browser targets.
+/// Returns the necessary vendor prefixes.
+pub fn downlevelSelectors(allocator: Allocator, selectors: []Selector, targets: css.targets.Targets) css.VendorPrefix {
+    var necessary_prefixes = css.VendorPrefix.empty();
+    for (selectors) |*selector| {
+        for (selector.components.items) |*component| {
+            necessary_prefixes.insert(downlevelComponent(allocator, component, targets));
+        }
+    }
+    return necessary_prefixes;
+}
+
+pub fn downlevelComponent(allocator: Allocator, component: *Component, targets: css.targets.Targets) css.VendorPrefix {
+    return switch (component.*) {
+        .non_ts_pseudo_class => |*pc| {
+            return switch (pc.*) {
+                .dir => |*d| {
+                    if (targets.shouldCompileSame(.dir_selector)) {
+                        component.* = downlevelDir(allocator, d.direction, targets);
+                        return downlevelComponent(allocator, component, targets);
+                    }
+                    return css.VendorPrefix.empty();
+                },
+                .lang => |l| {
+                    // :lang() with multiple languages is not supported everywhere.
+                    // compile this to :is(:lang(a), :lang(b)) etc.
+                    if (l.languages.items.len > 1 and targets.shouldCompileSame(.lang_selector_list)) {
+                        component.* = .{ .is = langListToSelectors(allocator, l.languages.items) };
+                        return downlevelComponent(allocator, component, targets);
+                    }
+                    return css.VendorPrefix.empty();
+                },
+                else => pc.getNecessaryPrefixes(targets),
+            };
+        },
+        .pseudo_element => |*pe| pe.getNecessaryPrefixes(targets),
+        .is => |selectors| {
+            var necessary_prefixes = downlevelSelectors(allocator, selectors, targets);
+
+            // Convert :is to :-webkit-any/:-moz-any if needed.
+            // All selectors must be simple, no combinators are supported.
+            if (targets.shouldCompileSame(.is_selector) and
+                !shouldUnwrapIs(selectors) and brk: {
+                for (selectors) |*selector| {
+                    if (selector.hasCombinator()) break :brk false;
+                }
+                break :brk true;
+            }) {
+                necessary_prefixes.insert(targets.prefixes(css.VendorPrefix{ .none = true }, .any_pseudo));
+            } else {
+                necessary_prefixes.insert(css.VendorPrefix{ .none = true });
+            }
+
+            return necessary_prefixes;
+        },
+        .negation => |selectors| {
+            var necessary_prefixes = downlevelSelectors(allocator, selectors, targets);
+
+            // Downlevel :not(.a, .b) -> :not(:is(.a, .b)) if not list is unsupported.
+            // We need to use :is() / :-webkit-any() rather than :not(.a):not(.b) to ensure the specificity is equivalent.
+            // https://drafts.csswg.org/selectors/#specificity-rules
+            if (selectors.len > 1 and css.targets.Targets.shouldCompileSame(&targets, .not_selector_list)) {
+                const is: Selector = Selector.fromComponent(allocator, Component{ .is = selectors: {
+                    const new_selectors = allocator.alloc(Selector, selectors.len) catch bun.outOfMemory();
+                    for (new_selectors, selectors) |*new, *sel| {
+                        new.* = sel.deepClone(allocator);
+                    }
+                    break :selectors new_selectors;
+                } });
+                var list = ArrayList(Selector).initCapacity(allocator, 1) catch bun.outOfMemory();
+                list.appendAssumeCapacity(is);
+                component.* = .{ .negation = list.items };
+
+                if (targets.shouldCompileSame(.is_selector)) {
+                    necessary_prefixes.insert(targets.prefixes(css.VendorPrefix{ .none = true }, .any_pseudo));
+                } else {
+                    necessary_prefixes.insert(css.VendorPrefix{ .none = true });
+                }
+            }
+
+            return necessary_prefixes;
+        },
+        .where, .has => |s| downlevelSelectors(allocator, s, targets),
+        .any => |*a| downlevelSelectors(allocator, a.selectors, targets),
+        else => css.VendorPrefix.empty(),
+    };
+}
+
+const RTL_LANGS: []const []const u8 = &.{
+    "ae", "ar", "arc", "bcc", "bqi", "ckb", "dv", "fa", "glk", "he", "ku", "mzn", "nqo", "pnb", "ps", "sd", "ug",
+    "ur", "yi",
+};
+
+fn downlevelDir(allocator: Allocator, dir: parser.Direction, targets: css.targets.Targets) Component {
+    // Convert :dir to :lang. If supported, use a list of languages in a single :lang,
+    // otherwise, use :is/:not, which may be further downleveled to e.g. :-webkit-any.
+    if (!targets.shouldCompileSame(.lang_selector_list)) {
+        const c = Component{
+            .non_ts_pseudo_class = PseudoClass{
+                .lang = .{ .languages = lang: {
+                    var list = ArrayList([]const u8).initCapacity(allocator, RTL_LANGS.len) catch bun.outOfMemory();
+                    list.appendSliceAssumeCapacity(RTL_LANGS);
+                    break :lang list;
+                } },
+            },
+        };
+        if (dir == .ltr) return Component{
+            .negation = negation: {
+                var list = allocator.alloc(Selector, 1) catch bun.outOfMemory();
+                list[0] = Selector.fromComponent(allocator, c);
+                break :negation list;
+            },
+        };
+        return c;
+    } else {
+        if (dir == .ltr) return Component{ .negation = langListToSelectors(allocator, RTL_LANGS) };
+        return Component{ .is = langListToSelectors(allocator, RTL_LANGS) };
+    }
+}
+
+fn langListToSelectors(allocator: Allocator, langs: []const []const u8) []Selector {
+    var selectors = allocator.alloc(Selector, langs.len) catch bun.outOfMemory();
+    for (langs, selectors[0..]) |lang, *sel| {
+        sel.* = Selector.fromComponent(allocator, Component{
+            .non_ts_pseudo_class = PseudoClass{
+                .lang = .{ .languages = langs: {
+                    var list = ArrayList([]const u8).initCapacity(allocator, 1) catch bun.outOfMemory();
+                    list.appendAssumeCapacity(lang);
+                    break :langs list;
+                } },
+            },
+        });
+    }
+    return selectors;
+}
+
+/// Returns the vendor prefix (if any) used in the given selector list.
+/// If multiple vendor prefixes are seen, this is invalid, and an empty result is returned.
+pub fn getPrefix(selectors: *const SelectorList) css.VendorPrefix {
+    var prefix = css.VendorPrefix.empty();
+    for (selectors.v.slice()) |*selector| {
+        for (selector.components.items) |*component_| {
+            const component: *const Component = component_;
+            const p = switch (component.*) {
+                // Return none rather than empty for these so that we call downlevel_selectors.
+                .non_ts_pseudo_class => |*pc| switch (pc.*) {
+                    .lang => css.VendorPrefix{ .none = true },
+                    .dir => css.VendorPrefix{ .none = true },
+                    else => pc.getPrefix(),
+                },
+                .is => css.VendorPrefix{ .none = true },
+                .where => css.VendorPrefix{ .none = true },
+                .has => css.VendorPrefix{ .none = true },
+                .negation => css.VendorPrefix{ .none = true },
+                .any => |*any| any.vendor_prefix,
+                .pseudo_element => |*pe| pe.getPrefix(),
+                else => css.VendorPrefix.empty(),
+            };
+
+            if (!p.isEmpty()) {
+                // Allow none to be mixed with a prefix.
+                const prefix_without_none = prefix.maskOut(css.VendorPrefix{ .none = true });
+                if (prefix_without_none.isEmpty() or prefix_without_none.eql(p)) {
+                    prefix.insert(p);
+                } else {
+                    return css.VendorPrefix.empty();
+                }
+            }
+        }
+    }
+
+    return prefix;
+}
+
+pub fn isCompatible(selectors: []const parser.Selector, targets: css.targets.Targets) bool {
+    const F = css.compat.Feature;
+    for (selectors) |*selector| {
+        for (selector.components.items) |*component| {
+            const feature = switch (component.*) {
+                .id, .class, .local_name => continue,
+
+                .explicit_any_namespace,
+                .explicit_no_namespace,
+                .default_namespace,
+                .namespace,
+                => F.namespaces,
+
+                .explicit_universal_type => F.selectors2,
+
+                .attribute_in_no_namespace_exists => F.selectors2,
+
+                .attribute_in_no_namespace => |x| brk: {
+                    if (x.case_sensitivity != parser.attrs.ParsedCaseSensitivity.case_sensitive) break :brk F.case_insensitive;
+                    break :brk switch (x.operator) {
+                        .equal, .includes, .dash_match => F.selectors2,
+                        .prefix, .substring, .suffix => F.selectors3,
+                    };
+                },
+
+                .attribute_other => |attr| switch (attr.operation) {
+                    .exists => F.selectors2,
+                    .with_value => |*x| brk: {
+                        if (x.case_sensitivity != parser.attrs.ParsedCaseSensitivity.case_sensitive) break :brk F.case_insensitive;
+
+                        break :brk switch (x.operator) {
+                            .equal, .includes, .dash_match => F.selectors2,
+                            .prefix, .substring, .suffix => F.selectors3,
+                        };
+                    },
+                },
+
+                .empty, .root => F.selectors3,
+                .negation => |sels| {
+                    // :not() selector list is not forgiving.
+                    if (!targets.isCompatible(F.selectors3) or !isCompatible(sels, targets)) return false;
+                    continue;
+                },
+
+                .nth => |*data| brk: {
+                    if (data.ty == .child and data.a == 0 and data.b == 1) break :brk F.selectors2;
+                    if (data.ty == .col or data.ty == .last_col) return false;
+                    break :brk F.selectors3;
+                },
+                .nth_of => |*n| {
+                    if (!targets.isCompatible(F.nth_child_of) or !isCompatible(n.selectors, targets)) return false;
+                    continue;
+                },
+
+                // These support forgiving selector lists, so no need to check nested selectors.
+                .is => |sels| brk: {
+                    // ... except if we are going to unwrap them.
+                    if (shouldUnwrapIs(sels) and isCompatible(sels, targets)) continue;
+                    break :brk F.is_selector;
+                },
+                .where, .nesting => F.is_selector,
+                .any => return false,
+                .has => |sels| {
+                    if (!targets.isCompatible(F.has_selector) or !isCompatible(sels, targets)) return false;
+                    continue;
+                },
+
+                .scope, .host, .slotted => F.shadowdomv1,
+
+                .part => F.part_pseudo,
+
+                .non_ts_pseudo_class => |*pseudo| brk: {
+                    switch (pseudo.*) {
+                        .link, .visited, .active, .hover, .focus, .lang => break :brk F.selectors2,
+
+                        .checked, .disabled, .enabled, .target => break :brk F.selectors3,
+
+                        .any_link => |prefix| {
+                            if (prefix.eql(css.VendorPrefix{ .none = true })) break :brk F.any_link;
+                        },
+                        .indeterminate => break :brk F.indeterminate_pseudo,
+
+                        .fullscreen => |prefix| {
+                            if (prefix.eql(css.VendorPrefix{ .none = true })) break :brk F.fullscreen;
+                        },
+
+                        .focus_visible => break :brk F.focus_visible,
+                        .focus_within => break :brk F.focus_within,
+                        .default => break :brk F.default_pseudo,
+                        .dir => break :brk F.dir_selector,
+                        .optional => break :brk F.optional_pseudo,
+                        .placeholder_shown => |prefix| {
+                            if (prefix.eql(css.VendorPrefix{ .none = true })) break :brk F.placeholder_shown;
+                        },
+
+                        inline .read_only, .read_write => |prefix| {
+                            if (prefix.eql(css.VendorPrefix{ .none = true })) break :brk F.read_only_write;
+                        },
+
+                        .valid, .invalid, .required => break :brk F.form_validation,
+                        .in_range, .out_of_range => break :brk F.in_out_of_range,
+
+                        .autofill => |prefix| {
+                            if (prefix.eql(css.VendorPrefix{ .none = true })) break :brk F.autofill;
+                        },
+
+                        // Experimental, no browser support.
+                        .current,
+                        .past,
+                        .future,
+                        .playing,
+                        .paused,
+                        .seeking,
+                        .stalled,
+                        .buffering,
+                        .muted,
+                        .volume_locked,
+                        .target_within,
+                        .local_link,
+                        .blank,
+                        .user_invalid,
+                        .user_valid,
+                        .defined,
+                        => return false,
+
+                        .custom => {},
+
+                        else => {},
+                    }
+                    return false;
+                },
+
+                .pseudo_element => |*pseudo| brk: {
+                    switch (pseudo.*) {
+                        .after, .before => break :brk F.gencontent,
+                        .first_line => break :brk F.first_line,
+                        .first_letter => break :brk F.first_letter,
+                        .selection => |prefix| {
+                            if (prefix.eql(css.VendorPrefix{ .none = true })) break :brk F.selection;
+                        },
+                        .placeholder => |prefix| {
+                            if (prefix.eql(css.VendorPrefix{ .none = true })) break :brk F.placeholder;
+                        },
+                        .marker => break :brk F.marker_pseudo,
+                        .backdrop => |prefix| {
+                            if (prefix.eql(css.VendorPrefix{ .none = true })) break :brk F.dialog;
+                        },
+                        .cue => break :brk F.cue,
+                        .cue_function => break :brk F.cue_function,
+                        .custom => return false,
+                        else => {},
+                    }
+                    return false;
+                },
+
+                .combinator => |*combinator| brk: {
+                    break :brk switch (combinator.*) {
+                        .child, .next_sibling => F.selectors2,
+                        .later_sibling => F.selectors3,
+                        else => continue,
+                    };
+                },
+            };
+
+            if (!targets.isCompatible(feature)) return false;
+        }
+    }
+
+    return true;
+}
+
+/// Determines whether a selector list contains only unused selectors.
+/// A selector is considered unused if it contains a class or id component that exists in the set of unused symbols.
+pub fn isUnused(
+    selectors: []const parser.Selector,
+    unused_symbols: *const std.StringArrayHashMapUnmanaged(void),
+    parent_is_unused: bool,
+) bool {
+    if (unused_symbols.count() == 0) return false;
+
+    for (selectors) |*selector| {
+        if (!isSelectorUnused(selector, unused_symbols, parent_is_unused)) return false;
+    }
+
+    return true;
+}
+
+fn isSelectorUnused(
+    selector: *const parser.Selector,
+    unused_symbols: *const std.StringArrayHashMapUnmanaged(void),
+    parent_is_unused: bool,
+) bool {
+    for (selector.components.items) |*component| {
+        switch (component.*) {
+            .class, .id => |ident| {
+                if (unused_symbols.contains(ident.v)) return true;
+            },
+            .is, .where => |is| {
+                if (isUnused(is, unused_symbols, parent_is_unused)) return true;
+            },
+            .any => |any| {
+                if (isUnused(any.selectors, unused_symbols, parent_is_unused)) return true;
+            },
+            .nesting => {
+                if (parent_is_unused) return true;
+            },
+            else => {},
+        }
+    }
+    return false;
+}
 
 /// The serialization module ported from lightningcss.
 ///
@@ -72,17 +510,19 @@ pub const serialize = struct {
         var is_relative = __is_relative;
 
         if (comptime bun.Environment.isDebug) {
+            debug("Selector components:\n", .{});
             for (selector.components.items) |*comp| {
-                std.debug.print("Selector components:\n  {}", .{comp});
+                debug(" {}\n", .{comp});
             }
 
+            debug("Compound selector iter\n", .{});
             var compound_selectors = CompoundSelectorIter{ .sel = selector };
             while (compound_selectors.next()) |comp| {
                 for (comp) |c| {
-                    std.debug.print("  {}, ", .{c});
+                    debug("  {}, ", .{c});
                 }
             }
-            std.debug.print("\n", .{});
+            debug("\n", .{});
         }
 
         // Compound selectors invert the order of their contents, so we need to
@@ -268,7 +708,7 @@ pub const serialize = struct {
                     const writer = id.writer();
                     css.serializer.serializeIdentifier(v.value, writer) catch return dest.addFmtError();
 
-                    const s = try css.to_css.string(dest.allocator, CSSString, &v.value, css.PrinterOptions{});
+                    const s = try css.to_css.string(dest.allocator, CSSString, &v.value, css.PrinterOptions.default(), dest.import_records);
 
                     if (id.items.len > 0 and id.items.len < s.len) {
                         try dest.writeStr(id.items);
@@ -308,7 +748,7 @@ pub const serialize = struct {
                         try dest.writeStr(":not(");
                     },
                     .any => |v| {
-                        const vp = dest.vendor_prefix.bitwiseOr(v.vendor_prefix);
+                        const vp = dest.vendor_prefix._or(v.vendor_prefix);
                         if (vp.intersects(css.VendorPrefix{ .webkit = true, .moz = true })) {
                             try dest.writeChar(':');
                             try vp.toCss(W, dest);
@@ -599,6 +1039,7 @@ pub const serialize = struct {
                 // If the printer has a vendor prefix override, use that.
                 const vp = if (!d.vendor_prefix.isEmpty()) d.vendor_prefix.bitwiseAnd(prefix).orNone() else prefix;
                 try vp.toCss(W, d);
+                debug("VENDOR PREFIX {d} OVERRIDE {d}", .{ vp.asBits(), d.vendor_prefix.asBits() });
                 return vp;
             }
 
@@ -722,14 +1163,14 @@ pub const serialize = struct {
             // Otherwise, use an :is() pseudo class.
             // Type selectors are only allowed at the start of a compound selector,
             // so use :is() if that is not the case.
-            if (ctx.selectors.v.items.len == 1 and
-                (first or (!hasTypeSelector(&ctx.selectors.v.items[0]) and
-                isSimple(&ctx.selectors.v.items[0]))))
+            if (ctx.selectors.v.len() == 1 and
+                (first or (!hasTypeSelector(ctx.selectors.v.at(0)) and
+                isSimple(ctx.selectors.v.at(0)))))
             {
-                try serializeSelector(&ctx.selectors.v.items[0], W, dest, ctx.parent, false);
+                try serializeSelector(ctx.selectors.v.at(0), W, dest, ctx.parent, false);
             } else {
                 try dest.writeStr(":is(");
-                try serializeSelectorList(ctx.selectors.v.items, W, dest, ctx.parent, false);
+                try serializeSelectorList(ctx.selectors.v.slice(), W, dest, ctx.parent, false);
                 try dest.writeChar(')');
             }
         } else {
@@ -744,7 +1185,7 @@ pub const serialize = struct {
     }
 };
 
-const tocss_servo = struct {
+pub const tocss_servo = struct {
     pub fn toCss_SelectorList(
         selectors: []const parser.Selector,
         comptime W: type,
@@ -1144,6 +1585,7 @@ const CompoundSelectorIter = struct {
     ///  .rev() // reverse
     /// ```
     pub inline fn next(this: *@This()) ?[]const parser.Component {
+        // Since we iterating backwards, we convert all indices into "backwards form" by doing `this.sel.components.items.len - 1 - i`
         while (this.i < this.sel.components.items.len) {
             const next_index: ?usize = next_index: {
                 for (this.i..this.sel.components.items.len) |j| {
@@ -1152,7 +1594,7 @@ const CompoundSelectorIter = struct {
                 break :next_index null;
             };
             if (next_index) |combinator_index| {
-                const start = combinator_index - 1;
+                const start = if (combinator_index == 0) 0 else combinator_index - 1;
                 const end = this.i;
                 const slice = this.sel.components.items[this.sel.components.items.len - 1 - start .. this.sel.components.items.len - end];
                 this.i = combinator_index + 1;

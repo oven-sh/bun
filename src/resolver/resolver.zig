@@ -1172,7 +1172,7 @@ pub const Resolver = struct {
 
         // Check both relative and package paths for CSS URL tokens, with relative
         // paths taking precedence over package paths to match Webpack behavior.
-        const is_package_path = isPackagePathNotAbsolute(import_path);
+        const is_package_path = kind != .entry_point_run and isPackagePathNotAbsolute(import_path);
         var check_relative = !is_package_path or kind.isFromCSS();
         var check_package = is_package_path;
 

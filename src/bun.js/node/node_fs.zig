@@ -1295,11 +1295,11 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Rename {
             const old_path = try PathLike.fromJS(ctx, arguments) orelse {
-                return ctx.throwInvalidArguments("oldPath must be a string or TypedArray", .{});
+                return ctx.throwInvalidArgumentTypeValue("oldPath", "string or an instance of Buffer or URL", arguments.next() orelse .undefined);
             };
 
             const new_path = try PathLike.fromJS(ctx, arguments) orelse {
-                return ctx.throwInvalidArguments("newPath must be a string or TypedArray", .{});
+                return ctx.throwInvalidArgumentTypeValue("newPath", "string or an instance of Buffer or URL", arguments.next() orelse .undefined);
             };
 
             return Rename{ .old_path = old_path, .new_path = new_path };

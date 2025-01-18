@@ -544,7 +544,7 @@ pub const BundleV2 = struct {
                         }
 
                         // Mark if the file is imported by JS and its URL is inlined for CSS
-                        const is_inlined = v.all_urls_for_css[import_record.source_index.get()].len > 0;
+                        const is_inlined = import_record.source_index.isValid() and v.all_urls_for_css[import_record.source_index.get()].len > 0;
                         if (is_js and is_inlined) {
                             v.additional_files_imported_by_js_and_inlined_in_css.set(import_record.source_index.get());
                         } else if (is_css and is_inlined) {

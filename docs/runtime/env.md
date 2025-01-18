@@ -22,7 +22,7 @@ $ FOO=helloworld bun run dev
 Or for a cross-platform solution, using `bun exec`.
 
 ```sh
-$ bun exec 'NODE_ENV=development bun run dev'
+$ bun exec 'FOO=helloworld bun run dev'
 ```
 
 You can even use it directly on a `package.json` script:

@@ -245,19 +245,30 @@ function onQueryFinish(onClose) {
   this.queries.delete(onClose);
   this.pool.release(this);
 }
+
+enum PooledConnectionState {
+  pending = 0,
+  connected = 1,
+  closed = 2,
+}
+enum PooledConnectionFlags {
+  /// canBeConnected is used to indicate that at least one time we were able to connect to the database
+  canBeConnected = 1 << 0,
+  /// reserved is used to indicate that the connection is currently reserved
+  reserved = 1 << 1,
+  /// preReserved is used to indicate that the connection will be reserved in the future when queryCount drops to 0
+  preReserved = 1 << 2,
+}
 class PooledConnection {
   pool: ConnectionPool;
   connection: ReturnType<typeof createConnection>;
-  state: "pending" | "connected" | "closed" = "pending";
+  state: PooledConnectionState = PooledConnectionState.pending;
   storedError: Error | null = null;
   queries: Set<(err: Error) => void> = new Set();
   onFinish: ((err: Error | null) => void) | null = null;
-  canBeConnected: boolean = false;
   connectionInfo: any;
-  /// reserved is used to indicate that the connection is currently reserved
-  reserved: boolean = false;
-  /// preReserved is used to indicate that the connection will be reserved in the future when queryCount drops to 0
-  preReserved: boolean = false;
+
+  flags: number = 0;
   /// queryCount is used to indicate the number of queries using the connection, if a connection is reserved or if its a transaction queryCount will be 1 independently of the number of queries
   queryCount: number = 0;
   #onConnected(err, _) {
@@ -266,13 +277,17 @@ class PooledConnection {
       connectionInfo.onconnect(err);
     }
     this.storedError = err;
-    this.canBeConnected = !err;
-    this.state = err ? "closed" : "connected";
+    if (!err) {
+      this.flags |= PooledConnectionFlags.canBeConnected;
+    }
+    this.state = err ? PooledConnectionState.closed : PooledConnectionState.connected;
     const onFinish = this.onFinish;
     if (onFinish) {
       this.queryCount = 0;
-      this.reserved = false;
+      this.flags &= ~PooledConnectionFlags.reserved;
+      this.flags &= ~PooledConnectionFlags.preReserved;
 
+      // pool is closed, lets finish the connection
       // pool is closed, lets finish the connection
       if (err) {
         onFinish(err);
@@ -288,7 +303,7 @@ class PooledConnection {
     if (connectionInfo?.onclose) {
       connectionInfo.onclose(err);
     }
-    this.state = "closed";
+    this.state = PooledConnectionState.closed;
     this.connection = null;
     this.storedError = err;
 
@@ -297,7 +312,8 @@ class PooledConnection {
     const queries = new Set(this.queries);
     this.queries.clear();
     this.queryCount = 0;
-    this.reserved = false;
+    this.flags &= ~PooledConnectionFlags.reserved;
+
     // notify all queries that the connection is closed
     for (const onClose of queries) {
       onClose(err);
@@ -311,7 +327,7 @@ class PooledConnection {
   }
   constructor(connectionInfo, pool: ConnectionPool) {
     this.connection = createConnection(connectionInfo, this.#onConnected.bind(this), this.#onClose.bind(this));
-    this.state = "pending";
+    this.state = PooledConnectionState.pending;
     this.pool = pool;
     this.connectionInfo = connectionInfo;
   }
@@ -329,7 +345,7 @@ class PooledConnection {
     }
     // reset error and state
     this.storedError = null;
-    this.state = "pending";
+    this.state = PooledConnectionState.pending;
     // retry connection
     this.connection = createConnection(
       this.connectionInfo,
@@ -338,7 +354,7 @@ class PooledConnection {
     );
   }
   close() {
-    if (this.state === "connected") {
+    if (this.state === PooledConnectionState.connected) {
       this.connection?.close();
     }
   }
@@ -351,7 +367,7 @@ class PooledConnection {
     // lets use a retry strategy
 
     // we can only retry if one day we are able to connect
-    if (this.canBeConnected) {
+    if (this.flags & PooledConnectionFlags.canBeConnected) {
       this.#doRetry();
     } else {
       // analyse type of error to see if we can retry
@@ -434,10 +450,10 @@ class ConnectionPool {
     if (!connectingEvent) {
       connection.queryCount--;
     }
-    const was_reserved = connection.reserved;
-    connection.reserved = false;
-    connection.preReserved = false;
-    if (connection.state !== "connected") {
+    const was_reserved = connection.flags & PooledConnectionFlags.reserved;
+    connection.flags &= ~PooledConnectionFlags.reserved;
+    connection.flags &= ~PooledConnectionFlags.preReserved;
+    if (connection.state !== PooledConnectionState.connected) {
       // connection is not ready
       return;
     }
@@ -459,7 +475,7 @@ class ConnectionPool {
         }
         const pendingReserved = this.reservedQueue.shift();
         if (pendingReserved) {
-          connection.reserved = true;
+          connection.flags |= PooledConnectionFlags.reserved;
           connection.queryCount++;
           // we have a connection waiting for a reserved connection lets prioritize it
           pendingReserved(connection.storedError, connection);
@@ -475,7 +491,7 @@ class ConnectionPool {
         // ok we can actually bind reserved queries to it
         const pendingReserved = this.reservedQueue.shift();
         if (pendingReserved) {
-          connection.reserved = true;
+          connection.flags |= PooledConnectionFlags.reserved;
           connection.queryCount++;
           // we have a connection waiting for a reserved connection lets prioritize it
           pendingReserved(connection.storedError, connection);
@@ -495,7 +511,7 @@ class ConnectionPool {
       const pollSize = this.connections.length;
       for (let i = 0; i < pollSize; i++) {
         const connection = this.connections[i];
-        if (connection.state !== "closed") {
+        if (connection.state !== PooledConnectionState.closed) {
           // some connection is connecting or connected
           return true;
         }
@@ -512,7 +528,7 @@ class ConnectionPool {
       const pollSize = this.connections.length;
       for (let i = 0; i < pollSize; i++) {
         const connection = this.connections[i];
-        if (connection.state === "connected") {
+        if (connection.state === PooledConnectionState.connected) {
           return true;
         }
       }
@@ -527,7 +543,7 @@ class ConnectionPool {
       const pollSize = this.connections.length;
       for (let i = 0; i < pollSize; i++) {
         const connection = this.connections[i];
-        if (connection.state === "connected") {
+        if (connection.state === PooledConnectionState.connected) {
           connection.connection.flush();
         }
       }
@@ -560,14 +576,14 @@ class ConnectionPool {
       for (let i = 0; i < pollSize; i++) {
         const connection = this.connections[i];
         switch (connection.state) {
-          case "pending":
+          case PooledConnectionState.pending:
             {
               const { promise, resolve } = Promise.withResolvers();
               connection.onFinish = resolve;
               promises.push(promise);
             }
             break;
-          case "connected":
+          case PooledConnectionState.connected:
             {
               const { promise, resolve } = Promise.withResolvers();
               connection.onFinish = resolve;
@@ -608,7 +624,7 @@ class ConnectionPool {
         for (let i = 0; i < pollSize; i++) {
           const connection = this.connections[i];
           // we need a new connection and we have some connections that can retry
-          if (connection.state === "closed") {
+          if (connection.state === PooledConnectionState.closed) {
             if (connection.retry()) {
               // lets wait for connection to be released
               if (!retry_in_progress) {
@@ -655,7 +671,7 @@ class ConnectionPool {
       const pollSize = this.connections.length;
       // pool is always at least 1 connection
       this.connections[0] = new PooledConnection(this.connectionInfo, this);
-      this.connections[0].preReserved = reserved; // lets pre reserve the first connection
+      this.connections[0].flags |= PooledConnectionFlags.preReserved; // lets pre reserve the first connection
       for (let i = 1; i < pollSize; i++) {
         this.connections[i] = new PooledConnection(this.connectionInfo, this);
       }
@@ -665,7 +681,8 @@ class ConnectionPool {
       let connectionWithLeastQueries: PooledConnection | null = null;
       let leastQueries = Infinity;
       for (const connection of this.readyConnections) {
-        if (connection.reserved || connection.preReserved) continue;
+        if (connection.flags & PooledConnectionFlags.reserved || connection.flags & PooledConnectionFlags.preReserved)
+          continue;
         const queryCount = connection.queryCount;
         if (queryCount > 0) {
           if (queryCount < leastQueries) {
@@ -674,7 +691,7 @@ class ConnectionPool {
             continue;
           }
         }
-        connection.reserved = true;
+        connection.flags |= PooledConnectionFlags.reserved;
         connection.queryCount++;
         this.readyConnections.delete(connection);
         onConnected(null, connection);
@@ -682,7 +699,7 @@ class ConnectionPool {
       }
       if (connectionWithLeastQueries) {
         // lets mark the connection with the least queries as preReserved if any
-        connectionWithLeastQueries.preReserved = true;
+        connectionWithLeastQueries.flags |= PooledConnectionFlags.preReserved;
       }
       // no connection available to be reserved lets wait for a connection to be released
       this.reservedQueue.push(onConnected);

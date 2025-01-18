@@ -329,10 +329,12 @@ pub const FDImpl = packed struct {
             return global.throwRangeError(float, .{ .field_name = "fd", .msg = "an integer" });
         }
 
-        const fd: c_int = @intFromFloat(float);
-        if (fd < 0 or fd > std.math.maxInt(i32)) {
-            return global.throwRangeError(fd, .{ .field_name = "fd", .min = 0, .max = std.math.maxInt(i32) });
+        const int: i64 = @intFromFloat(float);
+        if (int < 0 or int > std.math.maxInt(i32)) {
+            return global.throwRangeError(int, .{ .field_name = "fd", .min = 0, .max = std.math.maxInt(i32) });
         }
+
+        const fd: c_int = @intCast(int);
 
         if (comptime environment.isWindows) {
             return switch (bun.FDTag.get(fd)) {

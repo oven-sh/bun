@@ -324,6 +324,7 @@ pub const FDImpl = packed struct {
         if (!value.isNumber()) {
             return null;
         }
+
         const float = value.asNumber();
         if (@mod(float, 1) != 0) {
             return global.throwRangeError(float, .{ .field_name = "fd", .msg = "an integer" });

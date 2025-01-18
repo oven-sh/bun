@@ -415,7 +415,7 @@ pub const FSWatcher = struct {
 
             should_deinit_path = false;
 
-            return Arguments{
+            return .{
                 .path = path,
                 .listener = listener,
                 .global_this = ctx,

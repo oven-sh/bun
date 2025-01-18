@@ -1893,7 +1893,8 @@ pub fn isWindowsAbsolutePathMissingDriveLetter(comptime T: type, chars: []const 
 
 pub fn fromWPath(buf: []u8, utf16: []const u16) [:0]const u8 {
     bun.unsafeAssert(buf.len > 0);
-    const encode_into_result = copyUTF16IntoUTF8(buf[0 .. buf.len - 1], []const u16, utf16, false);
+    const to_copy = trimPrefixComptime(u16, utf16, bun.windows.long_path_prefix);
+    const encode_into_result = copyUTF16IntoUTF8(buf[0 .. buf.len - 1], []const u16, to_copy, false);
     bun.unsafeAssert(encode_into_result.written < buf.len);
     buf[encode_into_result.written] = 0;
     return buf[0..encode_into_result.written :0];
@@ -1929,9 +1930,9 @@ pub fn addNTPathPrefixIfNeeded(wbuf: []u16, utf16: []const u16) [:0]u16 {
         wbuf[utf16.len] = 0;
         return wbuf[0..utf16.len :0];
     }
-    if (hasPrefixComptimeType(u16, utf16, bun.windows.nt_maxpath_prefix)) {
+    if (hasPrefixComptimeType(u16, utf16, bun.windows.long_path_prefix)) {
         // Replace prefix
-        return addNTPathPrefix(wbuf, utf16[bun.windows.nt_maxpath_prefix.len..]);
+        return addNTPathPrefix(wbuf, utf16[bun.windows.long_path_prefix.len..]);
     }
     return addNTPathPrefix(wbuf, utf16);
 }
@@ -1941,7 +1942,7 @@ pub const toNTDir = toNTPath;
 
 pub fn toExtendedPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     bun.unsafeAssert(wbuf.len > 4);
-    wbuf[0..4].* = bun.windows.nt_maxpath_prefix;
+    wbuf[0..4].* = bun.windows.long_path_prefix;
     return wbuf[0 .. toWPathNormalized(wbuf[4..], utf8).len + 4 :0];
 }
 
@@ -2034,11 +2035,11 @@ pub fn toKernel32Path(wbuf: []u16, utf8: []const u8) [:0]u16 {
         utf8[bun.windows.nt_object_prefix_u8.len..]
     else
         utf8;
-    if (hasPrefixComptime(path, bun.windows.nt_maxpath_prefix_u8)) {
+    if (hasPrefixComptime(path, bun.windows.long_path_prefix_u8)) {
         return toWPath(wbuf, path);
     }
     if (utf8.len > 2 and bun.path.isDriveLetter(utf8[0]) and utf8[1] == ':' and bun.path.isSepAny(utf8[2])) {
-        wbuf[0..4].* = bun.windows.nt_maxpath_prefix;
+        wbuf[0..4].* = bun.windows.long_path_prefix;
         const wpath = toWPath(wbuf[4..], path);
         return wbuf[0 .. wpath.len + 4 :0];
     }

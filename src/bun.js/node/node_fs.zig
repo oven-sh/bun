@@ -17,6 +17,7 @@ const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
 
 const FileDescriptor = bun.FileDescriptor;
 const FDImpl = bun.FDImpl;
+const AbortSignal = JSC.AbortSignal;
 
 const Syscall = if (Environment.isWindows) bun.sys.sys_uv else bun.sys;
 
@@ -351,8 +352,10 @@ pub const Async = struct {
         };
     }
 
-    fn NewAsyncFSTask(comptime ReturnType: type, comptime ArgumentType: type, comptime Function: anytype) type {
+    fn NewAsyncFSTask(comptime ReturnType: type, comptime ArgumentType: type, comptime function: anytype) type {
         return struct {
+            pub const Task = @This();
+
             promise: JSC.JSPromise.Strong,
             args: ArgumentType,
             globalObject: *JSC.JSGlobalObject,
@@ -361,8 +364,12 @@ pub const Async = struct {
             ref: bun.Async.KeepAlive = .{},
             tracker: JSC.AsyncTaskTracker,
 
-            pub const Task = @This();
-
+            /// NewAsyncFSTask supports cancelable operations via AbortSignal,
+            /// so long as a "signal" field exists. The task wrapper will ensure
+            /// a promise rejection happens if signaled, but if `function` is
+            /// already called, no guarantees are made. It is recommended for
+            /// the functions to check .signal.aborted() for early returns.
+            pub const have_abort_signal = @hasField(ArgumentType, "signal");
             pub const heap_label = "Async" ++ bun.meta.typeBaseName(@typeName(ArgumentType)) ++ "Task";
 
             pub fn create(
@@ -371,21 +378,17 @@ pub const Async = struct {
                 args: ArgumentType,
                 vm: *JSC.VirtualMachine,
             ) JSC.JSValue {
-                var task = bun.new(
-                    Task,
-                    Task{
-                        .promise = JSC.JSPromise.Strong.init(globalObject),
-                        .args = args,
-                        .result = undefined,
-                        .globalObject = globalObject,
-                        .tracker = JSC.AsyncTaskTracker.init(vm),
-                    },
-                );
+                var task = bun.new(Task, .{
+                    .promise = JSC.JSPromise.Strong.init(globalObject),
+                    .args = args,
+                    .result = undefined,
+                    .globalObject = globalObject,
+                    .tracker = JSC.AsyncTaskTracker.init(vm),
+                });
                 task.ref.ref(vm);
                 task.args.toThreadSafe();
                 task.tracker.didSchedule(globalObject);
                 JSC.WorkPool.schedule(&task.task);
-
                 return task.promise.value();
             }
 
@@ -393,7 +396,7 @@ pub const Async = struct {
                 var this: *Task = @alignCast(@fieldParentPtr("task", task));
 
                 var node_fs = NodeFS{};
-                this.result = Function(&node_fs, this.args, .@"async");
+                this.result = function(&node_fs, this.args, .@"async");
 
                 if (this.result == .err) {
                     this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
@@ -411,7 +414,6 @@ pub const Async = struct {
                     .result => |*res| brk: {
                         const out = globalObject.toJS(res, .temporary);
                         success = out != .zero;
-
                         break :brk out;
                     },
                 };
@@ -422,6 +424,15 @@ pub const Async = struct {
                 const tracker = this.tracker;
                 tracker.willDispatch(globalObject);
                 defer tracker.didDispatch(globalObject);
+
+                if (have_abort_signal) check_abort: {
+                    const signal = this.args.signal orelse break :check_abort;
+                    if (signal.reasonIfAborted(globalObject)) |reason| {
+                        this.deinit();
+                        promise.reject(globalObject, reason.toJS(globalObject));
+                        return;
+                    }
+                }
 
                 this.deinit();
                 switch (success) {
@@ -2620,8 +2631,13 @@ pub const Arguments = struct {
 
         flag: FileSystemFlags = FileSystemFlags.r,
 
+        signal: ?*AbortSignal = null,
+
         pub fn deinit(self: ReadFile) void {
             self.path.deinit();
+            if (self.signal) |signal| {
+                signal.unref();
+            }
         }
 
         pub fn deinitAndUnprotect(self: ReadFile) void {
@@ -2641,6 +2657,9 @@ pub const Arguments = struct {
             var encoding = Encoding.buffer;
             var flag = FileSystemFlags.r;
 
+            var abort_signal: ?*AbortSignal = null;
+            errdefer if (abort_signal) |signal| signal.unref();
+
             if (arguments.next()) |arg| {
                 arguments.eat();
                 if (arg.isString()) {
@@ -2653,16 +2672,31 @@ pub const Arguments = struct {
                             return ctx.throwInvalidArguments("Invalid flag", .{});
                         };
                     }
+
+                    if (try arg.getTruthy(ctx, "signal")) |signal| {
+                        if (AbortSignal.fromJS(signal)) |signal_| {
+                            abort_signal = signal_.ref();
+                        } else {
+                            return ctx.ERR_INVALID_ARG_TYPE("The \"signal\" argument must be an instance of AbortSignal", .{}).throw();
+                        }
+                    }
                 }
             }
 
-            // Note: Signal is not implemented
-            return ReadFile{
+            return .{
                 .path = path,
                 .encoding = encoding,
                 .flag = flag,
                 .limit_size_for_javascript = true,
+                .signal = abort_signal,
             };
+        }
+
+        pub fn aborted(self: ReadFile) bool {
+            if (self.signal) |signal| {
+                return signal.aborted();
+            }
+            return false;
         }
     };
 
@@ -4742,24 +4776,16 @@ pub const NodeFS = struct {
         const ret = readFileWithOptions(this, args, flavor, .default);
         return switch (ret) {
             .err => .{ .err = ret.err },
-            .result => switch (ret.result) {
-                .buffer => .{
-                    .result = .{
-                        .buffer = ret.result.buffer,
-                    },
+            .result => |result| switch (result) {
+                .buffer => |buffer| .{
+                    .result = .{ .buffer = buffer },
                 },
                 .transcoded_string => |str| {
                     if (str.tag == .Dead) {
                         return .{ .err = Syscall.Error.fromCode(.NOMEM, .read).withPathLike(args.path) };
                     }
 
-                    return .{
-                        .result = .{
-                            .string = .{
-                                .underlying = str,
-                            },
-                        },
-                    };
+                    return .{ .result = .{ .string = .{ .underlying = str } } };
                 },
                 .string => brk: {
                     const str = bun.SliceWithUnderlyingString.transcodeFromOwnedSlice(@constCast(ret.result.string), args.encoding);
@@ -4839,6 +4865,8 @@ pub const NodeFS = struct {
                 _ = Syscall.close(fd);
         }
 
+        if (args.aborted()) return Maybe(Return.ReadFileWithOptions).aborted;
+
         // Only used in DOMFormData
         if (args.offset > 0) {
             _ = Syscall.setFileOffset(fd, args.offset);
@@ -4864,9 +4892,7 @@ pub const NodeFS = struct {
                 var available = temporary_read_buffer;
                 while (available.len > 0) {
                     switch (Syscall.read(fd, available)) {
-                        .err => |err| return .{
-                            .err = err,
-                        },
+                        .err => |err| return .{ .err = err },
                         .result => |amt| {
                             if (amt == 0) {
                                 did_succeed = true;
@@ -4940,6 +4966,8 @@ pub const NodeFS = struct {
         };
         // ----------------------------
 
+        if (args.aborted()) return Maybe(Return.ReadFileWithOptions).aborted;
+
         const stat_ = switch (Syscall.fstat(fd)) {
             .err => |err| return .{
                 .err = err,
@@ -4982,9 +5010,7 @@ pub const NodeFS = struct {
                 max_size,
                 1024 * 1024 * 1024 * 8,
             ),
-        ) catch return .{
-            .err = Syscall.Error.fromCode(.NOMEM, .read).withPathLike(args.path),
-        };
+        ) catch return .{ .err = Syscall.Error.fromCode(.NOMEM, .read).withPathLike(args.path) };
         if (temporary_read_buffer_before_stat_call.len > 0) {
             buf.appendSlice(temporary_read_buffer_before_stat_call) catch return .{
                 .err = Syscall.Error.fromCode(.NOMEM, .read).withPathLike(args.path),
@@ -4993,10 +5019,9 @@ pub const NodeFS = struct {
         buf.expandToCapacity();
 
         while (total < size) {
+            if (args.aborted()) return Maybe(Return.ReadFileWithOptions).aborted;
             switch (Syscall.read(fd, buf.items.ptr[total..@min(buf.capacity, max_size)])) {
-                .err => |err| return .{
-                    .err = err,
-                },
+                .err => |err| return .{ .err = err },
                 .result => |amt| {
                     total += amt;
 
@@ -5025,10 +5050,9 @@ pub const NodeFS = struct {
             }
         } else {
             while (true) {
+                if (args.aborted()) return Maybe(Return.ReadFileWithOptions).aborted;
                 switch (Syscall.read(fd, buf.items.ptr[total..@min(buf.capacity, max_size)])) {
-                    .err => |err| return .{
-                        .err = err,
-                    },
+                    .err => |err| return .{ .err = err },
                     .result => |amt| {
                         total += amt;
 
@@ -5598,7 +5622,7 @@ pub const NodeFS = struct {
                         },
                         .windows,
                     );
-                    this.sync_error_buf[0..4].* = bun.windows.nt_maxpath_prefix_u8;
+                    this.sync_error_buf[0..4].* = bun.windows.long_path_prefix_u8;
                     this.sync_error_buf[4 + target.len] = 0;
                     break :target this.sync_error_buf[0 .. 4 + target.len :0];
                 }

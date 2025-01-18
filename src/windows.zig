@@ -70,13 +70,11 @@ pub const INVALID_FILE_ATTRIBUTES: u32 = std.math.maxInt(u32);
 
 pub const nt_object_prefix = [4]u16{ '\\', '?', '?', '\\' };
 pub const nt_unc_object_prefix = [8]u16{ '\\', '?', '?', '\\', 'U', 'N', 'C', '\\' };
-// TODO: rename to long_path_prefix
-pub const nt_maxpath_prefix = [4]u16{ '\\', '\\', '?', '\\' };
+pub const long_path_prefix = [4]u16{ '\\', '\\', '?', '\\' };
 
 pub const nt_object_prefix_u8 = [4]u8{ '\\', '?', '?', '\\' };
 pub const nt_unc_object_prefix_u8 = [8]u8{ '\\', '?', '?', '\\', 'U', 'N', 'C', '\\' };
-// TODO: rename to long_path_prefix_u8
-pub const nt_maxpath_prefix_u8 = [4]u8{ '\\', '\\', '?', '\\' };
+pub const long_path_prefix_u8 = [4]u8{ '\\', '\\', '?', '\\' };
 
 const std = @import("std");
 const Environment = bun.Environment;
@@ -3427,7 +3425,7 @@ pub fn GetFinalPathNameByHandle(
 
     bun.sys.syslog("GetFinalPathNameByHandleW({*p}) = {}", .{ hFile, bun.fmt.utf16(ret) });
 
-    if (bun.strings.hasPrefixComptimeType(u16, ret, nt_maxpath_prefix)) {
+    if (bun.strings.hasPrefixComptimeType(u16, ret, long_path_prefix)) {
         // '\\?\C:\absolute\path' -> 'C:\absolute\path'
         ret = ret[4..];
         if (bun.strings.hasPrefixComptimeUTF16(ret, "UNC\\")) {

@@ -61,6 +61,15 @@ fn Bindings(comptime function_name: NodeFSFunctionEnum) type {
                 return .zero;
             }
 
+            const have_abort_signal = @hasField(Arguments, "signal");
+            if (have_abort_signal) check_early_abort: {
+                const signal = args.signal orelse break :check_early_abort;
+                if (signal.reasonIfAborted(globalObject)) |reason| {
+                    slice.deinit();
+                    return JSC.JSPromise.rejectedPromiseValue(globalObject, reason.toJS(globalObject));
+                }
+            }
+
             const Task = @field(JSC.Node.Async, @tagName(function_name));
             switch (comptime function_name) {
                 .cp => return Task.create(globalObject, this, args, globalObject.bunVM(), slice.arena),

@@ -42,8 +42,8 @@ pub const TimeLike = if (Environment.isWindows) f64 else std.posix.timespec;
 /// - "path"
 /// - "errno"
 pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
-    const hasRetry = ErrorTypeT != void and @hasDecl(ErrorTypeT, "retry");
-    const hasTodo = ErrorTypeT != void and @hasDecl(ErrorTypeT, "todo");
+    const has_retry = ErrorTypeT != void and @hasDecl(ErrorTypeT, "retry");
+    const has_todo = ErrorTypeT != void and @hasDecl(ErrorTypeT, "todo");
 
     return union(Tag) {
         pub const ErrorType = ErrorTypeT;
@@ -60,11 +60,17 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
         /// we (Zack, Dylan, Dave, Mason) observed that it was set to 0xFF in ReleaseFast in the debugger
         pub const Tag = enum(u8) { err, result };
 
-        pub const retry: @This() = if (hasRetry) .{ .err = ErrorType.retry } else .{ .err = ErrorType{} };
-
-        pub const success: @This() = @This(){
+        pub const retry: @This() = if (has_retry) .{ .err = ErrorType.retry } else .{ .err = .{} };
+        pub const success: @This() = .{
             .result = std.mem.zeroes(ReturnType),
         };
+        /// This value is technically garbage, but that is okay as `.aborted` is
+        /// only meant to be returned in an operation when there is an aborted
+        /// `AbortSignal` object associated with the operation.
+        pub const aborted: @This() = .{ .err = .{
+            .errno = @intFromEnum(posix.E.INTR),
+            .syscall = .access,
+        } };
 
         pub fn assert(this: @This()) ReturnType {
             switch (this) {
@@ -82,7 +88,7 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
                 }
                 @panic(comptime "TODO: Maybe(" ++ typeBaseNameT(ReturnType) ++ ")");
             }
-            if (hasTodo) {
+            if (has_todo) {
                 return .{ .err = ErrorType.todo() };
             }
             return .{ .err = ErrorType{} };
@@ -900,7 +906,7 @@ pub const PathLike = union(enum) {
                 if (sliced.len > 2 and bun.path.isDriveLetter(sliced[0]) and sliced[1] == ':' and bun.path.isSepAny(sliced[2])) {
                     // Add the long path syntax. This affects most of node:fs
                     const rest = path_handler.PosixToWinNormalizer.resolveCWDWithExternalBufZ(@ptrCast(buf[4..]), sliced) catch @panic("Error while resolving path.");
-                    buf[0..4].* = bun.windows.nt_maxpath_prefix_u8;
+                    buf[0..4].* = bun.windows.long_path_prefix_u8;
                     // When long path syntax is used, the slashes must be facing the correct direction.
                     bun.path.dangerouslyConvertPathToWindowsInPlace(u8, buf[4..][0..rest.len]);
                     return buf[0 .. 4 + rest.len :0];

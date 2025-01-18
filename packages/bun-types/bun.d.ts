@@ -2278,7 +2278,8 @@ declare module "bun" {
     | "import-rule"
     | "url-token"
     | "internal"
-    | "entry-point";
+    | "entry-point-run"
+    | "entry-point-build";
 
   interface Import {
     path: string;

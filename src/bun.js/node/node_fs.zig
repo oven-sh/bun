@@ -3679,7 +3679,7 @@ pub const NodeFS = struct {
         if (comptime Environment.isWindows) {
             var req: uv.fs_t = uv.fs_t.uninitialized;
             defer req.deinit();
-            const rc = uv.uv_fs_futime(uv.Loop.get(), &req, bun.uvfdcast(args.fd), args.atime, args.mtimes, null);
+            const rc = uv.uv_fs_futime(uv.Loop.get(), &req, bun.uvfdcast(args.fd), args.atime, args.mtime, null);
             return if (rc.errno()) |e|
                 .{ .err = .{
                     .errno = e,
@@ -5635,7 +5635,7 @@ pub const NodeFS = struct {
             const ret = Syscall.ftruncate(file.result, len);
             return switch (ret) {
                 .result => ret,
-                .err => |err| .{ .err = err.withPathAndSyscall(path.slice(), .trucnate) },
+                .err => |err| .{ .err = err.withPathAndSyscall(path.slice(), .truncate) },
             };
         }
 

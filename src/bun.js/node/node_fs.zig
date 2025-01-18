@@ -1330,7 +1330,7 @@ pub const Arguments = struct {
             };
             const len: u63 = brk: {
                 const len_value = arguments.next() orelse break :brk 0;
-                break :brk @max(0, try JSC.Node.validators.validateInteger(ctx, len_value, "len", .{}, null, null));
+                break :brk @max(0, try JSC.Node.validators.validateInteger(ctx, len_value, "len", null, null));
             };
             return .{ .path = path, .len = len };
         }
@@ -1464,15 +1464,13 @@ pub const Arguments = struct {
                 return throwInvalidFdError(ctx, fd_value);
             };
 
-            const len: JSC.WebCore.Blob.SizeType = brk: {
-                const len_value = arguments.next() orelse break :brk 0;
-                if (len_value.isNumber()) {
-                    arguments.eat();
-                    break :brk len_value.to(JSC.WebCore.Blob.SizeType);
-                }
-
-                break :brk 0;
-            };
+            const len: JSC.WebCore.Blob.SizeType = @intCast(@max(try JSC.Node.validators.validateInteger(
+                ctx,
+                arguments.next() orelse JSC.JSValue.jsNumber(0),
+                "len",
+                std.math.minInt(i52),
+                std.math.maxInt(JSC.WebCore.Blob.SizeType),
+            ), 0));
 
             return FTruncate{ .fd = fd, .len = len };
         }
@@ -1507,7 +1505,7 @@ pub const Arguments = struct {
                 };
 
                 arguments.eat();
-                break :brk wrapTo(uid_t, try JSC.Node.validators.validateInteger(ctx, uid_value, "uid", .{}, -1, std.math.maxInt(u32)));
+                break :brk wrapTo(uid_t, try JSC.Node.validators.validateInteger(ctx, uid_value, "uid", -1, std.math.maxInt(u32)));
             };
 
             const gid: gid_t = brk: {
@@ -1515,7 +1513,7 @@ pub const Arguments = struct {
                     return ctx.throwInvalidArguments("gid is required", .{});
                 };
                 arguments.eat();
-                break :brk wrapTo(gid_t, try JSC.Node.validators.validateInteger(ctx, gid_value, "gid", .{}, -1, std.math.maxInt(u32)));
+                break :brk wrapTo(gid_t, try JSC.Node.validators.validateInteger(ctx, gid_value, "gid", -1, std.math.maxInt(u32)));
             };
 
             return Chown{ .path = path, .uid = uid, .gid = gid };
@@ -1543,7 +1541,7 @@ pub const Arguments = struct {
                 };
 
                 arguments.eat();
-                break :brk wrapTo(uid_t, try JSC.Node.validators.validateInteger(ctx, uid_value, "uid", .{}, -1, std.math.maxInt(u32)));
+                break :brk wrapTo(uid_t, try JSC.Node.validators.validateInteger(ctx, uid_value, "uid", -1, std.math.maxInt(u32)));
             };
 
             const gid: gid_t = brk: {
@@ -1551,7 +1549,7 @@ pub const Arguments = struct {
                     return ctx.throwInvalidArguments("gid is required", .{});
                 };
                 arguments.eat();
-                break :brk wrapTo(gid_t, try JSC.Node.validators.validateInteger(ctx, gid_value, "gid", .{}, -1, std.math.maxInt(u32)));
+                break :brk wrapTo(gid_t, try JSC.Node.validators.validateInteger(ctx, gid_value, "gid", -1, std.math.maxInt(u32)));
             };
 
             return Fchown{ .fd = fd, .uid = uid, .gid = gid };
@@ -2032,11 +2030,11 @@ pub const Arguments = struct {
                     }
 
                     if (try val.get(ctx, "retryDelay")) |delay| {
-                        retry_delay = @intCast(try JSC.Node.validators.validateInteger(ctx, delay, "options.retryDelay", .{}, 0, std.math.maxInt(c_uint)));
+                        retry_delay = @intCast(try JSC.Node.validators.validateInteger(ctx, delay, "options.retryDelay", 0, std.math.maxInt(c_uint)));
                     }
 
                     if (try val.get(ctx, "maxRetries")) |retries| {
-                        max_retries = @intCast(try JSC.Node.validators.validateInteger(ctx, retries, "options.maxRetries", .{}, 0, std.math.maxInt(u32)));
+                        max_retries = @intCast(try JSC.Node.validators.validateInteger(ctx, retries, "options.maxRetries", 0, std.math.maxInt(u32)));
                     }
                 } else if (val != .undefined) {
                     return ctx.throwInvalidArguments("The \"options\" argument must be of type object.", .{});
@@ -2444,7 +2442,7 @@ pub const Arguments = struct {
                     },
                     // fs.write(fd, buffer[, offset[, length[, position]]], callback)
                     .buffer => {
-                        args.offset = @intCast(try JSC.Node.validators.validateInteger(ctx, current, "offset", .{}, 0, 9007199254740991));
+                        args.offset = @intCast(try JSC.Node.validators.validateInteger(ctx, current, "offset", 0, 9007199254740991));
                         arguments.eat();
                         current = arguments.next() orelse break :parse;
 
@@ -2527,7 +2525,7 @@ pub const Arguments = struct {
                 arguments.eat();
                 if (current.isNumber() or current.isBigInt()) {
                     const buf_len = buffer.slice().len;
-                    args.offset = @intCast(try JSC.Node.validators.validateInteger(ctx, current, "offset", .{}, 0, @intCast(buf_len)));
+                    args.offset = @intCast(try JSC.Node.validators.validateInteger(ctx, current, "offset", 0, @intCast(buf_len)));
 
                     if (arguments.remaining.len < 1) {
                         return ctx.throwInvalidArguments("length is required", .{});
@@ -2538,12 +2536,12 @@ pub const Arguments = struct {
                     defined_length = true;
 
                     if (arg_length.isNumber() or arg_length.isBigInt()) {
-                        args.length = @intCast(try JSC.Node.validators.validateInteger(ctx, arg_length, "length", .{}, 0, @intCast(buf_len - args.offset)));
+                        args.length = @intCast(try JSC.Node.validators.validateInteger(ctx, arg_length, "length", 0, @intCast(buf_len - args.offset)));
                     }
 
                     if (arguments.next()) |arg_position| {
                         arguments.eat();
-                        const num: i64 = try JSC.Node.validators.validateIntegerOrBigInt(ctx, arg_position, "position", .{}, -1, 9007199254740991);
+                        const num: i64 = try JSC.Node.validators.validateIntegerOrBigInt(ctx, arg_position, "position", -1, 9007199254740991);
 
                         if (num >= 0)
                             args.position = @as(ReadPosition, @intCast(num));
@@ -5634,10 +5632,14 @@ pub const NodeFS = struct {
             if (file == .err)
                 return .{ .err = file.err.withPath(path.slice()) };
             defer _ = Syscall.close(file.result);
-            return Syscall.ftruncate(file.result, len);
+            const ret = Syscall.ftruncate(file.result, len);
+            return switch (ret) {
+                .result => ret,
+                .err => |err| .{ .err = err.withPathAndSyscall(path.slice(), .trucnate) },
+            };
         }
 
-        return Maybe(Return.Truncate).errnoSys(C.truncate(path.sliceZ(&this.sync_error_buf), len), .truncate) orelse
+        return Maybe(Return.Truncate).errnoSysP(C.truncate(path.sliceZ(&this.sync_error_buf), len), .truncate, path.slice()) orelse
             Maybe(Return.Truncate).success;
     }
 
@@ -6348,7 +6350,7 @@ fn throwInvalidFdError(global: *JSC.JSGlobalObject, value: JSC.JSValue) bun.JSEr
     if (value.isNumber()) {
         return global.ERR_OUT_OF_RANGE("The value of \"fd\" is out of range. It must be an integer. Received {d}", .{bun.fmt.double(value.asNumber())}).throw();
     }
-    return JSC.Node.validators.throwErrInvalidArgType(global, "fd", .{}, "number", value);
+    return global.throwInvalidArgumentTypeValue("fd", "number", value);
 }
 
 pub export fn Bun__mkdirp(globalThis: *JSC.JSGlobalObject, path: [*:0]const u8) bool {

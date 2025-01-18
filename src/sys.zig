@@ -366,6 +366,17 @@ pub const Error = struct {
         };
     }
 
+    pub inline fn withPathAndSyscall(this: Error, path: anytype, syscall_: Syscall.Tag) Error {
+        if (std.meta.Child(@TypeOf(path)) == u16) {
+            @compileError("Do not pass WString path to withPath, it needs the path encoded as utf8");
+        }
+        return Error{
+            .errno = this.errno,
+            .syscall = syscall_,
+            .path = bun.span(path),
+        };
+    }
+
     pub inline fn withPathDest(this: Error, path: anytype, dest: anytype) Error {
         if (std.meta.Child(@TypeOf(path)) == u16) {
             @compileError("Do not pass WString path to withPathDest, it needs the path encoded as utf8 (path)");

@@ -1999,18 +1999,18 @@ declare module "bun" {
    * Configuration options for SQL client connection and behavior
    */
   type SQLOptions = {
+    /** Connection URL (can be string or URL object) */
+    url: URL | string;
     /** Database server hostname */
     host: string;
     /** Database server port number */
-    port: number;
+    port: number | string;
     /** Database user for authentication */
     user: string;
     /** Database password for authentication */
     password: string;
     /** Name of the database to connect to */
     database: string;
-    /** Connection URL (can be string or URL object) */
-    url: URL | string;
     /** Database adapter/driver to use */
     adapter: string;
     /** Maximum time in milliseconds to wait for connection to become available */
@@ -2019,12 +2019,6 @@ declare module "bun" {
     connectionTimeout: number;
     /** Maximum lifetime in milliseconds of a connection */
     maxLifetime: number;
-    /** Alternative snake_case naming for maxLifetime */
-    max_lifetime: number;
-    /** Alternative snake_case naming for connectionTimeout */
-    connection_timeout: number;
-    /** Alternative snake_case naming for idleTimeout */
-    idle_timeout: number;
     /** Whether to use TLS/SSL for the connection */
     tls: boolean;
     /** Callback function executed when a connection is established */
@@ -2063,9 +2057,23 @@ declare module "bun" {
   /**
    * Main SQL client interface providing connection and transaction management
    */
-  type SQLClient = {
-    /** Creates a new SQL client instance */
-    new (options?: SQLOptions | string): SQLClient;
+  interface SQLClient {
+    /** Creates a new SQL client instance
+     * @example
+     * const sql = new SQL("postgres://localhost:5432/mydb");
+     * const sql = new SQL(new URL("postgres://localhost:5432/mydb"));
+     */
+    new (connectionString: string | URL): SQLClient;
+    /** Creates a new SQL client instance with options
+     * @example
+     * const sql = new SQL("postgres://localhost:5432/mydb", { idleTimeout: 1000 });
+     */
+    new (connectionString: string | URL, options: SQLOptions): SQLClient;
+    /** Creates a new SQL client instance with options
+     * @example
+     * const sql = new SQL({ url: "postgres://localhost:5432/mydb", idleTimeout: 1000 });
+     */
+    new (options?: SQLOptions): SQLClient;
     /** Executes a SQL query using template literals */
     (strings: string, ...values: any[]): SQLQuery;
     /** Commits a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL
@@ -2100,7 +2108,6 @@ declare module "bun" {
      *   This can be used for running queries on an isolated connection.
      *   Calling reserve in a reserved Sql will return a new reserved connection, not the same connection (behavior matches postgres package).
      * @example
-     * compatible with `postgres` example
      * const reserved = await sql.reserve();
      * await reserved`select * from users`;
      * await reserved.release();
@@ -2242,10 +2249,10 @@ declare module "bun" {
     distributed(name: string, fn: SQLContextCallback): Promise<any>;
     /** Current client options */
     options: SQLOptions;
-  };
+  }
 
   /**
-   * Represents a reserved client from the connection pool
+   * Represents a reserved connection from the connection pool
    * Extends SQLClient with additional release functionality
    */
   interface ReservedSQLClient extends SQLClient {

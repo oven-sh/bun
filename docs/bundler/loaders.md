@@ -152,19 +152,6 @@ export default "Hello, world!";
 
 {% /codetabs %}
 
-### `wasm`
-
-**WebAssembly loader**. Default for `.wasm`.
-
-In the runtime, WebAssembly files can be directly imported. The file is read and returned as a `WebAssembly.Module`.
-
-```ts
-import wasm from "./module.wasm";
-console.log(wasm); // => WebAssembly.Module
-```
-
-In the bundler, `.wasm` files are handled using the [`file`](#file) loader.
-
 ### `napi`
 
 **Native addon loader**. Default for `.node`.

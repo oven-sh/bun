@@ -73,11 +73,15 @@ declare function $getByIdDirectPrivate<T = any>(obj: any, key: string): T;
 declare function $getByValWithThis(target: any, receiver: any, propertyKey: string): void;
 /** gets the prototype of an object */
 declare function $getPrototypeOf(value: any): any;
-/** gets an internal property on a promise
+/**
+ * Gets an internal property on a promise
  *
  *  You can pass
- *  - $promiseFieldFlags - get a number with flags
- *  - $promiseFieldReactionsOrResult - get the result (like Bun.peek)
+ *  - {@link $promiseFieldFlags} - get a number with flags
+ *  - {@link $promiseFieldReactionsOrResult} - get the result (like {@link Bun.peek})
+ *
+ * @param promise the promise to get the field from
+ * @param key an internal field id.
  */
 declare function $getPromiseInternalField<K extends PromiseFieldType, V>(
   promise: Promise<V>,
@@ -99,6 +103,19 @@ declare function $getMapIteratorInternalField(): TODO;
 declare function $getSetIteratorInternalField(): TODO;
 declare function $getProxyInternalField(): TODO;
 declare function $idWithProfile(): TODO;
+/**
+ * True for object-like `JSCell`s. That is, this is roughly equivalent to this
+ * JS code:
+ * ```js
+ * typeof obj === "object" && obj !== null
+ * ```
+ *
+ * @param obj The object to check
+ * @returns `true` if `obj` is an object-like `JSCell`
+ *
+ * @see [JSCell.h](https://github.com/oven-sh/WebKit/blob/main/Source/JavaScriptCore/runtime/JSCell.h)
+ * @see [JIT implementation](https://github.com/oven-sh/WebKit/blob/433f7598bf3537a295d0af5ffd83b9a307abec4e/Source/JavaScriptCore/jit/JITOpcodes.cpp#L311)
+ */
 declare function $isObject(obj: unknown): obj is object;
 declare function $isArray(obj: unknown): obj is any[];
 declare function $isCallable(fn: unknown): fn is CallableFunction;
@@ -557,6 +574,11 @@ declare type JSCSourceCodeObject = unique symbol;
 
 declare interface Function {
   path: string;
+}
+
+interface String {
+  $charCodeAt: String["charCodeAt"];
+  // add others as needed
 }
 
 declare var $Buffer: {

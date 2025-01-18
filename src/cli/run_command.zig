@@ -1262,6 +1262,19 @@ pub const RunCommand = struct {
         Output.flush();
     }
 
+    fn _bootAndHandleError(ctx: Command.Context, path: string) bool {
+        Run.boot(ctx, ctx.allocator.dupe(u8, path) catch return false) catch |err| {
+            ctx.log.print(Output.errorWriter()) catch {};
+
+            Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
+                std.fs.path.basename(path),
+                @errorName(err),
+            });
+            bun.handleErrorReturnTrace(err, @errorReturnTrace());
+            Global.exit(1);
+        };
+        return true;
+    }
     pub fn exec(
         ctx: Command.Context,
         cfg: struct {
@@ -1285,6 +1298,19 @@ pub const RunCommand = struct {
             positionals = positionals[1..];
         }
         const passthrough = ctx.passthrough; // unclear why passthrough is an escaped string, it should probably be []const []const u8 and allow its users to escape it.
+
+        var should_force_run_direct = false;
+        if (target_name.len == 1 and target_name[0] == '.') {
+            should_force_run_direct = true;
+        } else if (target_name.len > 1 and target_name[0] == '.' and (target_name[1] == std.fs.path.sep_posix or target_name[1] == std.fs.path.sep_windows)) {
+            should_force_run_direct = true;
+        } else if (std.fs.path.isAbsolute(target_name)) {
+            should_force_run_direct = true;
+        }
+        if (should_force_run_direct) {
+            log("Resolved to: `{s}`", .{target_name});
+            return _bootAndHandleError(ctx, target_name);
+        }
 
         // setup
 
@@ -1416,33 +1442,11 @@ pub const RunCommand = struct {
         if (this_transpiler.resolver.resolve(this_transpiler.fs.top_level_dir, target_name, .entry_point_run)) |resolved| {
             var resolved_mutable = resolved;
             log("Resolved to: `{s}`", .{resolved_mutable.path().?.text});
-            Run.boot(ctx, ctx.allocator.dupe(u8, resolved_mutable.path().?.text) catch bun.outOfMemory()) catch |err| {
-                bun.handleErrorReturnTrace(err, @errorReturnTrace());
-
-                ctx.log.print(Output.errorWriter()) catch {};
-
-                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
-                    std.fs.path.basename(target_name),
-                    @errorName(err),
-                });
-                Global.exit(1);
-            };
-            return true;
+            return _bootAndHandleError(ctx, resolved_mutable.path().?.text);
         } else |_| if (this_transpiler.resolver.resolve(this_transpiler.fs.top_level_dir, try std.mem.join(ctx.allocator, "", &.{ "./", target_name }), .entry_point_run)) |resolved| {
             var resolved_mutable = resolved;
             log("Resolved with `./` to: `{s}`", .{resolved_mutable.path().?.text});
-            Run.boot(ctx, ctx.allocator.dupe(u8, resolved_mutable.path().?.text) catch bun.outOfMemory()) catch |err| {
-                bun.handleErrorReturnTrace(err, @errorReturnTrace());
-
-                ctx.log.print(Output.errorWriter()) catch {};
-
-                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
-                    std.fs.path.basename(target_name),
-                    @errorName(err),
-                });
-                Global.exit(1);
-            };
-            return true;
+            return _bootAndHandleError(ctx, resolved_mutable.path().?.text);
         } else |_| {}
 
         // execute a node_modules/.bin/<X> command, or (run only) a system command like 'ls'

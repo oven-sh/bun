@@ -1,4 +1,4 @@
-import { file, spawn, spawnSync } from "bun";
+import { $, file, spawn, spawnSync } from "bun";
 import { beforeEach, describe, expect, it } from "bun:test";
 import { exists, mkdir, rm, writeFile } from "fs/promises";
 import {
@@ -669,6 +669,7 @@ describe("'bun run' priority", async () => {
     "folderandfile": { "index.js": "console.log('folderandfile/index.js')" },
     "folderandfile.js": "console.log('folderandfile.js')",
     "shellscript.sh": "echo shellscript.sh",
+    ".secretscript.js": "console.log('.secretscript.js')",
     "package.json": JSON.stringify({
       scripts: {
         "build": "echo scripts/build",
@@ -676,6 +677,8 @@ describe("'bun run' priority", async () => {
         "sample.js": "echo scripts/sample.js",
         "§'.js": 'echo "scripts/§\'.js"',
         "test.todo": "echo scripts/test.todo",
+        "/absolute": "echo DO_NOT_RUN",
+        "./relative": "echo DO_NOT_RUN",
       },
       main: "main.js",
     }),
@@ -684,7 +687,13 @@ describe("'bun run' priority", async () => {
   });
   chmodSync(dir + "/node_modules/.bin/confabulate", 0o755);
 
-  const commands: { command: string[]; req_run?: boolean; stdout: string; stderr?: string; exitCode?: number }[] = [
+  const commands: {
+    command: string[];
+    req_run?: boolean;
+    stdout: string;
+    stderr?: string | RegExp;
+    exitCode?: number;
+  }[] = [
     { command: ["test"], stdout: "scripts/test", stderr: "$ echo scripts/test", req_run: true },
     { command: ["build"], stdout: "scripts/build", stderr: "$ echo scripts/build", req_run: true },
     { command: ["consume"], stdout: "consume/index.js", stderr: "" },
@@ -697,7 +706,7 @@ describe("'bun run' priority", async () => {
     { command: ["consume/index.js"], stdout: "consume/index.js", stderr: "" },
 
     { command: ["./test"], stdout: "test/index.js", stderr: "" },
-    { command: ["./build"], stdout: "", exitCode: 1 },
+    { command: ["./build"], stdout: "", stderr: /error: Module not found '\.\/build'/, exitCode: 1 },
     { command: ["./consume"], stdout: "consume/index.js", stderr: "" },
 
     { command: ["index.js"], stdout: "index.js", stderr: "" },
@@ -734,13 +743,24 @@ describe("'bun run' priority", async () => {
     { command: ["./folderandfile"], stdout: "folderandfile.js", stderr: "" },
     { command: ["folderandfile.js"], stdout: "folderandfile.js", stderr: "" },
     { command: ["./folderandfile.js"], stdout: "folderandfile.js", stderr: "" },
+    { command: ["folderandfile/"], stdout: "folderandfile/index.js", stderr: "" },
+    { command: ["./folderandfile/"], stdout: "folderandfile/index.js", stderr: "" },
     { command: ["folderandfile/index"], stdout: "folderandfile/index.js", stderr: "" },
     { command: ["./folderandfile/index"], stdout: "folderandfile/index.js", stderr: "" },
     { command: ["folderandfile/index.js"], stdout: "folderandfile/index.js", stderr: "" },
     { command: ["./folderandfile/index.js"], stdout: "folderandfile/index.js", stderr: "" },
+    { command: [dir + "/folderandfile"], stdout: "folderandfile.js", stderr: "" },
+    { command: [dir + "/folderandfile/"], stdout: "folderandfile/index.js", stderr: "" },
 
     { command: ["shellscript.sh"], stdout: "shellscript.sh", stderr: "" },
     { command: ["./shellscript.sh"], stdout: "shellscript.sh", stderr: "" },
+
+    { command: [".secretscript.js"], stdout: ".secretscript.js", stderr: "" },
+    { command: ["./.secretscript"], stdout: ".secretscript.js", stderr: "" },
+    { command: [dir + "/.secretscript"], stdout: ".secretscript.js", stderr: "" },
+
+    { command: ["/absolute"], stdout: "", stderr: /error: Module not found '\/absolute'/, exitCode: 1 },
+    { command: ["./relative"], stdout: "", stderr: /error: Module not found '\.\/relative'/, exitCode: 1 },
 
     ...(isWindows
       ? [
@@ -759,6 +779,16 @@ describe("'bun run' priority", async () => {
     // TODO: test preloads (https://bun.sh/docs/runtime/bunfig#preload), test $npm_lifecycle_event
     // TODO: test with path overrides in tsconfig.json
   ];
+  if (isWindows) {
+    for (const cmd of [...commands]) {
+      if (cmd.command[0].includes("/")) {
+        commands.push({
+          ...cmd,
+          command: [cmd.command[0].replaceAll("/", "\\"), ...cmd.command.slice(1)],
+        });
+      }
+    }
+  }
 
   for (const cmd of commands) {
     for (const flag of [[], ["--bun"]]) {
@@ -771,12 +801,13 @@ describe("'bun run' priority", async () => {
             env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
           });
 
+          if (cmd.stderr != null && typeof cmd.stderr !== "string") expect(stderr.toString()).toMatch(cmd.stderr);
           expect({
-            ...(cmd.stderr != null ? { stderr: stderr.toString().trim() } : {}),
+            ...(cmd.stderr != null && typeof cmd.stderr === "string" ? { stderr: stderr.toString().trim() } : {}),
             stdout: stdout.toString().trim(),
             exitCode,
           }).toStrictEqual({
-            ...(cmd.stderr != null ? { stderr: cmd.stderr } : {}),
+            ...(cmd.stderr != null && typeof cmd.stderr === "string" ? { stderr: cmd.stderr } : {}),
             stdout: cmd.stdout,
             exitCode: cmd.exitCode ?? 0,
           });
@@ -784,6 +815,11 @@ describe("'bun run' priority", async () => {
       }
     }
   }
+});
+
+it("should run from stdin", async () => {
+  const res = await $`echo "console.log('hello')" | bun run -`.text();
+  expect(res).toBe(`hello\n`);
 });
 
 describe.todo("run from stdin", async () => {

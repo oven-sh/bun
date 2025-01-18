@@ -197,7 +197,9 @@ This causes the garbage collector to run more frequently, which can slow down ex
 
 ## Resolution order
 
-When there is a package.json script and a file with the same name, `bun run` prioritizes the script. The full resolution order is:
+Absolute paths and paths starting with `./` or `.\\` are always executed as source files.
+
+When there is a package.json script and a file with the same name, `bun run` prioritizes the package.json script. The full resolution order is:
 
 1. package.json scripts, eg `bun run build`
 2. Source files, eg `bun run src/main.js`

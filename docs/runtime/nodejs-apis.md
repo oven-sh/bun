@@ -58,6 +58,10 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 🟢 Fully implemented.
 
+### [`node:stream`](https://nodejs.org/api/stream.html)
+
+🟢 Fully implemented.
+
 ### [`node:string_decoder`](https://nodejs.org/api/string_decoder.html)
 
 🟢 Fully implemented. 100% of Node.js's test suite passes.
@@ -128,10 +132,6 @@ Some methods are not optimized yet.
 ### [`node:process`](https://nodejs.org/api/process.html)
 
 🟡 See [`process`](#process) Global.
-
-### [`node:stream`](https://nodejs.org/api/stream.html)
-
-🟡 Missing `toWeb`
 
 ### [`node:sys`](https://nodejs.org/api/util.html)
 

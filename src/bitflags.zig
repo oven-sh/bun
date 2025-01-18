@@ -37,6 +37,10 @@ pub fn Bitflags(comptime T: type) type {
             return @bitCast(@as(IntType, asBits(lhs) & asBits(rhs)));
         }
 
+        pub inline fn intersect(lhs: T, rhs: T) T {
+            return bitwiseAnd(lhs, rhs);
+        }
+
         pub inline fn insert(this: *T, other: T) void {
             this.* = bitwiseOr(this.*, other);
         }

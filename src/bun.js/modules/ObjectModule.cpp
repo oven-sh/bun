@@ -100,6 +100,9 @@ generateJSValueExportDefaultObjectSourceCode(JSC::JSGlobalObject* globalObject,
         JSC::VM& vm = lexicalGlobalObject->vm();
         exportNames.append(vm.propertyNames->defaultKeyword);
         exportValues.append(value);
+        const Identifier& esModuleMarker = vm.propertyNames->__esModule;
+        exportNames.append(esModuleMarker);
+        exportValues.append(jsBoolean(true));
 
         if (value.isCell())
             gcUnprotectNullTolerant(value.asCell());

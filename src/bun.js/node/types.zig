@@ -42,8 +42,10 @@ pub const TimeLike = if (Environment.isWindows) f64 else std.posix.timespec;
 /// - "path"
 /// - "errno"
 pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
-    const has_retry = ErrorTypeT != void and @hasDecl(ErrorTypeT, "retry");
-    const has_todo = ErrorTypeT != void and @hasDecl(ErrorTypeT, "todo");
+    // can't call @hasDecl on void, anyerror, etc
+    const has_any_decls = ErrorTypeT != void and ErrorTypeT != anyerror;
+    const has_retry = has_any_decls and @hasDecl(ErrorTypeT, "retry");
+    const has_todo = has_any_decls and @hasDecl(ErrorTypeT, "todo");
 
     return union(Tag) {
         pub const ErrorType = ErrorTypeT;

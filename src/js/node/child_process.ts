@@ -527,6 +527,7 @@ execFile[kCustomPromisifySymbol][kCustomPromisifySymbol] = execFile[kCustomPromi
  */
 function spawnSync(file, args, options) {
   options = {
+    __proto__: null,
     maxBuffer: MAX_BUFFER,
     ...normalizeSpawnArguments(file, args, options),
   };

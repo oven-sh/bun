@@ -710,3 +710,21 @@ extern "C" void JSC__JSValue__putBunString(
     Identifier id = Identifier::fromString(vm, str);
     target->putDirect(vm, id, value, 0);
 }
+
+void ResolvedSource::cleanup()
+{
+    if (source_url.tag == BunStringTag::WTFStringImpl) {
+        source_url.impl.wtf->deref();
+        source_url.tag = BunStringTag::Dead;
+    }
+    if (specifier.tag == BunStringTag::WTFStringImpl) {
+        specifier.impl.wtf->deref();
+        specifier.tag = BunStringTag::Dead;
+    }
+
+    if (source_code.tag == BunStringTag::WTFStringImpl && needsDeref) {
+        source_code.impl.wtf->deref();
+        source_code.tag = BunStringTag::Dead;
+        needsDeref = false;
+    }
+}

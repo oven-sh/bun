@@ -137,6 +137,9 @@ Ref<SourceProvider> SourceProvider::create(
         Bun__addSourceProviderSourceMap(globalObject->bunVM(), provider.ptr(), &resolvedSource.source_url);
     }
 
+    resolvedSource.source_url = BunStringEmpty;
+    resolvedSource.source_code = BunStringEmpty;
+
     return provider;
 }
 

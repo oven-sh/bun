@@ -51,9 +51,8 @@ public:
 
     ~ResolvedSourceCodeHolder()
     {
-        if (res->success && res->result.value.source_code.tag == BunStringTag::WTFStringImpl && res->result.value.needsDeref) {
-            res->result.value.needsDeref = false;
-            res->result.value.source_code.impl.wtf->deref();
+        if (res->success) {
+            res->result.value.cleanup();
         }
     }
 

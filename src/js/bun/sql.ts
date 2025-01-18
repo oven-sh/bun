@@ -47,7 +47,6 @@ const {
   createQuery,
   PostgresSQLConnection,
   init,
-  setPromiseAsHandled, // maybe we should move this to utils.zig
 } = $zig("postgres.zig", "createBinding");
 
 function normalizeSSLMode(value: string): SSLMode {
@@ -106,7 +105,7 @@ class Query extends PublicPromise {
     this[_queryStatus] = handle ? 0 : QueryStatus.cancelled;
   }
 
-  [_run]() {
+  async [_run]() {
     const { [_handle]: handle, [_handler]: handler, [_queryStatus]: status } = this;
 
     if (status & (QueryStatus.executed | QueryStatus.error | QueryStatus.cancelled)) {
@@ -114,7 +113,8 @@ class Query extends PublicPromise {
     }
 
     this[_queryStatus] |= QueryStatus.executed;
-    // await 1;
+    // this avoids a infinite loop
+    await 1;
     return handler(this, handle);
   }
 
@@ -185,14 +185,14 @@ class Query extends PublicPromise {
   then() {
     this[_run]();
     const result = super.$then.$apply(this, arguments);
-    setPromiseAsHandled(result);
+    $markPromiseAsHandled(result);
     return result;
   }
 
   catch() {
     this[_run]();
     const result = super.catch.$apply(this, arguments);
-    setPromiseAsHandled(result);
+    $markPromiseAsHandled(result);
     return result;
   }
 
@@ -363,7 +363,7 @@ class PooledConnection {
         case "ERR_POSTGRES_INVALID_SERVER_SIGNATURE":
         case "ERR_POSTGRES_INVALID_SERVER_KEY":
         case "ERR_POSTGRES_AUTHENTICATION_FAILED_PBKDF2":
-          // we can't retry this are authentication errors
+          // we can't retry these are authentication errors
           return false;
         default:
           // we can retry

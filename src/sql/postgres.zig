@@ -217,7 +217,7 @@ pub const PostgresSQLQuery = struct {
     binary: bool = false,
 
     pub usingnamespace JSC.Codegen.JSPostgresSQLQuery;
-
+    const log = bun.Output.scoped(.PostgresSQLQuery, false);
     pub fn getTarget(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         if (this.thisValue == .zero) {
             return .zero;
@@ -586,10 +586,11 @@ pub const PostgresSQLQuery = struct {
                 signature.deinit();
 
                 if (has_params and this.statement.?.status == .parsing) {
+
                     // if it has params, we need to wait for ParamDescription to be received before we can write the data
                 } else {
                     this.binary = this.statement.?.fields.len > 0;
-
+                    log("bindAndExecute", .{});
                     PostgresRequest.bindAndExecute(globalObject, this.statement.?, binding_value, columns_value, PostgresSQLConnection.Writer, writer) catch |err| {
                         if (!globalObject.hasException())
                             return globalObject.throwError(err, "failed to bind and execute query");
@@ -3178,14 +3179,6 @@ const Signature = struct {
     }
 };
 
-pub fn setPromiseAsHandled(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const js_promise = callframe.argument(0);
-    if (js_promise.asAnyPromise()) |promise| {
-        promise.setHandled(globalObject.vm());
-    }
-
-    return .undefined;
-}
 pub fn createBinding(globalObject: *JSC.JSGlobalObject) JSValue {
     const binding = JSValue.createEmptyObjectWithNullPrototype(globalObject);
     binding.put(globalObject, ZigString.static("PostgresSQLConnection"), PostgresSQLConnection.getConstructor(globalObject));
@@ -3200,11 +3193,6 @@ pub fn createBinding(globalObject: *JSC.JSGlobalObject) JSValue {
         globalObject,
         ZigString.static("createConnection"),
         JSC.JSFunction.create(globalObject, "createQuery", PostgresSQLConnection.call, 2, .{}),
-    );
-    binding.put(
-        globalObject,
-        ZigString.static("setPromiseAsHandled"),
-        JSC.JSFunction.create(globalObject, "setPromiseAsHandled", setPromiseAsHandled, 1, .{}),
     );
 
     return binding;

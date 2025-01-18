@@ -2673,11 +2673,11 @@ pub const Arguments = struct {
                         };
                     }
 
-                    if (try arg.getTruthy(ctx, "signal")) |signal| {
-                        if (AbortSignal.fromJS(signal)) |signal_| {
-                            abort_signal = signal_.ref();
+                    if (try arg.getTruthy(ctx, "signal")) |value| {
+                        if (AbortSignal.fromJS(value)) |signal| {
+                            abort_signal = signal.ref();
                         } else {
-                            return ctx.ERR_INVALID_ARG_TYPE("The \"signal\" argument must be an instance of AbortSignal", .{}).throw();
+                            return ctx.throwInvalidArgumentTypeValue("signal", "AbortSignal", value);
                         }
                     }
                 }

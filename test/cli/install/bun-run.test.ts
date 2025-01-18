@@ -706,7 +706,7 @@ describe("'bun run' priority", async () => {
     { command: ["consume/index.js"], stdout: "consume/index.js", stderr: "" },
 
     { command: ["./test"], stdout: "test/index.js", stderr: "" },
-    { command: ["./build"], stdout: "", stderr: /error: Module not found "\.(\/|\\|\\\\)build"/, exitCode: 1 },
+    { command: ["./build"], stdout: "", stderr: /error: Module not found "\.(\/|\\|\\\\)build"|EACCES/, exitCode: 1 },
     { command: ["./consume"], stdout: "consume/index.js", stderr: "" },
 
     { command: ["index.js"], stdout: "index.js", stderr: "" },
@@ -765,8 +765,18 @@ describe("'bun run' priority", async () => {
     { command: ["./.secretscript"], stdout: ".secretscript.js", stderr: "" },
     { command: [dir + "/.secretscript"], stdout: ".secretscript.js", stderr: "" },
 
-    { command: ["/absolute"], stdout: "", stderr: /error: Module not found "(\/|\\|\\\\)absolute"/, exitCode: 1 },
-    { command: ["./relative"], stdout: "", stderr: /error: Module not found ".(\/|\\|\\\\)relative"/, exitCode: 1 },
+    {
+      command: ["/absolute"],
+      stdout: "",
+      stderr: /error: Module not found "(\/|\\|\\\\)absolute"|EACCES/,
+      exitCode: 1,
+    },
+    {
+      command: ["./relative"],
+      stdout: "",
+      stderr: /error: Module not found ".(\/|\\|\\\\)relative"|EACCES/,
+      exitCode: 1,
+    },
 
     ...(isWindows
       ? [

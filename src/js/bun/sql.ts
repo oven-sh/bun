@@ -544,7 +544,8 @@ class ConnectionPool {
         throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
       }
       this.closed = true;
-      await Bun.sleep(timeout * 1000);
+      // TODO: check queryCount to this logic
+      // await Bun.sleep(timeout * 1000);
     } else {
       this.closed = true;
     }
@@ -1261,7 +1262,8 @@ function SQL(o) {
         }
         state.closed = true;
         // no new queries will be allowed
-        await Bun.sleep(timeout * 1000);
+        // TODO: check queryCount to this logic
+        // await Bun.sleep(timeout * 1000);
       } else {
         // close will release the connection back to the pool but will actually close the connection if its open
         state.closed = true;
@@ -1507,7 +1509,8 @@ function SQL(o) {
         if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
           throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
         }
-        await Bun.sleep(timeout * 1000);
+        // TODO: check queryCount to this logic
+        // await Bun.sleep(timeout * 1000);
       }
       if (!state.closed) {
         if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {

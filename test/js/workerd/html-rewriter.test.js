@@ -15,6 +15,50 @@ var setTimeoutAsync = (fn, delay) => {
 };
 
 describe("HTMLRewriter", () => {
+  it("error handling", () => {
+    expect(() => new HTMLRewriter().transform(Symbol("ok"))).toThrow();
+  });
+
+  it("error inside element handler", () => {
+    expect(() =>
+      new HTMLRewriter()
+        .on("div", {
+          element(element) {
+            throw new Error("test");
+          },
+        })
+        .transform(new Response("<div>hello</div>")),
+    ).toThrow("test");
+  });
+
+  it("error inside element handler (string)", () => {
+    expect(() =>
+      new HTMLRewriter()
+        .on("div", {
+          element(element) {
+            throw new Error("test");
+          },
+        })
+        .transform("<div>hello</div>"),
+    ).toThrow("test");
+  });
+
+  it("async error inside element handler", async () => {
+    try {
+      await new HTMLRewriter()
+        .on("div", {
+          async element(element) {
+            await Bun.sleep(0);
+            throw new Error("test");
+          },
+        })
+        .transform(new Response("<div>hello</div>"));
+      expect.unreachable();
+    } catch (e) {
+      expect(e.message).toBe("test");
+    }
+  });
+
   it("HTMLRewriter: async replacement", async () => {
     await gcTick();
     const res = new HTMLRewriter()

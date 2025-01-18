@@ -27,6 +27,7 @@
 // ----------------------------------------------------------------------------
 const EventEmitter = require("node:events");
 const { StringDecoder } = require("node:string_decoder");
+const { promisify } = require("internal/promisify");
 
 const {
   validateFunction,
@@ -40,9 +41,6 @@ const {
 
 const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetStringWidth", 1);
 
-const ObjectGetPrototypeOf = Object.getPrototypeOf;
-const ObjectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
-const ObjectValues = Object.values;
 const PromiseReject = Promise.reject;
 
 var isWritable;
@@ -158,72 +156,6 @@ function stripVTControlCharacters(str) {
   return RegExpPrototypeSymbolReplace.$call(ansi, str, "");
 }
 
-// Promisify
-
-var kCustomPromisifiedSymbol = SymbolFor("nodejs.util.promisify.custom");
-var kCustomPromisifyArgsSymbol = Symbol("customPromisifyArgs");
-
-function promisify(original) {
-  validateFunction(original, "original");
-
-  if (original[kCustomPromisifiedSymbol]) {
-    let fn = original[kCustomPromisifiedSymbol];
-
-    validateFunction(fn, "util.promisify.custom");
-
-    return ObjectDefineProperty(fn, kCustomPromisifiedSymbol, {
-      __proto__: null,
-      value: fn,
-      enumerable: false,
-      writable: false,
-      configurable: true,
-    });
-  }
-
-  // Names to create an object from in case the callback receives multiple
-  // arguments, e.g. ['bytesRead', 'buffer'] for fs.read.
-  var argumentNames = original[kCustomPromisifyArgsSymbol];
-
-  function fn(...args) {
-    return new Promise((resolve, reject) => {
-      ArrayPrototypePush.$call(args, (err, ...values) => {
-        if (err) {
-          return reject(err);
-        }
-        if (argumentNames !== undefined && values.length > 1) {
-          var obj = {};
-          for (var i = 0; i < argumentNames.length; i++) obj[argumentNames[i]] = values[i];
-          resolve(obj);
-        } else {
-          resolve(values[0]);
-        }
-      });
-      original.$apply(this, args);
-    });
-  }
-
-  ObjectSetPrototypeOf(fn, ObjectGetPrototypeOf(original));
-
-  ObjectDefineProperty(fn, kCustomPromisifiedSymbol, {
-    __proto__: null,
-    value: fn,
-    enumerable: false,
-    writable: false,
-    configurable: true,
-  });
-
-  var descriptors = ObjectGetOwnPropertyDescriptors(original);
-  var propertiesValues = ObjectValues(descriptors);
-  for (var i = 0; i < propertiesValues.length; i++) {
-    // We want to use null-prototype objects to not rely on globally mutable
-    // %Object.prototype%.
-    ObjectSetPrototypeOf(propertiesValues[i], null);
-  }
-  return ObjectDefineProperties(fn, descriptors);
-}
-
-promisify.custom = kCustomPromisifiedSymbol;
-
 // Constants
 
 const kUTF16SurrogateThreshold = 0x10000; // 2 ** 16
@@ -275,14 +207,6 @@ class ERR_USE_AFTER_CLOSE extends NodeError {
     super("This socket has been ended by the other party", {
       code: "ERR_USE_AFTER_CLOSE",
     });
-  }
-}
-
-class AbortError extends Error {
-  code;
-  constructor() {
-    super("The operation was aborted");
-    this.code = "ABORT_ERR";
   }
 }
 
@@ -2405,14 +2329,14 @@ Interface.prototype.question[promisify.custom] = function question(query, option
   var signal = options?.signal;
 
   if (signal && signal.aborted) {
-    return PromiseReject(new AbortError(undefined, { cause: signal.reason }));
+    return PromiseReject($makeAbortError(undefined, { cause: signal.reason }));
   }
 
   return new Promise((resolve, reject) => {
     var cb = resolve;
     if (signal) {
       var onAbort = () => {
-        reject(new AbortError(undefined, { cause: signal.reason }));
+        reject($makeAbortError(undefined, { cause: signal.reason }));
       };
       signal.addEventListener("abort", onAbort, { once: true });
       cb = answer => {
@@ -2874,7 +2798,7 @@ var PromisesInterface = class Interface extends _Interface {
     if (signal) {
       validateAbortSignal(signal, "options.signal");
       if (signal.aborted) {
-        return PromiseReject(new AbortError(undefined, { cause: signal.reason }));
+        return PromiseReject($makeAbortError(undefined, { cause: signal.reason }));
       }
     }
     const { promise, resolve, reject } = $newPromiseCapability(Promise);
@@ -2882,7 +2806,7 @@ var PromisesInterface = class Interface extends _Interface {
     if (options?.signal) {
       var onAbort = () => {
         this[kQuestionCancel]();
-        reject(new AbortError(undefined, { cause: signal.reason }));
+        reject($makeAbortError(undefined, { cause: signal.reason }));
       };
       signal.addEventListener("abort", onAbort, { once: true });
       cb = answer => {

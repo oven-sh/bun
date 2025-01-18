@@ -75,7 +75,7 @@ pub fn HiveArray(comptime T: type, comptime capacity: u16) type {
             pub fn init(allocator: std.mem.Allocator) This {
                 return .{
                     .allocator = allocator,
-                    .hive = if (capacity > 0) HiveArray(T, capacity).init() else {},
+                    .hive = if (capacity > 0) HiveArray(T, capacity).init(),
                 };
             }
 

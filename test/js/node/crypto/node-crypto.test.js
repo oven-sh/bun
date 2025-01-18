@@ -439,7 +439,7 @@ describe("createHash", () => {
 
   it("repeated calls doesnt segfault", () => {
     function fn() {
-      crypto.createHash("sha1").update(Math.random(), "ascii").digest("base64");
+      crypto.createHash("sha1").update(Math.random().toString(), "ascii").digest("base64");
     }
 
     for (let i = 0; i < 10; i++) fn();

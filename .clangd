@@ -6,3 +6,6 @@ CompileFlags:
 
 Diagnostics:
   UnusedIncludes: None
+
+HeaderInsertion:
+  IncludeBlocks: Preserve # Do not auto-include headers.

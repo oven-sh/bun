@@ -1,16 +1,18 @@
 // Import Events
-var EventEmitter = require("node:events");
-const { ERR_UNHANDLED_ERROR } = require("internal/errors");
+let EventEmitter;
 
 const ObjectDefineProperty = Object.defineProperty;
 
 // Export Domain
 var domain: any = {};
 domain.createDomain = domain.create = function () {
+  if (!EventEmitter) {
+    EventEmitter = require("node:events");
+  }
   var d = new EventEmitter();
 
   function emitError(e) {
-    e ||= ERR_UNHANDLED_ERROR();
+    e ||= $ERR_UNHANDLED_ERROR();
     if (typeof e === "object") {
       e.domainEmitter = this;
       ObjectDefineProperty(e, "domain", {

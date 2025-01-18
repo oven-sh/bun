@@ -1,6 +1,8 @@
 
 [package]
 name = "bun-macro"
+description = "Proc macros for writing Bun native plugins."
+license = "MIT"
 version = "0.1.0"
 edition = "2021"
 

@@ -1,6 +1,6 @@
 import { describe, expect, jest, test } from "bun:test";
 import fs from "fs";
-import { tempDirWithFiles } from "harness";
+import { isWindows, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 const impls = [

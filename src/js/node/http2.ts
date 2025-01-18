@@ -87,8 +87,8 @@ function utcDate() {
 
 function cache() {
   const d = new Date();
-  utcCache = DatePrototypeToUTCString.$call(d);
-  setTimeout(resetCache, 1000 - DatePrototypeGetMilliseconds.call(d)).unref();
+  utcCache = d.toUTCString();
+  setTimeout(resetCache, 1000 - d.getMilliseconds()).unref();
 }
 
 function resetCache() {
@@ -141,6 +141,10 @@ function onRequestResume() {
 function onStreamDrain() {
   const response = this[kResponse];
   if (response !== undefined) response.emit("drain");
+}
+
+function onStreamAbortedResponse() {
+  // no-op for now
 }
 
 function onStreamAbortedRequest() {
@@ -388,6 +392,7 @@ class Http2ServerResponse extends Stream {
     this.writable = true;
     this.req = stream[kRequest];
     stream.on("drain", onStreamDrain);
+    stream.on("aborted", onStreamAbortedResponse);
     stream.on("close", onStreamCloseResponse);
     stream.on("wantTrailers", onStreamTrailersReady);
     stream.on("timeout", onStreamTimeout);
@@ -1629,6 +1634,7 @@ class Http2Stream extends Duplex {
     }
     const sensitives = headers[sensitiveHeaders];
     const sensitiveNames = {};
+    delete headers[sensitiveHeaders];
     if (sensitives) {
       if (!$isJSArray(sensitives)) {
         throw $ERR_INVALID_ARG_VALUE("headers[http2.neverIndex]", sensitives);
@@ -2039,6 +2045,7 @@ class ServerHttp2Stream extends Http2Stream {
     }
 
     const sensitives = headers[sensitiveHeaders];
+    delete headers[sensitiveHeaders];
     const sensitiveNames = {};
     if (sensitives) {
       if (!$isArray(sensitives)) {
@@ -2090,6 +2097,7 @@ class ServerHttp2Stream extends Http2Stream {
     }
 
     const sensitives = headers[sensitiveHeaders];
+    delete headers[sensitiveHeaders];
     const sensitiveNames = {};
     if (sensitives) {
       if (!$isArray(sensitives)) {
@@ -3082,6 +3090,7 @@ class ClientHttp2Session extends Http2Session {
     }
 
     const sensitives = headers[sensitiveHeaders];
+    delete headers[sensitiveHeaders];
     const sensitiveNames = {};
     if (sensitives) {
       if (!$isArray(sensitives)) {

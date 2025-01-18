@@ -31,8 +31,7 @@ const allCredentials = [
   },
 ];
 
-// TODO: figure out why minio is not creating a bucket on Linux, works on macOS and windows
-if (isDockerEnabled() && !isLinux) {
+if (isDockerEnabled()) {
   const minio_dir = tempDirWithFiles("minio", {});
   const result = child_process.spawnSync(
     "docker",
@@ -70,7 +69,7 @@ if (isDockerEnabled() && !isLinux) {
   await Bun.sleep(1_000);
 
   /// create a bucket
-  child_process.spawnSync(dockerCLI, [`exec`, `minio`, `mc`, `mb`, `http://localhost:9000/buntest`], {
+  child_process.spawnSync(dockerCLI, [`exec`, `minio`, `mc`, `mb`, `data/buntest`], {
     stdio: "ignore",
   });
 
@@ -234,6 +233,11 @@ for (let credentials of allCredentials) {
               const file = bucket.file(tmp_filename, options);
               const text = await file.slice(6, 10).text();
               expect(text).toBe("Bun!");
+            });
+            it("should download range with 0 offset", async () => {
+              const file = bucket.file(tmp_filename, options);
+              const text = await file.slice(0, 5).text();
+              expect(text).toBe("Hello");
             });
 
             it("should check if a key exists or content-length", async () => {

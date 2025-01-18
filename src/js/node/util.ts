@@ -2,7 +2,6 @@
 const types = require("node:util/types");
 /** @type {import('node-inspect-extracted')} */
 const utl = require("internal/util/inspect");
-const { ERR_OUT_OF_RANGE } = require("internal/errors");
 const { promisify } = require("internal/promisify");
 const { validateString, validateOneOf } = require("internal/validators");
 
@@ -256,7 +255,7 @@ function styleText(format, text) {
 
 function getSystemErrorName(err: any) {
   if (typeof err !== "number") throw $ERR_INVALID_ARG_TYPE("err", "number", err);
-  if (err >= 0 || !NumberIsSafeInteger(err)) throw ERR_OUT_OF_RANGE("err", "a negative integer", err);
+  if (err >= 0 || !NumberIsSafeInteger(err)) throw $ERR_OUT_OF_RANGE("err", "a negative integer", err);
   return internalErrorName(err);
 }
 
@@ -316,17 +315,43 @@ function aborted(signal: AbortSignal, resource: object) {
 }
 
 cjs_exports = {
-  format,
-  formatWithOptions,
-  stripVTControlCharacters,
-  deprecate,
+  // This is in order of `node --print 'Object.keys(util)'`
+  // _errnoException,
+  // _exceptionWithHostPort,
+  _extend,
+  callbackify,
   debug: debuglog,
   debuglog,
-  _extend,
+  deprecate,
+  format,
+  styleText,
+  formatWithOptions,
+  // getCallSite,
+  // getCallSites,
+  // getSystemErrorMap,
+  getSystemErrorName,
+  // getSystemErrorMessage,
+  inherits,
   inspect,
+  isDeepStrictEqual,
+  promisify,
+  stripVTControlCharacters,
+  toUSVString,
+  // transferableAbortSignal,
+  // transferableAbortController,
+  aborted,
   types,
+  // parseEnv,
+  parseArgs,
+  TextDecoder,
+  TextEncoder,
+  // MIMEType,
+  // MIMEParams,
+
+  // Deprecated in Node.js 22, removed in 23
   isArray: $isArray,
   isBoolean,
+  isBuffer,
   isNull,
   isNullOrUndefined,
   isNumber,
@@ -336,22 +361,10 @@ cjs_exports = {
   isRegExp,
   isObject,
   isDate,
-  isFunction,
   isError,
+  isFunction,
   isPrimitive,
-  isBuffer,
   log,
-  inherits,
-  toUSVString,
-  promisify,
-  callbackify,
-  isDeepStrictEqual,
-  TextDecoder,
-  TextEncoder,
-  parseArgs,
-  styleText,
-  getSystemErrorName,
-  aborted,
 };
 
 export default cjs_exports;

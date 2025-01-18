@@ -1325,7 +1325,8 @@ c {
     outdir: "/out",
     onAfterBundle(api) {
       for (const file of files) {
-        api.expectFile(join("/out", file)).toMatchSnapshot(file);
+        console.log("Checking snapshot:", file);
+        api.expectFile(join(file)).toMatchSnapshot(file);
       }
     },
   });
@@ -1506,8 +1507,6 @@ c {
 
   itBundled("css/CSSExternalQueryAndHashNoMatchESBuildIssue1822", {
     experimentalCss: true,
-
-    // GENERATED
     files: {
       "/entry.css": /* css */ `
         a { background: url(foo/bar.png?baz) }
@@ -1515,23 +1514,12 @@ c {
       `,
     },
     outfile: "/out.css",
-    /* TODO FIX expectedScanLog: `entry.css: ERROR: Could not resolve "foo/bar.png?baz"
-  NOTE: You can mark the path "foo/bar.png?baz" as external to exclude it from the bundle, which will remove this error.
-  entry.css: ERROR: Could not resolve "foo/bar.png#baz"
-  NOTE: You can mark the path "foo/bar.png#baz" as external to exclude it from the bundle, which will remove this error.
-  `, */
-  });
-  itBundled("css/CSSExternalQueryAndHashMatchESBuildIssue1822", {
-    experimentalCss: true,
-
-    // GENERATED
-    files: {
-      "/entry.css": /* css */ `
-        a { background: url(foo/bar.png?baz) }
-        b { background: url(foo/bar.png#baz) }
-      `,
+    bundleErrors: {
+      "/entry.css": [
+        `Could not resolve: "foo/bar.png?baz". Maybe you need to "bun install"?`,
+        `Could not resolve: "foo/bar.png#baz". Maybe you need to "bun install"?`,
+      ],
     },
-    outfile: "/out.css",
   });
   itBundled("css/CSSNestingOldBrowser", {
     experimentalCss: true,

@@ -2035,9 +2035,9 @@ declare module "bun" {
     /** Whether to use TLS/SSL for the connection */
     tls: boolean;
     /** Callback function executed when a connection is established */
-    onconnect: (client: SQLClient) => void;
+    onconnect: (client: SQL) => void;
     /** Callback function executed when a connection is closed */
-    onclose: (client: SQLClient) => void;
+    onclose: (client: SQL) => void;
     /** Maximum number of connections in the pool */
     max: number;
   };
@@ -2070,23 +2070,23 @@ declare module "bun" {
   /**
    * Main SQL client interface providing connection and transaction management
    */
-  interface SQLClient {
+  interface SQL {
     /** Creates a new SQL client instance
      * @example
      * const sql = new SQL("postgres://localhost:5432/mydb");
      * const sql = new SQL(new URL("postgres://localhost:5432/mydb"));
      */
-    new (connectionString: string | URL): SQLClient;
+    new (connectionString: string | URL): SQL;
     /** Creates a new SQL client instance with options
      * @example
      * const sql = new SQL("postgres://localhost:5432/mydb", { idleTimeout: 1000 });
      */
-    new (connectionString: string | URL, options: SQLOptions): SQLClient;
+    new (connectionString: string | URL, options: SQLOptions): SQL;
     /** Creates a new SQL client instance with options
      * @example
      * const sql = new SQL({ url: "postgres://localhost:5432/mydb", idleTimeout: 1000 });
      */
-    new (options?: SQLOptions): SQLClient;
+    new (options?: SQLOptions): SQL;
     /** Executes a SQL query using template literals
      * @example
      * const [user] = await sql`select * from users where id = ${1}`;
@@ -2106,7 +2106,7 @@ declare module "bun" {
      * @example
      * await sql.connect();
      */
-    connect(): Promise<SQLClient>;
+    connect(): Promise<SQL>;
     /** Closes the database connection with optional timeout in seconds
      * @example
      * await sql.close({ timeout: 1 });
@@ -2141,7 +2141,7 @@ declare module "bun" {
      * await reserved`select * from users`
      * }
      */
-    reserve(): Promise<ReservedSQLClient>;
+    reserve(): Promise<ReservedSQL>;
     /** Begins a new transaction
      * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.begin will resolve with the returned value from the callback function.
      * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
@@ -2270,23 +2270,23 @@ declare module "bun" {
 
   /**
    * Represents a reserved connection from the connection pool
-   * Extends SQLClient with additional release functionality
+   * Extends SQL with additional release functionality
    */
-  interface ReservedSQLClient extends SQLClient {
+  interface ReservedSQL extends SQL {
     /** Releases the client back to the connection pool */
     release(): void;
   }
 
   /**
    * Represents a client within a transaction context
-   * Extends SQLClient with savepoint functionality
+   * Extends SQL with savepoint functionality
    */
-  interface TransactionSQLClient extends SQLClient {
+  interface TransactionSQL extends SQL {
     /** Creates a savepoint within the current transaction */
     savepoint(name: string, fn: SQLContextCallback): Promise<undefined>;
   }
 
-  const sql: SQLClient;
+  var sql: SQL;
 
   /**
    *   This lets you use macros as regular imports

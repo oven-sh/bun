@@ -688,7 +688,7 @@ pub const BorderHandler = struct {
                     self.flush(d, c);
                 }
 
-                if (@field(@field(self, key), prop) != null and !@field(@field(self, key), prop).?.eql(val) and c.targets.browsers != null and css.generic.isCompatible(@TypeOf(val.*), val, c.targets.browsers.?)) {
+                if (@field(@field(self, key), prop) != null and !@field(@field(self, key), prop).?.eql(val) and c.targets.browsers != null and !css.generic.isCompatible(@TypeOf(val.*), val, c.targets.browsers.?)) {
                     self.flush(d, c);
                 }
             }

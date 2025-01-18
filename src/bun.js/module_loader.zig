@@ -2150,7 +2150,7 @@ pub const ModuleLoader = struct {
                                     break :brk .zero;
                                 }
                             };
-                            const hash = JSC.GenericWatcher.getHash(path.text);
+                            const hash = JSC.Watcher.getHash(path.text);
                             switch (jsc_vm.bun_watcher.addFile(
                                 input_fd,
                                 path.text,

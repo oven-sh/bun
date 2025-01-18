@@ -300,6 +300,7 @@ int BundlerPlugin::NativePluginList::call(JSC::VM& vm, BundlerPlugin* plugin, in
 
         if (filters[i].match(vm, path)) {
             Bun::NapiExternal* external = callbacks[i].external;
+            ASSERT(onBeforeParseArgs != nullptr);
             if (external) {
                 onBeforeParseArgs->external = external->value();
             } else {

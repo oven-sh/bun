@@ -3679,7 +3679,7 @@ pub const NodeFS = struct {
         if (comptime Environment.isWindows) {
             var req: uv.fs_t = uv.fs_t.uninitialized;
             defer req.deinit();
-            const rc = uv.uv_fs_futime(uv.Loop.get(), &req, bun.uvfdcast(args.fd), args.mtime, args.atime, null);
+            const rc = uv.uv_fs_futime(uv.Loop.get(), &req, bun.uvfdcast(args.fd), args.atime, args.mtimes, null);
             return if (rc.errno()) |e|
                 .{ .err = .{
                     .errno = e,
@@ -3691,8 +3691,8 @@ pub const NodeFS = struct {
         }
 
         var times = [2]std.posix.timespec{
-            args.mtime,
             args.atime,
+            args.mtime,
         };
 
         return if (Maybe(Return.Futimes).errnoSysFd(system.futimens(args.fd.int(), &times), .futime, args.fd)) |err|

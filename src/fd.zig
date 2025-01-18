@@ -326,12 +326,14 @@ pub const FDImpl = packed struct {
         }
         const float = value.asNumber();
         if (@mod(float, 1) != 0) {
-            return global.ERR_OUT_OF_RANGE("The value of \"fd\" is out of range. It must be an integer. Received {}", .{bun.fmt.double(value.asNumber())}).throw();
+            return global.throwRangeError(float, .{ .field_name = "fd", .msg = "an integer" });
         }
-        if (float < 0 or float > std.math.maxInt(i32)) {
-            return global.ERR_OUT_OF_RANGE("The value of \"fd\" is out of range. It must be >= 0 and <= {}", .{std.math.maxInt(i32)}).throw();
-        }
+
         const fd: c_int = @intFromFloat(float);
+        if (fd < 0 or fd > std.math.maxInt(i32)) {
+            return global.throwRangeError(fd, .{ .field_name = "fd", .min = 0, .max = std.math.maxInt(i32) });
+        }
+
         if (comptime environment.isWindows) {
             return switch (bun.FDTag.get(fd)) {
                 .stdin => FDImpl.decode(bun.STDIN_FD),

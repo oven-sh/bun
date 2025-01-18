@@ -2119,83 +2119,86 @@ pub const ModuleLoader = struct {
             },
 
             else => {
-                if (virtual_source == null) {
-                    if (comptime !disable_transpilying) {
-                        if (jsc_vm.isWatcherEnabled()) auto_watch: {
-                            if (std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
-                                const input_fd: bun.StoredFileDescriptorType = brk: {
-                                    // on macOS, we need a file descriptor to receive event notifications on it.
-                                    // so we use O_EVTONLY to open the file descriptor without asking any additional permissions.
-                                    if (comptime Environment.isMac) {
-                                        switch (bun.sys.open(
-                                            &(std.posix.toPosixPath(path.text) catch break :auto_watch),
-                                            bun.C.O_EVTONLY,
-                                            0,
-                                        )) {
-                                            .err => break :auto_watch,
-                                            .result => |fd| break :brk @enumFromInt(fd.cast()),
-                                        }
-                                    } else {
-                                        // Otherwise, don't even bother opening it.
-                                        break :brk .zero;
-                                    }
-                                };
-                                const hash = JSC.GenericWatcher.getHash(path.text);
-                                switch (jsc_vm.bun_watcher.addFile(
-                                    input_fd,
-                                    path.text,
-                                    hash,
-                                    loader,
-                                    .zero,
-                                    null,
-                                    true,
-                                )) {
-                                    .err => {
-                                        if (comptime Environment.isMac) {
-                                            // If any error occurs and we just
-                                            // opened the file descriptor to
-                                            // receive event notifications on
-                                            // it, we should close it.
-                                            if (input_fd != .zero) {
-                                                _ = bun.sys.close(bun.toFD(input_fd));
-                                            }
-                                        }
+                if (flags.disableTranspiling()) {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = bun.String.empty,
+                        .specifier = input_specifier,
+                        .source_url = input_specifier.createIfDifferent(path.text),
+                        .hash = 0,
+                        .tag = .esm,
+                    };
+                }
 
-                                        // we don't consider it a failure if we cannot watch the file
-                                        // they didn't open the file
-                                    },
-                                    .result => {},
+                if (virtual_source == null) {
+                    if (jsc_vm.isWatcherEnabled()) auto_watch: {
+                        if (std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
+                            const input_fd: bun.StoredFileDescriptorType = brk: {
+                                // on macOS, we need a file descriptor to receive event notifications on it.
+                                // so we use O_EVTONLY to open the file descriptor without asking any additional permissions.
+                                if (comptime Environment.isMac) {
+                                    switch (bun.sys.open(
+                                        &(std.posix.toPosixPath(path.text) catch break :auto_watch),
+                                        bun.C.O_EVTONLY,
+                                        0,
+                                    )) {
+                                        .err => break :auto_watch,
+                                        .result => |fd| break :brk @enumFromInt(fd.cast()),
+                                    }
+                                } else {
+                                    // Otherwise, don't even bother opening it.
+                                    break :brk .zero;
                                 }
+                            };
+                            const hash = JSC.GenericWatcher.getHash(path.text);
+                            switch (jsc_vm.bun_watcher.addFile(
+                                input_fd,
+                                path.text,
+                                hash,
+                                loader,
+                                .zero,
+                                null,
+                                true,
+                            )) {
+                                .err => {
+                                    if (comptime Environment.isMac) {
+                                        // If any error occurs and we just
+                                        // opened the file descriptor to
+                                        // receive event notifications on
+                                        // it, we should close it.
+                                        if (input_fd != .zero) {
+                                            _ = bun.sys.close(bun.toFD(input_fd));
+                                        }
+                                    }
+
+                                    // we don't consider it a failure if we cannot watch the file
+                                    // they didn't open the file
+                                },
+                                .result => {},
                             }
                         }
                     }
                 }
 
-                var stack_buf = std.heap.stackFallback(4096, jsc_vm.allocator);
-                const allocator = stack_buf.get();
-                var buf = MutableString.init2048(allocator) catch bun.outOfMemory();
-                defer buf.deinit();
-                var writer = buf.writer();
-                if (!jsc_vm.origin.isEmpty()) {
-                    writer.writeAll("export default `") catch bun.outOfMemory();
-                    // TODO: escape backtick char, though we might already do that
-                    JSC.API.Bun.getPublicPath(specifier, jsc_vm.origin, @TypeOf(&writer), &writer);
-                    writer.writeAll("`;\n") catch bun.outOfMemory();
-                } else {
-                    // search keywords: "export default \"{}\";"
-                    writer.writeAll("export default ") catch bun.outOfMemory();
-                    buf = js_printer.quoteForJSON(path.text, buf, true) catch bun.outOfMemory();
-                    writer = buf.writer();
-                    writer.writeAll(";\n") catch bun.outOfMemory();
-                }
+                const value = brk: {
+                    if (!jsc_vm.origin.isEmpty()) {
+                        var buf = MutableString.init2048(jsc_vm.allocator) catch bun.outOfMemory();
+                        defer buf.deinit();
+                        var writer = buf.writer();
+                        JSC.API.Bun.getPublicPath(specifier, jsc_vm.origin, @TypeOf(&writer), &writer);
+                        break :brk bun.String.createUTF8ForJS(globalObject.?, buf.slice());
+                    }
 
-                const public_url = bun.String.createUTF8(buf.slice());
+                    break :brk bun.String.createUTF8ForJS(globalObject.?, path.text);
+                };
+
                 return ResolvedSource{
-                    .allocator = &jsc_vm.allocator,
-                    .source_code = public_url,
+                    .allocator = null,
+                    .jsvalue_for_export = value,
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
                     .hash = 0,
+                    .tag = .export_default_object,
                 };
             },
         }

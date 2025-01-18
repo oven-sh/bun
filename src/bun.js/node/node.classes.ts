@@ -610,17 +610,9 @@ export default [
       writevSync: { fn: "writevSync", length: 3 },
       realpathNative: { fn: "realpathNative", length: 3 },
       realpathNativeSync: { fn: "realpathNativeSync", length: 3 },
-      // TODO:
-      // Dir: { fn: 'Dir', length: 3 },
       Dirent: { getter: "getDirent" },
       Stats: { getter: "getStats" },
-      // ReadStream: { fn: 'ReadStream', length: 2 },
-      // WriteStream: { fn: 'WriteStream', length: 2 },
-      // FileReadStream: { fn: 'FileReadStream', length: 2 },
-      // FileWriteStream: { fn: 'FileWriteStream', length: 2 },
-      // _toUnixTimestamp: { fn: '_toUnixTimestamp', length: 1 }
-      // createReadStream: { fn: "createReadStream", length: 2 },
-      // createWriteStream: { fn: "createWriteStream", length: 2 },
     },
   }),
 ];
+

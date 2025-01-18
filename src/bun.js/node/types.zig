@@ -608,7 +608,7 @@ pub const StringOrBuffer = union(enum) {
     }
 
     pub fn fromJSWithEncodingMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding: Encoding, is_async: bool, allow_string_object: bool) bun.JSError!?StringOrBuffer {
-        if (value.isCell() and value.jsType().isTypedArray()) {
+        if (value.isCell() and value.jsType().isArrayBufferLike()) {
             return .{ .buffer = Buffer.fromTypedArray(global, value) };
         }
 
@@ -1910,8 +1910,33 @@ pub const Dirent = struct {
     pub usingnamespace JSC.Codegen.JSDirent;
     pub usingnamespace bun.New(@This());
 
-    pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*Dirent {
-        return globalObject.throw("Dirent is not a constructor", .{});
+    pub fn constructor(global: *JSC.JSGlobalObject, call_frame: *JSC.CallFrame) bun.JSError!*Dirent {
+        const name_js, const type_js, const path_js = call_frame.argumentsAsArray(3);
+
+        const name = try name_js.toBunString2(global);
+        errdefer name.deref();
+
+        const path = try path_js.toBunString2(global);
+        errdefer path.deref();
+
+        const kind = try type_js.toInt32(global);
+        switch (kind) {
+            // these correspond to the libuv constants
+            else => .unknown,
+            1 => .file,
+            2 => .directory,
+            3 => .sym_link,
+            4 => .fifo,
+            5 => .unix_domain_socket,
+            6 => .character_device,
+            7 => .block_device,
+        }
+
+        return Dirent.new(.{
+            .name = name,
+            .path = path,
+            .kind = kind,
+        });
     }
 
     pub fn toJS(this: *Dirent, globalObject: *JSC.JSGlobalObject) JSC.JSValue {

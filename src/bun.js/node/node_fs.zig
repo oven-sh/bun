@@ -2563,10 +2563,10 @@ pub const Arguments = struct {
 
                     const arg_length = arguments.next().?;
                     arguments.eat();
-                    defined_length = true;
 
                     if (arg_length.isNumber() or arg_length.isBigInt()) {
                         args.length = @intCast(try JSC.Node.validators.validateInteger(ctx, arg_length, "length", 0, @intCast(buf_len - args.offset)));
+                        defined_length = true;
                     }
 
                     if (arguments.next()) |arg_position| {
@@ -2720,6 +2720,7 @@ pub const Arguments = struct {
         flag: FileSystemFlags = FileSystemFlags.w,
         mode: Mode = 0o666,
         file: PathOrFileDescriptor,
+        flush: bool = false,
 
         /// Encoded at the time of construction.
         data: StringOrBuffer,
@@ -2745,7 +2746,6 @@ pub const Arguments = struct {
             self.file.deinitAndUnprotect();
             self.data.deinitAndUnprotect();
         }
-
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!WriteFile {
             const path = try PathOrFileDescriptor.fromJS(ctx, arguments, bun.default_allocator) orelse {
                 return ctx.throwInvalidArguments("path must be a string or a file descriptor", .{});
@@ -2760,7 +2760,7 @@ pub const Arguments = struct {
             var flag = FileSystemFlags.w;
             var mode: Mode = default_permission;
             var abort_signal: ?*AbortSignal = null;
-
+            var flush: bool = false;
             if (data_value.isString()) {
                 encoding = Encoding.utf8;
             }
@@ -2789,6 +2789,14 @@ pub const Arguments = struct {
                             return ctx.throwInvalidArgumentTypeValue("signal", "AbortSignal", value);
                         }
                     }
+
+                    if (try arg.getOptional(ctx, "flush", JSC.JSValue)) |flush_| {
+                        if (flush_.isBoolean() or flush_.isUndefinedOrNull()) {
+                            flush = flush_ == .true;
+                        } else {
+                            return ctx.throwInvalidArgumentTypeValue("flush", "boolean", flush_);
+                        }
+                    }
                 }
             }
 
@@ -2799,8 +2807,7 @@ pub const Arguments = struct {
                 return ctx.ERR_INVALID_ARG_TYPE("The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView", .{}).throw();
             };
 
-            // Note: Signal is not implemented
-            return WriteFile{
+            return .{
                 .file = path,
                 .encoding = encoding,
                 .flag = flag,
@@ -2808,6 +2815,7 @@ pub const Arguments = struct {
                 .data = data,
                 .dirfd = bun.FD.cwd(),
                 .signal = abort_signal,
+                .flush = flush,
             };
         }
 
@@ -5256,6 +5264,14 @@ pub const NodeFS = struct {
                 _ = std.os.windows.kernel32.SetEndOfFile(fd.cast());
             } else {
                 _ = Syscall.ftruncate(fd, @intCast(@as(u63, @truncate(written))));
+            }
+        }
+
+        if (args.flush) {
+            if (Environment.isWindows) {
+                _ = std.os.windows.kernel32.FlushFileBuffers(fd.cast());
+            } else {
+                _ = system.fsync(fd.cast());
             }
         }
 

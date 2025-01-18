@@ -3826,6 +3826,27 @@ pub const JSValue = enum(i64) {
             };
         }
 
+        pub fn isArrayBufferLike(this: JSType) bool {
+            return switch (this) {
+                .DataView,
+                .ArrayBuffer,
+                .BigInt64Array,
+                .BigUint64Array,
+                .Float32Array,
+                .Float16Array,
+                .Float64Array,
+                .Int16Array,
+                .Int32Array,
+                .Int8Array,
+                .Uint16Array,
+                .Uint32Array,
+                .Uint8Array,
+                .Uint8ClampedArray,
+                => true,
+                else => false,
+            };
+        }
+
         pub fn toC(this: JSType) C_API.JSTypedArrayType {
             return switch (this) {
                 .Int8Array => .kJSTypedArrayTypeInt8Array,

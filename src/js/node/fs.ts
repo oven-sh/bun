@@ -8,11 +8,7 @@ const types = require("node:util/types");
 
 const { validateInteger } = require("internal/validators");
 const { kGetNativeReadableProto } = require("internal/shared");
-
-const NumberIsFinite = Number.isFinite;
-const DatePrototypeGetTime = Date.prototype.getTime;
 const isDate = types.isDate;
-const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
 // Private exports
 // `fs` points to the return value of `node_fs_binding.zig`'s `createBinding` function.
@@ -367,6 +363,14 @@ var access = function access(path, mode, callback) {
     if ($isTypedArrayView(buffer)) {
       callback ||= position || length || offsetOrOptions;
       ensureCallback(callback);
+
+      if (typeof offsetOrOptions === 'object') {
+        ({
+          offset: offsetOrOptions = 0,
+          length = buffer.byteLength - offsetOrOptions,
+          position = null,
+        } = offsetOrOptions ?? {});
+      }
 
       fs.write(fd, buffer, offsetOrOptions, length, position).then(wrapper, callback);
       return;

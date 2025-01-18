@@ -230,6 +230,19 @@ else()
   endif()
 endif()
 
+# --- Runtime safety ---
+
+# NOTE: these can get noisy when building with jsc from source. Not a problem when using downloaded objects from gh.
+# NOTE: do not enable shift checks. Many hash functions rely on overflows.
+# NOTE: make sure llvm-symbolizer is in your PATH
+if (ENABLE_ASSERTIONS)
+  register_compiler_flags(
+    DESCRIPTION "Enable undefined behavior sanitizer (UBSan)"
+    -fsanitize=alignment,nullability,bounds,unreachable,pointer-overflow,signed-integer-overflow ${UNIX}
+    /fsanitize:alignment,nullability,bounds,unreachable,pointer-overflow,signed-integer-overflow ${WIN32}
+  )
+endif()
+
 # --- Diagnostics ---
 if(UNIX)
   register_compiler_flags(

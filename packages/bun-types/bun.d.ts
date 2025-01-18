@@ -1997,6 +1997,19 @@ declare module "bun" {
   };
   /**
    * Configuration options for SQL client connection and behavior
+   *  @example
+   * const config: SQLOptions = {
+   *   host: 'localhost',
+   *   port: 5432,
+   *   user: 'dbuser',
+   *   password: 'secretpass',
+   *   database: 'myapp',
+   *   idleTimeout: 30000,
+   *   max: 20,
+   *   onconnect: (client) => {
+   *     console.log('Connected to database');
+   *   }
+   * };
    */
   type SQLOptions = {
     /** Connection URL (can be string or URL object) */
@@ -2235,7 +2248,8 @@ declare module "bun" {
      * Also know as Two-Phase Commit, in a distributed transaction, Phase 1 involves the coordinator preparing nodes by ensuring data is written and ready to commit, while Phase 2 finalizes with nodes committing or rolling back based on the coordinator's decision, ensuring durability and releasing locks.
      * In PostgreSQL and MySQL distributed transactions persist beyond the original session, allowing privileged users or coordinators to commit/rollback them, ensuring support for distributed transactions, recovery, and administrative tasks.
      * beginDistributed will automatic rollback if any exception are not caught, and you can commit and rollback later if everything goes well.
-     * PostgreSQL natively supports distributed transactions using PREPARE TRANSACTION, while MySQL uses XA Transactions, and MSSQL also supports distributed/XA transactions. However, in MSSQL, distributed transactions are tied to the original session, the DTC coordinator, and the specific connection. These transactions are automatically committed or rolled back following the same rules as regular transactions, with no option for manual intervention from other sessions, in MSSQL distributed transactions are used to coordinate transactions using Linked Servers.
+     * PostgreSQL natively supports distributed transactions using PREPARE TRANSACTION, while MySQL uses XA Transactions, and MSSQL also supports distributed/XA transactions. However, in MSSQL, distributed transactions are tied to the original session, the DTC coordinator, and the specific connection.
+     * These transactions are automatically committed or rolled back following the same rules as regular transactions, with no option for manual intervention from other sessions, in MSSQL distributed transactions are used to coordinate transactions using Linked Servers.
      * @example
      * await sql.beginDistributed("numbers", async sql => {
      *   await sql`create table if not exists numbers (a int)`;

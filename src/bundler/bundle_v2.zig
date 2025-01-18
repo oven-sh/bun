@@ -9688,8 +9688,12 @@ pub const LinkerContext = struct {
                     &buffer_writer,
                     printer_options,
                     &css_import.condition_import_records,
-                ) catch {
-                    @panic("TODO: HANDLE THIS ERROR!");
+                ) catch |e| {
+                    return CompileResult{
+                        .css = .{
+                            .result = .{ .err = e },
+                        },
+                    };
                 };
                 return CompileResult{
                     .css = .{
@@ -9710,8 +9714,12 @@ pub const LinkerContext = struct {
                     &buffer_writer,
                     printer_options,
                     &import_records,
-                ) catch {
-                    @panic("TODO: HANDLE THIS ERROR!");
+                ) catch |e| {
+                    return CompileResult{
+                        .css = .{
+                            .result = .{ .err = e },
+                        },
+                    };
                 };
                 return CompileResult{
                     .css = .{
@@ -9732,8 +9740,12 @@ pub const LinkerContext = struct {
                     &buffer_writer,
                     printer_options,
                     &c.graph.ast.items(.import_records)[idx.get()],
-                ) catch {
-                    @panic("TODO: HANDLE THIS ERROR!");
+                ) catch |e| {
+                    return CompileResult{
+                        .css = .{
+                            .result = .{ .err = e },
+                        },
+                    };
                 };
                 return CompileResult{
                     .css = .{

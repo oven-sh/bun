@@ -194,20 +194,16 @@ pub const DataURL = struct {
             trailing_start -= 1;
         }
 
+        if (!bun.simdutf.validate.utf8(text)) {
+            return false;
+        }
+
         var i: usize = 0;
         var run_start: usize = 0;
 
+        // TODO: vectorize this
         while (i < text.len) {
             const first_byte = text[i];
-            const utf8_len = std.unicode.utf8ByteSequenceLength(first_byte) catch {
-                // Invalid UTF-8
-                return false;
-            };
-
-            if (i + utf8_len > text.len) {
-                // String ends in the middle of a UTF-8 sequence
-                return false;
-            }
 
             // Check if we need to escape this character
             const needs_escape = first_byte == '\t' or
@@ -229,7 +225,7 @@ pub const DataURL = struct {
                 run_start = i + 1;
             }
 
-            i += utf8_len;
+            i += bun.strings.utf8ByteSequenceLength(first_byte);
         }
 
         if (run_start < text.len) {

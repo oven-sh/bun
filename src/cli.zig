@@ -2271,7 +2271,6 @@ pub const Command = struct {
                     break :brk null;
                 };
 
-                const force_using_bun = ctx.debug.run_in_bun;
                 var did_check = false;
                 if (default_loader) |loader| {
                     if (loader.canBeRunByBun()) {
@@ -2280,12 +2279,6 @@ pub const Command = struct {
                             return;
                         }
                         did_check = true;
-                    }
-                }
-
-                if (force_using_bun and !did_check) {
-                    if (maybeOpenWithBunJS(ctx)) {
-                        return;
                     }
                 }
 

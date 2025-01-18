@@ -1301,12 +1301,12 @@ pub const RunCommand = struct {
             return true;
         }
 
-        if (!did_try_open_with_bun_js and (log_errors or force_using_bun)) {
+        if (!did_try_open_with_bun_js and log_errors) {
             if (script_name_to_search.len > 0) {
                 possibly_open_with_bun_js: {
                     const ext = std.fs.path.extension(script_name_to_search);
                     var has_loader = false;
-                    if (!force_using_bun) {
+                    {
                         if (options.defaultLoaders.get(ext)) |load| {
                             has_loader = true;
                             if (!load.canBeRunByBun())
@@ -1345,7 +1345,7 @@ pub const RunCommand = struct {
 
                     const file = file_ catch break :possibly_open_with_bun_js;
 
-                    if (!force_using_bun) {
+                    {
                         // Due to preload, we don't know if they intend to run
                         // this as a script or as a regular file
                         // once we know it's a file, check if they have any preloads

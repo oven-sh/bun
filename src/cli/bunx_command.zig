@@ -328,6 +328,10 @@ pub const BunxCommand = struct {
         // 2. Run tsc
         if (strings.eqlComptime(update_request.name, "tsc")) {
             update_request.name = "typescript";
+        } else if (strings.eqlComptime(update_request.name, "bun-repl")) {
+            this_transpiler.env.map.remove("BUN_INSPECT_CONNECT_TO");
+            this_transpiler.env.map.remove("BUN_INSPECT_NOTIFY");
+            this_transpiler.env.map.remove("BUN_INSPECT");
         }
 
         const initial_bin_name = if (strings.eqlComptime(update_request.name, "typescript"))
@@ -365,12 +369,6 @@ pub const BunxCommand = struct {
         this_transpiler.env.map.put("npm_command", "exec") catch unreachable;
         this_transpiler.env.map.put("npm_lifecycle_event", "bunx") catch unreachable;
         this_transpiler.env.map.put("npm_lifecycle_script", opts.package_name) catch unreachable;
-
-        if (strings.eqlComptime(opts.package_name, "bun-repl")) {
-            this_transpiler.env.map.remove("BUN_INSPECT_CONNECT_TO");
-            this_transpiler.env.map.remove("BUN_INSPECT_NOTIFY");
-            this_transpiler.env.map.remove("BUN_INSPECT");
-        }
 
         const ignore_cwd = this_transpiler.env.get("BUN_WHICH_IGNORE_CWD") orelse "";
 

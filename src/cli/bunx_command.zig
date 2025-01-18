@@ -346,12 +346,6 @@ pub const BunxCommand = struct {
         var this_transpiler: bun.Transpiler = undefined;
         var ORIGINAL_PATH: string = "";
 
-        if (strings.eqlComptime(initial_bin_name, "bun-repl")) {
-            this_transpiler.env.map.remove("BUN_INSPECT_CONNECT_TO");
-            this_transpiler.env.map.remove("BUN_INSPECT_NOTIFY");
-            this_transpiler.env.map.remove("BUN_INSPECT");
-        }
-
         const root_dir_info = try Run.configureEnvForRun(
             ctx,
             &this_transpiler,
@@ -359,6 +353,12 @@ pub const BunxCommand = struct {
             true,
             true,
         );
+
+        if (strings.eqlComptime(initial_bin_name, "bun-repl")) {
+            this_transpiler.env.map.remove("BUN_INSPECT_CONNECT_TO");
+            this_transpiler.env.map.remove("BUN_INSPECT_NOTIFY");
+            this_transpiler.env.map.remove("BUN_INSPECT");
+        }
 
         try Run.configurePathForRun(
             ctx,

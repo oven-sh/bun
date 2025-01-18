@@ -442,6 +442,15 @@ describe("esbuild-bundler", () => {
       "/json.json": `{ "test": true }`,
       "/css.css": `a { color: red }`,
     },
+    bundleErrors: {
+      "/entry.css": [
+        'Cannot import a ".jsx" file into a CSS file',
+        'Cannot import a ".jsx" file into a CSS file',
+        'Cannot import a ".ts" file into a CSS file',
+        'Cannot import a ".tsx" file into a CSS file',
+        'Cannot import a ".json" file into a CSS file',
+      ],
+    },
     /* TODO FIX expectedScanLog: `entry.css: ERROR: Cannot use "js.js" as a URL
   NOTE: You can't use a "url()" token to reference the file "js.js" because it was loaded with the "js" loader, which doesn't provide a URL to embed in the resulting CSS.
   entry.css: ERROR: Cannot use "jsx.jsx" as a URL

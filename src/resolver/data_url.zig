@@ -116,33 +116,19 @@ pub const DataURL = struct {
     }
 
     /// Decodes the data from the data URL. Always returns an owned slice.
-    pub fn decodeData(url: DataURL, allocator: std.mem.Allocator) ![]u8 {
-        const data = decodeDataImpl(url, allocator) catch |e| {
-            if (e == error.Base64DecodeError) return e;
-            return allocator.dupe(u8, url.data);
-        };
-
-        if (data) |some| {
-            return some;
-        }
-
-        return allocator.dupe(u8, url.data);
-    }
-
-    /// Decodes the data from the data URL.
-    /// Returns null if the data is not base64 encoded or percent encoded.
-    pub fn decodeDataImpl(url: DataURL, allocator: std.mem.Allocator) !?[]u8 {
+    pub fn decodeData(url: DataURL, allocator: Allocator) ![]u8 {
+        const percent_decoded = PercentEncoding.decodeUnstrict(allocator, url.data) catch url.data orelse url.data;
         if (url.is_base64) {
-            const len = bun.base64.decodeLen(url.data);
+            const len = bun.base64.decodeLen(percent_decoded);
             const buf = try allocator.alloc(u8, len);
-            const result = bun.base64.decode(buf, url.data);
+            const result = bun.base64.decode(buf, percent_decoded);
             if (!result.isSuccessful() or result.count != len) {
                 return error.Base64DecodeError;
             }
             return buf;
         }
 
-        return PercentEncoding.decodeUnstrict(allocator, url.data) catch null orelse null;
+        return try allocator.dupe(u8, percent_decoded);
     }
 
     /// Returns the shorter of either a base64-encoded or percent-escaped data URL

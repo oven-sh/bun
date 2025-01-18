@@ -2494,12 +2494,10 @@ pub const BundleV2 = struct {
         if (bun.strings.eqlComptime(parse.path.namespace, "dataurl")) {
             const maybe_data_url = DataURL.parse(parse.path.text) catch return false;
             const data_url = maybe_data_url orelse return false;
-            const maybe_decoded = data_url.decodeDataImpl(bun.default_allocator) catch return false;
-            if (maybe_decoded) |d| {
-                this.free_list.append(d) catch bun.outOfMemory();
-            }
+            const maybe_decoded = data_url.decodeData(bun.default_allocator) catch return false;
+            this.free_list.append(maybe_decoded) catch bun.outOfMemory();
             parse.contents_or_fd = .{
-                .contents = maybe_decoded orelse data_url.data,
+                .contents = maybe_decoded,
             };
             parse.loader = switch (data_url.decodeMimeType().category) {
                 .javascript => .js,

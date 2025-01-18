@@ -5366,7 +5366,7 @@ pub const NodeFS = struct {
 
     pub fn rmdir(this: *NodeFS, args: Arguments.RmDir, _: Flavor) Maybe(Return.Rmdir) {
         if (args.recursive) {
-            zigDeleteTree(std.fs.cwd(), args.path.slice()) catch |err| {
+            zigDeleteTree(std.fs.cwd(), args.path.slice(), .directory) catch |err| {
                 const errno: bun.C.E = switch (@as(anyerror, err)) {
                     error.AccessDenied => .PERM,
                     error.FileTooBig => .FBIG,
@@ -5412,14 +5412,13 @@ pub const NodeFS = struct {
             Maybe(Return.Rmdir).success;
     }
 
-    pub fn rm(this: *NodeFS, args: Arguments.RmDir, _: Flavor) Maybe(Return.Rm) {
+    pub fn rm(this: *NodeFS, args: Arguments.Rm, _: Flavor) Maybe(Return.Rm) {
         // We cannot use removefileat() on macOS because it does not handle write-protected files as expected.
         if (args.recursive) {
-            // TODO: switch to an implementation which does not use any "unreachable"
-            zigDeleteTree(std.fs.cwd(), args.path.slice()) catch |err| {
+            zigDeleteTree(std.fs.cwd(), args.path.slice(), .file) catch |err| {
                 const errno: E = switch (@as(anyerror, err)) {
                     // error.InvalidHandle => .BADF,
-                    error.AccessDenied => .PERM,
+                    error.AccessDenied => .ACCES,
                     error.FileTooBig => .FBIG,
                     error.SymLinkLoop => .LOOP,
                     error.ProcessFdQuotaExceeded => .NFILE,
@@ -5442,14 +5441,16 @@ pub const NodeFS = struct {
                     // '/', '*', '?', '"', '<', '>', '|'
                     error.BadPathName => .INVAL,
 
-                    error.FileNotFound => .NOENT,
+                    error.FileNotFound => brk: {
+                        if (args.force) {
+                            return Maybe(Return.Rm).success;
+                        }
+                        break :brk .NOENT;
+                    },
                     error.IsDir => .ISDIR,
 
                     else => .FAULT,
                 };
-                if (args.force) {
-                    return Maybe(Return.Rm).success;
-                }
                 return Maybe(Return.Rm){
                     .err = bun.sys.Error.fromCode(errno, .rm).withPath(args.path.slice()),
                 };
@@ -5466,18 +5467,19 @@ pub const NodeFS = struct {
                 (er == error.IsDir or er == error.NotDir or er == error.AccessDenied))
             {
                 std.posix.rmdirZ(dest) catch |err| {
-                    if (args.force) {
-                        return Maybe(Return.Rm).success;
-                    }
-
                     const code: E = switch (err) {
-                        error.AccessDenied => .PERM,
+                        error.AccessDenied => .ACCES,
                         error.SymLinkLoop => .LOOP,
                         error.NameTooLong => .NAMETOOLONG,
                         error.SystemResources => .NOMEM,
                         error.ReadOnlyFileSystem => .ROFS,
                         error.FileBusy => .BUSY,
-                        error.FileNotFound => .NOENT,
+                        error.FileNotFound => brk: {
+                            if (args.force) {
+                                return Maybe(Return.Rm).success;
+                            }
+                            break :brk .NOENT;
+                        },
                         error.InvalidUtf8 => .INVAL,
                         error.InvalidWtf8 => .INVAL,
                         error.BadPathName => .INVAL,
@@ -5492,13 +5494,9 @@ pub const NodeFS = struct {
                 return Maybe(Return.Rm).success;
             }
 
-            if (args.force) {
-                return Maybe(Return.Rm).success;
-            }
-
             {
                 const code: E = switch (er) {
-                    error.AccessDenied => .PERM,
+                    error.AccessDenied => .ACCES,
                     error.SymLinkLoop => .LOOP,
                     error.NameTooLong => .NAMETOOLONG,
                     error.SystemResources => .NOMEM,
@@ -5507,7 +5505,12 @@ pub const NodeFS = struct {
                     error.InvalidUtf8 => .INVAL,
                     error.InvalidWtf8 => .INVAL,
                     error.BadPathName => .INVAL,
-                    error.FileNotFound => .NOENT,
+                    error.FileNotFound => brk: {
+                        if (args.force) {
+                            return Maybe(Return.Rm).success;
+                        }
+                        break :brk .NOENT;
+                    },
                     else => .FAULT,
                 };
 
@@ -6364,8 +6367,8 @@ comptime {
 
 /// Copied from std.fs.Dir.deleteTree. This function returns `FileNotFound` instead of ignoring it, which
 /// is required to match the behavior of Node.js's `fs.rm` { recursive: true, force: false }.
-pub fn zigDeleteTree(self: std.fs.Dir, sub_path: []const u8) !void {
-    var initial_iterable_dir = (try zigDeleteTreeOpenInitialSubpath(self, sub_path, .file)) orelse return;
+pub fn zigDeleteTree(self: std.fs.Dir, sub_path: []const u8, kind_hint: std.fs.File.Kind) !void {
+    var initial_iterable_dir = (try zigDeleteTreeOpenInitialSubpath(self, sub_path, kind_hint)) orelse return;
 
     const StackItem = struct {
         name: []const u8,
@@ -6564,10 +6567,7 @@ fn zigDeleteTreeOpenInitialSubpath(self: std.fs.Dir, sub_path: []const u8, kind_
                     .no_follow = true,
                     .iterate = true,
                 }) catch |err| switch (err) {
-                    error.NotDir => {
-                        treat_as_dir = false;
-                        continue :handle_entry;
-                    },
+                    error.NotDir,
                     error.FileNotFound,
                     error.AccessDenied,
                     error.SymLinkLoop,

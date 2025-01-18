@@ -181,6 +181,7 @@ var access = function access(path, mode, callback) {
       callback = options;
       options = undefined;
     }
+    console.log({options});
 
     ensureCallback(callback);
     fs.rm(path, options).then(nullcallback(callback), callback);

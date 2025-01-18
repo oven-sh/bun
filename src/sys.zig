@@ -3089,32 +3089,29 @@ pub fn directoryExistsAt(dir: anytype, subpath: anytype) JSC.Maybe(bool) {
         return .{ .result = is_dir };
     }
 
-    const have_statx = Environment.isLinux;
-    if (have_statx) brk: {
-        var statx: std.os.linux.Statx = undefined;
-        if (Maybe(bool).errnoSys(bun.C.linux.statx(
-            dir_fd.cast(),
-            subpath,
-            // Don't follow symlinks, don't automount, minimize permissions needed
-            std.os.linux.AT.SYMLINK_NOFOLLOW | std.os.linux.AT.NO_AUTOMOUNT,
-            // We only need the file type to check if it's a directory
-            std.os.linux.STATX_TYPE,
-            &statx,
-        ), .statx)) |err| {
-            switch (err.err.getErrno()) {
-                .OPNOTSUPP, .NOSYS => break :brk, // Linux < 4.11
-
-                .EXIST => return .{ .result = false },
-
-                // truly doesn't exist.
-                .NOENT => return .{ .result = false },
-
-                else => return err,
-            }
-            return err;
-        }
-        return .{ .result = S.ISDIR(statx.mode) };
-    }
+    // TODO: use statx to query less information. this path is currently broken
+    // const have_statx = Environment.isLinux;
+    // if (have_statx) brk: {
+    //     var statx: std.os.linux.Statx = undefined;
+    //     if (Maybe(bool).errnoSys(bun.C.linux.statx(
+    //         dir_fd.cast(),
+    //         subpath,
+    //         // Don't follow symlinks, don't automount, minimize permissions needed
+    //         std.os.linux.AT.SYMLINK_NOFOLLOW | std.os.linux.AT.NO_AUTOMOUNT,
+    //         // We only need the file type to check if it's a directory
+    //         std.os.linux.STATX_TYPE,
+    //         &statx,
+    //     ), .statx)) |err| {
+    //         switch (err.err.getErrno()) {
+    //             .OPNOTSUPP, .NOSYS => break :brk, // Linux < 4.11
+    //             // truly doesn't exist.
+    //             .NOENT => return .{ .result = false },
+    //             else => return err,
+    //         }
+    //         return err;
+    //     }
+    //     return .{ .result = S.ISDIR(statx.mode) };
+    // }
 
     return switch (fstatat(dir_fd, subpath)) {
         .err => |err| switch (err.getErrno()) {

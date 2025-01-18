@@ -198,6 +198,8 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
         execArgv ? static_cast<uint32_t>(execArgv->size()) : 0,
         preloadModules.size() ? preloadModules.data() : nullptr,
         static_cast<uint32_t>(preloadModules.size()));
+    // now referenced by Zig
+    worker->ref();
 
     preloadModuleStrings->clear();
 
@@ -417,9 +419,8 @@ void Worker::forEachWorker(const Function<Function<void(ScriptExecutionContext&)
 
 extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker* worker, int32_t exitCode)
 {
-
-    worker->ref();
     worker->dispatchExit(exitCode);
+    // no longer referenced by Zig
     worker->deref();
 
     if (globalObject) {

@@ -2253,7 +2253,7 @@ pub const AbortSignal = extern opaque {
         globalObject: *JSC.JSGlobalObject,
         reason: CommonAbortReason,
     ) void {
-        bun.Analytics.Features.abort_signal += 1;
+        bun.analytics.Features.abort_signal += 1;
         return WebCore__AbortSignal__signal(this, globalObject, reason);
     }
 

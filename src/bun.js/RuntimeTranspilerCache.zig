@@ -611,7 +611,7 @@ pub const RuntimeTranspilerCache = struct {
                 debug("get(\"{s}\") = {d} bytes, ignored for debug build", .{ source.path.text, this.entry.?.output_code.byteSlice().len });
             }
         }
-        bun.Analytics.Features.transpiler_cache += 1;
+        bun.analytics.Features.transpiler_cache += 1;
 
         if (comptime bun.Environment.isDebug) {
             if (!bun_debug_restore_from_cache) {

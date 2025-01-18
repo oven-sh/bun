@@ -44,7 +44,6 @@ const DotEnv = @import("./env_loader.zig");
 const Lock = bun.Mutex;
 const NodeFallbackModules = @import("./node_fallbacks.zig");
 const CacheEntry = @import("./cache.zig").FsCacheEntry;
-const Analytics = @import("./analytics/analytics_thread.zig");
 const URL = @import("./url.zig").URL;
 const Linker = linker.Linker;
 const Resolver = _resolver.Resolver;

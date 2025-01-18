@@ -185,15 +185,15 @@ const string = bun.string;
 
 pub const BunInfo = struct {
     bun_version: string,
-    platform: Analytics.GenerateHeader.GeneratePlatform.Platform,
+    platform: analytics.Schema.analytics.Platform,
 
-    const Analytics = @import("./analytics/analytics_thread.zig");
+    const analytics = bun.analytics;
     const JSON = bun.JSON;
     const JSAst = bun.JSAst;
     pub fn generate(comptime Bundler: type, _: Bundler, allocator: std.mem.Allocator) !JSAst.Expr {
         const info = BunInfo{
             .bun_version = Global.package_json_version,
-            .platform = Analytics.GenerateHeader.GeneratePlatform.forOS(),
+            .platform = analytics.GenerateHeader.GeneratePlatform.forOS(),
         };
 
         return try JSON.toAST(allocator, BunInfo, info);

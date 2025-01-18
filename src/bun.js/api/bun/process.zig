@@ -1209,7 +1209,7 @@ pub fn spawnProcessPosix(
     argv: [*:null]?[*:0]const u8,
     envp: [*:null]?[*:0]const u8,
 ) !JSC.Maybe(PosixSpawnResult) {
-    bun.Analytics.Features.spawn += 1;
+    bun.analytics.Features.spawn += 1;
     var actions = try PosixSpawn.Actions.init();
     defer actions.deinit();
 
@@ -1495,7 +1495,7 @@ pub fn spawnProcessWindows(
     envp: [*:null]?[*:0]const u8,
 ) !JSC.Maybe(WindowsSpawnResult) {
     bun.markWindowsOnly();
-    bun.Analytics.Features.spawn += 1;
+    bun.analytics.Features.spawn += 1;
 
     var uv_process_options = std.mem.zeroes(uv.uv_process_options_t);
 

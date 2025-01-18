@@ -46,7 +46,7 @@ pub const Run = struct {
     pub fn bootStandalone(ctx: Command.Context, entry_path: string, graph: bun.StandaloneModuleGraph) !void {
         JSC.markBinding(@src());
         bun.JSC.initialize(false);
-        bun.Analytics.Features.standalone_executable += 1;
+        bun.analytics.Features.standalone_executable += 1;
 
         const graph_ptr = try bun.default_allocator.create(bun.StandaloneModuleGraph);
         graph_ptr.* = graph;

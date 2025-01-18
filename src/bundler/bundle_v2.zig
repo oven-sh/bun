@@ -96,7 +96,6 @@ const isPackagePath = _resolver.isPackagePath;
 const Lock = bun.Mutex;
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const CacheEntry = @import("../cache.zig").Fs.Entry;
-const Analytics = @import("../analytics/analytics_thread.zig");
 const URL = @import("../url.zig").URL;
 const Linker = linker.Linker;
 const Resolver = _resolver.Resolver;

@@ -248,7 +248,7 @@ pub const WebWorker = struct {
     pub fn startWithErrorHandling(
         this: *WebWorker,
     ) void {
-        bun.Analytics.Features.workers_spawned += 1;
+        bun.analytics.Features.workers_spawned += 1;
         start(this) catch |err| {
             Output.panic("An unhandled error occurred while starting a worker: {s}\n", .{@errorName(err)});
         };
@@ -496,7 +496,7 @@ pub const WebWorker = struct {
     pub fn exitAndDeinit(this: *WebWorker) noreturn {
         JSC.markBinding(@src());
         this.setStatus(.terminated);
-        bun.Analytics.Features.workers_terminated += 1;
+        bun.analytics.Features.workers_terminated += 1;
 
         log("[{d}] exitAndDeinit", .{this.execution_context_id});
         const cpp_worker = this.cpp_worker;

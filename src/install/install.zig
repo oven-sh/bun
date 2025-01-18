@@ -6876,7 +6876,7 @@ pub const PackageManager = struct {
                     }
 
                     manager.extracted_count += 1;
-                    bun.Analytics.Features.extracted_packages += 1;
+                    bun.analytics.Features.extracted_packages += 1;
 
                     if (comptime @TypeOf(callbacks.onExtract) != void and ExtractCompletionContext == *PackageInstaller) {
                         extract_ctx.fixCachedLockfilePackageSlices();

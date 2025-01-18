@@ -358,7 +358,7 @@ pub fn loadFromDir(
             }
         };
 
-        bun.Analytics.Features.text_lockfile += 1;
+        bun.analytics.Features.text_lockfile += 1;
 
         return .{
             .ok = .{
@@ -401,7 +401,7 @@ pub fn loadFromDir(
                     Output.panic("failed to parse text lockfile converted from binary lockfile: {s}", .{@errorName(err)});
                 };
 
-                bun.Analytics.Features.text_lockfile += 1;
+                bun.analytics.Features.text_lockfile += 1;
             }
         },
         else => {},

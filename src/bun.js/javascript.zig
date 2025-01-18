@@ -34,7 +34,7 @@ const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
-const Analytics = @import("../analytics/analytics_thread.zig");
+const analytics = bun.analytics;
 const ZigString = bun.JSC.ZigString;
 const Runtime = @import("../runtime.zig");
 const Router = @import("./api/filesystem_router.zig");
@@ -1844,7 +1844,7 @@ pub const VirtualMachine = struct {
         this.transpiler.resolver.caches.fs.use_alternate_source_cache = true;
         this.macro_mode = true;
         this.event_loop = &this.macro_event_loop;
-        Analytics.Features.macros += 1;
+        analytics.Features.macros += 1;
         this.transpiler_store.enabled = false;
     }
 

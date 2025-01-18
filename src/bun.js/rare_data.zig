@@ -314,7 +314,7 @@ pub fn boringEngine(rare: *RareData) *BoringSSL.ENGINE {
 }
 
 pub fn stderr(rare: *RareData) *Blob.Store {
-    bun.Analytics.Features.@"Bun.stderr" += 1;
+    bun.analytics.Features.@"Bun.stderr" += 1;
     return rare.stderr_store orelse brk: {
         var mode: bun.Mode = 0;
         const fd = if (Environment.isWindows) FDImpl.fromUV(2).encode() else bun.STDERR_FD;
@@ -346,7 +346,7 @@ pub fn stderr(rare: *RareData) *Blob.Store {
 }
 
 pub fn stdout(rare: *RareData) *Blob.Store {
-    bun.Analytics.Features.@"Bun.stdout" += 1;
+    bun.analytics.Features.@"Bun.stdout" += 1;
     return rare.stdout_store orelse brk: {
         var mode: bun.Mode = 0;
         const fd = if (Environment.isWindows) FDImpl.fromUV(1).encode() else bun.STDOUT_FD;
@@ -376,7 +376,7 @@ pub fn stdout(rare: *RareData) *Blob.Store {
 }
 
 pub fn stdin(rare: *RareData) *Blob.Store {
-    bun.Analytics.Features.@"Bun.stdin" += 1;
+    bun.analytics.Features.@"Bun.stdin" += 1;
     return rare.stdin_store orelse brk: {
         var mode: bun.Mode = 0;
         const fd = if (Environment.isWindows) FDImpl.fromUV(0).encode() else bun.STDIN_FD;

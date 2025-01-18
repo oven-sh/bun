@@ -108,7 +108,7 @@ pub const LifecycleScriptSubprocess = struct {
     }
 
     pub fn spawnNextScript(this: *LifecycleScriptSubprocess, next_script_index: u8) !void {
-        bun.Analytics.Features.lifecycle_scripts += 1;
+        bun.analytics.Features.lifecycle_scripts += 1;
 
         if (!this.has_incremented_alive_count) {
             this.has_incremented_alive_count = true;

@@ -25,7 +25,7 @@ const SourceMap = @import("./sourcemap/sourcemap.zig");
 const windows = std.os.windows;
 const Output = bun.Output;
 const Global = bun.Global;
-const Features = bun.Analytics.Features;
+const Features = bun.analytics.Features;
 const debug = std.debug;
 
 /// Set this to false if you want to disable all uses of this panic handler.
@@ -879,18 +879,18 @@ pub fn printMetadata(writer: anytype) !void {
 
     try writer.writeAll(metadata_version_line);
     {
-        const platform = bun.Analytics.GenerateHeader.GeneratePlatform.forOS();
+        const platform = bun.analytics.GenerateHeader.GeneratePlatform.forOS();
         const cpu_features = CPUFeatures.get();
         if (bun.Environment.isLinux and !bun.Environment.isMusl) {
             const version = gnu_get_libc_version() orelse "";
-            const kernel_version = bun.Analytics.GenerateHeader.GeneratePlatform.kernelVersion();
+            const kernel_version = bun.analytics.GenerateHeader.GeneratePlatform.kernelVersion();
             if (platform.os == .wsl) {
                 try writer.print("WSL Kernel v{d}.{d}.{d} | glibc v{s}\n", .{ kernel_version.major, kernel_version.minor, kernel_version.patch, bun.sliceTo(version, 0) });
             } else {
                 try writer.print("Linux Kernel v{d}.{d}.{d} | glibc v{s}\n", .{ kernel_version.major, kernel_version.minor, kernel_version.patch, bun.sliceTo(version, 0) });
             }
         } else if (bun.Environment.isLinux and bun.Environment.isMusl) {
-            const kernel_version = bun.Analytics.GenerateHeader.GeneratePlatform.kernelVersion();
+            const kernel_version = bun.analytics.GenerateHeader.GeneratePlatform.kernelVersion();
             try writer.print("Linux Kernel v{d}.{d}.{d} | musl\n", .{ kernel_version.major, kernel_version.minor, kernel_version.patch });
         } else if (bun.Environment.isMac) {
             try writer.print("macOS v{s}\n", .{platform.version});
@@ -920,7 +920,7 @@ pub fn printMetadata(writer: anytype) !void {
             }
         }
     }
-    try writer.print("\n{}", .{bun.Analytics.Features.formatter()});
+    try writer.print("\n{}", .{bun.analytics.Features.formatter()});
 
     if (bun.use_mimalloc) {
         var elapsed_msecs: usize = 0;
@@ -1760,7 +1760,7 @@ pub const js_bindings = struct {
     }
 
     pub fn jsGetFeaturesAsVLQ(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const bits = bun.Analytics.packedFeatures();
+        const bits = bun.analytics.packedFeatures();
         var buf = std.BoundedArray(u8, 16){};
         writeU64AsTwoVLQs(buf.writer(), @bitCast(bits)) catch {
             // there is definitely enough space in the bounded array
@@ -1772,7 +1772,7 @@ pub const js_bindings = struct {
 
     pub fn jsGetFeatureData(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const obj = JSValue.createEmptyObject(global, 5);
-        const list = bun.Analytics.packed_features_list;
+        const list = bun.analytics.packed_features_list;
         const array = JSValue.createEmptyArray(global, list.len);
         for (list, 0..) |feature, i| {
             array.putIndex(global, @intCast(i), bun.String.static(feature).toJS(global));

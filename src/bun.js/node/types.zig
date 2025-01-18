@@ -1919,23 +1919,23 @@ pub const Dirent = struct {
         const path = try path_js.toBunString2(global);
         errdefer path.deref();
 
-        const kind = try type_js.toInt32(global);
-        switch (kind) {
+        const kind = type_js.toInt32();
+        const kind_enum: Kind = switch (kind) {
             // these correspond to the libuv constants
             else => .unknown,
             1 => .file,
             2 => .directory,
             3 => .sym_link,
-            4 => .fifo,
+            4 => .named_pipe,
             5 => .unix_domain_socket,
             6 => .character_device,
             7 => .block_device,
-        }
+        };
 
         return Dirent.new(.{
             .name = name,
             .path = path,
-            .kind = kind,
+            .kind = kind_enum,
         });
     }
 

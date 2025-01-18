@@ -197,6 +197,8 @@ pub const NodeJSFS = struct {
     pub const watch = callSync(.watch);
     pub const watchFile = callSync(.watchFile);
     pub const unwatchFile = callSync(.unwatchFile);
+    // pub const statfs = callAsync(.statfs);
+    // pub const statfsSync = callSync(.statfs);
 };
 
 pub fn createBinding(globalObject: *JSC.JSGlobalObject) JSC.JSValue {

@@ -37,7 +37,7 @@ Or for a cross-platform solution, using the `bun exec` syntax.
 $ bun exec 'FOO=helloworld bun run dev'
 ```
 
-Scripts from a `package.json` called with `bun run` will automatically use the `bun exec` syntax on Windows so they will be natively cross-platform when it comes to variable definition.
+On Windows, `package.json` scripts called with `bun run` will automatically use the **bun shell**, making the following also cross-platform.
 ```json
 "scripts": {
   "dev": "NODE_ENV=development bun --watch  app.ts",

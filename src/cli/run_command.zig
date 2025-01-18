@@ -1263,6 +1263,7 @@ pub const RunCommand = struct {
     }
 
     fn _bootAndHandleError(ctx: Command.Context, path: string) bool {
+        Global.configureAllocator(.{ .long_running = true });
         Run.boot(ctx, ctx.allocator.dupe(u8, path) catch return false) catch |err| {
             ctx.log.print(Output.errorWriter()) catch {};
 
@@ -1308,8 +1309,23 @@ pub const RunCommand = struct {
             should_force_run_direct = true;
         }
         if (should_force_run_direct) {
-            log("Resolved to: `{s}`", .{target_name});
-            return _bootAndHandleError(ctx, target_name);
+            const cwd = bun.getcwd(&path_buf) catch |e| {
+                Output.prettyErrorln("<r><red>error<r>: Failed to get CWD due to error: <b>{s}<r>", .{
+                    @errorName(e),
+                });
+                return false;
+            };
+            path_buf[cwd.len] = std.fs.path.sep_posix;
+            var parts = [_]string{target_name};
+            const file_path = resolve_path.joinAbsStringBuf(
+                path_buf[0 .. cwd.len + 1],
+                &path_buf2,
+                &parts,
+                .auto,
+            );
+            log("Resolved to: `{s}`", .{file_path});
+            const out_path = ctx.allocator.dupe(u8, file_path) catch unreachable;
+            return _bootAndHandleError(ctx, out_path);
         }
 
         // setup

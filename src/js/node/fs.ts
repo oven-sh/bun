@@ -177,7 +177,7 @@ var access = function access(path, mode, callback) {
       callback = options;
       options = undefined;
     }
-    console.log({options});
+    console.log({ options });
 
     ensureCallback(callback);
     fs.rm(path, options).then(nullcallback(callback), callback);
@@ -364,7 +364,7 @@ var access = function access(path, mode, callback) {
       callback ||= position || length || offsetOrOptions;
       ensureCallback(callback);
 
-      if (typeof offsetOrOptions === 'object') {
+      if (typeof offsetOrOptions === "object") {
         ({
           offset: offsetOrOptions = 0,
           length = buffer.byteLength - offsetOrOptions,
@@ -617,7 +617,9 @@ readv[kCustomPromisifiedSymbol] = promises.readv;
 const statWatchers = new Map();
 function getValidatedPath(p) {
   if (p instanceof URL) return Bun.fileURLToPath(p);
-  if (typeof p !== "string") throw new TypeError("Path must be a string or URL.");
+  if (typeof p !== "string") {
+    p += "";
+  }
   return require("node:path").resolve(p);
 }
 function watchFile(filename, options, listener) {

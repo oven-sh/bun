@@ -301,7 +301,7 @@ pub const RunCommand = struct {
 
         if (!use_system_shell) {
             const mini = bun.JSC.MiniEventLoop.initGlobal(env);
-            const code = bun.shell.Interpreter.initAndRunFromSource(ctx, mini, name, copy_script.items) catch |err| {
+            const code = bun.shell.Interpreter.initAndRunFromSource(ctx, mini, name, copy_script.items, cwd) catch |err| {
                 if (!silent) {
                     Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
                 }
@@ -1424,6 +1424,10 @@ pub const RunCommand = struct {
         if (root_dir_info.enclosing_package_json) |package_json| {
             if (package_json.scripts) |scripts| {
                 if (scripts.get(script_name_to_search)) |script_content| {
+                    const package_json_path = root_dir_info.enclosing_package_json.?.source.path.text;
+                    const package_json_dir = strings.withoutTrailingSlash(strings.withoutSuffixComptime(package_json_path, "package.json"));
+                    log("Running in dir `{s}`", .{package_json_dir});
+
                     // allocate enough to hold "post${scriptname}"
                     var temp_script_buffer = try std.fmt.allocPrint(ctx.allocator, "ppre{s}", .{script_name_to_search});
                     defer ctx.allocator.free(temp_script_buffer);
@@ -1434,7 +1438,7 @@ pub const RunCommand = struct {
                             ctx.allocator,
                             prescript,
                             temp_script_buffer[1..],
-                            this_transpiler.fs.top_level_dir,
+                            package_json_dir,
                             this_transpiler.env,
                             &.{},
                             ctx.debug.silent,
@@ -1448,7 +1452,7 @@ pub const RunCommand = struct {
                             ctx.allocator,
                             script_content,
                             script_name_to_search,
-                            this_transpiler.fs.top_level_dir,
+                            package_json_dir,
                             this_transpiler.env,
                             passthrough,
                             ctx.debug.silent,
@@ -1464,7 +1468,7 @@ pub const RunCommand = struct {
                             ctx.allocator,
                             postscript,
                             temp_script_buffer,
-                            this_transpiler.fs.top_level_dir,
+                            package_json_dir,
                             this_transpiler.env,
                             &.{},
                             ctx.debug.silent,

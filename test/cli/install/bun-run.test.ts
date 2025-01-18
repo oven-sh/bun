@@ -649,3 +649,96 @@ describe("should handle run case", () => {
     });
   }
 });
+
+describe("should run scripts from the project root (#16169)", async () => {
+  const dir = tempDirWithFiles("test", {
+    "run_here": {
+      "myscript.ts": "console.log('successful run')",
+      "package.json": JSON.stringify({
+        scripts: { "sample": "pwd", "runscript": "bun myscript.ts" },
+      }),
+      "dont_run_in_here": {
+        "runme.ts": "console.log('do run this script')",
+      },
+    },
+  });
+
+  it("outside", () => {
+    const run_outside = spawnSync({
+      cmd: [bunExe(), "run", "sample"],
+      cwd: dir + "/run_here",
+      env: bunEnv,
+    });
+    expect(run_outside.stdout.toString()).toContain("run_here");
+    expect(run_outside.stdout.toString()).not.toContain("dont_run_in_here");
+    expect(run_outside.exitCode).toBe(0);
+  });
+
+  it("inside", () => {
+    const run_inside = spawnSync({
+      cmd: [bunExe(), "run", "sample"],
+      cwd: dir + "/run_here/dont_run_in_here",
+      env: bunEnv,
+    });
+    expect(run_inside.stdout.toString()).toContain("run_here");
+    expect(run_inside.stdout.toString()).not.toContain("dont_run_in_here");
+    expect(run_inside.exitCode).toBe(0);
+  });
+
+  it("inside --shell=bun", () => {
+    const run_inside = spawnSync({
+      cmd: [bunExe(), "--shell=bun", "run", "sample"],
+      cwd: dir + "/run_here/dont_run_in_here",
+      env: bunEnv,
+    });
+    expect(run_inside.stdout.toString()).toContain("run_here");
+    expect(run_inside.stdout.toString()).not.toContain("dont_run_in_here");
+    expect(run_inside.exitCode).toBe(0);
+  });
+
+  it("inside script", () => {
+    const run_inside = spawnSync({
+      cmd: [bunExe(), "run", "runme.ts"],
+      cwd: dir + "/run_here/dont_run_in_here",
+      env: bunEnv,
+    });
+    expect(run_inside.stdout.toString()).toContain("do run this script");
+    expect(run_inside.exitCode).toBe(0);
+  });
+
+  it("inside wrong script", () => {
+    const run_inside = spawnSync({
+      cmd: [bunExe(), "run", "myscript.ts"],
+      cwd: dir + "/run_here/dont_run_in_here",
+      env: bunEnv,
+    });
+    const stderr = run_inside.stderr.toString();
+    if (stderr.includes("myscript.ts") && stderr.includes("EACCES")) {
+      // for some reason on musl, the run_here folder is in $PATH
+      // 'error: Failed to run "myscript.ts" due to:\nEACCES: run_here/myscript.ts: Permission denied (posix_spawn())'
+    } else {
+      expect(stderr).toBe('error: Script not found "myscript.ts"\n');
+    }
+    expect(run_inside.exitCode).toBe(1);
+  });
+
+  it("outside 2", () => {
+    const run_outside_script = spawnSync({
+      cmd: [bunExe(), "runscript"],
+      cwd: dir + "/run_here",
+      env: bunEnv,
+    });
+    expect(run_outside_script.stdout.toString()).toBe("successful run\n");
+    expect(run_outside_script.exitCode).toBe(0);
+  });
+
+  it("inside 2", () => {
+    const run_inside_script = spawnSync({
+      cmd: [bunExe(), "runscript"],
+      cwd: dir + "/run_here/dont_run_in_here",
+      env: bunEnv,
+    });
+    expect(run_inside_script.stdout.toString()).toBe("successful run\n");
+    expect(run_inside_script.exitCode).toBe(0);
+  });
+});

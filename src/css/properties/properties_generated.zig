@@ -6951,7 +6951,8 @@ pub const Property = union(PropertyIdTag) {
             .@"mask-box-image-width" => |*v| css.generic.eql(Rect(BorderImageSideWidth), &v[0], &v[0]) and v[1].eq(rhs.@"mask-box-image-width"[1]),
             .@"mask-box-image-outset" => |*v| css.generic.eql(Rect(LengthOrNumber), &v[0], &v[0]) and v[1].eq(rhs.@"mask-box-image-outset"[1]),
             .@"mask-box-image-repeat" => |*v| css.generic.eql(BorderImageRepeat, &v[0], &v[0]) and v[1].eq(rhs.@"mask-box-image-repeat"[1]),
-            .all, .unparsed => true,
+            .unparsed => |*u| u.eql(&rhs.unparsed),
+            .all => true,
             .custom => |*c| c.eql(&rhs.custom),
         };
     }

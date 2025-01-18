@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { hideFromStackTrace } from "harness";
+import { hideFromStackTrace, bunExe, bunEnv } from "harness";
+import { join } from "path";
 
 describe("Bun.Transpiler", () => {
   const transpiler = new Bun.Transpiler({
@@ -312,6 +313,13 @@ describe("Bun.Transpiler", () => {
       exp("F<{}>()\nclass F<T> {}", "F();\n\nclass F {\n}");
 
       exp("f<{}>()\nfunction f<T>() {}", "let f = function() {\n};\nf()");
+    });
+
+    it("malformed enums", () => {
+      const err = ts.expectParseError;
+
+      err("enum Foo { [2]: 'hi' }", 'Expected identifier but found "["');
+      err("enum [] { a }", 'Expected identifier but found "["');
     });
 
     // TODO: fix all the cases that report generic "Parse error"
@@ -3425,4 +3433,34 @@ describe("await can only be used inside an async function message", () => {
   it("in arrow function with expression body", () => {
     assertError(`const foo = () => await bar();`, false);
   });
+});
+
+it("does not crash with 9 comments and typescript type skipping", () => {
+  const cmd = [bunExe(), "build", "--minify-identifiers", join(import.meta.dir, "fixtures", "9-comments.ts")];
+  const { stdout, stderr, exitCode } = Bun.spawnSync({
+    cmd,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  expect(stderr.toString()).toBe("");
+  expect(stdout.toString()).toContain("success!");
+  expect(exitCode).toBe(0);
+});
+
+it("runtime transpiler stack overflows", async () => {
+  expect(async () => await import("./fixtures/lots-of-for-loop.js")).toThrow(`Maximum call stack size exceeded`);
+});
+
+it("Bun.Transpiler.transformSync stack overflows", async () => {
+  const code = await Bun.file(join(import.meta.dir, "fixtures", "lots-of-for-loop.js")).text();
+  const transpiler = new Bun.Transpiler();
+  expect(() => transpiler.transformSync(code)).toThrow(`Maximum call stack size exceeded`);
+});
+
+it("Bun.Transpiler.transform stack overflows", async () => {
+  const code = await Bun.file(join(import.meta.dir, "fixtures", "lots-of-for-loop.js")).text();
+  const transpiler = new Bun.Transpiler();
+  expect(async () => await transpiler.transform(code)).toThrow(`Maximum call stack size exceeded`);
 });

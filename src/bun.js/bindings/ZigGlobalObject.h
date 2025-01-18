@@ -53,6 +53,7 @@ class GlobalInternals;
 #include "BunCommonStrings.h"
 #include "BunHttp2CommonStrings.h"
 #include "BunGlobalScope.h"
+#include <js_native_api.h>
 
 namespace WebCore {
 class WorkerGlobalScope;
@@ -72,8 +73,8 @@ namespace Zig {
 
 class JSCStackTrace;
 
-using JSDOMStructureMap = HashMap<const JSC::ClassInfo*, JSC::WriteBarrier<JSC::Structure>>;
-using DOMGuardedObjectSet = HashSet<WebCore::DOMGuardedObject*>;
+using JSDOMStructureMap = UncheckedKeyHashMap<const JSC::ClassInfo*, JSC::WriteBarrier<JSC::Structure>>;
+using DOMGuardedObjectSet = UncheckedKeyHashSet<WebCore::DOMGuardedObject*>;
 
 #define ZIG_GLOBAL_OBJECT_DEFINED
 
@@ -210,6 +211,11 @@ public:
     JSC::JSValue HTTPSResponseSinkPrototype() const { return m_JSHTTPSResponseSinkClassStructure.prototypeInitializedOnMainThread(this); }
     JSC::JSValue JSReadableHTTPSResponseSinkControllerPrototype() const { return m_JSHTTPSResponseControllerPrototype.getInitializedOnMainThread(this); }
 
+    JSC::Structure* NetworkSinkStructure() const { return m_JSNetworkSinkClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* NetworkSink() { return m_JSNetworkSinkClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue NetworkSinkPrototype() const { return m_JSNetworkSinkClassStructure.prototypeInitializedOnMainThread(this); }
+    JSC::JSValue JSReadableNetworkSinkControllerPrototype() const { return m_JSFetchTaskletChunkedRequestControllerPrototype.getInitializedOnMainThread(this); }
+
     JSC::Structure* JSBufferListStructure() const { return m_JSBufferListClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* JSBufferList() { return m_JSBufferListClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue JSBufferListPrototype() const { return m_JSBufferListClassStructure.prototypeInitializedOnMainThread(this); }
@@ -329,8 +335,14 @@ public:
         Bun__BodyValueBufferer__onResolveStream,
         Bun__onResolveEntryPointResult,
         Bun__onRejectEntryPointResult,
+        Bun__FetchTasklet__onRejectRequestStream,
+        Bun__FetchTasklet__onResolveRequestStream,
+        Bun__S3UploadStream__onRejectRequestStream,
+        Bun__S3UploadStream__onResolveRequestStream,
+        Bun__FileStreamWrapper__onRejectRequestStream,
+        Bun__FileStreamWrapper__onResolveRequestStream,
     };
-    static constexpr size_t promiseFunctionsSize = 24;
+    static constexpr size_t promiseFunctionsSize = 30;
 
     static PromiseFunctions promiseHandlerID(SYSV_ABI EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1));
 
@@ -386,6 +398,10 @@ public:
     // When a napi module initializes on dlopen, we need to know what the value is
     mutable JSC::WriteBarrier<Unknown> m_pendingNapiModuleAndExports[2];
 
+    // This is the result of dlopen()ing a napi module.
+    // We will add it to the resulting napi value.
+    void* m_pendingNapiModuleDlopenHandle = nullptr;
+
     // The handle scope where all new NAPI values will be created. You must not pass any napi_values
     // back to a NAPI function without putting them in the handle scope, as the NAPI function may
     // move them off the stack which will cause them to get collected if not in the handle scope.
@@ -435,7 +451,7 @@ public:
     // This increases the cache hit rate for JSC::VM's SourceProvider cache
     // It also avoids an extra allocation for the SourceProvider
     // The key is a pointer to the source code
-    WTF::HashMap<uintptr_t, Ref<JSC::SourceProvider>> sourceProviderMap;
+    WTF::UncheckedKeyHashMap<uintptr_t, Ref<JSC::SourceProvider>> sourceProviderMap;
     size_t reloadCount = 0;
 
     void reload();
@@ -463,8 +479,12 @@ public:
 
     LazyProperty<JSGlobalObject, JSObject> m_processEnvObject;
 
+    LazyProperty<JSGlobalObject, Structure> m_JSS3FileStructure;
+    LazyProperty<JSGlobalObject, Structure> m_S3ErrorStructure;
+
     JSObject* cryptoObject() const { return m_cryptoObject.getInitializedOnMainThread(this); }
     JSObject* JSDOMFileConstructor() const { return m_JSDOMFileConstructor.getInitializedOnMainThread(this); }
+
     Bun::CommonStrings& commonStrings() { return m_commonStrings; }
     Bun::Http2CommonStrings& http2CommonStrings() { return m_http2_commongStrings; }
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
@@ -504,11 +524,14 @@ public:
     LazyClassStructure m_JSFileSinkClassStructure;
     LazyClassStructure m_JSHTTPResponseSinkClassStructure;
     LazyClassStructure m_JSHTTPSResponseSinkClassStructure;
+    LazyClassStructure m_JSNetworkSinkClassStructure;
+
     LazyClassStructure m_JSStringDecoderClassStructure;
     LazyClassStructure m_NapiClassStructure;
     LazyClassStructure m_callSiteStructure;
     LazyClassStructure m_JSBufferClassStructure;
     LazyClassStructure m_NodeVMScriptClassStructure;
+    LazyClassStructure m_JSX509CertificateClassStructure;
 
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.
@@ -533,6 +556,7 @@ public:
     LazyProperty<JSGlobalObject, JSMap> m_esmRegistryMap;
     LazyProperty<JSGlobalObject, JSObject> m_JSArrayBufferControllerPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_JSHTTPSResponseControllerPrototype;
+    LazyProperty<JSGlobalObject, JSObject> m_JSFetchTaskletChunkedRequestControllerPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_JSFileSinkControllerPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_subtleCryptoObject;
     LazyProperty<JSGlobalObject, Structure> m_JSHTTPResponseController;
@@ -554,6 +578,7 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_importMetaObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_asyncBoundFunctionStructure;
     LazyProperty<JSGlobalObject, JSC::JSObject> m_JSDOMFileConstructor;
+
     LazyProperty<JSGlobalObject, Structure> m_JSCryptoKey;
     LazyProperty<JSGlobalObject, Structure> m_NapiExternalStructure;
     LazyProperty<JSGlobalObject, Structure> m_NapiPrototypeStructure;
@@ -572,6 +597,17 @@ public:
     LazyProperty<JSGlobalObject, CustomGetterSetter> m_lazyStackCustomGetterSetter;
 
     bool hasOverridenModuleResolveFilenameFunction = false;
+
+    // Almost all NAPI functions should set error_code to the status they're returning right before
+    // they return it
+    napi_extended_error_info m_lastNapiErrorInfo = {
+        .error_message = "",
+        // Not currently used by Bun -- always nullptr
+        .engine_reserved = nullptr,
+        // Not currently used by Bun -- always zero
+        .engine_error_code = 0,
+        .error_code = napi_ok,
+    };
 
 private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);

@@ -44,11 +44,18 @@ var has_printed_message = false;
 var panicking = std.atomic.Value(u8).init(0);
 
 // Locked to avoid interleaving panic messages from multiple threads.
-var panic_mutex = std.Thread.Mutex{};
+// TODO: I don't think it's safe to lock/unlock a mutex inside a signal handler.
+var panic_mutex = bun.Mutex{};
 
 /// Counts how many times the panic handler is invoked by this thread.
 /// This is used to catch and handle panics triggered by the panic handler.
 threadlocal var panic_stage: usize = 0;
+
+threadlocal var inside_native_plugin: ?[*:0]const u8 = null;
+
+export fn CrashHandler__setInsideNativePlugin(name: ?[*:0]const u8) callconv(.C) void {
+    inside_native_plugin = name;
+}
 
 /// This can be set by various parts of the codebase to indicate a broader
 /// action being taken. It is printed when a crash happens, which can help
@@ -60,7 +67,9 @@ threadlocal var panic_stage: usize = 0;
 pub threadlocal var current_action: ?Action = null;
 
 var before_crash_handlers: std.ArrayListUnmanaged(struct { *anyopaque, *const OnBeforeCrash }) = .{};
-var before_crash_handlers_mutex: std.Thread.Mutex = .{};
+
+// TODO: I don't think it's safe to lock/unlock a mutex inside a signal handler.
+var before_crash_handlers_mutex: bun.Mutex = .{};
 
 const CPUFeatures = @import("./bun.js/bindings/CPUFeatures.zig").CPUFeatures;
 
@@ -226,6 +235,18 @@ pub fn crashHandler(
 
                     writer.writeAll("=" ** 60 ++ "\n") catch std.posix.abort();
                     printMetadata(writer) catch std.posix.abort();
+
+                    if (inside_native_plugin) |name| {
+                        const native_plugin_name = name;
+                        const fmt =
+                            \\
+                            \\Bun has encountered a crash while running the <red><d>"{s}"<r> native plugin.
+                            \\
+                            \\This indicates either a bug in the native plugin or in Bun.
+                            \\
+                        ;
+                        writer.print(Output.prettyFmt(fmt, true), .{native_plugin_name}) catch std.posix.abort();
+                    }
                 } else {
                     if (Output.enable_ansi_colors) {
                         writer.writeAll(Output.prettyFmt("<red>", true)) catch std.posix.abort();
@@ -308,7 +329,17 @@ pub fn crashHandler(
                         } else {
                             writer.writeAll(Output.prettyFmt(": ", true)) catch std.posix.abort();
                         }
-                        if (reason == .out_of_memory) {
+                        if (inside_native_plugin) |name| {
+                            const native_plugin_name = name;
+                            writer.print(Output.prettyFmt(
+                                \\Bun has encountered a crash while running the <red><d>"{s}"<r> native plugin.
+                                \\
+                                \\To send a redacted crash report to Bun's team,
+                                \\please file a GitHub issue using the link below:
+                                \\
+                                \\
+                            , true), .{native_plugin_name}) catch std.posix.abort();
+                        } else if (reason == .out_of_memory) {
                             writer.writeAll(
                                 \\Bun has ran out of memory.
                                 \\
@@ -943,7 +974,7 @@ fn waitForOtherThreadToFinishPanicking() void {
 
         // Sleep forever without hammering the CPU
         var futex = std.atomic.Value(u32).init(0);
-        while (true) std.Thread.Futex.wait(&futex, 0);
+        while (true) bun.Futex.waitForever(&futex, 0);
         comptime unreachable;
     }
 }
@@ -959,7 +990,7 @@ pub fn sleepForeverIfAnotherThreadIsCrashing() void {
     if (panicking.load(.acquire) > 0) {
         // Sleep forever without hammering the CPU
         var futex = std.atomic.Value(u32).init(0);
-        while (true) std.Thread.Futex.wait(&futex, 0);
+        while (true) bun.Futex.waitForever(&futex, 0);
         comptime unreachable;
     }
 }
@@ -1449,63 +1480,70 @@ fn crash() noreturn {
 
 pub var verbose_error_trace = false;
 
-fn handleErrorReturnTraceExtra(err: anyerror, maybe_trace: ?*std.builtin.StackTrace, comptime is_root: bool) void {
+noinline fn coldHandleErrorReturnTrace(err_int_workaround_for_zig_ccall_bug: std.meta.Int(.unsigned, @bitSizeOf(anyerror)), trace: *std.builtin.StackTrace, comptime is_root: bool) void {
+    @setCold(true);
+    const err = @errorFromInt(err_int_workaround_for_zig_ccall_bug);
+
+    // The format of the panic trace is slightly different in debug
+    // builds Mainly, we demangle the backtrace immediately instead
+    // of using a trace string.
+    //
+    // To make the release-mode behavior easier to demo, debug mode
+    // checks for this CLI flag.
+    const is_debug = bun.Environment.isDebug and check_flag: {
+        for (bun.argv) |arg| {
+            if (bun.strings.eqlComptime(arg, "--debug-crash-handler-use-trace-string")) {
+                break :check_flag false;
+            }
+        }
+        break :check_flag true;
+    };
+
+    if (is_debug) {
+        if (is_root) {
+            if (verbose_error_trace) {
+                Output.note("Release build will not have this trace by default:", .{});
+            }
+        } else {
+            Output.note(
+                "caught error.{s}:",
+                .{@errorName(err)},
+            );
+        }
+        Output.flush();
+        dumpStackTrace(trace.*);
+    } else {
+        const ts = TraceString{
+            .trace = trace,
+            .reason = .{ .zig_error = err },
+            .action = .view_trace,
+        };
+        if (is_root) {
+            Output.prettyErrorln(
+                \\
+                \\To send a redacted crash report to Bun's team,
+                \\please file a GitHub issue using the link below:
+                \\
+                \\ <cyan>{}<r>
+                \\
+            ,
+                .{ts},
+            );
+        } else {
+            Output.prettyErrorln(
+                "<cyan>trace<r>: error.{s}: <d>{}<r>",
+                .{ @errorName(err), ts },
+            );
+        }
+    }
+}
+
+inline fn handleErrorReturnTraceExtra(err: anyerror, maybe_trace: ?*std.builtin.StackTrace, comptime is_root: bool) void {
     if (!builtin.have_error_return_tracing) return;
     if (!verbose_error_trace and !is_root) return;
 
     if (maybe_trace) |trace| {
-        // The format of the panic trace is slightly different in debug
-        // builds Mainly, we demangle the backtrace immediately instead
-        // of using a trace string.
-        //
-        // To make the release-mode behavior easier to demo, debug mode
-        // checks for this CLI flag.
-        const is_debug = bun.Environment.isDebug and check_flag: {
-            for (bun.argv) |arg| {
-                if (bun.strings.eqlComptime(arg, "--debug-crash-handler-use-trace-string")) {
-                    break :check_flag false;
-                }
-            }
-            break :check_flag true;
-        };
-
-        if (is_debug) {
-            if (is_root) {
-                if (verbose_error_trace) {
-                    Output.note("Release build will not have this trace by default:", .{});
-                }
-            } else {
-                Output.note(
-                    "caught error.{s}:",
-                    .{@errorName(err)},
-                );
-            }
-            Output.flush();
-            dumpStackTrace(trace.*);
-        } else {
-            const ts = TraceString{
-                .trace = trace,
-                .reason = .{ .zig_error = err },
-                .action = .view_trace,
-            };
-            if (is_root) {
-                Output.prettyErrorln(
-                    \\
-                    \\To send a redacted crash report to Bun's team,
-                    \\please file a GitHub issue using the link below:
-                    \\
-                    \\ <cyan>{}<r>
-                    \\
-                ,
-                    .{ts},
-                );
-            } else {
-                Output.prettyErrorln(
-                    "<cyan>trace<r>: error.{s}: <d>{}<r>",
-                    .{ @errorName(err), ts },
-                );
-            }
-        }
+        coldHandleErrorReturnTrace(@intFromError(err), trace, is_root);
     }
 }
 
@@ -1525,6 +1563,7 @@ const stdDumpStackTrace = debug.dumpStackTrace;
 /// Version of the standard library dumpStackTrace that has some fallbacks for
 /// cases where such logic fails to run.
 pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
+    Output.flush();
     const stderr = std.io.getStdErr().writer();
     if (!bun.Environment.isDebug) {
         // debug symbols aren't available, lets print a tracestring
@@ -1611,6 +1650,13 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
     defer alloc.free(proc.stdout);
     stderr.writeAll(proc.stdout) catch return;
     stderr.writeAll(proc.stderr) catch return;
+}
+
+pub fn dumpCurrentStackTrace(first_address: ?usize) void {
+    var addrs: [32]usize = undefined;
+    var stack: std.builtin.StackTrace = .{ .index = 0, .instruction_addresses = &addrs };
+    std.debug.captureStackTrace(first_address, &stack);
+    dumpStackTrace(stack);
 }
 
 /// A variant of `std.builtin.StackTrace` that stores its data within itself

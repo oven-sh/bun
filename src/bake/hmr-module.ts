@@ -8,13 +8,18 @@ export type ExportsCallbackFunction = (new_exports: any) => void;
 
 export const enum State {
   Loading,
-  Boundary,
+  Ready,
   Error,
 }
 
 export const enum LoadModuleType {
   AssertPresent,
   UserDynamic,
+}
+
+interface DepEntry {
+  _callback: ExportsCallbackFunction;
+  _expectedImports: string[] | undefined;
 }
 
 /**
@@ -33,7 +38,8 @@ export class HotModule<E = any> {
   _import_meta: ImportMeta | undefined = undefined;
   _cached_failure: any = undefined;
   // modules that import THIS module
-  _deps: Map<HotModule, ExportsCallbackFunction | undefined> = new Map();
+  _deps: Map<HotModule, DepEntry | undefined> = new Map();
+  _onDispose: HotDisposeFunction[] | undefined = undefined;
 
   constructor(id: Id) {
     this.id = id;
@@ -41,18 +47,27 @@ export class HotModule<E = any> {
 
   require(id: Id, onReload?: ExportsCallbackFunction) {
     const mod = loadModule(id, LoadModuleType.UserDynamic);
-    mod._deps.set(this, onReload);
+    mod._deps.set(this, onReload ? { _callback: onReload, _expectedImports: undefined } : undefined);
     return mod.exports;
   }
 
-  importSync(id: Id, onReload?: ExportsCallbackFunction) {
+  importSync(id: Id, onReload?: ExportsCallbackFunction, expectedImports?: string[]) {
     const mod = loadModule(id, LoadModuleType.AssertPresent);
-    // insert into the map if not present
-    mod._deps.set(this, onReload);
+    mod._deps.set(this, onReload ? { _callback: onReload, _expectedImports: expectedImports } : undefined);
     const { exports, __esModule } = mod;
-    return __esModule ? exports : (mod._ext_exports ??= { ...exports, default: exports });
+    const object = __esModule ? exports : (mod._ext_exports ??= { ...exports, default: exports });
+
+    if (expectedImports && mod._state === State.Ready) {
+      for (const key of expectedImports) {
+        if (!(key in object)) {
+          throw new SyntaxError(`The requested module '${id}' does not provide an export named '${key}'`);
+        }
+      }
+    }
+    return object;
   }
 
+  /// Equivalent to `import()` in ES modules
   async dynamicImport(specifier: string, opts?: ImportCallOptions) {
     const mod = loadModule(specifier, LoadModuleType.UserDynamic);
     // insert into the map if not present
@@ -76,7 +91,81 @@ if (side === "server") {
 }
 
 function initImportMeta(m: HotModule): ImportMeta {
-  throw new Error("TODO: import meta object");
+  return {
+    url: `bun://${m.id}`,
+    main: false,
+    // @ts-ignore
+    get hot() {
+      const hot = new Hot(m);
+      Object.defineProperty(this, "hot", { value: hot });
+      return hot;
+    },
+  };
+}
+
+type HotAcceptFunction = (esmExports: any | void) => void;
+type HotArrayAcceptFunction = (esmExports: (any | void)[]) => void;
+type HotDisposeFunction = (data: any) => void;
+type HotEventHandler = (data: any) => void;
+
+class Hot {
+  private _module: HotModule;
+
+  data = {};
+
+  constructor(module: HotModule) {
+    this._module = module;
+  }
+
+  accept(
+    arg1: string | readonly string[] | HotAcceptFunction,
+    arg2: HotAcceptFunction | HotArrayAcceptFunction | undefined,
+  ) {
+    console.warn("TODO: implement ImportMetaHot.accept (called from " + JSON.stringify(this._module.id) + ")");
+  }
+
+  decline() {} // Vite: "This is currently a noop and is there for backward compatibility"
+
+  dispose(cb: HotDisposeFunction) {
+    (this._module._onDispose ??= []).push(cb);
+  }
+
+  prune(cb: HotDisposeFunction) {
+    throw new Error("TODO: implement ImportMetaHot.prune");
+  }
+
+  invalidate() {
+    throw new Error("TODO: implement ImportMetaHot.invalidate");
+  }
+
+  on(event: string, cb: HotEventHandler) {
+    if (isUnsupportedViteEventName(event)) {
+      throw new Error(`Unsupported event name: ${event}`);
+    }
+
+    throw new Error("TODO: implement ImportMetaHot.on");
+  }
+
+  off(event: string, cb: HotEventHandler) {
+    throw new Error("TODO: implement ImportMetaHot.off");
+  }
+
+  send(event: string, cb: HotEventHandler) {
+    throw new Error("TODO: implement ImportMetaHot.send");
+  }
+}
+
+function isUnsupportedViteEventName(str: string) {
+  return (
+    str === "vite:beforeUpdate" ||
+    str === "vite:afterUpdate" ||
+    str === "vite:beforeFullReload" ||
+    str === "vite:beforePrune" ||
+    str === "vite:invalidate" ||
+    str === "vite:error" ||
+    str === "vite:ws:disconnect" ||
+    str === "vite:ws:connect"
+  );
 }
 
 /**
@@ -107,6 +196,10 @@ export function loadModule<T = any>(key: Id, type: LoadModuleType): HotModule<T>
   try {
     registry.set(key, mod);
     load(mod);
+    mod._state = State.Ready;
+    mod._deps.forEach((entry, dep) => {
+      entry?._callback(mod.exports);
+    });
   } catch (err) {
     console.error(err);
     mod._cached_failure = err;
@@ -121,11 +214,12 @@ export const getModule = registry.get.bind(registry);
 export function replaceModule(key: Id, load: ModuleLoadFunction) {
   const module = registry.get(key);
   if (module) {
+    module._onDispose?.forEach(cb => cb(null));
     module.exports = {};
     load(module);
     const { exports } = module;
     for (const updater of module._deps.values()) {
-      updater?.(exports);
+      updater?._callback?.(exports);
     }
   }
 }
@@ -155,12 +249,14 @@ export function replaceModules(modules: any) {
 }
 
 export const serverManifest = {};
-export const clientManifest = {};
+export const ssrManifest = {};
+
+export let onServerSideReload: (() => Promise<void>) | null = null;
 
 if (side === "server") {
   const server_module = new HotModule("bun:bake/server");
   server_module.__esModule = true;
-  server_module.exports = { serverManifest, clientManifest };
+  server_module.exports = { serverManifest, ssrManifest, actionManifest: null };
   registry.set(server_module.id, server_module);
 }
 
@@ -174,7 +270,9 @@ if (side === "client") {
   const server_module = new HotModule("bun:bake/client");
   server_module.__esModule = true;
   server_module.exports = {
-    bundleRouteForDevelopment: async () => {},
+    onServerSideReload: async cb => {
+      onServerSideReload = cb;
+    },
   };
   registry.set(server_module.id, server_module);
 }

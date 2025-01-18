@@ -53,8 +53,8 @@ pub const PublishCommand = struct {
 
             normalized_pkg_info: string,
 
-            publish_script: if (directory_publish) ?[]const u8 else void = if (directory_publish) null else {},
-            postpublish_script: if (directory_publish) ?[]const u8 else void = if (directory_publish) null else {},
+            publish_script: if (directory_publish) ?[]const u8 else void = if (directory_publish) null,
+            postpublish_script: if (directory_publish) ?[]const u8 else void = if (directory_publish) null,
             script_env: if (directory_publish) *DotEnv.Loader else void,
 
             const FromTarballError = OOM || error{
@@ -281,11 +281,10 @@ pub const PublishCommand = struct {
                 manager: *PackageManager,
             ) FromWorkspaceError!Context(directory_publish) {
                 var lockfile: Lockfile = undefined;
-                const load_from_disk_result = lockfile.loadFromDisk(
+                const load_from_disk_result = lockfile.loadFromCwd(
                     manager,
                     manager.allocator,
                     manager.log,
-                    manager.options.lockfile_path,
                     false,
                 );
 
@@ -441,6 +440,8 @@ pub const PublishCommand = struct {
 
         if (manager.options.do.run_scripts) {
             const abs_workspace_path: string = strings.withoutTrailingSlash(strings.withoutSuffixComptime(manager.original_package_json_path, "package.json"));
+            try context.script_env.map.put("npm_command", "publish");
+
             if (context.publish_script) |publish_script| {
                 _ = Run.runPackageScriptForeground(
                     context.command_ctx,
@@ -682,8 +683,7 @@ pub const PublishCommand = struct {
         // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
         // deleting the entire line
         const original_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (comptime Environment.isWindows)
-            bun.win32.unsetStdioModeFlags(0, bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT) catch null
-        else {};
+            bun.win32.unsetStdioModeFlags(0, bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT) catch null;
 
         defer if (comptime Environment.isWindows) {
             if (original_mode) |mode| {

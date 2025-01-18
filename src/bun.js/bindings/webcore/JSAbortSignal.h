@@ -43,6 +43,8 @@ public:
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
     static AbortSignal* toWrapped(JSC::VM&, JSC::JSValue);
 
+    static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
+
     DECLARE_INFO;
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)

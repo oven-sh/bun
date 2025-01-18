@@ -7,7 +7,10 @@
 /// Version 8: Fix for generated symbols
 /// Version 9: String printing changes
 /// Version 10: Constant folding for ''.charCodeAt(n)
-const expected_version = 10;
+/// Version 11: Fix \uFFFF printing regression
+/// Version 12: "use strict"; makes it CommonJS if we otherwise don't know which one to pick.
+/// Version 13: Hoist `import.meta.require` definition, see #15738
+const expected_version = 13;
 
 const bun = @import("root").bun;
 const std = @import("std");

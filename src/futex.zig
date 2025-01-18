@@ -1,182 +1,142 @@
-//! Futex is a mechanism used to block (`wait`) and unblock (`wake`) threads using a 32bit memory address as hints.
-//! Blocking a thread is acknowledged only if the 32bit memory address is equal to a given value.
-//! This check helps avoid block/unblock deadlocks which occur if a `wake()` happens before a `wait()`.
-//! Using Futex, other Thread synchronization primitives can be built which efficiently wait for cross-thread events or signals.
-
-// This is copy-pasted from Zig's source code to fix an issue with linking on macOS Catalina and earlier.
+//! This is a copy-pasta of std.Thread.Futex, except without `unreachable`
+//! A mechanism used to block (`wait`) and unblock (`wake`) threads using a
+//! 32bit memory address as hints.
+//!
+//! Blocking a thread is acknowledged only if the 32bit memory address is equal
+//! to a given value. This check helps avoid block/unblock deadlocks which
+//! occur if a `wake()` happens before a `wait()`.
+//!
+//! Using Futex, other Thread synchronization primitives can be built which
+//! efficiently wait for cross-thread events or signals.
 
 const std = @import("std");
-const bun = @import("root").bun;
 const builtin = @import("builtin");
 const Futex = @This();
-
-const target = builtin.target;
-const single_threaded = builtin.single_threaded;
-
+const windows = std.os.windows;
+const linux = std.os.linux;
+const c = std.c;
+const bun = @import("root").bun;
 const assert = bun.assert;
-const testing = std.testing;
-
-const Atomic = std.atomic.Value;
-const spinLoopHint = std.atomic.spinLoopHint;
+const atomic = std.atomic;
 
 /// Checks if `ptr` still contains the value `expect` and, if so, blocks the caller until either:
 /// - The value at `ptr` is no longer equal to `expect`.
 /// - The caller is unblocked by a matching `wake()`.
-/// - The caller is unblocked spuriously by an arbitrary internal signal.
-///
-/// If `timeout` is provided, and the caller is blocked for longer than `timeout` nanoseconds`, `error.TimedOut` is returned.
+/// - The caller is unblocked spuriously ("at random").
+/// - The caller blocks for longer than the given timeout. In which case, `error.Timeout` is returned.
 ///
 /// The checking of `ptr` and `expect`, along with blocking the caller, is done atomically
 /// and totally ordered (sequentially consistent) with respect to other wait()/wake() calls on the same `ptr`.
-pub fn wait(ptr: *const Atomic(u32), expect: u32, timeout: ?u64) error{TimedOut}!void {
-    if (single_threaded) {
-        // check whether the caller should block
-        if (ptr.raw != expect) {
-            return;
-        }
+pub fn wait(ptr: *const atomic.Value(u32), expect: u32, timeout_ns: ?u64) error{Timeout}!void {
+    @setCold(true);
 
-        // There are no other threads which could notify the caller on single_threaded.
-        // Therefore a wait() without a timeout would block indefinitely.
-        const timeout_ns = timeout orelse {
-            @panic("deadlock");
-        };
-
-        // Simulate blocking with the timeout knowing that:
-        // - no other thread can change the ptr value
-        // - no other thread could unblock us if we waiting on the ptr
-        std.time.sleep(timeout_ns);
-        return error.TimedOut;
-    }
-
-    // Avoid calling into the OS for no-op waits()
-    if (timeout) |timeout_ns| {
-        if (timeout_ns == 0) {
+    // Avoid calling into the OS for no-op timeouts.
+    if (timeout_ns) |t| {
+        if (t == 0) {
             if (ptr.load(.seq_cst) != expect) return;
-            return error.TimedOut;
+            return error.Timeout;
         }
     }
 
-    return OsFutex.wait(ptr, expect, timeout);
+    return Impl.wait(ptr, expect, timeout_ns);
 }
 
-/// Unblocks at most `num_waiters` callers blocked in a `wait()` call on `ptr`.
-/// `num_waiters` of 1 unblocks at most one `wait(ptr, ...)` and `maxInt(u32)` unblocks effectively all `wait(ptr, ...)`.
-pub fn wake(ptr: *const Atomic(u32), num_waiters: u32) void {
-    if (single_threaded) return;
-    if (num_waiters == 0) return;
+pub fn waitForever(ptr: *const atomic.Value(u32), expect: u32) void {
+    @setCold(true);
 
-    return OsFutex.wake(ptr, num_waiters);
+    while (true) {
+        Impl.wait(ptr, expect, null) catch |err| switch (err) {
+            // Shouldn't happen, but people can override system calls sometimes.
+            error.Timeout => continue,
+        };
+        break;
+    }
 }
 
-const OsFutex = if (target.os.tag == .windows)
-    WindowsFutex
-else if (target.os.tag == .linux)
-    LinuxFutex
-else if (target.isDarwin())
-    DarwinFutex
-else if (builtin.link_libc)
-    PosixFutex
+/// Unblocks at most `max_waiters` callers blocked in a `wait()` call on `ptr`.
+pub fn wake(ptr: *const atomic.Value(u32), max_waiters: u32) void {
+    @setCold(true);
+
+    // Avoid calling into the OS if there's nothing to wake up.
+    if (max_waiters == 0) {
+        return;
+    }
+
+    Impl.wake(ptr, max_waiters);
+}
+
+const Impl = if (builtin.os.tag == .windows)
+    WindowsImpl
+else if (builtin.os.tag.isDarwin())
+    DarwinImpl
+else if (builtin.os.tag == .linux)
+    LinuxImpl
+else if (builtin.target.isWasm())
+    WasmImpl
 else
-    UnsupportedFutex;
+    UnsupportedImpl;
 
-const UnsupportedFutex = struct {
-    fn wait(ptr: *const Atomic(u32), expect: u32, timeout: ?u64) error{TimedOut}!void {
+/// We can't do @compileError() in the `Impl` switch statement above as its eagerly evaluated.
+/// So instead, we @compileError() on the methods themselves for platforms which don't support futex.
+const UnsupportedImpl = struct {
+    fn wait(ptr: *const atomic.Value(u32), expect: u32, timeout: ?u64) error{Timeout}!void {
         return unsupported(.{ ptr, expect, timeout });
     }
 
-    fn wake(ptr: *const Atomic(u32), num_waiters: u32) void {
-        return unsupported(.{ ptr, num_waiters });
+    fn wake(ptr: *const atomic.Value(u32), max_waiters: u32) void {
+        return unsupported(.{ ptr, max_waiters });
     }
 
-    fn unsupported(unused: anytype) noreturn {
-        _ = unused;
-        @compileError("Unsupported operating system: " ++ @tagName(target.os.tag));
+    fn unsupported(_: anytype) noreturn {
+        @compileError("Unsupported operating system " ++ @tagName(builtin.target.os.tag));
     }
 };
 
-const WindowsFutex = struct {
-    const windows = std.os.windows;
-
-    fn wait(ptr: *const Atomic(u32), expect: u32, timeout: ?u64) error{TimedOut}!void {
+// We use WaitOnAddress through NtDll instead of API-MS-Win-Core-Synch-l1-2-0.dll
+// as it's generally already a linked target and is autoloaded into all processes anyway.
+const WindowsImpl = struct {
+    fn wait(ptr: *const atomic.Value(u32), expect: u32, timeout: ?u64) error{Timeout}!void {
         var timeout_value: windows.LARGE_INTEGER = undefined;
         var timeout_ptr: ?*const windows.LARGE_INTEGER = null;
 
         // NTDLL functions work with time in units of 100 nanoseconds.
-        // Positive values for timeouts are absolute time while negative is relative.
-        if (timeout) |timeout_ns| {
+        // Positive values are absolute deadlines while negative values are relative durations.
+        if (timeout) |delay| {
+            timeout_value = @as(windows.LARGE_INTEGER, @intCast(delay / 100));
+            timeout_value = -timeout_value;
             timeout_ptr = &timeout_value;
-            timeout_value = -@as(windows.LARGE_INTEGER, @intCast(timeout_ns / 100));
         }
 
-        switch (windows.ntdll.RtlWaitOnAddress(
-            @as(?*const anyopaque, @ptrCast(ptr)),
-            @as(?*const anyopaque, @ptrCast(&expect)),
+        const rc = windows.ntdll.RtlWaitOnAddress(
+            ptr,
+            &expect,
             @sizeOf(@TypeOf(expect)),
             timeout_ptr,
-        )) {
+        );
+
+        switch (rc) {
             .SUCCESS => {},
-            .TIMEOUT => return error.TimedOut,
-            else => unreachable,
+            .TIMEOUT => {
+                assert(timeout != null);
+                return error.Timeout;
+            },
+            else => @panic("Unexpected RtlWaitOnAddress() return code"),
         }
     }
 
-    fn wake(ptr: *const Atomic(u32), num_waiters: u32) void {
-        const address = @as(?*const anyopaque, @ptrCast(ptr));
-        switch (num_waiters) {
+    fn wake(ptr: *const atomic.Value(u32), max_waiters: u32) void {
+        const address: ?*const anyopaque = ptr;
+        assert(max_waiters != 0);
+
+        switch (max_waiters) {
             1 => windows.ntdll.RtlWakeAddressSingle(address),
             else => windows.ntdll.RtlWakeAddressAll(address),
         }
     }
 };
 
-const LinuxFutex = struct {
-    const linux = std.os.linux;
-
-    fn wait(ptr: *const Atomic(u32), expect: u32, timeout: ?u64) error{TimedOut}!void {
-        var ts: std.posix.timespec = undefined;
-        var ts_ptr: ?*std.posix.timespec = null;
-
-        // Futex timespec timeout is already in relative time.
-        if (timeout) |timeout_ns| {
-            ts_ptr = &ts;
-            ts.tv_sec = @as(@TypeOf(ts.tv_sec), @intCast(timeout_ns / std.time.ns_per_s));
-            ts.tv_nsec = @as(@TypeOf(ts.tv_nsec), @intCast(timeout_ns % std.time.ns_per_s));
-        }
-
-        switch (bun.C.getErrno(linux.futex_wait(
-            @as(*const i32, @ptrCast(ptr)),
-            linux.FUTEX.PRIVATE_FLAG | linux.FUTEX.WAIT,
-            @as(i32, @bitCast(expect)),
-            ts_ptr,
-        ))) {
-            .SUCCESS => {}, // notified by `wake()`
-            .INTR => {}, // spurious wakeup
-            .AGAIN => {}, // ptr.* != expect
-            .TIMEDOUT => return error.TimedOut,
-            .INVAL => {}, // possibly timeout overflow
-            .FAULT => unreachable,
-            else => unreachable,
-        }
-    }
-
-    fn wake(ptr: *const Atomic(u32), num_waiters: u32) void {
-        switch (bun.C.getErrno(linux.futex_wake(
-            @as(*const i32, @ptrCast(ptr)),
-            linux.FUTEX.PRIVATE_FLAG | linux.FUTEX.WAKE,
-            std.math.cast(i32, num_waiters) orelse std.math.maxInt(i32),
-        ))) {
-            .SUCCESS => {}, // successful wake up
-            .INVAL => {}, // invalid futex_wait() on ptr done elsewhere
-            .FAULT => {}, // pointer became invalid while doing the wake
-            else => unreachable,
-        }
-    }
-};
-
-const DarwinFutex = struct {
-    const darwin = std.c;
-
-    fn wait(ptr: *const Atomic(u32), expect: u32, timeout: ?u64) error{TimedOut}!void {
+const DarwinImpl = struct {
+    fn wait(ptr: *const atomic.Value(u32), expect: u32, timeout: ?u64) error{Timeout}!void {
         // Darwin XNU 7195.50.7.100.1 introduced __ulock_wait2 and migrated code paths (notably pthread_cond_t) towards it:
         // https://github.com/apple/darwin-xnu/commit/d4061fb0260b3ed486147341b72468f836ed6c8f#diff-08f993cc40af475663274687b7c326cc6c3031e0db3ac8de7b24624610616be6
         //
@@ -185,218 +145,160 @@ const DarwinFutex = struct {
         //
         // ulock_wait() uses 32-bit micro-second timeouts where 0 = INFINITE or no-timeout
         // ulock_wait2() uses 64-bit nano-second timeouts (with the same convention)
+        const supports_ulock_wait2 = builtin.target.os.version_range.semver.min.major >= 11;
+
         var timeout_ns: u64 = 0;
-        if (timeout) |timeout_value| {
-            // This should be checked by the caller.
-            assert(timeout_value != 0);
-            timeout_ns = timeout_value;
+        if (timeout) |delay| {
+            assert(delay != 0); // handled by timedWait()
+            timeout_ns = delay;
         }
-        const addr = @as(*const anyopaque, @ptrCast(ptr));
-        const flags = darwin.UL_COMPARE_AND_WAIT | darwin.ULF_NO_ERRNO;
+
         // If we're using `__ulock_wait` and `timeout` is too big to fit inside a `u32` count of
         // micro-seconds (around 70min), we'll request a shorter timeout. This is fine (users
         // should handle spurious wakeups), but we need to remember that we did so, so that
-        // we don't return `TimedOut` incorrectly. If that happens, we set this variable to
+        // we don't return `Timeout` incorrectly. If that happens, we set this variable to
         // true so that we we know to ignore the ETIMEDOUT result.
         var timeout_overflowed = false;
+
+        const addr: *const anyopaque = ptr;
+        const flags = c.UL_COMPARE_AND_WAIT | c.ULF_NO_ERRNO;
         const status = blk: {
-            const timeout_us = cast: {
-                const timeout_u32 = std.math.cast(u32, timeout_ns / std.time.ns_per_us);
-                timeout_overflowed = timeout_u32 == null;
-                break :cast timeout_u32 orelse std.math.maxInt(u32);
+            if (supports_ulock_wait2) {
+                break :blk c.__ulock_wait2(flags, addr, expect, timeout_ns, 0);
+            }
+
+            const timeout_us = std.math.cast(u32, timeout_ns / std.time.ns_per_us) orelse overflow: {
+                timeout_overflowed = true;
+                break :overflow std.math.maxInt(u32);
             };
-            break :blk darwin.__ulock_wait(flags, addr, expect, timeout_us);
+
+            break :blk c.__ulock_wait(flags, addr, expect, timeout_us);
         };
 
         if (status >= 0) return;
-        switch (@as(std.posix.E, @enumFromInt(-status))) {
+        switch (@as(c.E, @enumFromInt(-status))) {
+            // Wait was interrupted by the OS or other spurious signalling.
             .INTR => {},
-            // Address of the futex is paged out. This is unlikely, but possible in theory, and
+            // Address of the futex was paged out. This is unlikely, but possible in theory, and
             // pthread/libdispatch on darwin bother to handle it. In this case we'll return
             // without waiting, but the caller should retry anyway.
             .FAULT => {},
-            .TIMEDOUT => if (!timeout_overflowed) return error.TimedOut,
-            else => unreachable,
+            // Only report Timeout if we didn't have to cap the timeout
+            .TIMEDOUT => {
+                assert(timeout != null);
+                if (!timeout_overflowed) return error.Timeout;
+            },
+            else => @panic("Unexpected __ulock_wait() return code"),
         }
     }
 
-    fn wake(ptr: *const Atomic(u32), num_waiters: u32) void {
-        var flags: u32 = darwin.UL_COMPARE_AND_WAIT | darwin.ULF_NO_ERRNO;
-        if (num_waiters > 1) {
-            flags |= darwin.ULF_WAKE_ALL;
-        }
+    fn wake(ptr: *const atomic.Value(u32), max_waiters: u32) void {
+        const default_flags: u32 = c.UL_COMPARE_AND_WAIT | c.ULF_NO_ERRNO;
+        const flags: u32 = default_flags | (if (max_waiters > 1) c.ULF_WAKE_ALL else @as(u32, 0));
 
         while (true) {
-            const addr = @as(*const anyopaque, @ptrCast(ptr));
-            const status = darwin.__ulock_wake(flags, addr, 0);
+            const addr: *const anyopaque = ptr;
+            const status = c.__ulock_wake(flags, addr, 0);
 
             if (status >= 0) return;
-            switch (@as(std.posix.E, @enumFromInt(-status))) {
+            switch (@as(c.E, @enumFromInt(-status))) {
                 .INTR => continue, // spurious wake()
-                .FAULT => continue, // address of the lock was paged out
+                .FAULT => @panic("__ulock_wake() returned EFAULT unexpectedly"), // __ulock_wake doesn't generate EFAULT according to darwin pthread_cond_t
                 .NOENT => return, // nothing was woken up
-                .ALREADY => unreachable, // only for ULF_WAKE_THREAD
-                else => unreachable,
+                .ALREADY => @panic("__ulock_wake() returned EALREADY unexpectedly"), // only for ULF_WAKE_THREAD
+                else => @panic("Unexpected __ulock_wake() return code"),
             }
         }
     }
 };
 
-const PosixFutex = struct {
-    fn wait(ptr: *const Atomic(u32), expect: u32, timeout: ?u64) error{TimedOut}!void {
-        const address = @intFromPtr(ptr);
-        const bucket = Bucket.from(address);
-        var waiter: List.Node = undefined;
-
-        {
-            assert(std.c.pthread_mutex_lock(&bucket.mutex) == .SUCCESS);
-            defer assert(std.c.pthread_mutex_unlock(&bucket.mutex) == .SUCCESS);
-
-            if (ptr.load(.seq_cst) != expect) {
-                return;
+// https://man7.org/linux/man-pages/man2/futex.2.html
+const LinuxImpl = struct {
+    fn wait(ptr: *const atomic.Value(u32), expect: u32, timeout: ?u64) error{Timeout}!void {
+        const ts: linux.timespec = if (timeout) |timeout_ns|
+            .{
+                .tv_sec = @intCast(timeout_ns / std.time.ns_per_s),
+                .tv_nsec = @intCast(timeout_ns % std.time.ns_per_s),
             }
+        else
+            undefined;
 
-            waiter.data = .{ .address = address };
-            bucket.list.prepend(&waiter);
-        }
+        const rc = linux.futex_wait(
+            @as(*const i32, @ptrCast(&ptr.raw)),
+            linux.FUTEX.PRIVATE_FLAG | linux.FUTEX.WAIT,
+            @as(i32, @bitCast(expect)),
+            if (timeout != null) &ts else null,
+        );
 
-        var timed_out = false;
-        waiter.data.wait(timeout) catch {
-            defer if (!timed_out) {
-                waiter.data.wait(null) catch unreachable;
-            };
-
-            assert(std.c.pthread_mutex_lock(&bucket.mutex) == .SUCCESS);
-            defer assert(std.c.pthread_mutex_unlock(&bucket.mutex) == .SUCCESS);
-
-            if (waiter.data.address == address) {
-                timed_out = true;
-                bucket.list.remove(&waiter);
-            }
-        };
-
-        waiter.data.deinit();
-        if (timed_out) {
-            return error.TimedOut;
+        switch (linux.E.init(rc)) {
+            .SUCCESS => {}, // notified by `wake()`
+            .INTR => {}, // spurious wakeup
+            .AGAIN => {}, // ptr.* != expect
+            .TIMEDOUT => {
+                assert(timeout != null);
+                return error.Timeout;
+            },
+            .INVAL => {}, // possibly timeout overflow
+            .FAULT => @panic("futex_wait() returned EFAULT unexpectedly"), // ptr was invalid
+            else => |err| bun.Output.panic("Unexpected futex_wait() return code: {d} - {s}", .{ rc, std.enums.tagName(linux.E, err) orelse "unknown" }),
         }
     }
 
-    fn wake(ptr: *const Atomic(u32), num_waiters: u32) void {
-        const address = @intFromPtr(ptr);
-        const bucket = Bucket.from(address);
-        var can_notify = num_waiters;
+    fn wake(ptr: *const atomic.Value(u32), max_waiters: u32) void {
+        const rc = linux.futex_wake(
+            @as(*const i32, @ptrCast(&ptr.raw)),
+            linux.FUTEX.PRIVATE_FLAG | linux.FUTEX.WAKE,
+            std.math.cast(i32, max_waiters) orelse std.math.maxInt(i32),
+        );
 
-        var notified = List{};
-        defer while (notified.popFirst()) |waiter| {
-            waiter.data.notify();
-        };
+        switch (linux.E.init(rc)) {
+            .SUCCESS => {}, // successful wake up
+            .INVAL => {}, // invalid futex_wait() on ptr done elsewhere
+            .FAULT => @panic("futex_wake() returned EFAULT unexpectedly"), // pointer became invalid while doing the wake
+            else => @panic("Unexpected futex_wake() return code"),
+        }
+    }
+};
 
-        assert(std.c.pthread_mutex_lock(&bucket.mutex) == .SUCCESS);
-        defer assert(std.c.pthread_mutex_unlock(&bucket.mutex) == .SUCCESS);
-
-        var waiters = bucket.list.first;
-        while (waiters) |waiter| {
-            assert(waiter.data.address != null);
-            waiters = waiter.next;
-
-            if (waiter.data.address != address) continue;
-            if (can_notify == 0) break;
-            can_notify -= 1;
-
-            bucket.list.remove(waiter);
-            waiter.data.address = null;
-            notified.prepend(waiter);
+const WasmImpl = struct {
+    fn wait(ptr: *const atomic.Value(u32), expect: u32, timeout: ?u64) error{Timeout}!void {
+        if (!comptime std.Target.wasm.featureSetHas(builtin.target.cpu.features, .atomics)) {
+            @compileError("WASI target missing cpu feature 'atomics'");
+        }
+        const to: i64 = if (timeout) |to| @intCast(to) else -1;
+        const result = asm (
+            \\local.get %[ptr]
+            \\local.get %[expected]
+            \\local.get %[timeout]
+            \\memory.atomic.wait32 0
+            \\local.set %[ret]
+            : [ret] "=r" (-> u32),
+            : [ptr] "r" (&ptr.raw),
+              [expected] "r" (@as(i32, @bitCast(expect))),
+              [timeout] "r" (to),
+        );
+        switch (result) {
+            0 => {}, // ok
+            1 => {}, // expected =! loaded
+            2 => return error.Timeout,
+            else => @panic("Unexpected memory.atomic.wait32() return code"),
         }
     }
 
-    const Bucket = struct {
-        mutex: std.c.pthread_mutex_t = .{},
-        list: List = .{},
-
-        var buckets = [_]Bucket{.{}} ** 64;
-
-        fn from(address: usize) *Bucket {
-            return &buckets[address % buckets.len];
+    fn wake(ptr: *const atomic.Value(u32), max_waiters: u32) void {
+        if (!comptime std.Target.wasm.featureSetHas(builtin.target.cpu.features, .atomics)) {
+            @compileError("WASI target missing cpu feature 'atomics'");
         }
-    };
-
-    const List = std.TailQueue(struct {
-        address: ?usize,
-        state: State = .empty,
-        cond: std.c.pthread_cond_t = .{},
-        mutex: std.c.pthread_mutex_t = .{},
-
-        const Self = @This();
-        const State = enum {
-            empty,
-            waiting,
-            notified,
-        };
-
-        fn deinit(self: *Self) void {
-            _ = std.c.pthread_cond_destroy(&self.cond);
-            _ = std.c.pthread_mutex_destroy(&self.mutex);
-        }
-
-        fn wait(self: *Self, timeout: ?u64) error{TimedOut}!void {
-            assert(std.c.pthread_mutex_lock(&self.mutex) == .SUCCESS);
-            defer assert(std.c.pthread_mutex_unlock(&self.mutex) == .SUCCESS);
-
-            switch (self.state) {
-                .empty => self.state = .waiting,
-                .waiting => unreachable,
-                .notified => return,
-            }
-
-            var ts: std.posix.timespec = undefined;
-            var ts_ptr: ?*const std.posix.timespec = null;
-            if (timeout) |timeout_ns| {
-                ts_ptr = &ts;
-                std.posix.clock_gettime(std.posix.CLOCK_REALTIME, &ts) catch unreachable;
-                ts.tv_sec += @as(@TypeOf(ts.tv_sec), @intCast(timeout_ns / std.time.ns_per_s));
-                ts.tv_nsec += @as(@TypeOf(ts.tv_nsec), @intCast(timeout_ns % std.time.ns_per_s));
-                if (ts.tv_nsec >= std.time.ns_per_s) {
-                    ts.tv_sec += 1;
-                    ts.tv_nsec -= std.time.ns_per_s;
-                }
-            }
-
-            while (true) {
-                switch (self.state) {
-                    .empty => unreachable,
-                    .waiting => {},
-                    .notified => return,
-                }
-
-                const ts_ref = ts_ptr orelse {
-                    assert(std.c.pthread_cond_wait(&self.cond, &self.mutex) == .SUCCESS);
-                    continue;
-                };
-
-                const rc = std.c.pthread_cond_timedwait(&self.cond, &self.mutex, ts_ref);
-                switch (rc) {
-                    .SUCCESS => {},
-                    .TIMEDOUT => {
-                        self.state = .empty;
-                        return error.TimedOut;
-                    },
-                    else => unreachable,
-                }
-            }
-        }
-
-        fn notify(self: *Self) void {
-            assert(std.c.pthread_mutex_lock(&self.mutex) == .SUCCESS);
-            defer assert(std.c.pthread_mutex_unlock(&self.mutex) == .SUCCESS);
-
-            switch (self.state) {
-                .empty => self.state = .notified,
-                .waiting => {
-                    self.state = .notified;
-                    assert(std.c.pthread_cond_signal(&self.cond) == .SUCCESS);
-                },
-                .notified => unreachable,
-            }
-        }
-    });
+        assert(max_waiters != 0);
+        const woken_count = asm (
+            \\local.get %[ptr]
+            \\local.get %[waiters]
+            \\memory.atomic.notify 0
+            \\local.set %[ret]
+            : [ret] "=r" (-> u32),
+            : [ptr] "r" (&ptr.raw),
+              [waiters] "r" (max_waiters),
+        );
+        _ = woken_count; // can be 0 when linker flag 'shared-memory' is not enabled
+    }
 };

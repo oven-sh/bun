@@ -290,8 +290,6 @@ pub fn CssRuleList(comptime AtRule: type) type {
 
                         // Attempt to merge the new rule with the last rule we added.
                         var merged = false;
-                        const ZACK_REMOVE_THIS = false;
-                        _ = ZACK_REMOVE_THIS; // autofix
                         if (rules.items.len > 0 and rules.items[rules.items.len - 1] == .style) {
                             const last_style_rule = &rules.items[rules.items.len - 1].style;
                             if (mergeStyleRules(AtRule, sty, last_style_rule, context)) {

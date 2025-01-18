@@ -2,6 +2,7 @@
 import path from "path";
 import type { ClassDefinition, Field } from "./class-definitions";
 import { camelCase, pascalCase, writeIfNotChanged } from "./helpers";
+import jsclasses from "./../bun.js/bindings/js_classes";
 
 if (process.env.BUN_SILENT === "1") {
   console.log = () => {};
@@ -361,12 +362,6 @@ JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);
 `;
   }
 
-  if (obj.wantsThis) {
-    externs += `
-extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES ${classSymbolName(typeName, "_setThis")}(JSC::JSGlobalObject*, void*, JSC::EncodedJSValue);
-`;
-  }
-
   if (obj.structuredClone) {
     externs +=
       `extern JSC_CALLCONV void JSC_HOST_CALL_ATTRIBUTES ${symbolName(
@@ -462,11 +457,11 @@ void ${proto}::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 `;
 }
 
-function generatePrototypeHeader(typename) {
+function generatePrototypeHeader(typename, final = true) {
   const proto = prototypeName(typename);
 
   return `
-class ${proto} final : public JSC::JSNonFinalObject {
+class ${proto} ${final ? "final" : ""} : public JSC::JSNonFinalObject {
   public:
       using Base = JSC::JSNonFinalObject;
 
@@ -489,7 +484,7 @@ class ${proto} final : public JSC::JSNonFinalObject {
           return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
       }
 
-  private:
+  protected:
       ${proto}(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
           : Base(vm, structure)
       {
@@ -543,7 +538,7 @@ class ${name} final : public JSC::InternalFunction {
       static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES call(JSC::JSGlobalObject*, JSC::CallFrame*);
 
       DECLARE_EXPORT_INFO;
-  private:
+  protected:
       ${name}(JSC::VM& vm, JSC::Structure* structure);
       void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, ${prototypeName(typeName)}* prototype);
 };
@@ -652,13 +647,6 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
   }
 
     auto value = JSValue::encode(instance);
-${
-  obj.wantsThis
-    ? `
-    ${classSymbolName(typeName, "_setThis")}(globalObject, ptr, value);
-`
-    : ""
-}
     RELEASE_AND_RETURN(scope, value);
 }
 
@@ -923,6 +911,7 @@ function renderStaticDecls(symbolName, typeName, fields, supportsObjectCreate = 
 
   return rows.join("\n");
 }
+
 function writeBarrier(symbolName, typeName, name, cacheName) {
   return `
 
@@ -941,6 +930,7 @@ extern JSC_CALLCONV JSC::EncodedJSValue ${symbolName(typeName, name)}GetCachedVa
 
   `.trim();
 }
+
 function renderFieldsImpl(
   symbolName: (typeName: string, name: string) => string,
   typeName: string,
@@ -1190,6 +1180,24 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
   return rows.map(a => a.trim()).join("\n");
 }
 
+function allCachedValues(obj: ClassDefinition) {
+  let values = (obj.values ?? []).slice().map(name => [name, `m_${name}`]);
+  for (const name in obj.proto) {
+    let cacheName = obj.proto[name].cache;
+    if (cacheName === true) {
+      cacheName = "m_" + name;
+    } else if (cacheName) {
+      cacheName = `m_${cacheName}`;
+    }
+
+    if (cacheName) {
+      values.push([name, cacheName]);
+    }
+  }
+
+  return values;
+}
+
 var extraIncludes = [];
 function generateClassHeader(typeName, obj: ClassDefinition) {
   var { klass, proto, JSType = "ObjectType", values = [], callbacks = {}, zigOnly = false } = obj;
@@ -1206,7 +1214,7 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
     [...Object.values(klass), ...Object.values(proto)].find(a => !!a.cache)
       ? "DECLARE_VISIT_CHILDREN;\ntemplate<typename Visitor> void visitAdditionalChildren(Visitor&);\nDECLARE_VISIT_OUTPUT_CONSTRAINTS;\n"
       : "";
-  const sizeEstimator = obj.estimatedSize ? "static size_t estimatedSize(JSCell* cell, VM& vm);" : "";
+  const sizeEstimator = "static size_t estimatedSize(JSCell* cell, VM& vm);";
 
   var weakOwner = "";
   var weakInit = ``;
@@ -1247,8 +1255,10 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
     suffix += `JSC::JSValue getInternalProperties(JSC::VM &vm, JSC::JSGlobalObject *globalObject, ${name}*);`;
   }
 
+  const final = obj.final ?? true;
+
   return `
-  class ${name} final : public JSC::JSDestructibleObject {
+  class ${name}${final ? " final" : ""} : public JSC::JSDestructibleObject {
     public:
         using Base = JSC::JSDestructibleObject;
         static ${name}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
@@ -1290,6 +1300,16 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
 
         static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
         static ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(${name}, m_ctx); }
+
+        /**
+         * Estimated size of the object from Zig including the JS wrapper.
+         */
+        static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
+
+        /**
+         * Memory cost of the object from Zig, without necessarily having a JS wrapper alive.
+         */
+        static size_t memoryCost(void* ptr);
 
         void* m_ctx { nullptr };
 
@@ -1367,7 +1387,8 @@ function generateClassImpl(typeName, obj: ClassDefinition) {
     .join("\n");
 
   for (const name in callbacks) {
-    DEFINE_VISIT_CHILDREN_LIST += "\n" + `    visitor.append(thisObject->m_callback_${name});`;
+    // Use appendHidden so it doesn't show up in the heap snapshot twice.
+    DEFINE_VISIT_CHILDREN_LIST += "\n" + `    visitor.appendHidden(thisObject->m_callback_${name});`;
   }
 
   const values = (obj.values || [])
@@ -1396,6 +1417,8 @@ visitor.reportExtraMemoryVisited(size);
 }
 
 DEFINE_VISIT_CHILDREN(${name});
+
+
 
 template<typename Visitor>
 void ${name}::visitAdditionalChildren(Visitor& visitor)
@@ -1473,9 +1496,39 @@ ${name}::~${name}()
 `;
   }
 
+  if (!obj.estimatedSize && !obj.memoryCost) {
+    externs += `extern "C" const size_t ${symbolName(typeName, "ZigStructSize")};`;
+  } else if (obj.memoryCost) {
+    externs += `extern JSC_CALLCONV size_t ${symbolName(typeName, "memoryCost")}(void* ptr);`;
+  }
+
+  if (obj.memoryCost) {
+    output += `
+size_t ${name}::memoryCost(void* ptr) {
+  return ptr ? ${symbolName(typeName, "memoryCost")}(ptr) : 0;
+}
+`;
+  } else if (obj.estimatedSize) {
+    output += `
+size_t ${name}::memoryCost(void* ptr) {
+  return ptr ? ${symbolName(typeName, "estimatedSize")}(ptr) : 0;
+}
+  `;
+  } else {
+    output += `
+size_t ${name}::memoryCost(void* ptr) {
+  return ptr ? ${symbolName(typeName, "ZigStructSize")} : 0;
+}
+  `;
+  }
+
   output += `
 
-
+size_t ${name}::estimatedSize(JSC::JSCell* cell, JSC::VM& vm) {
+  auto* thisObject = jsCast<${name}*>(cell);
+  auto* wrapped = thisObject->wrapped();
+  return Base::estimatedSize(cell, vm) + ${name}::memoryCost(wrapped);
+}
 
 void ${name}::destroy(JSCell* cell)
 {
@@ -1539,17 +1592,29 @@ extern JSC_CALLCONV bool JSC_HOST_CALL_ATTRIBUTES ${typeName}__dangerouslySetPtr
   return true;
 }
 
-
 extern "C" const size_t ${typeName}__ptrOffset = ${className(typeName)}::offsetOfWrapped();
 
 void ${name}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
     auto* thisObject = jsCast<${name}*>(cell);
     if (void* wrapped = thisObject->wrapped()) {
-        // if (thisObject->scriptExecutionContext())
-        //     analyzer.setLabelForCell(cell, makeString("url ", thisObject->scriptExecutionContext()->url().string()));
+        analyzer.setWrappedObjectForCell(cell, wrapped);
     }
+
     Base::analyzeHeap(cell, analyzer);
+    ${allCachedValues(obj).length > 0 ? `auto& vm = thisObject->vm();` : ""}
+
+    ${allCachedValues(obj)
+      .map(
+        ([name, cacheName]) => `
+if (JSValue ${cacheName}Value = thisObject->${cacheName}.get()) {
+  if (${cacheName}Value.isCell()) {
+    const Identifier& id = Identifier::fromString(vm, "${name}"_s);
+    analyzer.analyzePropertyNameEdge(cell, ${cacheName}Value.asCell(), id.impl());
+  }
+}`,
+      )
+      .join("\n  ")}
 }
 
 ${
@@ -1594,7 +1659,12 @@ ${DEFINE_VISIT_CHILDREN}
 }
 
 function generateHeader(typeName, obj) {
-  return generateClassHeader(typeName, obj).trim() + "\n\n";
+  const fields = [
+    generateClassHeader(typeName, obj).trim() + "\n\n",
+    !(obj.final ?? true) ? generatePrototypeHeader(typeName, false) : null,
+  ].filter(Boolean);
+
+  return "\n" + fields.join("\n").trim();
 }
 
 function generateImpl(typeName, obj) {
@@ -1602,7 +1672,7 @@ function generateImpl(typeName, obj) {
 
   const proto = obj.proto;
   return [
-    generatePrototypeHeader(typeName),
+    (obj.final ?? true) ? generatePrototypeHeader(typeName, true) : null,
     !obj.noConstructor ? generateConstructorHeader(typeName).trim() + "\n" : null,
     generatePrototype(typeName, obj).trim(),
     !obj.noConstructor ? generateConstructorImpl(typeName, obj).trim() : null,
@@ -1620,10 +1690,10 @@ function generateZig(
     construct,
     finalize,
     noConstructor = false,
-    wantsThis = false,
     overridesToJS = false,
     estimatedSize,
     call = false,
+    memoryCost,
     values = [],
     hasPendingActivity = false,
     structuredClone = false,
@@ -1695,12 +1765,25 @@ const JavaScriptCoreBindings = struct {
 
 `;
 
+    if (memoryCost) {
+      exports.set("memoryCost", symbolName(typeName, "memoryCost"));
+      output += `
+    pub fn ${symbolName(typeName, "memoryCost")}(thisValue: *${typeName}) callconv(JSC.conv) usize {
+      return @call(.always_inline, ${typeName}.memoryCost, .{thisValue});
+    }
+  `;
+    }
+
     if (estimatedSize) {
       exports.set("estimatedSize", symbolName(typeName, "estimatedSize"));
       output += `
         pub fn ${symbolName(typeName, "estimatedSize")}(thisValue: *${typeName}) callconv(JSC.conv) usize {
           return @call(.always_inline, ${typeName}.estimatedSize, .{thisValue});
         }
+      `;
+    } else if (!memoryCost && !estimatedSize) {
+      output += `
+        export const ${symbolName(typeName, "ZigStructSize")}: usize = @sizeOf(${typeName});
       `;
     }
 
@@ -1731,20 +1814,10 @@ const JavaScriptCoreBindings = struct {
           return @as(*${typeName}, ${typeName}.constructor(globalObject, callFrame) catch |err| switch (err) {
             error.JSError => return null,
             error.OutOfMemory => {
-              globalObject.throwOutOfMemory();
+              globalObject.throwOutOfMemory() catch {};
               return null;
             },
           });
-        }
-      `;
-    }
-
-    if (construct && !noConstructor && wantsThis) {
-      exports.set("_setThis", classSymbolName(typeName, "_setThis"));
-      output += `
-        pub fn ${classSymbolName(typeName, "_setThis")}(globalObject: *JSC.JSGlobalObject, ptr: *anyopaque, this: JSC.JSValue) callconv(JSC.conv) void {
-          const real: *${typeName} = @ptrCast(@alignCast(ptr));
-          real.this_value.set(globalObject, this);
         }
       `;
     }
@@ -1754,10 +1827,7 @@ const JavaScriptCoreBindings = struct {
       output += `
         pub fn ${classSymbolName(typeName, "call")}(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
           if (comptime Environment.enable_logs) zig("${typeName}<d>({})<r>", .{callFrame});
-          return @call(.always_inline, ${typeName}.call, .{globalObject, callFrame}) catch |err| switch (err) {
-            error.JSError => .zero,
-            error.OutOfMemory => globalObject.throwOutOfMemoryValue(),
-          };
+          return @call(.always_inline, JSC.toJSHostFunction(${typeName}.call), .{globalObject, callFrame});
         }
       `;
     }
@@ -1810,10 +1880,7 @@ const JavaScriptCoreBindings = struct {
           output += `
         pub fn ${names.fn}(thisValue: *${typeName}, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame${proto[name].passThis ? ", js_this_value: JSC.JSValue" : ""}) callconv(JSC.conv) JSC.JSValue {
           if (comptime Environment.enable_logs) zig("<d>${typeName}.<r>${name}<d>({})<r>", .{callFrame});
-          return @call(.always_inline, ${typeName}.${fn}, .{thisValue, globalObject, callFrame${proto[name].passThis ? ", js_this_value" : ""}}) catch |err| switch (err) {
-            error.JSError => .zero,
-            error.OutOfMemory => globalObject.throwOutOfMemoryValue(),
-          };
+          return @call(.always_inline, JSC.toJSHostValue, .{globalObject, @call(.always_inline, ${typeName}.${fn}, .{thisValue, globalObject, callFrame${proto[name].passThis ? ", js_this_value" : ""}})});
         }
         `;
         }
@@ -1860,10 +1927,7 @@ const JavaScriptCoreBindings = struct {
           output += `
         pub fn ${names.fn}(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
           if (comptime Environment.enable_logs) JSC.markBinding(@src());
-          return @call(.always_inline, ${typeName}.${fn}, .{globalObject, callFrame}) catch |err| switch (err) {
-            error.JSError => .zero,
-            error.OutOfMemory => globalObject.throwOutOfMemoryValue(),
-          };
+          return @call(.always_inline, JSC.toJSHostFunction(${typeName}.${fn}), .{globalObject, callFrame});
         }
         `;
         }
@@ -1894,7 +1958,7 @@ const JavaScriptCoreBindings = struct {
       output += `
       pub fn ${symbolName(typeName, "onStructuredCloneDeserialize")}(globalObject: *JSC.JSGlobalObject, ptr: [*]u8, end: [*]u8) callconv(JSC.conv) JSC.JSValue {
         if (comptime Environment.enable_logs) JSC.markBinding(@src());
-        return @call(.always_inline, ${typeName}.onStructuredCloneDeserialize, .{globalObject, ptr, end});
+        return @call(.always_inline, JSC.toJSHostValue, .{ globalObject, @call(.always_inline, ${typeName}.onStructuredCloneDeserialize, .{globalObject, ptr, end}) });
       }
       `;
     } else {
@@ -2007,7 +2071,7 @@ function generateLazyClassStructureHeader(typeName, { klass = {}, proto = {}, zi
   return `
   JSC::Structure* ${className(typeName)}Structure() const { return m_${className(typeName)}.getInitializedOnMainThread(this); }
   JSC::JSObject* ${className(typeName)}Constructor() const { return m_${className(typeName)}.constructorInitializedOnMainThread(this); }
-  JSC::JSValue ${className(typeName)}Prototype() const { return m_${className(typeName)}.prototypeInitializedOnMainThread(this); }
+  JSC::JSObject* ${className(typeName)}Prototype() const { return m_${className(typeName)}.prototypeInitializedOnMainThread(this); }
   JSC::LazyClassStructure m_${className(typeName)};
     `.trim();
 }
@@ -2042,6 +2106,9 @@ const GENERATED_CLASSES_HEADER = [
 #include "root.h"
 
 namespace Zig {
+
+JSC_DECLARE_HOST_FUNCTION(jsFunctionInherits);
+
 }
 
 #include "JSDOMWrapper.h"
@@ -2084,6 +2151,7 @@ const GENERATED_CLASSES_IMPL_HEADER_PRE = `
 #include "ZigGeneratedClasses.h"
 #include "ErrorCode+List.h"
 #include "ErrorCode.h"
+#include <JavaScriptCore/HeapAnalyzer.h>
 
 #if !OS(WINDOWS)
 #define JSC_CALLCONV "C"
@@ -2107,6 +2175,30 @@ const GENERATED_CLASSES_IMPL_FOOTER = `
 } // namespace WebCore
 
 `;
+
+function jsInheritsCppImpl() {
+  return `
+${jsclasses
+  .map(v => v[1])
+  .filter(v => v?.length > 0)
+  .map((v, i) => `#include "${v}"`)
+  .join("\n")}
+
+JSC_DEFINE_HOST_FUNCTION(Zig::jsFunctionInherits, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto id = callFrame->argument(0).toInt32(globalObject);
+    auto value = callFrame->argument(1);
+    if (!value.isCell()) return JSValue::encode(jsBoolean(false));
+    auto cell = value.asCell();
+    switch (id) {
+${jsclasses
+  .map(v => v[0])
+  .map((v, i) => `    case ${i}: return JSValue::encode(jsBoolean(cell->inherits<WebCore::JS${v}>()));`)
+  .join("\n")}
+    }
+    return JSValue::encode(jsBoolean(false));
+}`;
+}
 
 function initLazyClasses(initLaterFunctions) {
   return `
@@ -2282,6 +2374,7 @@ comptime {
 
   `,
 ]);
+
 if (!process.env.ONLY_ZIG) {
   const allHeaders = classes.map(a => generateHeader(a.name, a));
   await writeIfNotChanged(`${outBase}/ZigGeneratedClasses.h`, [
@@ -2300,7 +2393,9 @@ if (!process.env.ONLY_ZIG) {
     allImpls.join("\n"),
     writeCppSerializers(classes),
     GENERATED_CLASSES_IMPL_FOOTER,
+    jsInheritsCppImpl(),
   ]);
+
   await writeIfNotChanged(
     `${outBase}/ZigGeneratedClasses+lazyStructureHeader.h`,
     classes.map(a => generateLazyClassStructureHeader(a.name, a)).join("\n"),

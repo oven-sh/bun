@@ -61,6 +61,11 @@ public:
 
     static String createPublicURL(ScriptExecutionContext&, URLRegistrable&);
 
+    size_t memoryCost() const
+    {
+        return sizeof(DOMURL) + m_url.string().sizeInBytes();
+    }
+
 private:
     static ExceptionOr<Ref<DOMURL>> create(const String& url, const URL& base);
     DOMURL(URL&& completeURL);

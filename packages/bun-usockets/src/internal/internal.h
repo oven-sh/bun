@@ -90,8 +90,8 @@ enum {
 #define POLL_TYPE_MASK (POLL_TYPE_KIND_MASK | POLL_TYPE_POLLING_MASK)
 
 /* Bun APIs implemented in Zig */
-void Bun__lock(uint32_t *lock);
-void Bun__unlock(uint32_t *lock);
+void Bun__lock(zig_mutex_t *lock);
+void Bun__unlock(zig_mutex_t *lock);
 
 struct addrinfo_request;
 struct addrinfo_result_entry {

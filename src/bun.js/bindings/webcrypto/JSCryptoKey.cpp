@@ -88,9 +88,9 @@ template<> std::optional<CryptoKey::Type> parseEnumeration<CryptoKey::Type>(JSGl
 {
     auto stringValue = value.toWTFString(&lexicalGlobalObject);
     static constexpr std::pair<ComparableASCIILiteral, CryptoKey::Type> mappings[] = {
-        { "private", CryptoKey::Type::Private },
-        { "public", CryptoKey::Type::Public },
-        { "secret", CryptoKey::Type::Secret },
+        { "private"_s, CryptoKey::Type::Private },
+        { "public"_s, CryptoKey::Type::Public },
+        { "secret"_s, CryptoKey::Type::Secret },
     };
     static constexpr SortedArrayMap enumerationMapping { mappings };
     if (auto* enumerationValue = enumerationMapping.tryGet(stringValue); LIKELY(enumerationValue))
@@ -173,6 +173,28 @@ static const HashTableValue JSCryptoKeyPrototypeTableValues[] = {
 };
 
 const ClassInfo JSCryptoKeyPrototype::s_info = { "CryptoKey"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCryptoKeyPrototype) };
+
+JSCryptoKey* JSCryptoKey::fromJS(JSGlobalObject* globalObject, JSValue value)
+{
+    if (value.inherits<JSCryptoKey>()) {
+        return jsCast<JSCryptoKey*>(value);
+    }
+
+    JSObject* object = value.getObject();
+    if (!object) {
+        return nullptr;
+    }
+
+    auto& vm = globalObject->vm();
+
+    auto& names = WebCore::builtinNames(vm);
+
+    if (auto nativeValue = object->getIfPropertyExists(globalObject, names.bunNativePtrPrivateName())) {
+        return jsDynamicCast<JSCryptoKey*>(nativeValue);
+    }
+
+    return nullptr;
+}
 
 void JSCryptoKeyPrototype::finishCreation(VM& vm)
 {

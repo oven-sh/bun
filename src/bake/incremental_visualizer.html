@@ -85,7 +85,7 @@
         const ws = new WebSocket(location.origin + "/_bun/hmr");
         ws.binaryType = "arraybuffer"; // We are expecting binary data
         ws.onopen = function () {
-          ws.send(new Uint8Array([118])); // Send 'v' byte to initiate connection
+          ws.send("sv"); // Subscribe to visualizer events
         };
         ws.onmessage = function (event) {
           decodeAndUpdate(new Uint8Array(event.data));

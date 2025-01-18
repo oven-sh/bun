@@ -1858,14 +1858,15 @@ ssl_wrapped_context_on_close(struct us_internal_ssl_socket_t *s, int code,
       (struct us_wrapped_socket_context_t *)us_internal_ssl_socket_context_ext(
           context);
 
-  if (wrapped_context->events.on_close) {
-    wrapped_context->events.on_close((struct us_socket_t *)s, code, reason);
-  }
 
   // writting here can cause the context to not be writable anymore but its the
   // user responsability to check for that
   if (wrapped_context->old_events.on_close) {
     wrapped_context->old_events.on_close((struct us_socket_t *)s, code, reason);
+  }
+
+  if (wrapped_context->events.on_close) {
+    wrapped_context->events.on_close((struct us_socket_t *)s, code, reason);
   }
 
   us_socket_context_unref(0, wrapped_context->tcp_context);
@@ -1880,14 +1881,15 @@ ssl_wrapped_context_on_writable(struct us_internal_ssl_socket_t *s) {
       (struct us_wrapped_socket_context_t *)us_internal_ssl_socket_context_ext(
           context);
 
-  if (wrapped_context->events.on_writable) {
-    wrapped_context->events.on_writable((struct us_socket_t *)s);
-  }
 
   // writting here can cause the context to not be writable anymore but its the
   // user responsability to check for that
   if (wrapped_context->old_events.on_writable) {
     wrapped_context->old_events.on_writable((struct us_socket_t *)s);
+  }
+
+  if (wrapped_context->events.on_writable) {
+    wrapped_context->events.on_writable((struct us_socket_t *)s);
   }
 
   return s;
@@ -1916,14 +1918,14 @@ ssl_wrapped_context_on_timeout(struct us_internal_ssl_socket_t *s) {
   struct us_wrapped_socket_context_t *wrapped_context =
       (struct us_wrapped_socket_context_t *)us_internal_ssl_socket_context_ext(
           context);
+  if (wrapped_context->old_events.on_timeout) {
+    wrapped_context->old_events.on_timeout((struct us_socket_t *)s);
+  }
 
   if (wrapped_context->events.on_timeout) {
     wrapped_context->events.on_timeout((struct us_socket_t *)s);
   }
 
-  if (wrapped_context->old_events.on_timeout) {
-    wrapped_context->old_events.on_timeout((struct us_socket_t *)s);
-  }
 
   return s;
 }
@@ -1935,13 +1937,12 @@ ssl_wrapped_context_on_long_timeout(struct us_internal_ssl_socket_t *s) {
   struct us_wrapped_socket_context_t *wrapped_context =
       (struct us_wrapped_socket_context_t *)us_internal_ssl_socket_context_ext(
           context);
+  if (wrapped_context->old_events.on_long_timeout) {
+    wrapped_context->old_events.on_long_timeout((struct us_socket_t *)s);
+  }
 
   if (wrapped_context->events.on_long_timeout) {
     wrapped_context->events.on_long_timeout((struct us_socket_t *)s);
-  }
-
-  if (wrapped_context->old_events.on_long_timeout) {
-    wrapped_context->old_events.on_long_timeout((struct us_socket_t *)s);
   }
 
   return s;
@@ -1954,14 +1955,13 @@ ssl_wrapped_context_on_end(struct us_internal_ssl_socket_t *s) {
   struct us_wrapped_socket_context_t *wrapped_context =
       (struct us_wrapped_socket_context_t *)us_internal_ssl_socket_context_ext(
           context);
-
-  if (wrapped_context->events.on_end) {
-    wrapped_context->events.on_end((struct us_socket_t *)s);
-  }
-
   if (wrapped_context->old_events.on_end) {
     wrapped_context->old_events.on_end((struct us_socket_t *)s);
   }
+  if (wrapped_context->events.on_end) {
+    wrapped_context->events.on_end((struct us_socket_t *)s);
+  }
+  
   return s;
 }
 
@@ -1973,13 +1973,13 @@ ssl_wrapped_on_connect_error(struct us_internal_ssl_socket_t *s, int code) {
       (struct us_wrapped_socket_context_t *)us_internal_ssl_socket_context_ext(
           context);
 
+  if (wrapped_context->old_events.on_connect_error) {
+    wrapped_context->old_events.on_connect_error((struct us_connecting_socket_t *)s, code);
+  }
   if (wrapped_context->events.on_connect_error) {
     wrapped_context->events.on_connect_error((struct us_connecting_socket_t *)s, code);
   }
 
-  if (wrapped_context->old_events.on_connect_error) {
-    wrapped_context->old_events.on_connect_error((struct us_connecting_socket_t *)s, code);
-  }
   return s;
 }
 
@@ -1990,14 +1990,14 @@ ssl_wrapped_on_socket_connect_error(struct us_internal_ssl_socket_t *s, int code
   struct us_wrapped_socket_context_t *wrapped_context =
       (struct us_wrapped_socket_context_t *)us_internal_ssl_socket_context_ext(
           context);
-
+  if (wrapped_context->old_events.on_connecting_socket_error) {
+    wrapped_context->old_events.on_connecting_socket_error((struct us_socket_t *)s, code);
+  }
   if (wrapped_context->events.on_connecting_socket_error) {
     wrapped_context->events.on_connecting_socket_error((struct us_socket_t *)s, code);
   }
 
-  if (wrapped_context->old_events.on_connecting_socket_error) {
-    wrapped_context->old_events.on_connecting_socket_error((struct us_socket_t *)s, code);
-  }
+
   return s;
 }
 
@@ -2153,6 +2153,8 @@ us_socket_context_on_socket_connect_error(
   socket->ssl_read_wants_write = 0;
   socket->fatal_error = 0;
   socket->handshake_state = HANDSHAKE_PENDING;
+  // always resume the socket
+  us_socket_resume(1, &socket->s);
   return socket;
 }
 

@@ -50,7 +50,7 @@ const ShellError = shell.ShellError;
 const ast = shell.AST;
 const SmolList = shell.SmolList;
 
-const GlobWalker = Glob.GlobWalker_(null, Glob.SyscallAccessor, true);
+const GlobWalker = Glob.BunGlobWalkerZ;
 
 const stdin_no = 0;
 const stdout_no = 1;
@@ -704,11 +704,10 @@ pub const ParsedShellScript = struct {
     }
 
     pub fn setCwd(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const arguments_ = callframe.arguments(2);
+        const arguments_ = callframe.arguments_old(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
         const str_js = arguments.nextEat() orelse {
-            globalThis.throw("$`...`.cwd(): expected a string argument", .{});
-            return .undefined;
+            return globalThis.throw("$`...`.cwd(): expected a string argument", .{});
         };
         const str = bun.String.fromJS(str_js, globalThis);
         this.cwd = str;
@@ -722,32 +721,24 @@ pub const ParsedShellScript = struct {
     }
 
     pub fn setEnv(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        var env =
-            if (this.export_env) |*env|
-        brk: {
-            env.clearRetainingCapacity();
-            break :brk env.*;
-        } else EnvMap.init(bun.default_allocator);
-        defer this.export_env = env;
-
         const value1 = callframe.argument(0);
         if (!value1.isObject()) {
-            globalThis.throwInvalidArguments("env must be an object", .{});
-            return .undefined;
+            return globalThis.throwInvalidArguments("env must be an object", .{});
         }
 
-        var object_iter = JSC.JSPropertyIterator(.{
+        var object_iter = try JSC.JSPropertyIterator(.{
             .skip_empty_name = false,
             .include_value = true,
         }).init(globalThis, value1);
         defer object_iter.deinit();
 
+        var env: EnvMap = EnvMap.init(bun.default_allocator);
         env.ensureTotalCapacity(object_iter.len);
 
         // If the env object does not include a $PATH, it must disable path lookup for argv[0]
         // PATH = "";
 
-        while (object_iter.next()) |key| {
+        while (try object_iter.next()) |key| {
             const keyslice = key.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
             var value = object_iter.value;
             if (value == .undefined) continue;
@@ -761,14 +752,17 @@ pub const ParsedShellScript = struct {
 
             env.insert(keyref, valueref);
         }
-
+        if (this.export_env) |*previous| {
+            previous.deinit();
+        }
+        this.export_env = env;
         return .undefined;
     }
 
     pub fn createParsedShellScript(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         var shargs = ShellArgs.init();
 
-        const arguments_ = callframe.arguments(2);
+        const arguments_ = callframe.arguments_old(2);
         const arguments = arguments_.slice();
         if (arguments.len < 2) {
             return globalThis.throwNotEnoughArguments("Bun.$", 2, arguments.len);
@@ -778,10 +772,7 @@ pub const ParsedShellScript = struct {
         var template_args = template_args_js.arrayIterator(globalThis);
 
         var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, shargs.arena_allocator());
-        var jsstrings = std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4) catch {
-            globalThis.throwOutOfMemory();
-            return .undefined;
-        };
+        var jsstrings = try std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4);
         defer {
             for (jsstrings.items[0..]) |bunstr| {
                 bunstr.deref();
@@ -790,12 +781,7 @@ pub const ParsedShellScript = struct {
         }
         var jsobjs = std.ArrayList(JSValue).init(shargs.arena_allocator());
         var script = std.ArrayList(u8).init(shargs.arena_allocator());
-        if (!(bun.shell.shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script) catch {
-            globalThis.throwOutOfMemory();
-            return .undefined;
-        })) {
-            return .undefined;
-        }
+        try bun.shell.shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script);
 
         var parser: ?bun.shell.Parser = null;
         var lex_result: ?shell.LexResult = null;
@@ -810,8 +796,7 @@ pub const ParsedShellScript = struct {
             if (err == shell.ParseError.Lex) {
                 assert(lex_result != null);
                 const str = lex_result.?.combineErrors(shargs.arena_allocator());
-                globalThis.throwPretty("{s}", .{str});
-                return .undefined;
+                return globalThis.throwPretty("{s}", .{str});
             }
 
             if (parser) |*p| {
@@ -819,12 +804,10 @@ pub const ParsedShellScript = struct {
                     assert(p.errors.items.len > 0);
                 }
                 const errstr = p.combineErrors();
-                globalThis.throwPretty("{s}", .{errstr});
-                return .undefined;
+                return globalThis.throwPretty("{s}", .{errstr});
             }
 
-            globalThis.throwError(err, "failed to lex/parse shell");
-            return .undefined;
+            return globalThis.throwError(err, "failed to lex/parse shell");
         };
 
         shargs.script_ast = script_ast;
@@ -1181,33 +1164,18 @@ pub const Interpreter = struct {
         }
     };
 
-    pub fn createShellInterpreter(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSValue {
+    pub fn createShellInterpreter(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const allocator = bun.default_allocator;
-        const arguments_ = callframe.arguments(3);
+        const arguments_ = callframe.arguments_old(3);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
-        const resolve = arguments.nextEat() orelse {
-            globalThis.throw("shell: expected 3 arguments, got 0", .{});
-            return .undefined;
-        };
+        const resolve = arguments.nextEat() orelse return globalThis.throw("shell: expected 3 arguments, got 0", .{});
 
-        const reject = arguments.nextEat() orelse {
-            globalThis.throw("shell: expected 3 arguments, got 0", .{});
-            return .undefined;
-        };
+        const reject = arguments.nextEat() orelse return globalThis.throw("shell: expected 3 arguments, got 0", .{});
 
-        const parsed_shell_script_js = arguments.nextEat() orelse {
-            globalThis.throw("shell: expected 3 arguments, got 0", .{});
-            return .undefined;
-        };
+        const parsed_shell_script_js = arguments.nextEat() orelse return globalThis.throw("shell: expected 3 arguments, got 0", .{});
 
-        const parsed_shell_script = parsed_shell_script_js.as(ParsedShellScript) orelse {
-            globalThis.throw("shell: expected a ParsedShellScript", .{});
-            return .undefined;
-        };
+        const parsed_shell_script = parsed_shell_script_js.as(ParsedShellScript) orelse return globalThis.throw("shell: expected a ParsedShellScript", .{});
 
         var shargs: *ShellArgs = undefined;
         var jsobjs: std.ArrayList(JSValue) = std.ArrayList(JSValue).init(allocator);
@@ -1215,10 +1183,7 @@ pub const Interpreter = struct {
         var cwd: ?bun.String = null;
         var export_env: ?EnvMap = null;
 
-        if (parsed_shell_script.args == null) {
-            globalThis.throw("shell: shell args is null, this is a bug in Bun. Please file a GitHub issue.", .{});
-            return .undefined;
-        }
+        if (parsed_shell_script.args == null) return globalThis.throw("shell: shell args is null, this is a bug in Bun. Please file a GitHub issue.", .{});
 
         parsed_shell_script.take(
             globalThis,
@@ -1249,8 +1214,7 @@ pub const Interpreter = struct {
                 if (export_env) |*ee| ee.deinit();
                 if (cwd) |*cc| cc.deref();
                 shargs.deinit();
-                throwShellErr(e, .{ .js = globalThis.bunVM().event_loop });
-                return .zero;
+                return try throwShellErr(e, .{ .js = globalThis.bunVM().event_loop });
             },
         };
 
@@ -1260,7 +1224,7 @@ pub const Interpreter = struct {
             if (cwd) |*cc| cc.deref();
             shargs.deinit();
             interpreter.finalize();
-            return .zero;
+            return error.JSError;
         }
 
         interpreter.flags.quiet = quiet;
@@ -1335,7 +1299,7 @@ pub const Interpreter = struct {
 
             var env_loader: *bun.DotEnv.Loader = env_loader: {
                 if (event_loop == .js) {
-                    break :env_loader event_loop.js.virtual_machine.bundler.env;
+                    break :env_loader event_loop.js.virtual_machine.transpiler.env;
                 }
 
                 break :env_loader event_loop.env();
@@ -1355,18 +1319,20 @@ pub const Interpreter = struct {
             break :brk export_env;
         };
 
-        var pathbuf: bun.PathBuffer = undefined;
-        const cwd: [:0]const u8 = switch (Syscall.getcwdZ(&pathbuf)) {
+        // Avoid the large stack allocation on Windows.
+        const pathbuf = bun.default_allocator.create(bun.PathBuffer) catch bun.outOfMemory();
+        defer bun.default_allocator.destroy(pathbuf);
+        const cwd: [:0]const u8 = switch (Syscall.getcwdZ(pathbuf)) {
             .result => |cwd| cwd,
             .err => |err| {
-                return .{ .err = .{ .sys = err.toSystemError() } };
+                return .{ .err = .{ .sys = err.toShellSystemError() } };
             },
         };
 
         const cwd_fd = switch (Syscall.open(cwd, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
             .result => |fd| fd,
             .err => |err| {
-                return .{ .err = .{ .sys = err.toSystemError() } };
+                return .{ .err = .{ .sys = err.toShellSystemError() } };
             },
         };
 
@@ -1380,7 +1346,7 @@ pub const Interpreter = struct {
         log("Duping stdin", .{});
         const stdin_fd = switch (if (bun.Output.Source.Stdio.isStdinNull()) bun.sys.openNullDevice() else ShellSyscall.dup(shell.STDIN_FD)) {
             .result => |fd| fd,
-            .err => |err| return .{ .err = .{ .sys = err.toSystemError() } },
+            .err => |err| return .{ .err = .{ .sys = err.toShellSystemError() } },
         };
 
         const stdin_reader = IOReader.init(stdin_fd, event_loop);
@@ -1421,7 +1387,7 @@ pub const Interpreter = struct {
         };
 
         if (cwd_) |c| {
-            if (interpreter.root_shell.changeCwdImpl(interpreter, c, true).asErr()) |e| return .{ .err = .{ .sys = e.toSystemError() } };
+            if (interpreter.root_shell.changeCwdImpl(interpreter, c, true).asErr()) |e| return .{ .err = .{ .sys = e.toShellSystemError() } };
         }
 
         return .{ .result = interpreter };
@@ -1473,8 +1439,7 @@ pub const Interpreter = struct {
             null,
         )) {
             .err => |*e| {
-                throwShellErr(e, .{ .mini = mini });
-                return 1;
+                e.throwMini();
             },
             .result => |i| i,
         };
@@ -1496,7 +1461,7 @@ pub const Interpreter = struct {
         switch (try interp.run()) {
             .err => |e| {
                 interp.deinitEverything();
-                bun.Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{}<r>", .{ std.fs.path.basename(path), e.toSystemError() });
+                bun.Output.err(e, "Failed to run script <b>{s}<r>", .{std.fs.path.basename(path)});
                 bun.Global.exit(1);
                 return 1;
             },
@@ -1508,7 +1473,7 @@ pub const Interpreter = struct {
         return code;
     }
 
-    pub fn initAndRunFromSource(ctx: bun.CLI.Command.Context, mini: *JSC.MiniEventLoop, path_for_errors: []const u8, src: []const u8) !ExitCode {
+    pub fn initAndRunFromSource(ctx: bun.CLI.Command.Context, mini: *JSC.MiniEventLoop, path_for_errors: []const u8, src: []const u8, cwd: ?[]const u8) !ExitCode {
         bun.Analytics.Features.standalone_shell += 1;
         var shargs = ShellArgs.init();
         defer shargs.deinit();
@@ -1540,11 +1505,10 @@ pub const Interpreter = struct {
             shargs,
             jsobjs,
             null,
-            null,
+            cwd,
         )) {
             .err => |*e| {
-                throwShellErr(e, .{ .mini = mini });
-                return 1;
+                e.throwMini();
             },
             .result => |i| i,
         };
@@ -1564,7 +1528,7 @@ pub const Interpreter = struct {
         switch (try interp.run()) {
             .err => |e| {
                 interp.deinitEverything();
-                bun.Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{}<r>", .{ path_for_errors, e.toSystemError() });
+                bun.Output.err(e, "Failed to run script <b>{s}<r>", .{path_for_errors});
                 bun.Global.exit(1);
                 return 1;
             },
@@ -1644,14 +1608,14 @@ pub const Interpreter = struct {
         if (this.setupIOBeforeRun().asErr()) |e| {
             defer this.deinitEverything();
             const shellerr = bun.shell.ShellErr.newSys(e);
-            throwShellErr(&shellerr, .{ .js = globalThis.bunVM().event_loop });
-            return .undefined;
+            return try throwShellErr(&shellerr, .{ .js = globalThis.bunVM().event_loop });
         }
         incrPendingActivityFlag(&this.has_pending_activity);
 
         var root = Script.init(this, &this.root_shell, &this.args.script_ast, Script.ParentPtr.init(this), this.root_io.copy());
         this.started.store(true, .seq_cst);
         root.start();
+        if (globalThis.hasException()) return error.JSError;
 
         return .undefined;
     }
@@ -1796,8 +1760,7 @@ pub const Interpreter = struct {
         defer slice.deinit();
         switch (this.root_shell.changeCwd(this, slice.slice())) {
             .err => |e| {
-                globalThis.throwValue(e.toJSC(globalThis));
-                return .undefined;
+                return globalThis.throwValue(e.toJSC(globalThis));
             },
             .result => {},
         }
@@ -1807,8 +1770,7 @@ pub const Interpreter = struct {
     pub fn setEnv(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const value1 = callframe.argument(0);
         if (!value1.isObject()) {
-            globalThis.throwInvalidArguments("env must be an object", .{});
-            return .undefined;
+            return globalThis.throwInvalidArguments("env must be an object", .{});
         }
 
         var object_iter = JSC.JSPropertyIterator(.{
@@ -2767,7 +2729,7 @@ pub const Interpreter = struct {
         }
 
         pub fn throw(this: *const State, err: *const bun.shell.ShellErr) void {
-            throwShellErr(err, this.eventLoop());
+            throwShellErr(err, this.eventLoop()) catch {}; //TODO:
         }
 
         pub fn rootIO(this: *const State) *const IO {
@@ -3441,7 +3403,7 @@ pub const Interpreter = struct {
                         closefd(pipe[0]);
                         closefd(pipe[1]);
                     }
-                    const system_err = err.toSystemError();
+                    const system_err = err.toShellSystemError();
                     this.writeFailingError("bun: {s}\n", .{system_err.message});
                     return .yield;
                 }
@@ -3461,7 +3423,7 @@ pub const Interpreter = struct {
                         const subshell_state = switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, cmd_io, .pipeline)) {
                             .result => |s| s,
                             .err => |err| {
-                                const system_err = err.toSystemError();
+                                const system_err = err.toShellSystemError();
                                 this.writeFailingError("bun: {s}\n", .{system_err.message});
                                 return .yield;
                             },
@@ -3610,31 +3572,16 @@ pub const Interpreter = struct {
                     pipe[0] = bun.FDImpl.fromUV(fds[0]).encode();
                     pipe[1] = bun.FDImpl.fromUV(fds[1]).encode();
                 } else {
-                    const fds: [2]bun.FileDescriptor = brk: {
-                        var fds_: [2]std.c.fd_t = undefined;
-                        const rc = std.c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &fds_);
-                        if (rc != 0) {
-                            return bun.sys.Maybe(void).errno(bun.sys.getErrno(rc), .socketpair);
-                        }
-
-                        var before = std.c.fcntl(fds_[0], std.posix.F.GETFL);
-
-                        const result = std.c.fcntl(fds_[0], std.posix.F.SETFL, before | bun.O.CLOEXEC);
-                        if (result == -1) {
-                            _ = bun.sys.close(bun.toFD(fds_[0]));
-                            _ = bun.sys.close(bun.toFD(fds_[1]));
-                            return Maybe(void).errno(bun.sys.getErrno(result), .fcntl);
-                        }
-
-                        if (comptime bun.Environment.isMac) {
-                            // SO_NOSIGPIPE
-                            before = 1;
-                            _ = std.c.setsockopt(fds_[0], std.posix.SOL.SOCKET, std.posix.SO.NOSIGPIPE, &before, @sizeOf(c_int));
-                        }
-
-                        break :brk .{ bun.toFD(fds_[0]), bun.toFD(fds_[1]) };
+                    const fds: [2]bun.FileDescriptor = switch (bun.sys.socketpair(
+                        std.posix.AF.UNIX,
+                        std.posix.SOCK.STREAM,
+                        0,
+                        .blocking,
+                    )) {
+                        .result => |fds| .{ bun.toFD(fds[0]), bun.toFD(fds[1]) },
+                        .err => |err| return .{ .err = err },
                     };
-                    log("socketpair() = {{{}, {}}}", .{ fds[0], fds[1] });
+
                     pipe.* = fds;
                 }
                 set_count.* += 1;
@@ -4927,15 +4874,16 @@ pub const Interpreter = struct {
                     switch (this.exec.bltn.start()) {
                         .result => {},
                         .err => |e| {
-                            this.writeFailingError("bun: {s}: {s}", .{ @tagName(this.exec.bltn.kind), e.toSystemError().message });
+                            this.writeFailingError("bun: {s}: {s}", .{ @tagName(this.exec.bltn.kind), e.toShellSystemError().message });
                             return;
                         },
                     }
                     return;
                 }
 
-                var path_buf: bun.PathBuffer = undefined;
-                const resolved = which(&path_buf, spawn_args.PATH, spawn_args.cwd, first_arg_real) orelse blk: {
+                const path_buf = bun.PathBufferPool.get();
+                defer bun.PathBufferPool.put(path_buf);
+                const resolved = which(path_buf, spawn_args.PATH, spawn_args.cwd, first_arg_real) orelse blk: {
                     if (bun.strings.eqlComptime(first_arg_real, "bun") or bun.strings.eqlComptime(first_arg_real, "bun-debug")) blk2: {
                         break :blk bun.selfExePath() catch break :blk2;
                     }
@@ -4983,23 +4931,11 @@ pub const Interpreter = struct {
                         } else if (this.base.interpreter.jsobjs[val.idx].as(JSC.WebCore.Blob)) |blob__| {
                             const blob = blob__.dupe();
                             if (this.node.redirect.stdin) {
-                                if (!spawn_args.stdio[stdin_no].extractBlob(global, .{
-                                    .Blob = blob,
-                                }, stdin_no)) {
-                                    return;
-                                }
+                                spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stdin_no) catch return;
                             } else if (this.node.redirect.stdout) {
-                                if (!spawn_args.stdio[stdin_no].extractBlob(global, .{
-                                    .Blob = blob,
-                                }, stdout_no)) {
-                                    return;
-                                }
+                                spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stdout_no) catch return;
                             } else if (this.node.redirect.stderr) {
-                                if (!spawn_args.stdio[stdin_no].extractBlob(global, .{
-                                    .Blob = blob,
-                                }, stderr_no)) {
-                                    return;
-                                }
+                                spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stderr_no) catch return;
                             }
                         } else if (JSC.WebCore.ReadableStream.fromJS(this.base.interpreter.jsobjs[val.idx], global)) |rstream| {
                             _ = rstream;
@@ -5007,26 +4943,17 @@ pub const Interpreter = struct {
                         } else if (this.base.interpreter.jsobjs[val.idx].as(JSC.WebCore.Response)) |req| {
                             req.getBodyValue().toBlobIfPossible();
                             if (this.node.redirect.stdin) {
-                                if (!spawn_args.stdio[stdin_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdin_no)) {
-                                    return;
-                                }
+                                spawn_args.stdio[stdin_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdin_no) catch return;
                             }
                             if (this.node.redirect.stdout) {
-                                if (!spawn_args.stdio[stdout_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdout_no)) {
-                                    return;
-                                }
+                                spawn_args.stdio[stdout_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdout_no) catch return;
                             }
                             if (this.node.redirect.stderr) {
-                                if (!spawn_args.stdio[stderr_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stderr_no)) {
-                                    return;
-                                }
+                                spawn_args.stdio[stderr_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stderr_no) catch return;
                             }
                         } else {
                             const jsval = this.base.interpreter.jsobjs[val.idx];
-                            global.throw(
-                                "Unknown JS value used in shell: {}",
-                                .{jsval.fmtString(global)},
-                            );
+                            global.throw("Unknown JS value used in shell: {}", .{jsval.fmtString(global)}) catch {}; // TODO: propagate
                             return;
                         }
                     },
@@ -5041,7 +4968,7 @@ pub const Interpreter = struct {
                         const flags = this.node.redirect.toFlags();
                         const redirfd = switch (ShellSyscall.openat(this.base.shell.cwd_fd, path, flags, perm)) {
                             .err => |e| {
-                                return this.writeFailingError("bun: {s}: {s}", .{ e.toSystemError().message, path });
+                                return this.writeFailingError("bun: {s}: {s}", .{ e.toShellSystemError().message, path });
                             },
                             .result => |f| f,
                         };
@@ -5632,7 +5559,7 @@ pub const Interpreter = struct {
                         const flags = node.redirect.toFlags();
                         const redirfd = switch (ShellSyscall.openat(cmd.base.shell.cwd_fd, path, flags, perm)) {
                             .err => |e| {
-                                cmd.writeFailingError("bun: {s}: {s}", .{ e.toSystemError().message, path });
+                                cmd.writeFailingError("bun: {s}: {s}", .{ e.toShellSystemError().message, path });
                                 return .yield;
                             },
                             .result => |f| f,
@@ -5675,7 +5602,7 @@ pub const Interpreter = struct {
                         } else if (interpreter.jsobjs[file.jsbuf.idx].as(JSC.WebCore.Body.Value)) |body| {
                             if ((node.redirect.stdout or node.redirect.stderr) and !(body.* == .Blob and !body.Blob.needsToReadFile())) {
                                 // TODO: Locked->stream -> file -> blob conversion via .toBlobIfPossible() except we want to avoid modifying the Response/Request if unnecessary.
-                                cmd.base.interpreter.event_loop.js.global.throw("Cannot redirect stdout/stderr to an immutable blob. Expected a file", .{});
+                                cmd.base.interpreter.event_loop.js.global.throw("Cannot redirect stdout/stderr to an immutable blob. Expected a file", .{}) catch {};
                                 return .yield;
                             }
 
@@ -5703,7 +5630,7 @@ pub const Interpreter = struct {
                         } else if (interpreter.jsobjs[file.jsbuf.idx].as(JSC.WebCore.Blob)) |blob| {
                             if ((node.redirect.stdout or node.redirect.stderr) and !blob.needsToReadFile()) {
                                 // TODO: Locked->stream -> file -> blob conversion via .toBlobIfPossible() except we want to avoid modifying the Response/Request if unnecessary.
-                                cmd.base.interpreter.event_loop.js.global.throw("Cannot redirect stdout/stderr to an immutable blob. Expected a file", .{});
+                                cmd.base.interpreter.event_loop.js.global.throw("Cannot redirect stdout/stderr to an immutable blob. Expected a file", .{}) catch {};
                                 return .yield;
                             }
 
@@ -5721,7 +5648,7 @@ pub const Interpreter = struct {
                             }
                         } else {
                             const jsval = cmd.base.interpreter.jsobjs[val.idx];
-                            cmd.base.interpreter.event_loop.js.global.throw("Unknown JS value used in shell: {}", .{jsval.fmtString(globalObject)});
+                            cmd.base.interpreter.event_loop.js.global.throw("Unknown JS value used in shell: {}", .{jsval.fmtString(globalObject)}) catch {};
                             return .yield;
                         }
                     },
@@ -5746,7 +5673,7 @@ pub const Interpreter = struct {
         }
 
         pub inline fn throw(this: *const Builtin, err: *const bun.shell.ShellErr) void {
-            this.parentCmd().base.throw(err);
+            this.parentCmd().base.throw(err) catch {};
         }
 
         pub inline fn parentCmd(this: *const Builtin) *const Cmd {
@@ -5873,12 +5800,17 @@ pub const Interpreter = struct {
         /// Error messages formatted to match bash
         fn taskErrorToString(this: *Builtin, comptime kind: Kind, err: anytype) []const u8 {
             switch (@TypeOf(err)) {
-                Syscall.Error => return switch (err.getErrno()) {
-                    bun.C.E.NOENT => this.fmtErrorArena(kind, "{s}: No such file or directory\n", .{err.path}),
-                    bun.C.E.NAMETOOLONG => this.fmtErrorArena(kind, "{s}: File name too long\n", .{err.path}),
-                    bun.C.E.ISDIR => this.fmtErrorArena(kind, "{s}: is a directory\n", .{err.path}),
-                    bun.C.E.NOTEMPTY => this.fmtErrorArena(kind, "{s}: Directory not empty\n", .{err.path}),
-                    else => this.fmtErrorArena(kind, "{s}\n", .{err.toSystemError().message.byteSlice()}),
+                Syscall.Error => {
+                    if (err.getErrorCodeTagName()) |entry| {
+                        _, const sys_errno = entry;
+                        if (bun.sys.coreutils_error_map.get(sys_errno)) |message| {
+                            if (err.path.len > 0) {
+                                return this.fmtErrorArena(kind, "{s}: {s}\n", .{ err.path, message });
+                            }
+                            return this.fmtErrorArena(kind, "{s}\n", .{message});
+                        }
+                    }
+                    return this.fmtErrorArena(kind, "unknown error {d}\n", .{err.errno});
                 },
                 JSC.SystemError => {
                     if (err.path.length() == 0) return this.fmtErrorArena(kind, "{s}\n", .{err.message.byteSlice()});
@@ -6500,7 +6432,7 @@ pub const Interpreter = struct {
                         .mtime = mtime,
                         .path = .{ .string = bun.PathString.init(filepath) },
                     };
-                    if (node_fs.utimes(args, .callback).asErr()) |err| out: {
+                    if (node_fs.utimes(args, .sync).asErr()) |err| out: {
                         if (err.getErrno() == bun.C.E.NOENT) {
                             const perm = 0o664;
                             switch (Syscall.open(filepath, bun.O.CREAT | bun.O.WRONLY, perm)) {
@@ -6509,12 +6441,12 @@ pub const Interpreter = struct {
                                     break :out;
                                 },
                                 .err => |e| {
-                                    this.err = e.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toSystemError();
+                                    this.err = e.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toShellSystemError();
                                     break :out;
                                 },
                             }
                         }
-                        this.err = err.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toSystemError();
+                        this.err = err.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toShellSystemError();
                     }
 
                     if (this.event_loop == .js) {
@@ -6904,10 +6836,10 @@ pub const Interpreter = struct {
 
                         var vtable = MkdirVerboseVTable{ .inner = this, .active = this.opts.verbose };
 
-                        switch (node_fs.mkdirRecursiveImpl(args, .callback, *MkdirVerboseVTable, &vtable)) {
+                        switch (node_fs.mkdirRecursiveImpl(args, *MkdirVerboseVTable, &vtable)) {
                             .result => {},
                             .err => |e| {
-                                this.err = e.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toSystemError();
+                                this.err = e.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toShellSystemError();
                                 std.mem.doNotOptimizeAway(&node_fs);
                             },
                         }
@@ -6917,7 +6849,7 @@ pub const Interpreter = struct {
                             .recursive = false,
                             .always_return_none = true,
                         };
-                        switch (node_fs.mkdirNonRecursive(args, .callback)) {
+                        switch (node_fs.mkdirNonRecursive(args)) {
                             .result => {
                                 if (this.opts.verbose) {
                                     this.created_directories.appendSlice(filepath[0..filepath.len]) catch bun.outOfMemory();
@@ -6925,7 +6857,7 @@ pub const Interpreter = struct {
                                 }
                             },
                             .err => |e| {
-                                this.err = e.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toSystemError();
+                                this.err = e.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toShellSystemError();
                                 std.mem.doNotOptimizeAway(&node_fs);
                             },
                         }
@@ -7230,12 +7162,13 @@ pub const Interpreter = struct {
                 }
 
                 if (this.bltn.stdout.needsIO() == null) {
-                    var path_buf: bun.PathBuffer = undefined;
+                    const path_buf = bun.PathBufferPool.get();
+                    defer bun.PathBufferPool.put(path_buf);
                     const PATH = this.bltn.parentCmd().base.shell.export_env.get(EnvStr.initSlice("PATH")) orelse EnvStr.initSlice("");
                     var had_not_found = false;
                     for (args) |arg_raw| {
                         const arg = arg_raw[0..std.mem.len(arg_raw)];
-                        const resolved = which(&path_buf, PATH.slice(), this.bltn.parentCmd().base.shell.cwdZ(), arg) orelse {
+                        const resolved = which(path_buf, PATH.slice(), this.bltn.parentCmd().base.shell.cwdZ(), arg) orelse {
                             had_not_found = true;
                             const buf = this.bltn.fmtErrorArena(.which, "{s} not found\n", .{arg});
                             _ = this.bltn.writeNoIO(.stdout, buf);
@@ -7270,10 +7203,11 @@ pub const Interpreter = struct {
                 const arg_raw = multiargs.args_slice[multiargs.arg_idx];
                 const arg = arg_raw[0..std.mem.len(arg_raw)];
 
-                var path_buf: bun.PathBuffer = undefined;
+                const path_buf = bun.PathBufferPool.get();
+                defer bun.PathBufferPool.put(path_buf);
                 const PATH = this.bltn.parentCmd().base.shell.export_env.get(EnvStr.initSlice("PATH")) orelse EnvStr.initSlice("");
 
-                const resolved = which(&path_buf, PATH.slice(), this.bltn.parentCmd().base.shell.cwdZ(), arg) orelse {
+                const resolved = which(path_buf, PATH.slice(), this.bltn.parentCmd().base.shell.cwdZ(), arg) orelse {
                     multiargs.had_not_found = true;
                     if (this.bltn.stdout.needsIO()) |safeguard| {
                         multiargs.state = .waiting_write;
@@ -8560,7 +8494,7 @@ pub const Interpreter = struct {
                                             return this.writeFailingError(buf, 1);
                                         },
                                         else => {
-                                            const sys_err = e.toSystemError();
+                                            const sys_err = e.toShellSystemError();
                                             const buf = this.bltn.fmtErrorArena(.mv, "{s}: {s}\n", .{ sys_err.path.byteSlice(), sys_err.message.byteSlice() });
                                             return this.writeFailingError(buf, 1);
                                         },
@@ -8694,7 +8628,7 @@ pub const Interpreter = struct {
                 exec.tasks_done += 1;
                 if (exec.tasks_done >= exec.task_count) {
                     if (exec.err) |err| {
-                        const e = err.toSystemError();
+                        const e = err.toShellSystemError();
                         const buf = this.bltn.fmtErrorArena(.mv, "{}: {}\n", .{ e.path, e.message });
                         _ = this.writeFailingError(buf, err.errno);
                         return;
@@ -8836,7 +8770,7 @@ pub const Interpreter = struct {
                     filepath_args: []const [*:0]const u8,
                     total_tasks: usize,
                     err: ?Syscall.Error = null,
-                    lock: std.Thread.Mutex = std.Thread.Mutex{},
+                    lock: bun.Mutex = bun.Mutex{},
                     error_signal: std.atomic.Value(bool) = .{ .raw = false },
                     output_done: std.atomic.Value(usize) = .{ .raw = 0 },
                     output_count: std.atomic.Value(usize) = .{ .raw = 0 },
@@ -9314,7 +9248,7 @@ pub const Interpreter = struct {
                 root_is_absolute: bool,
 
                 error_signal: *std.atomic.Value(bool),
-                err_mutex: bun.Lock = .{},
+                err_mutex: bun.Mutex = .{},
                 err: ?Syscall.Error = null,
 
                 event_loop: JSC.EventLoopHandle,
@@ -10817,7 +10751,7 @@ pub const Interpreter = struct {
                 src_absolute: ?[:0]const u8 = null,
                 tgt_absolute: ?[:0]const u8 = null,
                 cwd_path: [:0]const u8,
-                verbose_output_lock: std.Thread.Mutex = .{},
+                verbose_output_lock: bun.Mutex = .{},
                 verbose_output: ArrayList(u8) = ArrayList(u8).init(bun.default_allocator),
 
                 task: JSC.WorkPoolTask = .{ .callback = &runFromThreadPool },
@@ -11395,7 +11329,7 @@ pub const Interpreter = struct {
 
         pub fn onReaderError(this: *IOReader, err: bun.sys.Error) void {
             this.setReading(false);
-            this.err = err.toSystemError();
+            this.err = err.toShellSystemError();
             for (this.readers.slice()) |r| {
                 r.onReaderDone(if (this.err) |*e| brk: {
                     e.ref();
@@ -11787,7 +11721,7 @@ pub const Interpreter = struct {
 
         pub fn onError(this: *This, err__: bun.sys.Error) void {
             this.setWriting(false);
-            const ee = err__.toSystemError();
+            const ee = err__.toShellSystemError();
             this.err = ee;
             log("IOWriter(0x{x}, fd={}) onError errno={s} errmsg={} errsyscall={}", .{ @intFromPtr(this), this.fd, @tagName(ee.getErrno()), ee.message, ee.syscall });
             var seen_alloc = std.heap.stackFallback(@sizeOf(usize) * 64, bun.default_allocator);
@@ -12217,11 +12151,13 @@ inline fn fastMod(val: anytype, comptime rhs: comptime_int) @TypeOf(val) {
     return val & (rhs - 1);
 }
 
-fn throwShellErr(e: *const bun.shell.ShellErr, event_loop: JSC.EventLoopHandle) void {
-    switch (event_loop) {
+/// 'js' event loop will always return JSError
+/// 'mini' event loop will always return noreturn and exit 1
+fn throwShellErr(e: *const bun.shell.ShellErr, event_loop: JSC.EventLoopHandle) bun.JSError!noreturn {
+    return switch (event_loop) {
         .mini => e.throwMini(),
         .js => e.throwJS(event_loop.js.global),
-    }
+    };
 }
 
 pub const ReadChunkAction = enum {

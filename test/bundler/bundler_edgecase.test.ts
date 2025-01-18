@@ -186,18 +186,7 @@ describe("bundler", () => {
       NODE_ENV: "development",
     },
   });
-  itBundled("edgecase/ProcessEnvArbitrary", {
-    files: {
-      "/entry.js": /* js */ `
-        capture(process.env.ARBITRARY);
-      `,
-    },
-    target: "browser",
-    capture: ["process.env.ARBITRARY"],
-    env: {
-      ARBITRARY: "secret environment stuff!",
-    },
-  });
+
   itBundled("edgecase/StarExternal", {
     files: {
       "/entry.js": /* js */ `
@@ -1347,7 +1336,7 @@ describe("bundler", () => {
     target: "bun",
     run: true,
     todo: isBroken && isWindows,
-    debugTimeoutScale: 5,
+    timeoutScale: 5,
   });
   itBundled("edgecase/PackageExternalDoNotBundleNodeModules", {
     files: {
@@ -2253,4 +2242,43 @@ describe("bundler", () => {
       stdout: "windows",
     },
   });
+
+  itBundled("edgecase/TSPublicFieldMinification", {
+    files: {
+      "/entry.ts": /* ts */ `
+        export class Foo {
+          constructor(public name: string) {}
+        }
+
+        const keys = Object.keys(new Foo('test'))
+        if (keys.length !== 1) throw new Error('Keys length is not 1')
+        if (keys[0] !== 'name') throw new Error('keys[0] is not "name"')
+        console.log('success')
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    target: "bun",
+    run: {
+      stdout: "success",
+    },
+  });
 });
+
+for (const backend of ["api", "cli"] as const) {
+  describe(`bundler_edgecase/${backend}`, () => {
+    itBundled("edgecase/ProcessEnvArbitrary", {
+      files: {
+        "/entry.js": /* js */ `
+        capture(process.env.ARBITRARY);
+      `,
+      },
+      target: "browser",
+      backend,
+      capture: ["process.env.ARBITRARY"],
+      env: {
+        ARBITRARY: "secret environment stuff!",
+      },
+    });
+  });
+}

@@ -117,7 +117,7 @@ fn NewLexer_(
         const is_json = json_options.is_json;
         const json = json_options;
         const JSONBool = if (is_json) bool else void;
-        const JSONBoolDefault: JSONBool = if (is_json) true else {};
+        const JSONBoolDefault: JSONBool = if (is_json) true;
 
         pub const Error = error{
             UTF8Fail,
@@ -153,13 +153,6 @@ fn NewLexer_(
         code_point: CodePoint = -1,
         identifier: []const u8 = "",
         jsx_pragma: JSXPragma = .{},
-        bun_pragma: enum {
-            none,
-            bun,
-            bun_cjs,
-            bytecode,
-            bytecode_cjs,
-        } = .none,
         source_mapping_url: ?js_ast.Span = null,
         number: f64 = 0.0,
         rescan_close_brace_as_template_token: bool = false,
@@ -187,8 +180,7 @@ fn NewLexer_(
             }
         else
             void = if (json_options.guess_indentation)
-            .{}
-        else {},
+            .{},
 
         pub inline fn loc(self: *const LexerType) logger.Loc {
             return logger.usize2Loc(self.start);
@@ -271,6 +263,25 @@ fn NewLexer_(
             // if (panic) {
             //     return Error.ParserError;
             // }
+        }
+
+        pub fn restore(this: *LexerType, original: *const LexerType) void {
+            const all_comments = this.all_comments;
+            const comments_to_preserve_before = this.comments_to_preserve_before;
+            const temp_buffer_u16 = this.temp_buffer_u16;
+            this.* = original.*;
+
+            // make sure pointers are valid
+            this.all_comments = all_comments;
+            this.comments_to_preserve_before = comments_to_preserve_before;
+            this.temp_buffer_u16 = temp_buffer_u16;
+
+            bun.debugAssert(all_comments.items.len >= original.all_comments.items.len);
+            bun.debugAssert(comments_to_preserve_before.items.len >= original.comments_to_preserve_before.items.len);
+            bun.debugAssert(temp_buffer_u16.items.len == 0 and original.temp_buffer_u16.items.len == 0);
+
+            this.all_comments.items.len = original.all_comments.items.len;
+            this.comments_to_preserve_before.items.len = original.comments_to_preserve_before.items.len;
         }
 
         /// Look ahead at the next n codepoints without advancing the iterator.
@@ -378,7 +389,7 @@ fn NewLexer_(
                                 // 1-3 digit octal
                                 var is_bad = false;
                                 var value: i64 = c2 - '0';
-                                var restore = iter;
+                                var prev = iter;
 
                                 _ = iterator.next(&iter) or {
                                     if (value == 0) {
@@ -395,7 +406,7 @@ fn NewLexer_(
                                 switch (c3) {
                                     '0'...'7' => {
                                         value = value * 8 + c3 - '0';
-                                        restore = iter;
+                                        prev = iter;
                                         _ = iterator.next(&iter) or return lexer.syntaxError();
 
                                         const c4 = iter.c;
@@ -405,14 +416,14 @@ fn NewLexer_(
                                                 if (temp < 256) {
                                                     value = temp;
                                                 } else {
-                                                    iter = restore;
+                                                    iter = prev;
                                                 }
                                             },
                                             '8', '9' => {
                                                 is_bad = true;
                                             },
                                             else => {
-                                                iter = restore;
+                                                iter = prev;
                                             },
                                         }
                                     },
@@ -420,7 +431,7 @@ fn NewLexer_(
                                         is_bad = true;
                                     },
                                     else => {
-                                        iter = restore;
+                                        iter = prev;
                                     },
                                 }
 
@@ -811,7 +822,7 @@ fn NewLexer_(
             return code_point;
         }
 
-        fn step(lexer: *LexerType) void {
+        pub fn step(lexer: *LexerType) void {
             lexer.code_point = lexer.nextCodepoint();
 
             // Track the approximate number of newlines in the file so we can preallocate
@@ -1938,9 +1949,7 @@ fn NewLexer_(
                                         // }
                                     }
 
-                                    if (lexer.bun_pragma == .none and strings.hasPrefixWithWordBoundary(chunk, "bun")) {
-                                        lexer.bun_pragma = .bun;
-                                    } else if (strings.hasPrefixWithWordBoundary(chunk, "jsx")) {
+                                    if (strings.hasPrefixWithWordBoundary(chunk, "jsx")) {
                                         if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsx", chunk)) |span| {
                                             lexer.jsx_pragma._jsx = span;
                                         }
@@ -1960,10 +1969,6 @@ fn NewLexer_(
                                         if (PragmaArg.scan(.no_space_first, lexer.start + i + 1, " sourceMappingURL=", chunk)) |span| {
                                             lexer.source_mapping_url = span;
                                         }
-                                    } else if ((lexer.bun_pragma == .bun or lexer.bun_pragma == .bun_cjs) and strings.hasPrefixWithWordBoundary(chunk, "bytecode")) {
-                                        lexer.bun_pragma = if (lexer.bun_pragma == .bun) .bytecode else .bytecode_cjs;
-                                    } else if ((lexer.bun_pragma == .bytecode or lexer.bun_pragma == .bun) and strings.hasPrefixWithWordBoundary(chunk, "bun-cjs")) {
-                                        lexer.bun_pragma = if (lexer.bun_pragma == .bytecode) .bytecode_cjs else .bun_cjs;
                                     }
                                 },
                                 else => {},
@@ -1993,9 +1998,7 @@ fn NewLexer_(
                             }
                         }
 
-                        if (lexer.bun_pragma == .none and strings.hasPrefixWithWordBoundary(chunk, "bun")) {
-                            lexer.bun_pragma = .bun;
-                        } else if (strings.hasPrefixWithWordBoundary(chunk, "jsx")) {
+                        if (strings.hasPrefixWithWordBoundary(chunk, "jsx")) {
                             if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsx", chunk)) |span| {
                                 lexer.jsx_pragma._jsx = span;
                             }
@@ -2015,10 +2018,6 @@ fn NewLexer_(
                             if (PragmaArg.scan(.no_space_first, lexer.start + i + 1, " sourceMappingURL=", chunk)) |span| {
                                 lexer.source_mapping_url = span;
                             }
-                        } else if ((lexer.bun_pragma == .bun or lexer.bun_pragma == .bun_cjs) and strings.hasPrefixWithWordBoundary(chunk, "bytecode")) {
-                            lexer.bun_pragma = if (lexer.bun_pragma == .bun) .bytecode else .bytecode_cjs;
-                        } else if ((lexer.bun_pragma == .bytecode or lexer.bun_pragma == .bun) and strings.hasPrefixWithWordBoundary(chunk, "bun-cjs")) {
-                            lexer.bun_pragma = if (lexer.bun_pragma == .bytecode) .bytecode_cjs else .bun_cjs;
                         }
                     },
                     else => {},
@@ -2143,7 +2142,7 @@ fn NewLexer_(
                         const flag_characters = "dgimsuvy";
                         const min_flag = comptime std.mem.min(u8, flag_characters);
                         const max_flag = comptime std.mem.max(u8, flag_characters);
-                        const RegexpFlags = std.bit_set.IntegerBitSet((max_flag - min_flag) + 1);
+                        const RegexpFlags = bun.bit_set.IntegerBitSet((max_flag - min_flag) + 1);
                         var flags = RegexpFlags.initEmpty();
                         while (isIdentifierContinue(lexer.code_point)) {
                             switch (lexer.code_point) {
@@ -3043,18 +3042,10 @@ pub const Lexer = NewLexer(.{});
 
 const JSIdentifier = @import("./js_lexer/identifier.zig");
 pub inline fn isIdentifierStart(codepoint: i32) bool {
-    if (comptime Environment.isWasm) {
-        return JSIdentifier.JumpTable.isIdentifierStart(codepoint);
-    }
-
-    return JSIdentifier.Bitset.isIdentifierStart(codepoint);
+    return JSIdentifier.isIdentifierStart(codepoint);
 }
 pub inline fn isIdentifierContinue(codepoint: i32) bool {
-    if (comptime Environment.isWasm) {
-        return JSIdentifier.JumpTable.isIdentifierPart(codepoint);
-    }
-
-    return JSIdentifier.Bitset.isIdentifierPart(codepoint);
+    return JSIdentifier.isIdentifierPart(codepoint);
 }
 
 pub fn isWhitespace(codepoint: CodePoint) bool {

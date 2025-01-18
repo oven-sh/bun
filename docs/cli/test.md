@@ -75,8 +75,10 @@ jobs:
     name: build-app
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
       - name: Install bun
-        uses: oven-sh/setup-bun
+        uses: oven-sh/setup-bun@v2
       - name: Install dependencies # (assuming your project has dependencies)
         run: bun install # You can use npm/yarn/pnpm instead if you prefer
       - name: Run tests
@@ -124,7 +126,7 @@ Use the `--bail` flag to abort the test run early after a pre-determined number 
 $ bun test --bail
 
 # bail after 10 failure
-$ bun test --bail 10
+$ bun test --bail=10
 ```
 
 ## Watch mode

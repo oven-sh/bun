@@ -2,6 +2,8 @@ pub usingnamespace @import("./webcore/response.zig");
 pub usingnamespace @import("./webcore/encoding.zig");
 pub usingnamespace @import("./webcore/streams.zig");
 pub usingnamespace @import("./webcore/blob.zig");
+pub usingnamespace @import("./webcore/S3Stat.zig");
+pub usingnamespace @import("./webcore/S3Client.zig");
 pub usingnamespace @import("./webcore/request.zig");
 pub usingnamespace @import("./webcore/body.zig");
 pub const ObjectURLRegistry = @import("./webcore/ObjectURLRegistry.zig");
@@ -24,7 +26,7 @@ pub const Lifetime = enum {
 
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-alert
 fn alert(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(1).slice();
+    const arguments = callframe.arguments_old(1).slice();
     var output = bun.Output.writer();
     const has_message = arguments.len != 0;
 
@@ -74,7 +76,7 @@ fn alert(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSErr
 }
 
 fn confirm(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(1).slice();
+    const arguments = callframe.arguments_old(1).slice();
     var output = bun.Output.writer();
     const has_message = arguments.len != 0;
 
@@ -212,7 +214,7 @@ pub const Prompt = struct {
         globalObject: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        const arguments = callframe.arguments(3).slice();
+        const arguments = callframe.arguments_old(3).slice();
         var state = std.heap.stackFallback(2048, bun.default_allocator);
         const allocator = state.get();
         var output = bun.Output.writer();
@@ -265,8 +267,7 @@ pub const Prompt = struct {
         // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
         // deleting the entire line
         const original_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (comptime Environment.isWindows)
-            bun.win32.unsetStdioModeFlags(0, bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT) catch null
-        else {};
+            bun.win32.unsetStdioModeFlags(0, bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT) catch null;
 
         defer if (comptime Environment.isWindows) {
             if (original_mode) |mode| {
@@ -376,17 +377,14 @@ pub const Crypto = struct {
 
         if (keylen_value.isEmptyOrUndefinedOrNull() or !keylen_value.isAnyInt()) {
             const err = globalThis.createInvalidArgs("keylen must be an integer", .{});
-            globalThis.throwValue(err);
-            return .zero;
+            return globalThis.throwValue(err);
         }
 
         const keylen_int = keylen_value.to(i64);
         if (keylen_int < 0) {
-            globalThis.throwValue(globalThis.createRangeError("keylen must be a positive integer", .{}));
-            return .zero;
+            return globalThis.throwValue(globalThis.createRangeError("keylen must be a positive integer", .{}));
         } else if (keylen_int > 0x7fffffff) {
-            globalThis.throwValue(globalThis.createRangeError("keylen must be less than 2^31", .{}));
-            return .zero;
+            return globalThis.throwValue(globalThis.createRangeError("keylen must be less than 2^31", .{}));
         }
 
         var blockSize: ?usize = null;
@@ -400,8 +398,7 @@ pub const Crypto = struct {
                 break :outer;
 
             if (!options_value.isObject()) {
-                globalThis.throwValue(globalThis.createInvalidArgs("options must be an object", .{}));
-                return .zero;
+                return globalThis.throwValue(globalThis.createInvalidArgs("options must be an object", .{}));
             }
 
             if (try options_value.getTruthy(globalThis, "cost") orelse try options_value.getTruthy(globalThis, "N")) |N_value| {
@@ -507,8 +504,7 @@ pub const Crypto = struct {
         if (keylen > buf.len) {
             // i don't think its a real scenario, but just in case
             buf = globalThis.allocator().alloc(u8, keylen) catch {
-                globalThis.throw("Failed to allocate memory", .{});
-                return .undefined;
+                return globalThis.throw("Failed to allocate memory", .{});
             };
             needs_deinit = true;
         } else {
@@ -533,46 +529,36 @@ pub const Crypto = struct {
         return JSC.ArrayBuffer.create(globalThis, buf, .ArrayBuffer);
     }
 
-    fn throwInvalidParameter(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        globalThis.ERR_CRYPTO_SCRYPT_INVALID_PARAMETER("Invalid scrypt parameters", .{}).throw();
-        return .zero;
+    fn throwInvalidParameter(globalThis: *JSC.JSGlobalObject) bun.JSError {
+        return globalThis.ERR_CRYPTO_SCRYPT_INVALID_PARAMETER("Invalid scrypt parameters", .{}).throw();
     }
 
-    fn throwInvalidParams(globalThis: *JSC.JSGlobalObject, comptime error_type: @Type(.EnumLiteral), comptime message: [:0]const u8, fmt: anytype) JSC.JSValue {
+    fn throwInvalidParams(globalThis: *JSC.JSGlobalObject, comptime error_type: @Type(.EnumLiteral), comptime message: [:0]const u8, fmt: anytype) bun.JSError {
         if (error_type != .RangeError) @compileError("Error type not added!");
-        globalThis.ERR_CRYPTO_INVALID_SCRYPT_PARAMS(message, fmt).throw();
         BoringSSL.ERR_clear_error();
-        return .zero;
+        return globalThis.ERR_CRYPTO_INVALID_SCRYPT_PARAMS(message, fmt).throw();
     }
 
-    pub fn timingSafeEqual(
-        _: *@This(),
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
-        const arguments = callframe.arguments(2).slice();
+    pub fn timingSafeEqual(_: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const arguments = callframe.arguments_old(2).slice();
 
         if (arguments.len < 2) {
-            globalThis.throwInvalidArguments("Expected 2 typed arrays but got nothing", .{});
-            return .undefined;
+            return globalThis.throwInvalidArguments("Expected 2 typed arrays but got nothing", .{});
         }
 
         const array_buffer_a = arguments[0].asArrayBuffer(globalThis) orelse {
-            globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[0].jsType())});
-            return .undefined;
+            return globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[0].jsType())});
         };
         const a = array_buffer_a.byteSlice();
 
         const array_buffer_b = arguments[1].asArrayBuffer(globalThis) orelse {
-            globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[1].jsType())});
-            return .undefined;
+            return globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[1].jsType())});
         };
         const b = array_buffer_b.byteSlice();
 
         const len = a.len;
         if (b.len != len) {
-            globalThis.throw("Input buffers must have the same byte length", .{});
-            return .undefined;
+            return globalThis.throw("Input buffers must have the same byte length", .{});
         }
         return JSC.jsBoolean(len == 0 or bun.BoringSSL.CRYPTO_memcmp(a.ptr, b.ptr, len) == 0);
     }
@@ -588,8 +574,7 @@ pub const Crypto = struct {
 
         const len = a.len;
         if (b.len != len) {
-            globalThis.throw("Input buffers must have the same byte length", .{});
-            return .zero;
+            return globalThis.throw("Input buffers must have the same byte length", .{});
         }
 
         return JSC.jsBoolean(len == 0 or bun.BoringSSL.CRYPTO_memcmp(a.ptr, b.ptr, len) == 0);
@@ -600,15 +585,13 @@ pub const Crypto = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        const arguments = callframe.arguments(1).slice();
+        const arguments = callframe.arguments_old(1).slice();
         if (arguments.len == 0) {
-            globalThis.throwInvalidArguments("Expected typed array but got nothing", .{});
-            return .undefined;
+            return globalThis.throwInvalidArguments("Expected typed array but got nothing", .{});
         }
 
         var array_buffer = arguments[0].asArrayBuffer(globalThis) orelse {
-            globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[0].jsType())});
-            return .undefined;
+            return globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[0].jsType())});
         };
         const slice = array_buffer.byteSlice();
 
@@ -651,13 +634,12 @@ pub const Crypto = struct {
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        const str, var bytes = bun.String.createUninitialized(.latin1, 36);
-        defer str.deref();
+        var str, var bytes = bun.String.createUninitialized(.latin1, 36);
 
         const uuid = globalThis.bunVM().rareData().nextUUID();
 
         uuid.print(bytes[0..36]);
-        return str.toJS(globalThis);
+        return str.transferToJS(globalThis);
     }
 
     comptime {
@@ -675,8 +657,7 @@ pub const Crypto = struct {
                     if (arguments[0].isString()) {
                         encoding_value = arguments[0];
                         break :brk JSC.Node.Encoding.fromJS(encoding_value, globalThis) orelse {
-                            globalThis.ERR_UNKNOWN_ENCODING("Encoding must be one of base64, base64url, hex, or buffer", .{}).throw();
-                            return .undefined;
+                            return globalThis.ERR_UNKNOWN_ENCODING("Encoding must be one of base64, base64url, hex, or buffer", .{}).throw();
                         };
                     }
                 }
@@ -698,14 +679,7 @@ pub const Crypto = struct {
                     const date = timestamp_value.getUnixTimestamp();
                     break :brk @intFromFloat(@max(0, date));
                 }
-
-                if (globalThis.validateIntegerRange(timestamp_value, i64, 0, .{
-                    .min = 0,
-                    .field_name = "timestamp",
-                })) |timestamp_int| {
-                    break :brk @intCast(timestamp_int);
-                }
-                return .zero;
+                break :brk @intCast(try globalThis.validateIntegerRange(timestamp_value, i64, 0, .{ .min = 0, .field_name = "timestamp" }));
             }
 
             break :brk @intCast(@max(0, std.time.milliTimestamp()));
@@ -740,15 +714,14 @@ pub const Crypto = struct {
     }
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*Crypto {
-        return globalThis.throw2("Crypto is not constructable", .{});
+        return JSC.Error.ERR_ILLEGAL_CONSTRUCTOR.throw(globalThis, "Crypto is not constructable", .{});
     }
 
     pub export fn CryptoObject__create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding(@src());
 
         var ptr = bun.default_allocator.create(Crypto) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
+            return globalThis.throwOutOfMemoryValue();
         };
 
         return ptr.toJS(globalThis);

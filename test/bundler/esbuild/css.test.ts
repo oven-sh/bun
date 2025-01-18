@@ -381,9 +381,9 @@ describe("esbuild-bundler", () => {
       "/entry.css": `@import "./entry.json";`,
     },
     entryPoints: ["/entry.css"],
-    /* TODO FIX expectedScanLog: `entry.css: ERROR: Cannot import "entry.json" into a CSS file
-  NOTE: An "@import" rule can only be used to import another CSS file, and "entry.json" is not a CSS file (it was loaded with the "json" loader).
-  `, */
+    bundleErrors: {
+      "/entry.css": ['Cannot import a ".json" file into a CSS file'],
+    },
   });
   itBundled("css/MissingImportURLInCSS", {
     experimentalCss: true,

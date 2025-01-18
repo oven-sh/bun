@@ -7532,7 +7532,7 @@ pub const LinkerContext = struct {
                                     .jsx, .js, .ts, .tsx, .napi, .sqlite, .json, .html => {
                                         this.log.addErrorFmt(
                                             source,
-                                            Loc.Empty,
+                                            record.range.loc,
                                             this.allocator,
                                             "Cannot import a \".{s}\" file into a CSS file",
                                             .{@tagName(loader)},
@@ -7541,7 +7541,7 @@ pub const LinkerContext = struct {
                                     .sqlite_embedded => {
                                         this.log.addErrorFmt(
                                             source,
-                                            Loc.Empty,
+                                            record.range.loc,
                                             this.allocator,
                                             "Cannot import a \"sqlite_embedded\" file into a CSS file",
                                             .{},

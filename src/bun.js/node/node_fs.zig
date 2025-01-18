@@ -107,6 +107,11 @@ pub const Async = struct {
     pub const writeFile = NewAsyncFSTask(Return.WriteFile, Arguments.WriteFile, NodeFS.writeFile);
     pub const writev = NewUVFSRequest(Return.Writev, Arguments.Writev, .writev);
 
+    comptime {
+        bun.assert(readFile.have_abort_signal);
+        bun.assert(writeFile.have_abort_signal);
+    }
+
     pub const cp = AsyncCpTask;
 
     pub const readdir_recursive = AsyncReaddirRecursiveTask;
@@ -2712,9 +2717,14 @@ pub const Arguments = struct {
 
         dirfd: FileDescriptor,
 
+        signal: ?*AbortSignal = null,
+
         pub fn deinit(self: WriteFile) void {
             self.file.deinit();
             self.data.deinit();
+            if (self.signal) |signal| {
+                signal.unref();
+            }
         }
 
         pub fn toThreadSafe(self: *WriteFile) void {
@@ -2740,6 +2750,7 @@ pub const Arguments = struct {
             var encoding = Encoding.buffer;
             var flag = FileSystemFlags.w;
             var mode: Mode = default_permission;
+            var abort_signal: ?*AbortSignal = null;
 
             if (data_value.isString()) {
                 encoding = Encoding.utf8;
@@ -2761,6 +2772,14 @@ pub const Arguments = struct {
                     if (try arg.getTruthy(ctx, "mode")) |mode_| {
                         mode = try JSC.Node.modeFromJS(ctx, mode_) orelse mode;
                     }
+
+                    if (try arg.getTruthy(ctx, "signal")) |value| {
+                        if (AbortSignal.fromJS(value)) |signal| {
+                            abort_signal = signal.ref();
+                        } else {
+                            return ctx.throwInvalidArgumentTypeValue("signal", "AbortSignal", value);
+                        }
+                    }
                 }
             }
 
@@ -2779,7 +2798,15 @@ pub const Arguments = struct {
                 .mode = mode,
                 .data = data,
                 .dirfd = bun.FD.cwd(),
+                .signal = abort_signal,
             };
+        }
+
+        pub fn aborted(self: WriteFile) bool {
+            if (self.signal) |signal| {
+                return signal.aborted();
+            }
+            return false;
         }
     };
 
@@ -5159,6 +5186,8 @@ pub const NodeFS = struct {
             if (args.file == .path)
                 _ = bun.sys.close(fd);
         }
+
+        if (args.aborted()) return Maybe(Return.WriteFile).aborted;
 
         var buf = args.data.slice();
         var written: usize = 0;

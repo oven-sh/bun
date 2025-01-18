@@ -196,11 +196,11 @@ const exports = {
   read: asyncWrap(fs.read, "read"),
   write: asyncWrap(fs.write, "write"),
   readdir: asyncWrap(fs.readdir, "readdir"),
-  readFile: function (fileHandleOrFdOrPath, ...args) {
+  readFile: async function (fileHandleOrFdOrPath, ...args) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
     return _readFile(fileHandleOrFdOrPath, ...args);
   },
-  writeFile: function (fileHandleOrFdOrPath, ...args: any[]) {
+  writeFile: async function (fileHandleOrFdOrPath, ...args: any[]) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
     if (
       !$isTypedArrayView(args[0]) &&
@@ -209,7 +209,7 @@ const exports = {
     ) {
       $debug("fs.promises.writeFile async iterator slow path!");
       // Node accepts an arbitrary async iterator here
-      // @ts-expect-error TODO
+      // @ts-expect-error
       return writeFileAsyncIterator(fileHandleOrFdOrPath, ...args);
     }
     return _writeFile(fileHandleOrFdOrPath, ...args);
@@ -310,7 +310,6 @@ function asyncWrap(fn: any, name: string) {
       throwEBADFIfNecessary("writeFile", fd);
       let encoding = "utf8";
       let flush = false;
-
       if (options == null || typeof options === "function") {
       } else if (typeof options === "string") {
         encoding = options;
@@ -507,17 +506,19 @@ function asyncWrap(fn: any, name: string) {
       const fd = this[kFd];
       throwEBADFIfNecessary("writeFile", fd);
       let encoding: string = "utf8";
-
+      let signal: AbortSignal | undefined = undefined;
+ 
       if (options == null || typeof options === "function") {
       } else if (typeof options === "string") {
         encoding = options;
       } else {
         encoding = options?.encoding ?? encoding;
+        signal = options?.signal ?? undefined;
       }
 
       try {
         this[kRef]();
-        return await writeFile(fd, data, { encoding, flag: this[kFlag] });
+        return await writeFile(fd, data, { encoding, flag: this[kFlag], signal });
       } finally {
         this[kUnref]();
       }
@@ -621,7 +622,7 @@ function throwEBADFIfNecessary(fn: string, fd) {
   }
 }
 
-async function writeFileAsyncIteratorInner(fd, iterable, encoding) {
+async function writeFileAsyncIteratorInner(fd, iterable, encoding, signal: AbortSignal | null) {
   const writer = Bun.file(fd).writer();
 
   const mustRencode = !(encoding === "utf8" || encoding === "utf-8" || encoding === "binary" || encoding === "buffer");
@@ -629,9 +630,15 @@ async function writeFileAsyncIteratorInner(fd, iterable, encoding) {
 
   try {
     for await (let chunk of iterable) {
+      if (signal?.aborted) {
+        throw signal.reason;
+      }
+
       if (mustRencode && typeof chunk === "string") {
         $debug("Re-encoding chunk to", encoding);
         chunk = Buffer.from(chunk, encoding);
+      } else if ($isUndefinedOrNull(chunk)) {
+        throw $ERR_INVALID_ARG_TYPE("write() expects a string, ArrayBufferView, or ArrayBuffer");
       }
 
       const prom = writer.write(chunk);
@@ -650,10 +657,15 @@ async function writeFileAsyncIteratorInner(fd, iterable, encoding) {
 
 async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, flag, mode) {
   let encoding;
+  let signal: AbortSignal | null = null;
   if (typeof optionsOrEncoding === "object") {
     encoding = optionsOrEncoding?.encoding ?? (encoding || "utf8");
     flag = optionsOrEncoding?.flag ?? (flag || "w");
     mode = optionsOrEncoding?.mode ?? (mode || 0o666);
+    signal = optionsOrEncoding?.signal ?? null;
+    if (signal?.aborted) {
+      throw signal.reason;
+    }
   } else if (typeof optionsOrEncoding === "string" || optionsOrEncoding == null) {
     encoding = optionsOrEncoding || "utf8";
     flag ??= "w";
@@ -671,10 +683,15 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
     fdOrPath = await fs.open(fdOrPath, flag, mode);
   }
 
+  if (signal?.aborted) {
+    if (mustClose) await fs.close(fdOrPath);
+    throw signal.reason;
+  }
+
   let totalBytesWritten = 0;
 
   try {
-    totalBytesWritten = await writeFileAsyncIteratorInner(fdOrPath, iterable, encoding);
+    totalBytesWritten = await writeFileAsyncIteratorInner(fdOrPath, iterable, encoding, signal);
   } finally {
     if (mustClose) {
       try {
@@ -683,6 +700,15 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
         }
       } finally {
         await fs.close(fdOrPath);
+        // abort signal shadows other errors
+        if (signal?.aborted) {
+          throw signal.reason;
+        }
+      }
+    } else {
+      // abort signal shadows other errors
+      if (signal?.aborted) {
+        throw signal.reason;
       }
     }
   }

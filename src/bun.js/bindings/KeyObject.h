@@ -3,9 +3,11 @@
 
 #include "root.h"
 #include "helpers.h"
+#include "ExceptionOr.h"
 
 namespace WebCore {
 
-JSC::JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject);
+ExceptionOr<Vector<uint8_t>> KeyObject__GetBuffer(JSC::JSValue bufferArg);
+JSC::JSValue createKeyObjectBinding(Zig::GlobalObject* globalObject);
 
 } // namespace WebCore

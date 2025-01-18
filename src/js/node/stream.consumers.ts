@@ -1,12 +1,35 @@
 // Hardcoded module "node:stream/consumers" / "readable-stream/consumer"
-export async function arrayBuffer(stream): Promise<ArrayBuffer> {
-  if ($isReadableStream(stream)) return Bun.readableStreamToArrayBuffer(stream);
-  const chunks: any[] = [];
+"use strict";
+
+const { Buffer } = require("node:buffer");
+
+const JSONParse = JSON.parse;
+
+async function blob(stream): Promise<Blob> {
+  if ($inheritsReadableStream(stream)) return Bun.readableStreamToBlob(stream);
+  const chunks: (Blob | ArrayBuffer | string | NodeJS.ArrayBufferView)[] = [];
   for await (const chunk of stream) chunks.push(chunk);
-  return Buffer.concat(chunks).buffer as ArrayBuffer;
+  return new Blob(chunks);
 }
-export async function text(stream): Promise<string> {
-  if ($isReadableStream(stream)) return Bun.readableStreamToText(stream);
+
+async function arrayBuffer(stream): Promise<ArrayBuffer> {
+  if ($inheritsReadableStream(stream)) return Bun.readableStreamToArrayBuffer(stream);
+  const ret = await blob(stream);
+  return ret.arrayBuffer();
+}
+
+async function bytes(stream): Promise<Uint8Array> {
+  if ($inheritsReadableStream(stream)) return Bun.readableStreamToBytes(stream);
+  const ret = await blob(stream);
+  return ret.bytes();
+}
+
+async function buffer(stream): Promise<Buffer> {
+  return Buffer.from(await arrayBuffer(stream));
+}
+
+async function text(stream): Promise<string> {
+  if ($inheritsReadableStream(stream)) return Bun.readableStreamToText(stream);
   const dec = new TextDecoder();
   let str = "";
   for await (const chunk of stream) {
@@ -18,22 +41,16 @@ export async function text(stream): Promise<string> {
   str += dec.decode(undefined, { stream: false });
   return str;
 }
-export async function json(stream): Promise<any> {
-  if ($isReadableStream(stream)) return Bun.readableStreamToJSON(stream).then(JSON.parse);
-  return JSON.parse(await text(stream));
-}
-export async function buffer(stream): Promise<Buffer> {
-  return new Buffer(await arrayBuffer(stream));
-}
-async function blob(stream) {
-  if ($isReadableStream(stream)) return Bun.readableStreamToBlob(stream).then(JSON.parse);
-  const chunks: any[] = [];
-  for await (const chunk of stream) chunks.push(chunk);
-  return new Blob(chunks);
+
+async function json(stream): Promise<any> {
+  if ($inheritsReadableStream(stream)) return Bun.readableStreamToJSON(stream);
+  const str = await text(stream);
+  return JSONParse(str);
 }
 
 export default {
   arrayBuffer,
+  bytes,
   text,
   json,
   buffer,

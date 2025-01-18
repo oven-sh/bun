@@ -65,6 +65,9 @@ const opensslVersionNumber = (major = 0, minor = 0, patch = 0) => {
   return (major << 28) | (minor << 20) | (patch << 4);
 };
 
+// https://github.com/electron/electron/blob/5680c628b6718385bbd975b51ec2640aa7df226b/patches/node/fix_crypto_tests_to_run_with_bssl.patch#L21
+const openSSLIsBoringSSL = process.versions.boringssl !== undefined;
+
 let OPENSSL_VERSION_NUMBER;
 const hasOpenSSL = (major = 0, minor = 0, patch = 0) => {
   if (!hasCrypto) return false;
@@ -121,6 +124,10 @@ if ((process.argv.length === 2 || process.argv.length === 3) &&
         (process.features.inspector || !flag.startsWith('--inspect'))) {
       if (flag === "--expose-gc" && process.versions.bun) {
         globalThis.gc ??= () => Bun.gc(true);
+        break;
+      }
+      if (flag === "--expose-internals" && process.versions.bun) {
+        process.env.SKIP_FLAG_CHECK = "1";
         break;
       }
       console.log(
@@ -1104,6 +1111,7 @@ const common = {
   mustNotMutateObjectDeep,
   mustSucceed,
   nodeProcessAborted,
+  openSSLIsBoringSSL,
   PIPE,
   parseTestFlags,
   platformTimeout,

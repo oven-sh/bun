@@ -3805,7 +3805,11 @@ pub const NodeFS = struct {
                     else => {
                         return .{ .err = err.withPath(this.osPathIntoSyncErrorBuf(path[0..len])) };
                     },
-                    .EXIST => return switch (bun.sys.directoryExistsAt(bun.invalid_fd, path)) {
+                    // mkpath_np in macOS also checks for EISDIR.
+                    .ISDIR,
+                    // check if it was actually a directory or not.
+                    .EXIST,
+                    => return switch (bun.sys.directoryExistsAt(bun.invalid_fd, path)) {
                         .err => .{ .err = .{
                             .errno = err.errno,
                             .syscall = .mkdir,
@@ -5697,7 +5701,7 @@ pub const NodeFS = struct {
             defer bun.OSPathBufferPool.put(tmp);
             @memcpy(tmp[0..slice.len], slice);
             return bun.strings.fromWPath(&this.sync_error_buf, tmp[0..slice.len]);
-        } else {}
+        }
     }
 
     fn cpSyncInner(

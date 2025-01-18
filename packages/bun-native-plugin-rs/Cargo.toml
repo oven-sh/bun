@@ -1,5 +1,7 @@
 [package]
 name = "bun-native-plugin"
+description = "Rustified wrapper for writing native plugins for Bun."
+license = "MIT"
 version = "0.1.0"
 edition = "2021"
 
@@ -8,7 +10,8 @@ bindgen = "0.70.1"
 
 [dependencies]
 anyhow = "1.0.94"
-bun-macro = { path = "./bun-macro" }
+# use local path in dev and publish to crates.io in prod
+bun-macro = { path = "./bun-macro", version = "0.1.0" }
 napi = { version = "2.14.1", default-features = false, features = ["napi4"] }
 
 [features]

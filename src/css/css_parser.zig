@@ -364,7 +364,7 @@ pub fn DefineShorthand(comptime T: type, comptime property_name: PropertyIdTag) 
             //             const property_id = @unionInit(
             //                 PropertyId,
             //                 field.name,
-            //                 if (@hasDecl(T.VendorPrefixMap, field.name)) vendor_prefix else {},
+            //                 if (@hasDecl(T.VendorPrefixMap, field.name)) vendor_prefix,
             //             );
             //             const value = property.longhand(&property_id);
             //             if (@as(PropertyIdTag, value) == @as(PropertyIdTag, property_id)) {
@@ -405,7 +405,7 @@ pub fn DefineShorthand(comptime T: type, comptime property_name: PropertyIdTag) 
             //         out[i] = @unionInit(
             //             PropertyId,
             //             field.name,
-            //             if (@hasField(T.VendorPrefixMap, field.name)) vendor_prefix else {},
+            //             if (@hasField(T.VendorPrefixMap, field.name)) vendor_prefix,
             //         );
             //     }
 

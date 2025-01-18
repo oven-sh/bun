@@ -47,7 +47,7 @@ void CryptoAlgorithmSHA224::digest(Vector<uint8_t>&& message, VectorCallback&& c
 {
     auto digest = PAL::CryptoDigest::create(PAL::CryptoDigest::Algorithm::SHA_224);
     if (!digest) {
-        exceptionCallback(OperationError);
+        exceptionCallback(OperationError, ""_s);
         return;
     }
 

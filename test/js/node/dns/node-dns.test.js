@@ -423,7 +423,7 @@ describe("test invalid arguments", () => {
     }).toThrow("Expected address to be a non-empty string for 'lookupService'.");
     expect(() => {
       dns.lookupService("google.com", 443, (err, hostname, service) => {});
-    }).toThrow('The "address" argument is invalid. Received google.com');
+    }).toThrow('The "address" argument is invalid. Received type string ("google.com")');
   });
 });
 

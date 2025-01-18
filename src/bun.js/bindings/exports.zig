@@ -789,7 +789,7 @@ pub const ZigStackFramePosition = extern struct {
 };
 
 pub const ZigException = extern struct {
-    code: JSErrorCode,
+    type: JSErrorCode,
     runtime_type: JSRuntimeType,
 
     /// SystemError only
@@ -810,6 +810,12 @@ pub const ZigException = extern struct {
     remapped: bool = false,
 
     fd: i32 = -1,
+
+    pub extern fn ZigException__collectSourceLines(jsValue: JSValue, global: *JSGlobalObject, exception: *ZigException) void;
+
+    pub fn collectSourceLines(this: *ZigException, value: JSValue, global: *JSGlobalObject) void {
+        ZigException__collectSourceLines(value, global, this);
+    }
 
     pub fn deinit(this: *ZigException) void {
         this.syscall.deref();
@@ -883,7 +889,7 @@ pub const ZigException = extern struct {
         pub fn zigException(this: *Holder) *ZigException {
             if (!this.loaded) {
                 this.zig_exception = ZigException{
-                    .code = @as(JSErrorCode, @enumFromInt(255)),
+                    .type = @as(JSErrorCode, @enumFromInt(255)),
                     .runtime_type = JSRuntimeType.Nothing,
                     .name = String.empty,
                     .message = String.empty,
@@ -925,7 +931,7 @@ pub const ZigException = extern struct {
         var is_empty = true;
         var api_exception = Api.JsException{
             .runtime_type = @intFromEnum(this.runtime_type),
-            .code = @intFromEnum(this.code),
+            .code = @intFromEnum(this.type),
         };
 
         if (_name.len > 0) {

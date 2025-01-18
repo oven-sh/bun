@@ -1046,4 +1046,58 @@ describe("HEAD requests #15355", () => {
       expect(body).toBe("");
     }
   });
+
+  describe("HEAD request should respect status", () => {
+    test("status only without headers", async () => {
+      using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          return new Response(null, { status: 404 });
+        },
+      });
+      const response = await fetch(server.url, { method: "HEAD" });
+      expect(response.status).toBe(404);
+      expect(response.headers.get("content-length")).toBe("0");
+    });
+    test("status only with headers", async () => {
+      using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          return new Response(null, {
+            status: 404,
+            headers: { "X-Bun-Test": "1", "Content-Length": "11" },
+          });
+        },
+      });
+      const response = await fetch(server.url, { method: "HEAD" });
+      expect(response.status).toBe(404);
+      expect(response.headers.get("content-length")).toBe("11");
+      expect(response.headers.get("x-bun-test")).toBe("1");
+    });
+
+    test("status only with transfer-encoding", async () => {
+      using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          return new Response(null, { status: 404, headers: { "Transfer-Encoding": "chunked" } });
+        },
+      });
+      const response = await fetch(server.url, { method: "HEAD" });
+      expect(response.status).toBe(404);
+      expect(response.headers.get("transfer-encoding")).toBe("chunked");
+    });
+
+    test("status only with body", async () => {
+      using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          return new Response("Hello World", { status: 404 });
+        },
+      });
+      const response = await fetch(server.url, { method: "HEAD" });
+      expect(response.status).toBe(404);
+      expect(response.headers.get("content-length")).toBe("11");
+      expect(await response.text()).toBe("");
+    });
+  });
 });

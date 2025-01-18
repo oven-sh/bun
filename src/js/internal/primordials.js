@@ -5,13 +5,13 @@
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const ObjectFreeze = Object.freeze;
 
-const createSafeIterator = (factory, next) => {
+const createSafeIterator = (factory, next_) => {
   class SafeIterator {
     constructor(iterable) {
       this._iterator = factory(iterable);
     }
     next() {
-      return next(this._iterator);
+      return next_(this._iterator);
     }
     [Symbol.iterator]() {
       return this;
@@ -78,13 +78,27 @@ const makeSafe = (unsafe, safe) => {
 const StringIterator = uncurryThis(String.prototype[Symbol.iterator]);
 const StringIteratorPrototype = Reflect.getPrototypeOf(StringIterator(""));
 const ArrayPrototypeForEach = uncurryThis(Array.prototype.forEach);
-
 const ArrayPrototypeSymbolIterator = uncurryThis(Array.prototype[Symbol.iterator]);
-const ArrayIteratorPrototypeNext = uncurryThis(ArrayPrototypeSymbolIterator.next);
+const ArrayIteratorPrototypeNext = uncurryThis(Array.prototype[Symbol.iterator]().next);
+const SafeArrayIterator = createSafeIterator(ArrayPrototypeSymbolIterator, ArrayIteratorPrototypeNext);
+
+const ArrayPrototypeMap = Array.prototype.map;
+const PromisePrototypeThen = Promise.prototype.then;
+
+const arrayToSafePromiseIterable = (promises, mapFn) =>
+  new SafeArrayIterator(
+    ArrayPrototypeMap.$call(
+      promises,
+      (promise, i) =>
+        new Promise((a, b) => PromisePrototypeThen.$call(mapFn == null ? promise : mapFn(promise, i), a, b)),
+    ),
+  );
+const PromiseAll = Promise.all;
+const SafePromiseAll = (promises, mapFn) => PromiseAll(arrayToSafePromiseIterable(promises, mapFn));
 
 export default {
   Array,
-  SafeArrayIterator: createSafeIterator(ArrayPrototypeSymbolIterator, ArrayIteratorPrototypeNext),
+  SafeArrayIterator,
   MapPrototypeGetSize: getGetter(Map, "size"),
   Number,
   Object,
@@ -98,6 +112,7 @@ export default {
       }
     },
   ),
+  SafePromiseAll,
   SafeSet: makeSafe(
     Set,
     class SafeSet extends Set {

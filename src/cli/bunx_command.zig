@@ -328,10 +328,6 @@ pub const BunxCommand = struct {
         // 2. Run tsc
         if (strings.eqlComptime(update_request.name, "tsc")) {
             update_request.name = "typescript";
-        } else if (strings.eqlComptime(update_request.name, "bun-repl")) {
-            this_transpiler.env.map.remove("BUN_INSPECT_CONNECT_TO");
-            this_transpiler.env.map.remove("BUN_INSPECT_NOTIFY");
-            this_transpiler.env.map.remove("BUN_INSPECT");
         }
 
         const initial_bin_name = if (strings.eqlComptime(update_request.name, "typescript"))
@@ -349,6 +345,12 @@ pub const BunxCommand = struct {
         // SAFETY: initialized by Run.configureEnvForRun
         var this_transpiler: bun.Transpiler = undefined;
         var ORIGINAL_PATH: string = "";
+
+        if (strings.eqlComptime(initial_bin_name, "bun-repl")) {
+            this_transpiler.env.map.remove("BUN_INSPECT_CONNECT_TO");
+            this_transpiler.env.map.remove("BUN_INSPECT_NOTIFY");
+            this_transpiler.env.map.remove("BUN_INSPECT");
+        }
 
         const root_dir_info = try Run.configureEnvForRun(
             ctx,

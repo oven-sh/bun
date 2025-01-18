@@ -259,6 +259,7 @@ pub const Tag = enum(u8) {
     socketpair,
     setsockopt,
     statx,
+    rm,
 
     uv_spawn,
     uv_pipe,

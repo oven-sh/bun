@@ -1046,17 +1046,6 @@ pub const PathLike = union(enum) {
 };
 
 pub const Valid = struct {
-    pub fn fileDescriptor(fd: i64, global: JSC.C.JSContextRef) bun.JSError!void {
-        const fd_t = if (Environment.isWindows) bun.windows.libuv.uv_file else bun.FileDescriptorInt;
-        if (fd < 0 or fd > std.math.maxInt(fd_t)) {
-            return global.throwRangeError(fd, .{
-                .min = 0,
-                .max = std.math.maxInt(fd_t),
-                .field_name = "fd",
-            });
-        }
-    }
-
     pub fn pathSlice(zig_str: JSC.ZigString.Slice, ctx: JSC.C.JSContextRef) bun.JSError!void {
         switch (zig_str.len) {
             0...bun.MAX_PATH_BYTES => return,

@@ -21,13 +21,15 @@ Variables can be set before execution via the command line on a per operating sy
 $ FOO=helloworld bun run dev
 ```
 
-```sh#Windows Terminal
+```sh#Windows
+# Using CMD
 $ set FOO=helloworld && bun run dev
-```
 
-```sh#Windows PowerShell
+# Using PowerShell
 $ $env:FOO="helloworld"; bun run dev
 ```
+
+{% /codetabs %}
 
 Or for a cross-platform solution, using the `bun exec` syntax.
 
@@ -35,7 +37,7 @@ Or for a cross-platform solution, using the `bun exec` syntax.
 $ bun exec 'FOO=helloworld bun run dev'
 ```
 
-Scrips from a `package.json` called with `bun run` will automatically use the `bun exec` syntax so they will be natively cross-platform when it comes to variable definition.
+Scripts from a `package.json` called with `bun run` will automatically use the `bun exec` syntax on Windows so they will be natively cross-platform when it comes to variable definition.
 ```json
 "scripts": {
   "dev": "NODE_ENV=development bun --watch  app.ts",

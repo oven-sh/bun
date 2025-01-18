@@ -973,7 +973,11 @@ pub fn watch(
 
     const path_info = switch (manager._fdFromAbsolutePathZ(path)) {
         .result => |result| result,
-        .err => |err| return .{ .err = err },
+        .err => |_err| {
+            var err = _err;
+            err.syscall = .watch;
+            return .{ .err = err };
+        },
     };
 
     const watcher = PathWatcher.init(manager, path_info, recursive, callback, updateEnd, ctx) catch |e| {

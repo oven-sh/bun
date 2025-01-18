@@ -441,7 +441,8 @@ pub const BlobOrStringOrBuffer = union(enum) {
             else => {},
         }
 
-        return .{ .string_or_buffer = try StringOrBuffer.fromJSWithEncodingValueMaybeAsync(global, allocator, value, encoding_value, is_async) orelse return null };
+        const allow_string_object = true;
+        return .{ .string_or_buffer = try StringOrBuffer.fromJSWithEncodingValueMaybeAsync(global, allocator, value, encoding_value, is_async, allow_string_object) orelse return null };
     }
 };
 
@@ -546,12 +547,15 @@ pub const StringOrBuffer = union(enum) {
         }
     }
 
-    pub fn fromJSMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, is_async: bool) ?StringOrBuffer {
+    pub fn fromJSMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, is_async: bool, allow_string_object: bool) ?StringOrBuffer {
         return switch (value.jsType()) {
             .String,
             .StringObject,
             .DerivedStringObject,
-            => {
+            => |str_type| {
+                if (!allow_string_object and str_type != .String) {
+                    return null;
+                }
                 const str = bun.String.fromJS(value, global);
 
                 if (is_async) {
@@ -592,14 +596,14 @@ pub const StringOrBuffer = union(enum) {
     }
 
     pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue) ?StringOrBuffer {
-        return fromJSMaybeAsync(global, allocator, value, false);
+        return fromJSMaybeAsync(global, allocator, value, false, true);
     }
 
     pub fn fromJSWithEncoding(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding: Encoding) bun.JSError!?StringOrBuffer {
-        return fromJSWithEncodingMaybeAsync(global, allocator, value, encoding, false);
+        return fromJSWithEncodingMaybeAsync(global, allocator, value, encoding, false, true);
     }
 
-    pub fn fromJSWithEncodingMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding: Encoding, is_async: bool) bun.JSError!?StringOrBuffer {
+    pub fn fromJSWithEncodingMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding: Encoding, is_async: bool, allow_string_object: bool) bun.JSError!?StringOrBuffer {
         if (value.isCell() and value.jsType().isTypedArray()) {
             return StringOrBuffer{
                 .buffer = Buffer.fromTypedArray(global, value),
@@ -607,14 +611,14 @@ pub const StringOrBuffer = union(enum) {
         }
 
         if (encoding == .utf8) {
-            return fromJSMaybeAsync(global, allocator, value, is_async);
+            return fromJSMaybeAsync(global, allocator, value, is_async, allow_string_object);
         }
 
         if (value.isString()) {
             var str = try bun.String.fromJS2(value, global);
             defer str.deref();
             if (str.isEmpty()) {
-                return fromJSMaybeAsync(global, allocator, value, is_async);
+                return fromJSMaybeAsync(global, allocator, value, is_async, allow_string_object);
             }
 
             const out = str.encode(encoding);
@@ -638,13 +642,13 @@ pub const StringOrBuffer = union(enum) {
         return fromJSWithEncoding(global, allocator, value, encoding);
     }
 
-    pub fn fromJSWithEncodingValueMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue, maybe_async: bool) bun.JSError!?StringOrBuffer {
+    pub fn fromJSWithEncodingValueMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue, maybe_async: bool, allow_string_object: bool) bun.JSError!?StringOrBuffer {
         const encoding: Encoding = brk: {
             if (!encoding_value.isCell())
                 break :brk .utf8;
             break :brk Encoding.fromJS(encoding_value, global) orelse .utf8;
         };
-        return fromJSWithEncodingMaybeAsync(global, allocator, value, encoding, maybe_async);
+        return fromJSWithEncodingMaybeAsync(global, allocator, value, encoding, maybe_async, allow_string_object);
     }
 };
 

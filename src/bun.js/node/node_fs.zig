@@ -2700,7 +2700,10 @@ pub const Arguments = struct {
                 }
             }
 
-            const data = try StringOrBuffer.fromJSWithEncodingMaybeAsync(ctx, bun.default_allocator, data_value, encoding, arguments.will_be_async) orelse {
+            // String objects not allowed (typeof new String("hi") === "object")
+            // https://github.com/nodejs/node/blob/6f946c95b9da75c70e868637de8161bc8d048379/lib/internal/fs/utils.js#L916
+            const allow_string_object = false;
+            const data = try StringOrBuffer.fromJSWithEncodingMaybeAsync(ctx, bun.default_allocator, data_value, encoding, arguments.will_be_async, allow_string_object) orelse {
                 return ctx.ERR_INVALID_ARG_TYPE("The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView", .{}).throw();
             };
 
@@ -3217,7 +3220,7 @@ pub const NodeFS = struct {
             .path => |path_| {
                 const path = path_.sliceZ(&this.sync_error_buf);
 
-                const fd = switch (Syscall.open(path, @intFromEnum(FileSystemFlags.a), 0o666)) {
+                const fd = switch (Syscall.open(path, @intFromEnum(FileSystemFlags.a), args.mode)) {
                     .result => |result| result,
                     .err => |err| return .{ .err = err },
                 };

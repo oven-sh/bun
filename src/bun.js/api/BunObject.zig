@@ -1417,7 +1417,8 @@ pub const Crypto = struct {
                     }
                 }
 
-                out.salt = JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arguments[1], is_async) orelse {
+                const allow_string_object = true;
+                out.salt = JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arguments[1], is_async, allow_string_object) orelse {
                     return globalThis.throwInvalidArgumentTypeValue("salt", "string or buffer", arguments[1]);
                 };
 
@@ -1425,7 +1426,7 @@ pub const Crypto = struct {
                     return globalThis.throwInvalidArguments("salt is too long", .{});
                 }
 
-                out.password = JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arguments[0], is_async) orelse {
+                out.password = JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arguments[0], is_async, allow_string_object) orelse {
                     if (!globalThis.hasException()) {
                         return globalThis.throwInvalidArgumentTypeValue("password", "string or buffer", arguments[0]);
                     }

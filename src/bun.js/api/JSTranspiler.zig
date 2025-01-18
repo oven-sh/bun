@@ -906,7 +906,8 @@ pub fn transform(this: *JSTranspiler, globalThis: *JSC.JSGlobalObject, callframe
         return globalThis.throwInvalidArgumentType("transform", "code", "string or Uint8Array");
     };
 
-    var code = try JSC.Node.StringOrBuffer.fromJSWithEncodingMaybeAsync(globalThis, bun.default_allocator, code_arg, .utf8, true) orelse {
+    const allow_string_object = true;
+    var code = try JSC.Node.StringOrBuffer.fromJSWithEncodingMaybeAsync(globalThis, bun.default_allocator, code_arg, .utf8, true, allow_string_object) orelse {
         return globalThis.throwInvalidArgumentType("transform", "code", "string or Uint8Array");
     };
     errdefer code.deinit();

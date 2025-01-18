@@ -354,9 +354,14 @@ class PooledConnection {
     );
   }
   close() {
-    if (this.state === PooledConnectionState.connected) {
-      this.connection?.close();
-    }
+    try {
+      if (this.state === PooledConnectionState.connected) {
+        this.connection?.close();
+      }
+    } catch {}
+  }
+  flush() {
+    this.connection?.flush();
   }
   retry() {
     // if pool is closed, we can't retry
@@ -1164,23 +1169,26 @@ function SQL(o) {
   function queryFromTransactionHandler(transactionQueries, query, handle, err) {
     const pooledConnection = this;
     if (err) {
+      transactionQueries.delete(query);
       return query.reject(err);
     }
     // query is cancelled
     if (query.cancelled) {
+      transactionQueries.delete(query);
       return query.reject($ERR_POSTGRES_QUERY_CANCELLED("Query cancelled"));
     }
-    // keep the query alive until we finish the transaction or the query
-    transactionQueries.add(query);
+
     query.finally(onTransactionQueryDisconnected.bind(transactionQueries, query));
     handle.run(pooledConnection.connection, query);
   }
   function queryFromTransaction(strings, values, pooledConnection, transactionQueries) {
     try {
-      return new Query(
+      const query = new Query(
         doCreateQuery(strings, values, true),
         queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
       );
+      transactionQueries.add(query);
+      return query;
     } catch (err) {
       return Promise.reject(err);
     }
@@ -1188,6 +1196,10 @@ function SQL(o) {
   function onTransactionDisconnected(err) {
     const reject = this.reject;
     this.connectionState |= ReservedConnectionState.closed;
+
+    for (const query of this.queries) {
+      (query as Query).reject(err);
+    }
     if (err) {
       return reject(err);
     }
@@ -1199,15 +1211,16 @@ function SQL(o) {
       return reject(err);
     }
 
+    let reservedTransaction = new Set();
+
     const state = {
       connectionState: ReservedConnectionState.acceptQueries,
       reject,
+      storedError: null,
+      queries: new Set(),
     };
     const onClose = onTransactionDisconnected.bind(state);
     pooledConnection.onClose(onClose);
-
-    let reserveQueries = new Set();
-    let reservedTransaction = new Set();
 
     function reserved_sql(strings, ...values) {
       if (
@@ -1220,7 +1233,7 @@ function SQL(o) {
         return new SQLArrayParameter(strings, values);
       }
       // we use the same code path as the transaction sql
-      return queryFromTransaction(strings, values, pooledConnection, reserveQueries);
+      return queryFromTransaction(strings, values, pooledConnection, state.queries);
     }
     reserved_sql.connect = () => {
       if (state.connectionState & ReservedConnectionState.closed) {
@@ -1323,6 +1336,7 @@ function SQL(o) {
       return pooledConnection.flush();
     };
     reserved_sql.close = async (options?: { timeout?: number }) => {
+      const reserveQueries = state.queries;
       if (
         state.connectionState & ReservedConnectionState.closed ||
         !(state.connectionState & ReservedConnectionState.acceptQueries)
@@ -1336,7 +1350,7 @@ function SQL(o) {
         if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
           throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
         }
-        if (timeout > 0 && reserveQueries.size > 0) {
+        if (timeout > 0 && (reserveQueries.size > 0 || reservedTransaction.size > 0)) {
           const { promise, resolve } = Promise.withResolvers();
           // race all queries vs timeout
           const pending_queries = Array.from(reserveQueries);
@@ -1347,9 +1361,7 @@ function SQL(o) {
               (query as Query).cancel();
             }
             state.connectionState |= ReservedConnectionState.closed;
-            pooledConnection.queries.delete(onClose);
             pooledConnection.close();
-            pool.release(pooledConnection);
 
             resolve();
           }, timeout * 1000);
@@ -1362,17 +1374,24 @@ function SQL(o) {
         }
       }
       state.connectionState |= ReservedConnectionState.closed;
-
-      pooledConnection.queries.delete(onClose);
+      for (const query of reserveQueries) {
+        (query as Query).cancel();
+      }
 
       pooledConnection.close();
 
-      pool.release(pooledConnection);
       return Promise.resolve(undefined);
     };
     reserved_sql.release = () => {
+      if (
+        state.connectionState & ReservedConnectionState.closed ||
+        !(state.connectionState & ReservedConnectionState.acceptQueries)
+      ) {
+        return Promise.reject(connectionClosedError());
+      }
       // just release the connection back to the pool
       state.connectionState |= ReservedConnectionState.closed;
+      state.connectionState &= ~ReservedConnectionState.acceptQueries;
       pooledConnection.queries.delete(onClose);
       pool.release(pooledConnection);
       return Promise.resolve(undefined);
@@ -1425,10 +1444,10 @@ function SQL(o) {
     const state = {
       connectionState: ReservedConnectionState.acceptQueries,
       reject,
+      queries: new Set(),
     };
 
     let savepoints = 0;
-    let transactionQueries = new Set();
     let transactionSavepoints = new Set();
     const adapter = connectionInfo.adapter;
     let BEGIN_COMMAND: string = "BEGIN";
@@ -1515,7 +1534,7 @@ function SQL(o) {
       if (state.connectionState & ReservedConnectionState.closed) {
         return Promise.reject(connectionClosedError());
       }
-      return queryFromTransaction(strings, values, pooledConnection, transactionQueries);
+      return queryFromTransaction(strings, values, pooledConnection, state.queries);
     }
     function transaction_sql(strings, ...values) {
       if (
@@ -1528,7 +1547,7 @@ function SQL(o) {
         return new SQLArrayParameter(strings, values);
       }
 
-      return queryFromTransaction(strings, values, pooledConnection, transactionQueries);
+      return queryFromTransaction(strings, values, pooledConnection, state.queries);
     }
     // reserve is allowed to be called inside transaction connection but will return a new reserved connection from the pool and will not be part of the transaction
     // this matchs the behavior of the postgres package
@@ -1603,13 +1622,14 @@ function SQL(o) {
         return Promise.reject(connectionClosedError());
       }
       state.connectionState &= ~ReservedConnectionState.acceptQueries;
-
+      const transactionQueries = state.queries;
       let timeout = options?.timeout;
       if (timeout) {
         timeout = Number(timeout);
         if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
           throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
         }
+
         if (timeout > 0 && (transactionQueries.size > 0 || transactionSavepoints.size > 0)) {
           const { promise, resolve } = Promise.withResolvers();
           // race all queries vs timeout
@@ -1633,6 +1653,9 @@ function SQL(o) {
           });
           return promise;
         }
+      }
+      for (const query of transactionQueries) {
+        (query as Query).cancel();
       }
       if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
         await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);

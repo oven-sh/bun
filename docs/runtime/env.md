@@ -13,10 +13,24 @@ FOO=hello
 BAR=world
 ```
 
-Variables can also be set via the command line.
+Variables can be set before execution via the command line, on POSIX-compliant shells.
 
 ```sh
 $ FOO=helloworld bun run dev
+```
+
+Or for a cross-platform solution, using `bun exec`.
+
+```sh
+$ bun exec 'NODE_ENV=development bun run dev'
+```
+
+You can even use it directly on a `package.json` script:
+
+```
+	"scripts": {
+		"dev": "bun exec 'NODE_ENV=development bun --watch  app.ts'",
+	},
 ```
 
 Or programmatically by assigning a property to `process.env`.

@@ -2530,11 +2530,16 @@ pub const Arguments = struct {
             };
 
             const buffer_value = arguments.next();
-            const buffer = Buffer.fromJS(ctx, buffer_value orelse {
+            const buffer: JSC.MarkedArrayBuffer = Buffer.fromJS(ctx, buffer_value orelse {
                 return ctx.throwInvalidArguments("buffer is required", .{});
             }) orelse {
                 return ctx.throwInvalidArgumentTypeValue("buffer", "TypedArray", buffer_value.?);
             };
+
+            if (buffer.buffer.len == 0) {
+                return JSC.Error.ERR_INVALID_ARG_VALUE.throw(ctx, "The argument 'buffer' is empty and cannot be written.", .{});
+            }
+
             arguments.eat();
 
             var args = Read{

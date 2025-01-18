@@ -21,7 +21,7 @@ const kDeserialize = Symbol("kDeserialize");
 const kEmptyObject = ObjectFreeze({ __proto__: null });
 const kFlag = Symbol("kFlag");
 
-const { validateObject } = require("internal/validators");
+const { validateObject, validateInteger } = require("internal/validators");
 
 function watch(
   filename: string | Buffer | URL,
@@ -392,6 +392,10 @@ function asyncWrap(fn: any, name: string) {
         return { buffer, bytesRead: 0 };
       }
 
+      if (buffer.byteLength === 0) {
+        throw $ERR_INVALID_ARG_VALUE("buffer", buffer, "is empty and cannot be written");
+      }
+
       try {
         this[kRef]();
         return { buffer, bytesRead: await read(fd, buffer, offset, length, position) };
@@ -507,7 +511,7 @@ function asyncWrap(fn: any, name: string) {
       throwEBADFIfNecessary("writeFile", fd);
       let encoding: string = "utf8";
       let signal: AbortSignal | undefined = undefined;
- 
+
       if (options == null || typeof options === "function") {
       } else if (typeof options === "string") {
         encoding = options;

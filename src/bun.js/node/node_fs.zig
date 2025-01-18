@@ -2542,10 +2542,13 @@ pub const Arguments = struct {
 
                     if (arguments.next()) |arg_position| {
                         arguments.eat();
-                        const num: i64 = try JSC.Node.validators.validateIntegerOrBigInt(ctx, arg_position, "position", -1, 9007199254740991);
 
-                        if (num >= 0)
-                            args.position = @as(ReadPosition, @intCast(num));
+                        if (!arg_position.isNull()) {
+                            const num: i64 = try JSC.Node.validators.validateIntegerOrBigInt(ctx, arg_position, "position", -1, 9007199254740991);
+
+                            if (num >= 0)
+                                args.position = @as(ReadPosition, @intCast(num));
+                        }
                     }
                 } else if (current.isObject()) {
                     if (try current.getTruthy(ctx, "offset")) |num| {

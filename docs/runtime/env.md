@@ -13,7 +13,7 @@ FOO=hello
 BAR=world
 ```
 
-Variables can be set before execution via the command line on a per operating system basis.
+Variables can also be set via the command line.
 
 {% codetabs %}
 
@@ -31,18 +31,23 @@ $ $env:FOO="helloworld"; bun run dev
 
 {% /codetabs %}
 
-Or for a cross-platform solution, using the `bun exec` syntax.
+{% details summary="Cross-platform solution with Windows" %}
+
+For a cross-platform solution, you can use [bun shell](https://bun.sh/docs/runtime/shell). For example, the `bun exec` command.
 
 ```sh
 $ bun exec 'FOO=helloworld bun run dev'
 ```
 
 On Windows, `package.json` scripts called with `bun run` will automatically use the **bun shell**, making the following also cross-platform.
-```json
+
+```json#package.json
 "scripts": {
-  "dev": "NODE_ENV=development bun --watch  app.ts",
+  "dev": "NODE_ENV=development bun --watch app.ts",
 },
 ```
+
+{% /details %}
 
 Or programmatically by assigning a property to `process.env`.
 

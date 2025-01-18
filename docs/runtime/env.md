@@ -13,23 +13,32 @@ FOO=hello
 BAR=world
 ```
 
-Variables can be set before execution via the command line, on POSIX-compliant shells.
+Variables can be set before execution via the command line on a per operating system basis.
 
-```sh
+{% codetabs %}
+
+```sh#Linux/macOS
 $ FOO=helloworld bun run dev
 ```
 
-Or for a cross-platform solution, using `bun exec`.
+```sh#Windows Terminal
+$ set FOO=helloworld && bun run dev
+```
+
+```sh#Windows PowerShell
+$ $env:FOO="helloworld"; bun run dev
+```
+
+Or for a cross-platform solution, using the `bun exec` syntax.
 
 ```sh
 $ bun exec 'FOO=helloworld bun run dev'
 ```
 
-You can even use it directly on a `package.json` script:
-
+Scrips from a `package.json` called with `bun run` will automatically use the `bun exec` syntax so they will be natively cross-platform when it comes to variable definition.
 ```json
 "scripts": {
-  "dev": "bun exec 'NODE_ENV=development bun --watch  app.ts'",
+  "dev": "NODE_ENV=development bun --watch  app.ts",
 },
 ```
 

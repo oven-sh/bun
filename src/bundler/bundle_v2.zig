@@ -9692,6 +9692,7 @@ pub const LinkerContext = struct {
                     return CompileResult{
                         .css = .{
                             .result = .{ .err = e },
+                            .source_index = Index.invalid.get(),
                         },
                     };
                 };
@@ -9718,6 +9719,7 @@ pub const LinkerContext = struct {
                     return CompileResult{
                         .css = .{
                             .result = .{ .err = e },
+                            .source_index = Index.invalid.get(),
                         },
                     };
                 };
@@ -9744,6 +9746,7 @@ pub const LinkerContext = struct {
                     return CompileResult{
                         .css = .{
                             .result = .{ .err = e },
+                            .source_index = idx.get(),
                         },
                     };
                 };

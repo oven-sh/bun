@@ -970,6 +970,39 @@ static napi_value try_add_tag(const Napi::CallbackInfo &info) {
   return Napi::Boolean::New(env, status == napi_ok);
 }
 
+// set_instance_data(number)
+static napi_value set_instance_data(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value object = info[0];
+
+  static int32_t data;
+  assert(napi_get_value_int32(env, object, &data) == napi_ok);
+  assert(napi_set_instance_data(env, &data, nullptr, nullptr) == napi_ok);
+  return env.Undefined();
+}
+
+// get_instance_data(): number | null
+static napi_value get_instance_data(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  void *data_ptr = nullptr;
+  assert(napi_get_instance_data(env, &data_ptr) == napi_ok);
+  if (data_ptr == nullptr) {
+    return env.Null();
+  }
+
+  napi_value out;
+  assert(napi_create_int32(env, *(int32_t *)data_ptr, &out) == napi_ok);
+  return out;
+}
+
+// reset_instance_data()
+static napi_value reset_instance_data(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  assert(napi_set_instance_data(env, nullptr, nullptr, nullptr) == napi_ok);
+  return env.Undefined();
+}
+
 static napi_value bigint_to_i64(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   // start at 1 is intentional, since argument 0 is the callback to run GC
@@ -1197,6 +1230,10 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
   exports.Set("add_tag", Napi::Function::New(env, add_tag));
   exports.Set("try_add_tag", Napi::Function::New(env, try_add_tag));
   exports.Set("check_tag", Napi::Function::New(env, check_tag));
+  exports.Set("set_instance_data", Napi::Function::New(env, set_instance_data));
+  exports.Set("get_instance_data", Napi::Function::New(env, get_instance_data));
+  exports.Set("reset_instance_data",
+              Napi::Function::New(env, reset_instance_data));
   exports.Set("bigint_to_i64", Napi::Function::New(env, bigint_to_i64));
   exports.Set("bigint_to_u64", Napi::Function::New(env, bigint_to_u64));
   exports.Set("bigint_to_64_null", Napi::Function::New(env, bigint_to_64_null));

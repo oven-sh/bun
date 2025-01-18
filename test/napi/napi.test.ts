@@ -321,6 +321,12 @@ describe("napi", () => {
     });
   });
 
+  describe("instance data", () => {
+    it("works with multiple envs", () => {
+      checkSameOutput("test_instance_data", []);
+    });
+  });
+
   describe("napi_wrap", () => {
     it("accepts the right kinds of values", () => {
       checkSameOutput("test_napi_wrap", []);

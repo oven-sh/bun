@@ -1,6 +1,7 @@
 #include "napi_handle_scope.h"
 
 #include "ZigGlobalObject.h"
+#include "napi.h"
 
 namespace Bun {
 
@@ -127,19 +128,19 @@ NapiHandleScope::~NapiHandleScope()
     NapiHandleScope::close(m_globalObject, m_impl);
 }
 
-extern "C" NapiHandleScopeImpl* NapiHandleScope__open(Zig::GlobalObject* globalObject, bool escapable)
+extern "C" NapiHandleScopeImpl* NapiHandleScope__open(napi_env env, bool escapable)
 {
-    return NapiHandleScope::open(globalObject, escapable);
+    return NapiHandleScope::open(env->globalObject(), escapable);
 }
 
-extern "C" void NapiHandleScope__close(Zig::GlobalObject* globalObject, NapiHandleScopeImpl* current)
+extern "C" void NapiHandleScope__close(napi_env env, NapiHandleScopeImpl* current)
 {
-    return NapiHandleScope::close(globalObject, current);
+    return NapiHandleScope::close(env->globalObject(), current);
 }
 
-extern "C" void NapiHandleScope__append(Zig::GlobalObject* globalObject, JSC::EncodedJSValue value)
+extern "C" void NapiHandleScope__append(napi_env env, JSC::EncodedJSValue value)
 {
-    globalObject->m_currentNapiHandleScopeImpl.get()->append(JSC::JSValue::decode(value));
+    env->globalObject()->m_currentNapiHandleScopeImpl.get()->append(JSC::JSValue::decode(value));
 }
 
 extern "C" bool NapiHandleScope__escape(NapiHandleScopeImpl* handleScope, JSC::EncodedJSValue value)

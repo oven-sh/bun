@@ -1,5 +1,6 @@
 #include <js_native_api.h>
 #include <node_api.h>
+#include <stdint.h>
 #include <stdio.h>
 
 #define NODE_API_CALL(env, call)                                               \
@@ -20,6 +21,15 @@
       return NULL;                                                             \
     }                                                                          \
   } while (0)
+
+static napi_value get_instance_data(napi_env env, napi_callback_info info) {
+  void *data_ptr = NULL;
+  NODE_API_CALL(env, napi_get_instance_data(env, &data_ptr));
+
+  napi_value out;
+  NODE_API_CALL(env, napi_create_int32(env, *(int32_t *)data_ptr, &out));
+  return out;
+}
 
 static napi_value try_unwrap(napi_env env, napi_callback_info info) {
   size_t argc = 1;
@@ -49,5 +59,16 @@ static napi_value try_unwrap(napi_env env, napi_callback_info info) {
                                      try_unwrap, NULL, &try_unwrap_function));
   NODE_API_CALL(env, napi_set_named_property(env, exports, "try_unwrap",
                                              try_unwrap_function));
+
+  napi_value get_instance_data_function;
+  NODE_API_CALL(env, napi_create_function(env, "get_instance_data",
+                                          NAPI_AUTO_LENGTH, get_instance_data,
+                                          NULL, &get_instance_data_function));
+  NODE_API_CALL(env, napi_set_named_property(env, exports, "get_instance_data",
+                                             get_instance_data_function));
+
+  static int32_t instance_data = 42;
+  NODE_API_CALL(env, napi_set_instance_data(env, &instance_data, NULL, NULL));
+
   return exports;
 }

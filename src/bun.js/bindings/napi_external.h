@@ -1,11 +1,10 @@
-
-
 #pragma once
 
 #include "root.h"
 
 #include "BunBuiltinNames.h"
 #include "BunClientData.h"
+#include "napi.h"
 
 namespace Bun {
 
@@ -52,51 +51,52 @@ public:
             JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    static NapiExternal* create(JSC::VM& vm, JSC::Structure* structure, void* value, void* finalizer_hint, void* finalizer)
+    // env is needed only if a finalizer is passed, otherwise it may be null
+    static NapiExternal* create(JSC::VM& vm, JSC::Structure* structure, napi_env env, void* value, void* finalizer_hint, napi_finalize finalizer)
     {
-        NapiExternal* accessor = new (NotNull, JSC::allocateCell<NapiExternal>(vm)) NapiExternal(vm, structure);
+        NapiExternal* external = new (NotNull, JSC::allocateCell<NapiExternal>(vm)) NapiExternal(vm, structure);
 
-        accessor->finishCreation(vm, value, finalizer_hint, finalizer);
+        external->finishCreation(vm, env, value, finalizer_hint, finalizer);
 
 #if BUN_DEBUG
         if (auto* callFrame = vm.topCallFrame) {
             auto origin = callFrame->callerSourceOrigin(vm);
-            accessor->sourceOriginURL = origin.string();
+            external->sourceOriginURL = origin.string();
 
             std::unique_ptr<Vector<StackFrame>> stackTrace = makeUnique<Vector<StackFrame>>();
-            vm.interpreter.getStackTrace(accessor, *stackTrace, 0, 20);
+            vm.interpreter.getStackTrace(external, *stackTrace, 0, 20);
             if (!stackTrace->isEmpty()) {
                 for (auto& frame : *stackTrace) {
                     if (frame.hasLineAndColumnInfo()) {
                         LineColumn lineColumn = frame.computeLineAndColumn();
-                        accessor->sourceOriginLine = lineColumn.line;
-                        accessor->sourceOriginColumn = lineColumn.column;
+                        external->sourceOriginLine = lineColumn.line;
+                        external->sourceOriginColumn = lineColumn.column;
                         break;
                     }
                 }
             }
         }
 #endif
-        return accessor;
+        return external;
     }
 
-    void finishCreation(JSC::VM& vm, void* value, void* finalizer_hint, void* finalizer)
+    void finishCreation(JSC::VM& vm, napi_env env, void* value, void* finalizer_hint, napi_finalize finalizer)
     {
         Base::finishCreation(vm);
         m_value = value;
         m_finalizerHint = finalizer_hint;
-        napi_env = this->globalObject();
-        this->finalizer = finalizer;
+        m_env = env;
+        m_finalizer = finalizer;
     }
 
     static void destroy(JSC::JSCell* cell);
 
     void* value() const { return m_value; }
 
-    void* m_value;
-    void* m_finalizerHint;
-    void* finalizer;
-    JSGlobalObject* napi_env;
+    void* m_value = nullptr;
+    void* m_finalizerHint = nullptr;
+    napi_finalize m_finalizer = nullptr;
+    napi_env m_env = nullptr;
 
 #if BUN_DEBUG
     String sourceOriginURL = String();

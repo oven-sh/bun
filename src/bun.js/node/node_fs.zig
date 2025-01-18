@@ -2156,8 +2156,6 @@ pub const Arguments = struct {
             };
             errdefer prefix.deinit();
 
-            arguments.eat();
-
             var encoding = Encoding.utf8;
 
             if (arguments.next()) |val| {

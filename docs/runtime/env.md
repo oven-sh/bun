@@ -27,10 +27,10 @@ $ bun exec 'FOO=helloworld bun run dev'
 
 You can even use it directly on a `package.json` script:
 
-```
-	"scripts": {
-		"dev": "bun exec 'NODE_ENV=development bun --watch  app.ts'",
-	},
+```json
+"scripts": {
+  "dev": "bun exec 'NODE_ENV=development bun --watch  app.ts'",
+},
 ```
 
 Or programmatically by assigning a property to `process.env`.

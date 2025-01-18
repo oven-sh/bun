@@ -577,6 +577,12 @@ class ConnectionPool {
     while ((pending = this.waitingQueue.shift())) {
       pending(connectionClosedError(), null);
     }
+    while (this.reservedQueue.length > 0) {
+      const pendingReserved = this.reservedQueue.shift();
+      if (pendingReserved) {
+        pendingReserved(connectionClosedError(), null);
+      }
+    }
     const promises: Array<Promise<any>> = [];
     if (this.poolStarted) {
       this.poolStarted = false;

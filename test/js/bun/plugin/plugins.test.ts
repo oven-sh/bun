@@ -187,7 +187,7 @@ plugin({
 // This is to test that it works when imported from a separate file
 import "../../third_party/svelte";
 import "./module-plugins";
-import { render as svelteRender } from 'svelte/server'; 
+import { render as svelteRender } from "svelte/server";
 
 describe("require", () => {
   it("SSRs `<h1>Hello world!</h1>` with Svelte", () => {
@@ -476,7 +476,11 @@ describe("errors", () => {
         return new Response(result);
       },
     });
-    const { default: text } = await import(`http://${server.hostname}:${server.port}/hey.txt`);
+    const sleep = ms => new Promise<string>(res => setTimeout(() => res("timeout"), ms));
+    const text = await Promise.race([
+      import(`http://${server.hostname}:${server.port}/hey.txt`).then(mod => mod.default) as Promise<string>,
+      sleep(2_500),
+    ]);
     expect(text).toBe(result);
   });
 });

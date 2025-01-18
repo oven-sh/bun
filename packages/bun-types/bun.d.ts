@@ -18,6 +18,7 @@ declare module "bun" {
   import type { Encoding as CryptoEncoding } from "crypto";
   import type { CipherNameAndProtocol, EphemeralKeyInfo, PeerCertificate } from "tls";
   import type { Stats } from "node:fs";
+  import type { X509Certificate } from "node:crypto";
   interface Env {
     NODE_ENV?: string;
     /**
@@ -2277,7 +2278,8 @@ declare module "bun" {
     | "import-rule"
     | "url-token"
     | "internal"
-    | "entry-point";
+    | "entry-point-run"
+    | "entry-point-build";
 
   interface Import {
     path: string;
@@ -5372,6 +5374,7 @@ declare module "bun" {
      * socket has been destroyed, `null` will be returned.
      */
     getCertificate(): PeerCertificate | object | null;
+    getX509Certificate(): X509Certificate | undefined;
 
     /**
      * Returns an object containing information on the negotiated cipher suite.
@@ -5410,6 +5413,7 @@ declare module "bun" {
      * @return A certificate object.
      */
     getPeerCertificate(): PeerCertificate;
+    getPeerX509Certificate(): X509Certificate;
 
     /**
      * See [SSL\_get\_shared\_sigalgs](https://www.openssl.org/docs/man1.1.1/man3/SSL_get_shared_sigalgs.html) for more information.

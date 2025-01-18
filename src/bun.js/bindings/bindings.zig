@@ -4841,6 +4841,12 @@ pub const JSValue = enum(i64) {
     pub inline fn isObject(this: JSValue) bool {
         return this.isCell() and this.jsType().isObject();
     }
+    pub inline fn isPlainObject(this: JSValue) bool {
+        return this.isCell() and switch (this.jsType()) {
+            .Object, .FinalObject => true,
+            else => false,
+        };
+    }
     pub inline fn isArray(this: JSValue) bool {
         return this.isCell() and this.jsType().isArray();
     }

@@ -2443,7 +2443,6 @@ pub const Arguments = struct {
                 },
             };
             errdefer args.deinit();
-
             arguments.eat();
 
             parse: {
@@ -2464,6 +2463,7 @@ pub const Arguments = struct {
                     },
                     // fs.write(fd, buffer[, offset[, length[, position]]], callback)
                     .buffer => {
+                        if (current.isUndefinedOrNull() or current.isFunction()) break :parse;
                         args.offset = @intCast(try JSC.Node.validators.validateInteger(ctx, current, "offset", 0, 9007199254740991));
                         arguments.eat();
                         current = arguments.next() orelse break :parse;
@@ -2471,22 +2471,18 @@ pub const Arguments = struct {
                         if (!(current.isNumber() or current.isBigInt())) break :parse;
                         const length = current.to(i64);
                         const buf_len = args.buffer.buffer.slice().len;
-                        if (args.offset > buf_len) {
+                        const max_offset = @min(buf_len, std.math.maxInt(i64));
+                        if (args.offset > max_offset) {
                             return ctx.throwRangeError(
                                 @as(f64, @floatFromInt(args.offset)),
-                                .{ .field_name = "offset", .max = @intCast(@min(buf_len, std.math.maxInt(i64))) },
+                                .{ .field_name = "offset", .max = @intCast(max_offset) },
                             );
                         }
-                        if (length > buf_len - args.offset) {
+                        const max_len = @min(buf_len - args.offset, std.math.maxInt(i32));
+                        if (length > max_len or length < 0) {
                             return ctx.throwRangeError(
                                 @as(f64, @floatFromInt(length)),
-                                .{ .field_name = "length", .max = @intCast(@min(buf_len - args.offset, std.math.maxInt(i64))) },
-                            );
-                        }
-                        if (length < 0) {
-                            return ctx.throwRangeError(
-                                @as(f64, @floatFromInt(length)),
-                                .{ .field_name = "length", .min = 0 },
+                                .{ .field_name = "length", .min = 0, .max = @intCast(max_len) },
                             );
                         }
                         args.length = @intCast(length);
@@ -2550,7 +2546,14 @@ pub const Arguments = struct {
             var defined_length = false;
             if (arguments.next()) |current| {
                 arguments.eat();
-                if (current.isNumber() or current.isBigInt()) {
+                const is_number = current.isNumber();
+                if (is_number) {
+                    const double = current.asNumber();
+                    if (!std.math.isFinite(double)) {
+                        return ctx.throwInvalidArgumentTypeValue("options", "number or", current);
+                    }
+                }
+                if (is_number or current.isBigInt()) {
                     const buf_len = buffer.slice().len;
                     args.offset = @intCast(try JSC.Node.validators.validateInteger(ctx, current, "offset", 0, @intCast(buf_len)));
 
@@ -2576,7 +2579,8 @@ pub const Arguments = struct {
                                 args.position = @as(ReadPosition, @intCast(num));
                         }
                     }
-                } else if (current.isObject()) {
+                } else if (current.isPlainObject()) {
+                    std.debug.print("wtf {}\n", .{current.jsType()});
                     if (try current.getTruthy(ctx, "offset")) |num| {
                         if (num.isNumber() or num.isBigInt()) {
                             args.offset = num.to(u52);
@@ -2597,6 +2601,8 @@ pub const Arguments = struct {
                                 args.position = num.to(i52);
                         }
                     }
+                } else if (!current.isUndefinedOrNull()) {
+                    return ctx.throwInvalidArgumentTypeValue("options", "number or object", current);
                 }
             }
 

@@ -571,12 +571,12 @@ pub const StringOrBuffer = union(enum) {
                     sliced.reportExtraMemory(global.vm());
 
                     if (sliced.underlying.isEmpty()) {
-                        return StringOrBuffer{ .encoded_slice = sliced.utf8 };
+                        return .{ .encoded_slice = sliced.utf8 };
                     }
 
-                    return StringOrBuffer{ .threadsafe_string = sliced };
+                    return .{ .threadsafe_string = sliced };
                 } else {
-                    return StringOrBuffer{ .string = str.toSlice(allocator) };
+                    return .{ .string = str.toSlice(allocator) };
                 }
             },
 
@@ -594,9 +594,7 @@ pub const StringOrBuffer = union(enum) {
             .BigInt64Array,
             .BigUint64Array,
             .DataView,
-            => StringOrBuffer{
-                .buffer = Buffer.fromArrayBuffer(global, value),
-            },
+            => .{ .buffer = Buffer.fromArrayBuffer(global, value) },
             else => null,
         };
     }
@@ -611,9 +609,7 @@ pub const StringOrBuffer = union(enum) {
 
     pub fn fromJSWithEncodingMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding: Encoding, is_async: bool, allow_string_object: bool) bun.JSError!?StringOrBuffer {
         if (value.isCell() and value.jsType().isTypedArray()) {
-            return StringOrBuffer{
-                .buffer = Buffer.fromTypedArray(global, value),
-            };
+            return .{ .buffer = Buffer.fromTypedArray(global, value) };
         }
 
         if (encoding == .utf8) {
@@ -630,9 +626,7 @@ pub const StringOrBuffer = union(enum) {
             const out = str.encode(encoding);
             defer global.vm().reportExtraMemory(out.len);
 
-            return .{
-                .encoded_slice = JSC.ZigString.Slice.init(bun.default_allocator, out),
-            };
+            return .{ .encoded_slice = JSC.ZigString.Slice.init(bun.default_allocator, out) };
         }
 
         return null;

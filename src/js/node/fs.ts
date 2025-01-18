@@ -349,6 +349,9 @@ var access = function access(path, mode, callback) {
       }
       ({ offset = 0, length = buffer?.byteLength - offset, position = null } = params ?? {});
     }
+    if (!callback) {
+      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
+    }
     fs.read(fd, buffer, offset, length, position).then(
       bytesRead => {
         callback(null, bytesRead, buffer);
@@ -1689,8 +1692,19 @@ function _toUnixTimestamp(time: any, name = "time") {
   throw $ERR_INVALID_ARG_TYPE(name, "number or Date", time);
 }
 
+class Dir {
+  #handle;
+
+  constructor(handle, path, options) {
+    if (handle == null) throw $ERR_MISSING_ARGS("handle");
+    // TODO:
+    throw new Error("not implemented");
+  }
+}
+
 export default {
   Dirent,
+  Dir,
   FSWatcher,
   ReadStream,
   Stats,

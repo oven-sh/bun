@@ -30,6 +30,10 @@ export function getStdioWriteStream(fd) {
   let stream;
   if (tty.isatty(fd)) {
     stream = new tty.WriteStream(fd);
+    // TODO: this is the wrong place for this property.
+    // but the TTY is technically duplex
+    // see test-fs-syncwritestream.js
+    stream.readable = true;
     process.on("SIGWINCH", () => {
       stream._refreshSize();
     });
@@ -37,6 +41,7 @@ export function getStdioWriteStream(fd) {
   } else {
     const fs = require("node:fs");
     stream = new fs.WriteStream(fd, { autoClose: false, fd });
+    stream.readable = false;
     stream._type = "fs";
   }
 

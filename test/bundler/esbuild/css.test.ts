@@ -400,6 +400,7 @@ describe("esbuild-bundler", () => {
     },
   });
 
+  // Skipping for now
   // itBundled("css/ExternalImportURLInCSS", {
   //   experimentalCss: true,
 

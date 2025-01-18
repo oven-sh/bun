@@ -828,10 +828,7 @@ pub fn normalizeStringGenericTZ(
                 }
             } else {
                 // drive letter
-                buf[buf_i] = switch (path_[0]) {
-                    'a'...'z' => path_[0] & (std.math.maxInt(T) ^ (1 << 5)),
-                    else => path_[0],
-                };
+                buf[buf_i] = std.ascii.toUpper(@truncate(path_[0]));
                 buf[buf_i + 1] = ':';
                 buf_i += 2;
                 dotdot = buf_i;
@@ -850,7 +847,7 @@ pub fn normalizeStringGenericTZ(
                 @memcpy(buf[buf_i .. buf_i + 4], &strings.literalBuf(T, "\\??\\"));
                 buf_i += 4;
             }
-            buf[buf_i] = path_[0];
+            buf[buf_i] = std.ascii.toUpper(@truncate(path_[0]));
             buf[buf_i + 1] = ':';
             buf_i += 2;
             dotdot = buf_i;

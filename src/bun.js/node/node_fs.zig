@@ -4367,6 +4367,13 @@ pub const NodeFS = struct {
         var iterator = DirIterator.iterate(dir, comptime if (is_u16) .u16 else .u8);
         var entry = iterator.next();
 
+        const re_encoding_buffer: ?*bun.PathBuffer = if (is_u16 and args.encoding != .utf8)
+            bun.PathBufferPool.get()
+        else 
+            null;
+        defer if (is_u16 and args.encoding != .utf8)
+            bun.PathBufferPool.put(re_encoding_buffer.?);
+
         while (switch (entry) {
             .err => |err| {
                 for (entries.items) |*item| {
@@ -4427,8 +4434,15 @@ pub const NodeFS = struct {
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
                     },
-                    bun.String => {
-                        entries.append(bun.String.createUTF16(utf16_name)) catch bun.outOfMemory();
+                    bun.String => switch(args.encoding) {
+                        .buffer => unreachable,
+                        // in node.js, libuv converts to utf8 before node.js converts those bytes into other stuff
+                        // all encodings besides hex, base64, and base64url are mis-interpreting filesystem bytes.
+                        .utf8 => entries.append(bun.String.createUTF16(utf16_name)) catch bun.outOfMemory(),
+                        else => |enc| {
+                            const utf8_path = bun.strings.fromWPath(re_encoding_buffer.?, utf16_name);
+                            entries.append(JSC.WebCore.Encoder.toBunString(utf8_path, enc)) catch bun.outOfMemory();
+                        },
                     },
                     else => @compileError("unreachable"),
                 }
@@ -5720,8 +5734,11 @@ pub const NodeFS = struct {
                 bun.O.WRONLY | flags,
                 0o644,
             );
-            if (file == .err)
-                return .{ .err = file.err.withPath(path.slice()) };
+            if (file == .err){
+                return .{ .err = .{
+                    .errno = file.err.errno,
+                    .path = path.slice(),
+                    .syscall = .truncate,} };}
             defer _ = Syscall.close(file.result);
             const ret = Syscall.ftruncate(file.result, len);
             return switch (ret) {

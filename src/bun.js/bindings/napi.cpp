@@ -563,6 +563,7 @@ public:
         ASSERT(jsCast<NAPIFunction*>(callframe->jsCallee()));
         auto* function = static_cast<NAPIFunction*>(callframe->jsCallee());
         auto* env = toNapi(globalObject);
+        ASSERT(function->m_method);
         auto* callback = reinterpret_cast<napi_callback>(function->m_method);
         JSC::VM& vm = globalObject->vm();
 
@@ -2098,7 +2099,7 @@ extern "C" napi_status napi_get_value_int32(napi_env env, napi_value value, int3
     JSC::JSValue jsValue = toJS(value);
     NAPI_RETURN_EARLY_IF_FALSE(env, jsValue.isNumber(), napi_number_expected);
 
-    *result = jsValue.isInt32() ? jsValue.asInt32() : JSC::toInt32(jsValue.asDouble());
+    *result = jsValue.isInt32() ? jsValue.asInt32() : JSC::toInt32(jsValue.asNumber());
     NAPI_RETURN_SUCCESS(env);
 }
 
@@ -2109,8 +2110,8 @@ extern "C" napi_status napi_get_value_uint32(napi_env env, napi_value value, uin
     NAPI_CHECK_ARG(env, value);
     JSC::JSValue jsValue = toJS(value);
     NAPI_RETURN_EARLY_IF_FALSE(env, jsValue.isNumber(), napi_number_expected);
+    *result = jsValue.isUInt32() ? jsValue.asUInt32() : JSC::toUInt32(jsValue.asNumber());
 
-    *result = jsValue.isUInt32() ? jsValue.asUInt32() : JSC::toUInt32(jsValue.asDouble());
     NAPI_RETURN_SUCCESS(env);
 }
 

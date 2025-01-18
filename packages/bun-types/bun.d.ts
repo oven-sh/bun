@@ -1995,6 +1995,62 @@ declare module "bun" {
      */
     stat(path: string, options?: S3Options): Promise<S3Stats>;
   };
+  type SQLOptions = {
+    host: string;
+    port: number;
+    user: string;
+    password: string;
+    database: string;
+    url: URL | string;
+    adapter: string;
+    idleTimeout: number;
+    connectionTimeout: number;
+    maxLifetime: number;
+    max_lifetime: number;
+    connection_timeout: number;
+    idle_timeout: number;
+    tls: boolean;
+    onconnect: (client: SQLClient) => void;
+    onclose: (client: SQLClient) => void;
+    max: number;
+  };
+  interface SQLQuery extends Promise<any> {
+    active: boolean;
+    cancelled: boolean;
+    cancel(): SQLQuery;
+    execute(): SQLQuery;
+    raw(): SQLQuery;
+    values(): SQLQuery;
+  }
+
+  type SQLContextCallback = (sql: (strings: string, ...values: any[]) => SQLQuery | Array<SQLQuery>) => Promise<any>;
+
+  type SQLClient = {
+    new (options?: SQLOptions | string): SQLClient;
+    (strings: string, ...values: any[]): SQLQuery;
+    commitDistributed(name: string): Promise<undefined>;
+    rollbackDistributed(name: string): Promise<undefined>;
+    connect(): Promise<SQLClient>;
+    close(options?: { timeout?: number }): Promise<undefined>;
+    end(options?: { timeout?: number }): Promise<undefined>;
+    flush(): void;
+    reserve(): Promise<ReservedSQLClient>;
+    begin(fn: SQLContextCallback): Promise<any>;
+    begin(options: string, fn: SQLContextCallback): Promise<any>;
+    transaction(fn: SQLContextCallback): Promise<any>;
+    transaction(options: string, fn: SQLContextCallback): Promise<any>;
+    beginDistributed(name: string, fn: SQLContextCallback): Promise<any>;
+    distributed(name: string, fn: SQLContextCallback): Promise<any>;
+    options: SQLOptions;
+  };
+  interface ReservedSQLClient extends SQLClient {
+    release(): void;
+  }
+  interface TransactionSQLClient extends SQLClient {
+    savepoint(name: string, fn: SQLContextCallback): Promise<undefined>;
+  }
+
+  const sql: SQLClient;
 
   /**
    *   This lets you use macros as regular imports

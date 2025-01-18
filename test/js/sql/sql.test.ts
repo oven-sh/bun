@@ -1,4 +1,5 @@
-import { postgres, sql } from "bun:sql";
+import { sql } from "bun";
+const postgres = (...args) => new sql(...args);
 import { expect, test, mock } from "bun:test";
 import { $ } from "bun";
 import { bunExe, isCI, withoutAggressiveGC } from "harness";

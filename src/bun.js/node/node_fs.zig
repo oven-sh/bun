@@ -3821,7 +3821,11 @@ pub const NodeFS = struct {
                     else => {
                         return .{ .err = err.withPath(this.osPathIntoSyncErrorBuf(path[0..len])) };
                     },
-                    .EXIST => return switch (bun.sys.directoryExistsAt(bun.invalid_fd, path)) {
+                    // mkpath_np in macOS also checks for EISDIR.
+                    .ISDIR,
+                    // check if it was actually a directory or not.
+                    .EXIST,
+                    => return switch (bun.sys.directoryExistsAt(bun.invalid_fd, path)) {
                         .err => .{ .err = .{
                             .errno = err.errno,
                             .syscall = .mkdir,

@@ -65,7 +65,7 @@ pub fn validateInteger(globalThis: *JSGlobalObject, value: JSValue, comptime nam
 
     const num = value.asInt52();
     if (num < min or num > max) {
-        return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} && <= {d}. Received {}", name_args ++ .{ min, max, num });
+        return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} and <= {d}. Received {}", name_args ++ .{ min, max, num });
     }
     return num;
 }
@@ -110,7 +110,7 @@ pub fn validateInt32(globalThis: *JSGlobalObject, value: JSValue, comptime name_
     // Use floating point comparison here to ensure values out of i32 range get caught instead of clamp/truncated.
     if (num < @as(f64, @floatFromInt(min)) or num > @as(f64, @floatFromInt(max))) {
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
-        return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} && <= {d}. Received {}", name_args ++ .{ min, max, value.toFmt(&formatter) });
+        return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} and <= {d}. Received {}", name_args ++ .{ min, max, value.toFmt(&formatter) });
     }
     return @intFromFloat(num);
 }
@@ -128,7 +128,7 @@ pub fn validateUint32(globalThis: *JSGlobalObject, value: JSValue, comptime name
     const max: i64 = @intCast(std.math.maxInt(u32));
     if (num < min or num > max) {
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
-        return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} && <= {d}. Received {}", name_args ++ .{ min, max, value.toFmt(&formatter) });
+        return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} and <= {d}. Received {}", name_args ++ .{ min, max, value.toFmt(&formatter) });
     }
     return @truncate(@as(u63, @intCast(num)));
 }
@@ -155,7 +155,7 @@ pub fn validateNumber(globalThis: *JSGlobalObject, value: JSValue, comptime name
     }
     if (!valid) {
         if (min != null and max != null) {
-            return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} && <= {d}. Received {s}", name_args ++ .{ min, max, value });
+            return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} and <= {d}. Received {s}", name_args ++ .{ min, max, value });
         } else if (min != null) {
             return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d}. Received {s}", name_args ++ .{ max, value });
         } else {

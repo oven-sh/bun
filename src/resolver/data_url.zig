@@ -117,7 +117,8 @@ pub const DataURL = struct {
 
     /// Decodes the data from the data URL. Always returns an owned slice.
     pub fn decodeData(url: DataURL, allocator: std.mem.Allocator) ![]u8 {
-        const data = decodeDataImpl(url, allocator) catch {
+        const data = decodeDataImpl(url, allocator) catch |e| {
+            if (e == error.Base64DecodeError) return e;
             return allocator.dupe(u8, url.data);
         };
 

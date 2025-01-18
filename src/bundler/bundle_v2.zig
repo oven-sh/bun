@@ -2492,7 +2492,8 @@ pub const BundleV2 = struct {
         if (had_matches) return true;
 
         if (bun.strings.eqlComptime(parse.path.namespace, "dataurl")) {
-            const data_url = DataURL.parseWithoutCheck(parse.path.text) catch return false;
+            const maybe_data_url = DataURL.parse(parse.path.text) catch return false;
+            const data_url = maybe_data_url orelse return false;
             const maybe_decoded = data_url.decodeDataImpl(bun.default_allocator) catch return false;
             if (maybe_decoded) |d| {
                 this.free_list.append(d) catch bun.outOfMemory();

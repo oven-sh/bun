@@ -2128,8 +2128,9 @@ pub const Arguments = struct {
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!MkdirTemp {
-            const prefix = try PathLike.fromJS(ctx, arguments) orelse
-                return .{};
+            const prefix = try PathLike.fromJS(ctx, arguments) orelse {
+                return ctx.throwInvalidArgumentTypeValue("prefix", "string, Buffer, or URL", arguments.next() orelse .undefined);
+            };
             errdefer prefix.deinit();
 
             arguments.eat();

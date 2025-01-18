@@ -56,7 +56,7 @@ export class HotModule<E = any> {
     mod._deps.set(this, onReload ? { _callback: onReload, _expectedImports: expectedImports } : undefined);
     const { exports, __esModule } = mod;
     const object = __esModule ? exports : (mod._ext_exports ??= { ...exports, default: exports });
-    
+
     if (expectedImports && mod._state === State.Ready) {
       for (const key of expectedImports) {
         if (!(key in object)) {
@@ -156,14 +156,16 @@ class Hot {
 }
 
 function isUnsupportedViteEventName(str: string) {
-  return str === 'vite:beforeUpdate'
-    || str === 'vite:afterUpdate'
-    || str === 'vite:beforeFullReload'
-    || str === 'vite:beforePrune'
-    || str === 'vite:invalidate'
-    || str === 'vite:error'
-    || str === 'vite:ws:disconnect'
-    || str === 'vite:ws:connect';
+  return (
+    str === "vite:beforeUpdate" ||
+    str === "vite:afterUpdate" ||
+    str === "vite:beforeFullReload" ||
+    str === "vite:beforePrune" ||
+    str === "vite:invalidate" ||
+    str === "vite:error" ||
+    str === "vite:ws:disconnect" ||
+    str === "vite:ws:connect"
+  );
 }
 
 /**
@@ -196,7 +198,7 @@ export function loadModule<T = any>(key: Id, type: LoadModuleType): HotModule<T>
     load(mod);
     mod._state = State.Ready;
     mod._deps.forEach((entry, dep) => {
-        entry._callback?.(mod.exports);
+      entry?._callback(mod.exports);
     });
   } catch (err) {
     console.error(err);
@@ -212,7 +214,7 @@ export const getModule = registry.get.bind(registry);
 export function replaceModule(key: Id, load: ModuleLoadFunction) {
   const module = registry.get(key);
   if (module) {
-    module._onDispose?.forEach((cb) => cb(null));
+    module._onDispose?.forEach(cb => cb(null));
     module.exports = {};
     load(module);
     const { exports } = module;
@@ -268,7 +270,7 @@ if (side === "client") {
   const server_module = new HotModule("bun:bake/client");
   server_module.__esModule = true;
   server_module.exports = {
-    onServerSideReload: async (cb) => {
+    onServerSideReload: async cb => {
       onServerSideReload = cb;
     },
   };

@@ -26,10 +26,10 @@ const ComptimeStringMap = bun.ComptimeStringMap;
 const JSPrinter = @import("./js_printer.zig");
 const js_lexer = @import("./js_lexer.zig");
 const TypeScript = @import("./js_parser.zig").TypeScript;
-const ThreadlocalArena = @import("./mimalloc_arena.zig").Arena;
+const ThreadlocalArena = @import("./allocators/mimalloc_arena.zig").Arena;
 const MimeType = bun.http.MimeType;
 const OOM = bun.OOM;
-
+const Loader = bun.options.Loader;
 /// This is the index to the automatically-generated part containing code that
 /// calls "__export(exports, { ... getters ... })". This is used to generate
 /// getters on an exports object for ES6 export statements, and is both for
@@ -132,7 +132,6 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
         }
 
         pub fn reset(store: *Store) void {
-            store.debug_lock.assertUnlocked();
             log("reset", .{});
 
             if (Environment.isDebug) {
@@ -152,8 +151,6 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
             comptime if (!supportsType(T)) {
                 @compileError("Store does not know about type: " ++ @typeName(T));
             };
-
-            store.debug_lock.assertUnlocked();
 
             if (store.current.tryAlloc(T)) |ptr|
                 return ptr;
@@ -2507,20 +2504,17 @@ pub const E = struct {
             if (s.isUTF8()) {
                 if (try strings.toUTF16Alloc(allocator, s.slice8(), false, false)) |utf16| {
                     var out, const chars = bun.String.createUninitialized(.utf16, utf16.len);
-                    defer out.deref();
                     @memcpy(chars, utf16);
-                    return out.toJS(globalObject);
+                    return out.transferToJS(globalObject);
                 } else {
                     var out, const chars = bun.String.createUninitialized(.latin1, s.slice8().len);
-                    defer out.deref();
                     @memcpy(chars, s.slice8());
-                    return out.toJS(globalObject);
+                    return out.transferToJS(globalObject);
                 }
             } else {
                 var out, const chars = bun.String.createUninitialized(.utf16, s.slice16().len);
-                defer out.deref();
                 @memcpy(chars, s.slice16());
-                return out.toJS(globalObject);
+                return out.transferToJS(globalObject);
             }
         }
 
@@ -3044,7 +3038,7 @@ pub const Stmt = struct {
         return Stmt.allocate(allocator, S.SExpr, S.SExpr{ .value = expr }, expr.loc);
     }
 
-    pub const Tag = enum(u6) {
+    pub const Tag = enum {
         s_block,
         s_break,
         s_class,
@@ -3126,7 +3120,13 @@ pub const Stmt = struct {
         s_empty: S.Empty, // special case, its a zero value type
         s_debugger: S.Debugger,
 
-        s_lazy_export: Expr.Data,
+        s_lazy_export: *Expr.Data,
+
+        comptime {
+            if (@sizeOf(Stmt) > 24) {
+                @compileLog("Expected Stmt to be <= 24 bytes, but it is", @sizeOf(Stmt), " bytes");
+            }
+        }
 
         pub const Store = struct {
             const StoreType = NewStore(&.{
@@ -4564,7 +4564,7 @@ pub const Expr = struct {
         };
     }
 
-    pub const Tag = enum(u6) {
+    pub const Tag = enum {
         e_array,
         e_unary,
         e_binary,
@@ -6911,8 +6911,6 @@ pub const Ast = struct {
     wrapper_ref: Ref = Ref.None,
     require_ref: Ref = Ref.None,
 
-    prepend_part: ?Part = null,
-
     // These are used when bundling. They are filled in during the parser pass
     // since we already have to traverse the AST then anyway and the parser pass
     // is conveniently fully parallelized.
@@ -7008,7 +7006,7 @@ pub const BundledAst = struct {
     hashbang: string = "",
     parts: Part.List = .{},
     css: ?*bun.css.BundlerStyleSheet = null,
-    url_for_css: ?[]const u8 = null,
+    url_for_css: []const u8 = "",
     symbols: Symbol.List = .{},
     module_scope: Scope = .{},
     char_freq: CharFreq = undefined,
@@ -7125,7 +7123,6 @@ pub const BundledAst = struct {
             .import_records = ast.import_records,
 
             .hashbang = ast.hashbang,
-            // .url_for_css = ast.url_for_css orelse "",
             .parts = ast.parts,
             // This list may be mutated later, so we should store the capacity
             .symbols = ast.symbols,
@@ -7173,12 +7170,12 @@ pub const BundledAst = struct {
     pub fn addUrlForCss(
         this: *BundledAst,
         allocator: std.mem.Allocator,
-        css_enabled: bool,
+        experimental: Loader.Experimental,
         source: *const logger.Source,
         mime_type_: ?[]const u8,
         unique_key: ?[]const u8,
     ) void {
-        if (css_enabled) {
+        if (experimental.css) {
             const mime_type = if (mime_type_) |m| m else MimeType.byExtension(bun.strings.trimLeadingChar(std.fs.path.extension(source.path.text), '.')).value;
             const contents = source.contents;
             // TODO: make this configurable
@@ -7902,8 +7899,8 @@ pub const Macro = struct {
     const DotEnv = @import("./env_loader.zig");
     const js = @import("./bun.js/javascript_core_c_api.zig");
     const Zig = @import("./bun.js/bindings/exports.zig");
-    const Bundler = bun.Bundler;
-    const MacroEntryPoint = bun.bundler.MacroEntryPoint;
+    const Transpiler = bun.Transpiler;
+    const MacroEntryPoint = bun.transpiler.MacroEntryPoint;
     const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
     pub const MacroRemapEntry = @import("./resolver/package_json.zig").MacroImportReplacementMap;
 
@@ -7928,12 +7925,12 @@ pub const Macro = struct {
             return this.remap.get(path);
         }
 
-        pub fn init(bundler: *Bundler) MacroContext {
+        pub fn init(transpiler: *Transpiler) MacroContext {
             return MacroContext{
                 .macros = MacroMap.init(default_allocator),
-                .resolver = &bundler.resolver,
-                .env = bundler.env,
-                .remap = bundler.options.macro_remap,
+                .resolver = &transpiler.resolver,
+                .env = transpiler.env,
+                .remap = transpiler.options.macro_remap,
             };
         }
 
@@ -8090,13 +8087,14 @@ pub const Macro = struct {
                 .allocator = default_allocator,
                 .args = resolver.opts.transform_options,
                 .log = log,
+                .is_main_thread = false,
                 .env_loader = env,
             });
 
             _vm.enableMacroMode();
             _vm.eventLoop().ensureWaker();
 
-            try _vm.bundler.configureDefines();
+            try _vm.transpiler.configureDefines();
             break :brk _vm;
         };
 
@@ -8124,7 +8122,7 @@ pub const Macro = struct {
 
         threadlocal var args_buf: [3]js.JSObjectRef = undefined;
         threadlocal var exception_holder: Zig.ZigException.Holder = undefined;
-        pub const MacroError = error{ MacroFailed, OutOfMemory } || ToJSError;
+        pub const MacroError = error{ MacroFailed, OutOfMemory } || ToJSError || bun.JSError;
 
         pub const Run = struct {
             caller: Expr,
@@ -8196,14 +8194,13 @@ pub const Macro = struct {
                     .String => this.coerce(value, .String),
                     .Promise => this.coerce(value, .Promise),
                     else => brk: {
-                        var name = value.getClassInfoName() orelse bun.String.init("unknown");
-                        defer name.deref();
+                        const name = value.getClassInfoName() orelse "unknown";
 
                         this.log.addErrorFmt(
                             this.source,
                             this.caller.loc,
                             this.allocator,
-                            "cannot coerce {} ({s}) to Bun's AST. Please return a simpler type",
+                            "cannot coerce {s} ({s}) to Bun's AST. Please return a simpler type",
                             .{ name, @tagName(value.jsType()) },
                         ) catch unreachable;
                         break :brk error.MacroFailed;
@@ -8340,7 +8337,7 @@ pub const Macro = struct {
                             return _entry.value_ptr.*;
                         }
 
-                        var object_iter = JSC.JSPropertyIterator(.{
+                        var object_iter = try JSC.JSPropertyIterator(.{
                             .skip_empty_name = false,
                             .include_value = true,
                         }).init(this.global, value);
@@ -8357,7 +8354,7 @@ pub const Macro = struct {
                         );
                         _entry.value_ptr.* = out;
 
-                        while (object_iter.next()) |prop| {
+                        while (try object_iter.next()) |prop| {
                             properties[object_iter.i] = G.Property{
                                 .key = Expr.init(E.String, E.String.init(prop.toOwnedSlice(this.allocator) catch unreachable), this.caller.loc),
                                 .value = try this.run(object_iter.value),

@@ -563,6 +563,39 @@ it("should not hang after destroy", async () => {
   }
 });
 
+it("should trigger error when aborted even if connection failed #13126", async () => {
+  const signal = AbortSignal.timeout(100);
+  const socket = createConnection({
+    host: "example.com",
+    port: 999,
+    signal: signal,
+  });
+  const { promise, resolve, reject } = Promise.withResolvers();
+
+  socket.on("connect", reject);
+  socket.on("error", resolve);
+
+  const err = (await promise) as Error;
+  expect(err.name).toBe("TimeoutError");
+});
+
+it("should trigger error when aborted even if connection failed, and the signal is already aborted #13126", async () => {
+  const signal = AbortSignal.timeout(1);
+  await Bun.sleep(10);
+  const socket = createConnection({
+    host: "example.com",
+    port: 999,
+    signal: signal,
+  });
+  const { promise, resolve, reject } = Promise.withResolvers();
+
+  socket.on("connect", reject);
+  socket.on("error", resolve);
+
+  const err = (await promise) as Error;
+  expect(err.name).toBe("TimeoutError");
+});
+
 it.if(isWindows)(
   "should work with named pipes",
   async () => {

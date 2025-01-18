@@ -6,20 +6,20 @@
 
 namespace Bake {
 
-class DevSourceProvider final : public JSC::StringSourceProvider {
+class SourceProvider final : public JSC::StringSourceProvider {
 public:
-    static Ref<DevSourceProvider> create(
+    static Ref<SourceProvider> create(
       const String& source,
       const JSC::SourceOrigin& sourceOrigin,
       String&& sourceURL,
       const TextPosition& startPosition,
       JSC::SourceProviderSourceType sourceType
     ) {
-        return adoptRef(*new DevSourceProvider(source, sourceOrigin, WTFMove(sourceURL), startPosition, sourceType));
+        return adoptRef(*new SourceProvider(source, sourceOrigin, WTFMove(sourceURL), startPosition, sourceType));
     }
 
 private:
-  DevSourceProvider(
+  SourceProvider(
     const String& source,
     const JSC::SourceOrigin& sourceOrigin,
     String&& sourceURL,

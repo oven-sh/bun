@@ -88,6 +88,7 @@ pub const Source = struct {
         if (source_set) return;
         bun.debugAssert(stdout_stream_set);
         source = Source.init(stdout_stream, stderr_stream);
+        bun.StackCheck.configureThread();
     }
 
     pub fn configureNamedThread(name: StringTypes.stringZ) void {
@@ -309,19 +310,18 @@ pub const Source = struct {
         }
 
         if (bun.getenvZ("TERM_PROGRAM")) |term_program| {
-            if (strings.eqlComptime(term_program, "iTerm.app")) {
-                lazy_color_depth = .@"16m";
-                return;
-            }
-
-            if (strings.eqlComptime(term_program, "WezTerm")) {
-                lazy_color_depth = .@"16m";
-                return;
-            }
-
-            if (strings.eqlComptime(term_program, "ghostty")) {
-                lazy_color_depth = .@"16m";
-                return;
+            const use_16m = .{
+                "ghostty",
+                "MacTerm",
+                "WezTerm",
+                "HyperTerm",
+                "iTerm.app",
+            };
+            inline for (use_16m) |program| {
+                if (strings.eqlComptime(term_program, program)) {
+                    lazy_color_depth = .@"16m";
+                    return;
+                }
             }
         }
 
@@ -468,16 +468,16 @@ pub fn isVerbose() bool {
     return false;
 }
 
-var _source_for_test: if (Environment.isTest) Source else void = undefined;
-var _source_for_test_set = false;
-pub fn initTest() void {
-    if (_source_for_test_set) return;
-    _source_for_test_set = true;
-    const in = std.io.getStdErr();
-    const out = std.io.getStdOut();
-    _source_for_test = Source.init(File.from(out), File.from(in));
-    Source.set(&_source_for_test);
-}
+// var _source_for_test: if (Environment.isTest) Source else void = undefined;
+// var _source_for_test_set = false;
+// pub fn initTest() void {
+//     if (_source_for_test_set) return;
+//     _source_for_test_set = true;
+//     const in = std.io.getStdErr();
+//     const out = std.io.getStdOut();
+//     _source_for_test = Source.init(File.from(out), File.from(in));
+//     Source.set(&_source_for_test);
+// }
 pub fn enableBuffering() void {
     if (comptime Environment.isNative) enable_buffering = true;
 }
@@ -674,7 +674,7 @@ pub noinline fn println(comptime fmt: string, args: anytype) void {
 /// Print to stdout, but only in debug builds.
 /// Text automatically buffers
 pub fn debug(comptime fmt: string, args: anytype) void {
-    if (comptime Environment.isRelease) return;
+    if (!Environment.isDebug) return;
     prettyErrorln("<d>DEBUG:<r> " ++ fmt, args);
     flush();
 }
@@ -745,7 +745,7 @@ fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
         var out_set = false;
         var really_disable = disabled;
         var evaluated_disable = false;
-        var lock = std.Thread.Mutex{};
+        var lock = bun.Mutex{};
 
         pub fn isVisible() bool {
             if (!evaluated_disable) {
@@ -842,27 +842,31 @@ pub fn scoped(comptime tag: anytype, comptime disabled: bool) LogFunction {
 // <blue>
 // <cyan>
 // <green>
+// <bggreen>
 // <magenta>
 // <red>
+// <bgred>
 // <white>
 // <yellow>
 // <b> - bold
 // <d> - dim
 // </r> - reset
 // <r> - reset
-const ED = "\x1b[";
+const CSI = "\x1b[";
 pub const color_map = ComptimeStringMap(string, .{
-    &.{ "black", ED ++ "30m" },
-    &.{ "blue", ED ++ "34m" },
-    &.{ "b", ED ++ "1m" },
-    &.{ "d", ED ++ "2m" },
-    &.{ "i", ED ++ "3m" },
-    &.{ "cyan", ED ++ "36m" },
-    &.{ "green", ED ++ "32m" },
-    &.{ "magenta", ED ++ "35m" },
-    &.{ "red", ED ++ "31m" },
-    &.{ "white", ED ++ "37m" },
-    &.{ "yellow", ED ++ "33m" },
+    &.{ "b", CSI ++ "1m" },
+    &.{ "d", CSI ++ "2m" },
+    &.{ "i", CSI ++ "3m" },
+    &.{ "black", CSI ++ "30m" },
+    &.{ "red", CSI ++ "31m" },
+    &.{ "green", CSI ++ "32m" },
+    &.{ "yellow", CSI ++ "33m" },
+    &.{ "blue", CSI ++ "34m" },
+    &.{ "magenta", CSI ++ "35m" },
+    &.{ "cyan", CSI ++ "36m" },
+    &.{ "white", CSI ++ "37m" },
+    &.{ "bgred", CSI ++ "41m" },
+    &.{ "bggreen", CSI ++ "42m" },
 });
 const RESET: string = "\x1b[0m";
 pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) [:0]const u8 {
@@ -1063,12 +1067,20 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
     const info = @typeInfo(T);
 
     if (comptime T == bun.sys.Error or info == .Pointer and info.Pointer.child == bun.sys.Error) {
-        prettyErrorln("<r><red>error:<r><d>:<r> " ++ fmt, args ++ .{error_name});
+        const e: bun.sys.Error = error_name;
+        const tag_name, const sys_errno = e.getErrorCodeTagName() orelse {
+            err("unknown error", fmt, args);
+            return;
+        };
+        if (bun.sys.coreutils_error_map.get(sys_errno)) |label| {
+            prettyErrorln("<r><red>{s}<r><d>:<r> {s}: " ++ fmt ++ " <d>({s})<r>", .{ tag_name, label } ++ args ++ .{@tagName(e.syscall)});
+        } else {
+            prettyErrorln("<r><red>{s}<r><d>:<r> " ++ fmt ++ " <d>({s})<r>", .{tag_name} ++ args ++ .{@tagName(e.syscall)});
+        }
         return;
     }
 
     const display_name, const is_comptime_name = display_name: {
-
         // Zig string literals are of type *const [n:0]u8
         // we assume that no one will pass this type from not using a string literal.
         if (info == .Pointer and info.Pointer.size == .One and info.Pointer.is_const) {

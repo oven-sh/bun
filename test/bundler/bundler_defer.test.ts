@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { itBundled } from './expectBundled';
-import { bunExe, bunEnv, tempDirWithFiles } from 'harness';
-import * as path from 'node:path';
+import { itBundled } from "./expectBundled";
+import { bunExe, bunEnv, tempDirWithFiles } from "harness";
+import * as path from "node:path";
 
 describe("defer", () => {
   {
@@ -179,10 +179,12 @@ describe("defer", () => {
               },
             },
           ],
+          throw: true,
         });
         console.log(result);
-      } catch (err) {
+      } catch (err: any) {
         expect(err).toBeDefined();
+        expect(err.message).toBe("WOOPS");
         return;
       }
       throw new Error("DIDNT GET ERROR!");
@@ -213,15 +215,15 @@ describe("defer", () => {
 
           console.log("Foo", foo, lmao);
             `,
-                  "/lmao.ts": `
+        "/lmao.ts": `
           import { foo } from "./foo.ts";
           export const lmao = "lolss";
           console.log(foo);
             `,
-                  "/foo.ts": `
+        "/foo.ts": `
             export const foo = 'lkdfjlsdf';
             console.log('hi')`,
-                  "/a.css": `
+        "/a.css": `
             h1 {
               color: blue;
             }

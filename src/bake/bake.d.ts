@@ -421,7 +421,7 @@ declare module "bun" {
     type GetParamIterator =
       | AsyncIterable<Record<string, string>, GetParamsFinalOpts>
       | Iterable<Record<string, string>, GetParamsFinalOpts>
-      | ({ pages: Array<Record<String, String>> } & GetParamsFinalOpts);
+      | ({ pages: Array<Record<string, string>> } & GetParamsFinalOpts);
 
     type GetParamsFinalOpts = void | null | {
       /**
@@ -516,7 +516,7 @@ declare module "bun" {
      * Inject a module into the development server's runtime, to be loaded
      * before all other user code.
      */
-    addPreload(module: string, side: 'client' | 'server'): void;
+    addPreload(...args: any): void;
   }
 
   declare interface OnLoadArgs {

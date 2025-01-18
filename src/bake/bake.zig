@@ -15,7 +15,7 @@ pub const UserOptions = struct {
     arena: std.heap.ArenaAllocator,
     allocations: StringRefList,
 
-    root: []const u8,
+    root: [:0]const u8,
     framework: Framework,
     bundler_options: SplitBundlerOptions,
 
@@ -78,9 +78,9 @@ pub const UserOptions = struct {
 const StringRefList = struct {
     strings: std.ArrayListUnmanaged(ZigString.Slice),
 
-    pub fn track(al: *StringRefList, str: ZigString.Slice) []const u8 {
+    pub fn track(al: *StringRefList, str: ZigString.Slice) [:0]const u8 {
         al.strings.append(bun.default_allocator, str) catch bun.outOfMemory();
-        return str.slice();
+        return str.sliceZ();
     }
 
     pub fn free(al: *StringRefList) void {
@@ -466,7 +466,7 @@ pub const Framework = struct {
                     } else if (exts_js.isArray()) {
                         var it_2 = exts_js.arrayIterator(global);
                         var i_2: usize = 0;
-                        const extensions = try arena.alloc([]const u8, array.getLength(global));
+                        const extensions = try arena.alloc([]const u8, exts_js.getLength(global));
                         while (it_2.next()) |array_item| : (i_2 += 1) {
                             const slice = refs.track(try array_item.toSlice2(global, arena));
                             if (bun.strings.eqlComptime(slice, "*"))
@@ -544,9 +544,9 @@ pub const Framework = struct {
         log: *bun.logger.Log,
         mode: Mode,
         comptime renderer: Graph,
-        out: *bun.bundler.Bundler,
+        out: *bun.transpiler.Transpiler,
     ) !void {
-        out.* = try bun.Bundler.init(
+        out.* = try bun.Transpiler.init(
             allocator, // TODO: this is likely a memory leak
             log,
             std.mem.zeroes(bun.Schema.Api.TransformOptions),
@@ -595,14 +595,18 @@ pub const Framework = struct {
         out.options.minify_identifiers = mode != .development;
         out.options.minify_whitespace = mode != .development;
 
-        out.options.experimental_css = true;
+        out.options.experimental.css = true;
         out.options.css_chunking = true;
 
         out.options.framework = framework;
 
-        // In development mode, source maps must always be `linked`
-        // In production, TODO: follow user configuration
-        out.options.source_map = .linked;
+        out.options.source_map = switch (mode) {
+            // Source maps must always be linked, as DevServer special cases the
+            // linking and part of the generation of these.
+            .development => .external,
+            // TODO: follow user configuration
+            else => .none,
+        };
 
         out.configureLinker();
         try out.configureDefines();
@@ -615,8 +619,10 @@ pub const Framework = struct {
         });
 
         if (mode != .development) {
-            out.options.entry_naming = "[name]-[hash].[ext]";
-            out.options.chunk_naming = "chunk-[name]-[hash].[ext]";
+            // Hide information about the source repository, at the cost of debugging quality.
+            out.options.entry_naming = "_bun/[hash].[ext]";
+            out.options.chunk_naming = "_bun/[hash].[ext]";
+            out.options.asset_naming = "_bun/[hash].[ext]";
         }
 
         out.resolver.opts = out.options;

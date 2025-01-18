@@ -47,9 +47,44 @@ pub const AnimationName = union(enum) {
     }
 
     pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        _ = this; // autofix
-        _ = dest; // autofix
-        @panic(css.todo_stuff.depth);
+        const css_module_animation_enabled = if (dest.css_module) |css_module|
+            css_module.config.animation
+        else
+            false;
+
+        switch (this.*) {
+            .none => return dest.writeStr("none"),
+            .ident => |s| {
+                if (css_module_animation_enabled) {
+                    if (dest.css_module) |*css_module| {
+                        css_module.getReference(dest.allocator, s.v, dest.loc.source_index);
+                    }
+                }
+                return s.toCssWithOptions(W, dest, css_module_animation_enabled);
+            },
+            .string => |s| {
+                if (css_module_animation_enabled) {
+                    if (dest.css_module) |*css_module| {
+                        css_module.getReference(dest.allocator, s, dest.loc.source_index);
+                    }
+                }
+
+                // CSS-wide keywords and `none` cannot remove quotes
+                if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(s, "none") or
+                    bun.strings.eqlCaseInsensitiveASCIIICheckLength(s, "initial") or
+                    bun.strings.eqlCaseInsensitiveASCIIICheckLength(s, "inherit") or
+                    bun.strings.eqlCaseInsensitiveASCIIICheckLength(s, "unset") or
+                    bun.strings.eqlCaseInsensitiveASCIIICheckLength(s, "default") or
+                    bun.strings.eqlCaseInsensitiveASCIIICheckLength(s, "revert") or
+                    bun.strings.eqlCaseInsensitiveASCIIICheckLength(s, "revert-layer"))
+                {
+                    css.serializer.serializeString(s, dest) catch return dest.addFmtError();
+                    return;
+                }
+
+                return dest.writeIdent(s, css_module_animation_enabled);
+            },
+        }
     }
 };
 

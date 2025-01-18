@@ -9,91 +9,346 @@
 
 // clang-format off
 
+#if !defined(E2BIG)
+#define E2BIG 7
+#endif
+#if !defined(EACCES)
+#define EACCES 13
+#endif
+#if !defined(EADDRINUSE)
+#define EADDRINUSE 48
+#endif
+#if !defined(EADDRNOTAVAIL)
+#define EADDRNOTAVAIL 49
+#endif
+#if !defined(EAFNOSUPPORT)
+#define EAFNOSUPPORT 47
+#endif
+#if !defined(EAGAIN)
+#define EAGAIN 35
+#endif
+#if !defined(EAI_ADDRFAMILY)
+#define EAI_ADDRFAMILY 3000
+#endif
+#if !defined(EAI_AGAIN)
+#define EAI_AGAIN 3001
+#endif
+#if !defined(EAI_BADFLAGS)
+#define EAI_BADFLAGS 3002
+#endif
+#if !defined(EAI_BADHINTS)
+#define EAI_BADHINTS 3013
+#endif
+#if !defined(EAI_CANCELED)
+#define EAI_CANCELED 3003
+#endif
+#if !defined(EAI_FAIL)
+#define EAI_FAIL 3004
+#endif
+#if !defined(EAI_FAMILY)
+#define EAI_FAMILY 3005
+#endif
+#if !defined(EAI_MEMORY)
+#define EAI_MEMORY 3006
+#endif
+#if !defined(EAI_NODATA)
+#define EAI_NODATA 3007
+#endif
+#if !defined(EAI_NONAME)
+#define EAI_NONAME 3008
+#endif
+#if !defined(EAI_OVERFLOW)
+#define EAI_OVERFLOW 3009
+#endif
+#if !defined(EAI_PROTOCOL)
+#define EAI_PROTOCOL 3014
+#endif
+#if !defined(EAI_SERVICE)
+#define EAI_SERVICE 3010
+#endif
+#if !defined(EAI_SOCKTYPE)
+#define EAI_SOCKTYPE 3011
+#endif
+#if !defined(EALREADY)
+#define EALREADY 37
+#endif
+#if !defined(EBADF)
+#define EBADF 9
+#endif
+#if !defined(EBUSY)
+#define EBUSY 16
+#endif
+#if !defined(ECANCELED)
+#define ECANCELED 89
+#endif
+#if !defined(ECHARSET)
+#define ECHARSET 4080
+#endif
+#if !defined(ECONNABORTED)
+#define ECONNABORTED 53
+#endif
+#if !defined(ECONNREFUSED)
+#define ECONNREFUSED 61
+#endif
+#if !defined(ECONNRESET)
+#define ECONNRESET 54
+#endif
+#if !defined(EDESTADDRREQ)
+#define EDESTADDRREQ 39
+#endif
+#if !defined(EEXIST)
+#define EEXIST 17
+#endif
+#if !defined(EFAULT)
+#define EFAULT 14
+#endif
+#if !defined(EFBIG)
+#define EFBIG 27
+#endif
+#if !defined(EHOSTUNREACH)
+#define EHOSTUNREACH 65
+#endif
+#if !defined(EINTR)
+#define EINTR 4
+#endif
+#if !defined(EINVAL)
+#define EINVAL 22
+#endif
+#if !defined(EIO)
+#define EIO 5
+#endif
+#if !defined(EISCONN)
+#define EISCONN 56
+#endif
+#if !defined(EISDIR)
+#define EISDIR 21
+#endif
+#if !defined(ELOOP)
+#define ELOOP 62
+#endif
+#if !defined(EMFILE)
+#define EMFILE 24
+#endif
+#if !defined(EMSGSIZE)
+#define EMSGSIZE 40
+#endif
+#if !defined(ENAMETOOLONG)
+#define ENAMETOOLONG 63
+#endif
+#if !defined(ENETDOWN)
+#define ENETDOWN 50
+#endif
+#if !defined(ENETUNREACH)
+#define ENETUNREACH 51
+#endif
+#if !defined(ENFILE)
+#define ENFILE 23
+#endif
+#if !defined(ENOBUFS)
+#define ENOBUFS 55
+#endif
+#if !defined(ENODEV)
+#define ENODEV 19
+#endif
+#if !defined(ENOENT)
+#define ENOENT 2
+#endif
+#if !defined(ENOMEM)
+#define ENOMEM 12
+#endif
+#if !defined(ENONET)
+#define ENONET 4056
+#endif
+#if !defined(ENOPROTOOPT)
+#define ENOPROTOOPT 42
+#endif
+#if !defined(ENOSPC)
+#define ENOSPC 28
+#endif
+#if !defined(ENOSYS)
+#define ENOSYS 78
+#endif
+#if !defined(ENOTCONN)
+#define ENOTCONN 57
+#endif
+#if !defined(ENOTDIR)
+#define ENOTDIR 20
+#endif
+#if !defined(ENOTEMPTY)
+#define ENOTEMPTY 66
+#endif
+#if !defined(ENOTSOCK)
+#define ENOTSOCK 38
+#endif
+#if !defined(ENOTSUP)
+#define ENOTSUP 45
+#endif
+#if !defined(EOVERFLOW)
+#define EOVERFLOW 84
+#endif
+#if !defined(EPERM)
+#define EPERM 1
+#endif
+#if !defined(EPIPE)
+#define EPIPE 32
+#endif
+#if !defined(EPROTO)
+#define EPROTO 100
+#endif
+#if !defined(EPROTONOSUPPORT)
+#define EPROTONOSUPPORT 43
+#endif
+#if !defined(EPROTOTYPE)
+#define EPROTOTYPE 41
+#endif
+#if !defined(ERANGE)
+#define ERANGE 34
+#endif
+#if !defined(EROFS)
+#define EROFS 30
+#endif
+#if !defined(ESHUTDOWN)
+#define ESHUTDOWN 58
+#endif
+#if !defined(ESPIPE)
+#define ESPIPE 29
+#endif
+#if !defined(ESRCH)
+#define ESRCH 3
+#endif
+#if !defined(ETIMEDOUT)
+#define ETIMEDOUT 60
+#endif
+#if !defined(ETXTBSY)
+#define ETXTBSY 26
+#endif
+#if !defined(EXDEV)
+#define EXDEV 18
+#endif
+#if !defined(UNKNOWN)
+#define UNKNOWN 4094
+#endif
+// this is intentionally always overridden
+#if defined(EOF)
+#undef EOF
+#endif
+#define EOF 4095
+#if !defined(ENXIO)
+#define ENXIO 6
+#endif
+#if !defined(EMLINK)
+#define EMLINK 31
+#endif
+#if !defined(EHOSTDOWN)
+#define EHOSTDOWN 64
+#endif
+#if !defined(EREMOTEIO)
+#define EREMOTEIO 4030
+#endif
+#if !defined(ENOTTY)
+#define ENOTTY 25
+#endif
+#if !defined(EFTYPE)
+#define EFTYPE 79
+#endif
+#if !defined(EILSEQ)
+#define EILSEQ 92
+#endif
+#if !defined(ESOCKTNOSUPPORT)
+#define ESOCKTNOSUPPORT 44
+#endif
+#if !defined(ENODATA)
+#define ENODATA 96
+#endif
+#if !defined(EUNATCH)
+#define EUNATCH 4023
+#endif
+
 #define BUN_UV_ERRNO_MAP(macro) \
-  macro(E2BIG, -7, "argument list too long") \
-  macro(EACCES, -13, "permission denied") \
-  macro(EADDRINUSE, -48, "address already in use") \
-  macro(EADDRNOTAVAIL, -49, "address not available") \
-  macro(EAFNOSUPPORT, -47, "address family not supported") \
-  macro(EAGAIN, -35, "resource temporarily unavailable") \
-  macro(EAI_ADDRFAMILY, -3000, "address family not supported") \
-  macro(EAI_AGAIN, -3001, "temporary failure") \
-  macro(EAI_BADFLAGS, -3002, "bad ai_flags value") \
-  macro(EAI_BADHINTS, -3013, "invalid value for hints") \
-  macro(EAI_CANCELED, -3003, "request canceled") \
-  macro(EAI_FAIL, -3004, "permanent failure") \
-  macro(EAI_FAMILY, -3005, "ai_family not supported") \
-  macro(EAI_MEMORY, -3006, "out of memory") \
-  macro(EAI_NODATA, -3007, "no address") \
-  macro(EAI_NONAME, -3008, "unknown node or service") \
-  macro(EAI_OVERFLOW, -3009, "argument buffer overflow") \
-  macro(EAI_PROTOCOL, -3014, "resolved protocol is unknown") \
-  macro(EAI_SERVICE, -3010, "service not available for socket type") \
-  macro(EAI_SOCKTYPE, -3011, "socket type not supported") \
-  macro(EALREADY, -37, "connection already in progress") \
-  macro(EBADF, -9, "bad file descriptor") \
-  macro(EBUSY, -16, "resource busy or locked") \
-  macro(ECANCELED, -89, "operation canceled") \
-  macro(ECHARSET, -4080, "invalid Unicode character") \
-  macro(ECONNABORTED, -53, "software caused connection abort") \
-  macro(ECONNREFUSED, -61, "connection refused") \
-  macro(ECONNRESET, -54, "connection reset by peer") \
-  macro(EDESTADDRREQ, -39, "destination address required") \
-  macro(EEXIST, -17, "file already exists") \
-  macro(EFAULT, -14, "bad address in system call argument") \
-  macro(EFBIG, -27, "file too large") \
-  macro(EHOSTUNREACH, -65, "host is unreachable") \
-  macro(EINTR, -4, "interrupted system call") \
-  macro(EINVAL, -22, "invalid argument") \
-  macro(EIO, -5, "i/o error") \
-  macro(EISCONN, -56, "socket is already connected") \
-  macro(EISDIR, -21, "illegal operation on a directory") \
-  macro(ELOOP, -62, "too many symbolic links encountered") \
-  macro(EMFILE, -24, "too many open files") \
-  macro(EMSGSIZE, -40, "message too long") \
-  macro(ENAMETOOLONG, -63, "name too long") \
-  macro(ENETDOWN, -50, "network is down") \
-  macro(ENETUNREACH, -51, "network is unreachable") \
-  macro(ENFILE, -23, "file table overflow") \
-  macro(ENOBUFS, -55, "no buffer space available") \
-  macro(ENODEV, -19, "no such device") \
-  macro(ENOENT, -2, "no such file or directory") \
-  macro(ENOMEM, -12, "not enough memory") \
-  macro(ENONET, -4056, "machine is not on the network") \
-  macro(ENOPROTOOPT, -42, "protocol not available") \
-  macro(ENOSPC, -28, "no space left on device") \
-  macro(ENOSYS, -78, "function not implemented") \
-  macro(ENOTCONN, -57, "socket is not connected") \
-  macro(ENOTDIR, -20, "not a directory") \
-  macro(ENOTEMPTY, -66, "directory not empty") \
-  macro(ENOTSOCK, -38, "socket operation on non-socket") \
-  macro(ENOTSUP, -45, "operation not supported on socket") \
-  macro(EOVERFLOW, -84, "value too large for defined data type") \
-  macro(EPERM, -1, "operation not permitted") \
-  macro(EPIPE, -32, "broken pipe") \
-  macro(EPROTO, -100, "protocol error") \
-  macro(EPROTONOSUPPORT, -43, "protocol not supported") \
-  macro(EPROTOTYPE, -41, "protocol wrong type for socket") \
-  macro(ERANGE, -34, "result too large") \
-  macro(EROFS, -30, "read-only file system") \
-  macro(ESHUTDOWN, -58, "cannot send after transport endpoint shutdown") \
-  macro(ESPIPE, -29, "invalid seek") \
-  macro(ESRCH, -3, "no such process") \
-  macro(ETIMEDOUT, -60, "connection timed out") \
-  macro(ETXTBSY, -26, "text file is busy") \
-  macro(EXDEV, -18, "cross-device link not permitted") \
-  macro(UNKNOWN, -4094, "unknown error") \
-  macro(EOF, -4095, "end of file") \
-  macro(ENXIO, -6, "no such device or address") \
-  macro(EMLINK, -31, "too many links") \
-  macro(EHOSTDOWN, -64, "host is down") \
-  macro(EREMOTEIO, -4030, "remote I/O error") \
-  macro(ENOTTY, -25, "inappropriate ioctl for device") \
-  macro(EFTYPE, -79, "inappropriate file type or format") \
-  macro(EILSEQ, -92, "illegal byte sequence") \
-  macro(ESOCKTNOSUPPORT, -44, "socket type not supported") \
-  macro(ENODATA, -96, "no data available") \
-  macro(EUNATCH, -4023, "protocol driver not attache")
+  macro(E2BIG, "argument list too long") \
+  macro(EACCES, "permission denied") \
+  macro(EADDRINUSE, "address already in use") \
+  macro(EADDRNOTAVAIL, "address not available") \
+  macro(EAFNOSUPPORT, "address family not supported") \
+  macro(EAGAIN, "resource temporarily unavailable") \
+  macro(EAI_ADDRFAMILY, "address family not supported") \
+  macro(EAI_AGAIN, "temporary failure") \
+  macro(EAI_BADFLAGS, "bad ai_flags value") \
+  macro(EAI_BADHINTS, "invalid value for hints") \
+  macro(EAI_CANCELED, "request canceled") \
+  macro(EAI_FAIL, "permanent failure") \
+  macro(EAI_FAMILY, "ai_family not supported") \
+  macro(EAI_MEMORY, "out of memory") \
+  macro(EAI_NODATA, "no address") \
+  macro(EAI_NONAME, "unknown node or service") \
+  macro(EAI_OVERFLOW, "argument buffer overflow") \
+  macro(EAI_PROTOCOL, "resolved protocol is unknown") \
+  macro(EAI_SERVICE, "service not available for socket type") \
+  macro(EAI_SOCKTYPE, "socket type not supported") \
+  macro(EALREADY, "connection already in progress") \
+  macro(EBADF, "bad file descriptor") \
+  macro(EBUSY, "resource busy or locked") \
+  macro(ECANCELED, "operation canceled") \
+  macro(ECHARSET, "invalid Unicode character") \
+  macro(ECONNABORTED, "software caused connection abort") \
+  macro(ECONNREFUSED, "connection refused") \
+  macro(ECONNRESET, "connection reset by peer") \
+  macro(EDESTADDRREQ, "destination address required") \
+  macro(EEXIST, "file already exists") \
+  macro(EFAULT, "bad address in system call argument") \
+  macro(EFBIG, "file too large") \
+  macro(EHOSTUNREACH, "host is unreachable") \
+  macro(EINTR, "interrupted system call") \
+  macro(EINVAL, "invalid argument") \
+  macro(EIO, "i/o error") \
+  macro(EISCONN, "socket is already connected") \
+  macro(EISDIR, "illegal operation on a directory") \
+  macro(ELOOP, "too many symbolic links encountered") \
+  macro(EMFILE, "too many open files") \
+  macro(EMSGSIZE, "message too long") \
+  macro(ENAMETOOLONG, "name too long") \
+  macro(ENETDOWN, "network is down") \
+  macro(ENETUNREACH, "network is unreachable") \
+  macro(ENFILE, "file table overflow") \
+  macro(ENOBUFS, "no buffer space available") \
+  macro(ENODEV, "no such device") \
+  macro(ENOENT, "no such file or directory") \
+  macro(ENOMEM, "not enough memory") \
+  macro(ENONET, "machine is not on the network") \
+  macro(ENOPROTOOPT, "protocol not available") \
+  macro(ENOSPC, "no space left on device") \
+  macro(ENOSYS, "function not implemented") \
+  macro(ENOTCONN, "socket is not connected") \
+  macro(ENOTDIR, "not a directory") \
+  macro(ENOTEMPTY, "directory not empty") \
+  macro(ENOTSOCK, "socket operation on non-socket") \
+  macro(ENOTSUP, "operation not supported on socket") \
+  macro(EOVERFLOW, "value too large for defined data type") \
+  macro(EPERM, "operation not permitted") \
+  macro(EPIPE, "broken pipe") \
+  macro(EPROTO, "protocol error") \
+  macro(EPROTONOSUPPORT, "protocol not supported") \
+  macro(EPROTOTYPE, "protocol wrong type for socket") \
+  macro(ERANGE, "result too large") \
+  macro(EROFS, "read-only file system") \
+  macro(ESHUTDOWN, "cannot send after transport endpoint shutdown") \
+  macro(ESPIPE, "invalid seek") \
+  macro(ESRCH, "no such process") \
+  macro(ETIMEDOUT, "connection timed out") \
+  macro(ETXTBSY, "text file is busy") \
+  macro(EXDEV, "cross-device link not permitted") \
+  macro(UNKNOWN, "unknown error") \
+  macro(EOF, "end of file") \
+  macro(ENXIO, "no such device or address") \
+  macro(EMLINK, "too many links") \
+  macro(EHOSTDOWN, "host is down") \
+  macro(EREMOTEIO, "remote I/O error") \
+  macro(ENOTTY, "inappropriate ioctl for device") \
+  macro(EFTYPE, "inappropriate file type or format") \
+  macro(EILSEQ, "illegal byte sequence") \
+  macro(ESOCKTNOSUPPORT, "socket type not supported") \
+  macro(ENODATA, "no data available") \
+  macro(EUNATCH, "protocol driver not attached")
 
 // clang-format on
 namespace Bun {
@@ -112,17 +367,11 @@ JSC_DEFINE_HOST_FUNCTION(jsErrname, (JSGlobalObject * globalObject, JSC::CallFra
     }
 
     auto err = arg0.toInt32(globalObject);
-    switch (err) {
-#define CASE(name, value, desc) \
-    case value:                 \
-        return JSValue::encode(JSC::jsString(vm, String(#name##_s)));
+#define CASE(name, desc) \
+    if (err == -name) return JSValue::encode(JSC::jsString(vm, String(#name##_s)));
 
-        BUN_UV_ERRNO_MAP(CASE)
+    BUN_UV_ERRNO_MAP(CASE)
 #undef CASE
-    default: {
-        break;
-    }
-    }
 
     return JSValue::encode(jsString(vm, makeString("Unknown system error: "_s, err)));
 }
@@ -140,7 +389,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGetErrorMap, (JSGlobalObject * globalObject, JSC::Cal
         map->set(globalObject, JSC::jsNumber(value), arr);
     };
 
-#define PUT_PROPERTY(name, value, desc) putProperty(vm, map, globalObject, #name##_s, value, desc##_s);
+#define PUT_PROPERTY(name, desc) putProperty(vm, map, globalObject, #name##_s, -name, desc##_s);
     BUN_UV_ERRNO_MAP(PUT_PROPERTY)
 #undef PUT_PROPERTY
 
@@ -157,11 +406,11 @@ JSObject* create(VM& vm, JSGlobalObject* globalObject)
     // Before: 96305608
     // After:  95973832
     const auto putNamedProperty = [](JSC::VM& vm, JSObject* bindingObject, const ASCIILiteral name, int value) -> void {
-        bindingObject->putDirect(vm, JSC::Identifier::fromString(vm, makeString("UV_"_s, name)), JSC::jsNumber(value));
+        bindingObject->putDirect(vm, JSC::Identifier::fromString(vm, name), JSC::jsNumber(value));
     };
 
-#define PUT_PROPERTY(name, value, desc) \
-    putNamedProperty(vm, bindingObject, #name##_s, value);
+#define PUT_PROPERTY(name, desc) \
+    putNamedProperty(vm, bindingObject, "UV_" #name##_s, -name);
     BUN_UV_ERRNO_MAP(PUT_PROPERTY)
 #undef PUT_PROPERTY
 

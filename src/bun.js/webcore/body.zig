@@ -72,7 +72,7 @@ pub const Body = struct {
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>bodyUsed<d>:<r> ", enable_ansi_colors));
-        formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.value == .Used), .BooleanObject, enable_ansi_colors);
+        try formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.value == .Used), .BooleanObject, enable_ansi_colors);
 
         if (this.value == .Blob) {
             try formatter.printComma(Writer, writer, enable_ansi_colors);
@@ -89,7 +89,7 @@ pub const Body = struct {
                 try formatter.printComma(Writer, writer, enable_ansi_colors);
                 try writer.writeAll("\n");
                 try formatter.writeIndent(Writer, writer);
-                formatter.printAs(.Object, Writer, writer, stream.value, stream.value.jsType(), enable_ansi_colors);
+                try formatter.printAs(.Object, Writer, writer, stream.value, stream.value.jsType(), enable_ansi_colors);
             }
         }
     }
@@ -150,6 +150,18 @@ pub const Body = struct {
                 }
 
                 return false;
+            }
+
+            if (this.readable.get()) |readable| {
+                return readable.isDisturbed(globalObject);
+            }
+
+            return false;
+        }
+
+        pub fn isDisturbed2(this: *const PendingValue, globalObject: *JSC.JSGlobalObject) bool {
+            if (this.promise != null) {
+                return true;
             }
 
             if (this.readable.get()) |readable| {
@@ -398,6 +410,16 @@ pub const Body = struct {
                 .WTFStringImpl => @as(Blob.SizeType, @truncate(this.WTFStringImpl.byteSlice().len)),
                 .Locked => this.Locked.sizeHint(),
                 // .InlineBlob => @truncate(Blob.SizeType, this.InlineBlob.sliceConst().len),
+                else => 0,
+            };
+        }
+
+        pub fn memoryCost(this: *const Value) usize {
+            return switch (this.*) {
+                .InternalBlob => this.InternalBlob.bytes.items.len,
+                .WTFStringImpl => this.WTFStringImpl.memoryCost(),
+                .Locked => this.Locked.sizeHint(),
+                // .InlineBlob => this.InlineBlob.sliceConst().len,
                 else => 0,
             };
         }
@@ -1089,9 +1111,9 @@ pub const Body = struct {
         var body = Body{ .value = Value{ .Null = {} } };
 
         body.value = try Value.fromJS(globalThis, value);
-        if (body.value == .Blob)
+        if (body.value == .Blob) {
             assert(body.value.Blob.allocator == null); // owned by Body
-
+        }
         return body;
     }
 };

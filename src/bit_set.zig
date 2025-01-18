@@ -1,3 +1,8 @@
+//! This is a fork of Zig standard library bit_set.zig
+//! - https://github.com/ziglang/zig/pull/14129
+//! - AutoBitset which optimally chooses between a dynamic or static bitset.
+//! Prefer our fork over std.bit_set.zig.
+//!
 //! This file defines several variants of bit sets.  A bit set
 //! is a densely stored set of integers with a known maximum,
 //! in which each integer gets a single bit.  Bit sets have very
@@ -402,7 +407,7 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
 
         /// Returns true if the bit at the specified index
         /// is present in the set, false otherwise.
-        pub inline fn isSet(self: *const Self, index: usize) bool {
+        pub fn isSet(self: *const Self, index: usize) bool {
             if (comptime Environment.allow_assert) bun.assert(index < bit_length);
             if (num_masks == 0) return false; // doesn't compile in this case
             return (self.masks[maskIndex(index)] & maskBit(index)) != 0;

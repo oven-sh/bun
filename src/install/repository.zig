@@ -17,6 +17,7 @@ const strings = @import("../string_immutable.zig");
 const GitSHA = String;
 const Path = bun.path;
 const File = bun.sys.File;
+const OOM = bun.OOM;
 
 threadlocal var final_path_buf: bun.PathBuffer = undefined;
 threadlocal var ssh_path_buf: bun.PathBuffer = undefined;
@@ -181,6 +182,51 @@ pub const Repository = extern struct {
         .{ "gitlab", ".com" },
     });
 
+    pub fn parseAppendGit(input: string, buf: *String.Buf) OOM!Repository {
+        var remain = input;
+        if (strings.hasPrefixComptime(remain, "git+")) {
+            remain = remain["git+".len..];
+        }
+        if (strings.lastIndexOfChar(remain, '#')) |hash| {
+            return .{
+                .repo = try buf.append(remain[0..hash]),
+                .committish = try buf.append(remain[hash + 1 ..]),
+            };
+        }
+        return .{
+            .repo = try buf.append(remain),
+        };
+    }
+
+    pub fn parseAppendGithub(input: string, buf: *String.Buf) OOM!Repository {
+        var remain = input;
+        if (strings.hasPrefixComptime(remain, "github:")) {
+            remain = remain["github:".len..];
+        }
+        var hash: usize = 0;
+        var slash: usize = 0;
+        for (remain, 0..) |c, i| {
+            switch (c) {
+                '/' => slash = i,
+                '#' => hash = i,
+                else => {},
+            }
+        }
+
+        const repo = if (hash == 0) remain[slash + 1 ..] else remain[slash + 1 .. hash];
+
+        var result: Repository = .{
+            .owner = try buf.append(remain[0..slash]),
+            .repo = try buf.append(repo),
+        };
+
+        if (hash != 0) {
+            result.committish = try buf.append(remain[hash + 1 ..]);
+        }
+
+        return result;
+    }
+
     pub fn createDependencyNameFromVersionLiteral(
         allocator: std.mem.Allocator,
         repository: *const Repository,
@@ -258,6 +304,14 @@ pub const Repository = extern struct {
     pub fn formatAs(this: *const Repository, label: string, buf: []const u8, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
         const formatter = Formatter{ .label = label, .repository = this, .buf = buf };
         return try formatter.format(layout, opts, writer);
+    }
+
+    pub fn fmt(this: *const Repository, label: string, buf: []const u8) Formatter {
+        return .{
+            .repository = this,
+            .buf = buf,
+            .label = label,
+        };
     }
 
     pub const Formatter = struct {

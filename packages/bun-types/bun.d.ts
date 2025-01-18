@@ -2074,7 +2074,10 @@ declare module "bun" {
      * const sql = new SQL({ url: "postgres://localhost:5432/mydb", idleTimeout: 1000 });
      */
     new (options?: SQLOptions): SQLClient;
-    /** Executes a SQL query using template literals */
+    /** Executes a SQL query using template literals
+     * @example
+     * const [user] = await sql`select * from users where id = ${1}`;
+     */
     (strings: string, ...values: any[]): SQLQuery;
     /** Commits a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL
      * @example

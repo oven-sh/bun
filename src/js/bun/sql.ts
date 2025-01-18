@@ -1091,7 +1091,10 @@ function assertValidTransactionName(name: string) {
     throw Error(`Distributed transaction name cannot contain single quotes.`);
   }
 }
-function SQL(o) {
+function SQL(o, e = {}) {
+  if (typeof o === "string" || o instanceof URL) {
+    o = { ...e, url: o };
+  }
   var connectionInfo = loadOptions(o);
   var pool = new ConnectionPool(connectionInfo);
 

@@ -1907,9 +1907,28 @@ pub fn fromWPath(buf: []u8, utf16: []const u16) [:0]const u8 {
     return buf[0..encode_into_result.written :0];
 }
 
+pub fn withoutNTPrefix(path: [:0]const u16) [:0]const u16 {
+    if (hasPrefixComptimeUTF16(path, &bun.windows.nt_object_prefix_u8)) {
+        return path[bun.windows.nt_object_prefix.len..];
+    }
+    if (hasPrefixComptimeUTF16(path, &bun.windows.nt_maxpath_prefix_u8)) {
+        return path[bun.windows.nt_maxpath_prefix.len..];
+    }
+    if (hasPrefixComptimeUTF16(path, &bun.windows.nt_unc_object_prefix_u8)) {
+        return path[bun.windows.nt_unc_object_prefix.len..];
+    }
+    return path;
+}
+
 pub fn toNTPath(wbuf: []u16, utf8: []const u8) [:0]u16 {
     if (!std.fs.path.isAbsoluteWindows(utf8)) {
         return toWPathNormalized(wbuf, utf8);
+    }
+
+    if (strings.hasPrefixComptime(utf8, &bun.windows.nt_object_prefix_u8) or
+        strings.hasPrefixComptime(utf8, &bun.windows.nt_unc_object_prefix_u8))
+    {
+        return wbuf[0..toWPathNormalized(wbuf, utf8).len :0];
     }
 
     // UNC absolute path, replace leading '\\' with '\??\UNC\'
@@ -1927,6 +1946,12 @@ pub fn toNTPath(wbuf: []u16, utf8: []const u8) [:0]u16 {
 pub fn toNTPath16(wbuf: []u16, path: []const u16) [:0]u16 {
     if (!std.fs.path.isAbsoluteWindowsWTF16(path)) {
         return toWPathNormalized16(wbuf, path);
+    }
+
+    if (strings.hasPrefixComptimeUTF16(path, &bun.windows.nt_object_prefix_u8) or
+        strings.hasPrefixComptimeUTF16(path, &bun.windows.nt_unc_object_prefix_u8))
+    {
+        return wbuf[0..toWPathNormalized16(wbuf, path).len :0];
     }
 
     if (strings.hasPrefixComptimeUTF16(path, "\\\\")) {

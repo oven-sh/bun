@@ -2286,7 +2286,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                     wbuf[i] = 0;
                     const fullpath = wbuf[0..i :0];
 
-                    _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false).unwrap() catch |err| {
+                    _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, strings.withoutNTPrefix(fullpath), 0, false).unwrap() catch |err| {
                         return Result.fail(err, .linking_dependency);
                     };
                 }

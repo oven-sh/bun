@@ -1565,7 +1565,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             state.buf[i] = 0;
             const fullpath = state.buf[0..i :0];
 
-            _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false).unwrap() catch |err| {
+            _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, strings.withoutNTPrefix(fullpath), 0, false).unwrap() catch |err| {
                 state.cached_package_dir.close();
                 state.walker.deinit();
                 return Result.fail(err, .copying_files);
@@ -1838,7 +1838,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
                 dest[dest.len - task.basename - 1] = 0;
                 const dirpath = dest[0 .. dest.len - task.basename - 1 :0];
-                _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, dirpath, 0, false).unwrap() catch {};
+                _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, strings.withoutNTPrefix(dirpath), 0, false).unwrap() catch {};
                 dest[dest.len - task.basename - 1] = std.fs.path.sep;
 
                 if (bun.windows.CreateHardLinkW(dest.ptr, src.ptr, null) != 0) {

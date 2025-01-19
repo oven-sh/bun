@@ -2019,7 +2019,7 @@ declare module "bun" {
     /** Database server port number */
     port: number | string;
     /** Database user for authentication */
-    user: string;
+    username: string;
     /** Database password for authentication */
     password: string;
     /** Name of the database to connect to */
@@ -2065,12 +2065,12 @@ declare module "bun" {
    * Callback function type for transaction contexts
    * @param sql Function to execute SQL queries within the transaction
    */
-  type SQLTransactionContextCallback = (sql: TransactionSQL) => Promise<any>;
+  type SQLTransactionContextCallback = (sql: TransactionSQL) => Promise<any> | Array<SQLQuery>;
   /**
    * Callback function type for savepoint contexts
    * @param sql Function to execute SQL queries within the savepoint
    */
-  type SQLSavepointContextCallback = (sql: SavepointSQL) => Promise<any>;
+  type SQLSavepointContextCallback = (sql: SavepointSQL) => Promise<any> | Array<SQLQuery>;
 
   /**
    * Main SQL client interface providing connection and transaction management
@@ -2097,6 +2097,12 @@ declare module "bun" {
      * const [user] = await sql`select * from users where id = ${1}`;
      */
     (strings: string | TemplateStringsArray, ...values: any[]): SQLQuery;
+    /**
+     * Helper function to allow easy use to insert values into a query
+     * @example
+     * const result = await sql`insert into users ${sql(users)} RETURNING *`;
+     */
+    (obj: any): SQLQuery;
     /** Commits a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL
      * @example
      * await sql.commitDistributed("my_distributed_transaction");
@@ -2271,6 +2277,8 @@ declare module "bun" {
     distributed(name: string, fn: SQLTransactionContextCallback): Promise<any>;
     /** Current client options */
     options: SQLOptions;
+
+    [Symbol.asyncDispose](): Promise<any>;
   }
 
   /**
@@ -2280,6 +2288,7 @@ declare module "bun" {
   interface ReservedSQL extends SQL {
     /** Releases the client back to the connection pool */
     release(): void;
+    [Symbol.dispose](): void;
   }
 
   /**

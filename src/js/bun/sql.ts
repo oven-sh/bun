@@ -61,6 +61,7 @@ function normalizeSSLMode(value: string): SSLMode {
     case "prefer":
       return SSLMode.prefer;
     case "require":
+    case "required":
       return SSLMode.require;
     case "verify-ca":
     case "verify_ca":
@@ -468,12 +469,13 @@ class ConnectionPool {
         this.onAllQueriesFinished();
       }
     }
+
     if (connection.state !== PooledConnectionState.connected) {
       // connection is not ready
       return;
     }
     if (was_reserved) {
-      if (this.waitingQueue.length > 0) {
+      if (this.waitingQueue.length > 0 || this.reservedQueue.length > 0) {
         if (connection.storedError) {
           // this connection got a error but maybe we can wait for another
 
@@ -496,28 +498,27 @@ class ConnectionPool {
           pendingReserved(connection.storedError, connection);
           return;
         }
-        this.flushConcurrentQueries();
-      } else {
-        // connection is ready, lets add it back to the ready connections
-        this.readyConnections.add(connection);
-      }
-    } else {
-      if (connection.queryCount == 0) {
-        // ok we can actually bind reserved queries to it
-        const pendingReserved = this.reservedQueue.shift();
-        if (pendingReserved) {
-          connection.flags |= PooledConnectionFlags.reserved;
-          connection.queryCount++;
-          // we have a connection waiting for a reserved connection lets prioritize it
-          pendingReserved(connection.storedError, connection);
-          return;
-        }
       }
 
       this.readyConnections.add(connection);
-
       this.flushConcurrentQueries();
+      return;
     }
+    if (connection.queryCount == 0) {
+      // ok we can actually bind reserved queries to it
+      const pendingReserved = this.reservedQueue.shift();
+      if (pendingReserved) {
+        connection.flags |= PooledConnectionFlags.reserved;
+        connection.queryCount++;
+        // we have a connection waiting for a reserved connection lets prioritize it
+        pendingReserved(connection.storedError, connection);
+        return;
+      }
+    }
+
+    this.readyConnections.add(connection);
+
+    this.flushConcurrentQueries();
   }
 
   hasConnectionsAvailable() {
@@ -1002,6 +1003,7 @@ function loadOptions(o) {
         "must be a non-negative integer less than 2^31",
       );
     }
+    idleTimeout *= 1000;
   }
 
   if (connectionTimeout != null) {
@@ -1013,6 +1015,7 @@ function loadOptions(o) {
         "must be a non-negative integer less than 2^31",
       );
     }
+    connectionTimeout *= 1000;
   }
 
   if (maxLifetime != null) {
@@ -1024,6 +1027,7 @@ function loadOptions(o) {
         "must be a non-negative integer less than 2^31",
       );
     }
+    maxLifetime *= 1000;
   }
 
   if (max != null) {

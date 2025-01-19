@@ -4369,7 +4369,7 @@ pub const NodeFS = struct {
 
         const re_encoding_buffer: ?*bun.PathBuffer = if (is_u16 and args.encoding != .utf8)
             bun.PathBufferPool.get()
-        else 
+        else
             null;
         defer if (is_u16 and args.encoding != .utf8)
             bun.PathBufferPool.put(re_encoding_buffer.?);
@@ -4434,7 +4434,7 @@ pub const NodeFS = struct {
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
                     },
-                    bun.String => switch(args.encoding) {
+                    bun.String => switch (args.encoding) {
                         .buffer => unreachable,
                         // in node.js, libuv converts to utf8 before node.js converts those bytes into other stuff
                         // all encodings besides hex, base64, and base64url are mis-interpreting filesystem bytes.
@@ -5734,11 +5734,13 @@ pub const NodeFS = struct {
                 bun.O.WRONLY | flags,
                 0o644,
             );
-            if (file == .err){
+            if (file == .err) {
                 return .{ .err = .{
                     .errno = file.err.errno,
                     .path = path.slice(),
-                    .syscall = .truncate,} };}
+                    .syscall = .truncate,
+                } };
+            }
             defer _ = Syscall.close(file.result);
             const ret = Syscall.ftruncate(file.result, len);
             return switch (ret) {

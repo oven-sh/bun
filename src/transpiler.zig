@@ -958,12 +958,15 @@ pub const Transpiler = struct {
                         transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{} while minifying", .{e.kind}) catch bun.outOfMemory();
                         return null;
                     }
-                    const result = sheet.toCss(alloc, bun.css.PrinterOptions{
+                    const result = switch (sheet.toCss(alloc, bun.css.PrinterOptions{
                         .targets = bun.css.Targets.forBundlerTarget(transpiler.options.target),
                         .minify = transpiler.options.minify_whitespace,
-                    }, null) catch |e| {
-                        bun.handleErrorReturnTrace(e, @errorReturnTrace());
-                        return null;
+                    }, null)) {
+                        .result => |v| v,
+                        .err => |e| {
+                            transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{} while printing", .{e}) catch bun.outOfMemory();
+                            return null;
+                        },
                     };
                     output_file.value = .{ .buffer = .{ .allocator = alloc, .bytes = result.code } };
                 } else {

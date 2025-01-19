@@ -2532,9 +2532,7 @@ pub const Arguments = struct {
                 return ctx.throwInvalidArgumentTypeValue("buffer", "TypedArray", buffer_value.?);
             };
 
-            if (buffer.buffer.len == 0) {
-                return JSC.Error.ERR_INVALID_ARG_VALUE.throw(ctx, "The argument 'buffer' is empty and cannot be written.", .{});
-            }
+         
 
             arguments.eat();
 
@@ -2567,6 +2565,10 @@ pub const Arguments = struct {
                     if (arg_length.isNumber() or arg_length.isBigInt()) {
                         args.length = @intCast(try JSC.Node.validators.validateInteger(ctx, arg_length, "length", 0, @intCast(buf_len - args.offset)));
                         defined_length = true;
+                    }
+
+                   if (buffer.buffer.len == 0) {
+                        return JSC.Error.ERR_INVALID_ARG_VALUE.throw(ctx, "The argument 'buffer' is empty and cannot be written.", .{});
                     }
 
                     if (arguments.next()) |arg_position| {

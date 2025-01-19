@@ -2546,7 +2546,10 @@ pub const Arguments = struct {
                 if (is_number) {
                     const double = current.asNumber();
                     if (!std.math.isFinite(double)) {
-                        return ctx.throwInvalidArgumentTypeValue("options", "number or", current);
+                        return ctx.throwRangeError(
+                            @as(f64, double),
+                            .{ .field_name = "position", .msg = "an integer" },
+                        );
                     }
                 }
                 if (is_number or current.isBigInt()) {

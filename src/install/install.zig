@@ -1383,18 +1383,14 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             Method.hardlink;
 
         fn installWithClonefileEachDir(this: *@This(), destination_dir: std.fs.Dir) !Result {
-            var cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result{
-                .fail = .{ .err = err, .step = .opening_cache_dir },
-            };
+            var cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result.fail(err, .opening_cache_dir, @errorReturnTrace());
             defer cached_package_dir.close();
             var walker_ = Walker.walk(
                 cached_package_dir,
                 this.allocator,
                 &[_]bun.OSPathSlice{},
                 &[_]bun.OSPathSlice{},
-            ) catch |err| return Result{
-                .fail = .{ .err = err, .step = .opening_cache_dir },
-            };
+            ) catch |err| return Result.fail(err, .opening_cache_dir, @errorReturnTrace());
             defer walker_.deinit();
 
             const FileCopier = struct {
@@ -1443,22 +1439,15 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 }
             };
 
-            var subdir = destination_dir.makeOpenPath(bun.span(this.destination_dir_subpath), .{}) catch |err| return Result{
-                .fail = .{ .err = err, .step = .opening_dest_dir },
-            };
-
+            var subdir = destination_dir.makeOpenPath(bun.span(this.destination_dir_subpath), .{}) catch |err| return Result.fail(err, .opening_dest_dir, @errorReturnTrace());
             defer subdir.close();
 
             this.file_count = FileCopier.copy(
                 subdir,
                 &walker_,
-            ) catch |err| return Result{
-                .fail = .{ .err = err, .step = .copying_files },
-            };
+            ) catch |err| return Result.fail(err, .copying_files, @errorReturnTrace());
 
-            return Result{
-                .success = {},
-            };
+            return .{ .success = {} };
         }
 
         // https://www.unix.com/man-page/mojave/2/fclonefileat/

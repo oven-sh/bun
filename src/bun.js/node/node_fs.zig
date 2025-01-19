@@ -834,7 +834,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             var buf: bun.OSPathBuffer = undefined;
 
             const normdest: bun.OSPathSliceZ = if (Environment.isWindows)
-                switch (bun.sys.normalizePathWindows(u16, bun.invalid_fd, dest, &buf)) {
+                switch (bun.sys.normalizePathWindows(u16, bun.invalid_fd, dest, &buf, false)) {
                     .err => |err| {
                         this.finishConcurrently(.{ .err = err });
                         return false;

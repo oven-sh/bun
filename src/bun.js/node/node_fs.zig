@@ -44,6 +44,7 @@ const UvFsCallback = fn (*uv.fs_t) callconv(.C) void;
 
 const Stats = JSC.Node.Stats;
 const Dirent = JSC.Node.Dirent;
+const StatFS = JSC.Node.StatFS;
 
 pub const default_permission = if (Environment.isPosix)
     Syscall.S.IRUSR |
@@ -105,7 +106,7 @@ pub const Async = struct {
     pub const write = NewUVFSRequest(Return.Write, Arguments.Write, .write);
     pub const writeFile = NewAsyncFSTask(Return.WriteFile, Arguments.WriteFile, NodeFS.writeFile);
     pub const writev = NewUVFSRequest(Return.Writev, Arguments.Writev, .writev);
-
+    pub const statfs = NewAsyncFSTask(Return.StatFS, Arguments.StatFS, NodeFS.statfs);
     pub const cp = AsyncCpTask;
 
     pub const readdir_recursive = AsyncReaddirRecursiveTask;
@@ -1668,6 +1669,47 @@ pub const Arguments = struct {
 
     pub const LCHmod = Chmod;
 
+    pub const StatFS = struct {
+        path: PathLike,
+        big_int: bool = false,
+        throw_if_no_entry: bool = true,
+
+        pub fn deinit(this: Arguments.StatFS) void {
+            this.path.deinit();
+        }
+
+        pub fn deinitAndUnprotect(this: *Arguments.StatFS) void {
+            this.path.deinitAndUnprotect();
+        }
+
+        pub fn toThreadSafe(this: *Arguments.StatFS) void {
+            this.path.toThreadSafe();
+        }
+
+        pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Arguments.StatFS {
+            const path = try PathLike.fromJS(ctx, arguments) orelse {
+                return ctx.throwInvalidArguments("path must be a string or TypedArray", .{});
+            };
+            errdefer path.deinit();
+
+            const big_int = brk: {
+                if (arguments.next()) |next_val| {
+                    if (next_val.isObject()) {
+                        if (next_val.isCallable(ctx.vm())) break :brk false;
+                        arguments.eat();
+
+                        if (try next_val.getBooleanStrict(ctx, "bigint")) |big_int| {
+                            break :brk big_int;
+                        }
+                    }
+                }
+                break :brk false;
+            };
+
+            return .{ .path = path, .big_int = big_int };
+        }
+    };
+
     pub const Stat = struct {
         path: PathLike,
         big_int: bool = false,
@@ -3058,6 +3100,7 @@ const Return = struct {
     pub const Open = FDImpl;
     pub const WriteFile = void;
     pub const Readv = Read;
+    pub const StatFS = JSC.Node.StatFS;
     pub const Read = struct {
         bytes_read: u52,
 
@@ -5483,6 +5526,13 @@ pub const NodeFS = struct {
         };
 
         return Maybe(Return.Rm).success;
+    }
+
+    pub fn statfs(this: *NodeFS, args: Arguments.StatFS, _: Flavor) Maybe(Return.StatFS) {
+        return switch (Syscall.statfs(args.path.sliceZ(&this.sync_error_buf))) {
+            .result => |result| Maybe(Return.StatFS){ .result = Return.StatFS.init(result, args.big_int) },
+            .err => |err| Maybe(Return.StatFS){ .err = err },
+        };
     }
 
     pub fn stat(this: *NodeFS, args: Arguments.Stat, comptime _: Flavor) Maybe(Return.Stat) {

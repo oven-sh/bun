@@ -86,8 +86,12 @@ function getQueryHandle(query) {
   let handle = query[_handle];
   if (!handle) {
     try {
-      handle = doCreateQuery(query[_strings], query[_values], query[_allowUnsafeTransaction], query[_poolSize]);
-      query[_handle] = handle;
+      query[_handle] = handle = doCreateQuery(
+        query[_strings],
+        query[_values],
+        query[_allowUnsafeTransaction],
+        query[_poolSize],
+      );
     } catch (err) {
       query[_queryStatus] |= QueryStatus.error | QueryStatus.invalidHandle;
       query.reject(err);
@@ -136,6 +140,7 @@ class Query extends PublicPromise {
     if (status & (QueryStatus.executed | QueryStatus.error | QueryStatus.cancelled | QueryStatus.invalidHandle)) {
       return;
     }
+
     const handle = getQueryHandle(this);
     if (!handle) return this;
 

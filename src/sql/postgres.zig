@@ -459,7 +459,7 @@ pub const PostgresSQLQuery = struct {
         const thisValue = this.thisValue;
         const targetValue = this.getTarget(globalObject);
         defer allowGC(thisValue, globalObject);
-        if (thisValue == .zero or targetValue == .zero or connection == .zero) {
+        if (thisValue == .zero or targetValue == .zero) {
             return;
         }
 
@@ -474,7 +474,7 @@ pub const PostgresSQLQuery = struct {
             consumePendingValue(thisValue, globalObject) orelse .undefined,
             tag.toJSTag(globalObject),
             tag.toJSNumber(),
-            PostgresSQLConnection.queriesGetCached(connection) orelse .undefined,
+            if (connection == .zero) .undefined else PostgresSQLConnection.queriesGetCached(connection) orelse .undefined,
         });
     }
 
@@ -563,14 +563,13 @@ pub const PostgresSQLQuery = struct {
         defer query_str.deinit();
         const columns_value = PostgresSQLQuery.columnsGetCached(this_value) orelse .undefined;
 
-        var signature = Signature.generate(globalObject, query_str.slice(), binding_value, columns_value) catch |err| {
+        var signature = Signature.generate(globalObject, query_str.slice(), binding_value, columns_value, connection.prepared_statement_id) catch |err| {
             if (!globalObject.hasException())
                 return globalObject.throwError(err, "failed to generate signature");
             return error.JSError;
         };
 
         var writer = connection.writer();
-
         const entry = connection.statements.getOrPut(bun.default_allocator, bun.hash(signature.name)) catch |err| {
             signature.deinit();
             return globalObject.throwError(err, "failed to allocate statement");
@@ -604,6 +603,8 @@ pub const PostgresSQLQuery = struct {
 
             // If it does not have params, we can write and execute immediately in one go
             if (!has_params) {
+                log("prepareAndQueryWithSignature", .{});
+
                 PostgresRequest.prepareAndQueryWithSignature(globalObject, query_str.slice(), binding_value, PostgresSQLConnection.Writer, writer, &signature) catch |err| {
                     signature.deinit();
                     if (!globalObject.hasException())
@@ -612,7 +613,9 @@ pub const PostgresSQLQuery = struct {
                 };
                 did_write = true;
             } else {
-                PostgresRequest.writeQuery(query_str.slice(), signature.name, signature.fields, PostgresSQLConnection.Writer, writer) catch |err| {
+                log("writeQuery", .{});
+
+                PostgresRequest.writeQuery(query_str.slice(), signature.prepared_statement_name, signature.fields, PostgresSQLConnection.Writer, writer) catch |err| {
                     signature.deinit();
                     if (!globalObject.hasException())
                         return globalObject.throwError(err, "failed to write query");
@@ -630,7 +633,7 @@ pub const PostgresSQLQuery = struct {
                 const stmt = bun.default_allocator.create(PostgresSQLStatement) catch |err| {
                     return globalObject.throwError(err, "failed to allocate statement");
                 };
-
+                connection.prepared_statement_id += 1;
                 stmt.* = .{ .signature = signature, .ref_count = 2, .status = PostgresSQLStatement.Status.parsing };
                 this.statement = stmt;
                 entry.value_ptr.* = stmt;
@@ -868,11 +871,11 @@ pub const PostgresRequest = struct {
         writer: protocol.NewWriter(Context),
         signature: *Signature,
     ) AnyPostgresError!void {
-        try writeQuery(query, signature.name, signature.fields, Context, writer);
-        try writeBind(signature.name, bun.String.empty, globalObject, array_value, .zero, &.{}, &.{}, Context, writer);
+        try writeQuery(query, signature.prepared_statement_name, signature.fields, Context, writer);
+        try writeBind(signature.prepared_statement_name, bun.String.empty, globalObject, array_value, .zero, &.{}, &.{}, Context, writer);
         var exec = protocol.Execute{
             .p = .{
-                .prepared_statement = signature.name,
+                .prepared_statement = signature.prepared_statement_name,
             },
         };
         try exec.writeInternal(Context, writer);
@@ -889,10 +892,10 @@ pub const PostgresRequest = struct {
         comptime Context: type,
         writer: protocol.NewWriter(Context),
     ) !void {
-        try writeBind(statement.signature.name, bun.String.empty, globalObject, array_value, columns_value, statement.parameters, statement.fields, Context, writer);
+        try writeBind(statement.signature.prepared_statement_name, bun.String.empty, globalObject, array_value, columns_value, statement.parameters, statement.fields, Context, writer);
         var exec = protocol.Execute{
             .p = .{
-                .prepared_statement = statement.signature.name,
+                .prepared_statement = statement.signature.prepared_statement_name,
             },
         };
         try exec.writeInternal(Context, writer);
@@ -979,6 +982,7 @@ pub const PostgresSQLConnection = struct {
     globalObject: *JSC.JSGlobalObject,
 
     statements: PreparedStatementsMap,
+    prepared_statement_id: u64 = 0,
     pending_activity_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     js_value: JSValue = JSValue.undefined,
 
@@ -3102,8 +3106,11 @@ const Signature = struct {
     fields: []const int4,
     name: []const u8,
     query: []const u8,
+    prepared_statement_name: []const u8,
 
+    const log = bun.Output.scoped(.PostgresSignature, false);
     pub fn deinit(this: *Signature) void {
+        bun.default_allocator.free(this.prepared_statement_name);
         bun.default_allocator.free(this.fields);
         bun.default_allocator.free(this.name);
         bun.default_allocator.free(this.query);
@@ -3116,7 +3123,7 @@ const Signature = struct {
         return hasher.final();
     }
 
-    pub fn generate(globalObject: *JSC.JSGlobalObject, query: []const u8, array_value: JSValue, columns: JSValue) !Signature {
+    pub fn generate(globalObject: *JSC.JSGlobalObject, query: []const u8, array_value: JSValue, columns: JSValue, prepared_statement_id: u64) !Signature {
         var fields = std.ArrayList(int4).init(bun.default_allocator);
         var name = try std.ArrayList(u8).initCapacity(bun.default_allocator, query.len);
 
@@ -3170,8 +3177,11 @@ const Signature = struct {
         if (iter.anyFailed()) {
             return error.InvalidQueryBinding;
         }
+        // max u64 length is 20, max prepared_statement_name length is 63
+        const prepared_statement_name = try bun.fmt.allocPrint(bun.default_allocator, "P{s}${d}", .{ name.items[0..@min(40, name.items.len)], prepared_statement_id });
 
         return Signature{
+            .prepared_statement_name = prepared_statement_name,
             .name = name.items,
             .fields = fields.items,
             .query = try bun.default_allocator.dupe(u8, query),

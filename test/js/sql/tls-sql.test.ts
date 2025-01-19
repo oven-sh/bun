@@ -86,28 +86,26 @@ if (TLS_POSTGRES_DATABASE_URL) {
     ).toBe("fail");
   });
 
-  // need fragment support
-  test.skip("Transaction succeeds on caught savepoint", async () => {
+  test("Transaction succeeds on caught savepoint", async () => {
     await using sql = new SQL(options);
-    const table_id = Bun.randomUUIDv7().toString().replace(/-/g, "_");
-
-    await sql`CREATE TABLE IF NOT EXISTS test_random${sql(table_id)} (a int)`;
+    const table_id = `test_random${Bun.randomUUIDv7().toString().replace(/-/g, "_")}`;
+    await sql`CREATE TABLE IF NOT EXISTS ${sql(table_id)} (a int)`;
     try {
       await sql.begin(async sql => {
-        await sql`insert into test_random${sql(table_id)} values(1)`;
+        await sql`insert into ${sql(table_id)} values(1)`;
         await sql
           .savepoint(async sql => {
-            await sql`insert into test_random${sql(table_id)} values(2)`;
+            await sql`insert into ${sql(table_id)} values(2)`;
             throw new Error("please rollback");
           })
           .catch(() => {
             /* ignore */
           });
-        await sql`insert into test_random${sql(table_id)} values(3)`;
+        await sql`insert into ${sql(table_id)} values(3)`;
       });
-      expect((await sql`select count(1) from test_random${sql(table_id)}`)[0].count).toBe("2");
+      expect((await sql`select count(1) from ${sql(table_id)}`)[0].count).toBe("2");
     } finally {
-      await sql`DROP TABLE IF EXISTS test_random${sql(table_id)}`;
+      await sql`DROP TABLE IF EXISTS ${sql(table_id)}`;
     }
   });
 

@@ -14,6 +14,12 @@ test("fs.mkdir recursive should not error on existing", async () => {
     mkdirSync(dir1);
   }).toThrow("EEXIST: file already exists");
 
+  // relative
+  expect(() => {
+    mkdirSync("123test", { recursive: true });
+    mkdirSync("123test", { recursive: true });
+  }).not.toThrow();
+
   const dir2 = join(testDir, "test456");
   expect(await mkdir(dir2)).toBeUndefined();
   expect(await mkdir(dir2, { recursive: true })).toBeUndefined();

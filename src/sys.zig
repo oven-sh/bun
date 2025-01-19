@@ -772,7 +772,8 @@ pub fn fstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
         };
     }
     var stat_ = mem.zeroes(bun.Stat);
-    if (Maybe(bun.Stat).errnoSysFP(syscall.fstatat(fd.int(), path, &stat_, 0), .fstatat, fd, path)) |err| {
+    const fd_valid = if (fd == bun.invalid_fd) std.posix.AT.FDCWD else fd.int();
+    if (Maybe(bun.Stat).errnoSysFP(syscall.fstatat(fd_valid, path, &stat_, 0), .fstatat, fd, path)) |err| {
         log("fstatat({}, {s}) = {s}", .{ fd, path, @tagName(err.getErrno()) });
         return err;
     }

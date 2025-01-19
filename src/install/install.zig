@@ -1565,11 +1565,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             state.buf[i] = 0;
             const fullpath = state.buf[0..i :0];
 
-            _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, strings.withoutNTPrefix(fullpath), 0, false).unwrap() catch |err| {
-                state.cached_package_dir.close();
-                state.walker.deinit();
-                return Result.fail(err, .copying_files);
-            };
+            _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false);
             state.to_copy_buf = state.buf[fullpath.len..];
 
             const cache_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(state.cached_package_dir.fd, &state.buf2, state.buf2.len, 0);
@@ -1838,7 +1834,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
                 dest[dest.len - task.basename - 1] = 0;
                 const dirpath = dest[0 .. dest.len - task.basename - 1 :0];
-                _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, strings.withoutNTPrefix(dirpath), 0, false).unwrap() catch {};
+                _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, dirpath, 0, false).unwrap() catch {};
                 dest[dest.len - task.basename - 1] = std.fs.path.sep;
 
                 if (bun.windows.CreateHardLinkW(dest.ptr, src.ptr, null) != 0) {
@@ -2286,9 +2282,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                     wbuf[i] = 0;
                     const fullpath = wbuf[0..i :0];
 
-                    _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, strings.withoutNTPrefix(fullpath), 0, false).unwrap() catch |err| {
-                        return Result.fail(err, .linking_dependency);
-                    };
+                    _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false);
                 }
 
                 const res = strings.copyUTF16IntoUTF8(dest_buf[0..], []const u16, wbuf[0..i], true);

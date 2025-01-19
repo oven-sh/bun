@@ -375,6 +375,9 @@ function asyncWrap(fn: any, name: string) {
     }
 
     async read(buffer, offset, length, position) {
+      if (length === 0) {
+        return { buffer, bytesRead: 0 };
+      }
       const fd = this[kFd];
       throwEBADFIfNecessary("read", fd);
 

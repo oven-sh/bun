@@ -227,17 +227,6 @@ pub const PostgresSQLQuery = struct {
         return target;
     }
 
-    pub fn getQuery(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject) JSValue {
-        return this.query.toJS(globalObject);
-    }
-
-    pub fn getValues(this: *PostgresSQLQuery, _: *JSC.JSGlobalObject) JSValue {
-        if (this.thisValue == .zero) {
-            return .undefined;
-        }
-        return PostgresSQLQuery.valuesGetCached(this.thisValue) orelse .undefined;
-    }
-
     pub const Status = enum(u8) {
         pending,
         written,

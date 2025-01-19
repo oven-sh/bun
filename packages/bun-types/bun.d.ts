@@ -2065,7 +2065,12 @@ declare module "bun" {
    * Callback function type for transaction contexts
    * @param sql Function to execute SQL queries within the transaction
    */
-  type SQLContextCallback = (sql: (strings: string, ...values: any[]) => SQLQuery | Array<SQLQuery>) => Promise<any>;
+  type SQLTransactionContextCallback = (sql: TransactionSQL) => Promise<any>;
+  /**
+   * Callback function type for savepoint contexts
+   * @param sql Function to execute SQL queries within the savepoint
+   */
+  type SQLSavepointContextCallback = (sql: SavepointSQL) => Promise<any>;
 
   /**
    * Main SQL client interface providing connection and transaction management
@@ -2091,7 +2096,7 @@ declare module "bun" {
      * @example
      * const [user] = await sql`select * from users where id = ${1}`;
      */
-    (strings: string, ...values: any[]): SQLQuery;
+    (strings: string | TemplateStringsArray, ...values: any[]): SQLQuery;
     /** Commits a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL
      * @example
      * await sql.commitDistributed("my_distributed_transaction");
@@ -2166,7 +2171,7 @@ declare module "bun" {
      *   return [user, account]
      * })
      */
-    begin(fn: SQLContextCallback): Promise<any>;
+    begin(fn: SQLTransactionContextCallback): Promise<any>;
     /** Begins a new transaction with options
      * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.begin will resolve with the returned value from the callback function.
      * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
@@ -2191,7 +2196,7 @@ declare module "bun" {
      *   return [user, account]
      * })
      */
-    begin(options: string, fn: SQLContextCallback): Promise<any>;
+    begin(options: string, fn: SQLTransactionContextCallback): Promise<any>;
     /** Alternative method to begin a transaction
      * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.transaction will resolve with the returned value from the callback function.
      * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
@@ -2217,7 +2222,7 @@ declare module "bun" {
      *   return [user, account]
      * })
      */
-    transaction(fn: SQLContextCallback): Promise<any>;
+    transaction(fn: SQLTransactionContextCallback): Promise<any>;
     /** Alternative method to begin a transaction with options
      * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.transaction will resolve with the returned value from the callback function.
      * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
@@ -2243,7 +2248,7 @@ declare module "bun" {
      *   return [user, account]
      * })
      */
-    transaction(options: string, fn: SQLContextCallback): Promise<any>;
+    transaction(options: string, fn: SQLTransactionContextCallback): Promise<any>;
     /** Begins a distributed transaction
      * Also know as Two-Phase Commit, in a distributed transaction, Phase 1 involves the coordinator preparing nodes by ensuring data is written and ready to commit, while Phase 2 finalizes with nodes committing or rolling back based on the coordinator's decision, ensuring durability and releasing locks.
      * In PostgreSQL and MySQL distributed transactions persist beyond the original session, allowing privileged users or coordinators to commit/rollback them, ensuring support for distributed transactions, recovery, and administrative tasks.
@@ -2259,11 +2264,11 @@ declare module "bun" {
      * await sql.commitDistributed("numbers");
      * // or await sql.rollbackDistributed("numbers");
      */
-    beginDistributed(name: string, fn: SQLContextCallback): Promise<any>;
+    beginDistributed(name: string, fn: SQLTransactionContextCallback): Promise<any>;
     /** Alternative method to begin a distributed transaction
      * @alias beginDistributed
      */
-    distributed(name: string, fn: SQLContextCallback): Promise<any>;
+    distributed(name: string, fn: SQLTransactionContextCallback): Promise<any>;
     /** Current client options */
     options: SQLOptions;
   }
@@ -2283,8 +2288,13 @@ declare module "bun" {
    */
   interface TransactionSQL extends SQL {
     /** Creates a savepoint within the current transaction */
-    savepoint(name: string, fn: SQLContextCallback): Promise<undefined>;
+    savepoint(name: string, fn: SQLSavepointContextCallback): Promise<any>;
+    savepoint(fn: SQLSavepointContextCallback): Promise<any>;
   }
+  /**
+   * Represents a savepoint within a transaction
+   */
+  interface SavepointSQL extends SQL {}
 
   var sql: SQL;
 

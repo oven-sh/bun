@@ -10,10 +10,7 @@ function ReadStream(fd) {
   if (!(this instanceof ReadStream)) {
     return new ReadStream(fd);
   }
-  if (fd >> 0 !== fd || fd < 0) throw new RangeError("fd must be a positive integer");
-
   require("node:fs").ReadStream.$apply(this, ["", { fd }]);
-
   this.isRaw = false;
   this.isTTY = true;
 }
@@ -79,7 +76,6 @@ Object.defineProperty(ReadStream, "prototype", {
 
 function WriteStream(fd) {
   if (!(this instanceof WriteStream)) return new WriteStream(fd);
-  if (fd >> 0 !== fd || fd < 0) throw new RangeError("fd must be a positive integer");
 
   const stream = require("node:fs").WriteStream.$call(this, "", { fd });
 

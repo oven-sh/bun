@@ -29,7 +29,7 @@ export function getStdioWriteStream(fd) {
 
   let stream;
   if (tty.isatty(fd)) {
-    stream = new tty.WriteStream(fd);
+    stream = new tty.WriteStream(null, { fd });
     // TODO: this is the wrong place for this property.
     // but the TTY is technically duplex
     // see test-fs-syncwritestream.js
@@ -40,7 +40,7 @@ export function getStdioWriteStream(fd) {
     stream._type = "tty";
   } else {
     const fs = require("node:fs");
-    stream = new fs.WriteStream(fd, { autoClose: false, fd });
+    stream = new fs.WriteStream(null, { autoClose: false, fd });
     stream.readable = false;
     stream._type = "fs";
   }
@@ -125,7 +125,7 @@ export function getStdinStream(fd) {
 
   const tty = require("node:tty");
   const ReadStream = tty.isatty(fd) ? tty.ReadStream : require("node:fs").ReadStream;
-  const stream = new ReadStream(fd);
+  const stream = new ReadStream(null, { fd });
 
   const originalOn = stream.on;
 

@@ -64,7 +64,7 @@ function mkdirForce(path: string) {
 }
 
 function tmpdirTestMkdir(): string {
-  const now = Date.now().toString();
+  const now = Date.now().toString() + Math.random().toString(16).slice(2, 10);
   const tempdir = `${tmpdir()}/fs.test.ts/${now}/1234/hi`;
   expect(existsSync(tempdir), `tempdir ${tempdir} should not exist`).toBe(false);
   const res = mkdirSync(tempdir, { recursive: true });
@@ -1867,7 +1867,6 @@ describe("createReadStream", () => {
         expect(chunk.length).toBe("File read successfully".length);
         expect(chunk.toString()).toBe("File read successfully");
       });
-
       stream.on("close", () => {
         resolve(true);
       });
@@ -1884,11 +1883,13 @@ describe("createReadStream", () => {
     return await new Promise(resolve => {
       stream.on("data", chunk => {
         expect(chunk instanceof Buffer).toBe(true);
-        expect(chunk.length).toBe(22);
-        expect(chunk.toString()).toBe(data);
+        expect(chunk.length).toBe(1);
+        expect(chunk.toString()).toBe(data.slice(i, i + 1));
+        i++;
       });
 
       stream.on("end", () => {
+        expect(i).toBe(data.length);
         resolve(true);
       });
     });
@@ -2104,10 +2105,7 @@ describe("fs.WriteStream", () => {
   it("should use fd if provided", () => {
     const path = join(tmpdir(), `not-used-${Date.now()}.txt`);
     expect(existsSync(path)).toBe(false);
-    // @ts-ignore-next-line
-    const ws = new WriteStream_(path, {
-      fd: 2,
-    });
+    const ws = new WriteStream_(path, { fd: 2 });
     // @ts-ignore-next-line
     expect(ws.fd).toBe(2);
     expect(existsSync(path)).toBe(false);
@@ -2409,7 +2407,7 @@ describe("fs/promises", () => {
             "-e",
             `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
               full,
-            )}, { withFileTypes: true }).sort()), null, 2)`,
+            )}, { withFileTypes: true }).map(v => ({ path: v.parentPath ?? v.path, name: v.name })).sort()), null, 2)`,
           ],
           cwd: process.cwd(),
           stdout: "pipe",
@@ -2425,9 +2423,9 @@ describe("fs/promises", () => {
     const text = await new Response(subprocess.stdout).text();
     const node = JSON.parse(text);
     expect(bun.length).toEqual(node.length);
-    expect([...new Set(node.map(v => v.parentPath))]).toEqual([full]);
-    expect([...new Set(bun.map(v => v.parentPath))]).toEqual([full]);
-    expect(bun.map(v => join(v.parentPath, v.name)).sort()).toEqual(node.map(v => join(v.path, v.name)).sort());
+    expect([...new Set(node.map(v => v.parentPath ?? v.path))]).toEqual([full]);
+    expect([...new Set(bun.map(v => v.parentPath ?? v.path))]).toEqual([full]);
+    expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(node.map(v => join(v.path, v.name)).sort());
   }, 100000);
 
   it("readdir(path, {withFileTypes: true, recursive: true}) produces the same result as Node.js", async () => {
@@ -2445,7 +2443,7 @@ describe("fs/promises", () => {
             "-e",
             `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
               full,
-            )}, { withFileTypes: true, recursive: true }).sort((a, b) => a.path.localeCompare(b.path))), null, 2)`,
+            )}, { withFileTypes: true, recursive: true }).map(v => ({ path: v.parentPath ?? v.path, name: v.name })).sort((a, b) => a.path.localeCompare(b.path))), null, 2)`,
           ],
           cwd: process.cwd(),
           stdout: "pipe",
@@ -2461,8 +2459,8 @@ describe("fs/promises", () => {
     const text = await new Response(subprocess.stdout).text();
     const node = JSON.parse(text);
     expect(bun.length).toEqual(node.length);
-    expect(new Set(bun.map(v => v.path))).toEqual(new Set(node.map(v => v.path)));
-    expect(bun.map(v => join(v.path, v.name)).sort()).toEqual(node.map(v => join(v.path, v.name)).sort());
+    expect(new Set(bun.map(v => v.parentPath ?? v.path))).toEqual(new Set(node.map(v => v.path)));
+    expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(node.map(v => join(v.path, v.name)).sort());
   }, 100000);
 
   it("readdirSync(path, {withFileTypes: true, recursive: true}) produces the same result as Node.js", async () => {
@@ -2480,7 +2478,7 @@ describe("fs/promises", () => {
             "-e",
             `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
               full,
-            )}, { withFileTypes: true, recursive: true }).sort((a, b) => a.path.localeCompare(b.path))), null, 2)`,
+            )}, { withFileTypes: true, recursive: true }).map(v => ({ path: v.parentPath ?? v.path, name: v.name })).sort((a, b) => a.path.localeCompare(b.path))), null, 2)`,
           ],
           cwd: process.cwd(),
           stdout: "pipe",
@@ -2496,8 +2494,8 @@ describe("fs/promises", () => {
     const text = await new Response(subprocess.stdout).text();
     const node = JSON.parse(text);
     expect(bun.length).toEqual(node.length);
-    expect(new Set(bun.map(v => v.path))).toEqual(new Set(node.map(v => v.path)));
-    expect(bun.map(v => join(v.path, v.name)).sort()).toEqual(node.map(v => join(v.path, v.name)).sort());
+    expect(new Set(bun.map(v => v.parentPath ?? v.path))).toEqual(new Set(node.map(v => v.path)));
+    expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(node.map(v => join(v.path, v.name)).sort());
   }, 100000);
 
   for (let withFileTypes of [false, true] as const) {

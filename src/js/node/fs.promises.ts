@@ -567,27 +567,28 @@ function asyncWrap(fn: any, name: string) {
 
     readableWebStream(options = kEmptyObject) {
       const fd = this[kFd];
-      throwEBADFIfNecessary("fs".createReadStream, fd);
+      throwEBADFIfNecessary("readableWebStream", fd);
 
       return Bun.file(fd).stream();
     }
 
     createReadStream(options = kEmptyObject) {
       const fd = this[kFd];
-      throwEBADFIfNecessary("fs".createReadStream, fd);
-      return require("node:fs").createReadStream("", {
-        fd: this,
+      throwEBADFIfNecessary("createReadStream", fd);
+      return new (require("internal/fs/streams").ReadStream)(undefined, {
         highWaterMark: 64 * 1024,
         ...options,
+        fd: this,
       });
     }
 
     createWriteStream(options = kEmptyObject) {
       const fd = this[kFd];
-      throwEBADFIfNecessary("fs".createWriteStream, fd);
-      return require("node:fs").createWriteStream("", {
-        fd: this,
+      throwEBADFIfNecessary("createWriteStream", fd);
+      return new (require("internal/fs/streams").WriteStream)(undefined, {
+        highWaterMark: 64 * 1024,
         ...options,
+        fd: this,
       });
     }
 

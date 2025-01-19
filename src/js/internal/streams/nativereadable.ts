@@ -67,7 +67,7 @@ export default function () {
     this[hasResized] = !DYNAMICALLY_ADJUST_CHUNK_SIZE;
 
     options ??= {};
-    Readable.$apply(this, [options]);
+    Readable.$call(this, options);
 
     if (typeof options.highWaterMark === "number") {
       this[highWaterMark] = options.highWaterMark;

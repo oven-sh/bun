@@ -87,6 +87,7 @@ public:
 #endif
 
     void* dataPtr;
+    void* symbolFromDynamicLibrary { nullptr };
 
 private:
     JSFFIFunction(VM&, NativeExecutable*, JSGlobalObject*, Structure*, CFFIFunction&&);

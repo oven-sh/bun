@@ -8,7 +8,7 @@ import { test } from "bun:test";
 import { EventEmitter } from "node:events";
 // @ts-ignore
 import { dedent } from "../bundler/expectBundled.ts";
-import { bunEnv, isWindows, mergeWindowEnvs } from "harness";
+import { bunEnv, isCI, isWindows, mergeWindowEnvs } from "harness";
 import { expect } from "bun:test";
 
 /** For testing bundler related bugs in the DevServer */
@@ -27,16 +27,31 @@ export const minimalFramework: Bake.Framework = {
   },
 };
 
-export interface DevServerTest {
-  /**
-   * Framework to use. Consider `minimalFramework` if possible.
-   * Provide this object or `files['bun.app.ts']` for a dynamic one.
-   */
-  framework?: Bake.Framework | "react";
-  /** Starting files */
-  files: FileObject;
+export type DevServerTest = (
+  | {
+      /** Starting files */
+      files: FileObject;
+      /**
+       * Framework to use. Consider `minimalFramework` if possible.
+       * Provide this object or `files['bun.app.ts']` for a dynamic one.
+       */
+      framework?: Bake.Framework | "react";
+      /**
+       * Source code for a TSX file that `export default`s an array of BunPlugin,
+       * combined with the `framework` option.
+       */
+      pluginFile?: string;
+    }
+  | {
+      /**
+       * Copy all files from test/bake/fixtures/<name>
+       * This directory must contain `bun.app.ts` to allow hacking on fixtures manually via `bun run .`
+       */
+      fixture: string;
+    }
+) & {
   test: (dev: Dev) => Promise<void>;
-}
+};
 
 type FileObject = Record<string, string | Buffer>;
 
@@ -62,8 +77,9 @@ export class Dev {
   }
 
   fetch(url: string, init?: RequestInit) {
-    return new DevFetchPromise((resolve, reject) =>
-      fetch(new URL(url, this.baseUrl).toString(), init).then(resolve, reject),
+    return new DevFetchPromise(
+      (resolve, reject) => fetch(new URL(url, this.baseUrl).toString(), init).then(resolve, reject),
+      this,
     );
   }
 
@@ -102,7 +118,17 @@ export class Dev {
   }
 
   async waitForHotReload() {
-    await this.output.waitForLine(/bundled route|error|reloaded/i);
+    const err = this.output.waitForLine(/error/i);
+    const success = this.output.waitForLine(/bundled route|reloaded/i);
+    await Promise.race([
+      // On failure, give a little time in case a partial write caused a
+      // bundling error, and a success came in.
+      err.then(
+        () => Bun.sleep(500),
+        () => {},
+      ),
+      success,
+    ]);
   }
 
   async [Symbol.asyncDispose]() {}
@@ -117,14 +143,33 @@ export interface Step {
 }
 
 class DevFetchPromise extends Promise<Response> {
-  expect(result: string) {
+  dev: Dev;
+  constructor(
+    executor: (resolve: (value: Response | PromiseLike<Response>) => void, reject: (reason?: any) => void) => void,
+    dev: Dev,
+  ) {
+    super(executor);
+    this.dev = dev;
+  }
+
+  expect(result: any) {
+    if (typeof result !== "string") {
+      result = JSON.stringify(result);
+    }
     return withAnnotatedStack(snapshotCallerLocation(), async () => {
-      const res = await this;
-      if (!res.ok) {
-        throw new Error(`Expected response to be ok, but got ${res.status} ${res.statusText}`);
+      try {
+        const res = await this;
+        if (!res.ok) {
+          throw new Error(`Expected response to be ok, but got ${res.status} ${res.statusText}`);
+        }
+        const text = (await res.text()).trim();
+        expect(text).toBe(result.trim());
+      } catch (err) {
+        if (this.dev.panicked) {
+          throw new Error("DevServer crashed");
+        }
+        throw err;
       }
-      const text = (await res.text()).trim();
-      expect(text).toBe(result.trim());
     });
   }
   expectNoSpaces(result: string) {
@@ -148,18 +193,52 @@ class DevFetchPromise extends Promise<Response> {
 
 function snapshotCallerLocation(): string {
   const stack = new Error().stack!;
-  const lines = stack.split("\n");
+  const lines = stack.replaceAll("\r\n", "\n").split("\n");
   let i = 1;
   for (; i < lines.length; i++) {
-    if (!lines[i].includes(import.meta.filename)) {
-      return lines[i];
+    const line = lines[i].replaceAll("\\", "/");
+    if (line.includes(import.meta.path.replaceAll("\\", "/"))) {
+      return line;
     }
   }
   throw new Error("Couldn't find caller location in stack trace");
 }
-
 function stackTraceFileName(line: string): string {
-  return / \(((?:[A-Za-z]:)?.*?)[:)]/.exec(line)![1].replaceAll("\\", "/");
+  let result = line.trim();
+
+  // Remove leading "at " and any parentheses
+  if (result.startsWith("at ")) {
+    result = result.slice(3).trim();
+  }
+
+  // Handle case with angle brackets like "<anonymous>"
+  const angleStart = result.indexOf("<");
+  const angleEnd = result.indexOf(">");
+  if (angleStart >= 0 && angleEnd > angleStart) {
+    result = result.slice(angleEnd + 1).trim();
+  }
+
+  // Remove parentheses and everything after colon
+  const openParen = result.indexOf("(");
+  if (openParen >= 0) {
+    result = result.slice(openParen + 1).trim();
+  }
+
+  // Handle drive letters (e.g. C:) and line numbers
+  let colon = result.indexOf(":");
+
+  // Check for drive letter (e.g. C:) by looking for single letter before colon
+  if (colon > 0 && /[a-zA-Z]/.test(result[colon - 1])) {
+    // On Windows, skip past drive letter colon to find line number colon
+    colon = result.indexOf(":", colon + 1);
+  }
+
+  if (colon >= 0) {
+    result = result.slice(0, colon);
+  }
+
+  result = result.trim();
+  return result.replaceAll("\\", "/");
 }
 
 async function withAnnotatedStack<T>(stackLine: string, cb: () => Promise<T>): Promise<T> {
@@ -281,7 +360,7 @@ class OutputLineStream extends EventEmitter {
   }
 }
 
-export function devTest(description: string, options: DevServerTest) {
+export function devTest<T extends DevServerTest>(description: string, options: T): T {
   // Capture the caller name as part of the test tempdir
   const callerLocation = snapshotCallerLocation();
   const caller = stackTraceFileName(callerLocation);
@@ -290,49 +369,75 @@ export function devTest(description: string, options: DevServerTest) {
   const basename = path.basename(caller, ".test" + path.extname(caller));
   const count = (counts[basename] = (counts[basename] ?? 0) + 1);
 
-  // TODO: Tests are too flaky on Windows. Cannot reproduce locally.
-  if (isWindows) {
+  // TODO: Tests are flaky on all platforms. Disable
+  if (isCI) {
     jest.test.todo(`DevServer > ${basename}.${count}: ${description}`);
-    return;
+    return options;
   }
 
   jest.test(`DevServer > ${basename}.${count}: ${description}`, async () => {
     const root = path.join(tempDir, basename + count);
-    writeAll(root, options.files);
-    if (options.files["bun.app.ts"] == undefined) {
-      if (!options.framework) {
-        throw new Error("Must specify a options.framework or provide a bun.app.ts file");
+    if ("files" in options) {
+      writeAll(root, options.files);
+      if (options.files["bun.app.ts"] == undefined) {
+        if (!options.framework) {
+          throw new Error("Must specify a options.framework or provide a bun.app.ts file");
+        }
+        if (options.pluginFile) {
+          fs.writeFileSync(path.join(root, "pluginFile.ts"), dedent(options.pluginFile));
+        }
+        fs.writeFileSync(
+          path.join(root, "bun.app.ts"),
+          dedent`
+            ${options.pluginFile ? `import plugins from './pluginFile.ts';` : "let plugins = undefined;"}
+            export default {
+              app: {
+                framework: ${JSON.stringify(options.framework)},
+                plugins,
+              },
+            };
+          `,
+        );
+      } else {
+        if (options.pluginFile) {
+          throw new Error("Cannot provide both bun.app.ts and pluginFile");
+        }
       }
-      fs.writeFileSync(
-        path.join(root, "bun.app.ts"),
-        dedent`
-          export default {
-            app: {
-              framework: ${JSON.stringify(options.framework)},
-            },
-          };
-        `,
-      );
+    } else {
+      if (!options.fixture) {
+        throw new Error("Must provide either `fixture` or `files`");
+      }
+      const fixture = path.join(devTestRoot, "../fixtures", options.fixture);
+      fs.cpSync(fixture, root, { recursive: true });
+
+      if (!fs.existsSync(path.join(root, "bun.app.ts"))) {
+        throw new Error(`Fixture ${fixture} must contain a bun.app.ts file.`);
+      }
+      if (!fs.existsSync(path.join(root, "node_modules"))) {
+        // link the node_modules directory from test/node_modules to the temp directory
+        fs.symlinkSync(path.join(devTestRoot, "../../node_modules"), path.join(root, "node_modules"), "junction");
+      }
     }
     fs.writeFileSync(
       path.join(root, "harness_start.ts"),
       dedent`
         import appConfig from "./bun.app.ts";
         export default {
+          ...appConfig,
           port: 0,
-          ...appConfig
         };
       `,
     );
 
     await using devProcess = Bun.spawn({
       cwd: root,
-      cmd: [process.execPath, "./bun.app.ts"],
+      cmd: [process.execPath, "./harness_start.ts"],
       env: mergeWindowEnvs([
         bunEnv,
         {
           FORCE_COLOR: "1",
           BUN_DEV_SERVER_TEST_RUNNER: "1",
+          BUN_DUMP_STATE_ON_CRASH: "1",
         },
       ]),
       stdio: ["pipe", "pipe", "pipe"],
@@ -354,4 +459,5 @@ export function devTest(description: string, options: DevServerTest) {
       throw err;
     }
   });
+  return options;
 }

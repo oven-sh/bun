@@ -2,7 +2,7 @@ name: Update libarchive
 
 on:
   schedule:
-    - cron: "0 0 * * 0"
+    - cron: "0 3 * * 0"
   workflow_dispatch:
 
 jobs:
@@ -18,44 +18,75 @@ jobs:
       - name: Check libarchive version
         id: check-version
         run: |
-          CURRENT_VERSION=$(grep -oP 'LIBARCHIVE_VERSION\s+\K\S+' cmake/targets/BuildLibArchive.cmake)
+          set -euo pipefail
+
+          # Extract the commit hash from the line after COMMIT
+          CURRENT_VERSION=$(awk '/[[:space:]]*COMMIT[[:space:]]*$/{getline; gsub(/^[[:space:]]+|[[:space:]]+$/,"",$0); print}' cmake/targets/BuildLibArchive.cmake)
+
           if [ -z "$CURRENT_VERSION" ]; then
-            echo "Error: Could not find current version in BuildLibArchive.cmake"
+            echo "Error: Could not find COMMIT line in BuildLibArchive.cmake"
             exit 1
           fi
+
+          # Validate that it looks like a git hash
+          if ! [[ $CURRENT_VERSION =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Error: Invalid git hash format in BuildLibArchive.cmake"
+            echo "Found: $CURRENT_VERSION"
+            echo "Expected: 40 character hexadecimal string"
+            exit 1
+          fi
+
           echo "current=$CURRENT_VERSION" >> $GITHUB_OUTPUT
 
           LATEST_RELEASE=$(curl -sL https://api.github.com/repos/libarchive/libarchive/releases/latest)
+          if [ -z "$LATEST_RELEASE" ]; then
+            echo "Error: Failed to fetch latest release from GitHub API"
+            exit 1
+          fi
+
           LATEST_TAG=$(echo "$LATEST_RELEASE" | jq -r '.tag_name')
+          if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" = "null" ]; then
+            echo "Error: Could not extract tag name from GitHub API response"
+            exit 1
+          fi
+
           LATEST_SHA=$(curl -sL "https://api.github.com/repos/libarchive/libarchive/git/ref/tags/$LATEST_TAG" | jq -r '.object.sha')
-          if [ -z "$LATEST_SHA" ]; then
-            echo "Error: Could not fetch latest version from GitHub API"
+          if [ -z "$LATEST_SHA" ] || [ "$LATEST_SHA" = "null" ]; then
+            echo "Error: Could not fetch SHA for tag $LATEST_TAG"
             exit 1
           fi
-          if [ ${#LATEST_SHA} -ne 40 ]; then
-            echo "Error: Invalid SHA length"
+
+          if ! [[ $LATEST_SHA =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Error: Invalid SHA format received from GitHub"
+            echo "Found: $LATEST_SHA"
+            echo "Expected: 40 character hexadecimal string"
             exit 1
           fi
+
           echo "latest=$LATEST_SHA" >> $GITHUB_OUTPUT
+          echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
 
-      - name: Create PR if update needed
+      - name: Update version if needed
         if: success() && steps.check-version.outputs.current != steps.check-version.outputs.latest
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          BRANCH="update-libarchive-${GITHUB_SHA::8}"
-          git checkout -b "$BRANCH"
+          set -euo pipefail
+          # Handle multi-line format where COMMIT and its value are on separate lines
+          sed -i -E '/[[:space:]]*COMMIT[[:space:]]*$/{n;s/[[:space:]]*([0-9a-f]+)[[:space:]]*$/    ${{ steps.check-version.outputs.latest }}/}' cmake/targets/BuildLibArchive.cmake
 
-          sed -i "s/LIBARCHIVE_VERSION\s\+[0-9a-f]\+/LIBARCHIVE_VERSION ${{ steps.check-version.outputs.latest }}/" cmake/targets/BuildLibArchive.cmake
-          
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add cmake/targets/BuildLibArchive.cmake
-          git commit -m "deps: update libarchive to ${{ steps.check-version.outputs.latest }}"
-          git push origin "$BRANCH"
+      - name: Create Pull Request
+        if: success() && steps.check-version.outputs.current != steps.check-version.outputs.latest
+        uses: peter-evans/create-pull-request@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          add-paths: |
+            cmake/targets/BuildLibArchive.cmake
+          commit-message: "deps: update libarchive to ${{ steps.check-version.outputs.tag }} (${{ steps.check-version.outputs.latest }})"
+          title: "deps: update libarchive to ${{ steps.check-version.outputs.tag }}"
+          delete-branch: true
+          branch: deps/update-libarchive-${{ github.run_number }}
+          body: |
+            ## What does this PR do?
 
-          gh pr create \
-            --title "deps: update libarchive to ${LATEST_SHA::8}" \
-            --body "Updates libarchive from ${CURRENT_VERSION::8} to ${LATEST_SHA::8}" \
-            --base main \
-            --head "$BRANCH"
+            Updates libarchive to version ${{ steps.check-version.outputs.tag }}
+
+            Auto-updated by [this workflow](https://github.com/oven-sh/bun/actions/workflows/update-libarchive.yml)

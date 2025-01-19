@@ -562,6 +562,10 @@ pub fn MultiArrayList(comptime T: type) type {
             return self.bytes[0..capacityInBytes(self.capacity)];
         }
 
+        pub fn memoryCost(self: Self) usize {
+            return capacityInBytes(self.capacity);
+        }
+
         pub fn zero(self: Self) void {
             @memset(self.allocatedBytes(), 0);
         }

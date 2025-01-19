@@ -4744,7 +4744,7 @@ describe("expect()", () => {
     expect(expect("abc").toMatch("a")).toBeUndefined();
   });
   test.todo("toMatchInlineSnapshot to return undefined", () => {
-    expect(expect("abc").toMatchInlineSnapshot()).toBeUndefined();
+    expect(expect("abc").toMatchInlineSnapshot('"abc"')).toBeUndefined();
   });
   test("toMatchObject to return undefined", () => {
     expect(expect({}).toMatchObject({})).toBeUndefined();
@@ -4768,11 +4768,19 @@ describe("expect()", () => {
       }).toThrow(),
     ).toBeUndefined();
   });
-  test.todo("toThrowErrorMatchingInlineSnapshot to return undefined", () => {
-    expect(expect(() => {}).toThrowErrorMatchingInlineSnapshot()).toBeUndefined();
+  test("toThrowErrorMatchingInlineSnapshot to return undefined", () => {
+    expect(
+      expect(() => {
+        throw 0;
+      }).toThrowErrorMatchingInlineSnapshot("undefined"),
+    ).toBeUndefined();
   });
-  test.todo("toThrowErrorMatchingSnapshot to return undefined", () => {
-    expect(expect(() => {}).toThrowErrorMatchingSnapshot()).toBeUndefined();
+  test("toThrowErrorMatchingSnapshot to return undefined", () => {
+    expect(
+      expect(() => {
+        throw 0;
+      }).toThrowErrorMatchingSnapshot("undefined"),
+    ).toBeUndefined();
   });
 
   test(' " " to contain ""', () => {

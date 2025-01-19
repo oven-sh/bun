@@ -339,6 +339,13 @@ JSC_DEFINE_HOST_FUNCTION(jsAbortSignalPrototypeFunction_throwIfAborted, (JSGloba
     return IDLOperation<JSAbortSignal>::call<jsAbortSignalPrototypeFunction_throwIfAbortedBody>(*lexicalGlobalObject, *callFrame, "throwIfAborted");
 }
 
+size_t JSAbortSignal::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
+{
+    auto* thisObject = jsCast<JSAbortSignal*>(cell);
+    auto& wrapped = thisObject->wrapped();
+    return Base::estimatedSize(cell, vm) + wrapped.memoryCost();
+}
+
 JSC::GCClient::IsoSubspace* JSAbortSignal::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<JSAbortSignal, UseCustomHeapCellType::No>(

@@ -31,6 +31,13 @@ pub const Lifetime = enum {
     allocated,
     temporary,
 };
+
+/// Marshall a zig value into a JSValue using comptime reflection.
+///
+/// - Primitives are converted to their JS equivalent.
+/// - Types with `toJS` or `toJSNewlyCreated` methods have them called
+/// - Slices are converted to JS arrays
+/// - Enums are converted to 32-bit numbers.
 pub fn toJS(globalObject: *JSC.JSGlobalObject, comptime ValueType: type, value: ValueType, comptime lifetime: Lifetime) JSC.JSValue {
     const Type = comptime brk: {
         var CurrentType = ValueType;
@@ -52,9 +59,7 @@ pub fn toJS(globalObject: *JSC.JSGlobalObject, comptime ValueType: type, value: 
         bool => return JSC.JSValue.jsBoolean(if (comptime Type != ValueType) value.* else value),
         *JSC.JSGlobalObject => return value.toJSValue(),
         []const u8, [:0]const u8, [*:0]const u8, []u8, [:0]u8, [*:0]u8 => {
-            const str = bun.String.createUTF8(value);
-            defer str.deref();
-            return str.toJS(globalObject);
+            return bun.String.createUTF8ForJS(globalObject, value);
         },
         []const bun.String => {
             defer {
@@ -75,7 +80,7 @@ pub fn toJS(globalObject: *JSC.JSGlobalObject, comptime ValueType: type, value: 
 
                 var array = JSC.JSValue.createEmptyArray(globalObject, value.len);
                 for (value, 0..) |*item, i| {
-                    const res = toJS(globalObject, *Child, item, lifetime);
+                    const res = toJS(globalObject, *const Child, item, lifetime);
                     if (res == .zero) return .zero;
                     array.putIndex(
                         globalObject,
@@ -92,6 +97,13 @@ pub fn toJS(globalObject: *JSC.JSGlobalObject, comptime ValueType: type, value: 
 
             if (comptime @hasDecl(Type, "toJS") and @typeInfo(@TypeOf(@field(Type, "toJS"))).Fn.params.len == 2) {
                 return value.toJS(globalObject);
+            }
+
+            // must come after toJS check in case this enum implements its own serializer.
+            if (@typeInfo(Type) == .Enum) {
+                // FIXME: creates non-normalized integers (e.g. u2), which
+                // aren't handled by `jsNumberWithType` rn
+                return JSC.JSValue.jsNumberWithType(u32, @as(u32, @intFromEnum(value)));
             }
 
             @compileError("dont know how to convert " ++ @typeName(ValueType) ++ " to JS");
@@ -279,8 +291,7 @@ pub const ArrayBuffer = extern struct {
                     }
                 },
                 .err => |err| {
-                    globalObject.throwValue(err.toJSC(globalObject));
-                    return .zero;
+                    return globalObject.throwValue(err.toJSC(globalObject)) catch .zero;
                 },
             }
         }
@@ -293,12 +304,11 @@ pub const ArrayBuffer = extern struct {
     extern fn ArrayBuffer__fromSharedMemfd(fd: i64, globalObject: *JSC.JSGlobalObject, byte_offset: usize, byte_length: usize, total_size: usize, JSC.JSValue.JSType) JSC.JSValue;
     pub const toArrayBufferFromSharedMemfd = ArrayBuffer__fromSharedMemfd;
 
-    pub fn toJSBufferFromMemfd(fd: bun.FileDescriptor, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJSBufferFromMemfd(fd: bun.FileDescriptor, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         const stat = switch (bun.sys.fstat(fd)) {
             .err => |err| {
-                globalObject.throwValue(err.toJSC(globalObject));
                 _ = bun.sys.close(fd);
-                return .zero;
+                return globalObject.throwValue(err.toJSC(globalObject));
             },
             .result => |fstat| fstat,
         };
@@ -335,9 +345,7 @@ pub const ArrayBuffer = extern struct {
                 return JSBuffer__fromMmap(globalObject, buf.ptr, buf.len);
             },
             .err => |err| {
-                globalObject.throwValue(err.toJSC(globalObject));
-
-                return .zero;
+                return globalObject.throwValue(err.toJSC(globalObject));
             },
         }
     }
@@ -678,8 +686,7 @@ pub const MarkedArrayBuffer = struct {
         const obj = this.toJSObjectRef(globalObject, &exception);
 
         if (exception[0] != null) {
-            globalObject.throwValue(JSC.JSValue.c(exception[0]));
-            return .zero;
+            return globalObject.throwValue(JSC.JSValue.c(exception[0])) catch return .zero;
         }
 
         return JSC.JSValue.c(obj);

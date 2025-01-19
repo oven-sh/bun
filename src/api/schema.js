@@ -13,6 +13,7 @@ const Loader = {
   "12": 12,
   "13": 13,
   "14": 14,
+  "15": 15,
   "jsx": 1,
   "js": 2,
   "ts": 3,
@@ -27,6 +28,7 @@ const Loader = {
   "dataurl": 12,
   "text": 13,
   "sqlite": 14,
+  "html": 15,
 };
 const LoaderKeys = {
   "1": "jsx",
@@ -43,6 +45,7 @@ const LoaderKeys = {
   "12": "dataurl",
   "13": "text",
   "14": "sqlite",
+  "15": "html",
   "jsx": "jsx",
   "js": "js",
   "ts": "ts",
@@ -57,6 +60,7 @@ const LoaderKeys = {
   "dataurl": "dataurl",
   "text": "text",
   "sqlite": "sqlite",
+  "html": "html",
 };
 const FrameworkEntryPointType = {
   "1": 1,

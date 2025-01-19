@@ -4,9 +4,9 @@ name: Define and replace static globals & constants
 
 The `--define` flag lets you declare statically-analyzable constants and globals. It replace all usages of an identifier or property in a JavaScript or TypeScript file with a constant value. This feature is supported at runtime and also in `bun build`. This is sort of similar to `#define` in C/C++, except for JavaScript.
 
-```ts
-bun --define process.env.NODE_ENV="'production'" src/index.ts # Runtime
-bun build --define process.env.NODE_ENV="'production'" src/index.ts # Build
+```sh
+$ bun --define process.env.NODE_ENV="'production'" src/index.ts # Runtime
+$ bun build --define process.env.NODE_ENV="'production'" src/index.ts # Build
 ```
 
 ---
@@ -25,12 +25,12 @@ if (process.env.NODE_ENV === "production") {
 
 Before the code reaches the JavaScript engine, Bun replaces `process.env.NODE_ENV` with `"production"`.
 
-```ts
-if ("production" === "production") {
-  console.log("Production mode");
-} else {
-  console.log("Development mode");
-}
+```ts-diff
++ if ("production" === "production") {
+    console.log("Production mode");
+  } else {
+    console.log("Development mode");
+  }
 ```
 
 ---
@@ -39,12 +39,12 @@ It doesn't stop there. Bun's optimizing transpiler is smart enough to do some ba
 
 Since `"production" === "production"` is always `true`, Bun replaces the entire expression with the `true` value.
 
-```ts
-if (true) {
-  console.log("Production mode");
-} else {
-  console.log("Development mode");
-}
+```ts-diff
++ if (true) {
+    console.log("Production mode");
+  } else {
+    console.log("Development mode");
+  }
 ```
 
 ---

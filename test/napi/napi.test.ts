@@ -115,6 +115,7 @@ describe("napi", () => {
           outdir: dir,
           target,
           format,
+          throw: true,
         });
 
         expect(build.logs).toBeEmpty();
@@ -319,6 +320,70 @@ describe("napi", () => {
       checkSameOutput("test_type_tag", []);
     });
   });
+
+  describe("napi_wrap", () => {
+    it("accepts the right kinds of values", () => {
+      checkSameOutput("test_napi_wrap", []);
+    });
+
+    it("is shared between addons", () => {
+      checkSameOutput("test_napi_wrap_cross_addon", []);
+    });
+
+    it("does not follow prototypes", () => {
+      checkSameOutput("test_napi_wrap_prototype", []);
+    });
+
+    it("does not consider proxies", () => {
+      checkSameOutput("test_napi_wrap_proxy", []);
+    });
+
+    it("can remove a wrap", () => {
+      checkSameOutput("test_napi_remove_wrap", []);
+    });
+
+    it("has the right lifetime", () => {
+      checkSameOutput("test_wrap_lifetime_without_ref", []);
+      checkSameOutput("test_wrap_lifetime_with_weak_ref", []);
+      checkSameOutput("test_wrap_lifetime_with_strong_ref", []);
+      checkSameOutput("test_remove_wrap_lifetime_with_weak_ref", []);
+      checkSameOutput("test_remove_wrap_lifetime_with_strong_ref", []);
+    });
+  });
+
+  describe("bigint conversion to int64/uint64", () => {
+    it("works", () => {
+      const tests = [-1n, 0n, 1n];
+      for (const power of [63, 64, 65]) {
+        for (const sign of [-1, 1]) {
+          const boundary = BigInt(sign) * 2n ** BigInt(power);
+          tests.push(boundary, boundary - 1n, boundary + 1n);
+        }
+      }
+
+      const testsString = "[" + tests.map(bigint => bigint.toString() + "n").join(",") + "]";
+      checkSameOutput("bigint_to_i64", testsString);
+      checkSameOutput("bigint_to_u64", testsString);
+    });
+    it("returns the right error code", () => {
+      const badTypes = '[null, undefined, 5, "123", "abc"]';
+      checkSameOutput("bigint_to_i64", badTypes);
+      checkSameOutput("bigint_to_u64", badTypes);
+      checkSameOutput("bigint_to_64_null", []);
+    });
+  });
+
+  describe("create_bigint_words", () => {
+    it("works", () => {
+      checkSameOutput("test_create_bigint_words", []);
+    });
+  });
+
+  describe("napi_get_last_error_info", () => {
+    it("returns information from the most recent call", () => {
+      checkSameOutput("test_extended_error_messages", []);
+    });
+  });
 });
 
 function checkSameOutput(test: string, args: any[] | string) {
@@ -326,11 +391,14 @@ function checkSameOutput(test: string, args: any[] | string) {
   let bunResult = runOn(bunExe(), test, args);
   // remove all debug logs
   bunResult = bunResult.replaceAll(/^\[\w+\].+$/gm, "").trim();
-  expect(bunResult).toBe(nodeResult);
+  expect(bunResult).toEqual(nodeResult);
   return nodeResult;
 }
 
 function runOn(executable: string, test: string, args: any[] | string) {
+  // when the inspector runs (can be due to VSCode extension), there is
+  // a bug that in debug modes the console logs extra stuff
+  const { BUN_INSPECT_CONNECT_TO: _, ...rest } = bunEnv;
   const exec = spawnSync({
     cmd: [
       executable,
@@ -339,7 +407,7 @@ function runOn(executable: string, test: string, args: any[] | string) {
       test,
       typeof args == "string" ? args : JSON.stringify(args),
     ],
-    env: bunEnv,
+    env: rest,
   });
   const errs = exec.stderr.toString();
   if (errs !== "") {

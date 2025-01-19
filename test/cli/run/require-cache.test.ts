@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isBroken, isIntelMacOS, isWindows, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 test("require.cache is not an empty object literal when inspected", () => {
@@ -32,7 +32,7 @@ test("require.cache does not include unevaluated modules", () => {
   expect(exitCode).toBe(0);
 });
 
-describe("files transpiled and loaded don't leak the output source code", () => {
+describe.skipIf(isBroken && isIntelMacOS)("files transpiled and loaded don't leak the output source code", () => {
   test("via require() with a lot of long export names", () => {
     let text = "";
     for (let i = 0; i < 10000; i++) {

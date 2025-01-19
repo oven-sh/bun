@@ -2,12 +2,12 @@
 // no longer set. This means we can import client components, using `react-dom`
 // to perform Server-side rendering (creating HTML) out of the RSC payload.
 import * as React from "react";
-import { clientManifest } from "bun:bake/server";
+import { ssrManifest } from "bun:bake/server";
 import type { Readable } from "node:stream";
 import { EventEmitter } from "node:events";
 import { createFromNodeStream, type Manifest } from "react-server-dom-bun/client.node.unbundled.js";
 import { renderToPipeableStream } from "react-dom/server.node";
-import { MiniAbortSignal } from "./server";
+import type { MiniAbortSignal } from "./server";
 
 // Verify that React 19 is being used.
 if (!React.use) {
@@ -15,7 +15,7 @@ if (!React.use) {
 }
 
 const createFromNodeStreamOptions: Manifest = {
-  moduleMap: clientManifest,
+  moduleMap: ssrManifest,
   moduleLoading: { prefix: "/" },
 };
 
@@ -49,7 +49,7 @@ export function renderToHtml(
       const promise = createFromNodeStream(rscPayload, {
         // React takes in a manifest mapping client-side assets
         // to the imports needed for server-side rendering.
-        moduleMap: clientManifest,
+        moduleMap: ssrManifest,
         moduleLoading: { prefix: "/" },
       });
       // The root is this "Root" component that unwraps the streamed promise

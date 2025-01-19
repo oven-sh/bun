@@ -49,105 +49,146 @@ pub const Gradient = union(enum) {
                 closure: Closure,
                 input_: *css.Parser,
             ) Result(Gradient) {
-                // css.todo_stuff.match_ignore_ascii_case
-                if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "linear-gradient")) {
-                    return .{ .result = .{ .linear = switch (LinearGradient.parse(input_, css.VendorPrefix{ .none = true })) {
-                        .result => |vv| vv,
-                        .err => |e| return .{ .err = e },
-                    } } };
-                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "repeating-linear-gradient")) {
-                    return .{ .result = .{ .repeating_linear = switch (LinearGradient.parse(input_, css.VendorPrefix{ .none = true })) {
-                        .result => |vv| vv,
-                        .err => |e| return .{ .err = e },
-                    } } };
-                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "radial-gradient")) {
-                    return .{ .result = .{ .radial = switch (RadialGradient.parse(input_, css.VendorPrefix{ .none = true })) {
-                        .result => |vv| vv,
-                        .err => |e| return .{ .err = e },
-                    } } };
-                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "repeating-radial-gradient")) {
-                    return .{ .result = .{ .repeating_radial = switch (RadialGradient.parse(input_, css.VendorPrefix{ .none = true })) {
-                        .result => |vv| vv,
-                        .err => |e| return .{ .err = e },
-                    } } };
-                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "conic-gradient")) {
-                    return .{ .result = .{ .conic = switch (ConicGradient.parse(input_)) {
-                        .result => |vv| vv,
-                        .err => |e| return .{ .err = e },
-                    } } };
-                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "repeating-conic-gradient")) {
-                    return .{ .result = .{ .repeating_conic = switch (ConicGradient.parse(input_)) {
-                        .result => |vv| vv,
-                        .err => |e| return .{ .err = e },
-                    } } };
-                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-webkit-linear-gradient")) {
-                    return .{ .result = .{ .linear = switch (LinearGradient.parse(input_, css.VendorPrefix{ .webkit = true })) {
-                        .result => |vv| vv,
-                        .err => |e| return .{ .err = e },
-                    } } };
-                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-webkit-repeating-linear-gradient")) {
-                    return .{ .result = .{ .repeating_linear = switch (LinearGradient.parse(input_, css.VendorPrefix{ .webkit = true })) {
-                        .result => |vv| vv,
-                        .err => |e| return .{ .err = e },
-                    } } };
-                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-webkit-radial-gradient")) {
-                    return .{ .result = .{ .radial = switch (RadialGradient.parse(input_, css.VendorPrefix{ .webkit = true })) {
-                        .result => |vv| vv,
-                        .err => |e| return .{ .err = e },
-                    } } };
-                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-webkit-repeating-radial-gradient")) {
-                    return .{ .result = .{ .repeating_radial = switch (RadialGradient.parse(input_, css.VendorPrefix{ .webkit = true })) {
-                        .result => |vv| vv,
-                        .err => |e| return .{ .err = e },
-                    } } };
-                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-moz-linear-gradient")) {
-                    return .{ .result = .{ .linear = switch (LinearGradient.parse(input_, css.VendorPrefix{ .moz = true })) {
-                        .result => |vv| vv,
-                        .err => |e| return .{ .err = e },
-                    } } };
-                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-moz-repeating-linear-gradient")) {
-                    return .{ .result = .{ .repeating_linear = switch (LinearGradient.parse(input_, css.VendorPrefix{ .moz = true })) {
-                        .result => |vv| vv,
-                        .err => |e| return .{ .err = e },
-                    } } };
-                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-moz-radial-gradient")) {
-                    return .{ .result = .{ .radial = switch (RadialGradient.parse(input_, css.VendorPrefix{ .moz = true })) {
-                        .result => |vv| vv,
-                        .err => |e| return .{ .err = e },
-                    } } };
-                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-moz-repeating-radial-gradient")) {
-                    return .{ .result = .{ .repeating_radial = switch (RadialGradient.parse(input_, css.VendorPrefix{ .moz = true })) {
-                        .result => |vv| vv,
-                        .err => |e| return .{ .err = e },
-                    } } };
-                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-o-linear-gradient")) {
-                    return .{ .result = .{ .linear = switch (LinearGradient.parse(input_, css.VendorPrefix{ .o = true })) {
-                        .result => |vv| vv,
-                        .err => |e| return .{ .err = e },
-                    } } };
-                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-o-repeating-linear-gradient")) {
-                    return .{ .result = .{ .repeating_linear = switch (LinearGradient.parse(input_, css.VendorPrefix{ .o = true })) {
-                        .result => |vv| vv,
-                        .err => |e| return .{ .err = e },
-                    } } };
-                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-o-radial-gradient")) {
-                    return .{ .result = .{ .radial = switch (RadialGradient.parse(input_, css.VendorPrefix{ .o = true })) {
-                        .result => |vv| vv,
-                        .err => |e| return .{ .err = e },
-                    } } };
-                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-o-repeating-radial-gradient")) {
-                    return .{ .result = .{ .repeating_radial = switch (RadialGradient.parse(input_, css.VendorPrefix{ .o = true })) {
-                        .result => |vv| vv,
-                        .err => |e| return .{ .err = e },
-                    } } };
-                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-webkit-gradient")) {
-                    return .{ .result = .{ .@"webkit-gradient" = switch (WebKitGradient.parse(input_)) {
-                        .result => |vv| vv,
-                        .err => |e| return .{ .err = e },
-                    } } };
-                } else {
+                const Map = comptime bun.ComptimeEnumMap(enum {
+                    @"linear-gradient",
+                    @"repeating-linear-gradient",
+                    @"radial-gradient",
+                    @"repeating-radial-gradient",
+                    @"conic-gradient",
+                    @"repeating-conic-gradient",
+                    @"-webkit-linear-gradient",
+                    @"-webkit-repeating-linear-gradient",
+                    @"-webkit-radial-gradient",
+                    @"-webkit-repeating-radial-gradient",
+                    @"-moz-linear-gradient",
+                    @"-moz-repeating-linear-gradient",
+                    @"-moz-radial-gradient",
+                    @"-moz-repeating-radial-gradient",
+                    @"-o-linear-gradient",
+                    @"-o-repeating-linear-gradient",
+                    @"-o-radial-gradient",
+                    @"-o-repeating-radial-gradient",
+                    @"-webkit-gradient",
+                });
+                if (Map.getAnyCase(closure.func)) |matched|
+                    switch (matched) {
+                        .@"linear-gradient" => {
+                            return .{ .result = .{ .linear = switch (LinearGradient.parse(input_, css.VendorPrefix{ .none = true })) {
+                                .result => |vv| vv,
+                                .err => |e| return .{ .err = e },
+                            } } };
+                        },
+                        .@"repeating-linear-gradient" => {
+                            return .{ .result = .{ .repeating_linear = switch (LinearGradient.parse(input_, css.VendorPrefix{ .none = true })) {
+                                .result => |vv| vv,
+                                .err => |e| return .{ .err = e },
+                            } } };
+                        },
+                        .@"radial-gradient" => {
+                            return .{ .result = .{ .radial = switch (RadialGradient.parse(input_, css.VendorPrefix{ .none = true })) {
+                                .result => |vv| vv,
+                                .err => |e| return .{ .err = e },
+                            } } };
+                        },
+                        .@"repeating-radial-gradient" => {
+                            return .{ .result = .{ .repeating_radial = switch (RadialGradient.parse(input_, css.VendorPrefix{ .none = true })) {
+                                .result => |vv| vv,
+                                .err => |e| return .{ .err = e },
+                            } } };
+                        },
+                        .@"conic-gradient" => {
+                            return .{ .result = .{ .conic = switch (ConicGradient.parse(input_)) {
+                                .result => |vv| vv,
+                                .err => |e| return .{ .err = e },
+                            } } };
+                        },
+                        .@"repeating-conic-gradient" => {
+                            return .{ .result = .{ .repeating_conic = switch (ConicGradient.parse(input_)) {
+                                .result => |vv| vv,
+                                .err => |e| return .{ .err = e },
+                            } } };
+                        },
+                        .@"-webkit-linear-gradient" => {
+                            return .{ .result = .{ .linear = switch (LinearGradient.parse(input_, css.VendorPrefix{ .webkit = true })) {
+                                .result => |vv| vv,
+                                .err => |e| return .{ .err = e },
+                            } } };
+                        },
+                        .@"-webkit-repeating-linear-gradient" => {
+                            return .{ .result = .{ .repeating_linear = switch (LinearGradient.parse(input_, css.VendorPrefix{ .webkit = true })) {
+                                .result => |vv| vv,
+                                .err => |e| return .{ .err = e },
+                            } } };
+                        },
+                        .@"-webkit-radial-gradient" => {
+                            return .{ .result = .{ .radial = switch (RadialGradient.parse(input_, css.VendorPrefix{ .webkit = true })) {
+                                .result => |vv| vv,
+                                .err => |e| return .{ .err = e },
+                            } } };
+                        },
+                        .@"-webkit-repeating-radial-gradient" => {
+                            return .{ .result = .{ .repeating_radial = switch (RadialGradient.parse(input_, css.VendorPrefix{ .webkit = true })) {
+                                .result => |vv| vv,
+                                .err => |e| return .{ .err = e },
+                            } } };
+                        },
+                        .@"-moz-linear-gradient" => {
+                            return .{ .result = .{ .linear = switch (LinearGradient.parse(input_, css.VendorPrefix{ .moz = true })) {
+                                .result => |vv| vv,
+                                .err => |e| return .{ .err = e },
+                            } } };
+                        },
+                        .@"-moz-repeating-linear-gradient" => {
+                            return .{ .result = .{ .repeating_linear = switch (LinearGradient.parse(input_, css.VendorPrefix{ .moz = true })) {
+                                .result => |vv| vv,
+                                .err => |e| return .{ .err = e },
+                            } } };
+                        },
+                        .@"-moz-radial-gradient" => {
+                            return .{ .result = .{ .radial = switch (RadialGradient.parse(input_, css.VendorPrefix{ .moz = true })) {
+                                .result => |vv| vv,
+                                .err => |e| return .{ .err = e },
+                            } } };
+                        },
+                        .@"-moz-repeating-radial-gradient" => {
+                            return .{ .result = .{ .repeating_radial = switch (RadialGradient.parse(input_, css.VendorPrefix{ .moz = true })) {
+                                .result => |vv| vv,
+                                .err => |e| return .{ .err = e },
+                            } } };
+                        },
+                        .@"-o-linear-gradient" => {
+                            return .{ .result = .{ .linear = switch (LinearGradient.parse(input_, css.VendorPrefix{ .o = true })) {
+                                .result => |vv| vv,
+                                .err => |e| return .{ .err = e },
+                            } } };
+                        },
+                        .@"-o-repeating-linear-gradient" => {
+                            return .{ .result = .{ .repeating_linear = switch (LinearGradient.parse(input_, css.VendorPrefix{ .o = true })) {
+                                .result => |vv| vv,
+                                .err => |e| return .{ .err = e },
+                            } } };
+                        },
+                        .@"-o-radial-gradient" => {
+                            return .{ .result = .{ .radial = switch (RadialGradient.parse(input_, css.VendorPrefix{ .o = true })) {
+                                .result => |vv| vv,
+                                .err => |e| return .{ .err = e },
+                            } } };
+                        },
+                        .@"-o-repeating-radial-gradient" => {
+                            return .{ .result = .{ .repeating_radial = switch (RadialGradient.parse(input_, css.VendorPrefix{ .o = true })) {
+                                .result => |vv| vv,
+                                .err => |e| return .{ .err = e },
+                            } } };
+                        },
+                        .@"-webkit-gradient" => {
+                            return .{ .result = .{ .@"webkit-gradient" = switch (WebKitGradient.parse(input_)) {
+                                .result => |vv| vv,
+                                .err => |e| return .{ .err = e },
+                            } } };
+                        },
+                    }
+                else
                     return .{ .err = closure.location.newUnexpectedTokenError(.{ .ident = closure.func }) };
-                }
             }
         }.parse);
     }
@@ -157,7 +198,7 @@ pub const Gradient = union(enum) {
             .linear => |g| .{ "linear-gradient(", g.vendor_prefix },
             .repeating_linear => |g| .{ "repeating-linear-gradient(", g.vendor_prefix },
             .radial => |g| .{ "radial-gradient(", g.vendor_prefix },
-            .repeating_radial => |g| .{ "repeating-linear-gradient(", g.vendor_prefix },
+            .repeating_radial => |g| .{ "repeating-radial-gradient(", g.vendor_prefix },
             .conic => .{ "conic-gradient(", null },
             .repeating_conic => .{ "repeating-conic-gradient(", null },
             .@"webkit-gradient" => .{ "-webkit-gradient(", null },
@@ -171,7 +212,7 @@ pub const Gradient = union(enum) {
 
         switch (this.*) {
             .linear, .repeating_linear => |*linear| {
-                try linear.toCss(W, dest, linear.vendor_prefix.eq(css.VendorPrefix{ .none = true }));
+                try linear.toCss(W, dest, linear.vendor_prefix.neq(css.VendorPrefix{ .none = true }));
             },
             .radial, .repeating_radial => |*radial| {
                 try radial.toCss(W, dest);
@@ -475,7 +516,7 @@ pub const RadialGradient = struct {
     }
 
     pub fn toCss(this: *const RadialGradient, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        if (std.meta.eql(this.shape, EndingShape.default())) {
+        if (!std.meta.eql(this.shape, EndingShape.default())) {
             try this.shape.toCss(W, dest);
             if (this.position.isCenter()) {
                 try dest.delim(',', false);
@@ -544,16 +585,16 @@ pub const ConicGradient = struct {
                 // https://w3c.github.io/csswg-drafts/css-images-4/#valdef-conic-gradient-angle
                 return Angle.parseWithUnitlessZero(i);
             }
-        }.parse, .{}).unwrapOr(Angle{ .deg = 0.0 });
+        }.parse, .{});
 
         const position = input.tryParse(struct {
             inline fn parse(i: *css.Parser) Result(Position) {
                 if (i.expectIdentMatching("at").asErr()) |e| return .{ .err = e };
                 return Position.parse(i);
             }
-        }.parse, .{}).unwrapOr(Position.center());
+        }.parse, .{});
 
-        if (!angle.eql(&Angle{ .deg = 0.0 }) or !std.meta.eql(position, Position.center())) {
+        if (angle.isOk() or position.isOk()) {
             if (input.expectComma().asErr()) |e| return .{ .err = e };
         }
 
@@ -562,8 +603,8 @@ pub const ConicGradient = struct {
             .err => |e| return .{ .err = e },
         };
         return .{ .result = ConicGradient{
-            .angle = angle,
-            .position = position,
+            .angle = angle.unwrapOr(Angle{ .deg = 0.0 }),
+            .position = position.unwrapOr(Position.center()),
             .items = items,
         } };
     }
@@ -1346,7 +1387,7 @@ pub fn ColorStop(comptime D: type) type {
         pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
             try this.color.toCss(W, dest);
             if (this.position) |*position| {
-                try dest.delim(',', false);
+                try dest.writeChar(' ');
                 try css.generic.toCss(D, position, W, dest);
             }
             return;

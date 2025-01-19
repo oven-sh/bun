@@ -19,7 +19,7 @@ pub const ResolveMessage = struct {
     pub usingnamespace JSC.Codegen.JSResolveMessage;
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*ResolveMessage {
-        return globalThis.throw2("ResolveMessage is not constructable", .{});
+        return globalThis.throw("ResolveMessage is not constructable", .{});
     }
 
     pub fn getCode(this: *ResolveMessage, globalObject: *JSC.JSGlobalObject) JSC.JSValue {

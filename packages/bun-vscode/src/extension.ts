@@ -53,3 +53,7 @@ export function activate(context: vscode.ExtensionContext) {
   // Only register for text editors
   context.subscriptions.push(vscode.commands.registerTextEditorCommand("extension.bun.runUnsavedCode", runUnsavedCode));
 }
+
+export function getConfig<T>(path: string, scope?: vscode.ConfigurationScope) {
+  return vscode.workspace.getConfiguration("bun", scope).get<T>(path);
+}

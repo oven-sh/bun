@@ -40,7 +40,7 @@ fn randomInt(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
 }
 
 fn pbkdf2(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments_old(5);
+    const arguments = callframe.arguments_old(6);
 
     const data = try PBKDF2.fromJS(globalThis, arguments.slice(), true);
 
@@ -67,8 +67,7 @@ fn pbkdf2Sync(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
     if (!data.run(output.slice())) {
         const err = Crypto.createCryptoError(globalThis, BoringSSL.ERR_get_error());
         BoringSSL.ERR_clear_error();
-        globalThis.throwValue(err);
-        return .zero;
+        return globalThis.throwValue(err);
     }
 
     return out_arraybuffer;

@@ -178,20 +178,38 @@ test("Closing a channel in onmessage prevents already queued tasks from firing o
   c1.postMessage("done");
 });
 
-test("broadcast channel used with workers", done => {
-  var bc = new BroadcastChannel("hello test");
-  var count = 0;
-  var workersCount = 100;
-  bc.onmessage = (e: MessageEvent) => {
-    expect(e).toBeInstanceOf(MessageEvent);
-    expect(e.target).toBe(bc);
-    expect(e.data).toBe("hello from worker");
-    if (++count == workersCount) {
-      bc.close();
-      done();
+test("broadcast channel used with workers", async () => {
+  const batchSize = 1;
+  for (let total = 0; total < 100; total++) {
+    let bc = new BroadcastChannel("hello test");
+
+    let promises: Promise<void>[] = [];
+    let resolveFns = [];
+
+    for (var i = 0; i < batchSize; i++) {
+      const { promise, resolve } = Promise.withResolvers();
+      promises.push(promise);
+      resolveFns.push(resolve);
     }
-  };
-  for (var i = 0; i < workersCount; i++) {
-    new Worker(new URL("./broadcast-channel-worker.ts", import.meta.url).href);
+    bc.onmessage = (e: MessageEvent) => {
+      expect(e).toBeInstanceOf(MessageEvent);
+      expect(e.target).toBe(bc);
+      expect(e.data).toBe("hello from worker");
+      const resolve = resolveFns.shift();
+      if (resolve) {
+        resolve();
+      } else {
+        console.warn("resolve fn not found");
+      }
+      console.count("resolve fn called");
+    };
+
+    for (let i = 0; i < batchSize; i++) {
+      new Worker(new URL("./broadcast-channel-worker.ts", import.meta.url).href);
+    }
+
+    await Promise.all(promises);
+    bc.close();
+    console.count("Batch complete");
   }
-});
+}, 99999);

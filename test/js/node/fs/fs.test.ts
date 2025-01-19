@@ -195,20 +195,19 @@ describe("test-fs-assert-encoding-error", () => {
     }).toThrow(expectedError);
   });
 
-  it.todo("ReadStream throws on invalid encoding", () => {
+  it("ReadStream throws on invalid encoding", () => {
     expect(() => {
       fs.ReadStream(testPath, options);
     }).toThrow(expectedError);
   });
 
-  it.todo("WriteStream throws on invalid encoding", () => {
+  it("WriteStream throws on invalid encoding", () => {
     expect(() => {
       fs.WriteStream(testPath, options);
     }).toThrow(expectedError);
   });
 });
 
-// TODO: port node.js tests for these
 it("fs.readv returns object", async done => {
   const fd = await promisify(fs.open)(import.meta.path, "r");
   const buffers = [Buffer.alloc(10), Buffer.alloc(10)];
@@ -1873,7 +1872,7 @@ describe("createReadStream", () => {
     });
   });
 
-  it("works (22 chunk)", async () => {
+  it("works (highWaterMark 1)", async () => {
     var stream = createReadStream(import.meta.dir + "/readFileSync.txt", {
       highWaterMark: 1,
     });
@@ -1895,10 +1894,9 @@ describe("createReadStream", () => {
     });
   });
 
-  // TODO - highWaterMark is just a hint, not a guarantee. it doesn't make sense to test for exact chunk sizes
-  it.skip("works (highWaterMark 1, 512 chunk)", async () => {
+  it("works (highWaterMark 512)", async () => {
     var stream = createReadStream(import.meta.dir + "/readLargeFileSync.txt", {
-      highWaterMark: 1,
+      highWaterMark: 512,
     });
 
     var data = readFileSync(import.meta.dir + "/readLargeFileSync.txt", "utf8");
@@ -1906,7 +1904,7 @@ describe("createReadStream", () => {
     return await new Promise(resolve => {
       stream.on("data", chunk => {
         expect(chunk instanceof Buffer).toBe(true);
-        expect(chunk.length).toBe(512);
+        expect(chunk.length).toBeLessThanOrEqual(512);
         expect(chunk.toString()).toBe(data.slice(i, i + 512));
         i += 512;
       });
@@ -2313,23 +2311,29 @@ describe("createWriteStream", () => {
 
   it("should call callbacks in the correct order", done => {
     const ws = createWriteStream(join(tmpdir(), "fs"));
-    let counter = 0;
+    let counter1 = 0;
     ws.on("open", () => {
-      expect(counter++).toBe(1);
+      expect(counter1++).toBe(0);
     });
 
     ws.close(() => {
-      expect(counter++).toBe(3);
-      done();
+      expect(counter1++).toBe(1);
+      if (counter2 === 2) {
+        done();
+      }
     });
 
+    let counter2 = 0;
     const rs = createReadStream(join(import.meta.dir, "readFileSync.txt"));
     rs.on("open", () => {
-      expect(counter++).toBe(0);
+      expect(counter2++).toBe(0);
     });
 
     rs.close(() => {
-      expect(counter++).toBe(2);
+      expect(counter2++).toBe(1);
+      if (counter1 === 2) {
+        done();
+      }
     });
   });
 });

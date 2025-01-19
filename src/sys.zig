@@ -2844,10 +2844,7 @@ pub fn directoryExistsAt(dir: anytype, subpath: anytype) JSC.Maybe(bool) {
         const wbuf = bun.WPathBufferPool.get();
         defer bun.WPathBufferPool.put(wbuf);
         const path = if (std.meta.Child(@TypeOf(subpath)) == u16)
-            if (std.fs.path.isAbsoluteWindowsWTF16(subpath))
-                bun.strings.addNTPathPrefixIfNeeded(wbuf, subpath)
-            else
-                bun.strings.toWPathNormalized16(wbuf, subpath)
+            bun.strings.toNTPath16(wbuf, subpath)
         else
             bun.strings.toNTPath(wbuf, subpath);
 

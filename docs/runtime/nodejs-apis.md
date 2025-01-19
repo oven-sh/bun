@@ -30,6 +30,10 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 🟢 Fully implemented. `EventEmitterAsyncResource` uses `AsyncResource` underneath. 100% of Node.js's test suite for EventEmitter passes.
 
+### [`node:fs`](https://nodejs.org/api/fs.html)
+
+🟢 Fully implemented. 92% of Node.js's test suite passes.
+
 ### [`node:http`](https://nodejs.org/api/http.html)
 
 🟢 Fully implemented. Outgoing client request body is currently buffered instead of streamed.
@@ -108,10 +112,6 @@ Some methods are not optimized yet.
 ### [`node:domain`](https://nodejs.org/api/domain.html)
 
 🟡 Missing `Domain` `active`
-
-### [`node:fs`](https://nodejs.org/api/fs.html)
-
-🟡 Missing `statfs` `statfsSync`, `opendirSync`. `Dir` is partially implemented.
 
 ### [`node:http2`](https://nodejs.org/api/http2.html)
 

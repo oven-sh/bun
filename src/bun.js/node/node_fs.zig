@@ -5519,6 +5519,7 @@ pub const NodeFS = struct {
         // We cannot use removefileat() on macOS because it does not handle write-protected files as expected.
         if (args.recursive) {
             zigDeleteTree(std.fs.cwd(), args.path.slice(), .file) catch |err| {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
                 const errno: E = switch (@as(anyerror, err)) {
                     // error.InvalidHandle => .BADF,
                     error.AccessDenied => .ACCES,
@@ -5563,14 +5564,16 @@ pub const NodeFS = struct {
 
         const dest = args.path.sliceZ(&this.sync_error_buf);
 
-        std.posix.unlinkZ(dest) catch |er| {
+        std.posix.unlinkZ(dest) catch |err1| {
+            bun.handleErrorReturnTrace(err1, @errorReturnTrace());
             // empircally, it seems to return AccessDenied when the
             // file is actually a directory on macOS.
             if (args.recursive and
-                (er == error.IsDir or er == error.NotDir or er == error.AccessDenied))
+                (err1 == error.IsDir or err1 == error.NotDir or err1 == error.AccessDenied))
             {
-                std.posix.rmdirZ(dest) catch |err| {
-                    const code: E = switch (err) {
+                std.posix.rmdirZ(dest) catch |err2| {
+                    bun.handleErrorReturnTrace(err2, @errorReturnTrace());
+                    const code: E = switch (err2) {
                         error.AccessDenied => .ACCES,
                         error.SymLinkLoop => .LOOP,
                         error.NameTooLong => .NAMETOOLONG,
@@ -5598,7 +5601,7 @@ pub const NodeFS = struct {
             }
 
             {
-                const code: E = switch (er) {
+                const code: E = switch (err1) {
                     error.AccessDenied => .ACCES,
                     error.SymLinkLoop => .LOOP,
                     error.NameTooLong => .NAMETOOLONG,

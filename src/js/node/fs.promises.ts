@@ -252,7 +252,6 @@ const exports = {
 export default exports;
 
 function asyncWrap(fn: any, name: string) {
-  console.log(fn, name);
   const wrapped = async function (...args) {
     return fn.$apply(fs, args);
   };

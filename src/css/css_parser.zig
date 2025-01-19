@@ -2849,10 +2849,23 @@ pub fn StyleSheet(comptime AtRule: type) type {
             return .{ .result = {} };
         }
 
-        pub fn toCssWithWriter(this: *const @This(), allocator: Allocator, writer: anytype, options: css_printer.PrinterOptions, import_records: ?*const bun.BabyList(ImportRecord)) PrintErr!ToCssResultInternal {
+        pub fn toCssWithWriter(this: *const @This(), allocator: Allocator, writer: anytype, options: css_printer.PrinterOptions, import_records: ?*const bun.BabyList(ImportRecord)) PrintResult(ToCssResultInternal) {
             const W = @TypeOf(writer);
-            const project_root = options.project_root;
+
             var printer = Printer(@TypeOf(writer)).new(allocator, std.ArrayList(u8).init(allocator), writer, options, import_records);
+            const result = this.toCssWithWriterImpl(allocator, W, &printer, options, import_records) catch {
+                bun.assert(printer.error_kind != null);
+                return .{
+                    .err = printer.error_kind.?,
+                };
+            };
+
+            return .{ .result = result };
+        }
+
+        pub fn toCssWithWriterImpl(this: *const @This(), allocator: Allocator, comptime W: type, printer: *Printer(W), options: css_printer.PrinterOptions, import_records: ?*const bun.BabyList(ImportRecord)) PrintErr!ToCssResultInternal {
+            _ = import_records; // autofix
+            const project_root = options.project_root;
 
             // #[cfg(feature = "sourcemap")]
             // {
@@ -2875,7 +2888,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
                 var references = CssModuleReferences{};
                 printer.css_module = CssModule.new(allocator, config, &this.sources, project_root, &references);
 
-                try this.rules.toCss(W, &printer);
+                try this.rules.toCss(W, printer);
                 try printer.newline();
 
                 return ToCssResultInternal{
@@ -2889,7 +2902,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
                     .references = references,
                 };
             } else {
-                try this.rules.toCss(W, &printer);
+                try this.rules.toCss(W, printer);
                 try printer.newline();
                 return ToCssResultInternal{
                     .dependencies = printer.dependencies,
@@ -2900,18 +2913,21 @@ pub fn StyleSheet(comptime AtRule: type) type {
             }
         }
 
-        pub fn toCss(this: *const @This(), allocator: Allocator, options: css_printer.PrinterOptions, import_records: ?*const bun.BabyList(ImportRecord)) PrintErr!ToCssResult {
+        pub fn toCss(this: *const @This(), allocator: Allocator, options: css_printer.PrinterOptions, import_records: ?*const bun.BabyList(ImportRecord)) PrintResult(ToCssResult) {
             // TODO: this is not necessary
             // Make sure we always have capacity > 0: https://github.com/napi-rs/napi-rs/issues/1124.
             var dest = ArrayList(u8).initCapacity(allocator, 1) catch unreachable;
             const writer = dest.writer(allocator);
-            const result = try toCssWithWriter(this, allocator, writer, options, import_records);
-            return ToCssResult{
+            const result = switch (toCssWithWriter(this, allocator, writer, options, import_records)) {
+                .result => |v| v,
+                .err => |e| return .{ .err = e },
+            };
+            return .{ .result = ToCssResult{
                 .code = dest.items,
                 .dependencies = result.dependencies,
                 .exports = result.exports,
                 .references = result.references,
-            };
+            } };
         }
 
         pub fn parse(allocator: Allocator, code: []const u8, options: ParserOptions, import_records: ?*bun.BabyList(ImportRecord)) Maybe(This, Err(ParserError)) {

@@ -4,7 +4,22 @@
 
 import { describe, test } from "bun:test";
 import "harness";
-import { attrTest, cssTest, indoc, minify_test, minifyTest, prefix_test } from "./util";
+import {
+  attrTest,
+  cssTest,
+  indoc,
+  minify_test,
+  prefix_test,
+  minifyTestWithOptions as minify_test_with_options,
+  minify_error_test_with_options,
+  ParserFlags,
+  ParserOptions,
+} from "./util";
+
+function error_test(css: string, error: unknown) {
+  // going to ignore this test for now
+  test.skip(`ERROR: ${css}`, () => {});
+}
 
 describe("css tests", () => {
   describe("pseudo-class edge case", () => {
@@ -38,7 +53,7 @@ describe("css tests", () => {
   });
 
   test("calc edge case", () => {
-    minifyTest(
+    minify_test(
       // Problem: the value is being printed as Infinity in our restrict_prec thing but the internal thing actually wants it as 3.40282e38px
       `.rounded-full {
   border-radius: calc(infinity * 1px);
@@ -48,7 +63,7 @@ describe("css tests", () => {
     );
   });
   describe("border_spacing", () => {
-    minifyTest(
+    minify_test(
       `
       .foo {
         border-spacing: 0px;
@@ -2392,10 +2407,10 @@ describe("css tests", () => {
       );
     }
 
-    minifyTest(".foo { aspect-ratio: auto }", ".foo{aspect-ratio:auto}");
-    minifyTest(".foo { aspect-ratio: 2 / 3 }", ".foo{aspect-ratio:2/3}");
-    minifyTest(".foo { aspect-ratio: auto 2 / 3 }", ".foo{aspect-ratio:auto 2/3}");
-    minifyTest(".foo { aspect-ratio: 2 / 3 auto }", ".foo{aspect-ratio:auto 2/3}");
+    minify_test(".foo { aspect-ratio: auto }", ".foo{aspect-ratio:auto}");
+    minify_test(".foo { aspect-ratio: 2 / 3 }", ".foo{aspect-ratio:2/3}");
+    minify_test(".foo { aspect-ratio: auto 2 / 3 }", ".foo{aspect-ratio:auto 2/3}");
+    minify_test(".foo { aspect-ratio: 2 / 3 auto }", ".foo{aspect-ratio:auto 2/3}");
   });
 
   describe("background", () => {
@@ -2966,268 +2981,280 @@ describe("css tests", () => {
   });
 
   describe("linear-gradient", () => {
-    minifyTest(".foo { background: linear-gradient(yellow, blue) }", ".foo{background:linear-gradient(#ff0,#00f)}");
-    minifyTest(
+    minify_test(".foo { background: linear-gradient(yellow, blue) }", ".foo{background:linear-gradient(#ff0,#00f)}");
+    minify_test(
       ".foo { background: linear-gradient(to bottom, yellow, blue); }",
       ".foo{background:linear-gradient(#ff0,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: linear-gradient(180deg, yellow, blue); }",
       ".foo{background:linear-gradient(#ff0,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: linear-gradient(0.5turn, yellow, blue); }",
       ".foo{background:linear-gradient(#ff0,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: linear-gradient(yellow 10%, blue 20%) }",
       ".foo{background:linear-gradient(#ff0 10%,#00f 20%)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: linear-gradient(to top, blue, yellow); }",
       ".foo{background:linear-gradient(#ff0,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: linear-gradient(to top, blue 10%, yellow 20%); }",
       ".foo{background:linear-gradient(#ff0 80%,#00f 90%)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: linear-gradient(to top, blue 10px, yellow 20px); }",
       ".foo{background:linear-gradient(0deg,#00f 10px,#ff0 20px)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: linear-gradient(135deg, yellow, blue); }",
       ".foo{background:linear-gradient(135deg,#ff0,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: linear-gradient(yellow, blue 20%, #0f0); }",
       ".foo{background:linear-gradient(#ff0,#00f 20%,#0f0)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: linear-gradient(to top right, red, white, blue) }",
       ".foo{background:linear-gradient(to top right,red,#fff,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: linear-gradient(yellow, blue calc(10% * 2), #0f0); }",
       ".foo{background:linear-gradient(#ff0,#00f 20%,#0f0)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: linear-gradient(yellow, 20%, blue); }",
       ".foo{background:linear-gradient(#ff0,20%,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: linear-gradient(yellow, 50%, blue); }",
       ".foo{background:linear-gradient(#ff0,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: linear-gradient(yellow, 20px, blue); }",
       ".foo{background:linear-gradient(#ff0,20px,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: linear-gradient(yellow, 50px, blue); }",
       ".foo{background:linear-gradient(#ff0,50px,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: linear-gradient(yellow, 50px, blue); }",
       ".foo{background:linear-gradient(#ff0,50px,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: linear-gradient(yellow, red 30% 40%, blue); }",
       ".foo{background:linear-gradient(#ff0,red 30% 40%,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: linear-gradient(yellow, red 30%, red 40%, blue); }",
       ".foo{background:linear-gradient(#ff0,red 30% 40%,#00f)}",
     );
-    minifyTest(".foo { background: linear-gradient(0, yellow, blue); }", ".foo{background:linear-gradient(#00f,#ff0)}");
-    minifyTest(
+    minify_test(
+      ".foo { background: linear-gradient(0, yellow, blue); }",
+      ".foo{background:linear-gradient(#00f,#ff0)}",
+    );
+    minify_test(
       ".foo { background: -webkit-linear-gradient(yellow, blue) }",
       ".foo{background:-webkit-linear-gradient(#ff0,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: -webkit-linear-gradient(bottom, yellow, blue); }",
       ".foo{background:-webkit-linear-gradient(#ff0,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: -webkit-linear-gradient(top right, red, white, blue) }",
       ".foo{background:-webkit-linear-gradient(top right,red,#fff,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: -moz-linear-gradient(yellow, blue) }",
       ".foo{background:-moz-linear-gradient(#ff0,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: -moz-linear-gradient(bottom, yellow, blue); }",
       ".foo{background:-moz-linear-gradient(#ff0,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: -moz-linear-gradient(top right, red, white, blue) }",
       ".foo{background:-moz-linear-gradient(top right,red,#fff,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: -o-linear-gradient(yellow, blue) }",
       ".foo{background:-o-linear-gradient(#ff0,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: -o-linear-gradient(bottom, yellow, blue); }",
       ".foo{background:-o-linear-gradient(#ff0,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: -o-linear-gradient(top right, red, white, blue) }",
       ".foo{background:-o-linear-gradient(top right,red,#fff,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: -webkit-gradient(linear, left top, left bottom, from(blue), to(yellow)) }",
       ".foo{background:-webkit-gradient(linear,0 0,0 100%,from(#00f),to(#ff0))}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: -webkit-gradient(linear, left top, left bottom, from(blue), color-stop(50%, red), to(yellow)) }",
       ".foo{background:-webkit-gradient(linear,0 0,0 100%,from(#00f),color-stop(.5,red),to(#ff0))}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: -webkit-gradient(linear, left top, left bottom, color-stop(0%, blue), color-stop(50%, red), color-stop(100%, yellow)) }",
       ".foo{background:-webkit-gradient(linear,0 0,0 100%,from(#00f),color-stop(.5,red),to(#ff0))}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: repeating-linear-gradient(yellow 10px, blue 50px) }",
       ".foo{background:repeating-linear-gradient(#ff0 10px,#00f 50px)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: -webkit-repeating-linear-gradient(yellow 10px, blue 50px) }",
       ".foo{background:-webkit-repeating-linear-gradient(#ff0 10px,#00f 50px)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: -moz-repeating-linear-gradient(yellow 10px, blue 50px) }",
       ".foo{background:-moz-repeating-linear-gradient(#ff0 10px,#00f 50px)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: -o-repeating-linear-gradient(yellow 10px, blue 50px) }",
       ".foo{background:-o-repeating-linear-gradient(#ff0 10px,#00f 50px)}",
     );
-    minifyTest(".foo { background: radial-gradient(yellow, blue) }", ".foo{background:radial-gradient(#ff0,#00f)}");
-    minifyTest(
+    minify_test(".foo { background: radial-gradient(yellow, blue) }", ".foo{background:radial-gradient(#ff0,#00f)}");
+    minify_test(
       ".foo { background: radial-gradient(at top left, yellow, blue) }",
       ".foo{background:radial-gradient(at 0 0,#ff0,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: radial-gradient(5em circle at top left, yellow, blue) }",
       ".foo{background:radial-gradient(5em at 0 0,#ff0,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: radial-gradient(circle at 100%, #333, #333 50%, #eee 75%, #333 75%) }",
       ".foo{background:radial-gradient(circle at 100%,#333,#333 50%,#eee 75%,#333 75%)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: radial-gradient(farthest-corner circle at 100% 50%, #333, #333 50%, #eee 75%, #333 75%) }",
       ".foo{background:radial-gradient(circle at 100%,#333,#333 50%,#eee 75%,#333 75%)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: radial-gradient(farthest-corner circle at 50% 50%, #333, #333 50%, #eee 75%, #333 75%) }",
       ".foo{background:radial-gradient(circle,#333,#333 50%,#eee 75%,#333 75%)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: radial-gradient(ellipse at top, #e66465, transparent) }",
       ".foo{background:radial-gradient(at top,#e66465,#0000)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: radial-gradient(20px, yellow, blue) }",
       ".foo{background:radial-gradient(20px,#ff0,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: radial-gradient(circle 20px, yellow, blue) }",
       ".foo{background:radial-gradient(20px,#ff0,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: radial-gradient(20px 40px, yellow, blue) }",
       ".foo{background:radial-gradient(20px 40px,#ff0,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: radial-gradient(ellipse 20px 40px, yellow, blue) }",
       ".foo{background:radial-gradient(20px 40px,#ff0,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: radial-gradient(ellipse calc(20px + 10px) 40px, yellow, blue) }",
       ".foo{background:radial-gradient(30px 40px,#ff0,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: radial-gradient(circle farthest-side, yellow, blue) }",
       ".foo{background:radial-gradient(circle farthest-side,#ff0,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: radial-gradient(farthest-side circle, yellow, blue) }",
       ".foo{background:radial-gradient(circle farthest-side,#ff0,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: radial-gradient(ellipse farthest-side, yellow, blue) }",
       ".foo{background:radial-gradient(farthest-side,#ff0,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: radial-gradient(farthest-side ellipse, yellow, blue) }",
       ".foo{background:radial-gradient(farthest-side,#ff0,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: -webkit-radial-gradient(yellow, blue) }",
       ".foo{background:-webkit-radial-gradient(#ff0,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: -moz-radial-gradient(yellow, blue) }",
       ".foo{background:-moz-radial-gradient(#ff0,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: -o-radial-gradient(yellow, blue) }",
       ".foo{background:-o-radial-gradient(#ff0,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: repeating-radial-gradient(circle 20px, yellow, blue) }",
       ".foo{background:repeating-radial-gradient(20px,#ff0,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: -webkit-repeating-radial-gradient(circle 20px, yellow, blue) }",
       ".foo{background:-webkit-repeating-radial-gradient(20px,#ff0,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: -moz-repeating-radial-gradient(circle 20px, yellow, blue) }",
       ".foo{background:-moz-repeating-radial-gradient(20px,#ff0,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: -o-repeating-radial-gradient(circle 20px, yellow, blue) }",
       ".foo{background:-o-repeating-radial-gradient(20px,#ff0,#00f)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: -webkit-gradient(radial, center center, 0, center center, 100, from(blue), to(yellow)) }",
       ".foo{background:-webkit-gradient(radial,50% 50%,0,50% 50%,100,from(#00f),to(#ff0))}",
     );
-    minifyTest(".foo { background: conic-gradient(#f06, gold) }", ".foo{background:conic-gradient(#f06,gold)}");
-    minifyTest(
+    minify_test(".foo { background: conic-gradient(#f06, gold) }", ".foo{background:conic-gradient(#f06,gold)}");
+    minify_test(
       ".foo { background: conic-gradient(at 50% 50%, #f06, gold) }",
       ".foo{background:conic-gradient(#f06,gold)}",
     );
-    minifyTest(
+    minify_test(
       ".foo { background: conic-gradient(from 0deg, #f06, gold) }",
       ".foo{background:conic-gradient(#f06,gold)}",
     );
-    minifyTest(".foo { background: conic-gradient(from 0, #f06, gold) }", ".foo{background:conic-gradient(#f06,gold)}");
-    minifyTest(
+    minify_test(
+      ".foo { background: conic-gradient(from 0, #f06, gold) }",
+      ".foo{background:conic-gradient(#f06,gold)}",
+    );
+
+    minify_test(
       ".foo { background: conic-gradient(from 0deg at center, #f06, gold) }",
       ".foo{background:conic-gradient(#f06,gold)}",
     );
-    minifyTest(
+
+    minify_test(
       ".foo { background: conic-gradient(white -50%, black 150%) }",
       ".foo{background:conic-gradient(#fff -50%,#000 150%)}",
     );
-    minifyTest(
+
+    minify_test(
       ".foo { background: conic-gradient(white -180deg, black 540deg) }",
       ".foo{background:conic-gradient(#fff -180deg,#000 540deg)}",
     );
-    minifyTest(
+
+    minify_test(
       ".foo { background: conic-gradient(from 45deg, white, black, white) }",
       ".foo{background:conic-gradient(from 45deg,#fff,#000,#fff)}",
     );
-    minifyTest(
+
+    minify_test(
       ".foo { background: repeating-conic-gradient(from 45deg, white, black, white) }",
       ".foo{background:repeating-conic-gradient(from 45deg,#fff,#000,#fff)}",
     );
-    minifyTest(
+
+    minify_test(
       ".foo { background: repeating-conic-gradient(black 0deg 25%, white 0deg 50%) }",
       ".foo{background:repeating-conic-gradient(#000 0deg 25%,#fff 0deg 50%)}",
     );
@@ -3253,7 +3280,7 @@ describe("css tests", () => {
 `,
     );
 
-    minifyTest(
+    minify_test(
       `
       .foo {
         font-family: "Helvetica", "Times New Roman", sans-serif;
@@ -3297,7 +3324,7 @@ describe("css tests", () => {
 `,
     );
 
-    minifyTest(
+    minify_test(
       `
       .foo {
         font-family: "Helvetica", "Times New Roman", sans-serif;
@@ -3328,29 +3355,29 @@ describe("css tests", () => {
 `,
     );
 
-    minifyTest(".foo { font: normal normal 600 9px/normal Charcoal; }", ".foo{font:600 9px Charcoal}");
-    minifyTest(".foo { font: normal normal 500 medium/normal Charcoal; }", ".foo{font:500 medium Charcoal}");
-    minifyTest(".foo { font: normal normal 400 medium Charcoal; }", ".foo{font:400 medium Charcoal}");
-    minifyTest(".foo { font: normal normal 500 medium/10px Charcoal; }", ".foo{font:500 medium/10px Charcoal}");
-    minifyTest(".foo { font-family: 'sans-serif'; }", '.foo{font-family:"sans-serif"}');
-    minifyTest(".foo { font-family: sans-serif; }", ".foo{font-family:sans-serif}");
-    minifyTest(".foo { font-family: 'default'; }", '.foo{font-family:"default"}');
-    minifyTest(".foo { font-family: default; }", ".foo{font-family:default}");
-    minifyTest(".foo { font-family: 'inherit'; }", '.foo{font-family:"inherit"}');
-    minifyTest(".foo { font-family: inherit; }", ".foo{font-family:inherit}");
-    minifyTest(".foo { font-family: inherit test; }", ".foo{font-family:inherit test}");
-    minifyTest(".foo { font-family: 'inherit test'; }", ".foo{font-family:inherit test}");
-    minifyTest(".foo { font-family: revert; }", ".foo{font-family:revert}");
-    minifyTest(".foo { font-family: 'revert'; }", '.foo{font-family:"revert"}');
-    minifyTest(".foo { font-family: revert-layer; }", ".foo{font-family:revert-layer}");
-    minifyTest(".foo { font-family: revert-layer, serif; }", ".foo{font-family:revert-layer,serif}");
-    minifyTest(".foo { font-family: 'revert', sans-serif; }", '.foo{font-family:"revert",sans-serif}');
-    minifyTest(".foo { font-family: 'revert', foo, sans-serif; }", '.foo{font-family:"revert",foo,sans-serif}');
-    minifyTest(".foo { font-family: ''; }", '.foo{font-family:""}');
+    minify_test(".foo { font: normal normal 600 9px/normal Charcoal; }", ".foo{font:600 9px Charcoal}");
+    minify_test(".foo { font: normal normal 500 medium/normal Charcoal; }", ".foo{font:500 medium Charcoal}");
+    minify_test(".foo { font: normal normal 400 medium Charcoal; }", ".foo{font:400 medium Charcoal}");
+    minify_test(".foo { font: normal normal 500 medium/10px Charcoal; }", ".foo{font:500 medium/10px Charcoal}");
+    minify_test(".foo { font-family: 'sans-serif'; }", '.foo{font-family:"sans-serif"}');
+    minify_test(".foo { font-family: sans-serif; }", ".foo{font-family:sans-serif}");
+    minify_test(".foo { font-family: 'default'; }", '.foo{font-family:"default"}');
+    minify_test(".foo { font-family: default; }", ".foo{font-family:default}");
+    minify_test(".foo { font-family: 'inherit'; }", '.foo{font-family:"inherit"}');
+    minify_test(".foo { font-family: inherit; }", ".foo{font-family:inherit}");
+    minify_test(".foo { font-family: inherit test; }", ".foo{font-family:inherit test}");
+    minify_test(".foo { font-family: 'inherit test'; }", ".foo{font-family:inherit test}");
+    minify_test(".foo { font-family: revert; }", ".foo{font-family:revert}");
+    minify_test(".foo { font-family: 'revert'; }", '.foo{font-family:"revert"}');
+    minify_test(".foo { font-family: revert-layer; }", ".foo{font-family:revert-layer}");
+    minify_test(".foo { font-family: revert-layer, serif; }", ".foo{font-family:revert-layer,serif}");
+    minify_test(".foo { font-family: 'revert', sans-serif; }", '.foo{font-family:"revert",sans-serif}');
+    minify_test(".foo { font-family: 'revert', foo, sans-serif; }", '.foo{font-family:"revert",foo,sans-serif}');
+    minify_test(".foo { font-family: ''; }", '.foo{font-family:""}');
 
-    // font-family in @font-face
-    minifyTest("@font-face { font-family: 'revert'; }", '@font-face{font-family:"revert"}');
-    minifyTest("@font-face { font-family: 'revert-layer'; }", '@font-face{font-family:"revert-layer"}');
+    // fonTfamily in @font-face
+    minify_test("@font-face { font-family: 'revert'; }", '@font-face{font-family:"revert"}');
+    minify_test("@font-face { font-family: 'revert-layer'; }", '@font-face{font-family:"revert-layer"}');
 
     prefix_test(
       `
@@ -3626,6 +3653,618 @@ describe("css tests", () => {
       {
         chrome: 50 << 16,
       },
+    );
+  });
+
+  describe("selectors", () => {
+    minify_test(":nth-col(2n) {width: 20px}", ":nth-col(2n){width:20px}");
+    minify_test(":nth-col(10n-1) {width: 20px}", ":nth-col(10n-1){width:20px}");
+    minify_test(":nth-col(-n+2) {width: 20px}", ":nth-col(-n+2){width:20px}");
+    minify_test(":nth-col(even) {width: 20px}", ":nth-col(2n){width:20px}");
+    minify_test(":nth-col(odd) {width: 20px}", ":nth-col(odd){width:20px}");
+    minify_test(":nth-last-col(2n) {width: 20px}", ":nth-last-col(2n){width:20px}");
+    minify_test(":nth-last-col(10n-1) {width: 20px}", ":nth-last-col(10n-1){width:20px}");
+    minify_test(":nth-last-col(-n+2) {width: 20px}", ":nth-last-col(-n+2){width:20px}");
+    minify_test(":nth-last-col(even) {width: 20px}", ":nth-last-col(2n){width:20px}");
+    minify_test(":nth-last-col(odd) {width: 20px}", ":nth-last-col(odd){width:20px}");
+    minify_test(":nth-child(odd) {width: 20px}", ":nth-child(odd){width:20px}");
+    minify_test(":nth-child(2n) {width: 20px}", ":nth-child(2n){width:20px}");
+    minify_test(":nth-child(2n+1) {width: 20px}", ":nth-child(odd){width:20px}");
+    minify_test(":first-child {width: 20px}", ":first-child{width:20px}");
+    minify_test(":nth-child(1) {width: 20px}", ":first-child{width:20px}");
+    minify_test(":nth-last-child(1) {width: 20px}", ":last-child{width:20px}");
+    minify_test(":nth-of-type(1) {width: 20px}", ":first-of-type{width:20px}");
+    minify_test(":nth-last-of-type(1) {width: 20px}", ":last-of-type{width:20px}");
+    minify_test(":nth-child(even of li.important) {width: 20px}", ":nth-child(2n of li.important){width:20px}");
+    minify_test(":nth-child(1 of li.important) {width: 20px}", ":nth-child(1 of li.important){width:20px}");
+    minify_test(
+      ":nth-last-child(even of li.important) {width: 20px}",
+      ":nth-last-child(2n of li.important){width:20px}",
+    );
+    minify_test(":nth-last-child(1 of li.important) {width: 20px}", ":nth-last-child(1 of li.important){width:20px}");
+    minify_test(":nth-last-child(1 of.important) {width: 20px}", ":nth-last-child(1 of .important){width:20px}");
+
+    minify_test('[foo="baz"] {color:red}', "[foo=baz]{color:red}");
+    minify_test('[foo="foo bar"] {color:red}', "[foo=foo\\ bar]{color:red}");
+    minify_test('[foo="foo bar baz"] {color:red}', '[foo="foo bar baz"]{color:red}');
+    minify_test('[foo=""] {color:red}', '[foo=""]{color:red}');
+    minify_test('.test:not([foo="bar"]) {color:red}', ".test:not([foo=bar]){color:red}");
+    minify_test(".test + .foo {color:red}", ".test+.foo{color:red}");
+    minify_test(".test ~ .foo {color:red}", ".test~.foo{color:red}");
+    minify_test(".test .foo {color:red}", ".test .foo{color:red}");
+    minify_test(
+      ".custom-range::-webkit-slider-thumb:active {color:red}",
+      ".custom-range::-webkit-slider-thumb:active{color:red}",
+    );
+    minify_test(".test:not(.foo, .bar) {color:red}", ".test:not(.foo,.bar){color:red}");
+    minify_test(".test:is(.foo, .bar) {color:red}", ".test:is(.foo,.bar){color:red}");
+    minify_test(".test:where(.foo, .bar) {color:red}", ".test:where(.foo,.bar){color:red}");
+    minify_test(".test:where(.foo, .bar) {color:red}", ".test:where(.foo,.bar){color:red}");
+    minify_test(":host {color:red}", ":host{color:red}");
+    minify_test(":host(.foo) {color:red}", ":host(.foo){color:red}");
+    minify_test("::slotted(span) {color:red", "::slotted(span){color:red}");
+    minify_test("custom-element::part(foo) {color:red}", "custom-element::part(foo){color:red}");
+    minify_test(".sm\\:text-5xl { font-size: 3rem }", ".sm\\:text-5xl{font-size:3rem}");
+    minify_test("a:has(> img) {color:red}", "a:has(>img){color:red}");
+    minify_test("dt:has(+ dt) {color:red}", "dt:has(+dt){color:red}");
+    minify_test(
+      "section:not(:has(h1, h2, h3, h4, h5, h6)) {color:red}",
+      "section:not(:has(h1,h2,h3,h4,h5,h6)){color:red}",
+    );
+    minify_test(":has(.sibling ~ .target) {color:red}", ":has(.sibling~.target){color:red}");
+    minify_test(".x:has(> .a > .b) {color:red}", ".x:has(>.a>.b){color:red}");
+    minify_test(".x:has(.bar, #foo) {color:red}", ".x:has(.bar,#foo){color:red}");
+    minify_test(".x:has(span + span) {color:red}", ".x:has(span+span){color:red}");
+    minify_test("a:has(:visited) {color:red}", "a:has(:visited){color:red}");
+
+    for (const element of [
+      "-webkit-scrollbar",
+      "-webkit-scrollbar-button",
+      "-webkit-scrollbar-track",
+      "-webkit-scrollbar-track-piece",
+      "-webkit-scrollbar-thumb",
+      "-webkit-scrollbar-corner",
+      "-webkit-resizer",
+    ]) {
+      for (const clasz of [
+        "enabled",
+        "disabled",
+        "hover",
+        "active",
+        "horizontal",
+        "vertical",
+        "decrement",
+        "increment",
+        "start",
+        "end",
+        "double-button",
+        "single-button",
+        "no-button",
+        "corner-present",
+        "window-inactive",
+      ]) {
+        minify_test(`::${element}:${clasz} {color:red}`, `::${element}:${clasz}{color:red}`);
+      }
+    }
+
+    for (const clasz of [
+      "horizontal",
+      "vertical",
+      "decrement",
+      "increment",
+      "start",
+      "end",
+      "double-button",
+      "single-button",
+      "no-button",
+      "corner-present",
+      "window-inactive",
+    ]) {
+      error_test(
+        `:${clasz} {color: red}`,
+        "ParserError::SelectorError(SelectorError::InvalidPseudoClassBeforeWebKitScrollbar)",
+      );
+    }
+
+    for (const element of [
+      "-webkit-scrollbar",
+      "-webkit-scrollbar-button",
+      "-webkit-scrollbar-track",
+      "-webkit-scrollbar-track-piece",
+      "-webkit-scrollbar-thumb",
+      "-webkit-scrollbar-corner",
+      "-webkit-resizer",
+    ]) {
+      error_test(
+        `::${element}:focus {color:red}`,
+        "ParserError::SelectorError(SelectorError::InvalidPseudoClassAfterWebKitScrollbar)",
+      );
+    }
+
+    error_test(
+      "a::first-letter:last-child {color:red}",
+      "ParserError::SelectorError(SelectorError::InvalidPseudoClassAfterPseudoElement)",
+    );
+
+    minify_test("a:last-child::first-letter {color:red}", "a:last-child:first-letter{color:red}");
+
+    error_test(
+      "a::first-letter:last-child {color:red}",
+      "ParserError::SelectorError(SelectorError::InvalidPseudoClassAfterPseudoElement)",
+    );
+    minify_test("a:last-child::first-letter {color:red}", "a:last-child:first-letter{color:red}");
+
+    prefix_test(
+      ".test:not(.foo, .bar) {color:red}",
+      `
+      .test:not(:-webkit-any(.foo, .bar)) {
+        color: red;
+      }
+
+      .test:not(:is(.foo, .bar)) {
+        color: red;
+      }
+      `,
+      {
+        safari: 8 << 16,
+      },
+    );
+    prefix_test(
+      ".test:not(.foo, .bar) {color:red}",
+      `
+      .test:not(.foo, .bar) {
+        color: red;
+      }
+      `,
+      {
+        safari: 11 << 16,
+      },
+    );
+
+    minify_test("a:lang(en) {color:red}", "a:lang(en){color:red}");
+    minify_test("a:lang(en, fr) {color:red}", "a:lang(en,fr){color:red}");
+    minify_test("a:lang('en') {color:red}", "a:lang(en){color:red}");
+    minify_test("a:-webkit-any(.foo, .bar) {color:red}", "a:-webkit-any(.foo,.bar){color:red}");
+    minify_test("a:-moz-any(.foo, .bar) {color:red}", "a:-moz-any(.foo,.bar){color:red}");
+
+    prefix_test(
+      "a:is(.foo, .bar) {color:red}",
+      `
+      a:-webkit-any(.foo, .bar) {
+        color: red;
+      }
+
+      a:-moz-any(.foo, .bar) {
+        color: red;
+      }
+
+      a:is(.foo, .bar) {
+        color: red;
+      }
+      `,
+      {
+        safari: 11 << 16,
+        firefox: 50 << 16,
+      },
+    );
+
+    prefix_test(
+      "a:is(.foo > .bar) {color:red}",
+      `
+      a:is(.foo > .bar) {
+        color: red;
+      }
+      `,
+      {
+        safari: 11 << 16,
+        firefox: 50 << 16,
+      },
+    );
+
+    prefix_test(
+      "a:lang(en, fr) {color:red}",
+      `
+      a:-webkit-any(:lang(en), :lang(fr)) {
+        color: red;
+      }
+
+      a:-moz-any(:lang(en), :lang(fr)) {
+        color: red;
+      }
+
+      a:is(:lang(en), :lang(fr)) {
+        color: red;
+      }
+      `,
+      {
+        safari: 11 << 16,
+        firefox: 50 << 16,
+      },
+    );
+
+    prefix_test(
+      "a:lang(en, fr) {color:red}",
+      `
+      a:is(:lang(en), :lang(fr)) {
+        color: red;
+      }
+      `,
+      {
+        safari: 14 << 16,
+        firefox: 88 << 16,
+      },
+    );
+
+    prefix_test(
+      "a:lang(en, fr) {color:red}",
+      `
+      a:lang(en, fr) {
+        color: red;
+      }
+      `,
+      {
+        safari: 14 << 16,
+      },
+    );
+
+    prefix_test(
+      "a:dir(rtl) {color:red}",
+      `
+      a:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        color: red;
+      }
+
+      a:-moz-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        color: red;
+      }
+
+      a:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        color: red;
+      }
+      `,
+      {
+        safari: 11 << 16,
+        firefox: 50 << 16,
+      },
+    );
+
+    prefix_test(
+      "a:dir(ltr) {color:red}",
+      `
+      a:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        color: red;
+      }
+
+      a:not(:-moz-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        color: red;
+      }
+
+      a:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        color: red;
+      }
+      `,
+      {
+        safari: 11 << 16,
+        firefox: 50 << 16,
+      },
+    );
+
+    prefix_test(
+      "a:dir(rtl) {color:red}",
+      `
+      a:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        color: red;
+      }
+      `,
+      {
+        safari: 14 << 16,
+        firefox: 88 << 16,
+      },
+    );
+
+    prefix_test(
+      "a:dir(ltr) {color:red}",
+      `
+      a:not(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        color: red;
+      }
+      `,
+      {
+        safari: 14 << 16,
+        firefox: 88 << 16,
+      },
+    );
+
+    prefix_test(
+      "a:dir(rtl) {color:red}",
+      `
+      a:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi) {
+        color: red;
+      }
+      `,
+      {
+        safari: 14 << 16,
+      },
+    );
+
+    prefix_test(
+      "a:dir(ltr) {color:red}",
+      `
+      a:not(:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi)) {
+        color: red;
+      }
+      `,
+      {
+        safari: 14 << 16,
+      },
+    );
+
+    prefix_test(
+      "a:is(:dir(rtl)) {color:red}",
+      `
+      a:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi) {
+        color: red;
+      }
+      `,
+      {
+        safari: 14 << 16,
+      },
+    );
+
+    prefix_test(
+      "a:where(:dir(rtl)) {color:red}",
+      `
+      a:where(:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi)) {
+        color: red;
+      }
+      `,
+      {
+        safari: 14 << 16,
+      },
+    );
+
+    prefix_test(
+      "a:has(:dir(rtl)) {color:red}",
+      `
+      a:has(:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi)) {
+        color: red;
+      }
+      `,
+      {
+        safari: 14 << 16,
+      },
+    );
+
+    prefix_test(
+      "a:not(:dir(rtl)) {color:red}",
+      `
+      a:not(:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi)) {
+        color: red;
+      }
+      `,
+      {
+        safari: 14 << 16,
+      },
+    );
+
+    prefix_test(
+      "a:dir(rtl)::after {color:red}",
+      `
+      a:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi):after {
+        color: red;
+      }
+      `,
+      {
+        safari: 14 << 16,
+      },
+    );
+
+    prefix_test(
+      "a:dir(rtl) div {color:red}",
+      `
+      a:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi) div {
+        color: red;
+      }
+      `,
+      {
+        safari: 14 << 16,
+      },
+    );
+
+    minify_test(".foo::cue {color: red}", ".foo::cue{color:red}");
+    minify_test(".foo::cue-region {color: red}", ".foo::cue-region{color:red}");
+    minify_test(".foo::cue(b) {color: red}", ".foo::cue(b){color:red}");
+    minify_test(".foo::cue-region(b) {color: red}", ".foo::cue-region(b){color:red}");
+    minify_test("::cue(v[voice='active']) {color: yellow;}", "::cue(v[voice=active]){color:#ff0}");
+    minify_test(":foo(bar) { color: yellow }", ":foo(bar){color:#ff0}");
+    minify_test("::foo(bar) { color: yellow }", "::foo(bar){color:#ff0}");
+    minify_test("::foo(*) { color: yellow }", "::foo(*){color:#ff0}");
+
+    minify_test(":is(.foo) { color: yellow }", ".foo{color:#ff0}");
+    minify_test(":is(#foo) { color: yellow }", "#foo{color:#ff0}");
+    minify_test("a:is(.foo) { color: yellow }", "a.foo{color:#ff0}");
+    minify_test("a:is([data-test]) { color: yellow }", "a[data-test]{color:#ff0}");
+    minify_test(".foo:is(a) { color: yellow }", ".foo:is(a){color:#ff0}");
+    minify_test(".foo:is(*|a) { color: yellow }", ".foo:is(*|a){color:#ff0}");
+    minify_test(".foo:is(*) { color: yellow }", ".foo:is(*){color:#ff0}");
+    minify_test(
+      "@namespace svg url(http://www.w3.org/2000/svg); .foo:is(svg|a) { color: yellow }",
+      '@namespace svg "http://www.w3.org/2000/svg";.foo:is(svg|a){color:#ff0}',
+    );
+    minify_test("a:is(.foo .bar) { color: yellow }", "a:is(.foo .bar){color:#ff0}");
+    minify_test(":is(.foo, .bar) { color: yellow }", ":is(.foo,.bar){color:#ff0}");
+    minify_test("a:is(:not(.foo)) { color: yellow }", "a:not(.foo){color:#ff0}");
+    minify_test("a:is(:first-child) { color: yellow }", "a:first-child{color:#ff0}");
+    minify_test("a:is(:has(.foo)) { color: yellow }", "a:has(.foo){color:#ff0}");
+    minify_test("a:is(:is(.foo)) { color: yellow }", "a.foo{color:#ff0}");
+    minify_test(":host(:hover) {color: red}", ":host(:hover){color:red}");
+    minify_test("::slotted(:hover) {color: red}", "::slotted(:hover){color:red}");
+
+    minify_test(":root::view-transition {position: fixed}", ":root::view-transition{position:fixed}");
+
+    for (const name of [
+      "view-transition-group",
+      "view-transition-image-pair",
+      "view-transition-new",
+      "view-transition-old",
+    ]) {
+      minify_test(`:root::${name}(*) {position: fixed}`, `:root::${name}(*){position:fixed}`);
+      minify_test(`:root::${name}(foo) {position: fixed}`, `:root::${name}(foo){position:fixed}`);
+      minify_test(`:root::${name}(foo):only-child {position: fixed}`, `:root::${name}(foo):only-child{position:fixed}`);
+      error_test(
+        `:root::${name}(foo):first-child {position: fixed}`,
+        "ParserError::SelectorError(SelectorError::InvalidPseudoClassAfterPseudoElement)",
+      );
+      error_test(
+        `:root::${name}(foo)::before {position: fixed}`,
+        "ParserError::SelectorError(SelectorError::InvalidState)",
+      );
+    }
+
+    minify_test(".foo ::deep .bar {width: 20px}", ".foo ::deep .bar{width:20px}");
+    minify_test(".foo::deep .bar {width: 20px}", ".foo::deep .bar{width:20px}");
+    minify_test(".foo ::deep.bar {width: 20px}", ".foo ::deep.bar{width:20px}");
+    minify_test(".foo ::unknown .bar {width: 20px}", ".foo ::unknown .bar{width:20px}");
+    minify_test(".foo ::unknown(foo) .bar {width: 20px}", ".foo ::unknown(foo) .bar{width:20px}");
+    minify_test(".foo ::unknown:only-child {width: 20px}", ".foo ::unknown:only-child{width:20px}");
+    minify_test(".foo ::unknown(.foo) .bar {width: 20px}", ".foo ::unknown(.foo) .bar{width:20px}");
+    minify_test(
+      ".foo ::unknown(.foo .bar / .baz) .bar {width: 20px}",
+      ".foo ::unknown(.foo .bar / .baz) .bar{width:20px}",
+    );
+    minify_test(".foo ::unknown(something(foo)) .bar {width: 20px}", ".foo ::unknown(something(foo)) .bar{width:20px}");
+    minify_test(".foo ::unknown([abc]) .bar {width: 20px}", ".foo ::unknown([abc]) .bar{width:20px}");
+
+    let deep_options: ParserOptions = {
+      flags: [ParserFlags.DEEP_SELECTOR_COMBINATOR],
+    };
+
+    error_test(".foo >>> .bar {width: 20px}", "ParserError::SelectorError(SelectorError::DanglingCombinator)");
+    error_test(".foo /deep/ .bar {width: 20px}", "ParserError::SelectorError(SelectorError::DanglingCombinator)");
+    minify_test_with_options(".foo >>> .bar {width: 20px}", ".foo>>>.bar{width:20px}", deep_options);
+    minify_test_with_options(".foo /deep/ .bar {width: 20px}", ".foo /deep/ .bar{width:20px}", deep_options);
+
+    let pure_css_module_options: ParserOptions = {
+      css_modules: {
+        pure: true,
+      },
+    };
+
+    minify_error_test_with_options(
+      "div {width: 20px}",
+      "MinifyErrorKind::ImpureCSSModuleSelector",
+      pure_css_module_options,
+    );
+    minify_error_test_with_options(
+      ":global(.foo) {width: 20px}",
+      "MinifyErrorKind::ImpureCSSModuleSelector",
+      pure_css_module_options,
+    );
+    minify_error_test_with_options(
+      "[foo=bar] {width: 20px}",
+      "MinifyErrorKind::ImpureCSSModuleSelector",
+      pure_css_module_options,
+    );
+    minify_error_test_with_options(
+      "div, .foo {width: 20px}",
+      "MinifyErrorKind::ImpureCSSModuleSelector",
+      pure_css_module_options,
+    );
+    minify_test_with_options(":local(.foo) {width: 20px}", "._8Z4fiW_foo{width:20px}", pure_css_module_options);
+    minify_test_with_options("div.my-class {color: red;}", "div._8Z4fiW_my-class{color:red}", pure_css_module_options);
+    minify_test_with_options("#id {color: red;}", "#_8Z4fiW_id{color:red}", pure_css_module_options);
+    minify_test_with_options("a .my-class{color: red;}", "a ._8Z4fiW_my-class{color:red}", pure_css_module_options);
+    minify_test_with_options(".my-class a {color: red;}", "._8Z4fiW_my-class a{color:red}", pure_css_module_options);
+    minify_test_with_options(
+      ".my-class:is(a) {color: red;}",
+      "._8Z4fiW_my-class:is(a){color:red}",
+      pure_css_module_options,
+    );
+    minify_test_with_options(
+      "div:has(.my-class) {color: red;}",
+      "div:has(._8Z4fiW_my-class){color:red}",
+      pure_css_module_options,
+    );
+    minify_test_with_options(
+      ".foo { html &:hover { a_value: some-value; } }",
+      "._8Z4fiW_foo{html &:hover{a_value:some-value}}",
+      pure_css_module_options,
+    );
+    minify_test_with_options(
+      ".foo { span { color: red; } }",
+      "._8Z4fiW_foo{& span{color:red}}",
+      pure_css_module_options,
+    );
+    minify_error_test_with_options(
+      "html { .foo { span { color: red; } } }",
+      "MinifyErrorKind::ImpureCSSModuleSelector",
+      pure_css_module_options,
+    );
+    minify_test_with_options(
+      ".foo { div { span { color: red; } } }",
+      "._8Z4fiW_foo{& div{& span{color:red}}}",
+      pure_css_module_options,
+    );
+    minify_error_test_with_options(
+      "@scope (div) { .foo { color: red } }",
+      "MinifyErrorKind::ImpureCSSModuleSelector",
+      pure_css_module_options,
+    );
+    minify_error_test_with_options(
+      "@scope (.a) to (div) { .foo { color: red } }",
+      "MinifyErrorKind::ImpureCSSModuleSelector",
+      pure_css_module_options,
+    );
+    minify_error_test_with_options(
+      "@scope (.a) to (.b) { div { color: red } }",
+      "MinifyErrorKind::ImpureCSSModuleSelector",
+      pure_css_module_options,
+    );
+    minify_test_with_options(
+      "@scope (.a) to (.b) { .foo { color: red } }",
+      "@scope(._8Z4fiW_a) to (._8Z4fiW_b){._8Z4fiW_foo{color:red}}",
+      pure_css_module_options,
+    );
+
+    error_test(
+      "input.defaultCheckbox::before h1 {width: 20px}",
+      `
+      ParserError::SelectorError(SelectorError::UnexpectedSelectorAfterPseudoElement(Token::Ident(
+        "h1".into(),
+      ))),
+`,
+    );
+    error_test(
+      "input.defaultCheckbox::before .my-class {width: 20px}",
+      "ParserError::SelectorError(SelectorError::UnexpectedSelectorAfterPseudoElement(Token::Delim('.')))",
+    );
+    error_test(
+      "input.defaultCheckbox::before.my-class {width: 20px}",
+      "ParserError::SelectorError(SelectorError::UnexpectedSelectorAfterPseudoElement(Token::Delim('.')))",
+    );
+    error_test(
+      "input.defaultCheckbox::before #id {width: 20px}",
+      `ParserError::SelectorError(SelectorError::UnexpectedSelectorAfterPseudoElement(Token::IDHash(
+        "id".into(),
+      )))`,
+    );
+    error_test(
+      "input.defaultCheckbox::before#id {width: 20px}",
+      `ParserError::SelectorError(SelectorError::UnexpectedSelectorAfterPseudoElement(Token::IDHash(
+        "id".into(),
+      )))`,
+    );
+    error_test(
+      "input.defaultCheckbox::before [attr] {width: 20px}",
+      `ParserError::SelectorError(SelectorError::UnexpectedSelectorAfterPseudoElement(
+        Token::SquareBracketBlock,
+      ))`,
+    );
+    error_test(
+      "input.defaultCheckbox::before[attr] {width: 20px}",
+      `ParserError::SelectorError(SelectorError::UnexpectedSelectorAfterPseudoElement(
+        Token::SquareBracketBlock,
+      ))`,
     );
   });
 });

@@ -106,7 +106,7 @@ pub const Async = struct {
     pub const write = NewUVFSRequest(Return.Write, Arguments.Write, .write);
     pub const writeFile = NewAsyncFSTask(Return.WriteFile, Arguments.WriteFile, NodeFS.writeFile);
     pub const writev = NewUVFSRequest(Return.Writev, Arguments.Writev, .writev);
-    pub const statfs = NewAsyncFSTask(Return.StatFS, Arguments.StatFS, NodeFS.statfs);
+    pub const statfs = NewUVFSRequest(Return.StatFS, Arguments.StatFS, .statfs);
     pub const cp = AsyncCpTask;
 
     pub const readdir_recursive = AsyncReaddirRecursiveTask;
@@ -159,6 +159,7 @@ pub const Async = struct {
             .write,
             .readv,
             .writev,
+            .statfs,
             => {},
             else => return NewAsyncFSTask(ReturnType, ArgumentType, @field(NodeFS, @tagName(FunctionEnum))),
         }
@@ -269,6 +270,13 @@ pub const Async = struct {
                         bun.debugAssert(rc == .zero);
                         log("uv writev({d}, {*}, {d}, {d}, {d} total bytes) = ~~", .{ fd, bufs.ptr, bufs.len, pos, sum });
                     },
+                    .statfs => {
+                        const args_: Arguments.StatFS = task.args;
+                        const path = args_.path.sliceZ(&this.node_fs.sync_error_buf);
+                        const rc = uv.uv_fs_statfs(loop, &task.req, path.ptr, &uv_callbackreq);
+                        bun.debugAssert(rc == .zero);
+                        log("uv statfs({s}) = ~~", .{path});
+                    },
                     else => comptime unreachable,
                 }
 
@@ -280,6 +288,20 @@ pub const Async = struct {
                 const this: *Task = @ptrCast(@alignCast(req.data.?));
                 var node_fs = NodeFS{};
                 this.result = @field(NodeFS, "uv_" ++ @tagName(FunctionEnum))(&node_fs, this.args, @intFromEnum(req.result));
+
+                if (this.result == .err) {
+                    this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
+                    std.mem.doNotOptimizeAway(&node_fs);
+                }
+
+                this.globalObject.bunVM().eventLoop().enqueueTask(JSC.Task.init(this));
+            }
+
+            fn uv_callbackreq(req: *uv.fs_t) callconv(.C) void {
+                defer uv.uv_fs_req_cleanup(req);
+                const this: *Task = @ptrCast(@alignCast(req.data.?));
+                var node_fs = NodeFS{};
+                this.result = @field(NodeFS, "uv_" ++ @tagName(FunctionEnum))(&node_fs, this.args, req, @intFromEnum(req.result));
 
                 if (this.result == .err) {
                     this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
@@ -1672,7 +1694,6 @@ pub const Arguments = struct {
     pub const StatFS = struct {
         path: PathLike,
         big_int: bool = false,
-        throw_if_no_entry: bool = true,
 
         pub fn deinit(this: Arguments.StatFS) void {
             this.path.deinit();
@@ -4063,6 +4084,18 @@ pub const NodeFS = struct {
             } };
         }
         return Maybe(Return.Open).initResult(FDImpl.decode(bun.toFD(@as(u32, @intCast(rc)))));
+    }
+
+    pub fn uv_statfs(_: *NodeFS, args: Arguments.StatFS, req: *uv.fs_t, rc: i64) Maybe(Return.StatFS) {
+        if (rc < 0) {
+            return Maybe(Return.StatFS){ .err = .{
+                .errno = @intCast(-rc),
+                .syscall = .open,
+                .path = args.path.slice(),
+                .from_libuv = true,
+            } };
+        }
+        return Maybe(Return.StatFS).initResult(Return.StatFS.init(req.ptrAs(*align(1) bun.StatFS).*, args.big_int));
     }
 
     pub fn openDir(_: *NodeFS, _: Arguments.OpenDir, comptime _: Flavor) Maybe(Return.OpenDir) {

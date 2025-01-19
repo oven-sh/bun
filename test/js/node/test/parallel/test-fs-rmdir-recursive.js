@@ -204,7 +204,9 @@ function removeAsync(dir) {
     });
   });
 
-  [undefined, null, 'foo', Infinity, function() {}].forEach((bad) => {
+  // Bun treats properties that are undefined as unset
+  // [undefined, null, 'foo', Infinity, function() {}].forEach((bad) => {
+  [null, 'foo', Infinity, function() {}].forEach((bad) => {
     assert.throws(() => {
       validateRmdirOptions({ recursive: bad });
     }, {

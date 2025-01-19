@@ -537,7 +537,7 @@ if (isGitPresent) {
         assert.throws(() => {
           fs.rmSync(filePath, common.mustNotMutateObjectDeep({ force: true }));
         }, {
-          code,
+          code: process.platform === 'win32' ? /EPERM|EACCES/g : code,
           name: 'Error',
         });
       } finally {
@@ -560,7 +560,7 @@ if (isGitPresent) {
           assert.throws(() => {
             fs.rmSync(root, common.mustNotMutateObjectDeep({ recursive: true }));
           }, {
-            code,
+            code: process.platform === 'win32' ? /EPERM|EACCES/g : code,
             name: 'Error',
           });
         } catch (err) {

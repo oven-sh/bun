@@ -88,8 +88,8 @@ function getQueryHandle(query) {
     try {
       handle = doCreateQuery(query[_strings], query[_values], query[_allowUnsafeTransaction], query[_poolSize]);
       query[_handle] = handle;
-      query[_queryStatus] |= QueryStatus.error | QueryStatus.invalidHandle;
     } catch (err) {
+      query[_queryStatus] |= QueryStatus.error | QueryStatus.invalidHandle;
       query.reject(err);
     }
   }

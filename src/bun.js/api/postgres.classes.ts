@@ -68,6 +68,14 @@ export default [
         fn: "doDone",
         length: 0,
       },
+      query: {
+        getter: "getQuery",
+        cache: true,
+      },
+      values: {
+        getter: "getValues",
+        cache: true,
+      },
     },
     values: ["pendingValue", "target", "columns", "binding"],
     estimatedSize: true,

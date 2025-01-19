@@ -227,6 +227,17 @@ pub const PostgresSQLQuery = struct {
         return target;
     }
 
+    pub fn getQuery(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject) JSValue {
+        return this.query.toJS(globalObject);
+    }
+
+    pub fn getValues(this: *PostgresSQLQuery, _: *JSC.JSGlobalObject) JSValue {
+        if (this.thisValue == .zero) {
+            return .undefined;
+        }
+        return PostgresSQLQuery.valuesGetCached(this.thisValue) orelse .undefined;
+    }
+
     pub const Status = enum(u8) {
         pending,
         written,
@@ -459,7 +470,7 @@ pub const PostgresSQLQuery = struct {
         const thisValue = this.thisValue;
         const targetValue = this.getTarget(globalObject);
         defer allowGC(thisValue, globalObject);
-        if (thisValue == .zero or targetValue == .zero) {
+        if (thisValue == .zero or targetValue == .zero or connection == .zero) {
             return;
         }
 

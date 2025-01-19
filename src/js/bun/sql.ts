@@ -5,6 +5,7 @@ const enum QueryStatus {
   cancelled = 1 << 2,
   error = 1 << 3,
   executed = 1 << 4,
+  invalidHandle = 1 << 5,
 }
 const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
 
@@ -39,6 +40,10 @@ const _handle = Symbol("handle");
 const _run = Symbol("run");
 const _queryStatus = Symbol("status");
 const _handler = Symbol("handler");
+const _strings = Symbol("strings");
+const _values = Symbol("values");
+const _allowUnsafeTransaction = Symbol("allowUnsafeTransaction");
+const _poolSize = Symbol("poolSize");
 const PublicPromise = Promise;
 type TransactionCallback = (sql: (strings: string, ...values: any[]) => Query) => Promise<any>;
 
@@ -77,12 +82,27 @@ function normalizeSSLMode(value: string): SSLMode {
   throw $ERR_INVALID_ARG_VALUE("sslmode", value);
 }
 
+function getQueryHandle(query) {
+  let handle = query[_handle];
+  if (!handle) {
+    try {
+      handle = doCreateQuery(query[_strings], query[_values], query[_allowUnsafeTransaction], query[_poolSize]);
+      query[_handle] = handle;
+      query[_queryStatus] |= QueryStatus.error | QueryStatus.invalidHandle;
+    } catch (err) {
+      query.reject(err);
+    }
+  }
+  return handle;
+}
 class Query extends PublicPromise {
   [_resolve];
   [_reject];
   [_handle];
   [_handler];
   [_queryStatus] = 0;
+  [_strings];
+  [_values];
 
   [Symbol.for("nodejs.util.inspect.custom")]() {
     const status = this[_queryStatus];
@@ -93,7 +113,7 @@ class Query extends PublicPromise {
     return `PostgresQuery { ${active ? "active" : ""} ${cancelled ? "cancelled" : ""} ${executed ? "executed" : ""} ${error ? "error" : ""} }`;
   }
 
-  constructor(handle, handler) {
+  constructor(strings, values, allowUnsafeTransaction, poolSize, handler) {
     var resolve_, reject_;
     super((resolve, reject) => {
       resolve_ = resolve;
@@ -101,17 +121,23 @@ class Query extends PublicPromise {
     });
     this[_resolve] = resolve_;
     this[_reject] = reject_;
-    this[_handle] = handle;
+    this[_handle] = null;
     this[_handler] = handler;
-    this[_queryStatus] = handle ? 0 : QueryStatus.cancelled;
+    this[_queryStatus] = 0;
+    this[_poolSize] = poolSize;
+    this[_strings] = strings;
+    this[_values] = values;
+    this[_allowUnsafeTransaction] = allowUnsafeTransaction;
   }
 
   async [_run]() {
-    const { [_handle]: handle, [_handler]: handler, [_queryStatus]: status } = this;
+    const { [_handler]: handler, [_queryStatus]: status } = this;
 
-    if (status & (QueryStatus.executed | QueryStatus.error | QueryStatus.cancelled)) {
+    if (status & (QueryStatus.executed | QueryStatus.error | QueryStatus.cancelled | QueryStatus.invalidHandle)) {
       return;
     }
+    const handle = getQueryHandle(this);
+    if (!handle) return this;
 
     this[_queryStatus] |= QueryStatus.executed;
     // this avoids a infinite loop
@@ -142,14 +168,20 @@ class Query extends PublicPromise {
 
   resolve(x) {
     this[_queryStatus] &= ~QueryStatus.active;
-    this[_handle].done();
+    const handle = getQueryHandle(this);
+    if (!handle) return this;
+    handle.done();
     return this[_resolve](x);
   }
 
   reject(x) {
     this[_queryStatus] &= ~QueryStatus.active;
     this[_queryStatus] |= QueryStatus.error;
-    this[_handle].done();
+    if (!(this[_queryStatus] & QueryStatus.invalidHandle)) {
+      const handle = getQueryHandle(this);
+      if (!handle) return this[_reject](x);
+      handle.done();
+    }
 
     return this[_reject](x);
   }
@@ -162,7 +194,8 @@ class Query extends PublicPromise {
     this[_queryStatus] |= QueryStatus.cancelled;
 
     if (status & QueryStatus.executed) {
-      this[_handle].cancel();
+      const handle = getQueryHandle(this);
+      handle.cancel();
     }
 
     return this;
@@ -174,12 +207,16 @@ class Query extends PublicPromise {
   }
 
   raw() {
-    this[_handle].raw = rawMode_objects;
+    const handle = getQueryHandle(this);
+    if (!handle) return this;
+    handle.raw = rawMode_objects;
     return this;
   }
 
   values() {
-    this[_handle].raw = rawMode_values;
+    const handle = getQueryHandle(this);
+    if (!handle) return this;
+    handle.raw = rawMode_values;
     return this;
   }
 
@@ -803,8 +840,10 @@ function createConnection(
 var hasSQLArrayParameter = false;
 function normalizeStrings(strings, values) {
   hasSQLArrayParameter = false;
-  if ($isJSArray(strings)) {
+
+  if ($isArray(strings)) {
     const count = strings.length;
+
     if (count === 0) {
       return "";
     }
@@ -852,6 +891,85 @@ function normalizeStrings(strings, values) {
   }
 
   return strings + "";
+}
+function hasQuery(value: any) {
+  return value instanceof Query;
+}
+function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize) {
+  let sqlString;
+  let final_values: Array<any>;
+  if ($isArray(strings) && values.some(hasQuery)) {
+    // we need to handle fragments of queries
+    final_values = [];
+    const final_strings = [];
+    let strings_idx = 0;
+
+    for (let i = 0; i < values.length; i++) {
+      const value = values[i];
+      if (value instanceof Query) {
+        const sub_strings = value[_strings];
+        if (typeof sub_strings === "string") {
+          // just a single fixed query string fragment
+          //@ts-ignore
+          final_strings.push(strings[strings_idx] + sub_strings + strings[strings_idx + 1]);
+          strings_idx += 2; // we merged 2 strings into 1
+          // in this case we dont have values to merge
+        } else {
+          // complex fragment, we need to merge values
+          const sub_values = value[_values];
+          if (final_strings.length > 0) {
+            // complex not the first
+            const current_idx = final_strings.length - 1;
+            final_strings[current_idx] = final_strings[current_idx] + sub_strings[0];
+            for (let j = 1; j < sub_strings.length; j++) {
+              final_strings.push(sub_strings[j]);
+            }
+            final_values.push(...sub_values);
+          } else {
+            // complex the first
+            final_strings.push(strings[strings_idx] + sub_strings[0]);
+            strings_idx += 1;
+            final_values.push(...sub_values);
+            for (let j = 1; j < sub_strings.length; j++) {
+              final_strings.push(sub_strings[j]);
+            }
+          }
+        }
+      } else {
+        // for each value we have 2 strings
+        //@ts-ignore
+        final_strings.push(strings[strings_idx]);
+        strings_idx += 1;
+        if (strings_idx + 1 < strings.length) {
+          //@ts-ignore
+          final_strings.push(strings[strings_idx + 1]);
+          strings_idx += 1;
+        }
+
+        final_values.push(value);
+      }
+    }
+    sqlString = normalizeStrings(final_strings, final_values);
+  } else {
+    sqlString = normalizeStrings(strings, values);
+    final_values = values;
+  }
+  let columns;
+  if (hasSQLArrayParameter) {
+    hasSQLArrayParameter = false;
+    const v = final_values[0];
+    columns = v.columns;
+    final_values = v.value;
+  }
+  if (!allowUnsafeTransaction) {
+    if (poolSize !== 1) {
+      const upperCaseSqlString = sqlString.toUpperCase().trim();
+      if (upperCaseSqlString.startsWith("BEGIN") || upperCaseSqlString.startsWith("START TRANSACTION")) {
+        throw $ERR_POSTGRES_UNSAFE_TRANSACTION("Only use sql.begin, sql.reserved or max: 1");
+      }
+    }
+  }
+  return createQuery(sqlString, final_values, new SQLResultArray(), columns);
 }
 
 class SQLArrayParameter {
@@ -1095,32 +1213,13 @@ function assertValidTransactionName(name: string) {
     throw Error(`Distributed transaction name cannot contain single quotes.`);
   }
 }
+
 function SQL(o, e = {}) {
   if (typeof o === "string" || o instanceof URL) {
     o = { ...e, url: o };
   }
   var connectionInfo = loadOptions(o);
   var pool = new ConnectionPool(connectionInfo);
-
-  function doCreateQuery(strings, values, allowUnsafeTransaction) {
-    const sqlString = normalizeStrings(strings, values);
-    let columns;
-    if (hasSQLArrayParameter) {
-      hasSQLArrayParameter = false;
-      const v = values[0];
-      columns = v.columns;
-      values = v.value;
-    }
-    if (!allowUnsafeTransaction) {
-      if (connectionInfo.max !== 1) {
-        const upperCaseSqlString = sqlString.toUpperCase().trim();
-        if (upperCaseSqlString.startsWith("BEGIN") || upperCaseSqlString.startsWith("START TRANSACTION")) {
-          throw $ERR_POSTGRES_UNSAFE_TRANSACTION("Only use sql.begin, sql.reserved or max: 1");
-        }
-      }
-    }
-    return createQuery(sqlString, values, new SQLResultArray(), columns);
-  }
 
   function onQueryDisconnected(err) {
     // connection closed mid query this will not be called if the query finishes first
@@ -1163,7 +1262,7 @@ function SQL(o, e = {}) {
   }
   function queryFromPool(strings, values) {
     try {
-      return new Query(doCreateQuery(strings, values, false), queryFromPoolHandler);
+      return new Query(strings, values, false, connectionInfo.max, queryFromPoolHandler);
     } catch (err) {
       return Promise.reject(err);
     }
@@ -1191,7 +1290,10 @@ function SQL(o, e = {}) {
   function queryFromTransaction(strings, values, pooledConnection, transactionQueries) {
     try {
       const query = new Query(
-        doCreateQuery(strings, values, true),
+        strings,
+        values,
+        true,
+        connectionInfo.max,
         queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
       );
       transactionQueries.add(query);
@@ -1236,7 +1338,7 @@ function SQL(o, e = {}) {
       ) {
         return Promise.reject(connectionClosedError());
       }
-      if ($isJSArray(strings) && strings[0] && typeof strings[0] === "object") {
+      if ($isArray(strings) && strings[0] && typeof strings[0] === "object") {
         return new SQLArrayParameter(strings, values);
       }
       // we use the same code path as the transaction sql
@@ -1550,7 +1652,7 @@ function SQL(o, e = {}) {
       ) {
         return Promise.reject(connectionClosedError());
       }
-      if ($isJSArray(strings) && strings[0] && typeof strings[0] === "object") {
+      if ($isArray(strings) && strings[0] && typeof strings[0] === "object") {
         return new SQLArrayParameter(strings, values);
       }
 
@@ -1778,7 +1880,7 @@ function SQL(o, e = {}) {
      * ]
      * sql`insert into users ${sql(users)}`
      */
-    if ($isJSArray(strings) && strings[0] && typeof strings[0] === "object") {
+    if ($isArray(strings) && strings[0] && typeof strings[0] === "object") {
       return new SQLArrayParameter(strings, values);
     }
 

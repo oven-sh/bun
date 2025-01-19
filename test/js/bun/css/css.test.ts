@@ -4267,4 +4267,603 @@ describe("css tests", () => {
       ))`,
     );
   });
+
+  describe("media", () => {
+    minify_test(
+      "@media (min-width: 240px) { .foo { color: chartreuse }}",
+      "@media (width>=240px){.foo{color:#7fff00}}",
+    );
+    minify_test("@media (width < 240px) { .foo { color: chartreuse }}", "@media (width<240px){.foo{color:#7fff00}}");
+    minify_test("@media (width <= 240px) { .foo { color: chartreuse }}", "@media (width<=240px){.foo{color:#7fff00}}");
+    minify_test("@media (width > 240px) { .foo { color: chartreuse }}", "@media (width>240px){.foo{color:#7fff00}}");
+    minify_test("@media (width >= 240px) { .foo { color: chartreuse }}", "@media (width>=240px){.foo{color:#7fff00}}");
+    minify_test("@media (240px < width) { .foo { color: chartreuse }}", "@media (width>240px){.foo{color:#7fff00}}");
+    minify_test("@media (240px <= width) { .foo { color: chartreuse }}", "@media (width>=240px){.foo{color:#7fff00}}");
+    minify_test("@media (240px > width) { .foo { color: chartreuse }}", "@media (width<240px){.foo{color:#7fff00}}");
+    minify_test("@media (240px >= width) { .foo { color: chartreuse }}", "@media (width<=240px){.foo{color:#7fff00}}");
+    minify_test(
+      "@media (100px < width < 200px) { .foo { color: chartreuse }}",
+      "@media (100px<width<200px){.foo{color:#7fff00}}",
+    );
+    minify_test(
+      "@media (100px <= width <= 200px) { .foo { color: chartreuse }}",
+      "@media (100px<=width<=200px){.foo{color:#7fff00}}",
+    );
+    minify_test(
+      "@media (min-width: 30em) and (max-width: 50em) { .foo { color: chartreuse }}",
+      "@media (width>=30em) and (width<=50em){.foo{color:#7fff00}}",
+    );
+    minify_test("@media screen, print { .foo { color: chartreuse }}", "@media screen,print{.foo{color:#7fff00}}");
+    minify_test("@media (hover: hover) { .foo { color: chartreuse }}", "@media (hover:hover){.foo{color:#7fff00}}");
+    minify_test("@media (hover) { .foo { color: chartreuse }}", "@media (hover){.foo{color:#7fff00}}");
+    minify_test(
+      "@media (aspect-ratio: 11/5) { .foo { color: chartreuse }}",
+      "@media (aspect-ratio:11/5){.foo{color:#7fff00}}",
+    );
+    minify_test(
+      "@media (aspect-ratio: 2/1) { .foo { color: chartreuse }}",
+      "@media (aspect-ratio:2){.foo{color:#7fff00}}",
+    );
+    minify_test(
+      "@media (aspect-ratio: 2) { .foo { color: chartreuse }}",
+      "@media (aspect-ratio:2){.foo{color:#7fff00}}",
+    );
+    minify_test(
+      "@media not screen and (color) { .foo { color: chartreuse }}",
+      "@media not screen and (color){.foo{color:#7fff00}}",
+    );
+    minify_test(
+      "@media only screen and (color) { .foo { color: chartreuse }}",
+      "@media only screen and (color){.foo{color:#7fff00}}",
+    );
+    minify_test(
+      "@media (update: slow) or (hover: none) { .foo { color: chartreuse }}",
+      "@media (update:slow) or (hover:none){.foo{color:#7fff00}}",
+    );
+    minify_test(
+      "@media (width < 600px) and (height < 600px) { .foo { color: chartreuse }}",
+      "@media (width<600px) and (height<600px){.foo{color:#7fff00}}",
+    );
+    minify_test(
+      "@media (not (color)) or (hover) { .foo { color: chartreuse }}",
+      "@media (not (color)) or (hover){.foo{color:#7fff00}}",
+    );
+    error_test(
+      "@media (example, all,), speech { .foo { color: chartreuse }}",
+      "ParserError::UnexpectedToken(Token::Comma)",
+    );
+    error_test("@media &test, speech { .foo { color: chartreuse }}", "ParserError::UnexpectedToken(Token::Delim('&'))");
+    error_test("@media &test { .foo { color: chartreuse }}", "ParserError::UnexpectedToken(Token::Delim('&'))");
+    minify_test(
+      "@media (min-width: calc(200px + 40px)) { .foo { color: chartreuse }}",
+      "@media (width>=240px){.foo{color:#7fff00}}",
+    );
+    minify_test(
+      "@media (min-width: calc(1em + 5px)) { .foo { color: chartreuse }}",
+      "@media (width>=calc(1em + 5px)){.foo{color:#7fff00}}",
+    );
+    minify_test("@media { .foo { color: chartreuse }}", ".foo{color:#7fff00}");
+    minify_test("@media all { .foo { color: chartreuse }}", ".foo{color:#7fff00}");
+    minify_test(
+      "@media not (((color) or (hover))) { .foo { color: chartreuse }}",
+      "@media not ((color) or (hover)){.foo{color:#7fff00}}",
+    );
+    minify_test(
+      "@media (hover) and ((color) and (test)) { .foo { color: chartreuse }}",
+      "@media (hover) and (color) and (test){.foo{color:#7fff00}}",
+    );
+    minify_test("@media (grid: 1) { .foo { color: chartreuse }}", "@media (grid:1){.foo{color:#7fff00}}");
+    minify_test(
+      "@media (width >= calc(2px + 4px)) { .foo { color: chartreuse }}",
+      "@media (width>=6px){.foo{color:#7fff00}}",
+    );
+
+    prefix_test(
+      `
+        @media (width >= 240px) {
+          .foo {
+            color: chartreuse;
+          }
+        }
+      `,
+      `
+        @media (min-width: 240px) {
+          .foo {
+            color: #7fff00;
+          }
+        }
+      `,
+      {
+        firefox: 60 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+        @media (width >= 240px) {
+          .foo {
+            color: chartreuse;
+          }
+        }
+      `,
+      `
+        @media (width >= 240px) {
+          .foo {
+            color: #7fff00;
+          }
+        }
+      `,
+      {
+        firefox: 64 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+        @media (color > 2) {
+          .foo {
+            color: chartreuse;
+          }
+        }
+      `,
+      `
+        @media (min-color: 3) {
+          .foo {
+            color: #7fff00;
+          }
+        }
+      `,
+      {
+        firefox: 60 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+        @media (color < 2) {
+          .foo {
+            color: chartreuse;
+          }
+        }
+      `,
+      `
+        @media (max-color: 1) {
+          .foo {
+            color: #7fff00;
+          }
+        }
+      `,
+      {
+        firefox: 60 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+        @media (width > 240px) {
+          .foo {
+            color: chartreuse;
+          }
+        }
+      `,
+      `
+        @media (min-width: 240.001px) {
+          .foo {
+            color: #7fff00;
+          }
+        }
+      `,
+      {
+        firefox: 60 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+        @media (width <= 240px) {
+          .foo {
+            color: chartreuse;
+          }
+        }
+      `,
+      `
+        @media (max-width: 240px) {
+          .foo {
+            color: #7fff00;
+          }
+        }
+      `,
+      {
+        firefox: 60 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+        @media (width <= 240px) {
+          .foo {
+            color: chartreuse;
+          }
+        }
+      `,
+      `
+        @media (width <= 240px) {
+          .foo {
+            color: #7fff00;
+          }
+        }
+      `,
+      {
+        firefox: 64 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+        @media (width < 240px) {
+          .foo {
+            color: chartreuse;
+          }
+        }
+      `,
+      `
+        @media (max-width: 239.999px) {
+          .foo {
+            color: #7fff00;
+          }
+        }
+      `,
+      {
+        firefox: 60 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+        @media (100px <= width <= 200px) {
+          .foo {
+            color: chartreuse;
+          }
+        }
+      `,
+      `
+        @media (min-width: 100px) and (max-width: 200px) {
+          .foo {
+            color: #7fff00;
+          }
+        }
+      `,
+      {
+        firefox: 85 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+        @media not (100px <= width <= 200px) {
+          .foo {
+            color: chartreuse;
+          }
+        }
+      `,
+      `
+        @media not ((min-width: 100px) and (max-width: 200px)) {
+          .foo {
+            color: #7fff00;
+          }
+        }
+      `,
+      {
+        firefox: 85 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+        @media (hover) and (100px <= width <= 200px) {
+          .foo {
+            color: chartreuse;
+          }
+        }
+      `,
+      `
+        @media (hover) and (min-width: 100px) and (max-width: 200px) {
+          .foo {
+            color: #7fff00;
+          }
+        }
+      `,
+      {
+        firefox: 85 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+        @media (hover) or (100px <= width <= 200px) {
+          .foo {
+            color: chartreuse;
+          }
+        }
+      `,
+      `
+        @media (hover) or ((min-width: 100px) and (max-width: 200px)) {
+          .foo {
+            color: #7fff00;
+          }
+        }
+      `,
+      {
+        firefox: 85 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+        @media (100px < width < 200px) {
+          .foo {
+            color: chartreuse;
+          }
+        }
+      `,
+      `
+        @media (min-width: 100.001px) and (max-width: 199.999px) {
+          .foo {
+            color: #7fff00;
+          }
+        }
+      `,
+      {
+        firefox: 85 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+        @media (200px >= width >= 100px) {
+          .foo {
+            color: chartreuse;
+          }
+        }
+      `,
+      `
+        @media (max-width: 200px) and (min-width: 100px) {
+          .foo {
+            color: #7fff00;
+          }
+        }
+      `,
+      {
+        firefox: 85 << 16,
+      },
+    );
+
+    cssTest(
+      `
+      @media not all {
+        .a {
+          color: green;
+        }
+      }
+      `,
+      "\n",
+      undefined,
+      false,
+    );
+
+    prefix_test(
+      `
+      @media (width > calc(1px + 1rem)) {
+        .foo { color: yellow; }
+      }
+      `,
+      `
+        @media (min-width: calc(1.001px + 1rem)) {
+          .foo {
+            color: #ff0;
+          }
+        }
+      `,
+      {
+        chrome: 85 << 16,
+      },
+    );
+    prefix_test(
+      `
+      @media (width > max(10px, 1rem)) {
+        .foo { color: yellow; }
+      }
+      `,
+      `
+        @media (min-width: calc(max(10px, 1rem) + .001px)) {
+          .foo {
+            color: #ff0;
+          }
+        }
+      `,
+      {
+        chrome: 85 << 16,
+      },
+    );
+    prefix_test(
+      `
+      @media (width > 0) {
+        .foo { color: yellow; }
+      }
+      `,
+      `
+        @media (min-width: .001px) {
+          .foo {
+            color: #ff0;
+          }
+        }
+      `,
+      {
+        chrome: 85 << 16,
+      },
+    );
+    prefix_test(
+      `
+      @media (min-resolution: 2dppx) {
+        .foo { color: yellow; }
+      }
+      `,
+      `
+        @media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx) {
+          .foo {
+            color: #ff0;
+          }
+        }
+      `,
+      {
+        safari: 15 << 16,
+      },
+      true,
+    );
+    prefix_test(
+      `
+      @media (min-resolution: 2dppx) {
+        .foo { color: yellow; }
+      }
+      `,
+      `
+        @media (min--moz-device-pixel-ratio: 2), (min-resolution: 2dppx) {
+          .foo {
+            color: #ff0;
+          }
+        }
+      `,
+      {
+        firefox: 10 << 16,
+      },
+      true,
+    );
+    prefix_test(
+      `
+      @media (resolution > 2dppx) {
+        .foo { color: yellow; }
+      }
+      `,
+      `
+        @media (-webkit-min-device-pixel-ratio: 2.001), (min-resolution: 2.001dppx) {
+          .foo {
+            color: #ff0;
+          }
+        }
+      `,
+      {
+        safari: 15 << 16,
+      },
+      true,
+    );
+    prefix_test(
+      `
+      @media (resolution >= 300dpi) {
+        .foo { color: yellow; }
+      }
+      `,
+      `
+        @media (-webkit-min-device-pixel-ratio: 3.125), (min-resolution: 300dpi) {
+          .foo {
+            color: #ff0;
+          }
+        }
+      `,
+      {
+        safari: 15 << 16,
+      },
+      true,
+    );
+    prefix_test(
+      `
+      @media (min-resolution: 113.38dpcm) {
+        .foo { color: yellow; }
+      }
+      `,
+      `
+        @media (-webkit-min-device-pixel-ratio: 2.99985), (min--moz-device-pixel-ratio: 2.99985), (min-resolution: 113.38dpcm) {
+          .foo {
+            color: #ff0;
+          }
+        }
+      `,
+      {
+        safari: 15 << 16,
+        firefox: 10 << 16,
+      },
+      true,
+    );
+    prefix_test(
+      `
+      @media (color) and (min-resolution: 2dppx) {
+        .foo { color: yellow; }
+      }
+      `,
+      `
+        @media (color) and (-webkit-min-device-pixel-ratio: 2), (color) and (min-resolution: 2dppx) {
+          .foo {
+            color: #ff0;
+          }
+        }
+      `,
+      {
+        safari: 15 << 16,
+      },
+      true,
+    );
+    prefix_test(
+      `
+      @media (min-resolution: 2dppx),
+             (min-resolution: 192dpi) {
+        .foo { color: yellow; }
+      }
+      `,
+      `
+        @media (-webkit-min-device-pixel-ratio: 2), (min--moz-device-pixel-ratio: 2), (min-resolution: 2dppx), (min-resolution: 192dpi) {
+          .foo {
+            color: #ff0;
+          }
+        }
+      `,
+      {
+        safari: 15 << 16,
+        firefox: 10 << 16,
+      },
+      true,
+    );
+    prefix_test(
+      `
+      @media only screen and (min-resolution: 124.8dpi) {
+        .foo { color: yellow; }
+      }
+      `,
+      `
+        @media only screen and (-webkit-min-device-pixel-ratio: 1.3), only screen and (min--moz-device-pixel-ratio: 1.3), only screen and (min-resolution: 124.8dpi) {
+          .foo {
+            color: #ff0;
+          }
+        }
+      `,
+      {
+        safari: 15 << 16,
+        firefox: 10 << 16,
+      },
+      true,
+    );
+
+    error_test("@media (min-width: hi) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");
+    error_test("@media (width >= hi) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");
+    error_test(
+      "@media (width >= 2/1) { .foo { color: chartreuse }}",
+      "ParserError::UnexpectedToken(Token::Delim('/'))",
+    );
+    error_test("@media (600px <= min-height) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");
+    error_test("@media (scan >= 1) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");
+    error_test("@media (min-scan: interlace) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");
+    error_test("@media (1px <= width <= bar) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");
+    error_test("@media (1px <= min-width <= 2px) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");
+    error_test("@media (1px <= scan <= 2px) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");
+    error_test("@media (grid: 10) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");
+    error_test("@media (prefers-color-scheme = dark) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");
+  });
 });

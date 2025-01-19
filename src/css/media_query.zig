@@ -116,6 +116,16 @@ pub const MediaList = struct {
             break :brk true;
         };
     }
+
+    /// Returns whether the media query list never matches.
+    pub fn neverMatches(this: *const MediaList) bool {
+        return this.media_queries.items.len > 0 and brk: {
+            for (this.media_queries.items) |*query| {
+                if (!query.neverMatches()) break :brk false;
+            }
+            break :brk true;
+        };
+    }
 };
 
 /// A binary `and` or `or` operator.
@@ -250,6 +260,10 @@ pub const MediaQuery = struct {
         } else false;
 
         return toCssWithParensIfNeeded(condition, W, dest, needs_parens);
+    }
+
+    pub fn neverMatches(this: *const MediaQuery) bool {
+        return this.qualifier == .not and this.media_type == .all and this.condition == null;
     }
 };
 

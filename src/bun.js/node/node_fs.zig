@@ -2532,8 +2532,6 @@ pub const Arguments = struct {
                 return ctx.throwInvalidArgumentTypeValue("buffer", "TypedArray", buffer_value.?);
             };
 
-         
-
             arguments.eat();
 
             var args = Read{
@@ -2567,7 +2565,7 @@ pub const Arguments = struct {
                         defined_length = true;
                     }
 
-                   if (buffer.buffer.len == 0) {
+                    if (buffer.buffer.len == 0) {
                         return JSC.Error.ERR_INVALID_ARG_VALUE.throw(ctx, "The argument 'buffer' is empty and cannot be written.", .{});
                     }
 

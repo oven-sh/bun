@@ -947,12 +947,12 @@ pub const PathLike = union(enum) {
 
     pub inline fn osPathKernel32(this: PathLike, buf: *bun.PathBuffer) bun.OSPathSliceZ {
         if (comptime Environment.isWindows) {
-            const s =  this.slice();
+            const s = this.slice();
             if (bun.strings.hasPrefixComptime(s, "/")) {
-            const b = bun.PathBufferPool.get();
-            defer bun.PathBufferPool.put(b);
-            const resolve = path_handler.PosixToWinNormalizer.resolveCWDWithExternalBuf(b,s) catch @panic("Error while resolving path.");
-            return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), resolve);
+                const b = bun.PathBufferPool.get();
+                defer bun.PathBufferPool.put(b);
+                const resolve = path_handler.PosixToWinNormalizer.resolveCWDWithExternalBuf(b, s) catch @panic("Error while resolving path.");
+                return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), resolve);
             }
             return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), s);
         }

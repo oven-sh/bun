@@ -1995,6 +1995,298 @@ declare module "bun" {
      */
     stat(path: string, options?: S3Options): Promise<S3Stats>;
   };
+  /**
+   * Configuration options for SQL client connection and behavior
+   *  @example
+   * const config: SQLOptions = {
+   *   host: 'localhost',
+   *   port: 5432,
+   *   user: 'dbuser',
+   *   password: 'secretpass',
+   *   database: 'myapp',
+   *   idleTimeout: 30000,
+   *   max: 20,
+   *   onconnect: (client) => {
+   *     console.log('Connected to database');
+   *   }
+   * };
+   */
+  type SQLOptions = {
+    /** Connection URL (can be string or URL object) */
+    url: URL | string;
+    /** Database server hostname */
+    host: string;
+    /** Database server port number */
+    port: number | string;
+    /** Database user for authentication */
+    user: string;
+    /** Database password for authentication */
+    password: string;
+    /** Name of the database to connect to */
+    database: string;
+    /** Database adapter/driver to use */
+    adapter: string;
+    /** Maximum time in milliseconds to wait for connection to become available */
+    idleTimeout: number;
+    /** Maximum time in milliseconds to wait when establishing a connection */
+    connectionTimeout: number;
+    /** Maximum lifetime in milliseconds of a connection */
+    maxLifetime: number;
+    /** Whether to use TLS/SSL for the connection */
+    tls: boolean;
+    /** Callback function executed when a connection is established */
+    onconnect: (client: SQL) => void;
+    /** Callback function executed when a connection is closed */
+    onclose: (client: SQL) => void;
+    /** Maximum number of connections in the pool */
+    max: number;
+  };
+
+  /**
+   * Represents a SQL query that can be executed, with additional control methods
+   * Extends Promise to allow for async/await usage
+   */
+  interface SQLQuery extends Promise<any> {
+    /** Indicates if the query is currently executing */
+    active: boolean;
+    /** Indicates if the query has been cancelled */
+    cancelled: boolean;
+    /** Cancels the executing query */
+    cancel(): SQLQuery;
+    /** Executes the query */
+    execute(): SQLQuery;
+    /** Returns the raw query result */
+    raw(): SQLQuery;
+    /** Returns only the values from the query result */
+    values(): SQLQuery;
+  }
+
+  /**
+   * Callback function type for transaction contexts
+   * @param sql Function to execute SQL queries within the transaction
+   */
+  type SQLContextCallback = (sql: (strings: string, ...values: any[]) => SQLQuery | Array<SQLQuery>) => Promise<any>;
+
+  /**
+   * Main SQL client interface providing connection and transaction management
+   */
+  interface SQL {
+    /** Creates a new SQL client instance
+     * @example
+     * const sql = new SQL("postgres://localhost:5432/mydb");
+     * const sql = new SQL(new URL("postgres://localhost:5432/mydb"));
+     */
+    new (connectionString: string | URL): SQL;
+    /** Creates a new SQL client instance with options
+     * @example
+     * const sql = new SQL("postgres://localhost:5432/mydb", { idleTimeout: 1000 });
+     */
+    new (connectionString: string | URL, options: SQLOptions): SQL;
+    /** Creates a new SQL client instance with options
+     * @example
+     * const sql = new SQL({ url: "postgres://localhost:5432/mydb", idleTimeout: 1000 });
+     */
+    new (options?: SQLOptions): SQL;
+    /** Executes a SQL query using template literals
+     * @example
+     * const [user] = await sql`select * from users where id = ${1}`;
+     */
+    (strings: string, ...values: any[]): SQLQuery;
+    /** Commits a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL
+     * @example
+     * await sql.commitDistributed("my_distributed_transaction");
+     */
+    commitDistributed(name: string): Promise<undefined>;
+    /** Rolls back a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL
+     * @example
+     * await sql.rollbackDistributed("my_distributed_transaction");
+     */
+    rollbackDistributed(name: string): Promise<undefined>;
+    /** Waits for the database connection to be established
+     * @example
+     * await sql.connect();
+     */
+    connect(): Promise<SQL>;
+    /** Closes the database connection with optional timeout in seconds
+     * @example
+     * await sql.close({ timeout: 1 });
+     */
+    close(options?: { timeout?: number }): Promise<undefined>;
+    /** Closes the database connection with optional timeout in seconds
+     * @alias close
+     * @example
+     * await sql.end({ timeout: 1 });
+     */
+    end(options?: { timeout?: number }): Promise<undefined>;
+    /** Flushes any pending operations */
+    flush(): void;
+    /**  The reserve method pulls out a connection from the pool, and returns a client that wraps the single connection.
+     *   This can be used for running queries on an isolated connection.
+     *   Calling reserve in a reserved Sql will return a new reserved connection, not the same connection (behavior matches postgres package).
+     * @example
+     * const reserved = await sql.reserve();
+     * await reserved`select * from users`;
+     * await reserved.release();
+     * // with in a production scenario would be something more like
+     * const reserved = await sql.reserve();
+     * try {
+     *   // ... queries
+     * } finally {
+     *   await reserved.release();
+     * }
+     * //To make it simpler bun supportsSymbol.dispose and Symbol.asyncDispose
+     * {
+     * // always release after context (safer)
+     * using reserved = await sql.reserve()
+     * await reserved`select * from users`
+     * }
+     */
+    reserve(): Promise<ReservedSQL>;
+    /** Begins a new transaction
+     * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.begin will resolve with the returned value from the callback function.
+     * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
+     * @example
+     * const [user, account] = await sql.begin(async sql => {
+     *   const [user] = await sql`
+     *     insert into users (
+     *       name
+     *     ) values (
+     *       'Murray'
+     *     )
+     *     returning *
+     *   `
+     *   const [account] = await sql`
+     *     insert into accounts (
+     *       user_id
+     *     ) values (
+     *       ${ user.user_id }
+     *     )
+     *     returning *
+     *   `
+     *   return [user, account]
+     * })
+     */
+    begin(fn: SQLContextCallback): Promise<any>;
+    /** Begins a new transaction with options
+     * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.begin will resolve with the returned value from the callback function.
+     * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
+     * @example
+     * const [user, account] = await sql.begin("read write", async sql => {
+     *   const [user] = await sql`
+     *     insert into users (
+     *       name
+     *     ) values (
+     *       'Murray'
+     *     )
+     *     returning *
+     *   `
+     *   const [account] = await sql`
+     *     insert into accounts (
+     *       user_id
+     *     ) values (
+     *       ${ user.user_id }
+     *     )
+     *     returning *
+     *   `
+     *   return [user, account]
+     * })
+     */
+    begin(options: string, fn: SQLContextCallback): Promise<any>;
+    /** Alternative method to begin a transaction
+     * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.transaction will resolve with the returned value from the callback function.
+     * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
+     * @alias begin
+     * @example
+     * const [user, account] = await sql.transaction(async sql => {
+     *   const [user] = await sql`
+     *     insert into users (
+     *       name
+     *     ) values (
+     *       'Murray'
+     *     )
+     *     returning *
+     *   `
+     *   const [account] = await sql`
+     *     insert into accounts (
+     *       user_id
+     *     ) values (
+     *       ${ user.user_id }
+     *     )
+     *     returning *
+     *   `
+     *   return [user, account]
+     * })
+     */
+    transaction(fn: SQLContextCallback): Promise<any>;
+    /** Alternative method to begin a transaction with options
+     * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.transaction will resolve with the returned value from the callback function.
+     * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
+     * @alias begin
+     * @example
+     * const [user, account] = await sql.transaction("read write", async sql => {
+     *   const [user] = await sql`
+     *     insert into users (
+     *       name
+     *     ) values (
+     *       'Murray'
+     *     )
+     *     returning *
+     *   `
+     *   const [account] = await sql`
+     *     insert into accounts (
+     *       user_id
+     *     ) values (
+     *       ${ user.user_id }
+     *     )
+     *     returning *
+     *   `
+     *   return [user, account]
+     * })
+     */
+    transaction(options: string, fn: SQLContextCallback): Promise<any>;
+    /** Begins a distributed transaction
+     * Also know as Two-Phase Commit, in a distributed transaction, Phase 1 involves the coordinator preparing nodes by ensuring data is written and ready to commit, while Phase 2 finalizes with nodes committing or rolling back based on the coordinator's decision, ensuring durability and releasing locks.
+     * In PostgreSQL and MySQL distributed transactions persist beyond the original session, allowing privileged users or coordinators to commit/rollback them, ensuring support for distributed transactions, recovery, and administrative tasks.
+     * beginDistributed will automatic rollback if any exception are not caught, and you can commit and rollback later if everything goes well.
+     * PostgreSQL natively supports distributed transactions using PREPARE TRANSACTION, while MySQL uses XA Transactions, and MSSQL also supports distributed/XA transactions. However, in MSSQL, distributed transactions are tied to the original session, the DTC coordinator, and the specific connection.
+     * These transactions are automatically committed or rolled back following the same rules as regular transactions, with no option for manual intervention from other sessions, in MSSQL distributed transactions are used to coordinate transactions using Linked Servers.
+     * @example
+     * await sql.beginDistributed("numbers", async sql => {
+     *   await sql`create table if not exists numbers (a int)`;
+     *   await sql`insert into numbers values(1)`;
+     * });
+     * // later you can call
+     * await sql.commitDistributed("numbers");
+     * // or await sql.rollbackDistributed("numbers");
+     */
+    beginDistributed(name: string, fn: SQLContextCallback): Promise<any>;
+    /** Alternative method to begin a distributed transaction
+     * @alias beginDistributed
+     */
+    distributed(name: string, fn: SQLContextCallback): Promise<any>;
+    /** Current client options */
+    options: SQLOptions;
+  }
+
+  /**
+   * Represents a reserved connection from the connection pool
+   * Extends SQL with additional release functionality
+   */
+  interface ReservedSQL extends SQL {
+    /** Releases the client back to the connection pool */
+    release(): void;
+  }
+
+  /**
+   * Represents a client within a transaction context
+   * Extends SQL with savepoint functionality
+   */
+  interface TransactionSQL extends SQL {
+    /** Creates a savepoint within the current transaction */
+    savepoint(name: string, fn: SQLContextCallback): Promise<undefined>;
+  }
+
+  var sql: SQL;
 
   /**
    *   This lets you use macros as regular imports

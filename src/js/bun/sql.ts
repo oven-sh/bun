@@ -921,8 +921,9 @@ function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize) {
             // complex not the first
             const current_idx = final_strings.length - 1;
             final_strings[current_idx] = final_strings[current_idx] + sub_strings[0];
-            for (let j = 1; j < sub_strings.length; j++) {
-              final_strings.push(sub_strings[j]);
+
+            if (sub_strings.length > 1) {
+              final_strings.push(...sub_strings.slice(1));
             }
             final_values.push(...sub_values);
           } else {
@@ -930,8 +931,8 @@ function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize) {
             final_strings.push(strings[strings_idx] + sub_strings[0]);
             strings_idx += 1;
             final_values.push(...sub_values);
-            for (let j = 1; j < sub_strings.length; j++) {
-              final_strings.push(sub_strings[j]);
+            if (sub_strings.length > 1) {
+              final_strings.push(...sub_strings.slice(1));
             }
           }
         }

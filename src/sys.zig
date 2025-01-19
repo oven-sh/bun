@@ -2844,10 +2844,12 @@ pub fn directoryExistsAt(dir: anytype, subpath: anytype) JSC.Maybe(bool) {
         const wbuf = bun.WPathBufferPool.get();
         defer bun.WPathBufferPool.put(wbuf);
         const path = if (std.meta.Child(@TypeOf(subpath)) == u16)
-            bun.strings.addNTPathPrefixIfNeeded(wbuf, subpath)
+            if (std.fs.path.isAbsoluteWindowsWTF16(subpath))
+                bun.strings.addNTPathPrefixIfNeeded(wbuf, subpath)
+            else
+                bun.strings.toWPathNormalized16(wbuf, subpath)
         else
             bun.strings.toNTPath(wbuf, subpath);
-        bun.path.dangerouslyConvertPathToWindowsInPlace(u16, path);
 
         const path_len_bytes: u16 = @truncate(path.len * 2);
         var nt_name = w.UNICODE_STRING{

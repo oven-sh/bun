@@ -1756,10 +1756,20 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
             );
             if (rc == 0) {
                 log("WriteFile({}, {d}) = {s}", .{ fd, adjusted_len, @tagName(bun.windows.getLastErrno()) });
+                const er = std.os.windows.kernel32.GetLastError();
+                if (er == .ACCESS_DENIED) {
+                    // file is not writable
+                    return .{ .err = .{
+                        .errno = @intFromEnum(bun.C.SystemErrno.EBADF),
+                        .syscall = .write,
+                        .fd = fd,
+                    } };
+                }
+                const errno = (bun.C.SystemErrno.init(bun.windows.kernel32.GetLastError()) orelse bun.C.SystemErrno.EUNKNOWN).toE();
                 return .{
                     .err = Syscall.Error{
-                        .errno = @intFromEnum(bun.windows.getLastErrno()),
-                        .syscall = .WriteFile,
+                        .errno = @intFromEnum(errno),
+                        .syscall = .write,
                         .fd = fd,
                     },
                 };

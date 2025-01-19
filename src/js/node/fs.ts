@@ -1085,40 +1085,40 @@ var exports = {
   Dir,
   Stats,
   get ReadStream() {
-    return exports.ReadStream = require('internal/fs/streams').ReadStream;
+    return (exports.ReadStream = require("internal/fs/streams").ReadStream);
   },
   set ReadStream(value) {
-    Object.defineProperty(exports, 'ReadStream', {
+    Object.defineProperty(exports, "ReadStream", {
       value,
       writable: true,
       configurable: true,
     });
   },
   get WriteStream() {
-    return exports.WriteStream = require('internal/fs/streams').WriteStream;
+    return (exports.WriteStream = require("internal/fs/streams").WriteStream);
   },
   set WriteStream(value) {
-    Object.defineProperty(exports, 'WriteStream', {
+    Object.defineProperty(exports, "WriteStream", {
       value,
       writable: true,
       configurable: true,
     });
   },
   get FileReadStream() {
-    return exports.FileReadStream = require('internal/fs/streams').FileReadStream;
+    return (exports.FileReadStream = require("internal/fs/streams").FileReadStream);
   },
   set FileReadStream(value) {
-    Object.defineProperty(exports, 'FileReadStream', {
+    Object.defineProperty(exports, "FileReadStream", {
       value,
       writable: true,
       configurable: true,
     });
   },
   get FileWriteStream() {
-    return exports.FileWriteStream = require('internal/fs/streams').FileWriteStream;
+    return (exports.FileWriteStream = require("internal/fs/streams").FileWriteStream);
   },
   set FileWriteStream(value) {
-    Object.defineProperty(exports, 'FileWriteStream', {
+    Object.defineProperty(exports, "FileWriteStream", {
       value,
       writable: true,
       configurable: true,

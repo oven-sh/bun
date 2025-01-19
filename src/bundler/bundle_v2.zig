@@ -9683,18 +9683,21 @@ pub const LinkerContext = struct {
                     .minify = c.options.minify_whitespace,
                     .targets = bun.css.Targets.forBundlerTarget(c.options.target),
                 };
-                _ = css.toCssWithWriter(
+                _ = switch (css.toCssWithWriter(
                     worker.allocator,
                     &buffer_writer,
                     printer_options,
                     &css_import.condition_import_records,
-                ) catch |e| {
-                    return CompileResult{
-                        .css = .{
-                            .result = .{ .err = e },
-                            .source_index = Index.invalid.get(),
-                        },
-                    };
+                )) {
+                    .result => {},
+                    .err => {
+                        return CompileResult{
+                            .css = .{
+                                .result = .{ .err = error.PrintError },
+                                .source_index = Index.invalid.get(),
+                            },
+                        };
+                    },
                 };
                 return CompileResult{
                     .css = .{
@@ -9710,18 +9713,21 @@ pub const LinkerContext = struct {
                     .minify = c.options.minify_whitespace,
                     .targets = bun.css.Targets.forBundlerTarget(c.options.target),
                 };
-                _ = css.toCssWithWriter(
+                _ = switch (css.toCssWithWriter(
                     worker.allocator,
                     &buffer_writer,
                     printer_options,
                     &import_records,
-                ) catch |e| {
-                    return CompileResult{
-                        .css = .{
-                            .result = .{ .err = e },
-                            .source_index = Index.invalid.get(),
-                        },
-                    };
+                )) {
+                    .result => {},
+                    .err => {
+                        return CompileResult{
+                            .css = .{
+                                .result = .{ .err = error.PrintError },
+                                .source_index = Index.invalid.get(),
+                            },
+                        };
+                    },
                 };
                 return CompileResult{
                     .css = .{
@@ -9737,18 +9743,21 @@ pub const LinkerContext = struct {
                     // TODO: make this more configurable
                     .minify = c.options.minify_whitespace or c.options.minify_syntax or c.options.minify_identifiers,
                 };
-                _ = css.toCssWithWriter(
+                _ = switch (css.toCssWithWriter(
                     worker.allocator,
                     &buffer_writer,
                     printer_options,
                     &c.graph.ast.items(.import_records)[idx.get()],
-                ) catch |e| {
-                    return CompileResult{
-                        .css = .{
-                            .result = .{ .err = e },
-                            .source_index = idx.get(),
-                        },
-                    };
+                )) {
+                    .result => {},
+                    .err => {
+                        return CompileResult{
+                            .css = .{
+                                .result = .{ .err = error.PrintError },
+                                .source_index = idx.get(),
+                            },
+                        };
+                    },
                 };
                 return CompileResult{
                     .css = .{
@@ -9929,9 +9938,12 @@ pub const LinkerContext = struct {
                                     .minify = c.options.minify_whitespace or c.options.minify_syntax or c.options.minify_identifiers,
                                 };
 
-                                const print_result = ast_import.toCss(allocator, printer_options, &entry.condition_import_records) catch |e| {
-                                    c.log.addErrorFmt(null, Loc.Empty, c.allocator, "Error generating CSS for import: {s}", .{@errorName(e)}) catch bun.outOfMemory();
-                                    continue;
+                                const print_result = switch (ast_import.toCss(allocator, printer_options, &entry.condition_import_records)) {
+                                    .result => |v| v,
+                                    .err => |e| {
+                                        c.log.addErrorFmt(null, Loc.Empty, c.allocator, "Error generating CSS for import: {}", .{e}) catch bun.outOfMemory();
+                                        continue;
+                                    },
                                 };
                                 p.* = bun.fs.Path.init(DataURL.encodeStringAsShortestDataURL(allocator, "text/css", std.mem.trim(u8, print_result.code, " \n\r\t")));
                             }

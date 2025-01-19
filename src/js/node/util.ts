@@ -123,7 +123,7 @@ function isObject(arg) {
   return typeof arg === "object" && arg !== null;
 }
 var isDate = types.isDate;
-var isError = types.isNativeError;
+var isError = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsError", 1);
 function isPrimitive(arg) {
   return (
     arg === null ||

@@ -217,8 +217,11 @@ pub const PostgresSQLQuery = struct {
     binary: bool = false,
 
     pub usingnamespace JSC.Codegen.JSPostgresSQLQuery;
-
+    const log = bun.Output.scoped(.PostgresSQLQuery, false);
     pub fn getTarget(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        if (this.thisValue == .zero) {
+            return .zero;
+        }
         const target = PostgresSQLQuery.targetGetCached(this.thisValue) orelse return .zero;
         PostgresSQLQuery.targetSetCached(this.thisValue, globalObject, .zero);
         return target;
@@ -325,10 +328,13 @@ pub const PostgresSQLQuery = struct {
             return;
         }
 
-        // TODO: error handling
         var vm = JSC.VirtualMachine.get();
         const function = vm.rareData().postgresql_context.onQueryRejectFn.get().?;
-        globalObject.queueMicrotask(function, &[_]JSValue{ targetValue, err.toJS(globalObject) });
+        const event_loop = vm.eventLoop();
+        event_loop.runCallback(function, globalObject, thisValue, &.{
+            targetValue,
+            err.toJS(globalObject),
+        });
     }
 
     const CommandTag = union(enum) {
@@ -484,9 +490,14 @@ pub const PostgresSQLQuery = struct {
 
     pub fn call(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(4).slice();
-        const query = arguments[0];
-        const values = arguments[1];
-        const columns = arguments[3];
+        var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+        defer args.deinit();
+        const query = args.nextEat() orelse {
+            return globalThis.throw("query must be a string", .{});
+        };
+        const values = args.nextEat() orelse {
+            return globalThis.throw("values must be an array", .{});
+        };
 
         if (!query.isString()) {
             return globalThis.throw("query must be a string", .{});
@@ -496,7 +507,9 @@ pub const PostgresSQLQuery = struct {
             return globalThis.throw("values must be an array", .{});
         }
 
-        const pending_value = arguments[2];
+        const pending_value = args.nextEat() orelse .undefined;
+        const columns = args.nextEat() orelse .undefined;
+
         if (!pending_value.jsType().isArrayLike()) {
             return globalThis.throwInvalidArgumentType("query", "pendingValue", "Array");
         }
@@ -573,10 +586,11 @@ pub const PostgresSQLQuery = struct {
                 signature.deinit();
 
                 if (has_params and this.statement.?.status == .parsing) {
+
                     // if it has params, we need to wait for ParamDescription to be received before we can write the data
                 } else {
                     this.binary = this.statement.?.fields.len > 0;
-
+                    log("bindAndExecute", .{});
                     PostgresRequest.bindAndExecute(globalObject, this.statement.?, binding_value, columns_value, PostgresSQLConnection.Writer, writer) catch |err| {
                         if (!globalObject.hasException())
                             return globalObject.throwError(err, "failed to bind and execute query");
@@ -2447,7 +2461,7 @@ pub const PostgresSQLConnection = struct {
                     DataCell.Putter.put,
                 );
 
-                const pending_value = PostgresSQLQuery.pendingValueGetCached(request.thisValue) orelse .zero;
+                const pending_value = if (request.thisValue == .zero) .zero else PostgresSQLQuery.pendingValueGetCached(request.thisValue) orelse .zero;
                 pending_value.ensureStillAlive();
                 const result = putter.toJS(this.globalObject, pending_value, statement.structure(this.js_value, this.globalObject), statement.fields_flags);
 

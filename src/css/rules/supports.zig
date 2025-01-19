@@ -42,6 +42,9 @@ pub const SupportsCondition = union(enum) {
         /// The property id for the declaration.
         property_id: css.PropertyId,
         /// The raw value of the declaration.
+        ///
+        /// What happens if the value is a URL? A URL in this context does nothing
+        /// e.g. `@supports (background-image: url('example.png'))`
         value: []const u8,
 
         pub fn eql(this: *const @This(), other: *const @This()) bool {
@@ -72,6 +75,18 @@ pub const SupportsCondition = union(enum) {
             .selector => {},
             .unknown => {},
         }
+    }
+
+    pub fn cloneWithImportRecords(
+        this: *const @This(),
+        allocator: std.mem.Allocator,
+        _: *bun.BabyList(bun.ImportRecord),
+    ) @This() {
+        return deepClone(this, allocator);
+    }
+
+    pub fn hash(this: *const @This(), hasher: anytype) void {
+        return css.implementHash(@This(), this, hasher);
     }
 
     pub fn eql(this: *const SupportsCondition, other: *const SupportsCondition) bool {

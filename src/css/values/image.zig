@@ -129,6 +129,70 @@ pub const Image = union(enum) {
         };
     }
 
+    pub fn getFallbacks(this: *@This(), allocator: Allocator, targets: css.targets.Targets) css.SmallList(Image, 6) {
+        const ColorFallbackKind = css.ColorFallbackKind;
+        // Determine which prefixes and color fallbacks are needed.
+        const prefixes = this.getNecessaryPrefixes(targets);
+        const fallbacks = this.getNecessaryFallbacks(targets);
+        var res = css.SmallList(Image, 6){};
+
+        // Get RGB fallbacks if needed.
+        const rgb = if (fallbacks.contains(ColorFallbackKind.RGB))
+            this.getFallback(allocator, ColorFallbackKind.RGB)
+        else
+            null;
+
+        // Prefixed properties only support RGB.
+        const prefix_image = if (rgb) |r| &r else this;
+
+        // Legacy -webkit-gradient()
+        if (prefixes.contains(VendorPrefix.WEBKIT) and
+            if (targets.browsers) |browsers| css.prefixes.Feature.isWebkitGradient(browsers) else false and
+            prefix_image.* == .gradient)
+        {
+            if (prefix_image.getLegacyWebkit(allocator)) |legacy| {
+                res.append(allocator, legacy);
+            }
+        }
+
+        // Standard syntax, with prefixes.
+        if (prefixes.contains(VendorPrefix.WEBKIT)) {
+            res.append(allocator, prefix_image.getPrefixed(allocator, css.VendorPrefix.WEBKIT));
+        }
+
+        if (prefixes.contains(VendorPrefix.MOZ)) {
+            res.append(allocator, prefix_image.getPrefixed(allocator, css.VendorPrefix.MOZ));
+        }
+
+        if (prefixes.contains(VendorPrefix.O)) {
+            res.append(allocator, prefix_image.getPrefixed(allocator, css.VendorPrefix.O));
+        }
+
+        if (prefixes.contains(VendorPrefix.NONE)) {
+            // Unprefixed, rgb fallback.
+            if (rgb) |r| {
+                res.append(allocator, r);
+            }
+
+            // P3 fallback.
+            if (fallbacks.contains(ColorFallbackKind.P3)) {
+                res.append(allocator, this.getFallback(allocator, ColorFallbackKind.P3));
+            }
+
+            // Convert original to lab if needed (e.g. if oklab is not supported but lab is).
+            if (fallbacks.contains(ColorFallbackKind.LAB)) {
+                this.* = this.getFallback(allocator, ColorFallbackKind.LAB);
+            }
+        } else if (res.pop()) |last| {
+            // Prefixed property with no unprefixed version.
+            // Replace self with the last prefixed version so that it doesn't
+            // get duplicated when the caller pushes the original value.
+            this.* = last;
+        }
+
+        return res;
+    }
+
     pub fn getFallback(this: *const @This(), allocator: Allocator, kind: css.ColorFallbackKind) Image {
         return switch (this.*) {
             .gradient => |grad| .{ .gradient = bun.create(allocator, Gradient, grad.getFallback(allocator, kind)) },

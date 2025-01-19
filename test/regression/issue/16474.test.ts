@@ -18,6 +18,9 @@ test("fs.mkdir recursive should not error on existing", async () => {
   expect(() => {
     mkdirSync("123test", { recursive: true });
     mkdirSync("123test", { recursive: true });
+
+    mkdirSync("123test/456test", { recursive: true });
+    mkdirSync("123test/456test", { recursive: true });
   }).not.toThrow();
 
   const dir2 = join(testDir, "test456");

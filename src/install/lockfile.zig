@@ -251,6 +251,52 @@ pub const LoadResult = union(enum) {
         };
     }
 
+    pub fn loadedFromBinaryLockfile(this: LoadResult) bool {
+        return switch (this) {
+            .not_found => false,
+            .err => |err| err.format == .binary,
+            .ok => |ok| ok.format == .binary,
+        };
+    }
+
+    pub fn saveFormat(this: LoadResult, manager: *const PackageManager) LockfileFormat {
+        switch (this) {
+            .not_found => {
+                // saving a lockfile for a new project. default to text lockfile
+                // unless saveTextLockfile is false in bunfig
+                const save_text_lockfile = manager.options.save_text_lockfile orelse true;
+                return if (save_text_lockfile) .text else .binary;
+            },
+            .err => |err| {
+                // an error occured, but we still loaded from an existing lockfile
+                if (manager.options.save_text_lockfile) |save_text_lockfile| {
+                    if (save_text_lockfile) {
+                        return .text;
+                    }
+                }
+                return err.format;
+            },
+            .ok => |ok| {
+                // loaded from an existing lockfile
+                if (manager.options.save_text_lockfile) |save_text_lockfile| {
+                    if (save_text_lockfile) {
+                        return .text;
+                    }
+
+                    if (ok.was_migrated) {
+                        return .binary;
+                    }
+                }
+
+                if (ok.was_migrated) {
+                    return .text;
+                }
+
+                return ok.format;
+            },
+        }
+    }
+
     pub const Step = enum { open_file, read_file, parse_file, migrating };
 };
 

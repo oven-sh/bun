@@ -8,7 +8,7 @@ const isDate = types.isDate;
 
 // Private exports
 // `fs` points to the return value of `node_fs_binding.zig`'s `createBinding` function.
-const { kUnref, fs } = promises.$data;
+const { fs } = promises.$data;
 
 const constants = $processBindingConstants.fs;
 

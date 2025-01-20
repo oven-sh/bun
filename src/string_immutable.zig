@@ -1934,6 +1934,11 @@ pub fn toNTPath(wbuf: []u16, utf8: []const u8) [:0]u16 {
 
     // UNC absolute path, replace leading '\\' with '\??\UNC\'
     if (strings.hasPrefixComptime(utf8, "\\\\")) {
+        if (strings.hasPrefixComptime(utf8[2..], bun.windows.long_path_prefix_u8[2..])) {
+            const prefix = bun.windows.nt_object_prefix;
+            wbuf[0..prefix.len].* = prefix;
+            return wbuf[0 .. toWPathNormalized(wbuf[prefix.len..], utf8[4..]).len + prefix.len :0];
+        }
         const prefix = bun.windows.nt_unc_object_prefix;
         wbuf[0..prefix.len].* = prefix;
         return wbuf[0 .. toWPathNormalized(wbuf[prefix.len..], utf8[2..]).len + prefix.len :0];
@@ -1956,6 +1961,11 @@ pub fn toNTPath16(wbuf: []u16, path: []const u16) [:0]u16 {
     }
 
     if (strings.hasPrefixComptimeUTF16(path, "\\\\")) {
+        if (strings.hasPrefixComptimeUTF16(path[2..], bun.windows.long_path_prefix_u8[2..])) {
+            const prefix = bun.windows.nt_object_prefix;
+            wbuf[0..prefix.len].* = prefix;
+            return wbuf[0 .. toWPathNormalized16(wbuf[prefix.len..], path[4..]).len + prefix.len :0];
+        }
         const prefix = bun.windows.nt_unc_object_prefix;
         wbuf[0..prefix.len].* = prefix;
         return wbuf[0 .. toWPathNormalized16(wbuf[prefix.len..], path[2..]).len + prefix.len :0];

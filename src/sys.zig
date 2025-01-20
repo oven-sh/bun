@@ -3098,8 +3098,8 @@ pub fn directoryExistsAt(dir: anytype, subpath: anytype) JSC.Maybe(bool) {
         };
         var basic_info: w.FILE_BASIC_INFORMATION = undefined;
         const rc = kernel32.NtQueryAttributesFile(&attr, &basic_info);
-        if (rc == .OBJECT_NAME_INVALID) {
-            bun.Output.warn("internal error: invalid object name: {}", .{bun.fmt.fmtOSPath(path, .{})});
+        if (rc == .OBJECT_NAME_INVALID or rc == .BAD_NETWORK_PATH) {
+            bun.Output.warn("internal error: {s}: {}", .{ @tagName(rc), bun.fmt.fmtOSPath(path, .{}) });
         }
         if (JSC.Maybe(bool).errnoSys(rc, .access)) |err| {
             syslog("NtQueryAttributesFile({}, {}, O_DIRECTORY | O_RDONLY, 0) = {} {d}", .{ dir_fd, bun.fmt.fmtOSPath(path, .{}), err, rc });

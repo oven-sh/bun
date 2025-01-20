@@ -3075,6 +3075,7 @@ pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.C.E {
         else => |t| {
             if (bun.Environment.isDebug) {
                 bun.Output.warn("Called translateNTStatusToErrno with {s} which does not have a mapping to errno.", .{@tagName(t)});
+                bun.crash_handler.dumpCurrentStackTrace(null);
             }
             return .UNKNOWN;
         },

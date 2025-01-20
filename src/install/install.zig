@@ -1562,7 +1562,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             state.buf[i] = 0;
             const fullpath = state.buf[0..i :0];
 
-            node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false);
+            _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false);
             state.to_copy_buf = state.buf[fullpath.len..];
 
             const cache_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(state.cached_package_dir.fd, &state.buf2, state.buf2.len, 0);

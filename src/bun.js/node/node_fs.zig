@@ -2563,12 +2563,8 @@ pub const Arguments = struct {
                     const arg_length = arguments.next().?;
                     arguments.eat();
 
-                    if (buffer.buffer.len == 0) {
-                        return JSC.Error.ERR_INVALID_ARG_VALUE.throw(ctx, "The argument 'buffer' is empty and cannot be written.", .{});
-                    }
-
                     if (arg_length.isNumber() or arg_length.isBigInt()) {
-                        args.length = @intCast(try JSC.Node.validators.validateInteger(ctx, arg_length, "length", 0, @intCast(buf_len - args.offset)));
+                        args.length = @intCast(try JSC.Node.validators.validateInteger(ctx, arg_length, "length", 0, std.math.maxInt(i64)));
                         defined_length = true;
                     }
 

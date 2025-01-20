@@ -753,7 +753,6 @@ if (isDockerEnabled()) {
   test("Throw syntax error", async () => {
     await using sql = postgres({ ...options, max: 1 });
     const err = await sql`wat 1`.catch(x => x);
-    console.log(err);
     expect(err.code).toBe("ERR_POSTGRES_SYNTAX_ERROR");
     expect(err.errno).toBe("42601");
     expect(err).toBeInstanceOf(SyntaxError);

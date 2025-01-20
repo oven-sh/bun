@@ -1432,8 +1432,7 @@ pub const RunCommand = struct {
             var list = std.ArrayList(u8).init(stack_fallback.get());
             errdefer list.deinit();
 
-            const stdin_file = bun.sys.File{ .handle = @enumFromInt(std.io.getStdIn().handle) };
-            stdin_file.reader().readAllArrayList(&list, 1024 * 1024 * 1024) catch return false;
+            bun.Output.buffered_stdin.reader().readAllArrayList(&list, 1024 * 1024 * 1024) catch return false;
 
             ctx.runtime_options.eval.script = list.items;
 

@@ -826,7 +826,7 @@ function createConnection(
     database,
     sslMode,
     idleTimeout = 0,
-    connectionTimeout = 30,
+    connectionTimeout = 30 * 1000,
     maxLifetime = 0,
   },
   onConnected,

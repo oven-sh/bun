@@ -700,6 +700,9 @@ const realpathSync: any =
         // This function is ported 1:1 from node.js, to emulate how it is unable to
         // resolve subst drives to their underlying location. The native call is
         // able to see through that.
+        if (typeof p !== "string") {
+          p += '';
+        }
         p = getValidatedPath(p);
         throwIfNullBytesInFileName(p);
         const knownHard = new Set();
@@ -804,6 +807,9 @@ const realpath: any =
           if (typeof options === "string") encoding = options;
           else encoding = options?.encoding;
           encoding && (assertEncodingForWindows ?? $newZigFunction("types.zig", "jsAssertEncodingValid", 1))(encoding);
+        }
+        if (typeof p !== "string") {
+          p += '';
         }
         p = getValidatedPath(p);
         throwIfNullBytesInFileName(p);

@@ -3709,7 +3709,10 @@ pub const NodeFS = struct {
 
     pub fn chown(this: *NodeFS, args: Arguments.Chown, _: Flavor) Maybe(Return.Chown) {
         if (comptime Environment.isWindows) {
-            return Syscall.chown(args.path.sliceZ(&this.sync_error_buf), args.uid, args.gid);
+            return switch (Syscall.chown(args.path.sliceZ(&this.sync_error_buf), args.uid, args.gid)) {
+                .err => |err| .{ .err = err.withPath(args.path.slice()) },
+                .result => |res| .{ .result = res },
+            };
         }
 
         const path = args.path.sliceZ(&this.sync_error_buf);
@@ -3721,7 +3724,10 @@ pub const NodeFS = struct {
         const path = args.path.sliceZ(&this.sync_error_buf);
 
         if (comptime Environment.isWindows) {
-            return Syscall.chmod(path, args.mode);
+            return switch (Syscall.chmod(path, args.mode)) {
+                .err => |err| .{ .err = err.withPath(args.path.slice()) },
+                .result => |res| .{ .result = res },
+            };
         }
 
         return Maybe(Return.Chmod).errnoSysP(C.chmod(path, args.mode), .chmod, path) orelse
@@ -5508,7 +5514,10 @@ pub const NodeFS = struct {
         }
 
         if (comptime Environment.isWindows) {
-            return Syscall.rmdir(args.path.sliceZ(&this.sync_error_buf));
+            return switch (Syscall.rmdir(args.path.sliceZ(&this.sync_error_buf))) {
+                .err => |err| .{ .err = err.withPath(args.path.slice()) },
+                .result => |result| .{ .result = result },
+            };
         }
 
         return Maybe(Return.Rmdir).errnoSysP(system.rmdir(args.path.sliceZ(&this.sync_error_buf)), .rmdir, args.path.slice()) orelse
@@ -5769,7 +5778,10 @@ pub const NodeFS = struct {
 
     pub fn unlink(this: *NodeFS, args: Arguments.Unlink, _: Flavor) Maybe(Return.Unlink) {
         if (Environment.isWindows) {
-            return Syscall.unlink(args.path.sliceZ(&this.sync_error_buf));
+            return switch (Syscall.unlink(args.path.sliceZ(&this.sync_error_buf))) {
+                .err => |err| .{ .err = err.withPath(args.path.slice()) },
+                .result => |result| .{ .result = result },
+            };
         }
         return Maybe(Return.Unlink).errnoSysP(system.unlink(args.path.sliceZ(&this.sync_error_buf)), .unlink, args.path.slice()) orelse
             Maybe(Return.Unlink).success;

@@ -2,10 +2,7 @@ import { test, expect, mock } from "bun:test";
 import { getSecret } from "harness";
 import { SQL, sql } from "bun";
 
-// const TLS_POSTGRES_DATABASE_URL = getSecret("TLS_POSTGRES_DATABASE_URL");
-const TLS_POSTGRES_DATABASE_URL =
-  "postgres://Jarred-Sumner:jPJVgQGALq06@ep-holy-wind-767134.us-east-2.aws.neon.tech/neondb?required";
-
+const TLS_POSTGRES_DATABASE_URL = getSecret("TLS_POSTGRES_DATABASE_URL");
 const options = {
   url: TLS_POSTGRES_DATABASE_URL,
   tls: true,

@@ -311,19 +311,28 @@ pub const ConcurrentCppTask = struct {
 
     const EventLoopTaskNoContext = opaque {
         extern fn Bun__EventLoopTaskNoContext__performTask(task: *EventLoopTaskNoContext) void;
+        extern fn Bun__EventLoopTaskNoContext__createdInBunVm(task: *const EventLoopTaskNoContext) ?*JSC.VirtualMachine;
 
         /// Deallocates `this`
         pub fn run(this: *EventLoopTaskNoContext) void {
             Bun__EventLoopTaskNoContext__performTask(this);
         }
+
+        /// Get the VM that created this task
+        pub fn getVM(this: *const EventLoopTaskNoContext) ?*JSC.VirtualMachine {
+            return Bun__EventLoopTaskNoContext__createdInBunVm(this);
+        }
     };
 
     pub fn runFromWorkpool(task: *JSC.WorkPoolTask) void {
         var this: *ConcurrentCppTask = @fieldParentPtr("workpool_task", task);
+        // Extract all the info we need from `this` and `cpp_task` before we call functions that
+        // free them
         const cpp_task = this.cpp_task;
+        const maybe_vm = cpp_task.getVM();
         this.destroy();
         cpp_task.run();
-        if (JSC.VirtualMachine.getMainThreadVM()) |vm| {
+        if (maybe_vm) |vm| {
             vm.event_loop.unrefConcurrently();
         }
     }
@@ -332,7 +341,7 @@ pub const ConcurrentCppTask = struct {
 
     pub export fn ConcurrentCppTask__createAndRun(cpp_task: *EventLoopTaskNoContext) void {
         JSC.markBinding(@src());
-        if (JSC.VirtualMachine.getMainThreadVM()) |vm| {
+        if (cpp_task.getVM()) |vm| {
             vm.event_loop.refConcurrently();
         }
         const cpp = ConcurrentCppTask.new(.{ .cpp_task = cpp_task });

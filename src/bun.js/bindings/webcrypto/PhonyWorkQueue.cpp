@@ -13,9 +13,9 @@ Ref<PhonyWorkQueue> PhonyWorkQueue::create(WTF::ASCIILiteral name)
 
 extern "C" void ConcurrentCppTask__createAndRun(EventLoopTaskNoContext* task);
 
-void PhonyWorkQueue::dispatch(WTF::Function<void()>&& function)
+void PhonyWorkQueue::dispatch(JSC::JSGlobalObject* globalObject, WTF::Function<void()>&& function)
 {
-    ConcurrentCppTask__createAndRun(new EventLoopTaskNoContext(WTFMove(function)));
+    ConcurrentCppTask__createAndRun(new EventLoopTaskNoContext(globalObject, WTFMove(function)));
 }
 
 } // namespace Bun

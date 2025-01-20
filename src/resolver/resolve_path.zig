@@ -1545,14 +1545,14 @@ fn _joinAbsStringBufWindows(
             n -= 1;
             if (std.fs.path.isAbsoluteWindows(parts[n])) {
                 const root_of_part = parts[n][0..windowsVolumeNameLen(parts[n])[0]];
-                if (root_of_part.len == 0 or strings.eqlCaseInsensitiveASCIIICheckLength(root_of_part, root)) {
+                if (root_of_part.len == 0 or strings.eql(root_of_part, root)) {
                     break :base .{ root, parts[n][root_of_part.len..], n + 1 };
                 }
             }
         }
         // use cwd only if the root matches
         const cwd_root = cwd[0..windowsVolumeNameLen(cwd)[0]];
-        if (strings.eqlCaseInsensitiveASCIIICheckLength(cwd_root, root)) {
+        if (strings.eql(cwd_root, root)) {
             break :base .{ root, cwd[cwd_root.len..], 0 };
         } else {
             break :base .{ root, "/", 0 };
@@ -1584,7 +1584,7 @@ fn _joinAbsStringBufWindows(
 
         // skip over volume name
         const volume = part[0..windowsVolumeNameLen(part)[0]];
-        if (volume.len > 0 and !strings.eqlCaseInsensitiveASCIIICheckLength(volume, root))
+        if (volume.len > 0 and !strings.eqlLong(volume, root, true))
             continue;
 
         const part_without_vol = part[volume.len..];

@@ -2202,6 +2202,10 @@ pub const PostgresSQLConnection = struct {
                         return DataCell{ .tag = .int4, .value = .{ .int4 = bun.fmt.parseInt(i32, bytes, 0) catch 0 } };
                     }
                 },
+                .int8 => {
+                    // .int8 is a 64-bit integer always string
+                    return DataCell{ .tag = .int8, .value = .{ .int8 = bun.fmt.parseInt(i64, bytes, 0) catch 0 } };
+                },
                 .float8 => {
                     if (binary and bytes.len == 8) {
                         return DataCell{ .tag = .float8, .value = .{ .float8 = try parseBinary(.float8, f64, bytes) } };

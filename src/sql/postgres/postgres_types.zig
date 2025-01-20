@@ -387,7 +387,7 @@ pub const Tag = enum(short) {
 
         if (value.isAnyInt()) {
             const int = value.toInt64();
-            if (int >= std.math.minInt(u32) and int <= std.math.maxInt(u32)) {
+            if (int >= std.math.minInt(i32) and int <= std.math.maxInt(i32)) {
                 return .int4;
             }
 

@@ -250,8 +250,8 @@ if (!isCI && hasPsql) {
     expect((await sql`select ${null} as x`)[0].x).toBeNull();
   });
 
-  test.todo("Unsigned Integer", async () => {
-    expect((await sql`select ${0x7fffffff + 2} as x`)[0].x).toBe(0x7fffffff + 2);
+  test("Unsigned Integer", async () => {
+    expect((await sql`select ${0x7fffffff + 2} as x`)[0].x).toBe(2147483649n);
   });
 
   test("Signed Integer", async () => {

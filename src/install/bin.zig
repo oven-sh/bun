@@ -269,28 +269,79 @@ pub const Bin = extern struct {
         return .{};
     }
 
-    /// Writes value of bin to a single line, either as a string or object. Cannot be `.none` because a value is expected to be
-    /// written to the json, as a property value or array value.
-    pub fn toSingleLineJson(this: *const Bin, buf: string, extern_strings: []const ExternalString, writer: anytype) @TypeOf(writer).Error!void {
+    pub fn toJson(
+        this: *const Bin,
+        comptime style: enum { single_line, multi_line },
+        indent: if (style == .multi_line) *u32 else void,
+        buf: string,
+        extern_strings: []const ExternalString,
+        writer: anytype,
+        writeIndent: *const fn (anytype, *u32) @TypeOf(writer).Error!void,
+    ) @TypeOf(writer).Error!void {
         bun.debugAssert(this.tag != .none);
+        if (comptime style == .single_line) {
+            switch (this.tag) {
+                .none => {},
+                .file => {
+                    try writer.print("{}", .{this.value.file.fmtJson(buf, .{})});
+                },
+                .named_file => {
+                    try writer.writeByte('{');
+                    try writer.print(" {}: {} ", .{
+                        this.value.named_file[0].fmtJson(buf, .{}),
+                        this.value.named_file[1].fmtJson(buf, .{}),
+                    });
+                    try writer.writeByte('}');
+                },
+                .dir => {
+                    try writer.print("{}", .{this.value.dir.fmtJson(buf, .{})});
+                },
+                .map => {
+                    try writer.writeByte('{');
+                    const list = this.value.map.get(extern_strings);
+                    var first = true;
+                    var i: usize = 0;
+                    while (i < list.len) : (i += 2) {
+                        if (!first) {
+                            try writer.writeByte(',');
+                        }
+                        first = false;
+                        try writer.print(" {}: {}", .{
+                            list[i].value.fmtJson(buf, .{}),
+                            list[i + 1].value.fmtJson(buf, .{}),
+                        });
+                    }
+                    try writer.writeAll(" }");
+                },
+            }
+
+            return;
+        }
+
         switch (this.tag) {
             .none => {},
             .file => {
                 try writer.print("{}", .{this.value.file.fmtJson(buf, .{})});
             },
             .named_file => {
-                try writer.writeByte('{');
-                try writer.print(" {}: {} ", .{
+                try writer.writeAll("{\n");
+                indent.* += 1;
+                try writeIndent(writer, indent);
+                try writer.print("{}: {}\n", .{
                     this.value.named_file[0].fmtJson(buf, .{}),
                     this.value.named_file[1].fmtJson(buf, .{}),
                 });
+                indent.* -= 1;
+                try writeIndent(writer, indent);
                 try writer.writeByte('}');
             },
             .dir => {
                 try writer.print("{}", .{this.value.dir.fmtJson(buf, .{})});
             },
             .map => {
-                try writer.writeByte('{');
+                try writer.writeAll("{\n");
+                indent.* += 1;
+
                 const list = this.value.map.get(extern_strings);
                 var first = true;
                 var i: usize = 0;
@@ -298,13 +349,16 @@ pub const Bin = extern struct {
                     if (!first) {
                         try writer.writeByte(',');
                     }
+                    try writeIndent(writer, indent);
                     first = false;
-                    try writer.print(" {}: {}", .{
+                    try writer.print("{}: {}", .{
                         list[i].value.fmtJson(buf, .{}),
                         list[i + 1].value.fmtJson(buf, .{}),
                     });
                 }
-                try writer.writeAll(" }");
+                indent.* -= 1;
+                try writeIndent(writer, indent);
+                try writer.writeByte('}');
             },
         }
     }

@@ -66,6 +66,7 @@ threadlocal var initialized_store = false;
 const Futex = @import("../futex.zig");
 
 pub const Lockfile = @import("./lockfile.zig");
+pub const TextLockfile = @import("./bun.lock.zig");
 pub const PatchedDep = Lockfile.PatchedDep;
 const Walker = @import("../walker_skippable.zig");
 
@@ -15086,7 +15087,10 @@ pub const PackageManager = struct {
 
         // It's unnecessary work to re-save the lockfile if there are no changes
         const should_save_lockfile =
-            (load_result == .ok and load_result.ok.format == .binary and save_format == .text) or
+            (load_result == .ok and ((load_result.ok.format == .binary and save_format == .text) or
+
+            // make sure old versions are updated
+            load_result.ok.format == .text and save_format == .text and manager.lockfile.text_lockfile_version != TextLockfile.Version.current)) or
 
             // check `save_lockfile` after checking if loaded from binary and save format is text
             // because `save_lockfile` is set to false for `--frozen-lockfile`

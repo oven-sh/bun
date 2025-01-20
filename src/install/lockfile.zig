@@ -133,7 +133,7 @@ const GlobWalker = Glob.GlobWalker(ignoredWorkspacePaths, Glob.walk.SyscallAcces
 /// The version of the lockfile format, intended to prevent data corruption for format changes.
 format: FormatVersion = FormatVersion.current,
 
-text_lockfile_version: TextLockfile.Version = .v0,
+text_lockfile_version: TextLockfile.Version = TextLockfile.Version.current,
 
 meta_hash: MetaHash = zero_hash,
 
@@ -4445,13 +4445,39 @@ pub const Package = extern struct {
                     // - in the same position
                     // - shifted by a constant offset
                     while (to_i < to_deps.len) : (to_i += 1) {
-                        if (from_dep.name_hash == to_deps[to_i].name_hash) break :found;
+                        if (from_dep.name_hash == to_deps[to_i].name_hash) {
+                            const from_is_workspace_only = from_dep.behavior.isWorkspaceOnly();
+                            const to_is_workspace_only = to_deps[to_i].behavior.isWorkspaceOnly();
+
+                            if (from_is_workspace_only and to_is_workspace_only) {
+                                break :found;
+                            }
+
+                            if (from_is_workspace_only or to_is_workspace_only) {
+                                continue;
+                            }
+
+                            break :found;
+                        }
                     }
 
                     // less common, o(n^2) case
                     to_i = 0;
                     while (to_i < prev_i) : (to_i += 1) {
-                        if (from_dep.name_hash == to_deps[to_i].name_hash) break :found;
+                        if (from_dep.name_hash == to_deps[to_i].name_hash) {
+                            const from_is_workspace_only = from_dep.behavior.isWorkspaceOnly();
+                            const to_is_workspace_only = to_deps[to_i].behavior.isWorkspaceOnly();
+
+                            if (from_is_workspace_only and to_is_workspace_only) {
+                                break :found;
+                            }
+
+                            if (from_is_workspace_only or to_is_workspace_only) {
+                                continue;
+                            }
+
+                            break :found;
+                        }
                     }
 
                     // We found a removed dependency!
@@ -4732,7 +4758,8 @@ pub const Package = extern struct {
                             pm,
                         )) |dep| {
                             found_workspace = true;
-                            dependency_version = dep;
+                            dependency_version.tag = dep.tag;
+                            dependency_version.value = dep.value;
                         }
                     } else {
                         // It doesn't satisfy, but a workspace shares the same name. Override the workspace with the other dependency
@@ -4755,7 +4782,6 @@ pub const Package = extern struct {
                     if (workspace_range) |range| {
                         if (workspace_version) |ver| {
                             if (range.satisfies(ver, buf, buf)) {
-                                dependency_version.literal = path;
                                 dependency_version.value.workspace = path;
                                 break :workspace;
                             }
@@ -4764,7 +4790,6 @@ pub const Package = extern struct {
                         // important to trim before len == 0 check. `workspace:foo@      ` should install successfully
                         const version_literal = strings.trim(range.input, &strings.whitespace_chars);
                         if (version_literal.len == 0 or range.@"is *"() or Semver.Version.isTaggedVersionOnly(version_literal)) {
-                            dependency_version.literal = path;
                             dependency_version.value.workspace = path;
                             break :workspace;
                         }
@@ -4784,7 +4809,6 @@ pub const Package = extern struct {
                         return error.InstallFailed;
                     }
 
-                    dependency_version.literal = path;
                     dependency_version.value.workspace = path;
                 } else {
                     const workspace = dependency_version.value.workspace.slice(buf);
@@ -4809,7 +4833,6 @@ pub const Package = extern struct {
                         assert(path.len() > 0);
                         assert(!std.fs.path.isAbsolute(path.slice(buf)));
                     }
-                    dependency_version.literal = path;
                     dependency_version.value.workspace = path;
 
                     const workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, name_hash);

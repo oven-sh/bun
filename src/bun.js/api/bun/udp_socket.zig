@@ -639,7 +639,7 @@ pub const UDPSocket = struct {
         };
     }
 
-    pub fn finalize(this: *This) callconv(.C) void {
+    pub fn finalize(this: *This) void {
         log("Finalize {*}", .{this});
         this.deinit();
     }

@@ -910,6 +910,7 @@ pub fn normalizePathWindows(
     dir_fd: bun.FileDescriptor,
     path_: []const T,
     buf: *bun.WPathBuffer,
+    comptime opts: struct { add_nt_prefix: bool = true },
 ) Maybe([:0]const u16) {
     if (comptime T != u8 and T != u16) {
         @compileError("normalizePathWindows only supports u8 and u16 character types");
@@ -947,7 +948,7 @@ pub fn normalizePathWindows(
             }
         }
 
-        const norm = bun.path.normalizeStringGenericTZ(u16, path, buf, .{ .add_nt_prefix = true, .zero_terminate = true });
+        const norm = bun.path.normalizeStringGenericTZ(u16, path, buf, .{ .add_nt_prefix = opts.add_nt_prefix, .zero_terminate = true });
         return .{ .result = norm };
     }
 
@@ -1145,7 +1146,7 @@ fn openDirAtWindowsT(
     const wbuf = bun.WPathBufferPool.get();
     defer bun.WPathBufferPool.put(wbuf);
 
-    const norm = switch (normalizePathWindows(T, dirFd, path, wbuf)) {
+    const norm = switch (normalizePathWindows(T, dirFd, path, wbuf, .{})) {
         .err => |err| return .{ .err = err },
         .result => |norm| norm,
     };
@@ -1462,7 +1463,7 @@ pub fn openFileAtWindowsT(
     const wbuf = bun.WPathBufferPool.get();
     defer bun.WPathBufferPool.put(wbuf);
 
-    const norm = switch (normalizePathWindows(T, dirFd, path, wbuf)) {
+    const norm = switch (normalizePathWindows(T, dirFd, path, wbuf, .{})) {
         .err => |err| return .{ .err = err },
         .result => |norm| norm,
     };
@@ -3072,7 +3073,7 @@ pub fn directoryExistsAt(dir: anytype, subpath: anytype) JSC.Maybe(bool) {
         const wbuf = bun.WPathBufferPool.get();
         defer bun.WPathBufferPool.put(wbuf);
         const path = if (std.meta.Child(@TypeOf(subpath)) == u16)
-            bun.strings.addNTPathPrefixIfNeeded(wbuf, subpath)
+            bun.strings.toNTPath16(wbuf, subpath)
         else
             bun.strings.toNTPath(wbuf, subpath);
 

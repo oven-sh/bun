@@ -314,6 +314,7 @@ enum PooledConnectionFlags {
   /// preReserved is used to indicate that the connection will be reserved in the future when queryCount drops to 0
   preReserved = 1 << 2,
 }
+
 class PooledConnection {
   pool: ConnectionPool;
   connection: ReturnType<typeof createConnection>;
@@ -322,7 +323,6 @@ class PooledConnection {
   queries: Set<(err: Error) => void> = new Set();
   onFinish: ((err: Error | null) => void) | null = null;
   connectionInfo: any;
-
   flags: number = 0;
   /// queryCount is used to indicate the number of queries using the connection, if a connection is reserved or if its a transaction queryCount will be 1 independently of the number of queries
   queryCount: number = 0;
@@ -548,6 +548,7 @@ class ConnectionPool {
       }
       return;
     }
+
     if (was_reserved) {
       if (this.waitingQueue.length > 0 || this.reservedQueue.length > 0) {
         const pendingReserved = this.reservedQueue.shift();
@@ -564,7 +565,7 @@ class ConnectionPool {
       this.flushConcurrentQueries();
       return;
     }
-    if (connection.queryCount == 0) {
+    if (connection.queryCount === 0) {
       // ok we can actually bind reserved queries to it
       const pendingReserved = this.reservedQueue.shift();
       if (pendingReserved) {
@@ -661,6 +662,7 @@ class ConnectionPool {
               const { promise, resolve } = Promise.withResolvers();
               connection.onFinish = resolve;
               promises.push(promise);
+              connection.connection.close();
             }
             break;
           case PooledConnectionState.connected:
@@ -796,8 +798,11 @@ class ConnectionPool {
       this.poolStarted = true;
       const pollSize = this.connections.length;
       // pool is always at least 1 connection
-      this.connections[0] = new PooledConnection(this.connectionInfo, this);
-      this.connections[0].flags |= PooledConnectionFlags.preReserved; // lets pre reserve the first connection
+      const firstConnection = new PooledConnection(this.connectionInfo, this);
+      this.connections[0] = firstConnection;
+      if (reserved) {
+        firstConnection.flags |= PooledConnectionFlags.preReserved; // lets pre reserve the first connection
+      }
       for (let i = 1; i < pollSize; i++) {
         this.connections[i] = new PooledConnection(this.connectionInfo, this);
       }
@@ -807,7 +812,7 @@ class ConnectionPool {
       let connectionWithLeastQueries: PooledConnection | null = null;
       let leastQueries = Infinity;
       for (const connection of this.readyConnections) {
-        if (connection.flags & PooledConnectionFlags.reserved || connection.flags & PooledConnectionFlags.preReserved)
+        if (connection.flags & PooledConnectionFlags.preReserved || connection.flags & PooledConnectionFlags.reserved)
           continue;
         const queryCount = connection.queryCount;
         if (queryCount > 0) {
@@ -1067,7 +1072,7 @@ function loadOptions(o) {
     onclose,
     max,
     bigint;
-  const env = Bun.env;
+  const env = Bun.env || {};
   var sslMode: SSLMode = SSLMode.disable;
 
   if (o === undefined || (typeof o === "string" && o.length === 0)) {
@@ -1127,7 +1132,7 @@ function loadOptions(o) {
     }
     query = query.trim();
   }
-
+  o ||= {};
   hostname ||= o.hostname || o.host || env.PGHOST || "localhost";
   port ||= Number(o.port || env.PGPORT || 5432);
   username ||= o.username || o.user || env.PGUSERNAME || env.PGUSER || env.USER || env.USERNAME || "postgres";

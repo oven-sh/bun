@@ -579,6 +579,7 @@ pub const PostgresSQLQuery = struct {
         const connection: *PostgresSQLConnection = arguments[0].as(PostgresSQLConnection) orelse {
             return globalObject.throw("connection must be a PostgresSQLConnection", .{});
         };
+        connection.poll_ref.ref(globalObject.bunVM());
         var query = arguments[1];
 
         if (!query.isObject()) {
@@ -1375,7 +1376,7 @@ pub const PostgresSQLConnection = struct {
 
         this.ref();
         defer this.deref();
-        if (!this.socket.isClosed()) this.socket.close();
+        this.refAndClose();
         const on_close = this.consumeOnCloseCallback(this.globalObject) orelse return;
 
         const loop = this.globalObject.bunVM().eventLoop();
@@ -1447,6 +1448,8 @@ pub const PostgresSQLConnection = struct {
         const loop = vm.eventLoop();
         loop.enter();
         defer loop.exit();
+        this.poll_ref.unref(this.globalObject.bunVM());
+
         this.fail("Connection closed", error.ConnectionClosed);
     }
 
@@ -1460,7 +1463,7 @@ pub const PostgresSQLConnection = struct {
             .options = Data{ .temporary = this.options },
         };
         msg.writeInternal(Writer, this.writer()) catch |err| {
-            this.socket.close();
+            this.refAndClose();
             this.fail("Failed to write startup message", err);
         };
     }
@@ -1938,13 +1941,21 @@ pub const PostgresSQLConnection = struct {
         bun.default_allocator.destroy(this);
     }
 
+    fn refAndClose(this: *@This()) void {
+        if (!this.socket.isClosed()) {
+            // event loop need to be alive to close the socket
+            this.poll_ref.ref(this.globalObject.bunVM());
+            // will unref on socket close
+            this.socket.close();
+        }
+    }
+
     pub fn disconnect(this: *@This()) void {
         this.stopTimers();
 
         if (this.status == .connected) {
             this.status = .disconnected;
-            this.poll_ref.disable();
-            this.socket.close();
+            this.refAndClose();
         }
     }
 
@@ -2937,13 +2948,18 @@ pub const PostgresSQLConnection = struct {
     }
 
     pub fn consumeOnConnectCallback(this: *const PostgresSQLConnection, globalObject: *JSC.JSGlobalObject) ?JSC.JSValue {
+        debug("consumeOnConnectCallback", .{});
         const on_connect = PostgresSQLConnection.onconnectGetCached(this.js_value) orelse return null;
+        debug("consumeOnConnectCallback exists", .{});
+
         PostgresSQLConnection.onconnectSetCached(this.js_value, globalObject, .zero);
         return on_connect;
     }
 
     pub fn consumeOnCloseCallback(this: *const PostgresSQLConnection, globalObject: *JSC.JSGlobalObject) ?JSC.JSValue {
+        debug("consumeOnCloseCallback", .{});
         const on_close = PostgresSQLConnection.oncloseGetCached(this.js_value) orelse return null;
+        debug("consumeOnCloseCallback exists", .{});
         PostgresSQLConnection.oncloseSetCached(this.js_value, globalObject, .zero);
         return on_close;
     }

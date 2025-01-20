@@ -2,10 +2,12 @@ import { test, expect, mock } from "bun:test";
 import { getSecret } from "harness";
 import { SQL, sql } from "bun";
 
-const TLS_POSTGRES_DATABASE_URL = getSecret("TLS_POSTGRES_DATABASE_URL");
+// const TLS_POSTGRES_DATABASE_URL = getSecret("TLS_POSTGRES_DATABASE_URL");
+const TLS_POSTGRES_DATABASE_URL =
+  "postgres://Jarred-Sumner:jPJVgQGALq06@ep-holy-wind-767134.us-east-2.aws.neon.tech/neondb?required";
 
 const options = {
-  url: TLS_POSTGRES_DATABASE_URL!,
+  url: TLS_POSTGRES_DATABASE_URL,
   tls: true,
   adapter: "postgresql",
   max: 1,
@@ -13,7 +15,7 @@ const options = {
 };
 
 if (TLS_POSTGRES_DATABASE_URL) {
-  test("default sql", () => {
+  test("default sql", async () => {
     expect(sql.reserve).toBeDefined();
     expect(sql.options).toBeDefined();
     expect(sql[Symbol.asyncDispose]).toBeDefined();
@@ -28,12 +30,14 @@ if (TLS_POSTGRES_DATABASE_URL) {
     expect(sql.unsafe).toBeDefined();
     expect(sql.commitDistributed).toBeDefined();
     expect(sql.rollbackDistributed).toBeDefined();
+    await sql.close();
   });
   test("tls (explicit)", async () => {
     await using sql = new SQL(options);
     const [{ one, two }] = await sql`SELECT 1 as one, '2' as two`;
     expect(one).toBe(1);
     expect(two).toBe("2");
+    await sql.close();
   });
 
   test("Throws on illegal transactions", async () => {
@@ -147,7 +151,7 @@ if (TLS_POSTGRES_DATABASE_URL) {
     ).toBe("testing");
   });
 
-  test("Uncaught transaction request errosó rs bubbles to transaction", async () => {
+  test("Uncaught transaction request errors bubbles to transaction", async () => {
     await using sql = new SQL({ ...options, debug: true, idle_timeout: 1, fetch_types: false, max: 10 });
     expect(
       await sql
@@ -210,9 +214,13 @@ if (TLS_POSTGRES_DATABASE_URL) {
         });
       await sql`insert into test values(3)`;
     });
-
     expect(
-      (await Promise.all([sql.begin(sql => sql`select 1 as count`), sql.begin(sql => sql`select 1 as count`)]))
+      (
+        await Promise.all([
+          sql.begin(async sql => await sql`select 1 as count`),
+          sql.begin(async sql => await sql`select 1 as count`),
+        ])
+      )
         .map(x => x[0].count)
         .join(""),
     ).toBe("11");

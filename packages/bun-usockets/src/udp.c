@@ -138,6 +138,10 @@ int us_udp_socket_set_membership(struct us_udp_socket_t *s, const struct sockadd
     return bsd_socket_set_membership(us_poll_fd(&s->p), addr, iface, drop);
 }
 
+int us_udp_socket_set_source_specific_membership(struct us_udp_socket_t *s, const struct sockaddr_storage *source, const struct sockaddr_storage *group, const struct sockaddr_storage *iface, int drop) {
+    return bsd_socket_set_source_specific_membership(us_poll_fd(&s->p), source, group, iface, drop);
+}
+
 struct us_udp_socket_t *us_create_udp_socket(
     struct us_loop_t *loop,
     void (*data_cb)(struct us_udp_socket_t *, void *, int),

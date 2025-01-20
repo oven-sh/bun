@@ -415,6 +415,56 @@ int bsd_socket_set_membership(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_
     }
 }
 
+static int bsd_socket_set_source_specific_membership4(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_in *source, const struct sockaddr_in *group, const struct sockaddr_in *iface, int drop) {
+    struct ip_mreq_source mreq;
+    memset(&mreq, 0, sizeof(mreq));
+
+    if (iface != NULL) {
+        mreq.imr_interface.s_addr = iface->sin_addr.s_addr;
+    } else {
+        mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+    }
+
+    mreq.imr_sourceaddr.s_addr = source->sin_addr.s_addr;
+    mreq.imr_multiaddr.s_addr = group->sin_addr.s_addr;
+
+    int option = drop? IP_ADD_SOURCE_MEMBERSHIP : IP_DROP_SOURCE_MEMBERSHIP;
+
+    return setsockopt(fd, IPPROTO_IP, option, &mreq, sizeof(mreq));
+}
+
+static int bsd_socket_set_source_specific_membership6(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_in6 *source, const struct sockaddr_in6 *group, const struct sockaddr_in6 *iface, int drop) {
+    struct group_source_req mreq;
+    memset(&mreq, 0, sizeof(mreq));
+
+    if (iface != NULL) {
+        mreq.gsr_interface = iface->sin6_scope_id;
+    }
+
+    memcpy(&mreq.gsr_source, source, sizeof(mreq.gsr_source));
+    memcpy(&mreq.gsr_group, group, sizeof(mreq.gsr_group));
+
+    int option = drop? MCAST_JOIN_SOURCE_GROUP : MCAST_LEAVE_SOURCE_GROUP;
+
+    return setsockopt(fd, IPPROTO_IPV6, option, &mreq, sizeof(mreq));
+}
+
+int bsd_socket_set_source_specific_membership(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_storage *source, const struct sockaddr_storage *group, const struct sockaddr_storage *iface, int drop) {
+    if (source->ss_family == group->ss_family && group->ss_family == iface->ss_family) {
+        if (source->ss_family == AF_INET) {
+            return bsd_socket_set_source_specific_membership4(fd, (const struct sockaddr_in*) source, (const struct sockaddr_in*) group, (const struct sockaddr_in*) iface, drop);
+        } else if (source->ss_family == AF_INET6) {
+            return bsd_socket_set_source_specific_membership6(fd, (const struct sockaddr_in6*) source, (const struct sockaddr_in6*) group, (const struct sockaddr_in6*) iface, drop);
+        }
+    }
+
+#ifdef _WIN32
+    WSASetLastError(WSAEINVAL);
+#endif
+    errno = EINVAL;
+    return -1;
+}
+
 static int bsd_socket_ttl_any(LIBUS_SOCKET_DESCRIPTOR fd, int ttl, int ipv4, int ipv6) {
     if (ttl < 1 || ttl > 255) {
 #ifdef _WIN32

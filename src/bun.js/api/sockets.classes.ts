@@ -359,6 +359,14 @@ export default [
         fn: "dropMembership",
         length: 2,
       },
+      addSourceSpecificMembership: {
+        fn: "addSourceSpecificMembership",
+        length: 3,
+      },
+      dropSourceSpecificMembership: {
+        fn: "dropSourceSpecificMembership",
+        length: 3,
+      },
     },
     klass: {},
   }),

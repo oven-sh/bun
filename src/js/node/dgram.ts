@@ -85,6 +85,13 @@ function lookup6(lookup, address, callback) {
   return lookup(address || "::1", 6, callback);
 }
 
+function EINVAL(syscall) {
+  throw Object.assign(new Error(`${syscall} EINVAL`), {
+    code: "EINVAL",
+    syscall,
+  });
+}
+
 let dns;
 
 function newHandle(type, lookup) {
@@ -792,7 +799,7 @@ Socket.prototype.setMulticastInterface = function (interfaceAddress) {
     throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
   }
   if (!handle.socket.setMulticastInterface(interfaceAddress)) {
-    throw new Error("setMulticastInterface EINVAL");
+    throw EINVAL("setMulticastInterface");
   }
 };
 
@@ -807,12 +814,12 @@ Socket.prototype.addMembership = function (multicastAddress, interfaceAddress) {
   const { handle, bindState } = this[kStateSymbol];
   if (!handle?.socket) {
     if (!isIP(multicastAddress)) {
-      throw new Error("addMembership EINVAL");
+      throw EINVAL("addMembership");
     }
     throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
   }
   if (bindState === BIND_STATE_UNBOUND) {
-    this.bind(0);
+    this.bind({ port: 0, exclusive: true }, null);
   }
   return handle.socket.addMembership(multicastAddress, interfaceAddress);
 };
@@ -828,7 +835,7 @@ Socket.prototype.dropMembership = function (multicastAddress, interfaceAddress) 
   const { handle } = this[kStateSymbol];
   if (!handle?.socket) {
     if (!isIP(multicastAddress)) {
-      throw new Error("dropMembership EINVAL");
+      throw EINVAL("dropMembership");
     }
     throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
   }
@@ -836,35 +843,43 @@ Socket.prototype.dropMembership = function (multicastAddress, interfaceAddress) 
 };
 
 Socket.prototype.addSourceSpecificMembership = function (sourceAddress, groupAddress, interfaceAddress) {
-  throwNotImplemented("addSourceSpecificMembership", 10381);
-  /*
-  validateString(sourceAddress, 'sourceAddress');
-  validateString(groupAddress, 'groupAddress');
-
-  const err =
-    this[kStateSymbol].handle.addSourceSpecificMembership(sourceAddress,
-                                                          groupAddress,
-                                                          interfaceAddress);
-  if (err) {
-    throw new ErrnoException(err, 'addSourceSpecificMembership');
+  validateString(sourceAddress, "sourceAddress");
+  validateString(groupAddress, "groupAddress");
+  if (typeof interfaceAddress !== "undefined") {
+    validateString(interfaceAddress, "interfaceAddress");
   }
-  */
+
+  const { handle, bindState } = this[kStateSymbol];
+  if (!handle?.socket) {
+    if (!isIP(sourceAddress) || !isIP(groupAddress)) {
+      throw EINVAL("addSourceSpecificMembership");
+    }
+    throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
+  }
+  if (bindState === BIND_STATE_UNBOUND) {
+    this.bind(0);
+  }
+  return handle.socket.addSourceSpecificMembership(sourceAddress, groupAddress, interfaceAddress);
 };
 
 Socket.prototype.dropSourceSpecificMembership = function (sourceAddress, groupAddress, interfaceAddress) {
-  throwNotImplemented("dropSourceSpecificMembership", 10381);
-  /*
-  validateString(sourceAddress, 'sourceAddress');
-  validateString(groupAddress, 'groupAddress');
-
-  const err =
-    this[kStateSymbol].handle.dropSourceSpecificMembership(sourceAddress,
-                                                           groupAddress,
-                                                           interfaceAddress);
-  if (err) {
-    throw new ErrnoException(err, 'dropSourceSpecificMembership');
+  validateString(sourceAddress, "sourceAddress");
+  validateString(groupAddress, "groupAddress");
+  if (typeof interfaceAddress !== "undefined") {
+    validateString(interfaceAddress, "interfaceAddress");
   }
-  */
+
+  const { handle, bindState } = this[kStateSymbol];
+  if (!handle?.socket) {
+    if (!isIP(sourceAddress) || !isIP(groupAddress)) {
+      throw EINVAL("dropSourceSpecificMembership");
+    }
+    throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
+  }
+  if (bindState === BIND_STATE_UNBOUND) {
+    this.bind(0);
+  }
+  return handle.socket.dropSourceSpecificMembership(sourceAddress, groupAddress, interfaceAddress);
 };
 
 Socket.prototype.ref = function () {

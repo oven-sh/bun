@@ -455,8 +455,8 @@ pub const UDPSocket = struct {
             if (addr.family != interface.family) {
                 return globalThis.throwInvalidArguments("Family mismatch between address and interface", .{});
             }
-            break :blk this.socket.addMembership(&addr, &interface, drop);
-        } else this.socket.addMembership(&addr, null, drop);
+            break :blk this.socket.setMembership(&addr, &interface, drop);
+        } else this.socket.setMembership(&addr, null, drop);
 
         if (getUSError(res, .setsockopt, true)) |err| {
             return globalThis.throwValue(err.toJS(globalThis));
@@ -471,6 +471,54 @@ pub const UDPSocket = struct {
 
     pub fn dropMembership(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
         return this.setMembership(globalThis, callframe, true);
+    }
+
+    fn setSourceSpecificMembership(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame, drop: bool) bun.JSError!JSValue {
+        if (this.closed) {
+            return globalThis.throwValue(bun.JSC.Maybe(void).errnoSys(@as(i32, @intCast(@intFromEnum(std.posix.E.BADF))), .setsockopt).?.toJS(globalThis));
+        }
+
+        const arguments = callframe.arguments();
+        if (arguments.len < 2) {
+            return globalThis.throwInvalidArguments("Expected 2 arguments, got {}", .{arguments.len});
+        }
+
+        var source_addr: std.posix.sockaddr.storage = undefined;
+        if (!parseAddr(this, globalThis, JSC.jsNumber(0), arguments[0], &source_addr)) {
+            return globalThis.throwValue(bun.JSC.Maybe(void).errnoSys(@as(i32, @intCast(@intFromEnum(std.posix.E.INVAL))), .setsockopt).?.toJS(globalThis));
+        }
+
+        var group_addr: std.posix.sockaddr.storage = undefined;
+        if (!parseAddr(this, globalThis, JSC.jsNumber(0), arguments[1], &group_addr)) {
+            return globalThis.throwValue(bun.JSC.Maybe(void).errnoSys(@as(i32, @intCast(@intFromEnum(std.posix.E.INVAL))), .setsockopt).?.toJS(globalThis));
+        }
+
+        if (source_addr.family != group_addr.family) {
+            return globalThis.throwInvalidArguments("Family mismatch between source and group addresses", .{});
+        }
+
+        var interface: std.posix.sockaddr.storage = undefined;
+
+        const res = if (arguments.len > 2 and parseAddr(this, globalThis, JSC.jsNumber(0), arguments[2], &interface)) blk: {
+            if (source_addr.family != interface.family) {
+                return globalThis.throwInvalidArguments("Family mismatch among source, group and interface addresses", .{});
+            }
+            break :blk this.socket.setSourceSpecificMembership(&source_addr, &group_addr, &interface, drop);
+        } else this.socket.setSourceSpecificMembership(&source_addr, &group_addr, null, drop);
+
+        if (getUSError(res, .setsockopt, true)) |err| {
+            return globalThis.throwValue(err.toJS(globalThis));
+        }
+
+        return .true;
+    }
+
+    pub fn addSourceSpecificMembership(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
+        return this.setSourceSpecificMembership(globalThis, callframe, false);
+    }
+
+    pub fn dropSourceSpecificMembership(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
+        return this.setSourceSpecificMembership(globalThis, callframe, true);
     }
 
     pub fn setMulticastInterface(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {

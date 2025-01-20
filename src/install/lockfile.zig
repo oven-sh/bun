@@ -4758,7 +4758,9 @@ pub const Package = extern struct {
                             .auto,
                             false,
                         );
-                        bun.path.dangerouslyConvertPathToPosixInPlace(u8, Path.relative_to_common_path_buf[0..rel.len]);
+                        if (comptime Environment.isWindows) {
+                            bun.path.dangerouslyConvertPathToPosixInPlace(u8, Path.relative_to_common_path_buf[0..rel.len]);
+                        }
                         break :brk rel;
                     });
                     if (comptime Environment.allow_assert) {

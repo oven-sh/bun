@@ -972,6 +972,7 @@ function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize) {
         final_values.push(value);
       }
     }
+
     sqlString = normalizeStrings(final_strings, final_values);
   } else {
     sqlString = normalizeStrings(strings, values);
@@ -1385,8 +1386,16 @@ function SQL(o, e = {}) {
       ) {
         return Promise.reject(connectionClosedError());
       }
-      if ($isArray(strings) && strings[0] && typeof strings[0] === "object") {
-        return new SQLArrayParameter(strings, values);
+      if ($isArray(strings)) {
+        if (strings[0] && typeof strings[0] === "object") {
+          return new SQLArrayParameter(strings, values);
+        }
+      } else if (
+        typeof strings === "object" &&
+        !(strings instanceof Query) &&
+        !(strings instanceof SQLArrayParameter)
+      ) {
+        return new SQLArrayParameter([strings], values);
       }
       // we use the same code path as the transaction sql
       return queryFromTransaction(strings, values, pooledConnection, state.queries);
@@ -1702,8 +1711,16 @@ function SQL(o, e = {}) {
       ) {
         return Promise.reject(connectionClosedError());
       }
-      if ($isArray(strings) && strings[0] && typeof strings[0] === "object") {
-        return new SQLArrayParameter(strings, values);
+      if ($isArray(strings)) {
+        if (strings[0] && typeof strings[0] === "object") {
+          return new SQLArrayParameter(strings, values);
+        }
+      } else if (
+        typeof strings === "object" &&
+        !(strings instanceof Query) &&
+        !(strings instanceof SQLArrayParameter)
+      ) {
+        return new SQLArrayParameter([strings], values);
       }
 
       return queryFromTransaction(strings, values, pooledConnection, state.queries);
@@ -1933,8 +1950,12 @@ function SQL(o, e = {}) {
      * ]
      * sql`insert into users ${sql(users)}`
      */
-    if ($isArray(strings) && strings[0] && typeof strings[0] === "object") {
-      return new SQLArrayParameter(strings, values);
+    if ($isArray(strings)) {
+      if (strings[0] && typeof strings[0] === "object") {
+        return new SQLArrayParameter(strings, values);
+      }
+    } else if (typeof strings === "object" && !(strings instanceof Query) && !(strings instanceof SQLArrayParameter)) {
+      return new SQLArrayParameter([strings], values);
     }
 
     return queryFromPool(strings, values);

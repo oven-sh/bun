@@ -543,10 +543,10 @@ if (!isCI && hasPsql) {
     ).toBe("42703");
   });
 
-  // test.only("Fragments in transactions", async () => {
-  //   const sql = postgres({ ...options, debug: true, idle_timeout: 1, fetch_types: false });
-  //   expect((await sql.begin(sql => sql`select true as x where ${sql`1=1`}`))[0].x).toBe(true);
-  // });
+  test("Fragments in transactions", async () => {
+    const sql = postgres({ ...options, debug: true, idle_timeout: 1, fetch_types: false });
+    expect((await sql.begin(sql => sql`select true as x where ${sql`1=1`}`))[0].x).toBe(true);
+  });
 
   test("Transaction rejects with rethrown error", async () => {
     await using sql = postgres({ ...options });
@@ -754,7 +754,7 @@ if (!isCI && hasPsql) {
   });
 
   // Promise.all on multiple values in-flight doesn't work currently due to pendingValueGetcached pointing to the wrong value.
-  test.todo("Parallel connections using scram-sha-256", async () => {
+  test("Parallel connections using scram-sha-256", async () => {
     await using sql = postgres({ ...options, ...login_scram });
     return [
       true,
@@ -1348,53 +1348,49 @@ if (!isCI && hasPsql) {
     }
   });
 
-  // t('Connection errors are caught using begin()', {
-  //   timeout: 2
-  // }, async() => {
-  //   let error
-  //   try {
-  //     const sql = postgres({ host: 'localhost', port: 1 })
+  test("Connection errors are caught using begin()", async () => {
+    let error;
+    try {
+      const sql = postgres({ host: "localhost", port: 1 });
 
-  //     await sql.begin(async(sql) => {
-  //       await sql`insert into test (label, value) values (${1}, ${2})`
-  //     })
-  //   } catch (err) {
-  //     error = err
-  //   }
+      await sql.begin(async sql => {
+        await sql`insert into test (label, value) values (${1}, ${2})`;
+      });
+    } catch (err) {
+      error = err;
+    }
+    expect(error.code).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
+  });
 
-  //   return [
-  //     true,
-  //     error.code === 'ECONNREFUSED' ||
-  //     error.message === 'Connection refused (os error 61)'
-  //   ]
-  // })
+  test("dynamic table name", async () => {
+    await sql`create table test(a int)`;
+    try {
+      return expect((await sql`select * from ${sql("test")}`).length).toBe(0);
+    } finally {
+      await sql`drop table test`;
+    }
+  });
 
-  // t('dynamic table name', async() => {
-  //   await sql`create table test(a int)`
-  //   return [
-  //     0, (await sql`select * from ${ sql('test') }`).count,
-  //     await sql`drop table test`
-  //   ]
-  // })
+  test("dynamic schema name", async () => {
+    await sql`create table test(a int)`;
+    try {
+      return expect((await sql`select * from ${sql("public")}.test`).length).toBe(0);
+    } finally {
+      await sql`drop table test`;
+    }
+  });
 
-  // t('dynamic schema name', async() => {
-  //   await sql`create table test(a int)`
-  //   return [
-  //     0, (await sql`select * from ${ sql('public') }.test`).count,
-  //     await sql`drop table test`
-  //   ]
-  // })
+  test("dynamic schema and table name", async () => {
+    await sql`create table test(a int)`;
+    try {
+      return expect((await sql`select * from ${sql("public.test")}`).length).toBe(0);
+    } finally {
+      await sql`drop table test`;
+    }
+  });
 
-  // t('dynamic schema and table name', async() => {
-  //   await sql`create table test(a int)`
-  //   return [
-  //     0, (await sql`select * from ${ sql('public.test') }`).count,
-  //     await sql`drop table test`
-  //   ]
-  // })
-
-  test.todo("dynamic column name", async () => {
-    const result = await sql`select 1 as ${"\\!not_valid"}`;
+  test("dynamic column name", async () => {
+    const result = await sql`select 1 as ${sql("!not_valid")}`;
     expect(Object.keys(result[0])[0]).toBe("!not_valid");
   });
 
@@ -1406,19 +1402,27 @@ if (!isCI && hasPsql) {
   //   return [undefined, (await sql`select ${ sql({ a: 1, b: 2 }, 'a') }`)[0].b]
   // })
 
-  // t('dynamic insert', async() => {
-  //   await sql`create table test (a int, b text)`
-  //   const x = { a: 42, b: 'the answer' }
+  test("dynamic insert", async () => {
+    await sql`create table test (a int, b text)`;
+    try {
+      const x = { a: 42, b: "the answer" };
+      expect((await sql`insert into test ${sql(x)} returning *`)[0].b).toBe("the answer");
+    } finally {
+      await sql`drop table test`;
+    }
+  });
 
-  //   return ['the answer', (await sql`insert into test ${ sql(x) } returning *`)[0].b, await sql`drop table test`]
-  // })
-
-  // test.todo("dynamic insert pluck", async () => {
-  //   await sql`create table test (a int, b text)`;
-  //   const x = { a: 42, b: "the answer" };
-  //   const [{ b }] = await sql`insert into test ${sql(x, "a")} returning *`;
-  //   expect(b).toBe("the answer");
-  // });
+  test("dynamic insert pluck", async () => {
+    try {
+      await sql`create table test (a int, b text)`;
+      const x = { a: 42, b: "the answer" };
+      const [{ b, a }] = await sql`insert into test ${sql(x, "a")} returning *`;
+      expect(b).toBeNull();
+      expect(a).toBe(42);
+    } finally {
+      await sql`drop table test`;
+    }
+  });
 
   // t('dynamic in with empty array', async() => {
   //   await sql`create table test (a int)`

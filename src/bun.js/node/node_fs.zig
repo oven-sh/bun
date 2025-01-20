@@ -834,7 +834,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             var buf: bun.OSPathBuffer = undefined;
 
             const normdest: bun.OSPathSliceZ = if (Environment.isWindows)
-                switch (bun.sys.normalizePathWindows(u16, bun.invalid_fd, dest, &buf)) {
+                switch (bun.sys.normalizePathWindows(u16, bun.invalid_fd, dest, &buf, .{ .add_nt_prefix = false })) {
                     .err => |err| {
                         this.finishConcurrently(.{ .err = err });
                         return false;
@@ -3755,10 +3755,7 @@ pub const NodeFS = struct {
     pub fn mkdirRecursiveImpl(this: *NodeFS, args: Arguments.Mkdir, comptime Ctx: type, ctx: Ctx) Maybe(Return.Mkdir) {
         const buf = bun.OSPathBufferPool.get();
         defer bun.OSPathBufferPool.put(buf);
-        const path: bun.OSPathSliceZ = if (Environment.isWindows)
-            strings.toNTPath(buf, args.path.slice())
-        else
-            args.path.osPath(buf);
+        const path = args.path.osPath(buf);
 
         // TODO: remove and make it always a comptime argument
         return switch (args.always_return_none) {

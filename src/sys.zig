@@ -772,7 +772,8 @@ pub fn fstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
         };
     }
     var stat_ = mem.zeroes(bun.Stat);
-    if (Maybe(bun.Stat).errnoSysFP(syscall.fstatat(fd.int(), path, &stat_, 0), .fstatat, fd, path)) |err| {
+    const fd_valid = if (fd == bun.invalid_fd) std.posix.AT.FDCWD else fd.int();
+    if (Maybe(bun.Stat).errnoSysFP(syscall.fstatat(fd_valid, path, &stat_, 0), .fstatat, fd, path)) |err| {
         log("fstatat({}, {s}) = {s}", .{ fd, path, @tagName(err.getErrno()) });
         return err;
     }
@@ -889,6 +890,7 @@ pub fn normalizePathWindows(
     dir_fd: bun.FileDescriptor,
     path_: []const T,
     buf: *bun.WPathBuffer,
+    comptime opts: struct { add_nt_prefix: bool = true },
 ) Maybe([:0]const u16) {
     if (comptime T != u8 and T != u16) {
         @compileError("normalizePathWindows only supports u8 and u16 character types");
@@ -918,7 +920,7 @@ pub fn normalizePathWindows(
             }
         }
 
-        const norm = bun.path.normalizeStringGenericTZ(u16, path, buf, .{ .add_nt_prefix = true, .zero_terminate = true });
+        const norm = bun.path.normalizeStringGenericTZ(u16, path, buf, .{ .add_nt_prefix = opts.add_nt_prefix, .zero_terminate = true });
         return .{ .result = norm };
     }
 
@@ -1116,7 +1118,7 @@ fn openDirAtWindowsT(
     const wbuf = bun.WPathBufferPool.get();
     defer bun.WPathBufferPool.put(wbuf);
 
-    const norm = switch (normalizePathWindows(T, dirFd, path, wbuf)) {
+    const norm = switch (normalizePathWindows(T, dirFd, path, wbuf, .{})) {
         .err => |err| return .{ .err = err },
         .result => |norm| norm,
     };
@@ -1310,7 +1312,7 @@ pub fn openFileAtWindowsT(
     const wbuf = bun.WPathBufferPool.get();
     defer bun.WPathBufferPool.put(wbuf);
 
-    const norm = switch (normalizePathWindows(T, dirFd, path, wbuf)) {
+    const norm = switch (normalizePathWindows(T, dirFd, path, wbuf, .{})) {
         .err => |err| return .{ .err = err },
         .result => |norm| norm,
     };
@@ -2843,10 +2845,9 @@ pub fn directoryExistsAt(dir: anytype, subpath: anytype) JSC.Maybe(bool) {
         const wbuf = bun.WPathBufferPool.get();
         defer bun.WPathBufferPool.put(wbuf);
         const path = if (std.meta.Child(@TypeOf(subpath)) == u16)
-            bun.strings.addNTPathPrefixIfNeeded(wbuf, subpath)
+            bun.strings.toNTPath16(wbuf, subpath)
         else
             bun.strings.toNTPath(wbuf, subpath);
-        bun.path.dangerouslyConvertPathToWindowsInPlace(u16, path);
 
         const path_len_bytes: u16 = @truncate(path.len * 2);
         var nt_name = w.UNICODE_STRING{

@@ -806,10 +806,9 @@ pub const ErrorResponse = struct {
             .{ "table", table, void },
             .{ "where", where, void },
         };
-
         const error_code: JSC.Error =
             // https://www.postgresql.org/docs/8.1/errcodes-appendix.html
-            if ((code.toInt32() orelse 0) == 42601)
+            if (code.eqlComptime("42601"))
             JSC.Error.ERR_POSTGRES_SYNTAX_ERROR
         else
             JSC.Error.ERR_POSTGRES_SERVER_ERROR;

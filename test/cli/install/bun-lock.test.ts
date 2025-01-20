@@ -108,7 +108,14 @@ it("should be the default save format", async () => {
   );
 
   await runBunInstall(env, packageDir);
+  expect(await exists(join(packageDir, "bun.lockb"))).toBe(false);
+  expect(
+    (await file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234"),
+  ).toMatchSnapshot();
 
+  // adding a package will add to the text lockfile
+  await runBunInstall(env, packageDir, { packages: ["a-dep"] });
+  expect(await exists(join(packageDir, "bun.lockb"))).toBe(false);
   expect(
     (await file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234"),
   ).toMatchSnapshot();

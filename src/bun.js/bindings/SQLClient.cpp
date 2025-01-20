@@ -118,7 +118,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
     case DataCellTag::Raw: {
         Zig::GlobalObject* zigGlobal = jsCast<Zig::GlobalObject*>(globalObject);
         auto* subclassStructure = zigGlobal->JSBufferSubclassStructure();
-        auto* uint8Array = JSC::JSUint8Array::createUninitialized(globalObject, subclassStructure, cell.value.bytea[1]);
+        auto* uint8Array = JSC::JSUint8Array::createUninitialized(globalObject, subclassStructure, cell.value.raw.length);
         if (UNLIKELY(uint8Array == nullptr)) {
             return {};
         }

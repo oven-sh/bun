@@ -2282,6 +2282,7 @@ declare module "bun" {
      * const result = await sql.unsafe(`select ${danger} from users where id = ${dragons}`)
      */
     unsafe(string: string, values: any[]): SQLQuery;
+
     /** Current client options */
     options: SQLOptions;
 

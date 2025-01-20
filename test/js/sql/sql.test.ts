@@ -326,15 +326,17 @@ if (!isCI && hasPsql) {
   //   ['c', (await sql`select ${ sql.array(['a', 'b', 'c']) } as x`)[0].x[2]]
   // )
 
-  // t('Array of Date', async() => {
-  //   const now = new Date()
-  //   return [now.getTime(), (await sql`select ${ sql.array([now, now, now]) } as x`)[0].x[2].getTime()]
-  // })
+  // test("Array of Date", async () => {
+  //   const now = new Date();
+  //   const result = await sql`select ${sql.array([now, now, now])} as x`;
+  //   expect(result[0].x[2].getTime()).toBe(now.getTime());
+  // });
 
-  // t.only("Array of Box", async () => [
-  //   "(3,4),(1,2);(6,7),(4,5)",
-  //   (await sql`select ${"{(1,2),(3,4);(4,5),(6,7)}"}::box[] as x`)[0].x.join(";"),
-  // ]);
+  test.todo("Array of Box", async () => {
+    const result = await sql`select ${"{(1,2),(3,4);(4,5),(6,7)}"}::box[] as x`;
+    console.log(result);
+    expect(result[0].x.join(";")).toBe("(1,2);(3,4);(4,5);(6,7)");
+  });
 
   // t('Nested array n2', async() =>
   //   ['4', (await sql`select ${ sql.array([[1, 2], [3, 4]]) } as x`)[0].x[1][1]]
@@ -477,7 +479,7 @@ if (!isCI && hasPsql) {
           });
         await sql`insert into test values(3)`;
       });
-      expect((await sql`select count(1) from test`)[0].count).toBe("2");
+      expect((await sql`select count(1) from test`)[0].count).toBe(2n);
     } finally {
       await sql`drop table test`;
     }
@@ -618,21 +620,21 @@ if (!isCI && hasPsql) {
     }
   });
 
-  // t('Helpers in Transaction', async() => {
-  //   return ['1', (await sql.begin(async sql =>
-  //     await sql`select ${ sql({ x: 1 }) }`
-  //   ))[0].x]
-  // })
+  test("Helpers in Transaction", async () => {
+    const result = await sql.begin(async sql => await sql`select ${sql.unsafe("1 as x")}`);
+    expect(result[0].x).toBe(1);
+  });
 
-  // t('Undefined values throws', async() => {
-  //   let error
+  // in bun case undefined is null
+  // test("Undefined values throws", async () => {
+  //   let error;
 
   //   await sql`
-  //     select ${ undefined } as x
-  //   `.catch(x => error = x.code)
+  //     select ${undefined} as x
+  //   `.catch(x => (error = x.code));
 
-  //   return ['UNDEFINED_VALUE', error]
-  // })
+  //   expect(error).toBe("UNDEFINED_VALUE");
+  // });
 
   // t('Transform undefined', async() => {
   //   const sql = postgres({ ...options, transform: { undefined: null } })

@@ -4306,7 +4306,11 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
 
 GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction handler)
 {
-    if (handler == Bun__HTTPRequestContext__onReject) {
+    if (handler == BunServe__onResolvePlugins) {
+        return GlobalObject::PromiseFunctions::BunServe__Plugins__onResolve;
+    } else if (handler == BunServe__onRejectPlugins) {
+        return GlobalObject::PromiseFunctions::BunServe__Plugins__onReject;
+    } else if (handler == Bun__HTTPRequestContext__onReject) {
         return GlobalObject::PromiseFunctions::Bun__HTTPRequestContext__onReject;
     } else if (handler == Bun__HTTPRequestContext__onRejectStream) {
         return GlobalObject::PromiseFunctions::Bun__HTTPRequestContext__onRejectStream;

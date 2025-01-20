@@ -1698,6 +1698,12 @@ pub const Api = struct {
         /// ignore_dce_annotations
         ignore_dce_annotations: bool,
 
+        /// e.g.:
+        /// [serve]
+        /// plugins = ["tailwindcss"]
+        serve_plugins: ?[]const []const u8 = null,
+        bunfig_path: []const u8,
+
         pub fn decode(reader: anytype) anyerror!TransformOptions {
             var this = std.mem.zeroes(TransformOptions);
 

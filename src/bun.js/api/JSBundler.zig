@@ -129,6 +129,10 @@ pub const JSBundler = struct {
                 } else false;
             }
 
+            if (try config.getTruthy(globalThis, "experimentalHtml")) |enable_html| {
+                this.experimental.html = enable_html.toBoolean();
+            }
+
             // Plugins must be resolved first as they are allowed to mutate the config JSValue
             if (try config.getArray(globalThis, "plugins")) |array| {
                 const length = array.getLength(globalThis);

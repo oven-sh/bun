@@ -1724,6 +1724,7 @@ pub const Resolver = struct {
                                 var esmodule = ESModule{
                                     .conditions = switch (kind) {
                                         ast.ImportKind.require, ast.ImportKind.require_resolve => r.opts.conditions.require,
+                                        ast.ImportKind.at, ast.ImportKind.at_conditional => r.opts.conditions.style,
                                         else => r.opts.conditions.import,
                                     },
                                     .allocator = r.allocator,

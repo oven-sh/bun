@@ -49,21 +49,21 @@ function done2() {
   }
 }
 
-const SIGUSR1 = os.constants.signals.SIGUSR1;
 const SIGUSR2 = os.constants.signals.SIGUSR2;
 
 switch (process.argv.at(-1)) {
   case "SIGUSR1": {
-    const SIGNAL = os.constants.signals[process.platform === "linux" ? "SIGUSR2" : "SIGUSR1"];
-    process.on(SIGNAL, function () {
-      checkSignal(SIGNAL, arguments);
+    const signalName = process.platform === "linux" ? "SIGUSR2" : "SIGUSR1";
+    const signalNumber = os.constants.signals[signalName];
+    process.on(signalName, function () {
+      checkSignal(signalName, arguments);
       done();
     });
-    process.on(SIGNAL, function () {
-      checkSignal(SIGNAL, arguments);
+    process.on(signalName, function () {
+      checkSignal(signalName, arguments);
       done();
     });
-    raise(SIGNAL);
+    raise(signalNumber);
     break;
   }
   case "SIGUSR2": {

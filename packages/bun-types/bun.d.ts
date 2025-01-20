@@ -2275,6 +2275,13 @@ declare module "bun" {
      * @alias beginDistributed
      */
     distributed(name: string, fn: SQLTransactionContextCallback): Promise<any>;
+    /**If you know what you're doing, you can use unsafe to pass any string you'd like.
+     * Please note that this can lead to SQL injection if you're not careful.
+     * You can also nest sql.unsafe within a safe sql expression. This is useful if only part of your fraction has unsafe elements.
+     * @example
+     * const result = await sql.unsafe(`select ${danger} from users where id = ${dragons}`)
+     */
+    unsafe(string: string, values: any[]): SQLQuery;
     /** Current client options */
     options: SQLOptions;
 

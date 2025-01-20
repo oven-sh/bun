@@ -2164,13 +2164,13 @@ pub const PostgresSQLConnection = struct {
                                         .ptr = null,
                                         .len = 0,
                                         .byte_len = 0,
-                                        .type = tag.toJSTypedArrayType(),
+                                        .type = try tag.toJSTypedArrayType(),
                                     },
                                 },
                             };
                         }
 
-                        const elements = tag.pgArrayType().init(bytes).slice();
+                        const elements = (try tag.pgArrayType()).init(bytes).slice();
 
                         return DataCell{
                             .tag = .typed_array,
@@ -2180,7 +2180,7 @@ pub const PostgresSQLConnection = struct {
                                     .ptr = if (elements.len > 0) @ptrCast(elements.ptr) else null,
                                     .len = @truncate(elements.len),
                                     .byte_len = @truncate(bytes.len),
-                                    .type = tag.toJSTypedArrayType(),
+                                    .type = try tag.toJSTypedArrayType(),
                                 },
                             },
                         };

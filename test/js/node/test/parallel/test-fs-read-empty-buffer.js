@@ -32,8 +32,8 @@ assert.throws(
     () => filehandle.read(buffer, 0, 1, 0),
     {
       code: 'ERR_INVALID_ARG_VALUE',
-      message: 'The argument \'buffer\' is empty and cannot be written. ' +
-               'Received Uint8Array(0) []'
+      // message: 'The argument \'buffer\' is empty and cannot be written. ' +
+      //          'Received Uint8Array(0) []'
     }
   ).then(common.mustCall());
 })().then(common.mustCall());

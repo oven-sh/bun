@@ -364,7 +364,7 @@ int bsd_socket_multicast_interface(LIBUS_SOCKET_DESCRIPTOR fd, const struct sock
 
     if (addr->ss_family == AF_INET) {
         const struct sockaddr_in *addr4 = (const struct sockaddr_in*) addr;
-        int first_octet = htonl(addr4->sin_addr.s_addr) >> 24;
+        int first_octet = ntohl(addr4->sin_addr.s_addr) >> 24;
         // 224.0.0.0 through 239.255.255.255 (224.0.0.0/4) are multicast addresses
         // and thus not valid interface addresses.
         if (!(224 <= first_octet && first_octet <= 239)) {

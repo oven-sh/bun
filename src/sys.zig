@@ -215,6 +215,7 @@ pub const Tag = enum(u8) {
     readlink,
     rename,
     stat,
+    statfs,
     symlink,
     symlinkat,
     unlink,
@@ -708,6 +709,26 @@ pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
 
         if (Maybe(bun.Stat).errnoSysP(rc, .stat, path)) |err| return err;
         return Maybe(bun.Stat){ .result = stat_ };
+    }
+}
+
+pub fn statfs(path: [:0]const u8) Maybe(bun.StatFS) {
+    if (Environment.isWindows) {
+        return .{ .err = Error.fromCode(.ENOSYS, .statfs) };
+    } else {
+        var statfs_ = mem.zeroes(bun.StatFS);
+        const rc = if (Environment.isLinux)
+            C.translated.statfs(path, &statfs_)
+        else if (Environment.isMac)
+            C.translated.statfs(path, &statfs_)
+        else
+            @compileError("Unsupported platform");
+
+        if (comptime Environment.allow_assert)
+            log("statfs({s}) = {d}", .{ bun.asByteSlice(path), rc });
+
+        if (Maybe(bun.StatFS).errnoSysP(rc, .statfs, path)) |err| return err;
+        return Maybe(bun.StatFS){ .result = statfs_ };
     }
 }
 

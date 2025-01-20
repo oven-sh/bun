@@ -590,7 +590,9 @@ export default [
       rmdir: { fn: "rmdir", length: 3 },
       rmdirSync: { fn: "rmdirSync", length: 2 },
       stat: { fn: "stat", length: 1 },
+      statfs: { fn: "statfs", length: 2 },
       statSync: { fn: "statSync", length: 1 },
+      statfsSync: { fn: "statfsSync", length: 2 },
       symlink: { fn: "symlink", length: 4 },
       symlinkSync: { fn: "symlinkSync", length: 3 },
       truncate: { fn: "truncate", length: 3 },
@@ -612,6 +614,74 @@ export default [
       realpathNativeSync: { fn: "realpathNativeSync", length: 3 },
       Dirent: { getter: "getDirent" },
       Stats: { getter: "getStats" },
+    },
+  }),
+  define({
+    name: "StatFs",
+    construct: true,
+    finalize: true,
+    klass: {},
+    JSType: "0b11101110",
+
+    supportsObjectCreate: true,
+
+    // TODO: make these own properties to pass test-fs-statfs.js
+    proto: {
+      type: {
+        getter: "fstype",
+      },
+      bsize: {
+        getter: "bsize",
+      },
+      blocks: {
+        getter: "blocks",
+      },
+      bfree: {
+        getter: "bfree",
+      },
+      bavail: {
+        getter: "bavail",
+      },
+      files: {
+        getter: "files",
+      },
+      ffree: {
+        getter: "ffree",
+      },
+    },
+  }),
+  define({
+    name: "BigIntStatFs",
+    construct: true,
+    finalize: true,
+    klass: {},
+    JSType: "0b11101110",
+
+    supportsObjectCreate: true,
+
+    // TODO: make these own properties to pass test-fs-statfs.js
+    proto: {
+      type: {
+        getter: "fstype",
+      },
+      bsize: {
+        getter: "bsize",
+      },
+      blocks: {
+        getter: "blocks",
+      },
+      bfree: {
+        getter: "bfree",
+      },
+      bavail: {
+        getter: "bavail",
+      },
+      files: {
+        getter: "files",
+      },
+      ffree: {
+        getter: "ffree",
+      },
     },
   }),
 ];

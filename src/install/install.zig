@@ -7433,6 +7433,12 @@ pub const PackageManager = struct {
                     this.cache_directory = cache_dir;
                 }
 
+                if (config.ignore_scripts) |ignore_scripts| {
+                    if (ignore_scripts) {
+                        this.do.run_scripts = false;
+                    }
+                }
+
                 this.explicit_global_directory = config.global_dir orelse this.explicit_global_directory;
             }
 

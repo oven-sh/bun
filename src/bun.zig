@@ -2276,6 +2276,11 @@ const WindowsStat = extern struct {
 };
 
 pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.posix.Stat;
+pub const StatFS = switch (Environment.os) {
+    .mac => C.translated.struct_statfs,
+    .linux => C.translated.struct_statfs,
+    else => windows.libuv.uv_statfs_t,
+};
 
 pub var argv: [][:0]const u8 = &[_][:0]const u8{};
 

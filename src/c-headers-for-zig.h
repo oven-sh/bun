@@ -21,3 +21,9 @@
 // AI_ADDRCONFIG
 #include <netdb.h>
 #endif
+
+#if DARWIN
+#include <sys/mount.h>
+#elif LINUX
+#include <sys/statfs.h>
+#endif

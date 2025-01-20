@@ -61,7 +61,9 @@ async function startContainer(): Promise<{ port: number; containerName: string }
     }
 
     // Start the container
-    await execAsync(`${dockerCLI} run -d --name ${containerName} -p ${port}:5432 custom-postgres`);
+    await execAsync(
+      `${dockerCLI} run --sysctl net.ipv6.conf.all.disable_ipv6=1 --sysctl net.bridge.bridge-nf-call-ip6tables=1 --sysctl net.bridge.bridge-nf-call-iptables=1 -d --name ${containerName} -p ${port}:5432 custom-postgres`,
+    );
 
     // Wait for PostgreSQL to be ready
     await waitForPostgres(port);

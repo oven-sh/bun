@@ -1,9 +1,6 @@
 # Dockerfile
 FROM postgres:15
 
-# Copy custom pg_hba.conf
-# COPY pg_hba.conf /etc/postgresql/pg_hba.conf
-
 # Create initialization script
 RUN echo '#!/bin/bash\n\
 set -e\n\

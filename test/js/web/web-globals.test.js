@@ -30,6 +30,7 @@ test("exists", () => {
   expect(typeof PerformanceResourceTiming !== "undefined").toBe(true);
   expect(typeof PerformanceServerTiming !== "undefined").toBe(true);
   expect(typeof PerformanceTiming !== "undefined").toBe(true);
+  expect(typeof Navigator !== "undefined").toBe(true);
 });
 
 const globalSetters = [
@@ -239,7 +240,7 @@ test("navigator", () => {
   } else if (isWindows) {
     expect(navigator.platform).toBe("Win32");
   } else if (isLinux) {
-    expect(navigator.platform).toBe("Linux x86_64");
+    expect(navigator.platform).toBe(`Linux ${process.arch === "x64" ? "x86_64" : process.arch}`);
   }
 });
 

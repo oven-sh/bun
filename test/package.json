@@ -15,6 +15,8 @@
     "@grpc/grpc-js": "1.12.0",
     "@grpc/proto-loader": "0.7.10",
     "@napi-rs/canvas": "0.1.65",
+    "@nestjs/common": "11.0.3",
+    "@nestjs/core": "11.0.3",
     "@prisma/client": "5.8.0",
     "@remix-run/react": "2.10.3",
     "@remix-run/serve": "2.10.3",

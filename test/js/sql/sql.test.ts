@@ -1,13 +1,88 @@
-import { sql } from "bun";
+import { sql, SQL } from "bun";
 const postgres = (...args) => new sql(...args);
-import { expect, test, mock } from "bun:test";
+import { expect, test, mock, beforeAll, afterAll } from "bun:test";
 import { $ } from "bun";
 import { bunExe, isCI, withoutAggressiveGC } from "harness";
 import path from "path";
 
-const hasPsql = Bun.which("psql");
-if (!isCI && hasPsql) {
-  require("./bootstrap.js");
+import { exec } from "child_process";
+import { promisify } from "util";
+
+const execAsync = promisify(exec);
+import net from "net";
+
+async function findRandomPort() {
+  return new Promise((resolve, reject) => {
+    // Create a server to listen on a random port
+    const server = net.createServer();
+    server.listen(0, () => {
+      const port = server.address().port;
+      server.close(() => resolve(port));
+    });
+    server.on("error", reject);
+  });
+}
+async function waitForPostgres(port) {
+  for (let i = 0; i < 3; i++) {
+    try {
+      const sql = new SQL(`postgres://postgres@localhost:${port}/postgres`, {
+        idle_timeout: 20,
+        max_lifetime: 60 * 30,
+      });
+
+      await sql`SELECT 1`;
+      await sql.end();
+      console.log("PostgreSQL is ready!");
+      return true;
+    } catch (error) {
+      console.log(`Waiting for PostgreSQL... (${i + 1}/3)`);
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
+  throw new Error("PostgreSQL failed to start");
+}
+
+async function startContainer(): Promise<{ port: number; containerName: string }> {
+  try {
+    // Build the Docker image
+    console.log("Building Docker image...");
+    const dockerfilePath = path.join(import.meta.dir, "Dockerfile");
+    await execAsync(`docker build --pull --rm -f "${dockerfilePath}" -t custom-postgres .`);
+    const port = await findRandomPort();
+    const containerName = `postgres-test-${port}`;
+    // Check if container exists and remove it
+    try {
+      await execAsync(`docker rm -f ${containerName}`);
+    } catch (error) {
+      // Container might not exist, ignore error
+    }
+
+    // Start the container
+    await execAsync(`docker run -d --name ${containerName} -p ${port}:5432 custom-postgres`);
+
+    // Wait for PostgreSQL to be ready
+    await waitForPostgres(port);
+    return {
+      port,
+      containerName,
+    };
+  } catch (error) {
+    console.error("Error:", error);
+    process.exit(1);
+  }
+}
+
+const hasDocker = Bun.which("docker");
+if (hasDocker) {
+  const container: { port: number; containerName: string } = await startContainer();
+  afterAll(async () => {
+    try {
+      await execAsync(`docker stop -t 0 ${container.containerName}`);
+      await execAsync(`docker rm -f ${container.containerName}`);
+    } catch (error) {}
+  });
+
+  // require("./bootstrap.js");
 
   // macOS location: /opt/homebrew/var/postgresql@14/pg_hba.conf
   // --- Expected pg_hba.conf ---
@@ -35,33 +110,36 @@ if (!isCI && hasPsql) {
   // host replication all 127.0.0.1/32 trust
   // host replication all ::1/128 trust
   // --- Expected pg_hba.conf ---
-  process.env.DATABASE_URL = "postgres://bun_sql_test@localhost:5432/bun_sql_test";
+  process.env.DATABASE_URL = `postgres://bun_sql_test@localhost:${container.port}/bun_sql_test`;
 
   const login = {
     username: "bun_sql_test",
+    port: container.port,
   };
 
   const login_md5 = {
     username: "bun_sql_test_md5",
     password: "bun_sql_test_md5",
+    port: container.port,
   };
 
   const login_scram = {
     username: "bun_sql_test_scram",
     password: "bun_sql_test_scram",
+    port: container.port,
   };
 
   const options = {
     db: "bun_sql_test",
     username: login.username,
     password: login.password,
-    idle_timeout: 0,
-    connect_timeout: 0,
+    port: container.port,
     max: 1,
   };
 
   test("Connects with no options", async () => {
-    const sql = postgres({ max: 1 });
+    // we need at least the usename and port
+    await using sql = postgres({ max: 1, port: container.port, username: login.username });
 
     const result = (await sql`select 1 as x`)[0].x;
     sql.close();
@@ -509,20 +587,20 @@ if (!isCI && hasPsql) {
   //   }
   // });
 
-  // test("Prepared transaction", async () => {
-  //   await sql`create table test (a int)`;
+  test("Prepared transaction", async () => {
+    await sql`create table test (a int)`;
 
-  //   try {
-  //     await sql.beginDistributed("tx1", async sql => {
-  //       await sql`insert into test values(1)`;
-  //     });
+    try {
+      await sql.beginDistributed("tx1", async sql => {
+        await sql`insert into test values(1)`;
+      });
 
-  //     await sql.commitDistributed("tx1");
-  //     expect((await sql`select count(1) from test`)[0].count).toBe("1");
-  //   } finally {
-  //     await sql`drop table test`;
-  //   }
-  // });
+      await sql.commitDistributed("tx1");
+      expect((await sql`select count(1) from test`)[0].count).toBe("1");
+    } finally {
+      await sql`drop table test`;
+    }
+  });
 
   test("Transaction requests are executed implicitly", async () => {
     const sql = postgres({ ...options, debug: true, idle_timeout: 1, fetch_types: false });
@@ -664,7 +742,14 @@ if (!isCI && hasPsql) {
     true,
     await new Promise((resolve, reject) => {
       const sql = postgres(
-        "postgres://" + login_md5.username + ":" + (login_md5.password || "") + "@localhost:5432/" + options.db,
+        "postgres://" +
+          login_md5.username +
+          ":" +
+          (login_md5.password || "") +
+          "@localhost:" +
+          container.port +
+          "/" +
+          options.db,
       );
       sql`select 1`.then(() => resolve(true), reject);
     }),
@@ -1894,9 +1979,7 @@ if (!isCI && hasPsql) {
     let i = 1;
 
     for (const row of result) {
-      if (row.generate_series !== i++) {
-        throw new Error(`Row out of order at index ${i - 1}`);
-      }
+      expect(row.generate_series).toBe(i++);
     }
   }, 10000);
 

@@ -1,6 +1,6 @@
 import { test, expect, mock } from "bun:test";
 import { getSecret } from "harness";
-import { SQL } from "bun";
+import { SQL, sql } from "bun";
 
 const TLS_POSTGRES_DATABASE_URL = getSecret("TLS_POSTGRES_DATABASE_URL");
 
@@ -9,9 +9,26 @@ const options = {
   tls: true,
   adapter: "postgresql",
   max: 1,
+  // connectionTimeout: 30,
 };
 
 if (TLS_POSTGRES_DATABASE_URL) {
+  test("default sql", () => {
+    expect(sql.reserve).toBeDefined();
+    expect(sql.options).toBeDefined();
+    expect(sql[Symbol.asyncDispose]).toBeDefined();
+    expect(sql.begin).toBeDefined();
+    expect(sql.beginDistributed).toBeDefined();
+    expect(sql.distributed).toBeDefined();
+    expect(sql.unsafe).toBeDefined();
+    expect(sql.end).toBeDefined();
+    expect(sql.close).toBeDefined();
+    expect(sql.transaction).toBeDefined();
+    expect(sql.distributed).toBeDefined();
+    expect(sql.unsafe).toBeDefined();
+    expect(sql.commitDistributed).toBeDefined();
+    expect(sql.rollbackDistributed).toBeDefined();
+  });
   test("tls (explicit)", async () => {
     await using sql = new SQL(options);
     const [{ one, two }] = await sql`SELECT 1 as one, '2' as two`;
@@ -103,7 +120,7 @@ if (TLS_POSTGRES_DATABASE_URL) {
           });
         await sql`insert into ${sql(table_id)} values(3)`;
       });
-      expect((await sql`select count(1) from ${sql(table_id)}`)[0].count).toBe("2");
+      expect((await sql`select count(1) from ${sql(table_id)}`)[0].count).toBe(2n);
     } finally {
       await sql`DROP TABLE IF EXISTS ${sql(table_id)}`;
     }

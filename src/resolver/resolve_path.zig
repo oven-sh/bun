@@ -527,7 +527,8 @@ pub fn relativeBufZ(buf: []u8, from: []const u8, to: []const u8) [:0]const u8 {
     return buf[0..rel.len :0];
 }
 
-pub fn relativePlatformBuf(buf: []u8, from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
+pub fn relativePlatformBuf(buf: []u8, from: []const u8, to: []const u8, comptime _platform: Platform, comptime always_copy: bool) []const u8 {
+    const platform = comptime _platform.resolve();
     const normalized_from = if (platform.isAbsolute(from)) brk: {
         if (platform == .loose and bun.Environment.isWindows) {
             // we want to invoke the windows resolution behavior but end up with a

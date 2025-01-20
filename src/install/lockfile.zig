@@ -4755,7 +4755,7 @@ pub const Package = extern struct {
                                 },
                                 .auto,
                             ),
-                            .posix,
+                            .auto,
                             false,
                         );
                     });

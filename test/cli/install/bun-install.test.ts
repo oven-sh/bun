@@ -6261,6 +6261,7 @@ it("should perform bin-linking across multiple dependencies", async () => {
     },
   });
   await writeFile(join(package_dir, "package.json"), foo_package);
+  await cp(join(import.meta.dir, "bun.lockb.bin-linking"), join(package_dir, "bun.lockb"));
   await writeFile(
     join(package_dir, "bunfig.toml"),
     `
@@ -6282,7 +6283,6 @@ cache = false
   });
   const err1 = await new Response(stderr1).text();
   expect(err1).not.toContain("error:");
-  expect(err1).toContain("Saved lockfile");
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     `bun install ${Bun.version_with_sha}`,

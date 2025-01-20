@@ -2179,8 +2179,7 @@ pub fn toWPathMaybeDir(wbuf: []u16, utf8: []const u8, comptime add_trailing_lash
     //
     // An example of this is GetFileAttributesW(L"C:\\hello/world.txt") being OK
     // but GetFileAttributesW(L"\\\\?\\C:\\hello/world.txt") is NOT
-    if (Environment.isWindows)
-        bun.path.dangerouslyConvertPathToWindowsInPlace(u16, wbuf[0..result.count]);
+    bun.path.dangerouslyConvertPathToWindowsInPlace(u16, wbuf[0..result.count]);
 
     if (add_trailing_lash and result.count > 0 and wbuf[result.count - 1] != '\\') {
         wbuf[result.count] = '\\';

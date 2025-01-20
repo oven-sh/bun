@@ -901,11 +901,14 @@ pub const PathLike = union(enum) {
             if (std.fs.path.isAbsolute(sliced)) {
                 if (sliced.len > 2 and bun.path.isDriveLetter(sliced[0]) and sliced[1] == ':' and bun.path.isSepAny(sliced[2])) {
                     // Add the long path syntax. This affects most of node:fs
-                    const rest = path_handler.PosixToWinNormalizer.resolveCWDWithExternalBufZ(@ptrCast(buf[4..]), sliced) catch @panic("Error while resolving path.");
+                    const drive_resolve_buf = bun.PathBufferPool.get();
+                    defer bun.PathBufferPool.put(drive_resolve_buf);
+                    const rest = path_handler.PosixToWinNormalizer.resolveCWDWithExternalBufZ(drive_resolve_buf, sliced) catch @panic("Error while resolving path.");
                     buf[0..4].* = bun.windows.long_path_prefix_u8;
-                    // When long path syntax is used, the slashes must be facing the correct direction.
-                    bun.path.dangerouslyConvertPathToWindowsInPlace(u8, buf[4..][0..rest.len]);
-                    return buf[0 .. 4 + rest.len :0];
+                    // When long path syntax is used, the entire string should be normalized
+                    const n = bun.path.normalizeBuf(rest, buf[4..], .windows).len;
+                    buf[4 + n] = 0;
+                    return buf[0 .. 4 + n :0];
                 }
                 return path_handler.PosixToWinNormalizer.resolveCWDWithExternalBufZ(buf, sliced) catch @panic("Error while resolving path.");
             }
@@ -948,13 +951,15 @@ pub const PathLike = union(enum) {
     pub inline fn osPathKernel32(this: PathLike, buf: *bun.PathBuffer) bun.OSPathSliceZ {
         if (comptime Environment.isWindows) {
             const s = this.slice();
+            const b = bun.PathBufferPool.get();
+            defer bun.PathBufferPool.put(b);
             if (bun.strings.hasPrefixComptime(s, "/")) {
-                const b = bun.PathBufferPool.get();
-                defer bun.PathBufferPool.put(b);
-                const resolve = path_handler.PosixToWinNormalizer.resolveCWDWithExternalBuf(b, s) catch @panic("Error while resolving path.");
-                return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), resolve);
+                const resolve = path_handler.PosixToWinNormalizer.resolveCWDWithExternalBuf(buf, s) catch @panic("Error while resolving path.");
+                const normal = path_handler.normalizeBuf(resolve, b, .windows);
+                return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), normal);
             }
-            return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), s);
+            const normal = path_handler.normalizeBuf(s, b, .windows);
+            return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), normal);
         }
 
         return sliceZWithForceCopy(this, buf, false);

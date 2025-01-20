@@ -530,12 +530,16 @@ class ConnectionPool {
           return;
         }
 
+        const waitingQueue = this.waitingQueue;
+        const reservedQueue = this.reservedQueue;
+
+        this.waitingQueue = [];
+        this.reservedQueue = [];
         // we have no connections available so lets fails
-        let pending;
-        while ((pending = this.waitingQueue.shift())) {
+        for (const pending of waitingQueue) {
           pending(connection.storedError, connection);
         }
-        while ((pending = this.reservedQueue.shift())) {
+        for (const pending of reservedQueue) {
           pending(connection.storedError, connection);
         }
       }

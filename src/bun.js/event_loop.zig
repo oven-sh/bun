@@ -323,12 +323,18 @@ pub const ConcurrentCppTask = struct {
         const cpp_task = this.cpp_task;
         this.destroy();
         cpp_task.run();
+        if (JSC.VirtualMachine.getMainThreadVM()) |vm| {
+            vm.event_loop.unrefConcurrently();
+        }
     }
 
     pub usingnamespace bun.New(@This());
 
     pub export fn ConcurrentCppTask__createAndRun(cpp_task: *EventLoopTaskNoContext) void {
         JSC.markBinding(@src());
+        if (JSC.VirtualMachine.getMainThreadVM()) |vm| {
+            vm.event_loop.refConcurrently();
+        }
         const cpp = ConcurrentCppTask.new(.{ .cpp_task = cpp_task });
         JSC.WorkPool.schedule(&cpp.workpool_task);
     }

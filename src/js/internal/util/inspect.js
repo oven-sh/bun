@@ -73,7 +73,6 @@ const MapPrototypeValues = uncurryThis(Map.prototype.values);
 const MapPrototypeKeys = uncurryThis(Map.prototype.keys);
 const MathFloor = Math.floor;
 const MathMax = Math.max;
-const MathMin = Math.min;
 const MathRound = Math.round;
 const MathSqrt = Math.sqrt;
 const MathTrunc = Math.trunc;
@@ -1623,7 +1622,7 @@ function identicalSequenceRange(a, b) {
       const rest = b.length - pos;
       if (rest > 3) {
         let len = 1;
-        const maxLen = MathMin(a.length - i, rest);
+        const maxLen = $min(a.length - i, rest);
         // Count the number of consecutive entries.
         while (maxLen > len && a[i + len] === b[pos + len]) {
           len++;
@@ -1873,7 +1872,7 @@ function groupArrayElements(ctx, output, value) {
     const averageBias = MathSqrt(actualMax - totalLength / output.length);
     const biasedMax = MathMax(actualMax - 3 - averageBias, 1);
     // Dynamically check how many columns seem possible.
-    const columns = MathMin(
+    const columns = $min(
       // Ideally a square should be drawn. We expect a character to be about 2.5
       // times as high as wide. This is the area formula to calculate a square
       // which contains n rectangles of size `actualMax * approxCharHeights`.
@@ -1914,7 +1913,7 @@ function groupArrayElements(ctx, output, value) {
     // Each iteration creates a single line of grouped entries.
     for (let i = 0; i < outputLength; i += columns) {
       // The last lines may contain less entries than columns.
-      const max = MathMin(i + columns, outputLength);
+      const max = $min(i + columns, outputLength);
       let str = "";
       let j = i;
       for (; j < max - 1; j++) {
@@ -2114,7 +2113,7 @@ function formatArrayBuffer(ctx, value) {
     return [ctx.stylize("(detached)", "special")];
   }
   let str = StringPrototypeTrim(
-    RegExpPrototypeSymbolReplace(/(.{2})/g, hexSlice(buffer, 0, MathMin(ctx.maxArrayLength, buffer.length)), "$1 "),
+    RegExpPrototypeSymbolReplace(/(.{2})/g, hexSlice(buffer, 0, $min(ctx.maxArrayLength, buffer.length)), "$1 "),
   );
   const remaining = buffer.length - ctx.maxArrayLength;
   if (remaining > 0) str += ` ... ${remaining} more byte${remaining > 1 ? "s" : ""}`;
@@ -2123,7 +2122,7 @@ function formatArrayBuffer(ctx, value) {
 
 function formatArray(ctx, value, recurseTimes) {
   const valLen = value.length;
-  const len = MathMin(MathMax(0, ctx.maxArrayLength), valLen);
+  const len = $min(MathMax(0, ctx.maxArrayLength), valLen);
 
   const remaining = valLen - len;
   const output = [];
@@ -2144,9 +2143,9 @@ function formatTypedArray(value, length, ctx, ignored, recurseTimes) {
   if (Buffer.isBuffer(value)) {
     BufferModule ??= require("node:buffer");
     const INSPECT_MAX_BYTES = $requireMap.$get("buffer")?.exports.INSPECT_MAX_BYTES ?? BufferModule.INSPECT_MAX_BYTES;
-    ctx.maxArrayLength = MathMin(ctx.maxArrayLength, INSPECT_MAX_BYTES);
+    ctx.maxArrayLength = $min(ctx.maxArrayLength, INSPECT_MAX_BYTES);
   }
-  const maxLength = MathMin(MathMax(0, ctx.maxArrayLength), length);
+  const maxLength = $min(MathMax(0, ctx.maxArrayLength), length);
   const remaining = value.length - maxLength;
   const output = new Array(maxLength);
   const elementFormatter = value.length > 0 && typeof value[0] === "number" ? formatNumber : formatBigInt;
@@ -2171,7 +2170,7 @@ function formatTypedArray(value, length, ctx, ignored, recurseTimes) {
 
 function formatSet(value, ctx, ignored, recurseTimes) {
   const length = value.size;
-  const maxLength = MathMin(MathMax(0, ctx.maxArrayLength), length);
+  const maxLength = $min(MathMax(0, ctx.maxArrayLength), length);
   const remaining = length - maxLength;
   const output = [];
   ctx.indentationLvl += 2;
@@ -2190,7 +2189,7 @@ function formatSet(value, ctx, ignored, recurseTimes) {
 
 function formatMap(value, ctx, ignored, recurseTimes) {
   const length = value.size;
-  const maxLength = MathMin(MathMax(0, ctx.maxArrayLength), length);
+  const maxLength = $min(MathMax(0, ctx.maxArrayLength), length);
   const remaining = length - maxLength;
   const output = [];
   ctx.indentationLvl += 2;
@@ -2209,7 +2208,7 @@ function formatMap(value, ctx, ignored, recurseTimes) {
 
 function formatSetIterInner(ctx, recurseTimes, entries, state) {
   const maxArrayLength = MathMax(ctx.maxArrayLength, 0);
-  const maxLength = MathMin(maxArrayLength, entries.length);
+  const maxLength = $min(maxArrayLength, entries.length);
   const output = new Array(maxLength);
   ctx.indentationLvl += 2;
   for (let i = 0; i < maxLength; i++) {
@@ -2234,7 +2233,7 @@ function formatMapIterInner(ctx, recurseTimes, entries, state) {
   // Entries exist as [key1, val1, key2, val2, ...]
   const len = entries.length / 2;
   const remaining = len - maxArrayLength;
-  const maxLength = MathMin(maxArrayLength, len);
+  const maxLength = $min(maxArrayLength, len);
   const output = new Array(maxLength);
   let i = 0;
   ctx.indentationLvl += 2;

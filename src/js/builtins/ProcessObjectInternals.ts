@@ -25,11 +25,12 @@
  */
 
 export function getStdioWriteStream(fd) {
+  $assert(typeof fd === "number", `Expected fd to be a number, got ${typeof fd}`);
   const tty = require("node:tty");
 
   let stream;
   if (tty.isatty(fd)) {
-    stream = new tty.WriteStream(null, { fd });
+    stream = new tty.WriteStream(fd);
     // TODO: this is the wrong place for this property.
     // but the TTY is technically duplex
     // see test-fs-syncwritestream.js
@@ -62,7 +63,9 @@ export function getStdioWriteStream(fd) {
   stream._isStdio = true;
   stream.fd = fd;
 
-  return [stream, stream[require("internal/shared").fileSinkSymbol]];
+  const underlyingSink = stream[require("internal/fs/streams").kWriteStreamFastPath];
+  $assert(underlyingSink);
+  return [stream, underlyingSink];
 }
 
 export function getStdinStream(fd) {

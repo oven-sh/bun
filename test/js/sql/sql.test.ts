@@ -2,14 +2,15 @@ import { sql, SQL } from "bun";
 const postgres = (...args) => new sql(...args);
 import { expect, test, mock, beforeAll, afterAll } from "bun:test";
 import { $ } from "bun";
-import { bunExe, isCI, withoutAggressiveGC } from "harness";
+import { bunExe, isCI, withoutAggressiveGC, isLinux } from "harness";
 import path from "path";
 
-import { exec } from "child_process";
+import { exec, execSync } from "child_process";
 import { promisify } from "util";
 
 const execAsync = promisify(exec);
 import net from "net";
+const dockerCLI = Bun.which("docker") as string;
 
 async function findRandomPort() {
   return new Promise((resolve, reject) => {
@@ -47,20 +48,20 @@ async function startContainer(): Promise<{ port: number; containerName: string }
     // Build the Docker image
     console.log("Building Docker image...");
     const dockerfilePath = path.join(import.meta.dir, "docker", "Dockerfile");
-    await execAsync(`docker build --pull --rm -f "${dockerfilePath}" -t custom-postgres .`, {
+    await execAsync(`${dockerCLI} build --pull --rm -f "${dockerfilePath}" -t custom-postgres .`, {
       cwd: path.join(import.meta.dir, "docker"),
     });
     const port = await findRandomPort();
     const containerName = `postgres-test-${port}`;
     // Check if container exists and remove it
     try {
-      await execAsync(`docker rm -f ${containerName}`);
+      await execAsync(`${dockerCLI} rm -f ${containerName}`);
     } catch (error) {
       // Container might not exist, ignore error
     }
 
     // Start the container
-    await execAsync(`docker run -d --name ${containerName} -p ${port}:5432 custom-postgres`);
+    await execAsync(`${dockerCLI} run -d --name ${containerName} -p ${port}:5432 custom-postgres`);
 
     // Wait for PostgreSQL to be ready
     await waitForPostgres(port);
@@ -74,13 +75,29 @@ async function startContainer(): Promise<{ port: number; containerName: string }
   }
 }
 
-const hasDocker = Bun.which("docker");
-if (hasDocker) {
+function isDockerEnabled(): boolean {
+  if (!dockerCLI) {
+    return false;
+  }
+
+  // TODO: investigate why its not starting on Linux arm64
+  if (isLinux && process.arch === "arm64") {
+    return false;
+  }
+
+  try {
+    const info = execSync(`${dockerCLI} info`, { stdio: ["ignore", "pipe", "inherit"] });
+    return info.toString().indexOf("Server Version:") !== -1;
+  } catch {
+    return false;
+  }
+}
+if (isDockerEnabled()) {
   const container: { port: number; containerName: string } = await startContainer();
   afterAll(async () => {
     try {
-      await execAsync(`docker stop -t 0 ${container.containerName}`);
-      await execAsync(`docker rm -f ${container.containerName}`);
+      await execAsync(`${dockerCLI} stop -t 0 ${container.containerName}`);
+      await execAsync(`${dockerCLI} rm -f ${container.containerName}`);
     } catch (error) {}
   });
 

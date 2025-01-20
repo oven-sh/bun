@@ -129,7 +129,7 @@ if (!isCI && hasPsql) {
     expect(err.code).toBe(`ERR_POSTGRES_IDLE_TIMEOUT`);
   });
 
-  test.skip("Max lifetime works", async () => {
+  test("Max lifetime works", async () => {
     const onClosePromise = Promise.withResolvers();
     const onclose = mock(err => {
       onClosePromise.resolve(err);
@@ -137,7 +137,7 @@ if (!isCI && hasPsql) {
     const onconnect = mock();
     const sql = postgres({
       ...options,
-      max_lifetime: 64,
+      max_lifetime: 1,
       onconnect,
       onclose,
     });
@@ -348,9 +348,9 @@ if (!isCI && hasPsql) {
   //   ['Hello "you",c:\\windows', (await sql`select ${ sql.array(['Hello "you"', 'c:\\windows']) } as x`)[0].x.join(',')]
   // )
 
-  // t.only("Escapes", async () => {
-  //   expect(Object.keys((await sql`select 1 as ${sql('hej"hej')}`)[0])[0]).toBe('hej"hej');
-  // });
+  test("Escapes", async () => {
+    expect(Object.keys((await sql`select 1 as ${sql('hej"hej')}`)[0])[0]).toBe('hej"hej');
+  });
 
   // t.only(
   //   "big query body",

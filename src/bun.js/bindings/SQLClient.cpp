@@ -129,8 +129,10 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         return uint8Array;
     }
     case DataCellTag::String: {
-        return jsString(vm, WTF::String(cell.value.string));
-        break;
+        if (cell.value.string) {
+            return jsString(vm, WTF::String(cell.value.string));
+        }
+        return jsEmptyString(vm);
     }
     case DataCellTag::Double:
         return jsDoubleNumber(cell.value.number);
@@ -163,10 +165,12 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         return uint8Array;
     }
     case DataCellTag::Json: {
-        auto str = WTF::String(cell.value.string);
-        JSC::JSValue json = JSC::JSONParse(globalObject, str);
-        return json;
-        break;
+        if (cell.value.json) {
+            auto str = WTF::String(cell.value.json);
+            JSC::JSValue json = JSC::JSONParse(globalObject, str);
+            return json;
+        }
+        return jsNull();
     }
     case DataCellTag::Array: {
         MarkedArgumentBuffer args;

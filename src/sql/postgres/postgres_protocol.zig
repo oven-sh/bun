@@ -949,7 +949,10 @@ pub const DataRow = struct {
         for (0..remaining_fields) |index| {
             const byte_length = try reader.int4();
             switch (byte_length) {
-                0 => break,
+                0 => {
+                    var empty = Data.Empty;
+                    if (!try forEach(context, @intCast(index), &empty)) break;
+                },
                 null_int4 => {
                     if (!try forEach(context, @intCast(index), null)) break;
                 },

@@ -58,6 +58,8 @@ pub const Data = union(enum) {
     temporary: []const u8,
     empty: void,
 
+    pub const Empty: Data = .{ .empty = {} };
+
     pub fn toOwned(this: @This()) !bun.ByteList {
         return switch (this) {
             .owned => this.owned,
@@ -2048,7 +2050,7 @@ pub const PostgresSQLConnection = struct {
 
         pub const Value = extern union {
             null: u8,
-            string: bun.WTF.StringImpl,
+            string: ?bun.WTF.StringImpl,
             float8: f64,
             int4: i32,
             int8: i64,
@@ -2056,7 +2058,7 @@ pub const PostgresSQLConnection = struct {
             date: f64,
             date_with_time_zone: f64,
             bytea: [2]usize,
-            json: bun.WTF.StringImpl,
+            json: ?bun.WTF.StringImpl,
             array: Array,
             typed_array: TypedArray,
             raw: Raw,
@@ -2098,10 +2100,14 @@ pub const PostgresSQLConnection = struct {
 
             switch (this.tag) {
                 .string => {
-                    this.value.string.deref();
+                    if (this.value.string) |str| {
+                        str.deref();
+                    }
                 },
                 .json => {
-                    this.value.json.deref();
+                    if (this.value.json) |str| {
+                        str.deref();
+                    }
                 },
                 .bytea => {
                     if (this.value.bytea[1] == 0) return;
@@ -2213,7 +2219,7 @@ pub const PostgresSQLConnection = struct {
                     }
                 },
                 .jsonb, .json => {
-                    return DataCell{ .tag = .json, .value = .{ .json = String.createUTF8(bytes).value.WTFStringImpl }, .free_value = 1 };
+                    return DataCell{ .tag = .json, .value = .{ .json = if (bytes.len > 0) String.createUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
                 },
                 .bool => {
                     if (binary) {
@@ -2261,7 +2267,7 @@ pub const PostgresSQLConnection = struct {
                     }
                 },
                 else => {
-                    return DataCell{ .tag = .string, .value = .{ .string = bun.String.createUTF8(bytes).value.WTFStringImpl }, .free_value = 1 };
+                    return DataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) bun.String.createUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
                 },
             }
         }
@@ -2518,6 +2524,8 @@ pub const PostgresSQLConnection = struct {
                     cells = try bun.default_allocator.alloc(DataCell, statement.fields.len);
                     free_cells = true;
                 }
+                // make sure all cells are reseted if reader short breaks the fields will just be null with is better than undefined behavior
+                @memset(cells, DataCell{ .tag = .null, .value = .{ .null = 0 } });
                 putter.list = cells;
 
                 if (request.flags.result_mode == .raw) {

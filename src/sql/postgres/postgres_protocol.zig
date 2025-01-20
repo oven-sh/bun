@@ -799,7 +799,8 @@ pub const ErrorResponse = struct {
             .{ "column", column, void },
             .{ "constraint", constraint, void },
             .{ "datatype", datatype, void },
-            .{ "errno", code, i32 },
+            // in the past this was set to i32 but postgres returns a strings lets keep it compatible
+            .{ "errno", code, void },
             .{ "position", position, i32 },
             .{ "schema", schema, void },
             .{ "table", table, void },

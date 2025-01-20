@@ -35,7 +35,7 @@ if (TLS_POSTGRES_DATABASE_URL) {
           await sql`insert into test values('hej')`;
         })
         .catch(e => e.errno),
-    ).toBe(22);
+    ).toBe("22P02");
   });
 
   test("Transaction rolls back", async () => {
@@ -136,7 +136,7 @@ if (TLS_POSTGRES_DATABASE_URL) {
       await sql
         .begin(sql => [sql`select wat`, sql`select current_setting('bun_sql.test') as x, ${1} as a`])
         .catch(e => e.errno),
-    ).toBe(42703);
+    ).toBe("42703");
   });
 
   test("Transaction rejects with rethrown error", async () => {

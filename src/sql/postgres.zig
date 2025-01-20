@@ -202,7 +202,11 @@ pub const PostgresSQLContext = struct {
         }
     }
 };
-
+pub const PostgresSQLQueryResultMode = enum(u8) {
+    objects = 0,
+    values = 1,
+    raw = 2,
+};
 pub const PostgresSQLQuery = struct {
     statement: ?*PostgresSQLStatement = null,
     query: bun.String = bun.String.empty,
@@ -212,9 +216,14 @@ pub const PostgresSQLQuery = struct {
     thisValue: JSValue = .undefined,
 
     status: Status = Status.pending,
-    is_done: bool = false,
+
     ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
-    binary: bool = false,
+
+    flags: packed struct {
+        is_done: bool = false,
+        binary: bool = false,
+        result_mode: PostgresSQLQueryResultMode = .objects,
+    } = .{},
 
     pub usingnamespace JSC.Codegen.JSPostgresSQLQuery;
     const log = bun.Output.scoped(.PostgresSQLQuery, false);
@@ -541,10 +550,21 @@ pub const PostgresSQLQuery = struct {
 
     pub fn doDone(this: *@This(), globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         _ = globalObject;
-        this.is_done = true;
+        this.flags.is_done = true;
         return .undefined;
     }
+    pub fn setMode(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        const js_mode = callframe.argument(0);
+        if (js_mode.isEmptyOrUndefinedOrNull() or !js_mode.isNumber()) {
+            return globalObject.throwInvalidArgumentType("setMode", "mode", "Number");
+        }
 
+        const mode = js_mode.coerce(i32, globalObject);
+        this.flags.result_mode = std.meta.intToEnum(PostgresSQLQueryResultMode, mode) catch {
+            return globalObject.throwInvalidArgumentTypeValue("mode", "Number", js_mode);
+        };
+        return .undefined;
+    }
     pub fn doRun(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         var arguments_ = callframe.arguments_old(2);
         const arguments = arguments_.slice();
@@ -588,7 +608,7 @@ pub const PostgresSQLQuery = struct {
 
                     // if it has params, we need to wait for ParamDescription to be received before we can write the data
                 } else {
-                    this.binary = this.statement.?.fields.len > 0;
+                    this.flags.binary = this.statement.?.fields.len > 0;
                     log("bindAndExecute", .{});
                     PostgresRequest.bindAndExecute(globalObject, this.statement.?, binding_value, columns_value, PostgresSQLConnection.Writer, writer) catch |err| {
                         if (!globalObject.hasException())
@@ -2023,6 +2043,7 @@ pub const PostgresSQLConnection = struct {
             json = 9,
             array = 10,
             typed_array = 11,
+            raw = 12,
         };
 
         pub const Value = extern union {
@@ -2038,6 +2059,7 @@ pub const PostgresSQLConnection = struct {
             json: bun.WTF.StringImpl,
             array: Array,
             typed_array: TypedArray,
+            raw: Raw,
         };
 
         pub const Array = extern struct {
@@ -2048,6 +2070,10 @@ pub const PostgresSQLConnection = struct {
                 const ptr = this.ptr orelse return &.{};
                 return ptr[0..this.len];
             }
+        };
+        pub const Raw = extern struct {
+            ptr: ?[*]const u8 = null,
+            len: u64,
         };
         pub const TypedArray = extern struct {
             head_ptr: ?[*]u8 = null,
@@ -2095,7 +2121,20 @@ pub const PostgresSQLConnection = struct {
                 else => {},
             }
         }
-
+        pub fn raw(optional_bytes: ?*Data) DataCell {
+            if (optional_bytes) |bytes| {
+                const bytes_slice = bytes.slice();
+                return DataCell{
+                    .tag = .raw,
+                    .value = .{ .raw = .{ .ptr = @ptrCast(bytes_slice.ptr), .len = bytes_slice.len } },
+                };
+            }
+            // TODO: check empty and null fields
+            return DataCell{
+                .tag = .null,
+                .value = .{ .null = 0 },
+            };
+        }
         pub fn fromBytes(binary: bool, oid: int4, bytes: []const u8, globalObject: *JSC.JSGlobalObject) !DataCell {
             switch (@as(types.Tag, @enumFromInt(@as(short, @intCast(oid))))) {
                 // TODO: .int2_array, .float8_array
@@ -2323,26 +2362,31 @@ pub const PostgresSQLConnection = struct {
                 [*]DataCell,
                 u32,
                 Flags,
+                u8, // result_mode
             ) JSValue;
 
-            pub fn toJS(this: *Putter, globalObject: *JSC.JSGlobalObject, array: JSValue, structure: JSValue, flags: Flags) JSValue {
-                return JSC__constructObjectFromDataCell(globalObject, array, structure, this.list.ptr, @truncate(this.fields.len), flags);
+            pub fn toJS(this: *Putter, globalObject: *JSC.JSGlobalObject, array: JSValue, structure: JSValue, flags: Flags, result_mode: PostgresSQLQueryResultMode) JSValue {
+                return JSC__constructObjectFromDataCell(globalObject, array, structure, this.list.ptr, @truncate(this.fields.len), flags, @intFromEnum(result_mode));
             }
 
-            pub fn put(this: *Putter, index: u32, optional_bytes: ?*Data) !bool {
+            fn putImpl(this: *Putter, index: u32, optional_bytes: ?*Data, comptime is_raw: bool) !bool {
                 const field = &this.fields[index];
                 const oid = field.type_oid;
                 debug("index: {d}, oid: {d}", .{ index, oid });
                 const cell: *DataCell = &this.list[index];
-                cell.* = if (optional_bytes) |data|
-                    try DataCell.fromBytes(this.binary, oid, data.slice(), this.globalObject)
-                else
-                    DataCell{
-                        .tag = .null,
-                        .value = .{
-                            .null = 0,
-                        },
-                    };
+                if (is_raw) {
+                    cell.* = DataCell.raw(optional_bytes);
+                } else {
+                    cell.* = if (optional_bytes) |data|
+                        try DataCell.fromBytes(this.binary, oid, data.slice(), this.globalObject)
+                    else
+                        DataCell{
+                            .tag = .null,
+                            .value = .{
+                                .null = 0,
+                            },
+                        };
+                }
                 this.count += 1;
                 cell.index = switch (field.name_or_index) {
                     // The indexed columns can be out of order.
@@ -2360,6 +2404,13 @@ pub const PostgresSQLConnection = struct {
                     .name => 0,
                 };
                 return true;
+            }
+
+            pub fn putRaw(this: *Putter, index: u32, optional_bytes: ?*Data) !bool {
+                return this.putImpl(index, optional_bytes, true);
+            }
+            pub fn put(this: *Putter, index: u32, optional_bytes: ?*Data) !bool {
+                return this.putImpl(index, optional_bytes, false);
             }
         };
     };
@@ -2406,7 +2457,7 @@ pub const PostgresSQLConnection = struct {
                             continue;
                         };
                         req.status = .binding;
-                        req.binary = stmt.fields.len > 0;
+                        req.flags.binary = stmt.fields.len > 0;
                         any = true;
                     } else {
                         break;
@@ -2433,12 +2484,23 @@ pub const PostgresSQLConnection = struct {
             .DataRow => {
                 const request = this.current() orelse return error.ExpectedRequest;
                 var statement = request.statement orelse return error.ExpectedStatement;
-                statement.checkForDuplicateFields();
+                var structure: JSValue = .undefined;
+                // explict use switch without else so if new modes are added, we don't forget to check for duplicate fields
+                switch (request.flags.result_mode) {
+                    .objects => {
+                        // check for duplicate fields
+                        statement.checkForDuplicateFields();
+                        structure = statement.structure(this.js_value, this.globalObject);
+                    },
+                    .raw, .values => {
+                        // no need to check for duplicate fields or structure
+                    },
+                }
 
                 var putter = DataCell.Putter{
                     .list = &.{},
                     .fields = statement.fields,
-                    .binary = request.binary,
+                    .binary = request.flags.binary,
                     .globalObject = this.globalObject,
                 };
 
@@ -2458,16 +2520,25 @@ pub const PostgresSQLConnection = struct {
                 }
                 putter.list = cells;
 
-                try protocol.DataRow.decode(
-                    &putter,
-                    Context,
-                    reader,
-                    DataCell.Putter.put,
-                );
+                if (request.flags.result_mode == .raw) {
+                    try protocol.DataRow.decode(
+                        &putter,
+                        Context,
+                        reader,
+                        DataCell.Putter.putRaw,
+                    );
+                } else {
+                    try protocol.DataRow.decode(
+                        &putter,
+                        Context,
+                        reader,
+                        DataCell.Putter.put,
+                    );
+                }
 
                 const pending_value = if (request.thisValue == .zero) .zero else PostgresSQLQuery.pendingValueGetCached(request.thisValue) orelse .zero;
                 pending_value.ensureStillAlive();
-                const result = putter.toJS(this.globalObject, pending_value, statement.structure(this.js_value, this.globalObject), statement.fields_flags);
+                const result = putter.toJS(this.globalObject, pending_value, structure, statement.fields_flags, request.flags.result_mode);
 
                 if (pending_value == .zero) {
                     PostgresSQLQuery.pendingValueSetCached(request.thisValue, this.globalObject, result);

@@ -23,6 +23,11 @@ function connectionClosedError() {
 }
 hideFromStack(connectionClosedError);
 
+enum SQLQueryResultMode {
+  objects = 0,
+  values = 1,
+  raw = 2,
+}
 class SQLResultArray extends PublicArray {
   static [Symbol.toStringTag] = "SQLResults";
 
@@ -30,10 +35,6 @@ class SQLResultArray extends PublicArray {
   command;
   count;
 }
-
-const rawMode_values = 1;
-const rawMode_objects = 2;
-
 const _resolve = Symbol("resolve");
 const _reject = Symbol("reject");
 const _handle = Symbol("handle");
@@ -214,14 +215,14 @@ class Query extends PublicPromise {
   raw() {
     const handle = getQueryHandle(this);
     if (!handle) return this;
-    handle.raw = rawMode_objects;
+    handle.setMode(SQLQueryResultMode.raw);
     return this;
   }
 
   values() {
     const handle = getQueryHandle(this);
     if (!handle) return this;
-    handle.raw = rawMode_values;
+    handle.setMode(SQLQueryResultMode.values);
     return this;
   }
 

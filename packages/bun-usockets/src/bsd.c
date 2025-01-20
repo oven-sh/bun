@@ -360,21 +360,21 @@ int bsd_socket_multicast_interface(LIBUS_SOCKET_DESCRIPTOR fd, const struct sock
         errno = EBADF;
         return -1;
     }
-    int opt4 = SOL_IP;
-    int opt6 = SOL_IPV6;
-#else
-    int opt4 = IPPROTO_IP;
-    int opt6 = IPPROTO_IPV6;
 #endif
 
     if (addr->ss_family == AF_INET) {
         const struct sockaddr_in *addr4 = (const struct sockaddr_in*) addr;
-        return setsockopt(fd, opt4, IP_MULTICAST_IF, &addr4->sin_addr, sizeof(addr4->sin_addr));
+        int first_octet = htonl(addr4->sin_addr.s_addr) >> 24;
+        // 224.0.0.0 through 239.255.255.255 (224.0.0.0/4) are multicast addresses
+        // and thus not valid interface addresses.
+        if (!(224 <= first_octet && first_octet <= 239)) {
+            return setsockopt(fd, IPPROTO_IP, IP_MULTICAST_IF, &addr4->sin_addr, sizeof(addr4->sin_addr));
+        }
     }
 
     if (addr->ss_family == AF_INET6) {
         const struct sockaddr_in6 *addr6 = (const struct sockaddr_in6*) addr;
-        return setsockopt(fd, opt6, IPV6_MULTICAST_IF, &addr6->sin6_scope_id, sizeof(addr6->sin6_scope_id));
+        return setsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_IF, &addr6->sin6_scope_id, sizeof(addr6->sin6_scope_id));
     }
 
 #ifdef _WIN32

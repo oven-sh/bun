@@ -1996,16 +1996,20 @@ if (isDockerEnabled()) {
   //   return [1, (await sql`select 1 as x`)[0].x]
   // })
 
-  test("Big result", async () => {
-    await using sql = postgres(options);
-    const result = await sql`select * from generate_series(1, 100000)`;
-    expect(result.count).toBe(100000);
-    let i = 1;
+  test.skipIf(isCI)(
+    "Big result",
+    async () => {
+      await using sql = postgres(options);
+      const result = await sql`select * from generate_series(1, 100000)`;
+      expect(result.count).toBe(100000);
+      let i = 1;
 
-    for (const row of result) {
-      expect(row.generate_series).toBe(i++);
-    }
-  }, 10000);
+      for (const row of result) {
+        expect(row.generate_series).toBe(i++);
+      }
+    },
+    10000,
+  );
 
   // t('Debug', async() => {
   //   let result

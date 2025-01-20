@@ -156,6 +156,7 @@ class Query extends PublicPromise {
     if (!handle) return this;
 
     this[_queryStatus] |= QueryStatus.executed;
+    // this avoids a infinite loop
     await 1;
 
     return handler(this, handle);

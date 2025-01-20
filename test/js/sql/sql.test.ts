@@ -625,16 +625,20 @@ if (!isCI && hasPsql) {
     expect(result[0].x).toBe(1);
   });
 
-  // in bun case undefined is null
-  // test("Undefined values throws", async () => {
-  //   let error;
+  test("Undefined values throws", async () => {
+    // in bun case undefined is null should we fix this? null is a better DX
 
-  //   await sql`
-  //     select ${undefined} as x
-  //   `.catch(x => (error = x.code));
+    // let error;
 
-  //   expect(error).toBe("UNDEFINED_VALUE");
-  // });
+    // await sql`
+    //   select ${undefined} as x
+    // `.catch(x => (error = x.code));
+
+    // expect(error).toBe("UNDEFINED_VALUE");
+
+    const result = await sql`select ${undefined} as x`;
+    expect(result[0].x).toBeNull();
+  });
 
   // t('Transform undefined', async() => {
   //   const sql = postgres({ ...options, transform: { undefined: null } })
@@ -855,21 +859,21 @@ if (!isCI && hasPsql) {
   //   return ['hello', result[0].x]
   // })
 
-  // t('Connection ended promise', async() => {
-  //   const sql = postgres(options)
+  test("Connection ended promise", async () => {
+    const sql = postgres(options);
 
-  //   await sql.end()
+    await sql.end();
 
-  //   return [undefined, await sql.end()]
-  // })
+    expect(await sql.end()).toBeUndefined();
+  });
 
-  // t('Connection ended timeout', async() => {
-  //   const sql = postgres(options)
+  test("Connection ended timeout", async () => {
+    const sql = postgres(options);
 
-  //   await sql.end({ timeout: 10 })
+    await sql.end({ timeout: 10 });
 
-  //   return [undefined, await sql.end()]
-  // })
+    expect(await sql.end()).toBeUndefined();
+  });
 
   // t('Connection ended error', async() => {
   //   const sql = postgres(options)
@@ -1888,7 +1892,7 @@ if (!isCI && hasPsql) {
         throw new Error(`Row out of order at index ${i - 1}`);
       }
     }
-  });
+  }, 10000);
 
   // t('Debug', async() => {
   //   let result

@@ -371,6 +371,7 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, unsigned co
 
     default:
         // not a valid result mode
+        ASSERT_NOT_REACHED();
         return jsUndefined();
     }
 }

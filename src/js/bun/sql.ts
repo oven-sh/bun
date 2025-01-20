@@ -29,7 +29,7 @@ enum SQLQueryResultMode {
   raw = 2,
 }
 const escapeIdentifier = function escape(str) {
-  return '"' + str.replace(/"/g, '""').replace(/\./g, '"."') + '"';
+  return '"' + str.replaceAll('"', '""').replaceAll(".", '"."') + '"';
 };
 class SQLResultArray extends PublicArray {
   static [Symbol.toStringTag] = "SQLResults";
@@ -676,7 +676,7 @@ class ConnectionPool {
   }
   async close(options?: { timeout?: number }) {
     if (this.closed) {
-      return Promise.reject(connectionClosedError());
+      return Promise.resolve(undefined);
     }
     let timeout = options?.timeout;
     if (timeout) {
@@ -1509,7 +1509,7 @@ function SQL(o, e = {}) {
         state.connectionState & ReservedConnectionState.closed ||
         !(state.connectionState & ReservedConnectionState.acceptQueries)
       ) {
-        return Promise.reject(connectionClosedError());
+        return Promise.resolve(undefined);
       }
       state.connectionState &= ~ReservedConnectionState.acceptQueries;
       let timeout = options?.timeout;
@@ -1798,7 +1798,7 @@ function SQL(o, e = {}) {
         state.connectionState & ReservedConnectionState.closed ||
         !(state.connectionState & ReservedConnectionState.acceptQueries)
       ) {
-        return Promise.reject(connectionClosedError());
+        return Promise.resolve(undefined);
       }
       state.connectionState &= ~ReservedConnectionState.acceptQueries;
       const transactionQueries = state.queries;

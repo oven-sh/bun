@@ -354,14 +354,27 @@ int bsd_socket_multicast_loopback(LIBUS_SOCKET_DESCRIPTOR fd, int enabled) {
 }
 
 int bsd_socket_multicast_interface(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_storage *addr) {
+#ifdef _WIN32
+    if (fd == SOCKET_ERROR){
+        WSASetLastError(WSAEBADF);
+        errno = EBADF;
+        return -1;
+    }
+    int opt4 = SOL_IP;
+    int opt6 = SOL_IPV6;
+#else
+    int opt4 = IPPROTO_IP;
+    int opt6 = IPPROTO_IPV6;
+#endif
+
     if (addr->ss_family == AF_INET) {
         const struct sockaddr_in *addr4 = (const struct sockaddr_in*) addr;
-        return setsockopt(fd, IPPROTO_IP, IP_MULTICAST_IF, &addr4->sin_addr, sizeof(addr4->sin_addr));
+        return setsockopt(fd, opt4, IP_MULTICAST_IF, &addr4->sin_addr, sizeof(addr4->sin_addr));
     }
 
     if (addr->ss_family == AF_INET6) {
         const struct sockaddr_in6 *addr6 = (const struct sockaddr_in6*) addr;
-        return setsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_IF, &addr6->sin6_scope_id, sizeof(addr6->sin6_scope_id));
+        return setsockopt(fd, opt6, IPV6_MULTICAST_IF, &addr6->sin6_scope_id, sizeof(addr6->sin6_scope_id));
     }
 
 #ifdef _WIN32

@@ -210,6 +210,7 @@ pub const Tag = enum(u8) {
     readlink,
     rename,
     stat,
+    statfs,
     symlink,
     symlinkat,
     unlink,
@@ -694,6 +695,26 @@ pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
     }
 }
 
+pub fn statfs(path: [:0]const u8) Maybe(bun.StatFS) {
+    if (Environment.isWindows) {
+        return .{ .err = Error.fromCode(.ENOSYS, .statfs) };
+    } else {
+        var statfs_ = mem.zeroes(bun.StatFS);
+        const rc = if (Environment.isLinux)
+            C.translated.statfs(path, &statfs_)
+        else if (Environment.isMac)
+            C.translated.statfs(path, &statfs_)
+        else
+            @compileError("Unsupported platform");
+
+        if (comptime Environment.allow_assert)
+            log("statfs({s}) = {d}", .{ bun.asByteSlice(path), rc });
+
+        if (Maybe(bun.StatFS).errnoSysP(rc, .statfs, path)) |err| return err;
+        return Maybe(bun.StatFS){ .result = statfs_ };
+    }
+}
+
 pub fn lstat(path: [:0]const u8) Maybe(bun.Stat) {
     if (Environment.isWindows) {
         return sys_uv.lstat(path);
@@ -772,7 +793,8 @@ pub fn fstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
         };
     }
     var stat_ = mem.zeroes(bun.Stat);
-    if (Maybe(bun.Stat).errnoSysFP(syscall.fstatat(fd.int(), path, &stat_, 0), .fstatat, fd, path)) |err| {
+    const fd_valid = if (fd == bun.invalid_fd) std.posix.AT.FDCWD else fd.int();
+    if (Maybe(bun.Stat).errnoSysFP(syscall.fstatat(fd_valid, path, &stat_, 0), .fstatat, fd, path)) |err| {
         log("fstatat({}, {s}) = {s}", .{ fd, path, @tagName(err.getErrno()) });
         return err;
     }
@@ -889,6 +911,7 @@ pub fn normalizePathWindows(
     dir_fd: bun.FileDescriptor,
     path_: []const T,
     buf: *bun.WPathBuffer,
+    comptime opts: struct { add_nt_prefix: bool = true },
 ) Maybe([:0]const u16) {
     if (comptime T != u8 and T != u16) {
         @compileError("normalizePathWindows only supports u8 and u16 character types");
@@ -918,7 +941,7 @@ pub fn normalizePathWindows(
             }
         }
 
-        const norm = bun.path.normalizeStringGenericTZ(u16, path, buf, .{ .add_nt_prefix = true, .zero_terminate = true });
+        const norm = bun.path.normalizeStringGenericTZ(u16, path, buf, .{ .add_nt_prefix = opts.add_nt_prefix, .zero_terminate = true });
         return .{ .result = norm };
     }
 
@@ -1116,7 +1139,7 @@ fn openDirAtWindowsT(
     const wbuf = bun.WPathBufferPool.get();
     defer bun.WPathBufferPool.put(wbuf);
 
-    const norm = switch (normalizePathWindows(T, dirFd, path, wbuf)) {
+    const norm = switch (normalizePathWindows(T, dirFd, path, wbuf, .{})) {
         .err => |err| return .{ .err = err },
         .result => |norm| norm,
     };
@@ -1310,7 +1333,7 @@ pub fn openFileAtWindowsT(
     const wbuf = bun.WPathBufferPool.get();
     defer bun.WPathBufferPool.put(wbuf);
 
-    const norm = switch (normalizePathWindows(T, dirFd, path, wbuf)) {
+    const norm = switch (normalizePathWindows(T, dirFd, path, wbuf, .{})) {
         .err => |err| return .{ .err = err },
         .result => |norm| norm,
     };
@@ -2843,10 +2866,9 @@ pub fn directoryExistsAt(dir: anytype, subpath: anytype) JSC.Maybe(bool) {
         const wbuf = bun.WPathBufferPool.get();
         defer bun.WPathBufferPool.put(wbuf);
         const path = if (std.meta.Child(@TypeOf(subpath)) == u16)
-            bun.strings.addNTPathPrefixIfNeeded(wbuf, subpath)
+            bun.strings.toNTPath16(wbuf, subpath)
         else
             bun.strings.toNTPath(wbuf, subpath);
-        bun.path.dangerouslyConvertPathToWindowsInPlace(u16, path);
 
         const path_len_bytes: u16 = @truncate(path.len * 2);
         var nt_name = w.UNICODE_STRING{
@@ -2885,30 +2907,29 @@ pub fn directoryExistsAt(dir: anytype, subpath: anytype) JSC.Maybe(bool) {
         return .{ .result = is_dir };
     }
 
-    const have_statx = Environment.isLinux;
-    if (have_statx) brk: {
-        var statx: std.os.linux.Statx = undefined;
-        if (Maybe(bool).errnoSys(bun.C.linux.statx(
-            dir_fd.cast(),
-            subpath,
-            // Don't follow symlinks, don't automount, minimize permissions needed
-            std.os.linux.AT.SYMLINK_NOFOLLOW | std.os.linux.AT.NO_AUTOMOUNT,
-            // We only need the file type to check if it's a directory
-            std.os.linux.STATX_TYPE,
-            &statx,
-        ), .statx)) |err| {
-            switch (err.err.getErrno()) {
-                .OPNOTSUPP, .NOSYS => break :brk, // Linux < 4.11
-
-                // truly doesn't exist.
-                .NOENT => return .{ .result = false },
-
-                else => return err,
-            }
-            return err;
-        }
-        return .{ .result = S.ISDIR(statx.mode) };
-    }
+    // TODO: use statx to query less information. this path is currently broken
+    // const have_statx = Environment.isLinux;
+    // if (have_statx) brk: {
+    //     var statx: std.os.linux.Statx = undefined;
+    //     if (Maybe(bool).errnoSys(bun.C.linux.statx(
+    //         dir_fd.cast(),
+    //         subpath,
+    //         // Don't follow symlinks, don't automount, minimize permissions needed
+    //         std.os.linux.AT.SYMLINK_NOFOLLOW | std.os.linux.AT.NO_AUTOMOUNT,
+    //         // We only need the file type to check if it's a directory
+    //         std.os.linux.STATX_TYPE,
+    //         &statx,
+    //     ), .statx)) |err| {
+    //         switch (err.err.getErrno()) {
+    //             .OPNOTSUPP, .NOSYS => break :brk, // Linux < 4.11
+    //             // truly doesn't exist.
+    //             .NOENT => return .{ .result = false },
+    //             else => return err,
+    //         }
+    //         return err;
+    //     }
+    //     return .{ .result = S.ISDIR(statx.mode) };
+    // }
 
     return switch (fstatat(dir_fd, subpath)) {
         .err => |err| switch (err.getErrno()) {

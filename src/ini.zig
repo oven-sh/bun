@@ -1033,6 +1033,12 @@ pub fn loadNpmrc(
         }
     }
 
+    if (out.get("ignore-scripts")) |ignore_scripts| {
+        if (ignore_scripts.isBoolean()) {
+            install.ignore_scripts = ignore_scripts.data.e_boolean.value;
+        }
+    }
+
     var registry_map = install.scoped orelse bun.Schema.Api.NpmRegistryMap{};
 
     // Process scopes

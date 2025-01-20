@@ -19,3 +19,9 @@
 // geteuid
 #include <unistd.h>
 #endif
+
+#if DARWIN
+#include <sys/mount.h>
+#elif LINUX
+#include <sys/statfs.h>
+#endif

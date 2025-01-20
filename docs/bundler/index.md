@@ -533,7 +533,8 @@ export type BuildManifest = {
 };
 
 export type ImportKind =
-  | "entry-point"
+  | "entry-point-build"
+  | "entry-point-run"
   | "import-statement"
   | "require-call"
   | "dynamic-import"

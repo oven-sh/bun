@@ -1,3 +1,4 @@
+// To add a new error code, put it in ErrorCode.ts
 #pragma once
 
 #include "ZigGlobalObject.h"
@@ -85,6 +86,15 @@ JSC::EncodedJSValue ASSERTION(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* 
 JSC::EncodedJSValue ASSERTION(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral msg);
 JSC::EncodedJSValue CRYPTO_INVALID_CURVE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject);
 JSC::EncodedJSValue CRYPTO_JWK_UNSUPPORTED_CURVE(JSC::ThrowScope&, JSC::JSGlobalObject*, const WTF::String&);
+
+// URL
+
+/// `URL must be of scheme {expectedScheme}`
+JSC::EncodedJSValue INVALID_URL_SCHEME(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& expectedScheme);
+/// `File URL host must be "localhost" or empty on {platform}`
+JSC::EncodedJSValue INVALID_FILE_URL_HOST(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& platform);
+/// `File URL path {suffix}`
+JSC::EncodedJSValue INVALID_FILE_URL_PATH(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const ASCIILiteral suffix);
 
 }
 

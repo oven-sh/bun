@@ -2986,6 +2986,8 @@ pub const Api = struct {
             list: []const []const u8,
         } = null,
 
+        ignore_scripts: ?bool = null,
+
         pub fn decode(reader: anytype) anyerror!BunInstall {
             var this = std.mem.zeroes(BunInstall);
 

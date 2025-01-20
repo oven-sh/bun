@@ -55,6 +55,13 @@ pub const FontWeight = union(enum) {
         return .{ .absolute = AbsoluteFontWeight.default() };
     }
 
+    pub fn isCompatible(this: *const FontWeight, browsers: bun.css.targets.Browsers) bool {
+        return switch (this.*) {
+            .absolute => |*a| a.isCompatible(browsers),
+            .bolder, .lighter => true,
+        };
+    }
+
     pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
         return css.implementEql(@This(), lhs, rhs);
     }
@@ -86,6 +93,17 @@ pub const AbsoluteFontWeight = union(enum) {
         };
     }
 
+    pub fn isCompatible(this: *const AbsoluteFontWeight, browsers: bun.css.targets.Browsers) bool {
+        return switch (this.*) {
+            // Older browsers only supported 100, 200, 300, ...900 rather than arbitrary values.
+            .weight => |*val| if (!((val.* >= 100.0 and val.* <= 900.0) and @mod(val.*, 100.0) == 0.0))
+                css.Feature.font_weight_number.isCompatible(browsers)
+            else
+                true,
+            else => true,
+        };
+    }
+
     pub inline fn default() AbsoluteFontWeight {
         return .normal;
     }
@@ -106,6 +124,20 @@ pub const FontSize = union(enum) {
 
     pub usingnamespace css.DeriveParse(@This());
     pub usingnamespace css.DeriveToCss(@This());
+
+    pub fn isCompatible(this: *const FontSize, browsers: bun.css.targets.Browsers) bool {
+        return switch (this.*) {
+            .length => |*l| switch (l.*) {
+                .dimension => |*d| switch (d.*) {
+                    .rem => css.Feature.font_size_rem.isCompatible(browsers),
+                    else => l.isCompatible(browsers),
+                },
+                else => l.isCompatible(browsers),
+            },
+            .absolute => |*a| a.isCompatible(browsers),
+            .relative => true,
+        };
+    }
 
     pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
         return css.implementEql(@This(), lhs, rhs);
@@ -139,6 +171,13 @@ pub const AbsoluteFontSize = enum {
     @"xxx-large",
 
     pub usingnamespace css.DefineEnumProperty(@This());
+
+    pub fn isCompatible(this: *const AbsoluteFontSize, browsers: bun.css.targets.Browsers) bool {
+        return switch (this.*) {
+            .@"xxx-large" => css.Feature.font_size_x_x_x_large.isCompatible(browsers),
+            else => true,
+        };
+    }
 };
 
 /// A [relative font size](https://www.w3.org/TR/css-fonts-3/#relative-size-value),
@@ -178,6 +217,13 @@ pub const FontStretch = union(enum) {
         return switch (this.*) {
             .percentage => |*val| val.*,
             .keyword => |*kw| kw.intoPercentage(),
+        };
+    }
+
+    pub fn isCompatible(this: *const FontStretch, browsers: bun.css.targets.Browsers) bool {
+        return switch (this.*) {
+            .percentage => css.Feature.font_stretch_percentage.isCompatible(browsers),
+            .keyword => true,
         };
     }
 
@@ -247,6 +293,20 @@ pub const FontFamily = union(enum) {
     /// A custom family name.
     family_name: []const u8,
 
+    pub fn HashMap(comptime V: type) type {
+        return std.ArrayHashMapUnmanaged(FontFamily, V, struct {
+            pub fn hash(_: @This(), key: FontFamily) u32 {
+                var hasher = std.hash.Wyhash.init(0);
+                key.hash(&hasher);
+                return @truncate(hasher.final());
+            }
+
+            pub fn eql(_: @This(), a: FontFamily, b: FontFamily, _: usize) bool {
+                return a.eql(&b);
+            }
+        }, false);
+    }
+
     pub fn parse(input: *css.Parser) css.Result(@This()) {
         if (input.tryParse(css.Parser.expectString, .{}).asValue()) |value| {
             return .{ .result = .{ .family_name = value } };
@@ -306,7 +366,8 @@ pub const FontFamily = union(enum) {
                         } else {
                             id.append(dest.allocator, ' ') catch bun.outOfMemory();
                         }
-                        css.serializer.serializeIdentifier(slice, dest) catch return dest.addFmtError();
+                        const dest_id = id.writer(dest.allocator);
+                        css.serializer.serializeIdentifier(slice, dest_id) catch return dest.addFmtError();
                     }
                     if (id.items.len < val.len + 2) {
                         return dest.writeStr(id.items);
@@ -317,12 +378,23 @@ pub const FontFamily = union(enum) {
         }
     }
 
+    pub fn isCompatible(this: *const FontFamily, browsers: bun.css.targets.Browsers) bool {
+        return switch (this.*) {
+            .generic => |g| g.isCompatible(browsers),
+            .family_name => true,
+        };
+    }
+
     pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
         return css.implementEql(@This(), lhs, rhs);
     }
 
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
         return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn hash(this: *const @This(), hasher: anytype) void {
+        return css.implementHash(@This(), this, hasher);
     }
 };
 
@@ -361,6 +433,14 @@ pub const GenericFontFamily = enum {
     @"revert-layer",
 
     pub usingnamespace css.DefineEnumProperty(@This());
+
+    pub fn isCompatible(this: *const GenericFontFamily, browsers: bun.css.targets.Browsers) bool {
+        return switch (this.*) {
+            .@"system-ui" => css.Feature.font_family_system_ui.isCompatible(browsers),
+            .@"ui-serif", .@"ui-sans-serif", .@"ui-monospace", .@"ui-rounded" => css.Feature.extended_system_fonts.isCompatible(browsers),
+            else => true,
+        };
+    }
 };
 
 /// A value for the [font-style](https://www.w3.org/TR/css-fonts-4/#font-style-prop) property.
@@ -402,12 +482,22 @@ pub const FontStyle = union(enum) {
             .italic => try dest.writeStr("italic"),
             .oblique => |angle| {
                 try dest.writeStr("oblique");
-                if (angle.eql(&FontStyle.defaultObliqueAngle())) {
+                if (!angle.eql(&FontStyle.defaultObliqueAngle())) {
                     try dest.writeChar(' ');
                     try angle.toCss(W, dest);
                 }
             },
         }
+    }
+
+    pub fn isCompatible(this: *const FontStyle, browsers: bun.css.targets.Browsers) bool {
+        return switch (this.*) {
+            .oblique => |*angle| if (!angle.eql(&FontStyle.defaultObliqueAngle()))
+                css.Feature.font_style_oblique_angle.isCompatible(browsers)
+            else
+                true,
+            .normal, .italic => true,
+        };
     }
 
     pub fn defaultObliqueAngle() Angle {
@@ -463,6 +553,10 @@ pub const FontVariantCaps = enum {
         }
         return .{ .result = value };
     }
+
+    pub fn isCompatible(_: *const FontVariantCaps, _: bun.css.targets.Browsers) bool {
+        return true;
+    }
 };
 
 /// A value for the [line-height](https://www.w3.org/TR/2020/WD-css-inline-3-20200827/#propdef-line-height) property.
@@ -476,6 +570,13 @@ pub const LineHeight = union(enum) {
 
     pub usingnamespace @call(.auto, css.DeriveParse, .{@This()});
     pub usingnamespace @call(.auto, css.DeriveToCss, .{@This()});
+
+    pub fn isCompatible(this: *const LineHeight, browsers: bun.css.targets.Browsers) bool {
+        return switch (this.*) {
+            .length => |*l| l.isCompatible(browsers),
+            .normal, .number => true,
+        };
+    }
 
     pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
         return css.implementEql(@This(), lhs, rhs);
@@ -676,3 +777,279 @@ pub const VerticalAlignKeyword = enum {
 
     pub usingnamespace css.DefineEnumProperty(@This());
 };
+
+pub const FontProperty = packed struct(u8) {
+    @"font-family": bool = false,
+    @"font-size": bool = false,
+    @"font-style": bool = false,
+    @"font-weight": bool = false,
+    @"font-stretch": bool = false,
+    @"line-height": bool = false,
+    @"font-variant-caps": bool = false,
+    __unused: u1 = 0,
+
+    pub usingnamespace css.Bitflags(@This());
+
+    const FONT = FontProperty{
+        .@"font-family" = true,
+        .@"font-size" = true,
+        .@"font-style" = true,
+        .@"font-weight" = true,
+        .@"font-stretch" = true,
+        .@"line-height" = true,
+        .@"font-variant-caps" = true,
+    };
+
+    pub fn tryFromPropertyId(property_id: css.PropertyIdTag) ?FontProperty {
+        inline for (std.meta.fields(FontProperty)) |field| {
+            if (comptime std.mem.eql(u8, field.name, "__unused")) continue;
+            const desired = comptime @field(css.PropertyIdTag, field.name);
+            if (desired == property_id) {
+                var result: FontProperty = .{};
+                @field(result, field.name) = true;
+                return result;
+            }
+        }
+        if (property_id == .font) {
+            return FontProperty.FONT;
+        }
+        return null;
+    }
+};
+
+pub const FontHandler = struct {
+    family: ?bun.BabyList(FontFamily) = null,
+    size: ?FontSize = null,
+    style: ?FontStyle = null,
+    weight: ?FontWeight = null,
+    stretch: ?FontStretch = null,
+    line_height: ?LineHeight = null,
+    variant_caps: ?FontVariantCaps = null,
+    flushed_properties: FontProperty = .{},
+    has_any: bool = false,
+
+    pub fn handleProperty(
+        this: *FontHandler,
+        property: *const css.Property,
+        dest: *css.DeclarationList,
+        context: *css.PropertyHandlerContext,
+    ) bool {
+        switch (property.*) {
+            .@"font-family" => |*val| this.propertyHelper(dest, context, "family", val),
+            .@"font-size" => |*val| this.propertyHelper(dest, context, "size", val),
+            .@"font-style" => |*val| this.propertyHelper(dest, context, "style", val),
+            .@"font-weight" => |*val| this.propertyHelper(dest, context, "weight", val),
+            .@"font-stretch" => |*val| this.propertyHelper(dest, context, "stretch", val),
+            .@"font-variant-caps" => |*val| this.propertyHelper(dest, context, "variant_caps", val),
+            .@"line-height" => |*val| this.propertyHelper(dest, context, "line_height", val),
+            .font => |*val| {
+                this.flushHelper(dest, context, "family", &val.family);
+                this.flushHelper(dest, context, "size", &val.size);
+                this.flushHelper(dest, context, "style", &val.style);
+                this.flushHelper(dest, context, "weight", &val.weight);
+                this.flushHelper(dest, context, "stretch", &val.stretch);
+                this.flushHelper(dest, context, "line_height", &val.line_height);
+                this.flushHelper(dest, context, "variant_caps", &val.variant_caps);
+
+                this.family = css.generic.deepClone(bun.BabyList(FontFamily), &val.family, context.allocator);
+                this.size = val.size.deepClone(context.allocator);
+                this.style = val.style.deepClone(context.allocator);
+                this.weight = val.weight.deepClone(context.allocator);
+                this.stretch = val.stretch.deepClone(context.allocator);
+                this.line_height = val.line_height.deepClone(context.allocator);
+                this.variant_caps = val.variant_caps.deepClone(context.allocator);
+                this.has_any = true;
+                // TODO: reset other properties
+            },
+            .unparsed => |*val| {
+                if (isFontProperty(val.property_id)) {
+                    this.flush(dest, context);
+                    this.flushed_properties.insert(FontProperty.tryFromPropertyId(val.property_id).?);
+                    dest.append(context.allocator, property.*) catch bun.outOfMemory();
+                } else {
+                    return false;
+                }
+            },
+            else => return false,
+        }
+
+        return true;
+    }
+
+    inline fn propertyHelper(this: *FontHandler, dest: *css.DeclarationList, context: *css.PropertyHandlerContext, comptime prop: []const u8, val: anytype) void {
+        this.flushHelper(dest, context, prop, val);
+        @field(this, prop) = css.generic.deepClone(@TypeOf(val.*), val, context.allocator);
+        this.has_any = true;
+    }
+
+    inline fn flushHelper(
+        this: *FontHandler,
+        dest: *css.DeclarationList,
+        context: *css.PropertyHandlerContext,
+        comptime prop: []const u8,
+        val: anytype,
+    ) void {
+        if (@field(this, prop) != null and
+            !css.generic.eql(@TypeOf(@field(this, prop).?), &@field(this, prop).?, val) and
+            context.targets.browsers != null and
+            !css.generic.isCompatible(@TypeOf(@field(this, prop).?), val, context.targets.browsers.?))
+        {
+            this.flush(dest, context);
+        }
+    }
+
+    pub fn finalize(this: *FontHandler, decls: *css.DeclarationList, context: *css.PropertyHandlerContext) void {
+        this.flush(decls, context);
+        this.flushed_properties = .{};
+    }
+
+    fn flush(this: *FontHandler, decls: *css.DeclarationList, context: *css.PropertyHandlerContext) void {
+        const push = struct {
+            fn push(self: *FontHandler, d: *css.DeclarationList, ctx: *css.PropertyHandlerContext, comptime prop: []const u8, val: anytype) void {
+                d.append(ctx.allocator, @unionInit(css.Property, prop, val)) catch bun.outOfMemory();
+                var insertion: FontProperty = .{};
+                if (comptime std.mem.eql(u8, prop, "font")) {
+                    insertion = FontProperty.FONT;
+                } else {
+                    @field(insertion, prop) = true;
+                }
+                self.flushed_properties.insert(insertion);
+            }
+        }.push;
+
+        if (!this.has_any) {
+            return;
+        }
+
+        this.has_any = false;
+
+        var family: ?bun.BabyList(FontFamily) = bun.take(&this.family);
+        if (!this.flushed_properties.contains(FontProperty{ .@"font-family" = true })) {
+            family = compatibleFontFamily(context.allocator, family, !context.targets.shouldCompileSame(.font_family_system_ui));
+        }
+
+        const size: ?FontSize = bun.take(&this.size);
+        const style: ?FontStyle = bun.take(&this.style);
+        const weight: ?FontWeight = bun.take(&this.weight);
+        const stretch: ?FontStretch = bun.take(&this.stretch);
+        const line_height: ?LineHeight = bun.take(&this.line_height);
+        const variant_caps: ?FontVariantCaps = bun.take(&this.variant_caps);
+
+        if (family) |*f| {
+            if (f.len > 1) {
+                // Dedupe
+                var sfb = std.heap.stackFallback(664, bun.default_allocator);
+                const alloc = sfb.get();
+                var seen = FontFamily.HashMap(void){};
+                defer seen.deinit(alloc);
+
+                var i: usize = 0;
+                while (i < f.len) {
+                    const gop = seen.getOrPut(alloc, f.at(i).*) catch bun.outOfMemory();
+                    if (gop.found_existing) {
+                        _ = f.orderedRemove(i);
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
+        }
+
+        if (family != null and size != null and style != null and weight != null and stretch != null and line_height != null and variant_caps != null) {
+            const caps = variant_caps.?;
+            push(this, decls, context, "font", Font{
+                .family = family.?,
+                .size = size.?,
+                .style = style.?,
+                .weight = weight.?,
+                .stretch = stretch.?,
+                .line_height = line_height.?,
+                .variant_caps = if (caps.isCss2()) caps else FontVariantCaps.default(),
+            });
+
+            // The `font` property only accepts CSS 2.1 values for font-variant caps.
+            // If we have a CSS 3+ value, we need to add a separate property.
+            if (!caps.isCss2()) {
+                push(this, decls, context, "font-variant-caps", caps);
+            }
+        } else {
+            if (family) |val| {
+                push(this, decls, context, "font-family", val);
+            }
+
+            if (size) |val| {
+                push(this, decls, context, "font-size", val);
+            }
+
+            if (style) |val| {
+                push(this, decls, context, "font-style", val);
+            }
+
+            if (variant_caps) |val| {
+                push(this, decls, context, "font-variant-caps", val);
+            }
+
+            if (weight) |val| {
+                push(this, decls, context, "font-weight", val);
+            }
+
+            if (stretch) |val| {
+                push(this, decls, context, "font-stretch", val);
+            }
+
+            if (line_height) |val| {
+                push(this, decls, context, "line-height", val);
+            }
+        }
+    }
+};
+
+const SYSTEM_UI: FontFamily = FontFamily{ .generic = .@"system-ui" };
+
+const DEFAULT_SYSTEM_FONTS: []const []const u8 = &.{
+    // #1: Supported as the '-apple-system' value (macOS, Safari >= 9.2 < 11, Firefox >= 43)
+    "-apple-system",
+    // #2: Supported as the 'BlinkMacSystemFont' value (macOS, Chrome < 56)
+    "BlinkMacSystemFont",
+    "Segoe UI", // Windows >= Vista
+    "Roboto", // Android >= 4
+    "Noto Sans", // Plasma >= 5.5
+    "Ubuntu", // Ubuntu >= 10.10
+    "Cantarell", // GNOME >= 3
+    "Helvetica Neue",
+};
+
+inline fn compatibleFontFamily(allocator: std.mem.Allocator, _family: ?bun.BabyList(FontFamily), is_supported: bool) ?bun.BabyList(FontFamily) {
+    var family = _family;
+    if (is_supported) {
+        return family;
+    }
+
+    if (family) |*families| {
+        for (families.sliceConst(), 0..) |v, i| {
+            if (v.eql(&SYSTEM_UI)) {
+                for (DEFAULT_SYSTEM_FONTS, 0..) |name, j| {
+                    families.insert(allocator, i + j + 1, .{ .family_name = name }) catch bun.outOfMemory();
+                }
+                break;
+            }
+        }
+    }
+
+    return family;
+}
+
+inline fn isFontProperty(property_id: css.PropertyId) bool {
+    return switch (property_id) {
+        .@"font-family",
+        .@"font-size",
+        .@"font-style",
+        .@"font-weight",
+        .@"font-stretch",
+        .@"font-variant-caps",
+        .@"line-height",
+        .font,
+        => true,
+        else => false,
+    };
+}

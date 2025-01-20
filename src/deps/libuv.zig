@@ -1965,6 +1965,10 @@ pub const struct_uv_statfs_s = extern struct {
     f_files: u64,
     f_ffree: u64,
     f_spare: [4]u64,
+
+    pub fn init(this: *align(1) struct_uv_statfs_s) bun.StatFS {
+        return this.*;
+    }
 };
 pub const uv_statfs_t = struct_uv_statfs_s;
 pub const struct_uv_metrics_s = extern struct {

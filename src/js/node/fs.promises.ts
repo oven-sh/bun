@@ -190,6 +190,7 @@ const exports = {
   lstat: asyncWrap(fs.lstat, "lstat"),
   mkdir: asyncWrap(fs.mkdir, "mkdir"),
   mkdtemp: asyncWrap(fs.mkdtemp, "mkdtemp"),
+  statfs: asyncWrap(fs.statfs, "statfs"),
   open: async (path, flags = "r", mode = 0o666) => {
     return new FileHandle(await fs.open(path, flags, mode), flags);
   },

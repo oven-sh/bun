@@ -5810,6 +5810,7 @@ const ServePlugins = struct {
             pending_bundled_routes: bun.ArrayList(*HTMLBundleRoute),
         },
         result: ?*bun.JSC.API.JSBundler.Plugin,
+        err: string,
     };
 
     pub fn init(server: AnyServer, plugins: []const []const u8, initial_pending: *HTMLBundleRoute) *ServePlugins {
@@ -5896,6 +5897,9 @@ const ServePlugins = struct {
     }
 
     pub fn deinit(this: *ServePlugins) void {
+        if (this.value == .err) {
+            bun.default_allocator.free(this.value.err);
+        }
         ServePlugins.destroy(this);
     }
 
@@ -5923,6 +5927,7 @@ const ServePlugins = struct {
             route.deref();
         }
         this.value.pending.pending_bundled_routes.clearRetainingCapacity();
+        this.value = .{ .result = this.value.pending.plugins.? };
     }
 
     pub fn onRejectImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
@@ -5930,7 +5935,6 @@ const ServePlugins = struct {
 
         const arguments = callframe.arguments_old(2);
         const plugins = arguments.ptr[1].asPromisePtr(ServePlugins);
-        defer plugins.deref();
         handleOnReject(plugins, globalThis, arguments.ptr[0]);
 
         return JSValue.jsUndefined();
@@ -5938,22 +5942,29 @@ const ServePlugins = struct {
 
     pub fn handleOnReject(plugins: *ServePlugins, globalThis: *JSC.JSGlobalObject, e: JSValue) void {
         defer plugins.deref();
-
         const bunstr = e.toBunString(globalThis);
         defer bunstr.deref();
         const str = bunstr.toUTF8(bun.default_allocator);
         defer str.deinit();
+        const str_slice = str.slice();
         for (plugins.value.pending.pending_bundled_routes.items) |route| {
-            route.onPluginsRejected(str.slice());
+            route.onPluginsRejected(str_slice);
             route.deref();
         }
         plugins.value.pending.pending_bundled_routes.clearRetainingCapacity();
+        plugins.value = .{ .err = str_slice };
     }
 
     comptime {
         @export(onResolve, .{ .name = "BunServe__onResolvePlugins" });
         @export(onReject, .{ .name = "BunServe__onRejectPlugins" });
     }
+};
+
+const PluginsResult = union(enum) {
+    pending,
+    found: ?*bun.JSC.API.JSBundler.Plugin,
+    err: string,
 };
 
 pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
@@ -6006,18 +6017,17 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
         pub fn getPlugins(
             this: *ThisServer,
-            output: *?*bun.JSC.API.JSBundler.Plugin,
-        ) bool {
+        ) PluginsResult {
             if (this.plugins) |p| {
                 switch (p.value) {
                     .result => |plugins| {
-                        output.* = plugins;
-                        return true;
+                        return .{ .found = plugins };
                     },
-                    else => return false,
+                    .pending => return .pending,
+                    .err => return .{ .err = p.value.err },
                 }
             }
-            return false;
+            return .pending;
         }
 
         pub fn getPluginsAsync(
@@ -6028,6 +6038,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         ) void {
             bun.assert(this.plugins == null or this.plugins.?.value == .pending);
             if (this.plugins) |p| {
+                bun.assert(p.value != .err); // call .getPlugins() first
                 switch (p.value) {
                     .pending => {
                         bundle.ref();
@@ -6039,6 +6050,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         return;
                     },
                     .result => {},
+                    .err => {},
                 }
             } else {
                 this.plugins = ServePlugins.init(AnyServer.from(this), raw_plugins, bundle);
@@ -7660,9 +7672,9 @@ pub const AnyServer = union(enum) {
         };
     }
 
-    pub fn getPlugins(this: AnyServer, output: *?*bun.JSC.API.JSBundler.Plugin) bool {
+    pub fn getPlugins(this: AnyServer) PluginsResult {
         return switch (this) {
-            inline else => |server| server.getPlugins(output),
+            inline else => |server| server.getPlugins(),
         };
     }
 

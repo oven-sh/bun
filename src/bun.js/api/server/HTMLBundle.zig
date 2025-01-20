@@ -156,8 +156,17 @@ pub const HTMLBundleRoute = struct {
                         break :have_plugins;
                     }
 
-                    if (server.getPlugins(&plugins)) {
-                        break :have_plugins;
+                    switch (server.getPlugins()) {
+                        .pending => {},
+                        .err => |err| {
+                            this.value = .{ .err = bun.logger.Log.init(bun.default_allocator) };
+                            this.value.err.addError(null, bun.logger.Loc.Empty, err) catch bun.outOfMemory();
+                            break :out_of_pending_plugins;
+                        },
+                        .found => |result| {
+                            plugins = result;
+                            break :have_plugins;
+                        },
                     }
 
                     this.value = .pending_plugins;
@@ -167,6 +176,7 @@ pub const HTMLBundleRoute = struct {
                     plugins = existing_plugins;
                 },
             }
+            debug("HTMLBundleRoute(0x{x}) plugins resolved", .{@intFromPtr(this)});
             this.html_bundle.plugins = .{ .result = plugins };
             this.value = .pending;
         }
@@ -218,6 +228,7 @@ pub const HTMLBundleRoute = struct {
                     const raw_plugins = this.html_bundle.plugins.pending.?;
                     const bunfig_folder = this.html_bundle.bunfig_dir;
                     this.ref();
+                    debug("HTMLBundleRoute(0x{x}) resolving plugins...", .{@intFromPtr(this)});
                     server.loadAndResolvePlugins(this, raw_plugins, bunfig_folder);
                 }
             },
@@ -280,6 +291,7 @@ pub const HTMLBundleRoute = struct {
     }
 
     pub fn onPluginsResolved(this: *HTMLBundleRoute, plugins: ?*bun.JSC.API.JSBundler.Plugin) void {
+        debug("HTMLBundleRoute(0x{x}) plugins resolved", .{@intFromPtr(this)});
         this.html_bundle.plugins = .{ .result = plugins };
         // TODO: is this even possible?
         if (this.value != .pending_plugins) {
@@ -302,6 +314,7 @@ pub const HTMLBundleRoute = struct {
     }
 
     pub fn onPluginsRejected(this: *HTMLBundleRoute, error_string: []const u8) void {
+        debug("HTMLBundleRoute(0x{x}) plugins rejected", .{@intFromPtr(this)});
         this.value = .{ .err = bun.logger.Log.init(bun.default_allocator) };
         this.value.err.addError(null, bun.logger.Loc.Empty, error_string) catch bun.outOfMemory();
         if (this.server) |server| {

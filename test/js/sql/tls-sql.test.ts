@@ -9,7 +9,7 @@ const options = {
   tls: true,
   adapter: "postgresql",
   max: 1,
-  // connectionTimeout: 30,
+  bigint: true,
 };
 
 if (TLS_POSTGRES_DATABASE_URL) {

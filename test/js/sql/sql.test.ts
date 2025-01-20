@@ -251,7 +251,7 @@ if (!isCI && hasPsql) {
   });
 
   test("Unsigned Integer", async () => {
-    expect((await sql`select ${0x7fffffff + 2} as x`)[0].x).toBe(2147483649n);
+    expect((await sql`select ${0x7fffffff + 2} as x`)[0].x).toBe("2147483649");
   });
 
   test("Signed Integer", async () => {
@@ -479,7 +479,7 @@ if (!isCI && hasPsql) {
           });
         await sql`insert into test values(3)`;
       });
-      expect((await sql`select count(1) from test`)[0].count).toBe(2n);
+      expect((await sql`select count(1) from test`)[0].count).toBe("2");
     } finally {
       await sql`drop table test`;
     }
@@ -1906,10 +1906,17 @@ if (!isCI && hasPsql) {
   //   return ['select 1', result]
   // })
 
-  // t('bigint is returned as String', async() => [
-  //   'string',
-  //   typeof (await sql`select 9223372036854777 as x`)[0].x
-  // ])
+  test("bigint is returned as String", async () => {
+    expect(typeof (await sql`select 9223372036854777 as x`)[0].x).toBe("string");
+  });
+
+  test("bigint is returned as BigInt", async () => {
+    await using sql = postgres({
+      ...options,
+      bigint: true,
+    });
+    expect((await sql`select 9223372036854777 as x`)[0].x).toBe(9223372036854777n);
+  });
 
   test("int is returned as Number", async () => {
     expect((await sql`select 123 as x`)[0].x).toBe(123);

@@ -90,6 +90,7 @@ enum SQLQueryFlags {
   none = 0,
   allowUnsafeTransaction = 1 << 0,
   unsafe = 1 << 1,
+  bigint = 1 << 2,
 }
 function getQueryHandle(query) {
   let handle = query[_handle];
@@ -100,6 +101,7 @@ function getQueryHandle(query) {
         query[_values],
         query[_flags] & SQLQueryFlags.allowUnsafeTransaction,
         query[_poolSize],
+        query[_flags] & SQLQueryFlags.bigint,
       );
     } catch (err) {
       query[_queryStatus] |= QueryStatus.error | QueryStatus.invalidHandle;
@@ -915,7 +917,7 @@ function normalizeStrings(strings, values) {
 function hasQuery(value: any) {
   return value instanceof Query;
 }
-function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize) {
+function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize, bigint) {
   let sqlString;
   let final_values: Array<any>;
   if ($isArray(strings) && values.some(hasQuery)) {
@@ -997,7 +999,7 @@ function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize) {
       }
     }
   }
-  return createQuery(sqlString, final_values, new SQLResultArray(), columns);
+  return createQuery(sqlString, final_values, new SQLResultArray(), columns, !!bigint);
 }
 
 class SQLArrayParameter {
@@ -1048,7 +1050,8 @@ function loadOptions(o) {
     maxLifetime,
     onconnect,
     onclose,
-    max;
+    max,
+    bigint;
   const env = Bun.env;
   var sslMode: SSLMode = SSLMode.disable;
 
@@ -1125,6 +1128,7 @@ function loadOptions(o) {
   connectionTimeout ??= o.connection_timeout;
   maxLifetime ??= o.maxLifetime;
   maxLifetime ??= o.max_lifetime;
+  bigint ??= o.bigint;
 
   onconnect ??= o.onconnect;
   onclose ??= o.onclose;
@@ -1228,6 +1232,8 @@ function loadOptions(o) {
   }
   ret.max = max || 10;
 
+  ret.bigint = bigint;
+
   return ret;
 }
 
@@ -1290,7 +1296,13 @@ function SQL(o, e = {}) {
   }
   function queryFromPool(strings, values) {
     try {
-      return new Query(strings, values, SQLQueryFlags.none, connectionInfo.max, queryFromPoolHandler);
+      return new Query(
+        strings,
+        values,
+        connectionInfo.bigint ? SQLQueryFlags.bigint : SQLQueryFlags.none,
+        connectionInfo.max,
+        queryFromPoolHandler,
+      );
     } catch (err) {
       return Promise.reject(err);
     }
@@ -1298,7 +1310,13 @@ function SQL(o, e = {}) {
 
   function unsafeQuery(strings, values) {
     try {
-      return new Query(strings, values, SQLQueryFlags.unsafe, connectionInfo.max, queryFromPoolHandler);
+      return new Query(
+        strings,
+        values,
+        connectionInfo.bigint ? SQLQueryFlags.bigint | SQLQueryFlags.unsafe : SQLQueryFlags.unsafe,
+        connectionInfo.max,
+        queryFromPoolHandler,
+      );
     } catch (err) {
       return Promise.reject(err);
     }
@@ -1328,7 +1346,9 @@ function SQL(o, e = {}) {
       const query = new Query(
         strings,
         values,
-        SQLQueryFlags.allowUnsafeTransaction,
+        connectionInfo.bigint
+          ? SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.bigint
+          : SQLQueryFlags.allowUnsafeTransaction,
         connectionInfo.max,
         queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
       );
@@ -1343,7 +1363,9 @@ function SQL(o, e = {}) {
       const query = new Query(
         strings,
         values,
-        SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.unsafe,
+        connectionInfo.bigint
+          ? SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.unsafe | SQLQueryFlags.bigint
+          : SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.unsafe,
         connectionInfo.max,
         queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
       );

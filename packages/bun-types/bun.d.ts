@@ -2040,6 +2040,8 @@ declare module "bun" {
     onclose: (client: SQL) => void;
     /** Maximum number of connections in the pool */
     max: number;
+    /** By default values outside i32 range are returned as strings. If this is true, values outside i32 range are returned as BigInts. */
+    bigint: boolean;
   };
 
   /**

@@ -224,6 +224,7 @@ pub const PostgresSQLQuery = struct {
     flags: packed struct {
         is_done: bool = false,
         binary: bool = false,
+        bigint: bool = false,
         result_mode: PostgresSQLQueryResultMode = .objects,
     } = .{},
 
@@ -500,7 +501,7 @@ pub const PostgresSQLQuery = struct {
     }
 
     pub fn call(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const arguments = callframe.arguments_old(4).slice();
+        const arguments = callframe.arguments_old(5).slice();
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
         const query = args.nextEat() orelse {
@@ -520,6 +521,8 @@ pub const PostgresSQLQuery = struct {
 
         const pending_value = args.nextEat() orelse .undefined;
         const columns = args.nextEat() orelse .undefined;
+        const js_bigint = args.nextEat() orelse .false;
+        const bigint = js_bigint.isBoolean() and js_bigint.asBoolean();
 
         if (!pending_value.jsType().isArrayLike()) {
             return globalThis.throwInvalidArgumentType("query", "pendingValue", "Array");
@@ -533,6 +536,9 @@ pub const PostgresSQLQuery = struct {
         ptr.* = .{
             .query = query.toBunString(globalThis),
             .thisValue = this_value,
+            .flags = .{
+                .bigint = bigint,
+            },
         };
         ptr.query.ref();
 
@@ -2141,7 +2147,7 @@ pub const PostgresSQLConnection = struct {
                 .value = .{ .null = 0 },
             };
         }
-        pub fn fromBytes(binary: bool, oid: int4, bytes: []const u8, globalObject: *JSC.JSGlobalObject) !DataCell {
+        pub fn fromBytes(binary: bool, bigint: bool, oid: int4, bytes: []const u8, globalObject: *JSC.JSGlobalObject) !DataCell {
             switch (@as(types.Tag, @enumFromInt(@as(short, @intCast(oid))))) {
                 // TODO: .int2_array, .float8_array
                 inline .int4_array, .float4_array => |tag| {
@@ -2192,7 +2198,7 @@ pub const PostgresSQLConnection = struct {
                         };
                     } else {
                         // TODO:
-                        return fromBytes(false, @intFromEnum(types.Tag.bytea), bytes, globalObject);
+                        return fromBytes(false, bigint, @intFromEnum(types.Tag.bytea), bytes, globalObject);
                     }
                 },
                 .int4 => {
@@ -2202,9 +2208,14 @@ pub const PostgresSQLConnection = struct {
                         return DataCell{ .tag = .int4, .value = .{ .int4 = bun.fmt.parseInt(i32, bytes, 0) catch 0 } };
                     }
                 },
+                // postgres when reading bigint as int8 it returns a string unless type: { bigint: postgres.BigInt is set
                 .int8 => {
-                    // .int8 is a 64-bit integer always string
-                    return DataCell{ .tag = .int8, .value = .{ .int8 = bun.fmt.parseInt(i64, bytes, 0) catch 0 } };
+                    if (bigint) {
+                        // .int8 is a 64-bit integer always string
+                        return DataCell{ .tag = .int8, .value = .{ .int8 = bun.fmt.parseInt(i64, bytes, 0) catch 0 } };
+                    } else {
+                        return DataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) bun.String.createUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
+                    }
                 },
                 .float8 => {
                     if (binary and bytes.len == 8) {
@@ -2362,6 +2373,7 @@ pub const PostgresSQLConnection = struct {
             list: []DataCell,
             fields: []const protocol.FieldDescription,
             binary: bool = false,
+            bigint: bool = false,
             count: usize = 0,
             globalObject: *JSC.JSGlobalObject,
 
@@ -2388,7 +2400,7 @@ pub const PostgresSQLConnection = struct {
                     cell.* = DataCell.raw(optional_bytes);
                 } else {
                     cell.* = if (optional_bytes) |data|
-                        try DataCell.fromBytes(this.binary, oid, data.slice(), this.globalObject)
+                        try DataCell.fromBytes(this.binary, this.bigint, oid, data.slice(), this.globalObject)
                     else
                         DataCell{
                             .tag = .null,
@@ -2511,6 +2523,7 @@ pub const PostgresSQLConnection = struct {
                     .list = &.{},
                     .fields = statement.fields,
                     .binary = request.flags.binary,
+                    .bigint = request.flags.bigint,
                     .globalObject = this.globalObject,
                 };
 

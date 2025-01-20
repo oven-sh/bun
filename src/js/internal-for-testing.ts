@@ -53,8 +53,12 @@ export const iniInternals = {
 
 export const cssInternals = {
   minifyTestWithOptions: $newZigFunction("css_internals.zig", "minifyTestWithOptions", 3),
+  minifyErrorTestWithOptions: $newZigFunction("css_internals.zig", "minifyErrorTestWithOptions", 3),
   testWithOptions: $newZigFunction("css_internals.zig", "testWithOptions", 3),
   prefixTestWithOptions: $newZigFunction("css_internals.zig", "prefixTestWithOptions", 3),
+  minifyTest: $newZigFunction("css_internals.zig", "minifyTest", 3),
+  prefixTest: $newZigFunction("css_internals.zig", "prefixTest", 3),
+  _test: $newZigFunction("css_internals.zig", "_test", 3),
   attrTest: $newZigFunction("css_internals.zig", "attrTest", 3),
 };
 

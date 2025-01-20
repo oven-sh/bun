@@ -46,8 +46,10 @@ async function startContainer(): Promise<{ port: number; containerName: string }
   try {
     // Build the Docker image
     console.log("Building Docker image...");
-    const dockerfilePath = path.join(import.meta.dir, "Dockerfile");
-    await execAsync(`docker build --pull --rm -f "${dockerfilePath}" -t custom-postgres .`);
+    const dockerfilePath = path.join(import.meta.dir, "docker", "Dockerfile");
+    await execAsync(`docker build --pull --rm -f "${dockerfilePath}" -t custom-postgres .`, {
+      cwd: path.join(import.meta.dir, "docker"),
+    });
     const port = await findRandomPort();
     const containerName = `postgres-test-${port}`;
     // Check if container exists and remove it

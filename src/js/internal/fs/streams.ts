@@ -2,7 +2,7 @@
 import type { FileSink } from "bun";
 const { Readable, Writable, finished } = require("node:stream");
 const fs: typeof import("node:fs") = require("node:fs");
-const { read, write, fsync, writev } = fs;
+const { open, read, write, fsync, writev } = fs;
 const { FileHandle, kRef, kUnref, kFd } = (fs.promises as any).$data as {
   FileHandle: { new (): FileHandle };
   readonly kRef: unique symbol;
@@ -589,20 +589,20 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
     cb = encoding;
     encoding = null;
   }
-
   let fileSink = this[kWriteStreamFastPath];
   if (!fileSink) {
     this.write = Writable.prototype.write;
     return this.write(data, encoding, cb);
   } else if (fileSink === true) {
-    if (this.open !== streamNoop) {
+    if (this.open !== streamNoop || fs.open !== open || fs.write !== write) {
+      this[kWriteStreamFastPath] = undefined;
       this.write = Writable.prototype.write;
       return this.write(data, encoding, cb);
     }
     fileSink = this[kWriteStreamFastPath] = Bun.file(this.path).writer();
   }
-
   try {
+    $assert(fs.write === write, "this patching case not handled, and likely does not matter");
     const maybePromise = fileSink.write(data);
     if (typeof cb === "function") thenIfPromise(maybePromise, cb);
   } catch (e) {

@@ -2563,13 +2563,13 @@ pub const Arguments = struct {
                     const arg_length = arguments.next().?;
                     arguments.eat();
 
+                    if (buffer.buffer.len == 0) {
+                        return JSC.Error.ERR_INVALID_ARG_VALUE.throw(ctx, "The argument 'buffer' is empty and cannot be written.", .{});
+                    }
+
                     if (arg_length.isNumber() or arg_length.isBigInt()) {
                         args.length = @intCast(try JSC.Node.validators.validateInteger(ctx, arg_length, "length", 0, @intCast(buf_len - args.offset)));
                         defined_length = true;
-                    }
-
-                    if (buffer.buffer.len == 0) {
-                        return JSC.Error.ERR_INVALID_ARG_VALUE.throw(ctx, "The argument 'buffer' is empty and cannot be written.", .{});
                     }
 
                     if (arguments.next()) |arg_position| {
@@ -2582,8 +2582,7 @@ pub const Arguments = struct {
                                 args.position = @as(ReadPosition, @intCast(num));
                         }
                     }
-                } else if (current.isPlainObject()) {
-                    std.debug.print("wtf {}\n", .{current.jsType()});
+                } else if (current.isObject() and !current.isArray()) {
                     if (try current.getTruthy(ctx, "offset")) |num| {
                         if (num.isNumber() or num.isBigInt()) {
                             args.offset = num.to(u52);

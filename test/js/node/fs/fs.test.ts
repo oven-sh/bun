@@ -3509,7 +3509,7 @@ it("fs.statfs should work with bigint", async () => {
   expect(stats).toBeDefined();
   for (const k of ["type", "bsize", "blocks", "bfree", "bavail", "files", "ffree"]) {
     expect(stats).toHaveProperty(k);
-    expect(stats[k]).toBeTypeOf("number");
+    expect(stats[k]).toBeTypeOf("bigint");
   }
 });
 

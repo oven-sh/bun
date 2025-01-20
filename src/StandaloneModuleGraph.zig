@@ -473,12 +473,11 @@ pub const StandaloneModuleGraph = struct {
                 const file = bun.sys.openFileAtWindows(
                     bun.invalid_fd,
                     out,
-                    // access_mask
-                    w.SYNCHRONIZE | w.GENERIC_WRITE | w.GENERIC_READ | w.DELETE,
-                    // create disposition
-                    w.FILE_OPEN,
-                    // create options
-                    w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+                    .{
+                        .access_mask = w.SYNCHRONIZE | w.GENERIC_WRITE | w.GENERIC_READ | w.DELETE,
+                        .disposition = w.FILE_OPEN,
+                        .options = w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+                    },
                 ).unwrap() catch |e| {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}", .{e});
                     Global.exit(1);
@@ -965,12 +964,11 @@ pub const StandaloneModuleGraph = struct {
                 return bun.sys.openFileAtWindows(
                     bun.FileDescriptor.cwd(),
                     nt_path,
-                    // access_mask
-                    w.SYNCHRONIZE | w.GENERIC_READ,
-                    // create disposition
-                    w.FILE_OPEN,
-                    // create options
-                    w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+                    .{
+                        .access_mask = w.SYNCHRONIZE | w.GENERIC_READ,
+                        .disposition = w.FILE_OPEN,
+                        .options = w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+                    },
                 ).unwrap() catch {
                     return error.FileNotFound;
                 };

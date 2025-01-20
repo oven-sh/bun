@@ -779,7 +779,7 @@ pub fn mkdiratW(dir_fd: bun.FileDescriptor, file_path: []const u16, _: i32) Mayb
 
 pub fn fstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
     if (Environment.isWindows) {
-        return switch (openatWindowsA(fd, path, 0)) {
+        return switch (openatWindowsA(fd, path, 0, 0)) {
             .result => |file| {
                 // :(
                 defer _ = close(file);
@@ -1174,6 +1174,14 @@ pub noinline fn openDirAtWindowsA(
     return openDirAtWindowsT(u8, dirFd, path, options);
 }
 
+const NtCreateFileOptions = struct {
+    access_mask: w.ULONG,
+    disposition: w.ULONG,
+    options: w.ULONG,
+    attributes: w.ULONG = w.FILE_ATTRIBUTE_NORMAL,
+    sharing_mode: w.ULONG = FILE_SHARE,
+};
+
 /// For this function to open an absolute path, it must start with "\??\". Otherwise
 /// you need a reference file descriptor the "invalid_fd" file descriptor is used
 /// to signify that the current working directory should be used.
@@ -1192,9 +1200,7 @@ pub noinline fn openDirAtWindowsA(
 pub fn openFileAtWindowsNtPath(
     dir: bun.FileDescriptor,
     path: []const u16,
-    access_mask: w.ULONG,
-    disposition: w.ULONG,
-    options: w.ULONG,
+    options: NtCreateFileOptions,
 ) Maybe(bun.FileDescriptor) {
     // Another problem re: normalization is that you can use relative paths, but no leading '.\' or './''
     // this path is probably already backslash normalized so we're only going to check for '.\'
@@ -1237,19 +1243,18 @@ pub fn openFileAtWindowsNtPath(
     };
     var io: windows.IO_STATUS_BLOCK = undefined;
 
-    var attributes: w.DWORD = w.FILE_ATTRIBUTE_NORMAL;
-
+    var attributes = options.attributes;
     while (true) {
         const rc = windows.ntdll.NtCreateFile(
             &result,
-            access_mask,
+            options.access_mask,
             &attr,
             &io,
             null,
             attributes,
-            FILE_SHARE,
-            disposition,
-            options,
+            options.sharing_mode,
+            options.disposition,
+            options.options,
             null,
             0,
         );
@@ -1272,7 +1277,7 @@ pub fn openFileAtWindowsNtPath(
 
         if (rc == .ACCESS_DENIED and
             attributes == w.FILE_ATTRIBUTE_NORMAL and
-            (access_mask & (w.GENERIC_READ | w.GENERIC_WRITE)) == w.GENERIC_WRITE)
+            (options.access_mask & (w.GENERIC_READ | w.GENERIC_WRITE)) == w.GENERIC_WRITE)
         {
             // > If CREATE_ALWAYS and FILE_ATTRIBUTE_NORMAL are specified,
             // > CreateFile fails and sets the last error to ERROR_ACCESS_DENIED
@@ -1291,7 +1296,7 @@ pub fn openFileAtWindowsNtPath(
 
         switch (windows.Win32Error.fromNTStatus(rc)) {
             .SUCCESS => {
-                if (access_mask & w.FILE_APPEND_DATA != 0) {
+                if (options.access_mask & w.FILE_APPEND_DATA != 0) {
                     // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfilepointerex
                     const FILE_END = 2;
                     if (kernel32.SetFilePointerEx(result, 0, null, FILE_END) == 0) {
@@ -1452,9 +1457,7 @@ pub fn openFileAtWindowsT(
     comptime T: type,
     dirFd: bun.FileDescriptor,
     path: []const T,
-    access_mask: w.ULONG,
-    disposition: w.ULONG,
-    options: w.ULONG,
+    options: NtCreateFileOptions,
 ) Maybe(bun.FileDescriptor) {
     const wbuf = bun.WPathBufferPool.get();
     defer bun.WPathBufferPool.put(wbuf);
@@ -1464,34 +1467,30 @@ pub fn openFileAtWindowsT(
         .result => |norm| norm,
     };
 
-    return openFileAtWindowsNtPath(dirFd, norm, access_mask, disposition, options);
+    return openFileAtWindowsNtPath(dirFd, norm, options);
 }
 
 pub fn openFileAtWindows(
     dirFd: bun.FileDescriptor,
     path: []const u16,
-    access_mask: w.ULONG,
-    disposition: w.ULONG,
-    options: w.ULONG,
+    opts: NtCreateFileOptions,
 ) Maybe(bun.FileDescriptor) {
-    return openFileAtWindowsT(u16, dirFd, path, access_mask, disposition, options);
+    return openFileAtWindowsT(u16, dirFd, path, opts);
 }
 
 pub noinline fn openFileAtWindowsA(
     dirFd: bun.FileDescriptor,
     path: []const u8,
-    access_mask: w.ULONG,
-    disposition: w.ULONG,
-    options: w.ULONG,
+    opts: NtCreateFileOptions,
 ) Maybe(bun.FileDescriptor) {
-    return openFileAtWindowsT(u8, dirFd, path, access_mask, disposition, options);
+    return openFileAtWindowsT(u8, dirFd, path, opts);
 }
 
-pub fn openatWindowsT(comptime T: type, dir: bun.FileDescriptor, path: []const T, flags: bun.Mode) Maybe(bun.FileDescriptor) {
-    return openatWindowsTMaybeNormalize(T, dir, path, flags, true);
+pub fn openatWindowsT(comptime T: type, dir: bun.FileDescriptor, path: []const T, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+    return openatWindowsTMaybeNormalize(T, dir, path, flags, perm, true);
 }
 
-fn openatWindowsTMaybeNormalize(comptime T: type, dir: bun.FileDescriptor, path: []const T, flags: bun.Mode, comptime normalize: bool) Maybe(bun.FileDescriptor) {
+fn openatWindowsTMaybeNormalize(comptime T: type, dir: bun.FileDescriptor, path: []const T, flags: bun.Mode, perm: bun.Mode, comptime normalize: bool) Maybe(bun.FileDescriptor) {
     if (flags & O.DIRECTORY != 0) {
         const windows_options: WindowsOpenDirOptions = .{
             .iterable = flags & O.PATH == 0,
@@ -1525,7 +1524,7 @@ fn openatWindowsTMaybeNormalize(comptime T: type, dir: bun.FileDescriptor, path:
         access_mask |= w.GENERIC_READ;
     }
 
-    const creation: w.ULONG = blk: {
+    const disposition: w.ULONG = blk: {
         if (flags & O.CREAT != 0) {
             if (flags & O.EXCL != 0) {
                 break :blk w.FILE_CREATE;
@@ -1545,27 +1544,41 @@ fn openatWindowsTMaybeNormalize(comptime T: type, dir: bun.FileDescriptor, path:
 
     const options: windows.ULONG = if (follow_symlinks) file_or_dir_flag | blocking_flag else file_or_dir_flag | windows.FILE_OPEN_REPARSE_POINT;
 
-    if (comptime !normalize and T == u16) {
-        return openFileAtWindowsNtPath(dir, path, access_mask, creation, options);
+    var attributes: w.DWORD = windows.FILE_ATTRIBUTE_NORMAL;
+    if (flags & O.CREAT != 0 and perm & 0x80 == 0 and perm != 0) {
+        attributes |= windows.FILE_ATTRIBUTE_READONLY;
     }
 
-    return openFileAtWindowsT(T, dir, path, access_mask, creation, options);
+    const open_options: NtCreateFileOptions = .{
+        .access_mask = access_mask,
+        .disposition = disposition,
+        .options = options,
+        .attributes = attributes,
+    };
+
+    if (comptime !normalize and T == u16) {
+        return openFileAtWindowsNtPath(dir, path, open_options);
+    }
+
+    return openFileAtWindowsT(T, dir, path, open_options);
 }
 
 pub fn openatWindows(
     dir: anytype,
     path: []const u16,
     flags: bun.Mode,
+    perm: bun.Mode,
 ) Maybe(bun.FileDescriptor) {
-    return openatWindowsT(u16, bun.toFD(dir), path, flags);
+    return openatWindowsT(u16, bun.toFD(dir), path, flags, perm);
 }
 
 pub fn openatWindowsA(
     dir: bun.FileDescriptor,
     path: []const u8,
     flags: bun.Mode,
+    perm: bun.Mode,
 ) Maybe(bun.FileDescriptor) {
-    return openatWindowsT(u8, dir, path, flags);
+    return openatWindowsT(u8, dir, path, flags, perm);
 }
 
 pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSliceZ, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
@@ -1577,7 +1590,7 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSliceZ, flag
 
         return Maybe(bun.FileDescriptor).errnoSysFP(rc, .open, dirfd, file_path) orelse .{ .result = bun.toFD(rc) };
     } else if (comptime Environment.isWindows) {
-        return openatWindowsT(bun.OSPathChar, dirfd, file_path, flags);
+        return openatWindowsT(bun.OSPathChar, dirfd, file_path, flags, perm);
     }
 
     while (true) {
@@ -1625,7 +1638,7 @@ pub fn access(path: bun.OSPathSliceZ, mode: bun.Mode) Maybe(void) {
 
 pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isWindows) {
-        return openatWindowsT(u8, dirfd, file_path, flags);
+        return openatWindowsT(u8, dirfd, file_path, flags, perm);
     } else {
         return openatOSPath(dirfd, file_path, flags, perm);
     }
@@ -1647,7 +1660,7 @@ pub fn openatFileWithLibuvFlags(dirfd: bun.FileDescriptor, file_path: [:0]const 
 
 pub fn openatA(dirfd: bun.FileDescriptor, file_path: []const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isWindows) {
-        return openatWindowsT(u8, dirfd, file_path, flags);
+        return openatWindowsT(u8, dirfd, file_path, flags, perm);
     }
 
     const pathZ = std.posix.toPosixPath(file_path) catch return Maybe(bun.FileDescriptor){

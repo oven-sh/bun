@@ -2577,6 +2577,7 @@ pub const Blob = struct {
                             bun.O.RDONLY
                         else
                             bun.O.WRONLY | bun.O.CREAT,
+                        0,
                     )) {
                         .result => |result| bun.toLibUVOwnedFD(result) catch {
                             _ = bun.sys.close(result);

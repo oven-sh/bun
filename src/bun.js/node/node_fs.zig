@@ -6418,7 +6418,7 @@ pub const NodeFS = struct {
                 }
                 return ret.success;
             } else {
-                const handle = switch (bun.sys.openatWindows(bun.invalid_fd, src, bun.O.RDONLY)) {
+                const handle = switch (bun.sys.openatWindows(bun.invalid_fd, src, bun.O.RDONLY, 0)) {
                     .err => |err| return .{ .err = err },
                     .result => |src_fd| src_fd,
                 };

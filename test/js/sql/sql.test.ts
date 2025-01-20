@@ -170,19 +170,20 @@ if (isDockerEnabled()) {
     const onconnect = mock();
     await using sql = postgres({
       ...options,
-      hostname: "unreachable_host",
-      connection_timeout: 1,
+      hostname: "example.com",
+      connection_timeout: 4,
       onconnect,
       onclose,
+      max: 1,
     });
     let error: any;
     try {
-      await sql`select pg_sleep(2)`;
+      await sql`select pg_sleep(8)`;
     } catch (e) {
       error = e;
     }
     expect(error.code).toBe(`ERR_POSTGRES_CONNECTION_TIMEOUT`);
-    expect(error.message).toContain("Connection timeout after 1s");
+    expect(error.message).toContain("Connection timeout after 4s");
     expect(onconnect).not.toHaveBeenCalled();
     expect(onclose).toHaveBeenCalledTimes(1);
   });

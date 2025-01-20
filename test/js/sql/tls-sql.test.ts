@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { test, expect, mock } from "bun:test";
 import { getSecret } from "harness";
 import { SQL } from "bun";
 

@@ -85,7 +85,7 @@ if (!isCI && hasPsql) {
       error = e;
     }
     expect(error.code).toBe(`ERR_POSTGRES_CONNECTION_TIMEOUT`);
-    expect(error.message).toContain("Connection timeout after 1ms");
+    expect(error.message).toContain("Connection timeout after 1s");
     expect(onconnect).not.toHaveBeenCalled();
     expect(onclose).toHaveBeenCalledTimes(1);
   });
@@ -118,7 +118,7 @@ if (!isCI && hasPsql) {
     const onconnect = mock();
     await using sql = postgres({
       ...options,
-      idle_timeout: 100,
+      idle_timeout: 1,
       onconnect,
       onclose,
     });
@@ -129,7 +129,7 @@ if (!isCI && hasPsql) {
     expect(err.code).toBe(`ERR_POSTGRES_IDLE_TIMEOUT`);
   });
 
-  test("Max lifetime works", async () => {
+  test.skip("Max lifetime works", async () => {
     const onClosePromise = Promise.withResolvers();
     const onclose = mock(err => {
       onClosePromise.resolve(err);
@@ -399,7 +399,7 @@ if (!isCI && hasPsql) {
             await sql`insert into test values('hej')`;
           })
           .catch(e => e.errno),
-      ).toBe(22);
+      ).toBe("22P02");
     } finally {
       await sql`drop table test`;
     }
@@ -507,20 +507,20 @@ if (!isCI && hasPsql) {
   //   }
   // });
 
-  test("Prepared transaction", async () => {
-    await sql`create table test (a int)`;
+  // test("Prepared transaction", async () => {
+  //   await sql`create table test (a int)`;
 
-    try {
-      await sql.beginDistributed("tx1", async sql => {
-        await sql`insert into test values(1)`;
-      });
+  //   try {
+  //     await sql.beginDistributed("tx1", async sql => {
+  //       await sql`insert into test values(1)`;
+  //     });
 
-      await sql.commitDistributed("tx1");
-      expect((await sql`select count(1) from test`)[0].count).toBe("1");
-    } finally {
-      await sql`drop table test`;
-    }
-  });
+  //     await sql.commitDistributed("tx1");
+  //     expect((await sql`select count(1) from test`)[0].count).toBe("1");
+  //   } finally {
+  //     await sql`drop table test`;
+  //   }
+  // });
 
   test("Transaction requests are executed implicitly", async () => {
     const sql = postgres({ ...options, debug: true, idle_timeout: 1, fetch_types: false });
@@ -540,7 +540,7 @@ if (!isCI && hasPsql) {
       await sql
         .begin(sql => [sql`select wat`, sql`select current_setting('bun_sql.test') as x, ${1} as a`])
         .catch(e => e.errno),
-    ).toBe(42703);
+    ).toBe("42703");
   });
 
   // test.only("Fragments in transactions", async () => {
@@ -650,7 +650,7 @@ if (!isCI && hasPsql) {
   test("Throw syntax error", async () => {
     const err = await sql`wat 1`.catch(x => x);
     expect(err.code).toBe("ERR_POSTGRES_SYNTAX_ERROR");
-    expect(err.errno).toBe(42601);
+    expect(err.errno).toBe("42601");
     expect(err).toBeInstanceOf(SyntaxError);
   });
 

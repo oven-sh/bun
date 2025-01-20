@@ -515,24 +515,26 @@ class ConnectionPool {
 
     if (connection.state !== PooledConnectionState.connected) {
       // connection is not ready
+      if (connection.storedError) {
+        // this connection got a error but maybe we can wait for another
+
+        if (this.hasConnectionsAvailable()) {
+          return;
+        }
+
+        // we have no connections available so lets fails
+        let pending;
+        while ((pending = this.waitingQueue.shift())) {
+          pending(connection.storedError, connection);
+        }
+        while ((pending = this.reservedQueue.shift())) {
+          pending(connection.storedError, connection);
+        }
+      }
       return;
     }
     if (was_reserved) {
       if (this.waitingQueue.length > 0 || this.reservedQueue.length > 0) {
-        if (connection.storedError) {
-          // this connection got a error but maybe we can wait for another
-
-          if (this.hasConnectionsAvailable()) {
-            return;
-          }
-
-          // we have no connections available so lets fails
-          let pending;
-          while ((pending = this.waitingQueue.shift())) {
-            pending.onConnected(connection.storedError, connection);
-          }
-          return;
-        }
         const pendingReserved = this.reservedQueue.shift();
         if (pendingReserved) {
           connection.flags |= PooledConnectionFlags.reserved;
@@ -816,7 +818,7 @@ function createConnection(
     database,
     sslMode,
     idleTimeout = 0,
-    connectionTimeout = 30 * 1000,
+    connectionTimeout = 30,
     maxLifetime = 0,
   },
   onConnected,

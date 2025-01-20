@@ -2306,6 +2306,7 @@ declare module "bun" {
   interface SavepointSQL extends SQL {}
 
   var sql: SQL;
+  var SQL: SQL;
 
   /**
    *   This lets you use macros as regular imports

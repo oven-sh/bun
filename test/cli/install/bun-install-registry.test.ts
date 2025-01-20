@@ -57,7 +57,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  ({ packageDir, packageJson } = await verdaccio.createTestDir());
+  ({ packageDir, packageJson } = await verdaccio.createTestDir({ saveTextLockfile: false }));
   await Bun.$`rm -f ${import.meta.dir}/htpasswd`.throws(false);
   await Bun.$`rm -rf ${import.meta.dir}/packages/private-pkg-dont-touch`.throws(false);
   users = {};
@@ -767,6 +767,7 @@ async function authBunfig(user: string) {
         [install]
         cache = false
         registry = { url = "http://localhost:${port}/", token = "${authToken}" }
+        saveTextLockfile = false
         `;
 }
 
@@ -2843,6 +2844,7 @@ test("manifest cache will invalidate when registry changes", async () => {
 [install]
 cache = "${cacheDir}"
 registry = "http://localhost:${port}"
+saveTextLockfile = false
       `,
     ),
     write(

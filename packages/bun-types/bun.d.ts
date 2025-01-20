@@ -2120,12 +2120,12 @@ declare module "bun" {
      * await sql.connect();
      */
     connect(): Promise<SQL>;
-    /** Closes the database connection with optional timeout in seconds
+    /** Closes the database connection with optional timeout in seconds. If timeout is 0, it will close immediately, if is not provided it will wait for all queries to finish before closing.
      * @example
      * await sql.close({ timeout: 1 });
      */
     close(options?: { timeout?: number }): Promise<undefined>;
-    /** Closes the database connection with optional timeout in seconds
+    /** Closes the database connection with optional timeout in seconds. If timeout is 0, it will close immediately, if is not provided it will wait for all queries to finish before closing.
      * @alias close
      * @example
      * await sql.end({ timeout: 1 });

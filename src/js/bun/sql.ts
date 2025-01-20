@@ -156,8 +156,8 @@ class Query extends PublicPromise {
     if (!handle) return this;
 
     this[_queryStatus] |= QueryStatus.executed;
-    // this avoids a infinite loop
     await 1;
+
     return handler(this, handle);
   }
 
@@ -682,7 +682,7 @@ class ConnectionPool {
   }
   async close(options?: { timeout?: number }) {
     if (this.closed) {
-      return Promise.resolve(undefined);
+      return;
     }
     let timeout = options?.timeout;
     if (timeout) {
@@ -691,26 +691,40 @@ class ConnectionPool {
         throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
       }
       this.closed = true;
-      if (timeout > 0 && this.hasPendingQueries()) {
-        const { promise, resolve } = Promise.withResolvers();
-        const timer = setTimeout(() => {
-          // timeout is reached, lets close and probably fail some queries
-          this.#close().finally(resolve);
-        }, timeout * 1000);
-        timer.unref(); // dont block the event loop
-        this.onAllQueriesFinished = () => {
-          clearTimeout(timer);
-          // everything is closed, lets close the pool
-          this.#close().finally(resolve);
-        };
-
-        return promise;
+      if (timeout === 0 || !this.hasPendingQueries()) {
+        // close immediately
+        await this.#close();
+        return;
       }
+
+      const { promise, resolve } = Promise.withResolvers();
+      const timer = setTimeout(() => {
+        // timeout is reached, lets close and probably fail some queries
+        this.#close().finally(resolve);
+      }, timeout * 1000);
+      timer.unref(); // dont block the event loop
+      this.onAllQueriesFinished = () => {
+        clearTimeout(timer);
+        // everything is closed, lets close the pool
+        this.#close().finally(resolve);
+      };
+
+      return promise;
     } else {
       this.closed = true;
+      if (!this.hasPendingQueries()) {
+        // close immediately
+        await this.#close();
+        return;
+      }
+      // gracefully close the pool
+      const { promise, resolve } = Promise.withResolvers();
+      this.onAllQueriesFinished = () => {
+        // everything is closed, lets close the pool
+        this.#close().finally(resolve);
+      };
+      return promise;
     }
-
-    await this.#close();
   }
 
   /**

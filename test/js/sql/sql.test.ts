@@ -875,35 +875,35 @@ if (!isCI && hasPsql) {
     expect(await sql.end()).toBeUndefined();
   });
 
-  // t('Connection ended error', async() => {
-  //   const sql = postgres(options)
-  //   await sql.end()
-  //   return ['CONNECTION_ENDED', (await sql``.catch(x => x.code))]
-  // })
+  test("Connection ended error", async () => {
+    const sql = postgres(options);
+    await sql.end();
+    return expect(await sql``.catch(x => x.code)).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
+  });
 
-  // t('Connection end does not cancel query', async() => {
-  //   const sql = postgres(options)
+  test("Connection end does not cancel query", async () => {
+    const sql = postgres(options);
 
-  //   const promise = sql`select 1 as x`.execute()
+    const promise = sql`select pg_sleep(0.2) as x`.execute();
+    // we await 1 to start the query
+    await 1;
+    await sql.end();
+    return expect(await promise).toEqual([{ x: "" }]);
+  });
 
-  //   await sql.end()
+  test("Connection destroyed", async () => {
+    const sql = postgres(options);
+    process.nextTick(() => sql.end({ timeout: 0 }));
+    expect(await sql``.catch(x => x.code)).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
+  });
 
-  //   return [1, (await promise)[0].x]
-  // })
+  test("Connection destroyed with query before", async () => {
+    const sql = postgres(options);
+    const error = sql`select pg_sleep(0.2)`.catch(err => err.code);
 
-  // t('Connection destroyed', async() => {
-  //   const sql = postgres(options)
-  //   process.nextTick(() => sql.end({ timeout: 0 }))
-  //   return ['CONNECTION_DESTROYED', await sql``.catch(x => x.code)]
-  // })
-
-  // t('Connection destroyed with query before', async() => {
-  //   const sql = postgres(options)
-  //       , error = sql`select pg_sleep(0.2)`.catch(err => err.code)
-
-  //   sql.end({ timeout: 0 })
-  //   return ['CONNECTION_DESTROYED', await error]
-  // })
+    sql.end({ timeout: 0 });
+    return expect(await error).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
+  });
 
   // t('transform column', async() => {
   //   const sql = postgres({
@@ -1027,14 +1027,18 @@ if (!isCI && hasPsql) {
   //   ]
   // })
 
-  // t('unsafe', async() => {
-  //   await sql`create table test (x int)`
-  //   return [1, (await sql.unsafe('insert into test values ($1) returning *', [1]))[0].x, await sql`drop table test`]
-  // })
+  test("unsafe", async () => {
+    await sql`create table test (x int)`;
+    try {
+      expect(await sql.unsafe("insert into test values ($1) returning *", [1])).toEqual([{ x: 1 }]);
+    } finally {
+      await sql`drop table test`;
+    }
+  });
 
-  // t('unsafe simple', async() => {
-  //   return [1, (await sql.unsafe('select 1 as x'))[0].x]
-  // })
+  test("unsafe simple", async () => {
+    expect(await sql.unsafe("select 1 as x")).toEqual([{ x: 1 }]);
+  });
 
   // t('unsafe simple includes columns', async() => {
   //   return ['x', (await sql.unsafe('select 1 as x').values()).columns[0].name]
@@ -1052,12 +1056,14 @@ if (!isCI && hasPsql) {
   //   ]
   // })
 
-  // t('simple query using unsafe with multiple statements', async() => {
-  //   return [
-  //     '1,2',
-  //     (await sql.unsafe('select 1 as x;select 2 as x')).map(x => x[0].x).join()
-  //   ]
-  // })
+  test.todo("simple query using unsafe with multiple statements", async () => {
+    // bun always uses prepared statements, so this is not supported
+    //     PostgresError: cannot insert multiple commands into a prepared statement
+    //  errno: "42601",
+    //   code: "ERR_POSTGRES_SYNTAX_ERROR"
+    expect(await sql.unsafe("select 1 as x;select 2 as x")).toEqual([{ x: 1 }, { x: 2 }]);
+    // return ["1,2", (await sql.unsafe("select 1 as x;select 2 as x")).map(x => x[0].x).join()];
+  });
 
   // t('simple query using simple() with multiple statements', async() => {
   //   return [
@@ -1298,9 +1304,9 @@ if (!isCI && hasPsql) {
     { timeout: 1000000 },
   );
 
-  // t('only allows one statement', async() =>
-  //   ['42601', await sql`select 1; select 2`.catch(e => e.code)]
-  // )
+  test("only allows one statement", async () => {
+    expect(await sql`select 1; select 2`.catch(e => e.errno)).toBe("42601");
+  });
 
   // t('await sql() throws not tagged error', async() => {
   //   let error
@@ -1421,13 +1427,13 @@ if (!isCI && hasPsql) {
 
   test("dynamic insert pluck", async () => {
     try {
-      await sql`create table test (a int, b text)`;
+      await sql`create table test2 (a int, b text)`;
       const x = { a: 42, b: "the answer" };
-      const [{ b, a }] = await sql`insert into test ${sql(x, "a")} returning *`;
+      const [{ b, a }] = await sql`insert into test2 ${sql(x, "a")} returning *`;
       expect(b).toBeNull();
       expect(a).toBe(42);
     } finally {
-      await sql`drop table test`;
+      await sql`drop table test2`;
     }
   });
 

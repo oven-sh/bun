@@ -2095,8 +2095,15 @@ var lazyDefaultSQL;
 
 function resetDefaultSQL(sql) {
   lazyDefaultSQL = sql;
-  Object.assign(defaultSQLObject, lazyDefaultSQL);
-  exportsObject.default = exportsObject.sql = lazyDefaultSQL;
+  // this will throw "attempt to assign to readonly property"
+  // Object.assign(defaultSQLObject, lazyDefaultSQL);
+  // exportsObject.default = exportsObject.sql = lazyDefaultSQL;
+}
+
+function ensureDefaultSQL() {
+  if (!lazyDefaultSQL) {
+    resetDefaultSQL(SQL(undefined));
+  }
 }
 
 var initialDefaultSQL;
@@ -2108,6 +2115,62 @@ var defaultSQLObject = (initialDefaultSQL = function sql(strings, ...values) {
     resetDefaultSQL(SQL(undefined));
   }
   return lazyDefaultSQL(strings, ...values);
+});
+
+defaultSQLObject.reserve = (...args) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.reserve(...args);
+};
+defaultSQLObject.commitDistributed = (...args) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.commitDistributed(...args);
+};
+defaultSQLObject.rollbackDistributed = (...args) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.rollbackDistributed(...args);
+};
+defaultSQLObject.distributed = defaultSQLObject.beginDistributed = (...args) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.beginDistributed(...args);
+};
+
+defaultSQLObject.connect = (...args) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.connect(...args);
+};
+
+defaultSQLObject.unsafe = (...args) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.unsafe(...args);
+};
+
+defaultSQLObject.transaction = defaultSQLObject.begin = (...args) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.begin(...args);
+};
+
+defaultSQLObject.end = defaultSQLObject.close = (...args) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.close(...args);
+};
+defaultSQLObject.flush = (...args) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.flush(...args);
+};
+//define lazy properties
+Object.defineProperties(defaultSQLObject, {
+  options: {
+    get: () => {
+      ensureDefaultSQL();
+      return lazyDefaultSQL.options;
+    },
+  },
+  [Symbol.asyncDispose]: {
+    get: () => {
+      ensureDefaultSQL();
+      return lazyDefaultSQL[Symbol.asyncDispose];
+    },
+  },
 });
 
 var exportsObject = {

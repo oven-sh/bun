@@ -654,14 +654,15 @@ if (!isCI && hasPsql) {
     expect(err).toBeInstanceOf(SyntaxError);
   });
 
-  // t('Connect using uri', async() =>
-  //   [true, await new Promise((resolve, reject) => {
-  //     const sql = postgres('postgres://' + login.user + ':' + (login.pass || '') + '@localhost:5432/' + options.db, {
-  //       idle_timeout
-  //     })
-  //     sql`select 1`.then(() => resolve(true), reject)
-  //   })]
-  // )
+  test("Connect using uri", async () => [
+    true,
+    await new Promise((resolve, reject) => {
+      const sql = postgres(
+        "postgres://" + login_md5.username + ":" + (login_md5.password || "") + "@localhost:5432/" + options.db,
+      );
+      sql`select 1`.then(() => resolve(true), reject);
+    }),
+  ]);
 
   // t('Options from uri with special characters in user and pass', async() => {
   //   const opt = postgres({ user: 'öla', pass: 'pass^word' }).options
@@ -2869,25 +2870,22 @@ if (!isCI && hasPsql) {
   //   return ['12233445566778', xs.sort().join('')]
   // })
 
-  // t('reserve connection', async() => {
-  //   const reserved = await sql.reserve()
+  test("reserve connection", async () => {
+    const sql = postgres({ ...options, max: 1 });
+    const reserved = await sql.reserve();
 
-  //   setTimeout(() => reserved.release(), 510)
+    setTimeout(() => reserved.release(), 510);
 
-  //   const xs = await Promise.all([
-  //     reserved`select 1 as x`.then(([{ x }]) => ({ time: Date.now(), x })),
-  //     sql`select 2 as x`.then(([{ x }]) => ({ time: Date.now(), x })),
-  //     reserved`select 3 as x`.then(([{ x }]) => ({ time: Date.now(), x }))
-  //   ])
+    const xs = await Promise.all([
+      reserved`select 1 as x`.then(([{ x }]) => ({ time: Date.now(), x })),
+      sql`select 2 as x`.then(([{ x }]) => ({ time: Date.now(), x })),
+      reserved`select 3 as x`.then(([{ x }]) => ({ time: Date.now(), x })),
+    ]);
 
-  //   if (xs[1].time - xs[2].time < 500)
-  //     throw new Error('Wrong time')
+    if (xs[1].time - xs[2].time < 500) throw new Error("Wrong time");
 
-  //   return [
-  //     '123',
-  //     xs.map(x => x.x).join('')
-  //   ]
-  // })
+    expect(xs.map(x => x.x).join("")).toBe("123");
+  });
 
   test("keeps process alive when it should", async () => {
     const file = path.posix.join(__dirname, "sql-fixture-ref.ts");

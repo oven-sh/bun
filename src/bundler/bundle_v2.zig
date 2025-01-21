@@ -1747,6 +1747,7 @@ pub const BundleV2 = struct {
                     .conditions = config.conditions.map.keys(),
                     .ignore_dce_annotations = transpiler.options.ignore_dce_annotations,
                     .drop = config.drop.map.keys(),
+                    .bunfig_path = transpiler.options.bunfig_path,
                 },
                 completion.env,
             );
@@ -1818,6 +1819,7 @@ pub const BundleV2 = struct {
             }
 
             if (this.html_build_task) |html_build_task| {
+                this.plugins = null;
                 html_build_task.onComplete(this);
                 return;
             }

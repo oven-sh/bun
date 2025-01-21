@@ -5947,6 +5947,7 @@ const ServePlugins = struct {
         defer plugins.deref();
         var pending_bundled_routes = plugins.value.pending.pending_bundled_routes;
         defer pending_bundled_routes.deinit(bun.default_allocator);
+        plugins.value.pending.promise.deinit();
         plugins.value.pending.pending_bundled_routes = .{};
         plugins.value = .err;
         for (pending_bundled_routes.items) |route| {

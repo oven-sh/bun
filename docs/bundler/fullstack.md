@@ -204,6 +204,8 @@ Bun's [bundler plugins](https://bun.sh/docs/bundler/plugins) are also supported 
 
 To configure plugins for `Bun.serve`, add a `plugins` array in the `[serve.static]` section of your `bunfig.toml`.
 
+### Using TailwindCSS in HTML routes
+
 For example, enable TailwindCSS on your routes by adding add the `bun-plugin-tailwind` plugin:
 
 ```toml

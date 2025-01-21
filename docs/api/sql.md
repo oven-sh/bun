@@ -504,13 +504,6 @@ console.log(typeof result.x); // 'string'
 console.log(result.x); // '9223372036854777';
 ```
 
-## Why This Matters:
-
-- Handling Large IDs: Useful for databases with IDs that exceed 32-bit limits.
-- Precision in Calculations: Maintains accuracy in financial or mathematical computations.
-- Timestamps: Facilitates working with high-resolution timestamps (microseconds/nanoseconds).
-- Scientific and Statistical Data: Ideal for large datasets requiring exact values.
-
 ## Getting BigInt Instead of Strings
 
 If you need large numbers as BigInt instead of strings, you can enable this by setting the `bigint: true` option when initializing the SQL client:

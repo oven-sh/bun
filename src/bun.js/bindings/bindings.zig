@@ -1795,6 +1795,7 @@ pub const SystemError = extern struct {
         this.message.ref();
         this.syscall.ref();
         this.hostname.ref();
+        this.dest.ref();
     }
 
     pub fn toErrorInstance(this: *const SystemError, global: *JSGlobalObject) JSValue {
@@ -1823,13 +1824,7 @@ pub const SystemError = extern struct {
     /// implementing follows this convention. It is exclusively used
     /// to match the error code that `node:os` throws.
     pub fn toErrorInstanceWithInfoObject(this: *const SystemError, global: *JSGlobalObject) JSValue {
-        defer {
-            this.path.deref();
-            this.code.deref();
-            this.message.deref();
-            this.syscall.deref();
-            this.dest.deref();
-        }
+        defer this.deref();
 
         return SystemError__toErrorInstanceWithInfoObject(this, global);
     }

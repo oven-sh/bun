@@ -45,10 +45,10 @@ function versionOf(cwd: string, path: string) {
 
 function ensureLockfileDoesntChangeOnBunI(cwd: string) {
   install(cwd, ["install"]);
-  const lockb1 = readFileSync(join(cwd, "bun.lockb"));
+  const lockb1 = readFileSync(join(cwd, "bun.lock"));
   install(cwd, ["install", "--frozen-lockfile"]);
   install(cwd, ["install", "--force"]);
-  const lockb2 = readFileSync(join(cwd, "bun.lockb"));
+  const lockb2 = readFileSync(join(cwd, "bun.lock"));
 
   expect(lockb1.toString("hex")).toEqual(lockb2.toString("hex"));
 }

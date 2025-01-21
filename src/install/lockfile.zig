@@ -4579,14 +4579,16 @@ pub const Package = extern struct {
             // number of from_deps could be greater than to_deps.
             summary.add = @truncate((to_deps.len) -| (from_deps.len -| summary.remove));
 
-            inline for (Lockfile.Scripts.names) |hook| {
-                if (!@field(to.scripts, hook).eql(
-                    @field(from.scripts, hook),
-                    to_lockfile.buffers.string_bytes.items,
-                    from_lockfile.buffers.string_bytes.items,
-                )) {
-                    // We found a changed life-cycle script
-                    summary.update += 1;
+            if (from.resolution.tag != .root) {
+                inline for (Lockfile.Scripts.names) |hook| {
+                    if (!@field(to.scripts, hook).eql(
+                        @field(from.scripts, hook),
+                        to_lockfile.buffers.string_bytes.items,
+                        from_lockfile.buffers.string_bytes.items,
+                    )) {
+                        // We found a changed life-cycle script
+                        summary.update += 1;
+                    }
                 }
             }
 

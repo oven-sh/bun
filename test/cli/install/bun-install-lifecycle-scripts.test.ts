@@ -179,7 +179,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       await rm(join(packageDir, "prepare.txt"));
       await rm(join(packageDir, "postprepare.txt"));
       await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-      await rm(join(packageDir, "bun.lockb"));
+      await rm(join(packageDir, "bun.lock"));
 
       // all at once
       ({ stdout, stderr, exited } = spawn({
@@ -521,7 +521,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
 
       await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-      await rm(join(packageDir, "bun.lockb"));
+      await rm(join(packageDir, "bun.lock"));
 
       await writeFile(
         packageJson,
@@ -1453,7 +1453,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       ).toContain("what-bin@1.0.0");
 
       await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-      await rm(join(packageDir, "bun.lockb"));
+      await rm(join(packageDir, "bun.lock"));
 
       await writeFile(
         packageJson,
@@ -1487,6 +1487,9 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).not.toContain("warn:");
 
       expect(await exited).toBe(0);
+      const firstLockfile = await (
+        await file(join(packageDir, "bun.lock")).text()
+      ).replaceAll(/localhost:\d+/g, "localhost:1234");
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
 
       expect(await file(join(packageDir, "node_modules", "what-bin", "what-bin.js")).text()).toContain(
@@ -1521,6 +1524,10 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "3 packages installed",
       ]);
       expect(await exited).toBe(0);
+      const secondLockfile = await (
+        await file(join(packageDir, "bun.lock")).text()
+      ).replaceAll(/localhost:\d+/g, "localhost:1234");
+      expect(firstLockfile).toEqual(secondLockfile);
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
     });
 
@@ -1650,7 +1657,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
       await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
       await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
-      await rm(join(packageDir, "bun.lockb"));
+      await rm(join(packageDir, "bun.lock"));
 
       await writeFile(
         packageJson,
@@ -1748,6 +1755,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("will run default trustedDependencies after install that didn't include them", async () => {
+      await verdaccio.writeBunfig(packageDir, { saveTextLockfile: false });
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
@@ -2547,6 +2555,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         test(withRm ? "withRm" : "withoutRm", async () => {
           const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
+          await verdaccio.writeBunfig(packageDir, { saveTextLockfile: false });
           await writeFile(
             packageJson,
             JSON.stringify({

@@ -491,9 +491,12 @@ pub const Subprocess = struct {
 
         pub fn finalize(this: *Readable) void {
             switch (this.*) {
-                inline .memfd, .fd => |fd| {
+                .memfd => |fd| {
                     this.* = .{ .closed = {} };
                     _ = bun.sys.close(fd);
+                },
+                .fd => {
+                    this.* = .{ .closed = {} };
                 },
                 .pipe => |pipe| {
                     defer pipe.detach();

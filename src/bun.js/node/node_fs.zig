@@ -5906,6 +5906,7 @@ pub const NodeFS = struct {
                 .{ .err = Syscall.Error{
                     .errno = errno,
                     .syscall = .utime,
+                    .path = args.path.slice(),
                 } }
             else
                 Maybe(Return.Utimes).success;
@@ -5925,7 +5926,7 @@ pub const NodeFS = struct {
         };
 
         return if (Maybe(Return.Utimes).errnoSysP(std.c.utimes(args.path.sliceZ(&this.sync_error_buf), &times), .utime, args.path.slice())) |err|
-            err
+            .{ .err = err.err.withPath(args.path.slice()) }
         else
             Maybe(Return.Utimes).success;
     }
@@ -5946,6 +5947,7 @@ pub const NodeFS = struct {
                 .{ .err = Syscall.Error{
                     .errno = errno,
                     .syscall = .utime,
+                    .path = args.path.slice(),
                 } }
             else
                 Maybe(Return.Utimes).success;
@@ -5965,7 +5967,7 @@ pub const NodeFS = struct {
         };
 
         return if (Maybe(Return.Lutimes).errnoSysP(C.lutimes(args.path.sliceZ(&this.sync_error_buf), &times), .lutime, args.path.slice())) |err|
-            err
+            .{ .err = err.err.withPath(args.path.slice()) }
         else
             Maybe(Return.Lutimes).success;
     }

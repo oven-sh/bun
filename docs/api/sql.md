@@ -11,16 +11,16 @@ const users = await sql`
 
 // Select with multiple conditions
 const activeUsers = await sql`
-  SELECT * 
-  FROM users 
-  WHERE active = ${true} 
+  SELECT *
+  FROM users
+  WHERE active = ${true}
   AND age >= ${18}
 `;
 ```
 
 {% features title="Features" %}
 
-{% icon size=20 name="Shield" /%} Tagged template literals to protect againt SQL injection
+{% icon size=20 name="Shield" /%} Tagged template literals to protect against SQL injection
 
 {% icon size=20 name="GitMerge" /%} Transactions
 
@@ -53,7 +53,7 @@ import { sql } from "bun";
 
 // Basic insert with direct values
 const [user] = await sql`
-  INSERT INTO users (name, email) 
+  INSERT INTO users (name, email)
   VALUES (${name}, ${email})
   RETURNING *
 `;
@@ -561,7 +561,7 @@ The plan is to add more database drivers in the future.
 
 npm packages like postgres.js, pg, and node-postgres can be used in Bun too. They're great options.
 
-Two reaons why:
+Two reasons why:
 
 1. We think it's simpler for developers to have a database driver built into Bun. The time you spend library shopping is time you could be building your app.
 2. We leverage some JavaScriptCore engine internals to make it faster to create objects that would be difficult to implement in a library

@@ -319,7 +319,7 @@ await sql.rollbackDistributed("tx1");
 
 ## Authentication
 
-Bun supports SCRAM-SHA-256 (SASL), MD5, and Clear Text authentication. SASL is recommended for better security.
+Bun supports SCRAM-SHA-256 (SASL), MD5, and Clear Text authentication. SASL is recommended for better security. Check [Postgres SASL Authentication](https://www.postgresql.org/docs/current/sasl-authentication.html) for more information.
 
 ### SSL Modes Overview
 

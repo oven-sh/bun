@@ -5,7 +5,7 @@
       "name": "bun",
       "devDependencies": {
         "@mdn/browser-compat-data": "~5.5.28",
-        "@types/bun": "^1.1",
+        "@types/bun": "*",
         "@types/react": "^18.3.3",
         "@typescript-eslint/eslint-plugin": "^7.11.0",
         "@typescript-eslint/parser": "^7.11.0",
@@ -28,7 +28,7 @@
     "packages/bun-types": {
       "name": "bun-types",
       "dependencies": {
-        "@types/node": "^22",
+        "@types/node": "*",
         "@types/ws": "~8.5.10",
       },
       "devDependencies": {
@@ -254,7 +254,7 @@
 
     "builtins": ["builtins@1.0.3", "", {}, "sha512-uYBjakWipfaO/bXI7E8rq6kpwHRZK5cNYrUv2OzZSI/FvmdMyXJ2tG9dKcjEC5YHmHpUAwsargWIZNWdxb/bnQ=="],
 
-    "bun-types": ["bun-types@workspace:packages/bun-types", { "dependencies": { "@types/node": "^22", "@types/ws": "~8.5.10" }, "devDependencies": { "@biomejs/biome": "^1.5.3", "@definitelytyped/dtslint": "^0.0.199", "@definitelytyped/eslint-plugin": "^0.0.197", "typescript": "^5.0.2" } }],
+    "bun-types": ["bun-types@workspace:packages/bun-types", { "dependencies": { "@types/node": "*", "@types/ws": "~8.5.10" }, "devDependencies": { "@biomejs/biome": "^1.5.3", "@definitelytyped/dtslint": "^0.0.199", "@definitelytyped/eslint-plugin": "^0.0.197", "typescript": "^5.0.2" } }],
 
     "call-bind": ["call-bind@1.0.7", "", { "dependencies": { "es-define-property": "^1.0.0", "es-errors": "^1.3.0", "function-bind": "^1.1.2", "get-intrinsic": "^1.2.4", "set-function-length": "^1.2.1" } }, "sha512-GHTSNSYICQ7scH7sZ+M2rFopRoLh8t2bLSW6BbgrtLsahOIB5iyAVJf9GjWK3cYTDaMj4XdBpM1cA6pIS0Kv2w=="],
 

@@ -115,7 +115,7 @@ pub enum BunLoader {
     BUN_LOADER_DATAURL = 11,
     BUN_LOADER_TEXT = 12,
 }
-unsafe extern "C" {
+extern "C" {
     pub static BUN_LOADER_MAX: BunLoader;
 }
 #[repr(C)]
@@ -175,7 +175,7 @@ pub enum BunLogLevel {
     BUN_LOG_LEVEL_WARN = 3,
     BUN_LOG_LEVEL_ERROR = 4,
 }
-unsafe extern "C" {
+extern "C" {
     pub static BUN_LOG_MAX: BunLogLevel;
 }
 pub type __builtin_va_list = *mut ::std::os::raw::c_char;

@@ -599,6 +599,10 @@ var access = function access(path, mode, callback) {
     return new FSWatcher(path, options, listener);
   },
   opendir = function opendir(path, options, callback) {
+    if (typeof options === "function") {
+      callback = options;
+      options = undefined;
+    }
     const result = new Dir(1, path, options);
     if (callback) callback(null, result);
   };

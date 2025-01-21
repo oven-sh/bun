@@ -722,7 +722,12 @@ const realpathSync: any =
             throw $ERR_INVALID_ARG_VALUE("path", "string without null bytes", p.pathname);
           }
           p = Bun.fileURLToPath(p as URL);
-        } else p = getValidatedPath(p);
+        } else {
+          if (typeof p !== "string") {
+            p += "";
+          }
+          p = getValidatedPath(p);
+        }
         throwIfNullBytesInFileName(p);
         const knownHard = new Set();
 
@@ -827,15 +832,17 @@ const realpath: any =
           else encoding = options?.encoding;
           encoding && (assertEncodingForWindows ?? $newZigFunction("types.zig", "jsAssertEncodingValid", 1))(encoding);
         }
-        if (typeof p !== "string") {
-          p += "";
-        }
         if (p instanceof URL) {
           if (p.pathname.indexOf("%00") != -1) {
             throw $ERR_INVALID_ARG_VALUE("path", "string without null bytes", p.pathname);
           }
           p = Bun.fileURLToPath(p as URL);
-        } else p = getValidatedPath(p);
+        } else {
+          if (typeof p !== "string") {
+            p += "";
+          }
+          p = getValidatedPath(p);
+        }
         throwIfNullBytesInFileName(p);
 
         const knownHard = new Set();

@@ -211,8 +211,8 @@ const db = new SQL({
 
   // Connection pool settings
   max: 20, // Maximum connections in pool
-  idleTimeout: 30000, // Close idle connections after 30s
-  maxLifetime: 0, // Connection lifetime in ms (0 = forever)
+  idleTimeout: 30, // Close idle connections after 30s
+  maxLifetime: 0, // Connection lifetime in seconds (0 = forever)
   connectionTimeout: 30, // Timeout when establishing new connections
 
   // SSL/TLS options
@@ -375,9 +375,9 @@ Bun's SQL client automatically manages a connection pool, which is a pool of dat
 const db = new SQL({
   // Pool configuration
   max: 20, // Maximum 20 concurrent connections
-  idleTimeout: 30000, // Close idle connections after 30s
-  maxLifetime: 3600000, // Max connection lifetime 1 hour
-  connectionTimeout: 10000, // Connection timeout 10s
+  idleTimeout: 30, // Close idle connections after 30s
+  maxLifetime: 3600, // Max connection lifetime 1 hour
+  connectionTimeout: 10, // Connection timeout 10s
 });
 ```
 

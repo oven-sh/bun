@@ -617,6 +617,7 @@ console.log('Main JS loaded page:', page);`,
 </html>`,
     },
     entryPoints: ["/in/main.js"],
+    loader: { ".html": "file" },
     onAfterBundle(api) {
       const bundle = api.readFile("out/main.js");
 

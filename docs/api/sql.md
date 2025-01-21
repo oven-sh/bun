@@ -3,28 +3,42 @@ Bun provides native bindings for working with PostgreSQL databases with a modern
 ```ts
 import { sql } from "bun";
 
-// Execute a query
-const [{ message }] = await sql`select 'Hello world' as message`;
-console.log(message); // "Hello world"
+const user = {
+  name: "Alice",
+  email: "alice@example.com",
+  age: 25,
+};
+
+const [user] = await sql`INSERT INTO users ${sql(user)} RETURNING *`;
+console.log(user); // { id: 1, name: "Alice", email: "alice@example.com", age: 25 }
 ```
 
 The API is simple and fast, Credit to [postgres.js](https://github.com/porsager/postgres) and its contributors for inspiring the API of `Bun.sql`.
 
-Features include:
+Features:
 
+- Tagged template literals automatically protect against SQL injection
 - Transactions
 - Parameters (named & positional)
-- Prepared statements
+- Automatic prepared statements
 - Connection pooling
 - The fastest performance of any PostgreSQL driver for JavaScript
 - `bigint` support
-
-## Querying
-
-Bun's SQL client provides a powerful yet simple interface for database operations. Using tagged template literals and helpful utilities, you can write safe and efficient database queries with minimal boilerplate.
-
-The foundation of database interaction is the ability to retrieve data. Bun makes this straightforward by using template literals for parameter interpolation. This approach not only makes queries easy to read but also ensures they're safe from SQL injection.
-When you use template literals with the SQL client, each interpolated value is automatically converted to a prepared statement parameter. This means your queries are both safe and efficient.
+- Authentication methods:
+  - SASL (SCRAM-SHA-256) support
+  - MD5
+  - Clear text
+- Connection timeouts
+- SQL fragments
+- Returning data as objects, as values (array of arrays), and raw
+- Binary protocol support, improving serialization performance
+- TLS support, including auth mode:
+  - `require`
+  - `prefer`
+  - `disable`
+  - `verify-ca`
+  - `verify-full`
+- `$DATABASE_URL` environment variable support
 
 ## Basic Select Queries
 
@@ -124,7 +138,7 @@ const rows = await sql`SELECT * FROM users`.raw();
 console.log(rows); // [[Buffer, Buffer], [Buffer, Buffer], [Buffer, Buffer]]
 ```
 
-## Dynamic SQL Components
+## SQL Fragments
 
 A common need in database applications is the ability to construct queries dynamically based on runtime conditions. Bun provides safe ways to do this without risking SQL injection.
 
@@ -303,7 +317,7 @@ await sql.commitDistributed("tx1");
 await sql.rollbackDistributed("tx1");
 ```
 
-## Connection Management
+## Connection Pooling
 
 Bun's SQL client automatically manages a connection pool, which is a pool of database connections that are reused for multiple queries. This helps to reduce the overhead of establishing and closing connections for each query, and it also helps to manage the number of concurrent connections to the database.
 
@@ -364,55 +378,67 @@ The client provides typed errors for different failure scenarios:
 
 ### Connection Errors
 
-- `ERR_POSTGRES_CONNECTION_CLOSED`: Connection was terminated or never established
-- `ERR_POSTGRES_CONNECTION_TIMEOUT`: Failed to establish connection within timeout period
-- `ERR_POSTGRES_IDLE_TIMEOUT`: Connection closed due to inactivity
-- `ERR_POSTGRES_LIFETIME_TIMEOUT`: Connection exceeded maximum lifetime
-- `ERR_POSTGRES_TLS_NOT_AVAILABLE`: SSL/TLS connection not available
-- `ERR_POSTGRES_TLS_UPGRADE_FAILED`: Failed to upgrade connection to SSL/TLS
+| Connection Errors                 | Description                                          |
+| --------------------------------- | ---------------------------------------------------- |
+| `ERR_POSTGRES_CONNECTION_CLOSED`  | Connection was terminated or never established       |
+| `ERR_POSTGRES_CONNECTION_TIMEOUT` | Failed to establish connection within timeout period |
+| `ERR_POSTGRES_IDLE_TIMEOUT`       | Connection closed due to inactivity                  |
+| `ERR_POSTGRES_LIFETIME_TIMEOUT`   | Connection exceeded maximum lifetime                 |
+| `ERR_POSTGRES_TLS_NOT_AVAILABLE`  | SSL/TLS connection not available                     |
+| `ERR_POSTGRES_TLS_UPGRADE_FAILED` | Failed to upgrade connection to SSL/TLS              |
 
 ### Authentication Errors
 
-- `ERR_POSTGRES_AUTHENTICATION_FAILED_PBKDF2`: Password authentication failed
-- `ERR_POSTGRES_UNKNOWN_AUTHENTICATION_METHOD`: Server requested unknown auth method
-- `ERR_POSTGRES_UNSUPPORTED_AUTHENTICATION_METHOD`: Server requested unsupported auth method
-- `ERR_POSTGRES_INVALID_SERVER_KEY`: Invalid server key during authentication
-- `ERR_POSTGRES_INVALID_SERVER_SIGNATURE`: Invalid server signature
-- `ERR_POSTGRES_SASL_SIGNATURE_INVALID_BASE64`: Invalid SASL signature encoding
-- `ERR_POSTGRES_SASL_SIGNATURE_MISMATCH`: SASL signature verification failed
+| Authentication Errors                            | Description                              |
+| ------------------------------------------------ | ---------------------------------------- |
+| `ERR_POSTGRES_AUTHENTICATION_FAILED_PBKDF2`      | Password authentication failed           |
+| `ERR_POSTGRES_UNKNOWN_AUTHENTICATION_METHOD`     | Server requested unknown auth method     |
+| `ERR_POSTGRES_UNSUPPORTED_AUTHENTICATION_METHOD` | Server requested unsupported auth method |
+| `ERR_POSTGRES_INVALID_SERVER_KEY`                | Invalid server key during authentication |
+| `ERR_POSTGRES_INVALID_SERVER_SIGNATURE`          | Invalid server signature                 |
+| `ERR_POSTGRES_SASL_SIGNATURE_INVALID_BASE64`     | Invalid SASL signature encoding          |
+| `ERR_POSTGRES_SASL_SIGNATURE_MISMATCH`           | SASL signature verification failed       |
 
 ### Query Errors
 
-- `ERR_POSTGRES_SYNTAX_ERROR`: Invalid SQL syntax (extends `SyntaxError`)
-- `ERR_POSTGRES_SERVER_ERROR`: General error from PostgreSQL server
-- `ERR_POSTGRES_INVALID_QUERY_BINDING`: Invalid parameter binding
-- `ERR_POSTGRES_QUERY_CANCELLED`: Query was cancelled
+| Query Errors                         | Description                                |
+| ------------------------------------ | ------------------------------------------ |
+| `ERR_POSTGRES_SYNTAX_ERROR`          | Invalid SQL syntax (extends `SyntaxError`) |
+| `ERR_POSTGRES_SERVER_ERROR`          | General error from PostgreSQL server       |
+| `ERR_POSTGRES_INVALID_QUERY_BINDING` | Invalid parameter binding                  |
+| `ERR_POSTGRES_QUERY_CANCELLED`       | Query was cancelled                        |
 
 ### Data Type Errors
 
-- `ERR_POSTGRES_INVALID_BINARY_DATA`: Invalid binary data format
-- `ERR_POSTGRES_INVALID_BYTE_SEQUENCE`: Invalid byte sequence
-- `ERR_POSTGRES_INVALID_BYTE_SEQUENCE_FOR_ENCODING`: Encoding error
-- `ERR_POSTGRES_INVALID_CHARACTER`: Invalid character in data
-- `ERR_POSTGRES_OVERFLOW`: Numeric overflow
-- `ERR_POSTGRES_UNSUPPORTED_BYTEA_FORMAT`: Unsupported binary format
-- `ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE`: Integer size not supported
-- `ERR_POSTGRES_MULTIDIMENSIONAL_ARRAY_NOT_SUPPORTED_YET`: Multidimensional arrays not supported
-- `ERR_POSTGRES_NULLS_IN_ARRAY_NOT_SUPPORTED_YET`: NULL values in arrays not supported
+| Data Type Errors                                        | Description                           |
+| ------------------------------------------------------- | ------------------------------------- |
+| `ERR_POSTGRES_INVALID_BINARY_DATA`                      | Invalid binary data format            |
+| `ERR_POSTGRES_INVALID_BYTE_SEQUENCE`                    | Invalid byte sequence                 |
+| `ERR_POSTGRES_INVALID_BYTE_SEQUENCE_FOR_ENCODING`       | Encoding error                        |
+| `ERR_POSTGRES_INVALID_CHARACTER`                        | Invalid character in data             |
+| `ERR_POSTGRES_OVERFLOW`                                 | Numeric overflow                      |
+| `ERR_POSTGRES_UNSUPPORTED_BYTEA_FORMAT`                 | Unsupported binary format             |
+| `ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE`                 | Integer size not supported            |
+| `ERR_POSTGRES_MULTIDIMENSIONAL_ARRAY_NOT_SUPPORTED_YET` | Multidimensional arrays not supported |
+| `ERR_POSTGRES_NULLS_IN_ARRAY_NOT_SUPPORTED_YET`         | NULL values in arrays not supported   |
 
 ### Protocol Errors
 
-- `ERR_POSTGRES_EXPECTED_REQUEST`: Expected client request
-- `ERR_POSTGRES_EXPECTED_STATEMENT`: Expected prepared statement
-- `ERR_POSTGRES_INVALID_BACKEND_KEY_DATA`: Invalid backend key data
-- `ERR_POSTGRES_INVALID_MESSAGE`: Invalid protocol message
-- `ERR_POSTGRES_INVALID_MESSAGE_LENGTH`: Invalid message length
-- `ERR_POSTGRES_UNEXPECTED_MESSAGE`: Unexpected message type
+| Protocol Errors                         | Description                 |
+| --------------------------------------- | --------------------------- |
+| `ERR_POSTGRES_EXPECTED_REQUEST`         | Expected client request     |
+| `ERR_POSTGRES_EXPECTED_STATEMENT`       | Expected prepared statement |
+| `ERR_POSTGRES_INVALID_BACKEND_KEY_DATA` | Invalid backend key data    |
+| `ERR_POSTGRES_INVALID_MESSAGE`          | Invalid protocol message    |
+| `ERR_POSTGRES_INVALID_MESSAGE_LENGTH`   | Invalid message length      |
+| `ERR_POSTGRES_UNEXPECTED_MESSAGE`       | Unexpected message type     |
 
 ### Transaction Errors
 
-- `ERR_POSTGRES_UNSAFE_TRANSACTION`: Unsafe transaction operation detected
-- `ERR_POSTGRES_INVALID_TRANSACTION_STATE`: Invalid transaction state
+| Transaction Errors                       | Description                           |
+| ---------------------------------------- | ------------------------------------- |
+| `ERR_POSTGRES_UNSAFE_TRANSACTION`        | Unsafe transaction operation detected |
+| `ERR_POSTGRES_INVALID_TRANSACTION_STATE` | Invalid transaction state             |
 
 ## Numbers and BigInt
 

@@ -457,7 +457,7 @@ editor = "code"
 
 The `bun run` command can be configured under the `[run]` section. These apply to the `bun run` command and the `bun` command when running a file or executable or script.
 
-Currently, `bunfig.toml` isn't always automatically loaded for `bun run` in a local project (it does check for a global `bunfig.toml`), so you might still need to pass `-c` or `-c=bunfig.toml` to use these settings.
+Currently, `bunfig.toml` isn't automatically loaded for `bun run` in a local project, so you might still need to pass `-c` or `-c=bunfig.toml` to use these settings.
 
 ### `run.shell` - use the system shell or Bun's shell
 

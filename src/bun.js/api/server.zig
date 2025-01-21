@@ -5849,8 +5849,8 @@ const ServePlugins = struct {
         const alloc = sfb.get();
         const bunstring_array = alloc.alloc(bun.String, this.value.pending.raw_plugins.len) catch bun.outOfMemory();
         defer alloc.free(bunstring_array);
-        for (this.value.pending.raw_plugins, 0..) |raw_plugin, i| {
-            bunstring_array[i] = bun.String.init(raw_plugin);
+        for (this.value.pending.raw_plugins, bunstring_array) |raw_plugin, *out| {
+            out.* = bun.String.init(raw_plugin);
         }
         const plugins = bun.String.toJSArray(globalThis, bunstring_array);
         const bunfig_folder_bunstr = bun.String.createUTF8ForJS(globalThis, bunfig_folder);

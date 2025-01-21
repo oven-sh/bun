@@ -72,6 +72,53 @@ Certificate.verifySpkac = verifySpkac;
 Certificate.exportPublicKey = exportPublicKey;
 Certificate.exportChallenge = exportChallenge;
 
+let bunAlgorithmMap: Map<string, string>;
+function normalizeAlgorithmName(alg: string) {
+  if (!bunAlgorithmMap) {
+    // This list should be kept roughly in sync with the ComptimeStringMap used
+    // in Bun.CryptoHasher
+    bunAlgorithmMap = new Map([
+      ["blake2b256", "blake2b256"],
+      ["blake2b512", "blake2b512"],
+
+      // this JS code expects rmd160
+      // so we for now normalize to that instead.
+      ["ripemd160", "rmd160"],
+      ["rmd160", "rmd160"],
+      ["md4", "md4"],
+      ["md5", "md5"],
+      ["sha1", "sha1"],
+      ["sha128", "sha1"],
+      ["sha224", "sha224"],
+      ["sha256", "sha256"],
+      ["sha384", "sha384"],
+      ["sha512", "sha512"],
+      ["sha-1", "sha1"],
+      ["sha-224", "sha224"],
+      ["sha-256", "sha256"],
+      ["sha-384", "sha384"],
+      ["sha-512", "sha512"],
+      ["sha-512/224", "sha512-224"],
+      ["sha-512_224", "sha512-224"],
+      ["sha-512224", "sha512-224"],
+      ["sha512-224", "sha512-224"],
+      ["sha-512/256", "sha512-256"],
+      ["sha-512_256", "sha512-256"],
+      ["sha-512256", "sha512-256"],
+      ["sha512-256", "sha512-256"],
+      ["sha384", "sha384"],
+      ["sha3-224", "sha3-224"],
+      ["sha3-256", "sha3-256"],
+      ["sha3-384", "sha3-384"],
+      ["sha3-512", "sha3-512"],
+      ["shake128", "shake128"],
+      ["shake256", "shake256"],
+    ]);
+  }
+
+  return bunAlgorithmMap.get((alg = alg?.toLowerCase?.())) || alg;
+}
+
 function getCipherInfo(nameOrNid, options) {
   if (typeof nameOrNid !== "string" && typeof nameOrNid !== "number") {
     throw $ERR_INVALID_ARG_TYPE("nameOrNid", ["string", "number"], nameOrNid);
@@ -1471,6 +1518,7 @@ var require_browser3 = __commonJS({
     var sha = require_sha2();
     var ZEROS = Buffer2.alloc(128);
     function Hmac(alg, key) {
+      alg = normalizeAlgorithmName(alg);
       key = exportIfKeyObject(key);
 
       Base.$call(this, "digest"), typeof key == "string" && (key = Buffer2.from(key));

@@ -211,19 +211,19 @@ console.log("How...dashing?");
 "/* styles.css */
 .container {
   text-align: center;
-  font-family: system-ui, sans-serif;
   max-width: 800px;
   margin: 2rem auto;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Noto Sans, Ubuntu, Cantarell, Helvetica Neue, sans-serif;
 }
 
 button {
-  font-size: 1.25rem;
-  border-radius: .25rem;
-  border: 2px solid #000;
   cursor: pointer;
   transition: all .2s;
   background: #fff;
+  border: 2px solid #000;
+  border-radius: .25rem;
   padding: .5rem 1rem;
+  font-size: 1.25rem;
 }
 
 button:hover {
@@ -234,7 +234,9 @@ button:hover {
 `);
   }
 
-  expect(await (await fetch(`http://${hostname}:${port}/a-different-url`)).text()).toMatchInlineSnapshot(`"Hello World"`);
+  expect(await (await fetch(`http://${hostname}:${port}/a-different-url`)).text()).toMatchInlineSnapshot(
+    `"Hello World"`,
+  );
 
   subprocess.kill();
 });

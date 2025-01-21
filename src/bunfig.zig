@@ -482,6 +482,12 @@ pub const Bunfig = struct {
                         }
                     }
 
+                    if (install_obj.get("ignoreScripts")) |ignore_scripts_expr| {
+                        if (ignore_scripts_expr.asBool()) |ignore_scripts| {
+                            install.ignore_scripts = ignore_scripts;
+                        }
+                    }
+
                     if (install_obj.get("lockfile")) |lockfile_expr| {
                         if (lockfile_expr.get("print")) |lockfile| {
                             try this.expectString(lockfile);

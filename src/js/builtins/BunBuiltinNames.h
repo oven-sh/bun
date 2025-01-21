@@ -259,6 +259,7 @@ using namespace JSC;
     macro(written) \
     macro(napiDlopenHandle) \
     macro(napiWrappedContents) \
+    macro(SQL) \
     BUN_ADDITIONAL_BUILTIN_NAMES(macro)
 // --- END of BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME ---
 

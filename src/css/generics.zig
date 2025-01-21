@@ -25,6 +25,38 @@ const DashedIdentFns = css.DashedIdentFns;
 const Ident = css.Ident;
 const IdentFns = css.IdentFns;
 
+pub fn slice(comptime T: type, val: *const T) []const bun.meta.looksLikeListContainerType(T).?.child {
+    if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
+        return switch (result.list) {
+            .array_list => val.items,
+            .baby_list => val.sliceConst(),
+            .small_list => val.slice(),
+        };
+    }
+    @compileError("Unsupported type for `slice`: " ++ @typeName(T));
+}
+
+pub fn isCompatible(comptime T: type, val: *const T, browsers: bun.css.targets.Browsers) bool {
+    if (@hasDecl(T, "isCompatible")) return T.isCompatible(val, browsers);
+    const tyinfo = @typeInfo(T);
+    if (tyinfo == .Pointer) {
+        const TT = std.meta.Child(T);
+        return isCompatible(TT, val.*, browsers);
+    }
+    if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
+        const slc = switch (result.list) {
+            .array_list => val.items,
+            .baby_list => val.sliceConst(),
+            .small_list => val.sliceConst(),
+        };
+        for (slc) |*item| {
+            if (!isCompatible(result.child, item, browsers)) return false;
+        }
+        return true;
+    }
+    @compileError("Unsupported type for `isCompatible`: " ++ @typeName(T));
+}
+
 pub inline fn parseWithOptions(comptime T: type, input: *Parser, options: *const ParserOptions) Result(T) {
     if (T != f32 and T != i32 and @hasDecl(T, "parseWithOptions")) return T.parseWithOptions(input, options);
     if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
@@ -125,10 +157,10 @@ pub inline fn toCss(comptime T: type, this: *const T, comptime W: type, dest: *P
     if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
         switch (result.list) {
             .array_list => {
-                return css.to_css.fromList(result.child, this, W, dest);
+                return css.to_css.fromList(result.child, this.items, W, dest);
             },
-            .baby_list => {},
-            .small_list => {},
+            .baby_list => @compileError("TODO"),
+            .small_list => @compileError("TODO"),
         }
     }
     return switch (T) {
@@ -143,8 +175,8 @@ pub inline fn toCss(comptime T: type, this: *const T, comptime W: type, dest: *P
 
 pub fn eqlList(comptime T: type, lhs: *const ArrayList(T), rhs: *const ArrayList(T)) bool {
     if (lhs.items.len != rhs.items.len) return false;
-    for (lhs.items, 0..) |*item, i| {
-        if (!eql(T, item, &rhs.items[i])) return false;
+    for (lhs.items, rhs.items) |*left, *right| {
+        if (!eql(T, left, right)) return false;
     }
     return true;
 }
@@ -175,6 +207,7 @@ pub inline fn eql(comptime T: type, lhs: *const T, rhs: *const T) bool {
     }
     if (comptime tyinfo == .Optional) {
         const TT = std.meta.Child(T);
+        if (lhs.* == null and rhs.* == null) return true;
         if (lhs.* != null and rhs.* != null) return eql(TT, &lhs.*.?, &rhs.*.?);
         return false;
     }
@@ -213,15 +246,15 @@ pub inline fn deepClone(comptime T: type, this: *const T, allocator: Allocator) 
             return bun.create(allocator, TT, deepClone(TT, this.*, allocator));
         }
         if (comptime tyinfo.Pointer.size == .Slice) {
-            var slice = allocator.alloc(tyinfo.Pointer.child, this.len) catch bun.outOfMemory();
+            var slc = allocator.alloc(tyinfo.Pointer.child, this.len) catch bun.outOfMemory();
             if (comptime bun.meta.isSimpleCopyType(tyinfo.Pointer.child) or tyinfo.Pointer.child == []const u8) {
-                @memcpy(slice, this.*);
+                @memcpy(slc, this.*);
             } else {
                 for (this.*, 0..) |*e, i| {
-                    slice[i] = deepClone(tyinfo.Pointer.child, e, allocator);
+                    slc[i] = deepClone(tyinfo.Pointer.child, e, allocator);
                 }
             }
-            return slice;
+            return slc;
         }
         @compileError("Deep clone not supported for this kind of pointer: " ++ @tagName(tyinfo.Pointer.size) ++ " (" ++ @typeName(T) ++ ")");
     }
@@ -237,15 +270,7 @@ pub inline fn deepClone(comptime T: type, this: *const T, allocator: Allocator) 
         return switch (result.list) {
             .array_list => css.deepClone(result.child, allocator, this),
             .baby_list => {
-                var ret = bun.BabyList(result.child){
-                    .ptr = (allocator.alloc(result.child, this.len) catch bun.outOfMemory()).ptr,
-                    .len = this.len,
-                    .cap = this.len,
-                };
-                for (this.sliceConst(), ret.ptr[0..this.len]) |*old, *new| {
-                    new.* = bun.css.generic.deepClone(result.child, old, allocator);
-                }
-                return ret;
+                return bun.BabyList(result.child).deepClone2(this, allocator);
             },
             .small_list => this.deepClone(allocator),
         };

@@ -1523,10 +1523,13 @@ fn isTypeSelector(component: ?*const parser.Component) bool {
 
 fn isSimple(selector: *const parser.Selector) bool {
     var iter = selector.iterRawParseOrderFrom(0);
-    while (iter.next()) |component| {
-        if (component.isCombinator()) return true;
-    }
-    return false;
+    const any_is_combinator = any_is_combinator: {
+        while (iter.next()) |component| {
+            if (component.isCombinator()) break :any_is_combinator true;
+        }
+        break :any_is_combinator false;
+    };
+    return !any_is_combinator;
 }
 
 const CombinatorIter = struct {

@@ -51,18 +51,18 @@ for (const options of [
   // Test malicious corner case: it works as {length: 4} but not intentionally
   new String('4444'),
 ]) {
-  // runTest(Buffer.allocUnsafe(expected.length), options);
+  runTest(Buffer.allocUnsafe(expected.length), options);
 }
 
 for (const options of [
 
   // Test various invalid options
-  // false,
-  // true,
-  // Infinity,
-  // 42n,
-  // Symbol(),
-  // 'amString',
+  false,
+  true,
+  Infinity,
+  42n,
+  Symbol(),
+  'amString',
   [],
   () => {},
 

@@ -546,7 +546,7 @@ var access = function access(path, mode, callback) {
       if (offsetOrOptions !== undefined) {
         // validateObject(offsetOrOptions, 'options', kValidateObjectAllowNullable);
         if (typeof offsetOrOptions !== "object" || $isArray(offsetOrOptions)) {
-          throw new Error("Invalid argument");
+          throw $ERR_INVALID_ARG_TYPE("options", "object", offsetOrOptions);
         }
       }
 

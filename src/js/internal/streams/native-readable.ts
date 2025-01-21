@@ -141,7 +141,7 @@ function read(this: NativeReadable, maxToRead: number) {
     }
     const drainResult = ptr.drain();
     this[kConstructed] = true;
-    $debug(`[${this.debugId}] drain result: ${drainResult?.byteLength ?? 'null'}`);
+    $debug(`[${this.debugId}] drain result: ${drainResult?.byteLength ?? "null"}`);
     if ((drainResult?.byteLength ?? 0) > 0) {
       this.push(drainResult);
     }
@@ -149,7 +149,9 @@ function read(this: NativeReadable, maxToRead: number) {
   const chunk = getRemainingChunk(this, maxToRead);
   var result = ptr.pull(chunk, this[kCloseState]);
   $assert(result !== undefined);
-  $debug(`[${this.debugId}] pull ${chunk?.byteLength} bytes, result: ${result instanceof Promise ? '<pending>' : result}, closeState: ${this[kCloseState][0]}`);
+  $debug(
+    `[${this.debugId}] pull ${chunk?.byteLength} bytes, result: ${result instanceof Promise ? "<pending>" : result}, closeState: ${this[kCloseState][0]}`,
+  );
   if ($isPromise(result)) {
     this[kPendingRead] = true;
     return result.then(

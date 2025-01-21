@@ -265,25 +265,26 @@ function streamConstruct(this: FSStream, callback: (e?: any) => void) {
     } as any;
     this.open();
   } else {
-    if (fastPath) fast: {
-      // // there is a chance that this fd is not actually correct but it will be a number
-      // if (fastPath !== true) {
-      //   // @ts-expect-error undocumented. to make this public please make it a
-      //   // getter. couldn't figure that out sorry
-      //   this.fd = fastPath._getFd();
-      // } else {
-      //   if (fs.open !== open || fs.write !== write || fs.fsync !== fsync || fs.close !== close) {
-      //     this[kWriteStreamFastPath] = undefined;
-      //     break fast;
-      //   }
-      //   // @ts-expect-error
-      //   this.fd = (this[kWriteStreamFastPath] = Bun.file(this.path).writer())._getFd();
-      // }
-      callback();
-      this.emit("open", this.fd);
-      this.emit("ready");
-      return;
-    }
+    if (fastPath)
+      fast: {
+        // // there is a chance that this fd is not actually correct but it will be a number
+        // if (fastPath !== true) {
+        //   // @ts-expect-error undocumented. to make this public please make it a
+        //   // getter. couldn't figure that out sorry
+        //   this.fd = fastPath._getFd();
+        // } else {
+        //   if (fs.open !== open || fs.write !== write || fs.fsync !== fsync || fs.close !== close) {
+        //     this[kWriteStreamFastPath] = undefined;
+        //     break fast;
+        //   }
+        //   // @ts-expect-error
+        //   this.fd = (this[kWriteStreamFastPath] = Bun.file(this.path).writer())._getFd();
+        // }
+        callback();
+        this.emit("open", this.fd);
+        this.emit("ready");
+        return;
+      }
     this[kFs].open(this.path, this.flags, this.mode, (err, fd) => {
       if (err) {
         callback(err);
@@ -406,7 +407,7 @@ ReadStream.prototype.pipe = function (this: FSStream, dest, pipeOpts) {
   // if (this[kReadStreamFastPath]) {
   // }
   return Readable.prototype.pipe.$call(this, dest, pipeOpts);
-}
+};
 
 function WriteStream(this: FSStream, path: string | null, options?: any): void {
   if (!(this instanceof WriteStream)) {
@@ -455,7 +456,7 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     throw $ERR_INVALID_ARG_TYPE("options.fd", "number or FileHandle", fd);
   }
 
-  const autoDestroy = autoClose = (options.autoDestroy = autoClose === undefined ? true : autoClose);
+  const autoDestroy = (autoClose = options.autoDestroy = autoClose === undefined ? true : autoClose);
 
   if (customFs) {
     const { write, writev, close, fsync } = customFs;
@@ -606,16 +607,18 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
     }
 
     const maybePromise = fileSink.write(data);
-    if ($isPromise(maybePromise) && 
-      (($getPromiseInternalField(maybePromise, $promiseFieldFlags) & $promiseStateMask) === $promiseStatePending)
+    if (
+      $isPromise(maybePromise) &&
+      ($getPromiseInternalField(maybePromise, $promiseFieldFlags) & $promiseStateMask) === $promiseStatePending
     ) {
       const prevRefCount = this[kIsPerformingIO];
       this[kIsPerformingIO] = (prevRefCount === true ? 0 : prevRefCount || 0) + 1;
-      if (cb) maybePromise.then(() => {
-        cb(null);
-        this[kIsPerformingIO] -= 1;
-        this.emit(kIoDone, null);
-      }, cb);
+      if (cb)
+        maybePromise.then(() => {
+          cb(null);
+          this[kIsPerformingIO] -= 1;
+          this.emit(kIoDone, null);
+        }, cb);
       return false;
     } else {
       if (cb) process.nextTick(cb, null);
@@ -631,8 +634,7 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
 const writablePrototypeWrite = Writable.prototype.write;
 const kWriteMonkeyPatchDefense = Symbol("!");
 function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
-  if (this[kWriteMonkeyPatchDefense])
-    return writablePrototypeWrite.$call(this, data, encoding, cb);
+  if (this[kWriteMonkeyPatchDefense]) return writablePrototypeWrite.$call(this, data, encoding, cb);
 
   if (typeof encoding === "function") {
     cb = encoding;

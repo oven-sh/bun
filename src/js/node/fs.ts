@@ -599,16 +599,8 @@ var access = function access(path, mode, callback) {
     return new FSWatcher(path, options, listener);
   },
   opendir = function opendir(path, options, callback) {
-    if ($isCallable(options)) {
-      callback = options;
-      options = undefined;
-    }
-
-    ensureCallback(callback);
-
-    promises.opendir(path, options).then(function (dir) {
-      callback(null, dir);
-    }, callback);
+    const result = new Dir(1, path, options);
+    if (callback) callback(null, result);
   };
 
 const { defineCustomPromisifyArgs } = require("internal/promisify");
@@ -1012,13 +1004,71 @@ function _toUnixTimestamp(time: any, name = "time") {
   throw $ERR_INVALID_ARG_TYPE(name, "number or Date", time);
 }
 
+function opendirSync(path, options) {
+  return new Dir(1, path, options);
+}
+
 class Dir {
   #handle;
+  #path;
+  #options;
+  #entries: any[] | null = null;
 
   constructor(handle, path, options) {
     if (handle == null) throw $ERR_MISSING_ARGS("handle");
-    // TODO:
-    throw new Error("not implemented");
+    this.#handle = handle;
+    this.#path = path;
+    this.#options = options;
+  }
+
+  readSync() {
+    let entries = (this.#entries ??= fs.readdirSync(this.#path, {
+      withFileTypes: true,
+      encoding: this.#options?.encoding,
+      recursive: this.#options?.recursive,
+    }));
+    return entries.shift() ?? null;
+  }
+
+  read(cb?): any {
+    if (cb) {
+      return this.read().then(entry => cb(null, entry));
+    }
+
+    if (this.#entries) return Promise.resolve(this.#entries.shift() ?? null);
+
+    return fs
+      .readdir(this.#path, {
+        withFileTypes: true,
+        encoding: this.#options?.encoding,
+        recursive: this.#options?.recursive,
+      })
+      .then(entries => {
+        this.#entries = entries;
+        return entries.shift() ?? null;
+      });
+  }
+
+  close(cb?: () => void) {
+    if (cb) {
+      process.nextTick(cb);
+    }
+    return fs.closedirSync(this.#handle);
+  }
+
+  closeSync() {}
+
+  get path() {
+    return this.#path;
+  }
+
+  async *[Symbol.asyncIterator]() {
+    let entries = (this.#entries ??= await fs.readdir(this.#path, {
+      withFileTypes: true,
+      encoding: this.#options?.encoding,
+      recursive: this.#options?.recursive,
+    }));
+    yield* entries;
   }
 }
 
@@ -1115,7 +1165,7 @@ var exports = {
   // Dir
   Dirent,
   opendir,
-  // opendirSync,
+  opendirSync,
   F_OK: 0,
   R_OK: 4,
   W_OK: 2,

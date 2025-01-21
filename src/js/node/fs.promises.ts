@@ -111,41 +111,8 @@ function cp(src, dest, options) {
   return fs.cp(src, dest, options.recursive, options.errorOnExist, options.force ?? true, options.mode);
 }
 
-// TODO: implement this in native code using a Dir Iterator 💀
-// This is currently stubbed for Next.js support.
-class Dir {
-  #entries: Dirent[];
-  #path: string;
-  constructor(e: Dirent[], path: string) {
-    this.#entries = e;
-    this.#path = path;
-  }
-  get path() {
-    return this.#path;
-  }
-  readSync() {
-    return this.#entries.shift() ?? null;
-  }
-  read(c) {
-    if (c) process.nextTick(c, null, this.readSync());
-    return Promise.resolve(this.readSync());
-  }
-  closeSync() {}
-  close(c) {
-    if (c) process.nextTick(c);
-    return Promise.resolve();
-  }
-  *[Symbol.asyncIterator]() {
-    var next;
-    while ((next = this.readSync())) {
-      yield next;
-    }
-  }
-}
-
-async function opendir(dir: string) {
-  const entries = await fs.readdir(dir, { withFileTypes: true });
-  return new Dir(entries, dir);
+async function opendir(dir: string, options) {
+  return new (require('node:fs').Dir)(1, dir, options);
 }
 
 const private_symbols = {
@@ -396,22 +363,18 @@ function asyncWrap(fn: any, name: string) {
           position = null,
         } = bufferOrParams ?? kEmptyObject);
       }
-    
-      if (offset !== null && typeof offset === 'object') {
+
+      if (offset !== null && typeof offset === "object") {
         // This is fh.read(buffer, options)
-        ({
-          offset = 0,
-          length = buffer?.byteLength - offset,
-          position = null,
-        } = offset);
+        ({ offset = 0, length = buffer?.byteLength - offset, position = null } = offset);
       }
-    
+
       if (offset == null) {
         offset = 0;
       } else {
-        validateInteger(offset, 'offset', 0);
+        validateInteger(offset, "offset", 0);
       }
-    
+
       length ??= buffer?.byteLength - offset;
 
       try {

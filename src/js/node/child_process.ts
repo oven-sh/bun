@@ -1145,10 +1145,9 @@ class ChildProcess extends EventEmitter {
           case "pipe": {
             const value = this.#handle[fdToStdioName(i) as any as number];
             // This can happen if the process was already killed.
-            if (!value)
-              return new ShimmedStdioOutStream();
+            if (!value) return new ShimmedStdioOutStream();
 
-            const pipe = require('internal/streams/native-readable').constructNativeReadable(value, { encoding });
+            const pipe = require("internal/streams/native-readable").constructNativeReadable(value, { encoding });
             this.#closesNeeded++;
             pipe.once("close", () => this.#maybeClose());
             if (autoResume) pipe.resume();

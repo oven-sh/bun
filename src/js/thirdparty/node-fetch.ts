@@ -55,7 +55,7 @@ class Response extends WebResponse {
     if (!body) {
       var web = super.body;
       if (!web) return null;
-      body = this[kBody] = new (require('internal/webstreams_adapters')._ReadableFromWeb)({}, web)
+      body = this[kBody] = new (require("internal/webstreams_adapters")._ReadableFromWeb)({}, web);
     }
 
     return body;

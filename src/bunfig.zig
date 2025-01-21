@@ -629,28 +629,30 @@ pub const Bunfig = struct {
                 }
             }
 
-            if (json.getObject("serve")) |serve_obj| {
-                if (serve_obj.get("plugins")) |config_plugins| {
-                    const plugins: ?[]const []const u8 = plugins: {
-                        if (config_plugins.data == .e_array) {
-                            const raw_plugins = config_plugins.data.e_array.items.slice();
-                            if (raw_plugins.len == 0) break :plugins null;
-                            const plugins = try this.allocator.alloc(string, raw_plugins.len);
-                            for (raw_plugins, 0..) |p, i| {
-                                try this.expectString(p);
-                                plugins[i] = try p.data.e_string.string(allocator);
+            if (json.getObject("serve")) |serve_obj2| {
+                if (serve_obj2.getObject("static")) |serve_obj| {
+                    if (serve_obj.get("plugins")) |config_plugins| {
+                        const plugins: ?[]const []const u8 = plugins: {
+                            if (config_plugins.data == .e_array) {
+                                const raw_plugins = config_plugins.data.e_array.items.slice();
+                                if (raw_plugins.len == 0) break :plugins null;
+                                const plugins = try this.allocator.alloc(string, raw_plugins.len);
+                                for (raw_plugins, 0..) |p, i| {
+                                    try this.expectString(p);
+                                    plugins[i] = try p.data.e_string.string(allocator);
+                                }
+                                break :plugins plugins;
+                            } else {
+                                const p = try config_plugins.data.e_string.string(allocator);
+                                const plugins = try this.allocator.alloc(string, 1);
+                                plugins[0] = p;
+                                break :plugins plugins;
                             }
-                            break :plugins plugins;
-                        } else {
-                            const p = try config_plugins.data.e_string.string(allocator);
-                            const plugins = try this.allocator.alloc(string, 1);
-                            plugins[0] = p;
-                            break :plugins plugins;
-                        }
-                    };
+                        };
 
-                    this.bunfig.serve_plugins = plugins;
-                    this.bunfig.bunfig_path = bun.default_allocator.dupe(u8, this.source.path.text) catch bun.outOfMemory();
+                        this.bunfig.serve_plugins = plugins;
+                        this.bunfig.bunfig_path = bun.default_allocator.dupe(u8, this.source.path.text) catch bun.outOfMemory();
+                    }
                 }
             }
 

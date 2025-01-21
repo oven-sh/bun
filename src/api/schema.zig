@@ -1699,7 +1699,7 @@ pub const Api = struct {
         ignore_dce_annotations: bool,
 
         /// e.g.:
-        /// [serve]
+        /// [serve.static]
         /// plugins = ["tailwindcss"]
         serve_plugins: ?[]const []const u8 = null,
         bunfig_path: []const u8,

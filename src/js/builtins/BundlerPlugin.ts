@@ -65,7 +65,7 @@ export function loadAndResolvePluginsForServe(
     runSetupFn: typeof runSetupFunction,
     bundlerPlugin: BundlerPlugin,
   ) => {
-    let onstart_promises_array = undefined;
+    let onstart_promises_array: Array<Promise<any>> | undefined = undefined;
     for (let i = 0; i < plugins.length; i++) {
       let pluginModuleResolved = await Bun.resolve(plugins[i], bunfig_folder);
 
@@ -77,7 +77,7 @@ export function loadAndResolvePluginsForServe(
       if (!pluginModule || pluginModule.name === undefined || pluginModule.setup === undefined) {
         throw new TypeError(`"${plugins[i]}" is not a valid bundler plugin.`);
       }
-      onstart_promises_array = runSetupFn.$apply(bundlerPlugin, [
+      onstart_promises_array = await runSetupFn.$apply(bundlerPlugin, [
         pluginModule.setup,
         config,
         onstart_promises_array,
@@ -85,7 +85,7 @@ export function loadAndResolvePluginsForServe(
         false,
       ]);
     }
-    if (onstart_promises_array) {
+    if (onstart_promises_array !== undefined) {
       await Promise.all(onstart_promises_array);
     }
   })(plugins, bunfig_folder, runSetupFn, bundlerPlugin);
@@ -108,7 +108,7 @@ export function runSetupFunction(
   promises: Array<Promise<any>> | undefined,
   is_last: boolean,
   isBake: boolean,
-): Promise<Array<Promise<any>> | undefined> {
+): Promise<Array<Promise<any>>> | undefined {
   this.promises = promises;
   var onLoadPlugins = new Map<string, [RegExp, AnyFunction][]>();
   var onResolvePlugins = new Map<string, [RegExp, AnyFunction][]>();

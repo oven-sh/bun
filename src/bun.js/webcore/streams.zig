@@ -3903,7 +3903,14 @@ pub const FileSink = struct {
     pub const JSSink = NewJSSink(@This(), "FileSink");
 
     fn getFd(this: *const @This()) i32 {
-        return this.fd.impl().uv();
+        if (Environment.isWindows) {
+            const fd_impl = this.fd.impl();
+            return switch (fd_impl.kind) {
+                .system => -1, // TODO:
+                .uv => fd_impl.value.as_uv,
+            };
+        }
+        return this.fd.cast();
     }
 
     fn toResult(this: *FileSink, write_result: bun.io.WriteResult) StreamResult.Writable {

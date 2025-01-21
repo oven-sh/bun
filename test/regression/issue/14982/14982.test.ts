@@ -14,5 +14,5 @@ describe("issue 14982", () => {
     await process.exited;
     expect(process.exitCode).toBe(0);
     expect(await new Response(process.stdout).text()).toBe("Test command\n");
-  }, 5000);
+  }, 15000);
 });

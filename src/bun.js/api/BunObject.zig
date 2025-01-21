@@ -133,7 +133,7 @@ pub const BunObject = struct {
         @export(BunObject.semver, .{ .name = getterName("semver") });
         @export(BunObject.embeddedFiles, .{ .name = getterName("embeddedFiles") });
         @export(BunObject.S3Client, .{ .name = getterName("S3Client") });
-        @export(BunObject.s3, .{ .name = getterName("s3DefaultClient") });
+        @export(BunObject.s3, .{ .name = getterName("s3") });
 
         // --- Getters --
 

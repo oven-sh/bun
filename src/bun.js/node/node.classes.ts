@@ -590,7 +590,9 @@ export default [
       rmdir: { fn: "rmdir", length: 3 },
       rmdirSync: { fn: "rmdirSync", length: 2 },
       stat: { fn: "stat", length: 1 },
+      statfs: { fn: "statfs", length: 2 },
       statSync: { fn: "statSync", length: 1 },
+      statfsSync: { fn: "statfsSync", length: 2 },
       symlink: { fn: "symlink", length: 4 },
       symlinkSync: { fn: "symlinkSync", length: 3 },
       truncate: { fn: "truncate", length: 3 },
@@ -610,17 +612,77 @@ export default [
       writevSync: { fn: "writevSync", length: 3 },
       realpathNative: { fn: "realpathNative", length: 3 },
       realpathNativeSync: { fn: "realpathNativeSync", length: 3 },
-      // TODO:
-      // Dir: { fn: 'Dir', length: 3 },
       Dirent: { getter: "getDirent" },
       Stats: { getter: "getStats" },
-      // ReadStream: { fn: 'ReadStream', length: 2 },
-      // WriteStream: { fn: 'WriteStream', length: 2 },
-      // FileReadStream: { fn: 'FileReadStream', length: 2 },
-      // FileWriteStream: { fn: 'FileWriteStream', length: 2 },
-      // _toUnixTimestamp: { fn: '_toUnixTimestamp', length: 1 }
-      // createReadStream: { fn: "createReadStream", length: 2 },
-      // createWriteStream: { fn: "createWriteStream", length: 2 },
+    },
+  }),
+  define({
+    name: "StatFs",
+    construct: true,
+    finalize: true,
+    klass: {},
+    JSType: "0b11101110",
+
+    supportsObjectCreate: true,
+
+    // TODO: make these own properties to pass test-fs-statfs.js
+    proto: {
+      type: {
+        getter: "fstype",
+      },
+      bsize: {
+        getter: "bsize",
+      },
+      blocks: {
+        getter: "blocks",
+      },
+      bfree: {
+        getter: "bfree",
+      },
+      bavail: {
+        getter: "bavail",
+      },
+      files: {
+        getter: "files",
+      },
+      ffree: {
+        getter: "ffree",
+      },
+    },
+  }),
+  define({
+    name: "BigIntStatFs",
+    construct: true,
+    finalize: true,
+    klass: {},
+    JSType: "0b11101110",
+
+    supportsObjectCreate: true,
+
+    // TODO: make these own properties to pass test-fs-statfs.js
+    proto: {
+      type: {
+        getter: "fstype",
+      },
+      bsize: {
+        getter: "bsize",
+      },
+      blocks: {
+        getter: "blocks",
+      },
+      bfree: {
+        getter: "bfree",
+      },
+      bavail: {
+        getter: "bavail",
+      },
+      files: {
+        getter: "files",
+      },
+      ffree: {
+        getter: "ffree",
+      },
     },
   }),
 ];
+

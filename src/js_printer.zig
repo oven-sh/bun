@@ -1858,10 +1858,8 @@ fn NewPrinter(
             if (!import_options.isMissing()) {
                 // since we previously stripped type, it is a breaking change to
                 // enable this for non-bun platforms
-                if (is_bun_platform or bun.FeatureFlags.breaking_changes_1_2) {
-                    p.printWhitespacer(ws(", "));
-                    p.printExpr(import_options, .comma, .{});
-                }
+                p.printWhitespacer(ws(", "));
+                p.printExpr(import_options, .comma, .{});
             }
 
             p.print(")");
@@ -2356,10 +2354,8 @@ fn NewPrinter(
                         if (!e.options.isMissing()) {
                             // since we previously stripped type, it is a breaking change to
                             // enable this for non-bun platforms
-                            if (is_bun_platform or bun.FeatureFlags.breaking_changes_1_2) {
-                                p.printWhitespacer(ws(", "));
-                                p.printExpr(e.options, .comma, .{});
-                            }
+                            p.printWhitespacer(ws(", "));
+                            p.printExpr(e.options, .comma, .{});
                         }
 
                         // TODO:

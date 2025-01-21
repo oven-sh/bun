@@ -640,3 +640,5 @@ declare function $ERR_ILLEGAL_CONSTRUCTOR(): TypeError;
  * @param base - The base class to inherit from
  */
 declare function $toClass(fn: Function, name: string, base?: Function | undefined | null);
+
+declare function $min(a: number, b: number): number;

@@ -70,6 +70,8 @@ pub inline fn clampFloat(_self: anytype, min: @TypeOf(_self), max: @TypeOf(_self
     return self;
 }
 
+pub const ArrayList = std.ArrayListUnmanaged;
+
 /// We cannot use a threadlocal memory allocator for FileSystem-related things
 /// FileSystem is a singleton.
 pub const fs_allocator = default_allocator;
@@ -1600,6 +1602,8 @@ pub const Semver = @import("./install/semver.zig");
 pub const ImportRecord = @import("./import_record.zig").ImportRecord;
 pub const ImportKind = @import("./import_record.zig").ImportKind;
 
+pub const Watcher = @import("./Watcher.zig");
+
 pub usingnamespace @import("./util.zig");
 pub const fast_debug_build_cmd = .None;
 pub const fast_debug_build_mode = fast_debug_build_cmd != .None and
@@ -2274,6 +2278,11 @@ const WindowsStat = extern struct {
 };
 
 pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.posix.Stat;
+pub const StatFS = switch (Environment.os) {
+    .mac => C.translated.struct_statfs,
+    .linux => C.translated.struct_statfs,
+    else => windows.libuv.uv_statfs_t,
+};
 
 pub var argv: [][:0]const u8 = &[_][:0]const u8{};
 

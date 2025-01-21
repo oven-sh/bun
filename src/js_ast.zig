@@ -7170,12 +7170,11 @@ pub const BundledAst = struct {
     pub fn addUrlForCss(
         this: *BundledAst,
         allocator: std.mem.Allocator,
-        experimental: Loader.Experimental,
         source: *const logger.Source,
         mime_type_: ?[]const u8,
         unique_key: ?[]const u8,
     ) void {
-        if (experimental.css) {
+        {
             const mime_type = if (mime_type_) |m| m else MimeType.byExtension(bun.strings.trimLeadingChar(std.fs.path.extension(source.path.text), '.')).value;
             const contents = source.contents;
             // TODO: make this configurable

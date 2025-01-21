@@ -501,8 +501,8 @@ import { sql } from "bun";
 // large numbers are returned as strings
 const [{ x, y }] = await sql`SELECT 9223372036854777 as x, 12345 as y`;
 
-console.log(typeof x, x); // 'string' "9223372036854777"
-console.log(typeof y, y); // 'number' 12345
+console.log(typeof x, x); // "string" "9223372036854777"
+console.log(typeof y, y); // "number" 12345
 ```
 
 ## Getting BigInt Instead of Strings
@@ -514,7 +514,7 @@ const sql = new SQL({
   bigint: true,
 });
 
-const [result] = await sql`SELECT 9223372036854777 as x`;
+const [{ x }] = await sql`SELECT 9223372036854777 as x`;
 
-console.log(result.x); // 9223372036854777n;
+console.log(typeof x, x); // "bigint" 9223372036854777n
 ```

@@ -497,8 +497,6 @@ Bun's SQL client includes special handling for large numbers that exceed the ran
 ```ts
 import { sql } from "bun";
 
-// By default, numbers in the range of a 32-bit signed integer are returned as numbers and
-// large numbers are returned as strings
 const [{ x, y }] = await sql`SELECT 9223372036854777 as x, 12345 as y`;
 
 console.log(typeof x, x); // "string" "9223372036854777"

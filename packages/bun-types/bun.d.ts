@@ -2316,6 +2316,7 @@ declare module "bun" {
   interface SavepointSQL extends SQL {}
 
   var sql: SQL;
+  var postgres: SQL;
   var SQL: SQL;
 
   /**

@@ -1,6 +1,6 @@
 import { test, expect, mock } from "bun:test";
 import { getSecret } from "harness";
-import { SQL, sql } from "bun";
+import { SQL, sql, postgres } from "bun";
 
 const TLS_POSTGRES_DATABASE_URL = getSecret("TLS_POSTGRES_DATABASE_URL");
 const options = {
@@ -27,7 +27,22 @@ if (TLS_POSTGRES_DATABASE_URL) {
     expect(sql.unsafe).toBeDefined();
     expect(sql.commitDistributed).toBeDefined();
     expect(sql.rollbackDistributed).toBeDefined();
-    await sql.close();
+  });
+  test("default postgres", async () => {
+    expect(postgres.reserve).toBeDefined();
+    expect(postgres.options).toBeDefined();
+    expect(postgres[Symbol.asyncDispose]).toBeDefined();
+    expect(postgres.begin).toBeDefined();
+    expect(postgres.beginDistributed).toBeDefined();
+    expect(postgres.distributed).toBeDefined();
+    expect(postgres.unsafe).toBeDefined();
+    expect(postgres.end).toBeDefined();
+    expect(postgres.close).toBeDefined();
+    expect(postgres.transaction).toBeDefined();
+    expect(postgres.distributed).toBeDefined();
+    expect(postgres.unsafe).toBeDefined();
+    expect(postgres.commitDistributed).toBeDefined();
+    expect(postgres.rollbackDistributed).toBeDefined();
   });
   test("tls (explicit)", async () => {
     await using sql = new SQL(options);

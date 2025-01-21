@@ -5944,11 +5944,13 @@ const ServePlugins = struct {
 
     pub fn handleOnReject(plugins: *ServePlugins, globalThis: *JSC.JSGlobalObject, e: JSValue) void {
         defer plugins.deref();
-        for (plugins.value.pending.pending_bundled_routes.items) |route| {
+        var pending_bundled_routes = plugins.value.pending.pending_bundled_routes;
+        defer pending_bundled_routes.deinit(bun.default_allocator);
+        plugins.value.pending.pending_bundled_routes = .{};
+        for (pending_bundled_routes.items) |route| {
             route.onPluginsRejected();
             route.deref();
         }
-        plugins.value.pending.pending_bundled_routes.deinit(bun.default_allocator);
         plugins.value = .err;
         globalThis.bunVM().runErrorHandler(e, null);
     }

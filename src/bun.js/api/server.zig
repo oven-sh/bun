@@ -5796,6 +5796,179 @@ pub const ServerWebSocket = struct {
     }
 };
 
+const ServePlugins = struct {
+    value: Value,
+    ref_count: u32 = 1,
+
+    pub usingnamespace bun.NewRefCounted(ServePlugins, deinit);
+
+    pub const Value = union(enum) {
+        pending: struct {
+            raw_plugins: []const []const u8,
+            promise: JSC.JSPromise.Strong,
+            plugins: ?*bun.JSC.API.JSBundler.Plugin,
+            pending_bundled_routes: bun.ArrayList(*HTMLBundleRoute),
+        },
+        result: ?*bun.JSC.API.JSBundler.Plugin,
+        err,
+    };
+
+    pub fn init(server: AnyServer, plugins: []const []const u8, initial_pending: *HTMLBundleRoute) *ServePlugins {
+
+        // TODO: call builtin which resolves and imports plugin modules
+
+        var pending_bundled_routes = bun.ArrayList(*HTMLBundleRoute){};
+        pending_bundled_routes.append(bun.default_allocator, initial_pending) catch bun.outOfMemory();
+        const this = ServePlugins.new(.{
+            .value = .{
+                .pending = .{
+                    .plugins = null,
+                    .raw_plugins = plugins,
+                    .promise = JSC.JSPromise.Strong.init(server.globalThis()),
+                    .pending_bundled_routes = pending_bundled_routes,
+                },
+            },
+        });
+        return this;
+    }
+
+    extern fn JSBundlerPlugin__loadAndResolvePluginsForServe(
+        plugin: *bun.JSC.API.JSBundler.Plugin,
+        plugins: JSC.JSValue,
+        bunfig_folder: JSC.JSValue,
+    ) JSValue;
+
+    pub fn loadAndResolvePlugins(this: *ServePlugins, globalThis: *JSC.JSGlobalObject, bunfig_folder: string) void {
+        bun.assert(this.value == .pending);
+        this.ref();
+        defer this.deref();
+
+        const plugin = bun.JSC.API.JSBundler.Plugin.create(globalThis, .browser);
+        this.value.pending.plugins = plugin;
+        var sfb = std.heap.stackFallback(@sizeOf(bun.String) * 4, bun.default_allocator);
+        const alloc = sfb.get();
+        const bunstring_array = alloc.alloc(bun.String, this.value.pending.raw_plugins.len) catch bun.outOfMemory();
+        defer alloc.free(bunstring_array);
+        for (this.value.pending.raw_plugins, bunstring_array) |raw_plugin, *out| {
+            out.* = bun.String.init(raw_plugin);
+        }
+        const plugins = bun.String.toJSArray(globalThis, bunstring_array);
+        const bunfig_folder_bunstr = bun.String.createUTF8ForJS(globalThis, bunfig_folder);
+
+        globalThis.bunVM().eventLoop().enter();
+        const result = JSBundlerPlugin__loadAndResolvePluginsForServe(plugin, plugins, bunfig_folder_bunstr);
+        globalThis.bunVM().eventLoop().exit();
+        // handle the case where js synchronously throws an error
+        if (globalThis.tryTakeException()) |e| {
+            handleOnReject(this, globalThis, e);
+            return;
+        }
+
+        if (!result.isEmptyOrUndefinedOrNull()) {
+            // handle the case where js returns a promise
+            if (result.asAnyPromise()) |promise| {
+                switch (promise.status(globalThis.vm())) {
+                    // promise not fulfilled yet
+                    .pending => {
+                        this.ref();
+                        this.value.pending.promise.strong.set(globalThis, promise.asValue(globalThis));
+                        promise.asValue(globalThis).then(globalThis, this, onResolveImpl, onRejectImpl);
+                        return;
+                    },
+                    .fulfilled => {
+                        handleOnResolve(this);
+                        return;
+                    },
+                    .rejected => {
+                        // const value = promise.asValue(globalThis);
+                        const value = promise.result(globalThis.vm());
+                        handleOnReject(this, globalThis, value);
+                        return;
+                    },
+                }
+            }
+
+            if (result.toError()) |e| {
+                handleOnReject(this, globalThis, e);
+            } else {
+                handleOnResolve(this);
+            }
+        }
+    }
+
+    pub fn deinit(this: *ServePlugins) void {
+        if (this.value == .result) {
+            if (this.value.result) |plugins| {
+                plugins.deinit();
+            }
+        }
+        ServePlugins.destroy(this);
+    }
+
+    pub const onResolve = JSC.toJSHostFunction(onResolveImpl);
+    pub const onReject = JSC.toJSHostFunction(onRejectImpl);
+
+    pub fn onResolveImpl(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        ctxLog("onResolve", .{});
+
+        const arguments = callframe.arguments_old(2);
+        var plugins = arguments.ptr[1].asPromisePtr(ServePlugins);
+        defer plugins.deref();
+        const plugins_result = arguments.ptr[0];
+        plugins_result.ensureStillAlive();
+
+        handleOnResolve(plugins);
+
+        return JSValue.jsUndefined();
+    }
+
+    pub fn handleOnResolve(this: *ServePlugins) void {
+        this.value.pending.promise.deinit();
+        var pending_bundled_routes = this.value.pending.pending_bundled_routes;
+        defer pending_bundled_routes.deinit(bun.default_allocator);
+        this.value = .{ .result = this.value.pending.plugins };
+        for (pending_bundled_routes.items) |route| {
+            route.onPluginsResolved(this.value.result);
+            route.deref();
+        }
+    }
+
+    pub fn onRejectImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        ctxLog("onReject", .{});
+
+        const arguments = callframe.arguments_old(2);
+        const plugins = arguments.ptr[1].asPromisePtr(ServePlugins);
+        handleOnReject(plugins, globalThis, arguments.ptr[0]);
+
+        return JSValue.jsUndefined();
+    }
+
+    pub fn handleOnReject(plugins: *ServePlugins, globalThis: *JSC.JSGlobalObject, e: JSValue) void {
+        defer plugins.deref();
+        var pending_bundled_routes = plugins.value.pending.pending_bundled_routes;
+        defer pending_bundled_routes.deinit(bun.default_allocator);
+        plugins.value.pending.promise.deinit();
+        plugins.value.pending.pending_bundled_routes = .{};
+        plugins.value = .err;
+        for (pending_bundled_routes.items) |route| {
+            route.onPluginsRejected();
+            route.deref();
+        }
+        globalThis.bunVM().runErrorHandler(e, null);
+    }
+
+    comptime {
+        @export(onResolve, .{ .name = "BunServe__onResolvePlugins" });
+        @export(onReject, .{ .name = "BunServe__onRejectPlugins" });
+    }
+};
+
+const PluginsResult = union(enum) {
+    pending,
+    found: ?*bun.JSC.API.JSBundler.Plugin,
+    err,
+};
+
 pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
     return struct {
         pub const ssl_enabled = ssl_enabled_;
@@ -5831,6 +6004,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             has_handled_all_closed_promise: bool = false,
         } = .{},
 
+        plugins: ?*ServePlugins = null,
+
         dev_server: ?*bun.bake.DevServer,
 
         pub const doStop = JSC.wrapInstanceMethod(ThisServer, "stopFromJS", false);
@@ -5841,6 +6016,49 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub const doFetch = onFetch;
         pub const doRequestIP = JSC.wrapInstanceMethod(ThisServer, "requestIP", false);
         pub const doTimeout = JSC.wrapInstanceMethod(ThisServer, "timeout", false);
+
+        pub fn getPlugins(
+            this: *ThisServer,
+        ) PluginsResult {
+            if (this.plugins) |p| {
+                switch (p.value) {
+                    .result => |plugins| {
+                        return .{ .found = plugins };
+                    },
+                    .pending => return .pending,
+                    .err => return .err,
+                }
+            }
+            return .pending;
+        }
+
+        pub fn getPluginsAsync(
+            this: *ThisServer,
+            bundle: *HTMLBundleRoute,
+            raw_plugins: []const []const u8,
+            bunfig_folder: string,
+        ) void {
+            bun.assert(this.plugins == null or this.plugins.?.value == .pending);
+            if (this.plugins) |p| {
+                bun.assert(p.value != .err); // call .getPlugins() first
+                switch (p.value) {
+                    .pending => {
+                        bundle.ref();
+                        p.value.pending.pending_bundled_routes.append(
+                            bun.default_allocator,
+                            bundle,
+                        ) catch unreachable;
+
+                        return;
+                    },
+                    .result => {},
+                    .err => {},
+                }
+            } else {
+                this.plugins = ServePlugins.init(AnyServer.from(this), raw_plugins, bundle);
+                this.plugins.?.loadAndResolvePlugins(this.globalThis, bunfig_folder);
+            }
+        }
 
         pub fn doSubscriberCount(this: *ThisServer, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const arguments = callframe.arguments_old(1);
@@ -6644,6 +6862,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 dev_server.deinit();
             }
 
+            if (this.plugins) |plugins| {
+                plugins.deref();
+            }
+
             this.destroy();
         }
 
@@ -7445,6 +7667,24 @@ pub const AnyServer = union(enum) {
     HTTPSServer: *HTTPSServer,
     DebugHTTPServer: *DebugHTTPServer,
     DebugHTTPSServer: *DebugHTTPSServer,
+
+    pub fn plugins(this: AnyServer) ?*ServePlugins {
+        return switch (this) {
+            inline else => |server| server.plugins,
+        };
+    }
+
+    pub fn getPlugins(this: AnyServer) PluginsResult {
+        return switch (this) {
+            inline else => |server| server.getPlugins(),
+        };
+    }
+
+    pub fn loadAndResolvePlugins(this: AnyServer, bundle: *HTMLBundleRoute, raw_plugins: []const []const u8, bunfig_path: []const u8) void {
+        return switch (this) {
+            inline else => |server| server.getPluginsAsync(bundle, raw_plugins, bunfig_path),
+        };
+    }
 
     pub fn reloadStaticRoutes(this: AnyServer) !bool {
         return switch (this) {

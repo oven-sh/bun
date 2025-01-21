@@ -117,7 +117,7 @@ describe("bundler", async () => {
   });
 
   const loaders: Loader[] = ["wasm", "json", "file" /* "napi" */, "text"];
-  const exts = ["wasm", "css", "json", ".lmao" /*  ".node" */, ".txt"];
+  const exts = ["wasm", "json", "lmao" /*  ".node" */, "txt"];
   for (let i = 0; i < loaders.length; i++) {
     const loader = loaders[i];
     const ext = exts[i];

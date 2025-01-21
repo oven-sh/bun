@@ -2339,8 +2339,26 @@ pub const ModuleLoader = struct {
         }
 
         if (type_attribute) |attribute| {
-            if (bun.ComptimeEnumMap(options.Loader).fromString(attribute.*)) |e| {
-                loader = e;
+            if (attribute.eqlComptime("sqlite")) {
+                loader = .sqlite;
+            } else if (attribute.eqlComptime("text")) {
+                loader = .text;
+            } else if (attribute.eqlComptime("json")) {
+                loader = .json;
+            } else if (attribute.eqlComptime("toml")) {
+                loader = .toml;
+            } else if (attribute.eqlComptime("file")) {
+                loader = .file;
+            } else if (attribute.eqlComptime("js")) {
+                loader = .js;
+            } else if (attribute.eqlComptime("jsx")) {
+                loader = .jsx;
+            } else if (attribute.eqlComptime("ts")) {
+                loader = .ts;
+            } else if (attribute.eqlComptime("tsx")) {
+                loader = .tsx;
+            } else if (attribute.eqlComptime("html")) {
+                loader = .html;
             }
         }
 

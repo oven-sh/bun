@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import path, { join } from "path";
 import assert from "assert";
+import { buildNoThrow } from "./buildNoThrow";
 
 describe("Bun.build", () => {
   test("css works", async () => {
@@ -98,7 +99,7 @@ describe("Bun.build", () => {
         }
       `,
     });
-    const y = await Bun.build({
+    const y = await buildNoThrow({
       entrypoints: [join(dir, "src/file1.ts")],
       outdir: join(dir, "out"),
       sourcemap: "external",
@@ -135,7 +136,7 @@ describe("Bun.build", () => {
 
   test("returns errors properly", async () => {
     Bun.gc(true);
-    const build = await Bun.build({
+    const build = await buildNoThrow({
       entrypoints: [join(import.meta.dir, "does-not-exist.ts")],
     });
     expect(build.outputs).toHaveLength(0);
@@ -375,7 +376,7 @@ describe("Bun.build", () => {
   // });
 
   test("errors are returned as an array", async () => {
-    const x = await Bun.build({
+    const x = await buildNoThrow({
       entrypoints: [join(import.meta.dir, "does-not-exist.ts")],
       outdir: tempDirWithFiles("errors-are-returned-as-an-array", {}),
     });

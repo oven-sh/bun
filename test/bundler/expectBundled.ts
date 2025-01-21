@@ -1061,7 +1061,17 @@ for (const [key, blob] of build.outputs) {
         }
 
         configRef = buildConfig;
-        const build = await Bun.build(buildConfig);
+        let build: BuildOutput;
+        try {
+          build = await Bun.build(buildConfig);
+        } catch (e) {
+          const err = e as AggregateError;
+          build = {
+            outputs: [],
+            success: false,
+            logs: err.errors,
+          };
+        }
         if (onAfterApiBundle) await onAfterApiBundle(build);
         configRef = null!;
         Bun.gc(true);

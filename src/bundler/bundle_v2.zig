@@ -1750,7 +1750,7 @@ pub const BundleV2 = struct {
                 },
                 completion.env,
             );
-            transpiler.options.env.behavior = .disable;
+            transpiler.options.env.behavior = config.env_behavior;
             transpiler.options.env.prefix = config.env_prefix.slice();
 
             transpiler.options.entry_points = config.entry_points.keys();
@@ -4105,12 +4105,12 @@ pub const ParseTask = struct {
         const OnBeforeParseArguments = extern struct {
             struct_size: usize = @sizeOf(OnBeforeParseArguments),
             context: *OnBeforeParsePlugin,
-            path_ptr: [*]const u8 = "",
+            path_ptr: ?[*]const u8 = "",
             path_len: usize = 0,
-            namespace_ptr: [*]const u8 = "file",
+            namespace_ptr: ?[*]const u8 = "file",
             namespace_len: usize = "file".len,
             default_loader: Loader = .file,
-            external: ?*void = null,
+            external: ?*anyopaque = null,
         };
 
         const BunLogOptions = extern struct {
@@ -4192,8 +4192,9 @@ pub const ParseTask = struct {
             }
         };
 
-        const OnBeforeParseResultWrapper = struct {
-            original_source: ?[]const u8 = null,
+        const OnBeforeParseResultWrapper = extern struct {
+            original_source: ?[*]const u8 = null,
+            original_source_len: usize = 0,
             loader: Loader,
             check: if (bun.Environment.isDebug) u32 else u0 = if (bun.Environment.isDebug) 42069 else 0, // Value to ensure OnBeforeParseResult is wrapped in this struct
             result: OnBeforeParseResult,
@@ -4252,14 +4253,16 @@ pub const ParseTask = struct {
             result.free_user_context = null;
             result.user_context = null;
             const wrapper: *OnBeforeParseResultWrapper = result.getWrapper();
-            wrapper.original_source = entry.contents;
+            wrapper.original_source = entry.contents.ptr;
+            wrapper.original_source_len = entry.contents.len;
             return 0;
         }
 
         pub export fn OnBeforeParseResult__reset(this: *OnBeforeParseResult) void {
             const wrapper = this.getWrapper();
             this.loader = wrapper.loader;
-            if (wrapper.original_source) |src| {
+            if (wrapper.original_source) |src_ptr| {
+                const src = src_ptr[0..wrapper.original_source_len];
                 this.source_ptr = src.ptr;
                 this.source_len = src.len;
             } else {
@@ -4279,7 +4282,7 @@ pub const ParseTask = struct {
             // since fetching the source stores it inside `result.source_ptr`
             if (result.source_ptr != null) {
                 const wrapper: *OnBeforeParseResultWrapper = result.getWrapper();
-                return @intFromBool(result.source_ptr.? != wrapper.original_source.?.ptr);
+                return @intFromBool(result.source_ptr.? != wrapper.original_source.?);
             }
 
             return 0;

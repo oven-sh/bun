@@ -1295,7 +1295,7 @@ const default_loader_ext = [_]string{
     ".toml",  ".wasm",
     ".txt",   ".text",
 
-    ".jsonc",
+    ".jsonc", ".html",
 };
 
 // Only set it for browsers by default.

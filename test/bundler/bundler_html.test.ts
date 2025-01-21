@@ -597,42 +597,6 @@ console.log('Loaded HTML!', badDefaultImport);`,
     },
   });
 
-  itBundled("html/js-importing-html-and-entry-point-default-import-succeeds-html-loader-disabled", {
-    outdir: "out/",
-    target: "browser",
-    files: {
-      "/in/2nd.js": `
-console.log('2nd');`,
-      "/in/entry.js": `
-import badDefaultImport from './template.html';
-console.log('Loaded HTML!', badDefaultImport);`,
-
-      "/in/template.html": `
-<!DOCTYPE html>
-<html>
-  <head>
-    <title>HTML Template</title>
-  </head>
-  <body>
-    <h1>HTML Template</h1>
-    <script src="./entry.js"></script>
-    <script src="./2nd.js"></script>
-  </body>
-</html>`,
-    },
-    entryPointsRaw: ["in/template.html", "in/entry.js"],
-    onAfterBundle(api) {
-      const entryBundle = api.readFile("out/entry.js");
-
-      // Verify we DID bundle the HTML file
-      expect(entryBundle).toMatch(/\.\/template-.*\.html/);
-      const filename = entryBundle.match(/\.\/(template-.*\.html)/)?.[1];
-      expect(filename).toBeDefined();
-      const templateBundle = api.readFile("out/" + filename!);
-      expect(templateBundle).toContain("HTML Template");
-    },
-  });
-
   // Test circular dependencies between JS and HTML
   itBundled("html/circular-js-html", {
     outdir: "out/",

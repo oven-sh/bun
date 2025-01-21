@@ -5810,7 +5810,7 @@ const ServePlugins = struct {
             pending_bundled_routes: bun.ArrayList(*HTMLBundleRoute),
         },
         result: ?*bun.JSC.API.JSBundler.Plugin,
-        err: string,
+        err,
     };
 
     pub fn init(server: AnyServer, plugins: []const []const u8, initial_pending: *HTMLBundleRoute) *ServePlugins {
@@ -5897,8 +5897,10 @@ const ServePlugins = struct {
     }
 
     pub fn deinit(this: *ServePlugins) void {
-        if (this.value == .err) {
-            bun.default_allocator.free(this.value.err);
+        if (this.value == .result) {
+            if (this.value.result) |plugins| {
+                plugins.deinit();
+            }
         }
         ServePlugins.destroy(this);
     }
@@ -5942,17 +5944,13 @@ const ServePlugins = struct {
 
     pub fn handleOnReject(plugins: *ServePlugins, globalThis: *JSC.JSGlobalObject, e: JSValue) void {
         defer plugins.deref();
-        const bunstr = e.toBunString(globalThis);
-        defer bunstr.deref();
-        const str = bunstr.toUTF8(bun.default_allocator);
-        defer str.deinit();
-        const str_slice = str.slice();
         for (plugins.value.pending.pending_bundled_routes.items) |route| {
-            route.onPluginsRejected(str_slice);
+            route.onPluginsRejected();
             route.deref();
         }
-        plugins.value.pending.pending_bundled_routes.clearRetainingCapacity();
-        plugins.value = .{ .err = str_slice };
+        plugins.value.pending.pending_bundled_routes.deinit(bun.default_allocator);
+        plugins.value = .err;
+        globalThis.bunVM().runErrorHandler(e, null);
     }
 
     comptime {
@@ -5964,7 +5962,7 @@ const ServePlugins = struct {
 const PluginsResult = union(enum) {
     pending,
     found: ?*bun.JSC.API.JSBundler.Plugin,
-    err: string,
+    err,
 };
 
 pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
@@ -6024,7 +6022,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         return .{ .found = plugins };
                     },
                     .pending => return .pending,
-                    .err => return .{ .err = p.value.err },
+                    .err => return .err,
                 }
             }
             return .pending;

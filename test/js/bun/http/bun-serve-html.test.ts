@@ -2,6 +2,24 @@ import { Subprocess } from "bun";
 import { describe, test, expect } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
+
+function replaceHash(html: string) {
+  return html
+    .trim()
+    .split("\n")
+    .map(a => a.trim())
+    .filter(a => a.length > 0)
+    .join("\n")
+    .trim()
+    .replace(/chunk-[a-z0-9]+\.css/g, "chunk-HASH.css")
+    .replace(/chunk-[a-z0-9]+\.js/g, "chunk-HASH.js");
+}
+
+function extractHash(html: string, file_kind: "css" | "js") {
+  const re = file_kind === "css" ? /chunk-([a-z0-9]+)\.css/ : /chunk-([a-z0-9]+)\.js/;
+  return html.match(re)?.[1];
+}
+
 test("serve html", async () => {
   const dir = tempDirWithFiles("html-css-js", {
     "dashboard.html": /*html*/ `
@@ -248,7 +266,7 @@ describe("serve plugins", () => {
   test("basic plugin", async () => {
     const dir = await tempDirWithFiles("bun-serve-html-txt", {
       "bunfig.toml": /* toml */ `
-[serve]
+[serve.static]
 plugins = ["./plugin.ts"]
 `,
       "index.html": /* html */ `
@@ -298,22 +316,22 @@ export default p;
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("text/html;charset=utf-8");
 
-    const html = await response.text();
+    const rawHtml = await response.text();
+    const html = replaceHash(rawHtml);
     expect(html).toMatchInlineSnapshot(`
-"
-<!DOCTYPE html>
+"<!DOCTYPE html>
 <html>
 <head>
-  
-<link rel="stylesheet" crossorigin href="/chunk-efbnbska.css"><script type="module" crossorigin src="/chunk-kdrjysff.js"></script></head>
+<link rel="stylesheet" crossorigin href="/chunk-HASH.css"><script type="module" crossorigin src="/chunk-HASH.js"></script></head>
 <body>
-  <div class="text-file-content"></div>
+<div class="text-file-content"></div>
 </body>
-</html>
-"
+</html>"
 `);
 
-    const cssResponse = await fetch(`http://${hostname}:${port}/chunk-efbnbska.css`);
+    const hash = extractHash(rawHtml, "css");
+    console.log("HASH", hash);
+    const cssResponse = await fetch(`http://${hostname}:${port}/chunk-${hash}.css`);
     expect(cssResponse.status).toBe(200);
     const css = await cssResponse.text();
     // the base64 encoding of "LMAO OOGA BOOGA"
@@ -331,13 +349,16 @@ export default p;
 
   test("serve html with failing plugin", async () => {
     const dir = tempDirWithFiles("html-css-js-failing-plugin", {
+      "bunfig.toml": /* toml */ `
+[serve.static]
+plugins = ["./plugin.ts"]
+`,
       "index.html": /*html*/ `
       <!DOCTYPE html>
       <html>
         <head>
           <title>Bun HTML Import Test</title>
           <link rel="stylesheet" href="styles.css">
-          <script type="module" src="script.js"></script>
         </head>
         <body>
           <div class="container">
@@ -373,6 +394,10 @@ export default p;
     });
     const response = await fetch(`http://${hostname}:${port}/`);
     expect(response.status).toBe(500);
+
+    // try again
+    const response2 = await fetch(`http://${hostname}:${port}/`);
+    expect(response2.status).toBe(500);
   });
 
   test("empty plugin array", async () => {
@@ -408,7 +433,9 @@ export default p;
         button.textContent = \`Click me: \${count}\`;
       };
     `,
-      "bunfig.toml": `plugins = []`,
+      "bunfig.toml": `
+[serve.static]
+plugins = []`,
     });
 
     const { subprocess, port, hostname } = await waitForServer(dir, {
@@ -468,19 +495,20 @@ export default p;
       "careers.js": "console.log('careers page')",
       "faq.js": "console.log('faq page')",
       "ooga.js": "console.log('ooga page')",
-      "bunfig.toml": `[[plugins]]
-name = "test-plugin"
-path = "./plugin.js"`,
+      "bunfig.toml": `[serve.static]
+plugins = ["./plugin.js"]`,
       "plugin.js": `
 export default {
   name: "test-plugin",
   setup(build) {
     // Add a small delay to simulate plugin initialization
+    console.log("plugin setup");
     return new Promise(resolve => setTimeout(resolve, 1000));
   }
 }`,
     });
 
+    console.log("Waiting for server");
     const { subprocess, port, hostname } = await waitForServer(dir, {
       "/": join(dir, "index.html"),
       "/about": join(dir, "about.html"),
@@ -493,6 +521,7 @@ export default {
       "/faq": join(dir, "faq.html"),
       "/ooga": join(dir, "ooga.html"),
     });
+    console.log("done waiting for server");
 
     // Make concurrent requests to all routes while plugins are loading
     const responses = await Promise.all([

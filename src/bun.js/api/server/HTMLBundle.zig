@@ -158,9 +158,8 @@ pub const HTMLBundleRoute = struct {
 
                     switch (server.getPlugins()) {
                         .pending => {},
-                        .err => |err| {
+                        .err => {
                             this.value = .{ .err = bun.logger.Log.init(bun.default_allocator) };
-                            this.value.err.addError(null, bun.logger.Loc.Empty, err) catch bun.outOfMemory();
                             break :out_of_pending_plugins;
                         },
                         .found => |result| {
@@ -313,21 +312,9 @@ pub const HTMLBundleRoute = struct {
         }
     }
 
-    pub fn onPluginsRejected(this: *HTMLBundleRoute, error_string: []const u8) void {
+    pub fn onPluginsRejected(this: *HTMLBundleRoute) void {
         debug("HTMLBundleRoute(0x{x}) plugins rejected", .{@intFromPtr(this)});
         this.value = .{ .err = bun.logger.Log.init(bun.default_allocator) };
-        this.value.err.addError(null, bun.logger.Loc.Empty, error_string) catch bun.outOfMemory();
-        if (this.server) |server| {
-            if (server.config().development) {
-                switch (bun.Output.enable_ansi_colors_stderr) {
-                    inline else => |enable_ansi_colors| {
-                        var writer = bun.Output.errorWriterBuffered();
-                        this.value.err.printWithEnableAnsiColors(&writer, enable_ansi_colors) catch {};
-                        writer.context.flush() catch {};
-                    },
-                }
-            }
-        }
 
         this.resumePendingResponses();
     }

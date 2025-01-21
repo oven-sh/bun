@@ -5527,7 +5527,7 @@ pub const NodeFS = struct {
     pub fn rmdir(this: *NodeFS, args: Arguments.RmDir, _: Flavor) Maybe(Return.Rmdir) {
         if (args.recursive) {
             zigDeleteTree(std.fs.cwd(), args.path.slice(), .directory) catch |err| {
-                const errno: bun.C.E = switch (@as(anyerror, err)) {
+                var errno: bun.C.E = switch (@as(anyerror, err)) {
                     error.AccessDenied => .PERM,
                     error.FileTooBig => .FBIG,
                     error.SymLinkLoop => .LOOP,
@@ -5556,6 +5556,9 @@ pub const NodeFS = struct {
 
                     else => .FAULT,
                 };
+                if (Environment.isWindows and errno == .NOTDIR) {
+                    errno = .NOENT;
+                }
                 return Maybe(Return.Rm){
                     .err = bun.sys.Error.fromCode(errno, .rmdir),
                 };

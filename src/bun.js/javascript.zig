@@ -1931,9 +1931,11 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.next_immediate_tasks = EventLoop.Queue.init(
             default_allocator,
         );
+        vm.regular_event_loop.virtual_machine = vm;
         vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
         vm.regular_event_loop.concurrent_tasks = .{};
         vm.event_loop = &vm.regular_event_loop;
+        vm.eventLoop().ensureWaker();
 
         vm.transpiler.macro_context = null;
         vm.transpiler.resolver.store_fd = false;
@@ -1962,7 +1964,6 @@ pub const VirtualMachine = struct {
             null,
         );
         vm.regular_event_loop.global = vm.global;
-        vm.regular_event_loop.virtual_machine = vm;
         vm.jsc = vm.global.vm();
 
         vm.configureDebugger(opts.debugger);
@@ -2211,9 +2212,11 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.next_immediate_tasks = EventLoop.Queue.init(
             default_allocator,
         );
+        vm.regular_event_loop.virtual_machine = vm;
         vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
         vm.regular_event_loop.concurrent_tasks = .{};
         vm.event_loop = &vm.regular_event_loop;
+        vm.eventLoop().ensureWaker();
         vm.hot_reload = worker.parent.hot_reload;
         vm.transpiler.macro_context = null;
         vm.transpiler.resolver.store_fd = opts.store_fd;
@@ -2242,7 +2245,6 @@ pub const VirtualMachine = struct {
             worker.cpp_worker,
         );
         vm.regular_event_loop.global = vm.global;
-        vm.regular_event_loop.virtual_machine = vm;
         vm.jsc = vm.global.vm();
         vm.transpiler.setAllocator(allocator);
         vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
@@ -2302,9 +2304,11 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.next_immediate_tasks = EventLoop.Queue.init(
             default_allocator,
         );
+        vm.regular_event_loop.virtual_machine = vm;
         vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
         vm.regular_event_loop.concurrent_tasks = .{};
         vm.event_loop = &vm.regular_event_loop;
+        vm.eventLoop().ensureWaker();
 
         vm.transpiler.macro_context = null;
         vm.transpiler.resolver.store_fd = opts.store_fd;
@@ -2320,7 +2324,6 @@ pub const VirtualMachine = struct {
 
         vm.transpiler.macro_context = js_ast.Macro.MacroContext.init(&vm.transpiler);
 
-        vm.regular_event_loop.virtual_machine = vm;
         vm.smol = opts.smol;
 
         if (opts.smol)

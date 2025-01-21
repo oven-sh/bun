@@ -120,7 +120,7 @@ await sql`INSERT INTO users ${sql(user, ["name", "email"])}`;
 
 By default, Bun's SQL client returns query results as arrays of objects, where each object represents a row with column names as keys. However, there are cases where you might want the data in a different format. The client provides two additional methods for this purpose.
 
-### Values Format: `sql.values()`
+### Values Format
 
 The `.values()` method returns rows as arrays of values rather than objects. Each row becomes an array where the values are in the same order as the columns in your query.
 
@@ -129,7 +129,7 @@ const rows = await sql`SELECT * FROM users`.values();
 console.log(rows); // [['Alice', 'alice@example.com'], ['Bob', 'bob@example.com']]
 ```
 
-### Raw Format: `sql.raw()`
+### Raw Format
 
 The `.raw()` method returns rows as arrays of `Buffer` objects. This can be useful for working with binary data or for performance reasons.
 

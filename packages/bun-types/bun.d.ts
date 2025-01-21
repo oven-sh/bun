@@ -1571,7 +1571,7 @@ declare module "bun" {
      *
      *     // Write large chunks of data efficiently
      *     for (const chunk of largeDataChunks) {
-     *       await writer.write(chunk);
+     *       writer.write(chunk);
      *     }
      *     await writer.end();
      *
@@ -1579,7 +1579,7 @@ declare module "bun" {
      *     // Error handling
      *     const writer = file.writer();
      *     try {
-     *       await writer.write(data);
+     *       writer.write(data);
      *       await writer.end();
      *     } catch (err) {
      *       console.error('Upload failed:', err);

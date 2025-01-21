@@ -240,8 +240,23 @@ Bun uses [`HTMLRewriter`](/docs/api/html-rewriter) to scan for `<script>` and `<
 
 This works similarly to how [`Bun.build` processes HTML files](/docs/bundler/html).
 
+## Plugins
+
+Bun's [bundler plugins](https://bun.sh/docs/bundler/plugins) are also supported when bundling static routes.
+
+To configure plugins for `Bun.serve`, add a `plugins` array in the `[serve.static]` section of your `bunfig.toml`:
+
+```toml
+[serve.static]
+plugins = ["bun-plugin-tailwind", "./my-custom-plugin.ts"]
+
+```
+
+Any JS file or module which exports a [valiid bundler plugin object](https://bun.sh/docs/bundler/plugins#usage) (essentially an object with a `name` and `setup` field) can be placed inside the `plugins` array.
+
+Bun will lazily resolve and load each plugin and use them to bundle your routes.
+
 ## This is a work in progress
 
 - Client-side hot reloading isn't wired up yet. It will be in the future.
 - This doesn't support `bun build` yet. It also will in the future.
-- We haven't figured out plugins yet. This probably will live in `bunfig.toml` with the same API as in `Bun.build` otherwise.

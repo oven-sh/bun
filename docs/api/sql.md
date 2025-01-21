@@ -28,8 +28,6 @@ const activeUsers = await sql`
 
 {% icon size=20 name="Network" /%} Connection pooling
 
-{% icon size=20 name="Zap" /%} Fastest driver available to JavaScript
-
 {% icon size=20 name="Binary" /%} `BigInt` support
 
 {% icon size=20 name="Key" /%} SASL Auth support (SCRAM-SHA-256), MD5, and Clear Text

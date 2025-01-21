@@ -1908,14 +1908,19 @@ pub fn fromWPath(buf: []u8, utf16: []const u16) [:0]const u8 {
     return buf[0..encode_into_result.written :0];
 }
 
-pub fn withoutNTPrefix(path: [:0]const u16) [:0]const u16 {
-    if (hasPrefixComptimeUTF16(path, &bun.windows.nt_object_prefix_u8)) {
+pub fn withoutNTPrefix(comptime T: type, path: []const T) []const T {
+    if (comptime !Environment.isWindows) return path;
+    const cmp = if (T == u8)
+        hasPrefixComptime
+    else
+        hasPrefixComptimeUTF16;
+    if (cmp(path, &bun.windows.nt_object_prefix_u8)) {
         return path[bun.windows.nt_object_prefix.len..];
     }
-    if (hasPrefixComptimeUTF16(path, &bun.windows.nt_maxpath_prefix_u8)) {
-        return path[bun.windows.nt_maxpath_prefix.len..];
+    if (cmp(path, &bun.windows.long_path_prefix_u8)) {
+        return path[bun.windows.long_path_prefix.len..];
     }
-    if (hasPrefixComptimeUTF16(path, &bun.windows.nt_unc_object_prefix_u8)) {
+    if (cmp(path, &bun.windows.nt_unc_object_prefix_u8)) {
         return path[bun.windows.nt_unc_object_prefix.len..];
     }
     return path;

@@ -4422,7 +4422,7 @@ pub const NodeFS = struct {
             .err => |err| .{ .err = .{
                 .syscall = .scandir,
                 .errno = err.errno,
-                .path = err.path,
+                .path = args.path.slice(),
             } },
             .result => |result| .{ .result = result },
         };
@@ -4480,7 +4480,7 @@ pub const NodeFS = struct {
         }) |current| : (entry = iterator.next()) {
             if (ExpectedType == Dirent) {
                 if (dirent_path.isEmpty()) {
-                    dirent_path = JSC.WebCore.Encoder.toBunString(basename, args.encoding);
+                    dirent_path = JSC.WebCore.Encoder.toBunString(strings.withoutNTPrefix(std.meta.Child(@TypeOf(basename)), basename), args.encoding);
                 }
             }
             if (comptime !is_u16) {
@@ -4784,7 +4784,7 @@ pub const NodeFS = struct {
                         const path_u8 = bun.path.dirname(bun.path.join(&[_]string{ root_basename, name_to_copy }, .auto), .auto);
                         if (dirent_path_prev.isEmpty() or !bun.strings.eql(dirent_path_prev.byteSlice(), path_u8)) {
                             dirent_path_prev.deref();
-                            dirent_path_prev = JSC.WebCore.Encoder.toBunString(path_u8, args.encoding);
+                            dirent_path_prev = JSC.WebCore.Encoder.toBunString(strings.withoutNTPrefix(std.meta.Child(@TypeOf(path_u8)), path_u8), args.encoding);
                         }
                         dirent_path_prev.ref();
                         entries.append(.{
@@ -4794,10 +4794,10 @@ pub const NodeFS = struct {
                         }) catch bun.outOfMemory();
                     },
                     Buffer => {
-                        entries.append(Buffer.fromString(name_to_copy, bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
+                        entries.append(Buffer.fromString(strings.withoutNTPrefix(std.meta.Child(@TypeOf(name_to_copy)), name_to_copy), bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
                     },
                     bun.String => {
-                        entries.append(JSC.WebCore.Encoder.toBunString(name_to_copy, args.encoding)) catch bun.outOfMemory();
+                        entries.append(JSC.WebCore.Encoder.toBunString(strings.withoutNTPrefix(std.meta.Child(@TypeOf(name_to_copy)), name_to_copy), args.encoding)) catch bun.outOfMemory();
                     },
                     else => @compileError(unreachable),
                 }

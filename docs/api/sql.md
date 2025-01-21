@@ -317,6 +317,45 @@ await sql.commitDistributed("tx1");
 await sql.rollbackDistributed("tx1");
 ```
 
+## Authentication
+
+Bun supports SCRAM-SHA-256 (SASL), MD5, and Clear Text authentication. SASL is recommended for better security.
+
+### SSL Modes Overview
+
+PostgreSQL supports different SSL/TLS modes to control how secure connections are established. These modes determine the behavior when connecting and the level of certificate verification performed.
+
+```ts
+const sql = new SQL({
+  hostname: "localhost",
+  username: "user",
+  password: "password",
+  ssl: "disable", // | "prefer" | "require" | "verify-ca" | "verify-full"
+});
+```
+
+| SSL Mode      | Description                                                                                                          |
+| ------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `disable`     | No SSL/TLS used. Connections fail if server requires SSL.                                                            |
+| `prefer`      | Tries SSL first, falls back to non-SSL if SSL fails. Default mode if none specified.                                 |
+| `require`     | Requires SSL without certificate verification. Fails if SSL cannot be established.                                   |
+| `verify-ca`   | Verifies server certificate is signed by trusted CA. Fails if verification fails.                                    |
+| `verify-full` | Most secure mode. Verifies certificate and hostname match. Protects against untrusted certificates and MITM attacks. |
+
+### Using With Connection Strings
+
+The SSL mode can also be specified in connection strings:
+
+```ts
+// Using prefer mode
+const sql = new SQL("postgres://user:password@localhost/mydb?sslmode=prefer");
+
+// Using verify-full mode
+const sql = new SQL(
+  "postgres://user:password@localhost/mydb?sslmode=verify-full",
+);
+```
+
 ## Connection Pooling
 
 Bun's SQL client automatically manages a connection pool, which is a pool of database connections that are reused for multiple queries. This helps to reduce the overhead of establishing and closing connections for each query, and it also helps to manage the number of concurrent connections to the database.

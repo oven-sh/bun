@@ -1,25 +1,8 @@
 Bun provides native bindings for working with PostgreSQL databases with a modern, Promise-based API. The interface is designed to be simple and performant, using tagged template literals for queries and offering features like connection pooling, transactions, and prepared statements.
 
-The API is simple and fast, with a surface inspired by [postgres.js](https://github.com/porsager/postgres).
-
-| | |
-|-|-|
-|✅|Tagged template literals to protect againt SQL injection|
-|✅|Transactions|
-|✅|Named & Positional parameters|
-|✅|Connection pooling|
-|✅|Faster than any other driver|
-|✅|`BigInt` support|
-|✅|SaSL Auth support|
-|✅|Connection timeouts|
-|✅|Returning row data objects, arrays, `Buffer`s|
-|✅|Support for the binary protocol|
-|✅|TLS support + auth mode|
-|✅|Automatic configuration with environment variable|
-
-## Basic Select Queries
-
 ```ts
+import { sql } from "bun";
+
 const users = await sql`
   SELECT * FROM users
   WHERE active = ${true}
@@ -35,15 +18,41 @@ const activeUsers = await sql`
 `;
 ```
 
-## Insert Operations
+{% features title="Features" %}
 
-Insert operations come with several helpful features to make inserting data both safe and convenient. The client provides special helpers for handling both single-row and bulk inserts.
+{% icon size=20 name="Shield" /%} Tagged template literals to protect againt SQL injection
 
-### Single Row Insert
+{% icon size=20 name="GitMerge" /%} Transactions
 
-Single row inserts can be performed either by specifying values directly or by using the `sql()` helper function with objects. The helper function automatically handles field names and value escaping.
+{% icon size=20 name="Variable" /%} Named & positional parameters
+
+{% icon size=20 name="Network" /%} Connection pooling
+
+{% icon size=20 name="Zap" /%} Fastest driver available to JavaScript
+
+{% icon size=20 name="Binary" /%} `BigInt` support
+
+{% icon size=20 name="Key" /%} SASL Auth support (SCRAM-SHA-256), MD5, and Clear Text
+
+{% icon size=20 name="Timer" /%} Connection timeouts
+
+{% icon size=20 name="Database" /%} Returning rows as data objects, arrays of arrays, or `Buffer`
+
+{% icon size=20 name="Code" /%} Binary protocol support makes it faster
+
+{% icon size=20 name="Lock" /%} TLS support (and auth mode)
+
+{% icon size=20 name="Settings" /%} Automatic configuration with environment variable
+
+{% /features %}
+
+### Inserting data
+
+You can pass JavaScript values directly to the SQL template literal and escaping will be handled for you.
 
 ```ts
+import { sql } from "bun";
+
 // Basic insert with direct values
 const [user] = await sql`
   INSERT INTO users (name, email) 
@@ -66,7 +75,7 @@ const [newUser] = await sql`
 
 ### Bulk Insert
 
-One of the most powerful features is the ability to insert multiple rows in a single query. This is significantly more efficient than performing multiple individual inserts, especially when dealing with large datasets.
+You can also pass arrays of objects to the SQL template literal and it will be expanded to a `INSERT INTO ... VALUES ...` statement.
 
 ```ts
 const users = [
@@ -78,9 +87,9 @@ const users = [
 await sql`INSERT INTO users ${sql(users)}`;
 ```
 
-### Selective Column Insert
+### Picking columns to insert
 
-Sometimes you have objects with more properties than you want to insert into the database. The SQL helper allows you to specify exactly which columns should be included in the insert operation.
+You can use `sql(object, Array<string>)` to pick which columns to insert. Each of the columns must be defined on the object.
 
 ```ts
 const user = {
@@ -93,20 +102,31 @@ await sql`INSERT INTO users ${sql(user, ["name", "email"])}`;
 // Only inserts name and email columns, ignoring other fields
 ```
 
-## Alternative Query Result Formats
+## Query Results
 
 By default, Bun's SQL client returns query results as arrays of objects, where each object represents a row with column names as keys. However, there are cases where you might want the data in a different format. The client provides two additional methods for this purpose.
 
-### Values Format
+### `sql``.values()` format
 
-The `.values()` method returns rows as arrays of values rather than objects. Each row becomes an array where the values are in the same order as the columns in your query.
+The `sql``.values()` method returns rows as arrays of values rather than objects. Each row becomes an array where the values are in the same order as the columns in your query.
 
 ```ts
 const rows = await sql`SELECT * FROM users`.values();
-console.log(rows); // [['Alice', 'alice@example.com'], ['Bob', 'bob@example.com']]
+console.log(rows);
 ```
 
-### Raw Format
+This returns something like:
+
+```ts
+[
+  ["Alice", "alice@example.com"],
+  ["Bob", "bob@example.com"],
+];
+```
+
+`sql``.values()` is especially useful if duplicate column names are returned in the query results. When using objects (the default), the last column name is used as the key in the object -- but when using `sql``.values()`, each column is present in the array so you can access it by index.
+
+### `sql``.raw()` format
 
 The `.raw()` method returns rows as arrays of `Buffer` objects. This can be useful for working with binary data or for performance reasons.
 
@@ -121,7 +141,7 @@ A common need in database applications is the ability to construct queries dynam
 
 ### Dynamic Table Names
 
-When you need to reference tables or schemas dynamically, always use the sql() helper to ensure proper escaping:
+When you need to reference tables or schemas dynamically, use the `sql()` helper to ensure proper escaping:
 
 ```ts
 // Safely reference tables dynamically
@@ -133,7 +153,7 @@ await sql`SELECT * FROM ${sql("public.users")}`;
 
 ### Conditional Queries
 
-One of the most powerful features is the ability to build queries with conditional clauses. This allows you to create flexible queries that adapt to your application's needs:
+You can use the `sql()` helper to build queries with conditional clauses. This allows you to create flexible queries that adapt to your application's needs:
 
 ```ts
 // Optional WHERE clauses
@@ -149,13 +169,17 @@ await sql`
 
 ### Unsafe Queries
 
-You can use the `sql.unsafe` function to execute raw SQL strings. Use this with caution, as it can be dangerous if you're not careful.
+You can use the `sql.unsafe` function to execute raw SQL strings. Use this with caution, as it will not escape user input.
 
 ```ts
 const result = await sql.unsafe(
   "SELECT " + columns + " FROM users WHERE id = " + id,
 );
 ```
+
+#### What is SQL Injection?
+
+{% image href="https://xkcd.com/327/" src="https://imgs.xkcd.com/comics/exploits_of_a_mom.png" /%}
 
 ### Execute and Cancelling Queries
 
@@ -219,6 +243,16 @@ const db = new SQL({
 
   // SSL/TLS options
   tls: true,
+  // tls: {
+  //   rejectUnauthorized: true,
+  //   requestCert: true,
+  //   ca: "path/to/ca.pem",
+  //   key: "path/to/key.pem",
+  //   cert: "path/to/cert.pem",
+  //   checkServerIdentity(hostname, cert) {
+  //     ...
+  //   },
+  // },
 
   // Callbacks
   onconnect: client => {
@@ -339,7 +373,9 @@ The SSL mode can also be specified in connection strings:
 const sql = new SQL("postgres://user:password@localhost/mydb?sslmode=prefer");
 
 // Using verify-full mode
-const sql = new SQL("postgres://user:password@localhost/mydb?sslmode=verify-full");
+const sql = new SQL(
+  "postgres://user:password@localhost/mydb?sslmode=verify-full",
+);
 ```
 
 ## Connection Pooling
@@ -491,3 +527,46 @@ const [{ x }] = await sql`SELECT 9223372036854777 as x`;
 
 console.log(typeof x, x); // "bigint" 9223372036854777n
 ```
+
+## Roadmap
+
+There's still some things we haven't finished yet.
+
+- MySQL support: [we're working on it](https://github.com/oven-sh/bun/pull/15274)
+- SQLite support: planned, but not started. Ideally, we implement it natively instead of wrapping `bun:sqlite`.
+- Column name transforms (e.g. `snake_case` to `camelCase`). This is mostly blocked on a unicode-aware implementation of changing the case in C++ using WebKit's `WTF::String`.
+- Column type transforms
+
+### Postgres-specific features
+
+We haven't implemented these yet:
+
+- `COPY` support
+- `LISTEN` support
+- `NOTIFY` support
+
+We also haven't implemented some of the more uncommon features like:
+
+- GSSAPI authentication
+- `SCRAM-SHA-256-PLUS` support
+- Point & PostGIS types
+- All the multi-dimensional integer array types (only a couple of the types are supported)
+
+## Frequently Asked Questions
+
+> Why is this `Bun.sql` and not `Bun.postgres`?
+
+The plan is to add more database drivers in the future.
+
+> Why not just use an existing library?
+
+npm packages like postgres.js, pg, and node-postgres can be used in Bun too. They're great options.
+
+Two reaons why:
+
+1. We think it's simpler for developers to have a database driver built into Bun. The time you spend library shopping is time you could be building your app.
+2. We leverage some JavaScriptCore engine internals to make it faster to create objects that would be difficult to implement in a library
+
+## Credits
+
+Huge thanks to [@porsager](https://github.com/porsager)'s [postgres.js](https://github.com/porsager/postgres) for the inspiration for the API interface.

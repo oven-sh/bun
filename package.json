@@ -26,6 +26,9 @@
     "autoprefixer": "^10.4.19",
     "@mdn/browser-compat-data": "~5.5.28"
   },
+  "resolutions": {
+    "bun-types": "workspace:packages/bun-types"
+  },
   "scripts": {
     "build": "bun run build:debug",
     "build:debug": "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Debug -B build/debug",

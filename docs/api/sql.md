@@ -122,7 +122,7 @@ This returns something like:
 ];
 ```
 
-`sql``.values()` is especially useful if duplicate column names are returned in the query results. When using objects (the default), the last column name is used as the key in the object -- but when using `sql``.values()`, each column is present in the array so you can access it by index.
+`sql``.values()` is especially useful if duplicate column names are returned in the query results. When using objects (the default), the last column name is used as the key in the object, which means duplicate column names overwrite each other &mdash; but when using `sql``.values()`, each column is present in the array so you can access the values of duplicate columns by index.
 
 ### `sql``.raw()` format
 

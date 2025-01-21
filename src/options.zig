@@ -1676,7 +1676,9 @@ pub const BundleOptions = struct {
         this.defines_loaded = true;
     }
 
-    pub fn loader(this: *const BundleOptions, ext: string) Loader {
+    pub const loader = loaderForExtension;
+    /// loader from {type: ""} import attribute must be preferred over the file extension
+    pub fn loaderForExtension(this: *const BundleOptions, ext: string) Loader {
         return this.loaders.get(ext) orelse .file;
     }
 

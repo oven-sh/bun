@@ -927,8 +927,8 @@ pub const BundleV2 = struct {
             path.* = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
             const loader: Loader = (brk: {
                 if (import_record.importer_source_index) |importer| {
-                    var record: *ImportRecord = &this.graph.ast.items(.import_records)[importer].slice()[import_record.import_record_index];
-                    if (record.loader()) |out_loader| {
+                    const record: *ImportRecord = &this.graph.ast.items(.import_records)[importer].slice()[import_record.import_record_index];
+                    if (record.loader) |out_loader| {
                         break :brk out_loader;
                     }
                 }
@@ -2954,12 +2954,12 @@ pub const BundleV2 = struct {
             }
 
             // By default, we treat .sqlite files as external.
-            if (import_record.tag == .with_type_sqlite) {
+            if (import_record.loader != null and import_record.loader.? == .sqlite) {
                 import_record.is_external_without_side_effects = true;
                 continue;
             }
 
-            if (import_record.tag == .with_type_sqlite_embedded) {
+            if (import_record.loader != null and import_record.loader.? == .sqlite_embedded) {
                 import_record.is_external_without_side_effects = true;
             }
 
@@ -3190,7 +3190,7 @@ pub const BundleV2 = struct {
 
             // Figure out the loader.
             {
-                if (import_record.tag.loader()) |l| {
+                if (import_record.loader) |l| {
                     resolve_task.loader = l;
                 }
 

@@ -1267,33 +1267,7 @@ declare module "bun" {
   }
 
   var S3Client: S3Client;
-
-  /**
-   * Creates a new S3File instance for working with a single file.
-   *
-   * @param path The path or key of the file
-   * @param options S3 configuration options
-   * @returns `S3File` instance for the specified path
-   *
-   * @example
-   *    import { s3 } from "bun";
-   *    const file = s3("my-file.txt", {
-   *      bucket: "my-bucket",
-   *      accessKeyId: "your-access-key",
-   *      secretAccessKey: "your-secret-key"
-   *    });
-   *
-   *    // Read the file
-   *    const content = await file.text();
-   *
-   * @example
-   *    // Using s3:// protocol
-   *    const file = s3("s3://my-bucket/my-file.txt", {
-   *      accessKeyId: "your-access-key",
-   *      secretAccessKey: "your-secret-key"
-   *    });
-   */
-  function s3(path: string | URL, options?: S3Options): S3File;
+  var s3: S3Client;
 
   /**
    * Configuration options for S3 operations

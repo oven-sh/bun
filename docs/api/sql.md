@@ -505,9 +505,9 @@ console.log(typeof x, x); // "string" "9223372036854777"
 console.log(typeof y, y); // "number" 12345
 ```
 
-## Getting BigInt Instead of Strings
+## BigInt Instead of Strings
 
-If you need large numbers as BigInt instead of strings, you can enable this by setting the `bigint: true` option when initializing the SQL client:
+If you need large numbers as BigInt instead of strings, you can enable this by setting the `bigint` option to `true` when initializing the SQL client:
 
 ```ts
 const sql = new SQL({

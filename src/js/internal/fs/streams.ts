@@ -51,6 +51,7 @@ const disableFastPaths = () => (
 // `new Response(Bun.file("path.txt"))`.
 // This makes an idomatic Node.js pattern much faster.
 const kReadStreamFastPath = Symbol("kReadStreamFastPath");
+const kWriteStreamFastPathClosed = Symbol("kWriteStreamFastPathClosed");
 // Bun supports a fast path for `createWriteStream("path.txt")` where instead of
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
@@ -490,7 +491,8 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     this[kWriteStreamFastPath] = fd ? Bun.file(fd).writer() : true;
     this._write = underscoreWriteFast;
     this._writev = undefined;
-    this.write = writeFast as any;
+    // TODO: fix this problem
+    // this.write = writeFast as any;
     this.end = endFast as any;
   }
 
@@ -601,7 +603,12 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
     if ($isPromise(maybePromise) && 
       (($getPromiseInternalField(maybePromise, $promiseFieldFlags) & $promiseStateMask) === $promiseStatePending)
     ) {
-      if (cb) maybePromise.then(() => cb(null), cb);
+      const prevRefCount = this[kIsPerformingIO];
+      this[kIsPerformingIO] = (prevRefCount === true ? 0 : prevRefCount || 0) + 1;
+      if (cb) maybePromise.then(() => {
+        cb(null);
+        this[kIsPerformingIO] -= 1;
+      }, cb);
       return false;
     } else {
       if (cb) process.nextTick(cb, null);
@@ -636,7 +643,14 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
     if ($isPromise(maybePromise) && 
       (($getPromiseInternalField(maybePromise, $promiseFieldFlags) & $promiseStateMask) === $promiseStatePending)
     ) {
-      if (typeof cb === "function") maybePromise.then(() => cb(null), cb);
+      const prevRefCount = this[kIsPerformingIO];
+      this[kIsPerformingIO] = (prevRefCount === true ? 0 : prevRefCount || 0) + 1;
+      if (typeof cb === "function") maybePromise.then(() => {
+        cb(null);
+        if ((this[kIsPerformingIO] -= 1) === 0 && this[kWriteStreamFastPathClosed]) {
+          this.emit(kIoDone, null);
+        }
+      }, cb);
       return false;
     } else {
       if (typeof cb === "function") process.nextTick(cb, null);
@@ -656,14 +670,24 @@ function endFast(this: FSStream, data: any, encoding: any, cb: any) {
       const maybePromise = fileSink.write(data);
       if ($isPromise(maybePromise)) {
         fileSink.flush();
-        maybePromise.then(() => Writable.prototype.end.$call(this, cb));
+        maybePromise.then(() => endFastInner.$call(this, cb));
         return;
       }
     }
-    process.nextTick(() => Writable.prototype.end.$call(this, cb));
+    process.nextTick(() => endFastInner.$call(this, cb));
     return;
   }
   return Writable.prototype.end.$call(this, data, encoding, cb);
+}
+
+function endFastInner(this: FSStream, cb: any) {
+  const prevRefCount = this[kIsPerformingIO];
+  if (typeof prevRefCount === "number" && prevRefCount > 0) {
+    this[kWriteStreamFastPathClosed] = true;
+    this.once(kIoDone, () => Writable.prototype.end.$call(this, cb));
+  } else {
+    Writable.prototype.end.$call(this, cb);
+  }
 }
 
 writeStreamPrototype._writev = function (data, cb) {

@@ -274,13 +274,17 @@ function streamConstruct(this: FSStream, callback: (e?: any) => void) {
     } as any;
     this.open();
   } else {
-    if (fastPath) {
+    if (fastPath) fast: {
       // there is a chance that this fd is not actually correct but it will be a number
       if (fastPath !== true) {
         // @ts-expect-error undocumented. to make this public please make it a
         // getter. couldn't figure that out sorry
         this.fd = fastPath._getFd();
       } else {
+        if (fs.open !== open || fs.write !== write || fs.fsync !== fsync || fs.close !== close) {
+          this[kWriteStreamFastPath] = undefined;
+          break fast;
+        }
         // @ts-expect-error
         this.fd = (this[kWriteStreamFastPath] = Bun.file(this.path).writer())._getFd();
       }
@@ -630,7 +634,7 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
     this.write = Writable.prototype.write;
     return this.write(data, encoding, cb);
   } else if (fileSink === true) {
-    if (this.open !== streamNoop || fs.open !== open || fs.write !== write) {
+    if (this.open !== streamNoop || fs.open !== open || fs.write !== write || fs.fsync !== fsync || fs.close !== close) {
       this[kWriteStreamFastPath] = undefined;
       this.write = Writable.prototype.write;
       return this.write(data, encoding, cb);

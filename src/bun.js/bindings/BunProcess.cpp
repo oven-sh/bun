@@ -48,6 +48,7 @@
 #include "wtf/text/OrdinalNumber.h"
 #include "NodeValidator.h"
 #include "NodeModuleModule.h"
+#include "JSX509Certificate.h"
 
 #include "AsyncContextFrame.h"
 #include "ErrorCode.h"
@@ -2606,6 +2607,15 @@ inline JSValue processBindingConfig(Zig::GlobalObject* globalObject, JSC::VM& vm
     return config;
 }
 
+JSValue createCryptoX509Object(JSGlobalObject* globalObject)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto cryptoX509 = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
+    cryptoX509->putDirect(vm, JSC::Identifier::fromString(vm, "isX509Certificate"_s), JSC::JSFunction::create(vm, globalObject, 1, String("isX509Certificate"_s), jsIsX509Certificate, ImplementationVisibility::Public), 0);
+    return cryptoX509;
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObject, CallFrame* callFrame))
 {
     auto& vm = jsGlobalObject->vm();
@@ -2622,6 +2632,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
     if (moduleName == "constants"_s) return JSValue::encode(globalObject->processBindingConstants());
     if (moduleName == "contextify"_s) PROCESS_BINDING_NOT_IMPLEMENTED("contextify");
     if (moduleName == "crypto"_s) PROCESS_BINDING_NOT_IMPLEMENTED("crypto");
+    if (moduleName == "crypto/x509"_s) return JSValue::encode(createCryptoX509Object(globalObject));
     if (moduleName == "fs"_s) PROCESS_BINDING_NOT_IMPLEMENTED_ISSUE("fs", "3546");
     if (moduleName == "fs_event_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("fs_event_wrap");
     if (moduleName == "http_parser"_s) PROCESS_BINDING_NOT_IMPLEMENTED("http_parser");

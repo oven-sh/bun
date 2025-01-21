@@ -2,7 +2,6 @@
 const types = require("node:util/types");
 /** @type {import('node-inspect-extracted')} */
 const utl = require("internal/util/inspect");
-const { ERR_OUT_OF_RANGE } = require("internal/errors");
 const { promisify } = require("internal/promisify");
 const { validateString, validateOneOf } = require("internal/validators");
 
@@ -32,36 +31,42 @@ const format = utl.format;
 const stripVTControlCharacters = utl.stripVTControlCharacters;
 
 const codesWarned = new Set();
+
+function getDeprecationWarningEmitter(code, msg, deprecated, shouldEmitWarning = () => true) {
+  let warned = false;
+  return function () {
+    if (!warned && shouldEmitWarning()) {
+      warned = true;
+      if (code !== undefined) {
+        if (!codesWarned.has(code)) {
+          process.emitWarning(msg, "DeprecationWarning", code, deprecated);
+          codesWarned.add(code);
+        }
+      } else {
+        process.emitWarning(msg, "DeprecationWarning", deprecated);
+      }
+    }
+  };
+}
+
 function deprecate(fn, msg, code) {
-  if (process.noDeprecation === true) {
-    return fn;
-  }
+  // Lazy-load to avoid a circular dependency.
   if (code !== undefined) validateString(code, "code");
 
-  var warned = false;
-  function deprecated() {
-    if (!warned) {
-      if (process.throwDeprecation) {
-        var err = new Error(msg);
-        if (code) err.code = code;
-        throw err;
-      } else if (process.traceDeprecation) {
-        console.trace(msg);
-      } else {
-        if (code !== undefined) {
-          // only warn for each code once
-          if (codesWarned.has(code)) {
-            process.emitWarning(msg, "DeprecationWarning", code);
-          }
-          codesWarned.add(code);
-        } else {
-          process.emitWarning(msg, "DeprecationWarning");
-        }
-      }
-      warned = true;
+  const emitDeprecationWarning = getDeprecationWarningEmitter(code, msg, deprecated);
+
+  function deprecated(...args) {
+    if (!process.noDeprecation) {
+      emitDeprecationWarning();
     }
-    return fn.$apply(this, arguments);
+    if (new.target) {
+      return Reflect.construct(fn, args, new.target);
+    }
+    return fn.$apply(this, args);
   }
+
+  // The wrapper will keep the same prototype as fn to maintain prototype chain
+  Object.setPrototypeOf(deprecated, fn);
   return deprecated;
 }
 
@@ -124,7 +129,7 @@ function isObject(arg) {
   return typeof arg === "object" && arg !== null;
 }
 var isDate = types.isDate;
-var isError = types.isNativeError;
+var isError = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsError", 1);
 function isPrimitive(arg) {
   return (
     arg === null ||
@@ -256,7 +261,7 @@ function styleText(format, text) {
 
 function getSystemErrorName(err: any) {
   if (typeof err !== "number") throw $ERR_INVALID_ARG_TYPE("err", "number", err);
-  if (err >= 0 || !NumberIsSafeInteger(err)) throw ERR_OUT_OF_RANGE("err", "a negative integer", err);
+  if (err >= 0 || !NumberIsSafeInteger(err)) throw $ERR_OUT_OF_RANGE("err", "a negative integer", err);
   return internalErrorName(err);
 }
 

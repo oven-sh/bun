@@ -53,21 +53,54 @@ pub fn throwRangeError(
     return globalThis.ERR_OUT_OF_RANGE(fmt, args).throw();
 }
 
-pub fn validateInteger(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, min_value: ?i64, max_value: ?i64) bun.JSError!i64 {
+pub fn validateInteger(globalThis: *JSGlobalObject, value: JSValue, comptime name: string, min_value: ?i64, max_value: ?i64) bun.JSError!i64 {
     const min = min_value orelse JSC.MIN_SAFE_INTEGER;
     const max = max_value orelse JSC.MAX_SAFE_INTEGER;
 
-    if (!value.isNumber())
-        return throwErrInvalidArgType(globalThis, name_fmt, name_args, "number", value);
-    if (!value.isAnyInt()) {
-        return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be an integer. Received {}", name_args ++ .{bun.fmt.double(value.asNumber())});
+    if (!value.isNumber()) {
+        return globalThis.throwInvalidArgumentTypeValue(name, "number", value);
     }
 
-    const num = value.asInt52();
-    if (num < min or num > max) {
-        return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} && <= {d}. Received {}", name_args ++ .{ min, max, num });
+    const num = value.asNumber();
+
+    if (!value.isAnyInt()) {
+        return globalThis.throwRangeError(num, .{ .field_name = name, .msg = "an integer" });
     }
-    return num;
+
+    const int = value.asInt52();
+    if (int < min or int > max) {
+        return globalThis.throwRangeError(int, .{ .field_name = name, .min = min, .max = max });
+    }
+    return int;
+}
+
+pub fn validateIntegerOrBigInt(globalThis: *JSGlobalObject, value: JSValue, comptime name: string, min_value: ?i64, max_value: ?i64) bun.JSError!i64 {
+    const min = min_value orelse JSC.MIN_SAFE_INTEGER;
+    const max = max_value orelse JSC.MAX_SAFE_INTEGER;
+
+    if (value.isBigInt()) {
+        const num = value.to(i64);
+        if (num < min or num > max) {
+            return globalThis.throwRangeError(num, .{ .field_name = name, .min = min, .max = max });
+        }
+        return num;
+    }
+
+    if (!value.isNumber()) {
+        return globalThis.throwInvalidArgumentTypeValue(name, "number", value);
+    }
+
+    const num = value.asNumber();
+
+    if (!value.isAnyInt()) {
+        return globalThis.throwRangeError(num, .{ .field_name = name, .msg = "an integer" });
+    }
+
+    const int = value.asInt52();
+    if (int < min or int > max) {
+        return globalThis.throwRangeError(int, .{ .field_name = name, .min = min, .max = max });
+    }
+    return int;
 }
 
 pub fn validateInt32(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, min_value: ?i32, max_value: ?i32) bun.JSError!i32 {
@@ -85,7 +118,7 @@ pub fn validateInt32(globalThis: *JSGlobalObject, value: JSValue, comptime name_
     // Use floating point comparison here to ensure values out of i32 range get caught instead of clamp/truncated.
     if (num < @as(f64, @floatFromInt(min)) or num > @as(f64, @floatFromInt(max))) {
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
-        return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} && <= {d}. Received {}", name_args ++ .{ min, max, value.toFmt(&formatter) });
+        return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} and <= {d}. Received {}", name_args ++ .{ min, max, value.toFmt(&formatter) });
     }
     return @intFromFloat(num);
 }
@@ -103,7 +136,7 @@ pub fn validateUint32(globalThis: *JSGlobalObject, value: JSValue, comptime name
     const max: i64 = @intCast(std.math.maxInt(u32));
     if (num < min or num > max) {
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
-        return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} && <= {d}. Received {}", name_args ++ .{ min, max, value.toFmt(&formatter) });
+        return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} and <= {d}. Received {}", name_args ++ .{ min, max, value.toFmt(&formatter) });
     }
     return @truncate(@as(u63, @intCast(num)));
 }
@@ -130,7 +163,7 @@ pub fn validateNumber(globalThis: *JSGlobalObject, value: JSValue, comptime name
     }
     if (!valid) {
         if (min != null and max != null) {
-            return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} && <= {d}. Received {s}", name_args ++ .{ min, max, value });
+            return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} and <= {d}. Received {s}", name_args ++ .{ min, max, value });
         } else if (min != null) {
             return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d}. Received {s}", name_args ++ .{ max, value });
         } else {

@@ -82,6 +82,7 @@ describe("spawn()", () => {
     ]);
     await runBunInstall(bunEnv, tmpdir);
 
+    console.error({tmpdir});
     const { exitCode, out } = await new Promise<any>(resolve => {
       const child = spawn("./node_modules/.bin/foo", { cwd: tmpdir, env: bunEnv });
       child.on("exit", async exitCode => {
@@ -427,9 +428,11 @@ it("it accepts stdio passthrough", async () => {
     stdio: ["ignore", "pipe", "pipe"],
     env: bunEnv,
   }));
+  console.log(package_dir);
   const [err, out, exitCode] = await Promise.all([new Response(stderr).text(), new Response(stdout).text(), exited]);
   try {
     // This command outputs in either `["hello", "world"]` or `["world", "hello"]` order.
+    console.log({err, out});
     expect([err.split("\n")[0], ...err.split("\n").slice(1, -1).sort(), err.split("\n").at(-1)]).toEqual([
       "$ run-p echo-hello echo-world",
       "$ echo hello",

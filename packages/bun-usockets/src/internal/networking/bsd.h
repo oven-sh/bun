@@ -26,7 +26,7 @@
 
 #include "libusockets.h"
 
-#ifdef _WIN32 
+#ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -178,9 +178,16 @@ int bsd_udp_packet_buffer_local_ip(struct udp_recvbuf *msgvec, int index, char *
 LIBUS_SOCKET_DESCRIPTOR apple_no_sigpipe(LIBUS_SOCKET_DESCRIPTOR fd);
 LIBUS_SOCKET_DESCRIPTOR bsd_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd);
 void bsd_socket_nodelay(LIBUS_SOCKET_DESCRIPTOR fd, int enabled);
+int bsd_socket_broadcast(LIBUS_SOCKET_DESCRIPTOR fd, int enabled);
+int bsd_socket_ttl_unicast(LIBUS_SOCKET_DESCRIPTOR fd, int ttl);
+int bsd_socket_ttl_multicast(LIBUS_SOCKET_DESCRIPTOR fd, int ttl);
+int bsd_socket_multicast_loopback(LIBUS_SOCKET_DESCRIPTOR fd, int enabled);
+int bsd_socket_multicast_interface(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_storage *addr);
+int bsd_socket_set_membership(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_storage *addr, const struct sockaddr_storage *iface, int drop);
+int bsd_socket_set_source_specific_membership(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_storage *source, const struct sockaddr_storage *group, const struct sockaddr_storage *iface, int drop);
 int bsd_socket_keepalive(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay);
 void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd);
-LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol);
+LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, int *err);
 
 void bsd_close_socket(LIBUS_SOCKET_DESCRIPTOR fd);
 void bsd_shutdown_socket(LIBUS_SOCKET_DESCRIPTOR fd);
@@ -211,7 +218,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
 LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t pathlen, int options, int* error);
 
 /* Creates an UDP socket bound to the hostname and port */
-LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port);
+LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int options, int *err);
 int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int port);
 int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd);
 

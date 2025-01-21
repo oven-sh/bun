@@ -71,6 +71,11 @@
       JSC::JSGlobalObject *lexicalGlobalObject, JSC::Identifier moduleKey,     \
       Vector<JSC::Identifier, 4> &exportNames,                                 \
       JSC::MarkedArgumentBuffer &exportValues)
+#define DEFINE_NATIVE_MODULE_NOINLINE(name)                                             \
+  void generateNativeModule_##name(                                     \
+      JSC::JSGlobalObject *lexicalGlobalObject, JSC::Identifier moduleKey,     \
+      Vector<JSC::Identifier, 4> &exportNames,                                 \
+      JSC::MarkedArgumentBuffer &exportValues)
 
 #define INIT_NATIVE_MODULE(numberOfExportNames)                                \
   Zig::GlobalObject *globalObject =                                            \

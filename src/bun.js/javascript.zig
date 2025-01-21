@@ -84,7 +84,7 @@ const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
 const PackageManager = @import("../install/install.zig").PackageManager;
 const IPC = @import("ipc.zig");
 const DNSResolver = @import("api/bun/dns_resolver.zig").DNSResolver;
-pub const GenericWatcher = @import("../watcher.zig");
+const Watcher = bun.Watcher;
 
 const ModuleLoader = JSC.ModuleLoader;
 const FetchFlags = JSC.FetchFlags;
@@ -629,14 +629,14 @@ pub const ImportWatcher = union(enum) {
         }
     }
 
-    pub inline fn watchlist(this: ImportWatcher) GenericWatcher.WatchList {
+    pub inline fn watchlist(this: ImportWatcher) Watcher.WatchList {
         return switch (this) {
             inline .hot, .watch => |w| w.watchlist,
             else => .{},
         };
     }
 
-    pub inline fn indexOf(this: ImportWatcher, hash: GenericWatcher.HashType) ?u32 {
+    pub inline fn indexOf(this: ImportWatcher, hash: Watcher.HashType) ?u32 {
         return switch (this) {
             inline .hot, .watch => |w| w.indexOf(hash),
             else => null,
@@ -647,7 +647,7 @@ pub const ImportWatcher = union(enum) {
         this: ImportWatcher,
         fd: StoredFileDescriptorType,
         file_path: string,
-        hash: GenericWatcher.HashType,
+        hash: Watcher.HashType,
         loader: options.Loader,
         dir_fd: StoredFileDescriptorType,
         package_json: ?*PackageJSON,
@@ -2404,15 +2404,12 @@ pub const VirtualMachine = struct {
             return builtin;
         }
 
-        const display_specifier = _specifier.toUTF8(bun.default_allocator);
-        defer display_specifier.deinit();
         const specifier_clone = _specifier.toUTF8(bun.default_allocator);
         defer specifier_clone.deinit();
-        var display_slice = display_specifier.slice();
-        const specifier = ModuleLoader.normalizeSpecifier(jsc_vm, specifier_clone.slice(), &display_slice);
+        const normalized_file_path_from_specifier, const specifier = ModuleLoader.normalizeSpecifier(jsc_vm, specifier_clone.slice());
         const referrer_clone = referrer.toUTF8(bun.default_allocator);
         defer referrer_clone.deinit();
-        var path = Fs.Path.init(specifier_clone.slice());
+        var path = Fs.Path.init(normalized_file_path_from_specifier);
 
         // For blobs.
         var blob_source: ?JSC.WebCore.Blob = null;
@@ -2505,8 +2502,7 @@ pub const VirtualMachine = struct {
 
         return try ModuleLoader.transpileSourceCode(
             jsc_vm,
-            specifier_clone.slice(),
-            display_slice,
+            specifier,
             referrer_clone.slice(),
             _specifier,
             path,
@@ -3096,7 +3092,7 @@ pub const VirtualMachine = struct {
     pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
         this.has_loaded = false;
         this.main = entry_path;
-        this.main_hash = GenericWatcher.getHash(entry_path);
+        this.main_hash = Watcher.getHash(entry_path);
 
         try this.ensureDebugger(true);
 
@@ -3132,7 +3128,7 @@ pub const VirtualMachine = struct {
     pub fn reloadEntryPointForTestRunner(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
         this.has_loaded = false;
         this.main = entry_path;
-        this.main_hash = GenericWatcher.getHash(entry_path);
+        this.main_hash = Watcher.getHash(entry_path);
 
         this.eventLoop().ensureWaker();
 
@@ -3439,7 +3435,9 @@ pub const VirtualMachine = struct {
             allow_ansi_color,
             allow_side_effects,
         ) catch |err| {
-            if (comptime Environment.isDebug) {
+            if (err == error.JSError) {
+                this.global.clearException();
+            } else if (comptime Environment.isDebug) {
                 // yo dawg
                 Output.printErrorln("Error while printing Error-like object: {s}", .{@errorName(err)});
                 Output.flush();
@@ -3800,7 +3798,7 @@ pub const VirtualMachine = struct {
         }
     }
 
-    fn printErrorInstance(this: *VirtualMachine, error_instance: JSValue, exception_list: ?*ExceptionList, formatter: *ConsoleObject.Formatter, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool, comptime allow_side_effects: bool) anyerror!void {
+    fn printErrorInstance(this: *VirtualMachine, error_instance: JSValue, exception_list: ?*ExceptionList, formatter: *ConsoleObject.Formatter, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool, comptime allow_side_effects: bool) !void {
         var exception_holder = ZigException.Holder.init();
         var exception = exception_holder.zigException();
         defer exception_holder.deinit(this);
@@ -4520,7 +4518,6 @@ pub const VirtualMachine = struct {
     }
 };
 
-pub const Watcher = GenericWatcher.NewWatcher;
 pub const HotReloader = NewHotReloader(VirtualMachine, JSC.EventLoop, false);
 pub const WatchReloader = NewHotReloader(VirtualMachine, JSC.EventLoop, true);
 extern fn BunDebugger__willHotReload() void;
@@ -4748,9 +4745,9 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
         pub noinline fn onFileUpdate(
             this: *@This(),
-            events: []GenericWatcher.WatchEvent,
+            events: []Watcher.WatchEvent,
             changed_files: []?[:0]u8,
-            watchlist: GenericWatcher.WatchList,
+            watchlist: Watcher.WatchList,
         ) void {
             const slice = watchlist.slice();
             const file_paths = slice.items(.file_path);
@@ -4858,7 +4855,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         _ = this.ctx.bustDirCache(strings.withoutTrailingSlashWindowsPath(file_path));
 
                         if (entries_option) |dir_ent| {
-                            var last_file_hash: GenericWatcher.HashType = std.math.maxInt(GenericWatcher.HashType);
+                            var last_file_hash: Watcher.HashType = std.math.maxInt(Watcher.HashType);
 
                             for (affected) |changed_name_| {
                                 const changed_name: []const u8 = if (comptime Environment.isMac)
@@ -4871,14 +4868,14 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                 var prev_entry_id: usize = std.math.maxInt(usize);
                                 if (loader != .file) {
                                     var path_string: bun.PathString = undefined;
-                                    var file_hash: GenericWatcher.HashType = last_file_hash;
+                                    var file_hash: Watcher.HashType = last_file_hash;
                                     const abs_path: string = brk: {
                                         if (dir_ent.entries.get(@as([]const u8, @ptrCast(changed_name)))) |file_ent| {
                                             // reset the file descriptor
                                             file_ent.entry.cache.fd = .zero;
                                             file_ent.entry.need_stat = true;
                                             path_string = file_ent.entry.abs_path;
-                                            file_hash = GenericWatcher.getHash(path_string.slice());
+                                            file_hash = Watcher.getHash(path_string.slice());
                                             for (hashes, 0..) |hash, entry_id| {
                                                 if (hash == file_hash) {
                                                     if (file_descriptors[entry_id] != .zero) {
@@ -4906,7 +4903,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
                                             @memcpy(_on_file_update_path_buf[file_path_without_trailing_slash.len..][0..changed_name.len], changed_name);
                                             const path_slice = _on_file_update_path_buf[0 .. file_path_without_trailing_slash.len + changed_name.len + 1];
-                                            file_hash = GenericWatcher.getHash(path_slice);
+                                            file_hash = Watcher.getHash(path_slice);
                                             break :brk path_slice;
                                         }
                                     };

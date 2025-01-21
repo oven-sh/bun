@@ -1,11 +1,6 @@
+const assert = require("node:assert");
 const nativeTests = require("./build/Release/napitests.node");
 const secondAddon = require("./build/Release/second_addon.node");
-
-function assert(ok) {
-  if (!ok) {
-    throw new Error("assertion failed");
-  }
-}
 
 async function gcUntil(fn) {
   const MAX = 100;

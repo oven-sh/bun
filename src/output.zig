@@ -842,27 +842,31 @@ pub fn scoped(comptime tag: anytype, comptime disabled: bool) LogFunction {
 // <blue>
 // <cyan>
 // <green>
+// <bggreen>
 // <magenta>
 // <red>
+// <bgred>
 // <white>
 // <yellow>
 // <b> - bold
 // <d> - dim
 // </r> - reset
 // <r> - reset
-const ED = "\x1b[";
+const CSI = "\x1b[";
 pub const color_map = ComptimeStringMap(string, .{
-    &.{ "black", ED ++ "30m" },
-    &.{ "blue", ED ++ "34m" },
-    &.{ "b", ED ++ "1m" },
-    &.{ "d", ED ++ "2m" },
-    &.{ "i", ED ++ "3m" },
-    &.{ "cyan", ED ++ "36m" },
-    &.{ "green", ED ++ "32m" },
-    &.{ "magenta", ED ++ "35m" },
-    &.{ "red", ED ++ "31m" },
-    &.{ "white", ED ++ "37m" },
-    &.{ "yellow", ED ++ "33m" },
+    &.{ "b", CSI ++ "1m" },
+    &.{ "d", CSI ++ "2m" },
+    &.{ "i", CSI ++ "3m" },
+    &.{ "black", CSI ++ "30m" },
+    &.{ "red", CSI ++ "31m" },
+    &.{ "green", CSI ++ "32m" },
+    &.{ "yellow", CSI ++ "33m" },
+    &.{ "blue", CSI ++ "34m" },
+    &.{ "magenta", CSI ++ "35m" },
+    &.{ "cyan", CSI ++ "36m" },
+    &.{ "white", CSI ++ "37m" },
+    &.{ "bgred", CSI ++ "41m" },
+    &.{ "bggreen", CSI ++ "42m" },
 });
 const RESET: string = "\x1b[0m";
 pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) [:0]const u8 {
@@ -1045,11 +1049,9 @@ pub inline fn warn(comptime fmt: []const u8, args: anytype) void {
     prettyErrorln("<yellow>warn<r><d>:<r> " ++ fmt, args);
 }
 
-const debugWarnScope = Scoped("debug_warn", false);
-
 /// Print a yellow warning message, only in debug mode
 pub inline fn debugWarn(comptime fmt: []const u8, args: anytype) void {
-    if (debugWarnScope.isVisible()) {
+    if (bun.Environment.isDebug) {
         prettyErrorln("<yellow>debug warn<r><d>:<r> " ++ fmt, args);
         flush();
     }

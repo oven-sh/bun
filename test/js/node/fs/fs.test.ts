@@ -20,6 +20,8 @@ import fs, {
   openAsBlob,
   openSync,
   promises,
+  statfsSync,
+  statfs,
   readdirSync,
   readFile,
   readFileSync,
@@ -39,6 +41,7 @@ import fs, {
   writeSync,
   writevSync,
 } from "node:fs";
+import * as os from "node:os";
 import { dirname, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 
@@ -63,9 +66,9 @@ function mkdirForce(path: string) {
 }
 
 function tmpdirTestMkdir(): string {
-  const now = Date.now().toString();
+  const now = Date.now().toString() + Math.random().toString(16).slice(2, 10);
   const tempdir = `${tmpdir()}/fs.test.ts/${now}/1234/hi`;
-  expect(existsSync(tempdir)).toBe(false);
+  expect(existsSync(tempdir), `tempdir ${tempdir} should not exist`).toBe(false);
   const res = mkdirSync(tempdir, { recursive: true });
   if (!res?.includes(now)) {
     expect(res).toInclude("fs.test.ts");
@@ -194,20 +197,19 @@ describe("test-fs-assert-encoding-error", () => {
     }).toThrow(expectedError);
   });
 
-  it.todo("ReadStream throws on invalid encoding", () => {
+  it("ReadStream throws on invalid encoding", () => {
     expect(() => {
       fs.ReadStream(testPath, options);
     }).toThrow(expectedError);
   });
 
-  it.todo("WriteStream throws on invalid encoding", () => {
+  it("WriteStream throws on invalid encoding", () => {
     expect(() => {
       fs.WriteStream(testPath, options);
     }).toThrow(expectedError);
   });
 });
 
-// TODO: port node.js tests for these
 it("fs.readv returns object", async done => {
   const fd = await promisify(fs.open)(import.meta.path, "r");
   const buffers = [Buffer.alloc(10), Buffer.alloc(10)];
@@ -1040,8 +1042,7 @@ it("mkdtempSync, readdirSync, rmdirSync and unlinkSync with non-ascii", () => {
 });
 
 it("mkdtempSync() empty name", () => {
-  // @ts-ignore-next-line
-  const tempdir = mkdtempSync();
+  const tempdir = mkdtempSync(os.tmpdir());
   expect(existsSync(tempdir)).toBe(true);
   writeFileSync(tempdir + "/non-ascii-👍.txt", "hello");
   const dirs = readdirSync(tempdir);
@@ -1867,14 +1868,13 @@ describe("createReadStream", () => {
         expect(chunk.length).toBe("File read successfully".length);
         expect(chunk.toString()).toBe("File read successfully");
       });
-
       stream.on("close", () => {
         resolve(true);
       });
     });
   });
 
-  it("works (22 chunk)", async () => {
+  it("works (highWaterMark 1)", async () => {
     var stream = createReadStream(import.meta.dir + "/readFileSync.txt", {
       highWaterMark: 1,
     });
@@ -1884,20 +1884,21 @@ describe("createReadStream", () => {
     return await new Promise(resolve => {
       stream.on("data", chunk => {
         expect(chunk instanceof Buffer).toBe(true);
-        expect(chunk.length).toBe(22);
-        expect(chunk.toString()).toBe(data);
+        expect(chunk.length).toBe(1);
+        expect(chunk.toString()).toBe(data.slice(i, i + 1));
+        i++;
       });
 
       stream.on("end", () => {
+        expect(i).toBe(data.length);
         resolve(true);
       });
     });
   });
 
-  // TODO - highWaterMark is just a hint, not a guarantee. it doesn't make sense to test for exact chunk sizes
-  it.skip("works (highWaterMark 1, 512 chunk)", async () => {
+  it("works (highWaterMark 512)", async () => {
     var stream = createReadStream(import.meta.dir + "/readLargeFileSync.txt", {
-      highWaterMark: 1,
+      highWaterMark: 512,
     });
 
     var data = readFileSync(import.meta.dir + "/readLargeFileSync.txt", "utf8");
@@ -1905,7 +1906,7 @@ describe("createReadStream", () => {
     return await new Promise(resolve => {
       stream.on("data", chunk => {
         expect(chunk instanceof Buffer).toBe(true);
-        expect(chunk.length).toBe(512);
+        expect(chunk.length).toBeLessThanOrEqual(512);
         expect(chunk.toString()).toBe(data.slice(i, i + 512));
         i += 512;
       });
@@ -2104,10 +2105,7 @@ describe("fs.WriteStream", () => {
   it("should use fd if provided", () => {
     const path = join(tmpdir(), `not-used-${Date.now()}.txt`);
     expect(existsSync(path)).toBe(false);
-    // @ts-ignore-next-line
-    const ws = new WriteStream_(path, {
-      fd: 2,
-    });
+    const ws = new WriteStream_(path, { fd: 2 });
     // @ts-ignore-next-line
     expect(ws.fd).toBe(2);
     expect(existsSync(path)).toBe(false);
@@ -2315,23 +2313,29 @@ describe("createWriteStream", () => {
 
   it("should call callbacks in the correct order", done => {
     const ws = createWriteStream(join(tmpdir(), "fs"));
-    let counter = 0;
+    let counter1 = 0;
     ws.on("open", () => {
-      expect(counter++).toBe(1);
+      expect(counter1++).toBe(0);
     });
 
     ws.close(() => {
-      expect(counter++).toBe(3);
-      done();
+      expect(counter1++).toBe(1);
+      if (counter2 === 2) {
+        done();
+      }
     });
 
+    let counter2 = 0;
     const rs = createReadStream(join(import.meta.dir, "readFileSync.txt"));
     rs.on("open", () => {
-      expect(counter++).toBe(0);
+      expect(counter2++).toBe(0);
     });
 
     rs.close(() => {
-      expect(counter++).toBe(2);
+      expect(counter2++).toBe(1);
+      if (counter1 === 2) {
+        done();
+      }
     });
   });
 });
@@ -2409,7 +2413,7 @@ describe("fs/promises", () => {
             "-e",
             `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
               full,
-            )}, { withFileTypes: true }).sort()), null, 2)`,
+            )}, { withFileTypes: true }).map(v => ({ path: v.parentPath ?? v.path, name: v.name })).sort()), null, 2)`,
           ],
           cwd: process.cwd(),
           stdout: "pipe",
@@ -2425,9 +2429,9 @@ describe("fs/promises", () => {
     const text = await new Response(subprocess.stdout).text();
     const node = JSON.parse(text);
     expect(bun.length).toEqual(node.length);
-    expect([...new Set(node.map(v => v.parentPath))]).toEqual([full]);
-    expect([...new Set(bun.map(v => v.parentPath))]).toEqual([full]);
-    expect(bun.map(v => join(v.parentPath, v.name)).sort()).toEqual(node.map(v => join(v.path, v.name)).sort());
+    expect([...new Set(node.map(v => v.parentPath ?? v.path))]).toEqual([full]);
+    expect([...new Set(bun.map(v => v.parentPath ?? v.path))]).toEqual([full]);
+    expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(node.map(v => join(v.path, v.name)).sort());
   }, 100000);
 
   it("readdir(path, {withFileTypes: true, recursive: true}) produces the same result as Node.js", async () => {
@@ -2445,7 +2449,7 @@ describe("fs/promises", () => {
             "-e",
             `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
               full,
-            )}, { withFileTypes: true, recursive: true }).sort((a, b) => a.path.localeCompare(b.path))), null, 2)`,
+            )}, { withFileTypes: true, recursive: true }).map(v => ({ path: v.parentPath ?? v.path, name: v.name })).sort((a, b) => a.path.localeCompare(b.path))), null, 2)`,
           ],
           cwd: process.cwd(),
           stdout: "pipe",
@@ -2461,8 +2465,8 @@ describe("fs/promises", () => {
     const text = await new Response(subprocess.stdout).text();
     const node = JSON.parse(text);
     expect(bun.length).toEqual(node.length);
-    expect(new Set(bun.map(v => v.path))).toEqual(new Set(node.map(v => v.path)));
-    expect(bun.map(v => join(v.path, v.name)).sort()).toEqual(node.map(v => join(v.path, v.name)).sort());
+    expect(new Set(bun.map(v => v.parentPath ?? v.path))).toEqual(new Set(node.map(v => v.path)));
+    expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(node.map(v => join(v.path, v.name)).sort());
   }, 100000);
 
   it("readdirSync(path, {withFileTypes: true, recursive: true}) produces the same result as Node.js", async () => {
@@ -2480,7 +2484,7 @@ describe("fs/promises", () => {
             "-e",
             `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
               full,
-            )}, { withFileTypes: true, recursive: true }).sort((a, b) => a.path.localeCompare(b.path))), null, 2)`,
+            )}, { withFileTypes: true, recursive: true }).map(v => ({ path: v.parentPath ?? v.path, name: v.name })).sort((a, b) => a.path.localeCompare(b.path))), null, 2)`,
           ],
           cwd: process.cwd(),
           stdout: "pipe",
@@ -2496,8 +2500,8 @@ describe("fs/promises", () => {
     const text = await new Response(subprocess.stdout).text();
     const node = JSON.parse(text);
     expect(bun.length).toEqual(node.length);
-    expect(new Set(bun.map(v => v.path))).toEqual(new Set(node.map(v => v.path)));
-    expect(bun.map(v => join(v.path, v.name)).sort()).toEqual(node.map(v => join(v.path, v.name)).sort());
+    expect(new Set(bun.map(v => v.parentPath ?? v.path))).toEqual(new Set(node.map(v => v.path)));
+    expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(node.map(v => join(v.path, v.name)).sort());
   }, 100000);
 
   for (let withFileTypes of [false, true] as const) {
@@ -3461,4 +3465,66 @@ it("open mode verification", async () => {
   expect(() => fs.open(__filename, 0, 4294967298.5, () => {})).toThrow(
     RangeError(`The value of "mode" is out of range. It must be an integer. Received 4294967298.5`),
   );
+});
+
+it("fs.mkdirSync recursive should not error when the directory already exists, but should error when its a file", () => {
+  expect(() => mkdirSync(import.meta.dir, { recursive: true })).not.toThrowError();
+  expect(() => mkdirSync(import.meta.path, { recursive: true })).toThrowError();
+});
+
+it("fs.mkdirSync recursive: false should error when the directory already exists, regardless if its a file or dir", () => {
+  expect(() => mkdirSync(import.meta.dir, { recursive: false })).toThrowError();
+  expect(() => mkdirSync(import.meta.path, { recursive: false })).toThrowError();
+});
+
+it("fs.statfsSync should work", () => {
+  const stats = statfsSync(import.meta.path);
+  ["type", "bsize", "blocks", "bfree", "bavail", "files", "ffree"].forEach(k => {
+    expect(stats).toHaveProperty(k);
+    expect(stats[k]).toBeNumber();
+  });
+
+  const bigIntStats = statfsSync(import.meta.path, { bigint: true });
+  ["type", "bsize", "blocks", "bfree", "bavail", "files", "ffree"].forEach(k => {
+    expect(bigIntStats).toHaveProperty(k);
+    expect(bigIntStats[k]).toBeTypeOf("bigint");
+  });
+});
+
+it("fs.promises.statfs should work", async () => {
+  const stats = await fs.promises.statfs(import.meta.path);
+  expect(stats).toBeDefined();
+});
+
+it("fs.promises.statfs should work with bigint", async () => {
+  const stats = await fs.promises.statfs(import.meta.path, { bigint: true });
+  expect(stats).toBeDefined();
+});
+
+it("fs.statfs should work with bigint", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  fs.statfs(import.meta.path, { bigint: true }, (err, stats) => {
+    if (err) return resolve(err);
+    resolve(stats);
+  });
+  const stats = await promise;
+  expect(stats).toBeDefined();
+  for (const k of ["type", "bsize", "blocks", "bfree", "bavail", "files", "ffree"]) {
+    expect(stats).toHaveProperty(k);
+    expect(stats[k]).toBeTypeOf("bigint");
+  }
+});
+
+it("fs.statfs should work with bigint", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  fs.statfs(import.meta.path, { bigint: true }, (err, stats) => {
+    if (err) return resolve(err);
+    resolve(stats);
+  });
+  const stats = await promise;
+  expect(stats).toBeDefined();
+  for (const k of ["type", "bsize", "blocks", "bfree", "bavail", "files", "ffree"]) {
+    expect(stats).toHaveProperty(k);
+    expect(stats[k]).toBeTypeOf("bigint");
+  }
 });

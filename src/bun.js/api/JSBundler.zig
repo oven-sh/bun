@@ -129,7 +129,7 @@ pub const JSBundler = struct {
                 } else false;
             }
 
-            if (try config.getTruthy(globalThis, "experimentalHtml")) |enable_html| {
+            if (try config.getTruthy(globalThis, "html")) |enable_html| {
                 this.experimental.html = enable_html.toBoolean();
             }
 

@@ -55,6 +55,7 @@ export function loadAndResolvePluginsForServe(
     experimentalCss: true,
     experimentalHtml: true,
     target: "browser",
+    root: bunfig_folder,
   };
 
   let bundlerPlugin = this;

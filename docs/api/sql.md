@@ -495,13 +495,14 @@ The client provides typed errors for different failure scenarios:
 Bun's SQL client includes special handling for large numbers that exceed the range of a 32-bit integer. Here’s how it works:
 
 ```ts
-import { sql, SQL } from "bun";
+import { sql } from "bun";
 
-// By default, large numbers are returned as strings
-const [result] = await sql`SELECT 9223372036854777 as x`;
+// By default, numbers in the range of a 32-bit signed integer are returned as numbers and
+// large numbers are returned as strings
+const [{ x, y }] = await sql`SELECT 9223372036854777 as x, 12345 as y`;
 
-console.log(typeof result.x); // 'string'
-console.log(result.x); // '9223372036854777';
+console.log(typeof x, x); // 'string' "9223372036854777"
+console.log(typeof y, y); // 'number' 12345
 ```
 
 ## Getting BigInt Instead of Strings

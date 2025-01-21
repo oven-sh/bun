@@ -391,11 +391,14 @@ function checkSameOutput(test: string, args: any[] | string) {
   let bunResult = runOn(bunExe(), test, args);
   // remove all debug logs
   bunResult = bunResult.replaceAll(/^\[\w+\].+$/gm, "").trim();
-  expect(bunResult).toBe(nodeResult);
+  expect(bunResult).toEqual(nodeResult);
   return nodeResult;
 }
 
 function runOn(executable: string, test: string, args: any[] | string) {
+  // when the inspector runs (can be due to VSCode extension), there is
+  // a bug that in debug modes the console logs extra stuff
+  const { BUN_INSPECT_CONNECT_TO: _, ...rest } = bunEnv;
   const exec = spawnSync({
     cmd: [
       executable,
@@ -404,7 +407,7 @@ function runOn(executable: string, test: string, args: any[] | string) {
       test,
       typeof args == "string" ? args : JSON.stringify(args),
     ],
-    env: bunEnv,
+    env: rest,
   });
   const errs = exec.stderr.toString();
   if (errs !== "") {

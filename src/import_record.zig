@@ -7,24 +7,26 @@ const Index = @import("ast/base.zig").Index;
 const Api = @import("./api/schema.zig").Api;
 
 pub const ImportKind = enum(u8) {
-    /// An entry point provided by the user
-    entry_point,
+    /// An entry point provided to `bun run` or `bun`
+    entry_point_run = 0,
+    /// An entry point provided to `bun build` or `Bun.build`
+    entry_point_build = 1,
     /// An ES6 import or re-export statement
-    stmt,
+    stmt = 2,
     /// A call to "require()"
-    require,
+    require = 3,
     /// An "import()" expression with a string argument
-    dynamic,
+    dynamic = 4,
     /// A call to "require.resolve()"
-    require_resolve,
+    require_resolve = 5,
     /// A CSS "@import" rule
-    at,
+    at = 6,
     /// A CSS "@import" rule with import conditions
-    at_conditional,
+    at_conditional = 7,
     /// A CSS "url(...)" token
-    url,
+    url = 8,
 
-    internal,
+    internal = 9,
 
     pub const Label = std.EnumArray(ImportKind, []const u8);
     pub const all_labels: Label = brk: {
@@ -32,7 +34,8 @@ pub const ImportKind = enum(u8) {
         // - src/js/builtins/codegen/replacements.ts
         // - packages/bun-types/bun.d.ts
         var labels = Label.initFill("");
-        labels.set(ImportKind.entry_point, "entry-point");
+        labels.set(ImportKind.entry_point_run, "entry-point-run");
+        labels.set(ImportKind.entry_point_build, "entry-point-build");
         labels.set(ImportKind.stmt, "import-statement");
         labels.set(ImportKind.require, "require-call");
         labels.set(ImportKind.dynamic, "dynamic-import");
@@ -45,7 +48,8 @@ pub const ImportKind = enum(u8) {
 
     pub const error_labels: Label = brk: {
         var labels = Label.initFill("");
-        labels.set(ImportKind.entry_point, "entry point");
+        labels.set(ImportKind.entry_point_run, "entry point (run)");
+        labels.set(ImportKind.entry_point_build, "entry point (build)");
         labels.set(ImportKind.stmt, "import");
         labels.set(ImportKind.require, "require()");
         labels.set(ImportKind.dynamic, "import()");

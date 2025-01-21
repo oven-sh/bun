@@ -397,7 +397,7 @@ pub const Transpiler = struct {
     }
 
     fn _resolveEntryPoint(transpiler: *Transpiler, entry_point: string) !_resolver.Result {
-        return transpiler.resolver.resolveWithFramework(transpiler.fs.top_level_dir, entry_point, .entry_point) catch |err| {
+        return transpiler.resolver.resolveWithFramework(transpiler.fs.top_level_dir, entry_point, .entry_point_build) catch |err| {
             // Relative entry points that were not resolved to a node_modules package are
             // interpreted as relative to the current working directory.
             if (!std.fs.path.isAbsolute(entry_point) and
@@ -407,7 +407,7 @@ pub const Transpiler = struct {
                     return transpiler.resolver.resolve(
                         transpiler.fs.top_level_dir,
                         try strings.append(transpiler.allocator, "./", entry_point),
-                        .entry_point,
+                        .entry_point_build,
                     ) catch {
                         // return the original error
                         break :brk;
@@ -958,12 +958,15 @@ pub const Transpiler = struct {
                         transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{} while minifying", .{e.kind}) catch bun.outOfMemory();
                         return null;
                     }
-                    const result = sheet.toCss(alloc, bun.css.PrinterOptions{
+                    const result = switch (sheet.toCss(alloc, bun.css.PrinterOptions{
                         .targets = bun.css.Targets.forBundlerTarget(transpiler.options.target),
                         .minify = transpiler.options.minify_whitespace,
-                    }, null) catch |e| {
-                        bun.handleErrorReturnTrace(e, @errorReturnTrace());
-                        return null;
+                    }, null)) {
+                        .result => |v| v,
+                        .err => |e| {
+                            transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{} while printing", .{e}) catch bun.outOfMemory();
+                            return null;
+                        },
                     };
                     output_file.value = .{ .buffer = .{ .allocator = alloc, .bytes = result.code } };
                 } else {
@@ -1784,7 +1787,7 @@ pub const Transpiler = struct {
                 js_ast.Stmt.Data.Store.reset();
             }
 
-            const result = transpiler.resolver.resolve(transpiler.fs.top_level_dir, entry, .entry_point) catch |err| {
+            const result = transpiler.resolver.resolve(transpiler.fs.top_level_dir, entry, .entry_point_build) catch |err| {
                 Output.prettyError("Error resolving \"{s}\": {s}\n", .{ entry, @errorName(err) });
                 continue;
             };

@@ -2917,3 +2917,47 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
   });
 }
+
+test("ignore-scripts is read from npmrc", async () => {
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.2.3",
+        dependencies: {
+          "uses-what-bin": "1.0.0",
+        },
+        scripts: {
+          postinstall: `${bunExe()} -e 'await Bun.write("postinstall.txt", "postinstall!!")'`,
+        },
+        trustedDependencies: ["uses-what-bin"],
+      }),
+    ),
+    write(join(packageDir, ".npmrc"), "ignore-scripts=true"),
+  ]);
+
+  async function checkScripts(): Promise<boolean[]> {
+    return Promise.all([
+      exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt")),
+      exists(join(packageDir, "postinstall.txt")),
+    ]);
+  }
+
+  await runBunInstall(env, packageDir);
+  expect(await checkScripts()).toEqual([false, false]);
+
+  await write(join(packageDir, ".npmrc"), "ignore-scripts=false");
+
+  await runBunInstall(env, packageDir, { savesLockfile: false });
+  expect(await checkScripts()).toEqual([false, true]);
+
+  await Promise.all([
+    rm(join(packageDir, "postinstall.txt")),
+    rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
+  ]);
+  expect(await checkScripts()).toEqual([false, false]);
+
+  await runBunInstall(env, packageDir, { savesLockfile: false });
+  expect(await checkScripts()).toEqual([true, true]);
+});

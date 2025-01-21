@@ -461,6 +461,18 @@ var access = function access(path, mode, callback) {
       callback(null, stats);
     }, callback);
   },
+  statfs = function statfs(path, options, callback) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    ensureCallback(callback);
+
+    fs.statfs(path, options).then(function (stats) {
+      callback(null, stats);
+    }, callback);
+  },
   symlink = function symlink(target, path, type, callback) {
     if (callback === undefined) {
       callback = type;
@@ -538,6 +550,7 @@ var access = function access(path, mode, callback) {
   realpathSync = fs.realpathSync.bind(fs),
   renameSync = fs.renameSync.bind(fs),
   statSync = fs.statSync.bind(fs),
+  statfsSync = fs.statfsSync.bind(fs),
   symlinkSync = fs.symlinkSync.bind(fs),
   truncateSync = fs.truncateSync.bind(fs),
   unlinkSync = fs.unlinkSync.bind(fs),
@@ -1532,7 +1545,9 @@ export default {
   rmdir,
   rmdirSync,
   stat,
+  statfs,
   statSync,
+  statfsSync,
   symlink,
   symlinkSync,
   truncate,
@@ -1644,7 +1659,9 @@ setName(rmSync, "rmSync");
 setName(rmdir, "rmdir");
 setName(rmdirSync, "rmdirSync");
 setName(stat, "stat");
+setName(statfs, "statfs");
 setName(statSync, "statSync");
+setName(statfsSync, "statfsSync");
 setName(symlink, "symlink");
 setName(symlinkSync, "symlinkSync");
 setName(truncate, "truncate");

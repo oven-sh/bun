@@ -20,6 +20,8 @@ import fs, {
   openAsBlob,
   openSync,
   promises,
+  statfsSync,
+  statfs,
   readdirSync,
   readFile,
   readFileSync,
@@ -3471,4 +3473,56 @@ it("fs.mkdirSync recursive should not error when the directory already exists, b
 it("fs.mkdirSync recursive: false should error when the directory already exists, regardless if its a file or dir", () => {
   expect(() => mkdirSync(import.meta.dir, { recursive: false })).toThrowError();
   expect(() => mkdirSync(import.meta.path, { recursive: false })).toThrowError();
+});
+
+it("fs.statfsSync should work", () => {
+  const stats = statfsSync(import.meta.path);
+  ["type", "bsize", "blocks", "bfree", "bavail", "files", "ffree"].forEach(k => {
+    expect(stats).toHaveProperty(k);
+    expect(stats[k]).toBeNumber();
+  });
+
+  const bigIntStats = statfsSync(import.meta.path, { bigint: true });
+  ["type", "bsize", "blocks", "bfree", "bavail", "files", "ffree"].forEach(k => {
+    expect(bigIntStats).toHaveProperty(k);
+    expect(bigIntStats[k]).toBeTypeOf("bigint");
+  });
+});
+
+it("fs.promises.statfs should work", async () => {
+  const stats = await fs.promises.statfs(import.meta.path);
+  expect(stats).toBeDefined();
+});
+
+it("fs.promises.statfs should work with bigint", async () => {
+  const stats = await fs.promises.statfs(import.meta.path, { bigint: true });
+  expect(stats).toBeDefined();
+});
+
+it("fs.statfs should work with bigint", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  fs.statfs(import.meta.path, { bigint: true }, (err, stats) => {
+    if (err) return resolve(err);
+    resolve(stats);
+  });
+  const stats = await promise;
+  expect(stats).toBeDefined();
+  for (const k of ["type", "bsize", "blocks", "bfree", "bavail", "files", "ffree"]) {
+    expect(stats).toHaveProperty(k);
+    expect(stats[k]).toBeTypeOf("bigint");
+  }
+});
+
+it("fs.statfs should work with bigint", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  fs.statfs(import.meta.path, { bigint: true }, (err, stats) => {
+    if (err) return resolve(err);
+    resolve(stats);
+  });
+  const stats = await promise;
+  expect(stats).toBeDefined();
+  for (const k of ["type", "bsize", "blocks", "bfree", "bavail", "files", "ffree"]) {
+    expect(stats).toHaveProperty(k);
+    expect(stats[k]).toBeTypeOf("bigint");
+  }
 });

@@ -2019,7 +2019,7 @@ declare module "bun" {
     /** Database server port number */
     port: number | string;
     /** Database user for authentication */
-    user: string;
+    username: string;
     /** Database password for authentication */
     password: string;
     /** Name of the database to connect to */
@@ -2040,6 +2040,8 @@ declare module "bun" {
     onclose: (client: SQL) => void;
     /** Maximum number of connections in the pool */
     max: number;
+    /** By default values outside i32 range are returned as strings. If this is true, values outside i32 range are returned as BigInts. */
+    bigint: boolean;
   };
 
   /**
@@ -2065,7 +2067,12 @@ declare module "bun" {
    * Callback function type for transaction contexts
    * @param sql Function to execute SQL queries within the transaction
    */
-  type SQLContextCallback = (sql: (strings: string, ...values: any[]) => SQLQuery | Array<SQLQuery>) => Promise<any>;
+  type SQLTransactionContextCallback = (sql: TransactionSQL) => Promise<any> | Array<SQLQuery>;
+  /**
+   * Callback function type for savepoint contexts
+   * @param sql Function to execute SQL queries within the savepoint
+   */
+  type SQLSavepointContextCallback = (sql: SavepointSQL) => Promise<any> | Array<SQLQuery>;
 
   /**
    * Main SQL client interface providing connection and transaction management
@@ -2091,7 +2098,13 @@ declare module "bun" {
      * @example
      * const [user] = await sql`select * from users where id = ${1}`;
      */
-    (strings: string, ...values: any[]): SQLQuery;
+    (strings: string | TemplateStringsArray, ...values: any[]): SQLQuery;
+    /**
+     * Helper function to allow easy use to insert values into a query
+     * @example
+     * const result = await sql`insert into users ${sql(users)} RETURNING *`;
+     */
+    (obj: any): SQLQuery;
     /** Commits a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL
      * @example
      * await sql.commitDistributed("my_distributed_transaction");
@@ -2107,12 +2120,12 @@ declare module "bun" {
      * await sql.connect();
      */
     connect(): Promise<SQL>;
-    /** Closes the database connection with optional timeout in seconds
+    /** Closes the database connection with optional timeout in seconds. If timeout is 0, it will close immediately, if is not provided it will wait for all queries to finish before closing.
      * @example
      * await sql.close({ timeout: 1 });
      */
     close(options?: { timeout?: number }): Promise<undefined>;
-    /** Closes the database connection with optional timeout in seconds
+    /** Closes the database connection with optional timeout in seconds. If timeout is 0, it will close immediately, if is not provided it will wait for all queries to finish before closing.
      * @alias close
      * @example
      * await sql.end({ timeout: 1 });
@@ -2166,7 +2179,7 @@ declare module "bun" {
      *   return [user, account]
      * })
      */
-    begin(fn: SQLContextCallback): Promise<any>;
+    begin(fn: SQLTransactionContextCallback): Promise<any>;
     /** Begins a new transaction with options
      * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.begin will resolve with the returned value from the callback function.
      * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
@@ -2191,7 +2204,7 @@ declare module "bun" {
      *   return [user, account]
      * })
      */
-    begin(options: string, fn: SQLContextCallback): Promise<any>;
+    begin(options: string, fn: SQLTransactionContextCallback): Promise<any>;
     /** Alternative method to begin a transaction
      * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.transaction will resolve with the returned value from the callback function.
      * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
@@ -2217,7 +2230,7 @@ declare module "bun" {
      *   return [user, account]
      * })
      */
-    transaction(fn: SQLContextCallback): Promise<any>;
+    transaction(fn: SQLTransactionContextCallback): Promise<any>;
     /** Alternative method to begin a transaction with options
      * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.transaction will resolve with the returned value from the callback function.
      * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
@@ -2243,7 +2256,7 @@ declare module "bun" {
      *   return [user, account]
      * })
      */
-    transaction(options: string, fn: SQLContextCallback): Promise<any>;
+    transaction(options: string, fn: SQLTransactionContextCallback): Promise<any>;
     /** Begins a distributed transaction
      * Also know as Two-Phase Commit, in a distributed transaction, Phase 1 involves the coordinator preparing nodes by ensuring data is written and ready to commit, while Phase 2 finalizes with nodes committing or rolling back based on the coordinator's decision, ensuring durability and releasing locks.
      * In PostgreSQL and MySQL distributed transactions persist beyond the original session, allowing privileged users or coordinators to commit/rollback them, ensuring support for distributed transactions, recovery, and administrative tasks.
@@ -2259,13 +2272,23 @@ declare module "bun" {
      * await sql.commitDistributed("numbers");
      * // or await sql.rollbackDistributed("numbers");
      */
-    beginDistributed(name: string, fn: SQLContextCallback): Promise<any>;
+    beginDistributed(name: string, fn: SQLTransactionContextCallback): Promise<any>;
     /** Alternative method to begin a distributed transaction
      * @alias beginDistributed
      */
-    distributed(name: string, fn: SQLContextCallback): Promise<any>;
+    distributed(name: string, fn: SQLTransactionContextCallback): Promise<any>;
+    /**If you know what you're doing, you can use unsafe to pass any string you'd like.
+     * Please note that this can lead to SQL injection if you're not careful.
+     * You can also nest sql.unsafe within a safe sql expression. This is useful if only part of your fraction has unsafe elements.
+     * @example
+     * const result = await sql.unsafe(`select ${danger} from users where id = ${dragons}`)
+     */
+    unsafe(string: string, values?: any[]): SQLQuery;
+
     /** Current client options */
     options: SQLOptions;
+
+    [Symbol.asyncDispose](): Promise<any>;
   }
 
   /**
@@ -2275,6 +2298,7 @@ declare module "bun" {
   interface ReservedSQL extends SQL {
     /** Releases the client back to the connection pool */
     release(): void;
+    [Symbol.dispose](): void;
   }
 
   /**
@@ -2283,10 +2307,17 @@ declare module "bun" {
    */
   interface TransactionSQL extends SQL {
     /** Creates a savepoint within the current transaction */
-    savepoint(name: string, fn: SQLContextCallback): Promise<undefined>;
+    savepoint(name: string, fn: SQLSavepointContextCallback): Promise<any>;
+    savepoint(fn: SQLSavepointContextCallback): Promise<any>;
   }
+  /**
+   * Represents a savepoint within a transaction
+   */
+  interface SavepointSQL extends SQL {}
 
   var sql: SQL;
+  var postgres: SQL;
+  var SQL: SQL;
 
   /**
    *   This lets you use macros as regular imports

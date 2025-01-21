@@ -9,7 +9,7 @@ bun install
 To run in Bun:
 
 ```bash
-bun run ./index.mjs
+bun ./index.mjs
 ```
 
 To run in Node.js:

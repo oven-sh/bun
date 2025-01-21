@@ -2163,61 +2163,71 @@ var defaultSQLObject = (initialDefaultSQL = function sql(strings, ...values) {
   return lazyDefaultSQL(strings, ...values);
 });
 
-defaultSQLObject.reserve = (...args) => {
-  ensureDefaultSQL();
-  return lazyDefaultSQL.reserve(...args);
-};
-defaultSQLObject.commitDistributed = (...args) => {
-  ensureDefaultSQL();
-  return lazyDefaultSQL.commitDistributed(...args);
-};
-defaultSQLObject.rollbackDistributed = (...args) => {
-  ensureDefaultSQL();
-  return lazyDefaultSQL.rollbackDistributed(...args);
-};
-defaultSQLObject.distributed = defaultSQLObject.beginDistributed = (...args) => {
-  ensureDefaultSQL();
-  return lazyDefaultSQL.beginDistributed(...args);
-};
-
-defaultSQLObject.connect = (...args) => {
-  ensureDefaultSQL();
-  return lazyDefaultSQL.connect(...args);
-};
-
-defaultSQLObject.unsafe = (...args) => {
-  ensureDefaultSQL();
-  return lazyDefaultSQL.unsafe(...args);
-};
-
-defaultSQLObject.transaction = defaultSQLObject.begin = (...args) => {
-  ensureDefaultSQL();
-  return lazyDefaultSQL.begin(...args);
-};
-
-defaultSQLObject.end = defaultSQLObject.close = (...args) => {
-  ensureDefaultSQL();
-  return lazyDefaultSQL.close(...args);
-};
-defaultSQLObject.flush = (...args) => {
-  ensureDefaultSQL();
-  return lazyDefaultSQL.flush(...args);
-};
-//define lazy properties
-Object.defineProperties(defaultSQLObject, {
-  options: {
-    get: () => {
-      ensureDefaultSQL();
-      return lazyDefaultSQL.options;
-    },
+const DefaultSQLObjectPrototype = {
+  reserve(...args) {
+    ensureDefaultSQL();
+    return lazyDefaultSQL.reserve(...args);
   },
-  [Symbol.asyncDispose]: {
-    get: () => {
-      ensureDefaultSQL();
-      return lazyDefaultSQL[Symbol.asyncDispose];
-    },
+  commitDistributed(...args) {
+    ensureDefaultSQL();
+    return lazyDefaultSQL.commitDistributed(...args);
   },
-});
+  rollbackDistributed(...args) {
+    ensureDefaultSQL();
+    return lazyDefaultSQL.rollbackDistributed(...args);
+  },
+  beginDistributed(...args) {
+    ensureDefaultSQL();
+    return lazyDefaultSQL.beginDistributed(...args);
+  },
+  connect(...args) {
+    ensureDefaultSQL();
+    return lazyDefaultSQL.connect(...args);
+  },
+  unsafe(...args) {
+    ensureDefaultSQL();
+    return lazyDefaultSQL.unsafe(...args);
+  },
+  begin(...args) {
+    ensureDefaultSQL();
+    return lazyDefaultSQL.begin(...args);
+  },
+  close(...args) {
+    ensureDefaultSQL();
+    return lazyDefaultSQL.close(...args);
+  },
+  flush(...args) {
+    ensureDefaultSQL();
+    return lazyDefaultSQL.flush(...args);
+  },
+
+  get options() {
+    ensureDefaultSQL();
+    return lazyDefaultSQL.options;
+  },
+
+  [Symbol.asyncDispose]() {
+    ensureDefaultSQL();
+    return lazyDefaultSQL[Symbol.asyncDispose]();
+  },
+
+  [Symbol.toStringTag]: "SQL",
+
+  distributed: undefined,
+  transaction: undefined,
+  end: undefined,
+
+  __proto__: null,
+};
+
+// @ts-expect-error
+DefaultSQLObjectPrototype.distributed = DefaultSQLObjectPrototype.beginDistributed;
+// @ts-expect-error
+DefaultSQLObjectPrototype.transaction = DefaultSQLObjectPrototype.begin;
+// @ts-expect-error
+DefaultSQLObjectPrototype.end = DefaultSQLObjectPrototype.close;
+
+Object.setPrototypeOf(defaultSQLObject, DefaultSQLObjectPrototype);
 
 var exportsObject = {
   sql: defaultSQLObject,

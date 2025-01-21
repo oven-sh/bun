@@ -705,13 +705,14 @@ function endFastInner(this: FSStream, cb: any) {
 
 var kWriteFastSimpleBuffering = Symbol("writeFastSimpleBuffering");
 function writeFastSimple(this: FSStream, data: any, encoding: any, cb: any) {
-  if (encoding != null && typeof encoding === "function") {
-    cb = encoding;
-    encoding = null;
-  }
-
   if (!this[kWriteFastSimpleBuffering]) {
-    const result: any = this._write(data, encoding, cb);
+    if (encoding != null && typeof encoding === "function") {
+      cb = encoding;
+      encoding = null;
+    }
+
+    if (typeof cb !== "function") cb = undefined;
+    const result: any = this._write(data, encoding, cb ?? streamNoop);
     if (result === false) {
       this[kWriteFastSimpleBuffering] = true;
     }

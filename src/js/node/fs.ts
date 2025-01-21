@@ -623,9 +623,9 @@ const { defineCustomPromisifyArgs } = require("internal/promisify");
 var kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
 exists[kCustomPromisifiedSymbol] = path => new Promise(resolve => exists(path, resolve));
 defineCustomPromisifyArgs(read, ["bytesRead", "buffer"]);
-defineCustomPromisifyArgs(readv, ["bytesRead", "buffer"]);
+defineCustomPromisifyArgs(readv, ["bytesRead", "buffers"]);
 defineCustomPromisifyArgs(write, ["bytesWritten", "buffer"]);
-defineCustomPromisifyArgs(writev, ["bytesWritten", "buffer"]);
+defineCustomPromisifyArgs(writev, ["bytesWritten", "buffers"]);
 
 // TODO: move this entire thing into native code.
 // the reason it's not done right now is because there isnt a great way to have multiple

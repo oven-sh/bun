@@ -180,6 +180,17 @@ const result = await sql.unsafe(
 );
 ```
 
+### Execute and Cancelling Queries
+
+Bun's SQL is a lazy Promise that means its will only start executing when awaited or executed with `.execute()`.
+You can cancel a query that is currently executing by calling the `cancel()` method on the query object.
+
+```ts
+const query = await sql`SELECT * FROM users`.execute();
+setTimeout(() => query.cancel(), 100);
+await query;
+```
+
 ## Connection Options
 
 You can configure your database connection by passing options to the SQL constructor:

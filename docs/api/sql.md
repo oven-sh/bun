@@ -10,7 +10,7 @@ const user = {
 };
 
 const [user] = await sql`INSERT INTO users ${sql(user)} RETURNING *`;
-console.log(user); // { id: 1, name: "Alice", email: "alice@example.com", age: 25 }
+// { id: 1, name: "Alice", email: "alice@example.com", age: 25 }
 ```
 
 The API is simple and fast, Credit to [postgres.js](https://github.com/porsager/postgres) and its contributors for inspiring the API of `Bun.sql`.

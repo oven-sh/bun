@@ -3903,7 +3903,7 @@ pub const FileSink = struct {
     pub const JSSink = NewJSSink(@This(), "FileSink");
 
     fn getFd(this: *const @This()) i32 {
-        return this.fd.cast();
+        return this.fd.impl().uv();
     }
 
     fn toResult(this: *FileSink, write_result: bun.io.WriteResult) StreamResult.Writable {

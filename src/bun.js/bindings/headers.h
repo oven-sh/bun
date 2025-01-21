@@ -797,6 +797,13 @@ ZIG_DECL JSC__JSValue Bun__Timer__setTimeout(JSC__JSGlobalObject* arg0, JSC__JSV
 
 #ifdef __cplusplus
 
+BUN_DECLARE_HOST_FUNCTION(BunServe__onResolvePlugins);
+BUN_DECLARE_HOST_FUNCTION(BunServe__onRejectPlugins);
+
+#endif
+
+#ifdef __cplusplus
+
 BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContext__onReject);
 BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContext__onRejectStream);
 BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContext__onResolve);

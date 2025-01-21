@@ -18,7 +18,7 @@ loaded: bool = false,
 
 eventlist_bytes: [eventlist_bytes_size]u8 align(@alignOf(Event)) = undefined,
 /// pointers into the next chunk of events
-eventlist_ptrs: [max_count]*Event = undefined,
+eventlist_ptrs: [max_count]*align(1) Event = undefined,
 /// if defined, it means `read` should continue from this offset before asking
 /// for more bytes. this is only hit under high watching load.
 /// see `test-fs-watch-recursive-linux-parallel-remove.js`
@@ -49,13 +49,13 @@ pub const Event = extern struct {
 
     const largest_size = std.mem.alignForward(usize, @sizeOf(Event) + bun.MAX_PATH_BYTES, @alignOf(Event));
 
-    pub fn name(event: *Event) [:0]u8 {
+    pub fn name(event: *align(1) Event) [:0]u8 {
         if (comptime Environment.allow_assert) bun.assert(event.name_len > 0);
         const name_first_char_ptr = std.mem.asBytes(&event.name_len).ptr + @sizeOf(u32);
         return bun.sliceTo(@as([*:0]u8, @ptrCast(name_first_char_ptr)), 0);
     }
 
-    pub fn size(event: *Event) u32 {
+    pub fn size(event: *align(1) Event) u32 {
         return @intCast(@sizeOf(Event) + event.name_len);
     }
 };
@@ -102,7 +102,7 @@ pub fn init(this: *INotifyWatcher, _: []const u8) !void {
     log("{} init", .{this.fd});
 }
 
-pub fn read(this: *INotifyWatcher) bun.JSC.Maybe([]const *Event) {
+pub fn read(this: *INotifyWatcher) bun.JSC.Maybe([]const *align(1) Event) {
     bun.assert(this.loaded);
     // This is what replit does as of Jaunary 2023.
     // 1) CREATE .http.ts.3491171321~
@@ -186,20 +186,19 @@ pub fn read(this: *INotifyWatcher) bun.JSC.Maybe([]const *Event) {
 
     var count: u32 = 0;
     while (i < read_eventlist_bytes.len) {
-        // It is implied that events *are* aligned, since the manual
-        // pages note about extra zero bytes in the name field.
-        const event: *Event = @alignCast(@ptrCast(read_eventlist_bytes[i..][0..@sizeOf(Event)].ptr));
+        // It is NOT aligned naturally. It is align 1!!!
+        const event: *align(1) Event = @alignCast(@ptrCast(read_eventlist_bytes[i..][0..@sizeOf(Event)].ptr));
         this.eventlist_ptrs[count] = event;
         i += event.size();
         count += 1;
-
-        log("{} read event {} {} {} {}", .{
-            this.fd,
-            event.watch_descriptor,
-            event.cookie,
-            event.mask,
-            bun.fmt.quote(event.name()),
-        });
+        if (!Environment.enable_logs)
+            log("{} read event {} {} {} {}", .{
+                this.fd,
+                event.watch_descriptor,
+                event.cookie,
+                event.mask,
+                bun.fmt.quote(event.name()),
+            });
 
         // when under high load with short file paths, it is very easy to
         // overrun the watcher's event buffer.
@@ -302,7 +301,7 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.JSC.Maybe(void) {
     return .{ .result = {} };
 }
 
-pub fn watchEventFromInotifyEvent(event: *const INotifyWatcher.Event, index: WatchItemIndex) WatchEvent {
+pub fn watchEventFromInotifyEvent(event: *align(1) const INotifyWatcher.Event, index: WatchItemIndex) WatchEvent {
     return .{
         .op = .{
             .delete = (event.mask & IN.DELETE_SELF) > 0 or (event.mask & IN.DELETE) > 0,

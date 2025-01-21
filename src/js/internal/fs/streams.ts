@@ -36,22 +36,13 @@ type FD = number;
 
 const { validateInteger, validateInt32, validateFunction } = require("internal/validators");
 
-// The stream fast paths can sometimes be a source of bugs. Here, a simple
-// mechanism to disable them is provided. For places internally where a fast
-// path is required, the `$fastPath` option can be used.
-//
-// The slow path is essentially a 1:1 mapping to Node.js' filesystem streams.
-let cachedDisableFastPaths: boolean | null = null;
-const disableFastPaths = () => (
-  cachedDisableFastPaths ??= !!Bun.env.BUN_DISABLE_STREAM_FAST_PATHS
-);
-
 // Bun supports a fast path for `createReadStream("path.txt")` with `.pipe(res)`,
 // where the entire stream implementation can be bypassed, effectively making it
 // `new Response(Bun.file("path.txt"))`.
 // This makes an idomatic Node.js pattern much faster.
 const kReadStreamFastPath = Symbol("kReadStreamFastPath");
 const kWriteStreamFastPathClosed = Symbol("kWriteStreamFastPathClosed");
+const kWriteFastSimpleBuffering = Symbol("writeFastSimpleBuffering");
 // Bun supports a fast path for `createWriteStream("path.txt")` where instead of
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
@@ -252,11 +243,11 @@ function streamConstruct(this: FSStream, callback: (e?: any) => void) {
   }
   const fastPath = this[kWriteStreamFastPath];
   if (this.open !== streamNoop) {
-    if (fastPath) {
-      // disable fast path in this case
-      $assert(this[kWriteStreamFastPath] === true, "fastPath is not true");
-      this[kWriteStreamFastPath] = undefined;
-    }
+    // if (fastPath) {
+    //   // disable fast path in this case
+    //   $assert(this[kWriteStreamFastPath] === true, "fastPath is not true");
+    //   this[kWriteStreamFastPath] = undefined;
+    // }
 
     // Backwards compat for monkey patching open().
     const orgEmit: any = this.emit;
@@ -275,19 +266,19 @@ function streamConstruct(this: FSStream, callback: (e?: any) => void) {
     this.open();
   } else {
     if (fastPath) fast: {
-      // there is a chance that this fd is not actually correct but it will be a number
-      if (fastPath !== true) {
-        // @ts-expect-error undocumented. to make this public please make it a
-        // getter. couldn't figure that out sorry
-        this.fd = fastPath._getFd();
-      } else {
-        if (fs.open !== open || fs.write !== write || fs.fsync !== fsync || fs.close !== close) {
-          this[kWriteStreamFastPath] = undefined;
-          break fast;
-        }
-        // @ts-expect-error
-        this.fd = (this[kWriteStreamFastPath] = Bun.file(this.path).writer())._getFd();
-      }
+      // // there is a chance that this fd is not actually correct but it will be a number
+      // if (fastPath !== true) {
+      //   // @ts-expect-error undocumented. to make this public please make it a
+      //   // getter. couldn't figure that out sorry
+      //   this.fd = fastPath._getFd();
+      // } else {
+      //   if (fs.open !== open || fs.write !== write || fs.fsync !== fsync || fs.close !== close) {
+      //     this[kWriteStreamFastPath] = undefined;
+      //     break fast;
+      //   }
+      //   // @ts-expect-error
+      //   this.fd = (this[kWriteStreamFastPath] = Bun.file(this.path).writer())._getFd();
+      // }
       callback();
       this.emit("open", this.fd);
       this.emit("ready");
@@ -386,7 +377,9 @@ function close(stream, err, cb) {
   if (fastPath && fastPath !== true) {
     stream.fd = null;
     const maybePromise = fastPath.end(err);
-    thenIfPromise(maybePromise, cb);
+    thenIfPromise(maybePromise, () => {
+      cb(err);
+    });
     return;
   }
 
@@ -420,7 +413,7 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     return new WriteStream(path, options);
   }
 
-  let fastPath = options?.$fastPath ?? !disableFastPaths();
+  let fastPath = options?.$fastPath;
 
   options = copyObject(getStreamOptions(options));
 
@@ -437,9 +430,6 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     this.mode = mode === undefined ? 0o666 : mode;
     if (customFs) {
       validateFunction(customFs.open, "options.fs.open");
-    }
-    if (flags !== undefined || mode !== undefined || customFs) {
-      fastPath = false;
     }
   } else if (typeof options.fd === "number") {
     // When fd is a raw descriptor, we must keep our fingers crossed
@@ -461,7 +451,6 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     fd[kRef]();
     fd.on("close", this.close.bind(this));
     this.fd = fd = fd[kFd];
-    fastPath = false;
   } else {
     throw $ERR_INVALID_ARG_TYPE("options.fd", "number or FileHandle", fd);
   }
@@ -499,14 +488,11 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
   }
 
   // Enable fast path
-  if (!start && fastPath) {
+  if (fastPath) {
     this[kWriteStreamFastPath] = fd ? Bun.file(fd).writer() : true;
     this._write = underscoreWriteFast;
     this._writev = undefined;
-    // TODO: fix this problem. i would like to bypass most of node:stream
-    // for the obvious happy path, but it is a bit convoluted :(
-    this.write = writeFastSimple as any;
-    // this.end = endFast as any;
+    this.write = writeFast as any;
   }
 
   Writable.$call(this, options);
@@ -607,11 +593,18 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
     return this._write(data, encoding, cb);
   }
   try {
+    if (this[kIsPerformingIO] > 0) {
+      this.once(kIoDone, () => {
+        underscoreWriteFast.$call(this, data, encoding, cb);
+      });
+      return;
+    }
     if (fileSink === true) {
       fileSink = this[kWriteStreamFastPath] = Bun.file(this.path).writer();
       // @ts-expect-error
       this.fd = fileSink._getFd();
     }
+
     const maybePromise = fileSink.write(data);
     if ($isPromise(maybePromise) && 
       (($getPromiseInternalField(maybePromise, $promiseFieldFlags) & $promiseStateMask) === $promiseStatePending)
@@ -621,6 +614,7 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
       if (cb) maybePromise.then(() => {
         cb(null);
         this[kIsPerformingIO] -= 1;
+        this.emit(kIoDone, null);
       }, cb);
       return false;
     } else {
@@ -633,93 +627,11 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
   }
 }
 
+// This function implementation is not correct.
 function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
-  if (encoding != null && typeof encoding === "function") {
-    cb = encoding;
-    encoding = null;
-  }
-  let fileSink = this[kWriteStreamFastPath];
-  if (!fileSink) {
-    this.write = Writable.prototype.write;
-    return this.write(data, encoding, cb);
-  } else if (fileSink === true) {
-    if (this.open !== streamNoop || fs.open !== open || fs.write !== write || fs.fsync !== fsync || fs.close !== close) {
-      this[kWriteStreamFastPath] = undefined;
-      this.write = Writable.prototype.write;
-      return this.write(data, encoding, cb);
-    }
-    fileSink = this[kWriteStreamFastPath] = Bun.file(this.path).writer();
-  }
-  try {
-    $assert(fs.write === write, "this patching case not handled, and likely does not matter");
-    const maybePromise = fileSink.write(data);
-    if ($isPromise(maybePromise) && 
-      (($getPromiseInternalField(maybePromise, $promiseFieldFlags) & $promiseStateMask) === $promiseStatePending)
-    ) {
-      const prevRefCount = this[kIsPerformingIO];
-      this[kIsPerformingIO] = (prevRefCount === true ? 0 : prevRefCount || 0) + 1;
-      if (typeof cb === "function") maybePromise.then(() => {
-        cb(null);
-        if ((this[kIsPerformingIO] -= 1) === 0 && (this[kWriteFastSimpleBuffering] = false, this[kWriteStreamFastPathClosed])) {
-          this.emit(kIoDone, null);
-        }
-      }, cb);
-      return false;
-    } else {
-      if (typeof cb === "function") process.nextTick(cb, null);
-    }
-    return true;
-  } catch (e) {
-    if (typeof cb === "function") process.nextTick(cb, e);
-    else process.nextTick(() => { this.emit("error", e); });
-    return false;
-  }
-}
-
-function endFast(this: FSStream, data: any, encoding: any, cb: any) {
-  const fileSink = this[kWriteStreamFastPath];
-  if (fileSink && fileSink !== true) {
-    if (data) {
-      const maybePromise = fileSink.write(data);
-      if ($isPromise(maybePromise)) {
-        fileSink.flush();
-        maybePromise.then(() => endFastInner.$call(this, cb));
-        return;
-      }
-    }
-    process.nextTick(() => endFastInner.$call(this, cb));
-    return;
-  }
-  return Writable.prototype.end.$call(this, data, encoding, cb);
-}
-
-function endFastInner(this: FSStream, cb: any) {
-  const prevRefCount = this[kIsPerformingIO];
-  if (typeof prevRefCount === "number" && prevRefCount > 0) {
-    this[kWriteStreamFastPathClosed] = true;
-    this.once(kIoDone, () => Writable.prototype.end.$call(this, cb));
-  } else {
-    Writable.prototype.end.$call(this, cb);
-  }
-}
-
-var kWriteFastSimpleBuffering = Symbol("writeFastSimpleBuffering");
-function writeFastSimple(this: FSStream, data: any, encoding: any, cb: any) {
-  if (!this[kWriteFastSimpleBuffering]) {
-    if (encoding != null && typeof encoding === "function") {
-      cb = encoding;
-      encoding = null;
-    }
-
-    if (typeof cb !== "function") cb = undefined;
-    const result: any = this._write(data, encoding, cb ?? streamNoop);
-    if (result === false) {
-      this[kWriteFastSimpleBuffering] = true;
-    }
-    return result;
-  }
-
-  return Writable.prototype.write.$call(this, data, encoding, cb);
+  const result: any = this._write(data, encoding, cb ?? streamNoop);
+  this.write = Writable.prototype.write;
+  return result;
 }
 
 writeStreamPrototype._writev = function (data, cb) {
@@ -757,8 +669,9 @@ writeStreamPrototype._destroy = function (err, cb) {
   // to close while used in a pending read or write operation. Wait for
   // any pending IO (kIsPerformingIO) to complete (kIoDone).
   if (this[kIsPerformingIO] > 0) {
-    this[kWriteStreamFastPathClosed] = true;
-    this.once(kIoDone, er => close(this, err || er, cb));
+    this.once(kIoDone, er => {
+      close(this, err || er, cb);
+    });
   } else {
     close(this, err, cb);
   }

@@ -3361,7 +3361,10 @@ pub const NodeFS = struct {
     pub const ReturnType = Return;
 
     pub fn access(this: *NodeFS, args: Arguments.Access, _: Flavor) Maybe(Return.Access) {
-        const path = args.path.osPathKernel32(&this.sync_error_buf);
+        const path: bun.OSPathSliceZ = if (args.path.slice().len == 0)
+            comptime bun.OSPathLiteral("")
+        else
+            args.path.osPathKernel32(&this.sync_error_buf);
         return switch (Syscall.access(path, args.mode.asInt())) {
             .err => |err| .{ .err = err.withPath(args.path.slice()) },
             .result => .{ .result = .{} },
@@ -3757,8 +3760,11 @@ pub const NodeFS = struct {
 
     pub fn exists(this: *NodeFS, args: Arguments.Exists, _: Flavor) Maybe(Return.Exists) {
         // NOTE: exists cannot return an error
-        const path = args.path orelse return .{ .result = false };
-        const slice = path.osPathKernel32(&this.sync_error_buf);
+        const path: PathLike = args.path orelse return .{ .result = false };
+        const slice = if (path.slice().len == 0)
+            comptime bun.OSPathLiteral("")
+        else
+            path.osPathKernel32(&this.sync_error_buf);
         return .{ .result = bun.sys.existsOSPath(slice, false) };
     }
 

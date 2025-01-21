@@ -112,13 +112,13 @@ pub const S3Client = struct {
         try writer.writeAll(comptime bun.Output.prettyFmt("<r>S3Client<r>", enable_ansi_colors));
         if (this.credentials.bucket.len > 0) {
             try writer.print(
-                comptime bun.Output.prettyFmt(" (<green>\"{s}\"<r>)<r> {", enable_ansi_colors),
+                comptime bun.Output.prettyFmt(" (<green>\"{s}\"<r>)<r> {{", enable_ansi_colors),
                 .{
                     this.credentials.bucket,
                 },
             );
         } else {
-            try writer.writeAll(comptime bun.Output.prettyFmt(" {", enable_ansi_colors));
+            try writer.writeAll(" {");
         }
 
         try writeFormatCredentials(this.credentials, this.options, this.acl, Formatter, formatter, writer, enable_ansi_colors);

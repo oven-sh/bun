@@ -3636,7 +3636,7 @@ pub const FFIObject = struct {
             },
             .slice => |slice| {
                 var str = bun.String.createUTF8(slice);
-                return str.toJS(globalThis);
+                return bun.String.createUTF8ForJS(globalThis, slice);
             },
         }
     }

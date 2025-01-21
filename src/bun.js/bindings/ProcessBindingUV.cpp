@@ -564,7 +564,7 @@ JSC_DEFINE_HOST_FUNCTION(jsErrname, (JSGlobalObject * globalObject, JSC::CallFra
 
     auto err = arg0.toInt32(globalObject);
 #define CASE(name, desc) \
-    if (err == -UV__##name) return JSValue::encode(JSC::jsString(vm, String(#name##_s)));
+    if (err == UV__##name) return JSValue::encode(JSC::jsString(vm, String(#name##_s)));
 
     BUN_UV_ERRNO_MAP(CASE)
 #undef CASE
@@ -585,7 +585,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGetErrorMap, (JSGlobalObject * globalObject, JSC::Cal
         map->set(globalObject, JSC::jsNumber(value), arr);
     };
 
-#define PUT_PROPERTY(name, desc) putProperty(vm, map, globalObject, #name##_s, -UV__##name, desc##_s);
+#define PUT_PROPERTY(name, desc) putProperty(vm, map, globalObject, #name##_s, UV__##name, desc##_s);
     BUN_UV_ERRNO_MAP(PUT_PROPERTY)
 #undef PUT_PROPERTY
 
@@ -606,7 +606,7 @@ JSObject* create(VM& vm, JSGlobalObject* globalObject)
     };
 
 #define PUT_PROPERTY(name, desc) \
-    putNamedProperty(vm, bindingObject, "UV_" #name##_s, -UV__##name);
+    putNamedProperty(vm, bindingObject, "UV_" #name##_s, UV__##name);
     BUN_UV_ERRNO_MAP(PUT_PROPERTY)
 #undef PUT_PROPERTY
 

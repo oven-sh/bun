@@ -4435,36 +4435,26 @@ fn NewPrinter(
 
                     p.printImportRecordPath(record);
 
-                    switch (record.tag) {
-                        .with_type_sqlite, .with_type_sqlite_embedded => {
-                            // we do not preserve "embed": "true" since it is not necessary
-                            p.printWhitespacer(ws(" with { type: \"sqlite\" }"));
-                        },
-                        .with_type_text => {
-                            if (comptime is_bun_platform) {
-                                p.printWhitespacer(ws(" with { type: \"text\" }"));
-                            }
-                        },
-                        .with_type_json => {
-                            // backwards compatibility: previously, we always stripped type json
-                            if (comptime is_bun_platform) {
-                                p.printWhitespacer(ws(" with { type: \"json\" }"));
-                            }
-                        },
-                        .with_type_toml => {
-                            // backwards compatibility: previously, we always stripped type
-                            if (comptime is_bun_platform) {
-                                p.printWhitespacer(ws(" with { type: \"toml\" }"));
-                            }
-                        },
-                        .with_type_file => {
-                            // backwards compatibility: previously, we always stripped type
-                            if (comptime is_bun_platform) {
-                                p.printWhitespacer(ws(" with { type: \"file\" }"));
-                            }
-                        },
-                        else => {},
-                    }
+                    // backwards compatibility: previously, we always stripped type
+                    if (comptime is_bun_platform) if (record.loader) |loader| switch (loader) {
+                        .jsx => p.printWhitespacer(ws(" with { type: \"jsx\" }")),
+                        .js => p.printWhitespacer(ws(" with { type: \"js\" }")),
+                        .ts => p.printWhitespacer(ws(" with { type: \"ts\" }")),
+                        .tsx => p.printWhitespacer(ws(" with { type: \"tsx\" }")),
+                        .css => p.printWhitespacer(ws(" with { type: \"css\" }")),
+                        .file => p.printWhitespacer(ws(" with { type: \"file\" }")),
+                        .json => p.printWhitespacer(ws(" with { type: \"json\" }")),
+                        .toml => p.printWhitespacer(ws(" with { type: \"toml\" }")),
+                        .wasm => p.printWhitespacer(ws(" with { type: \"wasm\" }")),
+                        .napi => p.printWhitespacer(ws(" with { type: \"napi\" }")),
+                        .base64 => p.printWhitespacer(ws(" with { type: \"base64\" }")),
+                        .dataurl => p.printWhitespacer(ws(" with { type: \"dataurl\" }")),
+                        .text => p.printWhitespacer(ws(" with { type: \"text\" }")),
+                        .bunsh => p.printWhitespacer(ws(" with { type: \"sh\" }")),
+                        // sqlite_embedded only relevant when bundling
+                        .sqlite, .sqlite_embedded => p.printWhitespacer(ws(" with { type: \"sqlite\" }")),
+                        .html => p.printWhitespacer(ws(" with { type: \"html\" }")),
+                    };
                     p.printSemicolonAfterStatement();
                 },
                 .s_block => |s| {

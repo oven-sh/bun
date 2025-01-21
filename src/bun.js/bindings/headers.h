@@ -160,7 +160,7 @@ CPP_DECL JSC__JSValue ZigString__toSyntaxErrorInstance(const ZigString* arg0, JS
 CPP_DECL JSC__JSValue ZigString__toTypeErrorInstance(const ZigString* arg0, JSC__JSGlobalObject* arg1);
 CPP_DECL JSC__JSValue ZigString__toValueGC(const ZigString* arg0, JSC__JSGlobalObject* arg1);
 CPP_DECL WebCore__DOMURL* WebCore__DOMURL__cast_(JSC__JSValue JSValue0, JSC__VM* arg1);
-CPP_DECL BunString WebCore__DOMURL__fileSystemPath(WebCore__DOMURL* arg0);
+CPP_DECL BunString WebCore__DOMURL__fileSystemPath(WebCore__DOMURL* arg0, int* errorCode);
 CPP_DECL void WebCore__DOMURL__href_(WebCore__DOMURL* arg0, ZigString* arg1);
 CPP_DECL void WebCore__DOMURL__pathname_(WebCore__DOMURL* arg0, ZigString* arg1);
 
@@ -343,7 +343,6 @@ CPP_DECL bool JSC__JSValue__isAnyError(JSC__JSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isAnyInt(JSC__JSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isBigInt(JSC__JSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isBigInt32(JSC__JSValue JSValue0);
-CPP_DECL bool JSC__JSValue__isBoolean(JSC__JSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isCallable(JSC__JSValue JSValue0, JSC__VM* arg1);
 CPP_DECL bool JSC__JSValue__isClass(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1);
 CPP_DECL bool JSC__JSValue__isConstructor(JSC__JSValue JSValue0);

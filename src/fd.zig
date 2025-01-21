@@ -2,16 +2,16 @@ const std = @import("std");
 const posix = std.posix;
 
 const bun = @import("root").bun;
-const env = bun.Environment;
+const environment = bun.Environment;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const libuv = bun.windows.libuv;
 
-const allow_assert = env.allow_assert;
+const allow_assert = environment.allow_assert;
 
 const log = bun.sys.syslog;
 fn handleToNumber(handle: FDImpl.System) FDImpl.SystemAsInt {
-    if (env.os == .windows) {
+    if (environment.os == .windows) {
         // intCast fails if 'fd > 2^62'
         // possible with handleToNumber(GetCurrentProcess());
         return @intCast(@intFromPtr(handle));
@@ -21,7 +21,7 @@ fn handleToNumber(handle: FDImpl.System) FDImpl.SystemAsInt {
 }
 
 fn numberToHandle(handle: FDImpl.SystemAsInt) FDImpl.System {
-    if (env.os == .windows) {
+    if (environment.os == .windows) {
         if (!@inComptime()) {
             bun.assert(handle != FDImpl.invalid_value);
         }
@@ -69,22 +69,22 @@ pub const FDImpl = packed struct {
 
     pub const System = posix.fd_t;
 
-    pub const SystemAsInt = switch (env.os) {
+    pub const SystemAsInt = switch (environment.os) {
         .windows => u63,
         else => System,
     };
 
-    pub const UV = switch (env.os) {
+    pub const UV = switch (environment.os) {
         .windows => bun.windows.libuv.uv_file,
         else => System,
     };
 
-    pub const Value = if (env.os == .windows)
+    pub const Value = if (environment.os == .windows)
         packed union { as_system: SystemAsInt, as_uv: UV }
     else
         packed union { as_system: SystemAsInt };
 
-    pub const Kind = if (env.os == .windows)
+    pub const Kind = if (environment.os == .windows)
         enum(u1) { system = 0, uv = 1 }
     else
         enum(u0) { system };
@@ -92,7 +92,7 @@ pub const FDImpl = packed struct {
     comptime {
         bun.assert(@sizeOf(FDImpl) == @sizeOf(System));
 
-        if (env.os == .windows) {
+        if (environment.os == .windows) {
             // we want the conversion from FD to fd_t to be a integer truncate
             bun.assert(@as(FDImpl, @bitCast(@as(u64, 512))).value.as_system == 512);
         }
@@ -106,7 +106,7 @@ pub const FDImpl = packed struct {
     }
 
     pub fn fromSystem(system_fd: System) FDImpl {
-        if (env.os == .windows) {
+        if (environment.os == .windows) {
             // the current process fd is max usize
             // https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getcurrentprocess
             bun.assert(@intFromPtr(system_fd) <= std.math.maxInt(SystemAsInt));
@@ -116,7 +116,7 @@ pub const FDImpl = packed struct {
     }
 
     pub fn fromUV(uv_fd: UV) FDImpl {
-        return switch (env.os) {
+        return switch (environment.os) {
             else => FDImpl{
                 .kind = .system,
                 .value = .{ .as_system = uv_fd },
@@ -129,7 +129,7 @@ pub const FDImpl = packed struct {
     }
 
     pub fn isValid(this: FDImpl) bool {
-        return switch (env.os) {
+        return switch (environment.os) {
             // the 'zero' value on posix is debatable. it can be standard in.
             // TODO(@paperdave): steamroll away every use of bun.FileDescriptor.zero
             else => this.value.as_system != invalid_value,
@@ -145,7 +145,7 @@ pub const FDImpl = packed struct {
     /// When calling this function, you may not be able to close the returned fd.
     /// To close the fd, you have to call `.close()` on the FD.
     pub fn system(this: FDImpl) System {
-        return switch (env.os == .windows) {
+        return switch (environment.os == .windows) {
             false => numberToHandle(this.value.as_system),
             true => switch (this.kind) {
                 .system => numberToHandle(this.value.as_system),
@@ -167,7 +167,7 @@ pub const FDImpl = packed struct {
     /// When calling this function, you should consider the FD struct to now be invalid.
     /// Calling `.close()` on the FD at that point may not work.
     pub fn uv(this: FDImpl) UV {
-        return switch (env.os) {
+        return switch (environment.os) {
             else => numberToHandle(this.value.as_system),
             .windows => switch (this.kind) {
                 .system => {
@@ -200,7 +200,7 @@ pub const FDImpl = packed struct {
 
     /// This function will prevent stdout and stderr from being closed.
     pub fn close(this: FDImpl) ?bun.sys.Error {
-        if (env.os != .windows or this.kind == .uv) {
+        if (environment.os != .windows or this.kind == .uv) {
             // This branch executes always on linux (uv() is no-op),
             // or on Windows when given a UV file descriptor.
             const fd = this.uv();
@@ -216,7 +216,7 @@ pub const FDImpl = packed struct {
     /// If error, the handle has not been closed
     pub fn makeLibUVOwned(this: FDImpl) !FDImpl {
         this.assertValid();
-        return switch (env.os) {
+        return switch (environment.os) {
             else => this,
             .windows => switch (this.kind) {
                 .system => fd: {
@@ -234,10 +234,10 @@ pub const FDImpl = packed struct {
 
         // Format the file descriptor for logging BEFORE closing it.
         // Otherwise the file descriptor is always invalid after closing it.
-        var buf: if (env.isDebug) [1050]u8 else void = undefined;
-        const this_fmt = if (env.isDebug) std.fmt.bufPrint(&buf, "{}", .{this}) catch unreachable;
+        var buf: if (environment.isDebug) [1050]u8 else void = undefined;
+        const this_fmt = if (environment.isDebug) std.fmt.bufPrint(&buf, "{}", .{this}) catch unreachable;
 
-        const result: ?bun.sys.Error = switch (env.os) {
+        const result: ?bun.sys.Error = switch (environment.os) {
             .linux => result: {
                 const fd = this.encode();
                 bun.assert(fd != bun.invalid_fd);
@@ -284,7 +284,7 @@ pub const FDImpl = packed struct {
             else => @compileError("FD.close() not implemented for this platform"),
         };
 
-        if (env.isDebug) {
+        if (environment.isDebug) {
             if (result) |err| {
                 if (err.errno == @intFromEnum(posix.E.BADF)) {
                     bun.Output.debugWarn("close({s}) = EBADF. This is an indication of a file descriptor UAF", .{this_fmt});
@@ -307,7 +307,7 @@ pub const FDImpl = packed struct {
             return null;
         }
         const fd: i32 = @intCast(fd64);
-        if (comptime env.isWindows) {
+        if (comptime environment.isWindows) {
             return switch (bun.FDTag.get(fd)) {
                 .stdin => FDImpl.decode(bun.STDIN_FD),
                 .stdout => FDImpl.decode(bun.STDOUT_FD),
@@ -324,14 +324,20 @@ pub const FDImpl = packed struct {
         if (!value.isNumber()) {
             return null;
         }
-        if (!value.isAnyInt()) {
-            return global.ERR_OUT_OF_RANGE("The value of \"fd\" is out of range. It must be an integer. Received {}", .{bun.fmt.double(value.asNumber())}).throw();
-        }
-        const fd64 = value.toInt64();
-        try JSC.Node.Valid.fileDescriptor(fd64, global);
-        const fd: i32 = @intCast(fd64);
 
-        if (comptime env.isWindows) {
+        const float = value.asNumber();
+        if (@mod(float, 1) != 0) {
+            return global.throwRangeError(float, .{ .field_name = "fd", .msg = "an integer" });
+        }
+
+        const int: i64 = @intFromFloat(float);
+        if (int < 0 or int > std.math.maxInt(i32)) {
+            return global.throwRangeError(int, .{ .field_name = "fd", .min = 0, .max = std.math.maxInt(i32) });
+        }
+
+        const fd: c_int = @intCast(int);
+
+        if (comptime environment.isWindows) {
             return switch (bun.FDTag.get(fd)) {
                 .stdin => FDImpl.decode(bun.STDIN_FD),
                 .stdout => FDImpl.decode(bun.STDOUT_FD),
@@ -339,7 +345,6 @@ pub const FDImpl = packed struct {
                 else => FDImpl.fromUV(fd),
             };
         }
-
         return FDImpl.fromUV(fd);
     }
 
@@ -376,11 +381,11 @@ pub const FDImpl = packed struct {
             @compileError("invalid format string for FDImpl.format. must be empty like '{}'");
         }
 
-        switch (env.os) {
+        switch (environment.os) {
             else => {
                 const fd = this.system();
                 try writer.print("{d}", .{fd});
-                if (env.isDebug and fd >= 3) print_with_path: {
+                if (environment.isDebug and fd >= 3) print_with_path: {
                     var path_buf: bun.PathBuffer = undefined;
                     const path = std.os.getFdPath(fd, &path_buf) catch break :print_with_path;
                     try writer.print("[{s}]", .{path});
@@ -389,7 +394,7 @@ pub const FDImpl = packed struct {
             .windows => {
                 switch (this.kind) {
                     .system => {
-                        if (env.isDebug) {
+                        if (environment.isDebug) {
                             const peb = std.os.windows.peb();
                             const handle = this.system();
                             if (handle == peb.ProcessParameters.hStdInput) {

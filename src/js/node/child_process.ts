@@ -53,9 +53,6 @@ if ($debug) {
   };
 }
 
-var NativeWritable;
-var ReadableFromWeb;
-
 // Sections:
 // 1. Exported child_process functions
 // 2. child_process helpers
@@ -1123,21 +1120,16 @@ class ChildProcess extends EventEmitter {
       }
     }
 
-    NativeWritable ||= StreamModule.NativeWritable;
-    ReadableFromWeb ||= StreamModule.Readable.fromWeb;
-
     const io = this.#stdioOptions[i];
     switch (i) {
       case 0: {
         switch (io) {
           case "pipe": {
             const stdin = this.#handle.stdin;
-
             if (!stdin)
               // This can happen if the process was already killed.
               return new ShimmedStdin();
-
-            return new NativeWritable(stdin);
+            return require("internal/fs/streams").writableFromFileSink(stdin);
           }
           case "inherit":
             return process.stdin || null;
@@ -1151,13 +1143,11 @@ class ChildProcess extends EventEmitter {
       case 1: {
         switch (io) {
           case "pipe": {
-            const value = this.#handle[fdToStdioName(i)];
+            const value = this.#handle[fdToStdioName(i) as any as number];
+            // This can happen if the process was already killed.
+            if (!value) return new ShimmedStdioOutStream();
 
-            if (!value)
-              // This can happen if the process was already killed.
-              return new ShimmedStdioOutStream();
-
-            const pipe = ReadableFromWeb(value, { encoding });
+            const pipe = require("internal/streams/native-readable").constructNativeReadable(value, { encoding });
             this.#closesNeeded++;
             pipe.once("close", () => this.#maybeClose());
             if (autoResume) pipe.resume();

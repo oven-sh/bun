@@ -1041,7 +1041,7 @@ export function mergeWindowEnvs(envs: Record<string, string | undefined>[]) {
 }
 
 export function tmpdirSync(pattern: string = "bun.test.") {
-  return fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), pattern));
+  return fs.mkdtempSync(join(fs.realpathSync.native(os.tmpdir()), pattern));
 }
 
 export async function runBunInstall(

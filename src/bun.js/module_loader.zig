@@ -434,7 +434,7 @@ pub const RuntimeTranspilerStore = struct {
 
             var fd: ?StoredFileDescriptorType = null;
             var package_json: ?*PackageJSON = null;
-            const hash = JSC.GenericWatcher.getHash(path.text);
+            const hash = bun.Watcher.getHash(path.text);
 
             switch (vm.bun_watcher) {
                 .hot, .watch => {
@@ -1523,7 +1523,7 @@ pub const ModuleLoader = struct {
             .js, .jsx, .ts, .tsx, .json, .toml, .text => {
                 jsc_vm.transpiled_count += 1;
                 jsc_vm.transpiler.resetStore();
-                const hash = JSC.GenericWatcher.getHash(path.text);
+                const hash = bun.Watcher.getHash(path.text);
                 const is_main = jsc_vm.main.len == path.text.len and
                     jsc_vm.main_hash == hash and
                     strings.eqlLong(jsc_vm.main, path.text, false);
@@ -2150,7 +2150,7 @@ pub const ModuleLoader = struct {
                                     break :brk .zero;
                                 }
                             };
-                            const hash = JSC.GenericWatcher.getHash(path.text);
+                            const hash = bun.Watcher.getHash(path.text);
                             switch (jsc_vm.bun_watcher.addFile(
                                 input_fd,
                                 path.text,

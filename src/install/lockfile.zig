@@ -4813,7 +4813,7 @@ pub const Package = extern struct {
                     const workspace = dependency_version.value.workspace.slice(buf);
                     const path = string_builder.append(String, if (strings.eqlComptime(workspace, "*")) "*" else brk: {
                         var buf2: bun.PathBuffer = undefined;
-                        break :brk Path.relativePlatform(
+                        const rel = Path.relativePlatform(
                             FileSystem.instance.top_level_dir,
                             Path.joinAbsStringBuf(
                                 FileSystem.instance.top_level_dir,
@@ -4824,9 +4824,13 @@ pub const Package = extern struct {
                                 },
                                 .auto,
                             ),
-                            .posix,
+                            .auto,
                             false,
                         );
+                        if (comptime Environment.isWindows) {
+                            bun.path.dangerouslyConvertPathToPosixInPlace(u8, Path.relative_to_common_path_buf[0..rel.len]);
+                        }
+                        break :brk rel;
                     });
                     if (comptime Environment.allow_assert) {
                         assert(path.len() > 0);

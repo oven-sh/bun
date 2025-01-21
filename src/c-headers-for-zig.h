@@ -18,6 +18,8 @@
 #include "pwd.h"
 // geteuid
 #include <unistd.h>
+// AI_ADDRCONFIG
+#include <netdb.h>
 #endif
 
 #if DARWIN

@@ -619,32 +619,13 @@ var access = function access(path, mode, callback) {
     }, callback);
   };
 
+const { defineCustomPromisifyArgs } = require("internal/promisify");
 var kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
 exists[kCustomPromisifiedSymbol] = path => new Promise(resolve => exists(path, resolve));
-read[kCustomPromisifiedSymbol] = async function (fd, bufferOrOptions, ...rest) {
-  const { isArrayBufferView } = require("node:util/types");
-  let buffer;
-
-  if (isArrayBufferView(bufferOrOptions)) {
-    buffer = bufferOrOptions;
-  } else {
-    buffer = bufferOrOptions?.buffer;
-  }
-
-  if (buffer == undefined) {
-    buffer = Buffer.alloc(16384);
-  }
-
-  const bytesRead = await fs.read(fd, buffer, ...rest);
-
-  return { bytesRead, buffer };
-};
-write[kCustomPromisifiedSymbol] = async function (fd, stringOrBuffer, ...rest) {
-  const bytesWritten = await fs.write(fd, stringOrBuffer, ...rest);
-  return { bytesWritten, buffer: stringOrBuffer };
-};
-writev[kCustomPromisifiedSymbol] = promises.writev;
-readv[kCustomPromisifiedSymbol] = promises.readv;
+defineCustomPromisifyArgs(read, ["bytesRead", "buffer"]);
+defineCustomPromisifyArgs(readv, ["bytesRead", "buffer"]);
+defineCustomPromisifyArgs(write, ["bytesWritten", "buffer"]);
+defineCustomPromisifyArgs(writev, ["bytesWritten", "buffer"]);
 
 // TODO: move this entire thing into native code.
 // the reason it's not done right now is because there isnt a great way to have multiple

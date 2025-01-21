@@ -2630,7 +2630,7 @@ pub const Arguments = struct {
 
             const buf_len = buffer.slice().len;
             if (buf_len == 0) {
-                return ctx.ERR_INVALID_ARG_VALUE("The 'buffer' argument is empty and cannot be written", .{}).throw();
+                return ctx.ERR_INVALID_ARG_VALUE("The argument 'buffer' is empty and cannot be written.", .{}).throw();
             }
             // validateOffsetLengthRead(offset, length, buffer.byteLength);
             if (@mod(length, 1) != 0) {
@@ -2649,6 +2649,9 @@ pub const Arguments = struct {
                     .{ .field_name = "length", .max = @intCast(buf_len -| args.offset) },
                 );
             }
+            if (int_length < 0) {
+                return ctx.throwRangeError(length, .{ .field_name = "length", .min = 0 });
+            }
             args.length = @intCast(int_length);
 
             // if (position == null) {
@@ -2659,8 +2662,21 @@ pub const Arguments = struct {
             const position_value: JSC.JSValue = arguments.nextEat() orelse .null;
             const position_int: i64 = if (position_value.isUndefinedOrNull())
                 -1
-            else
-                @intCast(try JSC.Node.validators.validateInteger(ctx, position_value, "position", -1, std.math.maxInt(i64)));
+            else if (position_value.isNumber())
+                try JSC.Node.validators.validateInteger(ctx, position_value, "position", -1, JSC.MAX_SAFE_INTEGER)
+            else if (position_value.isBigInt()) pos: {
+                const max_position = std.math.maxInt(i64) - args.length;
+                const position = position_value.to(i64);
+                if (position < -1 or position > max_position) {
+                    return ctx.throwRangeError(position, .{
+                        .field_name = "position",
+                        .min = -1,
+                        .max = @intCast(max_position),
+                    });
+                }
+                break :pos position;
+            } else return ctx.throwInvalidArgumentTypeValue("position", "number or bigint", position_value);
+
             // Bun needs `null` to tell the native function if to use pread or read
             args.position = if (position_int >= 0)
                 position_int

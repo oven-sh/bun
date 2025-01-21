@@ -382,6 +382,13 @@ Object.defineProperty(readStreamPrototype, "pending", {
 });
 
 function close(stream, err, cb) {
+  const fastPath: FileSink | true = stream[kWriteStreamFastPath];
+  if (fastPath && fastPath !== true) {
+    const maybePromise = fastPath.end(err);
+    thenIfPromise(maybePromise, cb);
+    return;
+  }
+
   if (!stream.fd) {
     cb(err);
   } else if (stream.flush) {
@@ -722,19 +729,14 @@ writeStreamPrototype._writev = function (data, cb) {
 };
 
 writeStreamPrototype._destroy = function (err, cb) {
-  const fastPath: FileSink | true = this[kWriteStreamFastPath];
-  if (fastPath && fastPath !== true) {
-    const maybePromise = fastPath.end(err);
-    thenIfPromise(maybePromise, cb);
-    return;
-  }
   // Usually for async IO it is safe to close a file descriptor
   // even when there are pending operations. However, due to platform
   // differences file IO is implemented using synchronous operations
   // running in a thread pool. Therefore, file descriptors are not safe
   // to close while used in a pending read or write operation. Wait for
   // any pending IO (kIsPerformingIO) to complete (kIoDone).
-  if (this[kIsPerformingIO]) {
+  if (this[kIsPerformingIO] > 0) {
+    this[kWriteStreamFastPathClosed] = true;
     this.once(kIoDone, er => close(this, err || er, cb));
   } else {
     close(this, err, cb);

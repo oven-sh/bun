@@ -2361,6 +2361,7 @@ const getMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "getMaxHTT
 
 var globalAgent = new Agent();
 export default {
+  __proto__: null,
   Agent,
   Server,
   METHODS,

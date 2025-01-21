@@ -2828,6 +2828,7 @@ var PromisesInterface = class Interface extends _Interface {
 // Exports
 // ----------------------------------------------------------------------------
 export default {
+  __proto__: null,
   Interface,
   clearLine,
   clearScreenDown,

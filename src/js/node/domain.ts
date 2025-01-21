@@ -4,7 +4,9 @@ let EventEmitter;
 const ObjectDefineProperty = Object.defineProperty;
 
 // Export Domain
-var domain: any = {};
+var domain: any = {
+  __proto__: null,
+};
 domain.createDomain = domain.create = function () {
   if (!EventEmitter) {
     EventEmitter = require("node:events");

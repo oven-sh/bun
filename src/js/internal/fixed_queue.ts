@@ -124,4 +124,5 @@ class FixedQueue<T> {
 export default {
   FixedCircularBuffer,
   FixedQueue,
+  __proto__: null,
 };

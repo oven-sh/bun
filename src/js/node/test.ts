@@ -27,6 +27,7 @@ function afterEach() {
 }
 
 export default {
+  __proto__: null,
   suite,
   test,
   describe: suite,

@@ -1541,6 +1541,7 @@ class BlockList {
 }
 
 export default {
+  __proto__: null,
   createServer,
   Server,
   createConnection,

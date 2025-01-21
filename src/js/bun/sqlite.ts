@@ -607,4 +607,5 @@ export default {
   constants,
   default: Database,
   SQLiteError,
+  __proto__: null,
 };

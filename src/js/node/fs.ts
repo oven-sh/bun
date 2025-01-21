@@ -1472,6 +1472,7 @@ function _toUnixTimestamp(time: any, name = "time") {
 }
 
 export default {
+  __proto__: null,
   Dirent,
   FSWatcher,
   ReadStream,

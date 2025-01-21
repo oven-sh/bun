@@ -20,4 +20,5 @@ function urlToHttpOptions(url) {
 
 export default {
   urlToHttpOptions,
+  __proto__: null,
 };

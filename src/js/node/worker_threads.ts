@@ -366,4 +366,5 @@ export default {
   receiveMessageOnPort,
   SHARE_ENV,
   threadId,
+  __proto__: null,
 };

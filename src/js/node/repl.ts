@@ -78,6 +78,7 @@ const builtinModules = [
 ];
 
 export default {
+  __proto__: null,
   lines: [],
   context: globalThis,
   historyIndex: -1,

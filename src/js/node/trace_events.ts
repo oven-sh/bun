@@ -23,4 +23,5 @@ function getEnabledCategories() {
 export default {
   createTracing,
   getEnabledCategories,
+  __proto__: null,
 };

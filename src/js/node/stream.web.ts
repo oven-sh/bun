@@ -17,4 +17,5 @@ export default {
   TextDecoderStream,
   CompressionStream: undefined,
   DecompressionStream: undefined,
+  __proto__: null,
 };

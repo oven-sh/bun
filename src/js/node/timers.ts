@@ -9,6 +9,7 @@ export default {
   setImmediate,
   clearInterval,
   clearImmediate,
+  __proto__: null,
   get promises() {
     return (timersPromisesValue ??= require("node:timers/promises"));
   },

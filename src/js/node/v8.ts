@@ -174,6 +174,7 @@ const promiseHooks = {
   };
 
 export default {
+  __proto__: null,
   cachedDataVersionTag,
   getHeapSnapshot,
   getHeapStatistics,

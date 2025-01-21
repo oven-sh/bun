@@ -749,4 +749,5 @@ export default {
   TLSSocket,
   checkServerIdentity,
   rootCertificates,
+  __proto__: null,
 };

@@ -332,6 +332,7 @@ function destroyer(stream, err) {
 }
 
 export default {
+  __proto__: null,
   construct,
   destroyer,
   destroy,

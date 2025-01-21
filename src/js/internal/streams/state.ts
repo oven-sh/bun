@@ -41,6 +41,7 @@ function getHighWaterMark(state, options, duplexKey, isDuplex) {
 }
 
 export default {
+  __proto__: null,
   getHighWaterMark,
   getDefaultHighWaterMark,
   setDefaultHighWaterMark,

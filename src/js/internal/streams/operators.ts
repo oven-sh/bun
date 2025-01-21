@@ -391,6 +391,7 @@ function take(number, options?: { signal: AbortSignal }) {
 ObjectDefineProperty(take, "length", { value: 1 });
 
 export default {
+  __proto__: null,
   streamReturningOperators: {
     drop,
     filter,

@@ -371,6 +371,7 @@ cjs_exports = {
   isFunction,
   isPrimitive,
   log,
+  __proto__: null,
 };
 
 export default cjs_exports;

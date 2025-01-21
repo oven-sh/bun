@@ -55,4 +55,5 @@ export default {
   json,
   buffer,
   blob,
+  __proto__: null,
 };

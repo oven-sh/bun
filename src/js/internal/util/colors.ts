@@ -13,6 +13,7 @@ let exports = {
   clear: "",
   reset: "",
   hasColors: false,
+  __proto__: null,
   shouldColorize(stream: WriteStream) {
     if (process.env.FORCE_COLOR !== undefined) {
       return require("internal/tty").getColorDepth(process.env) > 2;

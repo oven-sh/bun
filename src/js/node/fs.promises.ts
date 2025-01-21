@@ -160,6 +160,7 @@ const _writeFile = fs.writeFile.bind(fs);
 const _appendFile = fs.appendFile.bind(fs);
 
 const exports = {
+  __proto__: null,
   access: asyncWrap(fs.access, "access"),
   appendFile: async function (fileHandleOrFdOrPath, ...args) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;

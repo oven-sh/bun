@@ -1881,6 +1881,7 @@ class SystemError extends Error {
 }
 
 export default {
+  __proto__: null,
   ChildProcess,
   spawn,
   execFile,

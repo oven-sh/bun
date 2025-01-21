@@ -106,6 +106,7 @@ export default {
   fileSinkSymbol,
   ExceptionWithHostPort,
   once,
+  __proto__: null,
 
   kHandle: Symbol("kHandle"),
   kAutoDestroyed: Symbol("kAutoDestroyed"),

@@ -476,6 +476,7 @@ const asyncWrapProviders = {
 };
 
 export default {
+  __proto__: null,
   AsyncLocalStorage,
   createHook,
   executionAsyncId,

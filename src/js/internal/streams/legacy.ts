@@ -113,4 +113,4 @@ function prependListener(emitter, event, fn) {
   else emitter._events[event] = [fn, emitter._events[event]];
 }
 
-export default { Stream, prependListener };
+export default { Stream, prependListener, __proto__: null };

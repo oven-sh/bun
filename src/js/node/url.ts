@@ -940,6 +940,7 @@ const enum Char {
 }
 
 export default {
+  __proto__: null,
   parse: urlParse,
   resolve: urlResolve,
   resolveObject: urlResolveObject,

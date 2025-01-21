@@ -36,6 +36,7 @@ const console = {
 };
 
 export default {
+  __proto__: null,
   console,
   open,
   close,

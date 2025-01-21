@@ -445,4 +445,4 @@ function pipe(src, dst, finish, finishOnlyHandleError, { end }) {
   return eos(dst, { readable: false, writable: true }, finish);
 }
 
-export default { pipelineImpl, pipeline };
+export default { pipelineImpl, pipeline, __proto__: null };

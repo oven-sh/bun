@@ -390,6 +390,8 @@ const toASCII = function (input) {
 
 /** Define the public API */
 export default {
+  __proto__: null,
+
   /**
    * A string representing the current Punycode.js version number.
    * @memberOf punycode

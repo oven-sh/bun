@@ -2974,7 +2974,7 @@ pub const Win32Error = enum(u16) {
     }
 
     pub fn toSystemErrno(this: Win32Error) ?SystemErrno {
-        return SystemErrno.init(libuv.translateWin32ErrorToUV(this));
+        return SystemErrno.init(this);
     }
 
     pub fn fromNTStatus(status: win32.NTSTATUS) Win32Error {

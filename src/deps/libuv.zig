@@ -2076,10 +2076,7 @@ pub const uv_fs_poll_cb = ?*const fn ([*c]uv_fs_poll_t, c_int, [*c]const uv_stat
 pub const UV_LEAVE_GROUP: c_int = 0;
 pub const UV_JOIN_GROUP: c_int = 1;
 pub const uv_membership = c_uint;
-extern fn uv_translate_sys_error(sys_errno: c_int) c_int;
-pub fn translateWin32ErrorToUV(err: bun.windows.Win32Error) c_int {
-    return uv_translate_sys_error(@intFromEnum(err));
-}
+pub extern fn uv_translate_sys_error(sys_errno: c_int) c_int;
 pub extern fn uv_strerror(err: c_int) [*c]const u8;
 pub extern fn uv_strerror_r(err: c_int, buf: [*]u8, buflen: usize) [*]u8;
 pub extern fn uv_err_name(err: c_int) [*c]const u8;

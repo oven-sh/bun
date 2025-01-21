@@ -437,11 +437,15 @@ pub const Error = struct {
                 return .{ @tagName(system_errno), system_errno };
             }
         } else {
-            const system_errno: C.SystemErrno = @enumFromInt(@intFromEnum(
-                bun.windows.libuv.translateUVErrorToE(
-                    @as(c_int, err.errno) * -1,
-                ),
-            ));
+            const system_errno: C.SystemErrno = brk: {
+                // setRuntimeSafety(false) because we use tagName function, which will be null on invalid enum value.
+                @setRuntimeSafety(false);
+                if (err.from_libuv) {
+                    break :brk @enumFromInt(@intFromEnum(bun.windows.libuv.translateUVErrorToE(@as(c_int, err.errno) * -1)));
+                }
+
+                break :brk @enumFromInt(err.errno);
+            };
             if (bun.tagName(bun.C.SystemErrno, system_errno)) |errname| {
                 return .{ errname, system_errno };
             }

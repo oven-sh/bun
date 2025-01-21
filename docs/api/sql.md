@@ -217,7 +217,7 @@ const db = new SQL({
 });
 ```
 
-## Database Connection Variables
+## Database Environment Variables
 
 SQL connection parameters can be configured using environment variables. The system checks these variables in a specific order of precedence.
 

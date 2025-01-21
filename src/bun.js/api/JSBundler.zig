@@ -106,10 +106,6 @@ pub const JSBundler = struct {
                 did_set_target = true;
             }
 
-            if (this.target != .browser) {
-                return globalThis.throwInvalidArguments("'html' is currently only supported when target is 'browser'. You can still import HTML files via the 'file' loader, just not using the 'html' loader.", .{});
-            }
-
             // Plugins must be resolved first as they are allowed to mutate the config JSValue
             if (try config.getArray(globalThis, "plugins")) |array| {
                 const length = array.getLength(globalThis);

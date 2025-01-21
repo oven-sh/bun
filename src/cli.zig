@@ -295,6 +295,7 @@ pub const Arguments = struct {
         clap.parseParam("--minify-syntax                  Minify syntax and inline data") catch unreachable,
         clap.parseParam("--minify-whitespace              Minify whitespace") catch unreachable,
         clap.parseParam("--minify-identifiers             Minify identifiers") catch unreachable,
+        clap.parseParam("--css-chunking      Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an affect when multiple entrypoints import CSS") catch unreachable,
         clap.parseParam("--dump-environment-variables") catch unreachable,
         clap.parseParam("--conditions <STR>...            Pass custom conditions to resolve") catch unreachable,
         clap.parseParam("--app                            (EXPERIMENTAL) Build a web app for production using Bun Bake.") catch unreachable,
@@ -863,7 +864,7 @@ pub const Arguments = struct {
             ctx.bundler_options.minify_whitespace = minify_flag or args.flag("--minify-whitespace");
             ctx.bundler_options.minify_identifiers = minify_flag or args.flag("--minify-identifiers");
 
-            ctx.bundler_options.css_chunking = args.flag("--experimental-css-chunking");
+            ctx.bundler_options.css_chunking = args.flag("--css-chunking");
 
             ctx.bundler_options.emit_dce_annotations = args.flag("--emit-dce-annotations") or
                 !ctx.bundler_options.minify_whitespace;

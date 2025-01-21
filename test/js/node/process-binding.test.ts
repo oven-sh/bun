@@ -1,5 +1,3 @@
-import { isWindows } from "harness";
-
 describe("process.binding", () => {
   test("process.binding('constants')", () => {
     /* @ts-ignore */
@@ -18,10 +16,10 @@ describe("process.binding", () => {
 
     expect(uv).toHaveProperty("errname");
     expect(uv).toHaveProperty("UV_EACCES");
-    expect(uv.errname(-4)).toBe(isWindows ? "Unknown system error: -4" : "EINTR");
+    expect(uv.errname(-4)).toBe("EINTR");
     // force the number to be represented as a double
-    expect(uv.errname(Number("-5.9") + 1.9)).toBe(isWindows ? "Unknown system error: -4" : "EINTR");
-    expect(uv.errname(-4)).toBe(isWindows ? "Unknown system error: -4" : "EINTR");
+    expect(uv.errname(Number("-5.9") + 1.9)).toBe("EINTR");
+    expect(uv.errname(-4)).toBe("EINTR");
 
     expect(uv.errname(5)).toBe("Unknown system error: 5");
 

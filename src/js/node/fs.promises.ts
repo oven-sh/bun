@@ -1,5 +1,6 @@
 // Hardcoded module "node:fs/promises"
 import type { Dirent } from "fs";
+const types = require("node:util/types");
 const EventEmitter = require("node:events");
 const fs = $zig("node_fs_binding.zig", "createBinding");
 const constants = $processBindingConstants.fs;
@@ -375,31 +376,48 @@ function asyncWrap(fn: any, name: string) {
       }
     }
 
-    async read(buffer, offset, length, position) {
+    async read(bufferOrParams, offset, length, position) {
       const fd = this[kFd];
-      throwEBADFIfNecessary("read", fd);
+      throwEBADFIfNecessary("fsync", fd);
 
-      isArrayBufferView ??= require("node:util/types").isArrayBufferView;
-      if (!isArrayBufferView(buffer)) {
+      let buffer = bufferOrParams;
+      if (!types.isArrayBufferView(buffer)) {
         // This is fh.read(params)
-        if (buffer != undefined) {
-          validateObject(buffer, "options");
+        if (bufferOrParams !== undefined) {
+          // validateObject(bufferOrParams, 'options', kValidateObjectAllowNullable);
+          if (typeof bufferOrParams !== "object" || $isArray(bufferOrParams)) {
+            throw $ERR_INVALID_ARG_TYPE("options", "object", bufferOrParams);
+          }
         }
-        ({ buffer = Buffer.alloc(16384), offset = 0, length, position = null } = buffer ?? {});
+        ({
+          buffer = Buffer.alloc(16384),
+          offset = 0,
+          length = buffer.byteLength - offset,
+          position = null,
+        } = bufferOrParams ?? kEmptyObject);
       }
-      length = length ?? buffer?.byteLength - offset;
-
-      if (length === 0) {
-        return { buffer, bytesRead: 0 };
+    
+      if (offset !== null && typeof offset === 'object') {
+        // This is fh.read(buffer, options)
+        ({
+          offset = 0,
+          length = buffer?.byteLength - offset,
+          position = null,
+        } = offset);
       }
-
-      if (buffer.byteLength === 0) {
-        throw $ERR_INVALID_ARG_VALUE("buffer", buffer, "is empty and cannot be written");
+    
+      if (offset == null) {
+        offset = 0;
+      } else {
+        validateInteger(offset, 'offset', 0);
       }
+    
+      length ??= buffer?.byteLength - offset;
 
       try {
         this[kRef]();
-        return { buffer, bytesRead: await read(fd, buffer, offset, length, position) };
+        const bytesRead = await read(fd, buffer, offset, length, position);
+        return { buffer, bytesRead };
       } finally {
         this[kUnref]();
       }

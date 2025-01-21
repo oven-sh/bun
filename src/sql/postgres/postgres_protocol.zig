@@ -799,16 +799,16 @@ pub const ErrorResponse = struct {
             .{ "column", column, void },
             .{ "constraint", constraint, void },
             .{ "datatype", datatype, void },
-            .{ "errno", code, i32 },
+            // in the past this was set to i32 but postgres returns a strings lets keep it compatible
+            .{ "errno", code, void },
             .{ "position", position, i32 },
             .{ "schema", schema, void },
             .{ "table", table, void },
             .{ "where", where, void },
         };
-
         const error_code: JSC.Error =
             // https://www.postgresql.org/docs/8.1/errcodes-appendix.html
-            if (code.toInt32() orelse 0 == 42601)
+            if (code.eqlComptime("42601"))
             JSC.Error.ERR_POSTGRES_SYNTAX_ERROR
         else
             JSC.Error.ERR_POSTGRES_SERVER_ERROR;
@@ -948,7 +948,10 @@ pub const DataRow = struct {
         for (0..remaining_fields) |index| {
             const byte_length = try reader.int4();
             switch (byte_length) {
-                0 => break,
+                0 => {
+                    var empty = Data.Empty;
+                    if (!try forEach(context, @intCast(index), &empty)) break;
+                },
                 null_int4 => {
                     if (!try forEach(context, @intCast(index), null)) break;
                 },

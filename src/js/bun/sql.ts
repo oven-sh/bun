@@ -5,6 +5,7 @@ const enum QueryStatus {
   cancelled = 1 << 2,
   error = 1 << 3,
   executed = 1 << 4,
+  invalidHandle = 1 << 5,
 }
 const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
 
@@ -22,6 +23,14 @@ function connectionClosedError() {
 }
 hideFromStack(connectionClosedError);
 
+enum SQLQueryResultMode {
+  objects = 0,
+  values = 1,
+  raw = 2,
+}
+const escapeIdentifier = function escape(str) {
+  return '"' + str.replaceAll('"', '""').replaceAll(".", '"."') + '"';
+};
 class SQLResultArray extends PublicArray {
   static [Symbol.toStringTag] = "SQLResults";
 
@@ -29,16 +38,16 @@ class SQLResultArray extends PublicArray {
   command;
   count;
 }
-
-const rawMode_values = 1;
-const rawMode_objects = 2;
-
 const _resolve = Symbol("resolve");
 const _reject = Symbol("reject");
 const _handle = Symbol("handle");
 const _run = Symbol("run");
 const _queryStatus = Symbol("status");
 const _handler = Symbol("handler");
+const _strings = Symbol("strings");
+const _values = Symbol("values");
+const _poolSize = Symbol("poolSize");
+const _flags = Symbol("flags");
 const PublicPromise = Promise;
 type TransactionCallback = (sql: (strings: string, ...values: any[]) => Query) => Promise<any>;
 
@@ -61,6 +70,7 @@ function normalizeSSLMode(value: string): SSLMode {
     case "prefer":
       return SSLMode.prefer;
     case "require":
+    case "required":
       return SSLMode.require;
     case "verify-ca":
     case "verify_ca":
@@ -76,12 +86,38 @@ function normalizeSSLMode(value: string): SSLMode {
   throw $ERR_INVALID_ARG_VALUE("sslmode", value);
 }
 
+enum SQLQueryFlags {
+  none = 0,
+  allowUnsafeTransaction = 1 << 0,
+  unsafe = 1 << 1,
+  bigint = 1 << 2,
+}
+function getQueryHandle(query) {
+  let handle = query[_handle];
+  if (!handle) {
+    try {
+      query[_handle] = handle = doCreateQuery(
+        query[_strings],
+        query[_values],
+        query[_flags] & SQLQueryFlags.allowUnsafeTransaction,
+        query[_poolSize],
+        query[_flags] & SQLQueryFlags.bigint,
+      );
+    } catch (err) {
+      query[_queryStatus] |= QueryStatus.error | QueryStatus.invalidHandle;
+      query.reject(err);
+    }
+  }
+  return handle;
+}
 class Query extends PublicPromise {
   [_resolve];
   [_reject];
   [_handle];
   [_handler];
   [_queryStatus] = 0;
+  [_strings];
+  [_values];
 
   [Symbol.for("nodejs.util.inspect.custom")]() {
     const status = this[_queryStatus];
@@ -92,7 +128,7 @@ class Query extends PublicPromise {
     return `PostgresQuery { ${active ? "active" : ""} ${cancelled ? "cancelled" : ""} ${executed ? "executed" : ""} ${error ? "error" : ""} }`;
   }
 
-  constructor(handle, handler) {
+  constructor(strings, values, allowUnsafeTransaction, poolSize, handler) {
     var resolve_, reject_;
     super((resolve, reject) => {
       resolve_ = resolve;
@@ -100,21 +136,29 @@ class Query extends PublicPromise {
     });
     this[_resolve] = resolve_;
     this[_reject] = reject_;
-    this[_handle] = handle;
+    this[_handle] = null;
     this[_handler] = handler;
-    this[_queryStatus] = handle ? 0 : QueryStatus.cancelled;
+    this[_queryStatus] = 0;
+    this[_poolSize] = poolSize;
+    this[_strings] = strings;
+    this[_values] = values;
+    this[_flags] = allowUnsafeTransaction;
   }
 
   async [_run]() {
-    const { [_handle]: handle, [_handler]: handler, [_queryStatus]: status } = this;
+    const { [_handler]: handler, [_queryStatus]: status } = this;
 
-    if (status & (QueryStatus.executed | QueryStatus.error | QueryStatus.cancelled)) {
+    if (status & (QueryStatus.executed | QueryStatus.error | QueryStatus.cancelled | QueryStatus.invalidHandle)) {
       return;
     }
+
+    const handle = getQueryHandle(this);
+    if (!handle) return this;
 
     this[_queryStatus] |= QueryStatus.executed;
     // this avoids a infinite loop
     await 1;
+
     return handler(this, handle);
   }
 
@@ -141,14 +185,20 @@ class Query extends PublicPromise {
 
   resolve(x) {
     this[_queryStatus] &= ~QueryStatus.active;
-    this[_handle].done();
+    const handle = getQueryHandle(this);
+    if (!handle) return this;
+    handle.done();
     return this[_resolve](x);
   }
 
   reject(x) {
     this[_queryStatus] &= ~QueryStatus.active;
     this[_queryStatus] |= QueryStatus.error;
-    this[_handle].done();
+    if (!(this[_queryStatus] & QueryStatus.invalidHandle)) {
+      const handle = getQueryHandle(this);
+      if (!handle) return this[_reject](x);
+      handle.done();
+    }
 
     return this[_reject](x);
   }
@@ -161,7 +211,8 @@ class Query extends PublicPromise {
     this[_queryStatus] |= QueryStatus.cancelled;
 
     if (status & QueryStatus.executed) {
-      this[_handle].cancel();
+      const handle = getQueryHandle(this);
+      handle.cancel();
     }
 
     return this;
@@ -173,12 +224,16 @@ class Query extends PublicPromise {
   }
 
   raw() {
-    this[_handle].raw = rawMode_objects;
+    const handle = getQueryHandle(this);
+    if (!handle) return this;
+    handle.setMode(SQLQueryResultMode.raw);
     return this;
   }
 
   values() {
-    this[_handle].raw = rawMode_values;
+    const handle = getQueryHandle(this);
+    if (!handle) return this;
+    handle.setMode(SQLQueryResultMode.values);
     return this;
   }
 
@@ -259,6 +314,7 @@ enum PooledConnectionFlags {
   /// preReserved is used to indicate that the connection will be reserved in the future when queryCount drops to 0
   preReserved = 1 << 2,
 }
+
 class PooledConnection {
   pool: ConnectionPool;
   connection: ReturnType<typeof createConnection>;
@@ -267,7 +323,6 @@ class PooledConnection {
   queries: Set<(err: Error) => void> = new Set();
   onFinish: ((err: Error | null) => void) | null = null;
   connectionInfo: any;
-
   flags: number = 0;
   /// queryCount is used to indicate the number of queries using the connection, if a connection is reserved or if its a transaction queryCount will be 1 independently of the number of queries
   queryCount: number = 0;
@@ -468,42 +523,34 @@ class ConnectionPool {
         this.onAllQueriesFinished();
       }
     }
+
     if (connection.state !== PooledConnectionState.connected) {
       // connection is not ready
+      if (connection.storedError) {
+        // this connection got a error but maybe we can wait for another
+
+        if (this.hasConnectionsAvailable()) {
+          return;
+        }
+
+        const waitingQueue = this.waitingQueue;
+        const reservedQueue = this.reservedQueue;
+
+        this.waitingQueue = [];
+        this.reservedQueue = [];
+        // we have no connections available so lets fails
+        for (const pending of waitingQueue) {
+          pending(connection.storedError, connection);
+        }
+        for (const pending of reservedQueue) {
+          pending(connection.storedError, connection);
+        }
+      }
       return;
     }
+
     if (was_reserved) {
-      if (this.waitingQueue.length > 0) {
-        if (connection.storedError) {
-          // this connection got a error but maybe we can wait for another
-
-          if (this.hasConnectionsAvailable()) {
-            return;
-          }
-
-          // we have no connections available so lets fails
-          let pending;
-          while ((pending = this.waitingQueue.shift())) {
-            pending.onConnected(connection.storedError, connection);
-          }
-          return;
-        }
-        const pendingReserved = this.reservedQueue.shift();
-        if (pendingReserved) {
-          connection.flags |= PooledConnectionFlags.reserved;
-          connection.queryCount++;
-          // we have a connection waiting for a reserved connection lets prioritize it
-          pendingReserved(connection.storedError, connection);
-          return;
-        }
-        this.flushConcurrentQueries();
-      } else {
-        // connection is ready, lets add it back to the ready connections
-        this.readyConnections.add(connection);
-      }
-    } else {
-      if (connection.queryCount == 0) {
-        // ok we can actually bind reserved queries to it
+      if (this.waitingQueue.length > 0 || this.reservedQueue.length > 0) {
         const pendingReserved = this.reservedQueue.shift();
         if (pendingReserved) {
           connection.flags |= PooledConnectionFlags.reserved;
@@ -515,9 +562,24 @@ class ConnectionPool {
       }
 
       this.readyConnections.add(connection);
-
       this.flushConcurrentQueries();
+      return;
     }
+    if (connection.queryCount === 0) {
+      // ok we can actually bind reserved queries to it
+      const pendingReserved = this.reservedQueue.shift();
+      if (pendingReserved) {
+        connection.flags |= PooledConnectionFlags.reserved;
+        connection.queryCount++;
+        // we have a connection waiting for a reserved connection lets prioritize it
+        pendingReserved(connection.storedError, connection);
+        return;
+      }
+    }
+
+    this.readyConnections.add(connection);
+
+    this.flushConcurrentQueries();
   }
 
   hasConnectionsAvailable() {
@@ -600,6 +662,7 @@ class ConnectionPool {
               const { promise, resolve } = Promise.withResolvers();
               connection.onFinish = resolve;
               promises.push(promise);
+              connection.connection.close();
             }
             break;
           case PooledConnectionState.connected:
@@ -622,7 +685,7 @@ class ConnectionPool {
   }
   async close(options?: { timeout?: number }) {
     if (this.closed) {
-      return Promise.reject(connectionClosedError());
+      return;
     }
     let timeout = options?.timeout;
     if (timeout) {
@@ -631,26 +694,40 @@ class ConnectionPool {
         throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
       }
       this.closed = true;
-      if (timeout > 0 && this.hasPendingQueries()) {
-        const { promise, resolve } = Promise.withResolvers();
-        const timer = setTimeout(() => {
-          // timeout is reached, lets close and probably fail some queries
-          this.#close().finally(resolve);
-        }, timeout * 1000);
-        timer.unref(); // dont block the event loop
-        this.onAllQueriesFinished = () => {
-          clearTimeout(timer);
-          // everything is closed, lets close the pool
-          this.#close().finally(resolve);
-        };
-
-        return promise;
+      if (timeout === 0 || !this.hasPendingQueries()) {
+        // close immediately
+        await this.#close();
+        return;
       }
+
+      const { promise, resolve } = Promise.withResolvers();
+      const timer = setTimeout(() => {
+        // timeout is reached, lets close and probably fail some queries
+        this.#close().finally(resolve);
+      }, timeout * 1000);
+      timer.unref(); // dont block the event loop
+      this.onAllQueriesFinished = () => {
+        clearTimeout(timer);
+        // everything is closed, lets close the pool
+        this.#close().finally(resolve);
+      };
+
+      return promise;
     } else {
       this.closed = true;
+      if (!this.hasPendingQueries()) {
+        // close immediately
+        await this.#close();
+        return;
+      }
+      // gracefully close the pool
+      const { promise, resolve } = Promise.withResolvers();
+      this.onAllQueriesFinished = () => {
+        // everything is closed, lets close the pool
+        this.#close().finally(resolve);
+      };
+      return promise;
     }
-
-    await this.#close();
   }
 
   /**
@@ -721,8 +798,11 @@ class ConnectionPool {
       this.poolStarted = true;
       const pollSize = this.connections.length;
       // pool is always at least 1 connection
-      this.connections[0] = new PooledConnection(this.connectionInfo, this);
-      this.connections[0].flags |= PooledConnectionFlags.preReserved; // lets pre reserve the first connection
+      const firstConnection = new PooledConnection(this.connectionInfo, this);
+      this.connections[0] = firstConnection;
+      if (reserved) {
+        firstConnection.flags |= PooledConnectionFlags.preReserved; // lets pre reserve the first connection
+      }
       for (let i = 1; i < pollSize; i++) {
         this.connections[i] = new PooledConnection(this.connectionInfo, this);
       }
@@ -732,7 +812,7 @@ class ConnectionPool {
       let connectionWithLeastQueries: PooledConnection | null = null;
       let leastQueries = Infinity;
       for (const connection of this.readyConnections) {
-        if (connection.flags & PooledConnectionFlags.reserved || connection.flags & PooledConnectionFlags.preReserved)
+        if (connection.flags & PooledConnectionFlags.preReserved || connection.flags & PooledConnectionFlags.reserved)
           continue;
         const queryCount = connection.queryCount;
         if (queryCount > 0) {
@@ -802,8 +882,10 @@ function createConnection(
 var hasSQLArrayParameter = false;
 function normalizeStrings(strings, values) {
   hasSQLArrayParameter = false;
-  if ($isJSArray(strings)) {
+
+  if ($isArray(strings)) {
     const count = strings.length;
+
     if (count === 0) {
       return "";
     }
@@ -851,6 +933,93 @@ function normalizeStrings(strings, values) {
   }
 
   return strings + "";
+}
+function hasQuery(value: any) {
+  return value instanceof Query;
+}
+function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize, bigint) {
+  let sqlString;
+  let final_values: Array<any>;
+  if ($isArray(strings) && values.some(hasQuery)) {
+    // we need to handle fragments of queries
+    final_values = [];
+    const final_strings = [];
+    let strings_idx = 0;
+
+    for (let i = 0; i < values.length; i++) {
+      const value = values[i];
+      if (value instanceof Query) {
+        let sub_strings = value[_strings];
+        var is_unsafe = value[_flags] & SQLQueryFlags.unsafe;
+
+        if (typeof sub_strings === "string") {
+          if (!is_unsafe) {
+            // identifier
+            sub_strings = escapeIdentifier(sub_strings);
+          }
+          //@ts-ignore
+          final_strings.push(strings[strings_idx] + sub_strings + strings[strings_idx + 1]);
+          strings_idx += 2; // we merged 2 strings into 1
+          // in this case we dont have values to merge
+        } else {
+          // complex fragment, we need to merge values
+          const sub_values = value[_values];
+
+          if (final_strings.length > 0) {
+            // complex not the first
+            const current_idx = final_strings.length - 1;
+            final_strings[current_idx] = final_strings[current_idx] + sub_strings[0];
+
+            if (sub_strings.length > 1) {
+              final_strings.push(...sub_strings.slice(1));
+            }
+            final_values.push(...sub_values);
+          } else {
+            // complex the first
+            final_strings.push(strings[strings_idx] + sub_strings[0]);
+            strings_idx += 1;
+            final_values.push(...sub_values);
+            if (sub_strings.length > 1) {
+              final_strings.push(...sub_strings.slice(1));
+            }
+          }
+        }
+      } else {
+        // for each value we have 2 strings
+        //@ts-ignore
+        final_strings.push(strings[strings_idx]);
+        strings_idx += 1;
+        if (strings_idx + 1 < strings.length) {
+          //@ts-ignore
+          final_strings.push(strings[strings_idx + 1]);
+          strings_idx += 1;
+        }
+
+        final_values.push(value);
+      }
+    }
+
+    sqlString = normalizeStrings(final_strings, final_values);
+  } else {
+    sqlString = normalizeStrings(strings, values);
+    final_values = values;
+  }
+  let columns;
+  if (hasSQLArrayParameter) {
+    hasSQLArrayParameter = false;
+    const v = final_values[0];
+    columns = v.columns;
+    final_values = v.value;
+  }
+  if (!allowUnsafeTransaction) {
+    if (poolSize !== 1) {
+      const upperCaseSqlString = sqlString.toUpperCase().trim();
+      if (upperCaseSqlString.startsWith("BEGIN") || upperCaseSqlString.startsWith("START TRANSACTION")) {
+        throw $ERR_POSTGRES_UNSAFE_TRANSACTION("Only use sql.begin, sql.reserved or max: 1");
+      }
+    }
+  }
+  return createQuery(sqlString, final_values, new SQLResultArray(), columns, !!bigint);
 }
 
 class SQLArrayParameter {
@@ -901,8 +1070,9 @@ function loadOptions(o) {
     maxLifetime,
     onconnect,
     onclose,
-    max;
-  const env = Bun.env;
+    max,
+    bigint;
+  const env = Bun.env || {};
   var sslMode: SSLMode = SSLMode.disable;
 
   if (o === undefined || (typeof o === "string" && o.length === 0)) {
@@ -962,7 +1132,7 @@ function loadOptions(o) {
     }
     query = query.trim();
   }
-
+  o ||= {};
   hostname ||= o.hostname || o.host || env.PGHOST || "localhost";
   port ||= Number(o.port || env.PGPORT || 5432);
   username ||= o.username || o.user || env.PGUSERNAME || env.PGUSER || env.USER || env.USERNAME || "postgres";
@@ -978,6 +1148,7 @@ function loadOptions(o) {
   connectionTimeout ??= o.connection_timeout;
   maxLifetime ??= o.maxLifetime;
   maxLifetime ??= o.max_lifetime;
+  bigint ??= o.bigint;
 
   onconnect ??= o.onconnect;
   onclose ??= o.onclose;
@@ -1002,6 +1173,7 @@ function loadOptions(o) {
         "must be a non-negative integer less than 2^31",
       );
     }
+    idleTimeout *= 1000;
   }
 
   if (connectionTimeout != null) {
@@ -1013,6 +1185,7 @@ function loadOptions(o) {
         "must be a non-negative integer less than 2^31",
       );
     }
+    connectionTimeout *= 1000;
   }
 
   if (maxLifetime != null) {
@@ -1024,6 +1197,7 @@ function loadOptions(o) {
         "must be a non-negative integer less than 2^31",
       );
     }
+    maxLifetime *= 1000;
   }
 
   if (max != null) {
@@ -1078,6 +1252,8 @@ function loadOptions(o) {
   }
   ret.max = max || 10;
 
+  ret.bigint = bigint;
+
   return ret;
 }
 
@@ -1091,32 +1267,13 @@ function assertValidTransactionName(name: string) {
     throw Error(`Distributed transaction name cannot contain single quotes.`);
   }
 }
+
 function SQL(o, e = {}) {
   if (typeof o === "string" || o instanceof URL) {
     o = { ...e, url: o };
   }
   var connectionInfo = loadOptions(o);
   var pool = new ConnectionPool(connectionInfo);
-
-  function doCreateQuery(strings, values, allowUnsafeTransaction) {
-    const sqlString = normalizeStrings(strings, values);
-    let columns;
-    if (hasSQLArrayParameter) {
-      hasSQLArrayParameter = false;
-      const v = values[0];
-      columns = v.columns;
-      values = v.value;
-    }
-    if (!allowUnsafeTransaction) {
-      if (connectionInfo.max !== 1) {
-        const upperCaseSqlString = sqlString.toUpperCase().trim();
-        if (upperCaseSqlString.startsWith("BEGIN") || upperCaseSqlString.startsWith("START TRANSACTION")) {
-          throw $ERR_POSTGRES_UNSAFE_TRANSACTION("Only use sql.begin, sql.reserved or max: 1");
-        }
-      }
-    }
-    return createQuery(sqlString, values, new SQLResultArray(), columns);
-  }
 
   function onQueryDisconnected(err) {
     // connection closed mid query this will not be called if the query finishes first
@@ -1159,7 +1316,27 @@ function SQL(o, e = {}) {
   }
   function queryFromPool(strings, values) {
     try {
-      return new Query(doCreateQuery(strings, values, false), queryFromPoolHandler);
+      return new Query(
+        strings,
+        values,
+        connectionInfo.bigint ? SQLQueryFlags.bigint : SQLQueryFlags.none,
+        connectionInfo.max,
+        queryFromPoolHandler,
+      );
+    } catch (err) {
+      return Promise.reject(err);
+    }
+  }
+
+  function unsafeQuery(strings, values) {
+    try {
+      return new Query(
+        strings,
+        values,
+        connectionInfo.bigint ? SQLQueryFlags.bigint | SQLQueryFlags.unsafe : SQLQueryFlags.unsafe,
+        connectionInfo.max,
+        queryFromPoolHandler,
+      );
     } catch (err) {
       return Promise.reject(err);
     }
@@ -1187,7 +1364,12 @@ function SQL(o, e = {}) {
   function queryFromTransaction(strings, values, pooledConnection, transactionQueries) {
     try {
       const query = new Query(
-        doCreateQuery(strings, values, true),
+        strings,
+        values,
+        connectionInfo.bigint
+          ? SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.bigint
+          : SQLQueryFlags.allowUnsafeTransaction,
+        connectionInfo.max,
         queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
       );
       transactionQueries.add(query);
@@ -1196,6 +1378,24 @@ function SQL(o, e = {}) {
       return Promise.reject(err);
     }
   }
+  function unsafeQueryFromTransaction(strings, values, pooledConnection, transactionQueries) {
+    try {
+      const query = new Query(
+        strings,
+        values,
+        connectionInfo.bigint
+          ? SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.unsafe | SQLQueryFlags.bigint
+          : SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.unsafe,
+        connectionInfo.max,
+        queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
+      );
+      transactionQueries.add(query);
+      return query;
+    } catch (err) {
+      return Promise.reject(err);
+    }
+  }
+
   function onTransactionDisconnected(err) {
     const reject = this.reject;
     this.connectionState |= ReservedConnectionState.closed;
@@ -1232,12 +1432,23 @@ function SQL(o, e = {}) {
       ) {
         return Promise.reject(connectionClosedError());
       }
-      if ($isJSArray(strings) && strings[0] && typeof strings[0] === "object") {
-        return new SQLArrayParameter(strings, values);
+      if ($isArray(strings)) {
+        if (strings[0] && typeof strings[0] === "object") {
+          return new SQLArrayParameter(strings, values);
+        }
+      } else if (
+        typeof strings === "object" &&
+        !(strings instanceof Query) &&
+        !(strings instanceof SQLArrayParameter)
+      ) {
+        return new SQLArrayParameter([strings], values);
       }
       // we use the same code path as the transaction sql
       return queryFromTransaction(strings, values, pooledConnection, state.queries);
     }
+    reserved_sql.unsafe = (string, args = []) => {
+      return unsafeQueryFromTransaction(string, args, pooledConnection, state.queries);
+    };
     reserved_sql.connect = () => {
       if (state.connectionState & ReservedConnectionState.closed) {
         return Promise.reject(connectionClosedError());
@@ -1344,7 +1555,7 @@ function SQL(o, e = {}) {
         state.connectionState & ReservedConnectionState.closed ||
         !(state.connectionState & ReservedConnectionState.acceptQueries)
       ) {
-        return Promise.reject(connectionClosedError());
+        return Promise.resolve(undefined);
       }
       state.connectionState &= ~ReservedConnectionState.acceptQueries;
       let timeout = options?.timeout;
@@ -1454,8 +1665,8 @@ function SQL(o, e = {}) {
     let transactionSavepoints = new Set();
     const adapter = connectionInfo.adapter;
     let BEGIN_COMMAND: string = "BEGIN";
-    let ROLLBACK_COMMAND: string = "COMMIT";
-    let COMMIT_COMMAND: string = "ROLLBACK";
+    let ROLLBACK_COMMAND: string = "ROLLBACK";
+    let COMMIT_COMMAND: string = "COMMIT";
     let SAVEPOINT_COMMAND: string = "SAVEPOINT";
     let RELEASE_SAVEPOINT_COMMAND: string | null = "RELEASE SAVEPOINT";
     let ROLLBACK_TO_SAVEPOINT_COMMAND: string = "ROLLBACK TO SAVEPOINT";
@@ -1546,12 +1757,23 @@ function SQL(o, e = {}) {
       ) {
         return Promise.reject(connectionClosedError());
       }
-      if ($isJSArray(strings) && strings[0] && typeof strings[0] === "object") {
-        return new SQLArrayParameter(strings, values);
+      if ($isArray(strings)) {
+        if (strings[0] && typeof strings[0] === "object") {
+          return new SQLArrayParameter(strings, values);
+        }
+      } else if (
+        typeof strings === "object" &&
+        !(strings instanceof Query) &&
+        !(strings instanceof SQLArrayParameter)
+      ) {
+        return new SQLArrayParameter([strings], values);
       }
 
       return queryFromTransaction(strings, values, pooledConnection, state.queries);
     }
+    transaction_sql.unsafe = (string, args = []) => {
+      return unsafeQueryFromTransaction(string, args, pooledConnection, state.queries);
+    };
     // reserve is allowed to be called inside transaction connection but will return a new reserved connection from the pool and will not be part of the transaction
     // this matchs the behavior of the postgres package
     transaction_sql.reserve = () => sql.reserve();
@@ -1622,7 +1844,7 @@ function SQL(o, e = {}) {
         state.connectionState & ReservedConnectionState.closed ||
         !(state.connectionState & ReservedConnectionState.acceptQueries)
       ) {
-        return Promise.reject(connectionClosedError());
+        return Promise.resolve(undefined);
       }
       state.connectionState &= ~ReservedConnectionState.acceptQueries;
       const transactionQueries = state.queries;
@@ -1774,12 +1996,20 @@ function SQL(o, e = {}) {
      * ]
      * sql`insert into users ${sql(users)}`
      */
-    if ($isJSArray(strings) && strings[0] && typeof strings[0] === "object") {
-      return new SQLArrayParameter(strings, values);
+    if ($isArray(strings)) {
+      if (strings[0] && typeof strings[0] === "object") {
+        return new SQLArrayParameter(strings, values);
+      }
+    } else if (typeof strings === "object" && !(strings instanceof Query) && !(strings instanceof SQLArrayParameter)) {
+      return new SQLArrayParameter([strings], values);
     }
 
     return queryFromPool(strings, values);
   }
+
+  sql.unsafe = (string, args = []) => {
+    return unsafeQuery(string, args);
+  };
 
   sql.reserve = () => {
     if (pool.closed) {
@@ -1911,8 +2141,15 @@ var lazyDefaultSQL;
 
 function resetDefaultSQL(sql) {
   lazyDefaultSQL = sql;
-  Object.assign(defaultSQLObject, lazyDefaultSQL);
-  exportsObject.default = exportsObject.sql = lazyDefaultSQL;
+  // this will throw "attempt to assign to readonly property"
+  // Object.assign(defaultSQLObject, lazyDefaultSQL);
+  // exportsObject.default = exportsObject.sql = lazyDefaultSQL;
+}
+
+function ensureDefaultSQL() {
+  if (!lazyDefaultSQL) {
+    resetDefaultSQL(SQL(undefined));
+  }
 }
 
 var initialDefaultSQL;
@@ -1924,6 +2161,62 @@ var defaultSQLObject = (initialDefaultSQL = function sql(strings, ...values) {
     resetDefaultSQL(SQL(undefined));
   }
   return lazyDefaultSQL(strings, ...values);
+});
+
+defaultSQLObject.reserve = (...args) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.reserve(...args);
+};
+defaultSQLObject.commitDistributed = (...args) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.commitDistributed(...args);
+};
+defaultSQLObject.rollbackDistributed = (...args) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.rollbackDistributed(...args);
+};
+defaultSQLObject.distributed = defaultSQLObject.beginDistributed = (...args) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.beginDistributed(...args);
+};
+
+defaultSQLObject.connect = (...args) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.connect(...args);
+};
+
+defaultSQLObject.unsafe = (...args) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.unsafe(...args);
+};
+
+defaultSQLObject.transaction = defaultSQLObject.begin = (...args) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.begin(...args);
+};
+
+defaultSQLObject.end = defaultSQLObject.close = (...args) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.close(...args);
+};
+defaultSQLObject.flush = (...args) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.flush(...args);
+};
+//define lazy properties
+Object.defineProperties(defaultSQLObject, {
+  options: {
+    get: () => {
+      ensureDefaultSQL();
+      return lazyDefaultSQL.options;
+    },
+  },
+  [Symbol.asyncDispose]: {
+    get: () => {
+      ensureDefaultSQL();
+      return lazyDefaultSQL[Symbol.asyncDispose];
+    },
+  },
 });
 
 var exportsObject = {

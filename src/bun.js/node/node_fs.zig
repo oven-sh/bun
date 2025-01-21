@@ -2584,109 +2584,88 @@ pub const Arguments = struct {
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Read {
+            // About half of the normalization has already been done. The second half is done in the native code.
+            // fs_binding.read(fd, buffer, offset, length, position)
+
+            // fd = getValidatedFd(fd);
             const fd_value = arguments.nextEat() orelse JSC.JSValue.undefined;
             const fd = try JSC.Node.fileDescriptorFromJS(ctx, fd_value) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
 
-            const buffer_value = arguments.next();
-            const buffer: JSC.MarkedArrayBuffer = Buffer.fromJS(ctx, buffer_value orelse {
+            //  validateBuffer(buffer);
+            const buffer_value = arguments.nextEat() orelse
+                // theoretically impossible, argument has been passed already
                 return ctx.throwInvalidArguments("buffer is required", .{});
-            }) orelse {
-                return ctx.throwInvalidArgumentTypeValue("buffer", "TypedArray", buffer_value.?);
-            };
+            const buffer: JSC.MarkedArrayBuffer = Buffer.fromJS(ctx, buffer_value) orelse
+                return ctx.throwInvalidArgumentTypeValue("buffer", "TypedArray", buffer_value);
 
-            arguments.eat();
+            var args: Read = .{ .fd = fd, .buffer = buffer };
 
-            var args = Read{
-                .fd = fd,
-                .buffer = buffer,
-            };
+            const offset_value: JSC.JSValue = arguments.nextEat() orelse .null;
+            // if (offset == null) {
+            //   offset = 0;
+            // } else {
+            //   validateInteger(offset, 'offset', 0);
+            // }
+            args.offset = if (offset_value.isUndefinedOrNull())
+                0
+            else
+                @intCast(try JSC.Node.validators.validateInteger(ctx, offset_value, "offset", 0, JSC.MAX_SAFE_INTEGER));
 
-            var defined_length = false;
-            if (arguments.next()) |current| {
-                arguments.eat();
-                const is_number = current.isNumber();
-                if (is_number) {
-                    const double = current.asNumber();
-                    if (!std.math.isFinite(double)) {
-                        return ctx.throwRangeError(
-                            @as(f64, double),
-                            .{ .field_name = "position", .msg = "an integer" },
-                        );
-                    }
-                }
-                if (is_number or current.isBigInt()) {
-                    const buf_len = buffer.slice().len;
-                    args.offset = @intCast(try JSC.Node.validators.validateInteger(ctx, current, "offset", 0, @intCast(buf_len)));
+            // length |= 0;
+            const length: f64 = if (arguments.nextEat()) |arg|
+                try arg.toNumber(ctx)
+            else
+                0;
 
-                    if (arguments.remaining.len < 1) {
-                        return ctx.throwInvalidArguments("length is required", .{});
-                    }
-
-                    const arg_length = arguments.next().?;
-                    arguments.eat();
-
-                    if (arg_length.isNumber() or arg_length.isBigInt()) {
-                        args.length = @intCast(try JSC.Node.validators.validateInteger(ctx, arg_length, "length", 0, std.math.maxInt(i64)));
-                        defined_length = true;
-                    }
-
-                    if (arguments.next()) |arg_position| {
-                        arguments.eat();
-
-                        if (!arg_position.isNull()) {
-                            const num: i64 = try JSC.Node.validators.validateIntegerOrBigInt(ctx, arg_position, "position", -1, 9007199254740991);
-
-                            if (num >= 0)
-                                args.position = @as(ReadPosition, @intCast(num));
-                        }
-                    }
-                } else if (current.isObject() and !current.isArray()) {
-                    if (try current.getTruthy(ctx, "offset")) |num| {
-                        if (num.isNumber() or num.isBigInt()) {
-                            args.offset = num.to(u52);
-                        }
-                    }
-
-                    if (try current.getTruthy(ctx, "length")) |num| {
-                        if (num.isNumber() or num.isBigInt()) {
-                            args.length = num.to(u52);
-                        }
-                        defined_length = true;
-                    }
-
-                    if (try current.getTruthy(ctx, "position")) |num| {
-                        if (num.isNumber() or num.isBigInt()) {
-                            const n = num.to(i52);
-                            if (n >= 0)
-                                args.position = num.to(i52);
-                        }
-                    }
-                } else if (!current.isUndefinedOrNull()) {
-                    return ctx.throwInvalidArgumentTypeValue("options", "number or object", current);
-                }
+            //   if (length === 0) {
+            //     return process.nextTick(function tick() {
+            //       callback(null, 0, buffer);
+            //     });
+            //   }
+            if (length == 0) {
+                return .{ .fd = fd, .buffer = buffer, .length = 0 };
             }
 
-            if (defined_length and args.length > 0) {
-                const buf_length = buffer.slice().len;
-                if (buf_length == 0) {
-                    var formatter = bun.JSC.ConsoleObject.Formatter{ .globalThis = ctx };
-                    return ctx.ERR_INVALID_ARG_VALUE("The argument 'buffer' is empty and cannot be written. Received {}", .{buffer_value.?.toFmt(&formatter)}).throw();
-                }
-                if (args.length > buf_length) {
-                    return ctx.throwRangeError(
-                        @as(f64, @floatFromInt(args.length)),
-                        .{ .field_name = "length", .max = @intCast(@min(buf_length, std.math.maxInt(i64))) },
-                    );
-                }
-                if (args.offset +| args.length > buf_length) {
-                    return ctx.throwRangeError(
-                        @as(f64, @floatFromInt(args.offset + args.length)),
-                        .{ .field_name = "length", .max = @intCast(buf_length -| args.offset) },
-                    );
-                }
+            const buf_len = buffer.slice().len;
+            if (buf_len == 0) {
+                return ctx.ERR_INVALID_ARG_VALUE("The 'buffer' argument is empty and cannot be written", .{}).throw();
             }
+            // validateOffsetLengthRead(offset, length, buffer.byteLength);
+            if (@mod(length, 1) != 0) {
+                return ctx.throwRangeError(length, .{ .field_name = "length", .msg = "an integer" });
+            }
+            const int_length: i64 = @intFromFloat(length);
+            if (int_length > buf_len) {
+                return ctx.throwRangeError(
+                    length,
+                    .{ .field_name = "length", .max = @intCast(@min(buf_len, std.math.maxInt(i64))) },
+                );
+            }
+            if (@as(i64, @intCast(args.offset)) +| int_length > buf_len) {
+                return ctx.throwRangeError(
+                    length,
+                    .{ .field_name = "length", .max = @intCast(buf_len -| args.offset) },
+                );
+            }
+            args.length = @intCast(int_length);
+
+            // if (position == null) {
+            //   position = -1;
+            // } else {
+            //   validatePosition(position, 'position', length);
+            // }
+            const position_value: JSC.JSValue = arguments.nextEat() orelse .null;
+            const position_int: i64 = if (position_value.isUndefinedOrNull())
+                -1
+            else
+                @intCast(try JSC.Node.validators.validateInteger(ctx, position_value, "position", -1, std.math.maxInt(i64)));
+            // Bun needs `null` to tell the native function if to use pread or read
+            args.position = if (position_int >= 0)
+                position_int
+            else
+                null;
 
             return args;
         }

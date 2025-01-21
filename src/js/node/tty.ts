@@ -80,7 +80,7 @@ Object.defineProperty(ReadStream, "prototype", {
 function WriteStream(fd): void {
   if (!(this instanceof WriteStream)) return new WriteStream(fd);
 
-  const stream = require("node:fs").WriteStream.$call(this, null, { fd });
+  const stream = require("node:fs").WriteStream.$call(this, null, { fd, $fastPath: true });
   stream.columns = undefined;
   stream.rows = undefined;
   stream.isTTY = isatty(stream.fd);

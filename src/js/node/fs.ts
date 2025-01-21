@@ -314,36 +314,49 @@ var access = function access(path, mode, callback) {
     fs.fdatasync(fd).then(nullcallback(callback), callback);
   },
   read = function read(fd, buffer, offsetOrOptions, length, position, callback) {
+    // fd = getValidatedFd(fd); DEFERRED TO NATIVE
     let offset = offsetOrOptions;
-    let params = null;
+    let params: any = null;
     if (arguments.length <= 4) {
       if (arguments.length === 4) {
-        // fs.read(fd, buffer, options, callback)
+        // This is fs.read(fd, buffer, options, callback)
+        // validateObject(params, 'options', kValidateObjectAllowNullable);
+        if (typeof params !== "object" || $isArray(params)) {
+          throw $ERR_INVALID_ARG_TYPE("options", "object", params);
+        }
         callback = length;
         params = offsetOrOptions;
       } else if (arguments.length === 3) {
-        const { isArrayBufferView } = require("node:util/types");
-        // fs.read(fd, bufferOrParams, callback)
-        if (!isArrayBufferView(buffer)) {
-          // fs.read(fd, params, callback)
+        // This is fs.read(fd, bufferOrParams, callback)
+        if (!types.isArrayBufferView(buffer)) {
+          // fs.read(fd, bufferOrParams, callback)
           params = buffer;
           ({ buffer = Buffer.alloc(16384) } = params ?? {});
         }
         callback = offsetOrOptions;
       } else {
-        // fs.read(fd, callback)
+        // This is fs.read(fd, callback)
         callback = buffer;
         buffer = Buffer.alloc(16384);
       }
-      ({ offset = 0, length = buffer?.byteLength - offset, position = null } = params ?? {});
+
+      if (params !== undefined) {
+        // validateObject(params, 'options', kValidateObjectAllowNullable);
+        if (typeof params !== "object" || $isArray(params)) {
+          throw $ERR_INVALID_ARG_TYPE("options", "object", params);
+        }
+      }
+      ({
+        offset = 0,
+        length = buffer?.byteLength - offset,
+        position = null,
+      } = params ?? {});
     }
     if (!callback) {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
     fs.read(fd, buffer, offset, length, position).then(
-      bytesRead => {
-        callback(null, bytesRead, buffer);
-      },
+      bytesRead => void callback(null, bytesRead, buffer),
       err => callback(err),
     );
   },
@@ -531,7 +544,25 @@ var access = function access(path, mode, callback) {
   mkdirSync = fs.mkdirSync.bind(fs),
   mkdtempSync = fs.mkdtempSync.bind(fs),
   openSync = fs.openSync.bind(fs),
-  readSync = fs.readSync.bind(fs),
+  readSync = function readSync(fd, buffer, offsetOrOptions, length, position) {
+    let offset = offsetOrOptions;
+    if (arguments.length <= 3 || typeof offsetOrOptions === 'object') {
+      if (offsetOrOptions !== undefined) {
+        // validateObject(offsetOrOptions, 'options', kValidateObjectAllowNullable);
+        if (typeof offsetOrOptions !== 'object' || $isArray(offsetOrOptions)) {
+          throw new Error("Invalid argument");
+        }
+      }
+  
+      ({
+        offset = 0,
+        length = buffer.byteLength - offset,
+        position = null,
+      } = offsetOrOptions ?? {});
+    }
+
+    return fs.readSync(fd, buffer, offset, length, position);
+  },
   writeSync = fs.writeSync.bind(fs),
   readdirSync = fs.readdirSync.bind(fs),
   readFileSync = fs.readFileSync.bind(fs),

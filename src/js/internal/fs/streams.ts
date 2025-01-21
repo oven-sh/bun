@@ -36,6 +36,16 @@ type FD = number;
 
 const { validateInteger, validateInt32, validateFunction } = require("internal/validators");
 
+// The stream fast paths can sometimes be a source of bugs. Here, a simple
+// mechanism to disable them is provided. For places internally where a fast
+// path is required, the `$fastPath` option can be used.
+//
+// The slow path is essentially a 1:1 mapping to Node.js' filesystem streams.
+let cachedDisableFastPaths: boolean | null = null;
+const disableFastPaths = () => (
+  cachedDisableFastPaths ??= !!Bun.env.BUN_DISABLE_STREAM_FAST_PATHS
+);
+
 // Bun supports a fast path for `createReadStream("path.txt")` with `.pipe(res)`,
 // where the entire stream implementation can be bypassed, effectively making it
 // `new Response(Bun.file("path.txt"))`.
@@ -264,7 +274,15 @@ function streamConstruct(this: FSStream, callback: (e?: any) => void) {
     this.open();
   } else {
     if (fastPath) {
-      this.fd = NaN; // TODO: retrieve fd from file sink
+      // there is a chance that this fd is not actually correct but it will be a number
+      if (fastPath !== true) {
+        // @ts-expect-error undocumented. to make this public please make it a
+        // getter. couldn't figure that out sorry
+        this.fd = fastPath._getFd();
+      } else {
+        // @ts-expect-error
+        this.fd = (this[kWriteStreamFastPath] = Bun.file(this.path).writer())._getFd();
+      }
       callback();
       this.emit("open", this.fd);
       this.emit("ready");
@@ -389,12 +407,13 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     return new WriteStream(path, options);
   }
 
+  let fastPath = options?.$fastPath ?? !disableFastPaths();
+
   options = copyObject(getStreamOptions(options));
 
   // Only buffers are supported.
   options.decodeStrings = true;
 
-  let fastPath = true;
   let { fd, autoClose, fs: customFs, start, flush } = options;
   if (fd == null) {
     this[kFs] = customFs || fs;
@@ -575,13 +594,23 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
   try {
     if (fileSink === true) {
       fileSink = this[kWriteStreamFastPath] = Bun.file(this.path).writer();
+      // @ts-expect-error
+      this.fd = fileSink._getFd();
     }
     const maybePromise = fileSink.write(data);
-    if (cb) thenIfPromise(maybePromise, cb);
+    if ($isPromise(maybePromise) && 
+      (($getPromiseInternalField(maybePromise, $promiseFieldFlags) & $promiseStateMask) === $promiseStatePending)
+    ) {
+      if (cb) maybePromise.then(() => cb(null), cb);
+      return false;
+    } else {
+      if (cb) process.nextTick(cb, null);
+    }
+    return true;
   } catch (e) {
     if (cb) process.nextTick(cb, e);
+    return false;
   }
-  return true;
 }
 
 function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
@@ -604,12 +633,20 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
   try {
     $assert(fs.write === write, "this patching case not handled, and likely does not matter");
     const maybePromise = fileSink.write(data);
-    if (typeof cb === "function") thenIfPromise(maybePromise, cb);
+    if ($isPromise(maybePromise) && 
+      (($getPromiseInternalField(maybePromise, $promiseFieldFlags) & $promiseStateMask) === $promiseStatePending)
+    ) {
+      if (typeof cb === "function") maybePromise.then(() => cb(null), cb);
+      return false;
+    } else {
+      if (typeof cb === "function") process.nextTick(cb, null);
+    }
+    return true;
   } catch (e) {
     if (typeof cb === "function") process.nextTick(cb, e);
-    else throw e;
+    else process.nextTick(() => { this.emit("error", e); });
+    return false;
   }
-  return true;
 }
 
 function endFast(this: FSStream, data: any, encoding: any, cb: any) {
@@ -728,7 +765,7 @@ function writableFromFileSink(fileSink: any) {
   $assert(typeof fileSink === "object", "fileSink is not an object");
   $assert(typeof fileSink.write === "function", "fileSink.write is not a function");
   $assert(typeof fileSink.end === "function", "fileSink.end is not a function");
-  const w = new WriteStream("");
+  const w = new WriteStream("", { $fastPath: true });
   $assert(w[kWriteStreamFastPath] === true, "fast path not enabled");
   w[kWriteStreamFastPath] = fileSink;
   w.path = undefined;

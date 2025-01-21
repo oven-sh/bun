@@ -41,7 +41,7 @@ export function getStdioWriteStream(fd) {
     stream._type = "tty";
   } else {
     const fs = require("node:fs");
-    stream = new fs.WriteStream(null, { autoClose: false, fd });
+    stream = new fs.WriteStream(null, { autoClose: false, fd, $fastPath: true });
     stream.readable = false;
     stream._type = "fs";
   }

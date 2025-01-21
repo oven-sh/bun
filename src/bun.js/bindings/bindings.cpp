@@ -4089,6 +4089,17 @@ CPP_DECL double JSC__JSValue__coerceToDouble(JSC__JSValue JSValue0, JSC__JSGloba
 
     return result;
 }
+CPP_DECL double Bun__JSValue__toNumber(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, bool* had_exception)
+{
+    ASSERT_NO_PENDING_EXCEPTION(arg1);
+    auto catchScope = DECLARE_CATCH_SCOPE(arg1->vm());
+    double result = JSC::JSValue::decode(JSValue0).toNumber(arg1);
+    if (catchScope.exception()) {
+        *had_exception = true;
+        return PNaN;
+    }
+    return result;
+}
 
 // truncates values larger than int32
 int32_t JSC__JSValue__coerceToInt32(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)

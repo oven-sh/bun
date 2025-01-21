@@ -1974,9 +1974,18 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
         const jsEnd = JSC.toJSHostFunction(end);
         const jsConstruct = JSC.toJSHostFunction(construct);
 
+        fn jsGetInternalFd(ptr: *anyopaque) callconv(.C) JSValue {
+            var this = bun.cast(*ThisSink, ptr);
+            if (comptime @hasDecl(SinkType, "getFd")) {
+                return JSValue.jsNumber(this.sink.getFd());
+            }
+            return .null;
+        }
+
         comptime {
             @export(finalize, .{ .name = shim.symbolName("finalize") });
             @export(jsWrite, .{ .name = shim.symbolName("write") });
+            @export(jsGetInternalFd, .{ .name = shim.symbolName("getInternalFd") });
             @export(close, .{ .name = shim.symbolName("close") });
             @export(jsFlush, .{ .name = shim.symbolName("flush") });
             @export(jsStart, .{ .name = shim.symbolName("start") });
@@ -3892,6 +3901,10 @@ pub const FileSink = struct {
     }
 
     pub const JSSink = NewJSSink(@This(), "FileSink");
+
+    fn getFd(this: *const @This()) i32 {
+        return this.fd.cast();
+    }
 
     fn toResult(this: *FileSink, write_result: bun.io.WriteResult) StreamResult.Writable {
         switch (write_result) {

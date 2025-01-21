@@ -1,44 +1,21 @@
 Bun provides native bindings for working with PostgreSQL databases with a modern, Promise-based API. The interface is designed to be simple and performant, using tagged template literals for queries and offering features like connection pooling, transactions, and prepared statements.
 
-```ts
-import { sql } from "bun";
+The API is simple and fast, with a surface inspired by [postgres.js](https://github.com/porsager/postgres).
 
-const user = {
-  name: "Alice",
-  email: "alice@example.com",
-  age: 25,
-};
-
-const [user] = await sql`INSERT INTO users ${sql(user)} RETURNING *`;
-// { id: 1, name: "Alice", email: "alice@example.com", age: 25 }
-```
-
-The API is simple and fast, Credit to [postgres.js](https://github.com/porsager/postgres) and its contributors for inspiring the API of `Bun.sql`.
-
-Features:
-
-- Tagged template literals automatically protect against SQL injection
-- Transactions
-- Parameters (named & positional)
-- Automatic prepared statements
-- Connection pooling
-- The fastest performance of any PostgreSQL driver for JavaScript
-- `bigint` support
-- Authentication methods:
-  - SASL (SCRAM-SHA-256) support
-  - MD5
-  - Clear text
-- Connection timeouts
-- SQL fragments
-- Returning data as objects, as values (array of arrays), and raw
-- Binary protocol support, improving serialization performance
-- TLS support, including auth mode:
-  - `require`
-  - `prefer`
-  - `disable`
-  - `verify-ca`
-  - `verify-full`
-- `$DATABASE_URL` environment variable support
+| | |
+|-|-|
+|✅|Tagged template literals to protect againt SQL injection|
+|✅|Transactions|
+|✅|Named & Positional parameters|
+|✅|Connection pooling|
+|✅|Faster than any other driver|
+|✅|`BigInt` support|
+|✅|SaSL Auth support|
+|✅|Connection timeouts|
+|✅|Returning row data objects, arrays, `Buffer`s|
+|✅|Support for the binary protocol|
+|✅|TLS support + auth mode|
+|✅|Automatic configuration with environment variable|
 
 ## Basic Select Queries
 
@@ -60,11 +37,11 @@ const activeUsers = await sql`
 
 ## Insert Operations
 
-Insert operations in Bun's SQL client come with several helpful features to make inserting data both safe and convenient. The client provides special helpers for handling both single-row and bulk inserts.
+Insert operations come with several helpful features to make inserting data both safe and convenient. The client provides special helpers for handling both single-row and bulk inserts.
 
 ### Single Row Insert
 
-Single row inserts can be performed either by specifying values directly or by using the sql() helper function with objects. The helper function automatically handles field names and value escaping.
+Single row inserts can be performed either by specifying values directly or by using the `sql()` helper function with objects. The helper function automatically handles field names and value escaping.
 
 ```ts
 // Basic insert with direct values
@@ -191,9 +168,34 @@ setTimeout(() => query.cancel(), 100);
 await query;
 ```
 
+## Database Environment Variables
+
+`sql` connection parameters can be configured using environment variables. The client checks these variables in a specific order of precedence.
+
+The following environment variables can be used to define the connection URL:
+
+| Environment Variable        | Description                                |
+| --------------------------- | ------------------------------------------ |
+| `POSTGRES_URL`              | Primary connection URL for PostgreSQL      |
+| `DATABASE_URL`              | Alternative connection URL                 |
+| `PGURL`                     | Alternative connection URL                 |
+| `PG_URL`                    | Alternative connection URL                 |
+| `TLS_POSTGRES_DATABASE_URL` | SSL/TLS-enabled connection URL             |
+| `TLS_DATABASE_URL`          | Alternative SSL/TLS-enabled connection URL |
+
+If no connection URL is provided, the system checks for the following individual parameters:
+
+| Environment Variable | Fallback Variables           | Default Value | Description       |
+| -------------------- | ---------------------------- | ------------- | ----------------- |
+| `PGHOST`             | -                            | `localhost`   | Database host     |
+| `PGPORT`             | -                            | `5432`        | Database port     |
+| `PGUSERNAME`         | `PGUSER`, `USER`, `USERNAME` | `postgres`    | Database user     |
+| `PGPASSWORD`         | -                            | (empty)       | Database password |
+| `PGDATABASE`         | -                            | username      | Database name     |
+
 ## Connection Options
 
-You can configure your database connection by passing options to the SQL constructor:
+You can configure your database connection manually by passing options to the SQL constructor:
 
 ```ts
 import { SQL } from "bun";
@@ -227,31 +229,6 @@ const db = new SQL({
   },
 });
 ```
-
-## Database Environment Variables
-
-SQL connection parameters can be configured using environment variables. The system checks these variables in a specific order of precedence.
-
-The following environment variables can be used to define the connection URL:
-
-| Environment Variable        | Description                                |
-| --------------------------- | ------------------------------------------ |
-| `POSTGRES_URL`              | Primary connection URL for PostgreSQL      |
-| `DATABASE_URL`              | Alternative connection URL                 |
-| `PGURL`                     | Alternative connection URL                 |
-| `PG_URL`                    | Alternative connection URL                 |
-| `TLS_POSTGRES_DATABASE_URL` | SSL/TLS-enabled connection URL             |
-| `TLS_DATABASE_URL`          | Alternative SSL/TLS-enabled connection URL |
-
-If no connection URL is provided, the system checks for the following individual parameters:
-
-| Environment Variable | Fallback Variables           | Default Value | Description       |
-| -------------------- | ---------------------------- | ------------- | ----------------- |
-| `PGHOST`             | -                            | `localhost`   | Database host     |
-| `PGPORT`             | -                            | `5432`        | Database port     |
-| `PGUSERNAME`         | `PGUSER`, `USER`, `USERNAME` | `postgres`    | Database user     |
-| `PGPASSWORD`         | -                            | (empty)       | Database password |
-| `PGDATABASE`         | -                            | username      | Database name     |
 
 ## Transactions
 
@@ -362,9 +339,7 @@ The SSL mode can also be specified in connection strings:
 const sql = new SQL("postgres://user:password@localhost/mydb?sslmode=prefer");
 
 // Using verify-full mode
-const sql = new SQL(
-  "postgres://user:password@localhost/mydb?sslmode=verify-full",
-);
+const sql = new SQL("postgres://user:password@localhost/mydb?sslmode=verify-full");
 ```
 
 ## Connection Pooling
@@ -492,7 +467,7 @@ The client provides typed errors for different failure scenarios:
 
 ## Numbers and BigInt
 
-Bun's SQL client includes special handling for large numbers that exceed the range of a 32-bit integer. Here’s how it works:
+Bun's SQL client includes special handling for large numbers that exceed the range of a 53-bit integer. Here’s how it works:
 
 ```ts
 import { sql } from "bun";

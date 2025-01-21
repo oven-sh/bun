@@ -3990,7 +3990,7 @@ pub const NodeFS = struct {
                         .err => .{ .err = .{
                             .errno = err.errno,
                             .syscall = .mkdir,
-                            .path = this.osPathIntoSyncErrorBuf(path[0..len]),
+                            .path = this.osPathIntoSyncErrorBuf(strings.withoutNTPrefix(bun.OSPathChar, path[0..len])),
                         } },
                         // if is a directory, OK. otherwise failure
                         .result => |result| if (result)
@@ -3999,7 +3999,7 @@ pub const NodeFS = struct {
                             .{ .err = .{
                                 .errno = err.errno,
                                 .syscall = .mkdir,
-                                .path = this.osPathIntoSyncErrorBuf(path[0..len]),
+                                .path = this.osPathIntoSyncErrorBuf(strings.withoutNTPrefix(bun.OSPathChar, path[0..len])),
                             } },
                     },
                     // continue
@@ -4017,7 +4017,7 @@ pub const NodeFS = struct {
                     return .{ .result = .{ .none = {} } };
                 }
                 return .{
-                    .result = .{ .string = bun.String.createFromOSPath(path) },
+                    .result = .{ .string = bun.String.createFromOSPath(strings.withoutNTPrefix(bun.OSPathChar, path)) },
                 };
             },
         }
@@ -4047,9 +4047,9 @@ pub const NodeFS = struct {
                             },
                             else => return .{ .err = err.withPath(
                                 if (Environment.isWindows)
-                                    this.osPathIntoSyncErrorBufOverlap(parent)
+                                    this.osPathIntoSyncErrorBufOverlap(strings.withoutNTPrefix(bun.OSPathChar, parent))
                                 else
-                                    parent,
+                                    strings.withoutNTPrefix(bun.OSPathChar, parent),
                             ) },
                         }
                     },
@@ -4079,7 +4079,7 @@ pub const NodeFS = struct {
 
                             // NOENT shouldn't happen here
                             else => return .{
-                                .err = err.withPath(this.osPathIntoSyncErrorBuf(path)),
+                                .err = err.withPath(this.osPathIntoSyncErrorBuf(strings.withoutNTPrefix(bun.OSPathChar, path))),
                             },
                         }
                     },
@@ -4104,7 +4104,7 @@ pub const NodeFS = struct {
 
                     // NOENT shouldn't happen here
                     else => return .{
-                        .err = err.withPath(this.osPathIntoSyncErrorBuf(path)),
+                        .err = err.withPath(this.osPathIntoSyncErrorBuf(strings.withoutNTPrefix(bun.OSPathChar, path))),
                     },
                 }
             },
@@ -4116,7 +4116,7 @@ pub const NodeFS = struct {
             return .{ .result = .{ .none = {} } };
         }
         return .{
-            .result = .{ .string = bun.String.createFromOSPath(working_mem[0..first_match]) },
+            .result = .{ .string = bun.String.createFromOSPath(strings.withoutNTPrefix(bun.OSPathChar, working_mem[0..first_match])) },
         };
     }
 

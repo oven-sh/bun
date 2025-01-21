@@ -4071,6 +4071,7 @@ it("should handle GitHub URL with existing lockfile", async () => {
     `
 [install]
 cache = false
+saveTextLockfile = false
 `,
   );
   await writeFile(
@@ -4976,6 +4977,7 @@ it("should handle Git URL with existing lockfile", async () => {
     `
 [install]
 cache = false
+saveTextLockfile = false
 `,
   );
   await writeFile(

@@ -1030,7 +1030,6 @@ function expectBundled(
           ignoreDCEAnnotations,
           drop,
           define: define ?? {},
-          throw: false,
         } as BuildConfig;
 
         if (dotenv) {

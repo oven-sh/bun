@@ -1258,30 +1258,6 @@ $ bun build ./index.tsx --outdir ./out --drop=console --drop=debugger --drop=any
 
 {% /codetabs %}
 
-### `experimentalCss`
-
-Whether to enable _experimental_ support for bundling CSS files. Defaults to `false`. In 1.2, this property will be deleted, and CSS bundling will always be enabled.
-
-This supports bundling CSS files imported from JS, as well as CSS entrypoints.
-
-{% codetabs group="a" %}
-
-```ts#JavaScript
-const result = await Bun.build({
-  entrypoints: ["./index.ts"],
-  experimentalCss: true,
-});
-// => { success: boolean, outputs: BuildArtifact[], logs: BuildMessage[] }
-```
-
-{% /codetabs %}
-
-### `throw`
-
-If set to `true`, `Bun.build` will throw on build failure. See the section ["Logs and Errors"](#logs-and-errors) for more details on the error message structure.
-
-In 1.2, this will default to `true`, with the previous behavior as `throw: false`
-
 ## Outputs
 
 The `Bun.build` function returns a `Promise<BuildOutput>`, defined as:
@@ -1582,13 +1558,6 @@ interface BuildConfig {
    * `// made with bun!`
    */
   footer?: string;
-
-  /**
-   * **Experimental**
-   *
-   * Enable CSS support.
-   */
-  experimentalCss?: boolean;
 
   /**
    * Drop function calls to matching property accesses.

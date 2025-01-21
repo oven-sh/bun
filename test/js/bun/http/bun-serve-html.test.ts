@@ -574,7 +574,7 @@ async function waitForServer(
     hostname: string;
   }>();
   const process = Bun.spawn({
-    cmd: [bunExe(), "--experimental-html", join(import.meta.dir, "bun-serve-static-fixture.js")],
+    cmd: [bunExe(), join(import.meta.dir, "bun-serve-static-fixture.js")],
     env: {
       ...bunEnv,
       NODE_ENV: undefined,

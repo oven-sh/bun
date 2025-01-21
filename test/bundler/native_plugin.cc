@@ -79,11 +79,12 @@ void log_error(const OnBeforeParseArguments *args,
 extern "C" BUN_PLUGIN_EXPORT void
 plugin_impl_with_needle(const OnBeforeParseArguments *args,
                         OnBeforeParseResult *result, const char *needle) {
-  // if (args->__struct_size < sizeof(OnBeforeParseArguments)) {
-  //     log_error(args, result, BUN_LOG_LEVEL_ERROR, "Invalid
-  //     OnBeforeParseArguments struct size", sizeof("Invalid
-  //     OnBeforeParseArguments struct size") - 1); return;
-  // }
+  if (args->__struct_size < sizeof(OnBeforeParseArguments)) {
+    const char *msg = "This plugin is built for a newer version of Bun than "
+                      "the one currently running.";
+    log_error(args, result, BUN_LOG_LEVEL_ERROR, msg, strlen(msg));
+    return;
+  }
 
   if (args->external) {
     External *external = (External *)args->external;

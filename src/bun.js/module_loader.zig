@@ -2357,7 +2357,7 @@ pub const ModuleLoader = struct {
                 loader = .ts;
             } else if (attribute.eqlComptime("tsx")) {
                 loader = .tsx;
-            } else if (jsc_vm.transpiler.options.experimental.html and attribute.eqlComptime("html")) {
+            } else if (attribute.eqlComptime("html")) {
                 loader = .html;
             }
         }

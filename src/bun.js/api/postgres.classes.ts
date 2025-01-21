@@ -68,6 +68,10 @@ export default [
         fn: "doDone",
         length: 0,
       },
+      setMode: {
+        fn: "setMode",
+        length: 1,
+      },
     },
     values: ["pendingValue", "target", "columns", "binding"],
     estimatedSize: true,

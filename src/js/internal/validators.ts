@@ -86,6 +86,7 @@ function validateOneOf(value, name, oneOf) {
 hideFromStack(validateOneOf);
 
 export default {
+  __proto__: null,
   validateObject: validateObject,
   validateLinkHeaderValue: validateLinkHeaderValue,
   checkIsHttpToken: checkIsHttpToken,

@@ -47,6 +47,7 @@ const constants = {
 };
 
 export default {
+  __proto__: null,
   createContext,
   runInContext,
   runInNewContext,

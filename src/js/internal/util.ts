@@ -2,4 +2,5 @@ const isInsideNodeModules: () => boolean = $newZigFunction("node_util_binding.zi
 
 export default {
   isInsideNodeModules,
+  __proto__: null,
 };

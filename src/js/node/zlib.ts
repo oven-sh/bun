@@ -730,6 +730,7 @@ const zlib = {
   Unzip,
   BrotliCompress,
   BrotliDecompress,
+  __proto__: null,
 
   deflate: createConvenienceMethod(Deflate, false, "deflate"),
   deflateSync: createConvenienceMethod(Deflate, true, "deflateSync"),

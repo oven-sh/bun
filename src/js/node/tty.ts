@@ -160,4 +160,4 @@ Object.defineProperty(WriteStream, "prototype", {
   configurable: true,
 });
 
-export default { ReadStream, WriteStream, isatty };
+export default { ReadStream, WriteStream, isatty, __proto__: null };

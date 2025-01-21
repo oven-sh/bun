@@ -966,6 +966,8 @@ for (const [method, pMethod] of [
 }
 
 export default {
+  __proto__: null,
+
   ADDRCONFIG: dns.ADDRCONFIG,
   ALL: dns.ALL,
   V4MAPPED: dns.V4MAPPED,

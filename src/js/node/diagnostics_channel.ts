@@ -391,6 +391,7 @@ function tracingChannel(nameOrChannels) {
 }
 
 export default {
+  __proto__: null,
   channel,
   hasSubscribers,
   subscribe,

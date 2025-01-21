@@ -19,4 +19,5 @@ function aggregateTwoErrors(innerError, outerError) {
 
 export default {
   aggregateTwoErrors,
+  __proto__: null,
 };

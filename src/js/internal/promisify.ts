@@ -102,4 +102,5 @@ export default {
   defineCustomPromisify,
   defineCustomPromisifyArgs,
   promisify,
+  __proto__: null,
 };

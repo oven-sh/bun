@@ -1080,6 +1080,7 @@ ObjectDefineProperty(UDP.prototype, 'owner', {
 */
 
 export default {
+  __proto__: null,
   /*
   _createSocketHandle: deprecate(
     _createSocketHandle,

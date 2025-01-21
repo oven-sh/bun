@@ -2759,6 +2759,7 @@ function internalGetConstructorName(val) {
 }
 
 export default {
+  __proto__: null,
   inspect,
   format,
   formatWithOptions,

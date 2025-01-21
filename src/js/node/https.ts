@@ -52,5 +52,6 @@ var https = {
   createServer: http.createServer,
   get,
   request,
+  __proto__: null,
 };
 export default https;

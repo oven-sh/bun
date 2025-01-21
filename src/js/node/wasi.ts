@@ -1934,4 +1934,4 @@ var require_wasi = __commonJS({
     exports.default = WASI;
   },
 });
-export default { WASI: require_wasi().default };
+export default { WASI: require_wasi().default, __proto__: null };

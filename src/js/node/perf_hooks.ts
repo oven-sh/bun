@@ -110,6 +110,7 @@ Object.setPrototypeOf(PerformanceResourceTiming.prototype, PerformanceEntry.prot
 Object.setPrototypeOf(PerformanceResourceTiming, PerformanceEntry);
 
 export default {
+  __proto__: null,
   performance: {
     mark(f) {
       return performance.mark(...arguments);

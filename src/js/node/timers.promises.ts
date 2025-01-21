@@ -205,6 +205,7 @@ export default {
   setTimeout: setTimeoutPromise,
   setImmediate: setImmediatePromise,
   setInterval: setIntervalPromise,
+  __proto__: null,
   scheduler: {
     wait: (delay, options) => setTimeoutPromise(delay, undefined, options),
     yield: setImmediatePromise,

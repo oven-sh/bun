@@ -108,4 +108,4 @@ function printMyersDiff(diff: Diff[], simple = false) {
   return { message: `\n${message}`, skipped };
 }
 
-export default { myersDiff, printMyersDiff, printSimpleMyersDiff };
+export default { myersDiff, printMyersDiff, printSimpleMyersDiff, __proto__: null };

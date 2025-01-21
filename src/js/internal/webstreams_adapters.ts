@@ -775,6 +775,7 @@ function newStreamDuplexFromReadableWritablePair(pair = kEmptyObject, options = 
 }
 
 export default {
+  __proto__: null,
   newWritableStreamFromStreamWritable,
   newReadableStreamFromStreamReadable,
   newStreamWritableFromWritableStream,

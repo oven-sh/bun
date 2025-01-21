@@ -42,4 +42,5 @@ function pipeline(...streams) {
 export default {
   finished,
   pipeline,
+  __proto__: null,
 };

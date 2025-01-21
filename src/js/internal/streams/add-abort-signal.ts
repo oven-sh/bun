@@ -46,6 +46,7 @@ function addAbortSignalNoValidate(signal, stream) {
 }
 
 export default {
+  __proto__: null,
   addAbortSignal,
   addAbortSignalNoValidate,
 };

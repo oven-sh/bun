@@ -171,4 +171,4 @@ function getColorDepth(env: NodeJS.ProcessEnv) {
   return COLORS_2;
 }
 
-export default { getColorDepth };
+export default { getColorDepth, __proto__: null };

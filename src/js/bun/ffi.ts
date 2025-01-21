@@ -582,4 +582,5 @@ export default {
   toBuffer,
   viewSource,
   cc,
+  __proto__: null,
 };

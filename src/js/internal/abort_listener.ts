@@ -30,4 +30,5 @@ function addAbortListener(signal: AbortSignal, listener: EventListener): Disposa
 
 export default {
   addAbortListener,
+  __proto__: null,
 };

@@ -384,6 +384,7 @@ Object.defineProperty(readStreamPrototype, "pending", {
 function close(stream, err, cb) {
   const fastPath: FileSink | true = stream[kWriteStreamFastPath];
   if (fastPath && fastPath !== true) {
+    stream.fd = null;
     const maybePromise = fastPath.end(err);
     thenIfPromise(maybePromise, cb);
     return;
@@ -502,9 +503,10 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     this[kWriteStreamFastPath] = fd ? Bun.file(fd).writer() : true;
     this._write = underscoreWriteFast;
     this._writev = undefined;
-    // TODO: fix this problem
-    // this.write = writeFast as any;
-    this.end = endFast as any;
+    // TODO: fix this problem. i would like to bypass most of node:stream
+    // for the obvious happy path, but it is a bit convoluted :(
+    this.write = writeFastSimple as any;
+    // this.end = endFast as any;
   }
 
   Writable.$call(this, options);
@@ -658,7 +660,7 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
       this[kIsPerformingIO] = (prevRefCount === true ? 0 : prevRefCount || 0) + 1;
       if (typeof cb === "function") maybePromise.then(() => {
         cb(null);
-        if ((this[kIsPerformingIO] -= 1) === 0 && this[kWriteStreamFastPathClosed]) {
+        if ((this[kIsPerformingIO] -= 1) === 0 && (this[kWriteFastSimpleBuffering] = false, this[kWriteStreamFastPathClosed])) {
           this.emit(kIoDone, null);
         }
       }, cb);
@@ -699,6 +701,24 @@ function endFastInner(this: FSStream, cb: any) {
   } else {
     Writable.prototype.end.$call(this, cb);
   }
+}
+
+var kWriteFastSimpleBuffering = Symbol("writeFastSimpleBuffering");
+function writeFastSimple(this: FSStream, data: any, encoding: any, cb: any) {
+  if (encoding != null && typeof encoding === "function") {
+    cb = encoding;
+    encoding = null;
+  }
+
+  if (!this[kWriteFastSimpleBuffering]) {
+    const result: any = this._write(data, encoding, cb);
+    if (result === false) {
+      this[kWriteFastSimpleBuffering] = true;
+    }
+    return result;
+  }
+
+  return Writable.prototype.write.$call(this, data, encoding, cb);
 }
 
 writeStreamPrototype._writev = function (data, cb) {

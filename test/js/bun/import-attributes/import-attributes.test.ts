@@ -80,8 +80,9 @@ async function testBunBuild(dir: string, loader: string): Promise<unknown> {
     outdir: path.join(dir, "out"),
   });
   if (result.success) {
+    const cmd = [bunExe(), "out/main_" + loader + ".js"];
     const result = Bun.spawnSync({
-      cmd: [bunExe(), "out/main_" + loader + ".js"],
+      cmd: cmd,
       cwd: dir,
     });
     if (result.exitCode !== 0) {
@@ -106,18 +107,22 @@ async function testBunBuild(dir: string, loader: string): Promise<unknown> {
     // return result.logs;
   }
 }
-async function compileAndTest(code: string): Record<string, string> {
+async function compileAndTest(code: string): Promise<Record<string, string>> {
   const v1 = await compileAndTest_inner(code, testBunRun);
   const v2 = await compileAndTest_inner(code, testBunRunAwaitImport);
-  expect(v1).toStrictEqual(v2);
   const v3 = await compileAndTest_inner(code, testBunBuild);
-  expect(v1).toStrictEqual(v3);
+  if (!Bun.deepEquals(v1, v2) || !Bun.deepEquals(v2, v3)) {
+    console.log("====  regular import  ====\n" + JSON.stringify(v1, null, 2) + "\n");
+    console.log("====  await import  ====\n" + JSON.stringify(v2, null, 2) + "\n");
+    console.log("====  build  ====\n" + JSON.stringify(v3, null, 2) + "\n");
+    throw new Error("did not equal");
+  }
   return v1;
 }
 async function compileAndTest_inner(
   code: string,
   cb: (dir: string, loader: string) => Promise<unknown>,
-): Record<string, string> {
+): Promise<Record<string, string>> {
   const dir = tempDirWithFiles("import-attributes", {
     "_the_file": code,
   });
@@ -152,26 +157,51 @@ async function compileAndTest_inner(
 }
 
 test("javascript", async () => {
-  expect(await compileAndTest(`export const a = "demo";`)).toMatchInlineSnapshot();
+  expect(await compileAndTest(`export const a = "demo";`)).toMatchInlineSnapshot(`
+{
+  "js,jsx,ts,tsx": "{"a":"demo"}",
+  "html,css,json,toml": ""error"",
+}
+`);
 });
 
 test("typescript", async () => {
-  expect(await compileAndTest(`export const a = (<T>() => {}).toString();`)).toMatchInlineSnapshot();
+  expect(await compileAndTest(`export const a = (<T>() => {}).toString();`)).toMatchInlineSnapshot(`
+{
+  "js,jsx,tsx,json,toml,html,css": ""error"",
+  "ts": "{"a":"() => {\\n}"}",
+}
+`);
 });
 
 test("json", async () => {
-  expect(await compileAndTest(`{"key": "value"}`)).toMatchInlineSnapshot();
+  expect(await compileAndTest(`{"key": "value"}`)).toMatchInlineSnapshot(`
+{
+  "js,jsx,ts,tsx,toml,html,css": ""error"",
+  "json": "{"key":"value","default":{"key":"value"}}",
+}
+`);
 });
 test("jsonc", async () => {
   expect(
     await compileAndTest(`{
       "key": "value", // my json
     }`),
-  ).toMatchInlineSnapshot();
+  ).toMatchInlineSnapshot(`
+{
+  "js,jsx,ts,tsx,json,toml,html,css": ""error"",
+  "json": "{"key":"value","default":{"key":"value"}}",
+}
+`);
 });
 test("toml", async () => {
   expect(
     await compileAndTest(`[section]
     key = "value"`),
-  ).toMatchInlineSnapshot();
+  ).toMatchInlineSnapshot(`
+{
+  "js,jsx,ts,tsx,json,html,css": ""error"",
+  "toml": "{"default":{"section":{"key":"value"}},"section":{"key":"value"}}",
+}
+`);
 });

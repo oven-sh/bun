@@ -2630,7 +2630,7 @@ pub const Arguments = struct {
 
             const buf_len = buffer.slice().len;
             if (buf_len == 0) {
-                return ctx.ERR_INVALID_ARG_VALUE("The 'buffer' argument is empty and cannot be written", .{}).throw();
+                return ctx.ERR_INVALID_ARG_VALUE("The argument 'buffer' is empty and cannot be written.", .{}).throw();
             }
             // validateOffsetLengthRead(offset, length, buffer.byteLength);
             if (@mod(length, 1) != 0) {
@@ -2649,6 +2649,9 @@ pub const Arguments = struct {
                     .{ .field_name = "length", .max = @intCast(buf_len -| args.offset) },
                 );
             }
+            if (int_length < 0) {
+                return ctx.throwRangeError(length, .{ .field_name = "length", .min = 0 });
+            }
             args.length = @intCast(int_length);
 
             // if (position == null) {
@@ -2659,8 +2662,21 @@ pub const Arguments = struct {
             const position_value: JSC.JSValue = arguments.nextEat() orelse .null;
             const position_int: i64 = if (position_value.isUndefinedOrNull())
                 -1
-            else
-                @intCast(try JSC.Node.validators.validateInteger(ctx, position_value, "position", -1, std.math.maxInt(i64)));
+            else if (position_value.isNumber())
+                try JSC.Node.validators.validateInteger(ctx, position_value, "position", -1, JSC.MAX_SAFE_INTEGER)
+            else if (position_value.isBigInt()) pos: {
+                const max_position = std.math.maxInt(i64) - args.length;
+                const position = position_value.to(i64);
+                if (position < -1 or position > max_position) {
+                    return ctx.throwRangeError(position, .{
+                        .field_name = "position",
+                        .min = -1,
+                        .max = @intCast(max_position),
+                    });
+                }
+                break :pos position;
+            } else return ctx.throwInvalidArgumentTypeValue("position", "number or bigint", position_value);
+
             // Bun needs `null` to tell the native function if to use pread or read
             args.position = if (position_int >= 0)
                 position_int
@@ -3345,7 +3361,10 @@ pub const NodeFS = struct {
     pub const ReturnType = Return;
 
     pub fn access(this: *NodeFS, args: Arguments.Access, _: Flavor) Maybe(Return.Access) {
-        const path = args.path.osPathKernel32(&this.sync_error_buf);
+        const path: bun.OSPathSliceZ = if (args.path.slice().len == 0)
+            comptime bun.OSPathLiteral("")
+        else
+            args.path.osPathKernel32(&this.sync_error_buf);
         return switch (Syscall.access(path, args.mode.asInt())) {
             .err => |err| .{ .err = err.withPath(args.path.slice()) },
             .result => .{ .result = .{} },
@@ -3741,8 +3760,11 @@ pub const NodeFS = struct {
 
     pub fn exists(this: *NodeFS, args: Arguments.Exists, _: Flavor) Maybe(Return.Exists) {
         // NOTE: exists cannot return an error
-        const path = args.path orelse return .{ .result = false };
-        const slice = path.osPathKernel32(&this.sync_error_buf);
+        const path: PathLike = args.path orelse return .{ .result = false };
+        const slice = if (path.slice().len == 0)
+            comptime bun.OSPathLiteral("")
+        else
+            path.osPathKernel32(&this.sync_error_buf);
         return .{ .result = bun.sys.existsOSPath(slice, false) };
     }
 
@@ -4400,7 +4422,7 @@ pub const NodeFS = struct {
             .err => |err| .{ .err = .{
                 .syscall = .scandir,
                 .errno = err.errno,
-                .path = err.path,
+                .path = args.path.slice(),
             } },
             .result => |result| .{ .result = result },
         };
@@ -4458,7 +4480,7 @@ pub const NodeFS = struct {
         }) |current| : (entry = iterator.next()) {
             if (ExpectedType == Dirent) {
                 if (dirent_path.isEmpty()) {
-                    dirent_path = JSC.WebCore.Encoder.toBunString(basename, args.encoding);
+                    dirent_path = JSC.WebCore.Encoder.toBunString(strings.withoutNTPrefix(std.meta.Child(@TypeOf(basename)), basename), args.encoding);
                 }
             }
             if (comptime !is_u16) {
@@ -4762,7 +4784,7 @@ pub const NodeFS = struct {
                         const path_u8 = bun.path.dirname(bun.path.join(&[_]string{ root_basename, name_to_copy }, .auto), .auto);
                         if (dirent_path_prev.isEmpty() or !bun.strings.eql(dirent_path_prev.byteSlice(), path_u8)) {
                             dirent_path_prev.deref();
-                            dirent_path_prev = JSC.WebCore.Encoder.toBunString(path_u8, args.encoding);
+                            dirent_path_prev = JSC.WebCore.Encoder.toBunString(strings.withoutNTPrefix(std.meta.Child(@TypeOf(path_u8)), path_u8), args.encoding);
                         }
                         dirent_path_prev.ref();
                         entries.append(.{
@@ -4772,10 +4794,10 @@ pub const NodeFS = struct {
                         }) catch bun.outOfMemory();
                     },
                     Buffer => {
-                        entries.append(Buffer.fromString(name_to_copy, bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
+                        entries.append(Buffer.fromString(strings.withoutNTPrefix(std.meta.Child(@TypeOf(name_to_copy)), name_to_copy), bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
                     },
                     bun.String => {
-                        entries.append(JSC.WebCore.Encoder.toBunString(name_to_copy, args.encoding)) catch bun.outOfMemory();
+                        entries.append(JSC.WebCore.Encoder.toBunString(strings.withoutNTPrefix(std.meta.Child(@TypeOf(name_to_copy)), name_to_copy), args.encoding)) catch bun.outOfMemory();
                     },
                     else => @compileError(unreachable),
                 }

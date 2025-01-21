@@ -382,6 +382,14 @@ Object.defineProperty(readStreamPrototype, "pending", {
 });
 
 function close(stream, err, cb) {
+  const fastPath: FileSink | true = stream[kWriteStreamFastPath];
+  if (fastPath && fastPath !== true) {
+    stream.fd = null;
+    const maybePromise = fastPath.end(err);
+    thenIfPromise(maybePromise, cb);
+    return;
+  }
+
   if (!stream.fd) {
     cb(err);
   } else if (stream.flush) {
@@ -495,9 +503,10 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     this[kWriteStreamFastPath] = fd ? Bun.file(fd).writer() : true;
     this._write = underscoreWriteFast;
     this._writev = undefined;
-    // TODO: fix this problem
-    // this.write = writeFast as any;
-    this.end = endFast as any;
+    // TODO: fix this problem. i would like to bypass most of node:stream
+    // for the obvious happy path, but it is a bit convoluted :(
+    this.write = writeFastSimple as any;
+    // this.end = endFast as any;
   }
 
   Writable.$call(this, options);
@@ -651,7 +660,7 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
       this[kIsPerformingIO] = (prevRefCount === true ? 0 : prevRefCount || 0) + 1;
       if (typeof cb === "function") maybePromise.then(() => {
         cb(null);
-        if ((this[kIsPerformingIO] -= 1) === 0 && this[kWriteStreamFastPathClosed]) {
+        if ((this[kIsPerformingIO] -= 1) === 0 && (this[kWriteFastSimpleBuffering] = false, this[kWriteStreamFastPathClosed])) {
           this.emit(kIoDone, null);
         }
       }, cb);
@@ -694,6 +703,25 @@ function endFastInner(this: FSStream, cb: any) {
   }
 }
 
+var kWriteFastSimpleBuffering = Symbol("writeFastSimpleBuffering");
+function writeFastSimple(this: FSStream, data: any, encoding: any, cb: any) {
+  if (!this[kWriteFastSimpleBuffering]) {
+    if (encoding != null && typeof encoding === "function") {
+      cb = encoding;
+      encoding = null;
+    }
+
+    if (typeof cb !== "function") cb = undefined;
+    const result: any = this._write(data, encoding, cb ?? streamNoop);
+    if (result === false) {
+      this[kWriteFastSimpleBuffering] = true;
+    }
+    return result;
+  }
+
+  return Writable.prototype.write.$call(this, data, encoding, cb);
+}
+
 writeStreamPrototype._writev = function (data, cb) {
   const len = data.length;
   const chunks = new Array(len);
@@ -722,19 +750,14 @@ writeStreamPrototype._writev = function (data, cb) {
 };
 
 writeStreamPrototype._destroy = function (err, cb) {
-  const fastPath: FileSink | true = this[kWriteStreamFastPath];
-  if (fastPath && fastPath !== true) {
-    const maybePromise = fastPath.end(err);
-    thenIfPromise(maybePromise, cb);
-    return;
-  }
   // Usually for async IO it is safe to close a file descriptor
   // even when there are pending operations. However, due to platform
   // differences file IO is implemented using synchronous operations
   // running in a thread pool. Therefore, file descriptors are not safe
   // to close while used in a pending read or write operation. Wait for
   // any pending IO (kIsPerformingIO) to complete (kIoDone).
-  if (this[kIsPerformingIO]) {
+  if (this[kIsPerformingIO] > 0) {
+    this[kWriteStreamFastPathClosed] = true;
     this.once(kIoDone, er => close(this, err || er, cb));
   } else {
     close(this, err, cb);

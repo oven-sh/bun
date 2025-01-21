@@ -4724,8 +4724,6 @@ pub const Package = extern struct {
             bun.assert(dependency_version.tag != .npm and dependency_version.tag != .dist_tag);
         }
 
-        var found_workspace = false;
-
         switch (dependency_version.tag) {
             .folder => {
                 const relative = Path.relative(
@@ -4757,7 +4755,6 @@ pub const Package = extern struct {
                             log,
                             pm,
                         )) |dep| {
-                            found_workspace = true;
                             dependency_version.tag = dep.tag;
                             dependency_version.value = dep.value;
                         }

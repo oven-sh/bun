@@ -319,6 +319,7 @@ pub const WebWorker = struct {
         for (this.preloads) |preload| {
             bun.default_allocator.free(preload);
         }
+        if (this.arena) |*arena| arena.deinit();
         bun.default_allocator.free(this.preloads);
         bun.default_allocator.destroy(this);
     }
@@ -513,7 +514,6 @@ pub const WebWorker = struct {
             globalObject = vm.global;
             vm_to_deinit = vm;
         }
-        var arena = this.arena;
 
         WebWorker__dispatchExit(globalObject, cpp_worker, exit_code);
         if (loop) |loop_| {
@@ -527,9 +527,6 @@ pub const WebWorker = struct {
             vm.deinit(); // NOTE: deinit here isn't implemented, so freeing workers will leak the vm.
         }
         bun.deleteAllPoolsForThreadExit();
-        if (arena) |*arena_| {
-            arena_.deinit();
-        }
 
         bun.exitThread();
     }

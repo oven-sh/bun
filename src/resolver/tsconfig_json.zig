@@ -146,6 +146,7 @@ pub const TSConfigJSON = struct {
         return string_builder.allocatedSlice()[0 .. string_builder.len - 1];
     }
 
+    /// Allocates. Call `tsconfig.destroy()` when done.
     pub fn parse(
         allocator: std.mem.Allocator,
         log: *logger.Log,

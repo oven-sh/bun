@@ -804,6 +804,7 @@ pub const RunCommand = struct {
     const DirInfo = @import("../resolver/dir_info.zig");
     pub fn configureEnvForRun(
         ctx: Command.Context,
+        /// Gets initialized
         this_transpiler: *transpiler.Transpiler,
         env: ?*DotEnv.Loader,
         log_errors: bool,
@@ -1264,7 +1265,10 @@ pub const RunCommand = struct {
 
     fn _bootAndHandleError(ctx: Command.Context, path: string) bool {
         Global.configureAllocator(.{ .long_running = true });
-        Run.boot(ctx, ctx.allocator.dupe(u8, path) catch return false) catch |err| {
+        var arena: bun.MimallocArena = .{};
+        // leaking memory on exit is fine, but it makes leak detection more difficult.
+        defer if (comptime bun.Environment.detect_leaks) arena.deinit();
+        Run.boot(ctx, &arena, ctx.allocator.dupe(u8, path) catch return false) catch |err| {
             ctx.log.print(Output.errorWriter()) catch {};
 
             Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
@@ -1274,6 +1278,7 @@ pub const RunCommand = struct {
             bun.handleErrorReturnTrace(err, @errorReturnTrace());
             Global.exit(1);
         };
+
         return true;
     }
     fn maybeOpenWithBunJS(ctx: Command.Context) bool {
@@ -1334,7 +1339,7 @@ pub const RunCommand = struct {
                 .err => return false,
             }
 
-            Global.configureAllocator(.{ .long_running = true });
+            Global.configureAllocator(.{ .long_running = true }); // CHECKME
 
             absolute_script_path = brk: {
                 if (comptime !Environment.isWindows) break :brk bun.getFdPath(file, &script_name_buf) catch return false;
@@ -1400,7 +1405,10 @@ pub const RunCommand = struct {
         const force_using_bun = ctx.debug.run_in_bun;
         var ORIGINAL_PATH: string = "";
         var this_transpiler: transpiler.Transpiler = undefined;
-        const root_dir_info = try configureEnvForRun(ctx, &this_transpiler, null, log_errors, false);
+        const root_dir_info: *DirInfo = try configureEnvForRun(ctx, &this_transpiler, null, log_errors, false);
+        defer if (comptime bun.Environment.detect_leaks) {
+            root_dir_info.deinit();
+        };
         try configurePathForRun(ctx, root_dir_info, &this_transpiler, &ORIGINAL_PATH, root_dir_info.abs_path, force_using_bun);
         this_transpiler.env.map.put("npm_command", "run-script") catch unreachable;
 
@@ -1441,7 +1449,7 @@ pub const RunCommand = struct {
             @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
             const entry_path = entry_point_buf[0 .. cwd.len + trigger.len];
 
-            Run.boot(ctx, ctx.allocator.dupe(u8, entry_path) catch return false) catch |err| {
+            Run.boot(ctx, null, ctx.allocator.dupe(u8, entry_path) catch return false) catch |err| {
                 ctx.log.print(Output.errorWriter()) catch {};
 
                 Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
@@ -1619,7 +1627,7 @@ pub const RunCommand = struct {
             var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
             const cwd = try std.posix.getcwd(&entry_point_buf);
             @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
-            try Run.boot(ctx, entry_point_buf[0 .. cwd.len + trigger.len]);
+            try Run.boot(ctx, null, entry_point_buf[0 .. cwd.len + trigger.len]);
             return;
         }
 
@@ -1649,7 +1657,7 @@ pub const RunCommand = struct {
             );
         };
 
-        Run.boot(ctx, normalized_filename) catch |err| {
+        Run.boot(ctx, null, normalized_filename) catch |err| {
             ctx.log.print(Output.errorWriter()) catch {};
 
             Output.err(err, "Failed to run script \"<b>{s}<r>\"", .{std.fs.path.basename(normalized_filename)});
@@ -1724,7 +1732,7 @@ pub const BunXFastPath = struct {
             bun.reinterpretSlice(u8, &direct_launch_buffer),
             wpath,
         ) catch return;
-        Run.boot(ctx, utf8) catch |err| {
+        Run.boot(ctx, null, utf8) catch |err| {
             ctx.log.print(Output.errorWriter()) catch {};
             Output.err(err, "Failed to run bin \"<b>{s}<r>\"", .{std.fs.path.basename(utf8)});
             Global.exit(1);

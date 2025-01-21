@@ -40,8 +40,12 @@ package_json_for_dependencies: ?*PackageJSON = null,
 
 abs_path: string = "",
 entries: Index = undefined,
-package_json: ?*PackageJSON = null, // Is there a "package.json" file?
-tsconfig_json: ?*TSConfigJSON = null, // Is there a "tsconfig.json" file in this directory or a parent directory?
+/// Is there a "package.json" file?
+///
+/// Allocated with `bun.default_allocator`.
+package_json: ?*PackageJSON = null,
+/// Is there a "tsconfig.json" file in this directory or a parent directory?
+tsconfig_json: ?*TSConfigJSON = null,
 abs_real_path: string = "", // If non-empty, this is the real absolute path resolving any symlinks
 
 flags: Flags.Set = Flags.Set{},
@@ -117,6 +121,11 @@ pub fn getParent(i: *const DirInfo) ?*DirInfo {
 }
 pub fn getEnclosingBrowserScope(i: *const DirInfo) ?*DirInfo {
     return HashMap.instance.atIndex(i.enclosing_browser_scope);
+}
+
+pub fn deinit(this: *DirInfo) void {
+    if (this.package_json) |package_json| package_json.destroy();
+    if (this.tsconfig_json) |tsconfig_json| tsconfig_json.destroy();
 }
 
 // Goal: Really fast, low allocation directory map exploiting cache locality where we don't worry about lifetimes much.

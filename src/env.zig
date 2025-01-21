@@ -45,6 +45,8 @@ pub const canary_revision = if (is_canary) build_options.canary_revision else ""
 pub const dump_source = isDebug and !isTest;
 pub const base_path = build_options.base_path;
 pub const enable_logs = build_options.enable_logs or isDebug;
+/// We're trying to find memory leaks
+pub const detect_leaks = isDebug or builtin.valgrind_support;
 
 pub const codegen_path = build_options.codegen_path;
 pub const codegen_embed = build_options.codegen_embed;

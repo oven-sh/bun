@@ -170,7 +170,7 @@ pub const Run = struct {
         return bun.shell.Interpreter.initAndRunFromFile(ctx, mini, entry_path);
     }
 
-    pub fn boot(ctx: Command.Context, entry_path: string) !void {
+    pub fn boot(ctx: Command.Context, _arena: ?*Arena, entry_path: string) !void {
         JSC.markBinding(@src());
 
         if (!ctx.debug.loaded_bunfig) {
@@ -190,6 +190,7 @@ pub const Run = struct {
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();
         var arena = try Arena.init();
+        if (_arena) |a| a.* = arena;
 
         run = .{
             .vm = try VirtualMachine.init(

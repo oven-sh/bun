@@ -1200,9 +1200,16 @@ pub const TestCommand = struct {
         var snapshot_values = Snapshots.ValuesHashMap.init(ctx.allocator);
         var snapshot_counts = bun.StringHashMap(usize).init(ctx.allocator);
         var inline_snapshots_to_write = std.AutoArrayHashMap(TestRunner.File.ID, std.ArrayList(Snapshots.InlineSnapshotToWrite)).init(ctx.allocator);
+        defer if (comptime bun.Environment.detect_leaks) {
+            snapshot_file_buf.deinit();
+            snapshot_values.deinit();
+            snapshot_counts.deinit();
+            inline_snapshots_to_write.deinit();
+        };
         JSC.isBunTest = true;
 
         var reporter = try ctx.allocator.create(CommandLineReporter);
+        defer ctx.allocator.destroy(reporter);
         reporter.* = CommandLineReporter{
             .jest = TestRunner{
                 .allocator = ctx.allocator,
@@ -1244,6 +1251,7 @@ pub const TestCommand = struct {
             };
         }
 
+        // FIXME: calling .deinit() on these causes compile errors
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();
         var vm = try JSC.VirtualMachine.init(
@@ -1263,6 +1271,7 @@ pub const TestCommand = struct {
                 .is_main_thread = true,
             },
         );
+        defer vm.deinit();
         vm.argv = ctx.passthrough;
         vm.preload = ctx.preloads;
         vm.transpiler.options.rewrite_jest_for_tests = true;

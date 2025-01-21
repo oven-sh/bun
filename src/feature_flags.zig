@@ -3,7 +3,7 @@ const bun = @import("root").bun;
 
 /// Enable breaking changes for the next major release of Bun
 // TODO: Make this a CLI flag / runtime var so that we can verify disabled code paths can compile
-pub const breaking_changes_1_2 = false;
+pub const breaking_changes_1_3 = false;
 
 /// Store and reuse file descriptors during module resolution
 /// This was a ~5% performance improvement

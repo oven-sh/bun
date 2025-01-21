@@ -109,7 +109,6 @@ pub const BuildCommand = struct {
         this_transpiler.options.footer = ctx.bundler_options.footer;
         this_transpiler.options.drop = ctx.args.drop;
 
-        this_transpiler.options.experimental = ctx.bundler_options.experimental;
         this_transpiler.options.css_chunking = ctx.bundler_options.css_chunking;
 
         this_transpiler.options.output_dir = ctx.bundler_options.outdir;
@@ -217,11 +216,9 @@ pub const BuildCommand = struct {
         try this_transpiler.configureDefines();
         this_transpiler.configureLinker();
 
-        if (bun.FeatureFlags.breaking_changes_1_2) {
-            // This is currently done in DevServer by default, but not in Bun.build
-            if (!this_transpiler.options.production) {
-                try this_transpiler.options.conditions.appendSlice(&.{"development"});
-            }
+        // This is currently done in DevServer by default, but not in Bun.build
+        if (!this_transpiler.options.production) {
+            try this_transpiler.options.conditions.appendSlice(&.{"development"});
         }
 
         this_transpiler.resolver.opts = this_transpiler.options;

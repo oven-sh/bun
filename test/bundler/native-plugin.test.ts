@@ -295,7 +295,6 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
           },
         },
       ],
-      throw: true,
     });
 
     const output = await Bun.$`${bunExe()} run dist/index.js`.cwd(tempdir).text();
@@ -679,7 +678,6 @@ console.log(JSON.stringify(json))
             },
           },
         ],
-        throw: true,
       });
 
       expect(result.success).toBeTrue();

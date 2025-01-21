@@ -5681,20 +5681,12 @@ pub const ServerWebSocket = struct {
             return JSValue.jsBoolean(true);
         }
 
-        if (comptime bun.FeatureFlags.breaking_changes_1_2) {
-            if (!args.ptr[0].isString()) {
-                return globalThis.throwInvalidArgumentTypeValue("topic", "string", args.ptr[0]);
-            }
+        if (!args.ptr[0].isString()) {
+            return globalThis.throwInvalidArgumentTypeValue("topic", "string", args.ptr[0]);
         }
 
         var topic = args.ptr[0].toSlice(globalThis, bun.default_allocator);
         defer topic.deinit();
-
-        if (comptime !bun.FeatureFlags.breaking_changes_1_2) {
-            if (globalThis.hasException()) {
-                return .zero;
-            }
-        }
 
         if (topic.len == 0) {
             return globalThis.throw("subscribe requires a non-empty topic name", .{});
@@ -5702,11 +5694,7 @@ pub const ServerWebSocket = struct {
 
         return JSValue.jsBoolean(this.websocket().subscribe(topic.slice()));
     }
-    pub fn unsubscribe(
-        this: *ServerWebSocket,
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSValue {
+    pub fn unsubscribe(this: *ServerWebSocket, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const args = callframe.arguments_old(1);
         if (args.len < 1) {
             return globalThis.throw("unsubscribe requires at least 1 argument", .{});
@@ -5716,20 +5704,12 @@ pub const ServerWebSocket = struct {
             return JSValue.jsBoolean(true);
         }
 
-        if (comptime bun.FeatureFlags.breaking_changes_1_2) {
-            if (!args.ptr[0].isString()) {
-                return globalThis.throwInvalidArgumentTypeValue("topic", "string", args.ptr[0]);
-            }
+        if (!args.ptr[0].isString()) {
+            return globalThis.throwInvalidArgumentTypeValue("topic", "string", args.ptr[0]);
         }
 
         var topic = args.ptr[0].toSlice(globalThis, bun.default_allocator);
         defer topic.deinit();
-
-        if (comptime !bun.FeatureFlags.breaking_changes_1_2) {
-            if (globalThis.hasException()) {
-                return .zero;
-            }
-        }
 
         if (topic.len == 0) {
             return globalThis.throw("unsubscribe requires a non-empty topic name", .{});
@@ -5751,20 +5731,12 @@ pub const ServerWebSocket = struct {
             return JSValue.jsBoolean(false);
         }
 
-        if (comptime bun.FeatureFlags.breaking_changes_1_2) {
-            if (!args.ptr[0].isString()) {
-                return globalThis.throwInvalidArgumentTypeValue("topic", "string", args.ptr[0]);
-            }
+        if (!args.ptr[0].isString()) {
+            return globalThis.throwInvalidArgumentTypeValue("topic", "string", args.ptr[0]);
         }
 
         var topic = args.ptr[0].toSlice(globalThis, bun.default_allocator);
         defer topic.deinit();
-
-        if (comptime !bun.FeatureFlags.breaking_changes_1_2) {
-            if (globalThis.hasException()) {
-                return .zero;
-            }
-        }
 
         if (topic.len == 0) {
             return globalThis.throw("isSubscribed requires a non-empty topic name", .{});

@@ -889,11 +889,6 @@ pub const BundleV2 = struct {
         const source_index = Index.source(this.graph.input_files.len);
         const loader = brk: {
             const default = path.loader(&this.transpiler.options.loaders) orelse .file;
-
-            if (!this.transpiler.options.experimental.html) {
-                break :brk default.disableHTML();
-            }
-
             break :brk default;
         };
 
@@ -922,7 +917,7 @@ pub const BundleV2 = struct {
 
         // Handle onLoad plugins as entry points
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
-            if (loader.shouldCopyForBundling(this.transpiler.options.experimental)) {
+            if (loader.shouldCopyForBundling()) {
                 var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
                 additional_files.push(this.graph.allocator, .{ .source_index = task.source_index.get() }) catch unreachable;
                 this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
@@ -1016,7 +1011,6 @@ pub const BundleV2 = struct {
         this.linker.options.ignore_dce_annotations = transpiler.options.ignore_dce_annotations;
         this.linker.options.banner = transpiler.options.banner;
         this.linker.options.footer = transpiler.options.footer;
-        this.linker.options.experimental = transpiler.options.experimental;
         this.linker.options.css_chunking = transpiler.options.css_chunking;
         this.linker.options.source_maps = transpiler.options.source_map;
         this.linker.options.tree_shaking = transpiler.options.tree_shaking;
@@ -1352,7 +1346,7 @@ pub const BundleV2 = struct {
 
         // Handle onLoad plugins
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
-            if (loader.shouldCopyForBundling(this.transpiler.options.experimental)) {
+            if (loader.shouldCopyForBundling()) {
                 var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
                 additional_files.push(this.graph.allocator, .{ .source_index = task.source_index.get() }) catch unreachable;
                 this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
@@ -1408,7 +1402,7 @@ pub const BundleV2 = struct {
 
         // Handle onLoad plugins
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
-            if (loader.shouldCopyForBundling(this.transpiler.options.experimental)) {
+            if (loader.shouldCopyForBundling()) {
                 var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
                 additional_files.push(this.graph.allocator, .{ .source_index = task.source_index.get() }) catch unreachable;
                 this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
@@ -1756,7 +1750,7 @@ pub const BundleV2 = struct {
                 },
                 completion.env,
             );
-            transpiler.options.env.behavior = config.env_behavior;
+            transpiler.options.env.behavior = .disable;
             transpiler.options.env.prefix = config.env_prefix.slice();
 
             transpiler.options.entry_points = config.entry_points.keys();
@@ -1782,7 +1776,6 @@ pub const BundleV2 = struct {
             transpiler.options.code_splitting = config.code_splitting;
             transpiler.options.emit_dce_annotations = config.emit_dce_annotations orelse !config.minify.whitespace;
             transpiler.options.ignore_dce_annotations = config.ignore_dce_annotations;
-            transpiler.options.experimental = config.experimental;
             transpiler.options.css_chunking = config.css_chunking;
             transpiler.options.banner = config.banner.slice();
             transpiler.options.footer = config.footer.slice();
@@ -1790,10 +1783,8 @@ pub const BundleV2 = struct {
             transpiler.configureLinker();
             try transpiler.configureDefines();
 
-            if (bun.FeatureFlags.breaking_changes_1_2) {
-                if (!transpiler.options.production) {
-                    try transpiler.options.conditions.appendSlice(&.{"development"});
-                }
+            if (!transpiler.options.production) {
+                try transpiler.options.conditions.appendSlice(&.{"development"});
             }
 
             transpiler.resolver.opts = transpiler.options;
@@ -1835,26 +1826,7 @@ pub const BundleV2 = struct {
 
             switch (this.result) {
                 .pending => unreachable,
-                .err => brk: {
-                    if (this.config.throw_on_error) {
-                        promise.reject(globalThis, this.log.toJSAggregateError(globalThis, bun.String.static("Bundle failed")));
-                        break :brk;
-                    }
-
-                    const root_obj = JSC.JSValue.createEmptyObject(globalThis, 3);
-                    root_obj.put(globalThis, JSC.ZigString.static("outputs"), JSC.JSValue.createEmptyArray(globalThis, 0));
-                    root_obj.put(
-                        globalThis,
-                        JSC.ZigString.static("success"),
-                        JSC.JSValue.jsBoolean(false),
-                    );
-                    root_obj.put(
-                        globalThis,
-                        JSC.ZigString.static("logs"),
-                        this.log.toJSArray(globalThis, bun.default_allocator),
-                    );
-                    promise.resolve(globalThis, root_obj);
-                },
+                .err => promise.reject(globalThis, this.log.toJSAggregateError(globalThis, bun.String.static("Bundle failed"))),
                 .value => |*build| {
                     const root_obj = JSC.JSValue.createEmptyObject(globalThis, 3);
                     const output_files: []options.OutputFile = build.output_files.items;
@@ -1999,7 +1971,7 @@ pub const BundleV2 = struct {
                 this.decrementScanCounter();
             },
             .success => |code| {
-                const should_copy_for_bundling = load.parse_task.defer_copy_for_bundling and code.loader.shouldCopyForBundling(this.transpiler.options.experimental);
+                const should_copy_for_bundling = load.parse_task.defer_copy_for_bundling and code.loader.shouldCopyForBundling();
                 if (should_copy_for_bundling) {
                     const source_index = load.source_index;
                     var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
@@ -2152,7 +2124,7 @@ pub const BundleV2 = struct {
 
                         // Handle onLoad plugins
                         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
-                            if (loader.shouldCopyForBundling(this.transpiler.options.experimental)) {
+                            if (loader.shouldCopyForBundling()) {
                                 var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
                                 additional_files.push(this.graph.allocator, .{ .source_index = task.source_index.get() }) catch unreachable;
                                 this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
@@ -2513,7 +2485,7 @@ pub const BundleV2 = struct {
     pub fn enqueueOnLoadPluginIfNeededImpl(this: *BundleV2, parse: *ParseTask) bool {
         if (this.plugins) |plugins| {
             if (plugins.hasAnyMatches(&parse.path, true)) {
-                if (parse.is_entry_point and parse.loader != null and parse.loader.?.shouldCopyForBundling(this.transpiler.options.experimental)) {
+                if (parse.is_entry_point and parse.loader != null and parse.loader.?.shouldCopyForBundling()) {
                     parse.defer_copy_for_bundling = true;
                 }
                 // This is where onLoad plugins are enqueued
@@ -2942,7 +2914,7 @@ pub const BundleV2 = struct {
                 .success => |val| val.source.index.get(),
             };
             const loader: Loader = this.graph.input_files.items(.loader)[source];
-            if (!loader.shouldCopyForBundling(this.transpiler.options.experimental)) {
+            if (!loader.shouldCopyForBundling()) {
                 this.finalizers.append(bun.default_allocator, parse_result.external) catch bun.outOfMemory();
             } else {
                 this.graph.input_files.items(.allocator)[source] = ExternalFreeFunctionAllocator.create(@ptrCast(parse_result.external.function.?), parse_result.external.ctx.?);
@@ -3072,7 +3044,7 @@ pub const BundleV2 = struct {
                             continue;
                         }
 
-                        if (loader.shouldCopyForBundling(this.transpiler.options.experimental)) {
+                        if (loader.shouldCopyForBundling()) {
                             var additional_files: *BabyList(AdditionalFile) = &graph.input_files.items(.additional_files)[result.source.index.get()];
                             additional_files.push(this.graph.allocator, .{ .source_index = new_task.source_index.get() }) catch unreachable;
                             new_input_file.side_effects = _resolver.SideEffects.no_side_effects__pure_data;
@@ -3086,7 +3058,7 @@ pub const BundleV2 = struct {
                             graph.input_files.items(.source)[existing.value_ptr.*].path.loader(&this.transpiler.options.loaders) orelse
                             options.Loader.file;
 
-                        if (loader.shouldCopyForBundling(this.transpiler.options.experimental)) {
+                        if (loader.shouldCopyForBundling()) {
                             var additional_files: *BabyList(AdditionalFile) = &graph.input_files.items(.additional_files)[result.source.index.get()];
                             additional_files.push(this.graph.allocator, .{ .source_index = existing.value_ptr.* }) catch unreachable;
                             graph.estimated_file_loader_count += 1;
@@ -3791,7 +3763,7 @@ pub const ParseTask = struct {
                     .data = source.contents,
                 }, Logger.Loc{ .start = 0 });
                 var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
-                ast.addUrlForCss(allocator, transpiler.options.experimental, &source, "text/plain", null);
+                ast.addUrlForCss(allocator, &source, "text/plain", null);
                 return ast;
             },
 
@@ -3890,87 +3862,83 @@ pub const ParseTask = struct {
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
             },
             .html => {
-                if (transpiler.options.experimental.html) {
-                    var scanner = HTMLScanner.init(allocator, log, &source);
-                    try scanner.scan(source.contents);
+                var scanner = HTMLScanner.init(allocator, log, &source);
+                try scanner.scan(source.contents);
 
-                    // Reuse existing code for creating the AST
-                    // because it handles the various Ref and other structs we
-                    // need in order to print code later.
-                    var ast = (try js_parser.newLazyExportAST(
-                        allocator,
-                        transpiler.options.define,
-                        opts,
-                        log,
-                        Expr.init(E.Missing, E.Missing{}, Logger.Loc.Empty),
-                        &source,
-                        "",
-                    )).?;
-                    ast.import_records = scanner.import_records;
+                // Reuse existing code for creating the AST
+                // because it handles the various Ref and other structs we
+                // need in order to print code later.
+                var ast = (try js_parser.newLazyExportAST(
+                    allocator,
+                    transpiler.options.define,
+                    opts,
+                    log,
+                    Expr.init(E.Missing, E.Missing{}, Logger.Loc.Empty),
+                    &source,
+                    "",
+                )).?;
+                ast.import_records = scanner.import_records;
 
-                    // We're banning import default of html loader files for now.
-                    //
-                    // TLDR: it kept including:
-                    //
-                    //   var name_default = ...;
-                    //
-                    // in the bundle because of the exports AST, and
-                    // gave up on figuring out how to fix it so that
-                    // this feature could ship.
-                    ast.has_lazy_export = false;
-                    ast.parts.ptr[1] = .{
-                        .stmts = &.{},
-                        .is_live = true,
-                        .import_record_indices = brk2: {
-                            // Generate a single part that depends on all the import records.
-                            // This is to ensure that we generate a JavaScript bundle containing all the user's code.
-                            var import_record_indices = try Part.ImportRecordIndices.initCapacity(allocator, scanner.import_records.len);
-                            import_record_indices.len = @truncate(scanner.import_records.len);
-                            for (import_record_indices.slice(), 0..) |*import_record, index| {
-                                import_record.* = @intCast(index);
-                            }
-                            break :brk2 import_record_indices;
-                        },
-                    };
+                // We're banning import default of html loader files for now.
+                //
+                // TLDR: it kept including:
+                //
+                //   var name_default = ...;
+                //
+                // in the bundle because of the exports AST, and
+                // gave up on figuring out how to fix it so that
+                // this feature could ship.
+                ast.has_lazy_export = false;
+                ast.parts.ptr[1] = .{
+                    .stmts = &.{},
+                    .is_live = true,
+                    .import_record_indices = brk2: {
+                        // Generate a single part that depends on all the import records.
+                        // This is to ensure that we generate a JavaScript bundle containing all the user's code.
+                        var import_record_indices = try Part.ImportRecordIndices.initCapacity(allocator, scanner.import_records.len);
+                        import_record_indices.len = @truncate(scanner.import_records.len);
+                        for (import_record_indices.slice(), 0..) |*import_record, index| {
+                            import_record.* = @intCast(index);
+                        }
+                        break :brk2 import_record_indices;
+                    },
+                };
 
-                    // Try to avoid generating unnecessary ESM <> CJS wrapper code.
-                    if (opts.output_format == .esm or opts.output_format == .iife) {
-                        ast.exports_kind = .esm;
-                    }
-
-                    return JSAst.init(ast);
+                // Try to avoid generating unnecessary ESM <> CJS wrapper code.
+                if (opts.output_format == .esm or opts.output_format == .iife) {
+                    ast.exports_kind = .esm;
                 }
+
+                return JSAst.init(ast);
             },
             .css => {
-                if (transpiler.options.experimental.css) {
-                    var import_records = BabyList(ImportRecord){};
-                    const source_code = source.contents;
-                    var css_ast = switch (bun.css.BundlerStyleSheet.parseBundler(
-                        allocator,
-                        source_code,
-                        bun.css.ParserOptions.default(allocator, transpiler.log),
-                        &import_records,
-                    )) {
-                        .result => |v| v,
-                        .err => |e| {
-                            try e.addToLogger(log, &source);
-                            return error.SyntaxError;
-                        },
-                    };
-                    if (css_ast.minify(allocator, bun.css.MinifyOptions{
-                        .targets = bun.css.Targets.forBundlerTarget(transpiler.options.target),
-                        .unused_symbols = .{},
-                    }).asErr()) |e| {
+                var import_records = BabyList(ImportRecord){};
+                const source_code = source.contents;
+                var css_ast = switch (bun.css.BundlerStyleSheet.parseBundler(
+                    allocator,
+                    source_code,
+                    bun.css.ParserOptions.default(allocator, transpiler.log),
+                    &import_records,
+                )) {
+                    .result => |v| v,
+                    .err => |e| {
                         try e.addToLogger(log, &source);
-                        return error.MinifyError;
-                    }
-                    const root = Expr.init(E.Object, E.Object{}, Logger.Loc{ .start = 0 });
-                    const css_ast_heap = bun.create(allocator, bun.css.BundlerStyleSheet, css_ast);
-                    var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
-                    ast.css = css_ast_heap;
-                    ast.import_records = import_records;
-                    return ast;
+                        return error.SyntaxError;
+                    },
+                };
+                if (css_ast.minify(allocator, bun.css.MinifyOptions{
+                    .targets = bun.css.Targets.forBundlerTarget(transpiler.options.target),
+                    .unused_symbols = .{},
+                }).asErr()) |e| {
+                    try e.addToLogger(log, &source);
+                    return error.MinifyError;
                 }
+                const root = Expr.init(E.Object, E.Object{}, Logger.Loc{ .start = 0 });
+                const css_ast_heap = bun.create(allocator, bun.css.BundlerStyleSheet, css_ast);
+                var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
+                ast.css = css_ast_heap;
+                ast.import_records = import_records;
+                return ast;
             },
             else => {},
         }
@@ -3980,7 +3948,7 @@ pub const ParseTask = struct {
         }, Logger.Loc{ .start = 0 });
         unique_key_for_additional_file.* = unique_key;
         var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
-        ast.addUrlForCss(allocator, transpiler.options.experimental, &source, null, unique_key);
+        ast.addUrlForCss(allocator, &source, null, unique_key);
         return ast;
     }
 
@@ -3992,7 +3960,6 @@ pub const ParseTask = struct {
         allocator: std.mem.Allocator,
         file_path: *Fs.Path,
         loader: Loader,
-        experimental: Loader.Experimental,
     ) !CacheEntry {
         return switch (task.contents_or_fd) {
             .fd => |contents| brk: {
@@ -4018,7 +3985,7 @@ pub const ParseTask = struct {
                 }
 
                 break :brk resolver.caches.fs.readFileWithAllocator(
-                    if (loader.shouldCopyForBundling(experimental))
+                    if (loader.shouldCopyForBundling())
                         // The OutputFile will own the memory for the contents
                         bun.default_allocator
                     else
@@ -4072,7 +4039,6 @@ pub const ParseTask = struct {
         allocator: std.mem.Allocator,
         file_path: *Fs.Path,
         loader: *Loader,
-        experimental: Loader.Experimental,
         from_plugin: *bool,
     ) !CacheEntry {
         const might_have_on_parse_plugins = brk: {
@@ -4087,7 +4053,7 @@ pub const ParseTask = struct {
         };
 
         if (!might_have_on_parse_plugins) {
-            return getCodeForParseTaskWithoutPlugins(task, log, transpiler, resolver, allocator, file_path, loader.*, experimental);
+            return getCodeForParseTaskWithoutPlugins(task, log, transpiler, resolver, allocator, file_path, loader.*);
         }
 
         var should_continue_running: i32 = 1;
@@ -4100,7 +4066,6 @@ pub const ParseTask = struct {
             .allocator = allocator,
             .file_path = file_path,
             .loader = loader,
-            .experimental = experimental,
             .deferred_error = null,
             .should_continue_running = &should_continue_running,
         };
@@ -4116,7 +4081,6 @@ pub const ParseTask = struct {
         allocator: std.mem.Allocator,
         file_path: *Fs.Path,
         loader: *Loader,
-        experimental: Loader.Experimental,
         deferred_error: ?anyerror = null,
         should_continue_running: *i32,
 
@@ -4278,8 +4242,6 @@ pub const ParseTask = struct {
                 this.file_path,
 
                 result.loader,
-
-                this.experimental,
             ) catch |err| {
                 this.deferred_error = err;
                 this.should_continue_running.* = 0;
@@ -4405,7 +4367,7 @@ pub const ParseTask = struct {
                 }
             }
 
-            return try getCodeForParseTaskWithoutPlugins(this.task, this.log, this.transpiler, this.resolver, this.allocator, this.file_path, this.loader.*, this.experimental);
+            return try getCodeForParseTaskWithoutPlugins(this.task, this.log, this.transpiler, this.resolver, this.allocator, this.file_path, this.loader.*);
         }
     };
 
@@ -4427,17 +4389,16 @@ pub const ParseTask = struct {
 
         // Do not process files as HTML if any of the following are true:
         // - building for node or bun.js
-        // - the experimental.html flag is not enabled.
         //
         //   We allow non-entrypoints to import HTML so that people could
         //   potentially use an onLoad plugin that returns HTML.
-        if (!transpiler.options.experimental.html or task.known_target != .browser) {
+        if (task.known_target != .browser) {
             loader = loader.disableHTML();
             task.loader = loader;
         }
 
         var contents_came_from_plugin: bool = false;
-        var entry = try getCodeForParseTask(task, log, transpiler, resolver, allocator, &file_path, &loader, this.ctx.transpiler.options.experimental, &contents_came_from_plugin);
+        var entry = try getCodeForParseTask(task, log, transpiler, resolver, allocator, &file_path, &loader, &contents_came_from_plugin);
 
         // WARNING: Do not change the variant of `task.contents_or_fd` from
         // `.fd` to `.contents` (or back) after this point!
@@ -4576,7 +4537,7 @@ pub const ParseTask = struct {
         var ast: JSAst = if (!is_empty)
             try getAST(log, transpiler, opts, allocator, resolver, source, loader, task.ctx.unique_key, &unique_key_for_additional_file)
         else switch (opts.module_type == .esm) {
-            inline else => |as_undefined| if (loader == .css and this.ctx.transpiler.options.experimental.css) try getEmptyCSSAST(
+            inline else => |as_undefined| if (loader == .css) try getEmptyCSSAST(
                 log,
                 transpiler,
                 opts,
@@ -4609,7 +4570,7 @@ pub const ParseTask = struct {
             .loader = loader,
 
             // Hash the files in here so that we do it in parallel.
-            .content_hash_for_additional_file = if (loader.shouldCopyForBundling(this.ctx.transpiler.options.experimental))
+            .content_hash_for_additional_file = if (loader.shouldCopyForBundling())
                 ContentHasher.run(source.contents)
             else
                 0,
@@ -5734,7 +5695,6 @@ pub const LinkerContext = struct {
         minify_identifiers: bool = false,
         banner: []const u8 = "",
         footer: []const u8 = "",
-        experimental: Loader.Experimental = .{},
         css_chunking: bool = false,
         source_maps: options.SourceMapOption = .none,
         target: options.Target = .browser,
@@ -6049,8 +6009,6 @@ pub const LinkerContext = struct {
 
         const entry_source_indices = this.graph.entry_points.items(.source_index);
         const css_asts = this.graph.ast.items(.css);
-        const experimental_css = this.options.experimental.css;
-        const experimental_html = this.options.experimental.html;
         const css_chunking = this.options.css_chunking;
         var html_chunks = bun.StringArrayHashMap(Chunk).init(temp_allocator);
         const loaders = this.parse_graph.input_files.items(.loader);
@@ -6064,7 +6022,7 @@ pub const LinkerContext = struct {
             var entry_bits = &this.graph.files.items(.entry_bits)[source_index];
             entry_bits.set(entry_bit);
 
-            const has_html_chunk = experimental_html and loaders[source_index] == .html;
+            const has_html_chunk = loaders[source_index] == .html;
             const js_chunk_key = brk: {
                 if (code_splitting) {
                     break :brk try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len));
@@ -6098,7 +6056,7 @@ pub const LinkerContext = struct {
                 }
             }
 
-            if (experimental_css and css_asts[source_index] != null) {
+            if (css_asts[source_index] != null) {
                 const order = this.findImportedFilesInCSSOrder(temp_allocator, &.{Index.init(source_index)});
                 // Create a chunk for the entry point here to ensure that the chunk is
                 // always generated even if the resulting file is empty
@@ -6151,7 +6109,7 @@ pub const LinkerContext = struct {
                 .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
             };
 
-            if (experimental_css) {
+            {
                 // If this JS entry point has an associated CSS entry point, generate it
                 // now. This is essentially done by generating a virtual CSS file that
                 // only contains "@import" statements in the order that the files were
@@ -6279,7 +6237,7 @@ pub const LinkerContext = struct {
                 sorted_chunks.appendAssumeCapacity(chunk);
 
                 // Attempt to order the JS HTML chunk immediately after the non-html one.
-                if (chunk.has_html_chunk and experimental_html) {
+                if (chunk.has_html_chunk) {
                     if (html_chunks.fetchSwapRemove(key)) |html_chunk| {
                         sorted_chunks.appendAssumeCapacity(html_chunk.value);
                     }
@@ -6308,11 +6266,8 @@ pub const LinkerContext = struct {
                 }
             }
 
-            // We don't care about the order of the HTML chunks that have
-            // no JS chunks.
-            if (experimental_html) {
-                try sorted_chunks.append(this.allocator, html_chunks.values());
-            }
+            // We don't care about the order of the HTML chunks that have no JS chunks.
+            try sorted_chunks.append(this.allocator, html_chunks.values());
 
             break :sort_chunks sorted_chunks.slice();
         };
@@ -13180,7 +13135,7 @@ pub const LinkerContext = struct {
             c.source_maps.line_offset_tasks.len = 0;
         }
 
-        if (c.options.experimental.css) {
+        {
             // Per CSS chunk:
             // Remove duplicate rules across files. This must be done in serial, not
             // in parallel, and must be done from the last rule to the first rule.

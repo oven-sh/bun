@@ -116,7 +116,7 @@ describe("bundler", async () => {
     },
   });
 
-  const loaders: Loader[] = ["wasm", "css", "json", "file" /* "napi" */, "text"];
+  const loaders: Loader[] = ["wasm", "json", "file" /* "napi" */, "text"];
   const exts = ["wasm", "css", "json", ".lmao" /*  ".node" */, ".txt"];
   for (let i = 0; i < loaders.length; i++) {
     const loader = loaders[i];
@@ -124,7 +124,6 @@ describe("bundler", async () => {
     itBundled(`bun/loader-copy-file-entry-point-with-onLoad-${loader}`, {
       target: "bun",
       outdir: "/out",
-      experimentalCss: false,
       files: {
         [`/entry.${ext}`]: /* js */ `{ "hello": "friends" }`,
       },
@@ -157,7 +156,6 @@ describe("bundler", async () => {
       target: "bun",
       outfile: "",
       outdir: "/out",
-      experimentalCss: false,
       files: {
         [`/entry.${ext}`]: /* js */ `{ "hello": "friends" }`,
       },

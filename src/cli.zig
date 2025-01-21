@@ -241,7 +241,6 @@ pub const Arguments = struct {
         clap.parseParam("--no-deprecation                  Suppress all reporting of the custom deprecation.") catch unreachable,
         clap.parseParam("--throw-deprecation               Determine whether or not deprecation warnings result in errors.") catch unreachable,
         clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
-        clap.parseParam("--experimental-html               Bundle .html imports as JavaScript & CSS") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -296,9 +295,6 @@ pub const Arguments = struct {
         clap.parseParam("--minify-syntax                  Minify syntax and inline data") catch unreachable,
         clap.parseParam("--minify-whitespace              Minify whitespace") catch unreachable,
         clap.parseParam("--minify-identifiers             Minify identifiers") catch unreachable,
-        clap.parseParam("--experimental-css               Enable experimental CSS bundling") catch unreachable,
-        clap.parseParam("--experimental-css-chunking      Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an affect when multiple entrypoints import CSS") catch unreachable,
-        clap.parseParam("--experimental-html              Use .html files as entry points for JavaScript & CSS") catch unreachable,
         clap.parseParam("--dump-environment-variables") catch unreachable,
         clap.parseParam("--conditions <STR>...            Pass custom conditions to resolve") catch unreachable,
         clap.parseParam("--app                            (EXPERIMENTAL) Build a web app for production using Bun Bake.") catch unreachable,
@@ -862,12 +858,6 @@ pub const Arguments = struct {
                 ctx.bundler_options.footer = footer;
             }
 
-            const experimental_css = args.flag("--experimental-css");
-            const experimental_html = args.flag("--experimental-html");
-            ctx.bundler_options.experimental.css = experimental_css;
-            ctx.bundler_options.experimental.html = experimental_html;
-            ctx.bundler_options.css_chunking = args.flag("--experimental-css-chunking");
-
             const minify_flag = args.flag("--minify");
             ctx.bundler_options.minify_syntax = minify_flag or args.flag("--minify-syntax");
             ctx.bundler_options.minify_whitespace = minify_flag or args.flag("--minify-whitespace");
@@ -1067,10 +1057,7 @@ pub const Arguments = struct {
             if (args.option("--sourcemap")) |setting| {
                 if (setting.len == 0) {
                     // In the future, Bun is going to make this default to .linked
-                    opts.source_map = if (bun.FeatureFlags.breaking_changes_1_2)
-                        .linked
-                    else
-                        .@"inline";
+                    opts.source_map = .linked;
                 } else if (strings.eqlComptime(setting, "inline")) {
                     opts.source_map = .@"inline";
                 } else if (strings.eqlComptime(setting, "none")) {
@@ -1164,7 +1151,6 @@ pub const Arguments = struct {
         }
 
         opts.resolve = Api.ResolveMode.lazy;
-        ctx.bundler_options.experimental.html = args.flag("--experimental-html");
 
         if (jsx_factory != null or
             jsx_fragment != null or
@@ -1554,7 +1540,6 @@ pub const Command = struct {
             bytecode: bool = false,
             banner: []const u8 = "",
             footer: []const u8 = "",
-            experimental: options.Loader.Experimental = .{},
             css_chunking: bool = false,
 
             bake: bool = false,

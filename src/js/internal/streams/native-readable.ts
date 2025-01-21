@@ -130,11 +130,14 @@ function read(this: NativeReadable, maxToRead: number) {
     return;
   }
   if (!this[kConstructed]) {
-    const result = ptr.start(this[kHighWaterMark]);
-    $debug(`[${this.debugId}] start, initial hwm: ${result}`);
+    const result: any = ptr.start(this[kHighWaterMark]);
+    $debug(`[${this.debugId}] start, initial hwm:`, result);
     if (typeof result === "number" && result > 1) {
       this[kHasResized] = true;
       this[kHighWaterMark] = Math.min(this[kHighWaterMark], result);
+    }
+    if ($isTypedArrayView(result) && result.byteLength > 0) {
+      this.push(result);
     }
     const drainResult = ptr.drain();
     this[kConstructed] = true;

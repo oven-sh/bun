@@ -629,7 +629,14 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
 
 // This function implementation is not correct.
 function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
-  const result: any = this._write(data, encoding, cb ?? streamNoop);
+  if (typeof encoding === "function") {
+    cb = encoding;
+    encoding = undefined;
+  }
+  if (typeof cb !== "function") {
+    cb = streamNoop;
+  }
+  const result: any = this._write(data, encoding, cb);
   this.write = Writable.prototype.write;
   return result;
 }

@@ -82,6 +82,7 @@ describe("spawn()", () => {
     ]);
     await runBunInstall(bunEnv, tmpdir);
 
+    console.error({tmpdir});
     const { exitCode, out } = await new Promise<any>(resolve => {
       const child = spawn("./node_modules/.bin/foo", { cwd: tmpdir, env: bunEnv });
       child.on("exit", async exitCode => {

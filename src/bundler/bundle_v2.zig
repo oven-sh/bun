@@ -1747,6 +1747,7 @@ pub const BundleV2 = struct {
                     .conditions = config.conditions.map.keys(),
                     .ignore_dce_annotations = transpiler.options.ignore_dce_annotations,
                     .drop = config.drop.map.keys(),
+                    .bunfig_path = transpiler.options.bunfig_path,
                 },
                 completion.env,
             );
@@ -1818,6 +1819,7 @@ pub const BundleV2 = struct {
             }
 
             if (this.html_build_task) |html_build_task| {
+                this.plugins = null;
                 html_build_task.onComplete(this);
                 return;
             }
@@ -1826,7 +1828,26 @@ pub const BundleV2 = struct {
 
             switch (this.result) {
                 .pending => unreachable,
-                .err => promise.reject(globalThis, this.log.toJSAggregateError(globalThis, bun.String.static("Bundle failed"))),
+                .err => brk: {
+                    if (this.config.throw_on_error) {
+                        promise.reject(globalThis, this.log.toJSAggregateError(globalThis, bun.String.static("Bundle failed")));
+                        break :brk;
+                    }
+
+                    const root_obj = JSC.JSValue.createEmptyObject(globalThis, 3);
+                    root_obj.put(globalThis, JSC.ZigString.static("outputs"), JSC.JSValue.createEmptyArray(globalThis, 0));
+                    root_obj.put(
+                        globalThis,
+                        JSC.ZigString.static("success"),
+                        JSC.JSValue.jsBoolean(false),
+                    );
+                    root_obj.put(
+                        globalThis,
+                        JSC.ZigString.static("logs"),
+                        this.log.toJSArray(globalThis, bun.default_allocator),
+                    );
+                    promise.resolve(globalThis, root_obj);
+                },
                 .value => |*build| {
                     const root_obj = JSC.JSValue.createEmptyObject(globalThis, 3);
                     const output_files: []options.OutputFile = build.output_files.items;

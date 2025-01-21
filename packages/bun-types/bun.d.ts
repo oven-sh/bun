@@ -2742,6 +2742,13 @@ declare module "bun" {
      * Drop function calls to matching property accesses.
      */
     drop?: string[];
+
+    /**
+     * When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
+     * When set to `false`, the `success` property of the returned object will be `false` when a build failure happens.
+     * This defaults to `true`.
+     */
+    throw?: boolean;
   }
 
   namespace Password {

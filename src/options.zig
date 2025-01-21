@@ -919,34 +919,41 @@ pub const ESMConditions = struct {
     default: ConditionsMap,
     import: ConditionsMap,
     require: ConditionsMap,
+    style: ConditionsMap,
 
     pub fn init(allocator: std.mem.Allocator, defaults: []const string) !ESMConditions {
         var default_condition_amp = ConditionsMap.init(allocator);
 
         var import_condition_map = ConditionsMap.init(allocator);
         var require_condition_map = ConditionsMap.init(allocator);
+        var style_condition_map = ConditionsMap.init(allocator);
 
         try default_condition_amp.ensureTotalCapacity(defaults.len + 2);
         try import_condition_map.ensureTotalCapacity(defaults.len + 2);
         try require_condition_map.ensureTotalCapacity(defaults.len + 2);
+        try style_condition_map.ensureTotalCapacity(defaults.len + 2);
 
         import_condition_map.putAssumeCapacity("import", {});
         require_condition_map.putAssumeCapacity("require", {});
+        style_condition_map.putAssumeCapacity("style", {});
 
         for (defaults) |default| {
             default_condition_amp.putAssumeCapacityNoClobber(default, {});
             import_condition_map.putAssumeCapacityNoClobber(default, {});
             require_condition_map.putAssumeCapacityNoClobber(default, {});
+            style_condition_map.putAssumeCapacityNoClobber(default, {});
         }
 
         default_condition_amp.putAssumeCapacity("default", {});
         import_condition_map.putAssumeCapacity("default", {});
         require_condition_map.putAssumeCapacity("default", {});
+        style_condition_map.putAssumeCapacity("default", {});
 
         return .{
             .default = default_condition_amp,
             .import = import_condition_map,
             .require = require_condition_map,
+            .style = style_condition_map,
         };
     }
 
@@ -957,11 +964,14 @@ pub const ESMConditions = struct {
         errdefer import.deinit();
         var require = try self.require.clone();
         errdefer require.deinit();
+        var style = try self.style.clone();
+        errdefer style.deinit();
 
         return .{
             .default = default,
             .import = import,
             .require = require,
+            .style = style,
         };
     }
 
@@ -969,11 +979,13 @@ pub const ESMConditions = struct {
         try self.default.ensureUnusedCapacity(conditions.len);
         try self.import.ensureUnusedCapacity(conditions.len);
         try self.require.ensureUnusedCapacity(conditions.len);
+        try self.style.ensureUnusedCapacity(conditions.len);
 
         for (conditions) |condition| {
             self.default.putAssumeCapacity(condition, {});
             self.import.putAssumeCapacity(condition, {});
             self.require.putAssumeCapacity(condition, {});
+            self.style.putAssumeCapacity(condition, {});
         }
     }
 };
@@ -1550,6 +1562,9 @@ pub const BundleOptions = struct {
     /// Set when Bake is bundling. Affects module resolution.
     framework: ?*bun.bake.Framework = null,
 
+    serve_plugins: ?[]const []const u8 = null,
+    bunfig_path: string = "",
+
     /// This is a list of packages which even when require() is used, we will
     /// instead convert to ESM import statements.
     ///
@@ -1724,6 +1739,9 @@ pub const BundleOptions = struct {
 
         Analytics.Features.define += @as(usize, @intFromBool(transform.define != null));
         Analytics.Features.loaders += @as(usize, @intFromBool(transform.loaders != null));
+
+        opts.serve_plugins = transform.serve_plugins;
+        opts.bunfig_path = transform.bunfig_path;
 
         if (transform.env_files.len > 0) {
             opts.env.files = transform.env_files;

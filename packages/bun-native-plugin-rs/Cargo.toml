@@ -2,11 +2,8 @@
 name = "bun-native-plugin"
 description = "Rustified wrapper for writing native plugins for Bun."
 license = "MIT"
-version = "0.1.0"
+version = "0.1.2"
 edition = "2021"
-
-[build-dependencies]
-bindgen = "0.70.1"
 
 [dependencies]
 anyhow = "1.0.94"

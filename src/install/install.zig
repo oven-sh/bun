@@ -25,6 +25,7 @@ const File = bun.sys.File;
 const JSLexer = bun.js_lexer;
 const logger = bun.logger;
 const OOM = bun.OOM;
+const FD = bun.FD;
 
 const js_parser = bun.js_parser;
 const JSON = bun.JSON;
@@ -65,6 +66,7 @@ threadlocal var initialized_store = false;
 const Futex = @import("../futex.zig");
 
 pub const Lockfile = @import("./lockfile.zig");
+pub const TextLockfile = @import("./bun.lock.zig");
 pub const PatchedDep = Lockfile.PatchedDep;
 const Walker = @import("../walker_skippable.zig");
 
@@ -7178,7 +7180,8 @@ pub const PackageManager = struct {
         ca: []const string = &.{},
         ca_file_name: string = &.{},
 
-        save_text_lockfile: bool = false,
+        // if set to `false` in bunfig, save a binary lockfile
+        save_text_lockfile: ?bool = null,
 
         lockfile_only: bool = false,
 
@@ -14390,7 +14393,13 @@ pub const PackageManager = struct {
             (load_result.ok.lockfile.buffers.dependencies.items.len == 0 and manager.update_requests.len > 0);
 
         manager.options.enable.force_save_lockfile = manager.options.enable.force_save_lockfile or
-            (load_result == .ok and (load_result.ok.was_migrated or (load_result.ok.format == .binary and manager.options.save_text_lockfile)));
+            (load_result == .ok and
+            // if migrated always save a new lockfile
+            (load_result.ok.was_migrated or
+
+            // if loaded from binary and save-text-lockfile is passed
+            (load_result.ok.format == .binary and
+            manager.options.save_text_lockfile orelse false)));
 
         // this defaults to false
         // but we force allowing updates to the lockfile when you do bun add
@@ -14515,7 +14524,20 @@ pub const PackageManager = struct {
 
                     had_any_diffs = manager.summary.hasDiffs();
 
-                    if (had_any_diffs) {
+                    if (!had_any_diffs) {
+                        // always grab latest scripts for root package
+                        var builder_ = manager.lockfile.stringBuilder();
+                        var builder = &builder_;
+
+                        maybe_root.scripts.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
+                        try builder.allocate();
+                        manager.lockfile.packages.items(.scripts)[0] = maybe_root.scripts.clone(
+                            lockfile.buffers.string_bytes.items,
+                            *Lockfile.StringBuilder,
+                            builder,
+                        );
+                        builder.clamp();
+                    } else {
                         var builder_ = manager.lockfile.stringBuilder();
                         // ensure we use one pointer to reference it instead of creating new ones and potentially aliasing
                         var builder = &builder_;
@@ -14975,13 +14997,7 @@ pub const PackageManager = struct {
 
         const lockfile_before_install = manager.lockfile;
 
-        const save_format: Lockfile.LoadResult.LockfileFormat = if (manager.options.save_text_lockfile)
-            .text
-        else switch (load_result) {
-            .not_found => .binary,
-            .err => |err| err.format,
-            .ok => |ok| ok.format,
-        };
+        const save_format = load_result.saveFormat(manager);
 
         if (manager.options.lockfile_only) {
             // save the lockfile and exit. make sure metahash is generated for binary lockfile
@@ -15088,18 +15104,24 @@ pub const PackageManager = struct {
                 @min(packages_len_before_install, manager.lockfile.packages.len),
             );
 
-        const should_save_lockfile = did_meta_hash_change or
-            had_any_diffs or
-            needs_new_lockfile or
-
-            // this will handle new trusted dependencies added through --trust
-            manager.update_requests.len > 0 or
-            (load_result == .ok and load_result.ok.serializer_result.packages_need_update);
-
         // It's unnecessary work to re-save the lockfile if there are no changes
-        if (manager.options.do.save_lockfile and
-            (should_save_lockfile or manager.lockfile.isEmpty() or manager.options.enable.force_save_lockfile))
-        {
+        const should_save_lockfile =
+            (load_result == .ok and ((load_result.ok.format == .binary and save_format == .text) or
+
+            // make sure old versions are updated
+            load_result.ok.format == .text and save_format == .text and manager.lockfile.text_lockfile_version != TextLockfile.Version.current)) or
+
+            // check `save_lockfile` after checking if loaded from binary and save format is text
+            // because `save_lockfile` is set to false for `--frozen-lockfile`
+            (manager.options.do.save_lockfile and
+            (did_meta_hash_change or
+            had_any_diffs or
+            manager.update_requests.len > 0 or
+            (load_result == .ok and load_result.ok.serializer_result.packages_need_update) or
+            manager.lockfile.isEmpty() or
+            manager.options.enable.force_save_lockfile));
+
+        if (should_save_lockfile) {
             try manager.saveLockfile(&load_result, save_format, had_any_diffs, lockfile_before_install, packages_len_before_install, log_level);
         }
 
@@ -15275,11 +15297,14 @@ pub const PackageManager = struct {
                     .ok => |ok| ok.format,
                 };
 
-                std.fs.cwd().deleteFileZ(if (delete_format == .text) "bun.lock" else "bun.lockb") catch |err| brk: {
+                bun.sys.unlinkat(
+                    FD.cwd(),
+                    if (delete_format == .text) comptime bun.OSPathLiteral("bun.lock") else comptime bun.OSPathLiteral("bun.lockb"),
+                ).unwrap() catch |err| {
                     // we don't care
-                    if (err == error.FileNotFound) {
+                    if (err == error.ENOENT) {
                         if (had_any_diffs) return;
-                        break :brk;
+                        break :delete;
                     }
 
                     if (log_level != .silent) {
@@ -15311,6 +15336,11 @@ pub const PackageManager = struct {
         }
 
         this.lockfile.saveToDisk(save_format, this.options.log_level.isVerbose());
+
+        // delete binary lockfile if saving text lockfile
+        if (save_format == .text and load_result.loadedFromBinaryLockfile()) {
+            _ = bun.sys.unlinkat(FD.cwd(), comptime bun.OSPathLiteral("bun.lockb"));
+        }
 
         if (comptime Environment.allow_assert) {
             if (load_result.* != .not_found) {

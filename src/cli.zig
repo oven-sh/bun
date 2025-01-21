@@ -863,6 +863,8 @@ pub const Arguments = struct {
             ctx.bundler_options.minify_whitespace = minify_flag or args.flag("--minify-whitespace");
             ctx.bundler_options.minify_identifiers = minify_flag or args.flag("--minify-identifiers");
 
+            ctx.bundler_options.css_chunking = args.flag("--experimental-css-chunking");
+
             ctx.bundler_options.emit_dce_annotations = args.flag("--emit-dce-annotations") or
                 !ctx.bundler_options.minify_whitespace;
 

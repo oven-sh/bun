@@ -18,6 +18,10 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 🟢 Fully implemented.
 
+### [`node:dgram`](https://nodejs.org/api/dgram.html)
+
+🟢 Fully implemented. > 90% of Node.js's test suite passes.
+
 ### [`node:diagnostics_channel`](https://nodejs.org/api/diagnostics_channel.html)
 
 🟢 Fully implemented.
@@ -99,11 +103,6 @@ This page is updated regularly to reflect compatibility status of the latest ver
 🟡 Missing `ECDH` `checkPrime` `checkPrimeSync` `generatePrime` `generatePrimeSync` `hkdf` `hkdfSync` `secureHeapUsed` `setEngine` `setFips`
 
 Some methods are not optimized yet.
-
-### [`node:dgram`](https://nodejs.org/api/dgram.html)
-
-🟡 Missing `setBroadcast` `setTTL` `setMulticastTTL` `setMulticastLoopback` `setMulticastInterface` `addMembership` `dropMembership`
-`addSourceSpecificMembership` `dropSourceSpecificMembership`
 
 ### [`node:domain`](https://nodejs.org/api/domain.html)
 

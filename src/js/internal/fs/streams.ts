@@ -628,9 +628,26 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
 }
 
 // This function implementation is not correct.
+const writablePrototypeWrite = Writable.prototype.write;
+const kWriteMonkeyPatchDefense = Symbol("!");
 function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
-  const result: any = this._write(data, encoding, cb ?? streamNoop);
-  this.write = Writable.prototype.write;
+  if (this[kWriteMonkeyPatchDefense])
+    return writablePrototypeWrite.$call(this, data, encoding, cb);
+
+  if (typeof encoding === "function") {
+    cb = encoding;
+    encoding = undefined;
+  }
+  if (typeof cb !== "function") {
+    cb = streamNoop;
+  }
+  const result: any = this._write(data, encoding, cb);
+  if (this.write === writeFast) {
+    this.write = writablePrototypeWrite;
+  } else {
+    // test-console-group.js
+    this[kWriteMonkeyPatchDefense] = true;
+  }
   return result;
 }
 

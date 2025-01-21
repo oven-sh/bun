@@ -3910,6 +3910,11 @@ pub const NodeFS = struct {
     }
 
     pub fn mkdir(this: *NodeFS, args: Arguments.Mkdir, _: Flavor) Maybe(Return.Mkdir) {
+        if (args.path.slice().len == 0) return .{ .err = .{
+            .errno = @intFromEnum(bun.C.E.NOENT),
+            .syscall = .mkdir,
+            .path = "",
+        } };
         return if (args.recursive) mkdirRecursive(this, args) else mkdirNonRecursive(this, args);
     }
 
@@ -3927,9 +3932,9 @@ pub const NodeFS = struct {
     }
 
     pub fn mkdirRecursiveImpl(this: *NodeFS, args: Arguments.Mkdir, comptime Ctx: type, ctx: Ctx) Maybe(Return.Mkdir) {
-        const buf = bun.OSPathBufferPool.get();
-        defer bun.OSPathBufferPool.put(buf);
-        const path = args.path.osPath(buf);
+        const buf = bun.PathBufferPool.get();
+        defer bun.PathBufferPool.put(buf);
+        const path = args.path.osPathKernel32(buf);
 
         return switch (args.always_return_none) {
             inline else => |always_return_none| this.mkdirRecursiveOSPathImpl(Ctx, ctx, path, args.mode, !always_return_none),

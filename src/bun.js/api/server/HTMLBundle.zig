@@ -19,8 +19,6 @@ bunfig_dir: []const u8,
 pub fn init(globalObject: *JSGlobalObject, path: []const u8, bunfig_path: []const u8, plugins: ?[]const []const u8) !*HTMLBundle {
     var config = bun.JSC.API.JSBundler.Config{};
     try config.entry_points.insert(path);
-    config.experimental.html = true;
-    config.experimental.css = true;
     config.target = .browser;
     try config.public_path.appendChar('/');
     return HTMLBundle.new(.{

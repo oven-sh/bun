@@ -660,12 +660,7 @@ pub const Loader = enum(u8) {
         };
     }
 
-    pub const Experimental = struct {
-        css: bool = bun.FeatureFlags.breaking_changes_1_2,
-        html: bool = bun.FeatureFlags.breaking_changes_1_2,
-    };
-
-    pub fn shouldCopyForBundling(this: Loader, experimental: Experimental) bool {
+    pub fn shouldCopyForBundling(this: Loader) bool {
         return switch (this) {
             .file,
             .napi,
@@ -674,8 +669,8 @@ pub const Loader = enum(u8) {
             // TODO: loader for reading bytes and creating module or instance
             .wasm,
             => true,
-            .css => !experimental.css,
-            .html => !experimental.html,
+            .css => false,
+            .html => false,
             else => false,
         };
     }
@@ -1299,7 +1294,7 @@ pub fn definesFromTransformOptions(
     );
 }
 
-const default_loader_ext_bun = [_]string{".node"};
+const default_loader_ext_bun = [_]string{ ".node", ".html" };
 const default_loader_ext = [_]string{
     ".jsx",   ".json",
     ".js",    ".mjs",
@@ -1389,10 +1384,6 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.
     if (target.isBun()) {
         inline for (default_loader_ext_bun) |ext| {
             _ = try loaders.getOrPutValue(ext, defaultLoaders.get(ext).?);
-        }
-
-        if (bun.CLI.Command.get().bundler_options.experimental.html) {
-            _ = try loaders.getOrPutValue(".html", .html);
         }
     }
 
@@ -1555,8 +1546,6 @@ pub const BundleOptions = struct {
     minify_syntax: bool = false,
     minify_identifiers: bool = false,
     dead_code_elimination: bool = true,
-
-    experimental: Loader.Experimental = .{},
     css_chunking: bool,
 
     ignore_dce_annotations: bool = false,
@@ -1744,7 +1733,6 @@ pub const BundleOptions = struct {
             .out_extensions = undefined,
             .env = Env.init(allocator),
             .transform_options = transform,
-            .experimental = .{},
             .css_chunking = false,
             .drop = transform.drop,
         };

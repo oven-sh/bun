@@ -10,7 +10,6 @@ import { join } from "node:path";
 
 describe("bundler", () => {
   itBundled("css/CSSEntryPoint", {
-    experimentalCss: true,
     files: {
       "/entry.css": /* css */ `
         body {
@@ -30,7 +29,6 @@ body {
   });
 
   itBundled("css/CSSEntryPointEmpty", {
-    experimentalCss: true,
     files: {
       "/entry.css": /* css */ `\n`,
     },
@@ -42,7 +40,6 @@ body {
   });
 
   itBundled("css/CSSNesting", {
-    experimentalCss: true,
     target: "bun",
     files: {
       "/entry.css": /* css */ `
@@ -66,7 +63,6 @@ body {
   });
 
   itBundled("css/CSSAtImportMissing", {
-    experimentalCss: true,
     files: {
       "/entry.css": `@import "./missing.css";`,
     },
@@ -76,7 +72,6 @@ body {
   });
 
   itBundled("css/CSSAtImportSimple", {
-    experimentalCss: true,
     // GENERATED
     files: {
       "/entry.css": /* css */ `
@@ -99,7 +94,6 @@ body {
   });
 
   itBundled("css/CSSAtImportDiamond", {
-    experimentalCss: true,
     // GENERATED
     files: {
       "/a.css": /* css */ `
@@ -143,7 +137,6 @@ body {
   });
 
   itBundled("css/CSSAtImportCycle", {
-    experimentalCss: true,
     files: {
       "/a.css": /* css */ `
         @import "./a.css";
@@ -162,7 +155,6 @@ body {
   });
 
   itBundled("css/CSSUrlImport", {
-    experimentalCss: true,
     files: {
       "/a.css": /* css */ `
         .hello {
@@ -189,7 +181,6 @@ body {
 
 describe("esbuild-bundler", () => {
   itBundled("css/CSSEntryPoint", {
-    experimentalCss: true,
     // GENERATED
     files: {
       "/entry.css": /* css */ `
@@ -200,7 +191,6 @@ describe("esbuild-bundler", () => {
     },
   });
   itBundled("css/CSSAtImportMissing", {
-    experimentalCss: true,
     files: {
       "/entry.css": `@import "./missing.css";`,
     },
@@ -209,7 +199,6 @@ describe("esbuild-bundler", () => {
     },
   });
   itBundled("css/CSSAtImportExternal", {
-    experimentalCss: true,
     external: ["./external1.css", "./external2.css", "./external3.css", "./external4.css", "./external5.css"],
     // GENERATED
     files: {
@@ -275,8 +264,6 @@ describe("esbuild-bundler", () => {
     },
   });
   itBundled("css/CSSAtImport", {
-    experimentalCss: true,
-
     // GENERATED
     files: {
       "/entry.css": /* css */ `
@@ -296,8 +283,6 @@ describe("esbuild-bundler", () => {
     },
   });
   itBundled("css/CSSFromJSMissingImport", {
-    experimentalCss: true,
-
     // GENERATED
     files: {
       "/entry.js": /* js */ `
@@ -311,7 +296,6 @@ describe("esbuild-bundler", () => {
     },
   });
   itBundled("css/CSSFromJSMissingStarImport", {
-    experimentalCss: true,
     outdir: "/out",
     files: {
       "/entry.js": /* js */ `
@@ -331,7 +315,6 @@ describe("esbuild-bundler", () => {
     },
   });
   itBundled("css/ImportCSSFromJS", {
-    experimentalCss: true,
     outdir: "/out",
     files: {
       "/entry.js": /* js */ `
@@ -351,7 +334,6 @@ describe("esbuild-bundler", () => {
     },
   });
   // itBundled("css/ImportCSSFromJSWriteToStdout", {
-  //   experimentalCss: true,
   //   files: {
   //     "/entry.js": `import "./entry.css"`,
   //     "/entry.css": `.entry { color: red }`,
@@ -361,7 +343,6 @@ describe("esbuild-bundler", () => {
   //   },
   // });
   itBundled("css/ImportJSFromCSS", {
-    experimentalCss: true,
     outdir: "/out",
     files: {
       "/entry.ts": `export default 123`,
@@ -373,8 +354,6 @@ describe("esbuild-bundler", () => {
     },
   });
   itBundled("css/ImportJSONFromCSS", {
-    experimentalCss: true,
-
     // GENERATED
     files: {
       "/entry.json": `{}`,
@@ -386,8 +365,6 @@ describe("esbuild-bundler", () => {
     },
   });
   itBundled("css/MissingImportURLInCSS", {
-    experimentalCss: true,
-
     // GENERATED
     files: {
       "/src/entry.css": /* css */ `
@@ -402,7 +379,6 @@ describe("esbuild-bundler", () => {
 
   // Skipping for now
   itBundled("css/ExternalImportURLInCSS", {
-    experimentalCss: true,
     files: {
       "/src/entry.css": /* css */ `
         div:after {
@@ -422,8 +398,6 @@ describe("esbuild-bundler", () => {
   });
 
   itBundled("css/InvalidImportURLInCSS", {
-    experimentalCss: true,
-
     // GENERATED
     files: {
       "/entry.css": /* css */ `
@@ -467,7 +441,6 @@ describe("esbuild-bundler", () => {
   `, */
   });
   itBundled("css/TextImportURLInCSSText", {
-    experimentalCss: true,
     outfile: "/out.css",
     files: {
       "/entry.css": /* css */ `
@@ -487,7 +460,6 @@ a {
     },
   });
   itBundled("css/Png", {
-    experimentalCss: true,
     outfile: "/out.css",
     // GENERATED
     files: {
@@ -496,7 +468,7 @@ a {
           background: url(./example.png);
         }
       `,
-      "/example.png": new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      "/example.png": Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     },
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
@@ -510,7 +482,6 @@ a {
 
   // We don't support dataurl rn
   //   itBundled("css/DataURLImportURLInCSS", {
-  //     experimentalCss: true,
   //     outfile: "/out.css",
   //     // GENERATED
   //     files: {
@@ -536,7 +507,6 @@ a {
 
   // We don't support binary loader rn
   //   itBundled("css/BinaryImportURLInCSS", {
-  //     experimentalCss: true,
 
   //     // GENERATED
   //     files: {
@@ -559,7 +529,6 @@ a {
 
   // We don't support base64 loader rn
   // itBundled("css/Base64ImportURLInCSS", {
-  //   experimentalCss: true,
 
   //   // GENERATED
   //   files: {
@@ -573,7 +542,6 @@ a {
   // });
 
   itBundled("css/FileImportURLInCSS", {
-    experimentalCss: true,
     files: {
       "/entry.css": /* css */ `
         @import "./one.css";
@@ -607,8 +575,6 @@ b {
   });
 
   itBundled("css/IgnoreURLsInAtRulePrelude", {
-    experimentalCss: true,
-
     // GENERATED
     files: {
       "/entry.css": /* css */ `
@@ -621,7 +587,6 @@ b {
   });
 
   itBundled("css/PackageURLsInCSS", {
-    experimentalCss: true,
     files: {
       "/entry.css": /* css */ `
         @import "./test.css";
@@ -659,7 +624,6 @@ c {
   });
 
   itBundled("css/CSSAtImportExtensionOrderCollision", {
-    experimentalCss: true,
     files: {
       // This should avoid picking ".js" because it's explicitly configured as non-CSS
       "/entry.css": `@import "./test";`,
@@ -682,7 +646,6 @@ c {
 
   /* We don't support `extensionOrder`/`--resolve-extensions` rn
   itBundled("css/CSSAtImportExtensionOrderCollisionUnsupported", {
-    experimentalCss: true,
 
     // GENERATED
     files: {
@@ -699,14 +662,12 @@ c {
   */
 
   // itBundled("css/CSSAtImportConditionsNoBundle", {
-  //   experimentalCss: true,
   //   files: {
   //     "/entry.css": `@import "./print.css" print;`,
   //   },
   // });
 
   itBundled("css/CSSAtImportConditionsBundleExternal", {
-    experimentalCss: true,
     files: {
       "/entry.css": /* css */ `@import "https://example.com/print.css" print;`,
     },
@@ -721,14 +682,12 @@ c {
   });
 
   itBundled("css/CSSAtImportConditionsBundleExternalConditionWithURL", {
-    experimentalCss: true,
     files: {
       "/entry.css": /* css */ `@import "https://example.com/foo.css" supports(background: url("foo.png"));`,
     },
   });
 
   itBundled("css/CSSAtImportConditionsBundleLOL", {
-    experimentalCss: true,
     outfile: "/out.css",
     files: {
       "/entry.css": /* css */ `
@@ -787,26 +746,26 @@ c {
         @import "http://example.com/foo.css" layer(layer-name) (min-width: 768px) and (max-width: 1024px);
         @import "http://example.com/foo.css" supports(display: flex);
         @import "http://example.com/foo.css" (min-width: 768px) and (max-width: 1024px);
-        
+
         /* foo.css */
         body {
           color: red;
         }
-        
+
         /* foo.css */
         @layer {
           body {
             color: red;
           }
         }
-        
+
         /* foo.css */
         @layer layer-name {
           body {
             color: red;
           }
         }
-        
+
         /* foo.css */
         @supports (display: flex) {
           @layer layer-name {
@@ -815,7 +774,7 @@ c {
             }
           }
         }
-        
+
         /* foo.css */
         @media (min-width: 768px) and (max-width: 1024px) {
           @layer layer-name {
@@ -824,30 +783,30 @@ c {
             }
           }
         }
-        
+
         /* foo.css */
         @supports (display: flex) {
           body {
             color: red;
           }
         }
-        
+
         /* foo.css */
         @media (min-width: 768px) and (max-width: 1024px) {
           body {
             color: red;
           }
         }
-        
+
         /* empty-1.css */
         @layer empty-1;
-        
+
         /* empty-2.css */
-        
-        
+
+
         /* empty-3.css */
-        
-        
+
+
         /* foo.css */
         @layer outer {
           @layer inner {
@@ -856,10 +815,10 @@ c {
             }
           }
         }
-        
+
         /* nested-layer.css */
         @layer outer;
-        
+
         /* foo.css */
         @supports (outer: true) {
           @layer inner {
@@ -868,10 +827,10 @@ c {
             }
           }
         }
-        
+
         /* nested-layer.css */
-        
-        
+
+
         /* foo.css */
         @media (outer: true) {
           @layer inner {
@@ -880,10 +839,10 @@ c {
             }
           }
         }
-        
+
         /* nested-layer.css */
-        
-        
+
+
         /* foo.css */
         @layer outer {
           @supports (inner: true) {
@@ -892,10 +851,10 @@ c {
             }
           }
         }
-        
+
         /* nested-supports.css */
         @layer outer;
-        
+
         /* foo.css */
         @supports (outer: true) {
           @supports (inner: true) {
@@ -904,10 +863,10 @@ c {
             }
           }
         }
-        
+
         /* nested-supports.css */
-        
-        
+
+
         /* foo.css */
         @media (outer: true) {
           @supports (inner: true) {
@@ -916,10 +875,10 @@ c {
             }
           }
         }
-        
+
         /* nested-supports.css */
-        
-        
+
+
         /* foo.css */
         @layer outer {
           @media (inner: true) {
@@ -928,10 +887,10 @@ c {
             }
           }
         }
-        
+
         /* nested-media.css */
         @layer outer;
-        
+
         /* foo.css */
         @supports (outer: true) {
           @media (inner: true) {
@@ -940,10 +899,10 @@ c {
             }
           }
         }
-        
+
         /* nested-media.css */
-        
-        
+
+
         /* foo.css */
         @media (outer: true) {
           @media (inner: true) {
@@ -952,10 +911,10 @@ c {
             }
           }
         }
-        
+
         /* nested-media.css */
-        
-        
+
+
         /* entry.css */
         `);
     },
@@ -965,7 +924,6 @@ c {
   // condition tokens. If they aren't cloned correctly, then something will
   // likely crash with an out-of-bounds error.
   itBundled("css/CSSAtImportConditionsWithImportRecordsBundle", {
-    experimentalCss: true,
     files: {
       "/entry.css": /* css */ `
         @import url(./foo.css) supports(background: url(./a.png));
@@ -1083,7 +1041,6 @@ c {
   // to test the changes is to bundle https://github.com/evanw/css-import-tests
   // and visually inspect a browser's rendering of the resulting CSS file.
   itBundled("css/CSSAtImportConditionsFromExternalRepo", {
-    experimentalCss: true,
     files: {
       "/001/default/a.css": `.box { background-color: green; }`,
       "/001/default/style.css": `@import url("a.css");`,
@@ -1342,7 +1299,6 @@ c {
   });
 
   itBundled("css/CSSAtImportConditionsAtLayerBundle", {
-    experimentalCss: true,
     files: {
       "/case1.css": /* css */ `
         @import url(case1-foo.css) layer(first.one);
@@ -1401,7 +1357,6 @@ c {
   });
 
   itBundled("css/CSSAtImportConditionsAtLayerBundleAlternatingLayerInFile", {
-    experimentalCss: true,
     files: {
       "/a.css": `@layer first { body { color: red } }`,
       "/b.css": `@layer last { body { color: green } }`,
@@ -1463,7 +1418,6 @@ c {
   });
 
   itBundled("css/CSSAtImportConditionsChainExternal", {
-    experimentalCss: true,
     files: {
       "/entry.css": /* css */ `
         @import "a.css" layer(a) not print;
@@ -1483,7 +1437,6 @@ c {
 
   // This test mainly just makes sure that this scenario doesn't crash
   itBundled("css/CSSAndJavaScriptCodeSplittingESBuildIssue1064", {
-    experimentalCss: true,
     files: {
       "/a.js": /* js */ `
         import shared from './shared.js'
@@ -1516,7 +1469,6 @@ c {
   });
 
   itBundled("css/CSSExternalQueryAndHashNoMatchESBuildIssue1822", {
-    experimentalCss: true,
     files: {
       "/entry.css": /* css */ `
         a { background: url(foo/bar.png?baz) }
@@ -1532,8 +1484,6 @@ c {
     },
   });
   itBundled("css/CSSNestingOldBrowser", {
-    experimentalCss: true,
-
     // GENERATED
     files: {
       "/nested-@layer.css": `a { @layer base { color: red; } }`,
@@ -1581,7 +1531,7 @@ c {
       "/toplevel-plus.css",
       "/toplevel-tilde.css",
     ],
-    unsupportedCSSFeatures: "Nesting",
+    unsupportedCSSFeatures: ["Nesting"],
     /* TODO FIX expectedScanLog: `nested-@layer.css: WARNING: CSS nesting syntax is not supported in the configured target environment (chrome10)
   nested-@media.css: WARNING: CSS nesting syntax is not supported in the configured target environment (chrome10)
   nested-ampersand-first.css: WARNING: CSS nesting syntax is not supported in the configured target environment (chrome10)
@@ -1603,8 +1553,6 @@ c {
   `, */
   });
   itBundled("css/MetafileCSSBundleTwoToOne", {
-    experimentalCss: true,
-
     files: {
       "/foo/entry.js": /* js */ `
         import '../common.css'
@@ -1622,8 +1570,6 @@ c {
     outdir: "/",
   });
   itBundled("css/DeduplicateRules", {
-    experimentalCss: true,
-
     // GENERATED
     files: {
       "/yes0.css": `a { color: red; color: green; color: red }`,

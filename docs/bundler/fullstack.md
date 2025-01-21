@@ -34,10 +34,8 @@ Bun.serve({
 });
 ```
 
-You'll need to run your app with `bun --experimental-html` to enable this feature:
-
 ```bash
-$ bun --experimental-html run app.ts
+$ bun run app.ts
 ```
 
 ## HTML imports are routes

@@ -5924,12 +5924,13 @@ const ServePlugins = struct {
 
     pub fn handleOnResolve(this: *ServePlugins) void {
         this.value.pending.promise.deinit();
-        for (this.value.pending.pending_bundled_routes.items) |route| {
-            route.onPluginsResolved(this.value.pending.plugins.?);
+        var pending_bundled_routes = this.value.pending.pending_bundled_routes;
+        defer pending_bundled_routes.deinit(bun.default_allocator);
+        this.value = .{ .result = this.value.pending.plugins };
+        for (pending_bundled_routes.items) |route| {
+            route.onPluginsResolved(this.value.result);
             route.deref();
         }
-        this.value.pending.pending_bundled_routes.clearRetainingCapacity();
-        this.value = .{ .result = this.value.pending.plugins.? };
     }
 
     pub fn onRejectImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
@@ -5947,11 +5948,11 @@ const ServePlugins = struct {
         var pending_bundled_routes = plugins.value.pending.pending_bundled_routes;
         defer pending_bundled_routes.deinit(bun.default_allocator);
         plugins.value.pending.pending_bundled_routes = .{};
+        plugins.value = .err;
         for (pending_bundled_routes.items) |route| {
             route.onPluginsRejected();
             route.deref();
         }
-        plugins.value = .err;
         globalThis.bunVM().runErrorHandler(e, null);
     }
 

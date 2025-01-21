@@ -346,11 +346,7 @@ var access = function access(path, mode, callback) {
           throw $ERR_INVALID_ARG_TYPE("options", "object", params);
         }
       }
-      ({
-        offset = 0,
-        length = buffer?.byteLength - offset,
-        position = null,
-      } = params ?? {});
+      ({ offset = 0, length = buffer?.byteLength - offset, position = null } = params ?? {});
     }
     if (!callback) {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
@@ -546,19 +542,15 @@ var access = function access(path, mode, callback) {
   openSync = fs.openSync.bind(fs),
   readSync = function readSync(fd, buffer, offsetOrOptions, length, position) {
     let offset = offsetOrOptions;
-    if (arguments.length <= 3 || typeof offsetOrOptions === 'object') {
+    if (arguments.length <= 3 || typeof offsetOrOptions === "object") {
       if (offsetOrOptions !== undefined) {
         // validateObject(offsetOrOptions, 'options', kValidateObjectAllowNullable);
-        if (typeof offsetOrOptions !== 'object' || $isArray(offsetOrOptions)) {
+        if (typeof offsetOrOptions !== "object" || $isArray(offsetOrOptions)) {
           throw new Error("Invalid argument");
         }
       }
-  
-      ({
-        offset = 0,
-        length = buffer.byteLength - offset,
-        position = null,
-      } = offsetOrOptions ?? {});
+
+      ({ offset = 0, length = buffer.byteLength - offset, position = null } = offsetOrOptions ?? {});
     }
 
     return fs.readSync(fd, buffer, offset, length, position);
@@ -744,10 +736,12 @@ const realpathSync: any =
         // This function is ported 1:1 from node.js, to emulate how it is unable to
         // resolve subst drives to their underlying location. The native call is
         // able to see through that.
-        if (typeof p !== "string") {
-          p += '';
-        }
-        p = getValidatedPath(p);
+        if (p instanceof URL) {
+          if (p.pathname.indexOf("%00") != -1) {
+            throw $ERR_INVALID_ARG_VALUE("path", "string without null bytes", p.pathname);
+          }
+          p = Bun.fileURLToPath(p as URL);
+        } else p = getValidatedPath(p);
         throwIfNullBytesInFileName(p);
         const knownHard = new Set();
 
@@ -853,9 +847,14 @@ const realpath: any =
           encoding && (assertEncodingForWindows ?? $newZigFunction("types.zig", "jsAssertEncodingValid", 1))(encoding);
         }
         if (typeof p !== "string") {
-          p += '';
+          p += "";
         }
-        p = getValidatedPath(p);
+        if (p instanceof URL) {
+          if (p.pathname.indexOf("%00") != -1) {
+            throw $ERR_INVALID_ARG_VALUE("path", "string without null bytes", p.pathname);
+          }
+          p = Bun.fileURLToPath(p as URL);
+        } else p = getValidatedPath(p);
         throwIfNullBytesInFileName(p);
 
         const knownHard = new Set();

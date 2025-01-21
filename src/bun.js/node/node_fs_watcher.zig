@@ -698,7 +698,11 @@ pub const FSWatcher = struct {
                 .result => |r| r,
                 .err => |err| {
                     ctx.deinit();
-                    return .{ .err = err };
+                    return .{ .err = .{
+                        .errno = err.errno,
+                        .syscall = .watch,
+                        .path = args.path.slice(),
+                    } };
                 },
             }
         else

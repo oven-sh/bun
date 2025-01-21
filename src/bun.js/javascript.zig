@@ -2051,9 +2051,11 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.next_immediate_tasks = EventLoop.Queue.init(
             default_allocator,
         );
+        vm.regular_event_loop.virtual_machine = vm;
         vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
         vm.regular_event_loop.concurrent_tasks = .{};
         vm.event_loop = &vm.regular_event_loop;
+        vm.eventLoop().ensureWaker();
 
         vm.transpiler.macro_context = null;
         vm.transpiler.resolver.store_fd = opts.store_fd;
@@ -2077,7 +2079,6 @@ pub const VirtualMachine = struct {
             null,
         );
         vm.regular_event_loop.global = vm.global;
-        vm.regular_event_loop.virtual_machine = vm;
         vm.jsc = vm.global.vm();
         vm.smol = opts.smol;
         vm.dns_result_order = opts.dns_result_order;

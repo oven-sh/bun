@@ -94,6 +94,9 @@ pub const All = struct {
         timer.next = time.*;
 
         this.timers.insert(timer);
+        if (Environment.isWindows) {
+            this.ensureUVTimer(@alignCast(@fieldParentPtr("timer", this)));
+        }
     }
 
     fn ensureUVTimer(this: *All, vm: *VirtualMachine) void {

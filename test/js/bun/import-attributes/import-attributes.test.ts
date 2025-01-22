@@ -3,13 +3,13 @@ import * as path from "path";
 
 // .napi is skipped (hard to make an example)
 // .sh is skipped (only works from `bun somefile.sh`)
+// .html, .css is skipped
 const loaders = ["js", "jsx", "ts", "tsx", "json", "toml", "html", "css"];
 
-// bug 1 found:
-// - module_loader.zig:2386
-//   - it determines the loader based on the type attribute, checks if it's js like, then proceeds to drop it and not pass it to transpile()
-//   - transpile() then figures out the loader itself based on file extension:
-//     - module_loader.zig:266
+// ctrl+shift+f for tailwind
+// next bug: ZigGlobalObject.cpp:4226
+// - in the case of `with {type: "json"}`, `params.type()` is `ScriptFetchParameters::Type::JSON` so
+//   the type attribute string is not set.
 
 async function testBunRun(dir: string, loader: string): Promise<unknown> {
   const cmd = [

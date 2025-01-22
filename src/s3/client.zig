@@ -64,8 +64,6 @@ pub fn downloadSlice(
 ) void {
     const range = brk: {
         if (size) |size_| {
-            if (offset == 0) break :brk null;
-
             var end = (offset + size_);
             if (size_ > 0) {
                 end -= 1;

@@ -39,6 +39,7 @@ public:
     static Ref<SourceProvider> create(
         Zig::GlobalObject*,
         ResolvedSource& resolvedSource,
+        JSC::SourceProviderSourceType sourceType = JSC::SourceProviderSourceType::Module,
         bool isBuiltIn = false);
     ~SourceProvider();
     unsigned hash() const override;

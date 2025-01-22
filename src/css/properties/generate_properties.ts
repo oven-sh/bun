@@ -358,6 +358,7 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
   return `
   /// Returns the property name, without any vendor prefixes.
   pub inline fn name(this: *const PropertyId) []const u8 {
+      if (this.* == .custom) return this.custom.asStr();
       return @tagName(this.*);
   }
 

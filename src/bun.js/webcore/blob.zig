@@ -830,7 +830,6 @@ pub const Blob = struct {
                         .recursive = true,
                         .always_return_none = true,
                     },
-                    .sync,
                 )) {
                     .result => {
                         this.mkdirp_if_not_exists = false;
@@ -2578,6 +2577,7 @@ pub const Blob = struct {
                             bun.O.RDONLY
                         else
                             bun.O.WRONLY | bun.O.CREAT,
+                        0,
                     )) {
                         .result => |result| bun.toLibUVOwnedFD(result) catch {
                             _ = bun.sys.close(result);
@@ -2757,7 +2757,7 @@ pub const Blob = struct {
             pub fn throw(this: *CopyFileWindows, err: bun.sys.Error) void {
                 const globalThis = this.promise.strong.globalThis.?;
                 const promise = this.promise.swap();
-                const err_instance = err.toSystemError().toErrorInstance(globalThis);
+                const err_instance = err.toJSC(globalThis);
                 var event_loop = this.event_loop;
                 event_loop.enter();
                 defer event_loop.exit();
@@ -4360,9 +4360,8 @@ pub const Blob = struct {
             const vm = globalThis.bunVM();
             const fd: bun.FileDescriptor = if (pathlike == .fd) pathlike.fd else brk: {
                 var file_path: bun.PathBuffer = undefined;
-                const path = pathlike.path.sliceZ(&file_path);
                 switch (bun.sys.open(
-                    path,
+                    pathlike.path.sliceZ(&file_path),
                     bun.O.WRONLY | bun.O.CREAT | bun.O.NONBLOCK,
                     write_permissions,
                 )) {
@@ -4370,10 +4369,10 @@ pub const Blob = struct {
                         break :brk result;
                     },
                     .err => |err| {
-                        return globalThis.throwValue(err.withPath(path).toJSC(globalThis));
+                        return globalThis.throwValue(err.withPath(pathlike.path.slice()).toJSC(globalThis));
                     },
                 }
-                unreachable;
+                @compileError(unreachable);
             };
 
             const is_stdout_or_stderr = brk: {

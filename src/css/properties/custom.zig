@@ -604,6 +604,7 @@ pub const TokenList = struct {
     pub fn getFallback(this: *const TokenList, allocator: Allocator, kind: ColorFallbackKind) @This() {
         var tokens = TokenList{};
         tokens.v.ensureTotalCapacity(allocator, this.v.items.len) catch bun.outOfMemory();
+        tokens.v.items.len = this.v.items.len;
         for (this.v.items, tokens.v.items[0..this.v.items.len]) |*old, *new| {
             new.* = switch (old.*) {
                 .color => |*color| TokenOrValue{ .color = color.getFallback(allocator, kind) },
@@ -1423,6 +1424,13 @@ pub const UnparsedProperty = struct {
         };
 
         return .{ .result = .{ .property_id = property_id, .value = value } };
+    }
+
+    pub fn getPrefixed(this: *const @This(), allocator: Allocator, targets: css.Targets, feature: css.prefixes.Feature) UnparsedProperty {
+        var clone = this.deepClone(allocator);
+        const prefix = this.property_id.prefix();
+        clone.property_id = clone.property_id.withPrefix(targets.prefixes(prefix.orNone(), feature));
+        return clone;
     }
 
     /// Returns a new UnparsedProperty with the same value and the given property id.

@@ -1522,8 +1522,8 @@ pub const Fetch = struct {
                     const cert = certificate_info.cert;
                     var cert_ptr = cert.ptr;
                     if (BoringSSL.d2i_X509(null, &cert_ptr, @intCast(cert.len))) |x509| {
-                        defer BoringSSL.X509_free(x509);
                         const globalObject = this.global_this;
+                        defer x509.free();
                         const js_cert = X509.toJS(x509, globalObject) catch |err| {
                             switch (err) {
                                 error.JSError => {},
@@ -2513,7 +2513,7 @@ pub const Fetch = struct {
             return .zero;
         }
 
-        // "decompression: boolean"
+        // "decompress: boolean"
         disable_decompression = extract_disable_decompression: {
             const objects_to_try = [_]JSValue{
                 options_object orelse .zero,
@@ -3482,6 +3482,39 @@ pub const Headers = struct {
     entries: Headers.Entries = .{},
     buf: std.ArrayListUnmanaged(u8) = .{},
     allocator: std.mem.Allocator,
+
+    pub fn memoryCost(this: *const Headers) usize {
+        return this.buf.items.len + this.entries.memoryCost();
+    }
+
+    pub fn clone(this: *Headers) !Headers {
+        return Headers{
+            .entries = try this.entries.clone(this.allocator),
+            .buf = try this.buf.clone(this.allocator),
+            .allocator = this.allocator,
+        };
+    }
+
+    pub fn append(this: *Headers, name: []const u8, value: []const u8) !void {
+        var offset: u32 = @truncate(this.buf.items.len);
+        try this.buf.ensureUnusedCapacity(this.allocator, name.len + value.len);
+        const name_ptr = Api.StringPointer{
+            .offset = offset,
+            .length = @truncate(name.len),
+        };
+        this.buf.appendSliceAssumeCapacity(name);
+        offset = @truncate(this.buf.items.len);
+        this.buf.appendSliceAssumeCapacity(value);
+
+        const value_ptr = Api.StringPointer{
+            .offset = offset,
+            .length = @truncate(value.len),
+        };
+        try this.entries.append(this.allocator, .{
+            .name = name_ptr,
+            .value = value_ptr,
+        });
+    }
 
     pub fn deinit(this: *Headers) void {
         this.entries.deinit(this.allocator);

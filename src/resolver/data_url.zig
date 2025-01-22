@@ -115,7 +115,8 @@ pub const DataURL = struct {
         return bun.http.MimeType.init(d.mime_type, null, null);
     }
 
-    pub fn decodeData(url: DataURL, allocator: std.mem.Allocator) ![]u8 {
+    /// Decodes the data from the data URL. Always returns an owned slice.
+    pub fn decodeData(url: DataURL, allocator: Allocator) ![]u8 {
         const percent_decoded = PercentEncoding.decodeUnstrict(allocator, url.data) catch url.data orelse url.data;
         if (url.is_base64) {
             const len = bun.base64.decodeLen(percent_decoded);
@@ -127,6 +128,110 @@ pub const DataURL = struct {
             return buf;
         }
 
-        return allocator.dupe(u8, percent_decoded);
+        return try allocator.dupe(u8, percent_decoded);
+    }
+
+    /// Returns the shorter of either a base64-encoded or percent-escaped data URL
+    pub fn encodeStringAsShortestDataURL(allocator: Allocator, mime_type: []const u8, text: []const u8) []u8 {
+        // Calculate base64 version
+        const base64_encode_len = bun.base64.encodeLen(text);
+        const total_base64_encode_len = "data:".len + mime_type.len + ";base64,".len + base64_encode_len;
+
+        use_base64: {
+            var counter = CountingBuf{};
+            const success = encodeStringAsPercentEscapedDataURL(&counter, mime_type, text) catch unreachable;
+            if (!success) {
+                break :use_base64;
+            }
+
+            if (counter.len > total_base64_encode_len) {
+                break :use_base64;
+            }
+
+            var buf = std.ArrayList(u8).init(allocator);
+            errdefer buf.deinit();
+            const success2 = encodeStringAsPercentEscapedDataURL(&buf, mime_type, text) catch unreachable;
+            if (!success2) {
+                break :use_base64;
+            }
+            return buf.items;
+        }
+
+        const base64buf = allocator.alloc(u8, total_base64_encode_len) catch bun.outOfMemory();
+        return std.fmt.bufPrint(base64buf, "data:{s};base64,{s}", .{ mime_type, text }) catch unreachable;
+    }
+
+    const CountingBuf = struct {
+        len: usize = 0,
+
+        pub fn appendSlice(self: *CountingBuf, slice: []const u8) Allocator.Error!void {
+            self.len += slice.len;
+        }
+
+        pub fn append(self: *CountingBuf, _: u8) Allocator.Error!void {
+            self.len += 1;
+        }
+
+        pub fn toOwnedSlice(_: *CountingBuf) Allocator.Error![]u8 {
+            return "";
+        }
+    };
+
+    pub fn encodeStringAsPercentEscapedDataURL(buf: anytype, mime_type: []const u8, text: []const u8) !bool {
+        const hex = "0123456789ABCDEF";
+
+        try buf.appendSlice("data:");
+        try buf.appendSlice(mime_type);
+        try buf.append(',');
+
+        // Scan for trailing characters that need to be escaped
+        var trailing_start = text.len;
+        while (trailing_start > 0) {
+            const c = text[trailing_start - 1];
+            if (c > 0x20 or c == '\t' or c == '\n' or c == '\r') {
+                break;
+            }
+            trailing_start -= 1;
+        }
+
+        if (!bun.simdutf.validate.utf8(text)) {
+            return false;
+        }
+
+        var i: usize = 0;
+        var run_start: usize = 0;
+
+        // TODO: vectorize this
+        while (i < text.len) {
+            const first_byte = text[i];
+
+            // Check if we need to escape this character
+            const needs_escape = first_byte == '\t' or
+                first_byte == '\n' or
+                first_byte == '\r' or
+                first_byte == '#' or
+                i >= trailing_start or
+                (first_byte == '%' and i + 2 < text.len and
+                PercentEncoding.isHex(text[i + 1]) and
+                PercentEncoding.isHex(text[i + 2]));
+
+            if (needs_escape) {
+                if (run_start < i) {
+                    try buf.appendSlice(text[run_start..i]);
+                }
+                try buf.append('%');
+                try buf.append(hex[first_byte >> 4]);
+                try buf.append(hex[first_byte & 15]);
+                run_start = i + 1;
+            }
+
+            i += bun.strings.utf8ByteSequenceLength(first_byte);
+        }
+
+        if (run_start < text.len) {
+            try buf.appendSlice(text[run_start..]);
+        }
+
+        return true;
     }
 };

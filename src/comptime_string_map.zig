@@ -193,6 +193,10 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             return str.inMapCaseInsensitive(@This());
         }
 
+        pub fn fromString(str: bun.String) ?V {
+            return getWithEql(str, bun.String.eqlComptime);
+        }
+
         pub fn getASCIIICaseInsensitive(input: anytype) ?V {
             return getWithEqlLowercase(input, bun.strings.eqlComptimeIgnoreLen);
         }

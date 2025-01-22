@@ -1248,7 +1248,7 @@ pub const InternalDNS = struct {
 
         valid: bool = true,
 
-        libinfo: if (Environment.isMac) MacAsyncDNS else void = if (Environment.isMac) .{} else {},
+        libinfo: if (Environment.isMac) MacAsyncDNS else void = if (Environment.isMac) .{},
 
         pub fn isExpired(this: *Request, timestamp_to_store: *u32) bool {
             if (this.refcount > 0 or this.result == null) {
@@ -1395,7 +1395,7 @@ pub const InternalDNS = struct {
         // https://github.com/nodejs/node/issues/33816
         // https://github.com/aio-libs/aiohttp/issues/5357
         // https://github.com/libuv/libuv/issues/2225
-        .flags = if (Environment.isPosix) bun.C.netdb.AI_ADDRCONFIG else 0,
+        .flags = if (Environment.isPosix) bun.C.translated.AI_ADDRCONFIG else 0,
         .next = null,
         .protocol = 0,
         .socktype = std.c.SOCK.STREAM,

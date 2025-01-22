@@ -24,7 +24,7 @@ const MacroRemap = @import("./package_json.zig").MacroMap;
 const ESModule = @import("./package_json.zig").ESModule;
 const BrowserMap = @import("./package_json.zig").BrowserMap;
 const CacheSet = cache.Set;
-const DataURL = @import("./data_url.zig").DataURL;
+pub const DataURL = @import("./data_url.zig").DataURL;
 pub const DirInfo = @import("./dir_info.zig");
 const ResolvePath = @import("./resolve_path.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
@@ -687,7 +687,7 @@ pub const Resolver = struct {
         defer r.extension_order = original_order;
         r.extension_order = switch (kind) {
             .url, .at_conditional, .at => options.BundleOptions.Defaults.CSSExtensionOrder[0..],
-            .entry_point, .stmt, .dynamic => r.opts.extension_order.default.esm,
+            .entry_point_build, .entry_point_run, .stmt, .dynamic => r.opts.extension_order.default.esm,
             else => r.opts.extension_order.default.default,
         };
 
@@ -731,7 +731,7 @@ pub const Resolver = struct {
 
         // Certain types of URLs default to being external for convenience,
         // while these rules should not be applied to the entrypoint as it is never external (#12734)
-        if (kind != .entry_point and
+        if (kind != .entry_point_build and kind != .entry_point_run and
             (r.isExternalPattern(import_path) or
             // "fill: url(#filter);"
             (kind.isFromCSS() and strings.startsWith(import_path, "#")) or
@@ -878,6 +878,23 @@ pub const Resolver = struct {
         errdefer (r.flushDebugLogs(.fail) catch {});
 
         var tmp = r.resolveWithoutSymlinks(source_dir_normalized, import_path, kind, global_cache);
+
+        // Fragments in URLs in CSS imports are technically expected to work
+        if (tmp == .not_found and kind.isFromCSS()) try_without_suffix: {
+            // If resolution failed, try again with the URL query and/or hash removed
+            const maybe_suffix = std.mem.indexOfAny(u8, import_path, "?#");
+            if (maybe_suffix == null or maybe_suffix.? < 1)
+                break :try_without_suffix;
+
+            const suffix = maybe_suffix.?;
+            if (r.debug_logs) |*debug| {
+                debug.addNoteFmt("Retrying resolution after removing the suffix {s}", .{import_path[suffix..]});
+            }
+            const result2 = r.resolveWithoutSymlinks(source_dir_normalized, import_path[0..suffix], kind, global_cache);
+            if (result2 == .not_found) break :try_without_suffix;
+            tmp = result2;
+        }
+
         switch (tmp) {
             .success => |*result| {
                 if (!strings.eqlComptime(result.path_pair.primary.namespace, "node") and !result.is_standalone_module)
@@ -926,7 +943,7 @@ pub const Resolver = struct {
                             .primary_side_effects_data = .no_side_effects__pure_data,
                         };
                     },
-                    .import => |path| return r.resolve(r.fs.top_level_dir, path, .entry_point),
+                    .import => |path| return r.resolve(r.fs.top_level_dir, path, .entry_point_build),
                 }
                 return .{};
             }
@@ -1155,8 +1172,8 @@ pub const Resolver = struct {
 
         // Check both relative and package paths for CSS URL tokens, with relative
         // paths taking precedence over package paths to match Webpack behavior.
-        const is_package_path = isPackagePathNotAbsolute(import_path);
-        var check_relative = !is_package_path or kind == .url;
+        const is_package_path = kind != .entry_point_run and isPackagePathNotAbsolute(import_path);
+        var check_relative = !is_package_path or kind.isFromCSS();
         var check_package = is_package_path;
 
         if (check_relative) {
@@ -1707,6 +1724,7 @@ pub const Resolver = struct {
                                 var esmodule = ESModule{
                                     .conditions = switch (kind) {
                                         ast.ImportKind.require, ast.ImportKind.require_resolve => r.opts.conditions.require,
+                                        ast.ImportKind.at, ast.ImportKind.at_conditional => r.opts.conditions.style,
                                         else => r.opts.conditions.import,
                                     },
                                     .allocator = r.allocator,

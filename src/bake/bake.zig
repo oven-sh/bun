@@ -589,15 +589,11 @@ pub const Framework = struct {
         }
 
         out.options.production = mode != .development;
-
         out.options.tree_shaking = mode != .development;
         out.options.minify_syntax = mode != .development;
         out.options.minify_identifiers = mode != .development;
         out.options.minify_whitespace = mode != .development;
-
-        out.options.experimental.css = true;
         out.options.css_chunking = true;
-
         out.options.framework = framework;
 
         out.options.source_map = switch (mode) {

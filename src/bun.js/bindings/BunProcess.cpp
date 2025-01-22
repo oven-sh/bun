@@ -44,6 +44,7 @@
 #include "wtf/text/OrdinalNumber.h"
 #include "NodeValidator.h"
 #include "NodeModuleModule.h"
+#include "JSX509Certificate.h"
 
 #include "AsyncContextFrame.h"
 #include "ErrorCode.h"
@@ -1122,9 +1123,9 @@ Process::~Process()
 {
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunction_emitWarning, (Zig::JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsFunction_emitWarning, (JSC::JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* process = jsCast<Process*>(globalObject->processObject());
@@ -1163,6 +1164,20 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, 
     abort();
 }
 
+static bool isJSValueEqualToASCIILiteral(JSC::JSGlobalObject* globalObject, JSC::JSValue value, const ASCIILiteral literal)
+{
+    if (!value.isString()) {
+        return false;
+    }
+
+    auto* str = value.toStringOrNull(globalObject);
+    if (!str) {
+        return false;
+    }
+    auto view = str->view(globalObject);
+    return view == literal;
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -1176,9 +1191,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObj
     auto ctor = callFrame->argument(3);
     auto detail = jsUndefined();
 
-    auto dep_warning = jsString(vm, String("DeprecationWarning"_s));
-
-    if (Bun__Node__ProcessNoDeprecation && JSC::JSValue::strictEqual(globalObject, type, dep_warning)) {
+    if (Bun__Node__ProcessNoDeprecation && isJSValueEqualToASCIILiteral(globalObject, type, "DeprecationWarning"_s)) {
         return JSValue::encode(jsUndefined());
     }
 
@@ -1233,7 +1246,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObj
     if (!detail.isUndefined()) errorInstance->putDirect(vm, vm.propertyNames->detail, detail, JSC::PropertyAttribute::DontEnum | 0);
     // ErrorCaptureStackTrace(warning, ctor || process.emitWarning);
 
-    if (JSC::JSValue::strictEqual(globalObject, type, dep_warning)) {
+    if (isJSValueEqualToASCIILiteral(globalObject, type, "DeprecationWarning"_s)) {
         if (Bun__Node__ProcessNoDeprecation) {
             return JSValue::encode(jsUndefined());
         }
@@ -1910,7 +1923,7 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
         return report;
     }
 #else // !OS(WINDOWS)
-    return jsString(vm, String("Not implemented. blame @paperdave"_s));
+    return jsString(vm, String("Not implemented. blame @paperclover"_s));
 #endif
 }
 
@@ -2501,6 +2514,15 @@ inline JSValue processBindingConfig(Zig::GlobalObject* globalObject, JSC::VM& vm
     return config;
 }
 
+JSValue createCryptoX509Object(JSGlobalObject* globalObject)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto cryptoX509 = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
+    cryptoX509->putDirect(vm, JSC::Identifier::fromString(vm, "isX509Certificate"_s), JSC::JSFunction::create(vm, globalObject, 1, String("isX509Certificate"_s), jsIsX509Certificate, ImplementationVisibility::Public), 0);
+    return cryptoX509;
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObject, CallFrame* callFrame))
 {
     auto& vm = jsGlobalObject->vm();
@@ -2517,6 +2539,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
     if (moduleName == "constants"_s) return JSValue::encode(globalObject->processBindingConstants());
     if (moduleName == "contextify"_s) PROCESS_BINDING_NOT_IMPLEMENTED("contextify");
     if (moduleName == "crypto"_s) PROCESS_BINDING_NOT_IMPLEMENTED("crypto");
+    if (moduleName == "crypto/x509"_s) return JSValue::encode(createCryptoX509Object(globalObject));
     if (moduleName == "fs"_s) PROCESS_BINDING_NOT_IMPLEMENTED_ISSUE("fs", "3546");
     if (moduleName == "fs_event_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("fs_event_wrap");
     if (moduleName == "http_parser"_s) PROCESS_BINDING_NOT_IMPLEMENTED("http_parser");

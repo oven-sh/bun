@@ -28,7 +28,7 @@ const fs = require('fs');
 const tmpdir = require('../common/tmpdir');
 
 // Test creating and reading symbolic link
-const linkData = fixtures.path('cycles/');
+const linkData = fixtures.path('cycles');
 const linkPath = tmpdir.resolve('cycles_link');
 
 tmpdir.refresh();
@@ -38,7 +38,9 @@ fs.symlink(linkData, linkPath, 'junction', common.mustSucceed(() => {
     assert.ok(stats.isSymbolicLink());
 
     fs.readlink(linkPath, common.mustSucceed((destination) => {
-      assert.strictEqual(destination, linkData);
+      // BUN: It was observed that Node.js 22 fails on this line, bun includes the trailing \ too. Make this test looser.
+      const withoutTrailingSlash = str => str.replace(/\\$/, '');
+      assert.strictEqual(withoutTrailingSlash(destination), withoutTrailingSlash(linkData));
 
       fs.unlink(linkPath, common.mustSucceed(() => {
         assert(!fs.existsSync(linkPath));
@@ -54,7 +56,6 @@ fs.symlink(linkData, linkPath, 'junction', common.mustSucceed(() => {
   const linkPath = tmpdir.resolve('invalid_junction_link');
 
   fs.symlink(linkData, linkPath, 'junction', common.mustSucceed(() => {
-    if (!common.isWindows) // TODO: BUN
     assert(!fs.existsSync(linkPath));
 
     fs.unlink(linkPath, common.mustSucceed(() => {

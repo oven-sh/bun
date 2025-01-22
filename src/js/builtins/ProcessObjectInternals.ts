@@ -25,18 +25,24 @@
  */
 
 export function getStdioWriteStream(fd) {
+  $assert(typeof fd === "number", `Expected fd to be a number, got ${typeof fd}`);
   const tty = require("node:tty");
 
   let stream;
   if (tty.isatty(fd)) {
     stream = new tty.WriteStream(fd);
+    // TODO: this is the wrong place for this property.
+    // but the TTY is technically duplex
+    // see test-fs-syncwritestream.js
+    stream.readable = true;
     process.on("SIGWINCH", () => {
       stream._refreshSize();
     });
     stream._type = "tty";
   } else {
     const fs = require("node:fs");
-    stream = new fs.WriteStream(fd, { autoClose: false, fd });
+    stream = new fs.WriteStream(null, { autoClose: false, fd, $fastPath: true });
+    stream.readable = false;
     stream._type = "fs";
   }
 
@@ -57,13 +63,12 @@ export function getStdioWriteStream(fd) {
   stream._isStdio = true;
   stream.fd = fd;
 
-  return [stream, stream[require("internal/shared").fileSinkSymbol]];
+  const underlyingSink = stream[require("internal/fs/streams").kWriteStreamFastPath];
+  $assert(underlyingSink);
+  return [stream, underlyingSink];
 }
 
 export function getStdinStream(fd) {
-  // Ideally we could use this:
-  // return require("node:stream")[Symbol.for("::bunternal::")]._ReadableFromWeb(Bun.stdin.stream());
-  // but we need to extend TTY/FS ReadStream
   const native = Bun.stdin.stream();
 
   var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
@@ -120,7 +125,7 @@ export function getStdinStream(fd) {
 
   const tty = require("node:tty");
   const ReadStream = tty.isatty(fd) ? tty.ReadStream : require("node:fs").ReadStream;
-  const stream = new ReadStream(fd);
+  const stream = new ReadStream(null, { fd });
 
   const originalOn = stream.on;
 

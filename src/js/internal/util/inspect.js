@@ -73,7 +73,6 @@ const MapPrototypeValues = uncurryThis(Map.prototype.values);
 const MapPrototypeKeys = uncurryThis(Map.prototype.keys);
 const MathFloor = Math.floor;
 const MathMax = Math.max;
-const MathMin = Math.min;
 const MathRound = Math.round;
 const MathSqrt = Math.sqrt;
 const MathTrunc = Math.trunc;
@@ -360,6 +359,10 @@ const validateObject = (value, name, allowArray = false) => {
     throw new codes.ERR_INVALID_ARG_TYPE(name, "Object", value);
 };
 
+function isURL(value) {
+  return typeof value.href === "string" && value instanceof URL;
+}
+
 const builtInObjects = new SafeSet(
   ArrayPrototypeFilter(
     ObjectGetOwnPropertyNames(globalThis),
@@ -460,6 +463,7 @@ const coreModuleRegExp = /^ {4}at (?:[^/\\(]+ \(|)node:(.+):\d+:\d+\)?$/;
 const nodeModulesRegExp = /[/\\]node_modules[/\\](.+?)(?=[/\\])/g;
 
 const classRegExp = /^(\s+[^(]*?)\s*{/;
+// eslint-disable-next-line node-core/no-unescaped-regexp-dot
 const stripCommentsRegExp = /(\/\/.*?\n)|(\/\*(.|\n)*?\*\/)/g;
 
 const kMinLineLength = 16;
@@ -727,7 +731,8 @@ function inspect(value, opts) {
       for (let i = 0; i < optKeys.length; ++i) {
         const key = optKeys[i];
         // TODO(BridgeAR): Find a solution what to do about stylize. Either make
-        // this function public or add a new API with a similar or better functionality.
+        // this function public or add a new API with a similar or better
+        // functionality.
         if (ObjectPrototypeHasOwnProperty(inspectDefaultOptions, key) || key === "stylize") {
           ctx[key] = opts[key];
         } else if (ctx.userOptions === undefined) {
@@ -743,6 +748,7 @@ function inspect(value, opts) {
   return formatValue(ctx, value, 0);
 }
 inspect.custom = customInspectSymbol;
+
 ObjectDefineProperty(inspect, "defaultOptions", {
   __proto__: null,
   get() {
@@ -865,8 +871,12 @@ inspect.styles = {
 };
 
 function addQuotes(str, quotes) {
-  if (quotes === -1) return `"${str}"`;
-  if (quotes === -2) return `\`${str}\``;
+  if (quotes === -1) {
+    return `"${str}"`;
+  }
+  if (quotes === -2) {
+    return `\`${str}\``;
+  }
   return `'${str}'`;
 }
 
@@ -963,10 +973,34 @@ function isInstanceof(object, proto) {
   }
 }
 
+// Special-case for some builtin prototypes in case their `constructor` property has been tampered.
+let wellKnownPrototypes;
+function initializeWellKnownPrototypes() {
+  wellKnownPrototypes = new SafeMap();
+  wellKnownPrototypes.set(Array.prototype, { name: "Array", constructor: Array });
+  wellKnownPrototypes.set(ArrayBuffer.prototype, { name: "ArrayBuffer", constructor: ArrayBuffer });
+  wellKnownPrototypes.set(Function.prototype, { name: "Function", constructor: Function });
+  wellKnownPrototypes.set(Map.prototype, { name: "Map", constructor: Map });
+  wellKnownPrototypes.set(Object.prototype, { name: "Object", constructor: Object });
+  wellKnownPrototypes.set(Set.prototype, { name: "Set", constructor: Set });
+  // wellKnownPrototypes.set(TypedArray.prototype, { name: "TypedArray", constructor: TypedArray });
+}
+
 function getConstructorName(obj, ctx, recurseTimes, protoProps) {
   let firstProto;
   const tmp = obj;
+  wellKnownPrototypes ?? initializeWellKnownPrototypes();
   while (obj || isUndetectableObject(obj)) {
+    const wellKnownPrototypeNameAndConstructor = wellKnownPrototypes.get(obj);
+    if (wellKnownPrototypeNameAndConstructor != null) {
+      const { name, constructor } = wellKnownPrototypeNameAndConstructor;
+      if (tmp instanceof constructor) {
+        if (protoProps !== undefined && firstProto !== obj) {
+          addPrototypeProperties(ctx, tmp, firstProto || tmp, recurseTimes, protoProps);
+        }
+        return name;
+      }
+    }
     const descriptor = ObjectGetOwnPropertyDescriptor(obj, "constructor");
     if (
       descriptor !== undefined &&
@@ -1143,7 +1177,8 @@ function formatValue(ctx, value, recurseTimes, typedArray) {
 
   // Memorize the context for custom inspection on proxies.
   const context = value;
-  // Always check for proxies to prevent side effects and to prevent triggering any proxy handlers.
+  // Always check for proxies to prevent side effects and to prevent triggering
+  // any proxy handlers.
   const proxy = getProxyDetails(value, !!ctx.showProxy);
   if (proxy !== undefined) {
     if (proxy === null || proxy[0] === null) {
@@ -1164,7 +1199,7 @@ function formatValue(ctx, value, recurseTimes, typedArray) {
       // Filter out the util module, its inspect function is special.
       maybeCustom !== inspect &&
       // Also filter out any prototype objects using the circular check.
-      !(value.constructor && value.constructor.prototype === value)
+      Object.getOwnPropertyDescriptor(value, "constructor")?.value?.prototype !== value
     ) {
       // This makes sure the recurseTimes are reported as before while using
       // a counter internally.
@@ -1173,7 +1208,9 @@ function formatValue(ctx, value, recurseTimes, typedArray) {
       const ret = maybeCustom.$call(context, depth, getUserOptions(ctx, isCrossContext), inspect);
       // If the custom inspection method returned `this`, don't go into infinite recursion.
       if (ret !== context) {
-        if (typeof ret !== "string") return formatValue(ctx, ret, recurseTimes);
+        if (typeof ret !== "string") {
+          return formatValue(ctx, ret, recurseTimes);
+        }
         return StringPrototypeReplaceAll(ret, "\n", `\n${StringPrototypeRepeat(" ", ctx.indentationLvl)}`);
       }
     }
@@ -1299,7 +1336,10 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
   if (noIterator) {
     keys = getKeys(value, ctx.showHidden);
     braces = ["{", "}"];
-    if (constructor === "Object") {
+    if (typeof value === "function") {
+      base = getFunctionBase(ctx, value, constructor, tag);
+      if (keys.length === 0 && protoProps === undefined) return ctx.stylize(base, "special");
+    } else if (constructor === "Object") {
       if (isArgumentsObject(value)) {
         braces[0] = "[Arguments] {";
       } else if (tag !== "") {
@@ -1308,9 +1348,6 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
       if (keys.length === 0 && protoProps === undefined) {
         return `${braces[0]}}`;
       }
-    } else if (typeof value === "function") {
-      base = getFunctionBase(value, constructor, tag);
-      if (keys.length === 0 && protoProps === undefined) return ctx.stylize(base, "special");
     } else if (isRegExp(value)) {
       // Make RegExps say that they are RegExps
       base = RegExpPrototypeToString(constructor !== null ? value : new RegExp(value));
@@ -1362,6 +1399,11 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
       formatter = formatNamespaceObject.bind(null, keys);
     } else if (isBoxedPrimitive(value)) {
       base = getBoxedBase(value, ctx, keys, constructor, tag);
+      if (keys.length === 0 && protoProps === undefined) {
+        return base;
+      }
+    } else if (isURL(value) && !(recurseTimes > ctx.depth && ctx.depth !== null)) {
+      base = value.href;
       if (keys.length === 0 && protoProps === undefined) {
         return base;
       }
@@ -1532,9 +1574,9 @@ function getClassBase(value, constructor, tag) {
   return `[${base}]`;
 }
 
-function getFunctionBase(value, constructor, tag) {
+function getFunctionBase(ctx, value, constructor, tag) {
   const stringified = FunctionPrototypeToString(value);
-  if (StringPrototypeStartsWith(stringified, "class") && StringPrototypeEndsWith(stringified, "}")) {
+  if (StringPrototypeStartsWith(stringified, "class") && stringified[stringified.length - 1] === "}") {
     const slice = StringPrototypeSlice(stringified, 5, -1);
     const bracketIndex = StringPrototypeIndexOf(slice, "{");
     if (
@@ -1560,7 +1602,7 @@ function getFunctionBase(value, constructor, tag) {
   if (value.name === "") {
     base += " (anonymous)";
   } else {
-    base += `: ${value.name}`;
+    base += `: ${typeof value.name === "string" ? value.name : formatValue(ctx, value.name)}`;
   }
   base += "]";
   if (constructor !== type && constructor !== null) {
@@ -1575,12 +1617,12 @@ function getFunctionBase(value, constructor, tag) {
 function identicalSequenceRange(a, b) {
   for (let i = 0; i < a.length - 3; i++) {
     // Find the first entry of b that matches the current entry of a.
-    const pos = b.indexOf(a[i]);
+    const pos = ArrayPrototypeIndexOf.$call(b, a[i]);
     if (pos !== -1) {
       const rest = b.length - pos;
       if (rest > 3) {
         let len = 1;
-        const maxLen = MathMin(a.length - i, rest);
+        const maxLen = $min(a.length - i, rest);
         // Count the number of consecutive entries.
         while (maxLen > len && a[i + len] === b[pos + len]) {
           len++;
@@ -1642,9 +1684,9 @@ function improveStack(stack, constructor, name, tag) {
       const start =
         RegExpPrototypeExec(/^([A-Z][a-z_ A-Z0-9[\]()-]+)(?::|\n {4}at)/, stack) ||
         RegExpPrototypeExec(/^([a-z_A-Z0-9-]*Error)$/, stack);
-      fallback = (start && start[1]) || "";
+      fallback = start?.[1] || "";
       len = fallback.length;
-      fallback = fallback || "Error";
+      fallback ||= "Error";
     }
     const prefix = StringPrototypeSlice(getPrefix(constructor, tag, fallback), 0, -1);
     if (name !== prefix) {
@@ -1830,7 +1872,7 @@ function groupArrayElements(ctx, output, value) {
     const averageBias = MathSqrt(actualMax - totalLength / output.length);
     const biasedMax = MathMax(actualMax - 3 - averageBias, 1);
     // Dynamically check how many columns seem possible.
-    const columns = MathMin(
+    const columns = $min(
       // Ideally a square should be drawn. We expect a character to be about 2.5
       // times as high as wide. This is the area formula to calculate a square
       // which contains n rectangles of size `actualMax * approxCharHeights`.
@@ -1871,7 +1913,7 @@ function groupArrayElements(ctx, output, value) {
     // Each iteration creates a single line of grouped entries.
     for (let i = 0; i < outputLength; i += columns) {
       // The last lines may contain less entries than columns.
-      const max = MathMin(i + columns, outputLength);
+      const max = $min(i + columns, outputLength);
       let str = "";
       let j = i;
       for (; j < max - 1; j++) {
@@ -1897,10 +1939,19 @@ function groupArrayElements(ctx, output, value) {
   return output;
 }
 
+function handleMaxCallStackSize(ctx, err, constructorName, indentationLvl) {
+  ctx.seen.pop();
+  ctx.indentationLvl = indentationLvl;
+  return ctx.stylize(
+    `[${constructorName}: Inspection interrupted ` + "prematurely. Maximum call stack size exceeded.]",
+    "special",
+  );
+}
+
 function addNumericSeparator(integerString) {
   let result = "";
   let i = integerString.length;
-  const start = StringPrototypeStartsWith(integerString, "-") ? 1 : 0;
+  const start = integerString[0] === "-" ? 1 : 0;
   for (; i >= start + 4; i -= 3) {
     result = `_${StringPrototypeSlice(integerString, i - 3, i)}${result}`;
   }
@@ -1962,7 +2013,8 @@ function formatPrimitive(fn, value, ctx) {
     if (
       ctx.compact !== true &&
       // We do not support handling unicode characters width with
-      // the readline getStringWidth function as there are performance implications.
+      // the readline getStringWidth function as there are
+      // performance implications.
       value.length > kMinLineLength &&
       value.length > ctx.breakLength - ctx.indentationLvl - 4
     ) {
@@ -2061,7 +2113,7 @@ function formatArrayBuffer(ctx, value) {
     return [ctx.stylize("(detached)", "special")];
   }
   let str = StringPrototypeTrim(
-    RegExpPrototypeSymbolReplace(/(.{2})/g, hexSlice(buffer, 0, MathMin(ctx.maxArrayLength, buffer.length)), "$1 "),
+    RegExpPrototypeSymbolReplace(/(.{2})/g, hexSlice(buffer, 0, $min(ctx.maxArrayLength, buffer.length)), "$1 "),
   );
   const remaining = buffer.length - ctx.maxArrayLength;
   if (remaining > 0) str += ` ... ${remaining} more byte${remaining > 1 ? "s" : ""}`;
@@ -2070,7 +2122,7 @@ function formatArrayBuffer(ctx, value) {
 
 function formatArray(ctx, value, recurseTimes) {
   const valLen = value.length;
-  const len = MathMin(MathMax(0, ctx.maxArrayLength), valLen);
+  const len = $min(MathMax(0, ctx.maxArrayLength), valLen);
 
   const remaining = valLen - len;
   const output = [];
@@ -2091,9 +2143,9 @@ function formatTypedArray(value, length, ctx, ignored, recurseTimes) {
   if (Buffer.isBuffer(value)) {
     BufferModule ??= require("node:buffer");
     const INSPECT_MAX_BYTES = $requireMap.$get("buffer")?.exports.INSPECT_MAX_BYTES ?? BufferModule.INSPECT_MAX_BYTES;
-    ctx.maxArrayLength = MathMin(ctx.maxArrayLength, INSPECT_MAX_BYTES);
+    ctx.maxArrayLength = $min(ctx.maxArrayLength, INSPECT_MAX_BYTES);
   }
-  const maxLength = MathMin(MathMax(0, ctx.maxArrayLength), length);
+  const maxLength = $min(MathMax(0, ctx.maxArrayLength), length);
   const remaining = value.length - maxLength;
   const output = new Array(maxLength);
   const elementFormatter = value.length > 0 && typeof value[0] === "number" ? formatNumber : formatBigInt;
@@ -2118,7 +2170,7 @@ function formatTypedArray(value, length, ctx, ignored, recurseTimes) {
 
 function formatSet(value, ctx, ignored, recurseTimes) {
   const length = value.size;
-  const maxLength = MathMin(MathMax(0, ctx.maxArrayLength), length);
+  const maxLength = $min(MathMax(0, ctx.maxArrayLength), length);
   const remaining = length - maxLength;
   const output = [];
   ctx.indentationLvl += 2;
@@ -2137,7 +2189,7 @@ function formatSet(value, ctx, ignored, recurseTimes) {
 
 function formatMap(value, ctx, ignored, recurseTimes) {
   const length = value.size;
-  const maxLength = MathMin(MathMax(0, ctx.maxArrayLength), length);
+  const maxLength = $min(MathMax(0, ctx.maxArrayLength), length);
   const remaining = length - maxLength;
   const output = [];
   ctx.indentationLvl += 2;
@@ -2156,7 +2208,7 @@ function formatMap(value, ctx, ignored, recurseTimes) {
 
 function formatSetIterInner(ctx, recurseTimes, entries, state) {
   const maxArrayLength = MathMax(ctx.maxArrayLength, 0);
-  const maxLength = MathMin(maxArrayLength, entries.length);
+  const maxLength = $min(maxArrayLength, entries.length);
   const output = new Array(maxLength);
   ctx.indentationLvl += 2;
   for (let i = 0; i < maxLength; i++) {
@@ -2181,7 +2233,7 @@ function formatMapIterInner(ctx, recurseTimes, entries, state) {
   // Entries exist as [key1, val1, key2, val2, ...]
   const len = entries.length / 2;
   const remaining = len - maxArrayLength;
-  const maxLength = MathMin(maxArrayLength, len);
+  const maxLength = $min(maxArrayLength, len);
   const output = new Array(maxLength);
   let i = 0;
   ctx.indentationLvl += 2;
@@ -2301,16 +2353,15 @@ function formatProperty(ctx, value, recurseTimes, key, type, desc, original = va
   if (type === kArrayType) return str;
   if (typeof key === "symbol") {
     const tmp = RegExpPrototypeSymbolReplace(strEscapeSequencesReplacer, SymbolPrototypeToString(key), escapeFn);
-    name = `[${ctx.stylize(tmp, "symbol")}]`;
-  } else if (key === "__proto__") {
-    name = "['__proto__']";
-  } else if (desc.enumerable === false) {
-    const tmp = RegExpPrototypeSymbolReplace(strEscapeSequencesReplacer, key, escapeFn);
-    name = `[${tmp}]`;
+    name = ctx.stylize(tmp, "symbol");
   } else if (RegExpPrototypeExec(keyStrRegExp, key) !== null) {
-    name = ctx.stylize(key, "name");
+    name = key === "__proto__" ? "['__proto__']" : ctx.stylize(key, "name");
   } else {
     name = ctx.stylize(strEscape(key), "string");
+  }
+
+  if (desc.enumerable === false) {
+    name = `[${name}]`;
   }
   return `${name}:${extra}${str}`;
 }
@@ -2320,7 +2371,8 @@ function isBelowBreakLength(ctx, output, start, base) {
   // length of at least `output.length`. In addition, some cases have a
   // whitespace in-between each other that is added to the total as well.
   // TODO(BridgeAR): Add unicode support. Use the readline getStringWidth
-  // function. Check the performance overhead and make it an opt-in in case it's significant.
+  // function. Check the performance overhead and make it an opt-in in case it's
+  // significant.
   let totalLength = output.length + start;
   if (totalLength + output.length > ctx.breakLength) return false;
   for (let i = 0; i < output.length; i++) {
@@ -2398,19 +2450,32 @@ function reduceToSingleString(ctx, output, base, braces, extrasType, recurseTime
 
 function hasBuiltInToString(value) {
   // Prevent triggering proxy traps.
-  const proxyTarget = getProxyDetails(value, false);
+  const getFullProxy = false;
+  const proxyTarget = getProxyDetails(value, getFullProxy);
   if (proxyTarget !== undefined) {
-    if (proxyTarget === null) return true;
+    if (proxyTarget === null) {
+      return true;
+    }
     value = proxyTarget;
   }
 
+  // Check if value has a custom Symbol.toPrimitive transformation.
+  if (typeof value[Symbol.toPrimitive] === "function") {
+    return false;
+  }
+
   // Count objects that have no `toString` function as built-in.
-  if (typeof value.toString !== "function") return true;
+  if (typeof value.toString !== "function") {
+    return true;
+  }
 
   // The object has a own `toString` property. Thus it's not not a built-in one.
-  if (ObjectPrototypeHasOwnProperty(value, "toString")) return false;
+  if (ObjectPrototypeHasOwnProperty(value, "toString")) {
+    return false;
+  }
 
-  // Find the object that has the `toString` property as own property in the prototype chain.
+  // Find the object that has the `toString` property as own property in the
+  // prototype chain.
   let pointer = value;
   do {
     pointer = ObjectGetPrototypeOf(pointer);

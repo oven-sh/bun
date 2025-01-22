@@ -1679,9 +1679,11 @@ pub const BunXFastPath = struct {
         const handle = (bun.sys.openFileAtWindows(
             bun.invalid_fd, // absolute path is given
             path_to_use,
-            windows.STANDARD_RIGHTS_READ | windows.FILE_READ_DATA | windows.FILE_READ_ATTRIBUTES | windows.FILE_READ_EA | windows.SYNCHRONIZE,
-            windows.FILE_OPEN,
-            windows.FILE_NON_DIRECTORY_FILE | windows.FILE_SYNCHRONOUS_IO_NONALERT,
+            .{
+                .access_mask = windows.STANDARD_RIGHTS_READ | windows.FILE_READ_DATA | windows.FILE_READ_ATTRIBUTES | windows.FILE_READ_EA | windows.SYNCHRONIZE,
+                .disposition = windows.FILE_OPEN,
+                .options = windows.FILE_NON_DIRECTORY_FILE | windows.FILE_SYNCHRONOUS_IO_NONALERT,
+            },
         ).unwrap() catch |err| {
             debug("Failed to open bunx file: '{}'", .{err});
             return;

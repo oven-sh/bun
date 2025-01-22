@@ -222,6 +222,8 @@ pub const O = struct {
         if (c_flags & bun.O.RDWR != 0) flags |= RDWR;
         if (c_flags & bun.O.TRUNC != 0) flags |= TRUNC;
         if (c_flags & bun.O.APPEND != 0) flags |= APPEND;
+        if (c_flags & bun.O.EXCL != 0) flags |= EXCL;
+        if (c_flags & FILEMAP != 0) flags |= FILEMAP;
 
         return flags;
     }
@@ -241,7 +243,8 @@ const _O_SHORT_LIVED = 0x1000;
 const _O_SEQUENTIAL = 0x0020;
 const _O_RANDOM = 0x0010;
 
-// These **do not** map to std.posix.O/bun.O!
+// These **do not** map to std.posix.O/bun.O
+// To use libuv O, use libuv.O.
 pub const UV_FS_O_APPEND = 0x0008;
 pub const UV_FS_O_CREAT = _O_CREAT;
 pub const UV_FS_O_EXCL = 0x0400;
@@ -1965,6 +1968,10 @@ pub const struct_uv_statfs_s = extern struct {
     f_files: u64,
     f_ffree: u64,
     f_spare: [4]u64,
+
+    pub fn init(this: *align(1) struct_uv_statfs_s) bun.StatFS {
+        return this.*;
+    }
 };
 pub const uv_statfs_t = struct_uv_statfs_s;
 pub const struct_uv_metrics_s = extern struct {

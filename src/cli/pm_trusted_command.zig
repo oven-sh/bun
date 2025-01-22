@@ -417,13 +417,7 @@ pub const TrustCommand = struct {
             try pm.lockfile.trusted_dependencies.?.put(ctx.allocator, @truncate(String.Builder.stringHash(name)), {});
         }
 
-        const save_format: Lockfile.LoadResult.LockfileFormat = if (pm.options.save_text_lockfile)
-            .text
-        else switch (load_lockfile) {
-            .not_found => .binary,
-            .err => |err| err.format,
-            .ok => |ok| ok.format,
-        };
+        const save_format = load_lockfile.saveFormat(pm);
         pm.lockfile.saveToDisk(save_format, pm.options.log_level.isVerbose());
 
         var buffer_writer = try bun.js_printer.BufferWriter.init(ctx.allocator);

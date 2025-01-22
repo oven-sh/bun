@@ -73,23 +73,23 @@ pub fn toNPMRegistryURLWithURL(this: *const CompileTarget, buf: []u8, registry_u
     return switch (this.os) {
         inline else => |os| switch (this.arch) {
             inline else => |arch| switch (this.libc) {
-              inline else => |libc| switch (this.baseline) {
-                  // https://registry.npmjs.org/@oven/bun-linux-x64/-/bun-linux-x64-0.1.6.tgz
-                  inline else => |is_baseline| try std.fmt.bufPrint(buf, comptime "{s}/@oven/bun-" ++
-                      os.npmName() ++ "-" ++ arch.npmName() ++
-                      libc.npmName() ++
-                      (if (is_baseline) "-baseline" else "") ++
-                      "/-/bun-" ++
-                      os.npmName() ++ "-" ++ arch.npmName() ++
-                      libc.npmName() ++
-                      (if (is_baseline) "-baseline" else "") ++
-                      "-" ++
-                      "{d}.{d}.{d}.tgz", .{
-                      registry_url,
-                      this.version.major,
-                      this.version.minor,
-                      this.version.patch,
-                  }),
+                inline else => |libc| switch (this.baseline) {
+                    // https://registry.npmjs.org/@oven/bun-linux-x64/-/bun-linux-x64-0.1.6.tgz
+                    inline else => |is_baseline| try std.fmt.bufPrint(buf, comptime "{s}/@oven/bun-" ++
+                        os.npmName() ++ "-" ++ arch.npmName() ++
+                        libc.npmName() ++
+                        (if (is_baseline) "-baseline" else "") ++
+                        "/-/bun-" ++
+                        os.npmName() ++ "-" ++ arch.npmName() ++
+                        libc.npmName() ++
+                        (if (is_baseline) "-baseline" else "") ++
+                        "-" ++
+                        "{d}.{d}.{d}.tgz", .{
+                        registry_url,
+                        this.version.major,
+                        this.version.minor,
+                        this.version.patch,
+                    }),
                 },
             },
         },

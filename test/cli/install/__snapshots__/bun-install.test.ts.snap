@@ -59,7 +59,7 @@ exports[`should handle modified git resolutions in bun.lock 1`] = `"{"lockfileVe
 
 exports[`should read install.saveTextLockfile from bunfig.toml 1`] = `
 "{
-  "lockfileVersion": 0,
+  "lockfileVersion": 1,
   "workspaces": {
     "": {
       "name": "foo",
@@ -70,7 +70,7 @@ exports[`should read install.saveTextLockfile from bunfig.toml 1`] = `
     },
   },
   "packages": {
-    "pkg-one": ["pkg-one@workspace:packages/pkg1", {}],
+    "pkg-one": ["pkg-one@workspace:packages/pkg1"],
   }
 }
 "

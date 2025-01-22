@@ -463,7 +463,7 @@ describe("ENOENT", () => {
         await Bun.write(file, "contents", ...opts);
         expect(fs.existsSync(file)).toBe(true);
       } finally {
-        fs.rmSync(dir, { force: true });
+        fs.rmSync(dir, { recursive: true, force: true });
       }
     });
   };
@@ -483,7 +483,7 @@ describe("ENOENT", () => {
         );
         expect(fs.existsSync(file)).toBe(false);
       } finally {
-        fs.rmSync(dir, { force: true });
+        fs.rmSync(dir, { recursive: true, force: true });
       }
     });
 

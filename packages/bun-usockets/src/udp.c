@@ -55,7 +55,7 @@ int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengt
         num -= count;
         // TODO nohang flag?
         int sent = bsd_sendmmsg(fd, buf, MSG_DONTWAIT);
-        if (sent < 0) { 
+        if (sent < 0) {
             return sent;
         }
         total_sent += sent;
@@ -91,9 +91,7 @@ void us_udp_socket_remote_ip(struct us_udp_socket_t *s, char *buf, int *length) 
   }
 }
 
-void *us_udp_socket_user(struct us_udp_socket_t *s) {
-    struct us_udp_socket_t *udp = (struct us_udp_socket_t *) s;
-
+void *us_udp_socket_user(struct us_udp_socket_t *udp) {
     return udp->user;
 }
 
@@ -108,6 +106,18 @@ void us_udp_socket_close(struct us_udp_socket_t *s) {
     s->on_close(s);
 }
 
+int us_udp_socket_set_broadcast(struct us_udp_socket_t *s, int enabled) {
+    return bsd_socket_broadcast(us_poll_fd(&s->p), enabled);
+}
+
+int us_udp_socket_set_ttl_unicast(struct us_udp_socket_t *s, int ttl) {
+    return bsd_socket_ttl_unicast(us_poll_fd(&s->p), ttl);
+}
+
+int us_udp_socket_set_ttl_multicast(struct us_udp_socket_t *s, int ttl) {
+    return bsd_socket_ttl_multicast(us_poll_fd(&s->p), ttl);
+}
+
 int us_udp_socket_connect(struct us_udp_socket_t *s, const char* host, unsigned short port) {
     return bsd_connect_udp_socket(us_poll_fd((struct us_poll_t *)s), host, port);
 }
@@ -116,17 +126,35 @@ int us_udp_socket_disconnect(struct us_udp_socket_t *s) {
     return bsd_disconnect_udp_socket(us_poll_fd((struct us_poll_t *)s));
 }
 
+int us_udp_socket_set_multicast_loopback(struct us_udp_socket_t *s, int enabled) {
+    return bsd_socket_multicast_loopback(us_poll_fd(&s->p), enabled);
+}
+
+int us_udp_socket_set_multicast_interface(struct us_udp_socket_t *s, const struct sockaddr_storage *addr) {
+    return bsd_socket_multicast_interface(us_poll_fd(&s->p), addr);
+}
+
+int us_udp_socket_set_membership(struct us_udp_socket_t *s, const struct sockaddr_storage *addr, const struct sockaddr_storage *iface, int drop) {
+    return bsd_socket_set_membership(us_poll_fd(&s->p), addr, iface, drop);
+}
+
+int us_udp_socket_set_source_specific_membership(struct us_udp_socket_t *s, const struct sockaddr_storage *source, const struct sockaddr_storage *group, const struct sockaddr_storage *iface, int drop) {
+    return bsd_socket_set_source_specific_membership(us_poll_fd(&s->p), source, group, iface, drop);
+}
+
 struct us_udp_socket_t *us_create_udp_socket(
-    struct us_loop_t *loop, 
-    void (*data_cb)(struct us_udp_socket_t *, void *, int), 
-    void (*drain_cb)(struct us_udp_socket_t *), 
+    struct us_loop_t *loop,
+    void (*data_cb)(struct us_udp_socket_t *, void *, int),
+    void (*drain_cb)(struct us_udp_socket_t *),
     void (*close_cb)(struct us_udp_socket_t *),
-    const char *host, 
-    unsigned short port, 
+    const char *host,
+    unsigned short port,
+    int flags,
+    int *err,
     void *user
 ) {
 
-    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_udp_socket(host, port);
+    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_udp_socket(host, port, flags, err);
     if (fd == LIBUS_SOCKET_ERROR) {
         return 0;
     }
@@ -157,6 +185,6 @@ struct us_udp_socket_t *us_create_udp_socket(
     udp->next = NULL;
 
     us_poll_start((struct us_poll_t *) udp, udp->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
-    
+
     return (struct us_udp_socket_t *) udp;
 }

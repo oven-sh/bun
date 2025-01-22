@@ -331,6 +331,42 @@ export default [
       closed: {
         getter: "getClosed",
       },
+      setBroadcast: {
+        fn: "setBroadcast",
+        length: 1,
+      },
+      setTTL: {
+        fn: "setTTL",
+        length: 1,
+      },
+      setMulticastTTL: {
+        fn: "setMulticastTTL",
+        length: 1,
+      },
+      setMulticastLoopback: {
+        fn: "setMulticastLoopback",
+        length: 1,
+      },
+      setMulticastInterface: {
+        fn: "setMulticastInterface",
+        length: 1,
+      },
+      addMembership: {
+        fn: "addMembership",
+        length: 2,
+      },
+      dropMembership: {
+        fn: "dropMembership",
+        length: 2,
+      },
+      addSourceSpecificMembership: {
+        fn: "addSourceSpecificMembership",
+        length: 3,
+      },
+      dropSourceSpecificMembership: {
+        fn: "dropSourceSpecificMembership",
+        length: 3,
+      },
     },
     klass: {},
   }),

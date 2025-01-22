@@ -6,25 +6,7 @@ import * as path from "path";
 // .html, .css is skipped
 const loaders = ["js", "jsx", "ts", "tsx", "json", "toml"];
 
-const skipped_loaders = [
-  "mjs",
-  "cjs",
-  "cts",
-  "mts",
-  "css",
-  "jsonc",
-  "wasm",
-  "webassembly",
-  "napi",
-  "node",
-  "dataurl",
-  "base64",
-  "txt",
-  "sh",
-  "sqlite_embedded",
-  "html",
-  "does_not_exist",
-];
+const other_loaders_do_not_crash = ["webassembly", "does_not_exist"];
 
 // ctrl+shift+f for tailwind
 // next bug: ZigGlobalObject.cpp:4226
@@ -128,15 +110,15 @@ async function testBunBuild(dir: string, loader: string): Promise<unknown> {
   }
 }
 async function compileAndTest(code: string): Promise<Record<string, unknown>> {
-  console.time("v1");
+  console.time("import {} from '';");
   const v1 = await compileAndTest_inner(code, "", testBunRun);
-  console.timeEnd("v1");
-  console.time("v2");
+  console.timeEnd("import {} from '';");
+  console.time("await import()");
   const v2 = await compileAndTest_inner(code, "", testBunRunAwaitImport);
-  console.timeEnd("v2");
-  console.time("v3");
+  console.timeEnd("await import()");
+  console.time("Bun.build()");
   const v3 = await compileAndTest_inner(code, "", testBunBuild);
-  console.timeEnd("v3");
+  console.timeEnd("Bun.build()");
   if (!Bun.deepEquals(v1, v2) || !Bun.deepEquals(v2, v3)) {
     console.log("====  regular import  ====\n" + JSON.stringify(v1, null, 2) + "\n");
     console.log("====  await import  ====\n" + JSON.stringify(v2, null, 2) + "\n");
@@ -257,7 +239,7 @@ test("toml", async () => {
 });
 
 describe("other loaders do not crash", () => {
-  for (const skipped_loader of skipped_loaders) {
+  for (const skipped_loader of other_loaders_do_not_crash) {
     test(skipped_loader, async () => {
       await compileAndTest(`export const a = "demo";`);
     });

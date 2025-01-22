@@ -490,6 +490,8 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                 &transpiler.log,
                 source,
                 allocator,
+                .json,
+                false,
             ) catch null) orelse break :macros;
             transpiler.macro_map = PackageJSON.parseMacrosJSON(allocator, json, &transpiler.log, &source);
         }

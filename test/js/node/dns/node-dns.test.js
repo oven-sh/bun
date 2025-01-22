@@ -523,6 +523,8 @@ describe("uses `dns.promises` implementations for `util.promisify` factory", () 
   });
 
   it("util.promisify(dns.lookup) acts like dns.promises.lookup", async () => {
-    expect(await util.promisify(dns.lookup)("example.com")).toEqual(await dns.promises.lookup("example.com"));
+    // This test previously used example.com, but that domain has multiple A records, which can cause this test to fail.
+    // As of this writing, google.com has only one A record. If that changes, update this test with a domain that has only one A record.
+    expect(await util.promisify(dns.lookup)("google.com")).toEqual(await dns.promises.lookup("google.com"));
   });
 });

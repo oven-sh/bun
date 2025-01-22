@@ -1,7 +1,8 @@
 import { describe, expect, it, beforeAll, afterAll } from "bun:test";
 import { bunExe, bunEnv, getSecret, tempDirWithFiles, isLinux } from "harness";
 import { randomUUID } from "crypto";
-import { S3Client, s3, file, which } from "bun";
+import { S3Client, s3 as defaultS3, file, which } from "bun";
+const s3 = (...args) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
 import child_process from "child_process";
 import type { S3Options } from "bun";

@@ -53,6 +53,9 @@ describe("expect()", () => {
     await expect(Promise.reject({ a: 1, b: 2 })).rejects.not.toMatchObject({ c: 1 });
     await expect(Promise.reject(new Error("rejectMessage"))).rejects.toMatchObject({ message: "rejectMessage" });
     await expect(Promise.reject(new Error())).rejects.toThrow();
+    await expect(async () => {
+      throw new Error("rejectMessage");
+    }).rejects.toThrow("rejectMessage");
 
     // not receiving a rejected promise -> should throw
     if (isBun) {

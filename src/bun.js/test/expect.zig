@@ -202,7 +202,40 @@ pub const Expect = struct {
     /// Processes the async flags (resolves/rejects), waiting for the async value if needed.
     /// If no flags, returns the original value
     /// If either flag is set, waits for the result, and returns either it as a JSValue, or null if the expectation failed (in which case if silent is false, also throws a js exception)
-    pub fn processPromise(custom_label: bun.String, flags: Expect.Flags, globalThis: *JSGlobalObject, value: JSValue, matcher_name: anytype, matcher_params: anytype, comptime silent: bool) bun.JSError!JSValue {
+    pub fn processPromise(
+        custom_label: bun.String,
+        flags: Expect.Flags,
+        globalThis: *JSGlobalObject,
+        inputValue: JSValue,
+        matcher_name: anytype,
+        matcher_params: anytype,
+        comptime silent: bool,
+    ) bun.JSError!JSValue {
+        var value = inputValue;
+
+        // If we have a .rejects or .resolves, and the user passed a function, call it and then use that value in the checks.
+        if (flags.promise != .none and value.isFunction()) {
+            const vm = globalThis.vm();
+            var return_value = JSValue.jsUndefined();
+
+            return_value = value.call(globalThis, .undefined, &.{}) catch |err| {
+                if (!silent) return globalThis.takeException(err);
+                return error.JSError;
+            };
+
+            if (return_value.asAnyPromise()) |promise| {
+                globalThis.bunVM().waitForPromise(promise);
+                promise.setHandled(vm);
+
+                value = return_value;
+            } else {
+                if (!silent and (flags.promise != .none)) {
+                    return globalThis.throw("Expected a Promise from the async function but did not receive one", .{});
+                }
+                return return_value;
+            }
+        }
+
         switch (flags.promise) {
             inline .resolves, .rejects => |resolution| {
                 if (value.asAnyPromise()) |promise| {

@@ -1499,10 +1499,7 @@ pub const BundleV2 = struct {
         this.graph.input_files.append(bun.default_allocator, .{
             .source = source,
             .loader = loader,
-            .side_effects = switch (loader) {
-                .text, .json, .toml, .file => _resolver.SideEffects.no_side_effects__pure_data,
-                else => _resolver.SideEffects.has_side_effects,
-            },
+            .side_effects = loader.sideEffects(),
         }) catch bun.outOfMemory();
         var task = this.graph.allocator.create(ParseTask) catch bun.outOfMemory();
         task.* = ParseTask.init(resolve_result, source_index, this);
@@ -1542,10 +1539,7 @@ pub const BundleV2 = struct {
         this.graph.input_files.append(bun.default_allocator, .{
             .source = source,
             .loader = loader,
-            .side_effects = switch (loader) {
-                .text, .json, .toml, .file => .no_side_effects__pure_data,
-                else => .has_side_effects,
-            },
+            .side_effects = loader.sideEffects(),
         }) catch bun.outOfMemory();
         var task = this.graph.allocator.create(ParseTask) catch bun.outOfMemory();
         task.* = .{
@@ -4209,10 +4203,10 @@ pub const ParseTask = struct {
                     ),
                 };
             },
-            .json => {
+            .json, .jsonc => |v| {
                 const trace = tracer(@src(), "ParseJSON");
                 defer trace.end();
-                const root = (try resolver.caches.json.parsePackageJSON(log, source, allocator, false)) orelse Expr.init(E.Object, E.Object{}, Logger.Loc.Empty);
+                const root = (try resolver.caches.json.parseJSON(log, source, allocator, if (v == .jsonc) .jsonc else .json, true)) orelse Expr.init(E.Object, E.Object{}, Logger.Loc.Empty);
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
             },
             .toml => {

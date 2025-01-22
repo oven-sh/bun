@@ -666,7 +666,7 @@ pub const Transpiler = struct {
         };
 
         switch (loader) {
-            .jsx, .tsx, .js, .ts, .json, .toml, .text => {
+            .jsx, .tsx, .js, .ts, .json, .jsonc, .toml, .text => {
                 var result = transpiler.parse(
                     ParseOptions{
                         .allocator = transpiler.allocator,
@@ -1184,14 +1184,13 @@ pub const Transpiler = struct {
                 };
             },
             // TODO: use lazy export AST
-            inline .toml, .json => |kind| {
-                var expr = if (kind == .json)
+            inline .toml, .json, .jsonc => |kind| {
+                var expr = if (kind == .jsonc)
                     // We allow importing tsconfig.*.json or jsconfig.*.json with comments
                     // These files implicitly become JSONC files, which aligns with the behavior of text editors.
-                    if (source.path.isJSONCFile())
-                        JSON.parseTSConfig(&source, transpiler.log, allocator, false) catch return null
-                    else
-                        JSON.parse(&source, transpiler.log, allocator, false) catch return null
+                    JSON.parseTSConfig(&source, transpiler.log, allocator, false) catch return null
+                else if (kind == .json)
+                    JSON.parse(&source, transpiler.log, allocator, false) catch return null
                 else if (kind == .toml)
                     TOML.parse(&source, transpiler.log, allocator, false) catch return null
                 else

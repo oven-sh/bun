@@ -4444,6 +4444,7 @@ fn NewPrinter(
                         .css => p.printWhitespacer(ws(" with { type: \"css\" }")),
                         .file => p.printWhitespacer(ws(" with { type: \"file\" }")),
                         .json => p.printWhitespacer(ws(" with { type: \"json\" }")),
+                        .jsonc => p.printWhitespacer(ws(" with { type: \"jsonc\" }")),
                         .toml => p.printWhitespacer(ws(" with { type: \"toml\" }")),
                         .wasm => p.printWhitespacer(ws(" with { type: \"wasm\" }")),
                         .napi => p.printWhitespacer(ws(" with { type: \"napi\" }")),

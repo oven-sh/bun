@@ -4,20 +4,22 @@ import * as path from "path";
 // .napi is skipped (hard to make an example)
 // .sh is skipped (only works from `bun somefile.sh`)
 // .html, .css is skipped
-const loaders = ["js", "jsx", "ts", "tsx", "json", "toml"];
+const loaders = ["js", "jsx", "ts", "tsx", "json", "jsonc", "toml", "text", "sqlite", "file"];
 
 const other_loaders_do_not_crash = ["webassembly", "does_not_exist"];
 
 // ctrl+shift+f for tailwind
-// next bug: ZigGlobalObject.cpp:4226
-// - in the case of `with {type: "json"}`, `params.type()` is `ScriptFetchParameters::Type::JSON` so
-//   the type attribute string is not set.
+// next bug: ModuleLoader.cpp:1665
+// - only some files use the jsonc loader, based on if `path.isJSONCFile()`:
+// - this probably improves performance
+// - if we want this, we should make a seperate jsonc loader instead of overloading json
+//   and checking the fliepath to determine if it is jsonc
 
-async function testBunRun(dir: string, loader: string): Promise<unknown> {
+async function testBunRun(dir: string, loader: string | null, filename: string): Promise<unknown> {
   const cmd = [
     bunExe(),
     "-e",
-    `import * as contents from './_the_file' with {type: '${loader}'}; console.log(JSON.stringify(contents));`,
+    `import * as contents from './${filename}'${loader != null ? ` with {type: '${loader}'}` : ""}; console.log(JSON.stringify(contents));`,
   ];
   const result = Bun.spawnSync({
     cmd: cmd,
@@ -41,11 +43,11 @@ async function testBunRun(dir: string, loader: string): Promise<unknown> {
     return JSON.parse(result.stdout.toString());
   }
 }
-async function testBunRunAwaitImport(dir: string, loader: string): Promise<unknown> {
+async function testBunRunAwaitImport(dir: string, loader: string | null, filename: string): Promise<unknown> {
   const cmd = [
     bunExe(),
     "-e",
-    `console.log(JSON.stringify(await import('./_the_file', {with: {type: '${loader}'}})));`,
+    `console.log(JSON.stringify(await import('./${filename}'${loader != null ? `, {with: {type: '${loader}'}}` : ""})));`,
   ];
   const result = Bun.spawnSync({
     cmd: cmd,
@@ -70,10 +72,10 @@ async function testBunRunAwaitImport(dir: string, loader: string): Promise<unkno
     return JSON.parse(result.stdout.toString());
   }
 }
-async function testBunBuild(dir: string, loader: string): Promise<unknown> {
+async function testBunBuild(dir: string, loader: string | null, filename: string): Promise<unknown> {
   await Bun.write(
     path.join(dir, "main_" + loader + ".js"),
-    `import * as contents from '${dir}/_the_file' with {type: '${loader}'}; console.log(JSON.stringify(contents));`,
+    `import * as contents from '${dir}/${filename}'${loader != null ? ` with {type: '${loader}'}` : ""}; console.log(JSON.stringify(contents));`,
   );
   const result = await Bun.build({
     entrypoints: [path.join(dir, "main_" + loader + ".js")],
@@ -109,15 +111,26 @@ async function testBunBuild(dir: string, loader: string): Promise<unknown> {
     // return result.logs;
   }
 }
-async function compileAndTest(code: string): Promise<Record<string, unknown>> {
+type Tests = Record<
+  string,
+  {
+    loader: string | null;
+    filename: string;
+    dir?: string;
+  }
+>;
+const default_tests = Object.fromEntries(
+  loaders.map(loader => [loader, { loader, filename: "no_extension" }]),
+) as Tests;
+async function compileAndTest(code: string, tests: Tests = default_tests): Promise<Record<string, unknown>> {
   console.time("import {} from '';");
-  const v1 = await compileAndTest_inner(code, "", testBunRun);
+  const v1 = await compileAndTest_inner(code, tests, testBunRun);
   console.timeEnd("import {} from '';");
   console.time("await import()");
-  const v2 = await compileAndTest_inner(code, "", testBunRunAwaitImport);
+  const v2 = await compileAndTest_inner(code, tests, testBunRunAwaitImport);
   console.timeEnd("await import()");
   console.time("Bun.build()");
-  const v3 = await compileAndTest_inner(code, "", testBunBuild);
+  const v3 = await compileAndTest_inner(code, tests, testBunBuild);
   console.timeEnd("Bun.build()");
   if (!Bun.deepEquals(v1, v2) || !Bun.deepEquals(v2, v3)) {
     console.log("====  regular import  ====\n" + JSON.stringify(v1, null, 2) + "\n");
@@ -129,34 +142,42 @@ async function compileAndTest(code: string): Promise<Record<string, unknown>> {
 }
 async function compileAndTest_inner(
   code: string,
-  ext: string,
-  cb: (dir: string, loader: string, ext: string) => Promise<unknown>,
+  tests: Tests,
+  cb: (dir: string, loader: string | null, filename: string) => Promise<unknown>,
 ): Promise<Record<string, unknown>> {
-  const dir = tempDirWithFiles("import-attributes", {
-    ["_the_file" + ext]: code,
-  });
-
   let res: Record<string, unknown> = {};
-  for (const loader of loaders) {
-    res[loader] = await cb(dir, loader, ext);
+  for (const [label, test] of Object.entries(tests)) {
+    test.dir = tempDirWithFiles("import-attributes", {
+      [test.filename]: code,
+    });
+    res[label] = await cb(test.dir!, test.loader, test.filename);
   }
-  expect(await cb(dir, "text", ext)).toEqual({ default: code });
-  const sqlite_res = await cb(dir, "sqlite", ext);
-  delete (sqlite_res as any).__esModule;
-  expect(sqlite_res).toStrictEqual({
-    db: { filename: path.join(dir, "_the_file" + ext) },
-    default: { filename: path.join(dir, "_the_file" + ext) },
-  });
-  if (cb === testBunBuild) {
-    expect(await cb(dir, "file", ext)).toEqual({
-      default: expect.any(String),
+  if (Object.hasOwn(res, "text")) {
+    expect(res.text).toEqual({ default: code });
+    delete res.text;
+  }
+  if (Object.hasOwn(res, "sqlite")) {
+    const sqlite_res = res.sqlite;
+    delete (sqlite_res as any).__esModule;
+    expect(sqlite_res).toStrictEqual({
+      db: { filename: path.join(tests.sqlite!.dir!, tests.sqlite!.filename) },
+      default: { filename: path.join(tests.sqlite!.dir!, tests.sqlite!.filename) },
     });
-  } else {
-    const file_res = await cb(dir, "file", ext);
-    delete (file_res as any).__esModule;
-    expect(file_res).toEqual({
-      default: path.join(dir, "_the_file" + ext),
-    });
+    delete res.sqlite;
+  }
+  if (Object.hasOwn(res, "file")) {
+    const file_res = res.file;
+    if (cb === testBunBuild) {
+      expect(file_res).toEqual({
+        default: expect.any(String),
+      });
+    } else {
+      delete (file_res as any).__esModule;
+      expect(file_res).toEqual({
+        default: path.join(tests.file!.dir!, tests.file!.filename),
+      });
+    }
+    delete res.file;
   }
   const res_flipped: Record<string, [unknown, string[]]> = {};
   for (const [k, v] of Object.entries(res)) {
@@ -171,7 +192,7 @@ test("javascript", async () => {
   "js,jsx,ts,tsx": {
     "a": "demo",
   },
-  "json,toml": "error",
+  "json,jsonc,toml": "error",
 }
 `);
 });
@@ -179,7 +200,7 @@ test("javascript", async () => {
 test("typescript", async () => {
   expect(await compileAndTest(`export const a = (<T>() => {}).toString().replace(/\\n/g, '');`)).toMatchInlineSnapshot(`
 {
-  "js,jsx,tsx,json,toml": "error",
+  "js,jsx,tsx,json,jsonc,toml": "error",
   "ts": {
     "a": "() => {}",
   },
@@ -188,14 +209,14 @@ test("typescript", async () => {
 });
 
 test("json", async () => {
-  expect(await compileAndTest(`{"key": "value"}`)).toMatchInlineSnapshot(`
+  expect(await compileAndTest(`{"key": "👩‍👧‍👧value"}`)).toMatchInlineSnapshot(`
 {
   "js,jsx,ts,tsx,toml": "error",
-  "json": {
+  "json,jsonc": {
     "default": {
-      "key": "value",
+      "key": "👩‍👧‍👧value",
     },
-    "key": "value",
+    "key": "👩‍👧‍👧value",
   },
 }
 `);
@@ -203,36 +224,79 @@ test("json", async () => {
 test("jsonc", async () => {
   expect(
     await compileAndTest(`{
-      "key": "value", // my json
+      "key": "👩‍👧‍👧value", // my json
     }`),
   ).toMatchInlineSnapshot(`
 {
-  "js,jsx,ts,tsx,toml": "error",
-  "json": {
+  "js,jsx,ts,tsx,json,toml": "error",
+  "jsonc": {
     "default": {
-      "key": "value"
+      "key": "👩‍👧‍👧value",
     },
-    "key": "value"
-  }
+    "key": "👩‍👧‍👧value",
+  },
 }
 `);
 });
 test("toml", async () => {
   expect(
     await compileAndTest(`[section]
-    key = "value"`),
+    key = "👩‍👧‍👧value"`),
   ).toMatchInlineSnapshot(`
 {
-  "js,jsx,ts,tsx,json": "error",
+  "js,jsx,ts,tsx,json,jsonc": "error",
   "toml": {
     "default": {
       "section": {
-        "key": "value",
+        "key": "👩‍👧‍👧value",
       },
     },
     "section": {
-      "key": "value",
+      "key": "👩‍👧‍👧value",
     },
+  },
+}
+`);
+});
+
+test("tsconfig.json is assumed jsonc", async () => {
+  const tests: Tests = {
+    "tsconfig.json": { loader: null, filename: "tsconfig.json" },
+    "myfile.json": { loader: null, filename: "myfile.json" },
+  };
+  expect(
+    await compileAndTest(
+      `{
+        // jsonc file
+        "key": "👩‍👧‍👧def",
+      }`,
+      tests,
+    ),
+  ).toMatchInlineSnapshot(`
+{
+  "myfile.json": "error",
+  "tsconfig.json": {
+    "default": {
+      "key": "👩‍👧‍👧def",
+    },
+    "key": "👩‍👧‍👧def",
+  },
+}
+`);
+  expect(
+    await compileAndTest(
+      `{
+        "key": "👩‍👧‍👧def"
+      }`,
+      tests,
+    ),
+  ).toMatchInlineSnapshot(`
+{
+  "tsconfig.json,myfile.json": {
+    "default": {
+      "key": "👩‍👧‍👧def",
+    },
+    "key": "👩‍👧‍👧def",
   },
 }
 `);

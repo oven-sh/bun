@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { S3Client, type S3Options } from "bun";
+import { s3, S3Client, type S3Options } from "bun";
 import { randomUUID } from "node:crypto";
 
 describe("s3 - Storage class", () => {
@@ -77,6 +77,16 @@ describe("s3 - Storage class", () => {
 
     expect(reqHeaders!.get("authorization")).toInclude("x-amz-storage-class");
     expect(reqHeaders!.get("x-amz-storage-class")).toBe(storageClass);
+  });
+
+  it("should work with static presign", () => {
+    const storageClass = "DEEP_ARCHIVE";
+    const result = S3Client.file("awsome_file").presign({
+      ...s3Options,
+      storageClass,
+    });
+
+    expect(result).toInclude(`x-amz-storage-class=${storageClass}`);
   });
 
   it("should work with instance options + .file() method", async () => {
@@ -248,4 +258,27 @@ describe("s3 - Storage class", () => {
     },
     { timeout: 20_000 },
   );
+
+  it("should work with default s3 instance", async () => {
+    let reqHeaders: Headers | undefined = undefined;
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        reqHeaders = req.headers;
+        return new Response("", {
+          headers: {
+            "Content-Type": "text/plain",
+          },
+          status: 200,
+        });
+      },
+    });
+
+    const storageClass = "INTELLIGENT_TIERING";
+
+    await s3.file("my_file", { ...s3Options, storageClass, endpoint: server.url.href }).write("any thing");
+
+    expect(reqHeaders!.get("authorization")).toInclude("x-amz-storage-class");
+    expect(reqHeaders!.get("x-amz-storage-class")).toBe(storageClass);
+  });
 });

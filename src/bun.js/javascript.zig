@@ -305,6 +305,7 @@ pub const SavedSourceMap = struct {
         entry.value_ptr.* = value.ptr();
     }
 
+    /// You must call `.map.deref()` on the returned url or you'll cause a memory leak.
     fn getWithContent(
         this: *SavedSourceMap,
         path: string,
@@ -377,10 +378,12 @@ pub const SavedSourceMap = struct {
         }
     }
 
+    /// You must call `.deref()` the returned source map or you'll cause a leak
     pub fn get(this: *SavedSourceMap, path: string) ?*ParsedSourceMap {
         return this.getWithContent(path, .mappings_only).map;
     }
 
+    /// You must call `.source_map.deref()` on the result or you'll introduce a memory leak
     pub fn resolveMapping(
         this: *SavedSourceMap,
         path: []const u8,
@@ -395,8 +398,10 @@ pub const SavedSourceMap = struct {
         const map = parse.map orelse return null;
 
         const mapping = parse.mapping orelse
-            SourceMap.Mapping.find(map.mappings, line, column) orelse
+            SourceMap.Mapping.find(map.mappings, line, column) orelse {
+            map.deref();
             return null;
+        };
 
         return .{
             .mapping = mapping,
@@ -1887,7 +1892,12 @@ pub const VirtualMachine = struct {
         JSC.markBinding(@src());
         const allocator = opts.allocator;
         VMHolder.vm = try allocator.create(VirtualMachine);
+        errdefer {
+            if (VMHolder.vm) |vm| allocator.destroy(vm);
+            VMHolder.vm = null;
+        }
         const console = try allocator.create(ConsoleObject);
+        errdefer allocator.destroy(console);
         console.* = ConsoleObject.init(Output.errorWriter(), Output.writer());
         const log = opts.log.?;
         const transpiler = try Transpiler.init(
@@ -4322,6 +4332,8 @@ pub const VirtualMachine = struct {
         writer.print("\n", .{}) catch {};
     }
 
+    /// You must call `.source_map.deref()` on the returned lookup, otherwise
+    /// you'll cause a memory leak.
     pub fn resolveSourceMapping(
         this: *VirtualMachine,
         path: []const u8,
@@ -4339,8 +4351,10 @@ pub const VirtualMachine = struct {
                 this.source_mappings.putValue(path, SavedSourceMap.Value.init(map)) catch
                     bun.outOfMemory();
 
-                const mapping = SourceMap.Mapping.find(map.mappings, line, column) orelse
+                const mapping = SourceMap.Mapping.find(map.mappings, line, column) orelse {
+                    map.deref();
                     return null;
+                };
 
                 return .{
                     .mapping = mapping,

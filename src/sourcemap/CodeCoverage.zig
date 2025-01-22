@@ -424,6 +424,7 @@ pub const ByteRangeMapping = struct {
         var executable_lines: Bitset = Bitset{};
         var lines_which_have_executed: Bitset = Bitset{};
         const parsed_mappings_ = bun.JSC.VirtualMachine.get().source_mappings.get(source_url.slice());
+        defer if (parsed_mappings_) |pm| pm.deref();
         var line_hits = LinesHits{};
 
         var functions = std.ArrayListUnmanaged(Block){};

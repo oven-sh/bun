@@ -1462,6 +1462,28 @@ declare module "bun" {
     type?: string;
 
     /**
+     * By default, Amazon S3 uses the STANDARD Storage Class to store newly created objects.
+     *
+     * @example
+     *    // Setting explicit Storage class
+     *     const file = s3("my-file.json", {
+     *       storageClass: "STANDARD_IA"
+     *     });
+     */
+    storageClass?:
+      | "STANDARD"
+      | "DEEP_ARCHIVE"
+      | "EXPRESS_ONEZONE"
+      | "GLACIER"
+      | "GLACIER_IR"
+      | "INTELLIGENT_TIERING"
+      | "ONEZONE_IA"
+      | "OUTPOSTS"
+      | "REDUCED_REDUNDANCY"
+      | "SNOW"
+      | "STANDARD_IA";
+
+    /**
      * @deprecated The size of the internal buffer in bytes. Defaults to 5 MiB. use `partSize` and `queueSize` instead.
      */
     highWaterMark?: number;

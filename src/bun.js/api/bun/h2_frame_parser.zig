@@ -1756,25 +1756,38 @@ pub const H2FrameParser = struct {
                 return null;
             }
 
-            const output = brk: {
+            if (getHTTP2CommonString(globalObject, header.well_know)) |js_header_name| {
+                var header_value = bun.String.fromUTF8(header.value);
+                const js_header_value = header_value.transferToJS(globalObject);
+                js_header_value.ensureStillAlive();
+                headers.push(globalObject, js_header_name);
+                headers.push(globalObject, js_header_value);
                 if (header.never_index) {
                     if (sensitiveHeaders.isUndefined()) {
                         sensitiveHeaders = JSC.JSValue.createEmptyArray(globalObject, 0);
                         sensitiveHeaders.ensureStillAlive();
                     }
-                    break :brk sensitiveHeaders;
-                } else break :brk headers;
-            };
-
-            if (getHTTP2CommonString(globalObject, header.well_know)) |header_info| {
-                output.push(globalObject, header_info);
-                var header_value = bun.String.fromUTF8(header.value);
-                output.push(globalObject, header_value.transferToJS(globalObject));
+                    sensitiveHeaders.push(globalObject, js_header_name);
+                }
             } else {
                 var header_name = bun.String.fromUTF8(header.name);
-                output.push(globalObject, header_name.transferToJS(globalObject));
+                const js_header_name = header_name.transferToJS(globalObject);
+                js_header_name.ensureStillAlive();
+
                 var header_value = bun.String.fromUTF8(header.value);
-                output.push(globalObject, header_value.transferToJS(globalObject));
+                const js_header_value = header_value.transferToJS(globalObject);
+                js_header_value.ensureStillAlive();
+
+                headers.push(globalObject, js_header_name);
+                headers.push(globalObject, js_header_value);
+
+                if (header.never_index) {
+                    if (sensitiveHeaders.isUndefined()) {
+                        sensitiveHeaders = JSC.JSValue.createEmptyArray(globalObject, 0);
+                        sensitiveHeaders.ensureStillAlive();
+                    }
+                    sensitiveHeaders.push(globalObject, js_header_name);
+                }
             }
 
             if (offset >= payload.len) {
@@ -3321,7 +3334,7 @@ pub const H2FrameParser = struct {
                             return .zero;
                         };
 
-                        const never_index = try sensitive_arg.getTruthy(globalObject, "neverIndex") != null;
+                        const never_index = try sensitive_arg.getTruthy(globalObject, name) != null;
 
                         const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
                         defer value_slice.deinit();
@@ -3349,7 +3362,7 @@ pub const H2FrameParser = struct {
                         return .zero;
                     };
 
-                    const never_index = try sensitive_arg.getTruthy(globalObject, "neverIndex") != null;
+                    const never_index = try sensitive_arg.getTruthy(globalObject, name) != null;
 
                     const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
                     defer value_slice.deinit();

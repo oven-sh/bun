@@ -95,7 +95,7 @@ disableManifest = false
 [install.lockfile]
 
 # Print a yarn v1 lockfile
-# Note: it does not load the lockfile, it just converts bun.lockb into a yarn.lock
+# Note: it does not load the lockfile, it just converts bun.lock into a yarn.lock
 print = "yarn"
 
 # Save the lockfile to disk
@@ -170,9 +170,9 @@ Bun stores installed packages from npm in `~/.bun/install/cache/${name}@${versio
 
 When the `node_modules` folder exists, before installing, Bun checks if the `"name"` and `"version"` in `package/package.json` in the expected node_modules folder matches the expected `name` and `version`. This is how it determines whether it should install. It uses a custom JSON parser which stops parsing as soon as it finds `"name"` and `"version"`.
 
-When a `bun.lockb` doesn’t exist or `package.json` has changed dependencies, tarballs are downloaded & extracted eagerly while resolving.
+When a `bun.lock` doesn’t exist or `package.json` has changed dependencies, tarballs are downloaded & extracted eagerly while resolving.
 
-When a `bun.lockb` exists and `package.json` hasn’t changed, Bun downloads missing dependencies lazily. If the package with a matching `name` & `version` already exists in the expected location within `node_modules`, Bun won’t attempt to download the tarball.
+When a `bun.lock` exists and `package.json` hasn’t changed, Bun downloads missing dependencies lazily. If the package with a matching `name` & `version` already exists in the expected location within `node_modules`, Bun won’t attempt to download the tarball.
 
 ## Platform-specific dependencies?
 
@@ -184,23 +184,9 @@ Peer dependencies are handled similarly to yarn. `bun install` will automaticall
 
 ## Lockfile
 
-`bun.lockb` is Bun’s binary lockfile format.
+`bun.lock` is Bun’s lockfile format. See [our blogpost about the text lockfile](https://bun.sh/blog/bun-lock-text-lockfile).
 
-## Why is it binary?
-
-In a word: Performance. Bun’s lockfile saves & loads incredibly quickly, and saves a lot more data than what is typically inside lockfiles.
-
-## How do I inspect it?
-
-For now, the easiest thing is to run `bun install -y`. That prints a Yarn v1-style yarn.lock file.
-
-## What does the lockfile store?
-
-Packages, metadata for those packages, the hoisted install order, dependencies for each package, what packages those dependencies resolved to, an integrity hash (if available), what each package was resolved to and which version (or equivalent).
-
-## Why is it fast?
-
-It uses linear arrays for all data. [Packages](https://github.com/oven-sh/bun/blob/be03fc273a487ac402f19ad897778d74b6d72963/src/install/install.zig#L1825) are referenced by an auto-incrementing integer ID or a hash of the package name. Strings longer than 8 characters are de-duplicated. Prior to saving on disk, the lockfile is garbage-collected & made deterministic by walking the package tree and cloning the packages in dependency order.
+Prior to Bun 1.2, the lockfile was binary and called `bun.lockb`. Old lockfiles can be upgraded to the new format by running `bun install --save-text-lockfile --frozen-lockfile --lockfile-only`, and then deleting `bun.lockb`.
 
 ## Cache
 

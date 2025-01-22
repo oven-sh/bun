@@ -118,7 +118,7 @@ pub const S3Client = struct {
                 },
             );
         } else {
-            try writer.writeAll(comptime bun.Output.prettyFmt(" {{", enable_ansi_colors));
+            try writer.writeAll(" {");
         }
 
         try writeFormatCredentials(this.credentials, this.options, this.acl, Formatter, formatter, writer, enable_ansi_colors);

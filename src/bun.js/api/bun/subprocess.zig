@@ -475,9 +475,12 @@ pub const Subprocess = struct {
 
         pub fn close(this: *Readable) void {
             switch (this.*) {
-                inline .memfd, .fd => |fd| {
+                .memfd => |fd| {
                     this.* = .{ .closed = {} };
                     _ = bun.sys.close(fd);
+                },
+                .fd => |_| {
+                    this.* = .{ .closed = {} };
                 },
                 .pipe => {
                     this.pipe.close();
@@ -488,9 +491,12 @@ pub const Subprocess = struct {
 
         pub fn finalize(this: *Readable) void {
             switch (this.*) {
-                inline .memfd, .fd => |fd| {
+                .memfd => |fd| {
                     this.* = .{ .closed = {} };
                     _ = bun.sys.close(fd);
+                },
+                .fd => {
+                    this.* = .{ .closed = {} };
                 },
                 .pipe => |pipe| {
                     defer pipe.detach();
@@ -1438,8 +1444,11 @@ pub const Subprocess = struct {
                 .pipe => |pipe| {
                     _ = pipe.end(null);
                 },
-                inline .memfd, .fd => |fd| {
+                .memfd => |fd| {
                     _ = bun.sys.close(fd);
+                    this.* = .{ .ignore = {} };
+                },
+                .fd => {
                     this.* = .{ .ignore = {} };
                 },
                 .buffer => {
@@ -2137,7 +2146,7 @@ pub const Subprocess = struct {
                 .hide_window = windows_hide,
                 .verbatim_arguments = windows_verbatim_arguments,
                 .loop = JSC.EventLoopHandle.init(jsc_vm),
-            } else {},
+            },
         };
 
         var spawned = switch (bun.spawn.spawnProcess(

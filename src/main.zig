@@ -21,6 +21,16 @@ pub extern "C" var environ: ?*anyopaque;
 pub fn main() void {
     bun.crash_handler.init();
 
+    if (Environment.isPosix) {
+        var act: std.posix.Sigaction = .{
+            .handler = .{ .handler = std.posix.SIG.IGN },
+            .mask = std.posix.empty_sigset,
+            .flags = 0,
+        };
+        std.posix.sigaction(std.posix.SIG.PIPE, &act, null) catch {};
+        std.posix.sigaction(std.posix.SIG.XFSZ, &act, null) catch {};
+    }
+
     // This should appear before we make any calls at all to libuv.
     // So it's safest to put it very early in the main function.
     if (Environment.isWindows) {

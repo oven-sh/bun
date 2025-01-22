@@ -18,17 +18,13 @@ One command is all you need (won't be experimental after Bun v1.2):
 {% codetabs %}
 
 ```bash#CLI
-$ bun build --experimental-html --experimental-css ./index.html --outdir=dist
+$ bun build ./index.html --outdir=dist
 ```
 
 ```ts#API
 Bun.build({
   entrypoints: ["./index.html"],
   outdir: "./dist",
-
-  // On by default in Bun v1.2+
-  html: true,
-  experimentalCss: true,
 });
 ```
 
@@ -63,8 +59,6 @@ Need more control? Configure the bundler through the JavaScript API and use Bun'
 await Bun.build({
   entrypoints: ["./index.html"],
   outdir: "./dist",
-  html: true,
-  experimentalCss: true,
   minify: true,
 
   plugins: [

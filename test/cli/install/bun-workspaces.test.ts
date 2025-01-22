@@ -101,7 +101,7 @@ test("dependency on workspace without version in package.json", async () => {
       "2 packages installed",
     ]);
     rmSync(join(packageDir, "node_modules"), { recursive: true, force: true });
-    rmSync(join(packageDir, "bun.lockb"), { recursive: true, force: true });
+    rmSync(join(packageDir, "bun.lock"), { recursive: true, force: true });
   }
 
   // downloads the package from the registry instead of
@@ -131,7 +131,7 @@ test("dependency on workspace without version in package.json", async () => {
     ]);
     rmSync(join(packageDir, "node_modules"), { recursive: true, force: true });
     rmSync(join(packageDir, "packages", "bar", "node_modules"), { recursive: true, force: true });
-    rmSync(join(packageDir, "bun.lockb"), { recursive: true, force: true });
+    rmSync(join(packageDir, "bun.lock"), { recursive: true, force: true });
   }
 }, 20_000);
 
@@ -745,9 +745,9 @@ test("adding packages in a subdirectory of a workspace", async () => {
     },
   });
 
-  // now delete node_modules and bun.lockb and install
+  // now delete node_modules and bun.lock and install
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-  await rm(join(packageDir, "bun.lockb"));
+  await rm(join(packageDir, "bun.lock"));
 
   ({ stdout, exited } = spawn({
     cmd: [bunExe(), "install"],
@@ -770,7 +770,7 @@ test("adding packages in a subdirectory of a workspace", async () => {
   expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", "foo", "no-deps", "what-bin"]);
 
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-  await rm(join(packageDir, "bun.lockb"));
+  await rm(join(packageDir, "bun.lock"));
 
   ({ stdout, exited } = spawn({
     cmd: [bunExe(), "install"],
@@ -984,7 +984,7 @@ test("it should detect duplicate workspace dependencies", async () => {
   expect(await exited).toBe(1);
 
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-  await rm(join(packageDir, "bun.lockb"), { force: true });
+  await rm(join(packageDir, "bun.lock"), { force: true });
 
   ({ stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
@@ -1082,7 +1082,7 @@ for (const rootVersion of versions) {
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
 
       await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-      await rm(join(packageDir, "bun.lockb"), { recursive: true, force: true });
+      await rm(join(packageDir, "bun.lock"), { recursive: true, force: true });
 
       ({ stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
@@ -1218,7 +1218,7 @@ for (const version of versions) {
     });
 
     await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-    await rm(join(packageDir, "bun.lockb"), { recursive: true, force: true });
+    await rm(join(packageDir, "bun.lock"), { recursive: true, force: true });
 
     // install from workspace package then from root
     ({ stdout, stderr, exited } = spawn({

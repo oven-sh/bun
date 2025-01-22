@@ -59,9 +59,7 @@ pub fn toJS(globalObject: *JSC.JSGlobalObject, comptime ValueType: type, value: 
         bool => return JSC.JSValue.jsBoolean(if (comptime Type != ValueType) value.* else value),
         *JSC.JSGlobalObject => return value.toJSValue(),
         []const u8, [:0]const u8, [*:0]const u8, []u8, [:0]u8, [*:0]u8 => {
-            const str = bun.String.createUTF8(value);
-            defer str.deref();
-            return str.toJS(globalObject);
+            return bun.String.createUTF8ForJS(globalObject, value);
         },
         []const bun.String => {
             defer {

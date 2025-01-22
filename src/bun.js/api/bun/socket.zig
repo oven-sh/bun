@@ -2215,10 +2215,11 @@ fn NewSocket(comptime ssl: bool) type {
             }
 
             var stack_fallback = std.heap.stackFallback(16 * 1024, bun.default_allocator);
+            const allow_string_object = true;
             const buffer: JSC.Node.StringOrBuffer = if (data_value.isUndefined())
                 JSC.Node.StringOrBuffer.empty
             else
-                JSC.Node.StringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalObject, stack_fallback.get(), data_value, encoding_value, false) catch {
+                JSC.Node.StringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalObject, stack_fallback.get(), data_value, encoding_value, false, allow_string_object) catch {
                     return .fail;
                 } orelse {
                     if (!globalObject.hasException()) {
@@ -3214,6 +3215,39 @@ fn NewSocket(comptime ssl: bool) type {
 
             if (cert) |x509| {
                 return X509.toJS(x509, globalObject);
+            }
+            return JSValue.jsUndefined();
+        }
+
+        pub fn getPeerX509Certificate(
+            this: *This,
+            globalObject: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
+        ) bun.JSError!JSValue {
+            if (comptime ssl == false) {
+                return JSValue.jsUndefined();
+            }
+            const ssl_ptr = this.socket.ssl() orelse return JSValue.jsUndefined();
+            const cert = BoringSSL.SSL_get_peer_certificate(ssl_ptr);
+            if (cert) |x509| {
+                return X509.toJSObject(x509, globalObject);
+            }
+            return JSValue.jsUndefined();
+        }
+
+        pub fn getX509Certificate(
+            this: *This,
+            globalObject: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
+        ) bun.JSError!JSValue {
+            if (comptime ssl == false) {
+                return JSValue.jsUndefined();
+            }
+
+            const ssl_ptr = this.socket.ssl() orelse return JSValue.jsUndefined();
+            const cert = BoringSSL.SSL_get_certificate(ssl_ptr);
+            if (cert) |x509| {
+                return X509.toJSObject(x509.ref(), globalObject);
             }
             return JSValue.jsUndefined();
         }

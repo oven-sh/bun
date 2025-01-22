@@ -1,8 +1,7 @@
 // Hardcoded module "node:http"
 const EventEmitter = require("node:events");
-const { isTypedArray } = require("node:util/types");
+const { isTypedArray, isArrayBuffer } = require("node:util/types");
 const { Duplex, Readable, Writable } = require("node:stream");
-const { ERR_INVALID_PROTOCOL } = require("internal/errors");
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { kAutoDestroyed } = require("internal/shared");
 const { urlToHttpOptions } = require("internal/url");
@@ -112,12 +111,11 @@ const kfakeSocket = Symbol("kfakeSocket");
 const kEmptyBuffer = Buffer.alloc(0);
 
 function isValidTLSArray(obj) {
-  if (typeof obj === "string" || isTypedArray(obj) || obj instanceof ArrayBuffer || obj instanceof Blob) return true;
+  if (typeof obj === "string" || isTypedArray(obj) || isArrayBuffer(obj) || $inheritsBlob(obj)) return true;
   if (Array.isArray(obj)) {
     for (var i = 0; i < obj.length; i++) {
       const item = obj[i];
-      if (typeof item !== "string" && !isTypedArray(item) && !(item instanceof ArrayBuffer) && !(item instanceof Blob))
-        return false;
+      if (typeof item !== "string" && !isTypedArray(item) && !isArrayBuffer(item) && !$inheritsBlob(item)) return false;
     }
     return true;
   }
@@ -1799,7 +1797,7 @@ class ClientRequest extends OutgoingMessage {
       expectedProtocol = this.agent.protocol;
     }
     if (protocol !== expectedProtocol) {
-      throw ERR_INVALID_PROTOCOL(protocol, expectedProtocol);
+      throw $ERR_INVALID_PROTOCOL(protocol, expectedProtocol);
     }
     this.#protocol = protocol;
 

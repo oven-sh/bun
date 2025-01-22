@@ -2,10 +2,10 @@
 const gen = bun.gen.bindgen_test;
 
 pub fn getBindgenTestFunctions(global: *JSC.JSGlobalObject) JSC.JSValue {
-    return global.createObjectFromStruct(.{
+    return JSC.JSObject.create(.{
         .add = gen.createAddCallback(global),
         .requiredAndOptionalArg = gen.createRequiredAndOptionalArgCallback(global),
-    }).toJS();
+    }, global).toJS();
 }
 
 // This example should be kept in sync with bindgen's documentation

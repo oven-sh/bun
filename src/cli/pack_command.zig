@@ -335,7 +335,7 @@ pub const PackCommand = struct {
                         // normally the behavior of `index.js` and `**/index.js` are the same,
                         // but includes require `**/`
                         const match_path = if (include.@"leading **/") entry_name else entry_subpath;
-                        switch (glob.matchImpl(include.glob, match_path)) {
+                        switch (glob.walk.matchImpl(include.glob, match_path)) {
                             .match => included = true,
                             .negate_no_match => included = false,
 
@@ -508,10 +508,10 @@ pub const PackCommand = struct {
         var bundled_pack_queue = PackQueue.init(ctx.allocator, {});
         if (ctx.bundled_deps.items.len == 0) return bundled_pack_queue;
 
-        const dir = root_dir.openDirZ("node_modules", .{ .iterate = true }) catch |err| {
+        var dir = root_dir.openDirZ("node_modules", .{ .iterate = true }) catch |err| {
             switch (err) {
-                // ignore node_modules if it isn't a directory
-                error.NotDir => return bundled_pack_queue,
+                // ignore node_modules if it isn't a directory, or doesn't exist
+                error.NotDir, error.FileNotFound => return bundled_pack_queue,
 
                 else => {
                     Output.err(err, "failed to open \"node_modules\" to pack bundled dependencies", .{});
@@ -519,6 +519,7 @@ pub const PackCommand = struct {
                 },
             }
         };
+        defer dir.close();
 
         // A set of bundled dependency locations
         // - node_modules/is-even
@@ -535,34 +536,77 @@ pub const PackCommand = struct {
         while (iter.next().unwrap() catch null) |entry| {
             if (entry.kind != .directory) continue;
 
-            const entry_name = entry.name.slice();
+            const _entry_name = entry.name.slice();
 
-            for (ctx.bundled_deps.items) |*dep| {
-                bun.assertWithLocation(dep.from_root_package_json, @src());
-                if (!strings.eqlLong(entry_name, dep.name, true)) continue;
+            if (strings.startsWithChar(_entry_name, '@')) {
+                const concat = try entrySubpath(ctx.allocator, "node_modules", _entry_name);
 
-                const entry_subpath = try entrySubpath(ctx.allocator, "node_modules", entry_name);
+                var scoped_dir = root_dir.openDirZ(concat, .{ .iterate = true }) catch {
+                    continue;
+                };
+                defer scoped_dir.close();
 
-                const dedupe_entry = try dedupe.getOrPut(entry_subpath);
-                if (dedupe_entry.found_existing) {
-                    // already got to it in `addBundledDep` below
+                var scoped_iter = DirIterator.iterate(scoped_dir, .u8);
+                while (scoped_iter.next().unwrap() catch null) |sub_entry| {
+                    const entry_name = try entrySubpath(ctx.allocator, _entry_name, sub_entry.name.slice());
+
+                    for (ctx.bundled_deps.items) |*dep| {
+                        bun.assertWithLocation(dep.from_root_package_json, @src());
+                        if (!strings.eqlLong(entry_name, dep.name, true)) continue;
+
+                        const entry_subpath = try entrySubpath(ctx.allocator, "node_modules", entry_name);
+
+                        const dedupe_entry = try dedupe.getOrPut(entry_subpath);
+                        if (dedupe_entry.found_existing) {
+                            // already got to it in `addBundledDep` below
+                            dep.was_packed = true;
+                            break;
+                        }
+
+                        const subdir = openSubdir(dir, entry_name, entry_subpath);
+                        dep.was_packed = true;
+                        try addBundledDep(
+                            ctx,
+                            root_dir,
+                            .{ subdir, entry_subpath, 2 },
+                            &bundled_pack_queue,
+                            &dedupe,
+                            &additional_bundled_deps,
+                            log_level,
+                        );
+
+                        break;
+                    }
+                }
+            } else {
+                const entry_name = _entry_name;
+                for (ctx.bundled_deps.items) |*dep| {
+                    bun.assertWithLocation(dep.from_root_package_json, @src());
+                    if (!strings.eqlLong(entry_name, dep.name, true)) continue;
+
+                    const entry_subpath = try entrySubpath(ctx.allocator, "node_modules", entry_name);
+
+                    const dedupe_entry = try dedupe.getOrPut(entry_subpath);
+                    if (dedupe_entry.found_existing) {
+                        // already got to it in `addBundledDep` below
+                        dep.was_packed = true;
+                        break;
+                    }
+
+                    const subdir = openSubdir(dir, entry_name, entry_subpath);
                     dep.was_packed = true;
+                    try addBundledDep(
+                        ctx,
+                        root_dir,
+                        .{ subdir, entry_subpath, 2 },
+                        &bundled_pack_queue,
+                        &dedupe,
+                        &additional_bundled_deps,
+                        log_level,
+                    );
+
                     break;
                 }
-
-                const subdir = openSubdir(dir, entry_name, entry_subpath);
-                dep.was_packed = true;
-                try addBundledDep(
-                    ctx,
-                    root_dir,
-                    .{ subdir, entry_subpath, 2 },
-                    &bundled_pack_queue,
-                    &dedupe,
-                    &additional_bundled_deps,
-                    log_level,
-                );
-
-                break;
             }
         }
 
@@ -835,22 +879,47 @@ pub const PackCommand = struct {
         const bundled_deps = json.get(field) orelse return null;
 
         invalid_field: {
-            var iter = bundled_deps.asArray() orelse switch (bundled_deps.data) {
-                .e_array => return .{},
+            switch (bundled_deps.data) {
+                .e_array => {
+                    var iter = bundled_deps.asArray() orelse return .{};
+
+                    while (iter.next()) |bundled_dep_item| {
+                        const bundled_dep = try bundled_dep_item.asStringCloned(allocator) orelse break :invalid_field;
+                        try deps.append(allocator, .{
+                            .name = bundled_dep,
+                            .from_root_package_json = true,
+                        });
+                    }
+                },
+                .e_boolean => {
+                    const b = bundled_deps.asBool() orelse return .{};
+                    if (!b == true) return .{};
+
+                    if (json.get("dependencies")) |dependencies_expr| {
+                        switch (dependencies_expr.data) {
+                            .e_object => |dependencies| {
+                                for (dependencies.properties.slice()) |*dependency| {
+                                    if (dependency.key == null) continue;
+                                    if (dependency.value == null) continue;
+
+                                    const bundled_dep = try dependency.key.?.asStringCloned(allocator) orelse break :invalid_field;
+                                    try deps.append(allocator, .{
+                                        .name = bundled_dep,
+                                        .from_root_package_json = true,
+                                    });
+                                }
+                            },
+                            else => {},
+                        }
+                    }
+                },
                 else => break :invalid_field,
-            };
-            while (iter.next()) |bundled_dep_item| {
-                const bundled_dep = try bundled_dep_item.asStringCloned(allocator) orelse break :invalid_field;
-                try deps.append(allocator, .{
-                    .name = bundled_dep,
-                    .from_root_package_json = true,
-                });
             }
 
             return deps;
         }
 
-        Output.errGeneric("expected `{s}` to be an array of strings", .{field});
+        Output.errGeneric("expected `{s}` to be a boolean or an array of strings", .{field});
         Global.crash();
     }
 
@@ -976,7 +1045,7 @@ pub const PackCommand = struct {
 
             // check default ignores that only apply to the root project directory
             for (root_default_ignore_patterns) |pattern| {
-                switch (glob.matchImpl(pattern, entry_name)) {
+                switch (glob.walk.matchImpl(pattern, entry_name)) {
                     .match => {
                         // cannot be reversed
                         return .{
@@ -1003,7 +1072,7 @@ pub const PackCommand = struct {
 
         for (default_ignore_patterns) |pattern_info| {
             const pattern, const can_override = pattern_info;
-            switch (glob.matchImpl(pattern, entry_name)) {
+            switch (glob.walk.matchImpl(pattern, entry_name)) {
                 .match => {
                     if (can_override) {
                         ignored = true;
@@ -1045,7 +1114,7 @@ pub const PackCommand = struct {
                 if (pattern.dirs_only and entry.kind != .directory) continue;
 
                 const match_path = if (pattern.rel_path) rel else entry_name;
-                switch (glob.matchImpl(pattern.glob, match_path)) {
+                switch (glob.walk.matchImpl(pattern.glob, match_path)) {
                     .match => {
                         ignored = true;
                         ignore_pattern = pattern.glob;
@@ -1140,11 +1209,11 @@ pub const PackCommand = struct {
 
         const edited_package_json = try editRootPackageJSON(ctx.allocator, ctx.lockfile, json);
 
-        var this_bundler: bun.bundler.Bundler = undefined;
+        var this_transpiler: bun.transpiler.Transpiler = undefined;
 
         _ = RunCommand.configureEnvForRun(
             ctx.command_ctx,
-            &this_bundler,
+            &this_transpiler,
             manager.env,
             manager.options.log_level != .silent,
             false,
@@ -1177,7 +1246,7 @@ pub const PackCommand = struct {
                             prepublish_only,
                             "prepublishOnly",
                             abs_workspace_path,
-                            this_bundler.env,
+                            this_transpiler.env,
                             &.{},
                             manager.options.log_level == .silent,
                             ctx.command_ctx.debug.use_system_shell,
@@ -1202,7 +1271,7 @@ pub const PackCommand = struct {
                         prepack_script_str,
                         "prepack",
                         abs_workspace_path,
-                        this_bundler.env,
+                        this_transpiler.env,
                         &.{},
                         manager.options.log_level == .silent,
                         ctx.command_ctx.debug.use_system_shell,
@@ -1226,7 +1295,7 @@ pub const PackCommand = struct {
                         prepare_script_str,
                         "prepare",
                         abs_workspace_path,
-                        this_bundler.env,
+                        this_transpiler.env,
                         &.{},
                         manager.options.log_level == .silent,
                         ctx.command_ctx.debug.use_system_shell,
@@ -1393,7 +1462,7 @@ pub const PackCommand = struct {
                     .uses_workspaces = false,
                     .publish_script = publish_script,
                     .postpublish_script = postpublish_script,
-                    .script_env = this_bundler.env,
+                    .script_env = this_transpiler.env,
                     .normalized_pkg_info = "",
                 };
             }
@@ -1719,7 +1788,7 @@ pub const PackCommand = struct {
                 .uses_workspaces = false,
                 .publish_script = publish_script,
                 .postpublish_script = postpublish_script,
-                .script_env = this_bundler.env,
+                .script_env = this_transpiler.env,
                 .normalized_pkg_info = normalized_pkg_info,
             };
         }

@@ -1,4 +1,4 @@
-//! > ⚠️ Note: This is an advanced and experimental API recommended only for plugin developers who are familiar with systems proramming and the C ABI. Use with caution.
+//! > ⚠️ Note: This is an advanced and experimental API recommended only for plugin developers who are familiar with systems programming and the C ABI. Use with caution.
 //!
 //! # Bun Native Plugins
 //!
@@ -44,7 +44,7 @@
 //! /// Use `no_mangle` so that we can reference this symbol by name later
 //! /// when registering this native plugin in JS.
 //! ///
-//! /// Here we'll create a dummy plugin which replaces all occurences of
+//! /// Here we'll create a dummy plugin which replaces all occurrences of
 //! /// `foo` with `bar`
 //! #[no_mangle]
 //! pub extern "C" fn on_before_parse_plugin_impl(
@@ -250,6 +250,8 @@
 pub use anyhow;
 pub use bun_macro::bun;
 
+pub mod sys;
+
 #[repr(transparent)]
 pub struct BunPluginName(*const c_char);
 
@@ -284,10 +286,6 @@ use std::{
     str::Utf8Error,
     sync::PoisonError,
 };
-
-pub mod sys {
-    include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
-}
 
 #[repr(C)]
 pub struct TaggedObject<T> {

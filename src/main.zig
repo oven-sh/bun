@@ -21,6 +21,16 @@ pub extern "C" var environ: ?*anyopaque;
 pub fn main() void {
     bun.crash_handler.init();
 
+    if (Environment.isPosix) {
+        var act: std.posix.Sigaction = .{
+            .handler = .{ .handler = std.posix.SIG.IGN },
+            .mask = std.posix.empty_sigset,
+            .flags = 0,
+        };
+        std.posix.sigaction(std.posix.SIG.PIPE, &act, null) catch {};
+        std.posix.sigaction(std.posix.SIG.XFSZ, &act, null) catch {};
+    }
+
     // This should appear before we make any calls at all to libuv.
     // So it's safest to put it very early in the main function.
     if (Environment.isWindows) {
@@ -44,7 +54,7 @@ pub fn main() void {
     if (Environment.isX64 and Environment.enableSIMD and Environment.isPosix) {
         bun_warn_avx_missing(@import("./cli/upgrade_command.zig").Version.Bun__githubBaselineURL.ptr);
     }
-
+    bun.StackCheck.configureThread();
     bun.CLI.Cli.start(bun.default_allocator);
     bun.Global.exit(0);
 }

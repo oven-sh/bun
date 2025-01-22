@@ -16,23 +16,23 @@ pub const use_mimalloc = true;
 pub const default_allocator: std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
 else
-    @import("./memory_allocator.zig").c_allocator;
+    @import("./allocators/memory_allocator.zig").c_allocator;
 
 /// Zeroing memory allocator
 pub const z_allocator: std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
 else
-    @import("./memory_allocator.zig").z_allocator;
+    @import("./allocators/memory_allocator.zig").z_allocator;
 
 pub const huge_allocator: std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
 else
-    @import("./memory_allocator.zig").huge_allocator;
+    @import("./allocators/memory_allocator.zig").huge_allocator;
 
 pub const auto_allocator: std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
 else
-    @import("./memory_allocator.zig").auto_allocator;
+    @import("./allocators/memory_allocator.zig").auto_allocator;
 
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
 pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
@@ -69,6 +69,8 @@ pub inline fn clampFloat(_self: anytype, min: @TypeOf(_self), max: @TypeOf(_self
     }
     return self;
 }
+
+pub const ArrayList = std.ArrayListUnmanaged;
 
 /// We cannot use a threadlocal memory allocator for FileSystem-related things
 /// FileSystem is a singleton.
@@ -556,7 +558,7 @@ pub const StringBuilder = @import("./string_builder.zig");
 
 pub const LinearFifo = @import("./linear_fifo.zig").LinearFifo;
 pub const linux = struct {
-    pub const memfd_allocator = @import("./linux_memfd_allocator.zig").LinuxMemFdAllocator;
+    pub const memfd_allocator = @import("./allocators/linux_memfd_allocator.zig").LinuxMemFdAllocator;
 };
 
 /// hash a string
@@ -887,7 +889,7 @@ pub fn openDirAbsoluteNotForDeletingOrRenaming(path_: []const u8) !std.fs.Dir {
     return fd.asDir();
 }
 
-pub const MimallocArena = @import("./mimalloc_arena.zig").Arena;
+pub const MimallocArena = @import("./allocators/mimalloc_arena.zig").Arena;
 pub fn getRuntimeFeatureFlag(comptime flag: [:0]const u8) bool {
     return struct {
         const state = enum(u8) { idk, disabled, enabled };
@@ -1331,8 +1333,8 @@ pub const PackageManager = install.PackageManager;
 pub const RunCommand = @import("./cli/run_command.zig").RunCommand;
 
 pub const fs = @import("./fs.zig");
-pub const Bundler = bundler.Bundler;
-pub const bundler = @import("./bundler.zig");
+pub const Transpiler = transpiler.Transpiler;
+pub const transpiler = @import("./transpiler.zig");
 pub const which = @import("./which.zig").which;
 pub const js_parser = @import("./js_parser.zig");
 pub const js_printer = @import("./js_printer.zig");
@@ -1399,10 +1401,10 @@ fn getFdPathViaCWD(fd: std.posix.fd_t, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
 
 pub const getcwd = std.posix.getcwd;
 
-pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
+pub fn getcwdAlloc(allocator: std.mem.Allocator) ![:0]u8 {
     var temp: PathBuffer = undefined;
     const temp_slice = try getcwd(&temp);
-    return allocator.dupe(u8, temp_slice);
+    return allocator.dupeZ(u8, temp_slice);
 }
 
 /// Get the absolute path to a file descriptor.
@@ -1600,6 +1602,8 @@ pub const Semver = @import("./install/semver.zig");
 pub const ImportRecord = @import("./import_record.zig").ImportRecord;
 pub const ImportKind = @import("./import_record.zig").ImportKind;
 
+pub const Watcher = @import("./Watcher.zig");
+
 pub usingnamespace @import("./util.zig");
 pub const fast_debug_build_cmd = .None;
 pub const fast_debug_build_mode = fast_debug_build_cmd != .None and
@@ -1607,12 +1611,13 @@ pub const fast_debug_build_mode = fast_debug_build_cmd != .None and
 
 pub const MultiArrayList = @import("./multi_array_list.zig").MultiArrayList;
 pub const StringJoiner = @import("./StringJoiner.zig");
-pub const NullableAllocator = @import("./NullableAllocator.zig");
+pub const NullableAllocator = @import("./allocators/NullableAllocator.zig");
 
 pub const renamer = @import("./renamer.zig");
 // TODO: Rename to SourceMap as this is a struct.
 pub const sourcemap = @import("./sourcemap/sourcemap.zig");
 
+/// Attempt to coerce some value into a byte slice.
 pub fn asByteSlice(buffer: anytype) []const u8 {
     return switch (@TypeOf(buffer)) {
         []const u8, []u8, [:0]const u8, [:0]u8 => buffer.ptr[0..buffer.len],
@@ -1854,6 +1859,17 @@ pub const StringSet = struct {
 
     pub const Map = StringArrayHashMap(void);
 
+    pub fn clone(self: StringSet) !StringSet {
+        var new_map = Map.init(self.map.allocator);
+        try new_map.ensureTotalCapacity(self.map.count());
+        for (self.map.keys()) |key| {
+            new_map.putAssumeCapacity(try self.map.allocator.dupe(u8, key), {});
+        }
+        return StringSet{
+            .map = new_map,
+        };
+    }
+
     pub fn init(allocator: std.mem.Allocator) StringSet {
         return StringSet{
             .map = Map.init(allocator),
@@ -1869,6 +1885,14 @@ pub const StringSet = struct {
         if (!entry.found_existing) {
             entry.key_ptr.* = try self.map.allocator.dupe(u8, key);
         }
+    }
+
+    pub fn contains(self: *StringSet, key: []const u8) bool {
+        return self.map.contains(key);
+    }
+
+    pub fn swapRemove(self: *StringSet, key: []const u8) bool {
+        return self.map.swapRemove(key);
     }
 
     pub fn deinit(self: *StringSet) void {
@@ -1887,6 +1911,13 @@ pub const StringMap = struct {
     dupe_keys: bool = false,
 
     pub const Map = StringArrayHashMap(string);
+
+    pub fn clone(self: StringMap) !StringMap {
+        return StringMap{
+            .map = try self.map.clone(),
+            .dupe_keys = self.dupe_keys,
+        };
+    }
 
     pub fn init(allocator: std.mem.Allocator, dupe_keys: bool) StringMap {
         return StringMap{
@@ -1955,7 +1986,8 @@ pub const bundle_v2 = @import("./bundler/bundle_v2.zig");
 pub const BundleV2 = bundle_v2.BundleV2;
 pub const ParseTask = bundle_v2.ParseTask;
 
-pub const Lock = @import("./lock.zig").Lock;
+pub const Lock = @compileError("Use bun.Mutex instead");
+pub const Mutex = @import("./Mutex.zig");
 pub const UnboundedQueue = @import("./bun.js/unbounded_queue.zig").UnboundedQueue;
 
 pub fn threadlocalAllocator() std.mem.Allocator {
@@ -2036,7 +2068,7 @@ pub fn HiveRef(comptime T: type, comptime capacity: u16) type {
     };
 }
 
-pub const MaxHeapAllocator = @import("./max_heap_allocator.zig").MaxHeapAllocator;
+pub const MaxHeapAllocator = @import("./allocators/max_heap_allocator.zig").MaxHeapAllocator;
 
 pub const tracy = @import("./tracy.zig");
 pub const trace = tracy.trace;
@@ -2246,6 +2278,11 @@ const WindowsStat = extern struct {
 };
 
 pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.posix.Stat;
+pub const StatFS = switch (Environment.os) {
+    .mac => C.translated.struct_statfs,
+    .linux => C.translated.struct_statfs,
+    else => windows.libuv.uv_statfs_t,
+};
 
 pub var argv: [][:0]const u8 = &[_][:0]const u8{};
 
@@ -3229,6 +3266,19 @@ pub fn exitThread() noreturn {
     }
 }
 
+pub fn deleteAllPoolsForThreadExit() void {
+    const pools_to_delete = .{
+        JSC.WebCore.ByteListPool,
+        bun.WPathBufferPool,
+        bun.PathBufferPool,
+        bun.JSC.ConsoleObject.Formatter.Visited.Pool,
+        bun.js_parser.StringVoidMap.Pool,
+    };
+    inline for (pools_to_delete) |pool| {
+        pool.deleteAll();
+    }
+}
+
 pub const Tmpfile = @import("./tmp.zig").Tmpfile;
 
 pub const io = @import("./io/io.zig");
@@ -3330,12 +3380,23 @@ pub inline fn resolveSourcePath(
 }
 
 const RuntimeEmbedRoot = enum {
+    /// Relative to `<build>/codegen`.
     codegen,
+    /// Relative to `src`
     src,
+    /// Reallocates the slice at every call. Avoid this if possible.  An example
+    /// using this reasonably is referencing incremental_visualizer.html, which
+    /// is reloaded from disk for each request, but more importantly allows
+    /// maintaining the DevServer state while hacking on the visualizer.
     src_eager,
+    /// Avoid this if possible. See `.src_eager`.
     codegen_eager,
 };
 
+/// Load a file at runtime. This is only to be used in debug builds,
+/// specifically when `Environment.codegen_embed` is false. This allows quick
+/// iteration on files, as this skips the Zig compiler. Once Zig gains good
+/// incremental support, the non-eager cases can be deleted.
 pub fn runtimeEmbedFile(
     comptime root: RuntimeEmbedRoot,
     comptime sub_path: []const u8,
@@ -3418,7 +3479,7 @@ pub fn selfExePath() ![:0]u8 {
             4096 + 1 // + 1 for the null terminator
         ]u8 = undefined;
         var len: usize = 0;
-        var lock: Lock = .{};
+        var lock: Mutex = .{};
 
         pub fn load() ![:0]u8 {
             const init = try std.fs.selfExePath(&value);
@@ -3878,7 +3939,7 @@ pub fn WeakPtr(comptime T: type, comptime weakable_field: std.meta.FieldEnum(T))
 
 pub const DebugThreadLock = if (Environment.allow_assert)
     struct {
-        owning_thread: ?std.Thread.Id = null,
+        owning_thread: ?std.Thread.Id,
         locked_at: crash_handler.StoredTrace,
 
         pub const unlocked: DebugThreadLock = .{
@@ -4054,7 +4115,7 @@ pub fn Once(comptime f: anytype) type {
 
         done: bool = false,
         payload: Return = undefined,
-        mutex: std.Thread.Mutex = .{},
+        mutex: bun.Mutex = .{},
 
         /// Call the function `f`.
         /// If `call` is invoked multiple times `f` will be executed only the
@@ -4095,6 +4156,16 @@ pub inline fn take(val: anytype) ?bun.meta.OptionalChild(@TypeOf(val)) {
     return null;
 }
 
+/// `val` must be a pointer to an optional type (e.g. `*?T`)
+///
+/// This function deinitializes the value and sets the optional to null.
+pub inline fn clear(val: anytype, allocator: std.mem.Allocator) void {
+    if (val.*) |*v| {
+        v.deinit(allocator);
+        val.* = null;
+    }
+}
+
 pub inline fn wrappingNegation(val: anytype) @TypeOf(val) {
     return 0 -% val;
 }
@@ -4122,3 +4193,269 @@ pub inline fn isComptimeKnown(x: anytype) bool {
 pub inline fn itemOrNull(comptime T: type, slice: []const T, index: usize) ?T {
     return if (index < slice.len) slice[index] else null;
 }
+
+pub const Maybe = bun.JSC.Node.Maybe;
+
+/// Type which could be borrowed or owned
+/// The name is from the Rust std's `Cow` type
+/// Can't think of a better name
+pub fn Cow(comptime T: type, comptime VTable: type) type {
+    const Handler = struct {
+        fn copy(this: *const T, allocator: std.mem.Allocator) T {
+            if (!@hasDecl(VTable, "copy")) @compileError(@typeName(VTable) ++ " needs `copy()` function");
+            return VTable.copy(this, allocator);
+        }
+
+        fn deinit(this: *T, allocator: std.mem.Allocator) void {
+            if (!@hasDecl(VTable, "deinit")) @compileError(@typeName(VTable) ++ " needs `deinit()` function");
+            return VTable.deinit(this, allocator);
+        }
+    };
+
+    return union(enum) {
+        borrowed: *const T,
+        owned: T,
+
+        pub fn borrow(val: *const T) @This() {
+            return .{
+                .borrowed = val,
+            };
+        }
+
+        pub fn own(val: T) @This() {
+            return .{
+                .owned = val,
+            };
+        }
+
+        pub fn replace(this: *@This(), allocator: std.mem.Allocator, newval: T) void {
+            if (this.* == .owned) {
+                this.deinit(allocator);
+            }
+            this.* = .{ .owned = newval };
+        }
+
+        /// Get the underlying value.
+        pub inline fn inner(this: *const @This()) *const T {
+            return switch (this.*) {
+                .borrowed => this.borrowed,
+                .owned => &this.owned,
+            };
+        }
+
+        pub inline fn innerMut(this: *@This()) ?*T {
+            return switch (this.*) {
+                .borrowed => null,
+                .owned => &this.owned,
+            };
+        }
+
+        pub fn toOwned(this: *@This(), allocator: std.mem.Allocator) *T {
+            switch (this.*) {
+                .borrowed => {
+                    this.* = .{
+                        .owned = Handler.copy(this.borrowed, allocator),
+                    };
+                },
+                .owned => {},
+            }
+            return &this.owned;
+        }
+
+        pub fn deinit(this: *@This(), allocator: std.mem.Allocator) void {
+            if (this.* == .owned) {
+                Handler.deinit(&this.owned, allocator);
+            }
+        }
+    };
+}
+
+/// To handle stack overflows:
+/// 1. StackCheck.init()
+/// 2. .isSafeToRecurse()
+pub const StackCheck = struct {
+    cached_stack_end: usize = 0,
+
+    extern fn Bun__StackCheck__initialize() void;
+    pub fn configureThread() void {
+        Bun__StackCheck__initialize();
+    }
+
+    extern "C" fn Bun__StackCheck__getMaxStack() usize;
+    fn getStackEnd() usize {
+        return Bun__StackCheck__getMaxStack();
+    }
+
+    pub fn init() StackCheck {
+        return StackCheck{ .cached_stack_end = getStackEnd() };
+    }
+
+    pub fn update(this: *StackCheck) void {
+        this.cached_stack_end = getStackEnd();
+    }
+
+    /// Is there at least 128 KB of stack space available?
+    pub fn isSafeToRecurse(this: StackCheck) bool {
+        const stack_ptr: usize = @frameAddress();
+        const remaining_stack = stack_ptr -| this.cached_stack_end;
+        return remaining_stack > 1024 * if (Environment.isWindows) 256 else 128;
+    }
+};
+
+// Workaround for lack of branch hints.
+pub noinline fn throwStackOverflow() StackOverflow!void {
+    @setCold(true);
+    return error.StackOverflow;
+}
+const StackOverflow = error{StackOverflow};
+
+// This pool exists because on Windows, each path buffer costs 64 KB.
+// This makes the stack memory usage very unpredictable, which means we can't really know how much stack space we have left.
+// This pool is a workaround to make the stack memory usage more predictable.
+// We keep up to 4 path buffers alive per thread at a time.
+pub fn PathBufferPoolT(comptime T: type) type {
+    return struct {
+        const Pool = ObjectPool(PathBuf, null, true, 4);
+        pub const PathBuf = struct {
+            bytes: T,
+
+            pub fn deinit(this: *PathBuf) void {
+                var node: *Pool.Node = @alignCast(@fieldParentPtr("data", this));
+                node.release();
+            }
+        };
+
+        pub fn get() *T {
+            // use a threadlocal allocator so mimalloc deletes it on thread deinit.
+            return &Pool.get(bun.threadlocalAllocator()).data.bytes;
+        }
+
+        pub fn put(buffer: *T) void {
+            var path_buf: *PathBuf = @alignCast(@fieldParentPtr("bytes", buffer));
+            path_buf.deinit();
+        }
+
+        pub fn deleteAll() void {
+            Pool.deleteAll();
+        }
+    };
+}
+
+pub const PathBufferPool = PathBufferPoolT(bun.PathBuffer);
+pub const WPathBufferPool = if (Environment.isWindows) PathBufferPoolT(bun.WPathBuffer) else struct {
+    // So it can be used in code that deletes all the pools.
+    pub fn deleteAll() void {}
+};
+pub const OSPathBufferPool = if (Environment.isWindows) WPathBufferPool else PathBufferPool;
+
+pub const S3 = @import("./s3/client.zig");
+
+const CowString = CowSlice(u8);
+
+/// "Copy on write" slice. There are many instances when it is desired to re-use
+/// a slice, but doing so would make it unknown if that slice should be freed.
+/// This structure, in release builds, is the same size as `[]const T`, but
+/// stores one bit for if deinitialziation should free the underlying memory.
+///
+///     const str = CowSlice(u8).initOwned(try alloc.dupe(u8, "hello!"), alloc);
+///     const borrow = str.borrow();
+///     assert(borrow.slice().ptr == str.slice().ptr)
+///     borrow.deinit(alloc); // knows it is borrowed, no free
+///     str.deinit(alloc); // calls free
+///
+/// In a debug build, there are aggressive assertions to ensure unintentional
+/// frees do not happen. But in a release build, the developer is expected to
+/// keep slice owners alive beyond the lifetimes of the borrowed instances.
+///
+/// CowSlice does not support slices longer than 2^(@bitSizeOf(usize)-1).
+pub fn CowSlice(T: type) type {
+    const DebugData = if (Environment.allow_assert) struct {
+        mutex: std.Thread.Mutex,
+        allocator: Allocator,
+        borrows: usize,
+    };
+    return struct {
+        ptr: [*]const T,
+        flags: packed struct(usize) {
+            len: @Type(.{ .Int = .{
+                .bits = @bitSizeOf(usize) - 1,
+                .signedness = .unsigned,
+            } }),
+            is_owned: bool,
+        },
+        debug: if (Environment.allow_assert) ?*DebugData else void,
+
+        const cow_str_assertions = Environment.isDebug;
+
+        /// `data` is transferred into the returned string, and must be freed with
+        /// `.deinit()` when the string and its borrows are done being used.
+        pub fn initOwned(data: []const T, allocator: Allocator) @This() {
+            return .{
+                .ptr = data.ptr,
+                .flags = .{
+                    .is_owned = true,
+                    .len = @intCast(data.len),
+                },
+                .debug = if (cow_str_assertions)
+                    bun.new(DebugData(.{
+                        .mutex = .{},
+                        .allocator = allocator,
+                        .borrows = 0,
+                    })),
+            };
+        }
+
+        /// `.deinit` will not free memory from this slice.
+        pub fn initNeverFree(data: []const T) @This() {
+            return .{
+                .ptr = data.ptr,
+                .flags = .{
+                    .is_owned = false,
+                    .len = @intCast(data.len),
+                },
+                .debug = null,
+            };
+        }
+
+        pub fn slice(str: @This()) []const T {
+            return str.ptr[0..str.flags.len];
+        }
+
+        /// Returns a new string. The borrowed string should be deinitialized
+        /// so that debug assertions that perform.
+        pub fn borrow(str: @This()) @This() {
+            if (cow_str_assertions) if (str.debug) |debug| {
+                debug.mutex.lock();
+                defer debug.mutex.unlock();
+                debug.borrows += 1;
+            };
+            return .{
+                .ptr = str.ptr,
+                .flags = .{
+                    .is_owned = false,
+                    .len = str.flags.len,
+                },
+                .debug = str.debug,
+            };
+        }
+
+        pub fn deinit(str: @This(), allocator: Allocator) void {
+            if (cow_str_assertions) if (str.debug) |debug| {
+                debug.mutex.lock();
+                defer debug.mutex.unlock();
+                bun.assert(debug.allocator == allocator);
+                if (str.flags.is_owned) {
+                    bun.assert(debug.borrows == 0); // active borrows become invalid data
+                } else {
+                    debug.borrows -= 1; // double deinit of a borrowed string
+                }
+                bun.destroy(debug);
+            };
+            if (str.flags.is_owned) {
+                allocator.free(str.slice());
+            }
+        }
+    };
+}
+
+const Allocator = std.mem.Allocator;

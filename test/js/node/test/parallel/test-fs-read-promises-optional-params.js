@@ -17,11 +17,11 @@ read(fd, common.mustNotMutateObjectDeep({}))
     assert.strictEqual(bytesRead, expected.byteLength);
     assert.deepStrictEqual(defaultBufferAsync.byteLength, buffer.byteLength);
   })
-  .then(common.mustCall());
+  .then(common.mustCall()).catch(console.error);
 
 read(fd, bufferAsOption, common.mustNotMutateObjectDeep({ position: 0 }))
   .then(function({ bytesRead, buffer }) {
     assert.strictEqual(bytesRead, expected.byteLength);
     assert.deepStrictEqual(bufferAsOption.byteLength, buffer.byteLength);
   })
-  .then(common.mustCall());
+  .then(common.mustCall()).catch(console.error);

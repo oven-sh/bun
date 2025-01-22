@@ -37,7 +37,7 @@
 //! The compiled binary is 13312 bytes and is `@embedFile`d into Bun itself.
 //! When this file is updated, the new binary should be compiled and BinLinkingShim.VersionFlag.current should be updated.
 //!
-//! Questions about this file should be directed at @paperdave.
+//! Questions about this file should be directed at @paperclover.
 const builtin = @import("builtin");
 const dbg = builtin.mode == .Debug;
 
@@ -46,7 +46,7 @@ const w = std.os.windows;
 const assert = std.debug.assert;
 const fmt16 = std.unicode.fmtUtf16le;
 
-const is_standalone = !@hasDecl(@import("root"), "JavaScriptCore");
+const is_standalone = @import("root") == @This();
 const bun = if (!is_standalone) @import("root").bun else @compileError("cannot use 'bun' in standalone build of bun_shim_impl");
 const bunDebugMessage = bun.Output.scoped(.bun_shim_impl, true);
 const callmod_inline = if (is_standalone) std.builtin.CallModifier.always_inline else bun.callmod_inline;

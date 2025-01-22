@@ -469,10 +469,22 @@ pub const Bunfig = struct {
                         }
                     }
 
+                    if (install_obj.get("saveTextLockfile")) |save_text_lockfile| {
+                        if (save_text_lockfile.asBool()) |value| {
+                            install.save_text_lockfile = value;
+                        }
+                    }
+
                     if (install_obj.get("concurrentScripts")) |jobs| {
                         if (jobs.data == .e_number) {
                             install.concurrent_scripts = jobs.data.e_number.toU32();
                             if (install.concurrent_scripts.? == 0) install.concurrent_scripts = null;
+                        }
+                    }
+
+                    if (install_obj.get("ignoreScripts")) |ignore_scripts_expr| {
+                        if (ignore_scripts_expr.asBool()) |ignore_scripts| {
+                            install.ignore_scripts = ignore_scripts;
                         }
                     }
 
@@ -591,6 +603,14 @@ pub const Bunfig = struct {
                         }
                     }
 
+                    if (run_expr.get("elide-lines")) |elide_lines| {
+                        if (elide_lines.data == .e_number) {
+                            this.ctx.bundler_options.elide_lines = @intFromFloat(elide_lines.data.e_number.value);
+                        } else {
+                            try this.addError(elide_lines.loc, "Expected number");
+                        }
+                    }
+
                     if (run_expr.get("shell")) |shell| {
                         if (shell.asString(allocator)) |value| {
                             if (strings.eqlComptime(value, "bun")) {
@@ -611,6 +631,33 @@ pub const Bunfig = struct {
                         } else {
                             try this.addError(bun_flag.loc, "Expected boolean");
                         }
+                    }
+                }
+            }
+
+            if (json.getObject("serve")) |serve_obj2| {
+                if (serve_obj2.getObject("static")) |serve_obj| {
+                    if (serve_obj.get("plugins")) |config_plugins| {
+                        const plugins: ?[]const []const u8 = plugins: {
+                            if (config_plugins.data == .e_array) {
+                                const raw_plugins = config_plugins.data.e_array.items.slice();
+                                if (raw_plugins.len == 0) break :plugins null;
+                                const plugins = try this.allocator.alloc(string, raw_plugins.len);
+                                for (raw_plugins, 0..) |p, i| {
+                                    try this.expectString(p);
+                                    plugins[i] = try p.data.e_string.string(allocator);
+                                }
+                                break :plugins plugins;
+                            } else {
+                                const p = try config_plugins.data.e_string.string(allocator);
+                                const plugins = try this.allocator.alloc(string, 1);
+                                plugins[0] = p;
+                                break :plugins plugins;
+                            }
+                        };
+
+                        this.bunfig.serve_plugins = plugins;
+                        this.bunfig.bunfig_path = bun.default_allocator.dupe(u8, this.source.path.text) catch bun.outOfMemory();
                     }
                 }
             }

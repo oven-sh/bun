@@ -1394,6 +1394,10 @@ fn NewSocket(comptime ssl: bool) type {
             return this.has_pending_activity.load(.acquire);
         }
 
+        pub fn memoryCost(this: *This) usize {
+            return @sizeOf(This) + this.buffered_data_for_node_net.cap;
+        }
+
         pub fn attachNativeCallback(this: *This, callback: NativeCallbacks) bool {
             if (this.native_callback != .none) return false;
             this.native_callback = callback;
@@ -1622,6 +1626,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             if (callback == .zero) {
                 if (handlers.promise.trySwap()) |promise| {
+                    handlers.promise.deinit();
                     if (this.this_value != .zero) {
                         this.this_value = .zero;
                     }
@@ -1629,7 +1634,7 @@ fn NewSocket(comptime ssl: bool) type {
 
                     // reject the promise on connect() error
                     const err_value = err.toErrorInstance(globalObject);
-                    promise.asPromise().?.rejectOnNextTick(globalObject, err_value);
+                    promise.asPromise().?.reject(globalObject, err_value);
                 }
 
                 return;
@@ -1653,7 +1658,7 @@ fn NewSocket(comptime ssl: bool) type {
                 // The error is effectively handled, but we should still reject the promise.
                 var promise = val.asPromise().?;
                 const err_ = err.toErrorInstance(globalObject);
-                promise.rejectOnNextTickAsHandled(globalObject, err_);
+                promise.rejectAsHandled(globalObject, err_);
             }
         }
         pub fn onConnectError(this: *This, _: Socket, errno: c_int) void {
@@ -2210,10 +2215,11 @@ fn NewSocket(comptime ssl: bool) type {
             }
 
             var stack_fallback = std.heap.stackFallback(16 * 1024, bun.default_allocator);
+            const allow_string_object = true;
             const buffer: JSC.Node.StringOrBuffer = if (data_value.isUndefined())
                 JSC.Node.StringOrBuffer.empty
             else
-                JSC.Node.StringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalObject, stack_fallback.get(), data_value, encoding_value, false) catch {
+                JSC.Node.StringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalObject, stack_fallback.get(), data_value, encoding_value, false, allow_string_object) catch {
                     return .fail;
                 } orelse {
                     if (!globalObject.hasException()) {
@@ -3209,6 +3215,39 @@ fn NewSocket(comptime ssl: bool) type {
 
             if (cert) |x509| {
                 return X509.toJS(x509, globalObject);
+            }
+            return JSValue.jsUndefined();
+        }
+
+        pub fn getPeerX509Certificate(
+            this: *This,
+            globalObject: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
+        ) bun.JSError!JSValue {
+            if (comptime ssl == false) {
+                return JSValue.jsUndefined();
+            }
+            const ssl_ptr = this.socket.ssl() orelse return JSValue.jsUndefined();
+            const cert = BoringSSL.SSL_get_peer_certificate(ssl_ptr);
+            if (cert) |x509| {
+                return X509.toJSObject(x509, globalObject);
+            }
+            return JSValue.jsUndefined();
+        }
+
+        pub fn getX509Certificate(
+            this: *This,
+            globalObject: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
+        ) bun.JSError!JSValue {
+            if (comptime ssl == false) {
+                return JSValue.jsUndefined();
+            }
+
+            const ssl_ptr = this.socket.ssl() orelse return JSValue.jsUndefined();
+            const cert = BoringSSL.SSL_get_certificate(ssl_ptr);
+            if (cert) |x509| {
+                return X509.toJSObject(x509.ref(), globalObject);
             }
             return JSValue.jsUndefined();
         }

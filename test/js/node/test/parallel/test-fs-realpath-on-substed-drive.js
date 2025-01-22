@@ -3,7 +3,6 @@
 const common = require('../common');
 if (!common.isWindows)
   common.skip('Test for Windows only');
-if (common.isWindows) return; // TODO: BUN
 
 const fixtures = require('../common/fixtures');
 

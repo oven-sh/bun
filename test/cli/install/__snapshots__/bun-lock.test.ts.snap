@@ -1,0 +1,123 @@
+// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`should write plaintext lockfiles 1`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "test-package",
+      "dependencies": {
+        "dummy-package": "file:./bar-0.0.2.tgz",
+      },
+    },
+  },
+  "packages": {
+    "dummy-package": ["bar@./bar-0.0.2.tgz", {}],
+  }
+}
+"
+`;
+
+exports[`should escape names 1`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "quote-in-dependency-name",
+    },
+    "packages/\\"": {
+      "name": "\\"",
+    },
+    "packages/pkg1": {
+      "name": "pkg1",
+      "dependencies": {
+        "\\"": "*",
+      },
+    },
+  },
+  "packages": {
+    "\\"": ["\\"@workspace:packages/\\""],
+
+    "pkg1": ["pkg1@workspace:packages/pkg1"],
+  }
+}
+"
+`;
+
+exports[`should be the default save format 1`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "jquery-4",
+      "dependencies": {
+        "no-deps": "1.0.0",
+      },
+    },
+  },
+  "packages": {
+    "no-deps": ["no-deps@1.0.0", "http://localhost:1234/no-deps/-/no-deps-1.0.0.tgz", {}, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="],
+  }
+}
+"
+`;
+
+exports[`should be the default save format 2`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "jquery-4",
+      "dependencies": {
+        "a-dep": "^1.0.10",
+        "no-deps": "1.0.0",
+      },
+    },
+  },
+  "packages": {
+    "a-dep": ["a-dep@1.0.10", "http://localhost:1234/a-dep/-/a-dep-1.0.10.tgz", {}, "sha512-NeQ6Ql9jRW8V+VOiVb+PSQAYOvVoSimW+tXaR0CoJk4kM9RIk/XlAUGCsNtn5XqjlDO4hcH8NcyaL507InevEg=="],
+
+    "no-deps": ["no-deps@1.0.0", "http://localhost:1234/no-deps/-/no-deps-1.0.0.tgz", {}, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="],
+  }
+}
+"
+`;
+
+exports[`should save the lockfile if --save-text-lockfile and --frozen-lockfile are used 1`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "test-pkg",
+      "dependencies": {
+        "no-deps": "1.0.0",
+      },
+    },
+  },
+  "packages": {
+    "no-deps": ["no-deps@1.0.0", "http://localhost:1234/no-deps/-/no-deps-1.0.0.tgz", {}, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="],
+  }
+}
+"
+`;
+
+exports[`should save the lockfile if --save-text-lockfile and --frozen-lockfile are used 2`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "test-pkg",
+      "dependencies": {
+        "a-dep": "^1.0.10",
+        "no-deps": "1.0.0",
+      },
+    },
+  },
+  "packages": {
+    "a-dep": ["a-dep@1.0.10", "http://localhost:1234/a-dep/-/a-dep-1.0.10.tgz", {}, "sha512-NeQ6Ql9jRW8V+VOiVb+PSQAYOvVoSimW+tXaR0CoJk4kM9RIk/XlAUGCsNtn5XqjlDO4hcH8NcyaL507InevEg=="],
+
+    "no-deps": ["no-deps@1.0.0", "http://localhost:1234/no-deps/-/no-deps-1.0.0.tgz", {}, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="],
+  }
+}
+"
+`;

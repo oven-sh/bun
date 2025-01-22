@@ -2,13 +2,15 @@ option(WEBKIT_VERSION "The version of WebKit to use")
 option(WEBKIT_LOCAL "If a local version of WebKit should be used instead of downloading")
 
 if(NOT WEBKIT_VERSION)
-  set(WEBKIT_VERSION e17d16e0060b3d80ae40e78353d19575c9a8f3af)
+  set(WEBKIT_VERSION 9e3b60e4a6438d20ee6f8aa5bec6b71d2b7d213f)
 endif()
+
+string(SUBSTRING ${WEBKIT_VERSION} 0 16 WEBKIT_VERSION_PREFIX)
 
 if(WEBKIT_LOCAL)
   set(DEFAULT_WEBKIT_PATH ${VENDOR_PATH}/WebKit/WebKitBuild/${CMAKE_BUILD_TYPE})
 else()
-  set(DEFAULT_WEBKIT_PATH ${CACHE_PATH}/webkit-${WEBKIT_VERSION})
+  set(DEFAULT_WEBKIT_PATH ${CACHE_PATH}/webkit-${WEBKIT_VERSION_PREFIX})
 endif()
 
 option(WEBKIT_PATH "The path to the WebKit directory")
@@ -30,6 +32,8 @@ if(WEBKIT_LOCAL)
       ${WEBKIT_PATH}/JavaScriptCore/PrivateHeaders
       ${WEBKIT_PATH}/bmalloc/Headers
       ${WEBKIT_PATH}/WTF/Headers
+      ${WEBKIT_PATH}/JavaScriptCore/DerivedSources/inspector
+      ${WEBKIT_PATH}/JavaScriptCore/PrivateHeaders/JavaScriptCore
     )
   endif()
 

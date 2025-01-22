@@ -42,7 +42,7 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
     vm.regular_event_loop.global = vm.global;
     vm.jsc = vm.global.vm();
     vm.event_loop.ensureWaker();
-    const b = &vm.bundler;
+    const b = &vm.transpiler;
     vm.preload = ctx.preloads;
     vm.argv = ctx.passthrough;
     vm.arena = &arena;
@@ -99,7 +99,7 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
 pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMachine) !void {
     // Load and evaluate the configuration module
     const global = vm.global;
-    const b = &vm.bundler;
+    const b = &vm.transpiler;
     const allocator = bun.default_allocator;
 
     Output.prettyErrorln("Loading configuration", .{});
@@ -109,7 +109,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         unresolved_config_entry_point = try std.fmt.allocPrint(ctx.allocator, "./{s}", .{unresolved_config_entry_point});
     }
 
-    const config_entry_point = b.resolver.resolve(cwd, unresolved_config_entry_point, .entry_point) catch |err| {
+    const config_entry_point = b.resolver.resolve(cwd, unresolved_config_entry_point, .entry_point_build) catch |err| {
         if (err == error.ModuleNotFound) {
             if (ctx.args.entry_points.len == 0) {
                 // Onboarding message
@@ -171,9 +171,9 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     try loader.map.put("NODE_ENV", "production");
     bun.DotEnv.instance = loader;
 
-    var client_bundler: bun.bundler.Bundler = undefined;
-    var server_bundler: bun.bundler.Bundler = undefined;
-    var ssr_bundler: bun.bundler.Bundler = undefined;
+    var client_bundler: bun.transpiler.Transpiler = undefined;
+    var server_bundler: bun.transpiler.Transpiler = undefined;
+    var ssr_bundler: bun.transpiler.Transpiler = undefined;
     try framework.initBundler(allocator, vm.log, .production_static, .server, &server_bundler);
     try framework.initBundler(allocator, vm.log, .production_static, .client, &client_bundler);
     if (separate_ssr_graph) {
@@ -181,13 +181,13 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     }
 
     if (ctx.bundler_options.bake_debug_disable_minify) {
-        for ([_]*bun.bundler.Bundler{ &client_bundler, &server_bundler, &ssr_bundler }) |bundler| {
-            bundler.options.minify_syntax = false;
-            bundler.options.minify_identifiers = false;
-            bundler.options.minify_whitespace = false;
-            bundler.resolver.opts.entry_naming = "_bun/[dir]/[name].[hash].[ext]";
-            bundler.resolver.opts.chunk_naming = "_bun/[dir]/[name].[hash].chunk.[ext]";
-            bundler.resolver.opts.asset_naming = "_bun/[dir]/[name].[hash].asset.[ext]";
+        for ([_]*bun.transpiler.Transpiler{ &client_bundler, &server_bundler, &ssr_bundler }) |transpiler| {
+            transpiler.options.minify_syntax = false;
+            transpiler.options.minify_identifiers = false;
+            transpiler.options.minify_whitespace = false;
+            transpiler.resolver.opts.entry_naming = "_bun/[dir]/[name].[hash].[ext]";
+            transpiler.resolver.opts.chunk_naming = "_bun/[dir]/[name].[hash].chunk.[ext]";
+            transpiler.resolver.opts.asset_naming = "_bun/[dir]/[name].[hash].asset.[ext]";
         }
     }
 
@@ -843,9 +843,6 @@ export fn BakeProdLoad(pt: *PerThread, key: bun.String) bun.String {
     defer utf8.deinit();
     if (pt.module_map.get(utf8.slice())) |value| {
         return pt.bundled_outputs[value.get()].value.toBunString();
-    }
-    for (pt.module_map.keys()) |keys| {
-        std.debug.print("key that does exist: {s}\n", .{keys});
     }
     return bun.String.dead;
 }

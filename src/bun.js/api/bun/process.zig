@@ -153,6 +153,10 @@ pub const Process = struct {
     sync: bool = false,
     event_loop: JSC.EventLoopHandle,
 
+    pub fn memoryCost(_: *const Process) usize {
+        return @sizeOf(@This());
+    }
+
     pub usingnamespace bun.NewRefCounted(Process, deinit);
 
     pub fn setExitHandler(this: *Process, handler: anytype) void {
@@ -984,6 +988,7 @@ pub const PosixSpawnOptions = struct {
         buffer: void,
         ipc: void,
         pipe: bun.FileDescriptor,
+        // TODO: remove this entry, it doesn't seem to be used
         dup2: struct { out: bun.JSC.Subprocess.StdioKind, to: bun.JSC.Subprocess.StdioKind },
     };
 
@@ -1795,9 +1800,7 @@ pub const sync = struct {
                 .use_execve_on_macos = this.use_execve_on_macos,
                 .stream = false,
                 .argv0 = this.argv0,
-                .windows = if (Environment.isWindows)
-                    this.windows
-                else {},
+                .windows = if (Environment.isWindows) this.windows,
             };
         }
     };

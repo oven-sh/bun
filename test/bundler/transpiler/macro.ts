@@ -13,3 +13,7 @@ export function addStrings(arg: string) {
 export function addStringsUTF16(arg: string) {
   return arg + "\\\f\n\r\t\v\0'\"`$\x00\x0B\x0C" + "😊";
 }
+
+export default function() {
+  return "defaultdefaultdefault";
+}

@@ -15,7 +15,7 @@ pub const UserOptions = struct {
     arena: std.heap.ArenaAllocator,
     allocations: StringRefList,
 
-    root: []const u8,
+    root: [:0]const u8,
     framework: Framework,
     bundler_options: SplitBundlerOptions,
 
@@ -78,9 +78,9 @@ pub const UserOptions = struct {
 const StringRefList = struct {
     strings: std.ArrayListUnmanaged(ZigString.Slice),
 
-    pub fn track(al: *StringRefList, str: ZigString.Slice) []const u8 {
+    pub fn track(al: *StringRefList, str: ZigString.Slice) [:0]const u8 {
         al.strings.append(bun.default_allocator, str) catch bun.outOfMemory();
-        return str.slice();
+        return str.sliceZ();
     }
 
     pub fn free(al: *StringRefList) void {
@@ -544,9 +544,9 @@ pub const Framework = struct {
         log: *bun.logger.Log,
         mode: Mode,
         comptime renderer: Graph,
-        out: *bun.bundler.Bundler,
+        out: *bun.transpiler.Transpiler,
     ) !void {
-        out.* = try bun.Bundler.init(
+        out.* = try bun.Transpiler.init(
             allocator, // TODO: this is likely a memory leak
             log,
             std.mem.zeroes(bun.Schema.Api.TransformOptions),
@@ -589,15 +589,11 @@ pub const Framework = struct {
         }
 
         out.options.production = mode != .development;
-
         out.options.tree_shaking = mode != .development;
         out.options.minify_syntax = mode != .development;
         out.options.minify_identifiers = mode != .development;
         out.options.minify_whitespace = mode != .development;
-
-        out.options.experimental_css = true;
         out.options.css_chunking = true;
-
         out.options.framework = framework;
 
         out.options.source_map = switch (mode) {

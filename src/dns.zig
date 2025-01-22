@@ -3,6 +3,10 @@ const std = @import("std");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 
+pub const AI_V4MAPPED: c_int = if (bun.Environment.isWindows) 2048 else bun.C.translated.AI_V4MAPPED;
+pub const AI_ADDRCONFIG: c_int = if (bun.Environment.isWindows) 1024 else bun.C.translated.AI_ADDRCONFIG;
+pub const AI_ALL: c_int = if (bun.Environment.isWindows) 256 else bun.C.translated.AI_ALL;
+
 pub const GetAddrInfo = struct {
     name: []const u8 = "",
     port: u16 = 0,
@@ -95,6 +99,9 @@ pub const GetAddrInfo = struct {
                         return error.InvalidFlags;
 
                     options.flags = flags.coerce(i32, globalObject);
+
+                    if (options.flags & ~(AI_ALL | AI_ADDRCONFIG | AI_V4MAPPED) != 0)
+                        return error.InvalidFlags;
                 }
 
                 return options;

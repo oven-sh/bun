@@ -173,12 +173,11 @@ const NODE_HTTP_WARNING =
 const kEmptyBuffer = Buffer.alloc(0);
 
 function isValidTLSArray(obj) {
-  if (typeof obj === "string" || isTypedArray(obj) || obj instanceof ArrayBuffer || obj instanceof Blob) return true;
+  if (typeof obj === "string" || isTypedArray(obj) || isArrayBuffer(obj) || $inheritsBlob(obj)) return true;
   if (Array.isArray(obj)) {
     for (var i = 0; i < obj.length; i++) {
       const item = obj[i];
-      if (typeof item !== "string" && !isTypedArray(item) && !(item instanceof ArrayBuffer) && !(item instanceof Blob))
-        return false;
+      if (typeof item !== "string" && !isTypedArray(item) && !isArrayBuffer(item) && !$inheritsBlob(item)) return false;
     }
     return true;
   }
@@ -187,7 +186,7 @@ function isValidTLSArray(obj) {
 
 function validateMsecs(numberlike: any, field: string) {
   if (typeof numberlike !== "number" || numberlike < 0) {
-    throw ERR_INVALID_ARG_TYPE(field, "number", numberlike);
+    throw $ERR_INVALID_ARG_TYPE(field, "number", numberlike);
   }
 
   return numberlike;
@@ -2314,6 +2313,9 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
   #agent = globalAgent;
   #path;
   #socketPath;
+  #stream;
+  #controller;
+  #startStream;
 
   #bodyChunks: Buffer[] | null = null;
   #fetchRequest;
@@ -2360,6 +2362,32 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
       encoding = undefined;
     } else if (!$isCallable(callback)) {
       callback = undefined;
+    }
+  }
+
+  set agent(value) {
+    this.#agent = value;
+  }
+
+  #createStream() {
+    if (!this.#stream) {
+      var self = this;
+
+      this.#stream = new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          self.#controller = controller;
+          for (let chunk of self.#bodyChunks) {
+            if (chunk === null) {
+              controller.close();
+            } else {
+              controller.write(chunk);
+            }
+          }
+          self.#bodyChunks = null;
+        },
+      });
+      this.#startStream();
     }
 
     return this.#write(chunk, encoding, callback);
@@ -2696,7 +2724,7 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
     } else if (agent == null) {
       agent = defaultAgent;
     } else if (typeof agent.addRequest !== "function") {
-      throw ERR_INVALID_ARG_TYPE("options.agent", "Agent-like Object, undefined, or false", agent);
+      throw $ERR_INVALID_ARG_TYPE("options.agent", "Agent-like Object, undefined, or false", agent);
     }
     this.#agent = agent;
     this.destroyed = false;
@@ -2707,7 +2735,7 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
       expectedProtocol = this.agent.protocol;
     }
     if (protocol !== expectedProtocol) {
-      throw ERR_INVALID_PROTOCOL(protocol, expectedProtocol);
+      throw $ERR_INVALID_PROTOCOL(protocol, expectedProtocol);
     }
     this.#protocol = protocol;
 
@@ -2747,8 +2775,7 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
     let method = options.method;
     const methodIsString = typeof method === "string";
     if (method !== null && method !== undefined && !methodIsString) {
-      // throw ERR_INVALID_ARG_TYPE("options.method", "string", method);
-      throw new Error("ERR_INVALID_ARG_TYPE: options.method");
+      throw $ERR_INVALID_ARG_TYPE("options.method", "string", method);
     }
 
     if (methodIsString && method) {
@@ -2986,12 +3013,7 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
 
 function validateHost(host, name) {
   if (host !== null && host !== undefined && typeof host !== "string") {
-    // throw ERR_INVALID_ARG_TYPE(
-    //   `options.${name}`,
-    //   ["string", "undefined", "null"],
-    //   host,
-    // );
-    throw new Error("Invalid arg type in options");
+    throw $ERR_INVALID_ARG_TYPE(`options.${name}`, ["string", "undefined", "null"], host);
   }
   return host;
 }

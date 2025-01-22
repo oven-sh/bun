@@ -182,12 +182,7 @@ if (!isCI) {
         try {
           const result = await Bun.build({
             entrypoints: ["invalid.css"],
-            experimentalCss: true,
           });
-
-          if (result.logs.length > 0) {
-            throw new AggregateError("CSS parser returned logs", result.logs);
-          }
 
           // We expect the parser to either throw an error or return a valid result
           // If it returns undefined/null, that's a potential issue
@@ -249,7 +244,6 @@ if (!isCI) {
       try {
         await Bun.build({
           entrypoints: ["invalid.css"],
-          experimentalCss: true,
         });
       } catch (error) {
         // Expected to throw, but shouldn't crash

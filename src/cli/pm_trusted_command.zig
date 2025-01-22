@@ -97,11 +97,11 @@ pub const UntrustedCommand = struct {
                     const package_id = pm.lockfile.buffers.resolutions.items[dep_id];
                     const resolution = &resolutions[package_id];
                     var package_scripts = scripts[package_id];
-
+                    var not_lazy: PackageManager.LazyPackageDestinationDir = .{ .dir = node_modules_dir };
                     const maybe_scripts_list = package_scripts.getList(
                         pm.log,
                         pm.lockfile,
-                        node_modules_dir,
+                        &not_lazy,
                         abs_node_modules_path.items,
                         alias,
                         resolution,
@@ -262,11 +262,11 @@ pub const TrustCommand = struct {
                     }
                     const resolution = &resolutions[package_id];
                     var package_scripts = scripts[package_id];
-
+                    var not_lazy = PackageManager.LazyPackageDestinationDir{ .dir = node_modules_dir };
                     const maybe_scripts_list = package_scripts.getList(
                         pm.log,
                         pm.lockfile,
-                        node_modules_dir,
+                        &not_lazy,
                         abs_node_modules_path.items,
                         alias,
                         resolution,
@@ -417,13 +417,7 @@ pub const TrustCommand = struct {
             try pm.lockfile.trusted_dependencies.?.put(ctx.allocator, @truncate(String.Builder.stringHash(name)), {});
         }
 
-        const save_format: Lockfile.LoadResult.LockfileFormat = if (pm.options.save_text_lockfile)
-            .text
-        else switch (load_lockfile) {
-            .not_found => .binary,
-            .err => |err| err.format,
-            .ok => |ok| ok.format,
-        };
+        const save_format = load_lockfile.saveFormat(pm);
         pm.lockfile.saveToDisk(save_format, pm.options.log_level.isVerbose());
 
         var buffer_writer = try bun.js_printer.BufferWriter.init(ctx.allocator);

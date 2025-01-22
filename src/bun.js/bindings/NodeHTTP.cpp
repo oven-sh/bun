@@ -418,7 +418,7 @@ BUN_DECLARE_HOST_FUNCTION(jsFunctionGetCompleteRequestOrResponseBodyValueAsArray
 extern "C" uWS::HttpRequest* Request__getUWSRequest(void*);
 extern "C" void Request__setInternalEventCallback(void*, EncodedJSValue, JSC::JSGlobalObject*);
 extern "C" void Request__setTimeout(void*, EncodedJSValue, JSC::JSGlobalObject*);
-extern "C" void NodeHTTPResponse__setTimeout(void*, EncodedJSValue, JSC::JSGlobalObject*);
+extern "C" bool NodeHTTPResponse__setTimeout(void*, EncodedJSValue, JSC::JSGlobalObject*);
 extern "C" void Server__setIdleTimeout(EncodedJSValue, EncodedJSValue, JSC::JSGlobalObject*);
 static EncodedJSValue assignHeadersFromFetchHeaders(FetchHeaders& impl, JSObject* prototype, JSObject* objectValue, JSC::InternalFieldTuple* tuple, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
 {
@@ -607,10 +607,10 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, Marke
     for (auto it = request->begin(); it != request->end(); ++it) {
         auto pair = *it;
         StringView nameView = StringView(std::span { reinterpret_cast<const LChar*>(pair.first.data()), pair.first.length() });
-        LChar* data = nullptr;
+        std::span<LChar> data;
         auto value = String::createUninitialized(pair.second.length(), data);
         if (pair.second.length() > 0)
-            memcpy(data, pair.second.data(), pair.second.length());
+            memcpy(data.data(), pair.second.data(), pair.second.length());
 
         HTTPHeaderName name;
         WTF::String nameString;
@@ -1238,7 +1238,10 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPGetHeader, (JSGlobalObject * globalObject, CallFr
         JSValue nameValue = callFrame->argument(1);
         if (nameValue.isString()) {
             FetchHeaders* impl = &headers->wrapped();
-            String name = nameValue.toWTFString(globalObject);
+            JSString* nameString = nameValue.toString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            const auto name = nameString->view(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
             if (WTF::equalIgnoringASCIICase(name, "set-cookie"_s)) {
                 return fetchHeadersGetSetCookie(globalObject, vm, impl);
             }

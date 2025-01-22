@@ -5086,6 +5086,7 @@ pub const Property = union(PropertyIdTag) {
                 }
             },
             .@"margin-right" => {
+                @setEvalBranchQuota(5000);
                 if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
                         return .{ .result = .{ .@"margin-right" = c } };
@@ -6951,7 +6952,8 @@ pub const Property = union(PropertyIdTag) {
             .@"mask-box-image-width" => |*v| css.generic.eql(Rect(BorderImageSideWidth), &v[0], &v[0]) and v[1].eq(rhs.@"mask-box-image-width"[1]),
             .@"mask-box-image-outset" => |*v| css.generic.eql(Rect(LengthOrNumber), &v[0], &v[0]) and v[1].eq(rhs.@"mask-box-image-outset"[1]),
             .@"mask-box-image-repeat" => |*v| css.generic.eql(BorderImageRepeat, &v[0], &v[0]) and v[1].eq(rhs.@"mask-box-image-repeat"[1]),
-            .all, .unparsed => true,
+            .unparsed => |*u| u.eql(&rhs.unparsed),
+            .all => true,
             .custom => |*c| c.eql(&rhs.custom),
         };
     }
@@ -7195,6 +7197,7 @@ pub const PropertyId = union(PropertyIdTag) {
 
     /// Returns the property name, without any vendor prefixes.
     pub inline fn name(this: *const PropertyId) []const u8 {
+        if (this.* == .custom) return this.custom.asStr();
         return @tagName(this.*);
     }
 

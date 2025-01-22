@@ -73,6 +73,10 @@ public:
         DROPPED
     };
 
+    size_t memoryCost() {
+        return getBufferedAmount() + sizeof(WebSocket);
+    }
+
     /* Sending fragmented messages puts a bit of effort on the user; you must not interleave regular sends
      * with fragmented sends and you must sendFirstFragment, [sendFragment], then finally sendLastFragment. */
     SendStatus sendFirstFragment(std::string_view message, OpCode opCode = OpCode::BINARY, bool compress = false) {

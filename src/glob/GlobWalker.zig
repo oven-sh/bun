@@ -1356,6 +1356,7 @@ pub fn GlobWalker_(
             if (comptime !isWindows) {
                 if (pattern_component.is_ascii and isAllAscii(filepath))
                     return GlobAscii.match(
+                        this.arena.allocator(),
                         pattern_component.patternSlice(this.pattern),
                         filepath,
                     ).matches();

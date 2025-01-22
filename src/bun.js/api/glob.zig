@@ -406,7 +406,7 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame
     var str = try str_arg.toSlice(globalThis, arena.allocator());
     defer str.deinit();
 
-    if (this.is_ascii and isAllAscii(str.slice())) return JSC.JSValue.jsBoolean(globImpl.Ascii.match(this.pattern, str.slice()).matches());
+    if (this.is_ascii and isAllAscii(str.slice())) return JSC.JSValue.jsBoolean(globImpl.Ascii.match(arena.allocator(), this.pattern, str.slice()).matches());
 
     const codepoints = codepoints: {
         if (this.pattern_codepoints) |cp| break :codepoints cp.items[0..];

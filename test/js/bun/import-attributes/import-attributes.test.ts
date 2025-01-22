@@ -1,19 +1,8 @@
 import { bunExe, tempDirWithFiles } from "harness";
 import * as path from "path";
 
-// .napi is skipped (hard to make an example)
-// .sh is skipped (only works from `bun somefile.sh`)
-// .html, .css is skipped
 const loaders = ["js", "jsx", "ts", "tsx", "json", "jsonc", "toml", "text", "sqlite", "file"];
-
 const other_loaders_do_not_crash = ["webassembly", "does_not_exist"];
-
-// ctrl+shift+f for tailwind
-// next bug: ModuleLoader.cpp:1665
-// - only some files use the jsonc loader, based on if `path.isJSONCFile()`:
-// - this probably improves performance
-// - if we want this, we should make a seperate jsonc loader instead of overloading json
-//   and checking the fliepath to determine if it is jsonc
 
 async function testBunRun(dir: string, loader: string | null, filename: string): Promise<unknown> {
   const cmd = [

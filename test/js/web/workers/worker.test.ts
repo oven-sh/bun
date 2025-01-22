@@ -372,4 +372,15 @@ describe("worker_threads", () => {
     await p;
     expect(message).toEqual("hello");
   });
+
+  test("worker catching error doesn't terminate", done => {
+    const worker = new wt.Worker(
+      "self.onerror = e => { setTimeout(() => { postMessage('hello'); }, 1); }; throw new Error('test')",
+      { eval: true },
+    );
+    worker.on("message", e => {
+      expect(e).toEqual("hello");
+      done();
+    });
+  });
 });

@@ -445,7 +445,7 @@ extern "C" void WebWorker__dispatchOnline(Worker* worker, Zig::GlobalObject* glo
     worker->dispatchOnline(globalObject);
 }
 
-extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker* worker, BunString message, JSC::EncodedJSValue errorValue)
+extern "C" bool WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker* worker, BunString message, JSC::EncodedJSValue errorValue)
 {
     JSValue error = JSC::JSValue::decode(errorValue);
     ErrorEvent::Init init;
@@ -454,8 +454,13 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
     init.cancelable = false;
     init.bubbles = false;
 
-    globalObject->globalEventScope.dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
+    bool hasListeners = globalObject->globalEventScope.hasEventListeners(eventNames().errorEvent);
+    if (hasListeners) {
+        globalObject->globalEventScope.dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
+        return true;
+    }
     worker->dispatchError(message.toWTFString(BunString::ZeroCopy));
+    return false;
 }
 
 extern "C" WebCore::Worker* WebWorker__getParentWorker(void*);

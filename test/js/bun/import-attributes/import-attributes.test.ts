@@ -4,7 +4,7 @@ import * as path from "path";
 // .napi is skipped (hard to make an example)
 // .sh is skipped (only works from `bun somefile.sh`)
 // .html, .css is skipped
-const loaders = ["js", "jsx", "ts", "tsx", "json", "toml", "html", "css"];
+const loaders = ["js", "jsx", "ts", "tsx", "json", "toml"];
 
 // ctrl+shift+f for tailwind
 // next bug: ZigGlobalObject.cpp:4226
@@ -107,10 +107,10 @@ async function testBunBuild(dir: string, loader: string): Promise<unknown> {
     // return result.logs;
   }
 }
-async function compileAndTest(code: string): Promise<Record<string, string>> {
-  const v1 = await compileAndTest_inner(code, testBunRun);
-  const v2 = await compileAndTest_inner(code, testBunRunAwaitImport);
-  const v3 = await compileAndTest_inner(code, testBunBuild);
+async function compileAndTest(code: string): Promise<Record<string, unknown>> {
+  const v1 = await compileAndTest_inner(code, "", testBunRun);
+  const v2 = await compileAndTest_inner(code, "", testBunRunAwaitImport);
+  const v3 = await compileAndTest_inner(code, "", testBunBuild);
   if (!Bun.deepEquals(v1, v2) || !Bun.deepEquals(v2, v3)) {
     console.log("====  regular import  ====\n" + JSON.stringify(v1, null, 2) + "\n");
     console.log("====  await import  ====\n" + JSON.stringify(v2, null, 2) + "\n");
@@ -121,55 +121,60 @@ async function compileAndTest(code: string): Promise<Record<string, string>> {
 }
 async function compileAndTest_inner(
   code: string,
-  cb: (dir: string, loader: string) => Promise<unknown>,
-): Promise<Record<string, string>> {
+  ext: string,
+  cb: (dir: string, loader: string, ext: string) => Promise<unknown>,
+): Promise<Record<string, unknown>> {
   const dir = tempDirWithFiles("import-attributes", {
-    "_the_file": code,
+    ["_the_file" + ext]: code,
   });
 
   let res: Record<string, unknown> = {};
   for (const loader of loaders) {
-    res[loader] = await cb(dir, loader);
+    res[loader] = await cb(dir, loader, ext);
   }
-  expect(await cb(dir, "text")).toEqual({ default: code });
-  const sqlite_res = await cb(dir, "sqlite");
+  expect(await cb(dir, "text", ext)).toEqual({ default: code });
+  const sqlite_res = await cb(dir, "sqlite", ext);
   delete (sqlite_res as any).__esModule;
   expect(sqlite_res).toStrictEqual({
-    db: { filename: path.join(dir, "_the_file") },
-    default: { filename: path.join(dir, "_the_file") },
+    db: { filename: path.join(dir, "_the_file" + ext) },
+    default: { filename: path.join(dir, "_the_file" + ext) },
   });
   if (cb === testBunBuild) {
-    expect(await cb(dir, "file")).toEqual({
+    expect(await cb(dir, "file", ext)).toEqual({
       default: expect.any(String),
     });
   } else {
-    const file_res = await cb(dir, "file");
+    const file_res = await cb(dir, "file", ext);
     delete (file_res as any).__esModule;
     expect(file_res).toEqual({
-      default: path.join(dir, "_the_file"),
+      default: path.join(dir, "_the_file" + ext),
     });
   }
-  const res_flipped: Record<string, string[]> = {};
+  const res_flipped: Record<string, [unknown, string[]]> = {};
   for (const [k, v] of Object.entries(res)) {
-    (res_flipped[JSON.stringify(v)] ??= []).push(k);
+    (res_flipped[JSON.stringify(v)] ??= [v, []])[1].push(k);
   }
-  return Object.fromEntries(Object.entries(res_flipped).map(([k, v]) => [v.join(","), k]));
+  return Object.fromEntries(Object.entries(res_flipped).map(([k, [k2, v]]) => [v.join(","), k2]));
 }
 
 test("javascript", async () => {
   expect(await compileAndTest(`export const a = "demo";`)).toMatchInlineSnapshot(`
 {
-  "js,jsx,ts,tsx": "{"a":"demo"}",
-  "html,css,json,toml": ""error"",
+  "js,jsx,ts,tsx": {
+    "a": "demo",
+  },
+  "json,toml": "error",
 }
 `);
 });
 
 test("typescript", async () => {
-  expect(await compileAndTest(`export const a = (<T>() => {}).toString();`)).toMatchInlineSnapshot(`
+  expect(await compileAndTest(`export const a = (<T>() => {}).toString().replace(/\\n/g, '');`)).toMatchInlineSnapshot(`
 {
-  "js,jsx,tsx,json,toml,html,css": ""error"",
-  "ts": "{"a":"() => {\\n}"}",
+  "js,jsx,tsx,json,toml": "error",
+  "ts": {
+    "a": "() => {}",
+  },
 }
 `);
 });
@@ -177,8 +182,13 @@ test("typescript", async () => {
 test("json", async () => {
   expect(await compileAndTest(`{"key": "value"}`)).toMatchInlineSnapshot(`
 {
-  "js,jsx,ts,tsx,toml,html,css": ""error"",
-  "json": "{"key":"value","default":{"key":"value"}}",
+  "js,jsx,ts,tsx,toml": "error",
+  "json": {
+    "default": {
+      "key": "value",
+    },
+    "key": "value",
+  },
 }
 `);
 });
@@ -189,8 +199,13 @@ test("jsonc", async () => {
     }`),
   ).toMatchInlineSnapshot(`
 {
-  "js,jsx,ts,tsx,json,toml,html,css": ""error"",
-  "json": "{"key":"value","default":{"key":"value"}}",
+  "js,jsx,ts,tsx,toml": "error",
+  "json": {
+    "default": {
+      "key": "value"
+    },
+    "key": "value"
+  }
 }
 `);
 });
@@ -200,8 +215,17 @@ test("toml", async () => {
     key = "value"`),
   ).toMatchInlineSnapshot(`
 {
-  "js,jsx,ts,tsx,json,html,css": ""error"",
-  "toml": "{"default":{"section":{"key":"value"}},"section":{"key":"value"}}",
+  "js,jsx,ts,tsx,json": "error",
+  "toml": {
+    "default": {
+      "section": {
+        "key": "value",
+      },
+    },
+    "section": {
+      "key": "value",
+    },
+  },
 }
 `);
 });

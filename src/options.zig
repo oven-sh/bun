@@ -770,6 +770,7 @@ pub const Loader = enum(u8) {
         .{ "jsonc", .json },
         .{ "toml", .toml },
         .{ "wasm", .wasm },
+        .{ "napi", .napi },
         .{ "node", .napi },
         .{ "dataurl", .dataurl },
         .{ "base64", .base64 },

@@ -2983,7 +2983,7 @@ pub fn getFileAttributes(path: anytype) ?WindowsFileAttributes {
 
     const T = std.meta.Child(@TypeOf(path));
     if (T == u16) {
-        assertIsValidWindowsPath(bun.OSPathChar, path);
+        // Win32 API does file path normalization, so we do not need the valid path assertion here.
         const dword = kernel32.GetFileAttributesW(path.ptr);
         if (comptime Environment.isDebug) {
             log("GetFileAttributesW({}) = {d}", .{ bun.fmt.utf16(path), dword });

@@ -2914,6 +2914,7 @@ pub const VirtualMachine = struct {
     // TODO:
     pub fn deinit(this: *VirtualMachine) void {
         this.auto_killer.deinit();
+        ZigGlobalObject.destroy(this.global);
 
         if (source_code_printer) |print| {
             print.getMutableBuffer().deinit();

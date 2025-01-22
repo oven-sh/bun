@@ -66,6 +66,10 @@ pub const ZigGlobalObject = extern struct {
         return global;
     }
 
+    pub fn destroy(global: *JSGlobalObject) void {
+        shim.cppFn("destroy", .{global});
+    }
+
     pub fn getModuleRegistryMap(global: *JSGlobalObject) *anyopaque {
         return shim.cppFn("getModuleRegistryMap", .{global});
     }

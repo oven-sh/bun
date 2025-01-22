@@ -970,6 +970,14 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
 
     return globalObject;
 }
+extern "C" void Zig__GlobalObject__destroy(JSC__JSGlobalObject* global)
+{
+    ASSERT(global != nullptr);
+    auto& vm = global->vm();
+    JSC::JSLockHolder locker(vm);
+    JSC::gcUnprotect(global);
+    global->vm().derefSuppressingSaferCPPChecking();
+}
 
 JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -1219,6 +1227,7 @@ GlobalObject::~GlobalObject()
         ctx->removeFromContextsMap();
         ctx->deref();
     }
+    globalEventScope.deref();
 }
 
 void GlobalObject::destroy(JSCell* cell)

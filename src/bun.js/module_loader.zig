@@ -2716,8 +2716,6 @@ pub const FetchFlags = enum {
     }
 };
 
-const SavedSourceMap = JSC.SavedSourceMap;
-
 pub const HardcodedModule = enum {
     bun,
     @"abort-controller",

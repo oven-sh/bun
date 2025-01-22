@@ -53,7 +53,7 @@ app.listen(port, () => {
 Commit your changes and push to GitHub.
 
 ```sh
-$ git add app.ts bun.lockb package.json
+$ git add app.ts bun.lock package.json
 $ git commit -m "Create simple Express app"
 $ git push origin main
 ```

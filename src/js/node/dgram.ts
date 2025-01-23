@@ -456,7 +456,7 @@ function sliceBuffer(buffer, offset, length) {
   if (typeof buffer === "string") {
     buffer = Buffer.from(buffer);
   } else if (!ArrayBuffer.isView(buffer)) {
-    throw $ERR_INVALID_ARG_TYPE("buffer", ["Buffer", "TypedArray", "DataView", "string"], buffer);
+    throw $ERR_INVALID_ARG_TYPE("buffer", ["string", "Buffer", "TypedArray", "DataView"], buffer);
   }
 
   offset = offset >>> 0;
@@ -562,12 +562,12 @@ Socket.prototype.send = function (buffer, offset, length, port, address, callbac
     if (typeof buffer === "string") {
       list = [Buffer.from(buffer)];
     } else if (!ArrayBuffer.isView(buffer)) {
-      throw $ERR_INVALID_ARG_TYPE("buffer", ["Buffer", "TypedArray", "DataView", "string"], buffer);
+      throw $ERR_INVALID_ARG_TYPE("buffer", ["string", "Buffer", "TypedArray", "DataView"], buffer);
     } else {
       list = [buffer];
     }
   } else if (!(list = fixBufferList(buffer))) {
-    throw $ERR_INVALID_ARG_TYPE("buffer list arguments", ["Buffer", "TypedArray", "DataView", "string"], buffer);
+    throw $ERR_INVALID_ARG_TYPE("buffer list arguments", ["string", "Buffer", "TypedArray", "DataView"], buffer);
   }
 
   if (!connected) port = validatePort(port, "Port", false);

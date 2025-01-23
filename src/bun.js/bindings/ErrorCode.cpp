@@ -367,7 +367,7 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
 
     result.append("The "_s);
 
-    if (arg_name.contains(' ')) {
+    if (arg_name.endsWith(" argument"_s)) {
         result.append(arg_name);
     } else {
         result.append("\""_s);
@@ -379,13 +379,18 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
     unsigned length = expected_types.size();
     if (length == 1) {
         result.append(expected_types.at(0).toWTFString(globalObject));
+    } else if (length == 2) {
+        result.append(expected_types.at(0).toWTFString(globalObject));
+        result.append(" or "_s);
+        result.append(expected_types.at(1).toWTFString(globalObject));
     } else {
         for (unsigned i = 0; i < length - 1; i++) {
             JSValue expected_type = expected_types.at(i);
-            if (i > 0) result.append(", "_s);
             result.append(expected_type.toWTFString(globalObject));
+            RETURN_IF_EXCEPTION(scope, {});
+            result.append(", "_s);
         }
-        result.append(" or "_s);
+        result.append("or "_s);
         result.append(expected_types.at(length - 1).toWTFString(globalObject));
     }
 
@@ -1021,6 +1026,17 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, error, message));
     }
 
+    case ErrorCode::ERR_BUFFER_OUT_OF_BOUNDS: {
+        auto arg0 = callFrame->argument(1);
+        if (!arg0.isUndefined()) {
+            auto str0 = arg0.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            auto message = makeString("\""_s, str0, "\" is outside of buffer bounds"_s);
+            return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_BUFFER_OUT_OF_BOUNDS, message));
+        }
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_BUFFER_OUT_OF_BOUNDS, "Attempt to access memory outside buffer bounds"_s));
+    }
+
     case ErrorCode::ERR_IPC_DISCONNECTED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_DISCONNECTED, "IPC channel is already disconnected"_s));
     case ErrorCode::ERR_SERVER_NOT_RUNNING:
@@ -1031,8 +1047,6 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_BAD_TYPE, "Bad socket type specified. Valid types are: udp4, udp6"_s));
     case ErrorCode::ERR_ZLIB_INITIALIZATION_FAILED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_ZLIB_INITIALIZATION_FAILED, "Initialization failed"_s));
-    case ErrorCode::ERR_BUFFER_OUT_OF_BOUNDS:
-        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_BUFFER_OUT_OF_BOUNDS, "Attempt to access memory outside buffer bounds"_s));
     case ErrorCode::ERR_IPC_ONE_PIPE:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_ONE_PIPE, "Child process can have only one IPC pipe"_s));
     case ErrorCode::ERR_SOCKET_ALREADY_BOUND:

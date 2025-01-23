@@ -220,6 +220,7 @@ pub const Tag = enum(u8) {
     symlinkat,
     unlink,
     utime,
+    utimensat,
     write,
     getcwd,
     getenv,
@@ -593,20 +594,40 @@ pub fn getcwdZ(buf: *bun.PathBuffer) Maybe([:0]const u8) {
         Result.errnoSysP(@as(c_int, 0), .getcwd, buf).?;
 }
 
+const syscall_or_C = if (Environment.isLinux) syscall else bun.C;
+
 pub fn fchmod(fd: bun.FileDescriptor, mode: bun.Mode) Maybe(void) {
     if (comptime Environment.isWindows) {
         return sys_uv.fchmod(fd, mode);
     }
 
-    return Maybe(void).errnoSysFd(C.fchmod(fd.cast(), mode), .fchmod, fd) orelse
-        Maybe(void).success;
+    while (true) {
+        const rc = syscall_or_C.fchmod(fd.cast(), mode);
+        if (Maybe(void).errnoSysFd(rc, .fchmod, fd)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+
+        return Maybe(void).success;
+    }
+
+    unreachable;
 }
 
-pub fn fchmodat(fd: bun.FileDescriptor, path: [:0]const u8, mode: bun.Mode, flags: i32) Maybe(void) {
+pub fn fchmodat(fd: bun.FileDescriptor, path: [:0]const u8, mode: bun.Mode, flags: if (Environment.isLinux) u32 else i32) Maybe(void) {
     if (comptime Environment.isWindows) @compileError("Use fchmod instead");
 
-    return Maybe(void).errnoSysFd(C.fchmodat(fd.cast(), path.ptr, mode, flags), .fchmodat, fd) orelse
-        Maybe(void).success;
+    while (true) {
+        const rc = syscall_or_C.fchmodat(fd.cast(), path.ptr, mode, flags);
+        if (Maybe(void).errnoSysFd(rc, .fchmodat, fd)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+
+        return Maybe(void).success;
+    }
+
+    unreachable;
 }
 
 pub fn chmod(path: [:0]const u8, mode: bun.Mode) Maybe(void) {
@@ -614,8 +635,17 @@ pub fn chmod(path: [:0]const u8, mode: bun.Mode) Maybe(void) {
         return sys_uv.chmod(path, mode);
     }
 
-    return Maybe(void).errnoSysP(C.chmod(path.ptr, mode), .chmod, path) orelse
-        Maybe(void).success;
+    while (true) {
+        const rc = syscall_or_C.chmod(path.ptr, mode);
+        if (Maybe(void).errnoSysP(rc, .chmod, path)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+
+        return Maybe(void).success;
+    }
+
+    unreachable;
 }
 
 pub fn chdirOSPath(path: bun.stringZ, destination: if (Environment.isPosix) bun.stringZ else bun.string) Maybe(void) {
@@ -702,7 +732,11 @@ pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
         return sys_uv.stat(path);
     } else {
         var stat_ = mem.zeroes(bun.Stat);
-        const rc = C.stat(path, &stat_);
+        const rc = if (Environment.isLinux)
+            // aarch64 linux doesn't implement a "stat" syscall. It's all fstatat.
+            linux.fstatat(std.posix.AT.FDCWD, path, &stat_, 0)
+        else
+            syscall_or_C.stat(path, &stat_);
 
         if (comptime Environment.allow_assert)
             log("stat({s}) = {d}", .{ bun.asByteSlice(path), rc });
@@ -753,13 +787,20 @@ pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
 
     var stat_ = mem.zeroes(bun.Stat);
 
-    const rc = C.fstat(fd.cast(), &stat_);
+    const rc = syscall_or_C.fstat(fd.cast(), &stat_);
 
     if (comptime Environment.allow_assert)
         log("fstat({}) = {d}", .{ fd, rc });
 
     if (Maybe(bun.Stat).errnoSysFd(rc, .fstat, fd)) |err| return err;
     return Maybe(bun.Stat){ .result = stat_ };
+}
+pub fn lutimes(path: [:0]const u8, atime: JSC.Node.TimeLike, mtime: JSC.Node.TimeLike) Maybe(void) {
+    if (comptime Environment.isWindows) {
+        return sys_uv.lutimes(path, atime, mtime);
+    }
+
+    return utimensWithFlags(path, atime, mtime, std.posix.AT.SYMLINK_NOFOLLOW);
 }
 
 pub fn mkdiratA(dir_fd: bun.FileDescriptor, file_path: []const u8) Maybe(void) {
@@ -3166,6 +3207,65 @@ pub fn directoryExistsAt(dir: anytype, subpath: anytype) JSC.Maybe(bool) {
         },
         .result => |result| .{ .result = S.ISDIR(result.mode) },
     };
+}
+
+pub fn futimens(fd: bun.FileDescriptor, atime: JSC.Node.TimeLike, mtime: JSC.Node.TimeLike) Maybe(void) {
+    if (comptime Environment.isWindows) @compileError("TODO: futimes");
+
+    while (true) {
+        const rc = syscall.futimens(fd.cast(), &[2]syscall.timespec{
+            .{ .tv_sec = @intCast(atime.tv_sec), .tv_nsec = atime.tv_nsec },
+            .{ .tv_sec = @intCast(mtime.tv_sec), .tv_nsec = mtime.tv_nsec },
+        });
+
+        log("futimens({}, accessed=({d}, {d}), modified=({d}, {d})) = {d}", .{ fd, atime.tv_sec, atime.tv_nsec, mtime.tv_sec, mtime.tv_nsec, rc });
+
+        if (rc == 0) {
+            return Maybe(void).success;
+        }
+
+        switch (bun.C.getErrno(rc)) {
+            .INTR => continue,
+            else => return Maybe(void).errnoSysFd(rc, .futimens, fd).?,
+        }
+    }
+
+    unreachable;
+}
+
+fn utimensWithFlags(path: bun.OSPathSliceZ, atime: JSC.Node.TimeLike, mtime: JSC.Node.TimeLike, flags: u32) Maybe(void) {
+    if (comptime Environment.isWindows) @compileError("TODO: utimens");
+
+    while (true) {
+        var times: [2]syscall.timespec = .{
+            .{ .tv_sec = @intCast(atime.tv_sec), .tv_nsec = atime.tv_nsec },
+            .{ .tv_sec = @intCast(mtime.tv_sec), .tv_nsec = mtime.tv_nsec },
+        };
+        const rc = syscall.utimensat(
+            std.fs.cwd().fd,
+            path,
+            // this var should be a const, the zig type definition is wrong.
+            &times,
+            flags,
+        );
+
+        log("utimensat({d}, atime=({d}, {d}), mtime=({d}, {d})) = {d}", .{ std.fs.cwd().fd, atime.tv_sec, atime.tv_nsec, mtime.tv_sec, mtime.tv_nsec, rc });
+
+        if (rc == 0) {
+            return Maybe(void).success;
+        }
+
+        switch (bun.C.getErrno(rc)) {
+            .INTR => continue,
+            else => return Maybe(void).errnoSysP(rc, .utimensat, path).?,
+        }
+    }
+
+    unreachable;
+}
+
+pub fn utimens(path: bun.OSPathSliceZ, atime: JSC.Node.TimeLike, mtime: JSC.Node.TimeLike) Maybe(void) {
+    return utimensWithFlags(path, atime, mtime, 0);
 }
 
 pub fn setNonblocking(fd: bun.FileDescriptor) Maybe(void) {

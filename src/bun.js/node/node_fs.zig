@@ -3849,15 +3849,10 @@ pub const NodeFS = struct {
                 Maybe(Return.Futimes).success;
         }
 
-        var times = [2]std.posix.timespec{
-            args.atime,
-            args.mtime,
+        return switch (Syscall.futimens(args.fd, args.atime, args.mtime)) {
+            .err => |err| .{ .err = err },
+            .result => Maybe(Return.Futimes).success,
         };
-
-        return if (Maybe(Return.Futimes).errnoSysFd(system.futimens(args.fd.int(), &times), .futime, args.fd)) |err|
-            err
-        else
-            Maybe(Return.Futimes).success;
     }
 
     pub fn lchmod(this: *NodeFS, args: Arguments.LCHmod, _: Flavor) Maybe(Return.Lchmod) {
@@ -5919,21 +5914,15 @@ pub const NodeFS = struct {
 
         bun.assert(args.mtime.tv_nsec <= 1e9);
         bun.assert(args.atime.tv_nsec <= 1e9);
-        var times = [2]std.c.timeval{
-            .{
-                .tv_sec = args.atime.tv_sec,
-                .tv_usec = @intCast(@divTrunc(args.atime.tv_nsec, std.time.ns_per_us)),
-            },
-            .{
-                .tv_sec = args.mtime.tv_sec,
-                .tv_usec = @intCast(@divTrunc(args.mtime.tv_nsec, std.time.ns_per_us)),
-            },
-        };
 
-        return if (Maybe(Return.Utimes).errnoSysP(std.c.utimes(args.path.sliceZ(&this.sync_error_buf), &times), .utime, args.path.slice())) |err|
-            .{ .err = err.err.withPath(args.path.slice()) }
-        else
-            Maybe(Return.Utimes).success;
+        return switch (Syscall.utimens(
+            args.path.sliceZ(&this.sync_error_buf),
+            args.atime,
+            args.mtime,
+        )) {
+            .err => |err| .{ .err = err.withPath(args.path.slice()) },
+            .result => Maybe(Return.Utimes).success,
+        };
     }
 
     pub fn lutimes(this: *NodeFS, args: Arguments.Lutimes, _: Flavor) Maybe(Return.Lutimes) {
@@ -5960,21 +5949,11 @@ pub const NodeFS = struct {
 
         bun.assert(args.mtime.tv_nsec <= 1e9);
         bun.assert(args.atime.tv_nsec <= 1e9);
-        var times = [2]std.c.timeval{
-            .{
-                .tv_sec = args.atime.tv_sec,
-                .tv_usec = @intCast(@divTrunc(args.atime.tv_nsec, std.time.ns_per_us)),
-            },
-            .{
-                .tv_sec = args.mtime.tv_sec,
-                .tv_usec = @intCast(@divTrunc(args.mtime.tv_nsec, std.time.ns_per_us)),
-            },
-        };
 
-        return if (Maybe(Return.Lutimes).errnoSysP(C.lutimes(args.path.sliceZ(&this.sync_error_buf), &times), .lutime, args.path.slice())) |err|
-            .{ .err = err.err.withPath(args.path.slice()) }
-        else
-            Maybe(Return.Lutimes).success;
+        return switch (Syscall.lutimes(args.path.sliceZ(&this.sync_error_buf), args.atime, args.mtime)) {
+            .err => |err| .{ .err = err.withPath(args.path.slice()) },
+            .result => Maybe(Return.Lutimes).success,
+        };
     }
 
     pub fn watch(_: *NodeFS, args: Arguments.Watch, _: Flavor) Maybe(Return.Watch) {
@@ -6321,7 +6300,7 @@ pub const NodeFS = struct {
                         }
                     };
                     defer {
-                        _ = std.c.ftruncate(dest_fd.int(), @as(std.c.off_t, @intCast(@as(u63, @truncate(wrote)))));
+                        _ = Syscall.ftruncate(dest_fd, @intCast(@as(u63, @truncate(wrote))));
                         _ = C.fchmod(dest_fd.int(), stat_.mode);
                         _ = Syscall.close(dest_fd);
                     }

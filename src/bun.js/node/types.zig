@@ -1295,20 +1295,49 @@ fn timeLikeFromMilliseconds(milliseconds: f64) TimeLike {
     if (Environment.isWindows) {
         return milliseconds / 1000.0;
     }
+
+    var sec: f64 = @divFloor(milliseconds, std.time.ms_per_s);
+    var nsec: f64 = @mod(milliseconds, std.time.ms_per_s) * std.time.ns_per_ms;
+
+    if (nsec < 0) {
+        nsec += 1e6;
+        sec -= 1;
+    }
+
     return .{
-        .tv_sec = @intFromFloat(@divFloor(milliseconds, std.time.ms_per_s)),
-        .tv_nsec = @intFromFloat(@mod(milliseconds, std.time.ms_per_s) * std.time.ns_per_ms),
+        .tv_sec = @intFromFloat(sec),
+        .tv_nsec = @intFromFloat(nsec),
     };
 }
 
 fn timeLikeFromNow() TimeLike {
-    const nanos = std.time.nanoTimestamp();
     if (Environment.isWindows) {
+        const nanos = std.time.nanoTimestamp();
         return @as(TimeLike, @floatFromInt(nanos)) / std.time.ns_per_s;
     }
+
+    // Permissions requirements
+    //        To set both file timestamps to the current time (i.e., times is
+    //        NULL, or both tv_nsec fields specify UTIME_NOW), either:
+    //
+    //        •  the caller must have write access to the file;
+    //
+    //        •  the caller's effective user ID must match the owner of the
+    //           file; or
+    //
+    //        •  the caller must have appropriate privileges.
+    //
+    //        To make any change other than setting both timestamps to the
+    //        current time (i.e., times is not NULL, and neither tv_nsec field
+    //        is UTIME_NOW and neither tv_nsec field is UTIME_OMIT), either
+    //        condition 2 or 3 above must apply.
+    //
+    //        If both tv_nsec fields are specified as UTIME_OMIT, then no file
+    //        ownership or permission checks are performed, and the file
+    //        timestamps are not modified, but other error conditions may still
     return .{
-        .tv_sec = @truncate(@divFloor(nanos, std.time.ns_per_s)),
-        .tv_nsec = @truncate(@mod(nanos, std.time.ns_per_s)),
+        .tv_sec = 0,
+        .tv_nsec = if (Environment.isLinux) std.os.linux.UTIME.NOW else bun.C.translated.UTIME_NOW,
     };
 }
 

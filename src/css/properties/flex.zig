@@ -727,11 +727,6 @@ pub const FlexHandler = struct {
         this.singleProperty("order", bun.take(&order), "flex-order", .{ BoxOrdinalGroup, "box-ordinal-group" }, dest, context, "order");
     }
 
-    fn fromStandard(val: anytype) ?FlexWrap {
-        _ = val; // autofix
-
-    }
-
     fn singleProperty(
         this: *FlexHandler,
         comptime prop: []const u8,

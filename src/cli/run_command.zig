@@ -1397,16 +1397,16 @@ pub const RunCommand = struct {
 
         // setup
 
+        if (!ctx.debug.loaded_bunfig) {
+            bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
+        }
+
         const force_using_bun = ctx.debug.run_in_bun;
         var ORIGINAL_PATH: string = "";
         var this_transpiler: transpiler.Transpiler = undefined;
         const root_dir_info = try configureEnvForRun(ctx, &this_transpiler, null, log_errors, false);
         try configurePathForRun(ctx, root_dir_info, &this_transpiler, &ORIGINAL_PATH, root_dir_info.abs_path, force_using_bun);
         this_transpiler.env.map.put("npm_command", "run-script") catch unreachable;
-
-        if (!ctx.debug.loaded_bunfig) {
-            bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
-        }
 
         // check for empty command
 

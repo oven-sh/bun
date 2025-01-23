@@ -1402,7 +1402,7 @@ pub const PackCommand = struct {
 
             if (comptime !for_publish) {
                 if (manager.options.pack_destination.len == 0) {
-                    Output.pretty("\n{}\n", .{fmtTarballFilename(package_name, package_version)});
+                    Output.pretty("\n{}\n", .{fmtTarballFilename(package_name, package_version, .normalize)});
                 } else {
                     var dest_buf: PathBuffer = undefined;
                     const abs_tarball_dest, _ = absTarballDestination(
@@ -1726,7 +1726,6 @@ pub const PackCommand = struct {
                 json.source,
                 shasum,
                 integrity,
-                abs_tarball_dest,
             );
 
         printArchivedFilesAndPackages(
@@ -1739,7 +1738,7 @@ pub const PackCommand = struct {
 
         if (comptime !for_publish) {
             if (manager.options.pack_destination.len == 0) {
-                Output.pretty("\n{}\n", .{fmtTarballFilename(package_name, package_version)});
+                Output.pretty("\n{}\n", .{fmtTarballFilename(package_name, package_version, .normalize)});
             } else {
                 Output.pretty("\n{s}\n", .{abs_tarball_dest});
             }
@@ -1809,11 +1808,11 @@ pub const PackCommand = struct {
         );
 
         const tarball_name = std.fmt.bufPrint(dest_buf[strings.withoutTrailingSlash(tarball_destination_dir).len..], "/{}\x00", .{
-            fmtTarballFilename(package_name, package_version),
+            fmtTarballFilename(package_name, package_version, .normalize),
         }) catch {
             Output.errGeneric("archive destination name too long: \"{s}/{}\"", .{
                 strings.withoutTrailingSlash(tarball_destination_dir),
-                fmtTarballFilename(package_name, package_version),
+                fmtTarballFilename(package_name, package_version, .normalize),
             });
             Global.crash();
         };
@@ -1824,18 +1823,29 @@ pub const PackCommand = struct {
         };
     }
 
-    fn fmtTarballFilename(package_name: string, package_version: string) TarballNameFormatter {
+    pub fn fmtTarballFilename(package_name: string, package_version: string, style: TarballNameFormatter.Style) TarballNameFormatter {
         return .{
             .package_name = package_name,
             .package_version = package_version,
+            .style = style,
         };
     }
 
     const TarballNameFormatter = struct {
         package_name: string,
         package_version: string,
+        style: Style,
+
+        pub const Style = enum {
+            normalize,
+            raw,
+        };
 
         pub fn format(this: TarballNameFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) !void {
+            if (this.style == .raw) {
+                return writer.print("{s}-{s}.tgz", .{ this.package_name, this.package_version });
+            }
+
             if (this.package_name[0] == '@') {
                 if (this.package_name.len > 1) {
                     if (strings.indexOfChar(this.package_name, '/')) |slash| {

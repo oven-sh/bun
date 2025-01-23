@@ -1363,6 +1363,7 @@ pub fn GlobWalker_(
             }
             const codepoints = this.componentStringUnicode(pattern_component);
             return matchImpl(
+                this.arena.allocator(),
                 codepoints,
                 filepath,
             ).matches();

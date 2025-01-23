@@ -335,7 +335,7 @@ pub const PackCommand = struct {
                         // normally the behavior of `index.js` and `**/index.js` are the same,
                         // but includes require `**/`
                         const match_path = if (include.@"leading **/") entry_name else entry_subpath;
-                        switch (glob.walk.matchImpl(include.glob, match_path)) {
+                        switch (glob.walk.matchImpl(allocator, include.glob, match_path)) {
                             .match => included = true,
                             .negate_no_match => included = false,
 
@@ -1045,7 +1045,7 @@ pub const PackCommand = struct {
 
             // check default ignores that only apply to the root project directory
             for (root_default_ignore_patterns) |pattern| {
-                switch (glob.walk.matchImpl(pattern, entry_name)) {
+                switch (glob.walk.matchImpl(bun.default_allocator, pattern, entry_name)) {
                     .match => {
                         // cannot be reversed
                         return .{
@@ -1072,7 +1072,7 @@ pub const PackCommand = struct {
 
         for (default_ignore_patterns) |pattern_info| {
             const pattern, const can_override = pattern_info;
-            switch (glob.walk.matchImpl(pattern, entry_name)) {
+            switch (glob.walk.matchImpl(bun.default_allocator, pattern, entry_name)) {
                 .match => {
                     if (can_override) {
                         ignored = true;
@@ -1114,7 +1114,7 @@ pub const PackCommand = struct {
                 if (pattern.dirs_only and entry.kind != .directory) continue;
 
                 const match_path = if (pattern.rel_path) rel else entry_name;
-                switch (glob.walk.matchImpl(pattern.glob, match_path)) {
+                switch (glob.walk.matchImpl(bun.default_allocator, pattern.glob, match_path)) {
                     .match => {
                         ignored = true;
                         ignore_pattern = pattern.glob;

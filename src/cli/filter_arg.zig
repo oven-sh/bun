@@ -187,7 +187,7 @@ pub const FilterSet = struct {
 
     pub fn matchesPath(self: *const FilterSet, path: []const u8) bool {
         for (self.filters) |filter| {
-            if (Glob.walk.matchImpl(filter.codepoints, path).matches()) {
+            if (Glob.walk.matchImpl(self.allocator, filter.codepoints, path).matches()) {
                 return true;
             }
         }
@@ -200,7 +200,7 @@ pub const FilterSet = struct {
                 .name => name,
                 .path => path,
             };
-            if (Glob.walk.matchImpl(filter.codepoints, target).matches()) {
+            if (Glob.walk.matchImpl(self.allocator, filter.codepoints, target).matches()) {
                 return true;
             }
         }

@@ -15071,7 +15071,7 @@ pub const PackageManager = struct {
                     },
                 };
 
-                switch (bun.glob.walk.matchImpl(pattern, path_or_name)) {
+                switch (bun.glob.walk.matchImpl(manager.allocator, pattern, path_or_name)) {
                     .match, .negate_match => install_root_dependencies = true,
 
                     .negate_no_match => {

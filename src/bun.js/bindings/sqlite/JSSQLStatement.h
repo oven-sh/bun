@@ -62,7 +62,7 @@ namespace WebCore {
 class JSSQLStatementConstructor final : public JSC::JSFunction {
 public:
     using Base = JSC::JSFunction;
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 
     static JSSQLStatementConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure);
 

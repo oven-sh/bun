@@ -22,6 +22,25 @@ function error_test(css: string, error: unknown) {
 }
 
 describe("css tests", () => {
+  // #16596
+  cssTest(
+    `.flexrow {
+	flex-direction: row;
+}
+
+.flexcol {
+	flex-direction: column;
+}
+
+.hello {
+	flex-wrap: wrap;
+}
+
+.world {
+	flex-wrap: nowrap;
+}`,
+    ".flexrow {\n  flex-direction: row;\n}\n\n.flexcol {\n  flex-direction: column;\n}\n\n.hello {\n  flex-wrap: wrap;\n}\n\n.world {\n  flex-wrap: nowrap;\n}\n",
+  );
   // test escape sequences
   cssTest(
     `.foo {

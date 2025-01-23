@@ -10,6 +10,9 @@ const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const Error = css.Error;
 
+const Property = css.Property;
+const PropertyId = css.PropertyId;
+
 const ContainerName = css.css_rules.container.ContainerName;
 
 const CSSNumberFns = css.css_values.number.CSSNumberFns;
@@ -29,7 +32,9 @@ const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
 const CustomIdentList = css.css_values.ident.CustomIdentList;
 const Angle = css.css_values.angle.Angle;
 const Url = css.css_values.url.Url;
-const CSSInteger = css.css_values.integer.CSSInteger;
+const CSSInteger = css.css_values.number.CSSInteger;
+
+const isFlex2009 = css.prefixes.Feature.isFlex2009;
 
 const VendorPrefix = css.VendorPrefix;
 
@@ -50,6 +55,15 @@ pub const FlexDirection = enum {
     pub fn default() FlexDirection {
         return .row;
     }
+
+    pub fn to2009(this: *const FlexDirection) struct { BoxOrient, BoxDirection } {
+        return switch (this.*) {
+            .row => .{ .horizontal, .normal },
+            .column => .{ .vertical, .normal },
+            .@"row-reverse" => .{ .horizontal, .reverse },
+            .@"column-reverse" => .{ .vertical, .reverse },
+        };
+    }
 };
 
 /// A value for the [flex-wrap](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#flex-wrap-property) property.
@@ -67,9 +81,12 @@ pub const FlexWrap = enum {
     pub fn default() FlexWrap {
         return .nowrap;
     }
+
+    pub fn fromStandard(this: *const FlexWrap) ?FlexWrap {
+        return this;
+    }
 };
 
-/// A value for the [flex-flow](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#flex-flow-property) shorthand property.
 /// A value for the [flex-flow](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#flex-flow-property) shorthand property.
 pub const FlexFlow = struct {
     /// The direction that flex items flow.
@@ -333,6 +350,14 @@ pub const BoxLines = enum {
     multiple,
 
     pub usingnamespace css.DefineEnumProperty(@This());
+
+    pub fn fromStandard(wrap: *const FlexWrap) ?BoxLines {
+        return switch (wrap.*) {
+            .nowrap => .single,
+            .wrap => .multiple,
+            else => null,
+        };
+    }
 };
 
 // Old flex (2012): https://www.w3.org/TR/2012/WD-css3-flexbox-20120322/
@@ -397,390 +422,418 @@ pub const FlexLinePack = enum {
     pub usingnamespace css.DefineEnumProperty(@This());
 };
 
+pub const BoxOrdinalGroup = CSSInteger;
+
 // A handler for flex-related properties that manages both standard and legacy vendor prefixed values.
-// pub const FlexHandler = struct {
-//     /// The flex-direction property value and vendor prefix
-//     direction: ?struct { FlexDirection, VendorPrefix } = null,
-//     /// The box-orient property value and vendor prefix (legacy)
-//     box_orient: ?struct { BoxOrient, VendorPrefix } = null,
-//     /// The box-direction property value and vendor prefix (legacy)
-//     box_direction: ?struct { BoxDirection, VendorPrefix } = null,
-//     /// The flex-wrap property value and vendor prefix
-//     wrap: ?struct { FlexWrap, VendorPrefix } = null,
-//     /// The box-lines property value and vendor prefix (legacy)
-//     box_lines: ?struct { BoxLines, VendorPrefix } = null,
-//     /// The flex-grow property value and vendor prefix
-//     grow: ?struct { CSSNumber, VendorPrefix } = null,
-//     /// The box-flex property value and vendor prefix (legacy)
-//     box_flex: ?struct { CSSNumber, VendorPrefix } = null,
-//     /// The flex-positive property value and vendor prefix (legacy)
-//     flex_positive: ?struct { CSSNumber, VendorPrefix } = null,
-//     /// The flex-shrink property value and vendor prefix
-//     shrink: ?struct { CSSNumber, VendorPrefix } = null,
-//     /// The flex-negative property value and vendor prefix (legacy)
-//     flex_negative: ?struct { CSSNumber, VendorPrefix } = null,
-//     /// The flex-basis property value and vendor prefix
-//     basis: ?struct { LengthPercentageOrAuto, VendorPrefix } = null,
-//     /// The preferred-size property value and vendor prefix (legacy)
-//     preferred_size: ?struct { LengthPercentageOrAuto, VendorPrefix } = null,
-//     /// The order property value and vendor prefix
-//     order: ?struct { CSSInteger, VendorPrefix } = null,
-//     /// The box-ordinal-group property value and vendor prefix (legacy)
-//     box_ordinal_group: ?struct { BoxOrdinalGroup, VendorPrefix } = null,
-//     /// The flex-order property value and vendor prefix (legacy)
-//     flex_order: ?struct { CSSInteger, VendorPrefix } = null,
-//     /// Whether any flex-related properties have been set
-//     has_any: bool = false,
+pub const FlexHandler = struct {
+    /// The flex-direction property value and vendor prefix
+    direction: ?struct { FlexDirection, VendorPrefix } = null,
+    /// The box-orient property value and vendor prefix (legacy)
+    box_orient: ?struct { BoxOrient, VendorPrefix } = null,
+    /// The box-direction property value and vendor prefix (legacy)
+    box_direction: ?struct { BoxDirection, VendorPrefix } = null,
+    /// The flex-wrap property value and vendor prefix
+    wrap: ?struct { FlexWrap, VendorPrefix } = null,
+    /// The box-lines property value and vendor prefix (legacy)
+    box_lines: ?struct { BoxLines, VendorPrefix } = null,
+    /// The flex-grow property value and vendor prefix
+    grow: ?struct { CSSNumber, VendorPrefix } = null,
+    /// The box-flex property value and vendor prefix (legacy)
+    box_flex: ?struct { CSSNumber, VendorPrefix } = null,
+    /// The flex-positive property value and vendor prefix (legacy)
+    flex_positive: ?struct { CSSNumber, VendorPrefix } = null,
+    /// The flex-shrink property value and vendor prefix
+    shrink: ?struct { CSSNumber, VendorPrefix } = null,
+    /// The flex-negative property value and vendor prefix (legacy)
+    flex_negative: ?struct { CSSNumber, VendorPrefix } = null,
+    /// The flex-basis property value and vendor prefix
+    basis: ?struct { LengthPercentageOrAuto, VendorPrefix } = null,
+    /// The preferred-size property value and vendor prefix (legacy)
+    preferred_size: ?struct { LengthPercentageOrAuto, VendorPrefix } = null,
+    /// The order property value and vendor prefix
+    order: ?struct { CSSInteger, VendorPrefix } = null,
+    /// The box-ordinal-group property value and vendor prefix (legacy)
+    box_ordinal_group: ?struct { BoxOrdinalGroup, VendorPrefix } = null,
+    /// The flex-order property value and vendor prefix (legacy)
+    flex_order: ?struct { CSSInteger, VendorPrefix } = null,
+    /// Whether any flex-related properties have been set
+    has_any: bool = false,
 
-//     pub fn handleProperty(
-//         this: *@This(),
-//         property: *const Property,
-//         dest: *css.DeclarationList,
-//         context: *css.PropertyHandlerContext,
-//     ) bool {
-//         const maybeFlush = struct {
-//             fn maybeFlush(
-//                 self: *FlexHandler,
-//                 comptime prop: []const u8,
-//                 val: anytype,
-//                 vp: *const VendorPrefix,
-//             ) void {
-//                 // If two vendor prefixes for the same property have different
-//                 // values, we need to flush what we have immediately to preserve order.
-//                 if (@field(self, prop)) |*field| {
-//                     if (!std.meta.eql(field[0], val.*) and !field[1].contains(vp.*)) {
-//                         self.flush(dest, context);
-//                     }
-//                 }
-//             }
-//         }.maybeFlush;
+    pub fn handleProperty(
+        this: *@This(),
+        property: *const Property,
+        dest: *css.DeclarationList,
+        context: *css.PropertyHandlerContext,
+    ) bool {
+        const maybeFlush = struct {
+            fn maybeFlush(
+                self: *FlexHandler,
+                d: *css.DeclarationList,
+                ctx: *css.PropertyHandlerContext,
+                comptime prop: []const u8,
+                val: anytype,
+                vp: *const VendorPrefix,
+            ) void {
+                // If two vendor prefixes for the same property have different
+                // values, we need to flush what we have immediately to preserve order.
+                if (@field(self, prop)) |*field| {
+                    if (!std.meta.eql(field[0], val.*) and !field[1].contains(vp.*)) {
+                        self.flush(d, ctx);
+                    }
+                }
+            }
+        }.maybeFlush;
 
-//         const propertyHelper = struct {
-//             fn propertyHelper(
-//                 self: *FlexHandler,
-//                 comptime prop: []const u8,
-//                 val: anytype,
-//                 vp: *const VendorPrefix,
-//             ) void {
-//                 maybeFlush(self, prop, val, vp);
+        const propertyHelper = struct {
+            fn propertyHelper(
+                self: *FlexHandler,
+                ctx: *css.PropertyHandlerContext,
+                d: *css.DeclarationList,
+                comptime prop: []const u8,
+                val: anytype,
+                vp: *const VendorPrefix,
+            ) void {
+                maybeFlush(self, d, ctx, prop, val, vp);
 
-//                 // Otherwise, update the value and add the prefix
-//                 if (@field(self, prop)) |*field| {
-//                     field[0] = val.deepClone(context.allocator);
-//                     field[1].insert(vp.*);
-//                 } else {
-//                     @field(self, prop) = .{
-//                         val.deepClone(context.allocator),
-//                         vp.*,
-//                     };
-//                     self.has_any = true;
-//                 }
-//             }
-//         }.propertyHelper;
+                // Otherwise, update the value and add the prefix
+                if (@field(self, prop)) |*field| {
+                    field[0] = css.generic.deepClone(@TypeOf(val.*), val, ctx.allocator);
+                    field[1].insert(vp.*);
+                } else {
+                    @field(self, prop) = .{
+                        css.generic.deepClone(@TypeOf(val.*), val, ctx.allocator),
+                        vp.*,
+                    };
+                    self.has_any = true;
+                }
+            }
+        }.propertyHelper;
 
-//         switch (property.*) {
-//             .flex_direction => |*val| {
-//                 if (context.targets.browsers != null) {
-//                     this.box_direction = null;
-//                     this.box_orient = null;
-//                 }
-//                 propertyHelper(this, "direction", &val[0], &val[1]);
-//             },
-//             .box_orient => |*val| propertyHelper(this, "box_orient", &val[0], &val[1]),
-//             .box_direction => |*val| propertyHelper(this, "box_direction", &val[0], &val[1]),
-//             .flex_wrap => |*val| {
-//                 if (context.targets.browsers != null) {
-//                     this.box_lines = null;
-//                 }
-//                 propertyHelper(this, "wrap", &val[0], &val[1]);
-//             },
-//             .box_lines => |*val| propertyHelper(this, "box_lines", &val[0], &val[1]),
-//             .flex_flow => |*val| {
-//                 if (context.targets.browsers != null) {
-//                     this.box_direction = null;
-//                     this.box_orient = null;
-//                 }
-//                 propertyHelper(this, "direction", &val[0].direction, &val[1]);
-//                 propertyHelper(this, "wrap", &val[0].wrap, &val[1]);
-//             },
-//             .flex_grow => |*val| {
-//                 if (context.targets.browsers != null) {
-//                     this.box_flex = null;
-//                     this.flex_positive = null;
-//                 }
-//                 propertyHelper(this, "grow", &val[0], &val[1]);
-//             },
-//             .box_flex => |*val| propertyHelper(this, "box_flex", &val[0], &val[1]),
-//             .flex_positive => |*val| propertyHelper(this, "flex_positive", &val[0], &val[1]),
-//             .flex_shrink => |*val| {
-//                 if (context.targets.browsers != null) {
-//                     this.flex_negative = null;
-//                 }
-//                 propertyHelper(this, "shrink", &val[0], &val[1]);
-//             },
-//             .flex_negative => |*val| propertyHelper(this, "flex_negative", &val[0], &val[1]),
-//             .flex_basis => |*val| {
-//                 if (context.targets.browsers != null) {
-//                     this.preferred_size = null;
-//                 }
-//                 propertyHelper(this, "basis", &val[0], &val[1]);
-//             },
-//             .flex_preferred_size => |*val| propertyHelper(this, "preferred_size", &val[0], &val[1]),
-//             .flex => |*val| {
-//                 if (context.targets.browsers != null) {
-//                     this.box_flex = null;
-//                     this.flex_positive = null;
-//                     this.flex_negative = null;
-//                     this.preferred_size = null;
-//                 }
-//                 maybeFlush(this, "grow", &val[0].grow, &val[1]);
-//                 maybeFlush(this, "shrink", &val[0].shrink, &val[1]);
-//                 maybeFlush(this, "basis", &val[0].basis, &val[1]);
-//                 propertyHelper(this, "grow", &val[0].grow, &val[1]);
-//                 propertyHelper(this, "shrink", &val[0].shrink, &val[1]);
-//                 propertyHelper(this, "basis", &val[0].basis, &val[1]);
-//             },
-//             .order => |*val| {
-//                 if (context.targets.browsers != null) {
-//                     this.box_ordinal_group = null;
-//                     this.flex_order = null;
-//                 }
-//                 propertyHelper(this, "order", &val[0], &val[1]);
-//             },
-//             .box_ordinal_group => |*val| propertyHelper(this, "box_ordinal_group", &val[0], &val[1]),
-//             .flex_order => |*val| propertyHelper(this, "flex_order", &val[0], &val[1]),
-//             .unparsed => |*val| {
-//                 if (isFlexProperty(&val.property_id)) {
-//                     this.flush(dest, context);
-//                     dest.append(context.allocator, property.deepClone(context.allocator)) catch unreachable;
-//                 } else {
-//                     return false;
-//                 }
-//             },
-//             else => return false,
-//         }
+        switch (property.*) {
+            .@"flex-direction" => |*val| {
+                if (context.targets.browsers != null) {
+                    this.box_direction = null;
+                    this.box_orient = null;
+                }
+                propertyHelper(this, context, dest, "direction", &val[0], &val[1]);
+            },
+            .@"box-orient" => |*val| propertyHelper(this, context, dest, "box_orient", &val[0], &val[1]),
+            .@"box-direction" => |*val| propertyHelper(this, context, dest, "box_direction", &val[0], &val[1]),
+            .@"flex-wrap" => |*val| {
+                if (context.targets.browsers != null) {
+                    this.box_lines = null;
+                }
+                propertyHelper(this, context, dest, "wrap", &val[0], &val[1]);
+            },
+            .@"box-lines" => |*val| propertyHelper(this, context, dest, "box_lines", &val[0], &val[1]),
+            .@"flex-flow" => |*val| {
+                if (context.targets.browsers != null) {
+                    this.box_direction = null;
+                    this.box_orient = null;
+                }
+                propertyHelper(this, context, dest, "direction", &val[0].direction, &val[1]);
+                propertyHelper(this, context, dest, "wrap", &val[0].wrap, &val[1]);
+            },
+            .@"flex-grow" => |*val| {
+                if (context.targets.browsers != null) {
+                    this.box_flex = null;
+                    this.flex_positive = null;
+                }
+                propertyHelper(this, context, dest, "grow", &val[0], &val[1]);
+            },
+            .@"box-flex" => |*val| propertyHelper(this, context, dest, "box_flex", &val[0], &val[1]),
+            .@"flex-positive" => |*val| propertyHelper(this, context, dest, "flex_positive", &val[0], &val[1]),
+            .@"flex-shrink" => |*val| {
+                if (context.targets.browsers != null) {
+                    this.flex_negative = null;
+                }
+                propertyHelper(this, context, dest, "shrink", &val[0], &val[1]);
+            },
+            .@"flex-negative" => |*val| propertyHelper(this, context, dest, "flex_negative", &val[0], &val[1]),
+            .@"flex-basis" => |*val| {
+                if (context.targets.browsers != null) {
+                    this.preferred_size = null;
+                }
+                propertyHelper(this, context, dest, "basis", &val[0], &val[1]);
+            },
+            .@"flex-preferred-size" => |*val| propertyHelper(this, context, dest, "preferred_size", &val[0], &val[1]),
+            .flex => |*val| {
+                if (context.targets.browsers != null) {
+                    this.box_flex = null;
+                    this.flex_positive = null;
+                    this.flex_negative = null;
+                    this.preferred_size = null;
+                }
+                maybeFlush(this, dest, context, "grow", &val[0].grow, &val[1]);
+                maybeFlush(this, dest, context, "shrink", &val[0].shrink, &val[1]);
+                maybeFlush(this, dest, context, "basis", &val[0].basis, &val[1]);
+                propertyHelper(this, context, dest, "grow", &val[0].grow, &val[1]);
+                propertyHelper(this, context, dest, "shrink", &val[0].shrink, &val[1]);
+                propertyHelper(this, context, dest, "basis", &val[0].basis, &val[1]);
+            },
+            .order => |*val| {
+                if (context.targets.browsers != null) {
+                    this.box_ordinal_group = null;
+                    this.flex_order = null;
+                }
+                propertyHelper(this, context, dest, "order", &val[0], &val[1]);
+            },
+            .@"box-ordinal-group" => |*val| propertyHelper(this, context, dest, "box_ordinal_group", &val[0], &val[1]),
+            .@"flex-order" => |*val| propertyHelper(this, context, dest, "flex_order", &val[0], &val[1]),
+            .unparsed => |*val| {
+                if (isFlexProperty(&val.property_id)) {
+                    this.flush(dest, context);
+                    dest.append(context.allocator, property.deepClone(context.allocator)) catch unreachable;
+                } else {
+                    return false;
+                }
+            },
+            else => return false,
+        }
 
-//         return true;
-//     }
+        return true;
+    }
 
-//     pub fn finalize(this: *@This(), dest: *css.DeclarationList, context: *css.PropertyHandlerContext) void {
-//         this.flush(dest, context);
-//     }
+    pub fn finalize(this: *@This(), dest: *css.DeclarationList, context: *css.PropertyHandlerContext) void {
+        this.flush(dest, context);
+    }
 
-//     fn flush(this: *@This(), dest: *css.DeclarationList, context: *css.PropertyHandlerContext) void {
-//         if (!this.has_any) {
-//             return;
-//         }
+    fn flush(this: *@This(), dest: *css.DeclarationList, context: *css.PropertyHandlerContext) void {
+        if (!this.has_any) {
+            return;
+        }
 
-//         this.has_any = false;
+        this.has_any = false;
 
-//         var direction = bun.take(&this.direction);
-//         var wrap = bun.take(&this.wrap);
-//         var grow = bun.take(&this.grow);
-//         var shrink = bun.take(&this.shrink);
-//         var basis = bun.take(&this.basis);
-//         const box_orient = bun.take(&this.box_orient);
-//         const box_direction = bun.take(&this.box_direction);
-//         const box_flex = bun.take(&this.box_flex);
-//         const box_ordinal_group = bun.take(&this.box_ordinal_group);
-//         const box_lines = bun.take(&this.box_lines);
-//         const flex_positive = bun.take(&this.flex_positive);
-//         const flex_negative = bun.take(&this.flex_negative);
-//         const preferred_size = bun.take(&this.preferred_size);
-//         const order = bun.take(&this.order);
-//         const flex_order = bun.take(&this.flex_order);
+        var direction: ?struct { FlexDirection, VendorPrefix } = bun.take(&this.direction);
+        var wrap: ?struct { FlexWrap, VendorPrefix } = bun.take(&this.wrap);
+        var grow: ?struct { CSSNumber, VendorPrefix } = bun.take(&this.grow);
+        var shrink: ?struct { CSSNumber, VendorPrefix } = bun.take(&this.shrink);
+        var basis = bun.take(&this.basis);
+        var box_orient = bun.take(&this.box_orient);
+        var box_direction = bun.take(&this.box_direction);
+        var box_flex = bun.take(&this.box_flex);
+        var box_ordinal_group = bun.take(&this.box_ordinal_group);
+        var box_lines = bun.take(&this.box_lines);
+        var flex_positive = bun.take(&this.flex_positive);
+        var flex_negative = bun.take(&this.flex_negative);
+        var preferred_size = bun.take(&this.preferred_size);
+        var order = bun.take(&this.order);
+        var flex_order = bun.take(&this.flex_order);
 
-//         // Legacy properties. These are only set if the final standard properties were unset.
-//         if (box_orient) |val| {
-//             if (!val[1].isEmpty()) {
-//                 dest.append(context.allocator, Property{ .box_orient = val }) catch unreachable;
-//             }
-//         }
+        // Legacy properties. These are only set if the final standard properties were unset.
+        legacyProperty(this, "box-orient", bun.take(&box_orient), dest, context);
+        legacyProperty(this, "box-direction", bun.take(&box_direction), dest, context);
+        legacyProperty(this, "box-ordinal-group", bun.take(&box_ordinal_group), dest, context);
+        legacyProperty(this, "box-flex", bun.take(&box_flex), dest, context);
+        legacyProperty(this, "box-lines", bun.take(&box_lines), dest, context);
+        legacyProperty(this, "flex-positive", bun.take(&flex_positive), dest, context);
+        legacyProperty(this, "flex-negative", bun.take(&flex_negative), dest, context);
+        legacyProperty(this, "flex-preferred-size", bun.take(&preferred_size), dest, context);
+        legacyProperty(this, "flex-order", bun.take(&flex_order), dest, context);
 
-//         if (box_direction) |val| {
-//             if (!val[1].isEmpty()) {
-//                 dest.append(context.allocator, Property{ .box_direction = val }) catch unreachable;
-//             }
-//         }
+        if (direction) |val| {
+            const dir = val[0];
+            if (context.targets.browsers) |targets| {
+                const prefixes = context.targets.prefixes(css.VendorPrefix.NONE, css.prefixes.Feature.flex_direction);
+                var prefixes_2009 = css.VendorPrefix.empty();
+                if (isFlex2009(targets)) {
+                    prefixes_2009.insert(css.VendorPrefix.WEBKIT);
+                }
+                if (prefixes.contains(css.VendorPrefix.MOZ)) {
+                    prefixes_2009.insert(css.VendorPrefix.MOZ);
+                }
+                if (!prefixes_2009.isEmpty()) {
+                    const orient, const newdir = dir.to2009();
+                    dest.append(context.allocator, Property{ .@"box-orient" = .{ orient, prefixes_2009 } }) catch bun.outOfMemory();
+                    dest.append(context.allocator, Property{ .@"box-direction" = .{ newdir, prefixes_2009 } }) catch bun.outOfMemory();
+                }
+            }
+        }
 
-//         if (box_ordinal_group) |val| {
-//             if (!val[1].isEmpty()) {
-//                 dest.append(context.allocator, Property{ .box_ordinal_group = val }) catch unreachable;
-//             }
-//         }
+        if (direction != null and wrap != null) {
+            const dir: *FlexDirection = &direction.?[0];
+            const dir_prefix: *VendorPrefix = &direction.?[1];
+            const wrapinner: *FlexWrap = &wrap.?[0];
+            const wrap_prefix: *VendorPrefix = &wrap.?[1];
 
-//         if (box_flex) |val| {
-//             if (!val[1].isEmpty()) {
-//                 dest.append(context.allocator, Property{ .box_flex = val }) catch unreachable;
-//             }
-//         }
+            const intersection = dir_prefix.bitwiseAnd(wrap_prefix.*);
+            if (!intersection.isEmpty()) {
+                var prefix = context.targets.prefixes(intersection, css.prefixes.Feature.flex_flow);
+                // Firefox only implemented the 2009 spec prefixed.
+                prefix.remove(css.VendorPrefix.MOZ);
+                dest.append(context.allocator, Property{ .@"flex-flow" = .{
+                    FlexFlow{
+                        .direction = dir.*,
+                        .wrap = wrapinner.*,
+                    },
+                    prefix,
+                } }) catch bun.outOfMemory();
+                dir_prefix.remove(intersection);
+                wrap_prefix.remove(intersection);
+            }
+        }
 
-//         if (box_lines) |val| {
-//             if (!val[1].isEmpty()) {
-//                 dest.append(context.allocator, Property{ .box_lines = val }) catch unreachable;
-//             }
-//         }
+        this.singleProperty("flex-direction", bun.take(&direction), null, null, dest, context, "flex_direction");
+        this.singleProperty("flex-wrap", bun.take(&wrap), null, .{ BoxLines, "box-lines" }, dest, context, "flex_wrap");
 
-//         if (flex_positive) |val| {
-//             if (!val[1].isEmpty()) {
-//                 dest.append(context.allocator, Property{ .flex_positive = val }) catch unreachable;
-//             }
-//         }
+        if (context.targets.browsers) |targets| {
+            if (grow) |val| {
+                const g = val[0];
+                const prefixes = context.targets.prefixes(css.VendorPrefix.NONE, css.prefixes.Feature.flex_grow);
+                var prefixes_2009 = css.VendorPrefix.empty();
+                if (isFlex2009(targets)) {
+                    prefixes_2009.insert(css.VendorPrefix.WEBKIT);
+                }
+                if (prefixes.contains(css.VendorPrefix.MOZ)) {
+                    prefixes_2009.insert(css.VendorPrefix.MOZ);
+                }
+                if (!prefixes_2009.isEmpty()) {
+                    dest.append(context.allocator, Property{ .@"box-flex" = .{ g, prefixes_2009 } }) catch bun.outOfMemory();
+                }
+            }
+        }
 
-//         if (flex_negative) |val| {
-//             if (!val[1].isEmpty()) {
-//                 dest.append(context.allocator, Property{ .flex_negative = val }) catch unreachable;
-//             }
-//         }
+        if (grow != null and shrink != null and basis != null) {
+            const g = grow.?[0];
+            const g_prefix: *VendorPrefix = &grow.?[1];
+            const s = shrink.?[0];
+            const s_prefix: *VendorPrefix = &shrink.?[1];
+            const b = basis.?[0];
+            const b_prefix: *VendorPrefix = &basis.?[1];
 
-//         if (preferred_size) |val| {
-//             if (!val[1].isEmpty()) {
-//                 dest.append(context.allocator, Property{ .flex_preferred_size = val }) catch unreachable;
-//             }
-//         }
+            const intersection = g_prefix.bitwiseAnd(s_prefix.bitwiseAnd(b_prefix.*));
+            if (!intersection.isEmpty()) {
+                var prefix = context.targets.prefixes(intersection, css.prefixes.Feature.flex);
+                // Firefox only implemented the 2009 spec prefixed.
+                prefix.remove(css.VendorPrefix.MOZ);
+                dest.append(context.allocator, Property{ .flex = .{
+                    Flex{
+                        .grow = g,
+                        .shrink = s,
+                        .basis = b,
+                    },
+                    prefix,
+                } }) catch bun.outOfMemory();
+                g_prefix.remove(intersection);
+                s_prefix.remove(intersection);
+                b_prefix.remove(intersection);
+            }
+        }
 
-//         if (flex_order) |val| {
-//             if (!val[1].isEmpty()) {
-//                 dest.append(context.allocator, Property{ .flex_order = val }) catch unreachable;
-//             }
-//         }
+        this.singleProperty("flex-grow", bun.take(&grow), "flex-positive", null, dest, context, "flex_grow");
+        this.singleProperty("flex-shrink", bun.take(&shrink), "flex-negative", null, dest, context, "flex_shrink");
+        this.singleProperty("flex-basis", bun.take(&basis), "flex-preferred-size", null, dest, context, "flex_basis");
+        this.singleProperty("order", bun.take(&order), "flex-order", .{ BoxOrdinalGroup, "box-ordinal-group" }, dest, context, "order");
+    }
 
-//         // Handle direction
-//         if (direction) |dir| {
-//             if (context.targets.browsers) |targets| {
-//                 const prefixes = context.targets.prefixes(VendorPrefix{ .none = true }, .flex_direction);
-//                 var prefixes_2009 = VendorPrefix{};
-//                 if (isFlexbox2009(targets)) {
-//                     prefixes_2009.insert(.webkit);
-//                 }
-//                 if (prefixes.contains(.moz)) {
-//                     prefixes_2009.insert(.moz);
-//                 }
-//                 if (!prefixes_2009.isEmpty()) {
-//                     const orient_dir = dir[0].to2009();
-//                     dest.append(context.allocator, Property{ .box_orient = .{ orient_dir[0], prefixes_2009 } }) catch unreachable;
-//                     dest.append(context.allocator, Property{ .box_direction = .{ orient_dir[1], prefixes_2009 } }) catch unreachable;
-//                 }
-//             }
-//         }
+    fn singleProperty(
+        this: *FlexHandler,
+        comptime prop: []const u8,
+        key: anytype,
+        comptime prop_2012: ?[]const u8,
+        comptime prop_2009: ?struct { type, []const u8 },
+        dest: *css.DeclarationList,
+        ctx: *css.PropertyHandlerContext,
+        comptime feature_name: []const u8,
+    ) void {
+        _ = this; // autofix
+        if (key) |value| {
+            const val = value[0];
+            var prefix = value[1];
+            if (!prefix.isEmpty()) {
+                prefix = ctx.targets.prefixes(prefix, @field(css.prefixes.Feature, feature_name));
+                if (comptime prop_2009) |p2009| {
+                    if (prefix.contains(css.VendorPrefix.NONE)) {
+                        // 2009 spec, implemented by webkit and firefox
+                        if (ctx.targets.browsers) |targets| {
+                            var prefixes_2009 = css.VendorPrefix.empty();
+                            if (isFlex2009(targets)) {
+                                prefixes_2009.insert(css.VendorPrefix.WEBKIT);
+                            }
+                            if (prefix.contains(css.VendorPrefix.MOZ)) {
+                                prefixes_2009.insert(css.VendorPrefix.MOZ);
+                            }
+                            if (!prefixes_2009.isEmpty()) {
+                                const s = brk: {
+                                    const T = comptime p2009[0];
+                                    if (comptime T == BoxOrdinalGroup) break :brk @as(?i32, val);
+                                    break :brk p2009[0].fromStandard(&val);
+                                };
+                                if (s) |v| {
+                                    dest.append(ctx.allocator, @unionInit(Property, p2009[1], .{
+                                        v,
+                                        prefixes_2009,
+                                    })) catch bun.outOfMemory();
+                                }
+                            }
+                        }
+                    }
+                }
 
-//         // Handle flex-flow
-//         if (direction != null and wrap != null) {
-//             const intersection = direction.?[1].intersect(wrap.?[1]);
-//             if (!intersection.isEmpty()) {
-//                 var prefix = context.targets.prefixes(intersection, .flex_flow);
-//                 // Firefox only implemented the 2009 spec prefixed.
-//                 prefix.remove(.moz);
-//                 dest.append(context.allocator, Property{ .flex_flow = .{
-//                     .{
-//                         .direction = direction.?[0],
-//                         .wrap = wrap.?[0],
-//                     },
-//                     prefix,
-//                 } }) catch unreachable;
-//                 direction.?[1].remove(intersection);
-//                 wrap.?[1].remove(intersection);
-//             }
-//         }
+                if (comptime prop_2012) |p2012| {
+                    var ms = true;
+                    if (prefix.contains(css.VendorPrefix.MS)) {
+                        dest.append(ctx.allocator, @unionInit(Property, p2012, .{
+                            val,
+                            css.VendorPrefix.MS,
+                        })) catch bun.outOfMemory();
+                        ms = false;
+                    }
 
-//         // Handle flex shorthand
-//         if (grow != null and shrink != null and basis != null) {
-//             const intersection = grow.?[1].intersect(shrink.?[1]).intersect(basis.?[1]);
-//             if (!intersection.isEmpty()) {
-//                 var prefix = context.targets.prefixes(intersection, .flex);
-//                 // Firefox only implemented the 2009 spec prefixed.
-//                 prefix.remove(.moz);
-//                 dest.append(context.allocator, Property{ .flex = .{
-//                     .{
-//                         .grow = grow.?[0],
-//                         .shrink = shrink.?[0],
-//                         .basis = basis.?[0],
-//                     },
-//                     prefix,
-//                 } }) catch unreachable;
-//                 grow.?[1].remove(intersection);
-//                 shrink.?[1].remove(intersection);
-//                 basis.?[1].remove(intersection);
-//             }
-//         }
+                    if (!ms) {
+                        prefix.remove(css.VendorPrefix.MS);
+                    }
+                }
 
-//         // Handle remaining individual properties
-//         if (direction) |dir| {
-//             if (!dir[1].isEmpty()) {
-//                 var prefix = context.targets.prefixes(dir[1], .flex_direction);
-//                 // Firefox only implemented the 2009 spec prefixed.
-//                 prefix.remove(.moz);
-//                 dest.append(context.allocator, Property{ .flex_direction = .{ dir[0], prefix } }) catch unreachable;
-//             }
-//         }
+                // Firefox only implemented the 2009 spec prefixed.
+                prefix.remove(css.VendorPrefix.MOZ);
+                dest.append(ctx.allocator, @unionInit(Property, prop, .{
+                    val,
+                    prefix,
+                })) catch bun.outOfMemory();
+            }
+        }
+    }
 
-//         if (wrap) |w| {
-//             if (!w[1].isEmpty()) {
-//                 var prefix = context.targets.prefixes(w[1], .flex_wrap);
-//                 // Firefox only implemented the 2009 spec prefixed.
-//                 prefix.remove(.moz);
-//                 dest.append(context.allocator, Property{ .flex_wrap = .{ w[0], prefix } }) catch unreachable;
-//             }
-//         }
+    fn legacyProperty(this: *FlexHandler, comptime field_name: []const u8, key: anytype, dest: *css.DeclarationList, ctx: *css.PropertyHandlerContext) void {
+        _ = this; // autofix
+        if (key) |value| {
+            const val = value[0];
+            const prefix = value[1];
+            if (!prefix.isEmpty()) {
+                dest.append(ctx.allocator, @unionInit(Property, field_name, .{
+                    val,
+                    prefix,
+                })) catch bun.outOfMemory();
+            } else {
+                // css.generic.eql(comptime T: type, lhs: *const T, rhs: *const T)
+                // css.generic.deinit(@TypeOf(val), &val, ctx.allocator);
+            }
+        }
+    }
 
-//         if (grow) |g| {
-//             if (!g[1].isEmpty()) {
-//                 var prefix = context.targets.prefixes(g[1], .flex_grow);
-//                 // Firefox only implemented the 2009 spec prefixed.
-//                 prefix.remove(.moz);
-//                 dest.append(context.allocator, Property{ .flex_grow = .{ g[0], prefix } }) catch unreachable;
-//             }
-//         }
-
-//         if (shrink) |s| {
-//             if (!s[1].isEmpty()) {
-//                 var prefix = context.targets.prefixes(s[1], .flex_shrink);
-//                 // Firefox only implemented the 2009 spec prefixed.
-//                 prefix.remove(.moz);
-//                 dest.append(context.allocator, Property{ .flex_shrink = .{ s[0], prefix } }) catch unreachable;
-//             }
-//         }
-
-//         if (basis) |b| {
-//             if (!b[1].isEmpty()) {
-//                 var prefix = context.targets.prefixes(b[1], .flex_basis);
-//                 // Firefox only implemented the 2009 spec prefixed.
-//                 prefix.remove(.moz);
-//                 dest.append(context.allocator, Property{ .flex_basis = .{ b[0], prefix } }) catch unreachable;
-//             }
-//         }
-
-//         if (order) |o| {
-//             if (!o[1].isEmpty()) {
-//                 var prefix = context.targets.prefixes(o[1], .order);
-//                 // Firefox only implemented the 2009 spec prefixed.
-//                 prefix.remove(.moz);
-//                 dest.append(context.allocator, Property{ .order = .{ o[0], prefix } }) catch unreachable;
-//             }
-//         }
-//     }
-
-//     fn isFlexProperty(property_id: *const PropertyId) bool {
-//         return switch (property_id.*) {
-//             .flex_direction,
-//             .box_orient,
-//             .box_direction,
-//             .flex_wrap,
-//             .box_lines,
-//             .flex_flow,
-//             .flex_grow,
-//             .box_flex,
-//             .flex_positive,
-//             .flex_shrink,
-//             .flex_negative,
-//             .flex_basis,
-//             .flex_preferred_size,
-//             .flex,
-//             .order,
-//             .box_ordinal_group,
-//             .flex_order,
-//             => true,
-//             else => false,
-//         };
-//     }
-// };
+    fn isFlexProperty(property_id: *const PropertyId) bool {
+        return switch (property_id.*) {
+            .@"flex-direction",
+            .@"box-orient",
+            .@"box-direction",
+            .@"flex-wrap",
+            .@"box-lines",
+            .@"flex-flow",
+            .@"flex-grow",
+            .@"box-flex",
+            .@"flex-positive",
+            .@"flex-shrink",
+            .@"flex-negative",
+            .@"flex-basis",
+            .@"flex-preferred-size",
+            .flex,
+            .order,
+            .@"box-ordinal-group",
+            .@"flex-order",
+            => true,
+            else => false,
+        };
+    }
+};

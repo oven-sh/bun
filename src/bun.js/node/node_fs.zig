@@ -3817,7 +3817,7 @@ pub const NodeFS = struct {
 
     pub fn fstat(_: *NodeFS, args: Arguments.Fstat, _: Flavor) Maybe(Return.Fstat) {
         return switch (Syscall.fstat(args.fd)) {
-            .result => |result| .{ .result = Stats.init(result, false) },
+            .result => |result| .{ .result = Stats.init(result, args.big_int) },
             .err => |err| .{ .err = err },
         };
     }

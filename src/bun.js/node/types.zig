@@ -1664,9 +1664,10 @@ pub fn StatType(comptime big: bool) type {
         const StatTimespec = if (Environment.isWindows) bun.windows.libuv.uv_timespec_t else std.posix.timespec;
 
         inline fn toNanoseconds(ts: StatTimespec) Timestamp {
-            const tv_sec: i64 = @intCast(ts.tv_sec);
-            const tv_nsec: i64 = @intCast(ts.tv_nsec);
-            return @as(Timestamp, @intCast(tv_sec * 1_000_000_000)) + @as(Timestamp, @intCast(tv_nsec));
+            return bun.timespec.ns(&bun.timespec{
+                .sec = @intCast(ts.tv_sec),
+                .nsec = @intCast(ts.tv_nsec),
+            });
         }
 
         fn toTimeMS(ts: StatTimespec) Float {
@@ -1683,8 +1684,10 @@ pub fn StatType(comptime big: bool) type {
                 return @as(i64, sec * std.time.ms_per_s) +
                     @as(i64, @divTrunc(nsec, std.time.ns_per_ms));
             } else {
-                return (@as(f64, @floatFromInt(tv_sec)) * std.time.ms_per_s) +
-                    (@as(f64, @floatFromInt(tv_nsec)) / std.time.ns_per_ms);
+                return @floatFromInt(bun.timespec.ms(&bun.timespec{
+                    .sec = @intCast(tv_sec),
+                    .nsec = @intCast(tv_nsec),
+                }));
             }
         }
 

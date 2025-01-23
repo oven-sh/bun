@@ -35,6 +35,7 @@ pub const AnyPostgresError = error{
     PBKDFD2,
     SASL_SIGNATURE_MISMATCH,
     SASL_SIGNATURE_INVALID_BASE64,
+    SASL_NO_KNOWN_MECHANISM,
     ShortRead,
     TLSNotAvailable,
     TLSUpgradeFailed,
@@ -1418,6 +1419,7 @@ pub const PostgresSQLConnection = struct {
             error.NullsInArrayNotSupportedYet => JSC.Error.ERR_POSTGRES_NULLS_IN_ARRAY_NOT_SUPPORTED_YET,
             error.Overflow => JSC.Error.ERR_POSTGRES_OVERFLOW,
             error.PBKDFD2 => JSC.Error.ERR_POSTGRES_AUTHENTICATION_FAILED_PBKDF2,
+            error.SASL_NO_KNOWN_MECHANISM => JSC.Error.ERR_POSTGRES_SASL_NO_KNOWN_MECHANISM,
             error.SASL_SIGNATURE_MISMATCH => JSC.Error.ERR_POSTGRES_SASL_SIGNATURE_MISMATCH,
             error.SASL_SIGNATURE_INVALID_BASE64 => JSC.Error.ERR_POSTGRES_SASL_SIGNATURE_INVALID_BASE64,
             error.TLSNotAvailable => JSC.Error.ERR_POSTGRES_TLS_NOT_AVAILABLE,
@@ -2664,12 +2666,15 @@ pub const PostgresSQLConnection = struct {
                         if (this.authentication_state != .SASL) {
                             this.authentication_state = .{ .SASL = .{} };
                         }
+                        debug("SASL, mechanisms offered: SCRAM-SHA-256 {any}, SCRAM-SHA-256-PLUS {any}", .{ auth.SASL.hasScramSha256, auth.SASL.hasScramSha256Plus });
 
+                        const mechanism_name = if (auth.SASL.hasScramSha256Plus) "SCRAM-SHA-256-PLUS" else "SCRAM-SHA-256";
+                        const gs2_header = if (auth.SASL.hasScramSha256Plus) "p=tls-server-end-point,," else "y,,";
                         var mechanism_buf: [128]u8 = undefined;
-                        const mechanism = std.fmt.bufPrintZ(&mechanism_buf, "n,,n=*,r={s}", .{this.authentication_state.SASL.nonce()}) catch unreachable;
+                        const mechanism = std.fmt.bufPrintZ(&mechanism_buf, "{s},,n=*,r={s}", .{ gs2_header, this.authentication_state.SASL.nonce() }) catch unreachable;
                         var response = protocol.SASLInitialResponse{
                             .mechanism = .{
-                                .temporary = "SCRAM-SHA-256",
+                                .temporary = mechanism_name,
                             },
                             .data = .{
                                 .temporary = mechanism,
@@ -2677,12 +2682,12 @@ pub const PostgresSQLConnection = struct {
                         };
 
                         try response.writeInternal(PostgresSQLConnection.Writer, this.writer());
-                        debug("SASL", .{});
+                        debug("SASL, mechanism selected: {s}", .{mechanism_name});
                         this.flushData();
                     },
                     .SASLContinue => |*cont| {
                         if (this.authentication_state != .SASL) {
-                            debug("Unexpected SASLContinue for authentiation state: {s}", .{@tagName(std.meta.activeTag(this.authentication_state))});
+                            debug("Unexpected SASLContinue for authentication state: {s}", .{@tagName(std.meta.activeTag(this.authentication_state))});
                             return error.UnexpectedMessage;
                         }
                         var sasl = &this.authentication_state.SASL;

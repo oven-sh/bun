@@ -1473,9 +1473,7 @@ pub const ModuleLoader = struct {
         var jsc_vm = global.bunVM();
         const filename = str.toUTF8(jsc_vm.allocator);
         defer filename.deinit();
-        // This is called from handleOnLoadResultNotPromise. Is this correct behaviour? Or should handleOnLoadResultNotPromise
-        // be called with a loader in order to not need this fn?
-        const loader = jsc_vm.transpiler.options.loaderForExtension(Fs.PathName.init(filename.slice()).ext).toAPI();
+        const loader = jsc_vm.transpiler.options.loader(Fs.PathName.init(filename.slice()).ext).toAPI();
         if (loader == .file) {
             return Api.Loader.js;
         }

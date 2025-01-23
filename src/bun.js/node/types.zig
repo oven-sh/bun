@@ -1295,20 +1295,49 @@ fn timeLikeFromMilliseconds(milliseconds: f64) TimeLike {
     if (Environment.isWindows) {
         return milliseconds / 1000.0;
     }
+
+    var sec: f64 = @divFloor(milliseconds, std.time.ms_per_s);
+    var nsec: f64 = @mod(milliseconds, std.time.ms_per_s) * std.time.ns_per_ms;
+
+    if (nsec < 0) {
+        nsec += std.time.ns_per_s;
+        sec -= 1;
+    }
+
     return .{
-        .tv_sec = @intFromFloat(@divFloor(milliseconds, std.time.ms_per_s)),
-        .tv_nsec = @intFromFloat(@mod(milliseconds, std.time.ms_per_s) * std.time.ns_per_ms),
+        .tv_sec = @intFromFloat(sec),
+        .tv_nsec = @intFromFloat(nsec),
     };
 }
 
 fn timeLikeFromNow() TimeLike {
-    const nanos = std.time.nanoTimestamp();
     if (Environment.isWindows) {
+        const nanos = std.time.nanoTimestamp();
         return @as(TimeLike, @floatFromInt(nanos)) / std.time.ns_per_s;
     }
+
+    // Permissions requirements
+    //        To set both file timestamps to the current time (i.e., times is
+    //        NULL, or both tv_nsec fields specify UTIME_NOW), either:
+    //
+    //        •  the caller must have write access to the file;
+    //
+    //        •  the caller's effective user ID must match the owner of the
+    //           file; or
+    //
+    //        •  the caller must have appropriate privileges.
+    //
+    //        To make any change other than setting both timestamps to the
+    //        current time (i.e., times is not NULL, and neither tv_nsec field
+    //        is UTIME_NOW and neither tv_nsec field is UTIME_OMIT), either
+    //        condition 2 or 3 above must apply.
+    //
+    //        If both tv_nsec fields are specified as UTIME_OMIT, then no file
+    //        ownership or permission checks are performed, and the file
+    //        timestamps are not modified, but other error conditions may still
     return .{
-        .tv_sec = @truncate(@divFloor(nanos, std.time.ns_per_s)),
-        .tv_nsec = @truncate(@mod(nanos, std.time.ns_per_s)),
+        .tv_sec = 0,
+        .tv_nsec = if (Environment.isLinux) std.os.linux.UTIME.NOW else bun.C.translated.UTIME_NOW,
     };
 }
 
@@ -1635,9 +1664,17 @@ pub fn StatType(comptime big: bool) type {
         const StatTimespec = if (Environment.isWindows) bun.windows.libuv.uv_timespec_t else std.posix.timespec;
 
         inline fn toNanoseconds(ts: StatTimespec) Timestamp {
-            const tv_sec: i64 = @intCast(ts.tv_sec);
-            const tv_nsec: i64 = @intCast(ts.tv_nsec);
-            return @as(Timestamp, @intCast(tv_sec * 1_000_000_000)) + @as(Timestamp, @intCast(tv_nsec));
+            if (ts.tv_sec < 0) {
+                return @intCast(@max(bun.timespec.nsSigned(&bun.timespec{
+                    .sec = @intCast(ts.tv_sec),
+                    .nsec = @intCast(ts.tv_nsec),
+                }), 0));
+            }
+
+            return bun.timespec.ns(&bun.timespec{
+                .sec = @intCast(ts.tv_sec),
+                .nsec = @intCast(ts.tv_nsec),
+            });
         }
 
         fn toTimeMS(ts: StatTimespec) Float {
@@ -1654,8 +1691,10 @@ pub fn StatType(comptime big: bool) type {
                 return @as(i64, sec * std.time.ms_per_s) +
                     @as(i64, @divTrunc(nsec, std.time.ns_per_ms));
             } else {
-                return (@as(f64, @floatFromInt(tv_sec)) * std.time.ms_per_s) +
-                    (@as(f64, @floatFromInt(tv_nsec)) / std.time.ns_per_ms);
+                return @floatFromInt(bun.timespec.ms(&bun.timespec{
+                    .sec = @intCast(tv_sec),
+                    .nsec = @intCast(tv_nsec),
+                }));
             }
         }
 
@@ -2478,3 +2517,6 @@ pub const StatFS = union(enum) {
         @compileError("Only use Stats.toJSNewlyCreated() or Stats.toJS() directly on a StatsBig or StatsSmall");
     }
 };
+
+pub const uid_t = if (Environment.isPosix) std.posix.uid_t else bun.windows.libuv.uv_uid_t;
+pub const gid_t = if (Environment.isPosix) std.posix.gid_t else bun.windows.libuv.uv_gid_t;

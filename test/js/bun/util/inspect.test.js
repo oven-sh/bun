@@ -602,3 +602,8 @@ it("console.log on a arguments shows list", () => {
 it("console.log on null prototype", () => {
   expect(Bun.inspect(Object.create(null))).toBe("[Object: null prototype] {}");
 });
+
+it("Symbol", () => {
+  expect(Bun.inspect(Symbol())).toBe("Symbol()");
+  expect(Bun.inspect(Symbol(""))).toBe("Symbol()");
+});

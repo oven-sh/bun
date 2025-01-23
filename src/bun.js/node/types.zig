@@ -1300,7 +1300,7 @@ fn timeLikeFromMilliseconds(milliseconds: f64) TimeLike {
     var nsec: f64 = @mod(milliseconds, std.time.ms_per_s) * std.time.ns_per_ms;
 
     if (nsec < 0) {
-        nsec += 1e6;
+        nsec += std.time.ns_per_s;
         sec -= 1;
     }
 
@@ -1664,6 +1664,13 @@ pub fn StatType(comptime big: bool) type {
         const StatTimespec = if (Environment.isWindows) bun.windows.libuv.uv_timespec_t else std.posix.timespec;
 
         inline fn toNanoseconds(ts: StatTimespec) Timestamp {
+            if (ts.tv_sec < 0) {
+                return @intCast(@max(bun.timespec.nsSigned(&bun.timespec{
+                    .sec = @intCast(ts.tv_sec),
+                    .nsec = @intCast(ts.tv_nsec),
+                }), 0));
+            }
+
             return bun.timespec.ns(&bun.timespec{
                 .sec = @intCast(ts.tv_sec),
                 .nsec = @intCast(ts.tv_nsec),

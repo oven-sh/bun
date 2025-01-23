@@ -3757,8 +3757,16 @@ pub const timespec = extern struct {
             return max;
     }
 
-    pub fn ms(this: *const timespec) u64 {
-        return this.ns() / std.time.ns_per_ms;
+    pub fn nsSigned(this: *const timespec) i64 {
+        const ns_per_sec = this.sec *% std.time.ns_per_s;
+        const ns_from_nsec = @divFloor(this.nsec, 1_000_000);
+        return ns_per_sec +% ns_from_nsec;
+    }
+
+    pub fn ms(this: *const timespec) i64 {
+        const ms_from_sec = this.sec *% 1000;
+        const ms_from_nsec = @divFloor(this.nsec, 1_000_000);
+        return ms_from_sec +% ms_from_nsec;
     }
 
     pub fn greater(a: *const timespec, b: *const timespec) bool {

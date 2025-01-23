@@ -18,10 +18,35 @@ function getFilename() {
   return filename;
 }
 
+const allStatKeys = [
+  "dev",
+  "ino",
+  "mode",
+  "nlink",
+  "uid",
+  "gid",
+  "rdev",
+  "size",
+  "blksize",
+  "blocks",
+  "atime",
+  "mtime",
+  "ctime",
+  "birthtime",
+  "atimeMs",
+  "mtimeMs",
+  "ctimeMs",
+  "birthtimeMs",
+  "atimeNs",
+  "mtimeNs",
+  "ctimeNs",
+  "birthtimeNs",
+];
+const statKeys = allStatKeys.filter((key) => !key.endsWith("Ns"));
 function verifyStats(bigintStats, numStats, allowableDelta) {
   // allowableDelta: It's possible that the file stats are updated between the
   // two stat() calls so allow for a small difference.
-  for (const key of Object.keys(numStats)) {
+  for (const key of statKeys) {
     const val = numStats[key];
     if (isDate(val)) {
       const time = val.getTime();

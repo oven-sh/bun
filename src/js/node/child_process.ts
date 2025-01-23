@@ -1275,12 +1275,16 @@ class ChildProcess extends EventEmitter {
       env: env,
       detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,
       onExit: (handle, exitCode, signalCode, err) => {
-        if (hasSocketsToEagerlyLoad) {
-          this.stdio;
-        }
-        $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
         this.#handle = handle;
         this.pid = this.#handle.pid;
+        $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
+
+        if (hasSocketsToEagerlyLoad) {
+          process.nextTick(() => {
+            this.stdio;
+            $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
+          });
+        }
 
         process.nextTick(
           (exitCode, signalCode, err) => this.#handleOnExit(exitCode, signalCode, err),

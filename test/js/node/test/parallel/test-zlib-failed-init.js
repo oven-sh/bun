@@ -11,7 +11,7 @@ assert.throws(
     code: 'ERR_OUT_OF_RANGE',
     name: 'RangeError',
     message: 'The value of "options.chunkSize" is out of range. It must ' +
-             'be >= 64. Received: 0'
+             'be >= 64. Received 0'
   }
 );
 

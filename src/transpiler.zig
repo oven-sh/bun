@@ -41,7 +41,7 @@ const Router = @import("./router.zig");
 const isPackagePath = _resolver.isPackagePath;
 const Css = @import("css_scanner.zig");
 const DotEnv = @import("./env_loader.zig");
-const Lock = @import("./lock.zig").Lock;
+const Lock = bun.Mutex;
 const NodeFallbackModules = @import("./node_fallbacks.zig");
 const CacheEntry = @import("./cache.zig").FsCacheEntry;
 const Analytics = @import("./analytics/analytics_thread.zig");
@@ -260,6 +260,7 @@ pub const PluginRunner = struct {
             importer,
             target,
         ) orelse return null;
+        if (!on_resolve_plugin.isObject()) return null;
         const path_value = try on_resolve_plugin.get(global, "path") orelse return null;
         if (path_value.isEmptyOrUndefinedOrNull()) return null;
         if (!path_value.isString()) {
@@ -396,7 +397,7 @@ pub const Transpiler = struct {
     }
 
     fn _resolveEntryPoint(transpiler: *Transpiler, entry_point: string) !_resolver.Result {
-        return transpiler.resolver.resolveWithFramework(transpiler.fs.top_level_dir, entry_point, .entry_point) catch |err| {
+        return transpiler.resolver.resolveWithFramework(transpiler.fs.top_level_dir, entry_point, .entry_point_build) catch |err| {
             // Relative entry points that were not resolved to a node_modules package are
             // interpreted as relative to the current working directory.
             if (!std.fs.path.isAbsolute(entry_point) and
@@ -406,7 +407,7 @@ pub const Transpiler = struct {
                     return transpiler.resolver.resolve(
                         transpiler.fs.top_level_dir,
                         try strings.append(transpiler.allocator, "./", entry_point),
-                        .entry_point,
+                        .entry_point_build,
                     ) catch {
                         // return the original error
                         break :brk;
@@ -841,6 +842,8 @@ pub const Transpiler = struct {
         outstream: Outstream,
         client_entry_point_: ?*EntryPoints.ClientEntryPoint,
     ) !?options.OutputFile {
+        _ = outstream;
+
         if (resolve_result.is_external) {
             return null;
         }
@@ -932,113 +935,44 @@ pub const Transpiler = struct {
                 Output.panic("TODO: dataurl, base64", .{}); // TODO
             },
             .css => {
-                if (transpiler.options.experimental_css) {
-                    const alloc = transpiler.allocator;
+                const alloc = transpiler.allocator;
 
-                    const entry = transpiler.resolver.caches.fs.readFileWithAllocator(
-                        transpiler.allocator,
-                        transpiler.fs,
-                        file_path.text,
-                        resolve_result.dirname_fd,
-                        false,
-                        null,
-                    ) catch |err| {
-                        transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{s} reading \"{s}\"", .{ @errorName(err), file_path.pretty }) catch {};
+                const entry = transpiler.resolver.caches.fs.readFileWithAllocator(
+                    transpiler.allocator,
+                    transpiler.fs,
+                    file_path.text,
+                    resolve_result.dirname_fd,
+                    false,
+                    null,
+                ) catch |err| {
+                    transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{s} reading \"{s}\"", .{ @errorName(err), file_path.pretty }) catch {};
+                    return null;
+                };
+                var sheet = switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parse(alloc, entry.contents, bun.css.ParserOptions.default(alloc, transpiler.log), null)) {
+                    .result => |v| v,
+                    .err => |e| {
+                        transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{} parsing", .{e}) catch unreachable;
                         return null;
-                    };
-                    var sheet = switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parse(alloc, entry.contents, bun.css.ParserOptions.default(alloc, transpiler.log), null)) {
-                        .result => |v| v,
-                        .err => |e| {
-                            transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{} parsing", .{e}) catch unreachable;
-                            return null;
-                        },
-                    };
-                    if (sheet.minify(alloc, bun.css.MinifyOptions.default()).asErr()) |e| {
-                        transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{} while minifying", .{e.kind}) catch bun.outOfMemory();
-                        return null;
-                    }
-                    const result = sheet.toCss(alloc, bun.css.PrinterOptions{
-                        .targets = bun.css.Targets.forBundlerTarget(transpiler.options.target),
-                        .minify = transpiler.options.minify_whitespace,
-                    }, null) catch |e| {
-                        bun.handleErrorReturnTrace(e, @errorReturnTrace());
-                        return null;
-                    };
-                    output_file.value = .{ .buffer = .{ .allocator = alloc, .bytes = result.code } };
-                } else {
-                    var file: bun.sys.File = undefined;
-
-                    if (Outstream == std.fs.Dir) {
-                        const output_dir = outstream;
-
-                        if (std.fs.path.dirname(file_path.pretty)) |dirname| {
-                            try output_dir.makePath(dirname);
-                        }
-                        file = bun.sys.File.from(try output_dir.createFile(file_path.pretty, .{}));
-                    } else {
-                        file = bun.sys.File.from(outstream);
-                    }
-
-                    const CSSBuildContext = struct {
-                        origin: URL,
-                    };
-                    const build_ctx = CSSBuildContext{ .origin = transpiler.options.origin };
-
-                    const BufferedWriter = std.io.CountingWriter(std.io.BufferedWriter(8192, bun.sys.File.Writer));
-                    const CSSWriter = Css.NewWriter(
-                        BufferedWriter.Writer,
-                        @TypeOf(&transpiler.linker),
-                        import_path_format,
-                        CSSBuildContext,
-                    );
-                    var buffered_writer = BufferedWriter{
-                        .child_stream = .{ .unbuffered_writer = file.writer() },
-                        .bytes_written = 0,
-                    };
-                    const entry = transpiler.resolver.caches.fs.readFile(
-                        transpiler.fs,
-                        file_path.text,
-                        resolve_result.dirname_fd,
-                        !cache_files,
-                        null,
-                    ) catch return null;
-
-                    const _file = Fs.PathContentsPair{ .path = file_path, .contents = entry.contents };
-                    var source = try logger.Source.initFile(_file, transpiler.allocator);
-                    source.contents_is_recycled = !cache_files;
-
-                    var css_writer = CSSWriter.init(
-                        &source,
-                        buffered_writer.writer(),
-                        &transpiler.linker,
-                        transpiler.log,
-                    );
-
-                    css_writer.buildCtx = build_ctx;
-
-                    try css_writer.run(transpiler.log, transpiler.allocator);
-                    try css_writer.ctx.context.child_stream.flush();
-                    output_file.size = css_writer.ctx.context.bytes_written;
-                    var file_op = options.OutputFile.FileOperation.fromFile(file.handle, file_path.pretty);
-
-                    file_op.fd = bun.toFD(file.handle);
-
-                    file_op.is_tmpdir = false;
-
-                    if (Outstream == std.fs.Dir) {
-                        file_op.dir = bun.toFD(outstream.fd);
-
-                        if (transpiler.fs.fs.needToCloseFiles()) {
-                            file.close();
-                            file_op.fd = .zero;
-                        }
-                    }
-
-                    output_file.value = .{ .move = file_op };
+                    },
+                };
+                if (sheet.minify(alloc, bun.css.MinifyOptions.default()).asErr()) |e| {
+                    transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{} while minifying", .{e.kind}) catch bun.outOfMemory();
+                    return null;
                 }
+                const result = switch (sheet.toCss(alloc, bun.css.PrinterOptions{
+                    .targets = bun.css.Targets.forBundlerTarget(transpiler.options.target),
+                    .minify = transpiler.options.minify_whitespace,
+                }, null)) {
+                    .result => |v| v,
+                    .err => |e| {
+                        transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{} while printing", .{e}) catch bun.outOfMemory();
+                        return null;
+                    },
+                };
+                output_file.value = .{ .buffer = .{ .allocator = alloc, .bytes = result.code } };
             },
 
-            .bunsh, .sqlite_embedded, .sqlite, .wasm, .file, .napi => {
+            .html, .bunsh, .sqlite_embedded, .sqlite, .wasm, .file, .napi => {
                 const hashed_name = try transpiler.linker.getHashedFilename(file_path, null);
                 var pathname = try transpiler.allocator.alloc(u8, hashed_name.len + file_path.name.ext.len);
                 bun.copy(u8, pathname, hashed_name);
@@ -1083,6 +1017,7 @@ pub const Transpiler = struct {
                 source,
                 false,
                 .{
+                    .bundling = false,
                     .runtime_imports = ast.runtime_imports,
                     .require_ref = ast.require_ref,
                     .css_import_behavior = transpiler.options.cssImportBehavior(),
@@ -1105,6 +1040,7 @@ pub const Transpiler = struct {
                 source,
                 false,
                 .{
+                    .bundling = false,
                     .runtime_imports = ast.runtime_imports,
                     .require_ref = ast.require_ref,
                     .source_map_handler = source_map_context,
@@ -1128,6 +1064,7 @@ pub const Transpiler = struct {
                     source,
                     is_bun,
                     .{
+                        .bundling = false,
                         .runtime_imports = ast.runtime_imports,
                         .require_ref = ast.require_ref,
                         .css_import_behavior = transpiler.options.cssImportBehavior(),
@@ -1362,7 +1299,6 @@ pub const Transpiler = struct {
                 opts.features.allow_runtime = transpiler.options.allow_runtime;
                 opts.features.set_breakpoint_on_first_line = this_parse.set_breakpoint_on_first_line;
                 opts.features.trim_unused_imports = transpiler.options.trim_unused_imports orelse loader.isTypeScript();
-                opts.features.use_import_meta_require = target.isBun();
                 opts.features.no_macros = transpiler.options.no_macros;
                 opts.features.runtime_transpiler_cache = this_parse.runtime_transpiler_cache;
                 opts.transform_only = transpiler.options.transform_only;
@@ -1781,7 +1717,7 @@ pub const Transpiler = struct {
                 js_ast.Stmt.Data.Store.reset();
             }
 
-            const result = transpiler.resolver.resolve(transpiler.fs.top_level_dir, entry, .entry_point) catch |err| {
+            const result = transpiler.resolver.resolve(transpiler.fs.top_level_dir, entry, .entry_point_build) catch |err| {
                 Output.prettyError("Error resolving \"{s}\": {s}\n", .{ entry, @errorName(err) });
                 continue;
             };

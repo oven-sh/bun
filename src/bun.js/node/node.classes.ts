@@ -2,6 +2,80 @@ import { define } from "../../codegen/class-definitions";
 
 export default [
   define({
+    name: "DNSResolver",
+    construct: false,
+    noConstructor: true,
+    finalize: true,
+    configurable: false,
+    klass: {},
+    proto: {
+      setServers: {
+        fn: "setServers",
+        length: 1,
+      },
+      getServers: {
+        fn: "getServers",
+        length: 0,
+      },
+      resolve: {
+        fn: "resolve",
+        length: 3,
+      },
+      resolveSrv: {
+        fn: "resolveSrv",
+        length: 1,
+      },
+      resolveTxt: {
+        fn: "resolveTxt",
+        length: 1,
+      },
+      resolveSoa: {
+        fn: "resolveSoa",
+        length: 1,
+      },
+      resolveNaptr: {
+        fn: "resolveNaptr",
+        length: 1,
+      },
+      resolveMx: {
+        fn: "resolveMx",
+        length: 1,
+      },
+      resolveCaa: {
+        fn: "resolveCaa",
+        length: 1,
+      },
+      resolveNs: {
+        fn: "resolveNs",
+        length: 1,
+      },
+      resolvePtr: {
+        fn: "resolvePtr",
+        length: 1,
+      },
+      resolveCname: {
+        fn: "resolveCname",
+        length: 1,
+      },
+      resolveAny: {
+        fn: "resolveAny",
+        length: 1,
+      },
+      setLocalAddress: {
+        fn: "setLocalAddress",
+        length: 1,
+      },
+      cancel: {
+        fn: "cancel",
+        length: 0,
+      },
+      reverse: {
+        fn: "reverse",
+        length: 1,
+      },
+    },
+  }),
+  define({
     name: "FSWatcher",
     construct: false,
     noConstructor: true,
@@ -497,8 +571,6 @@ export default [
       mkdtempSync: { fn: "mkdtempSync", length: 2 },
       open: { fn: "open", length: 4 },
       openSync: { fn: "openSync", length: 3 },
-      opendir: { fn: "opendir", length: 3 },
-      opendirSync: { fn: "opendirSync", length: 2 },
       readdir: { fn: "readdir", length: 3 },
       readdirSync: { fn: "readdirSync", length: 2 },
       read: { fn: "read", length: 6 },
@@ -518,7 +590,9 @@ export default [
       rmdir: { fn: "rmdir", length: 3 },
       rmdirSync: { fn: "rmdirSync", length: 2 },
       stat: { fn: "stat", length: 1 },
+      statfs: { fn: "statfs", length: 2 },
       statSync: { fn: "statSync", length: 1 },
+      statfsSync: { fn: "statfsSync", length: 2 },
       symlink: { fn: "symlink", length: 4 },
       symlinkSync: { fn: "symlinkSync", length: 3 },
       truncate: { fn: "truncate", length: 3 },
@@ -536,17 +610,79 @@ export default [
       writeSync: { fn: "writeSync", length: 5 },
       writev: { fn: "writev", length: 4 },
       writevSync: { fn: "writevSync", length: 3 },
-      // TODO:
-      // Dir: { fn: 'Dir', length: 3 },
+      realpathNative: { fn: "realpathNative", length: 3 },
+      realpathNativeSync: { fn: "realpathNativeSync", length: 3 },
       Dirent: { getter: "getDirent" },
       Stats: { getter: "getStats" },
-      // ReadStream: { fn: 'ReadStream', length: 2 },
-      // WriteStream: { fn: 'WriteStream', length: 2 },
-      // FileReadStream: { fn: 'FileReadStream', length: 2 },
-      // FileWriteStream: { fn: 'FileWriteStream', length: 2 },
-      // _toUnixTimestamp: { fn: '_toUnixTimestamp', length: 1 }
-      // createReadStream: { fn: "createReadStream", length: 2 },
-      // createWriteStream: { fn: "createWriteStream", length: 2 },
+    },
+  }),
+  define({
+    name: "StatFs",
+    construct: true,
+    finalize: true,
+    klass: {},
+    JSType: "0b11101110",
+
+    supportsObjectCreate: true,
+
+    // TODO: make these own properties to pass test-fs-statfs.js
+    proto: {
+      type: {
+        getter: "fstype",
+      },
+      bsize: {
+        getter: "bsize",
+      },
+      blocks: {
+        getter: "blocks",
+      },
+      bfree: {
+        getter: "bfree",
+      },
+      bavail: {
+        getter: "bavail",
+      },
+      files: {
+        getter: "files",
+      },
+      ffree: {
+        getter: "ffree",
+      },
+    },
+  }),
+  define({
+    name: "BigIntStatFs",
+    construct: true,
+    finalize: true,
+    klass: {},
+    JSType: "0b11101110",
+
+    supportsObjectCreate: true,
+
+    // TODO: make these own properties to pass test-fs-statfs.js
+    proto: {
+      type: {
+        getter: "fstype",
+      },
+      bsize: {
+        getter: "bsize",
+      },
+      blocks: {
+        getter: "blocks",
+      },
+      bfree: {
+        getter: "bfree",
+      },
+      bavail: {
+        getter: "bavail",
+      },
+      files: {
+        getter: "files",
+      },
+      ffree: {
+        getter: "ffree",
+      },
     },
   }),
 ];
+

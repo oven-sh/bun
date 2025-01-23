@@ -1,6 +1,7 @@
 #include "root.h"
 #include "wtf-bindings.h"
-
+#include <wtf/StackBounds.h>
+#include <wtf/StackCheck.h>
 #include <wtf/StackTrace.h>
 #include <wtf/dtoa.h>
 #include <atomic>
@@ -235,6 +236,18 @@ size_t toISOString(JSC::VM& vm, double date, char in[64])
         return 0;
 
     return charactersWritten;
+}
+
+static thread_local WTF::StackBounds stackBoundsForCurrentThread = WTF::StackBounds::emptyBounds();
+
+extern "C" void Bun__StackCheck__initialize()
+{
+    stackBoundsForCurrentThread = WTF::StackBounds::currentThreadStackBounds();
+}
+
+extern "C" void* Bun__StackCheck__getMaxStack()
+{
+    return stackBoundsForCurrentThread.end();
 }
 
 }

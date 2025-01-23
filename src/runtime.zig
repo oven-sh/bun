@@ -149,12 +149,15 @@ pub const Fallback = struct {
 };
 
 pub const Runtime = struct {
-    pub const source_code = @embedFile("runtime.out.js");
-    pub const hash = brk: {
-        @setEvalBranchQuota(source_code.len * 50);
-        break :brk bun.Wyhash11.hash(0, source_code);
-    };
+    pub fn sourceCode() string {
+        return if (Environment.codegen_embed)
+            @embedFile("runtime.out.js")
+        else
+            bun.runtimeEmbedFile(.codegen, "runtime.out.js");
+    }
+
     pub fn versionHash() u32 {
+        const hash = bun.Wyhash11.hash(0, sourceCode());
         return @truncate(hash);
     }
 
@@ -190,10 +193,6 @@ pub const Runtime = struct {
         set_breakpoint_on_first_line: bool = false,
 
         trim_unused_imports: bool = false,
-
-        /// Use `import.meta.require()` instead of require()?
-        /// This is only supported with --target=bun
-        use_import_meta_require: bool = false,
 
         /// Allow runtime usage of require(), converting `require` into `__require`
         auto_polyfill_require: bool = false,
@@ -240,7 +239,6 @@ pub const Runtime = struct {
             .dead_code_elimination,
             .set_breakpoint_on_first_line,
             .trim_unused_imports,
-            .use_import_meta_require,
             .dont_bundle_twice,
             .commonjs_at_runtime,
             .emit_decorator_metadata,

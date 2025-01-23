@@ -13,7 +13,7 @@ pub const igLog = bun.Output.scoped(.IncrementalGraph, false);
 pub const Options = struct {
     /// Arena must live until DevServer.deinit()
     arena: Allocator,
-    root: []const u8,
+    root: [:0]const u8,
     vm: *VirtualMachine,
     framework: bake.Framework,
     bundler_options: bake.SplitBundlerOptions,
@@ -83,7 +83,7 @@ server_fetch_function_callback: JSC.Strong,
 server_register_update_callback: JSC.Strong,
 
 // Watching
-bun_watcher: *JSC.Watcher,
+bun_watcher: *bun.Watcher,
 directory_watchers: DirectoryWatchStore,
 watcher_atomics: WatcherAtomics,
 
@@ -761,11 +761,9 @@ fn onRequestWithBundle(
             // routerTypeMain
             router_type.server_file_string.get() orelse str: {
                 const name = dev.server_graph.bundled_files.keys()[fromOpaqueFileId(.server, router_type.server_file).get()];
-                const str = bun.String.createUTF8(dev.relativePath(name));
-                defer str.deref();
-                const js = str.toJS(dev.vm.global);
-                router_type.server_file_string = JSC.Strong.create(js, dev.vm.global);
-                break :str js;
+                const str = bun.String.createUTF8ForJS(dev.vm.global, dev.relativePath(name));
+                router_type.server_file_string = JSC.Strong.create(str, dev.vm.global);
+                break :str str;
             },
             // routeModules
             route_bundle.cached_module_list.get() orelse arr: {
@@ -1585,7 +1583,7 @@ fn startNextBundleIfPresent(dev: *DevServer) void {
     }
 }
 
-fn insertOrUpdateCssAsset(dev: *DevServer, abs_path: []const u8, code: []const u8) !u31 {
+fn insertOrUpdateCssAsset(dev: *DevServer, abs_path: []const u8, code: []const u8) !Chunk.EntryPoint.ID {
     const path_hash = bun.hash(abs_path);
     const gop = try dev.css_files.getOrPut(dev.allocator, path_hash);
     if (gop.found_existing) {
@@ -3153,7 +3151,7 @@ const DirectoryWatchStore = struct {
         const specifier_cloned = try dev.allocator.dupe(u8, specifier);
         errdefer dev.allocator.free(specifier_cloned);
 
-        const watch_index = switch (dev.bun_watcher.addDirectory(fd, dir_name, bun.JSC.GenericWatcher.getHash(dir_name), false)) {
+        const watch_index = switch (dev.bun_watcher.addDirectory(fd, dir_name, bun.Watcher.getHash(dir_name), false)) {
             .err => return error.Ignore,
             .result => |id| id,
         };
@@ -4446,7 +4444,7 @@ pub const EntryPointList = struct {
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const Mutex = std.Thread.Mutex;
+const Mutex = bun.Mutex;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const AutoArrayHashMapUnmanaged = std.AutoArrayHashMapUnmanaged;
 
@@ -4478,11 +4476,12 @@ const Response = App.Response;
 const MimeType = bun.http.MimeType;
 
 const JSC = bun.JSC;
-const Watcher = bun.JSC.Watcher;
+const Watcher = bun.Watcher;
 const JSValue = JSC.JSValue;
 const VirtualMachine = JSC.VirtualMachine;
 const JSModuleLoader = JSC.JSModuleLoader;
 const EventLoopHandle = JSC.EventLoopHandle;
 const JSInternalPromise = JSC.JSInternalPromise;
 
-const ThreadlocalArena = @import("../mimalloc_arena.zig").Arena;
+const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
+const Chunk = bun.bundle_v2.Chunk;

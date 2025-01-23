@@ -1,11 +1,6 @@
+const assert = require("node:assert");
 const nativeTests = require("./build/Release/napitests.node");
 const secondAddon = require("./build/Release/second_addon.node");
-
-function assert(ok) {
-  if (!ok) {
-    throw new Error("assertion failed");
-  }
-}
 
 async function gcUntil(fn) {
   const MAX = 100;
@@ -157,7 +152,7 @@ nativeTests.test_number_integer_conversions_from_js = () => {
     const actualOutput = nativeTests.double_to_i32(input);
     console.log(`${input} as i32 => ${actualOutput}`);
     if (actualOutput !== expectedOutput) {
-      console.error("wrong");
+      console.error(`${input}: ${actualOutput} != ${expectedOutput}`);
     }
   }
 
@@ -188,7 +183,7 @@ nativeTests.test_number_integer_conversions_from_js = () => {
     const actualOutput = nativeTests.double_to_u32(input);
     console.log(`${input} as u32 => ${actualOutput}`);
     if (actualOutput !== expectedOutput) {
-      console.error("wrong");
+      console.error(`${input}: ${actualOutput} != ${expectedOutput}`);
     }
   }
 
@@ -223,7 +218,7 @@ nativeTests.test_number_integer_conversions_from_js = () => {
       `${typeof input == "number" ? input.toFixed(2) : input} as i64 => ${typeof actualOutput == "number" ? actualOutput.toFixed(2) : actualOutput}`,
     );
     if (actualOutput !== expectedOutput) {
-      console.error("wrong");
+      console.error(`${input}: ${actualOutput} != ${expectedOutput}`);
     }
   }
 };

@@ -337,7 +337,7 @@ pub const WebWorker = struct {
         // Prevent recursion
         vm.onUnhandledRejection = &JSC.VirtualMachine.onQuietUnhandledRejectionHandlerCaptureValue;
 
-        const error_instance = error_instance_or_exception.toError() orelse error_instance_or_exception;
+        var error_instance = error_instance_or_exception.toError() orelse error_instance_or_exception;
 
         var array = bun.MutableString.init(bun.default_allocator, 0) catch unreachable;
         defer array.deinit();
@@ -364,7 +364,13 @@ pub const WebWorker = struct {
                 .flush = false,
                 .max_depth = 32,
             },
-        );
+        ) catch |err| {
+            switch (err) {
+                error.JSError => {},
+                error.OutOfMemory => globalObject.throwOutOfMemory() catch {},
+            }
+            error_instance = globalObject.tryTakeException().?;
+        };
         buffered_writer.flush() catch {
             bun.outOfMemory();
         };
@@ -513,15 +519,18 @@ pub const WebWorker = struct {
         if (loop) |loop_| {
             loop_.internal_loop_data.jsc_vm = null;
         }
+
         bun.uws.onThreadExit();
         this.deinit();
 
         if (vm_to_deinit) |vm| {
             vm.deinit(); // NOTE: deinit here isn't implemented, so freeing workers will leak the vm.
         }
+        bun.deleteAllPoolsForThreadExit();
         if (arena) |*arena_| {
             arena_.deinit();
         }
+
         bun.exitThread();
     }
 

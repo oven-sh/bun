@@ -62,6 +62,13 @@ static double fetchStart(MonotonicTime timeOrigin, const ResourceTiming& resourc
     return networkLoadTimeToDOMHighResTimeStamp(timeOrigin, startTime);
 }
 
+size_t PerformanceResourceTiming::memoryCost() const
+{
+    size_t size = sizeof(PerformanceResourceTiming);
+    size += m_serverTiming.size() * sizeof(PerformanceServerTiming);
+    return size;
+}
+
 static double entryStartTime(MonotonicTime timeOrigin, const ResourceTiming& resourceTiming)
 {
     if (resourceTiming.networkLoadMetrics().failsTAOCheck

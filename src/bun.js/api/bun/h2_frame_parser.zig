@@ -1756,25 +1756,38 @@ pub const H2FrameParser = struct {
                 return null;
             }
 
-            const output = brk: {
+            if (getHTTP2CommonString(globalObject, header.well_know)) |js_header_name| {
+                var header_value = bun.String.fromUTF8(header.value);
+                const js_header_value = header_value.transferToJS(globalObject);
+                js_header_value.ensureStillAlive();
+                headers.push(globalObject, js_header_name);
+                headers.push(globalObject, js_header_value);
                 if (header.never_index) {
                     if (sensitiveHeaders.isUndefined()) {
                         sensitiveHeaders = JSC.JSValue.createEmptyArray(globalObject, 0);
                         sensitiveHeaders.ensureStillAlive();
                     }
-                    break :brk sensitiveHeaders;
-                } else break :brk headers;
-            };
-
-            if (getHTTP2CommonString(globalObject, header.well_know)) |header_info| {
-                output.push(globalObject, header_info);
-                var header_value = bun.String.fromUTF8(header.value);
-                output.push(globalObject, header_value.transferToJS(globalObject));
+                    sensitiveHeaders.push(globalObject, js_header_name);
+                }
             } else {
                 var header_name = bun.String.fromUTF8(header.name);
-                output.push(globalObject, header_name.transferToJS(globalObject));
+                const js_header_name = header_name.transferToJS(globalObject);
+                js_header_name.ensureStillAlive();
+
                 var header_value = bun.String.fromUTF8(header.value);
-                output.push(globalObject, header_value.transferToJS(globalObject));
+                const js_header_value = header_value.transferToJS(globalObject);
+                js_header_value.ensureStillAlive();
+
+                headers.push(globalObject, js_header_name);
+                headers.push(globalObject, js_header_value);
+
+                if (header.never_index) {
+                    if (sensitiveHeaders.isUndefined()) {
+                        sensitiveHeaders = JSC.JSValue.createEmptyArray(globalObject, 0);
+                        sensitiveHeaders.ensureStillAlive();
+                    }
+                    sensitiveHeaders.push(globalObject, js_header_name);
+                }
             }
 
             if (offset >= payload.len) {
@@ -2899,14 +2912,14 @@ pub const H2FrameParser = struct {
         var buffer = shared_request_buffer[0 .. shared_request_buffer.len - FrameHeader.byteSize];
         var encoded_size: usize = 0;
 
-        var iter = JSC.JSPropertyIterator(.{
+        var iter = try JSC.JSPropertyIterator(.{
             .skip_empty_name = false,
             .include_value = true,
         }).init(globalObject, headers_arg);
         defer iter.deinit();
 
         // TODO: support CONTINUE for more headers if headers are too big
-        while (iter.next()) |header_name| {
+        while (try iter.next()) |header_name| {
             if (header_name.length() == 0) continue;
 
             const name_slice = header_name.toUTF8(bun.default_allocator);
@@ -3231,7 +3244,7 @@ pub const H2FrameParser = struct {
         }
 
         // we iterate twice, because pseudo headers must be sent first, but can appear anywhere in the headers object
-        var iter = JSC.JSPropertyIterator(.{
+        var iter = try JSC.JSPropertyIterator(.{
             .skip_empty_name = false,
             .include_value = true,
         }).init(globalObject, headers_arg);
@@ -3240,7 +3253,7 @@ pub const H2FrameParser = struct {
         for (0..2) |ignore_pseudo_headers| {
             iter.reset();
 
-            while (iter.next()) |header_name| {
+            while (try iter.next()) |header_name| {
                 if (header_name.length() == 0) continue;
 
                 const name_slice = header_name.toUTF8(bun.default_allocator);
@@ -3321,7 +3334,7 @@ pub const H2FrameParser = struct {
                             return .zero;
                         };
 
-                        const never_index = try sensitive_arg.getTruthy(globalObject, "neverIndex") != null;
+                        const never_index = try sensitive_arg.getTruthy(globalObject, name) != null;
 
                         const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
                         defer value_slice.deinit();
@@ -3349,7 +3362,7 @@ pub const H2FrameParser = struct {
                         return .zero;
                     };
 
-                    const never_index = try sensitive_arg.getTruthy(globalObject, "neverIndex") != null;
+                    const never_index = try sensitive_arg.getTruthy(globalObject, name) != null;
 
                     const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
                     defer value_slice.deinit();

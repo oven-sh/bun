@@ -2,6 +2,7 @@
 import path from "path";
 import type { ClassDefinition, Field } from "./class-definitions";
 import { camelCase, pascalCase, writeIfNotChanged } from "./helpers";
+import jsclasses from "./../bun.js/bindings/js_classes";
 
 if (process.env.BUN_SILENT === "1") {
   console.log = () => {};
@@ -456,11 +457,11 @@ void ${proto}::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 `;
 }
 
-function generatePrototypeHeader(typename) {
+function generatePrototypeHeader(typename, final = true) {
   const proto = prototypeName(typename);
 
   return `
-class ${proto} final : public JSC::JSNonFinalObject {
+class ${proto} ${final ? "final" : ""} : public JSC::JSNonFinalObject {
   public:
       using Base = JSC::JSNonFinalObject;
 
@@ -483,7 +484,7 @@ class ${proto} final : public JSC::JSNonFinalObject {
           return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
       }
 
-  private:
+  protected:
       ${proto}(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
           : Base(vm, structure)
       {
@@ -537,7 +538,7 @@ class ${name} final : public JSC::InternalFunction {
       static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES call(JSC::JSGlobalObject*, JSC::CallFrame*);
 
       DECLARE_EXPORT_INFO;
-  private:
+  protected:
       ${name}(JSC::VM& vm, JSC::Structure* structure);
       void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, ${prototypeName(typeName)}* prototype);
 };
@@ -910,6 +911,7 @@ function renderStaticDecls(symbolName, typeName, fields, supportsObjectCreate = 
 
   return rows.join("\n");
 }
+
 function writeBarrier(symbolName, typeName, name, cacheName) {
   return `
 
@@ -928,6 +930,7 @@ extern JSC_CALLCONV JSC::EncodedJSValue ${symbolName(typeName, name)}GetCachedVa
 
   `.trim();
 }
+
 function renderFieldsImpl(
   symbolName: (typeName: string, name: string) => string,
   typeName: string,
@@ -1177,6 +1180,24 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
   return rows.map(a => a.trim()).join("\n");
 }
 
+function allCachedValues(obj: ClassDefinition) {
+  let values = (obj.values ?? []).slice().map(name => [name, `m_${name}`]);
+  for (const name in obj.proto) {
+    let cacheName = obj.proto[name].cache;
+    if (cacheName === true) {
+      cacheName = "m_" + name;
+    } else if (cacheName) {
+      cacheName = `m_${cacheName}`;
+    }
+
+    if (cacheName) {
+      values.push([name, cacheName]);
+    }
+  }
+
+  return values;
+}
+
 var extraIncludes = [];
 function generateClassHeader(typeName, obj: ClassDefinition) {
   var { klass, proto, JSType = "ObjectType", values = [], callbacks = {}, zigOnly = false } = obj;
@@ -1234,8 +1255,10 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
     suffix += `JSC::JSValue getInternalProperties(JSC::VM &vm, JSC::JSGlobalObject *globalObject, ${name}*);`;
   }
 
+  const final = obj.final ?? true;
+
   return `
-  class ${name} final : public JSC::JSDestructibleObject {
+  class ${name}${final ? " final" : ""} : public JSC::JSDestructibleObject {
     public:
         using Base = JSC::JSDestructibleObject;
         static ${name}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
@@ -1364,7 +1387,8 @@ function generateClassImpl(typeName, obj: ClassDefinition) {
     .join("\n");
 
   for (const name in callbacks) {
-    DEFINE_VISIT_CHILDREN_LIST += "\n" + `    visitor.append(thisObject->m_callback_${name});`;
+    // Use appendHidden so it doesn't show up in the heap snapshot twice.
+    DEFINE_VISIT_CHILDREN_LIST += "\n" + `    visitor.appendHidden(thisObject->m_callback_${name});`;
   }
 
   const values = (obj.values || [])
@@ -1578,6 +1602,19 @@ void ${name}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     }
 
     Base::analyzeHeap(cell, analyzer);
+    ${allCachedValues(obj).length > 0 ? `auto& vm = thisObject->vm();` : ""}
+
+    ${allCachedValues(obj)
+      .map(
+        ([name, cacheName]) => `
+if (JSValue ${cacheName}Value = thisObject->${cacheName}.get()) {
+  if (${cacheName}Value.isCell()) {
+    const Identifier& id = Identifier::fromString(vm, "${name}"_s);
+    analyzer.analyzePropertyNameEdge(cell, ${cacheName}Value.asCell(), id.impl());
+  }
+}`,
+      )
+      .join("\n  ")}
 }
 
 ${
@@ -1622,7 +1659,12 @@ ${DEFINE_VISIT_CHILDREN}
 }
 
 function generateHeader(typeName, obj) {
-  return generateClassHeader(typeName, obj).trim() + "\n\n";
+  const fields = [
+    generateClassHeader(typeName, obj).trim() + "\n\n",
+    !(obj.final ?? true) ? generatePrototypeHeader(typeName, false) : null,
+  ].filter(Boolean);
+
+  return "\n" + fields.join("\n").trim();
 }
 
 function generateImpl(typeName, obj) {
@@ -1630,7 +1672,7 @@ function generateImpl(typeName, obj) {
 
   const proto = obj.proto;
   return [
-    generatePrototypeHeader(typeName),
+    (obj.final ?? true) ? generatePrototypeHeader(typeName, true) : null,
     !obj.noConstructor ? generateConstructorHeader(typeName).trim() + "\n" : null,
     generatePrototype(typeName, obj).trim(),
     !obj.noConstructor ? generateConstructorImpl(typeName, obj).trim() : null,
@@ -2029,7 +2071,7 @@ function generateLazyClassStructureHeader(typeName, { klass = {}, proto = {}, zi
   return `
   JSC::Structure* ${className(typeName)}Structure() const { return m_${className(typeName)}.getInitializedOnMainThread(this); }
   JSC::JSObject* ${className(typeName)}Constructor() const { return m_${className(typeName)}.constructorInitializedOnMainThread(this); }
-  JSC::JSValue ${className(typeName)}Prototype() const { return m_${className(typeName)}.prototypeInitializedOnMainThread(this); }
+  JSC::JSObject* ${className(typeName)}Prototype() const { return m_${className(typeName)}.prototypeInitializedOnMainThread(this); }
   JSC::LazyClassStructure m_${className(typeName)};
     `.trim();
 }
@@ -2064,6 +2106,9 @@ const GENERATED_CLASSES_HEADER = [
 #include "root.h"
 
 namespace Zig {
+
+JSC_DECLARE_HOST_FUNCTION(jsFunctionInherits);
+
 }
 
 #include "JSDOMWrapper.h"
@@ -2130,6 +2175,30 @@ const GENERATED_CLASSES_IMPL_FOOTER = `
 } // namespace WebCore
 
 `;
+
+function jsInheritsCppImpl() {
+  return `
+${jsclasses
+  .map(v => v[1])
+  .filter(v => v?.length > 0)
+  .map((v, i) => `#include "${v}"`)
+  .join("\n")}
+
+JSC_DEFINE_HOST_FUNCTION(Zig::jsFunctionInherits, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto id = callFrame->argument(0).toInt32(globalObject);
+    auto value = callFrame->argument(1);
+    if (!value.isCell()) return JSValue::encode(jsBoolean(false));
+    auto cell = value.asCell();
+    switch (id) {
+${jsclasses
+  .map(v => v[0])
+  .map((v, i) => `    case ${i}: return JSValue::encode(jsBoolean(cell->inherits<WebCore::JS${v}>()));`)
+  .join("\n")}
+    }
+    return JSValue::encode(jsBoolean(false));
+}`;
+}
 
 function initLazyClasses(initLaterFunctions) {
   return `
@@ -2305,6 +2374,7 @@ comptime {
 
   `,
 ]);
+
 if (!process.env.ONLY_ZIG) {
   const allHeaders = classes.map(a => generateHeader(a.name, a));
   await writeIfNotChanged(`${outBase}/ZigGeneratedClasses.h`, [
@@ -2323,7 +2393,9 @@ if (!process.env.ONLY_ZIG) {
     allImpls.join("\n"),
     writeCppSerializers(classes),
     GENERATED_CLASSES_IMPL_FOOTER,
+    jsInheritsCppImpl(),
   ]);
+
   await writeIfNotChanged(
     `${outBase}/ZigGeneratedClasses+lazyStructureHeader.h`,
     classes.map(a => generateLazyClassStructureHeader(a.name, a)).join("\n"),

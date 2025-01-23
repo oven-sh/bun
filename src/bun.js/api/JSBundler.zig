@@ -38,7 +38,7 @@ const JSAst = bun.JSAst;
 const JSParser = bun.js_parser;
 const JSPrinter = bun.js_printer;
 const ScanPassResult = JSParser.ScanPassResult;
-const Mimalloc = @import("../../mimalloc_arena.zig");
+const Mimalloc = @import("../../allocators/mimalloc_arena.zig");
 const Runtime = @import("../../runtime.zig").Runtime;
 const JSLexer = bun.js_lexer;
 const Expr = JSAst.Expr;
@@ -75,13 +75,11 @@ pub const JSBundler = struct {
         bytecode: bool = false,
         banner: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         footer: OwnedString = OwnedString.initEmpty(bun.default_allocator),
-        experimental_css: bool = false,
         css_chunking: bool = false,
         drop: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         has_any_on_before_parse: bool = false,
-        throw_on_error: bool = if (bun.FeatureFlags.breaking_changes_1_2) true else false,
-
-        env_behavior: Api.DotEnvBehavior = if (!bun.FeatureFlags.breaking_changes_1_2) .load_all else .disable,
+        throw_on_error: bool = true,
+        env_behavior: Api.DotEnvBehavior = .disable,
         env_prefix: OwnedString = OwnedString.initEmpty(bun.default_allocator),
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
@@ -103,16 +101,10 @@ pub const JSBundler = struct {
             errdefer this.deinit(allocator);
             errdefer if (plugins.*) |plugin| plugin.deinit();
 
-            if (try config.getTruthy(globalThis, "experimentalCss")) |enable_css| {
-                this.experimental_css = if (enable_css.isBoolean())
-                    enable_css.toBoolean()
-                else if (enable_css.isObject()) true: {
-                    if (try enable_css.getTruthy(globalThis, "chunking")) |enable_chunking| {
-                        this.css_chunking = if (enable_chunking.isBoolean()) enable_css.toBoolean() else false;
-                    }
-
-                    break :true true;
-                } else false;
+            var did_set_target = false;
+            if (try config.getOptionalEnum(globalThis, "target", options.Target)) |target| {
+                this.target = target;
+                did_set_target = true;
             }
 
             // Plugins must be resolved first as they are allowed to mutate the config JSValue
@@ -190,15 +182,10 @@ pub const JSBundler = struct {
                 if (bytecode) {
                     // Default to CJS for bytecode, since esm doesn't really work yet.
                     this.format = .cjs;
+                    if (did_set_target and this.target != .bun and this.bytecode) {
+                        return globalThis.throwInvalidArguments("target must be 'bun' when bytecode is true", .{});
+                    }
                     this.target = .bun;
-                }
-            }
-
-            if (try config.getOptionalEnum(globalThis, "target", options.Target)) |target| {
-                this.target = target;
-
-                if (target != .bun and this.bytecode) {
-                    return globalThis.throwInvalidArguments("target must be 'bun' when bytecode is true", .{});
                 }
             }
 
@@ -220,7 +207,7 @@ pub const JSBundler = struct {
             }
 
             if (try config.getTruthy(globalThis, "sourcemap")) |source_map_js| {
-                if (bun.FeatureFlags.breaking_changes_1_2 and config.isBoolean()) {
+                if (config.isBoolean()) {
                     if (source_map_js == .true) {
                         this.source_map = if (has_out_dir)
                             .linked
@@ -444,13 +431,13 @@ pub const JSBundler = struct {
                     return globalThis.throwInvalidArguments("define must be an object", .{});
                 }
 
-                var define_iter = JSC.JSPropertyIterator(.{
+                var define_iter = try JSC.JSPropertyIterator(.{
                     .skip_empty_name = true,
                     .include_value = true,
                 }).init(globalThis, define);
                 defer define_iter.deinit();
 
-                while (define_iter.next()) |prop| {
+                while (try define_iter.next()) |prop| {
                     const property_value = define_iter.value;
                     const value_type = property_value.jsType();
 
@@ -476,7 +463,7 @@ pub const JSBundler = struct {
             }
 
             if (try config.getOwnObject(globalThis, "loader")) |loaders| {
-                var loader_iter = JSC.JSPropertyIterator(.{
+                var loader_iter = try JSC.JSPropertyIterator(.{
                     .skip_empty_name = true,
                     .include_value = true,
                 }).init(globalThis, loaders);
@@ -487,7 +474,7 @@ pub const JSBundler = struct {
                 var loader_values = try allocator.alloc(Api.Loader, loader_iter.len);
                 errdefer allocator.free(loader_values);
 
-                while (loader_iter.next()) |prop| {
+                while (try loader_iter.next()) |prop| {
                     if (!prop.hasPrefixComptime(".") or prop.length() < 2) {
                         return globalThis.throwInvalidArguments("loader property names must be file extensions, such as '.txt'", .{});
                     }
@@ -507,7 +494,7 @@ pub const JSBundler = struct {
                 };
             }
 
-            if (try config.getBooleanLoose(globalThis, "throw")) |flag| {
+            if (try config.getBooleanStrict(globalThis, "throw")) |flag| {
                 this.throw_on_error = flag;
             }
 

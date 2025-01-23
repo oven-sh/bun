@@ -17,7 +17,7 @@ async function tempDirToBuildIn() {
   console.log("Temp dir: " + dir);
   const copy = [
     ".eslintrc.json",
-    "bun.lockb",
+    "bun.lock",
     "next.config.js",
     "package.json",
     "postcss.config.js",

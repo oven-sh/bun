@@ -530,7 +530,7 @@ pub const IniTestingAPIs = struct {
         const envjs = callframe.argument(1);
         const env = if (envjs.isEmptyOrUndefinedOrNull()) globalThis.bunVM().transpiler.env else brk: {
             var envmap = bun.DotEnv.Map.HashTable.init(allocator);
-            var object_iter = JSC.JSPropertyIterator(.{
+            var object_iter = try JSC.JSPropertyIterator(.{
                 .skip_empty_name = false,
                 .include_value = true,
             }).init(globalThis, envjs);
@@ -538,7 +538,7 @@ pub const IniTestingAPIs = struct {
 
             try envmap.ensureTotalCapacity(object_iter.len);
 
-            while (object_iter.next()) |key| {
+            while (try object_iter.next()) |key| {
                 const keyslice = try key.toOwnedSlice(allocator);
                 var value = object_iter.value;
                 if (value == .undefined) continue;
@@ -1033,6 +1033,12 @@ pub fn loadNpmrc(
         }
     }
 
+    if (out.get("ignore-scripts")) |ignore_scripts| {
+        if (ignore_scripts.isBoolean()) {
+            install.ignore_scripts = ignore_scripts.data.e_boolean.value;
+        }
+    }
+
     var registry_map = install.scoped orelse bun.Schema.Api.NpmRegistryMap{};
 
     // Process scopes
@@ -1168,6 +1174,7 @@ pub fn loadNpmrc(
             const conf_item_url = bun.URL.parse(conf_item.registry_url);
 
             if (std.mem.eql(u8, bun.strings.withoutTrailingSlash(default_registry_url.host), bun.strings.withoutTrailingSlash(conf_item_url.host))) {
+                // Apply config to default registry
                 const v: *bun.Schema.Api.NpmRegistry = brk: {
                     if (install.default_registry) |*r| break :brk r;
                     install.default_registry = bun.Schema.Api.NpmRegistry{
@@ -1194,7 +1201,6 @@ pub fn loadNpmrc(
                     },
                     .email, .certfile, .keyfile => unreachable,
                 }
-                continue;
             }
 
             for (registry_map.scopes.keys(), registry_map.scopes.values()) |*k, *v| {
@@ -1206,6 +1212,7 @@ pub fn loadNpmrc(
                             continue;
                         }
                     }
+                    // Apply config to scoped registry
                     switch (conf_item.optname) {
                         ._authToken => {
                             if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| v.token = x;

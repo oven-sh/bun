@@ -64,7 +64,7 @@ async function testBunRunAwaitImport(dir: string, loader: string | null, filenam
 async function testBunBuild(dir: string, loader: string | null, filename: string): Promise<unknown> {
   await Bun.write(
     path.join(dir, "main_" + loader + ".js"),
-    `import * as contents from '${dir}/${filename}'${loader != null ? ` with {type: '${loader}'}` : ""}; console.log(JSON.stringify(contents));`,
+    `import * as contents from './${filename}'${loader != null ? ` with {type: '${loader}'${loader === "sqlite" ? ", embed: 'true'" : ""}}` : ""}; console.log(JSON.stringify(contents));`,
   );
   const result = await Bun.build({
     entrypoints: [path.join(dir, "main_" + loader + ".js")],
@@ -90,14 +90,12 @@ async function testBunBuild(dir: string, loader: string | null, filename: string
         console.log(dir);
         throw new Error("panic");
       }
-      // return result.stderr.toString().match(/error: .+/)?.[0];
       return "error";
     } else {
       return JSON.parse(result.stdout.toString());
     }
   } else {
     return "error";
-    // return result.logs;
   }
 }
 type Tests = Record<
@@ -148,10 +146,17 @@ async function compileAndTest_inner(
   if (Object.hasOwn(res, "sqlite")) {
     const sqlite_res = res.sqlite;
     delete (sqlite_res as any).__esModule;
-    expect(sqlite_res).toStrictEqual({
-      db: { filename: path.join(tests.sqlite!.dir!, tests.sqlite!.filename) },
-      default: { filename: path.join(tests.sqlite!.dir!, tests.sqlite!.filename) },
-    });
+    if (cb === testBunBuild) {
+      expect(sqlite_res).toStrictEqual({
+        default: { filename: expect.any(String) },
+      });
+      expect((sqlite_res as any).default.filename).toStartWith(path.join(tests.sqlite!.dir!, "out"));
+    } else {
+      expect(sqlite_res).toStrictEqual({
+        db: { filename: path.join(tests.sqlite!.dir!, tests.sqlite!.filename) },
+        default: { filename: path.join(tests.sqlite!.dir!, tests.sqlite!.filename) },
+      });
+    }
     delete res.sqlite;
   }
   if (Object.hasOwn(res, "file")) {

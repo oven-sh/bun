@@ -1965,6 +1965,7 @@ pub const VirtualMachine = struct {
         );
         vm.regular_event_loop.global = vm.global;
         vm.jsc = vm.global.vm();
+        uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc;
 
         vm.configureDebugger(opts.debugger);
         vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
@@ -2081,6 +2082,7 @@ pub const VirtualMachine = struct {
         );
         vm.regular_event_loop.global = vm.global;
         vm.jsc = vm.global.vm();
+        uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc;
         vm.smol = opts.smol;
         vm.dns_result_order = opts.dns_result_order;
 
@@ -2246,6 +2248,7 @@ pub const VirtualMachine = struct {
         );
         vm.regular_event_loop.global = vm.global;
         vm.jsc = vm.global.vm();
+        uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc;
         vm.transpiler.setAllocator(allocator);
         vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
 

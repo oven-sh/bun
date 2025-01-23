@@ -596,6 +596,24 @@ pub fn getcwdZ(buf: *bun.PathBuffer) Maybe([:0]const u8) {
 
 const syscall_or_C = if (Environment.isLinux) syscall else bun.C;
 
+pub fn fchown(fd: bun.FileDescriptor, uid: JSC.Node.uid_t, gid: JSC.Node.gid_t) Maybe(void) {
+    if (comptime Environment.isWindows) {
+        return sys_uv.fchown(fd, uid, gid);
+    }
+
+    while (true) {
+        const rc = syscall_or_C.fchown(fd.cast(), uid, gid);
+        if (Maybe(void).errnoSysFd(rc, .fchown, fd)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+
+        return Maybe(void).success;
+    }
+
+    unreachable;
+}
+
 pub fn fchmod(fd: bun.FileDescriptor, mode: bun.Mode) Maybe(void) {
     if (comptime Environment.isWindows) {
         return sys_uv.fchmod(fd, mode);

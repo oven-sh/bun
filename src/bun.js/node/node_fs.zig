@@ -36,8 +36,8 @@ const TimeLike = JSC.Node.TimeLike;
 const Mode = bun.Mode;
 const uv = bun.windows.libuv;
 const E = C.E;
-const uid_t = if (Environment.isPosix) std.posix.uid_t else bun.windows.libuv.uv_uid_t;
-const gid_t = if (Environment.isPosix) std.posix.gid_t else bun.windows.libuv.uv_gid_t;
+const uid_t = JSC.Node.uid_t;
+const gid_t = JSC.Node.gid_t;
 const ReadPosition = i64;
 const StringOrBuffer = JSC.Node.StringOrBuffer;
 const NodeFSFunctionEnum = std.meta.DeclEnum(JSC.Node.NodeFS);
@@ -1915,7 +1915,7 @@ pub const Arguments = struct {
             // will automatically be normalized to absolute path.
             const link_type: LinkType = link_type: {
                 if (arguments.next()) |next_val| {
-                    if (next_val.isUndefined()) {
+                    if (next_val.isUndefinedOrNull()) {
                         break :link_type .unspecified;
                     }
                     if (next_val.isString()) {
@@ -3791,8 +3791,10 @@ pub const NodeFS = struct {
             };
         }
 
-        return Maybe(Return.Chmod).errnoSysP(C.chmod(path, args.mode), .chmod, path) orelse
-            Maybe(Return.Chmod).success;
+        return switch (Syscall.chmod(path, args.mode)) {
+            .err => |err| .{ .err = err.withPath(args.path.slice()) },
+            .result => Maybe(Return.Chmod).success,
+        };
     }
 
     pub fn fchmod(_: *NodeFS, args: Arguments.FChmod, _: Flavor) Maybe(Return.Fchmod) {
@@ -3800,12 +3802,7 @@ pub const NodeFS = struct {
     }
 
     pub fn fchown(_: *NodeFS, args: Arguments.Fchown, _: Flavor) Maybe(Return.Fchown) {
-        if (comptime Environment.isWindows) {
-            return Syscall.fchown(args.fd, args.uid, args.gid);
-        }
-
-        return Maybe(Return.Fchown).errnoSys(C.fchown(args.fd.int(), args.uid, args.gid), .fchown) orelse
-            Maybe(Return.Fchown).success;
+        return Syscall.fchown(args.fd, args.uid, args.gid);
     }
 
     pub fn fdatasync(_: *NodeFS, args: Arguments.FdataSync, _: Flavor) Maybe(Return.Fdatasync) {

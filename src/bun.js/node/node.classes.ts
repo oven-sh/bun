@@ -244,63 +244,26 @@ export default [
           pure: true,
         },
       },
-      dev: {
-        getter: "dev",
-      },
-      ino: {
-        getter: "ino",
-      },
-      mode: {
-        getter: "mode",
-      },
-      nlink: {
-        getter: "nlink",
-      },
-      uid: {
-        getter: "uid",
-      },
-      gid: {
-        getter: "gid",
-      },
-      rdev: {
-        getter: "rdev",
-      },
-      size: {
-        getter: "size",
-      },
-      blksize: {
-        getter: "blksize",
-      },
-      blocks: {
-        getter: "blocks",
-      },
-      atime: {
-        getter: "atime",
-        cache: true,
-      },
-      mtime: {
-        getter: "mtime",
-        cache: true,
-      },
-      ctime: {
-        getter: "ctime",
-        cache: true,
-      },
-      birthtime: {
-        getter: "birthtime",
-      },
-      atimeMs: {
-        getter: "atimeMs",
-      },
-      mtimeMs: {
-        getter: "mtimeMs",
-      },
-      ctimeMs: {
-        getter: "ctimeMs",
-      },
-      birthtimeMs: {
-        getter: "birthtimeMs",
-      },
+    },
+    own: {
+      dev: "dev",
+      ino: "ino",
+      mode: "mode",
+      nlink: "nlink",
+      uid: "uid",
+      gid: "gid",
+      rdev: "rdev",
+      size: "size",
+      blksize: "blksize",
+      blocks: "blocks",
+      atimeMs: "atimeMs",
+      mtimeMs: "mtimeMs",
+      ctimeMs: "ctimeMs",
+      birthtimeMs: "birthtimeMs",
+      atime: "atime",
+      mtime: "mtime",
+      ctime: "ctime",
+      birthtime: "birthtime",
     },
   }),
   define({
@@ -386,76 +349,30 @@ export default [
           pure: true,
         },
       },
-      dev: {
-        getter: "dev",
-      },
-      ino: {
-        getter: "ino",
-      },
-      mode: {
-        getter: "mode",
-      },
-      nlink: {
-        getter: "nlink",
-      },
-      uid: {
-        getter: "uid",
-      },
-      gid: {
-        getter: "gid",
-      },
-      rdev: {
-        getter: "rdev",
-      },
-      size: {
-        getter: "size",
-      },
-      blksize: {
-        getter: "blksize",
-      },
-      blocks: {
-        getter: "blocks",
-      },
-      atime: {
-        getter: "atime",
-        cache: true,
-      },
-      mtime: {
-        getter: "mtime",
-        cache: true,
-      },
-      ctime: {
-        getter: "ctime",
-        cache: true,
-      },
-      birthtime: {
-        getter: "birthtime",
-        cache: true,
-      },
-      atimeMs: {
-        getter: "atimeMs",
-      },
-      mtimeMs: {
-        getter: "mtimeMs",
-      },
-      ctimeMs: {
-        getter: "ctimeMs",
-      },
-      birthtimeMs: {
-        getter: "birthtimeMs",
-      },
-      atimeNs: {
-        getter: "atimeNs",
-      },
-      mtimeNs: {
-        getter: "mtimeNs",
-      },
-      ctimeNs: {
-        getter: "ctimeNs",
-      },
-      birthtimeNs: {
-        getter: "birthtimeNs",
-      },
+    },
+    own: {
+      atime: "atime",
+      atimeMs: "atimeMs",
+      atimeNs: "atimeNs",
+      birthtime: "birthtime",
+      birthtimeMs: "birthtimeMs",
+      birthtimeNs: "birthtimeNs",
+      blksize: "blksize",
+      blocks: "blocks",
+      ctime: "ctime",
+      ctimeMs: "ctimeMs",
+      ctimeNs: "ctimeNs",
+      dev: "dev",
+      gid: "gid",
+      ino: "ino",
+      mode: "mode",
+      mtime: "mtime",
+      mtimeMs: "mtimeMs",
+      mtimeNs: "mtimeNs",
+      nlink: "nlink",
+      rdev: "rdev",
+      size: "size",
+      uid: "uid",
     },
   }),
   define({
@@ -685,4 +602,3 @@ export default [
     },
   }),
 ];
-

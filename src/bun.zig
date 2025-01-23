@@ -3745,16 +3745,14 @@ pub const timespec = extern struct {
 
         assert(this.sec >= 0);
         assert(this.nsec >= 0);
-
-        const max = std.math.maxInt(u64);
         const s_ns = std.math.mul(
             u64,
             @as(u64, @intCast(this.sec)),
             std.time.ns_per_s,
-        ) catch return max;
+        ) catch return std.math.maxInt(u64);
 
         return std.math.add(u64, s_ns, @as(u64, @intCast(this.nsec))) catch
-            return max;
+            return std.math.maxInt(i64);
     }
 
     pub fn nsSigned(this: *const timespec) i64 {

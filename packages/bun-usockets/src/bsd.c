@@ -801,6 +801,59 @@ static int us_internal_bind_and_listen(LIBUS_SOCKET_DESCRIPTOR listenFd, struct 
     return result;
 }
 
+static int bsd_set_reuseaddr(LIBUS_SOCKET_DESCRIPTOR listenFd) {
+    const int one = 1;
+#if defined(SO_REUSEPORT) && !defined(__linux__) && !defined(__GNU__)
+    return setsockopt(listenFd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one));
+#else
+    return setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+#endif
+}
+
+static int bsd_set_reuseport(LIBUS_SOCKET_DESCRIPTOR listenFd) {
+#if defined(__linux__)
+    // Among Bun's supported platforms, only Linux does load balancing with SO_REUSEPORT.
+    const int one = 1;
+    return setsockopt(listenFd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one));
+#else
+#if _WIN32
+    WSASetLastError(WSAEOPNOTSUPP);
+#endif
+    errno = ENOTSUP;
+    return -1;
+#endif
+}
+
+static int bsd_set_reuse(LIBUS_SOCKET_DESCRIPTOR listenFd, int options) {
+    int result = 0;
+
+    if ((options & LIBUS_LISTEN_EXCLUSIVE_PORT)) {
+#if _WIN32
+        const int one = 1;
+        result = setsockopt(listenFd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, &one, sizeof(one));
+        if (result != 0) {
+            return result;
+        }
+#endif
+    }
+
+    if ((options & LIBUS_LISTEN_REUSE_ADDR)) {
+        result = bsd_set_reuseaddr(listenFd);
+        if (result != 0) {
+            return result;
+        }
+    }
+
+    if ((options & LIBUS_LISTEN_REUSE_PORT)) {
+        result = bsd_set_reuseport(listenFd);
+        if (result != 0) {
+            return result;
+        }
+    }
+
+    return 0;
+}
+
 inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd(
     LIBUS_SOCKET_DESCRIPTOR listenFd,
     struct addrinfo *listenAddr,
@@ -809,20 +862,8 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
     int* error
 ) {
 
-    if ((options & LIBUS_LISTEN_EXCLUSIVE_PORT)) {
-#if _WIN32
-        int optval2 = 1;
-        setsockopt(listenFd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, &optval2, sizeof(optval2));
-#endif
-    } else {
-        if((options & LIBUS_LISTEN_REUSE_PORT)) {
-            int optval2 = 1;
-#if defined(SO_REUSEPORT)
-            setsockopt(listenFd, SOL_SOCKET, SO_REUSEPORT, &optval2, sizeof(optval2));
-#else
-            setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, &optval2, sizeof(optval2));
-#endif
-        }
+    if (bsd_set_reuse(listenFd, options) != 0) {
+        return LIBUS_SOCKET_ERROR;
     }
 
 #if defined(SO_REUSEADDR)
@@ -840,13 +881,10 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
 #endif
 
 #ifdef IPV6_V6ONLY
-    // TODO: revise support to match node.js
-    // if (listenAddr->ai_family == AF_INET6) {
-    //     int disabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
-    //     setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, &disabled, sizeof(disabled));
-    // }
-    int disabled = 0;
-    setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, &disabled, sizeof(disabled));
+    if (listenAddr->ai_family == AF_INET6) {
+        int disabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
+        setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, &disabled, sizeof(disabled));
+    }
 #endif
 
     if (us_internal_bind_and_listen(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen, 512, error)) {
@@ -1105,20 +1143,9 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
         setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, &enabled, sizeof(enabled));
     }
 
-    if ((options & LIBUS_LISTEN_EXCLUSIVE_PORT)) {
-#if _WIN32
-        int optval2 = 1;
-        setsockopt(listenFd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, &optval2, sizeof(optval2));
-#endif
-    } else {
-        if((options & LIBUS_LISTEN_REUSE_PORT)) {
-            int optval2 = 1;
-#if defined(SO_REUSEPORT)
-            setsockopt(listenFd, SOL_SOCKET, SO_REUSEPORT, &optval2, sizeof(optval2));
-#else
-            setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, &optval2, sizeof(optval2));
-#endif
-        }
+    if (bsd_set_reuse(listenFd, options) != 0) {
+        freeaddrinfo(result);
+        return LIBUS_SOCKET_ERROR;
     }
 
 #ifdef IPV6_V6ONLY

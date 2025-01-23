@@ -10,8 +10,9 @@ pub const u_int64_t = c_ulonglong;
 pub const LIBUS_LISTEN_DEFAULT: i32 = 0;
 pub const LIBUS_LISTEN_EXCLUSIVE_PORT: i32 = 1;
 pub const LIBUS_SOCKET_ALLOW_HALF_OPEN: i32 = 2;
-pub const LIBUS_SOCKET_REUSE_PORT: i32 = 4;
+pub const LIBUS_LISTEN_REUSE_PORT: i32 = 4;
 pub const LIBUS_SOCKET_IPV6_ONLY: i32 = 8;
+pub const LIBUS_LISTEN_REUSE_ADDR: i32 = 16;
 
 pub const Socket = opaque {
     pub fn write2(this: *Socket, first: []const u8, second: []const u8) i32 {

@@ -33,8 +33,9 @@ const SEND_BUFFER = false;
 const LIBUS_LISTEN_DEFAULT = 0;
 const LIBUS_LISTEN_EXCLUSIVE_PORT = 1;
 const LIBUS_SOCKET_ALLOW_HALF_OPEN = 2;
-const LIBUS_SOCKET_REUSE_PORT = 4;
+const LIBUS_LISTEN_REUSE_PORT = 4;
 const LIBUS_SOCKET_IPV6_ONLY = 8;
+const LIBUS_LISTEN_REUSE_ADDR = 16;
 
 const kStateSymbol = Symbol("state symbol");
 const kOwnerSymbol = Symbol("owner symbol");
@@ -165,7 +166,7 @@ function Socket(type, listener) {
     bindState: BIND_STATE_UNBOUND,
     connectState: CONNECT_STATE_DISCONNECTED,
     queue: undefined,
-    reuseAddr: options && options.reuseAddr, // Use UV_UDP_REUSEADDR if true.
+    reuseAddr: options && options.reuseAddr,
     reusePort: options && options.reusePort,
     ipv6Only: options && options.ipv6Only,
     recvBufferSize,
@@ -304,7 +305,7 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
     let flags = 0;
 
     if (state.reuseAddr) {
-      flags |= 0; //UV_UDP_REUSEADDR;
+      flags |= LIBUS_LISTEN_REUSE_ADDR;
     }
 
     if (state.ipv6Only) {
@@ -313,9 +314,7 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
 
     if (state.reusePort) {
       exclusive = true; // TODO: cluster support
-      flags |= LIBUS_SOCKET_REUSE_PORT;
-    } else {
-      flags |= LIBUS_LISTEN_EXCLUSIVE_PORT;
+      flags |= LIBUS_LISTEN_REUSE_PORT;
     }
 
     // TODO flags

@@ -22,6 +22,14 @@ function error_test(css: string, error: unknown) {
 }
 
 describe("css tests", () => {
+  // test escape sequences
+  cssTest(
+    `.foo {
+  content: "\\2b";
+}`,
+    '.foo{content:"+";}',
+  );
+
   describe("pseudo-class edge case", () => {
     cssTest(
       indoc`[type="file"]::file-selector-button:-moz-any() {

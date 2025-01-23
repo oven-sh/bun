@@ -4904,7 +4904,7 @@ const Tokenizer = struct {
                         }
                     }
                     // else: escaped EOF, do nothing.
-                    // continue;
+                    continue;
                 },
                 0 => {
                     this.advance(1);

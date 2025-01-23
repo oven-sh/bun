@@ -1,3 +1,5 @@
+import { bunRunAsScript, bunRun, tempDirWithFiles } from "harness";
+import path from "path";
 import { parse } from "url";
 
 describe("Url.prototype.parse", () => {
@@ -78,4 +80,19 @@ it("URL constructor throws ERR_MISSING_ARGS", () => {
 
   // @ts-expect-error
   expect(err?.code).toEqual("ERR_MISSING_ARGS");
+});
+
+describe("url.parse()", () => {
+  it("respects process.noDeprecation", () => {
+    const dir = tempDirWithFiles("url-parse", {
+      "index.js": `
+        process.noDeprecation = true;
+        const { parse } = require("url");
+        parse("http://example.com");
+      `,
+    });
+
+    const { stderr } = bunRun(path.join(dir, "index.js"));
+    expect(stderr).toBeEmpty();
+  });
 });

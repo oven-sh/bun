@@ -1,5 +1,5 @@
-import type { Server, ServerWebSocket } from "bun";
 import { AwsClient } from "aws4fetch";
+import type { Server, ServerWebSocket } from "bun";
 
 type Lambda = {
   fetch: (request: Request, server: Server) => Promise<Response | undefined>;
@@ -375,6 +375,11 @@ function formatHttpEventV2(event: HttpEventV2): Request {
   const hostname = headers.get("Host") ?? request.domainName;
   const proto = headers.get("X-Forwarded-Proto") ?? "http";
   const url = new URL(request.http.path, `${proto}://${hostname}/`);
+
+  for (const [key, value] of Object.entries(event.queryStringParameters ?? {})) {
+    url.searchParams.set(key, value);
+  }
+  
   return new Request(url.toString(), {
     method: request.http.method,
     headers,

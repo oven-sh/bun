@@ -105,7 +105,7 @@ pub const Editor = enum(u8) {
         return null;
     }
 
-    const which = @import("./which.zig").which;
+    const which = @import("which.zig").which;
     pub fn byPATH(env: *DotEnv.Loader, buf: *bun.PathBuffer, cwd: string, out: *[]const u8) ?Editor {
         const PATH = env.get("PATH") orelse return null;
 
@@ -350,7 +350,7 @@ pub const EditorContext = struct {
     editor: ?Editor = null,
     name: string = "",
     path: string = "",
-    const Fs = @import("./fs.zig");
+    const Fs = @import("fs.zig");
 
     pub fn openInEditor(this: *EditorContext, editor_: Editor, blob: []const u8, id: string, tmpdir: std.fs.Dir, line: string, column: string) void {
         _openInEditor(this.path, editor_, blob, id, tmpdir, line, column) catch |err| {

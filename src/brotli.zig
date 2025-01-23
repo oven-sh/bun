@@ -1,8 +1,8 @@
 const bun = @import("root").bun;
 const std = @import("std");
 pub const c = struct {
-    pub usingnamespace @import("./deps/brotli_decoder.zig");
-    pub usingnamespace @import("./deps/brotli_encoder.zig");
+    pub usingnamespace @import("deps/brotli_decoder.zig");
+    pub usingnamespace @import("deps/brotli_encoder.zig");
 };
 const BrotliDecoder = c.BrotliDecoder;
 const BrotliEncoder = c.BrotliEncoder;

@@ -51,7 +51,7 @@ const bun = if (!is_standalone) @import("root").bun else @compileError("cannot u
 const bunDebugMessage = bun.Output.scoped(.bun_shim_impl, true);
 const callmod_inline = if (is_standalone) std.builtin.CallModifier.always_inline else bun.callmod_inline;
 
-const Flags = @import("./BinLinkingShim.zig").Flags;
+const Flags = @import("BinLinkingShim.zig").Flags;
 
 const wliteral = std.unicode.utf8ToUtf16LeStringLiteral;
 

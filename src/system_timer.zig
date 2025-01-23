@@ -1,4 +1,4 @@
-const Environment = @import("./env.zig");
+const Environment = @import("env.zig");
 const std = @import("std");
 
 fn NewTimer() type {

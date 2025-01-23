@@ -1,7 +1,7 @@
 const std = @import("std");
 
-const FeatureFlags = @import("./feature_flags.zig");
-const Environment = @import("./env.zig");
+const FeatureFlags = @import("feature_flags.zig");
+const Environment = @import("env.zig");
 const FixedBufferAllocator = std.heap.FixedBufferAllocator;
 const bun = @import("root").bun;
 const OOM = bun.OOM;

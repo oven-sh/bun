@@ -10,14 +10,14 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
-const JavaScript = @import("./javascript.zig");
+const JavaScript = @import("javascript.zig");
 const JSC = bun.JSC;
-const WebCore = @import("./webcore.zig");
-const Test = @import("./test/jest.zig");
+const WebCore = @import("webcore.zig");
+const Test = @import("test/jest.zig");
 const Fetch = WebCore.Fetch;
 const Response = WebCore.Response;
 const Request = WebCore.Request;
-const Router = @import("./api/filesystem_router.zig");
+const Router = @import("api/filesystem_router.zig");
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const uws = bun.uws;
 const Body = WebCore.Body;
@@ -1318,9 +1318,9 @@ pub const Ref = struct {
     }
 };
 
-pub const Strong = @import("./Strong.zig").Strong;
-pub const Weak = @import("./Weak.zig").Weak;
-pub const WeakRefType = @import("./Weak.zig").WeakRefType;
+pub const Strong = @import("Strong.zig").Strong;
+pub const Weak = @import("Weak.zig").Weak;
+pub const WeakRefType = @import("Weak.zig").WeakRefType;
 
 pub const BinaryType = enum(u4) {
     Buffer,

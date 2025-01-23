@@ -2,16 +2,16 @@ const bun = @import("root").bun;
 const JSParser = bun.js_parser;
 const JSPrinter = bun.js_printer;
 const JSAst = bun.JSAst;
-const Api = @import("./api/schema.zig").Api;
+const Api = @import("api/schema.zig").Api;
 const Logger = bun.logger;
 const global = @import("root").bun;
 const default_allocator = global.default_allocator;
 const std = @import("std");
-const Define = @import("./defines.zig");
-const Options = @import("./options.zig");
-const ApiWriter = @import("./api/schema.zig").Writer;
-const ApiReader = @import("./api/schema.zig").Reader;
-const ImportKind = @import("./import_record.zig").ImportKind;
+const Define = @import("defines.zig");
+const Options = @import("options.zig");
+const ApiWriter = @import("api/schema.zig").Writer;
+const ApiReader = @import("api/schema.zig").Reader;
+const ImportKind = @import("import_record.zig").ImportKind;
 const Output = global.Output;
 
 export var code_buffer_ptr: ?[*]const u8 = null;
@@ -184,7 +184,7 @@ var error_stream = std.io.fixedBufferStream(&error_stream_buf);
 var output_source: global.Output.Source = undefined;
 var init_counter: usize = 0;
 export fn init(heapsize: u32) void {
-    const Mimalloc = @import("./allocators/mimalloc.zig");
+    const Mimalloc = @import("allocators/mimalloc.zig");
     defer init_counter +%= 1;
     if (init_counter == 0) {
 
@@ -205,7 +205,7 @@ export fn init(heapsize: u32) void {
         buffer_writer = writer.ctx;
     }
 }
-const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
+const Arena = @import("allocators/mimalloc_arena.zig").Arena;
 
 var log: Logger.Log = undefined;
 

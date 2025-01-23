@@ -119,7 +119,7 @@ pub const KeepAlive = struct {
     }
 };
 
-const Posix = @import("./posix_event_loop.zig");
+const Posix = @import("posix_event_loop.zig");
 
 pub const FilePoll = struct {
     fd: bun.FileDescriptor,

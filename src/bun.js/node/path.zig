@@ -5,7 +5,7 @@ const windows = bun.windows;
 
 const Path = @This();
 const typeBaseNameT = bun.meta.typeBaseNameT;
-const validators = @import("./util/validators.zig");
+const validators = @import("util/validators.zig");
 const validateObject = validators.validateObject;
 const validateString = validators.validateString;
 // Allow on the stack:

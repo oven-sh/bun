@@ -10,10 +10,10 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
-const Ref = @import("./ast/base.zig").Ref;
-const RefCtx = @import("./ast/base.zig").RefCtx;
+const Ref = @import("ast/base.zig").Ref;
+const RefCtx = @import("ast/base.zig").RefCtx;
 const logger = bun.logger;
-const JSLexer = @import("./js_lexer.zig");
+const JSLexer = @import("js_lexer.zig");
 
 pub const NoOpRenamer = struct {
     symbols: js_ast.Symbol.Map,

@@ -46,9 +46,9 @@ const NpmArgs = struct {
     pub const package_version: string = "npm_package_version";
 };
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
-const yarn_commands = @import("./list-of-yarn-commands.zig").all_yarn_commands;
+const yarn_commands = @import("list-of-yarn-commands.zig").all_yarn_commands;
 
-const ShellCompletions = @import("./shell_completions.zig");
+const ShellCompletions = @import("shell_completions.zig");
 const PosixSpawn = bun.posix.spawn;
 
 const PackageManager = @import("../install/install.zig").PackageManager;

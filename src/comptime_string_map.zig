@@ -2,7 +2,7 @@ const JSC = bun.JSC;
 const std = @import("std");
 const bun = @import("root").bun;
 const mem = std.mem;
-const strings = @import("./string_immutable.zig");
+const strings = @import("string_immutable.zig");
 
 /// Comptime string map optimized for small sets of disparate string keys.
 /// Works by separating the keys by length at comptime and only checking strings of

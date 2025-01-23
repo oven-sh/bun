@@ -23,9 +23,9 @@ const Shimmer = @import("../bindings/shimmer.zig").Shimmer;
 const Syscall = bun.sys;
 const URL = @import("../../url.zig").URL;
 const Value = std.json.Value;
-pub const validators = @import("./util/validators.zig");
+pub const validators = @import("util/validators.zig");
 
-pub const Path = @import("./path.zig");
+pub const Path = @import("path.zig");
 
 fn typeBaseNameT(comptime T: type) []const u8 {
     return meta.typeBaseName(@typeName(T));
@@ -654,7 +654,7 @@ pub const StringOrBuffer = union(enum) {
     }
 };
 
-pub const ErrorCode = @import("./nodejs_error_code.zig").Code;
+pub const ErrorCode = @import("nodejs_error_code.zig").Code;
 
 // We can't really use Zig's error handling for syscalls because Node.js expects the "real" errno to be returned
 // and various issues with std.posix that make it too unstable for arbitrary user input (e.g. how .BADF is marked as unreachable)

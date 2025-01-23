@@ -21,7 +21,7 @@ const std = @import("std");
 const bun = @import("root").bun;
 const builtin = @import("builtin");
 const mimalloc = @import("allocators/mimalloc.zig");
-const SourceMap = @import("./sourcemap/sourcemap.zig");
+const SourceMap = @import("sourcemap/sourcemap.zig");
 const windows = std.os.windows;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -71,7 +71,7 @@ var before_crash_handlers: std.ArrayListUnmanaged(struct { *anyopaque, *const On
 // TODO: I don't think it's safe to lock/unlock a mutex inside a signal handler.
 var before_crash_handlers_mutex: bun.Mutex = .{};
 
-const CPUFeatures = @import("./bun.js/bindings/CPUFeatures.zig").CPUFeatures;
+const CPUFeatures = @import("bun.js/bindings/CPUFeatures.zig").CPUFeatures;
 
 /// This structure and formatter must be kept in sync with `bun.report`'s decoder implementation.
 pub const CrashReason = union(enum) {

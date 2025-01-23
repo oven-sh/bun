@@ -47,7 +47,7 @@ pub fn ValidSelectorImpl(comptime T: type) void {
     _ = T.SelectorImpl.PseudoElement;
 }
 
-const selector_builder = @import("./builder.zig");
+const selector_builder = @import("builder.zig");
 
 pub const attrs = struct {
     pub fn NamespaceUrl(comptime Impl: type) type {

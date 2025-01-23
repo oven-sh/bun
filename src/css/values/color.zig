@@ -95,7 +95,7 @@ pub const CssColor = union(enum) {
 
     const This = @This();
 
-    pub const jsFunctionColor = @import("./color_js.zig").jsFunctionColor;
+    pub const jsFunctionColor = @import("color_js.zig").jsFunctionColor;
 
     pub fn isCompatible(this: *const CssColor, browsers: css.targets.Browsers) bool {
         return switch (this.*) {
@@ -3477,7 +3477,7 @@ const D50: []const f32 = &.{ @floatCast(@as(f64, 0.3457) / @as(f64, 0.3585)), 1.
 // const D50: []const f32 = &.{ 0.9642956, 1.0, 0.82510453 };
 
 const color_conversions = struct {
-    const generated = @import("./color_generated.zig").generated_color_conversions;
+    const generated = @import("color_generated.zig").generated_color_conversions;
 
     pub const convert_RGBA = struct {
         pub usingnamespace generated.convert_RGBA;

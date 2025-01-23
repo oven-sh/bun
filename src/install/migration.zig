@@ -12,20 +12,20 @@ const stringZ = bun.stringZ;
 const logger = bun.logger;
 const File = bun.sys.File;
 
-const Install = @import("./install.zig");
-const Resolution = @import("./resolution.zig").Resolution;
-const Dependency = @import("./dependency.zig");
-const VersionedURL = @import("./versioned_url.zig");
-const Npm = @import("./npm.zig");
-const Integrity = @import("./integrity.zig").Integrity;
-const Bin = @import("./bin.zig").Bin;
+const Install = @import("install.zig");
+const Resolution = @import("resolution.zig").Resolution;
+const Dependency = @import("dependency.zig");
+const VersionedURL = @import("versioned_url.zig");
+const Npm = @import("npm.zig");
+const Integrity = @import("integrity.zig").Integrity;
+const Bin = @import("bin.zig").Bin;
 
-const Semver = @import("./semver.zig");
+const Semver = @import("semver.zig");
 const String = Semver.String;
 const ExternalString = Semver.ExternalString;
 const stringHash = String.Builder.stringHash;
 
-const Lockfile = @import("./lockfile.zig");
+const Lockfile = @import("lockfile.zig");
 const LoadResult = Lockfile.LoadResult;
 
 const JSAst = bun.JSAst;

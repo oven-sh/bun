@@ -205,6 +205,6 @@ pub const zStream_struct = struct_z_stream_s;
 pub const gz_header_s = struct_gz_header_s;
 pub const gzFile_s = struct_gzFile_s;
 
-pub const DataType = @import("./zlib.shared.zig").DataType;
-pub const FlushValue = @import("./zlib.shared.zig").FlushValue;
-pub const ReturnCode = @import("./zlib.shared.zig").ReturnCode;
+pub const DataType = @import("zlib.shared.zig").DataType;
+pub const FlushValue = @import("zlib.shared.zig").FlushValue;
+pub const ReturnCode = @import("zlib.shared.zig").ReturnCode;

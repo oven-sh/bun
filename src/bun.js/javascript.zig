@@ -1,6 +1,6 @@
 const std = @import("std");
 const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
-const StaticExport = @import("./bindings/static_export.zig");
+const StaticExport = @import("bindings/static_export.zig");
 const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
@@ -37,7 +37,7 @@ const ImportKind = ast.ImportKind;
 const Analytics = @import("../analytics/analytics_thread.zig");
 const ZigString = bun.JSC.ZigString;
 const Runtime = @import("../runtime.zig");
-const Router = @import("./api/filesystem_router.zig");
+const Router = @import("api/filesystem_router.zig");
 const ImportRecord = ast.ImportRecord;
 const DotEnv = @import("../env_loader.zig");
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
@@ -51,12 +51,12 @@ const Fetch = WebCore.Fetch;
 const FetchEvent = WebCore.FetchEvent;
 const js = bun.JSC.C;
 const JSC = bun.JSC;
-const JSError = @import("./base.zig").JSError;
-const d = @import("./base.zig").d;
-const MarkedArrayBuffer = @import("./base.zig").MarkedArrayBuffer;
-const getAllocator = @import("./base.zig").getAllocator;
+const JSError = @import("base.zig").JSError;
+const d = @import("base.zig").d;
+const MarkedArrayBuffer = @import("base.zig").MarkedArrayBuffer;
+const getAllocator = @import("base.zig").getAllocator;
 const JSValue = bun.JSC.JSValue;
-const NewClass = @import("./base.zig").NewClass;
+const NewClass = @import("base.zig").NewClass;
 
 const JSGlobalObject = bun.JSC.JSGlobalObject;
 const ExceptionValueRef = bun.JSC.ExceptionValueRef;
@@ -75,7 +75,7 @@ const ErrorableZigString = bun.JSC.ErrorableZigString;
 const ZigGlobalObject = bun.JSC.ZigGlobalObject;
 const VM = bun.JSC.VM;
 const JSFunction = bun.JSC.JSFunction;
-const Config = @import("./config.zig");
+const Config = @import("config.zig");
 const URL = @import("../url.zig").URL;
 const Bun = JSC.API.Bun;
 const EventLoop = JSC.EventLoop;
@@ -614,7 +614,7 @@ pub const ExitHandler = struct {
     }
 };
 
-pub const WebWorker = @import("./web_worker.zig").WebWorker;
+pub const WebWorker = @import("web_worker.zig").WebWorker;
 
 pub const ImportWatcher = union(enum) {
     none: void,
@@ -4375,7 +4375,7 @@ pub const VirtualMachine = struct {
 
         pub usingnamespace bun.New(@This());
 
-        const node_cluster_binding = @import("./node/node_cluster_binding.zig");
+        const node_cluster_binding = @import("node/node_cluster_binding.zig");
 
         pub fn ipc(this: *IPCInstance) ?*IPC.IPCData {
             return &this.data;

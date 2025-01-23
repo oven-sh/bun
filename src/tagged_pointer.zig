@@ -7,7 +7,7 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
-const typeBaseName = @import("./meta.zig").typeBaseName;
+const typeBaseName = @import("meta.zig").typeBaseName;
 
 const TagSize = u15;
 const AddressableSize = u49;

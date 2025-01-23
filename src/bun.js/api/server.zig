@@ -175,7 +175,7 @@ pub fn writeStatus(comptime ssl: bool, resp_ptr: ?*uws.NewApp(ssl).Response, sta
     }
 }
 
-const StaticRoute = @import("./server/StaticRoute.zig");
+const StaticRoute = @import("server/StaticRoute.zig");
 const HTMLBundle = JSC.API.HTMLBundle;
 const HTMLBundleRoute = HTMLBundle.HTMLBundleRoute;
 pub const AnyStaticRoute = union(enum) {

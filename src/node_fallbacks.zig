@@ -1,8 +1,8 @@
 const std = @import("std");
-const string = @import("./string_types.zig").string;
-const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
+const string = @import("string_types.zig").string;
+const PackageJSON = @import("resolver/package_json.zig").PackageJSON;
 const logger = bun.logger;
-const Fs = @import("./fs.zig");
+const Fs = @import("fs.zig");
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 

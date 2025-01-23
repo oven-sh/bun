@@ -4,12 +4,12 @@ const std = @import("std");
 const logger = bun.logger;
 const Fs = @import("fs.zig");
 
-const resolver = @import("./resolver/resolver.zig");
-const api = @import("./api/schema.zig");
+const resolver = @import("resolver/resolver.zig");
+const api = @import("api/schema.zig");
 const Api = api.Api;
-const resolve_path = @import("./resolver/resolve_path.zig");
-const URL = @import("./url.zig").URL;
-const ConditionsMap = @import("./resolver/package_json.zig").ESModule.ConditionsMap;
+const resolve_path = @import("resolver/resolve_path.zig");
+const URL = @import("url.zig").URL;
+const ConditionsMap = @import("resolver/package_json.zig").ESModule.ConditionsMap;
 const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
@@ -23,12 +23,12 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const JSC = bun.JSC;
-const Runtime = @import("./runtime.zig").Runtime;
-const Analytics = @import("./analytics/analytics_thread.zig");
-const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
-const DotEnv = @import("./env_loader.zig");
+const Runtime = @import("runtime.zig").Runtime;
+const Analytics = @import("analytics/analytics_thread.zig");
+const MacroRemap = @import("resolver/package_json.zig").MacroMap;
+const DotEnv = @import("env_loader.zig");
 
-pub const defines = @import("./defines.zig");
+pub const defines = @import("defines.zig");
 pub const Define = defines.Define;
 
 const assert = bun.assert;
@@ -1889,7 +1889,7 @@ pub const TransformOptions = struct {
     }
 };
 
-pub const OutputFile = @import("./OutputFile.zig");
+pub const OutputFile = @import("OutputFile.zig");
 
 pub const TransformResult = struct {
     errors: []logger.Msg = &([_]logger.Msg{}),
@@ -2233,7 +2233,7 @@ pub const RouteConfig = struct {
     }
 };
 
-pub const GlobalCache = @import("./resolver/resolver.zig").GlobalCache;
+pub const GlobalCache = @import("resolver/resolver.zig").GlobalCache;
 
 pub const PathTemplate = struct {
     data: string = "",

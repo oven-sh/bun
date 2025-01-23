@@ -9,18 +9,18 @@ const ArrayList = std.ArrayListUnmanaged;
 const ImportRecord = bun.ImportRecord;
 const ImportKind = bun.ImportKind;
 
-pub const prefixes = @import("./prefixes.zig");
+pub const prefixes = @import("prefixes.zig");
 
-pub const dependencies = @import("./dependencies.zig");
+pub const dependencies = @import("dependencies.zig");
 pub const Dependency = dependencies.Dependency;
 
-pub const css_modules = @import("./css_modules.zig");
+pub const css_modules = @import("css_modules.zig");
 pub const CssModuleExports = css_modules.CssModuleExports;
 pub const CssModule = css_modules.CssModule;
 pub const CssModuleReferences = css_modules.CssModuleReferences;
 pub const CssModuleReference = css_modules.CssModuleReference;
 
-pub const css_rules = @import("./rules/rules.zig");
+pub const css_rules = @import("rules/rules.zig");
 pub const CssRule = css_rules.CssRule;
 pub const CssRuleList = css_rules.CssRuleList;
 pub const LayerName = css_rules.layer.LayerName;
@@ -37,11 +37,11 @@ pub const TailwindAtRule = css_rules.tailwind.TailwindAtRule;
 
 pub const MinifyContext = css_rules.MinifyContext;
 
-pub const media_query = @import("./media_query.zig");
+pub const media_query = @import("media_query.zig");
 pub const MediaList = media_query.MediaList;
 pub const MediaFeatureType = media_query.MediaFeatureType;
 
-pub const css_values = @import("./values/values.zig");
+pub const css_values = @import("values/values.zig");
 pub const DashedIdent = css_values.ident.DashedIdent;
 pub const DashedIdentFns = css_values.ident.DashedIdentFns;
 pub const CssColor = css_values.color.CssColor;
@@ -58,44 +58,44 @@ pub const CustomIdent = css_values.ident.CustomIdent;
 pub const CustomIdentFns = css_values.ident.CustomIdentFns;
 pub const Url = css_values.url.Url;
 
-pub const declaration = @import("./declaration.zig");
+pub const declaration = @import("declaration.zig");
 
-pub const css_properties = @import("./properties/properties.zig");
+pub const css_properties = @import("properties/properties.zig");
 pub const Property = css_properties.Property;
 pub const PropertyId = css_properties.PropertyId;
 pub const PropertyIdTag = css_properties.PropertyIdTag;
 pub const TokenList = css_properties.custom.TokenList;
 pub const TokenListFns = css_properties.custom.TokenListFns;
 
-const css_decls = @import("./declaration.zig");
+const css_decls = @import("declaration.zig");
 pub const DeclarationList = css_decls.DeclarationList;
 pub const DeclarationBlock = css_decls.DeclarationBlock;
 
-pub const selector = @import("./selectors/selector.zig");
+pub const selector = @import("selectors/selector.zig");
 pub const SelectorList = selector.parser.SelectorList;
 pub const Selector = selector.parser.Selector;
 pub const Component = selector.parser.Component;
 pub const PseudoClass = selector.parser.PseudoClass;
 pub const PseudoElement = selector.parser.PseudoElement;
 
-pub const logical = @import("./logical.zig");
+pub const logical = @import("logical.zig");
 pub const PropertyCategory = logical.PropertyCategory;
 pub const LogicalGroup = logical.LogicalGroup;
 
-pub const css_printer = @import("./printer.zig");
+pub const css_printer = @import("printer.zig");
 pub const Printer = css_printer.Printer;
 pub const PrinterOptions = css_printer.PrinterOptions;
-pub const targets = @import("./targets.zig");
+pub const targets = @import("targets.zig");
 pub const Targets = css_printer.Targets;
 // pub const Features = css_printer.Features;
 
-const context = @import("./context.zig");
+const context = @import("context.zig");
 pub const PropertyHandlerContext = context.PropertyHandlerContext;
 pub const DeclarationHandler = declaration.DeclarationHandler;
 
 pub const Maybe = bun.JSC.Node.Maybe;
 // TODO: Remove existing Error defined here and replace it with these
-const errors_ = @import("./error.zig");
+const errors_ = @import("error.zig");
 pub const Err = errors_.Err;
 pub const PrinterErrorKind = errors_.PrinterErrorKind;
 pub const PrinterError = errors_.PrinterError;
@@ -109,12 +109,12 @@ pub const MinifyErrorKind = errors_.MinifyErrorKind;
 pub const MinifyError = errors_.MinifyError;
 pub const MinifyErr = errors_.MinifyErr;
 
-pub const generic = @import("./generics.zig");
+pub const generic = @import("generics.zig");
 pub const HASH_SEED = generic.HASH_SEED;
 
 pub const ImportConditions = css_rules.import.ImportConditions;
 
-pub const compat = @import("./compat.zig");
+pub const compat = @import("compat.zig");
 
 pub const Features = targets.Features;
 pub const Feature = compat.Feature;
@@ -132,7 +132,7 @@ pub fn OOM(e: anyerror) noreturn {
     bun.outOfMemory();
 }
 
-pub const SmallList = @import("./small_list.zig").SmallList;
+pub const SmallList = @import("small_list.zig").SmallList;
 pub const Bitflags = bun.Bitflags;
 
 pub const todo_stuff = struct {

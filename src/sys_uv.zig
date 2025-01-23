@@ -416,4 +416,4 @@ pub inline fn write(fd: FileDescriptor, buf: []const u8) Maybe(usize) {
     return writev(fd, &bufs);
 }
 
-pub const Tag = @import("./sys.zig").Tag;
+pub const Tag = @import("sys.zig").Tag;

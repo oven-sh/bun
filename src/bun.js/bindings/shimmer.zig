@@ -1,9 +1,9 @@
 const std = @import("std");
 const bun = @import("root").bun;
-const StaticExport = @import("./static_export.zig");
-const Sizes = @import("./sizes.zig");
+const StaticExport = @import("static_export.zig");
+const Sizes = @import("sizes.zig");
 pub const is_bindgen: bool = false;
-const headers = @import("./headers.zig");
+const headers = @import("headers.zig");
 
 fn isNullableType(comptime Type: type) bool {
     return @typeInfo(Type) == .Optional or

@@ -6,7 +6,7 @@ const Log = logger.Log;
 
 const ArrayList = std.ArrayListUnmanaged;
 
-const css = @import("./css_parser.zig");
+const css = @import("css_parser.zig");
 const css_values = css.css_values;
 
 const Parser = css.Parser;

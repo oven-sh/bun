@@ -1,6 +1,6 @@
 const bun = @import("root").bun;
 const std = @import("std");
-const color = @import("./color.zig");
+const color = @import("color.zig");
 const RGBA = color.RGBA;
 const LAB = color.LAB;
 const LCH = color.LCH;

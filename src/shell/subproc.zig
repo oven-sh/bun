@@ -20,7 +20,7 @@ const sh = bun.shell;
 
 const PosixSpawn = bun.spawn;
 
-const util = @import("./util.zig");
+const util = @import("util.zig");
 
 pub const Stdio = util.Stdio;
 const FileSink = JSC.WebCore.FileSink;

@@ -3040,7 +3040,7 @@ fn NewLexer_(
 
 pub const Lexer = NewLexer(.{});
 
-const JSIdentifier = @import("./js_lexer/identifier.zig");
+const JSIdentifier = @import("js_lexer/identifier.zig");
 pub inline fn isIdentifierStart(codepoint: i32) bool {
     return JSIdentifier.isIdentifierStart(codepoint);
 }

@@ -2,8 +2,8 @@ const bun = @import("root").bun;
 const picohttp = bun.picohttp;
 const std = @import("std");
 
-const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploadOptions;
-const ACL = @import("./acl.zig").ACL;
+const MultiPartUploadOptions = @import("multipart_options.zig").MultiPartUploadOptions;
+const ACL = @import("acl.zig").ACL;
 const JSC = bun.JSC;
 const RareData = JSC.RareData;
 const strings = bun.strings;

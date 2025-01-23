@@ -29,7 +29,7 @@ const JSValue = bun.JSC.JSValue;
 const JSPromise = bun.JSC.JSPromise;
 const JSGlobalObject = bun.JSC.JSGlobalObject;
 const which = @import("../which.zig").which;
-const Braces = @import("./braces.zig");
+const Braces = @import("braces.zig");
 const Syscall = @import("../sys.zig");
 const Glob = @import("../glob.zig");
 const ResolvePath = @import("../resolver/resolve_path.zig");
@@ -44,7 +44,7 @@ const Maybe = JSC.Maybe;
 const WTFStringImplStruct = @import("../string.zig").WTFStringImplStruct;
 
 const Pipe = [2]bun.FileDescriptor;
-const shell = @import("./shell.zig");
+const shell = @import("shell.zig");
 const Token = shell.Token;
 const ShellError = shell.ShellError;
 const ast = shell.AST;

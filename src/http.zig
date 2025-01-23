@@ -12,40 +12,40 @@ const stringZ = bun.stringZ;
 const C = bun.C;
 const Loc = bun.logger.Loc;
 const Log = bun.logger.Log;
-const DotEnv = @import("./env_loader.zig");
+const DotEnv = @import("env_loader.zig");
 const std = @import("std");
-const URL = @import("./url.zig").URL;
-const PercentEncoding = @import("./url.zig").PercentEncoding;
-pub const Method = @import("./http/method.zig").Method;
-const Api = @import("./api/schema.zig").Api;
+const URL = @import("url.zig").URL;
+const PercentEncoding = @import("url.zig").PercentEncoding;
+pub const Method = @import("http/method.zig").Method;
+const Api = @import("api/schema.zig").Api;
 const Lock = bun.Mutex;
 const HTTPClient = @This();
-const Zlib = @import("./zlib.zig");
+const Zlib = @import("zlib.zig");
 const Brotli = bun.brotli;
-const StringBuilder = @import("./string_builder.zig");
+const StringBuilder = @import("string_builder.zig");
 const ThreadPool = bun.ThreadPool;
-const ObjectPool = @import("./pool.zig").ObjectPool;
+const ObjectPool = @import("pool.zig").ObjectPool;
 const posix = std.posix;
 const SOCK = posix.SOCK;
-const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
-const ZlibPool = @import("./http/zlib.zig");
+const Arena = @import("allocators/mimalloc_arena.zig").Arena;
+const ZlibPool = @import("http/zlib.zig");
 const BoringSSL = bun.BoringSSL;
 const Progress = bun.Progress;
-const X509 = @import("./bun.js/api/bun/x509.zig");
-const SSLConfig = @import("./bun.js/api/server.zig").ServerConfig.SSLConfig;
-const SSLWrapper = @import("./bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
+const X509 = @import("bun.js/api/bun/x509.zig");
+const SSLConfig = @import("bun.js/api/server.zig").ServerConfig.SSLConfig;
+const SSLWrapper = @import("bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
 
 const URLBufferPool = ObjectPool([8192]u8, null, false, 10);
 const uws = bun.uws;
-pub const MimeType = @import("./http/mime_type.zig");
-pub const URLPath = @import("./http/url_path.zig");
+pub const MimeType = @import("http/mime_type.zig");
+pub const URLPath = @import("http/url_path.zig");
 // This becomes Arena.allocator
 pub var default_allocator: std.mem.Allocator = undefined;
 var default_arena: Arena = undefined;
 pub var http_thread: HTTPThread = undefined;
-const HiveArray = @import("./hive_array.zig").HiveArray;
+const HiveArray = @import("hive_array.zig").HiveArray;
 const Batch = bun.ThreadPool.Batch;
-const TaggedPointerUnion = @import("./tagged_pointer.zig").TaggedPointerUnion;
+const TaggedPointerUnion = @import("tagged_pointer.zig").TaggedPointerUnion;
 const DeadSocket = opaque {};
 var dead_socket = @as(*DeadSocket, @ptrFromInt(1));
 //TODO: this needs to be freed when Worker Threads are implemented
@@ -1026,7 +1026,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
     };
 }
 
-const UnboundedQueue = @import("./bun.js/unbounded_queue.zig").UnboundedQueue;
+const UnboundedQueue = @import("bun.js/unbounded_queue.zig").UnboundedQueue;
 const Queue = UnboundedQueue(AsyncHTTP, .next);
 const ShutdownQueue = UnboundedQueue(AsyncHTTP, .next);
 const RequestWriteQueue = UnboundedQueue(AsyncHTTP, .next);
@@ -1767,7 +1767,7 @@ pub inline fn cleanup(force: bool) void {
     default_arena.gc(force);
 }
 
-pub const Headers = @import("./http/headers.zig");
+pub const Headers = @import("http/headers.zig");
 
 pub const SOCKET_FLAGS: u32 = if (Environment.isLinux)
     SOCK.CLOEXEC | posix.MSG.NOSIGNAL
@@ -2373,13 +2373,13 @@ pub fn headerStr(this: *const HTTPClient, ptr: Api.StringPointer) string {
     return this.header_buf[ptr.offset..][0..ptr.length];
 }
 
-pub const HeaderBuilder = @import("./http/header_builder.zig");
+pub const HeaderBuilder = @import("http/header_builder.zig");
 
 const HTTPCallbackPair = .{ *AsyncHTTP, HTTPClientResult };
-pub const HTTPChannel = @import("./sync.zig").Channel(HTTPCallbackPair, .{ .Static = 1000 });
+pub const HTTPChannel = @import("sync.zig").Channel(HTTPCallbackPair, .{ .Static = 1000 });
 // 32 pointers much cheaper than 1000 pointers
 const SingleHTTPChannel = struct {
-    const SingleHTTPCHannel_ = @import("./sync.zig").Channel(HTTPClientResult, .{ .Static = 8 });
+    const SingleHTTPCHannel_ = @import("sync.zig").Channel(HTTPClientResult, .{ .Static = 8 });
     channel: SingleHTTPCHannel_,
     pub fn reset(_: *@This()) void {}
     pub fn init() SingleHTTPChannel {

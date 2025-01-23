@@ -1,5 +1,5 @@
-const Semver = @import("./semver.zig");
-const String = @import("./semver.zig").String;
+const Semver = @import("semver.zig");
+const String = @import("semver.zig").String;
 
 pub const VersionedURL = extern struct {
     url: String,

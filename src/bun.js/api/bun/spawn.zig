@@ -445,6 +445,6 @@ pub const PosixSpawn = struct {
         }
     }
 
-    pub usingnamespace @import("./process.zig");
-    pub usingnamespace @import("./spawn/stdio.zig");
+    pub usingnamespace @import("process.zig");
+    pub usingnamespace @import("spawn/stdio.zig");
 };

@@ -21,37 +21,37 @@ const js_ast = bun.JSAst;
 const linker = @import("linker.zig");
 const Ref = @import("ast/base.zig").Ref;
 const Define = @import("defines.zig").Define;
-const DebugOptions = @import("./cli.zig").Command.DebugOptions;
-const ThreadPoolLib = @import("./thread_pool.zig");
+const DebugOptions = @import("cli.zig").Command.DebugOptions;
+const ThreadPoolLib = @import("thread_pool.zig");
 
 const Fs = @import("fs.zig");
 const schema = @import("api/schema.zig");
 const Api = schema.Api;
-const _resolver = @import("./resolver/resolver.zig");
+const _resolver = @import("resolver/resolver.zig");
 const sync = @import("sync.zig");
-const ImportRecord = @import("./import_record.zig").ImportRecord;
-const allocators = @import("./allocators.zig");
-const MimeType = @import("./http/mime_type.zig");
-const resolve_path = @import("./resolver/resolve_path.zig");
-const runtime = @import("./runtime.zig");
-const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
-const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
+const ImportRecord = @import("import_record.zig").ImportRecord;
+const allocators = @import("allocators.zig");
+const MimeType = @import("http/mime_type.zig");
+const resolve_path = @import("resolver/resolve_path.zig");
+const runtime = @import("runtime.zig");
+const PackageJSON = @import("resolver/package_json.zig").PackageJSON;
+const MacroRemap = @import("resolver/package_json.zig").MacroMap;
 const DebugLogs = _resolver.DebugLogs;
-const Router = @import("./router.zig");
+const Router = @import("router.zig");
 const isPackagePath = _resolver.isPackagePath;
 const Css = @import("css_scanner.zig");
-const DotEnv = @import("./env_loader.zig");
+const DotEnv = @import("env_loader.zig");
 const Lock = bun.Mutex;
-const NodeFallbackModules = @import("./node_fallbacks.zig");
-const CacheEntry = @import("./cache.zig").FsCacheEntry;
-const Analytics = @import("./analytics/analytics_thread.zig");
-const URL = @import("./url.zig").URL;
+const NodeFallbackModules = @import("node_fallbacks.zig");
+const CacheEntry = @import("cache.zig").FsCacheEntry;
+const Analytics = @import("analytics/analytics_thread.zig");
+const URL = @import("url.zig").URL;
 const Linker = linker.Linker;
 const Resolver = _resolver.Resolver;
-const TOML = @import("./toml/toml_parser.zig").TOML;
+const TOML = @import("toml/toml_parser.zig").TOML;
 const JSC = bun.JSC;
-const PackageManager = @import("./install/install.zig").PackageManager;
-const DataURL = @import("./resolver/data_url.zig").DataURL;
+const PackageManager = @import("install/install.zig").PackageManager;
+const DataURL = @import("resolver/data_url.zig").DataURL;
 
 pub fn MacroJSValueType_() type {
     if (comptime JSC.is_bindgen) {
@@ -64,8 +64,8 @@ pub fn MacroJSValueType_() type {
 pub const MacroJSValueType = MacroJSValueType_();
 const default_macro_js_value = if (JSC.is_bindgen) MacroJSValueType{} else JSC.JSValue.zero;
 
-const EntryPoints = @import("./bundler/entry_points.zig");
-const SystemTimer = @import("./system_timer.zig").Timer;
+const EntryPoints = @import("bundler/entry_points.zig");
+const SystemTimer = @import("system_timer.zig").Timer;
 pub usingnamespace EntryPoints;
 pub const ParseResult = struct {
     source: logger.Source,

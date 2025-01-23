@@ -7,7 +7,7 @@ const Encoder = JSC.WebCore.Encoder;
 const Mutex = bun.Mutex;
 const uws = @import("../../deps/uws.zig");
 
-const PathWatcher = @import("./path_watcher.zig");
+const PathWatcher = @import("path_watcher.zig");
 const UnboundedQueue = @import("../unbounded_queue.zig").UnboundedQueue;
 const EventLoopTimer = @import("../api/Timer.zig").EventLoopTimer;
 const VirtualMachine = JSC.VirtualMachine;

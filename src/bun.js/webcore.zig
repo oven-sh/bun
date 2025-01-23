@@ -1,20 +1,20 @@
-pub usingnamespace @import("./webcore/response.zig");
-pub usingnamespace @import("./webcore/encoding.zig");
-pub usingnamespace @import("./webcore/streams.zig");
-pub usingnamespace @import("./webcore/blob.zig");
-pub usingnamespace @import("./webcore/S3Stat.zig");
-pub usingnamespace @import("./webcore/S3Client.zig");
-pub usingnamespace @import("./webcore/request.zig");
-pub usingnamespace @import("./webcore/body.zig");
-pub const ObjectURLRegistry = @import("./webcore/ObjectURLRegistry.zig");
+pub usingnamespace @import("webcore/response.zig");
+pub usingnamespace @import("webcore/encoding.zig");
+pub usingnamespace @import("webcore/streams.zig");
+pub usingnamespace @import("webcore/blob.zig");
+pub usingnamespace @import("webcore/S3Stat.zig");
+pub usingnamespace @import("webcore/S3Client.zig");
+pub usingnamespace @import("webcore/request.zig");
+pub usingnamespace @import("webcore/body.zig");
+pub const ObjectURLRegistry = @import("webcore/ObjectURLRegistry.zig");
 const JSC = bun.JSC;
 const std = @import("std");
 const bun = @import("root").bun;
 const string = bun.string;
-pub const AbortSignal = @import("./bindings/bindings.zig").AbortSignal;
-pub const JSValue = @import("./bindings/bindings.zig").JSValue;
+pub const AbortSignal = @import("bindings/bindings.zig").AbortSignal;
+pub const JSValue = @import("bindings/bindings.zig").JSValue;
 const Environment = bun.Environment;
-const UUID7 = @import("./uuid.zig").UUID7;
+const UUID7 = @import("uuid.zig").UUID7;
 
 pub const Lifetime = enum {
     clone,

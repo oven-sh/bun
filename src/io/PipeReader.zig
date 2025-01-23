@@ -1,10 +1,10 @@
 const bun = @import("root").bun;
 const std = @import("std");
 const uv = bun.windows.libuv;
-const Source = @import("./source.zig").Source;
+const Source = @import("source.zig").Source;
 
-const ReadState = @import("./pipes.zig").ReadState;
-const FileType = @import("./pipes.zig").FileType;
+const ReadState = @import("pipes.zig").ReadState;
+const FileType = @import("pipes.zig").FileType;
 
 /// Read a blocking pipe without blocking the current thread.
 pub fn PosixPipeReader(
@@ -338,7 +338,7 @@ pub fn PosixPipeReader(
     };
 }
 
-const PollOrFd = @import("./pipes.zig").PollOrFd;
+const PollOrFd = @import("pipes.zig").PollOrFd;
 
 pub fn WindowsPipeReader(
     comptime This: type,

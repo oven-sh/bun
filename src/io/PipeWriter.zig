@@ -3,10 +3,10 @@ const std = @import("std");
 const Async = bun.Async;
 const JSC = bun.JSC;
 const uv = bun.windows.libuv;
-const Source = @import("./source.zig").Source;
+const Source = @import("source.zig").Source;
 
 const log = bun.Output.scoped(.PipeWriter, true);
-const FileType = @import("./pipes.zig").FileType;
+const FileType = @import("pipes.zig").FileType;
 
 pub const WriteResult = union(enum) {
     done: usize,
@@ -181,7 +181,7 @@ pub fn PosixPipeWriter(
     };
 }
 
-const PollOrFd = @import("./pipes.zig").PollOrFd;
+const PollOrFd = @import("pipes.zig").PollOrFd;
 
 pub fn PosixBufferedWriter(
     comptime Parent: type,

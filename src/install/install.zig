@@ -53,10 +53,10 @@ const HTTPChannel = HTTP.HTTPChannel;
 
 const HeaderBuilder = HTTP.HeaderBuilder;
 
-const Integrity = @import("./integrity.zig").Integrity;
+const Integrity = @import("integrity.zig").Integrity;
 const clap = bun.clap;
-const ExtractTarball = @import("./extract_tarball.zig");
-pub const Npm = @import("./npm.zig");
+const ExtractTarball = @import("extract_tarball.zig");
+pub const Npm = @import("npm.zig");
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
 const z_allocator = @import("../allocators/memory_allocator.zig").z_allocator;
 const Syscall = bun.sys;
@@ -65,8 +65,8 @@ const PackageManagerCommand = @import("../cli/package_manager_command.zig").Pack
 threadlocal var initialized_store = false;
 const Futex = @import("../futex.zig");
 
-pub const Lockfile = @import("./lockfile.zig");
-pub const TextLockfile = @import("./bun.lock.zig");
+pub const Lockfile = @import("lockfile.zig");
+pub const TextLockfile = @import("bun.lock.zig");
 pub const PatchedDep = Lockfile.PatchedDep;
 const Walker = @import("../walker_skippable.zig");
 
@@ -88,7 +88,7 @@ pub fn buntaghashbuf_make(buf: *BuntagHashBuf, patch_hash: u64) [:0]u8 {
     return bunhashtag;
 }
 
-pub const patch = @import("./patch_install.zig");
+pub const patch = @import("patch_install.zig");
 pub const PatchTask = patch.PatchTask;
 
 // these bytes are skipped
@@ -145,16 +145,16 @@ const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
 const NetworkQueue = std.fifo.LinearFifo(*NetworkTask, .{ .Static = 32 });
 const PatchTaskFifo = std.fifo.LinearFifo(*PatchTask, .{ .Static = 32 });
-const Semver = @import("./semver.zig");
+const Semver = @import("semver.zig");
 const ExternalString = Semver.ExternalString;
 const String = Semver.String;
 const GlobalStringBuilder = @import("../string_builder.zig");
 const SlicedString = Semver.SlicedString;
-pub const Repository = @import("./repository.zig").Repository;
-pub const Bin = @import("./bin.zig").Bin;
-pub const Dependency = @import("./dependency.zig");
-const Behavior = @import("./dependency.zig").Behavior;
-const FolderResolution = @import("./resolvers/folder_resolver.zig").FolderResolution;
+pub const Repository = @import("repository.zig").Repository;
+pub const Bin = @import("bin.zig").Bin;
+pub const Dependency = @import("dependency.zig");
+const Behavior = @import("dependency.zig").Behavior;
+const FolderResolution = @import("resolvers/folder_resolver.zig").FolderResolution;
 
 pub fn ExternalSlice(comptime Type: type) type {
     return extern struct {
@@ -2226,7 +2226,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
         }
 
         pub fn isDanglingWindowsBinLink(node_mod_fd: bun.FileDescriptor, path: []const u16, temp_buffer: []u8) bool {
-            const WinBinLinkingShim = @import("./windows-shim/BinLinkingShim.zig");
+            const WinBinLinkingShim = @import("windows-shim/BinLinkingShim.zig");
             const bin_path = bin_path: {
                 const fd = bun.sys.openatWindows(node_mod_fd, path, bun.O.RDONLY).unwrap() catch return true;
                 defer _ = bun.sys.close(fd);
@@ -2494,7 +2494,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
     };
 }
 
-pub const Resolution = @import("./resolution.zig").Resolution;
+pub const Resolution = @import("resolution.zig").Resolution;
 const Progress = bun.Progress;
 const TaggedPointer = @import("../tagged_pointer.zig");
 
@@ -15514,7 +15514,7 @@ pub const PackageManifestError = error{
     PackageManifestHTTP5xx,
 };
 
-pub const LifecycleScriptSubprocess = @import("./lifecycle_script_runner.zig").LifecycleScriptSubprocess;
+pub const LifecycleScriptSubprocess = @import("lifecycle_script_runner.zig").LifecycleScriptSubprocess;
 
 pub const bun_install_js_bindings = struct {
     const JSValue = JSC.JSValue;

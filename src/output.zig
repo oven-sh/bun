@@ -1,6 +1,6 @@
 const bun = @import("root").bun;
 const std = @import("std");
-const Environment = @import("./env.zig");
+const Environment = @import("env.zig");
 const string = bun.string;
 const root = @import("root");
 const strings = bun.strings;
@@ -11,7 +11,7 @@ const use_mimalloc = bun.use_mimalloc;
 const writeStream = std.json.writeStream;
 const WriteStream = std.json.WriteStream;
 
-const SystemTimer = @import("./system_timer.zig").Timer;
+const SystemTimer = @import("system_timer.zig").Timer;
 
 // These are threadlocal so we don't have stdout/stderr writing on top of each other
 threadlocal var source: Source = undefined;
@@ -63,7 +63,7 @@ pub const Source = struct {
         if (comptime Environment.isDebug) {
             if (comptime use_mimalloc) {
                 if (!source_set) {
-                    const Mimalloc = @import("./allocators/mimalloc.zig");
+                    const Mimalloc = @import("allocators/mimalloc.zig");
                     Mimalloc.mi_option_set(.show_errors, 1);
                 }
             }

@@ -9,7 +9,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
-const defines = @import("./defines.zig");
+const defines = @import("defines.zig");
 
 // If something is in this list, then a direct identifier expression or property
 // access chain matching this will be assumed to have no side effects and will

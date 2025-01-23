@@ -20,7 +20,7 @@ const JSObject = JSC.JSObject;
 const CallFrame = JSC.CallFrame;
 const ZigString = JSC.ZigString;
 const Environment = bun.Environment;
-const DiffFormatter = @import("./diff_format.zig").DiffFormatter;
+const DiffFormatter = @import("diff_format.zig").DiffFormatter;
 
 pub const Counter = struct {
     expected: u32 = 0,

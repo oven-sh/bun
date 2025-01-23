@@ -1,9 +1,9 @@
 const std = @import("std");
-const Environment = @import("./env.zig");
+const Environment = @import("env.zig");
 
 const Output = @import("output.zig");
 const use_mimalloc = bun.use_mimalloc;
-const StringTypes = @import("./string_types.zig");
+const StringTypes = @import("string_types.zig");
 const Mimalloc = bun.Mimalloc;
 const bun = @import("root").bun;
 
@@ -155,7 +155,7 @@ pub inline fn mimalloc_cleanup(force: bool) void {
         Mimalloc.mi_collect(force);
     }
 }
-pub const versions = @import("./generated_versions_list.zig");
+pub const versions = @import("generated_versions_list.zig");
 
 // Enabling huge pages slows down bun by 8x or so
 // Keeping this code for:
@@ -163,7 +163,7 @@ pub const versions = @import("./generated_versions_list.zig");
 // 2. if I want to configure allocator later
 pub inline fn configureAllocator(_: AllocatorConfiguration) void {
     // if (comptime !use_mimalloc) return;
-    // const Mimalloc = @import("./allocators/mimalloc.zig");
+    // const Mimalloc = @import("allocators/mimalloc.zig");
     // Mimalloc.mi_option_set_enabled(Mimalloc.mi_option_verbose, config.verbose);
     // Mimalloc.mi_option_set_enabled(Mimalloc.mi_option_large_os_pages, config.long_running);
     // if (!config.long_running) Mimalloc.mi_option_set(Mimalloc.mi_option_reset_delay, 0);
@@ -187,7 +187,7 @@ pub const BunInfo = struct {
     bun_version: string,
     platform: Analytics.GenerateHeader.GeneratePlatform.Platform,
 
-    const Analytics = @import("./analytics/analytics_thread.zig");
+    const Analytics = @import("analytics/analytics_thread.zig");
     const JSON = bun.JSON;
     const JSAst = bun.JSAst;
     pub fn generate(comptime Bundler: type, _: Bundler, allocator: std.mem.Allocator) !JSAst.Expr {

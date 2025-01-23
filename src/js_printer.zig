@@ -7,7 +7,7 @@ const options = @import("options.zig");
 const rename = @import("renamer.zig");
 const runtime = @import("runtime.zig");
 const Lock = bun.Mutex;
-const Api = @import("./api/schema.zig").Api;
+const Api = @import("api/schema.zig").Api;
 const fs = @import("fs.zig");
 const bun = @import("root").bun;
 const string = bun.string;
@@ -51,13 +51,13 @@ const first_high_surrogate = 0xD800;
 const last_high_surrogate = 0xDBFF;
 const first_low_surrogate = 0xDC00;
 const last_low_surrogate = 0xDFFF;
-const CodepointIterator = @import("./string_immutable.zig").UnsignedCodepointIterator;
+const CodepointIterator = @import("string_immutable.zig").UnsignedCodepointIterator;
 const assert = bun.assert;
 
 threadlocal var imported_module_ids_list: std.ArrayList(u32) = undefined;
 threadlocal var imported_module_ids_list_unset: bool = true;
 const ImportRecord = bun.ImportRecord;
-const SourceMap = @import("./sourcemap/sourcemap.zig");
+const SourceMap = @import("sourcemap/sourcemap.zig");
 
 /// For support JavaScriptCore
 const ascii_only_always_on_unless_minifying = true;

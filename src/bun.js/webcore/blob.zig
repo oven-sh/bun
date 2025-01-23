@@ -46,22 +46,22 @@ const libuv = bun.windows.libuv;
 const S3 = bun.S3;
 const S3Credentials = S3.S3Credentials;
 const PathOrBlob = JSC.Node.PathOrBlob;
-const WriteFilePromise = @import("./blob/WriteFile.zig").WriteFilePromise;
-const WriteFileWaitFromLockedValueTask = @import("./blob/WriteFile.zig").WriteFileWaitFromLockedValueTask;
-const NewReadFileHandler = @import("./blob/ReadFile.zig").NewReadFileHandler;
-const WriteFile = @import("./blob/WriteFile.zig").WriteFile;
-const ReadFile = @import("./blob/ReadFile.zig").ReadFile;
-const WriteFileWindows = @import("./blob/WriteFile.zig").WriteFileWindows;
+const WriteFilePromise = @import("blob/WriteFile.zig").WriteFilePromise;
+const WriteFileWaitFromLockedValueTask = @import("blob/WriteFile.zig").WriteFileWaitFromLockedValueTask;
+const NewReadFileHandler = @import("blob/ReadFile.zig").NewReadFileHandler;
+const WriteFile = @import("blob/WriteFile.zig").WriteFile;
+const ReadFile = @import("blob/ReadFile.zig").ReadFile;
+const WriteFileWindows = @import("blob/WriteFile.zig").WriteFileWindows;
 
-const S3File = @import("./S3File.zig");
+const S3File = @import("S3File.zig");
 
 pub const Blob = struct {
     const bloblog = Output.scoped(.Blob, false);
 
     pub usingnamespace bun.New(@This());
     pub usingnamespace JSC.Codegen.JSBlob;
-    pub usingnamespace @import("./blob/WriteFile.zig");
-    pub usingnamespace @import("./blob/ReadFile.zig");
+    pub usingnamespace @import("blob/WriteFile.zig");
+    pub usingnamespace @import("blob/ReadFile.zig");
     pub const ClosingState = enum(u8) {
         running,
         closing,
@@ -142,7 +142,7 @@ pub const Blob = struct {
         return store.data == .file;
     }
 
-    const ReadFileUV = @import("./blob/ReadFile.zig").ReadFileUV;
+    const ReadFileUV = @import("blob/ReadFile.zig").ReadFileUV;
     pub fn doReadFromS3(this: *Blob, comptime Function: anytype, global: *JSGlobalObject) JSValue {
         bloblog("doReadFromS3", .{});
 

@@ -3,7 +3,7 @@
 const std = @import("std");
 const bun = @import("root").bun;
 
-const mimalloc = @import("./allocators/mimalloc.zig");
+const mimalloc = @import("allocators/mimalloc.zig");
 
 pub const MIN_WBITS = 8;
 pub const MAX_WBITS = 15;

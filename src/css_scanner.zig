@@ -13,13 +13,13 @@ const FeatureFlags = bun.FeatureFlags;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
-const options = @import("./options.zig");
+const options = @import("options.zig");
 const import_record = @import("import_record.zig");
 const logger = bun.logger;
 const Options = options;
-const resolver = @import("./resolver/resolver.zig");
-const _linker = @import("./linker.zig");
-const URL = @import("./url.zig").URL;
+const resolver = @import("resolver/resolver.zig");
+const _linker = @import("linker.zig");
+const URL = @import("url.zig").URL;
 const replacementCharacter: CodePoint = 0xFFFD;
 
 pub const Chunk = struct {

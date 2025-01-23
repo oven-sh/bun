@@ -4,7 +4,7 @@ const UnboundedQueue = @import("../unbounded_queue.zig").UnboundedQueue;
 const Path = @import("../../resolver/resolve_path.zig");
 const Fs = @import("../../fs.zig");
 const Mutex = bun.Mutex;
-const FSEvents = @import("./fs_events.zig");
+const FSEvents = @import("fs_events.zig");
 
 const bun = @import("root").bun;
 const Output = bun.Output;

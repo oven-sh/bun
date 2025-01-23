@@ -4,7 +4,7 @@ const string = bun.string;
 const Output = bun.Output;
 const C_API = bun.JSC.C;
 const StringPointer = @import("../../api/schema.zig").Api.StringPointer;
-const Exports = @import("./exports.zig");
+const Exports = @import("exports.zig");
 const strings = bun.strings;
 const ErrorableZigString = Exports.ErrorableZigString;
 const ErrorableResolvedSource = Exports.ErrorableResolvedSource;
@@ -15,7 +15,7 @@ const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const JSC = bun.JSC;
 const Shimmer = JSC.Shimmer;
 const ConsoleObject = JSC.ConsoleObject;
-const FFI = @import("./FFI.zig");
+const FFI = @import("FFI.zig");
 const NullableAllocator = bun.NullableAllocator;
 const MutableString = bun.MutableString;
 const JestPrettyFormat = @import("../test/pretty_format.zig").JestPrettyFormat;
@@ -4235,7 +4235,7 @@ pub const JSValue = enum(i64) {
     }
 
     pub fn putZigString(value: JSValue, global: *JSGlobalObject, key: *const ZigString, result: JSC.JSValue) void {
-        @import("./headers.zig").JSC__JSValue__put(value, global, key, result);
+        @import("headers.zig").JSC__JSValue__put(value, global, key, result);
     }
 
     extern "C" fn JSC__JSValue__putBunString(value: JSValue, global: *JSGlobalObject, key: *const bun.String, result: JSC.JSValue) void;
@@ -7050,7 +7050,7 @@ pub const WTF = struct {
     }
 };
 
-pub usingnamespace @import("./JSPropertyIterator.zig");
+pub usingnamespace @import("JSPropertyIterator.zig");
 
 // DOMCall Fields
 const Bun = JSC.API.Bun;
@@ -7112,7 +7112,7 @@ pub const ScriptExecutionStatus = enum(i32) {
 comptime {
     // this file is gennerated, but cant be placed in the build/debug/codegen folder
     // because zig will complain about outside-of-module stuff
-    _ = @import("./GeneratedJS2Native.zig");
+    _ = @import("GeneratedJS2Native.zig");
 }
 
 // Error's cannot be created off of the main thread. So we use this to store the

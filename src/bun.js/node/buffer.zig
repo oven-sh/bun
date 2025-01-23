@@ -49,6 +49,8 @@ pub const BufferVectorized = struct {
                 Encoder.writeU8(str.slice().ptr, str.slice().len, buf.ptr, buf.len, .hex),
         } catch return false;
 
+        if (written == 0 and str.length() > 0) return false;
+
         switch (written) {
             0 => return true,
             1 => {

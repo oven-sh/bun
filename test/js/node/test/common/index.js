@@ -30,6 +30,7 @@ const net = require('net');
 // Do not require 'os' until needed so that test-os-checked-function can
 // monkey patch it. If 'os' is required here, that test will fail.
 const path = require('path');
+const { inspect } = require('util');
 const { inspect, getCallSites } = require('util');
 const { isMainThread } = require('worker_threads');
 const { isModuleNamespaceObject } = require('util/types');
@@ -902,13 +903,14 @@ function invalidArgTypeHelper(input) {
     return ` Received ${input}`;
   }
   if (typeof input === 'function') {
-    return ` Received function ${input.name}`;
+    if (input.name) return ` Received function ${input.name}`;
+    return ` Received function`;
   }
   if (typeof input === 'object') {
     if (input.constructor?.name) {
       return ` Received an instance of ${input.constructor.name}`;
     }
-    return ` Received ${inspect(input, { depth: -1 })}`;
+    return ` Received ${inspect(input, { depth: 0 })}`;
   }
 
   let inspected = inspect(input, { colors: false });

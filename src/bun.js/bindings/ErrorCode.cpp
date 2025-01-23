@@ -205,7 +205,6 @@ JSObject* createError(Zig::JSGlobalObject* globalObject, ErrorCode code, JSC::JS
 // export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) ZigString
 extern "C" ZigString Bun__inspect(JSC::JSGlobalObject* globalObject, JSValue value);
 
-//
 WTF::String JSValueToStringSafe(JSC::JSGlobalObject* globalObject, JSValue arg)
 {
     ASSERT(!arg.isEmpty());
@@ -379,13 +378,17 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
     unsigned length = expected_types.size();
     if (length == 1) {
         result.append(expected_types.at(0).toWTFString(globalObject));
+    } else if (length == 2) {
+        result.append(expected_types.at(0).toWTFString(globalObject));
+        result.append(", or "_s);
+        result.append(expected_types.at(1).toWTFString(globalObject));
     } else {
         for (unsigned i = 0; i < length - 1; i++) {
             JSValue expected_type = expected_types.at(i);
             if (i > 0) result.append(", "_s);
             result.append(expected_type.toWTFString(globalObject));
         }
-        result.append(" or "_s);
+        result.append(", or "_s);
         result.append(expected_types.at(length - 1).toWTFString(globalObject));
     }
 
@@ -433,6 +436,12 @@ WTF::String ERR_OUT_OF_RANGE(JSC::ThrowScope& scope, JSC::JSGlobalObject* global
 }
 
 namespace ERR {
+
+JSC::EncodedJSValue throwCode(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ErrorCode code, const WTF::String& message)
+{
+    throwScope.throwException(globalObject, createError(globalObject, code, message));
+    return {};
+}
 
 JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& arg_name, const WTF::String& expected_type, JSC::JSValue val_actual_value)
 {
@@ -529,7 +538,7 @@ JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObjec
     return {};
 }
 
-JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, JSC::JSValue value, const WTF::String& reason)
+JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& name, JSC::JSValue value, const WTF::String& reason)
 {
     ASCIILiteral type = String(name).contains('.') ? "property"_s : "argument"_s;
 
@@ -614,8 +623,12 @@ JSC::EncodedJSValue STRING_TOO_LONG(JSC::ThrowScope& throwScope, JSC::JSGlobalOb
     return {};
 }
 
-JSC::EncodedJSValue BUFFER_OUT_OF_BOUNDS(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+JSC::EncodedJSValue BUFFER_OUT_OF_BOUNDS(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& name)
 {
+    if (!name.isEmpty()) {
+        throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_BUFFER_OUT_OF_BOUNDS, makeString("\""_s, name, "\" is outside of buffer bounds"_s)));
+        return {};
+    }
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_BUFFER_OUT_OF_BOUNDS, "Attempt to access memory outside buffer bounds"_s));
     return {};
 }

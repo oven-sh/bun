@@ -200,8 +200,6 @@ pub const LineStyle = enum {
         return true;
     }
 
-    pub fn deinit(_: *const @This(), _: std.mem.Allocator) void {}
-
     pub fn default() LineStyle {
         return .none;
     }

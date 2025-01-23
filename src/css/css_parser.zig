@@ -170,6 +170,7 @@ pub const VendorPrefix = packed struct(u8) {
     pub const NONE = VendorPrefix{ .none = true };
     pub const WEBKIT = VendorPrefix{ .webkit = true };
     pub const MOZ = VendorPrefix{ .moz = true };
+    pub const MS = VendorPrefix{ .ms = true };
     pub const O = VendorPrefix{ .o = true };
 
     /// Fields listed here so we can iterate them in the order we want
@@ -880,6 +881,8 @@ pub fn DefineEnumProperty(comptime T: type) type {
             return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
             // @panic("TODO renable this");
         }
+
+        pub fn deinit(_: *T, _: std.mem.Allocator) void {}
 
         pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
             return dest.writeStr(asStr(this));
@@ -4901,7 +4904,7 @@ const Tokenizer = struct {
                         }
                     }
                     // else: escaped EOF, do nothing.
-                    // continue;
+                    continue;
                 },
                 0 => {
                     this.advance(1);

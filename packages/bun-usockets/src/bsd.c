@@ -863,7 +863,11 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
 ) {
 
     if (bsd_set_reuse(listenFd, options) != 0) {
-        return LIBUS_SOCKET_ERROR;
+        if (errno == ENOTSUP) {
+            errno = 0;
+        } else {
+            return LIBUS_SOCKET_ERROR;
+        }
     }
 
 #if defined(SO_REUSEADDR)
@@ -1144,8 +1148,12 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
     }
 
     if (bsd_set_reuse(listenFd, options) != 0) {
-        freeaddrinfo(result);
-        return LIBUS_SOCKET_ERROR;
+        if (errno == ENOTSUP) {
+            errno = 0;
+        } else {
+            freeaddrinfo(result);
+            return LIBUS_SOCKET_ERROR;
+        }
     }
 
 #ifdef IPV6_V6ONLY

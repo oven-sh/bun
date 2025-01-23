@@ -111,7 +111,8 @@ function urlParse(
   parseQueryString?: boolean,
   slashesDenoteHost?: boolean,
 ) {
-  const showDep = process.noDeprecation == null ? true : !process.noDeprecation;
+  const noDeprecation = process.noDeprecation;
+  const showDep = noDeprecation == null ? true : !noDeprecation;
   if (!urlParseWarned && showDep && !lazyUtil().isInsideNodeModules()) {
     urlParseWarned = true;
     process.emitWarning(

@@ -487,7 +487,10 @@ pub const Authentication = union(enum) {
         data: Data,
     },
     SSPI: struct {},
-    SASL: struct {},
+    SASL: struct {
+        hasScramSha256: bool,
+        hasScramSha256Plus: bool,
+    },
     SASLContinue: struct {
         data: Data,
         r: []const u8,
@@ -572,9 +575,24 @@ pub const Authentication = union(enum) {
 
             10 => {
                 if (message_length < 9) return error.InvalidMessageLength;
-                try reader.skip(message_length - 8);
+                var hasScramSha256 = false;
+                var hasScramSha256Plus = false;
+                const bytes = try reader.read(message_length - 8);
+                var iter = bun.strings.split(bytes.slice(), "\x00");
+                while (iter.next()) |item| {
+                    if (std.mem.eql(u8, item, "SCRAM-SHA-256")) {
+                        debug("Has SCRAM-SHA-256", .{});
+                        hasScramSha256 = true;
+                    } else if (std.mem.eql(u8, item, "SCRAM-SHA-256-PLUS")) {
+                        hasScramSha256Plus = true;
+                        debug("Has SCRAM-SHA-256-PLUS", .{});
+                    }
+                }
                 this.* = .{
-                    .SASL = .{},
+                    .SASL = .{
+                        .hasScramSha256 = hasScramSha256,
+                        .hasScramSha256Plus = hasScramSha256Plus,
+                    },
                 };
             },
 

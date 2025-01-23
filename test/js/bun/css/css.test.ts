@@ -2980,6 +2980,1196 @@ describe("css tests", () => {
     );
   });
 
+  describe("flex", () => {
+    cssTest(
+      `
+       .foo {
+         flex-direction: column;
+         flex-wrap: wrap;
+       }
+     `,
+      `
+       .foo {
+         flex-flow: column wrap;
+       }
+     `,
+    );
+
+    cssTest(
+      `
+       .foo {
+         flex-direction: row;
+         flex-wrap: wrap;
+       }
+     `,
+      `
+       .foo {
+         flex-flow: wrap;
+       }
+     `,
+    );
+
+    cssTest(
+      `
+       .foo {
+         flex-direction: row;
+         flex-wrap: nowrap;
+       }
+     `,
+      `
+       .foo {
+         flex-flow: row;
+       }
+     `,
+    );
+
+    cssTest(
+      `
+       .foo {
+         flex-direction: column;
+         flex-wrap: nowrap;
+       }
+     `,
+      `
+       .foo {
+         flex-flow: column;
+       }
+     `,
+    );
+
+    cssTest(
+      `
+       .foo {
+         flex-grow: 1;
+         flex-shrink: 1;
+         flex-basis: 0%;
+       }
+     `,
+      `
+       .foo {
+         flex: 1;
+       }
+     `,
+    );
+
+    cssTest(
+      `
+       .foo {
+         flex-grow: 1;
+         flex-shrink: 1;
+         flex-basis: 0;
+       }
+     `,
+      `
+       .foo {
+         flex: 1 1 0;
+       }
+     `,
+    );
+
+    cssTest(
+      `
+       .foo {
+         flex-grow: 1;
+         flex-shrink: 1;
+         flex-basis: 0px;
+       }
+     `,
+      `
+       .foo {
+         flex: 1 1 0;
+       }
+     `,
+    );
+
+    cssTest(
+      `
+       .foo {
+         flex-grow: 1;
+         flex-shrink: 2;
+         flex-basis: 0%;
+       }
+     `,
+      `
+       .foo {
+         flex: 1 2;
+       }
+     `,
+    );
+
+    cssTest(
+      `
+       .foo {
+         flex-grow: 2;
+         flex-shrink: 1;
+         flex-basis: 0%;
+       }
+     `,
+      `
+       .foo {
+         flex: 2;
+       }
+     `,
+    );
+
+    cssTest(
+      `
+       .foo {
+         flex-grow: 2;
+         flex-shrink: 2;
+         flex-basis: 0%;
+       }
+     `,
+      `
+       .foo {
+         flex: 2 2;
+       }
+     `,
+    );
+
+    cssTest(
+      `
+       .foo {
+         flex-grow: 1;
+         flex-shrink: 1;
+         flex-basis: 10px;
+       }
+     `,
+      `
+       .foo {
+         flex: 10px;
+       }
+     `,
+    );
+
+    cssTest(
+      `
+       .foo {
+         flex-grow: 2;
+         flex-shrink: 1;
+         flex-basis: 10px;
+       }
+     `,
+      `
+       .foo {
+         flex: 2 10px;
+       }
+     `,
+    );
+
+    cssTest(
+      `
+       .foo {
+         flex-grow: 1;
+         flex-shrink: 0;
+         flex-basis: 0%;
+       }
+     `,
+      `
+       .foo {
+         flex: 1 0;
+       }
+     `,
+    );
+
+    cssTest(
+      `
+       .foo {
+         flex-grow: 1;
+         flex-shrink: 0;
+         flex-basis: auto;
+       }
+     `,
+      `
+       .foo {
+         flex: 1 0 auto;
+       }
+     `,
+    );
+
+    cssTest(
+      `
+       .foo {
+         flex-grow: 1;
+         flex-shrink: 1;
+         flex-basis: auto;
+       }
+     `,
+      `
+       .foo {
+         flex: auto;
+       }
+     `,
+    );
+
+    cssTest(
+      `
+       .foo {
+         flex: 0 0;
+         flex-grow: 1;
+       }
+     `,
+      `
+       .foo {
+         flex: 1 0;
+       }
+     `,
+    );
+
+    cssTest(
+      `
+       .foo {
+         flex: 0 0;
+         flex-grow: var(--grow);
+       }
+     `,
+      `
+       .foo {
+         flex: 0 0;
+         flex-grow: var(--grow);
+       }
+     `,
+    );
+
+    // cssTest(
+    //   `
+    //    .foo {
+    //      align-content: center;
+    //      justify-content: center;
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      place-content: center;
+    //    }
+    //  `,
+    // );
+
+    // cssTest(
+    //   `
+    //    .foo {
+    //      align-content: first baseline;
+    //      justify-content: safe right;
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      place-content: baseline safe right;
+    //    }
+    //  `,
+    // );
+
+    // cssTest(
+    //   `
+    //    .foo {
+    //      place-content: first baseline unsafe left;
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      place-content: baseline unsafe left;
+    //    }
+    //  `,
+    // );
+
+    // cssTest(
+    //   `
+    //    .foo {
+    //      place-content: center center;
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      place-content: center;
+    //    }
+    //  `,
+    // );
+
+    // cssTest(
+    //   `
+    //    .foo {
+    //      align-self: center;
+    //      justify-self: center;
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      place-self: center;
+    //    }
+    //  `,
+    // );
+
+    // cssTest(
+    //   `
+    //    .foo {
+    //      align-self: center;
+    //      justify-self: unsafe left;
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      place-self: center unsafe left;
+    //    }
+    //  `,
+    // );
+
+    // cssTest(
+    //   `
+    //    .foo {
+    //      align-items: center;
+    //      justify-items: center;
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      place-items: center;
+    //    }
+    //  `,
+    // );
+
+    // cssTest(
+    //   `
+    //    .foo {
+    //      align-items: center;
+    //      justify-items: legacy left;
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      place-items: center legacy left;
+    //    }
+    //  `,
+    // );
+
+    // cssTest(
+    //   `
+    //    .foo {
+    //      place-items: center;
+    //      justify-items: var(--justify);
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      place-items: center;
+    //      justify-items: var(--justify);
+    //    }
+    //  `,
+    // );
+
+    // cssTest(
+    //   `
+    //    .foo {
+    //      row-gap: 10px;
+    //      column-gap: 20px;
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      gap: 10px 20px;
+    //    }
+    //  `,
+    // );
+
+    // cssTest(
+    //   `
+    //    .foo {
+    //      row-gap: 10px;
+    //      column-gap: 10px;
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      gap: 10px;
+    //    }
+    //  `,
+    // );
+
+    // cssTest(
+    //   `
+    //    .foo {
+    //      gap: 10px;
+    //      column-gap: 20px;
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      gap: 10px 20px;
+    //    }
+    //  `,
+    // );
+
+    // cssTest(
+    //   `
+    //    .foo {
+    //      column-gap: 20px;
+    //      gap: 10px;
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      gap: 10px;
+    //    }
+    //  `,
+    // );
+
+    // cssTest(
+    //   `
+    //    .foo {
+    //      row-gap: normal;
+    //      column-gap: 20px;
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      gap: normal 20px;
+    //    }
+    //  `,
+    // );
+
+    cssTest(
+      `
+       .foo {
+         -webkit-flex-grow: 1;
+         -webkit-flex-shrink: 1;
+         -webkit-flex-basis: auto;
+       }
+     `,
+      `
+       .foo {
+         -webkit-flex: auto;
+       }
+     `,
+    );
+    cssTest(
+      `
+       .foo {
+         -webkit-flex-grow: 1;
+         -webkit-flex-shrink: 1;
+         -webkit-flex-basis: auto;
+         flex-grow: 1;
+         flex-shrink: 1;
+         flex-basis: auto;
+       }
+     `,
+      `
+       .foo {
+         -webkit-flex: auto;
+         flex: auto;
+       }
+     `,
+    );
+    prefix_test(
+      `
+       .foo {
+         -webkit-box-orient: horizontal;
+         -webkit-box-direction: normal;
+         flex-direction: row;
+       }
+     `,
+      `
+       .foo {
+         -webkit-box-orient: horizontal;
+         -webkit-box-direction: normal;
+         -webkit-flex-direction: row;
+         flex-direction: row;
+       }
+     `,
+      {
+        safari: 4 << 16,
+      },
+    );
+    prefix_test(
+      `
+       .foo {
+         flex-direction: row;
+       }
+     `,
+      `
+       .foo {
+         -webkit-box-orient: horizontal;
+         -moz-box-orient: horizontal;
+         -webkit-box-direction: normal;
+         -moz-box-direction: normal;
+         -webkit-flex-direction: row;
+         -ms-flex-direction: row;
+         flex-direction: row;
+       }
+     `,
+      {
+        safari: 4 << 16,
+        firefox: 4 << 16,
+        ie: 10 << 16,
+      },
+    );
+    prefix_test(
+      `
+       .foo {
+         -webkit-box-orient: horizontal;
+         -webkit-box-direction: normal;
+         -moz-box-orient: horizontal;
+         -moz-box-direction: normal;
+         -webkit-flex-direction: row;
+         -ms-flex-direction: row;
+         flex-direction: row;
+       }
+     `,
+      `
+       .foo {
+         flex-direction: row;
+       }
+     `,
+      {
+        safari: 14 << 16,
+      },
+    );
+    prefix_test(
+      `
+       .foo {
+         flex-wrap: wrap;
+       }
+     `,
+      `
+       .foo {
+         -webkit-box-lines: multiple;
+         -moz-box-lines: multiple;
+         -webkit-flex-wrap: wrap;
+         -ms-flex-wrap: wrap;
+         flex-wrap: wrap;
+       }
+     `,
+      {
+        safari: 4 << 16,
+        firefox: 4 << 16,
+        ie: 10 << 16,
+      },
+    );
+    prefix_test(
+      `
+       .foo {
+         -webkit-box-lines: multiple;
+         -moz-box-lines: multiple;
+         -webkit-flex-wrap: wrap;
+         -ms-flex-wrap: wrap;
+         flex-wrap: wrap;
+       }
+     `,
+      `
+       .foo {
+         flex-wrap: wrap;
+       }
+     `,
+      {
+        safari: 11 << 16,
+      },
+    );
+    prefix_test(
+      `
+       .foo {
+         flex-flow: row wrap;
+       }
+     `,
+      `
+       .foo {
+         -webkit-box-orient: horizontal;
+         -moz-box-orient: horizontal;
+         -webkit-box-direction: normal;
+         -moz-box-direction: normal;
+         -webkit-flex-flow: wrap;
+         -ms-flex-flow: wrap;
+         flex-flow: wrap;
+       }
+     `,
+      {
+        safari: 4 << 16,
+        firefox: 4 << 16,
+        ie: 10 << 16,
+      },
+    );
+    prefix_test(
+      `
+       .foo {
+         -webkit-box-orient: horizontal;
+         -moz-box-orient: horizontal;
+         -webkit-box-direction: normal;
+         -moz-box-direction: normal;
+         -webkit-flex-flow: wrap;
+         -ms-flex-flow: wrap;
+         flex-flow: wrap;
+       }
+     `,
+      `
+       .foo {
+         flex-flow: wrap;
+       }
+     `,
+      {
+        safari: 11 << 16,
+      },
+    );
+    prefix_test(
+      `
+       .foo {
+         flex-grow: 1;
+       }
+     `,
+      `
+       .foo {
+         -webkit-box-flex: 1;
+         -moz-box-flex: 1;
+         -ms-flex-positive: 1;
+         -webkit-flex-grow: 1;
+         flex-grow: 1;
+       }
+     `,
+      {
+        safari: 4 << 16,
+        firefox: 4 << 16,
+        ie: 10 << 16,
+      },
+    );
+    prefix_test(
+      `
+       .foo {
+         -webkit-box-flex: 1;
+         -moz-box-flex: 1;
+         -ms-flex-positive: 1;
+         -webkit-flex-grow: 1;
+         flex-grow: 1;
+       }
+     `,
+      `
+       .foo {
+         flex-grow: 1;
+       }
+     `,
+      {
+        safari: 11 << 16,
+      },
+    );
+    prefix_test(
+      `
+       .foo {
+         flex-shrink: 1;
+       }
+     `,
+      `
+       .foo {
+         -ms-flex-negative: 1;
+         -webkit-flex-shrink: 1;
+         flex-shrink: 1;
+       }
+     `,
+      {
+        safari: 4 << 16,
+        firefox: 4 << 16,
+        ie: 10 << 16,
+      },
+    );
+    prefix_test(
+      `
+       .foo {
+         -ms-flex-negative: 1;
+         -webkit-flex-shrink: 1;
+         flex-shrink: 1;
+       }
+     `,
+      `
+       .foo {
+         flex-shrink: 1;
+       }
+     `,
+      {
+        safari: 11 << 16,
+      },
+    );
+    prefix_test(
+      `
+       .foo {
+         flex-basis: 1px;
+       }
+     `,
+      `
+       .foo {
+         -ms-flex-preferred-size: 1px;
+         -webkit-flex-basis: 1px;
+         flex-basis: 1px;
+       }
+     `,
+      {
+        safari: 4 << 16,
+        firefox: 4 << 16,
+        ie: 10 << 16,
+      },
+    );
+    prefix_test(
+      `
+       .foo {
+         -ms-flex-preferred-size: 1px;
+         -webkit-flex-basis: 1px;
+         flex-basis: 1px;
+       }
+     `,
+      `
+       .foo {
+         flex-basis: 1px;
+       }
+     `,
+      {
+        safari: 11 << 16,
+      },
+    );
+    prefix_test(
+      `
+       .foo {
+         flex: 1;
+       }
+     `,
+      `
+       .foo {
+         -webkit-box-flex: 1;
+         -moz-box-flex: 1;
+         -webkit-flex: 1;
+         -ms-flex: 1;
+         flex: 1;
+       }
+     `,
+      {
+        safari: 4 << 16,
+        firefox: 4 << 16,
+        ie: 10 << 16,
+      },
+    );
+    prefix_test(
+      `
+       .foo {
+         -webkit-box-flex: 1;
+         -moz-box-flex: 1;
+         -webkit-flex: 1;
+         -ms-flex: 1;
+         flex: 1;
+       }
+     `,
+      `
+       .foo {
+         flex: 1;
+       }
+     `,
+      {
+        safari: 11 << 16,
+      },
+    );
+    // prefix_test(
+    //   `
+    //    .foo {
+    //      align-content: space-between;
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      -ms-flex-line-pack: justify;
+    //      -webkit-align-content: space-between;
+    //      align-content: space-between;
+    //    }
+    //  `,
+    //   {
+    //     safari: 4 << 16,
+    //     firefox: 4 << 16,
+    //     ie: 10 << 16,
+    //   },
+    // );
+    // prefix_test(
+    //   `
+    //    .foo {
+    //      -ms-flex-line-pack: justify;
+    //      -webkit-align-content: space-between;
+    //      align-content: space-between;
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      align-content: space-between;
+    //    }
+    //  `,
+    //   {
+    //     safari: 11 << 16,
+    //   },
+    // );
+    // prefix_test(
+    //   `
+    //    .foo {
+    //      justify-content: space-between;
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      -webkit-box-pack: justify;
+    //      -moz-box-pack: justify;
+    //      -ms-flex-pack: justify;
+    //      -webkit-justify-content: space-between;
+    //      justify-content: space-between;
+    //    }
+    //  `,
+    //   {
+    //     safari: 4 << 16,
+    //     firefox: 4 << 16,
+    //     ie: 10 << 16,
+    //   },
+    // );
+    // prefix_test(
+    //   `
+    //    .foo {
+    //      -webkit-box-pack: justify;
+    //      -moz-box-pack: justify;
+    //      -ms-flex-pack: justify;
+    //      -webkit-justify-content: space-between;
+    //      justify-content: space-between;
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      justify-content: space-between;
+    //    }
+    //  `,
+    //   {
+    //     safari: 11 << 16,
+    //   },
+    // );
+    // prefix_test(
+    //   `
+    //    .foo {
+    //      place-content: space-between flex-end;
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      -ms-flex-line-pack: justify;
+    //      -webkit-box-pack: end;
+    //      -moz-box-pack: end;
+    //      -ms-flex-pack: end;
+    //      -webkit-align-content: space-between;
+    //      align-content: space-between;
+    //      -webkit-justify-content: flex-end;
+    //      justify-content: flex-end;
+    //    }
+    //  `,
+    //   {
+    //     safari: 4 << 16,
+    //     firefox: 4 << 16,
+    //     ie: 10 << 16,
+    //   },
+    // );
+    // prefix_test(
+    //   `
+    //    .foo {
+    //      -ms-flex-line-pack: justify;
+    //      -webkit-box-pack: end;
+    //      -moz-box-pack: end;
+    //      -ms-flex-pack: end;
+    //      -webkit-align-content: space-between;
+    //      -webkit-justify-content: flex-end;
+    //      place-content: space-between flex-end;
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      place-content: space-between flex-end;
+    //    }
+    //  `,
+    //   {
+    //     safari: 11 << 16,
+    //   },
+    // );
+    // prefix_test(
+    //   `
+    //    .foo {
+    //      place-content: space-between flex-end;
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      align-content: space-between;
+    //      justify-content: flex-end;
+    //    }
+    //  `,
+    //   {
+    //     chrome: 30 << 16,
+    //   },
+    // );
+    // prefix_test(
+    //   `
+    //    .foo {
+    //      place-content: space-between flex-end;
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      place-content: space-between flex-end;
+    //    }
+    //  `,
+    //   {
+    //     chrome: 60 << 16,
+    //   },
+    // );
+    // prefix_test(
+    //   `
+    //    .foo {
+    //      align-self: flex-end;
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      -ms-flex-item-align: end;
+    //      -webkit-align-self: flex-end;
+    //      align-self: flex-end;
+    //    }
+    //  `,
+    //   {
+    //     safari: 4 << 16,
+    //     firefox: 4 << 16,
+    //     ie: 10 << 16,
+    //   },
+    // );
+    // prefix_test(
+    //   `
+    //    .foo {
+    //      -ms-flex-item-align: end;
+    //      -webkit-align-self: flex-end;
+    //      align-self: flex-end;
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      align-self: flex-end;
+    //    }
+    //  `,
+    //   {
+    //     safari: 11 << 16,
+    //   },
+    // );
+    // prefix_test(
+    //   `
+    //    .foo {
+    //      place-self: center flex-end;
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      -ms-flex-item-align: center;
+    //      -webkit-align-self: center;
+    //      align-self: center;
+    //      justify-self: flex-end;
+    //    }
+    //  `,
+    //   {
+    //     safari: 4 << 16,
+    //     firefox: 4 << 16,
+    //     ie: 10 << 16,
+    //   },
+    // );
+    // prefix_test(
+    //   `
+    //    .foo {
+    //      -ms-flex-item-align: center;
+    //      -webkit-align-self: center;
+    //      place-self: center flex-end;
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      place-self: center flex-end;
+    //    }
+    //  `,
+    //   {
+    //     safari: 11 << 16,
+    //   },
+    // );
+    // prefix_test(
+    //   `
+    //    .foo {
+    //      place-self: center flex-end;
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      align-self: center;
+    //      justify-self: flex-end;
+    //    }
+    //  `,
+    //   {
+    //     chrome: 57 << 16,
+    //   },
+    // );
+    // prefix_test(
+    //   `
+    //    .foo {
+    //      place-self: center flex-end;
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      place-self: center flex-end;
+    //    }
+    //  `,
+    //   {
+    //     chrome: 59 << 16,
+    //   },
+    // );
+    // prefix_test(
+    //   `
+    //    .foo {
+    //      align-items: flex-end;
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      -webkit-box-align: end;
+    //      -moz-box-align: end;
+    //      -ms-flex-align: end;
+    //      -webkit-align-items: flex-end;
+    //      align-items: flex-end;
+    //    }
+    //  `,
+    //   {
+    //     safari: 4 << 16,
+    //     firefox: 4 << 16,
+    //     ie: 10 << 16,
+    //   },
+    // );
+    // prefix_test(
+    //   `
+    //    .foo {
+    //      -webkit-box-align: end;
+    //      -moz-box-align: end;
+    //      -ms-flex-align: end;
+    //      -webkit-align-items: flex-end;
+    //      align-items: flex-end;
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      align-items: flex-end;
+    //    }
+    //  `,
+    //   {
+    //     safari: 11 << 16,
+    //   },
+    // );
+    // prefix_test(
+    //   `
+    //    .foo {
+    //      place-items: flex-end center;
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      -webkit-box-align: end;
+    //      -moz-box-align: end;
+    //      -ms-flex-align: end;
+    //      -webkit-align-items: flex-end;
+    //      align-items: flex-end;
+    //      justify-items: center;
+    //    }
+    //  `,
+    //   {
+    //     safari: 4 << 16,
+    //     firefox: 4 << 16,
+    //     ie: 10 << 16,
+    //   },
+    // );
+    // prefix_test(
+    //   `
+    //    .foo {
+    //      -webkit-box-align: end;
+    //      -moz-box-align: end;
+    //      -ms-flex-align: end;
+    //      -webkit-align-items: flex-end;
+    //      place-items: flex-end center;
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      place-items: flex-end center;
+    //    }
+    //  `,
+    //   {
+    //     safari: 11 << 16,
+    //   },
+    // );
+    // prefix_test(
+    //   `
+    //    .foo {
+    //      place-items: flex-end center;
+    //    }
+    //  `,
+    //   `
+    //    .foo {
+    //      align-items: flex-end;
+    //      justify-items: center;
+    //    }
+    //  `,
+    //   {
+    //     safari: 10 << 16,
+    //   },
+    // );
+    prefix_test(
+      `
+       .foo {
+         order: 1;
+       }
+     `,
+      `
+       .foo {
+         -webkit-box-ordinal-group: 1;
+         -moz-box-ordinal-group: 1;
+         -ms-flex-order: 1;
+         -webkit-order: 1;
+         order: 1;
+       }
+     `,
+      {
+        safari: 4 << 16,
+        firefox: 4 << 16,
+        ie: 10 << 16,
+      },
+    );
+    prefix_test(
+      `
+       .foo {
+         -webkit-box-ordinal-group: 1;
+         -moz-box-ordinal-group: 1;
+         -ms-flex-order: 1;
+         -webkit-order: 1;
+         order: 1;
+       }
+     `,
+      `
+       .foo {
+         order: 1;
+       }
+     `,
+      {
+        safari: 11 << 16,
+      },
+    );
+    prefix_test(
+      `
+       .foo {
+         -ms-flex: 0 0 8%;
+         flex: 0 0 5%;
+       }
+     `,
+      `
+       .foo {
+         -ms-flex: 0 0 8%;
+         flex: 0 0 5%;
+       }
+     `,
+      {
+        safari: 11 << 16,
+      },
+    );
+  });
+
   describe("linear-gradient", () => {
     minify_test(".foo { background: linear-gradient(yellow, blue) }", ".foo{background:linear-gradient(#ff0,#00f)}");
     minify_test(

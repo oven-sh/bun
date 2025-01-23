@@ -111,7 +111,8 @@ function urlParse(
   parseQueryString?: boolean,
   slashesDenoteHost?: boolean,
 ) {
-  if (!urlParseWarned && !lazyUtil().isInsideNodeModules()) {
+  const showDep = process.noDeprecation == null ? true : !process.noDeprecation;
+  if (!urlParseWarned && showDep && !lazyUtil().isInsideNodeModules()) {
     urlParseWarned = true;
     process.emitWarning(
       "`url.parse()` behavior is not standardized and prone to " +

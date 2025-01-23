@@ -1317,7 +1317,8 @@ test('Additional assert', () => {
         '+ actual - expected\n' +
         '\n' +
         "+ 'test test'\n" +
-        "- 'test foobar'\n"
+        "- 'test foobar'\n" +
+         '        ^\n',
     }
   );
 

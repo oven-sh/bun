@@ -3572,7 +3572,7 @@ pub const NodeFS = struct {
                     }
 
                     if (ret.errnoSysP(C.clonefile(src, dest, 0), .copyfile, src) == null) {
-                        _ = C.chmod(dest, stat_.mode);
+                        _ = Syscall.chmod(dest, stat_.mode);
                         return ret.success;
                     }
                 } else {
@@ -3595,8 +3595,8 @@ pub const NodeFS = struct {
                         .err => |err| return Maybe(Return.CopyFile){ .err = err.withPath(args.dest.slice()) },
                     };
                     defer {
-                        _ = std.c.ftruncate(dest_fd.int(), @as(std.c.off_t, @intCast(@as(u63, @truncate(wrote)))));
-                        _ = C.fchmod(dest_fd.int(), stat_.mode);
+                        _ = Syscall.ftruncate(dest_fd, @as(std.c.off_t, @intCast(@as(u63, @truncate(wrote)))));
+                        _ = Syscall.fchmod(dest_fd, stat_.mode);
                         _ = Syscall.close(dest_fd);
                     }
 
@@ -3659,7 +3659,7 @@ pub const NodeFS = struct {
                     _ = bun.sys.unlink(dest);
                     return err;
                 }
-                _ = C.fchmod(dest_fd.cast(), stat_.mode);
+                _ = Syscall.fchmod(dest_fd, stat_.mode);
                 _ = Syscall.close(dest_fd);
                 return ret.success;
             }
@@ -3668,7 +3668,7 @@ pub const NodeFS = struct {
             if (posix.S.ISREG(stat_.mode) and bun.can_use_ioctl_ficlone()) {
                 const rc = bun.C.linux.ioctl_ficlone(dest_fd, src_fd);
                 if (rc == 0) {
-                    _ = C.fchmod(dest_fd.cast(), stat_.mode);
+                    _ = Syscall.fchmod(dest_fd, stat_.mode);
                     _ = Syscall.close(dest_fd);
                     return ret.success;
                 }
@@ -6249,7 +6249,7 @@ pub const NodeFS = struct {
                     }
 
                     if (ret.errnoSysP(C.clonefile(src, dest, 0), .clonefile, src) == null) {
-                        _ = C.chmod(dest, stat_.mode);
+                        _ = Syscall.chmod(dest, stat_.mode);
                         return ret.success;
                     }
                 } else {
@@ -6301,7 +6301,7 @@ pub const NodeFS = struct {
                     };
                     defer {
                         _ = Syscall.ftruncate(dest_fd, @intCast(@as(u63, @truncate(wrote))));
-                        _ = C.fchmod(dest_fd.int(), stat_.mode);
+                        _ = Syscall.fchmod(dest_fd, stat_.mode);
                         _ = Syscall.close(dest_fd);
                     }
 
@@ -6400,7 +6400,7 @@ pub const NodeFS = struct {
             if (posix.S.ISREG(stat_.mode) and bun.can_use_ioctl_ficlone()) {
                 const rc = bun.C.linux.ioctl_ficlone(dest_fd, src_fd);
                 if (rc == 0) {
-                    _ = C.fchmod(dest_fd.cast(), stat_.mode);
+                    _ = Syscall.fchmod(dest_fd, stat_.mode);
                     _ = Syscall.close(dest_fd);
                     return ret.success;
                 }
@@ -6409,8 +6409,8 @@ pub const NodeFS = struct {
             }
 
             defer {
-                _ = linux.ftruncate(dest_fd.cast(), @as(i64, @intCast(@as(u63, @truncate(wrote)))));
-                _ = linux.fchmod(dest_fd.cast(), stat_.mode);
+                _ = Syscall.ftruncate(dest_fd, @as(i64, @intCast(@as(u63, @truncate(wrote)))));
+                _ = Syscall.fchmod(dest_fd, stat_.mode);
                 _ = Syscall.close(dest_fd);
             }
 

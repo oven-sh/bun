@@ -3767,6 +3767,10 @@ pub const timespec = extern struct {
         return ms_from_sec +% ms_from_nsec;
     }
 
+    pub fn msUnsigned(this: *const timespec) u64 {
+        return this.ns() / std.time.ns_per_ms;
+    }
+
     pub fn greater(a: *const timespec, b: *const timespec) bool {
         return a.order(b) == .gt;
     }

@@ -356,17 +356,16 @@ for (const info of [
   { user: "bin3", directories: { bin: "bins" } },
 ]) {
   test(`can publish and install binaries with ${JSON.stringify(info)}`, async () => {
-    const { packageDir, packageJson } = await registry.createTestDir();
+    const { packageDir, packageJson } = await registry.createTestDir({ saveTextLockfile: false });
     const publishDir = tmpdirSync();
     const bunfig = await registry.authBunfig("binaries-" + info.user);
-    console.log({ packageDir, publishDir });
 
     await Promise.all([
-      rm(join(registry.packagesPath, "publish-pkg-bins"), { recursive: true, force: true }),
+      rm(join(registry.packagesPath, "publish-pkg-" + info.user), { recursive: true, force: true }),
       write(
         join(publishDir, "package.json"),
         JSON.stringify({
-          name: "publish-pkg-bins",
+          name: "publish-pkg-" + info.user,
           version: "1.1.1",
           ...info,
         }),
@@ -382,7 +381,7 @@ for (const info of [
         JSON.stringify({
           name: "foo",
           dependencies: {
-            "publish-pkg-bins": "1.1.1",
+            ["publish-pkg-" + info.user]: "1.1.1",
           },
         }),
       ),
@@ -391,7 +390,7 @@ for (const info of [
     const { out, err, exitCode } = await publish(env, publishDir);
     expect(err).not.toContain("error:");
     expect(err).not.toContain("warn:");
-    expect(out).toContain("+ publish-pkg-bins@1.1.1");
+    expect(out).toContain(`+ publish-pkg-${info.user}@1.1.1`);
     expect(exitCode).toBe(0);
 
     await runBunInstall(env, packageDir);
@@ -402,7 +401,14 @@ for (const info of [
       exists(join(packageDir, "node_modules", ".bin", isWindows ? "bin3.js.bunx" : "bin3.js")),
       exists(join(packageDir, "node_modules", ".bin", isWindows ? "bin4.js.bunx" : "bin4.js")),
       exists(join(packageDir, "node_modules", ".bin", isWindows ? "moredir" : "moredir/bin4.js")),
-      exists(join(packageDir, "node_modules", ".bin", isWindows ? "publish-pkg-bins.bunx" : "publish-pkg-bins")),
+      exists(
+        join(
+          packageDir,
+          "node_modules",
+          ".bin",
+          isWindows ? `publish-pkg-${info.user}.bunx` : "publish-pkg-" + info.user,
+        ),
+      ),
     ]);
 
     switch (info.user) {

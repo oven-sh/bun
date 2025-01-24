@@ -488,7 +488,6 @@ pub const Authentication = union(enum) {
     },
     SSPI: struct {},
     SASL: struct {
-        hasScramSha256: bool,
         hasScramSha256Plus: bool,
     },
     SASLContinue: struct {
@@ -586,7 +585,6 @@ pub const Authentication = union(enum) {
                 if (hasScramSha256 == false and hasScramSha256Plus == false) return error.SASL_NO_KNOWN_MECHANISM;
                 this.* = .{
                     .SASL = .{
-                        .hasScramSha256 = hasScramSha256,
                         .hasScramSha256Plus = hasScramSha256Plus,
                     },
                 };

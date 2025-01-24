@@ -92,6 +92,9 @@ const errors: ErrorCodeMapping = [
   // Console
   ["ERR_CONSOLE_WRITABLE_STREAM", TypeError, "TypeError"],
 
+  // FS
+  ["ERR_DIR_CLOSED", Error],
+
   // DNS
   ["ERR_DNS_SET_SERVERS_FAILED", Error],
 

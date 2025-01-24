@@ -873,6 +873,15 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
         return LIBUS_SOCKET_ERROR;
     }
 
+#if defined(SO_REUSEADDR) && !_WIN32
+    //  Unlike on Unix, here we don't set SO_REUSEADDR, because it doesn't just
+    //  allow binding to addresses that are in use by sockets in TIME_WAIT, it
+    //  effectively allows 'stealing' a port which is in use by another application.
+    //  See libuv issue #1360.
+    int one = 1;
+    setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+#endif
+
 #ifdef IPV6_V6ONLY
     if (listenAddr->ai_family == AF_INET6) {
         int enabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;

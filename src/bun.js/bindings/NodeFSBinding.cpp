@@ -1,3 +1,4 @@
+
 #include "root.h"
 
 #include "JavaScriptCore/FunctionPrototype.h"
@@ -31,28 +32,62 @@ using namespace WebCore;
 #if !OS(WINDOWS)
 #include <sys/stat.h>
 #else
-#include <uv.h>
+#ifndef mode_t
+#define mode_t int32_t
+#endif
+
+#ifndef S_IFMT
+#define S_IFMT 0170000
+#endif
+
+#ifndef S_IFDIR
+#define S_IFDIR 0040000
+#endif
+
+#ifndef S_IFCHR
+#define S_IFCHR 0020000
+#endif
+
+#ifndef S_IFBLK
+#define S_IFBLK 0060000
+#endif
+
+#ifndef S_IFREG
+#define S_IFREG 0100000
+#endif
+
+#ifndef S_IFIFO
+#define S_IFIFO 0010000
+#endif
+
+#ifndef S_IFLNK
+#define S_IFLNK 0120000
+#endif
+
+#ifndef S_IFSOCK
+#define S_IFSOCK 0140000
+#endif
 
 #ifndef S_ISBLK
-#define S_ISBLK(m) ((m) & _S_IFBLK) /* block special */
+#define S_ISBLK(m) (((m) & S_IFMT) == S_IFBLK) /* block special */
 #endif
 #ifndef S_ISCHR
-#define S_ISCHR(m) ((m) & _S_IFCHR) /* char special */
+#define S_ISCHR(m) (((m) & S_IFMT) == S_IFCHR) /* char special */
 #endif
 #ifndef S_ISDIR
-#define S_ISDIR(m) ((m) & _S_IFDIR) /* directory */
+#define S_ISDIR(m) (((m) & S_IFMT) == S_IFDIR) /* directory */
 #endif
 #ifndef S_ISFIFO
-#define S_ISFIFO(m) ((m) & _S_IFIFO) /* fifo or socket */
+#define S_ISFIFO(m) (((m) & S_IFMT) == S_IFIFO) /* fifo or socket */
 #endif
 #ifndef S_ISREG
-#define S_ISREG(m) ((m) & _S_IFREG) /* regular file */
+#define S_ISREG(m) (((m) & S_IFMT) == S_IFREG) /* regular file */
 #endif
 #ifndef S_ISLNK
-#define S_ISLNK(m) ((m) & _S_IFLNK) /* symbolic link */
+#define S_ISLNK(m) (((m) & S_IFMT) == S_IFLNK) /* symbolic link */
 #endif
 #ifndef S_ISSOCK
-#define S_ISSOCK(m) ((m) & _S_IFSOCK) /* socket */
+#define S_ISSOCK(m) (((m) & S_IFMT) == S_IFSOCK) /* socket */
 #endif
 #endif
 
@@ -61,123 +96,56 @@ JSC_DECLARE_HOST_FUNCTION(callBigIntStats);
 JSC_DECLARE_HOST_FUNCTION(constructStats);
 JSC_DECLARE_HOST_FUNCTION(constructBigIntStats);
 
-JSC_DEFINE_HOST_FUNCTION(jsStatsPrototypeFunction_isBlockDevice, (JSGlobalObject * globalObject, CallFrame* callFrame))
+enum class StatFunction {
+    isBlockDevice,
+    isCharacterDevice,
+    isDirectory,
+    isFIFO,
+    isFile,
+    isSocket,
+    isSymbolicLink,
+};
+
+static bool isModeFn(StatFunction fn, mode_t mode)
 {
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = JSC::jsDynamicCast<JSObject*>(callFrame->thisValue());
-    if (!thisObject)
-        return JSValue::encode(jsUndefined());
-
-    JSValue modeValue = thisObject->get(globalObject, builtinNames(vm).modePublicName());
-    RETURN_IF_EXCEPTION(scope, {});
-
-    mode_t mode = modeValue.toInt32(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    return JSValue::encode(jsBoolean(S_ISBLK(mode)));
+    switch (fn) {
+    case StatFunction::isBlockDevice:
+        return S_ISBLK(mode);
+    case StatFunction::isCharacterDevice:
+        return S_ISCHR(mode);
+    case StatFunction::isDirectory:
+        return S_ISDIR(mode);
+    case StatFunction::isFIFO:
+        return S_ISFIFO(mode);
+    case StatFunction::isFile:
+        return S_ISREG(mode);
+    case StatFunction::isSocket:
+        return S_ISSOCK(mode);
+    case StatFunction::isSymbolicLink:
+        return S_ISLNK(mode);
+    }
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsStatsPrototypeFunction_isCharacterDevice, (JSGlobalObject * globalObject, CallFrame* callFrame))
+template<StatFunction statFunction, bool isBigInt>
+static JSValue modeStatFunction(JSC::JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = JSC::jsDynamicCast<JSObject*>(callFrame->thisValue());
     if (!thisObject)
-        return JSValue::encode(jsUndefined());
+        return JSC::jsUndefined();
 
     JSValue modeValue = thisObject->get(globalObject, builtinNames(vm).modePublicName());
     RETURN_IF_EXCEPTION(scope, {});
 
-    mode_t mode = modeValue.toInt32(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    return JSValue::encode(jsBoolean(S_ISCHR(mode)));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsStatsPrototypeFunction_isDirectory, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = JSC::jsDynamicCast<JSObject*>(callFrame->thisValue());
-    if (!thisObject)
-        return JSValue::encode(jsUndefined());
-
-    JSValue modeValue = thisObject->get(globalObject, builtinNames(vm).modePublicName());
-    RETURN_IF_EXCEPTION(scope, {});
+    if constexpr (isBigInt) {
+        int64_t mode_value = modeValue.toBigInt64(globalObject);
+        return jsBoolean(isModeFn(statFunction, mode_value));
+    }
 
     mode_t mode = modeValue.toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-
-    return JSValue::encode(jsBoolean(S_ISDIR(mode)));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsStatsPrototypeFunction_isFIFO, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = JSC::jsDynamicCast<JSObject*>(callFrame->thisValue());
-    if (!thisObject)
-        return JSValue::encode(jsUndefined());
-
-    JSValue modeValue = thisObject->get(globalObject, builtinNames(vm).modePublicName());
-    RETURN_IF_EXCEPTION(scope, {});
-
-    mode_t mode = modeValue.toInt32(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    return JSValue::encode(jsBoolean(S_ISFIFO(mode)));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsStatsPrototypeFunction_isFile, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = JSC::jsDynamicCast<JSObject*>(callFrame->thisValue());
-    if (!thisObject)
-        return JSValue::encode(jsUndefined());
-
-    JSValue modeValue = thisObject->get(globalObject, builtinNames(vm).modePublicName());
-    RETURN_IF_EXCEPTION(scope, {});
-
-    mode_t mode = modeValue.toInt32(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    return JSValue::encode(jsBoolean(S_ISREG(mode)));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsStatsPrototypeFunction_isSocket, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = JSC::jsDynamicCast<JSObject*>(callFrame->thisValue());
-    if (!thisObject)
-        return JSValue::encode(jsUndefined());
-
-    JSValue modeValue = thisObject->get(globalObject, builtinNames(vm).modePublicName());
-    RETURN_IF_EXCEPTION(scope, {});
-
-    mode_t mode = modeValue.toInt32(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    return JSValue::encode(jsBoolean(S_ISSOCK(mode)));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsStatsPrototypeFunction_isSymbolicLink, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = JSC::jsDynamicCast<JSObject*>(callFrame->thisValue());
-    if (!thisObject)
-        return JSValue::encode(jsUndefined());
-
-    JSValue modeValue = thisObject->get(globalObject, builtinNames(vm).modePublicName());
-    RETURN_IF_EXCEPTION(scope, {});
-
-    mode_t mode = modeValue.toInt32(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    return JSValue::encode(jsBoolean(S_ISLNK(mode)));
+    return jsBoolean(isModeFn(statFunction, mode));
 }
 
 template<bool isBigInt>
@@ -211,10 +179,10 @@ JSObject* getConstructor(Zig::GlobalObject* globalObject)
 }
 
 enum class DateFieldType : uint8_t {
-    atime = 11,
-    mtime = 12,
-    ctime = 13,
-    birthtime = 14,
+    atime = 10,
+    mtime = 11,
+    ctime = 12,
+    birthtime = 13,
 };
 
 static const Identifier& identifier(JSC::VM& vm, DateFieldType dateField)
@@ -247,12 +215,13 @@ inline JSC::JSValue getDateField(JSC::JSGlobalObject* globalObject, JSC::Encoded
     JSValue value;
     if (thisObject->structureID() == getStructure<isBigInt>(defaultGlobalObject(globalObject))->id()) {
         value = thisObject->getDirect(static_cast<int>(field));
+        ASSERT(thisObject->getDirectOffset(vm, identifier(vm, field)) == static_cast<int>(field));
     } else {
         value = thisObject->get(globalObject, identifier(vm, field));
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    double internalNumber = value.toNumber(globalObject);
+    double internalNumber = isBigInt ? value.toBigInt64(globalObject) : value.toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
     JSValue result = JSC::DateInstance::create(vm, globalObject->dateStructure(), internalNumber);
@@ -309,6 +278,64 @@ JSC_DEFINE_CUSTOM_SETTER(jsStatsPrototypeFunction_DatePutter, (JSGlobalObject * 
     return true;
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsStatsPrototypeFunction_isBlockDevice, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    return JSValue::encode(modeStatFunction<StatFunction::isBlockDevice, false>(globalObject, callframe));
+}
+JSC_DEFINE_HOST_FUNCTION(jsStatsPrototypeFunction_isCharacterDevice, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    return JSValue::encode(modeStatFunction<StatFunction::isCharacterDevice, false>(globalObject, callframe));
+}
+JSC_DEFINE_HOST_FUNCTION(jsStatsPrototypeFunction_isDirectory, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    return JSValue::encode(modeStatFunction<StatFunction::isDirectory, false>(globalObject, callframe));
+}
+JSC_DEFINE_HOST_FUNCTION(jsStatsPrototypeFunction_isFIFO, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    return JSValue::encode(modeStatFunction<StatFunction::isFIFO, false>(globalObject, callframe));
+}
+JSC_DEFINE_HOST_FUNCTION(jsStatsPrototypeFunction_isFile, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    return JSValue::encode(modeStatFunction<StatFunction::isFile, false>(globalObject, callframe));
+}
+JSC_DEFINE_HOST_FUNCTION(jsStatsPrototypeFunction_isSocket, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    return JSValue::encode(modeStatFunction<StatFunction::isSocket, false>(globalObject, callframe));
+}
+JSC_DEFINE_HOST_FUNCTION(jsStatsPrototypeFunction_isSymbolicLink, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    return JSValue::encode(modeStatFunction<StatFunction::isSymbolicLink, false>(globalObject, callframe));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsBigIntStatsPrototypeFunction_isBlockDevice, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    return JSValue::encode(modeStatFunction<StatFunction::isBlockDevice, true>(globalObject, callframe));
+}
+JSC_DEFINE_HOST_FUNCTION(jsBigIntStatsPrototypeFunction_isCharacterDevice, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    return JSValue::encode(modeStatFunction<StatFunction::isCharacterDevice, true>(globalObject, callframe));
+}
+JSC_DEFINE_HOST_FUNCTION(jsBigIntStatsPrototypeFunction_isDirectory, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    return JSValue::encode(modeStatFunction<StatFunction::isDirectory, true>(globalObject, callframe));
+}
+JSC_DEFINE_HOST_FUNCTION(jsBigIntStatsPrototypeFunction_isFIFO, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    return JSValue::encode(modeStatFunction<StatFunction::isFIFO, true>(globalObject, callframe));
+}
+JSC_DEFINE_HOST_FUNCTION(jsBigIntStatsPrototypeFunction_isFile, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    return JSValue::encode(modeStatFunction<StatFunction::isFile, true>(globalObject, callframe));
+}
+JSC_DEFINE_HOST_FUNCTION(jsBigIntStatsPrototypeFunction_isSocket, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    return JSValue::encode(modeStatFunction<StatFunction::isSocket, true>(globalObject, callframe));
+}
+JSC_DEFINE_HOST_FUNCTION(jsBigIntStatsPrototypeFunction_isSymbolicLink, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    return JSValue::encode(modeStatFunction<StatFunction::isSymbolicLink, true>(globalObject, callframe));
+}
+
 static const HashTableValue JSStatsPrototypeTableValues[] = {
     { "isBlockDevice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsStatsPrototypeFunction_isBlockDevice, 0 } },
     { "isCharacterDevice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsStatsPrototypeFunction_isCharacterDevice, 0 } },
@@ -324,13 +351,13 @@ static const HashTableValue JSStatsPrototypeTableValues[] = {
 };
 
 static const HashTableValue JSBigIntStatsPrototypeTableValues[] = {
-    { "isBlockDevice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsStatsPrototypeFunction_isBlockDevice, 0 } },
-    { "isCharacterDevice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsStatsPrototypeFunction_isCharacterDevice, 0 } },
-    { "isDirectory"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsStatsPrototypeFunction_isDirectory, 0 } },
-    { "isFIFO"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsStatsPrototypeFunction_isFIFO, 0 } },
-    { "isFile"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsStatsPrototypeFunction_isFile, 0 } },
-    { "isSocket"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsStatsPrototypeFunction_isSocket, 0 } },
-    { "isSymbolicLink"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsStatsPrototypeFunction_isSymbolicLink, 0 } },
+    { "isBlockDevice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBigIntStatsPrototypeFunction_isBlockDevice, 0 } },
+    { "isCharacterDevice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBigIntStatsPrototypeFunction_isCharacterDevice, 0 } },
+    { "isDirectory"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBigIntStatsPrototypeFunction_isDirectory, 0 } },
+    { "isFIFO"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBigIntStatsPrototypeFunction_isFIFO, 0 } },
+    { "isFile"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBigIntStatsPrototypeFunction_isFile, 0 } },
+    { "isSocket"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBigIntStatsPrototypeFunction_isSocket, 0 } },
+    { "isSymbolicLink"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBigIntStatsPrototypeFunction_isSymbolicLink, 0 } },
     { "atime"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsBigIntStatsPrototypeGetter_atime, jsStatsPrototypeFunction_DatePutter } },
     { "mtime"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsBigIntStatsPrototypeGetter_mtime, jsStatsPrototypeFunction_DatePutter } },
     { "ctime"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsBigIntStatsPrototypeGetter_ctime, jsStatsPrototypeFunction_DatePutter } },
@@ -517,9 +544,13 @@ JSC::Structure* createJSStatsObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* g
     structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "size"_s), 0, offset);
     structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "blksize"_s), 0, offset);
     structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "blocks"_s), 0, offset);
+    ASSERT(offset + 1 == static_cast<PropertyOffset>(DateFieldType::atime));
     structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "atimeMs"_s), 0, offset);
+    ASSERT(offset + 1 == static_cast<PropertyOffset>(DateFieldType::mtime));
     structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "mtimeMs"_s), 0, offset);
+    ASSERT(offset + 1 == static_cast<PropertyOffset>(DateFieldType::ctime));
     structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "ctimeMs"_s), 0, offset);
+    ASSERT(offset + 1 == static_cast<PropertyOffset>(DateFieldType::birthtime));
     structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "birthtimeMs"_s), 0, offset);
 
     return structure;
@@ -543,10 +574,14 @@ JSC::Structure* createJSBigIntStatsObjectStructure(JSC::VM& vm, JSC::JSGlobalObj
     structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "size"_s), 0, offset);
     structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "blksize"_s), 0, offset);
     structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "blocks"_s), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "atimeMs"_s), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "mtimeMs"_s), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "ctimeMs"_s), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "birthtimeMs"_s), 0, offset);
+    ASSERT(offset + 1 == static_cast<PropertyOffset>(DateFieldType::atime));
+    structure = structure->addPropertyTransition(vm, structure, identifier(vm, DateFieldType::atime), 0, offset);
+    ASSERT(offset + 1 == static_cast<PropertyOffset>(DateFieldType::mtime));
+    structure = structure->addPropertyTransition(vm, structure, identifier(vm, DateFieldType::mtime), 0, offset);
+    ASSERT(offset + 1 == static_cast<PropertyOffset>(DateFieldType::ctime));
+    structure = structure->addPropertyTransition(vm, structure, identifier(vm, DateFieldType::ctime), 0, offset);
+    ASSERT(offset + 1 == static_cast<PropertyOffset>(DateFieldType::birthtime));
+    structure = structure->addPropertyTransition(vm, structure, identifier(vm, DateFieldType::birthtime), 0, offset);
     structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "atimeNs"_s), 0, offset);
     structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "mtimeNs"_s), 0, offset);
     structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "ctimeNs"_s), 0, offset);
@@ -559,7 +594,7 @@ extern "C" JSC::EncodedJSValue Bun__createJSStatsObject(Zig::GlobalObject* globa
     int64_t ino,
     int64_t mode,
     int64_t nlink,
-    int64_t uid, int64_t gid, int64_t rdev, int64_t size, int64_t blksize, int64_t blocks, int64_t atimeMs, int64_t mtimeMs, int64_t ctimeMs, int64_t birthtimeMs)
+    int64_t uid, int64_t gid, int64_t rdev, int64_t size, int64_t blksize, int64_t blocks, double atimeMs, double mtimeMs, double ctimeMs, double birthtimeMs)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -654,10 +689,10 @@ extern "C" JSC::EncodedJSValue Bun__createJSBigIntStatsObject(Zig::GlobalObject*
     object->putDirectOffset(vm, 7, js_size);
     object->putDirectOffset(vm, 8, js_blksize);
     object->putDirectOffset(vm, 9, js_blocks);
-    object->putDirectOffset(vm, 10, js_atimeMs);
-    object->putDirectOffset(vm, 11, js_mtimeMs);
-    object->putDirectOffset(vm, 12, js_ctimeMs);
-    object->putDirectOffset(vm, 13, js_birthtimeMs);
+    object->putDirectOffset(vm, static_cast<unsigned>(DateFieldType::atime), js_atimeMs);
+    object->putDirectOffset(vm, static_cast<unsigned>(DateFieldType::mtime), js_mtimeMs);
+    object->putDirectOffset(vm, static_cast<unsigned>(DateFieldType::ctime), js_ctimeMs);
+    object->putDirectOffset(vm, static_cast<unsigned>(DateFieldType::birthtime), js_birthtimeMs);
     object->putDirectOffset(vm, 14, js_atimeNs);
     object->putDirectOffset(vm, 15, js_mtimeNs);
     object->putDirectOffset(vm, 16, js_ctimeNs);
@@ -712,13 +747,13 @@ inline JSValue callJSStatsFunction(JSC::JSGlobalObject* globalObject, JSC::CallF
         // this.ctimeMs = ctimeNs / kNsPerMsBigInt;
         // this.birthtimeMs = birthtimeNs / kNsPerMsBigInt;
         const double kNsPerMsBigInt = 1000000;
-        atimeMs = jsDoubleNumber(atimeNs.toNumber(globalObject) / kNsPerMsBigInt);
+        atimeMs = jsDoubleNumber(atimeNs.toBigInt64(globalObject) / kNsPerMsBigInt);
         RETURN_IF_EXCEPTION(scope, {});
-        mtimeMs = jsDoubleNumber(mtimeNs.toNumber(globalObject) / kNsPerMsBigInt);
+        mtimeMs = jsDoubleNumber(mtimeNs.toBigInt64(globalObject) / kNsPerMsBigInt);
         RETURN_IF_EXCEPTION(scope, {});
-        ctimeMs = jsDoubleNumber(ctimeNs.toNumber(globalObject) / kNsPerMsBigInt);
+        ctimeMs = jsDoubleNumber(ctimeNs.toBigInt64(globalObject) / kNsPerMsBigInt);
         RETURN_IF_EXCEPTION(scope, {});
-        birthtimeMs = jsDoubleNumber(birthtimeNs.toNumber(globalObject) / kNsPerMsBigInt);
+        birthtimeMs = jsDoubleNumber(birthtimeNs.toBigInt64(globalObject) / kNsPerMsBigInt);
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -735,10 +770,10 @@ inline JSValue callJSStatsFunction(JSC::JSGlobalObject* globalObject, JSC::CallF
     object->putDirectOffset(vm, 8, size);
     object->putDirectOffset(vm, 9, blocks);
 
-    object->putDirectOffset(vm, 10, atimeMs);
-    object->putDirectOffset(vm, 11, mtimeMs);
-    object->putDirectOffset(vm, 12, ctimeMs);
-    object->putDirectOffset(vm, 13, birthtimeMs);
+    object->putDirectOffset(vm, static_cast<unsigned>(DateFieldType::atime), atimeMs);
+    object->putDirectOffset(vm, static_cast<unsigned>(DateFieldType::mtime), mtimeMs);
+    object->putDirectOffset(vm, static_cast<unsigned>(DateFieldType::ctime), ctimeMs);
+    object->putDirectOffset(vm, static_cast<unsigned>(DateFieldType::birthtime), birthtimeMs);
 
     if constexpr (isBigInt) {
         object->putDirectOffset(vm, 14, atimeNs);
@@ -799,13 +834,13 @@ inline JSValue constructJSStatsObject(JSC::JSGlobalObject* lexicalGlobalObject, 
         // this.ctimeMs = ctimeNs / kNsPerMsBigInt;
         // this.birthtimeMs = birthtimeNs / kNsPerMsBigInt;
         const double kNsPerMsBigInt = 1000000;
-        atimeMs = jsDoubleNumber(atimeNs.toNumber(globalObject) / kNsPerMsBigInt);
+        atimeMs = jsDoubleNumber(atimeNs.toBigInt64(globalObject) / kNsPerMsBigInt);
         RETURN_IF_EXCEPTION(scope, {});
-        mtimeMs = jsDoubleNumber(mtimeNs.toNumber(globalObject) / kNsPerMsBigInt);
+        mtimeMs = jsDoubleNumber(mtimeNs.toBigInt64(globalObject) / kNsPerMsBigInt);
         RETURN_IF_EXCEPTION(scope, {});
-        ctimeMs = jsDoubleNumber(ctimeNs.toNumber(globalObject) / kNsPerMsBigInt);
+        ctimeMs = jsDoubleNumber(ctimeNs.toBigInt64(globalObject) / kNsPerMsBigInt);
         RETURN_IF_EXCEPTION(scope, {});
-        birthtimeMs = jsDoubleNumber(birthtimeNs.toNumber(globalObject) / kNsPerMsBigInt);
+        birthtimeMs = jsDoubleNumber(birthtimeNs.toBigInt64(globalObject) / kNsPerMsBigInt);
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -820,10 +855,10 @@ inline JSValue constructJSStatsObject(JSC::JSGlobalObject* lexicalGlobalObject, 
     object->putDirect(vm, Identifier::fromString(vm, "ino"_s), ino, 0);
     object->putDirect(vm, Identifier::fromString(vm, "size"_s), size, 0);
     object->putDirect(vm, Identifier::fromString(vm, "blocks"_s), blocks, 0);
-    object->putDirect(vm, Identifier::fromString(vm, "atimeMs"_s), atimeMs, 0);
-    object->putDirect(vm, Identifier::fromString(vm, "mtimeMs"_s), mtimeMs, 0);
-    object->putDirect(vm, Identifier::fromString(vm, "ctimeMs"_s), ctimeMs, 0);
-    object->putDirect(vm, Identifier::fromString(vm, "birthtimeMs"_s), birthtimeMs, 0);
+    object->putDirect(vm, identifier(vm, DateFieldType::atime), atimeMs, 0);
+    object->putDirect(vm, identifier(vm, DateFieldType::mtime), mtimeMs, 0);
+    object->putDirect(vm, identifier(vm, DateFieldType::ctime), ctimeMs, 0);
+    object->putDirect(vm, identifier(vm, DateFieldType::birthtime), birthtimeMs, 0);
 
     if constexpr (isBigInt) {
         object->putDirect(vm, Identifier::fromString(vm, "atimeNs"_s), atimeNs, 0);

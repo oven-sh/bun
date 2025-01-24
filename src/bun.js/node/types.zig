@@ -1620,6 +1620,7 @@ pub fn StatType(comptime big: bool) type {
         value: bun.Stat,
 
         const StatTimespec = if (Environment.isWindows) bun.windows.libuv.uv_timespec_t else std.posix.timespec;
+        const Float = if (big) i64 else f64;
 
         inline fn toNanoseconds(ts: StatTimespec) u64 {
             if (ts.tv_sec < 0) {
@@ -1635,7 +1636,7 @@ pub fn StatType(comptime big: bool) type {
             });
         }
 
-        fn toTimeMS(ts: StatTimespec) i64 {
+        fn toTimeMS(ts: StatTimespec) Float {
             // On windows, Node.js purposefully mis-interprets time values
             // > On win32, time is stored in uint64_t and starts from 1601-01-01.
             // > libuv calculates tv_sec and tv_nsec from it and converts to signed long,
@@ -1649,10 +1650,10 @@ pub fn StatType(comptime big: bool) type {
                 return @as(i64, sec * std.time.ms_per_s) +
                     @as(i64, @divTrunc(nsec, std.time.ns_per_ms));
             } else {
-                return bun.timespec.ms(&bun.timespec{
+                return @floatFromInt(bun.timespec.ms(&bun.timespec{
                     .sec = @intCast(tv_sec),
                     .nsec = @intCast(tv_nsec),
-                });
+                }));
             }
         }
 
@@ -1678,13 +1679,13 @@ pub fn StatType(comptime big: bool) type {
             const size: i64 = @truncate(@as(i64, @intCast(stat_.size)));
             const blksize: i64 = @truncate(@as(i64, @intCast(stat_.blksize)));
             const blocks: i64 = @truncate(@as(i64, @intCast(stat_.blocks)));
-            const atime_ms: i64 = toTimeMS(aTime);
-            const mtime_ms: i64 = toTimeMS(mTime);
-            const ctime_ms: i64 = toTimeMS(cTime);
+            const atime_ms: Float = toTimeMS(aTime);
+            const mtime_ms: Float = toTimeMS(mTime);
+            const ctime_ms: Float = toTimeMS(cTime);
             const atime_ns: u64 = if (big) toNanoseconds(aTime) else 0;
             const mtime_ns: u64 = if (big) toNanoseconds(mTime) else 0;
             const ctime_ns: u64 = if (big) toNanoseconds(cTime) else 0;
-            const birthtime_ms: i64 = if (Environment.isLinux) 0 else toTimeMS(stat_.birthtime());
+            const birthtime_ms: Float = if (Environment.isLinux) 0 else toTimeMS(stat_.birthtime());
             const birthtime_ns: u64 = if (big and !Environment.isLinux) toNanoseconds(stat_.birthtime()) else 0;
 
             if (big) {
@@ -1752,10 +1753,10 @@ extern fn Bun__createJSStatsObject(
     size: i64,
     blksize: i64,
     blocks: i64,
-    atimeMs: i64,
-    mtimeMs: i64,
-    ctimeMs: i64,
-    birthtimeMs: i64,
+    atimeMs: f64,
+    mtimeMs: f64,
+    ctimeMs: f64,
+    birthtimeMs: f64,
 ) JSC.JSValue;
 
 extern fn Bun__createJSBigIntStatsObject(

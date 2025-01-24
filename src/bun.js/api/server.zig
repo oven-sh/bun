@@ -1266,7 +1266,6 @@ pub const ServerConfig = struct {
 
             if (try arg.get(global, "development")) |dev| {
                 args.development = dev.coerce(bool, global);
-                args.reuse_port = !args.development;
             }
             if (global.hasException()) return error.JSError;
 

@@ -256,7 +256,9 @@ inline JSC::JSValue getDateField(JSC::JSGlobalObject* globalObject, JSC::Encoded
     RETURN_IF_EXCEPTION(scope, {});
 
     JSValue result = JSC::DateInstance::create(vm, globalObject->dateStructure(), internalNumber);
-    thisObject->putDirect(vm, propertyName, result, 0);
+    if (!thisObject->structure()->mayBePrototype()) {
+        thisObject->putDirect(vm, propertyName, result, 0);
+    }
     return result;
 }
 

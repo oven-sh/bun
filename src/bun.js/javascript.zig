@@ -1935,7 +1935,6 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
         vm.regular_event_loop.concurrent_tasks = .{};
         vm.event_loop = &vm.regular_event_loop;
-        vm.eventLoop().ensureWaker();
 
         vm.transpiler.macro_context = null;
         vm.transpiler.resolver.store_fd = false;
@@ -1957,6 +1956,7 @@ pub const VirtualMachine = struct {
             VMHolder.main_thread_vm = vm;
         }
         vm.global = ZigGlobalObject.create(
+            vm,
             vm.console,
             if (opts.is_main_thread) -1 else std.math.maxInt(i32),
             false,
@@ -2057,7 +2057,6 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
         vm.regular_event_loop.concurrent_tasks = .{};
         vm.event_loop = &vm.regular_event_loop;
-        vm.eventLoop().ensureWaker();
 
         vm.transpiler.macro_context = null;
         vm.transpiler.resolver.store_fd = opts.store_fd;
@@ -2074,6 +2073,7 @@ pub const VirtualMachine = struct {
         vm.transpiler.macro_context = js_ast.Macro.MacroContext.init(&vm.transpiler);
 
         vm.global = ZigGlobalObject.create(
+            vm,
             vm.console,
             if (opts.is_main_thread) -1 else std.math.maxInt(i32),
             opts.smol,
@@ -2218,7 +2218,6 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
         vm.regular_event_loop.concurrent_tasks = .{};
         vm.event_loop = &vm.regular_event_loop;
-        vm.eventLoop().ensureWaker();
         vm.hot_reload = worker.parent.hot_reload;
         vm.transpiler.macro_context = null;
         vm.transpiler.resolver.store_fd = opts.store_fd;
@@ -2240,6 +2239,7 @@ pub const VirtualMachine = struct {
         vm.transpiler.macro_context = js_ast.Macro.MacroContext.init(&vm.transpiler);
 
         vm.global = ZigGlobalObject.create(
+            vm,
             vm.console,
             @as(i32, @intCast(worker.execution_context_id)),
             worker.mini,

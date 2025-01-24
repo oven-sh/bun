@@ -157,6 +157,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_POSTGRES_OVERFLOW", TypeError, "PostgresError"],
   ["ERR_POSTGRES_SASL_SIGNATURE_INVALID_BASE64", Error, "PostgresError"],
   ["ERR_POSTGRES_SASL_SIGNATURE_MISMATCH", Error, "PostgresError"],
+  ["ERR_POSTGRES_SASL_NO_KNOWN_MECHANISM", Error, "PostgresError"],
   ["ERR_POSTGRES_TLS_NOT_AVAILABLE", Error, "PostgresError"],
   ["ERR_POSTGRES_TLS_UPGRADE_FAILED", Error, "PostgresError"],
   ["ERR_POSTGRES_UNEXPECTED_MESSAGE", Error, "PostgresError"],

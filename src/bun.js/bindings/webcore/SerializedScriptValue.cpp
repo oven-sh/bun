@@ -5728,7 +5728,7 @@ RefPtr<SerializedScriptValue> SerializedScriptValue::create(StringView string)
 RefPtr<SerializedScriptValue> SerializedScriptValue::create(JSContextRef originContext, JSValueRef apiValue, JSValueRef* exception)
 {
     JSGlobalObject* lexicalGlobalObject = toJS(originContext);
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     JSLockHolder locker(vm);
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
@@ -5916,7 +5916,7 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
 JSValueRef SerializedScriptValue::deserialize(JSContextRef destinationContext, JSValueRef* exception)
 {
     JSGlobalObject* lexicalGlobalObject = toJS(destinationContext);
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     JSLockHolder locker(vm);
     auto scope = DECLARE_CATCH_SCOPE(vm);
 

@@ -48,7 +48,7 @@ namespace WebCore {
 
 JSC_DEFINE_HOST_FUNCTION(jsStatelessDH, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (callFrame->argumentCount() < 2) {
@@ -98,7 +98,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStatelessDH, (JSC::JSGlobalObject * lexicalGlobalObje
 
 JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ncrypto::ClearErrorOnReturn clearErrorOnReturn;
 
@@ -156,7 +156,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalO
 
 JSC_DEFINE_HOST_FUNCTION(jsGetCurves, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     const size_t numCurves = EC_get_builtin_curves(nullptr, 0);
@@ -179,7 +179,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCurves, (JSC::JSGlobalObject * lexicalGlobalObject
 
 JSC_DEFINE_HOST_FUNCTION(jsGetCiphers, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ncrypto::MarkPopErrorOnReturn mark_pop_error_on_return;
 
@@ -223,7 +223,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCiphers, (JSC::JSGlobalObject * lexicalGlobalObjec
 
 JSC_DEFINE_HOST_FUNCTION(jsCertVerifySpkac, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto input = KeyObject__GetBuffer(callFrame->argument(0));
@@ -242,7 +242,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCertVerifySpkac, (JSC::JSGlobalObject * lexicalGlobal
 
 JSC_DEFINE_HOST_FUNCTION(jsCertExportPublicKey, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto input = KeyObject__GetBuffer(callFrame->argument(0));
@@ -271,7 +271,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCertExportPublicKey, (JSC::JSGlobalObject * lexicalGl
 
 JSC_DEFINE_HOST_FUNCTION(jsCertExportChallenge, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto input = KeyObject__GetBuffer(callFrame->argument(0));
@@ -301,7 +301,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCertExportChallenge, (JSC::JSGlobalObject * lexicalGl
 
 JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ncrypto::MarkPopErrorOnReturn mark_pop_error_on_return;
 

@@ -29,7 +29,7 @@
 
 JSC_DEFINE_HOST_FUNCTION(NodeError_proto_toString, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto thisVal = callFrame->thisValue();
 
@@ -192,13 +192,13 @@ JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode co
 
 JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, const String& message, bool isDOMExceptionPrototype)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     return createError(vm, globalObject, code, jsString(vm, message), isDOMExceptionPrototype);
 }
 
 JSObject* createError(Zig::JSGlobalObject* globalObject, ErrorCode code, JSC::JSValue message, bool isDOMExceptionPrototype)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     return createError(vm, globalObject, code, message, isDOMExceptionPrototype);
 }
 
@@ -226,7 +226,7 @@ WTF::String JSValueToStringSafe(JSC::JSGlobalObject* globalObject, JSValue arg)
     }
     case JSC::JSType::InternalFunctionType:
     case JSC::JSType::JSFunctionType: {
-        auto& vm = globalObject->vm();
+        auto& vm = JSC::getVM(globalObject);
         auto catchScope = DECLARE_CATCH_SCOPE(vm);
         auto name = JSC::getCalculatedDisplayName(vm, cell->getObject());
         if (catchScope.exception()) {
@@ -254,7 +254,7 @@ WTF::String JSValueToStringSafe(JSC::JSGlobalObject* globalObject, JSValue arg)
 
 WTF::String determineSpecificType(JSC::JSGlobalObject* globalObject, JSValue value)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     ASSERT(!value.isEmpty());
@@ -547,7 +547,7 @@ JSC::EncodedJSValue INVALID_ARG_VALUE_RangeError(JSC::ThrowScope& throwScope, JS
     auto value_string = JSValueToStringSafe(globalObject, value);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto message = makeString("The "_s, type, " '"_s, name, "' "_s, reason, ". Received "_s, value_string);
     auto* structure = createErrorStructure(vm, globalObject, ErrorType::RangeError, "RangeError"_s, "ERR_INVALID_ARG_VALUE"_s, false);
     auto error = JSC::ErrorInstance::create(vm, structure, message, jsUndefined(), nullptr, JSC::RuntimeType::TypeNothing, ErrorType::RangeError, true);
@@ -745,7 +745,7 @@ void throwCryptoOperationFailed(JSGlobalObject* globalObject, JSC::ThrowScope& s
 JSC_DEFINE_HOST_FUNCTION(jsFunctionMakeAbortError, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto message = callFrame->argument(0);
     if (message.isUndefined()) message = JSC::jsString(vm, String("The operation was aborted"_s));
@@ -806,7 +806,7 @@ JSC::EncodedJSValue Bun::throwError(JSC::JSGlobalObject* globalObject, JSC::Thro
 
 JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     EXPECT_ARG_COUNT(1);

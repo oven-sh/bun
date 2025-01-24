@@ -847,6 +847,13 @@ static int bsd_set_reuse(LIBUS_SOCKET_DESCRIPTOR listenFd, int options) {
     if ((options & LIBUS_LISTEN_REUSE_PORT)) {
         result = bsd_set_reuseport(listenFd);
         if (result != 0) {
+            if (errno == ENOTSUP) {
+                if ((options & LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE) == 0) {
+                    errno = 0;
+                    return 0;
+                }
+            }
+
             return result;
         }
     }

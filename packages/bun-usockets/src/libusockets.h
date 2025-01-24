@@ -101,6 +101,7 @@ enum {
     /* Setting ipv6Only will disable dual-stack support, i.e., binding to host :: won't make 0.0.0.0 be bound.*/
     LIBUS_SOCKET_IPV6_ONLY = 8,
     LIBUS_LISTEN_REUSE_ADDR = 16,
+    LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE = 32,
 };
 
 /* Library types publicly available */

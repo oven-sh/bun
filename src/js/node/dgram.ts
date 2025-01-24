@@ -36,6 +36,7 @@ const LIBUS_SOCKET_ALLOW_HALF_OPEN = 2;
 const LIBUS_LISTEN_REUSE_PORT = 4;
 const LIBUS_SOCKET_IPV6_ONLY = 8;
 const LIBUS_LISTEN_REUSE_ADDR = 16;
+const LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE = 32;
 
 const kStateSymbol = Symbol("state symbol");
 const kOwnerSymbol = Symbol("owner symbol");
@@ -302,7 +303,7 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
       return;
     }
 
-    let flags = 0;
+    let flags = LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE;
 
     if (state.reuseAddr) {
       flags |= LIBUS_LISTEN_REUSE_ADDR;

@@ -2546,14 +2546,17 @@ pub const Expect = struct {
         var hint = hint_string.toSlice(default_allocator);
         defer hint.deinit();
 
-        const value: JSValue = try this.fnToErrStringOrUndefined(globalThis, try this.getValue(globalThis, thisValue, "toThrowErrorMatchingSnapshot", "<green>properties<r><d>, <r>hint"));
+        const value: JSValue = (try this.fnToErrStringOrUndefined(globalThis, try this.getValue(globalThis, thisValue, "toThrowErrorMatchingSnapshot", "<green>properties<r><d>, <r>hint"))) orelse {
+            const signature = comptime getSignature("toThrowErrorMatchingSnapshot", "", false);
+            return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Received function did not throw\n", .{});
+        };
 
         return this.snapshot(globalThis, value, null, hint.slice(), "toThrowErrorMatchingSnapshot");
     }
-    fn fnToErrStringOrUndefined(this: *Expect, globalThis: *JSGlobalObject, value: JSValue) !JSValue {
+    fn fnToErrStringOrUndefined(this: *Expect, globalThis: *JSGlobalObject, value: JSValue) !?JSValue {
         const err_value, _ = try this.getValueAsToThrow(globalThis, value);
 
-        var err_value_res = err_value orelse JSValue.undefined;
+        var err_value_res = err_value orelse return null;
         if (err_value_res.isAnyError()) {
             const message = try err_value_res.getTruthyComptime(globalThis, "message") orelse JSValue.undefined;
             err_value_res = message;
@@ -2596,7 +2599,10 @@ pub const Expect = struct {
 
         const expected_slice: ?[]const u8 = if (has_expected) expected.slice() else null;
 
-        const value: JSValue = try this.fnToErrStringOrUndefined(globalThis, try this.getValue(globalThis, thisValue, "toThrowErrorMatchingInlineSnapshot", "<green>properties<r><d>, <r>hint"));
+        const value: JSValue = (try this.fnToErrStringOrUndefined(globalThis, try this.getValue(globalThis, thisValue, "toThrowErrorMatchingInlineSnapshot", "<green>properties<r><d>, <r>hint"))) orelse {
+            const signature = comptime getSignature("toThrowErrorMatchingInlineSnapshot", "", false);
+            return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Received function did not throw\n", .{});
+        };
 
         return this.inlineSnapshot(globalThis, callFrame, value, null, expected_slice, "toThrowErrorMatchingInlineSnapshot");
     }
@@ -2652,6 +2658,68 @@ pub const Expect = struct {
         const value = try this.getValue(globalThis, thisValue, "toMatchInlineSnapshot", "<green>properties<r><d>, <r>hint");
         return this.inlineSnapshot(globalThis, callFrame, value, property_matchers, expected_slice, "toMatchInlineSnapshot");
     }
+    fn trimLeadingWhitespaceForInlineSnapshot(str_in: []const u8, trimmed_buf: []u8) []const u8 {
+        std.debug.assert(trimmed_buf.len == str_in.len);
+        var src = str_in;
+        var dst = trimmed_buf[0..];
+        // if the line is all whitespace, trim fully
+        // the first line containing a character determines the max trim count
+
+        // read first line (should be all-whitespace)
+        const first_newline = std.mem.indexOf(u8, src, "\n") orelse return str_in;
+        for (src[0..first_newline]) |char| if (char != ' ' and char != '\t') return str_in;
+        src = src[first_newline + 1 ..];
+
+        // read first real line and get indent
+        const indent_len = for (src, 0..) |char, i| {
+            if (char != ' ' and char != '\t') break i;
+        } else src.len;
+        if (indent_len == 0) return str_in; // no indent to trim; save time
+        // we're committed now
+        dst[0] = '\n';
+        dst = dst[1..];
+        src = src[indent_len..];
+        const second_newline = (std.mem.indexOf(u8, src, "\n") orelse return str_in) + 1;
+        @memcpy(dst[0..second_newline], src[0..second_newline]);
+        src = src[second_newline..];
+        dst = dst[second_newline..];
+
+        while (src.len > 0) {
+            // try read indent
+            const max_indent_len = @min(src.len, indent_len);
+            const line_indent_len = for (src[0..max_indent_len], 0..) |char, i| {
+                if (char != ' ' and char != '\t') break i;
+            } else max_indent_len;
+            src = src[line_indent_len..];
+
+            if (line_indent_len < max_indent_len) {
+                if (src.len == 0) {
+                    // perfect; done
+                    break;
+                }
+                if (src[0] != '\n') {
+                    // this line had less indentation than the first line, but wasn't empty. give up.
+                    return str_in;
+                }
+                // this line has less indentation than the first line, but it's empty so that's okay.
+            } else {
+                // this line has the same or more indentation than the first line. copy it.
+                const line_newline = (std.mem.indexOf(u8, src, "\n") orelse {
+                    // this is the last line. if it's not all whitespace, give up
+                    for (src) |char| {
+                        if (char != ' ' and char != '\t') return str_in;
+                    }
+                    break;
+                }) + 1;
+                @memcpy(dst[0..line_newline], src[0..line_newline]);
+                src = src[line_newline..];
+                dst = dst[line_newline..];
+            }
+        }
+
+        // done
+        return trimmed_buf[0 .. trimmed_buf.len - dst.len];
+    }
     fn inlineSnapshot(
         this: *Expect,
         globalThis: *JSGlobalObject,
@@ -2675,7 +2743,10 @@ pub const Expect = struct {
         try this.matchAndFmtSnapshot(globalThis, value, property_matchers, &pretty_value, fn_name);
 
         if (result) |saved_value| {
-            if (strings.eqlLong(pretty_value.slice(), saved_value, true)) {
+            const buf = try Jest.runner.?.snapshots.allocator.alloc(u8, saved_value.len);
+            const saved_with_trimmed_whitespace = trimLeadingWhitespaceForInlineSnapshot(saved_value, buf);
+
+            if (strings.eqlLong(pretty_value.slice(), saved_with_trimmed_whitespace, true)) {
                 Jest.runner.?.snapshots.passed += 1;
                 return .undefined;
             } else if (update) {
@@ -2687,7 +2758,7 @@ pub const Expect = struct {
                 const fmt = signature ++ "\n\n{any}\n";
                 const diff_format = DiffFormatter{
                     .received_string = pretty_value.slice(),
-                    .expected_string = saved_value,
+                    .expected_string = saved_with_trimmed_whitespace,
                     .globalThis = globalThis,
                 };
 

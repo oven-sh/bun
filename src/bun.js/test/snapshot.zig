@@ -298,7 +298,7 @@ pub const Snapshots = struct {
                     };
                     const fn_name = ils.kind;
                     if (!bun.strings.startsWith(file_text[next_start..], fn_name)) {
-                        try log.addErrorFmt(&source, .{ .start = @intCast(next_start) }, arena, "Failed to update inline snapshot: Could not find 'toMatchInlineSnapshot' here", .{});
+                        try log.addErrorFmt(&source, .{ .start = @intCast(next_start) }, arena, "Failed to update inline snapshot: Could not find '{s}' here", .{fn_name});
                         continue;
                     }
                     next_start += fn_name.len;
@@ -394,6 +394,8 @@ pub const Snapshots = struct {
 
                 try result_text.appendSlice(file_text[uncommitted_segment_end..final_start_usize]);
                 uncommitted_segment_end = final_end_usize;
+
+                // TODO: count the indentation level of the caller & indent the written snapshot with that level + "  "
 
                 if (needs_pre_comma) try result_text.appendSlice(", ");
                 const result_text_writer = result_text.writer();

@@ -742,6 +742,24 @@ describe("inline snapshots", () => {
     );
   });
 });
+test("indented inline snapshots", () => {
+  expect("a\nb").toMatchInlineSnapshot(`
+    "a
+    b"
+`);
+  expect({ a: 2 }).toMatchInlineSnapshot(`
+    {
+      "a": 2,
+    }
+            `);
+  expect(() => {
+    expect({ a: 2 }).toMatchInlineSnapshot(`
+                {
+              "a": 2,
+                }
+`);
+  }).toThrowErrorMatchingSnapshot();
+});
 
 test("error snapshots", () => {
   expect(() => {
@@ -756,6 +774,14 @@ test("error snapshots", () => {
   expect(() => {
     throw undefined; // this one doesn't work in jest because it doesn't think the function threw
   }).toThrowErrorMatchingInlineSnapshot(`undefined`);
+  expect(() => {
+    expect(() => {}).toThrowErrorMatchingInlineSnapshot(`undefined`);
+  }).toThrowErrorMatchingInlineSnapshot(`
+"\x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoThrowErrorMatchingInlineSnapshot\x1B[2m(\x1B[0m\x1B[2m)\x1B[0m
+
+\x1B[1mMatcher error\x1B[0m: Received function did not throw
+"
+`);
 });
 test("error inline snapshots", () => {
   expect(() => {

@@ -86,7 +86,7 @@ pub inline fn parse(comptime T: type, input: *Parser) Result(T) {
     }
     if (comptime @typeInfo(T) == .Optional) {
         const TT = std.meta.Child(T);
-        return .{ .result = parse(TT, input).asValue() };
+        return .{ .result = input.tryParse(parseFor(TT), .{}).asValue() };
     }
     if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
         switch (result.list) {

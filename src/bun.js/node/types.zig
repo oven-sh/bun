@@ -2247,8 +2247,9 @@ pub const Process = struct {
         const vm = globalObject.bunVM();
         const fs = vm.transpiler.fs;
 
-        var buf: bun.PathBuffer = undefined;
-        const slice = to.sliceZBuf(&buf) catch return globalObject.throw("Invalid path", .{});
+        var buf = bun.PathBufferPool.get();
+        defer bun.PathBufferPool.put(buf);
+        const slice = to.sliceZBuf(buf) catch return globalObject.throw("Invalid path", .{});
 
         switch (Syscall.chdir(fs.top_level_dir, slice)) {
             .result => {

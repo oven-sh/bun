@@ -1515,26 +1515,24 @@ pub const PostgresSQLConnection = struct {
 
         const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(this.socket.getNativeHandle()));
 
-        const peer_cert = BoringSSL.SSL_get_peer_certificate(ssl_ptr);
-        const sig_NID = BoringSSL.X509_get_signature_nid(peer_cert);
-        debug("sig_NID: {any}", .{sig_NID});
-        if (sig_NID != BoringSSL.NID_undef) {
-            var digest_NID: c_int = 0;
-            const found_digest = BoringSSL.OBJ_find_sigid_algs(sig_NID, &digest_NID, null);
-            debug("digest_NID: {any}", .{digest_NID});
-            if (found_digest == 1 and digest_NID != BoringSSL.NID_undef) {
-                const digest_type = switch (digest_NID) {
-                    BoringSSL.NID_md5, BoringSSL.NID_sha1 => BoringSSL.EVP_sha256(),
-                    else => BoringSSL.EVP_get_digestbynid(digest_NID),
-                };
-                if (digest_type != null) {
-                    const hashed = BoringSSL.X509_digest(peer_cert, digest_type, &this.tls_peer_cert_hash, &this.tls_peer_cert_hash_size);
-                    if (hashed == 0) this.tls_peer_cert_hash_size = 0; // unnecessary?
-                    debug("hash: {any}", .{this.tls_peer_cert_hash[0..this.tls_peer_cert_hash_size]});
+        if (BoringSSL.SSL_get_peer_certificate(ssl_ptr)) |peer_cert| {
+            const sig_NID = BoringSSL.X509_get_signature_nid(peer_cert);
+            if (sig_NID != BoringSSL.NID_undef) {
+                var digest_NID: c_int = 0;
+                const found_digest = BoringSSL.OBJ_find_sigid_algs(sig_NID, &digest_NID, null);
+                if (found_digest == 1 and digest_NID != BoringSSL.NID_undef) {
+                    const digest_type = switch (digest_NID) {
+                        BoringSSL.NID_md5, BoringSSL.NID_sha1 => BoringSSL.EVP_sha256(),
+                        else => BoringSSL.EVP_get_digestbynid(digest_NID),
+                    };
+                    if (digest_type != null) {
+                        const hashed = BoringSSL.X509_digest(peer_cert, digest_type, &this.tls_peer_cert_hash, &this.tls_peer_cert_hash_size);
+                        if (hashed == 0) this.tls_peer_cert_hash_size = 0; // unnecessary?
+                    }
                 }
             }
+            BoringSSL.X509_free(peer_cert);
         }
-        BoringSSL.X509_free(peer_cert);
 
         if (this.tls_config.reject_unauthorized == 0) {
             return;

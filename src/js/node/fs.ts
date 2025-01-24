@@ -1013,22 +1013,24 @@ function opendirSync(path, options) {
 }
 
 class Dir {
-  #handle;
+  /**
+   * `-1` when closed. stdio handles (0, 1, 2) don't actually get closed by
+   * {@link close} or {@link closeSync}.
+   */
+  #handle: number | undefined;
   #path;
   #options;
   #entries: any[] | null = null;
-  #closed: boolean;
 
   constructor(handle, path, options) {
-    if (handle == null) throw $ERR_MISSING_ARGS("handle");
+    if ($isUndefinedOrNull(handle)) throw $ERR_MISSING_ARGS("handle");
     this.#handle = handle;
     this.#path = path;
     this.#options = options;
-    this.#closed = false;
   }
 
   readSync() {
-    if (this.#closed) throw $ERR_DIR_CLOSED();
+    if (this.#handle < 0) throw $ERR_DIR_CLOSED();
 
     let entries = (this.#entries ??= fs.readdirSync(this.#path, {
       withFileTypes: true,
@@ -1039,7 +1041,7 @@ class Dir {
   }
 
   read(cb?): any {
-    if (this.#closed) throw $ERR_DIR_CLOSED();
+    if (this.#handle < 0) throw $ERR_DIR_CLOSED();
 
     if (cb) {
       return this.read().then(entry => cb(null, entry));
@@ -1060,16 +1062,18 @@ class Dir {
   }
 
   close(cb?: () => void) {
+    const handle = this.#handle;
     if (cb) {
       process.nextTick(cb);
     }
-    fs.closeSync(this.#handle);
-    this.#closed = true;
+    if (handle > 2) fs.closeSync(this.#handle);
+    this.#handle = -1;
   }
 
   closeSync() {
-    fs.closeSync(this.#handle);
-    this.#closed = true;
+    const handle = this.#handle;
+    if (handle > 2) fs.closeSync(handle);
+    this.#handle = -1;
   }
 
   get path() {

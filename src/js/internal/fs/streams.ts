@@ -634,23 +634,60 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
 const writablePrototypeWrite = Writable.prototype.write;
 const kWriteMonkeyPatchDefense = Symbol("!");
 function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
-  if (this[kWriteMonkeyPatchDefense]) return writablePrototypeWrite.$call(this, data, encoding, cb);
-
-  if (typeof encoding === "function") {
+  if (encoding != null && typeof encoding === "function") {
     cb = encoding;
-    encoding = undefined;
+    encoding = null;
   }
-  if (typeof cb !== "function") {
-    cb = streamNoop;
+  let fileSink = this[kWriteStreamFastPath];
+  if (!fileSink) {
+    this.write = Writable.prototype.write;
+    return this.write(data, encoding, cb);
+  } else if (fileSink === true) {
+    if (
+      this.open !== streamNoop ||
+      fs.open !== open ||
+      fs.write !== write ||
+      fs.fsync !== fsync ||
+      fs.close !== close
+    ) {
+      this[kWriteStreamFastPath] = undefined;
+      this.write = Writable.prototype.write;
+      return this.write(data, encoding, cb);
+    }
+    fileSink = this[kWriteStreamFastPath] = Bun.file(this.path).writer();
   }
-  const result: any = this._write(data, encoding, cb);
-  if (this.write === writeFast) {
-    this.write = writablePrototypeWrite;
-  } else {
-    // test-console-group.js
-    this[kWriteMonkeyPatchDefense] = true;
+  try {
+    $assert(fs.write === write, "this patching case not handled, and likely does not matter");
+    const maybePromise = fileSink.write(data);
+    if (
+      $isPromise(maybePromise) &&
+      ($getPromiseInternalField(maybePromise, $promiseFieldFlags) & $promiseStateMask) === $promiseStatePending
+    ) {
+      const prevRefCount = this[kIsPerformingIO];
+      this[kIsPerformingIO] = (prevRefCount === true ? 0 : prevRefCount || 0) + 1;
+      if (typeof cb === "function")
+        maybePromise.then(() => {
+          cb(null);
+          if (
+            (this[kIsPerformingIO] -= 1) === 0 &&
+            ((this[kWriteFastSimpleBuffering] = false), this[kWriteStreamFastPathClosed])
+          ) {
+            this.emit(kIoDone, null);
+          }
+        }, cb);
+      return false;
+    } else {
+      if (typeof cb === "function") process.nextTick(cb, null);
+    }
+    return true;
+  } catch (e) {
+    if (typeof cb === "function") process.nextTick(cb, e);
+    else
+      process.nextTick(() => {
+        this.emit("error", e);
+      });
+    return false;
   }
-  return result;
 }
 
 writeStreamPrototype._writev = function (data, cb) {

@@ -1411,7 +1411,7 @@ pub const EventLoop = struct {
         }
 
         if (this.entered_event_loop_count < 2) {
-            if (this.imminent_gc_timer.swap(null, .monotonic)) |timer| {
+            if (this.imminent_gc_timer.swap(null, .seq_cst)) |timer| {
                 timer.run(this.virtual_machine);
             }
         }

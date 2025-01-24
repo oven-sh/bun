@@ -1,5 +1,3 @@
-import { bunRunAsScript, bunRun, tempDirWithFiles } from "harness";
-import path from "path";
 import { parse } from "url";
 
 describe("Url.prototype.parse", () => {

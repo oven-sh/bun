@@ -2228,8 +2228,9 @@ pub const Process = struct {
         return JSC.toJSHostValue(globalObject, getCwd_(globalObject));
     }
     fn getCwd_(globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
-        var buf: bun.PathBuffer = undefined;
-        switch (Path.getCwd(&buf)) {
+        const buf = bun.PathBufferPool.get();
+        defer bun.PathBufferPool.put(buf);
+        switch (Path.getCwd(buf)) {
             .result => |r| return JSC.ZigString.init(r).withEncoding().toJS(globalObject),
             .err => |e| {
                 return globalObject.throwValue(e.toJSC(globalObject));

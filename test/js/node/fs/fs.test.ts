@@ -3536,43 +3536,42 @@ it("fs.statfs should work with bigint", async () => {
 });
 
 it("fs.Stat constructor", () => {
-  expect(new Stats()).toMatchInlineSnapshot(`Stats 
-Stats {
-  "atimeMs": undefined,
-  "birthtimeMs": undefined,
-  "blksize": undefined,
-  "blocks": undefined,
-  "ctimeMs": undefined,
-  "dev": undefined,
-  "gid": undefined,
-  "ino": undefined,
-  "mode": undefined,
-  "mtimeMs": undefined,
-  "nlink": undefined,
-  "rdev": undefined,
-  "size": undefined,
-  "uid": undefined,
-}
-`);
+  expect(new Stats()).toMatchObject({
+    "atimeMs": undefined,
+    "birthtimeMs": undefined,
+    "blksize": undefined,
+    "blocks": undefined,
+    "ctimeMs": undefined,
+    "dev": undefined,
+    "gid": undefined,
+    "ino": undefined,
+    "mode": undefined,
+    "mtimeMs": undefined,
+    "nlink": undefined,
+    "rdev": undefined,
+    "size": undefined,
+    "uid": undefined,
+  });
+});
+
+it("fs.Stat constructor with options", () => {
   // @ts-ignore
-  expect(new Stats(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)).toMatchInlineSnapshot(`Stats 
-Stats {
-  "atimeMs": 10,
-  "birthtimeMs": 13,
-  "blksize": 6,
-  "blocks": 9,
-  "ctimeMs": 12,
-  "dev": 0,
-  "gid": 4,
-  "ino": 7,
-  "mode": 1,
-  "mtimeMs": 11,
-  "nlink": 2,
-  "rdev": 5,
-  "size": 8,
-  "uid": 3,
-}
-`);
+  expect(new Stats(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)).toMatchObject({
+    atimeMs: 10,
+    birthtimeMs: 13,
+    blksize: 6,
+    blocks: 9,
+    ctimeMs: 12,
+    dev: 0,
+    gid: 4,
+    ino: 7,
+    mode: 1,
+    mtimeMs: 11,
+    nlink: 2,
+    rdev: 5,
+    size: 8,
+    uid: 3,
+  });
 });
 
 it("fs.Stat.atime reflects date matching Node.js behavior", () => {

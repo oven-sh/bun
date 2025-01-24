@@ -123,6 +123,9 @@ static bool isModeFn(StatFunction fn, mode_t mode)
         return S_ISSOCK(mode);
     case StatFunction::isSymbolicLink:
         return S_ISLNK(mode);
+    default: {
+        ASSERT_NOT_REACHED();
+    }
     }
 }
 

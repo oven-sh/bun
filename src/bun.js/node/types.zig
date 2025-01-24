@@ -1615,55 +1615,14 @@ pub const FileSystemFlags = enum(if (Environment.isWindows) c_int else c_uint) {
 
 /// Stats and BigIntStats classes from node:fs
 pub fn StatType(comptime big: bool) type {
-    const Int = if (big) i64 else i32;
-    const Float = if (big) i64 else f64;
-    const Timestamp = if (big) u64 else u0;
-
-    const Date = packed struct {
-        value: Float,
-        pub inline fn toJS(this: @This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-            const milliseconds = JSC.JSValue.jsNumber(this.value);
-            const array: [1]JSC.C.JSValueRef = .{milliseconds.asObjectRef()};
-            return JSC.JSValue.c(JSC.C.JSObjectMakeDate(globalObject, 1, &array, null));
-        }
-    };
-
-    return extern struct {
-        pub usingnamespace if (big) JSC.Codegen.JSBigIntStats else JSC.Codegen.JSStats;
+    return struct {
         pub usingnamespace bun.New(@This());
-
-        // Stats stores these as i32, but BigIntStats stores all of these as i64
-        // On windows, these two need to be u64 as the numbers are often very large.
-        dev: u64,
-        ino: u64,
-        mode: Int,
-        nlink: Int,
-        uid: Int,
-        gid: Int,
-        rdev: Int,
-        blksize: Int,
-        blocks: Int,
-
-        // Always store size as a 64-bit integer
-        size: i64,
-
-        // _ms is either a float if Small, or a 64-bit integer if Big
-        atime_ms: Float,
-        mtime_ms: Float,
-        ctime_ms: Float,
-        birthtime_ms: Float,
-
-        // _ns is a u64 storing nanosecond precision. it is a u0 when not BigIntStats
-        atime_ns: Timestamp = 0,
-        mtime_ns: Timestamp = 0,
-        ctime_ns: Timestamp = 0,
-        birthtime_ns: Timestamp = 0,
-
-        const This = @This();
+        value: bun.Stat,
 
         const StatTimespec = if (Environment.isWindows) bun.windows.libuv.uv_timespec_t else std.posix.timespec;
+        const Float = if (big) i64 else f64;
 
-        inline fn toNanoseconds(ts: StatTimespec) Timestamp {
+        inline fn toNanoseconds(ts: StatTimespec) u64 {
             if (ts.tv_sec < 0) {
                 return @intCast(@max(bun.timespec.nsSigned(&bun.timespec{
                     .sec = @intCast(ts.tv_sec),
@@ -1698,210 +1657,129 @@ pub fn StatType(comptime big: bool) type {
             }
         }
 
-        const PropertyGetter = fn (this: *This, globalObject: *JSC.JSGlobalObject) JSC.JSValue;
-
-        fn getter(comptime field: meta.FieldEnum(This)) PropertyGetter {
-            return struct {
-                pub fn callback(this: *This, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-                    const value = @field(this, @tagName(field));
-                    const Type = @TypeOf(value);
-                    if (comptime big and @typeInfo(Type) == .Int) {
-                        if (Type == u64) {
-                            return JSC.JSValue.fromUInt64NoTruncate(globalObject, value);
-                        }
-
-                        return JSC.JSValue.fromInt64NoTruncate(globalObject, value);
-                    }
-
-                    return JSC.JSValue.jsNumber(value);
-                }
-            }.callback;
+        pub fn toJS(this: *const @This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+            return statToJS(&this.value, globalObject);
         }
 
-        fn dateGetter(comptime field: meta.FieldEnum(This)) PropertyGetter {
-            return struct {
-                pub fn callback(this: *This, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-                    const value = @field(this, @tagName(field));
-                    // Doing `Date{ ... }` here shouldn't actually change the memory layout of `value`
-                    // but it will tell comptime code how to convert the i64/f64 to a JS Date.
-                    return globalObject.toJS(Date{ .value = value }, .temporary);
-                }
-            }.callback;
+        pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+            return if (big) Bun__JSBigIntStatsObjectConstructor(globalObject) else Bun__JSStatsObjectConstructor(globalObject);
         }
 
-        pub const isBlockDevice_ = JSC.wrapInstanceMethod(This, "isBlockDevice", false);
-        pub const isCharacterDevice_ = JSC.wrapInstanceMethod(This, "isCharacterDevice", false);
-        pub const isDirectory_ = JSC.wrapInstanceMethod(This, "isDirectory", false);
-        pub const isFIFO_ = JSC.wrapInstanceMethod(This, "isFIFO", false);
-        pub const isFile_ = JSC.wrapInstanceMethod(This, "isFile", false);
-        pub const isSocket_ = JSC.wrapInstanceMethod(This, "isSocket", false);
-        pub const isSymbolicLink_ = JSC.wrapInstanceMethod(This, "isSymbolicLink", false);
-
-        pub const isBlockDevice_WithoutTypeChecks = domCall(.isBlockDevice);
-        pub const isCharacterDevice_WithoutTypeChecks = domCall(.isCharacterDevice);
-        pub const isDirectory_WithoutTypeChecks = domCall(.isDirectory);
-        pub const isFIFO_WithoutTypeChecks = domCall(.isFIFO);
-        pub const isFile_WithoutTypeChecks = domCall(.isFile);
-        pub const isSocket_WithoutTypeChecks = domCall(.isSocket);
-        pub const isSymbolicLink_WithoutTypeChecks = domCall(.isSymbolicLink);
-
-        const DOMCallFn = fn (
-            *This,
-            *JSC.JSGlobalObject,
-        ) bun.JSError!JSC.JSValue;
-        fn domCall(comptime decl: meta.DeclEnum(This)) DOMCallFn {
-            return struct {
-                pub fn run(
-                    this: *This,
-                    _: *JSC.JSGlobalObject,
-                ) bun.JSError!JSC.JSValue {
-                    return @field(This, @tagName(decl))(this);
-                }
-            }.run;
-        }
-
-        pub const dev = getter(.dev);
-        pub const ino = getter(.ino);
-        pub const mode = getter(.mode);
-        pub const nlink = getter(.nlink);
-        pub const uid = getter(.uid);
-        pub const gid = getter(.gid);
-        pub const rdev = getter(.rdev);
-        pub const size = getter(.size);
-        pub const blksize = getter(.blksize);
-        pub const blocks = getter(.blocks);
-        pub const atime = dateGetter(.atime_ms);
-        pub const mtime = dateGetter(.mtime_ms);
-        pub const ctime = dateGetter(.ctime_ms);
-        pub const birthtime = dateGetter(.birthtime_ms);
-        pub const atimeMs = getter(.atime_ms);
-        pub const mtimeMs = getter(.mtime_ms);
-        pub const ctimeMs = getter(.ctime_ms);
-        pub const birthtimeMs = getter(.birthtime_ms);
-        pub const atimeNs = getter(.atime_ns);
-        pub const mtimeNs = getter(.mtime_ns);
-        pub const ctimeNs = getter(.ctime_ns);
-        pub const birthtimeNs = getter(.birthtime_ns);
-
-        inline fn modeInternal(this: *This) i32 {
-            return @truncate(this.mode);
-        }
-
-        const S = if (Environment.isWindows) bun.C.S else posix.system.S;
-
-        pub fn isBlockDevice(this: *This) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(S.ISBLK(@intCast(this.modeInternal())));
-        }
-
-        pub fn isCharacterDevice(this: *This) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(S.ISCHR(@intCast(this.modeInternal())));
-        }
-
-        pub fn isDirectory(this: *This) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(S.ISDIR(@intCast(this.modeInternal())));
-        }
-
-        pub fn isFIFO(this: *This) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(S.ISFIFO(@intCast(this.modeInternal())));
-        }
-
-        pub fn isFile(this: *This) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(bun.isRegularFile(this.modeInternal()));
-        }
-
-        pub fn isSocket(this: *This) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(S.ISSOCK(@intCast(this.modeInternal())));
-        }
-
-        /// Node.js says this method is only valid on the result of lstat()
-        /// so it's fine if we just include it on stat() because it would
-        /// still just return false.
-        ///
-        /// See https://nodejs.org/api/fs.html#statsissymboliclink
-        pub fn isSymbolicLink(this: *This) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(S.ISLNK(@intCast(this.modeInternal())));
-        }
-
-        // TODO: BigIntStats includes a `_checkModeProperty` but I dont think anyone actually uses it.
-
-        pub fn finalize(this: *This) void {
-            this.destroy();
-        }
-
-        pub fn init(stat_: bun.Stat) This {
+        fn statToJS(stat_: *const bun.Stat, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
             const aTime = stat_.atime();
             const mTime = stat_.mtime();
             const cTime = stat_.ctime();
+            const dev: i64 = @intCast(@max(stat_.dev, 0));
+            const ino: i64 = @intCast(@max(stat_.ino, 0));
+            const mode: i64 = @truncate(@as(i64, @intCast(stat_.mode)));
+            const nlink: i64 = @truncate(@as(i64, @intCast(stat_.nlink)));
+            const uid: i64 = @truncate(@as(i64, @intCast(stat_.uid)));
+            const gid: i64 = @truncate(@as(i64, @intCast(stat_.gid)));
+            const rdev: i64 = @truncate(@as(i64, @intCast(stat_.rdev)));
+            const size: i64 = @truncate(@as(i64, @intCast(stat_.size)));
+            const blksize: i64 = @truncate(@as(i64, @intCast(stat_.blksize)));
+            const blocks: i64 = @truncate(@as(i64, @intCast(stat_.blocks)));
+            const atime_ms: Float = toTimeMS(aTime);
+            const mtime_ms: Float = toTimeMS(mTime);
+            const ctime_ms: Float = toTimeMS(cTime);
+            const atime_ns: u64 = if (big) toNanoseconds(aTime) else 0;
+            const mtime_ns: u64 = if (big) toNanoseconds(mTime) else 0;
+            const ctime_ns: u64 = if (big) toNanoseconds(cTime) else 0;
+            const birthtime_ms: Float = if (Environment.isLinux) 0 else toTimeMS(stat_.birthtime());
+            const birthtime_ns: u64 = if (big and !Environment.isLinux) toNanoseconds(stat_.birthtime()) else 0;
 
-            return .{
-                .dev = @intCast(@max(stat_.dev, 0)),
-                .ino = @intCast(@max(stat_.ino, 0)),
-                .mode = @truncate(@as(i64, @intCast(stat_.mode))),
-                .nlink = @truncate(@as(i64, @intCast(stat_.nlink))),
-                .uid = @truncate(@as(i64, @intCast(stat_.uid))),
-                .gid = @truncate(@as(i64, @intCast(stat_.gid))),
-                .rdev = @truncate(@as(i64, @intCast(stat_.rdev))),
-                .size = @truncate(@as(i64, @intCast(stat_.size))),
-                .blksize = @truncate(@as(i64, @intCast(stat_.blksize))),
-                .blocks = @truncate(@as(i64, @intCast(stat_.blocks))),
-                .atime_ms = toTimeMS(aTime),
-                .mtime_ms = toTimeMS(mTime),
-                .ctime_ms = toTimeMS(cTime),
-                .atime_ns = if (big) toNanoseconds(aTime) else 0,
-                .mtime_ns = if (big) toNanoseconds(mTime) else 0,
-                .ctime_ns = if (big) toNanoseconds(cTime) else 0,
-
-                // Linux doesn't include this info in stat
-                // maybe it does in statx, but do you really need birthtime? If you do please file an issue.
-                .birthtime_ms = if (Environment.isLinux) 0 else toTimeMS(stat_.birthtime()),
-                .birthtime_ns = if (big and !Environment.isLinux) toNanoseconds(stat_.birthtime()) else 0,
-            };
-        }
-
-        pub fn constructor(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!*This {
             if (big) {
-                return globalObject.throwInvalidArguments("BigIntStats is not a constructor", .{});
+                return Bun__createJSBigIntStatsObject(
+                    globalObject,
+                    dev,
+                    ino,
+                    mode,
+                    nlink,
+                    uid,
+                    gid,
+                    rdev,
+                    size,
+                    blksize,
+                    blocks,
+                    atime_ms,
+                    mtime_ms,
+                    ctime_ms,
+                    birthtime_ms,
+                    atime_ns,
+                    mtime_ns,
+                    ctime_ns,
+                    birthtime_ns,
+                );
             }
 
-            // dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks, atimeMs, mtimeMs, ctimeMs, birthtimeMs
-            var args = callFrame.arguments();
-
-            const atime_ms: f64 = if (args.len > 10 and args[10].isNumber()) args[10].asNumber() else 0;
-            const mtime_ms: f64 = if (args.len > 11 and args[11].isNumber()) args[11].asNumber() else 0;
-            const ctime_ms: f64 = if (args.len > 12 and args[12].isNumber()) args[12].asNumber() else 0;
-            const birthtime_ms: f64 = if (args.len > 13 and args[13].isNumber()) args[13].asNumber() else 0;
-
-            const this = This.new(.{
-                .dev = if (args.len > 0 and args[0].isNumber()) @intCast(args[0].toInt32()) else 0,
-                .mode = if (args.len > 1 and args[1].isNumber()) args[1].toInt32() else 0,
-                .nlink = if (args.len > 2 and args[2].isNumber()) args[2].toInt32() else 0,
-                .uid = if (args.len > 3 and args[3].isNumber()) args[3].toInt32() else 0,
-                .gid = if (args.len > 4 and args[4].isNumber()) args[4].toInt32() else 0,
-                .rdev = if (args.len > 5 and args[5].isNumber()) args[5].toInt32() else 0,
-                .blksize = if (args.len > 6 and args[6].isNumber()) args[6].toInt32() else 0,
-                .ino = if (args.len > 7 and args[7].isNumber()) @intCast(args[7].toInt32()) else 0,
-                .size = if (args.len > 8 and args[8].isNumber()) args[8].toInt32() else 0,
-                .blocks = if (args.len > 9 and args[9].isNumber()) args[9].toInt32() else 0,
-                .atime_ms = atime_ms,
-                .mtime_ms = mtime_ms,
-                .ctime_ms = ctime_ms,
-                .birthtime_ms = birthtime_ms,
-            });
-
-            return this;
+            return Bun__createJSStatsObject(
+                globalObject,
+                dev,
+                ino,
+                mode,
+                nlink,
+                uid,
+                gid,
+                rdev,
+                size,
+                blksize,
+                blocks,
+                atime_ms,
+                mtime_ms,
+                ctime_ms,
+                birthtime_ms,
+            );
         }
 
-        comptime {
-            _ = isBlockDevice_WithoutTypeChecks;
-            _ = isCharacterDevice_WithoutTypeChecks;
-            _ = isDirectory_WithoutTypeChecks;
-            _ = isFIFO_WithoutTypeChecks;
-            _ = isFile_WithoutTypeChecks;
-            _ = isSocket_WithoutTypeChecks;
-            _ = isSymbolicLink_WithoutTypeChecks;
+        pub fn init(stat_: bun.Stat) @This() {
+            return @This(){
+                .value = stat_,
+            };
         }
     };
 }
+extern fn Bun__JSBigIntStatsObjectConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+extern fn Bun__JSStatsObjectConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+extern fn Bun__createJSStatsObject(
+    globalObject: *JSC.JSGlobalObject,
+    dev: i64,
+    ino: i64,
+    mode: i64,
+    nlink: i64,
+    uid: i64,
+    gid: i64,
+    rdev: i64,
+    size: i64,
+    blksize: i64,
+    blocks: i64,
+    atimeMs: f64,
+    mtimeMs: f64,
+    ctimeMs: f64,
+    birthtimeMs: f64,
+) JSC.JSValue;
+
+extern fn Bun__createJSBigIntStatsObject(
+    globalObject: *JSC.JSGlobalObject,
+    dev: i64,
+    ino: i64,
+    mode: i64,
+    nlink: i64,
+    uid: i64,
+    gid: i64,
+    rdev: i64,
+    size: i64,
+    blksize: i64,
+    blocks: i64,
+    atimeMs: i64,
+    mtimeMs: i64,
+    ctimeMs: i64,
+    birthtimeMs: i64,
+    atimeNs: u64,
+    mtimeNs: u64,
+    ctimeNs: u64,
+    birthtimeNs: u64,
+) JSC.JSValue;
 
 pub const StatsSmall = StatType(false);
 pub const StatsBig = StatType(true);
@@ -1921,8 +1799,8 @@ pub const Stats = union(enum) {
 
     pub fn toJSNewlyCreated(this: *const Stats, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         return switch (this.*) {
-            .big => StatsBig.new(this.big).toJS(globalObject),
-            .small => StatsSmall.new(this.small).toJS(globalObject),
+            .big => this.big.toJS(globalObject),
+            .small => this.small.toJS(globalObject),
         };
     }
 
@@ -1993,14 +1871,7 @@ pub const Dirent = struct {
     }
 
     pub fn toJS(this: *Dirent, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        const as_js = Dirent.toJSUnchecked(globalObject, this);
-
-        // Immediately create JSString* objects for the name and path
-        // So that the GC is aware of them and can collect them if necessary
-        Dirent.nameSetCached(as_js, globalObject, this.name.toJS(globalObject));
-        Dirent.pathSetCached(as_js, globalObject, this.path.toJS(globalObject));
-
-        return as_js;
+        return Dirent.toJSUnchecked(globalObject, this);
     }
 
     pub fn toJSNewlyCreated(this: *const Dirent, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
@@ -2415,7 +2286,11 @@ pub fn StatFSType(comptime big: bool) type {
                         return JSC.JSValue.fromInt64NoTruncate(globalObject, value);
                     }
 
-                    return JSC.JSValue.jsNumber(value);
+                    const result = JSC.JSValue.jsDoubleNumber(@as(f64, @floatFromInt(value)));
+                    if (Environment.isDebug) {
+                        bun.assert_eql(result.asNumber(), @as(f64, @floatFromInt(value)));
+                    }
+                    return result;
                 }
             }.callback;
         }

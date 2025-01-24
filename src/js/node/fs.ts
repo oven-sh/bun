@@ -1017,7 +1017,7 @@ class Dir {
    * `-1` when closed. stdio handles (0, 1, 2) don't actually get closed by
    * {@link close} or {@link closeSync}.
    */
-  #handle: number | undefined;
+  #handle: number;
   #path;
   #options;
   #entries: any[] | null = null;
@@ -1066,7 +1066,7 @@ class Dir {
     if (cb) {
       process.nextTick(cb);
     }
-    if (handle > 2) fs.closeSync(this.#handle);
+    if (handle > 2) fs.closeSync(handle);
     this.#handle = -1;
   }
 

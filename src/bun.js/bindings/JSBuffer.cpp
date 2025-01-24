@@ -1937,7 +1937,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlo
 
 extern "C" JSC::EncodedJSValue JSBuffer__fromMmap(Zig::GlobalObject* globalObject, void* ptr, size_t length)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* structure = globalObject->JSBufferSubclassStructure();

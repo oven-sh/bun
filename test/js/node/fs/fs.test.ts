@@ -3536,8 +3536,8 @@ it("fs.statfs should work with bigint", async () => {
 });
 
 it("fs.Stat constructor", () => {
-  expect(new Stats()).toMatchInlineSnapshot(`
-{
+  expect(new Stats()).toMatchInlineSnapshot(`Stats 
+Stats {
   "atimeMs": undefined,
   "birthtimeMs": undefined,
   "blksize": undefined,
@@ -3555,8 +3555,8 @@ it("fs.Stat constructor", () => {
 }
 `);
   // @ts-ignore
-  expect(new Stats(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)).toMatchInlineSnapshot(`
-{
+  expect(new Stats(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)).toMatchInlineSnapshot(`Stats 
+Stats {
   "atimeMs": 10,
   "birthtimeMs": 13,
   "blksize": 6,

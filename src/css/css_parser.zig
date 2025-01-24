@@ -3812,6 +3812,18 @@ pub const Parser = struct {
         }
     }
 
+    pub fn expectSquareBracketBlock(this: *Parser) Result(void) {
+        const start_location = this.currentSourceLocation();
+        const tok = switch (this.next()) {
+            .err => |e| return .{ .err = e },
+            .result => |v| v,
+        };
+        switch (tok.*) {
+            .open_square => return .{ .result = {} },
+            else => return .{ .err = start_location.newUnexpectedTokenError(tok.*) },
+        }
+    }
+
     /// Parse a <url-token> and return the unescaped value.
     pub fn expectUrl(this: *Parser) Result([]const u8) {
         const start_location = this.currentSourceLocation();

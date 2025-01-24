@@ -1017,15 +1017,19 @@ class Dir {
   #path;
   #options;
   #entries: any[] | null = null;
+  #closed: boolean;
 
   constructor(handle, path, options) {
     if (handle == null) throw $ERR_MISSING_ARGS("handle");
     this.#handle = handle;
     this.#path = path;
     this.#options = options;
+    this.#closed = false;
   }
 
   readSync() {
+    if (this.#closed) throw $ERR_DIR_CLOSED();
+
     let entries = (this.#entries ??= fs.readdirSync(this.#path, {
       withFileTypes: true,
       encoding: this.#options?.encoding,
@@ -1035,6 +1039,8 @@ class Dir {
   }
 
   read(cb?): any {
+    if (this.#closed) throw $ERR_DIR_CLOSED();
+
     if (cb) {
       return this.read().then(entry => cb(null, entry));
     }
@@ -1057,10 +1063,14 @@ class Dir {
     if (cb) {
       process.nextTick(cb);
     }
-    return fs.closedirSync(this.#handle);
+    fs.closeSync(this.#handle);
+    this.#closed = true;
   }
 
-  closeSync() {}
+  closeSync() {
+    fs.closeSync(this.#handle);
+    this.#closed = true;
+  }
 
   get path() {
     return this.#path;

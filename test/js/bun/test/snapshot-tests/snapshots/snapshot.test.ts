@@ -741,6 +741,9 @@ describe("inline snapshots", () => {
       `,
     );
   });
+  // it("keeps indentation", () => {
+  //   tester.test(v => ``);
+  // });
 });
 test("indented inline snapshots", () => {
   expect("a\nb").toMatchInlineSnapshot(`

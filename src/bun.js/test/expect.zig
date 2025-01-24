@@ -2658,28 +2658,31 @@ pub const Expect = struct {
         const value = try this.getValue(globalThis, thisValue, "toMatchInlineSnapshot", "<green>properties<r><d>, <r>hint");
         return this.inlineSnapshot(globalThis, callFrame, value, property_matchers, expected_slice, "toMatchInlineSnapshot");
     }
-    fn trimLeadingWhitespaceForInlineSnapshot(str_in: []const u8, trimmed_buf: []u8) []const u8 {
+    const TrimResult = struct { trimmed: []const u8, start_indent: ?[]const u8, end_indent: ?[]const u8 };
+    fn trimLeadingWhitespaceForInlineSnapshot(str_in: []const u8, trimmed_buf: []u8) TrimResult {
         std.debug.assert(trimmed_buf.len == str_in.len);
         var src = str_in;
         var dst = trimmed_buf[0..];
+        const give_up: TrimResult = .{ .trimmed = str_in, .start_indent = null, .end_indent = null };
         // if the line is all whitespace, trim fully
         // the first line containing a character determines the max trim count
 
         // read first line (should be all-whitespace)
-        const first_newline = std.mem.indexOf(u8, src, "\n") orelse return str_in;
-        for (src[0..first_newline]) |char| if (char != ' ' and char != '\t') return str_in;
+        const first_newline = std.mem.indexOf(u8, src, "\n") orelse return give_up;
+        for (src[0..first_newline]) |char| if (char != ' ' and char != '\t') return give_up;
         src = src[first_newline + 1 ..];
 
         // read first real line and get indent
         const indent_len = for (src, 0..) |char, i| {
             if (char != ' ' and char != '\t') break i;
         } else src.len;
-        if (indent_len == 0) return str_in; // no indent to trim; save time
+        if (indent_len == 0) return give_up; // no indent to trim; save time
+        const indent_str = src[0..indent_len];
         // we're committed now
         dst[0] = '\n';
         dst = dst[1..];
         src = src[indent_len..];
-        const second_newline = (std.mem.indexOf(u8, src, "\n") orelse return str_in) + 1;
+        const second_newline = (std.mem.indexOf(u8, src, "\n") orelse return give_up) + 1;
         @memcpy(dst[0..second_newline], src[0..second_newline]);
         src = src[second_newline..];
         dst = dst[second_newline..];
@@ -2697,17 +2700,21 @@ pub const Expect = struct {
                     // perfect; done
                     break;
                 }
-                if (src[0] != '\n') {
-                    // this line had less indentation than the first line, but wasn't empty. give up.
-                    return str_in;
+                if (src[0] == '\n') {
+                    // this line has less indentation than the first line, but it's empty so that's okay.
+                    dst[0] = '\n';
+                    src = src[1..];
+                    dst = dst[1..];
+                    continue;
                 }
-                // this line has less indentation than the first line, but it's empty so that's okay.
+                // this line had less indentation than the first line, but wasn't empty. give up.
+                return give_up;
             } else {
                 // this line has the same or more indentation than the first line. copy it.
                 const line_newline = (std.mem.indexOf(u8, src, "\n") orelse {
                     // this is the last line. if it's not all whitespace, give up
                     for (src) |char| {
-                        if (char != ' ' and char != '\t') return str_in;
+                        if (char != ' ' and char != '\t') return give_up;
                     }
                     break;
                 }) + 1;
@@ -2716,9 +2723,11 @@ pub const Expect = struct {
                 dst = dst[line_newline..];
             }
         }
+        const end_indent = if (std.mem.lastIndexOfScalar(u8, str_in, '\n')) |c| c + 1 else return give_up; // there has to have been at least a single newline to get here
+        for (str_in[end_indent..]) |c| if (c != ' ' and c != 't') return give_up; // we already checked, but the last line is not all whitespace again
 
         // done
-        return trimmed_buf[0 .. trimmed_buf.len - dst.len];
+        return .{ .trimmed = trimmed_buf[0 .. trimmed_buf.len - dst.len], .start_indent = indent_str, .end_indent = str_in[end_indent..] };
     }
     fn inlineSnapshot(
         this: *Expect,
@@ -2742,23 +2751,28 @@ pub const Expect = struct {
         defer pretty_value.deinit();
         try this.matchAndFmtSnapshot(globalThis, value, property_matchers, &pretty_value, fn_name);
 
+        var start_indent: ?[]const u8 = null;
+        var end_indent: ?[]const u8 = null;
         if (result) |saved_value| {
             const buf = try Jest.runner.?.snapshots.allocator.alloc(u8, saved_value.len);
-            const saved_with_trimmed_whitespace = trimLeadingWhitespaceForInlineSnapshot(saved_value, buf);
+            defer Jest.runner.?.snapshots.allocator.free(buf);
+            const trim_res = trimLeadingWhitespaceForInlineSnapshot(saved_value, buf);
 
-            if (strings.eqlLong(pretty_value.slice(), saved_with_trimmed_whitespace, true)) {
+            if (strings.eqlLong(pretty_value.slice(), trim_res.trimmed, true)) {
                 Jest.runner.?.snapshots.passed += 1;
                 return .undefined;
             } else if (update) {
                 Jest.runner.?.snapshots.passed += 1;
                 needs_write = true;
+                start_indent = trim_res.start_indent;
+                end_indent = trim_res.end_indent;
             } else {
                 Jest.runner.?.snapshots.failed += 1;
                 const signature = comptime getSignature(fn_name, "<green>expected<r>", false);
                 const fmt = signature ++ "\n\n{any}\n";
                 const diff_format = DiffFormatter{
                     .received_string = pretty_value.slice(),
-                    .expected_string = saved_with_trimmed_whitespace,
+                    .expected_string = trim_res.trimmed,
                     .globalThis = globalThis,
                 };
 
@@ -2804,6 +2818,8 @@ pub const Expect = struct {
                 .has_matchers = property_matchers != null,
                 .is_added = result == null,
                 .kind = fn_name,
+                .start_indent = if (start_indent) |ind| try Jest.runner.?.snapshots.allocator.dupe(u8, ind) else null,
+                .end_indent = if (end_indent) |ind| try Jest.runner.?.snapshots.allocator.dupe(u8, ind) else null,
             });
         }
 
@@ -5613,3 +5629,113 @@ fn incrementExpectCallCounter() void {
 }
 
 const assert = bun.assert;
+
+fn testTrimLeadingWhitespaceForSnapshot(src: []const u8, expected: []const u8) !void {
+    const cpy = try std.testing.allocator.alloc(u8, src.len);
+    defer std.testing.allocator.free(cpy);
+
+    const res = Expect.trimLeadingWhitespaceForInlineSnapshot(src, cpy);
+    sanityCheck(src, res);
+
+    try std.testing.expectEqualStrings(expected, res.trimmed);
+}
+fn sanityCheck(input: []const u8, res: Expect.TrimResult) void {
+    // sanity check: output has same number of lines & all input lines endWith output lines
+    var input_iter = std.mem.splitScalar(u8, input, '\n');
+    var output_iter = std.mem.splitScalar(u8, res.trimmed, '\n');
+    while (true) {
+        const next_input = input_iter.next();
+        const next_output = output_iter.next();
+        if (next_input == null) {
+            std.debug.assert(next_output == null);
+            break;
+        }
+        std.debug.assert(next_output != null);
+        std.debug.assert(std.mem.endsWith(u8, next_input.?, next_output.?));
+    }
+}
+fn testOne(input: []const u8) anyerror!void {
+    const cpy = try std.testing.allocator.alloc(u8, input.len);
+    defer std.testing.allocator.free(cpy);
+    const res = Expect.trimLeadingWhitespaceForInlineSnapshot(input, cpy);
+    sanityCheck(input, res);
+}
+
+test "Expect.trimLeadingWhitespaceForInlineSnapshot" {
+    try testTrimLeadingWhitespaceForSnapshot(
+        \\
+        \\Hello, world!
+        \\
+    ,
+        \\
+        \\Hello, world!
+        \\
+    );
+    try testTrimLeadingWhitespaceForSnapshot(
+        \\
+        \\  Hello, world!
+        \\               
+    ,
+        \\
+        \\Hello, world!
+        \\
+    );
+    try testTrimLeadingWhitespaceForSnapshot(
+        \\
+        \\  Object{
+        \\    key: value
+        \\  }
+        \\
+    ,
+        \\
+        \\Object{
+        \\  key: value
+        \\}
+        \\
+    );
+    try testTrimLeadingWhitespaceForSnapshot(
+        \\
+        \\  Object{
+        \\  key: value
+        \\
+        \\  }
+        \\                
+    ,
+        \\
+        \\Object{
+        \\key: value
+        \\
+        \\}
+        \\
+    );
+    try testTrimLeadingWhitespaceForSnapshot(
+        \\
+        \\    Object{
+        \\  key: value
+        \\  }
+        \\                
+    ,
+        \\
+        \\    Object{
+        \\  key: value
+        \\  }
+        \\                
+    );
+    try testTrimLeadingWhitespaceForSnapshot(
+        \\
+        \\  "æ™
+        \\
+        \\  !!!!*5897yhduN"'\`Il"
+        \\
+    ,
+        \\
+        \\"æ™
+        \\
+        \\!!!!*5897yhduN"'\`Il"
+        \\
+    );
+}
+
+test "fuzz Expect.trimLeadingWhitespaceForInlineSnapshot" {
+    try std.testing.fuzz(testOne, .{});
+}

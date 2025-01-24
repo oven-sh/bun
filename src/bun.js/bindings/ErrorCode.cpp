@@ -1065,6 +1065,8 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_UNABLE_TO_PIPE, "Cannot pipe to a closed or destroyed stream"_s));
     case ErrorCode::ERR_ILLEGAL_CONSTRUCTOR:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, "Illegal constructor"_s));
+    case ErrorCode::ERR_DIR_CLOSED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_DIR_CLOSED, "Directory handle was closed"_s));
 
     default: {
         break;

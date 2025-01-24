@@ -407,6 +407,7 @@ private:
         ASSERT(inherits(info()));
 
         reifyStaticProperties(vm, this->classInfo(), JSStatsPrototypeTableValues, *this);
+        JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
     }
 };
 
@@ -450,6 +451,7 @@ private:
         ASSERT(inherits(info()));
 
         reifyStaticProperties(vm, this->classInfo(), JSBigIntStatsPrototypeTableValues, *this);
+        JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
     }
 };
 

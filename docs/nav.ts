@@ -191,7 +191,7 @@ export default {
     }),
     page("install/lockfile", "Lockfile", {
       description:
-        "Bun's binary lockfile `bun.lockb` tracks your resolved dependency tree, making future installs fast and repeatable.",
+        "Bun's lockfile `bun.lock` tracks your resolved dependency tree, making future installs fast and repeatable.",
     }),
     page("install/registries", "Scopes and registries", {
       description: "How to configure private scopes and custom package registries.",
@@ -314,6 +314,9 @@ export default {
     page("api/streams", "Streams", {
       description: `Reading, writing, and manipulating streams of data in Bun.`,
     }), // "`Bun.serve`"),
+    page("api/sql", "SQL", {
+      description: `Bun provides fast, native bindings for interacting with PostgreSQL databases.`,
+    }),
     page("api/s3", "S3 Object Storage", {
       description: `Bun provides fast, native bindings for interacting with S3-compatible object storage services.`,
     }),

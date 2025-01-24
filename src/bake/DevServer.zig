@@ -83,7 +83,7 @@ server_fetch_function_callback: JSC.Strong,
 server_register_update_callback: JSC.Strong,
 
 // Watching
-bun_watcher: *JSC.Watcher,
+bun_watcher: *bun.Watcher,
 directory_watchers: DirectoryWatchStore,
 watcher_atomics: WatcherAtomics,
 
@@ -3151,7 +3151,7 @@ const DirectoryWatchStore = struct {
         const specifier_cloned = try dev.allocator.dupe(u8, specifier);
         errdefer dev.allocator.free(specifier_cloned);
 
-        const watch_index = switch (dev.bun_watcher.addDirectory(fd, dir_name, bun.JSC.GenericWatcher.getHash(dir_name), false)) {
+        const watch_index = switch (dev.bun_watcher.addDirectory(fd, dir_name, bun.Watcher.getHash(dir_name), false)) {
             .err => return error.Ignore,
             .result => |id| id,
         };
@@ -4476,7 +4476,7 @@ const Response = App.Response;
 const MimeType = bun.http.MimeType;
 
 const JSC = bun.JSC;
-const Watcher = bun.JSC.Watcher;
+const Watcher = bun.Watcher;
 const JSValue = JSC.JSValue;
 const VirtualMachine = JSC.VirtualMachine;
 const JSModuleLoader = JSC.JSModuleLoader;

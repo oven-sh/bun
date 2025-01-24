@@ -2262,7 +2262,7 @@ pub const Formatter = struct {
                     this.addForNewLine(description.len + "()".len);
                     writer.print(comptime Output.prettyFmt("<r><blue>Symbol({any})<r>", enable_ansi_colors), .{description});
                 } else {
-                    writer.print(comptime Output.prettyFmt("<r><blue>Symbol<r>", enable_ansi_colors), .{});
+                    writer.print(comptime Output.prettyFmt("<r><blue>Symbol()<r>", enable_ansi_colors), .{});
                 }
             },
             .Error => {

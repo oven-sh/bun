@@ -453,7 +453,6 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__close, (JSC::JSGlobalObject * lexicalGlo
 JSC_DECLARE_HOST_FUNCTION(${controller}__end);
 JSC_DEFINE_HOST_FUNCTION(${controller}__end, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
 {
-    
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -472,6 +471,28 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__end, (JSC::JSGlobalObject * lexicalGloba
     return ${name}__endWithSink(ptr, lexicalGlobalObject);
 }
 
+extern "C" JSC::EncodedJSValue ${name}__getInternalFd(WebCore::${className}*);
+
+// TODO: how to make this a property callback. then, we can expose this as a documented field
+// It should not be shipped as a function call.
+JSC_DEFINE_HOST_FUNCTION(${name}__getFd, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    WebCore::${className}* sink = JSC::jsDynamicCast<WebCore::${className}*>(callFrame->thisValue());
+    if (!sink) {
+        scope.throwException(globalObject, JSC::createTypeError(globalObject, "Expected ${name}"_s));
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    void *ptr = sink->wrapped();
+    if (ptr == nullptr) {
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    return ${name}__getInternalFd(sink);
+}
 
 JSC_DECLARE_HOST_FUNCTION(${name}__doClose);
 JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
@@ -995,6 +1016,7 @@ function lutInput() {
     write      ${`${name}__write`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 1
     ref        ${`${name}__ref`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 0
     unref      ${`${name}__unref`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 0
+    _getFd      ${`${name}__getFd`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 0
 @end
 */
 

@@ -434,7 +434,7 @@ pub const RuntimeTranspilerStore = struct {
 
             var fd: ?StoredFileDescriptorType = null;
             var package_json: ?*PackageJSON = null;
-            const hash = JSC.GenericWatcher.getHash(path.text);
+            const hash = bun.Watcher.getHash(path.text);
 
             switch (vm.bun_watcher) {
                 .hot, .watch => {
@@ -1523,7 +1523,7 @@ pub const ModuleLoader = struct {
             .js, .jsx, .ts, .tsx, .json, .toml, .text => {
                 jsc_vm.transpiled_count += 1;
                 jsc_vm.transpiler.resetStore();
-                const hash = JSC.GenericWatcher.getHash(path.text);
+                const hash = bun.Watcher.getHash(path.text);
                 const is_main = jsc_vm.main.len == path.text.len and
                     jsc_vm.main_hash == hash and
                     strings.eqlLong(jsc_vm.main, path.text, false);
@@ -2107,7 +2107,7 @@ pub const ModuleLoader = struct {
                     return error.NotSupported;
                 }
 
-                const html_bundle = try JSC.API.HTMLBundle.init(globalObject.?, path.text);
+                const html_bundle = try JSC.API.HTMLBundle.init(globalObject.?, path.text, jsc_vm.transpiler.options.bunfig_path, jsc_vm.transpiler.options.serve_plugins);
                 return ResolvedSource{
                     .allocator = &jsc_vm.allocator,
                     .jsvalue_for_export = html_bundle.toJS(globalObject.?),
@@ -2150,7 +2150,7 @@ pub const ModuleLoader = struct {
                                     break :brk .zero;
                                 }
                             };
-                            const hash = JSC.GenericWatcher.getHash(path.text);
+                            const hash = bun.Watcher.getHash(path.text);
                             switch (jsc_vm.bun_watcher.addFile(
                                 input_fd,
                                 path.text,
@@ -2357,7 +2357,7 @@ pub const ModuleLoader = struct {
                 loader = .ts;
             } else if (attribute.eqlComptime("tsx")) {
                 loader = .tsx;
-            } else if (jsc_vm.transpiler.options.experimental.html and attribute.eqlComptime("html")) {
+            } else if (attribute.eqlComptime("html")) {
                 loader = .html;
             }
         }

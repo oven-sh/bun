@@ -1258,30 +1258,6 @@ $ bun build ./index.tsx --outdir ./out --drop=console --drop=debugger --drop=any
 
 {% /codetabs %}
 
-### `experimentalCss`
-
-Whether to enable _experimental_ support for bundling CSS files. Defaults to `false`. In 1.2, this property will be deleted, and CSS bundling will always be enabled.
-
-This supports bundling CSS files imported from JS, as well as CSS entrypoints.
-
-{% codetabs group="a" %}
-
-```ts#JavaScript
-const result = await Bun.build({
-  entrypoints: ["./index.ts"],
-  experimentalCss: true,
-});
-// => { success: boolean, outputs: BuildArtifact[], logs: BuildMessage[] }
-```
-
-{% /codetabs %}
-
-### `throw`
-
-If set to `true`, `Bun.build` will throw on build failure. See the section ["Logs and Errors"](#logs-and-errors) for more details on the error message structure.
-
-In 1.2, this will default to `true`, with the previous behavior as `throw: false`
-
 ## Outputs
 
 The `Bun.build` function returns a `Promise<BuildOutput>`, defined as:
@@ -1422,7 +1398,8 @@ Refer to [Bundler > Executables](https://bun.sh/docs/bundler/executables) for co
 ## Logs and errors
 
 <!-- 1.2 documentation -->
-<!-- On failure, `Bun.build` returns a rejected promise with an `AggregateError`. This can be logged to the console for pretty printing of the error list, or programmatically read with a `try`/`catch` block.
+
+On failure, `Bun.build` returns a rejected promise with an `AggregateError`. This can be logged to the console for pretty printing of the error list, or programmatically read with a `try`/`catch` block.
 
 ```ts
 try {
@@ -1481,70 +1458,6 @@ if (result.logs.length > 0) {
     // Bun will pretty print the message object
     console.warn(message);
   }
-}
-``` -->
-
-By default, `Bun.build` only throws if invalid options are provided. Read the `success` property to determine if the build was successful; the `logs` property will contain additional details.
-
-```ts
-const result = await Bun.build({
-  entrypoints: ["./index.tsx"],
-  outdir: "./out",
-});
-
-if (!result.success) {
-  console.error("Build failed");
-  for (const message of result.logs) {
-    // Bun will pretty print the message object
-    console.error(message);
-  }
-}
-```
-
-Each message is either a `BuildMessage` or `ResolveMessage` object, which can be used to trace what problems happened in the build.
-
-```ts
-class BuildMessage {
-  name: string;
-  position?: Position;
-  message: string;
-  level: "error" | "warning" | "info" | "debug" | "verbose";
-}
-
-class ResolveMessage extends BuildMessage {
-  code: string;
-  referrer: string;
-  specifier: string;
-  importKind: ImportKind;
-}
-```
-
-If you want to throw an error from a failed build, consider passing the logs to an `AggregateError`. If uncaught, Bun will pretty-print the contained messages nicely.
-
-```ts
-if (!result.success) {
-  throw new AggregateError(result.logs, "Build failed");
-}
-```
-
-In Bun 1.2, throwing an aggregate error like this will become the default beahavior. You can opt-into it early using the `throw: true` option.
-
-```ts
-try {
-  const result = await Bun.build({
-    entrypoints: ["./index.tsx"],
-    outdir: "./out",
-  });
-} catch (e) {
-  // TypeScript does not allow annotations on the catch clause
-  const error = e as AggregateError;
-  console.error("Build Failed");
-
-  // Example: Using the built-in formatter
-  console.error(error);
-
-  // Example: Serializing the failure as a JSON string.
-  console.error(JSON.stringify(error, null, 2));
 }
 ```
 
@@ -1645,13 +1558,6 @@ interface BuildConfig {
    * `// made with bun!`
    */
   footer?: string;
-
-  /**
-   * **Experimental**
-   *
-   * Enable CSS support.
-   */
-  experimentalCss?: boolean;
 
   /**
    * Drop function calls to matching property accesses.

@@ -23,6 +23,7 @@ const ScrollMarginHandler = css.css_properties.margin_padding.ScrollMarginHandle
 const FontHandler = css.css_properties.font.FontHandler;
 const InsetHandler = css.css_properties.margin_padding.InsetHandler;
 const SizeHandler = css.css_properties.size.SizeHandler;
+const FlexHandler = css.css_properties.flex.FlexHandler;
 
 /// A CSS declaration block.
 ///
@@ -332,6 +333,7 @@ pub fn parse_declaration(
 pub const DeclarationHandler = struct {
     background: BackgroundHandler = .{},
     border: BorderHandler = .{},
+    flex: FlexHandler = .{},
     size: SizeHandler = .{},
     margin: MarginHandler = .{},
     padding: PaddingHandler = .{},
@@ -356,6 +358,7 @@ pub const DeclarationHandler = struct {
 
         this.background.finalize(&this.decls, context);
         this.border.finalize(&this.decls, context);
+        this.flex.finalize(&this.decls, context);
         this.size.finalize(&this.decls, context);
         this.margin.finalize(&this.decls, context);
         this.padding.finalize(&this.decls, context);
@@ -369,6 +372,7 @@ pub const DeclarationHandler = struct {
         // return this.background.handleProperty(property, &this.decls, context);
         return this.background.handleProperty(property, &this.decls, context) or
             this.border.handleProperty(property, &this.decls, context) or
+            this.flex.handleProperty(property, &this.decls, context) or
             this.size.handleProperty(property, &this.decls, context) or
             this.margin.handleProperty(property, &this.decls, context) or
             this.padding.handleProperty(property, &this.decls, context) or

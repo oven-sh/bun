@@ -115,7 +115,6 @@ describe("napi", () => {
           outdir: dir,
           target,
           format,
-          throw: true,
         });
 
         expect(build.logs).toBeEmpty();

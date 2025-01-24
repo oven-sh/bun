@@ -1267,33 +1267,7 @@ declare module "bun" {
   }
 
   var S3Client: S3Client;
-
-  /**
-   * Creates a new S3File instance for working with a single file.
-   *
-   * @param path The path or key of the file
-   * @param options S3 configuration options
-   * @returns `S3File` instance for the specified path
-   *
-   * @example
-   *    import { s3 } from "bun";
-   *    const file = s3("my-file.txt", {
-   *      bucket: "my-bucket",
-   *      accessKeyId: "your-access-key",
-   *      secretAccessKey: "your-secret-key"
-   *    });
-   *
-   *    // Read the file
-   *    const content = await file.text();
-   *
-   * @example
-   *    // Using s3:// protocol
-   *    const file = s3("s3://my-bucket/my-file.txt", {
-   *      accessKeyId: "your-access-key",
-   *      secretAccessKey: "your-secret-key"
-   *    });
-   */
-  function s3(path: string | URL, options?: S3Options): S3File;
+  var s3: S3Client;
 
   /**
    * Configuration options for S3 operations
@@ -1462,6 +1436,28 @@ declare module "bun" {
     type?: string;
 
     /**
+     * By default, Amazon S3 uses the STANDARD Storage Class to store newly created objects.
+     *
+     * @example
+     *    // Setting explicit Storage class
+     *     const file = s3("my-file.json", {
+     *       storageClass: "STANDARD_IA"
+     *     });
+     */
+    storageClass?:
+      | "STANDARD"
+      | "DEEP_ARCHIVE"
+      | "EXPRESS_ONEZONE"
+      | "GLACIER"
+      | "GLACIER_IR"
+      | "INTELLIGENT_TIERING"
+      | "ONEZONE_IA"
+      | "OUTPOSTS"
+      | "REDUCED_REDUNDANCY"
+      | "SNOW"
+      | "STANDARD_IA";
+
+    /**
      * @deprecated The size of the internal buffer in bytes. Defaults to 5 MiB. use `partSize` and `queueSize` instead.
      */
     highWaterMark?: number;
@@ -1597,7 +1593,7 @@ declare module "bun" {
      *
      *     // Write large chunks of data efficiently
      *     for (const chunk of largeDataChunks) {
-     *       await writer.write(chunk);
+     *       writer.write(chunk);
      *     }
      *     await writer.end();
      *
@@ -1605,7 +1601,7 @@ declare module "bun" {
      *     // Error handling
      *     const writer = file.writer();
      *     try {
-     *       await writer.write(data);
+     *       writer.write(data);
      *       await writer.end();
      *     } catch (err) {
      *       console.error('Upload failed:', err);
@@ -2739,31 +2735,6 @@ declare module "bun" {
     footer?: string;
 
     /**
-     * **Experimental**
-     *
-     * Bundle CSS files.
-     *
-     * This will be enabled by default in Bun v1.2.
-     *
-     * @default false (until Bunv 1.2)
-     */
-    experimentalCss?: boolean;
-
-    /**
-     * **Experimental**
-     *
-     * Bundle JavaScript & CSS files from HTML files. JavaScript & CSS files
-     * from non-external <script> or <link> tags will be bundled.
-     *
-     * Underneath, this works similarly to HTMLRewriter.
-     *
-     * This will be enabled by default in Bun v1.2.
-     *
-     * @default false (until Bun v1.2)
-     */
-    html?: boolean;
-
-    /**
      * Drop function calls to matching property accesses.
      */
     drop?: string[];
@@ -2771,9 +2742,7 @@ declare module "bun" {
     /**
      * When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
      * When set to `false`, the `success` property of the returned object will be `false` when a build failure happens.
-     *
-     * This defaults to `false` in Bun 1.1 and will change to `true` in Bun 1.2
-     * as most usage of `Bun.build` forgets to check for errors.
+     * This defaults to `true`.
      */
     throw?: boolean;
   }
@@ -3012,7 +2981,7 @@ declare module "bun" {
    * @param {Object} config - Build configuration options
    * @returns {Promise<BuildOutput>} Promise that resolves to build output containing generated artifacts and build status
    * @throws {AggregateError} When build fails and config.throw is true (default in Bun 1.2+)
-   * 
+   *
    * @example Basic usage - Bundle a single entrypoint and check results
    ```ts
    const result = await Bun.build({
@@ -3025,7 +2994,7 @@ declare module "bun" {
       process.exit(1);
     }
    ```
-    * 
+    *
     * @example Set up multiple entrypoints with code splitting enabled
     ```ts
     await Bun.build({
@@ -3035,7 +3004,7 @@ declare module "bun" {
       sourcemap: "external"
     });
     ```
-    * 
+    *
     * @example Configure minification and optimization settings
     ```ts
     await Bun.build({
@@ -3114,7 +3083,6 @@ declare module "bun" {
     try {
       const result = await Bun.build({
         entrypoints: ['./src/index.tsx'],
-        throw: true
       });
     } catch (e) {
       const error = e as AggregateError;
@@ -3152,7 +3120,6 @@ declare module "bun" {
         './src/themes/light.css'
       ],
       outdir: './dist/css',
-      experimentalCss: true
     });
     ```
     @example Define compile-time constants and version information

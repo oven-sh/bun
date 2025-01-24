@@ -1901,20 +1901,26 @@ pub fn isWindowsAbsolutePathMissingDriveLetter(comptime T: type, chars: []const 
 
 pub fn fromWPath(buf: []u8, utf16: []const u16) [:0]const u8 {
     bun.unsafeAssert(buf.len > 0);
-    const encode_into_result = copyUTF16IntoUTF8(buf[0 .. buf.len - 1], []const u16, utf16, false);
+    const to_copy = trimPrefixComptime(u16, utf16, bun.windows.long_path_prefix);
+    const encode_into_result = copyUTF16IntoUTF8(buf[0 .. buf.len - 1], []const u16, to_copy, false);
     bun.unsafeAssert(encode_into_result.written < buf.len);
     buf[encode_into_result.written] = 0;
     return buf[0..encode_into_result.written :0];
 }
 
-pub fn withoutNTPrefix(path: [:0]const u16) [:0]const u16 {
-    if (hasPrefixComptimeUTF16(path, &bun.windows.nt_object_prefix_u8)) {
+pub fn withoutNTPrefix(comptime T: type, path: []const T) []const T {
+    if (comptime !Environment.isWindows) return path;
+    const cmp = if (T == u8)
+        hasPrefixComptime
+    else
+        hasPrefixComptimeUTF16;
+    if (cmp(path, &bun.windows.nt_object_prefix_u8)) {
         return path[bun.windows.nt_object_prefix.len..];
     }
-    if (hasPrefixComptimeUTF16(path, &bun.windows.nt_maxpath_prefix_u8)) {
-        return path[bun.windows.nt_maxpath_prefix.len..];
+    if (cmp(path, &bun.windows.long_path_prefix_u8)) {
+        return path[bun.windows.long_path_prefix.len..];
     }
-    if (hasPrefixComptimeUTF16(path, &bun.windows.nt_unc_object_prefix_u8)) {
+    if (cmp(path, &bun.windows.nt_unc_object_prefix_u8)) {
         return path[bun.windows.nt_unc_object_prefix.len..];
     }
     return path;
@@ -1933,6 +1939,11 @@ pub fn toNTPath(wbuf: []u16, utf8: []const u8) [:0]u16 {
 
     // UNC absolute path, replace leading '\\' with '\??\UNC\'
     if (strings.hasPrefixComptime(utf8, "\\\\")) {
+        if (strings.hasPrefixComptime(utf8[2..], bun.windows.long_path_prefix_u8[2..])) {
+            const prefix = bun.windows.nt_object_prefix;
+            wbuf[0..prefix.len].* = prefix;
+            return wbuf[0 .. toWPathNormalized(wbuf[prefix.len..], utf8[4..]).len + prefix.len :0];
+        }
         const prefix = bun.windows.nt_unc_object_prefix;
         wbuf[0..prefix.len].* = prefix;
         return wbuf[0 .. toWPathNormalized(wbuf[prefix.len..], utf8[2..]).len + prefix.len :0];
@@ -1955,6 +1966,11 @@ pub fn toNTPath16(wbuf: []u16, path: []const u16) [:0]u16 {
     }
 
     if (strings.hasPrefixComptimeUTF16(path, "\\\\")) {
+        if (strings.hasPrefixComptimeUTF16(path[2..], bun.windows.long_path_prefix_u8[2..])) {
+            const prefix = bun.windows.nt_object_prefix;
+            wbuf[0..prefix.len].* = prefix;
+            return wbuf[0 .. toWPathNormalized16(wbuf[prefix.len..], path[4..]).len + prefix.len :0];
+        }
         const prefix = bun.windows.nt_unc_object_prefix;
         wbuf[0..prefix.len].* = prefix;
         return wbuf[0 .. toWPathNormalized16(wbuf[prefix.len..], path[2..]).len + prefix.len :0];
@@ -1990,9 +2006,9 @@ pub fn addNTPathPrefixIfNeeded(wbuf: []u16, utf16: []const u16) [:0]u16 {
         wbuf[utf16.len] = 0;
         return wbuf[0..utf16.len :0];
     }
-    if (hasPrefixComptimeType(u16, utf16, bun.windows.nt_maxpath_prefix)) {
+    if (hasPrefixComptimeType(u16, utf16, bun.windows.long_path_prefix)) {
         // Replace prefix
-        return addNTPathPrefix(wbuf, utf16[bun.windows.nt_maxpath_prefix.len..]);
+        return addNTPathPrefix(wbuf, utf16[bun.windows.long_path_prefix.len..]);
     }
     return addNTPathPrefix(wbuf, utf16);
 }
@@ -2002,7 +2018,7 @@ pub const toNTDir = toNTPath;
 
 pub fn toExtendedPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     bun.unsafeAssert(wbuf.len > 4);
-    wbuf[0..4].* = bun.windows.nt_maxpath_prefix;
+    wbuf[0..4].* = bun.windows.long_path_prefix;
     return wbuf[0 .. toWPathNormalized(wbuf[4..], utf8).len + 4 :0];
 }
 
@@ -2103,6 +2119,7 @@ pub fn toWDirNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
 pub fn toWPath(wbuf: []u16, utf8: []const u8) [:0]u16 {
     return toWPathMaybeDir(wbuf, utf8, false);
 }
+
 pub fn toPath(buf: []u8, utf8: []const u8) [:0]u8 {
     return toPathMaybeDir(buf, utf8, false);
 }
@@ -2110,6 +2127,23 @@ pub fn toPath(buf: []u8, utf8: []const u8) [:0]u8 {
 pub fn toWDirPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     return toWPathMaybeDir(wbuf, utf8, true);
 }
+
+pub fn toKernel32Path(wbuf: []u16, utf8: []const u8) [:0]u16 {
+    const path = if (hasPrefixComptime(utf8, bun.windows.nt_object_prefix_u8))
+        utf8[bun.windows.nt_object_prefix_u8.len..]
+    else
+        utf8;
+    if (hasPrefixComptime(path, bun.windows.long_path_prefix_u8)) {
+        return toWPath(wbuf, path);
+    }
+    if (utf8.len > 2 and bun.path.isDriveLetter(utf8[0]) and utf8[1] == ':' and bun.path.isSepAny(utf8[2])) {
+        wbuf[0..4].* = bun.windows.long_path_prefix;
+        const wpath = toWPath(wbuf[4..], path);
+        return wbuf[0 .. wpath.len + 4 :0];
+    }
+    return toWPath(wbuf, path);
+}
+
 fn isUNCPath(comptime T: type, path: []const T) bool {
     return path.len >= 3 and
         bun.path.Platform.windows.isSeparatorT(T, path[0]) and
@@ -2143,6 +2177,14 @@ pub fn toWPathMaybeDir(wbuf: []u16, utf8: []const u8, comptime add_trailing_lash
         utf8,
         wbuf[0..wbuf.len -| (1 + @as(usize, @intFromBool(add_trailing_lash)))],
     );
+
+    // Many Windows APIs expect normalized path slashes, particularly when the
+    // long path prefix is added or the nt object prefix. To make this easier,
+    // but a little redundant, this function always normalizes the slashes here.
+    //
+    // An example of this is GetFileAttributesW(L"C:\\hello/world.txt") being OK
+    // but GetFileAttributesW(L"\\\\?\\C:\\hello/world.txt") is NOT
+    bun.path.dangerouslyConvertPathToWindowsInPlace(u16, wbuf[0..result.count]);
 
     if (add_trailing_lash and result.count > 0 and wbuf[result.count - 1] != '\\') {
         wbuf[result.count] = '\\';

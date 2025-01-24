@@ -44,8 +44,8 @@ pub const TimeLike = if (Environment.isWindows) f64 else std.posix.timespec;
 pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
     // can't call @hasDecl on void, anyerror, etc
     const has_any_decls = ErrorTypeT != void and ErrorTypeT != anyerror;
-    const hasRetry = has_any_decls and @hasDecl(ErrorTypeT, "retry");
-    const hasTodo = has_any_decls and @hasDecl(ErrorTypeT, "todo");
+    const has_retry = has_any_decls and @hasDecl(ErrorTypeT, "retry");
+    const has_todo = has_any_decls and @hasDecl(ErrorTypeT, "todo");
 
     return union(Tag) {
         pub const ErrorType = ErrorTypeT;
@@ -62,11 +62,17 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
         /// we (Zack, Dylan, Dave, Mason) observed that it was set to 0xFF in ReleaseFast in the debugger
         pub const Tag = enum(u8) { err, result };
 
-        pub const retry: @This() = if (hasRetry) .{ .err = ErrorType.retry } else .{ .err = ErrorType{} };
-
-        pub const success: @This() = @This(){
+        pub const retry: @This() = if (has_retry) .{ .err = ErrorType.retry } else .{ .err = .{} };
+        pub const success: @This() = .{
             .result = std.mem.zeroes(ReturnType),
         };
+        /// This value is technically garbage, but that is okay as `.aborted` is
+        /// only meant to be returned in an operation when there is an aborted
+        /// `AbortSignal` object associated with the operation.
+        pub const aborted: @This() = .{ .err = .{
+            .errno = @intFromEnum(posix.E.INTR),
+            .syscall = .access,
+        } };
 
         pub fn assert(this: @This()) ReturnType {
             switch (this) {
@@ -84,7 +90,7 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
                 }
                 @panic(comptime "TODO: Maybe(" ++ typeBaseNameT(ReturnType) ++ ")");
             }
-            if (hasTodo) {
+            if (has_todo) {
                 return .{ .err = ErrorType.todo() };
             }
             return .{ .err = ErrorType{} };
@@ -443,7 +449,8 @@ pub const BlobOrStringOrBuffer = union(enum) {
             else => {},
         }
 
-        return .{ .string_or_buffer = try StringOrBuffer.fromJSWithEncodingValueMaybeAsync(global, allocator, value, encoding_value, is_async) orelse return null };
+        const allow_string_object = true;
+        return .{ .string_or_buffer = try StringOrBuffer.fromJSWithEncodingValueMaybeAsync(global, allocator, value, encoding_value, is_async, allow_string_object) orelse return null };
     }
 };
 
@@ -548,12 +555,15 @@ pub const StringOrBuffer = union(enum) {
         }
     }
 
-    pub fn fromJSMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, is_async: bool) ?StringOrBuffer {
+    pub fn fromJSMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, is_async: bool, allow_string_object: bool) ?StringOrBuffer {
         return switch (value.jsType()) {
             .String,
             .StringObject,
             .DerivedStringObject,
-            => {
+            => |str_type| {
+                if (!allow_string_object and str_type != .String) {
+                    return null;
+                }
                 const str = bun.String.fromJS(value, global);
 
                 if (is_async) {
@@ -563,12 +573,12 @@ pub const StringOrBuffer = union(enum) {
                     sliced.reportExtraMemory(global.vm());
 
                     if (sliced.underlying.isEmpty()) {
-                        return StringOrBuffer{ .encoded_slice = sliced.utf8 };
+                        return .{ .encoded_slice = sliced.utf8 };
                     }
 
-                    return StringOrBuffer{ .threadsafe_string = sliced };
+                    return .{ .threadsafe_string = sliced };
                 } else {
-                    return StringOrBuffer{ .string = str.toSlice(allocator) };
+                    return .{ .string = str.toSlice(allocator) };
                 }
             },
 
@@ -586,45 +596,39 @@ pub const StringOrBuffer = union(enum) {
             .BigInt64Array,
             .BigUint64Array,
             .DataView,
-            => StringOrBuffer{
-                .buffer = Buffer.fromArrayBuffer(global, value),
-            },
+            => .{ .buffer = Buffer.fromArrayBuffer(global, value) },
             else => null,
         };
     }
 
     pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue) ?StringOrBuffer {
-        return fromJSMaybeAsync(global, allocator, value, false);
+        return fromJSMaybeAsync(global, allocator, value, false, true);
     }
 
     pub fn fromJSWithEncoding(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding: Encoding) bun.JSError!?StringOrBuffer {
-        return fromJSWithEncodingMaybeAsync(global, allocator, value, encoding, false);
+        return fromJSWithEncodingMaybeAsync(global, allocator, value, encoding, false, true);
     }
 
-    pub fn fromJSWithEncodingMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding: Encoding, is_async: bool) bun.JSError!?StringOrBuffer {
-        if (value.isCell() and value.jsType().isTypedArray()) {
-            return StringOrBuffer{
-                .buffer = Buffer.fromTypedArray(global, value),
-            };
+    pub fn fromJSWithEncodingMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding: Encoding, is_async: bool, allow_string_object: bool) bun.JSError!?StringOrBuffer {
+        if (value.isCell() and value.jsType().isArrayBufferLike()) {
+            return .{ .buffer = Buffer.fromTypedArray(global, value) };
         }
 
         if (encoding == .utf8) {
-            return fromJSMaybeAsync(global, allocator, value, is_async);
+            return fromJSMaybeAsync(global, allocator, value, is_async, allow_string_object);
         }
 
         if (value.isString()) {
             var str = try bun.String.fromJS2(value, global);
             defer str.deref();
             if (str.isEmpty()) {
-                return fromJSMaybeAsync(global, allocator, value, is_async);
+                return fromJSMaybeAsync(global, allocator, value, is_async, allow_string_object);
             }
 
             const out = str.encode(encoding);
             defer global.vm().reportExtraMemory(out.len);
 
-            return .{
-                .encoded_slice = JSC.ZigString.Slice.init(bun.default_allocator, out),
-            };
+            return .{ .encoded_slice = JSC.ZigString.Slice.init(bun.default_allocator, out) };
         }
 
         return null;
@@ -640,13 +644,13 @@ pub const StringOrBuffer = union(enum) {
         return fromJSWithEncoding(global, allocator, value, encoding);
     }
 
-    pub fn fromJSWithEncodingValueMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue, maybe_async: bool) bun.JSError!?StringOrBuffer {
+    pub fn fromJSWithEncodingValueMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue, maybe_async: bool, allow_string_object: bool) bun.JSError!?StringOrBuffer {
         const encoding: Encoding = brk: {
             if (!encoding_value.isCell())
                 break :brk .utf8;
             break :brk Encoding.fromJS(encoding_value, global) orelse .utf8;
         };
-        return fromJSWithEncodingMaybeAsync(global, allocator, value, encoding, maybe_async);
+        return fromJSWithEncodingMaybeAsync(global, allocator, value, encoding, maybe_async, allow_string_object);
     }
 };
 
@@ -656,6 +660,7 @@ pub const ErrorCode = @import("./nodejs_error_code.zig").Code;
 // and various issues with std.posix that make it too unstable for arbitrary user input (e.g. how .BADF is marked as unreachable)
 
 /// https://github.com/nodejs/node/blob/master/lib/buffer.js#L587
+/// See `JSC.WebCore.Encoder` for encoding and decoding functions.
 /// must match src/bun.js/bindings/BufferEncodingType.h
 pub const Encoding = enum(u8) {
     utf8,
@@ -750,11 +755,10 @@ pub const Encoding = enum(u8) {
                 return JSC.ArrayBuffer.createBuffer(globalObject, input);
             },
             inline else => |enc| {
-                const res = JSC.WebCore.Encoder.toString(input.ptr, size, globalObject, enc);
+                const res = JSC.WebCore.Encoder.toStringComptime(input, globalObject, enc);
                 if (res.isError()) {
                     return globalObject.throwValue(res) catch .zero;
                 }
-
                 return res;
             },
         }
@@ -785,7 +789,7 @@ pub const Encoding = enum(u8) {
                 return JSC.ArrayBuffer.createBuffer(globalObject, input);
             },
             inline else => |enc| {
-                const res = JSC.WebCore.Encoder.toString(input.ptr, input.len, globalObject, enc);
+                const res = JSC.WebCore.Encoder.toStringComptime(input, globalObject, enc);
                 if (res.isError()) {
                     return globalObject.throwValue(res) catch .zero;
                 }
@@ -800,6 +804,13 @@ pub const Encoding = enum(u8) {
         return WebCore_BufferEncodingType_toJS(globalObject, encoding);
     }
 };
+
+/// This is used on the windows implementation of realpath, which is in javascript
+pub fn jsAssertEncodingValid(global: *JSC.JSGlobalObject, call_frame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const value = call_frame.argument(0);
+    _ = try Encoding.assert(value, global, .utf8);
+    return .undefined;
+}
 
 const PathOrBuffer = union(Tag) {
     path: bun.PathString,
@@ -888,6 +899,17 @@ pub const PathLike = union(enum) {
 
         if (Environment.isWindows) {
             if (std.fs.path.isAbsolute(sliced)) {
+                if (sliced.len > 2 and bun.path.isDriveLetter(sliced[0]) and sliced[1] == ':' and bun.path.isSepAny(sliced[2])) {
+                    // Add the long path syntax. This affects most of node:fs
+                    const drive_resolve_buf = bun.PathBufferPool.get();
+                    defer bun.PathBufferPool.put(drive_resolve_buf);
+                    const rest = path_handler.PosixToWinNormalizer.resolveCWDWithExternalBufZ(drive_resolve_buf, sliced) catch @panic("Error while resolving path.");
+                    buf[0..4].* = bun.windows.long_path_prefix_u8;
+                    // When long path syntax is used, the entire string should be normalized
+                    const n = bun.path.normalizeBuf(rest, buf[4..], .windows).len;
+                    buf[4 + n] = 0;
+                    return buf[0 .. 4 + n :0];
+                }
                 return path_handler.PosixToWinNormalizer.resolveCWDWithExternalBufZ(buf, sliced) catch @panic("Error while resolving path.");
             }
         }
@@ -921,6 +943,23 @@ pub const PathLike = union(enum) {
     pub inline fn osPath(this: PathLike, buf: *bun.OSPathBuffer) bun.OSPathSliceZ {
         if (comptime Environment.isWindows) {
             return sliceW(this, buf);
+        }
+
+        return sliceZWithForceCopy(this, buf, false);
+    }
+
+    pub inline fn osPathKernel32(this: PathLike, buf: *bun.PathBuffer) bun.OSPathSliceZ {
+        if (comptime Environment.isWindows) {
+            const s = this.slice();
+            const b = bun.PathBufferPool.get();
+            defer bun.PathBufferPool.put(b);
+            if (bun.strings.hasPrefixComptime(s, "/")) {
+                const resolve = path_handler.PosixToWinNormalizer.resolveCWDWithExternalBuf(buf, s) catch @panic("Error while resolving path.");
+                const normal = path_handler.normalizeBuf(resolve, b, .windows);
+                return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), normal);
+            }
+            const normal = path_handler.normalizeBuf(s, b, .windows);
+            return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), normal);
         }
 
         return sliceZWithForceCopy(this, buf, false);
@@ -966,10 +1005,20 @@ pub const PathLike = union(enum) {
             },
             else => {
                 if (arg.as(JSC.DOMURL)) |domurl| {
-                    var str: bun.String = domurl.fileSystemPath();
+                    var str: bun.String = domurl.fileSystemPath() catch |err| switch (err) {
+                        error.NotFileUrl => {
+                            return ctx.ERR_INVALID_URL_SCHEME("URL must be a non-empty \"file:\" path", .{}).throw();
+                        },
+                        error.InvalidPath => {
+                            return ctx.ERR_INVALID_FILE_URL_PATH("URL must be a non-empty \"file:\" path", .{}).throw();
+                        },
+                        error.InvalidHost => {
+                            return ctx.ERR_INVALID_FILE_URL_HOST("URL must be a non-empty \"file:\" path", .{}).throw();
+                        },
+                    };
                     defer str.deref();
                     if (str.isEmpty()) {
-                        return ctx.throwInvalidArguments("URL must be a non-empty \"file:\" path", .{});
+                        return ctx.ERR_INVALID_ARG_VALUE("URL must be a non-empty \"file:\" path", .{}).throw();
                     }
                     arguments.eat();
 
@@ -1017,17 +1066,6 @@ pub const PathLike = union(enum) {
 };
 
 pub const Valid = struct {
-    pub fn fileDescriptor(fd: i64, global: JSC.C.JSContextRef) bun.JSError!void {
-        const fd_t = if (Environment.isWindows) bun.windows.libuv.uv_file else bun.FileDescriptorInt;
-        if (fd < 0 or fd > std.math.maxInt(fd_t)) {
-            return global.throwRangeError(fd, .{
-                .min = 0,
-                .max = std.math.maxInt(fd_t),
-                .field_name = "fd",
-            });
-        }
-    }
-
     pub fn pathSlice(zig_str: JSC.ZigString.Slice, ctx: JSC.C.JSContextRef) bun.JSError!void {
         switch (zig_str.len) {
             0...bun.MAX_PATH_BYTES => return,
@@ -1257,20 +1295,49 @@ fn timeLikeFromMilliseconds(milliseconds: f64) TimeLike {
     if (Environment.isWindows) {
         return milliseconds / 1000.0;
     }
+
+    var sec: f64 = @divFloor(milliseconds, std.time.ms_per_s);
+    var nsec: f64 = @mod(milliseconds, std.time.ms_per_s) * std.time.ns_per_ms;
+
+    if (nsec < 0) {
+        nsec += std.time.ns_per_s;
+        sec -= 1;
+    }
+
     return .{
-        .tv_sec = @intFromFloat(@divFloor(milliseconds, std.time.ms_per_s)),
-        .tv_nsec = @intFromFloat(@mod(milliseconds, std.time.ms_per_s) * std.time.ns_per_ms),
+        .tv_sec = @intFromFloat(sec),
+        .tv_nsec = @intFromFloat(nsec),
     };
 }
 
 fn timeLikeFromNow() TimeLike {
-    const nanos = std.time.nanoTimestamp();
     if (Environment.isWindows) {
+        const nanos = std.time.nanoTimestamp();
         return @as(TimeLike, @floatFromInt(nanos)) / std.time.ns_per_s;
     }
+
+    // Permissions requirements
+    //        To set both file timestamps to the current time (i.e., times is
+    //        NULL, or both tv_nsec fields specify UTIME_NOW), either:
+    //
+    //        •  the caller must have write access to the file;
+    //
+    //        •  the caller's effective user ID must match the owner of the
+    //           file; or
+    //
+    //        •  the caller must have appropriate privileges.
+    //
+    //        To make any change other than setting both timestamps to the
+    //        current time (i.e., times is not NULL, and neither tv_nsec field
+    //        is UTIME_NOW and neither tv_nsec field is UTIME_OMIT), either
+    //        condition 2 or 3 above must apply.
+    //
+    //        If both tv_nsec fields are specified as UTIME_OMIT, then no file
+    //        ownership or permission checks are performed, and the file
+    //        timestamps are not modified, but other error conditions may still
     return .{
-        .tv_sec = @truncate(@divFloor(nanos, std.time.ns_per_s)),
-        .tv_nsec = @truncate(@mod(nanos, std.time.ns_per_s)),
+        .tv_sec = 0,
+        .tv_nsec = if (Environment.isLinux) std.os.linux.UTIME.NOW else bun.C.translated.UTIME_NOW,
     };
 }
 
@@ -1372,9 +1439,12 @@ pub const PathOrFileDescriptor = union(Tag) {
     }
 };
 
-pub const FileSystemFlags = enum(Mode) {
+pub const FileSystemFlags = enum(if (Environment.isWindows) c_int else c_uint) {
+    pub const tag_type = @typeInfo(FileSystemFlags).Enum.tag_type;
+    const O = bun.O;
+
     /// Open file for appending. The file is created if it does not exist.
-    a = bun.O.APPEND | bun.O.WRONLY | bun.O.CREAT,
+    a = O.APPEND | O.WRONLY | O.CREAT,
     /// Like 'a' but fails if the path exists.
     // @"ax" = bun.O.APPEND | bun.O.EXCL,
     /// Open file for reading and appending. The file is created if it does not exist.
@@ -1386,7 +1456,7 @@ pub const FileSystemFlags = enum(Mode) {
     /// Open file for reading and appending in synchronous mode. The file is created if it does not exist.
     // @"as+" = bun.O.APPEND | bun.O.RDWR,
     /// Open file for reading. An exception occurs if the file does not exist.
-    r = bun.O.RDONLY,
+    r = O.RDONLY,
     /// Open file for reading and writing. An exception occurs if the file does not exist.
     // @"r+" = bun.O.RDWR,
     /// Open file for reading and writing in synchronous mode. Instructs the operating system to bypass the local file system cache.
@@ -1394,7 +1464,7 @@ pub const FileSystemFlags = enum(Mode) {
     /// This doesn't turn fs.open() or fsPromises.open() into a synchronous blocking call. If synchronous operation is desired, something like fs.openSync() should be used.
     // @"rs+" = bun.O.RDWR,
     /// Open file for writing. The file is created (if it does not exist) or truncated (if it exists).
-    w = bun.O.WRONLY | bun.O.CREAT,
+    w = O.WRONLY | O.CREAT,
     /// Like 'w' but fails if the path exists.
     // @"wx" = bun.O.WRONLY | bun.O.TRUNC,
     // ///  Open file for reading and writing. The file is created (if it does not exist) or truncated (if it exists).
@@ -1404,69 +1474,60 @@ pub const FileSystemFlags = enum(Mode) {
 
     _,
 
-    const O_RDONLY: Mode = bun.O.RDONLY;
-    const O_RDWR: Mode = bun.O.RDWR;
-    const O_APPEND: Mode = bun.O.APPEND;
-    const O_CREAT: Mode = bun.O.CREAT;
-    const O_WRONLY: Mode = bun.O.WRONLY;
-    const O_EXCL: Mode = bun.O.EXCL;
-    const O_SYNC: Mode = 0;
-    const O_TRUNC: Mode = bun.O.TRUNC;
-
     const map = bun.ComptimeStringMap(Mode, .{
-        .{ "r", O_RDONLY },
-        .{ "rs", O_RDONLY | O_SYNC },
-        .{ "sr", O_RDONLY | O_SYNC },
-        .{ "r+", O_RDWR },
-        .{ "rs+", O_RDWR | O_SYNC },
-        .{ "sr+", O_RDWR | O_SYNC },
+        .{ "r", O.RDONLY },
+        .{ "rs", O.RDONLY | O.SYNC },
+        .{ "sr", O.RDONLY | O.SYNC },
+        .{ "r+", O.RDWR },
+        .{ "rs+", O.RDWR | O.SYNC },
+        .{ "sr+", O.RDWR | O.SYNC },
 
-        .{ "R", O_RDONLY },
-        .{ "RS", O_RDONLY | O_SYNC },
-        .{ "SR", O_RDONLY | O_SYNC },
-        .{ "R+", O_RDWR },
-        .{ "RS+", O_RDWR | O_SYNC },
-        .{ "SR+", O_RDWR | O_SYNC },
+        .{ "R", O.RDONLY },
+        .{ "RS", O.RDONLY | O.SYNC },
+        .{ "SR", O.RDONLY | O.SYNC },
+        .{ "R+", O.RDWR },
+        .{ "RS+", O.RDWR | O.SYNC },
+        .{ "SR+", O.RDWR | O.SYNC },
 
-        .{ "w", O_TRUNC | O_CREAT | O_WRONLY },
-        .{ "wx", O_TRUNC | O_CREAT | O_WRONLY | O_EXCL },
-        .{ "xw", O_TRUNC | O_CREAT | O_WRONLY | O_EXCL },
+        .{ "w", O.TRUNC | O.CREAT | O.WRONLY },
+        .{ "wx", O.TRUNC | O.CREAT | O.WRONLY | O.EXCL },
+        .{ "xw", O.TRUNC | O.CREAT | O.WRONLY | O.EXCL },
 
-        .{ "W", O_TRUNC | O_CREAT | O_WRONLY },
-        .{ "WX", O_TRUNC | O_CREAT | O_WRONLY | O_EXCL },
-        .{ "XW", O_TRUNC | O_CREAT | O_WRONLY | O_EXCL },
+        .{ "W", O.TRUNC | O.CREAT | O.WRONLY },
+        .{ "WX", O.TRUNC | O.CREAT | O.WRONLY | O.EXCL },
+        .{ "XW", O.TRUNC | O.CREAT | O.WRONLY | O.EXCL },
 
-        .{ "w+", O_TRUNC | O_CREAT | O_RDWR },
-        .{ "wx+", O_TRUNC | O_CREAT | O_RDWR | O_EXCL },
-        .{ "xw+", O_TRUNC | O_CREAT | O_RDWR | O_EXCL },
+        .{ "w+", O.TRUNC | O.CREAT | O.RDWR },
+        .{ "wx+", O.TRUNC | O.CREAT | O.RDWR | O.EXCL },
+        .{ "xw+", O.TRUNC | O.CREAT | O.RDWR | O.EXCL },
 
-        .{ "W+", O_TRUNC | O_CREAT | O_RDWR },
-        .{ "WX+", O_TRUNC | O_CREAT | O_RDWR | O_EXCL },
-        .{ "XW+", O_TRUNC | O_CREAT | O_RDWR | O_EXCL },
+        .{ "W+", O.TRUNC | O.CREAT | O.RDWR },
+        .{ "WX+", O.TRUNC | O.CREAT | O.RDWR | O.EXCL },
+        .{ "XW+", O.TRUNC | O.CREAT | O.RDWR | O.EXCL },
 
-        .{ "a", O_APPEND | O_CREAT | O_WRONLY },
-        .{ "ax", O_APPEND | O_CREAT | O_WRONLY | O_EXCL },
-        .{ "xa", O_APPEND | O_CREAT | O_WRONLY | O_EXCL },
-        .{ "as", O_APPEND | O_CREAT | O_WRONLY | O_SYNC },
-        .{ "sa", O_APPEND | O_CREAT | O_WRONLY | O_SYNC },
+        .{ "a", O.APPEND | O.CREAT | O.WRONLY },
+        .{ "ax", O.APPEND | O.CREAT | O.WRONLY | O.EXCL },
+        .{ "xa", O.APPEND | O.CREAT | O.WRONLY | O.EXCL },
+        .{ "as", O.APPEND | O.CREAT | O.WRONLY | O.SYNC },
+        .{ "sa", O.APPEND | O.CREAT | O.WRONLY | O.SYNC },
 
-        .{ "A", O_APPEND | O_CREAT | O_WRONLY },
-        .{ "AX", O_APPEND | O_CREAT | O_WRONLY | O_EXCL },
-        .{ "XA", O_APPEND | O_CREAT | O_WRONLY | O_EXCL },
-        .{ "AS", O_APPEND | O_CREAT | O_WRONLY | O_SYNC },
-        .{ "SA", O_APPEND | O_CREAT | O_WRONLY | O_SYNC },
+        .{ "A", O.APPEND | O.CREAT | O.WRONLY },
+        .{ "AX", O.APPEND | O.CREAT | O.WRONLY | O.EXCL },
+        .{ "XA", O.APPEND | O.CREAT | O.WRONLY | O.EXCL },
+        .{ "AS", O.APPEND | O.CREAT | O.WRONLY | O.SYNC },
+        .{ "SA", O.APPEND | O.CREAT | O.WRONLY | O.SYNC },
 
-        .{ "a+", O_APPEND | O_CREAT | O_RDWR },
-        .{ "ax+", O_APPEND | O_CREAT | O_RDWR | O_EXCL },
-        .{ "xa+", O_APPEND | O_CREAT | O_RDWR | O_EXCL },
-        .{ "as+", O_APPEND | O_CREAT | O_RDWR | O_SYNC },
-        .{ "sa+", O_APPEND | O_CREAT | O_RDWR | O_SYNC },
+        .{ "a+", O.APPEND | O.CREAT | O.RDWR },
+        .{ "ax+", O.APPEND | O.CREAT | O.RDWR | O.EXCL },
+        .{ "xa+", O.APPEND | O.CREAT | O.RDWR | O.EXCL },
+        .{ "as+", O.APPEND | O.CREAT | O.RDWR | O.SYNC },
+        .{ "sa+", O.APPEND | O.CREAT | O.RDWR | O.SYNC },
 
-        .{ "A+", O_APPEND | O_CREAT | O_RDWR },
-        .{ "AX+", O_APPEND | O_CREAT | O_RDWR | O_EXCL },
-        .{ "XA+", O_APPEND | O_CREAT | O_RDWR | O_EXCL },
-        .{ "AS+", O_APPEND | O_CREAT | O_RDWR | O_SYNC },
-        .{ "SA+", O_APPEND | O_CREAT | O_RDWR | O_SYNC },
+        .{ "A+", O.APPEND | O.CREAT | O.RDWR },
+        .{ "AX+", O.APPEND | O.CREAT | O.RDWR | O.EXCL },
+        .{ "XA+", O.APPEND | O.CREAT | O.RDWR | O.EXCL },
+        .{ "AS+", O.APPEND | O.CREAT | O.RDWR | O.SYNC },
+        .{ "SA+", O.APPEND | O.CREAT | O.RDWR | O.SYNC },
     });
 
     pub fn fromJS(ctx: JSC.C.JSContextRef, val: JSC.JSValue) bun.JSError!?FileSystemFlags {
@@ -1546,6 +1607,10 @@ pub const FileSystemFlags = enum(Mode) {
             return @enumFromInt(@as(i32, @intFromFloat(float)));
         }
     }
+
+    pub fn asInt(flags: FileSystemFlags) tag_type {
+        return @intFromEnum(flags);
+    }
 };
 
 /// Stats and BigIntStats classes from node:fs
@@ -1599,9 +1664,17 @@ pub fn StatType(comptime big: bool) type {
         const StatTimespec = if (Environment.isWindows) bun.windows.libuv.uv_timespec_t else std.posix.timespec;
 
         inline fn toNanoseconds(ts: StatTimespec) Timestamp {
-            const tv_sec: i64 = @intCast(ts.tv_sec);
-            const tv_nsec: i64 = @intCast(ts.tv_nsec);
-            return @as(Timestamp, @intCast(tv_sec * 1_000_000_000)) + @as(Timestamp, @intCast(tv_nsec));
+            if (ts.tv_sec < 0) {
+                return @intCast(@max(bun.timespec.nsSigned(&bun.timespec{
+                    .sec = @intCast(ts.tv_sec),
+                    .nsec = @intCast(ts.tv_nsec),
+                }), 0));
+            }
+
+            return bun.timespec.ns(&bun.timespec{
+                .sec = @intCast(ts.tv_sec),
+                .nsec = @intCast(ts.tv_nsec),
+            });
         }
 
         fn toTimeMS(ts: StatTimespec) Float {
@@ -1613,13 +1686,15 @@ pub fn StatType(comptime big: bool) type {
             const tv_sec = if (Environment.isWindows) @as(u32, @bitCast(ts.tv_sec)) else ts.tv_sec;
             const tv_nsec = if (Environment.isWindows) @as(u32, @bitCast(ts.tv_nsec)) else ts.tv_nsec;
             if (big) {
-                const sec: i64 = @intCast(tv_sec);
-                const nsec: i64 = @intCast(tv_nsec);
-                return @as(i64, @intCast(sec * std.time.ms_per_s)) +
-                    @as(i64, @intCast(@divTrunc(nsec, std.time.ns_per_ms)));
+                const sec: i64 = tv_sec;
+                const nsec: i64 = tv_nsec;
+                return @as(i64, sec * std.time.ms_per_s) +
+                    @as(i64, @divTrunc(nsec, std.time.ns_per_ms));
             } else {
-                return (@as(f64, @floatFromInt(tv_sec)) * std.time.ms_per_s) +
-                    (@as(f64, @floatFromInt(tv_nsec)) / std.time.ns_per_ms);
+                return @floatFromInt(bun.timespec.ms(&bun.timespec{
+                    .sec = @intCast(tv_sec),
+                    .nsec = @intCast(tv_nsec),
+                }));
             }
         }
 
@@ -1888,8 +1963,33 @@ pub const Dirent = struct {
     pub usingnamespace JSC.Codegen.JSDirent;
     pub usingnamespace bun.New(@This());
 
-    pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*Dirent {
-        return globalObject.throw("Dirent is not a constructor", .{});
+    pub fn constructor(global: *JSC.JSGlobalObject, call_frame: *JSC.CallFrame) bun.JSError!*Dirent {
+        const name_js, const type_js, const path_js = call_frame.argumentsAsArray(3);
+
+        const name = try name_js.toBunString2(global);
+        errdefer name.deref();
+
+        const path = try path_js.toBunString2(global);
+        errdefer path.deref();
+
+        const kind = type_js.toInt32();
+        const kind_enum: Kind = switch (kind) {
+            // these correspond to the libuv constants
+            else => .unknown,
+            1 => .file,
+            2 => .directory,
+            3 => .sym_link,
+            4 => .named_pipe,
+            5 => .unix_domain_socket,
+            6 => .character_device,
+            7 => .block_device,
+        };
+
+        return Dirent.new(.{
+            .name = name,
+            .path = path,
+            .kind = kind_enum,
+        });
     }
 
     pub fn toJS(this: *Dirent, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
@@ -2417,3 +2517,6 @@ pub const StatFS = union(enum) {
         @compileError("Only use Stats.toJSNewlyCreated() or Stats.toJS() directly on a StatsBig or StatsSmall");
     }
 };
+
+pub const uid_t = if (Environment.isPosix) std.posix.uid_t else bun.windows.libuv.uv_uid_t;
+pub const gid_t = if (Environment.isPosix) std.posix.gid_t else bun.windows.libuv.uv_gid_t;

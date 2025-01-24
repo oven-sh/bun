@@ -30,7 +30,6 @@ pub const BunObject = struct {
     pub const registerMacro = toJSCallback(Bun.registerMacro);
     pub const resolve = toJSCallback(Bun.resolve);
     pub const resolveSync = toJSCallback(Bun.resolveSync);
-    pub const s3 = S3File.createJSS3File;
     pub const serve = toJSCallback(Bun.serve);
     pub const sha = toJSCallback(JSC.wrapStaticMethod(Crypto.SHA512_256, "hash_", true));
     pub const shellEscape = toJSCallback(Bun.shellEscape);
@@ -72,6 +71,7 @@ pub const BunObject = struct {
     pub const stdout = toJSGetter(Bun.getStdout);
     pub const unsafe = toJSGetter(Bun.getUnsafe);
     pub const S3Client = toJSGetter(Bun.getS3ClientConstructor);
+    pub const s3 = toJSGetter(Bun.getS3DefaultClient);
     // --- Getters ---
 
     fn getterName(comptime baseName: anytype) [:0]const u8 {
@@ -133,6 +133,8 @@ pub const BunObject = struct {
         @export(BunObject.semver, .{ .name = getterName("semver") });
         @export(BunObject.embeddedFiles, .{ .name = getterName("embeddedFiles") });
         @export(BunObject.S3Client, .{ .name = getterName("S3Client") });
+        @export(BunObject.s3, .{ .name = getterName("s3") });
+
         // --- Getters --
 
         // -- Callbacks --
@@ -157,7 +159,6 @@ pub const BunObject = struct {
         @export(BunObject.resolve, .{ .name = callbackName("resolve") });
         @export(BunObject.resolveSync, .{ .name = callbackName("resolveSync") });
         @export(BunObject.serve, .{ .name = callbackName("serve") });
-        @export(BunObject.s3, .{ .name = callbackName("s3") });
         @export(BunObject.sha, .{ .name = callbackName("sha") });
         @export(BunObject.shellEscape, .{ .name = callbackName("shellEscape") });
         @export(BunObject.shrink, .{ .name = callbackName("shrink") });
@@ -1433,7 +1434,8 @@ pub const Crypto = struct {
                     }
                 }
 
-                out.salt = JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arguments[1], is_async) orelse {
+                const allow_string_object = true;
+                out.salt = JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arguments[1], is_async, allow_string_object) orelse {
                     return globalThis.throwInvalidArgumentTypeValue("salt", "string or buffer", arguments[1]);
                 };
 
@@ -1441,7 +1443,7 @@ pub const Crypto = struct {
                     return globalThis.throwInvalidArguments("salt is too long", .{});
                 }
 
-                out.password = JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arguments[0], is_async) orelse {
+                out.password = JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arguments[0], is_async, allow_string_object) orelse {
                     if (!globalThis.hasException()) {
                         return globalThis.throwInvalidArgumentTypeValue("password", "string or buffer", arguments[0]);
                     }
@@ -3450,6 +3452,9 @@ pub fn getGlobConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC
 pub fn getS3ClientConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     return JSC.WebCore.S3Client.getConstructor(globalThis);
 }
+pub fn getS3DefaultClient(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
+    return globalThis.bunVM().rareData().s3DefaultClient(globalThis);
+}
 pub fn getEmbeddedFiles(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     const vm = globalThis.bunVM();
     const graph = vm.standalone_module_graph orelse return JSC.JSValue.createEmptyArray(globalThis, 0);
@@ -3634,7 +3639,7 @@ pub const FFIObject = struct {
                 return err;
             },
             .slice => |slice| {
-                return WebCore.Encoder.toString(slice.ptr, slice.len, globalThis, .utf8);
+                return bun.String.createUTF8ForJS(globalThis, slice);
             },
         }
     }

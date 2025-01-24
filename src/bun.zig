@@ -70,6 +70,8 @@ pub inline fn clampFloat(_self: anytype, min: @TypeOf(_self), max: @TypeOf(_self
     return self;
 }
 
+pub const ArrayList = std.ArrayListUnmanaged;
+
 /// We cannot use a threadlocal memory allocator for FileSystem-related things
 /// FileSystem is a singleton.
 pub const fs_allocator = default_allocator;
@@ -1599,6 +1601,8 @@ pub fn cstring(input: []const u8) [:0]const u8 {
 pub const Semver = @import("./install/semver.zig");
 pub const ImportRecord = @import("./import_record.zig").ImportRecord;
 pub const ImportKind = @import("./import_record.zig").ImportKind;
+
+pub const Watcher = @import("./Watcher.zig");
 
 pub usingnamespace @import("./util.zig");
 pub const fast_debug_build_cmd = .None;
@@ -3741,19 +3745,29 @@ pub const timespec = extern struct {
 
         assert(this.sec >= 0);
         assert(this.nsec >= 0);
-
-        const max = std.math.maxInt(u64);
         const s_ns = std.math.mul(
             u64,
             @as(u64, @intCast(this.sec)),
             std.time.ns_per_s,
-        ) catch return max;
+        ) catch return std.math.maxInt(u64);
 
         return std.math.add(u64, s_ns, @as(u64, @intCast(this.nsec))) catch
-            return max;
+            return std.math.maxInt(i64);
     }
 
-    pub fn ms(this: *const timespec) u64 {
+    pub fn nsSigned(this: *const timespec) i64 {
+        const ns_per_sec = this.sec *% std.time.ns_per_s;
+        const ns_from_nsec = @divFloor(this.nsec, 1_000_000);
+        return ns_per_sec +% ns_from_nsec;
+    }
+
+    pub fn ms(this: *const timespec) i64 {
+        const ms_from_sec = this.sec *% 1000;
+        const ms_from_nsec = @divFloor(this.nsec, 1_000_000);
+        return ms_from_sec +% ms_from_nsec;
+    }
+
+    pub fn msUnsigned(this: *const timespec) u64 {
         return this.ns() / std.time.ns_per_ms;
     }
 

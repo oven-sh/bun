@@ -646,6 +646,11 @@ function mustNotMutateObjectDeep(original) {
     return original;
   }
 
+  const classes = [AbortSignal];
+  if (classes.some(c => original instanceof c)) {
+    return original;
+  }
+
   const cachedProxy = _mustNotMutateObjectDeepProxies.get(original);
   if (cachedProxy) {
     return cachedProxy;

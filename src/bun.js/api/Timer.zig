@@ -114,7 +114,7 @@ pub const All = struct {
             else
                 timespec{ .nsec = 0, .sec = 0 };
 
-            this.uv_timer.start(wait.ms(), 0, &onUVTimer);
+            this.uv_timer.start(wait.msUnsigned(), 0, &onUVTimer);
 
             if (this.active_timer_count > 0) {
                 this.uv_timer.ref();

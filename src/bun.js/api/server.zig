@@ -452,10 +452,15 @@ pub const ServerConfig = struct {
 
     pub fn getUsocketsOptions(this: *const ServerConfig) i32 {
         // Unlike Node.js, we set exclusive port in case reuse port is not set
-        var out: i32 = if (this.reuse_port) uws.LIBUS_LISTEN_REUSE_PORT else uws.LIBUS_LISTEN_EXCLUSIVE_PORT;
+        var out: i32 = if (this.reuse_port)
+            uws.LIBUS_LISTEN_REUSE_PORT | uws.LIBUS_LISTEN_REUSE_ADDR
+        else
+            uws.LIBUS_LISTEN_EXCLUSIVE_PORT;
+
         if (this.ipv6_only) {
             out |= uws.LIBUS_SOCKET_IPV6_ONLY;
         }
+
         return out;
     }
 

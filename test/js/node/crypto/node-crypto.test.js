@@ -536,3 +536,73 @@ it("createDecipheriv should validate iv and password", () => {
   expect(() => crypto.createDecipheriv("aes-128-cbc", key).setAutoPadding(false)).toThrow();
   expect(() => crypto.createDecipheriv("aes-128-cbc", key, Buffer.alloc(16)).setAutoPadding(false)).not.toThrow();
 });
+
+it("x25519", () => {
+  // Generate Alice's keys
+  const alice = crypto.generateKeyPairSync("x25519", {
+    publicKeyEncoding: {
+      type: "spki",
+      format: "der",
+    },
+    privateKeyEncoding: {
+      type: "pkcs8",
+      format: "der",
+    },
+  });
+
+  // Generate Bob's keys
+  const bob = crypto.generateKeyPairSync("x25519", {
+    publicKeyEncoding: {
+      type: "spki",
+      format: "der",
+    },
+    privateKeyEncoding: {
+      type: "pkcs8",
+      format: "der",
+    },
+  });
+
+  // Compute shared secrets
+  const aliceSecret = crypto.diffieHellman({
+    privateKey: alice.privateKey,
+    publicKey: bob.publicKey,
+  });
+
+  const bobSecret = crypto.diffieHellman({
+    privateKey: bob.privateKey,
+    publicKey: alice.publicKey,
+  });
+
+  // Verify both parties computed the same secret
+  expect(aliceSecret).toEqual(bobSecret);
+  expect(aliceSecret.length).toBe(32);
+
+  // Verify the key is valid
+  expect(() => {
+    crypto.generateKeyPairSync("x25519", {
+      publicKeyEncoding: {
+        type: "spki",
+        format: "der",
+      },
+      privateKeyEncoding: {
+        type: "pkcs8",
+        format: "der",
+      },
+    });
+  }).not.toThrow();
+
+  // Invalid key should throw
+  expect(() => {
+    crypto.diffieHellman({
+      privateKey: Buffer.from("invalid"),
+      publicKey: bob.publicKey,
+    });
+  }).toThrow();
+
+  expect(() => {
+    crypto.diffieHellman({
+      privateKey: bob.privateKey,
+      publicKey: Buffer.from("invalid"),
+    });
+  }).toThrow();
+});

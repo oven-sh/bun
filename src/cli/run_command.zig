@@ -1344,10 +1344,6 @@ pub const RunCommand = struct {
             };
         }
 
-        if (!ctx.debug.loaded_bunfig) {
-            bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
-        }
-
         _ = _bootAndHandleError(ctx, absolute_script_path.?);
         return true;
     }
@@ -1392,15 +1388,14 @@ pub const RunCommand = struct {
             }
         }
 
-        // try fast run (check if the file exists and is not a folder, then run it)
-        if (try_fast_run and maybeOpenWithBunJS(ctx)) return true;
-
-        // setup
-
         if (!ctx.debug.loaded_bunfig) {
             bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
         }
 
+        // try fast run (check if the file exists and is not a folder, then run it)
+        if (try_fast_run and maybeOpenWithBunJS(ctx)) return true;
+
+        // setup
         const force_using_bun = ctx.debug.run_in_bun;
         var ORIGINAL_PATH: string = "";
         var this_transpiler: transpiler.Transpiler = undefined;

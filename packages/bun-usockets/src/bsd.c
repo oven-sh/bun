@@ -863,31 +863,13 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
 ) {
 
     if (bsd_set_reuse(listenFd, options) != 0) {
-        if (errno == ENOTSUP) {
-            errno = 0;
-        } else {
-            return LIBUS_SOCKET_ERROR;
-        }
+        return LIBUS_SOCKET_ERROR;
     }
-
-#if defined(SO_REUSEADDR)
-    #ifndef _WIN32
-
-    //  Unlike on Unix, here we don't set SO_REUSEADDR, because it doesn't just
-    //  allow binding to addresses that are in use by sockets in TIME_WAIT, it
-    //  effectively allows 'stealing' a port which is in use by another application.
-    //  See libuv issue #1360.
-
-
-    int optval3 = 1;
-    setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, &optval3, sizeof(optval3));
-    #endif
-#endif
 
 #ifdef IPV6_V6ONLY
     if (listenAddr->ai_family == AF_INET6) {
-        int disabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
-        setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, &disabled, sizeof(disabled));
+        int enabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
+        setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, &enabled, sizeof(enabled));
     }
 #endif
 
@@ -1148,18 +1130,14 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
     }
 
     if (bsd_set_reuse(listenFd, options) != 0) {
-        if (errno == ENOTSUP) {
-            errno = 0;
-        } else {
-            freeaddrinfo(result);
-            return LIBUS_SOCKET_ERROR;
-        }
+        freeaddrinfo(result);
+        return LIBUS_SOCKET_ERROR;
     }
 
 #ifdef IPV6_V6ONLY
     if (listenAddr->ai_family == AF_INET6) {
-        int disabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
-        setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, &disabled, sizeof(disabled));
+        int enabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
+        setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, &enabled, sizeof(enabled));
     }
 #endif
 

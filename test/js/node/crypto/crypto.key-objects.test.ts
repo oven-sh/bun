@@ -390,8 +390,8 @@ describe("crypto.KeyObjects", () => {
     },
   ].forEach(info => {
     const keyType = info.keyType;
-    // X25519 implementation is incomplete, Ed448 and X448 are not supported yet
-    const test = keyType === "ed25519" ? it : it.skip;
+    // Ed448 and X448 are not supported yet
+    const test = keyType === "x448" || keyType === "ed448" ? it.skip : it;
     let privateKey: KeyObject;
     test(`${keyType} from Buffer should work`, async () => {
       const key = createPrivateKey(info.private);

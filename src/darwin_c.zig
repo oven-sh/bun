@@ -77,16 +77,16 @@ pub extern "c" fn clonefile(src: [*:0]const u8, dest: [*:0]const u8, flags: c_in
 
 pub const lstat = blk: {
     const T = *const fn (?[*:0]const u8, ?*bun.Stat) callconv(.C) c_int;
-    break :blk @extern(T, .{ .name = "lstat64" });
+    break :blk @extern(T, .{ .name = if (bun.Environment.isAarch64) "lstat" else "lstat64" });
 };
 
 pub const fstat = blk: {
     const T = *const fn (i32, ?*bun.Stat) callconv(.C) c_int;
-    break :blk @extern(T, .{ .name = "fstat64" });
+    break :blk @extern(T, .{ .name = if (bun.Environment.isAarch64) "fstat" else "fstat64" });
 };
 pub const stat = blk: {
     const T = *const fn (?[*:0]const u8, ?*bun.Stat) callconv(.C) c_int;
-    break :blk @extern(T, .{ .name = "stat64" });
+    break :blk @extern(T, .{ .name = if (bun.Environment.isAarch64) "stat" else "stat64" });
 };
 
 // pub fn stat_absolute(path: [:0]const u8) StatError!Stat {

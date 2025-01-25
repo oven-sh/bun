@@ -84,11 +84,16 @@ JSC_DEFINE_HOST_FUNCTION(jsStatelessDH, (JSC::JSGlobalObject * lexicalGlobalObje
     // Use DHPointer::stateless to compute the shared secret
     auto secret = ncrypto::DHPointer::stateless(ourKeyPtr, theirKeyPtr).release();
 
+    // These are owned by AsymmetricKeyValue, not by EVPKeyPointer.
+    ourKeyPtr.release();
+    theirKeyPtr.release();
+
     auto buffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(secret.data), secret.len }, createSharedTask<void(void*)>([](void* p) {
         OPENSSL_free(p);
     }));
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto* result = JSC::JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(buffer), 0, secret.len);
+    RETURN_IF_EXCEPTION(scope, {});
     if (!result) {
         return Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "diffieHellman"_s, jsUndefined(), "failed to allocate result buffer"_s);
     }

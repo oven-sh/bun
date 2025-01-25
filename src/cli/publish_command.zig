@@ -242,7 +242,6 @@ pub const PublishCommand = struct {
                     json_source,
                     shasum,
                     integrity,
-                    abs_tarball_path,
                 );
 
                 Pack.Context.printSummary(
@@ -876,7 +875,6 @@ pub const PublishCommand = struct {
         json_source: logger.Source,
         shasum: sha.SHA1.Digest,
         integrity: sha.SHA512.Digest,
-        abs_tarball_path: stringZ,
     ) OOM!string {
         bun.assertWithLocation(json.isObject(), @src());
 
@@ -928,10 +926,12 @@ pub const PublishCommand = struct {
             .value = Expr.init(
                 E.String,
                 .{
-                    .data = try bun.fmt.allocPrint(allocator, "http://{s}/{s}/-/{s}", .{
-                        strings.withoutTrailingSlash(registry.url.href),
+                    .data = try bun.fmt.allocPrint(allocator, "http://{s}/{s}/-/{}", .{
+                        // always use replace https with http
+                        // https://github.com/npm/cli/blob/9281ebf8e428d40450ad75ba61bc6f040b3bf896/workspaces/libnpmpublish/lib/publish.js#L120
+                        strings.withoutTrailingSlash(strings.withoutPrefixComptime(registry.url.href, "https://")),
                         package_name,
-                        std.fs.path.basename(abs_tarball_path),
+                        Pack.fmtTarballFilename(package_name, package_version, .raw),
                     }),
                 },
                 logger.Loc.Empty,
@@ -1362,8 +1362,8 @@ pub const PublishCommand = struct {
 
         // "_attachments"
         {
-            try writer.print(",\"_attachments\":{{\"{s}\":{{\"content_type\":\"{s}\",\"data\":\"", .{
-                std.fs.path.basename(ctx.abs_tarball_path),
+            try writer.print(",\"_attachments\":{{\"{}\":{{\"content_type\":\"{s}\",\"data\":\"", .{
+                Pack.fmtTarballFilename(ctx.package_name, ctx.package_version, .raw),
                 "application/octet-stream",
             });
 

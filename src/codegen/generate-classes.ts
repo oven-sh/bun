@@ -378,7 +378,7 @@ export function generateHashTableComment(nameToUse, symbolName, obj, props = {},
     externs += `
 extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${protoSymbolName(
       obj.name,
-      name,
+      props[name],
     )}(void* ptr, JSC::JSGlobalObject*);
 namespace WebCore {
 static JSC::JSValue construct${symbolName(name)}PropertyCallback(JSC::VM &vm, JSC::JSObject* initialThisObject);

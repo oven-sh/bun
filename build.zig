@@ -152,6 +152,7 @@ pub fn getCpuModel(os: OperatingSystem, arch: Arch) ?Target.Query.CpuModel {
 
 pub fn build(b: *Build) !void {
     std.log.info("zig compiler v{s}", .{builtin.zig_version_string});
+    checked_file_exists = std.AutoHashMap(u64, void).init(b.allocator);
 
     b.zig_lib_dir = b.zig_lib_dir orelse b.path("vendor/zig/lib");
 
@@ -481,9 +482,15 @@ pub fn addInstallObjectFile(
     }, b.fmt("{s}.o", .{name})).step;
 }
 
+var checked_file_exists: std.AutoHashMap(u64, void) = undefined;
 fn exists(path: []const u8) bool {
-    const file = std.fs.openFileAbsolute(path, .{ .mode = .read_only }) catch return false;
-    file.close();
+    const entry = checked_file_exists.getOrPut(std.hash.Wyhash.hash(0, path)) catch unreachable;
+    if (entry.found_existing) {
+        // It would've panicked.
+        return true;
+    }
+
+    std.fs.accessAbsolute(path, .{ .mode = .read_only }) catch return false;
     return true;
 }
 

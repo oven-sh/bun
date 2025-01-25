@@ -2647,15 +2647,6 @@ pub const create_bun_socket_error_t = enum(c_int) {
     load_ca_file,
     invalid_ca_file,
     invalid_ca,
-};
-
-pub extern fn create_ssl_context_from_bun_options(options: us_bun_socket_context_options_t, err: *create_bun_socket_error_t) ?*BoringSSL.SSL_CTX;
-
-pub const create_bun_socket_error_t = enum(i32) {
-    none = 0,
-    load_ca_file,
-    invalid_ca_file,
-    invalid_ca,
 
     pub fn toJS(this: create_bun_socket_error_t, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         return switch (this) {
@@ -2669,6 +2660,8 @@ pub const create_bun_socket_error_t = enum(i32) {
         };
     }
 };
+
+pub extern fn create_ssl_context_from_bun_options(options: us_bun_socket_context_options_t, err: *create_bun_socket_error_t) ?*BoringSSL.SSL_CTX;
 
 pub const us_bun_verify_error_t = extern struct {
     error_no: i32 = 0,

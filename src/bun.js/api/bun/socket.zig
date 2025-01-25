@@ -614,7 +614,13 @@ pub const Listener = struct {
 
         const ssl_enabled = ssl != null;
 
-        var socket_flags: i32 = if (exclusive) uws.LIBUS_LISTEN_EXCLUSIVE_PORT else (if (socket_config.reusePort) uws.LIBUS_SOCKET_REUSE_PORT else uws.LIBUS_LISTEN_DEFAULT);
+        var socket_flags: i32 = if (exclusive)
+            uws.LIBUS_LISTEN_EXCLUSIVE_PORT
+        else if (socket_config.reusePort)
+            uws.LIBUS_LISTEN_REUSE_PORT | uws.LIBUS_LISTEN_REUSE_ADDR
+        else
+            uws.LIBUS_LISTEN_DEFAULT;
+
         if (socket_config.allowHalfOpen) {
             socket_flags |= uws.LIBUS_SOCKET_ALLOW_HALF_OPEN;
         }

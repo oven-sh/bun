@@ -971,7 +971,7 @@ pub fn format(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]J
 
     var root: []const u8 = "";
     var root_slice: ?JSC.ZigString.Slice = null;
-    if (root_slice) |slice| slice.deinit();
+    defer if (root_slice) |slice| slice.deinit();
 
     if (try pathObject_ptr.getTruthy(globalObject, "root")) |jsValue| {
         root_slice = try jsValue.toSlice(globalObject, allocator);
@@ -979,7 +979,7 @@ pub fn format(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]J
     }
     var dir: []const u8 = "";
     var dir_slice: ?JSC.ZigString.Slice = null;
-    if (dir_slice) |slice| slice.deinit();
+    defer if (dir_slice) |slice| slice.deinit();
 
     if (try pathObject_ptr.getTruthy(globalObject, "dir")) |jsValue| {
         dir_slice = try jsValue.toSlice(globalObject, allocator);
@@ -987,7 +987,7 @@ pub fn format(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]J
     }
     var base: []const u8 = "";
     var base_slice: ?JSC.ZigString.Slice = null;
-    if (base_slice) |slice| slice.deinit();
+    defer if (base_slice) |slice| slice.deinit();
 
     if (try pathObject_ptr.getTruthy(globalObject, "base")) |jsValue| {
         base_slice = try jsValue.toSlice(globalObject, allocator);
@@ -995,7 +995,7 @@ pub fn format(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]J
     }
     var _name: []const u8 = "";
     var _name_slice: ?JSC.ZigString.Slice = null;
-    if (_name_slice) |slice| slice.deinit();
+    deferif (_name_slice) |slice| slice.deinit();
 
     if (try pathObject_ptr.getTruthy(globalObject, "name")) |jsValue| {
         _name_slice = try jsValue.toSlice(globalObject, allocator);
@@ -1003,7 +1003,7 @@ pub fn format(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]J
     }
     var ext: []const u8 = "";
     var ext_slice: ?JSC.ZigString.Slice = null;
-    if (ext_slice) |slice| slice.deinit();
+    defer if (ext_slice) |slice| slice.deinit();
 
     if (try pathObject_ptr.getTruthy(globalObject, "ext")) |jsValue| {
         ext_slice = try jsValue.toSlice(globalObject, allocator);

@@ -1403,6 +1403,53 @@ static int64_t lastIndexOf(const uint8_t* thisPtr, int64_t thisLength, const uin
     return -1;
 }
 
+static int64_t indexOfNumber(JSC::JSGlobalObject* lexicalGlobalObject, bool last, const uint8_t* typedVector, size_t byteLength, double byteOffsetD, uint8_t byteValue)
+{
+    ssize_t byteOffset = indexOfOffset(byteLength, byteOffsetD, 1, !last);
+    if (byteOffset == -1) return -1;
+    if (last) {
+        for (int64_t i = byteOffset; i >= 0; --i) {
+            if (byteValue == typedVector[i]) return i;
+        }
+    } else {
+        const void* offset = memchr(reinterpret_cast<const void*>(typedVector + byteOffset), byteValue, byteLength - byteOffset);
+        if (offset != NULL) return static_cast<const uint8_t*>(offset) - typedVector;
+    }
+    return -1;
+}
+
+static int64_t indexOfString(JSC::JSGlobalObject* lexicalGlobalObject, bool last, const uint8_t* typedVector, size_t byteLength, double byteOffsetD, JSString* str, BufferEncodingType encoding)
+{
+    ssize_t byteOffset = indexOfOffset(byteLength, byteOffsetD, str->length(), !last);
+    if (byteOffset == -1) return -1;
+    if (str->length() == 0) return byteOffset;
+    JSC::EncodedJSValue encodedBuffer = constructFromEncoding(lexicalGlobalObject, str, encoding);
+    auto* arrayValue = JSC::jsCast<JSC::JSUint8Array*>(JSC::JSValue::decode(encodedBuffer));
+    int64_t lengthValue = static_cast<int64_t>(arrayValue->byteLength());
+    const uint8_t* typedVectorValue = arrayValue->typedVector();
+    if (last) {
+        return lastIndexOf(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
+    } else {
+        if (encoding == BufferEncodingType::ucs2) return indexOf16(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
+        return indexOf(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
+    }
+}
+
+static int64_t indexOfBuffer(JSC::JSGlobalObject* lexicalGlobalObject, bool last, const uint8_t* typedVector, size_t byteLength, double byteOffsetD, JSC::JSGenericTypedArrayView<JSC::Uint8Adaptor>* array, BufferEncodingType encoding)
+{
+    size_t lengthValue = array->byteLength();
+    ssize_t byteOffset = indexOfOffset(byteLength, byteOffsetD, lengthValue, !last);
+    if (byteOffset == -1) return -1;
+    if (lengthValue == 0) return byteOffset;
+    const uint8_t* typedVectorValue = array->typedVector();
+    if (last) {
+        return lastIndexOf(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
+    } else {
+        if (encoding == BufferEncodingType::ucs2) return indexOf16(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
+        return indexOf(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
+    }
+}
+
 static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter buffer, bool last)
 {
     auto& vm = lexicalGlobalObject->vm();
@@ -1433,19 +1480,9 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*
     if (std::isnan(byteOffsetD)) byteOffsetD = dir ? 0 : byteLength;
 
     if (valueValue.isNumber()) {
-        ssize_t byteOffset = indexOfOffset(byteLength, byteOffsetD, 1, dir);
-        if (byteOffset == -1) return -1;
         uint8_t byteValue = (valueValue.toInt32(lexicalGlobalObject)) % 256;
         RETURN_IF_EXCEPTION(scope, -1);
-        if (last) {
-            for (int64_t i = byteOffset; i >= 0; --i) {
-                if (byteValue == typedVector[i]) return i;
-            }
-        } else {
-            const void* offset = memchr(reinterpret_cast<const void*>(typedVector + byteOffset), byteValue, byteLength - byteOffset);
-            if (offset != NULL) return static_cast<const uint8_t*>(offset) - typedVector;
-        }
-        return -1;
+        return indexOfNumber(lexicalGlobalObject, last, typedVector, byteLength, byteOffsetD, byteValue);
     }
 
     WTF::String encodingString;
@@ -1463,34 +1500,12 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*
         }
         auto* str = valueValue.toStringOrNull(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, -1);
-        ssize_t byteOffset = indexOfOffset(byteLength, byteOffsetD, str->length(), dir);
-        if (byteOffset == -1) return -1;
-        if (str->length() == 0) return byteOffset;
-        JSC::EncodedJSValue encodedBuffer = constructFromEncoding(lexicalGlobalObject, str, encoding.value());
-        auto* arrayValue = JSC::jsCast<JSC::JSUint8Array*>(JSC::JSValue::decode(encodedBuffer));
-        int64_t lengthValue = static_cast<int64_t>(arrayValue->byteLength());
-        const uint8_t* typedVectorValue = arrayValue->typedVector();
-        if (last) {
-            return lastIndexOf(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
-        } else {
-            if (encoding.value() == BufferEncodingType::ucs2) return indexOf16(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
-            return indexOf(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
-        }
+        return indexOfString(lexicalGlobalObject, last, typedVector, byteLength, byteOffsetD, str, encoding.value());
     }
 
     if (auto* array = JSC::jsDynamicCast<JSC::JSUint8Array*>(valueValue)) {
         if (!encoding.has_value()) encoding = BufferEncodingType::utf8;
-        size_t lengthValue = array->byteLength();
-        ssize_t byteOffset = indexOfOffset(byteLength, byteOffsetD, lengthValue, dir);
-        if (byteOffset == -1) return -1;
-        if (lengthValue == 0) return byteOffset;
-        const uint8_t* typedVectorValue = array->typedVector();
-        if (last) {
-            return lastIndexOf(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
-        } else {
-            if (encoding.value() == BufferEncodingType::ucs2) return indexOf16(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
-            return indexOf(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
-        }
+        return indexOfBuffer(lexicalGlobalObject, last, typedVector, byteLength, byteOffsetD, array, encoding.value());
     }
 
     Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "value"_s, "number, string, Buffer, or Uint8Array"_s, valueValue);

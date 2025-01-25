@@ -136,8 +136,8 @@ void Worker::setKeepAlive(bool keepAlive)
 bool Worker::updatePtr()
 {
     if (!WebWorker__updatePtr(impl_, this)) {
-        m_terminationState = TerminationState::Terminated;
-        m_onlineAndClosing = ClosingFlag;
+        m_onlineClosingFlags = ClosingFlag;
+        m_terminationFlags.fetch_or(TerminatedFlag);
         return false;
     }
 
@@ -223,7 +223,7 @@ Worker::~Worker()
 
 ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue messageValue, StructuredSerializeOptions&& options)
 {
-    if (m_terminationState != TerminationState::NotTerminated)
+    if (m_terminationFlags & TerminatedFlag)
         return Exception { InvalidStateError, "Worker has been terminated"_s };
 
     Vector<RefPtr<MessagePort>> ports;
@@ -252,7 +252,7 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
 void Worker::terminate()
 {
     // m_contextProxy.terminateWorkerGlobalScope();
-    m_terminationState = TerminationState::TerminateRequested;
+    m_terminationFlags.fetch_or(TerminateRequestedFlag);
     WebWorker__requestTerminate(impl_);
 }
 
@@ -284,17 +284,17 @@ void Worker::terminate()
 
 bool Worker::hasPendingActivity() const
 {
-    auto onlineAndClosing = m_onlineAndClosing.load();
-    if (onlineAndClosing & OnlineFlag) {
-        return !(onlineAndClosing & ClosingFlag);
+    auto onlineClosingFlags = m_onlineClosingFlags.load();
+    if (onlineClosingFlags & OnlineFlag) {
+        return !(onlineClosingFlags & ClosingFlag);
     }
 
-    return m_terminationState != TerminationState::Terminated;
+    return !(m_terminationFlags & TerminatedFlag);
 }
 
 void Worker::dispatchEvent(Event& event)
 {
-    if (m_terminationState == TerminationState::NotTerminated)
+    if (!m_terminationFlags)
         EventTargetWithInlineData::dispatchEvent(event);
 }
 
@@ -340,7 +340,7 @@ void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
 
     Locker lock(this->m_pendingTasksMutex);
 
-    m_onlineAndClosing.fetch_or(OnlineFlag);
+    m_onlineClosingFlags.fetch_or(OnlineFlag);
     auto* thisContext = workerGlobalObject->scriptExecutionContext();
     if (!thisContext) {
         return;
@@ -388,19 +388,19 @@ void Worker::dispatchExit(int32_t exitCode)
         return;
 
     ScriptExecutionContext::postTaskTo(ctx->identifier(), [exitCode, protectedThis = Ref { *this }](ScriptExecutionContext& context) -> void {
-        protectedThis->m_onlineAndClosing = ClosingFlag;
+        protectedThis->m_onlineClosingFlags = ClosingFlag;
 
         if (protectedThis->hasEventListeners(eventNames().closeEvent)) {
             auto event = CloseEvent::create(exitCode == 0, static_cast<unsigned short>(exitCode), exitCode == 0 ? "Worker terminated normally"_s : "Worker exited abnormally"_s);
             protectedThis->dispatchCloseEvent(event);
         }
-        protectedThis->m_terminationState = TerminationState::Terminated;
+        protectedThis->m_terminationFlags.fetch_or(TerminatedFlag);
     });
 }
 
 void Worker::postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&& task)
 {
-    if (!(m_onlineAndClosing & OnlineFlag)) {
+    if (!(m_onlineClosingFlags & OnlineFlag)) {
         Locker lock(this->m_pendingTasksMutex);
         this->m_pendingTasks.append(WTFMove(task));
         return;

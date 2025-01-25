@@ -4663,11 +4663,7 @@ pub const ServerWebSocket = struct {
         const arguments = [_]JSValue{
             this.getThisValue(),
             switch (opcode) {
-                .text => brk: {
-                    var str = ZigString.init(message);
-                    str.markUTF8();
-                    break :brk str.toJS(globalObject);
-                },
+                .text => bun.String.createUTF8ForJS(globalObject, message),
                 .binary => this.binaryToJS(globalObject, message),
                 else => unreachable,
             },
@@ -4831,13 +4827,12 @@ pub const ServerWebSocket = struct {
         }
 
         if (!handler.onClose.isEmptyOrUndefinedOrNull()) {
-            var str = ZigString.init(message);
             const globalObject = handler.globalObject;
             const loop = vm.eventLoop();
 
             loop.enter();
             defer loop.exit();
-            str.markUTF8();
+
             if (signal) |sig| {
                 if (!sig.aborted()) {
                     sig.signal(handler.globalObject, .ConnectionClosed);
@@ -4847,7 +4842,7 @@ pub const ServerWebSocket = struct {
             _ = handler.onClose.call(
                 globalObject,
                 .undefined,
-                &[_]JSC.JSValue{ this.getThisValue(), JSValue.jsNumber(code), str.toJS(globalObject) },
+                &[_]JSC.JSValue{ this.getThisValue(), JSValue.jsNumber(code), bun.String.createUTF8ForJS(globalObject, message) },
             ) catch |e| {
                 const err = globalObject.takeException(e);
                 log("onClose error", .{});
@@ -5784,7 +5779,7 @@ pub const ServerWebSocket = struct {
         };
 
         const text = bun.fmt.formatIp(address, &text_buf) catch unreachable;
-        return ZigString.init(text).toJS(globalThis);
+        return bun.String.createUTF8ForJS(globalThis, text);
     }
 };
 
@@ -6095,7 +6090,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             return if (request.request_context.getRemoteSocketInfo()) |info|
                 JSSocketAddress__create(
                     this.globalThis,
-                    bun.String.init(info.ip).toJS(this.globalThis),
+                    bun.String.createUTF8ForJS(this.globalThis, info.ip),
                     info.port,
                     info.is_ipv6,
                 )

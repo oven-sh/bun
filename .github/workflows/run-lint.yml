@@ -4,7 +4,7 @@ permissions:
   contents: read
 env:
   LLVM_VERSION: 16
-  BUN_VERSION: "1.2.0"
+  BUN_VERSION: "1.1.44"
 
 on:
   workflow_call:

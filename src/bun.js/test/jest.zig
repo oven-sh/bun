@@ -592,6 +592,14 @@ pub const TestScope = struct {
         actual: u32 = 0,
     };
 
+    pub fn deinit(this: *TestScope) void {
+        if (this.label.len > 0) {
+            const label = this.label;
+            this.label = "";
+            bun.default_allocator.free(label);
+        }
+    }
+
     pub fn call(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
         return createScope(globalThis, callframe, "test()", true, .pass);
     }
@@ -1224,9 +1232,7 @@ pub const DescribeScope = struct {
         }
         this.pending_tests.deinit(allocator);
         for (this.tests.items) |t| {
-            if (t.label.len > 0) {
-                allocator.free(t.label);
-            }
+            t.deinit();
         }
         this.tests.clearAndFree(allocator);
     }

@@ -1,6 +1,6 @@
 name: Issue Labeled
 env:
-  BUN_VERSION: 1.1.44
+  BUN_VERSION: 1.2.0
 
 on:
   issues:

@@ -892,7 +892,7 @@ pub const TextDecoder = struct {
         if (arguments.len > 0) {
             // encoding
             if (arguments[0].isString()) {
-                var str = arguments[0].toSlice(globalThis, bun.default_allocator);
+                var str = try arguments[0].toSlice(globalThis, bun.default_allocator);
                 defer if (str.isAllocated()) str.deinit();
 
                 if (EncodingLabel.which(str.slice())) |label| {

@@ -410,6 +410,13 @@ class InlineSnapshotTester {
       cb((a, b, c) => c),
     );
   }
+  testUpdateOnly(cb: (v: (b: string, c: string) => string) => string): void {
+    this.testInternal(
+      true,
+      cb((b, c) => b),
+      cb((b, c) => c),
+    );
+  }
   testInternal(use_update: boolean, before_value: string, after_value: string): void {
     const thefile = this.tmpfile(before_value);
 
@@ -513,6 +520,7 @@ describe("inline snapshots", () => {
   });
   test("inline snapshot update cases", () => {
     tester.test(
+      // prettier-ignore
       v => /*js*/ `
         test("cases", () => {
           expect("1").toMatchInlineSnapshot(${v("", bad, '`"1"`')});
@@ -534,19 +542,72 @@ describe("inline snapshots", () => {
                   ${v("", bad, '`"12"`')})\r
                     ;
           expect("13").toMatchInlineSnapshot(${v("", bad, '`"13"`')}); expect("14").toMatchInlineSnapshot(${v("", bad, '`"14"`')}); expect("15").toMatchInlineSnapshot(${v("", bad, '`"15"`')});
-          expect({a: new Date()}).toMatchInlineSnapshot({a: expect.any(Date)}${v("", ', "bad"', ', `\n{\n  "a": Any<Date>,\n}\n`')});
-          expect({a: new Date()}).toMatchInlineSnapshot({a: expect.any(Date)}${v(",", ', "bad"', ', `\n{\n  "a": Any<Date>,\n}\n`')});
-          expect({a: new Date()}).toMatchInlineSnapshot({a: expect.any(Date)\n}${v("", ', "bad"', ', `\n{\n  "a": Any<Date>,\n}\n`')});
-          expect({a: new Date()}).\ntoMatchInlineSnapshot({a: expect.any(Date)\n}${v("", ', "bad"', ', `\n{\n  "a": Any<Date>,\n}\n`')});
-          expect({a: new Date()})\n.\ntoMatchInlineSnapshot({a: expect.any(Date)\n}${v("", ', "bad"', ', `\n{\n  "a": Any<Date>,\n}\n`')});
-          expect({a: new Date()})\n.\ntoMatchInlineSnapshot({a: \nexpect.any(Date)\n}${v("", ', "bad"', ', `\n{\n  "a": Any<Date>,\n}\n`')});
-          expect({a: new Date()})\n.\ntoMatchInlineSnapshot({a: \nexpect.any(\nDate)\n}${v("", ', "bad"', ', `\n{\n  "a": Any<Date>,\n}\n`')});
-          expect({a: new Date()}).toMatchInlineSnapshot( {a: expect.any(Date)} ${v("", ', "bad"', ', `\n{\n  "a": Any<Date>,\n}\n`')});
-          expect({a: new Date()}).toMatchInlineSnapshot( {a: expect.any(Date)} ${v(",", ', "bad"', ', `\n{\n  "a": Any<Date>,\n}\n`')});
-          expect("😊").toMatchInlineSnapshot(${v("", bad, '`"😊"`')});
-          expect("\\r").toMatchInlineSnapshot(${v("", bad, '`\n"\n"\n`')});
-          expect("\\r\\n").toMatchInlineSnapshot(${v("", bad, '`\n"\n"\n`')});
-          expect("\\n").toMatchInlineSnapshot(${v("", bad, '`\n"\n"\n`')});
+          expect({a: new Date()}).toMatchInlineSnapshot({a: expect.any(Date)}${v("", `, "bad"`, `, \`
+            {
+              "a": Any<Date>,
+            }
+          \``)});
+          expect({a: new Date()}).toMatchInlineSnapshot({a: expect.any(Date)}${v(",", `, "bad"`, `, \`
+            {
+              "a": Any<Date>,
+            }
+          \``)});
+          expect({a: new Date()}).toMatchInlineSnapshot({a: expect.any(Date)
+}${v("", `, "bad"`, `, \`
+  {
+    "a": Any<Date>,
+  }
+\``)});
+          expect({a: new Date()}).\ntoMatchInlineSnapshot({a: expect.any(Date)
+}${v("", `, "bad"`, `, \`
+  {
+    "a": Any<Date>,
+  }
+\``)});
+          expect({a: new Date()})\n.\ntoMatchInlineSnapshot({a: expect.any(Date)
+}${v("", `, "bad"`, `, \`
+  {
+    "a": Any<Date>,
+  }
+\``)});
+          expect({a: new Date()})\n.\ntoMatchInlineSnapshot({a: 
+expect.any(Date)
+}${v("", `, "bad"`, `, \`
+  {
+    "a": Any<Date>,
+  }
+\``)});
+          expect({a: new Date()})\n.\ntoMatchInlineSnapshot({a: 
+expect.any(
+Date)
+}${v("", `, "bad"`, `, \`
+  {
+    "a": Any<Date>,
+  }
+\``)});
+          expect({a: new Date()}).toMatchInlineSnapshot( {a: expect.any(Date)} ${v("", `, "bad"`, `, \`
+            {
+              "a": Any<Date>,
+            }
+          \``)});
+          expect({a: new Date()}).toMatchInlineSnapshot( {a: expect.any(Date)} ${v(",", `, "bad"`, `, \`
+            {
+              "a": Any<Date>,
+            }
+          \``)});
+          expect("😊").toMatchInlineSnapshot(${v("", bad, `\`"😊"\``)});
+          expect("\\r").toMatchInlineSnapshot(${v("", bad, `\`
+            "
+            "
+          \``)});
+          expect("\\r\\n").toMatchInlineSnapshot(${v("", bad, `\`
+            "
+            "
+          \``)});
+          expect("\\n").toMatchInlineSnapshot(${v("", bad, `\`
+            "
+            "
+          \``)});
         });
       `,
     );
@@ -741,6 +802,60 @@ describe("inline snapshots", () => {
       `,
     );
   });
+  it("indentation", () => {
+    tester.test(
+      // prettier-ignore
+      v => /*js*/ `
+        test("cases", () => {
+          expect("abc\\n\\ndef").toMatchInlineSnapshot(${v("", `"hello"`, `\`
+            "abc
+
+            def"
+          \``)});
+          expect("from indented to dedented").toMatchInlineSnapshot(${v("", `\`
+            "abc
+
+            def"
+          \``, `\`"from indented to dedented"\``)});
+        });
+      `,
+    );
+  });
+  it("preserve existing indentation", () => {
+    tester.testUpdateOnly(
+      // prettier-ignore
+      v => /*js*/ `
+        test("cases", () => {
+          expect("keeps the same\\n\\nindentation").toMatchInlineSnapshot(${v(`\`
+                  "weird existing
+                  indentation" 
+    \``, `\`
+                  "keeps the same
+
+                  indentation"
+    \``)});
+        });
+      `,
+    );
+  });
+});
+test("indented inline snapshots", () => {
+  expect("a\nb").toMatchInlineSnapshot(`
+    "a
+    b"
+`);
+  expect({ a: 2 }).toMatchInlineSnapshot(`
+    {
+      "a": 2,
+    }
+            `);
+  expect(() => {
+    expect({ a: 2 }).toMatchInlineSnapshot(`
+                {
+              "a": 2,
+                }
+`);
+  }).toThrowErrorMatchingSnapshot();
 });
 
 test("error snapshots", () => {
@@ -756,6 +871,14 @@ test("error snapshots", () => {
   expect(() => {
     throw undefined; // this one doesn't work in jest because it doesn't think the function threw
   }).toThrowErrorMatchingInlineSnapshot(`undefined`);
+  expect(() => {
+    expect(() => {}).toThrowErrorMatchingInlineSnapshot(`undefined`);
+  }).toThrowErrorMatchingInlineSnapshot(`
+"\x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoThrowErrorMatchingInlineSnapshot\x1B[2m(\x1B[0m\x1B[2m)\x1B[0m
+
+\x1B[1mMatcher error\x1B[0m: Received function did not throw
+"
+`);
 });
 test("error inline snapshots", () => {
   expect(() => {

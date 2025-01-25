@@ -677,8 +677,7 @@ describe("crypto.KeyObjects", () => {
   });
 
   ["ed25519", "x25519"].forEach(keyType => {
-    const test = keyType === "ed25519" ? it : it.skip;
-    test(`${keyType} equals should work`, async () => {
+    it(`${keyType} equals should work`, async () => {
       const first = generateKeyPairSync(keyType);
       const second = generateKeyPairSync(keyType);
 
@@ -824,7 +823,7 @@ describe("crypto.KeyObjects", () => {
 
   describe("Test async elliptic curve key generation with 'jwk' encoding", () => {
     ["ed25519", "ed448", "x25519", "x448"].forEach(type => {
-      const test = type === "ed25519" ? it : it.skip;
+      const test = type === "x448" ? it.skip : it;
       test(`should work with ${type}`, async () => {
         const { promise, resolve, reject } = Promise.withResolvers();
         generateKeyPair(
@@ -1171,7 +1170,7 @@ describe("crypto.KeyObjects", () => {
 
   describe("Test sync elliptic curve key generation with 'jwk' encoding", () => {
     ["ed25519", "ed448", "x25519", "x448"].forEach(type => {
-      const test = type === "ed25519" ? it : it.skip;
+      const test = type === "x448" ? it.skip : it;
       test(`should work with ${type}`, async () => {
         const { publicKey, privateKey } = generateKeyPairSync(type, {
           publicKeyEncoding: {

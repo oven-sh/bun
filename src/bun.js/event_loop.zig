@@ -842,6 +842,7 @@ pub const EventLoop = struct {
 
     debug: Debug = .{},
     entered_event_loop_count: isize = 0,
+    concurrent_ref: std.atomic.Value(i32) = std.atomic.Value(i32).init(0),
     imminent_gc_timer: std.atomic.Value(?*JSC.BunTimer.WTFTimer) = .{ .raw = null },
 
     signal_handler: if (Environment.isPosix) ?*PosixSignalHandle else void = if (Environment.isPosix) null,

@@ -971,24 +971,24 @@ pub fn format(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]J
 
     var root: []const u8 = "";
     if (try pathObject_ptr.getTruthy(globalObject, "root")) |jsValue| {
-        root = jsValue.toSlice(globalObject, allocator).slice();
+        root = (try jsValue.toSlice(globalObject, allocator)).slice();
     }
     var dir: []const u8 = "";
     if (try pathObject_ptr.getTruthy(globalObject, "dir")) |jsValue| {
-        dir = jsValue.toSlice(globalObject, allocator).slice();
+        dir = (try jsValue.toSlice(globalObject, allocator)).slice();
     }
     var base: []const u8 = "";
     if (try pathObject_ptr.getTruthy(globalObject, "base")) |jsValue| {
-        base = jsValue.toSlice(globalObject, allocator).slice();
+        base = (try jsValue.toSlice(globalObject, allocator)).slice();
     }
     // Prefix with _ to avoid shadowing the identifier in the outer scope.
     var _name: []const u8 = "";
     if (try pathObject_ptr.getTruthy(globalObject, "name")) |jsValue| {
-        _name = jsValue.toSlice(globalObject, allocator).slice();
+        _name = (try jsValue.toSlice(globalObject, allocator)).slice();
     }
     var ext: []const u8 = "";
     if (try pathObject_ptr.getTruthy(globalObject, "ext")) |jsValue| {
-        ext = jsValue.toSlice(globalObject, allocator).slice();
+        ext = (try jsValue.toSlice(globalObject, allocator)).slice();
     }
     return formatJS_T(u8, globalObject, allocator, isWindows, .{ .root = root, .dir = dir, .base = base, .ext = ext, .name = _name });
 }

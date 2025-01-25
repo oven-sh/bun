@@ -619,7 +619,7 @@ pub const StreamStart = union(Tag) {
                         .FileSink = .{
                             .chunk_size = chunk_size,
                             .input_path = .{
-                                .path = path.toSlice(globalThis, globalThis.bunVM().allocator),
+                                .path = try path.toSlice(globalThis, globalThis.bunVM().allocator),
                             },
                         },
                     };

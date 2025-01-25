@@ -528,7 +528,7 @@ pub const Jest = struct {
         if (arguments.len < 1 or !arguments[0].isString()) {
             return globalObject.throw("Bun.jest() expects a string filename", .{});
         }
-        var str = arguments[0].toSlice(globalObject, bun.default_allocator);
+        var str = try arguments[0].toSlice(globalObject, bun.default_allocator);
         defer str.deinit();
         const slice = str.slice();
 
@@ -1753,7 +1753,7 @@ inline fn createScope(
     const label = if (description == .zero)
         ""
     else
-        (description.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
+        ((try description.toSlice(globalThis, allocator)).cloneIfNeeded(allocator) catch unreachable).slice();
 
     var tag_to_use = tag;
 
@@ -2061,7 +2061,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
             const label = if (description.isEmptyOrUndefinedOrNull())
                 ""
             else
-                (description.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
+                ((try description.toSlice(globalThis, allocator)).cloneIfNeeded(allocator) catch unreachable).slice();
             const formattedLabel = try formatLabel(globalThis, label, function_args, test_idx);
 
             const tag = parent.tag;

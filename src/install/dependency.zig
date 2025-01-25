@@ -1258,7 +1258,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
     if (!alias_value.isString()) {
         return .undefined;
     }
-    const alias_slice = alias_value.toSlice(globalThis, allocator);
+    const alias_slice = try alias_value.toSlice(globalThis, allocator);
     defer alias_slice.deinit();
 
     if (alias_slice.len == 0) {
@@ -1266,7 +1266,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
     }
 
     const name_value = if (arguments.len > 1) arguments[1] else .undefined;
-    const name_slice = name_value.toSlice(globalThis, allocator);
+    const name_slice = try name_value.toSlice(globalThis, allocator);
     defer name_slice.deinit();
 
     var name = alias_slice.slice();

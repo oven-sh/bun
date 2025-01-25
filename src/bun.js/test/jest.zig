@@ -1217,9 +1217,18 @@ pub const DescribeScope = struct {
                 _ = globalThis.bunVM().uncaughtException(globalThis, err, true);
             }
         }
+        const allocator = getAllocator(globalThis);
 
-        this.pending_tests.deinit(getAllocator(globalThis));
-        this.tests.clearAndFree(getAllocator(globalThis));
+        if (this.label.len > 0) {
+            allocator.free(this.label);
+        }
+        this.pending_tests.deinit(allocator);
+        for (this.tests.items) |t| {
+            if (t.label.len > 0) {
+                allocator.free(t.label);
+            }
+        }
+        this.tests.clearAndFree(allocator);
     }
 
     const ScopeStack = ObjectPool(std.ArrayListUnmanaged(*DescribeScope), null, true, 16);

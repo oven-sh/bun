@@ -1028,7 +1028,8 @@ pub const VirtualMachine = struct {
             vm.active_tasks +
             vm.event_loop.tasks.count +
             vm.event_loop.immediate_tasks.count +
-            vm.event_loop.next_immediate_tasks.count) > 0;
+            vm.event_loop.next_immediate_tasks.count +
+            @intFromBool(vm.event_loop.hasPendingRefs()) > 0);
     }
 
     pub fn wakeup(this: *VirtualMachine) void {

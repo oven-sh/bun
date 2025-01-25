@@ -545,8 +545,6 @@ pub const Task = TaggedPointerUnion(.{
     WriteFile,
     WriteFileTask,
     Writev,
-    EventLoop.RefConcurrentlyTask,
-    EventLoop.UnrefConcurrentlyTask,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
@@ -1352,14 +1350,6 @@ pub const EventLoop = struct {
                     var any: *StatFS = task.get(StatFS).?;
                     any.runFromJSThread();
                 },
-                @field(Task.Tag, typeBaseName(@typeName(RefConcurrentlyTask))) => {
-                    const loop = this.virtual_machine.event_loop_handle.?;
-                    loop.ref();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(UnrefConcurrentlyTask))) => {
-                    const loop = this.virtual_machine.event_loop_handle.?;
-                    loop.unref();
-                },
 
                 else => {
                     bun.Output.panic("Unexpected tag: {s}", .{@tagName(task.tag())});
@@ -1385,7 +1375,35 @@ pub const EventLoop = struct {
         _ = this.tickConcurrentWithCount();
     }
 
+    /// Check whether refConcurrently has been called but the change has not yet been applied to the
+    /// underlying event loop's `active` counter
+    pub fn hasPendingRefs(this: *const EventLoop) bool {
+        return this.concurrent_ref.load(.seq_cst) > 0;
+    }
+
+    fn updateCounts(this: *EventLoop) void {
+        const delta = this.concurrent_ref.swap(0, .seq_cst);
+        const loop = this.virtual_machine.event_loop_handle.?;
+        if (comptime Environment.isWindows) {
+            if (delta > 0) {
+                loop.active_handles += @intCast(delta);
+            } else {
+                loop.active_handles -= @intCast(-delta);
+            }
+        } else {
+            if (delta > 0) {
+                loop.num_polls += @intCast(delta);
+                loop.active += @intCast(delta);
+            } else {
+                loop.num_polls -= @intCast(-delta);
+                loop.active -= @intCast(-delta);
+            }
+        }
+    }
+
     pub fn tickConcurrentWithCount(this: *EventLoop) usize {
+        this.updateCounts();
+
         if (comptime Environment.isPosix) {
             if (this.signal_handler) |signal_handler| {
                 signal_handler.drain(this);
@@ -1727,21 +1745,14 @@ pub const EventLoop = struct {
         this.wakeup();
     }
 
-    pub const RefConcurrentlyTask = struct {
-        var instance: @This() = .{};
-    };
-
     pub fn refConcurrently(this: *EventLoop) void {
-        this.enqueueTaskConcurrent(ConcurrentTask.create(Task.init(&RefConcurrentlyTask.instance)));
+        _ = this.concurrent_ref.fetchAdd(1, .seq_cst);
         this.wakeup();
     }
 
-    pub const UnrefConcurrentlyTask = struct {
-        var instance: @This() = .{};
-    };
-
     pub fn unrefConcurrently(this: *EventLoop) void {
-        this.enqueueTaskConcurrent(ConcurrentTask.create(Task.init(&UnrefConcurrentlyTask.instance)));
+        // TODO maybe this should be AcquireRelease
+        _ = this.concurrent_ref.fetchSub(1, .seq_cst);
         this.wakeup();
     }
 };

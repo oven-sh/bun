@@ -1411,6 +1411,7 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*
     const uint8_t* typedVector = buffer->typedVector();
     size_t byteLength = buffer->byteLength();
     std::optional<BufferEncodingType> encoding = std::nullopt;
+    double byteOffsetD = 0;
 
     if (byteLength == 0) return -1;
 
@@ -1421,19 +1422,18 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*
     if (byteOffsetValue.isString()) {
         encodingValue = byteOffsetValue;
         byteOffsetValue = jsUndefined();
+        byteOffsetD = 0;
     } else {
-        double byteOffset = byteOffsetValue.toNumber(lexicalGlobalObject);
+        byteOffsetD = byteOffsetValue.toNumber(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, -1);
-        if (byteOffset > 0x7fffffffp0f) byteOffsetValue = jsDoubleNumber(0x7fffffffp0f);
-        if (byteOffset < -0x80000000p0f) byteOffsetValue = jsDoubleNumber(-0x80000000p0f);
+        if (byteOffsetD > 0x7fffffffp0f) byteOffsetD = 0x7fffffffp0f;
+        if (byteOffsetD < -0x80000000p0f) byteOffsetD = -0x80000000p0f;
     }
 
-    byteOffsetValue = jsDoubleNumber(byteOffsetValue.toNumber(lexicalGlobalObject));
-    RETURN_IF_EXCEPTION(scope, -1);
-    if (std::isnan(byteOffsetValue.asNumber())) byteOffsetValue = jsNumber(dir ? 0 : byteLength);
+    if (std::isnan(byteOffsetD)) byteOffsetD = dir ? 0 : byteLength;
 
     if (valueValue.isNumber()) {
-        ssize_t byteOffset = indexOfOffset(byteLength, byteOffsetValue.asNumber(), 1, dir);
+        ssize_t byteOffset = indexOfOffset(byteLength, byteOffsetD, 1, dir);
         if (byteOffset == -1) return -1;
         uint8_t byteValue = (valueValue.toInt32(lexicalGlobalObject)) % 256;
         RETURN_IF_EXCEPTION(scope, -1);
@@ -1463,11 +1463,11 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*
         }
         auto* str = valueValue.toStringOrNull(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, -1);
-        ssize_t byteOffset = indexOfOffset(byteLength, byteOffsetValue.asNumber(), str->length(), dir);
+        ssize_t byteOffset = indexOfOffset(byteLength, byteOffsetD, str->length(), dir);
         if (byteOffset == -1) return -1;
         if (str->length() == 0) return byteOffset;
         JSC::EncodedJSValue encodedBuffer = constructFromEncoding(lexicalGlobalObject, str, encoding.value());
-        auto* arrayValue = JSC::jsDynamicCast<JSC::JSUint8Array*>(JSC::JSValue::decode(encodedBuffer));
+        auto* arrayValue = JSC::jsCast<JSC::JSUint8Array*>(JSC::JSValue::decode(encodedBuffer));
         int64_t lengthValue = static_cast<int64_t>(arrayValue->byteLength());
         const uint8_t* typedVectorValue = arrayValue->typedVector();
         if (last) {
@@ -1481,7 +1481,7 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*
     if (auto* array = JSC::jsDynamicCast<JSC::JSUint8Array*>(valueValue)) {
         if (!encoding.has_value()) encoding = BufferEncodingType::utf8;
         size_t lengthValue = array->byteLength();
-        ssize_t byteOffset = indexOfOffset(byteLength, byteOffsetValue.asNumber(), lengthValue, dir);
+        ssize_t byteOffset = indexOfOffset(byteLength, byteOffsetD, lengthValue, dir);
         if (byteOffset == -1) return -1;
         if (lengthValue == 0) return byteOffset;
         const uint8_t* typedVectorValue = array->typedVector();

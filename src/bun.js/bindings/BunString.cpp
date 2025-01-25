@@ -98,17 +98,11 @@ extern "C" JSC::EncodedJSValue BunString__createUTF8ForJS(JSC::JSGlobalObject* g
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (length == 0) {
+        return JSValue::encode(jsEmptyString(vm));
+    }
     if (simdutf::validate_ascii(ptr, length)) {
-        std::span<LChar> destination;
-
-        auto impl = WTF::StringImpl::tryCreateUninitialized(length, destination);
-        if (UNLIKELY(!impl)) {
-            throwOutOfMemoryError(globalObject, scope);
-            return JSC::EncodedJSValue();
-        }
-        std::span<const LChar> source = { reinterpret_cast<const LChar*>(ptr), length };
-        WTF::memcpySpan(destination, source);
-        return JSValue::encode(jsString(vm, String(WTFMove(impl))));
+        return JSValue::encode(jsString(vm, WTF::String(std::span<const LChar>(reinterpret_cast<const LChar*>(ptr), length))));
     }
 
     auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const LChar*>(ptr), length });
@@ -116,7 +110,7 @@ extern "C" JSC::EncodedJSValue BunString__createUTF8ForJS(JSC::JSGlobalObject* g
         throwOutOfMemoryError(globalObject, scope);
         return JSC::EncodedJSValue();
     }
-    return JSValue::encode(jsString(vm, str));
+    return JSValue::encode(jsString(vm, WTFMove(str)));
 }
 
 extern "C" JSC::EncodedJSValue BunString__transferToJS(BunString* bunString, JSC::JSGlobalObject* globalObject)
@@ -129,7 +123,15 @@ extern "C" JSC::EncodedJSValue BunString__transferToJS(BunString* bunString, JSC
     }
 
     if (LIKELY(bunString->tag == BunStringTag::WTFStringImpl)) {
+#if ASSERT_ENABLED
+        unsigned refCount = bunString->impl.wtf->refCount();
+        ASSERT(refCount > 0 && !bunString->impl.wtf->isEmpty());
+#endif
         auto str = bunString->toWTFString();
+#if ASSERT_ENABLED
+        unsigned newRefCount = bunString->impl.wtf->refCount();
+        ASSERT(newRefCount == refCount + 1);
+#endif
         bunString->impl.wtf->deref();
         *bunString = { .tag = BunStringTag::Dead };
         return JSValue::encode(jsString(vm, WTFMove(str)));

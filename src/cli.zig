@@ -47,6 +47,7 @@ pub var start_time: i128 = undefined;
 const Bunfig = @import("./bunfig.zig").Bunfig;
 const OOM = bun.OOM;
 
+export var Bun__Node__ZeroFillBuffers = false;
 export var Bun__Node__ProcessNoDeprecation = false;
 export var Bun__Node__ProcessThrowDeprecation = false;
 
@@ -241,6 +242,7 @@ pub const Arguments = struct {
         clap.parseParam("--no-deprecation                  Suppress all reporting of the custom deprecation.") catch unreachable,
         clap.parseParam("--throw-deprecation               Determine whether or not deprecation warnings result in errors.") catch unreachable,
         clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
+        clap.parseParam("--zero-fill-buffers               Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -812,6 +814,9 @@ pub const Arguments = struct {
             }
             if (args.option("--title")) |title| {
                 Bun__Node__ProcessTitle = title;
+            }
+            if (args.flag("--zero-fill-buffers")) {
+                Bun__Node__ZeroFillBuffers = true;
             }
         }
 

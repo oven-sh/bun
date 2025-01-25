@@ -105,23 +105,11 @@ var protocolPattern = /^([a-z0-9.+-]+:)/i,
     "file:": true,
   };
 
-let urlParseWarned = false;
 function urlParse(
   url: string | URL | Url, // really has unknown type but intellisense is nice
   parseQueryString?: boolean,
   slashesDenoteHost?: boolean,
 ) {
-  if (!urlParseWarned && !lazyUtil().isInsideNodeModules()) {
-    urlParseWarned = true;
-    process.emitWarning(
-      "`url.parse()` behavior is not standardized and prone to " +
-        "errors that have security implications. Use the WHATWG URL API " +
-        "instead. CVEs are not issued for `url.parse()` vulnerabilities.",
-      "DeprecationWarning",
-      "DEP0169",
-    );
-  }
-
   if ($isObject(url) && url instanceof Url) return url;
 
   var u = new Url();

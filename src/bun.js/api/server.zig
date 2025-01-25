@@ -270,6 +270,7 @@ pub const ServerConfig = struct {
     reuse_port: bool = false,
     id: []const u8 = "",
     allow_hot: bool = true,
+    ipv6_only: bool = false,
 
     static_routes: std.ArrayList(StaticRouteEntry) = std.ArrayList(StaticRouteEntry).init(bun.default_allocator),
 
@@ -447,6 +448,20 @@ pub const ServerConfig = struct {
         }
 
         return arraylist.items;
+    }
+
+    pub fn getUsocketsOptions(this: *const ServerConfig) i32 {
+        // Unlike Node.js, we set exclusive port in case reuse port is not set
+        var out: i32 = if (this.reuse_port)
+            uws.LIBUS_LISTEN_REUSE_PORT | uws.LIBUS_LISTEN_REUSE_ADDR
+        else
+            uws.LIBUS_LISTEN_EXCLUSIVE_PORT;
+
+        if (this.ipv6_only) {
+            out |= uws.LIBUS_SOCKET_IPV6_ONLY;
+        }
+
+        return out;
     }
 
     pub const SSLConfig = struct {
@@ -1276,6 +1291,11 @@ pub const ServerConfig = struct {
 
             if (try arg.get(global, "reusePort")) |dev| {
                 args.reuse_port = dev.coerce(bool, global);
+            }
+            if (global.hasException()) return error.JSError;
+
+            if (try arg.get(global, "ipv6Only")) |dev| {
+                args.ipv6_only = dev.coerce(bool, global);
             }
             if (global.hasException()) return error.JSError;
 
@@ -4643,11 +4663,7 @@ pub const ServerWebSocket = struct {
         const arguments = [_]JSValue{
             this.getThisValue(),
             switch (opcode) {
-                .text => brk: {
-                    var str = ZigString.init(message);
-                    str.markUTF8();
-                    break :brk str.toJS(globalObject);
-                },
+                .text => bun.String.createUTF8ForJS(globalObject, message),
                 .binary => this.binaryToJS(globalObject, message),
                 else => unreachable,
             },
@@ -4811,13 +4827,12 @@ pub const ServerWebSocket = struct {
         }
 
         if (!handler.onClose.isEmptyOrUndefinedOrNull()) {
-            var str = ZigString.init(message);
             const globalObject = handler.globalObject;
             const loop = vm.eventLoop();
 
             loop.enter();
             defer loop.exit();
-            str.markUTF8();
+
             if (signal) |sig| {
                 if (!sig.aborted()) {
                     sig.signal(handler.globalObject, .ConnectionClosed);
@@ -4827,7 +4842,7 @@ pub const ServerWebSocket = struct {
             _ = handler.onClose.call(
                 globalObject,
                 .undefined,
-                &[_]JSC.JSValue{ this.getThisValue(), JSValue.jsNumber(code), str.toJS(globalObject) },
+                &[_]JSC.JSValue{ this.getThisValue(), JSValue.jsNumber(code), bun.String.createUTF8ForJS(globalObject, message) },
             ) catch |e| {
                 const err = globalObject.takeException(e);
                 log("onClose error", .{});
@@ -5764,7 +5779,7 @@ pub const ServerWebSocket = struct {
         };
 
         const text = bun.fmt.formatIp(address, &text_buf) catch unreachable;
-        return ZigString.init(text).toJS(globalThis);
+        return bun.String.createUTF8ForJS(globalThis, text);
     }
 };
 
@@ -6075,7 +6090,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             return if (request.request_context.getRemoteSocketInfo()) |info|
                 JSSocketAddress__create(
                     this.globalThis,
-                    bun.String.init(info.ip).toJS(this.globalThis),
+                    bun.String.createUTF8ForJS(this.globalThis, info.ip),
                     info.port,
                     info.is_ipv6,
                 )
@@ -7554,8 +7569,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     app.listenWithConfig(*ThisServer, this, onListen, .{
                         .port = tcp.port,
                         .host = host,
-                        // IPV6_ONLY is the default for bun, different from node it also set exclusive port in case reuse port is not set
-                        .options = (if (this.config.reuse_port) uws.LIBUS_SOCKET_REUSE_PORT else uws.LIBUS_LISTEN_EXCLUSIVE_PORT) | uws.LIBUS_SOCKET_IPV6_ONLY,
+                        .options = this.config.getUsocketsOptions(),
                     });
                 },
 
@@ -7565,8 +7579,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         this,
                         onListen,
                         unix,
-                        // IPV6_ONLY is the default for bun, different from node it also set exclusive port in case reuse port is not set
-                        (if (this.config.reuse_port) uws.LIBUS_SOCKET_REUSE_PORT else uws.LIBUS_LISTEN_EXCLUSIVE_PORT) | uws.LIBUS_SOCKET_IPV6_ONLY,
+                        this.config.getUsocketsOptions(),
                     );
                 },
             }

@@ -614,7 +614,13 @@ pub const Listener = struct {
 
         const ssl_enabled = ssl != null;
 
-        var socket_flags: i32 = if (exclusive) uws.LIBUS_LISTEN_EXCLUSIVE_PORT else (if (socket_config.reusePort) uws.LIBUS_SOCKET_REUSE_PORT else uws.LIBUS_LISTEN_DEFAULT);
+        var socket_flags: i32 = if (exclusive)
+            uws.LIBUS_LISTEN_EXCLUSIVE_PORT
+        else if (socket_config.reusePort)
+            uws.LIBUS_LISTEN_REUSE_PORT | uws.LIBUS_LISTEN_REUSE_ADDR
+        else
+            uws.LIBUS_LISTEN_DEFAULT;
+
         if (socket_config.allowHalfOpen) {
             socket_flags |= uws.LIBUS_SOCKET_ALLOW_HALF_OPEN;
         }
@@ -3877,9 +3883,9 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
             BoringSSL.load();
 
             const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl_options);
+            var err: uws.create_bun_socket_error_t = .none;
             // Create SSL context using uSockets to match behavior of node.js
-            const ctx = uws.create_ssl_context_from_bun_options(ctx_opts) orelse return error.InvalidOptions; // invalid options
-            errdefer BoringSSL.SSL_CTX_free(ctx);
+            const ctx = uws.create_ssl_context_from_bun_options(ctx_opts, &err) orelse return error.InvalidOptions; // invalid options
             this.ctx = ctx;
         }
 

@@ -475,8 +475,7 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *JSC.JSGlobalObject, extra_opt
         return S3.throwSignError(sign_err, globalThis);
     };
     defer result.deinit();
-    var str = bun.String.fromUTF8(result.url);
-    return str.transferToJS(this.globalThis);
+    return bun.String.createUTF8ForJS(this.globalThis, result.url);
 }
 pub fn getBucketName(
     this: *const Blob,

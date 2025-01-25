@@ -536,3 +536,106 @@ it("createDecipheriv should validate iv and password", () => {
   expect(() => crypto.createDecipheriv("aes-128-cbc", key).setAutoPadding(false)).toThrow();
   expect(() => crypto.createDecipheriv("aes-128-cbc", key, Buffer.alloc(16)).setAutoPadding(false)).not.toThrow();
 });
+
+it("x25519", () => {
+  // Generate Alice's keys
+  const alice = crypto.generateKeyPairSync("x25519", {
+    publicKeyEncoding: {
+      type: "spki",
+      format: "der",
+    },
+    privateKeyEncoding: {
+      type: "pkcs8",
+      format: "der",
+    },
+  });
+
+  // Generate Bob's keys
+  const bob = crypto.generateKeyPairSync("x25519", {
+    publicKeyEncoding: {
+      type: "spki",
+      format: "der",
+    },
+    privateKeyEncoding: {
+      type: "pkcs8",
+      format: "der",
+    },
+  });
+
+  // Convert keys to KeyObjects before DH computation
+  const alicePrivateKey = crypto.createPrivateKey({
+    key: alice.privateKey,
+    format: "der",
+    type: "pkcs8",
+  });
+
+  const bobPublicKey = crypto.createPublicKey({
+    key: bob.publicKey,
+    format: "der",
+    type: "spki",
+  });
+
+  const bobPrivateKey = crypto.createPrivateKey({
+    key: bob.privateKey,
+    format: "der",
+    type: "pkcs8",
+  });
+
+  const alicePublicKey = crypto.createPublicKey({
+    key: alice.publicKey,
+    format: "der",
+    type: "spki",
+  });
+
+  // Compute shared secrets using KeyObjects
+  const aliceSecret = crypto.diffieHellman({
+    privateKey: alicePrivateKey,
+    publicKey: bobPublicKey,
+  });
+
+  const bobSecret = crypto.diffieHellman({
+    privateKey: bobPrivateKey,
+    publicKey: alicePublicKey,
+  });
+
+  // Verify both parties computed the same secret
+  expect(aliceSecret).toEqual(bobSecret);
+  expect(aliceSecret.length).toBe(32);
+
+  // Verify valid key generation
+  expect(() => {
+    crypto.generateKeyPairSync("x25519", {
+      publicKeyEncoding: {
+        type: "spki",
+        format: "der",
+      },
+      privateKeyEncoding: {
+        type: "pkcs8",
+        format: "der",
+      },
+    });
+  }).not.toThrow();
+
+  // Test invalid keys - need to create proper KeyObjects even for invalid cases
+  expect(() => {
+    crypto.diffieHellman({
+      privateKey: crypto.createPrivateKey({
+        key: Buffer.from("invalid"),
+        format: "der",
+        type: "pkcs8",
+      }),
+      publicKey: bobPublicKey,
+    });
+  }).toThrow();
+
+  expect(() => {
+    crypto.diffieHellman({
+      privateKey: bobPrivateKey,
+      publicKey: crypto.createPublicKey({
+        key: Buffer.from("invalid"),
+        format: "der",
+        type: "spki",
+      }),
+    });
+  }).toThrow();
+});

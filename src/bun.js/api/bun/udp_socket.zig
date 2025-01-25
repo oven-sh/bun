@@ -864,8 +864,7 @@ pub const UDPSocket = struct {
         };
 
         const slice = bun.fmt.formatIp(address, &text_buf) catch unreachable;
-        var str = bun.String.createLatin1(slice);
-        return str.transferToJS(globalThis);
+        return bun.String.createUTF8ForJS(globalThis, slice);
     }
 
     pub fn getAddress(this: *This, globalThis: *JSGlobalObject) JSValue {

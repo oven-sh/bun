@@ -484,21 +484,15 @@ pub const GridTemplateAreas = union(enum) {
         var row: u32 = 0;
         var columns: u32 = 0;
 
-        while (input.tryParse(struct {
-            fn parse(i: *css.Parser) css.Result([]const u8) {
-                return i.expectString();
-            }
-        }.parse, .{}).asValue()) |s| {
-            const parsed_columns = switch (parseString(s, &tokens)) {
+        if (input.tryParse(css.Parser.expectString, .{}).asValue()) |s| {
+            const parsed_columns = switch (parseString(input.allocator(), s, &tokens)) {
                 .result => |v| v,
-                .err => return .{ .err = input.newError(.qualified_rule_invalid) },
+                .err => return .{input.newError(.qualified_rule_invalid)},
             };
 
             if (row == 0) {
                 columns = parsed_columns;
-            } else if (parsed_columns != columns) {
-                return .{ .err = input.newCustomError(.invalid_declaration) };
-            }
+            } else if (parsed_columns != columns) return .{ .err = input.newCustomError(.invalid_declaration) };
 
             row += 1;
         }
@@ -508,4 +502,60 @@ pub const GridTemplateAreas = union(enum) {
             .areas = tokens,
         } } };
     }
+
+    const HTML_SPACE_CHARACTERS: []const u8 = &.{ 0x0020, 0x0009, 0x000a, 0x000c, 0x000d };
+
+    fn parseString(allocator: Allocator, s: []const u8, tokens: *SmallList(?[]const u8, 1)) bun.Maybe(u32, void) {
+        var string = s;
+        var column = 0;
+
+        while (true) {
+            const rest = bun.strings.trim(string, HTML_SPACE_CHARACTERS);
+            if (rest.len == 0) {
+                // Each string must produce a valid token.
+                if (column == 0) return .{ .err = {} };
+                break;
+            }
+
+            column += 1;
+
+            if (bun.strings.startsWithChar(rest, '.')) {
+                const idx = idx: {
+                    for (rest, 0..) |*c, i| {
+                        if (c.* != '.') {
+                            break :idx i;
+                        }
+                    }
+                    break :idx rest.len;
+                };
+                string = rest[idx..];
+            }
+
+            const starts_with_name_codepoint = brk: {
+                if (rest.len == 0) break :brk false;
+                break :brk isNameCodepoint(rest[0]);
+            };
+
+            if (!starts_with_name_codepoint) return .{ .err = {} };
+
+            const token_len = token_len: {
+                for (rest, 0..) |*c, i| {
+                    if (!isNameCodepoint(c.*)) {
+                        break :token_len i;
+                    }
+                }
+                break :token_len rest.len;
+            };
+            const token = rest[0..token_len];
+            tokens.append(allocator, token) catch bun.outOfMemory();
+            string = rest[token_len..];
+        }
+
+        return .{ .result = column };
+    }
 };
+
+fn isNameCodepoint(c: u8) bool {
+    // alpha numeric, -, _, o
+    return c >= 'a' and c <= 'z' or c >= 'A' and c <= 'Z' or c == '_' or c >= '0' and c <= '9' or c == '-' or c >= 0x80; // codepoints larger than ascii;
+}

@@ -1524,12 +1524,16 @@ pub const RunCommand = struct {
         log("Try resolve `{s}` in `{s}`", .{ target_name, this_transpiler.fs.top_level_dir });
         if (this_transpiler.resolver.resolve(this_transpiler.fs.top_level_dir, target_name, .entry_point_run)) |resolved| {
             var resolved_mutable = resolved;
-            log("Resolved to: `{s}`", .{resolved_mutable.path().?.text});
-            return _bootAndHandleError(ctx, resolved_mutable.path().?.text);
+            if (!std.mem.endsWith(u8, resolved_mutable.path().?.text, ".json")) {
+                log("Resolved to: `{s}`", .{resolved_mutable.path().?.text});
+                return _bootAndHandleError(ctx, resolved_mutable.path().?.text);
+            }
         } else |_| if (this_transpiler.resolver.resolve(this_transpiler.fs.top_level_dir, try std.mem.join(ctx.allocator, "", &.{ "./", target_name }), .entry_point_run)) |resolved| {
             var resolved_mutable = resolved;
-            log("Resolved with `./` to: `{s}`", .{resolved_mutable.path().?.text});
-            return _bootAndHandleError(ctx, resolved_mutable.path().?.text);
+            if (!std.mem.endsWith(u8, resolved_mutable.path().?.text, ".json")) {
+                log("Resolved with `./` to: `{s}`", .{resolved_mutable.path().?.text});
+                return _bootAndHandleError(ctx, resolved_mutable.path().?.text);
+            }
         } else |_| {}
 
         // execute a node_modules/.bin/<X> command, or (run only) a system command like 'ls'

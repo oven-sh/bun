@@ -995,7 +995,7 @@ pub fn format(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]J
     }
     var _name: []const u8 = "";
     var _name_slice: ?JSC.ZigString.Slice = null;
-    deferif (_name_slice) |slice| slice.deinit();
+    defer if (_name_slice) |slice| slice.deinit();
 
     if (try pathObject_ptr.getTruthy(globalObject, "name")) |jsValue| {
         _name_slice = try jsValue.toSlice(globalObject, allocator);

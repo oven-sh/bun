@@ -902,22 +902,34 @@ pub fn parseLab(
             return this.parser.parseRelative(i, T, CssColor, @This().innerfn, .{});
         }
 
-        pub fn innerfn(i: *css.Parser, p: *ComponentParser) Result(CssColor) {
-            // f32::max() does not propagate NaN, so use clamp for now until f32::maximum() is stable.
-            const l = bun.clamp(
-                switch (p.parsePercentage(i)) {
-                    .result => |v| v,
-                    .err => |e| return .{ .err = e },
+        fn parseAB(p: *ComponentParser, i: *css.Parser) Result(f32) {
+            const state = i.state();
+            switch (p.parseNumber(i)) {
+                .result => |v| return .{ .result = bun.clamp(v, -125.0, 125.0) },
+                .err => {
+                    i.reset(&state);
+                    return switch (p.parsePercentage(i)) {
+                        .result => |pct| .{ .result = pct * 125.0 },
+                        .err => |e| .{ .err = e },
+                    };
                 },
-                0.0,
-                std.math.floatMax(f32),
-            );
-            const a = switch (p.parseNumber(i)) {
-                .result => |vv| vv,
+            }
+        }
+
+        pub fn innerfn(i: *css.Parser, p: *ComponentParser) Result(CssColor) {
+            const l = switch (p.parseNumberOrPercentage(i)) {
+                .result => |v| switch (v) {
+                    .number => |n| bun.clamp(n.value, 0.0, 100.0) / 100.0,
+                    .percentage => |pct| pct.unit_value,
+                },
                 .err => |e| return .{ .err = e },
             };
-            const b = switch (p.parseNumber(i)) {
-                .result => |vv| vv,
+            const a = switch (parseAB(p, i)) {
+                .result => |v| v,
+                .err => |e| return .{ .err = e },
+            };
+            const b = switch (parseAB(p, i)) {
+                .result => |v| v,
                 .err => |e| return .{ .err = e },
             };
             const alpha = switch (parseAlpha(i, p)) {

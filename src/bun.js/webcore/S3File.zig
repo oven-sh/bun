@@ -251,7 +251,7 @@ pub fn constructS3FileWithS3CredentialsAndOptions(
                 inner: {
                     if (file_type.isString()) {
                         var allocator = bun.default_allocator;
-                        var str = file_type.toSlice(globalObject, bun.default_allocator);
+                        var str = try file_type.toSlice(globalObject, bun.default_allocator);
                         defer str.deinit();
                         const slice = str.slice();
                         if (!strings.isAllASCII(slice)) {
@@ -294,7 +294,7 @@ pub fn constructS3FileWithS3Credentials(
                 inner: {
                     if (file_type.isString()) {
                         var allocator = bun.default_allocator;
-                        var str = file_type.toSlice(globalObject, bun.default_allocator);
+                        var str = try file_type.toSlice(globalObject, bun.default_allocator);
                         defer str.deinit();
                         const slice = str.slice();
                         if (!strings.isAllASCII(slice)) {

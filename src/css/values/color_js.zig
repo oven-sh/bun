@@ -232,7 +232,7 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
             };
         }
 
-        input = args[0].toSlice(globalThis, bun.default_allocator);
+        input = try args[0].toSlice(globalThis, bun.default_allocator);
 
         var parser_input = css.ParserInput.new(allocator, input.slice());
         var parser = css.Parser.new(&parser_input, null);

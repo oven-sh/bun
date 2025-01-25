@@ -592,11 +592,11 @@ pub const TestScope = struct {
         actual: u32 = 0,
     };
 
-    pub fn deinit(this: *TestScope) void {
+    pub fn deinit(this: *TestScope, globalThis: *JSGlobalObject) void {
         if (this.label.len > 0) {
             const label = this.label;
             this.label = "";
-            bun.default_allocator.free(label);
+            getAllocator(globalThis).free(label);
         }
     }
 
@@ -1165,8 +1165,7 @@ pub const DescribeScope = struct {
                     Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, 0, this);
                     i += 1;
                 }
-                this.tests.clearAndFree(allocator);
-                this.pending_tests.deinit(allocator);
+                this.deinit(globalObject);
                 return;
             }
             if (end == 0) {
@@ -1225,6 +1224,10 @@ pub const DescribeScope = struct {
                 _ = globalThis.bunVM().uncaughtException(globalThis, err, true);
             }
         }
+        this.deinit(globalThis);
+    }
+
+    pub fn deinit(this: *DescribeScope, globalThis: *JSGlobalObject) void {
         const allocator = getAllocator(globalThis);
 
         if (this.label.len > 0) {
@@ -1232,9 +1235,10 @@ pub const DescribeScope = struct {
             this.label = "";
             allocator.free(label);
         }
+
         this.pending_tests.deinit(allocator);
         for (this.tests.items) |t| {
-            t.deinit();
+            t.deinit(globalThis);
         }
         this.tests.clearAndFree(allocator);
     }

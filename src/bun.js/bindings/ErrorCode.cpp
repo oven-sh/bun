@@ -387,7 +387,6 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
         for (unsigned i = 0; i < length - 1; i++) {
             JSValue expected_type = expected_types.at(i);
             result.append(expected_type.toWTFString(globalObject));
-            RETURN_IF_EXCEPTION(scope, {});
             result.append(", "_s);
         }
         result.append("or "_s);

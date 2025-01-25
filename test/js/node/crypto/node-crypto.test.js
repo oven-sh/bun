@@ -562,22 +562,47 @@ it("x25519", () => {
     },
   });
 
-  // Compute shared secrets
+  // Convert keys to KeyObjects before DH computation
+  const alicePrivateKey = crypto.createPrivateKey({
+    key: alice.privateKey,
+    format: "der",
+    type: "pkcs8",
+  });
+
+  const bobPublicKey = crypto.createPublicKey({
+    key: bob.publicKey,
+    format: "der",
+    type: "spki",
+  });
+
+  const bobPrivateKey = crypto.createPrivateKey({
+    key: bob.privateKey,
+    format: "der",
+    type: "pkcs8",
+  });
+
+  const alicePublicKey = crypto.createPublicKey({
+    key: alice.publicKey,
+    format: "der",
+    type: "spki",
+  });
+
+  // Compute shared secrets using KeyObjects
   const aliceSecret = crypto.diffieHellman({
-    privateKey: alice.privateKey,
-    publicKey: bob.publicKey,
+    privateKey: alicePrivateKey,
+    publicKey: bobPublicKey,
   });
 
   const bobSecret = crypto.diffieHellman({
-    privateKey: bob.privateKey,
-    publicKey: alice.publicKey,
+    privateKey: bobPrivateKey,
+    publicKey: alicePublicKey,
   });
 
   // Verify both parties computed the same secret
   expect(aliceSecret).toEqual(bobSecret);
   expect(aliceSecret.length).toBe(32);
 
-  // Verify the key is valid
+  // Verify valid key generation
   expect(() => {
     crypto.generateKeyPairSync("x25519", {
       publicKeyEncoding: {
@@ -591,18 +616,26 @@ it("x25519", () => {
     });
   }).not.toThrow();
 
-  // Invalid key should throw
+  // Test invalid keys - need to create proper KeyObjects even for invalid cases
   expect(() => {
     crypto.diffieHellman({
-      privateKey: Buffer.from("invalid"),
-      publicKey: bob.publicKey,
+      privateKey: crypto.createPrivateKey({
+        key: Buffer.from("invalid"),
+        format: "der",
+        type: "pkcs8",
+      }),
+      publicKey: bobPublicKey,
     });
   }).toThrow();
 
   expect(() => {
     crypto.diffieHellman({
-      privateKey: bob.privateKey,
-      publicKey: Buffer.from("invalid"),
+      privateKey: bobPrivateKey,
+      publicKey: crypto.createPublicKey({
+        key: Buffer.from("invalid"),
+        format: "der",
+        type: "spki",
+      }),
     });
   }).toThrow();
 });

@@ -1228,7 +1228,9 @@ pub const DescribeScope = struct {
         const allocator = getAllocator(globalThis);
 
         if (this.label.len > 0) {
-            allocator.free(this.label);
+            const label = this.label;
+            this.label = "";
+            allocator.free(label);
         }
         this.pending_tests.deinit(allocator);
         for (this.tests.items) |t| {

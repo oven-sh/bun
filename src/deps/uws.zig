@@ -2641,9 +2641,8 @@ pub const us_bun_socket_context_options_t = extern struct {
     client_renegotiation_limit: u32 = 3,
     client_renegotiation_window: u32 = 600,
 };
-pub extern fn create_ssl_context_from_bun_options(options: us_bun_socket_context_options_t) ?*BoringSSL.SSL_CTX;
 
-pub const create_bun_socket_error_t = enum(i32) {
+pub const create_bun_socket_error_t = enum(c_int) {
     none = 0,
     load_ca_file,
     invalid_ca_file,
@@ -2661,6 +2660,8 @@ pub const create_bun_socket_error_t = enum(i32) {
         };
     }
 };
+
+pub extern fn create_ssl_context_from_bun_options(options: us_bun_socket_context_options_t, err: *create_bun_socket_error_t) ?*BoringSSL.SSL_CTX;
 
 pub const us_bun_verify_error_t = extern struct {
     error_no: i32 = 0,

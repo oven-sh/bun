@@ -7,7 +7,7 @@
 // supported macros that aren't json value -> json value. Otherwise, I'd use a real JS parser/ast
 // library, instead of RegExp hacks.
 //
-// For explanation on this, please nag @paperdave to write documentation on how everything works.
+// For explanation on this, please nag @paperclover to write documentation on how everything works.
 import fs from "fs";
 import { mkdir, writeFile } from "fs/promises";
 import { builtinModules } from "node:module";
@@ -19,6 +19,7 @@ import { getJS2NativeCPP, getJS2NativeZig } from "./generate-js2native";
 import { cap, declareASCIILiteral, writeIfNotChanged } from "./helpers";
 import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
 import { define } from "./replacements";
+import jsclasses from "./../bun.js/bindings/js_classes";
 
 const BASE = path.join(import.meta.dir, "../js");
 const debug = process.argv[2] === "--debug=ON";
@@ -387,7 +388,11 @@ pub const ResolvedSourceTag = enum(u32) {
     file = 4,
     esm = 5,
     json_for_object_loader = 6,
+    /// Generate an object with "default" set to all the exports, including a "default" propert
     exports_object = 7,
+
+    /// Generate a module that only exports default the input JSValue
+    export_default_object = 8,
 
     // Built in modules are loaded through InternalModuleRegistry by numerical ID.
     // In this enum are represented as \`(1 << 9) & id\`
@@ -412,6 +417,7 @@ writeIfNotChanged(
     ESM = 5,
     JSONForObjectLoader = 6,
     ExportsObject = 7,
+    ExportDefaultObject = 8,
     // Built in modules are loaded through InternalModuleRegistry by numerical ID.
     // In this enum are represented as \`(1 << 9) & id\`
     InternalModuleRegistryFlag = 1 << 9,
@@ -452,16 +458,33 @@ writeIfNotChanged(
 `;
 
     for (let i = 0; i < ErrorCode.length; i++) {
-      const [code, _, name] = ErrorCode[i];
+      const [code, constructor, name, ...other_constructors] = ErrorCode[i];
       dts += `
 /**
- * Generate a ${name} error with the \`code\` property set to ${code}.
+ * Generate a ${name ?? constructor.name} error with the \`code\` property set to ${code}.
  *
  * @param msg The error message
  * @param args Additional arguments
  */
 declare function $${code}(msg: string, ...args: any[]): ${name};
 `;
+
+      for (const con of other_constructors) {
+        if (con == null) continue;
+        dts += `
+/**
+ * Generate a ${con.name} error with the \`code\` property set to ${code}.
+ *
+ * @param msg The error message
+ * @param args Additional arguments
+ */
+declare function $${code}_${con.name}(msg: string, ...args: any[]): ${name};
+`;
+      }
+    }
+
+    for (const [name] of jsclasses) {
+      dts += `\ndeclare function $inherits${name}(value: any): boolean;`;
     }
 
     return dts;

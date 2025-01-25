@@ -103,7 +103,6 @@ error: Hello World`,
     run: { stdout: "" },
   });
   if (Bun.version.startsWith("1.2")) {
-    throw new Error("TODO: enable these tests please");
     for (const backend of ["api", "cli"] as const) {
       itBundled("bun/ExportsConditionsDevelopment" + backend.toUpperCase(), {
         files: {

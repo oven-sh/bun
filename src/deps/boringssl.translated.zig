@@ -154,7 +154,20 @@ pub const struct_X509_crl_st = opaque {};
 pub const X509_CRL = struct_X509_crl_st;
 pub const struct_X509_extension_st = opaque {};
 pub const X509_EXTENSION = struct_X509_extension_st;
-pub const struct_x509_st = opaque {};
+pub const struct_x509_st = opaque {
+    pub fn dup(this: *X509) ?*X509 {
+        return X509_dup(this);
+    }
+
+    pub fn ref(this: *X509) *X509 {
+        _ = X509_up_ref(this);
+        return this;
+    }
+
+    pub fn free(this: *X509) void {
+        X509_free(this);
+    }
+};
 pub const X509 = struct_x509_st;
 pub const CRYPTO_refcount_t = u32;
 pub const struct_openssl_method_common_st = extern struct {

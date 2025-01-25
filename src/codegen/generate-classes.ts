@@ -2,6 +2,7 @@
 import path from "path";
 import type { ClassDefinition, Field } from "./class-definitions";
 import { camelCase, pascalCase, writeIfNotChanged } from "./helpers";
+import jsclasses from "./../bun.js/bindings/js_classes";
 
 if (process.env.BUN_SILENT === "1") {
   console.log = () => {};
@@ -307,6 +308,17 @@ function propRow(
 
   throw "Unsupported property";
 }
+function ownRow(
+  symbolName: (a: string, b: string) => string,
+  typeName: string,
+  name: string,
+  prop: Field,
+  isWrapped = true,
+  defaultPropertyAttributes,
+  supportsObjectCreate = false,
+) {
+  throw "Unsupported property";
+}
 
 export function generateHashTable(nameToUse, symbolName, typeName, obj, props = {}, wrapped) {
   const rows = [];
@@ -344,6 +356,45 @@ export function generateHashTable(nameToUse, symbolName, typeName, obj, props = 
   }
   return `
   static const HashTableValue ${nameToUse}TableValues[${rows.length}] = {${"\n" + rows.join("  ,\n") + "\n"}};
+`;
+}
+
+export function generateHashTableComment(nameToUse, symbolName, obj, props = {}, wrapped) {
+  const rows = [];
+  let defaultPropertyAttributes = undefined;
+
+  if ("enumerable" in obj) {
+    defaultPropertyAttributes ||= {};
+    defaultPropertyAttributes.enumerable = obj.enumerable;
+  }
+
+  if ("configurable" in obj) {
+    defaultPropertyAttributes ||= {};
+    defaultPropertyAttributes.configurable = obj.configurable;
+  }
+
+  for (const name in props) {
+    if (name.startsWith("@@")) continue;
+    externs += `
+extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${protoSymbolName(
+      obj.name,
+      props[name],
+    )}(void* ptr, JSC::JSGlobalObject*);
+namespace WebCore {
+static JSC::JSValue construct${symbolName(name)}PropertyCallback(JSC::VM &vm, JSC::JSObject* initialThisObject);
+}
+    `;
+    rows.push(`${name}  WebCore::construct${symbolName(name)}PropertyCallback    PropertyCallback`);
+  }
+
+  if (rows.length === 0) {
+    return "";
+  }
+
+  return `
+@begin ${nameToUse}Table
+${rows.join("\n")}
+@end
 `;
 }
 
@@ -910,6 +961,7 @@ function renderStaticDecls(symbolName, typeName, fields, supportsObjectCreate = 
 
   return rows.join("\n");
 }
+
 function writeBarrier(symbolName, typeName, name, cacheName) {
   return `
 
@@ -928,6 +980,7 @@ extern JSC_CALLCONV JSC::EncodedJSValue ${symbolName(typeName, name)}GetCachedVa
 
   `.trim();
 }
+
 function renderFieldsImpl(
   symbolName: (typeName: string, name: string) => string,
   typeName: string,
@@ -1176,6 +1229,7 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
 
   return rows.map(a => a.trim()).join("\n");
 }
+
 function allCachedValues(obj: ClassDefinition) {
   let values = (obj.values ?? []).slice().map(name => [name, `m_${name}`]);
   for (const name in obj.proto) {
@@ -1193,6 +1247,7 @@ function allCachedValues(obj: ClassDefinition) {
 
   return values;
 }
+
 var extraIncludes = [];
 function generateClassHeader(typeName, obj: ClassDefinition) {
   var { klass, proto, JSType = "ObjectType", values = [], callbacks = {}, zigOnly = false } = obj;
@@ -1256,6 +1311,7 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
   class ${name}${final ? " final" : ""} : public JSC::JSDestructibleObject {
     public:
         using Base = JSC::JSDestructibleObject;
+        static constexpr unsigned StructureFlags = Base::StructureFlags${obj.hasOwnProperties() ? ` | HasStaticPropertyTable` : ""};
         static ${name}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
 
         DECLARE_EXPORT_INFO;
@@ -1373,6 +1429,7 @@ function generateClassImpl(typeName, obj: ClassDefinition) {
     hasPendingActivity = false,
     getInternalProperties = false,
     callbacks = {},
+    own,
   } = obj;
   const name = className(typeName);
 
@@ -1474,6 +1531,22 @@ ${renderCallbacksCppImpl(typeName, callbacks)}
     `;
   }
 
+  if (obj.hasOwnProperties()) {
+    output += Object.entries(own)
+      .map(
+        ([name, getterName]) => `
+static JSC::JSValue construct${symbolName(obj.name, name)}PropertyCallback(JSC::VM &vm, JSC::JSObject* initialThisObject) {
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Bun::JS${obj.name}* thisObject = jsCast<Bun::JS${obj.name}*>(initialThisObject);
+    JSC::EncodedJSValue result = ${protoSymbolName(obj.name, getterName)}(thisObject->wrapped(), thisObject->globalObject());
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSC::JSValue::decode(result);
+}
+    `,
+      )
+      .join("\n");
+  }
+
   if (finalize) {
     output += `
 ${name}::~${name}()
@@ -1530,7 +1603,7 @@ void ${name}::destroy(JSCell* cell)
     static_cast<${name}*>(cell)->${name}::~${name}();
 }
 
-const ClassInfo ${name}::s_info = { "${typeName}"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(${name}) };
+const ClassInfo ${name}::s_info = { "${typeName}"_s, &Base::s_info, ${obj.hasOwnProperties() ? `&${typeName}Table` : "nullptr"}, nullptr, CREATE_METHOD_TABLE(${name}) };
 
 void ${name}::finishCreation(VM& vm)
 {
@@ -1662,10 +1735,22 @@ function generateHeader(typeName, obj) {
   return "\n" + fields.join("\n").trim();
 }
 
-function generateImpl(typeName, obj) {
+let lutTextFile = `
+/* Source for ZigGeneratedClasses.lut.h
+`;
+function generateOwnProperties(typeName, symbolName, obj, props = {}, wrapped) {
+  lutTextFile += `
+${generateHashTableComment(typeName, symbolName, obj, props, wrapped)}
+`;
+}
+
+function generateImpl(typeName, obj: ClassDefinition) {
   if (obj.zigOnly) return "";
 
   const proto = obj.proto;
+  if (obj?.hasOwnProperties?.()) {
+    generateOwnProperties(typeName, name => symbolName(typeName, name), obj, obj.own);
+  }
   return [
     (obj.final ?? true) ? generatePrototypeHeader(typeName, true) : null,
     !obj.noConstructor ? generateConstructorHeader(typeName).trim() + "\n" : null,
@@ -1682,6 +1767,7 @@ function generateZig(
   {
     klass = {},
     proto = {},
+    own = {},
     construct,
     finalize,
     noConstructor = false,
@@ -1715,6 +1801,11 @@ function generateZig(
 
     exports.set("onStructuredCloneDeserialize", symbolName(typeName, "onStructuredCloneDeserialize"));
   }
+
+  proto = {
+    ...Object.fromEntries(Object.entries(own || {}).map(([name, getterName]) => [name, { getter: getterName }])),
+    ...proto,
+  };
 
   const externs = Object.entries({
     ...proto,
@@ -2101,6 +2192,9 @@ const GENERATED_CLASSES_HEADER = [
 #include "root.h"
 
 namespace Zig {
+
+JSC_DECLARE_HOST_FUNCTION(jsFunctionInherits);
+
 }
 
 #include "JSDOMWrapper.h"
@@ -2160,6 +2254,8 @@ namespace WebCore {
 using namespace JSC;
 using namespace Zig;
 
+#include "ZigGeneratedClasses.lut.h"
+
 `;
 
 const GENERATED_CLASSES_IMPL_FOOTER = `
@@ -2167,6 +2263,30 @@ const GENERATED_CLASSES_IMPL_FOOTER = `
 } // namespace WebCore
 
 `;
+
+function jsInheritsCppImpl() {
+  return `
+${jsclasses
+  .map(v => v[1])
+  .filter(v => v?.length > 0)
+  .map((v, i) => `#include "${v}"`)
+  .join("\n")}
+
+JSC_DEFINE_HOST_FUNCTION(Zig::jsFunctionInherits, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto id = callFrame->argument(0).toInt32(globalObject);
+    auto value = callFrame->argument(1);
+    if (!value.isCell()) return JSValue::encode(jsBoolean(false));
+    auto cell = value.asCell();
+    switch (id) {
+${jsclasses
+  .map(v => v[0])
+  .map((v, i) => `    case ${i}: return JSValue::encode(jsBoolean(cell->inherits<WebCore::JS${v}>()));`)
+  .join("\n")}
+    }
+    return JSValue::encode(jsBoolean(false));
+}`;
+}
 
 function initLazyClasses(initLaterFunctions) {
   return `
@@ -2246,12 +2366,15 @@ classes.sort((a, b) => (a.name < b.name ? -1 : 1));
 
 // sort all the prototype keys and klass keys
 for (const obj of classes) {
-  let { klass = {}, proto = {} } = obj;
+  let { klass = {}, proto = {}, own = {} } = obj;
 
   klass = Object.fromEntries(Object.entries(klass).sort(([a], [b]) => a.localeCompare(b)));
   proto = Object.fromEntries(Object.entries(proto).sort(([a], [b]) => a.localeCompare(b)));
+  own = Object.fromEntries(Object.entries(own).sort(([a], [b]) => a.localeCompare(b)));
+
   obj.klass = klass;
   obj.proto = proto;
+  obj.own = own;
 }
 
 const GENERATED_CLASSES_FOOTER = `
@@ -2342,6 +2465,7 @@ comptime {
 
   `,
 ]);
+
 if (!process.env.ONLY_ZIG) {
   const allHeaders = classes.map(a => generateHeader(a.name, a));
   await writeIfNotChanged(`${outBase}/ZigGeneratedClasses.h`, [
@@ -2360,7 +2484,16 @@ if (!process.env.ONLY_ZIG) {
     allImpls.join("\n"),
     writeCppSerializers(classes),
     GENERATED_CLASSES_IMPL_FOOTER,
+    jsInheritsCppImpl(),
   ]);
+
+  if (lutTextFile.length) {
+    lutTextFile += `
+/*
+`;
+    await writeIfNotChanged(`${outBase}/ZigGeneratedClasses.lut.txt`, [lutTextFile]);
+  }
+
   await writeIfNotChanged(
     `${outBase}/ZigGeneratedClasses+lazyStructureHeader.h`,
     classes.map(a => generateLazyClassStructureHeader(a.name, a)).join("\n"),

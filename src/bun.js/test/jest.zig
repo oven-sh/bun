@@ -1428,7 +1428,7 @@ pub const TestRunnerTask = struct {
         const elapsed = now.duration(&this.started_at).ms();
         this.ref.unref(this.globalThis.bunVM());
         this.globalThis.throwTerminationException();
-        this.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .{ .timeout = elapsed });
+        this.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .{ .timeout = @intCast(@max(elapsed, 0)) });
     }
 
     const ResultType = union(enum) {
@@ -1931,7 +1931,7 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
                         .quote_strings = true,
                     };
                     const value_fmt = current_arg.toFmt(&formatter);
-                    const test_index_str = std.fmt.allocPrint(allocator, "{any}", .{value_fmt}) catch bun.outOfMemory();
+                    const test_index_str = std.fmt.allocPrint(allocator, "{}", .{value_fmt}) catch bun.outOfMemory();
                     defer allocator.free(test_index_str);
                     list.appendSlice(allocator, test_index_str) catch bun.outOfMemory();
                     idx += 1;

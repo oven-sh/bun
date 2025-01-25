@@ -53,9 +53,6 @@ if ($debug) {
   };
 }
 
-var NativeWritable;
-var ReadableFromWeb;
-
 // Sections:
 // 1. Exported child_process functions
 // 2. child_process helpers
@@ -527,6 +524,7 @@ execFile[kCustomPromisifySymbol][kCustomPromisifySymbol] = execFile[kCustomPromi
  */
 function spawnSync(file, args, options) {
   options = {
+    __proto__: null,
     maxBuffer: MAX_BUFFER,
     ...normalizeSpawnArguments(file, args, options),
   };
@@ -1122,21 +1120,16 @@ class ChildProcess extends EventEmitter {
       }
     }
 
-    NativeWritable ||= StreamModule.NativeWritable;
-    ReadableFromWeb ||= StreamModule.Readable.fromWeb;
-
     const io = this.#stdioOptions[i];
     switch (i) {
       case 0: {
         switch (io) {
           case "pipe": {
             const stdin = this.#handle.stdin;
-
             if (!stdin)
               // This can happen if the process was already killed.
               return new ShimmedStdin();
-
-            return new NativeWritable(stdin);
+            return require("internal/fs/streams").writableFromFileSink(stdin);
           }
           case "inherit":
             return process.stdin || null;
@@ -1150,13 +1143,11 @@ class ChildProcess extends EventEmitter {
       case 1: {
         switch (io) {
           case "pipe": {
-            const value = this.#handle[fdToStdioName(i)];
+            const value = this.#handle[fdToStdioName(i) as any as number];
+            // This can happen if the process was already killed.
+            if (!value) return new ShimmedStdioOutStream();
 
-            if (!value)
-              // This can happen if the process was already killed.
-              return new ShimmedStdioOutStream();
-
-            const pipe = ReadableFromWeb(value, { encoding });
+            const pipe = require("internal/streams/native-readable").constructNativeReadable(value, { encoding });
             this.#closesNeeded++;
             pipe.once("close", () => this.#maybeClose());
             if (autoResume) pipe.resume();
@@ -1284,12 +1275,16 @@ class ChildProcess extends EventEmitter {
       env: env,
       detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,
       onExit: (handle, exitCode, signalCode, err) => {
-        if (hasSocketsToEagerlyLoad) {
-          this.stdio;
-        }
-        $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
         this.#handle = handle;
         this.pid = this.#handle.pid;
+        $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
+
+        if (hasSocketsToEagerlyLoad) {
+          process.nextTick(() => {
+            this.stdio;
+            $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
+          });
+        }
 
         process.nextTick(
           (exitCode, signalCode, err) => this.#handleOnExit(exitCode, signalCode, err),
@@ -1563,7 +1558,7 @@ function abortChildProcess(child, killSignal, reason) {
   if (!child) return;
   try {
     if (child.kill(killSignal)) {
-      child.emit("error", new AbortError(undefined, { cause: reason }));
+      child.emit("error", $makeAbortError(undefined, { cause: reason }));
     }
   } catch (err) {
     child.emit("error", err);
@@ -1610,7 +1605,7 @@ class ShimmedStdioOutStream extends EventEmitter {
 
 function validateMaxBuffer(maxBuffer) {
   if (maxBuffer != null && !(typeof maxBuffer === "number" && maxBuffer >= 0)) {
-    throw ERR_OUT_OF_RANGE("options.maxBuffer", "a positive number", maxBuffer);
+    throw $ERR_OUT_OF_RANGE("options.maxBuffer", "a positive number", maxBuffer);
   }
 }
 
@@ -1628,7 +1623,7 @@ function validateArgumentsNullCheck(args, propName) {
 
 function validateTimeout(timeout) {
   if (timeout != null && !(NumberIsInteger(timeout) && timeout >= 0)) {
-    throw ERR_OUT_OF_RANGE("timeout", "an unsigned integer", timeout);
+    throw $ERR_OUT_OF_RANGE("timeout", "an unsigned integer", timeout);
   }
 }
 
@@ -1697,18 +1692,6 @@ function toPathIfFileURL(fileURLOrPath) {
 var Error = globalThis.Error;
 var TypeError = globalThis.TypeError;
 var RangeError = globalThis.RangeError;
-
-// Node uses a slightly different abort error than standard DOM. See: https://github.com/nodejs/node/blob/main/lib/internal/errors.js
-class AbortError extends Error {
-  code = "ABORT_ERR";
-  name = "AbortError";
-  constructor(message = "The operation was aborted", options = undefined) {
-    if (options !== undefined && typeof options !== "object") {
-      throw $ERR_INVALID_ARG_TYPE("options", "object", options);
-    }
-    super(message, options);
-  }
-}
 
 function genericNodeError(message, options) {
   const err = new Error(message);
@@ -1848,29 +1831,6 @@ function genericNodeError(message, options) {
 //   },
 //   TypeError
 // );
-
-function ERR_OUT_OF_RANGE(str, range, input, replaceDefaultBoolean = false) {
-  // Node implementation:
-  // assert(range, 'Missing "range" argument');
-  // let msg = replaceDefaultBoolean
-  //   ? str
-  //   : `The value of "${str}" is out of range.`;
-  // let received;
-  // if (NumberIsInteger(input) && MathAbs(input) > 2 ** 32) {
-  //   received = addNumericalSeparator(String(input));
-  // } else if (typeof input === "bigint") {
-  //   received = String(input);
-  //   if (input > 2n ** 32n || input < -(2n ** 32n)) {
-  //     received = addNumericalSeparator(received);
-  //   }
-  //   received += "n";
-  // } else {
-  //   received = lazyInternalUtilInspect().inspect(input);
-  // }
-  // msg += ` It must be ${range}. Received ${received}`;
-  // return new RangeError(msg);
-  return new RangeError(`The value of ${str} is out of range. It must be ${range}. Received ${input}`);
-}
 
 function ERR_CHILD_PROCESS_STDIO_MAXBUFFER(stdio) {
   const err = Error(`${stdio} maxBuffer length exceeded`);

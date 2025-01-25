@@ -24,6 +24,7 @@ pub const css_rules = @import("./rules/rules.zig");
 pub const CssRule = css_rules.CssRule;
 pub const CssRuleList = css_rules.CssRuleList;
 pub const LayerName = css_rules.layer.LayerName;
+pub const LayerStatementRule = css_rules.layer.LayerStatementRule;
 pub const SupportsCondition = css_rules.supports.SupportsCondition;
 pub const CustomMedia = css_rules.custom_media.CustomMediaRule;
 pub const NamespaceRule = css_rules.namespace.NamespaceRule;
@@ -169,6 +170,8 @@ pub const VendorPrefix = packed struct(u8) {
     pub const NONE = VendorPrefix{ .none = true };
     pub const WEBKIT = VendorPrefix{ .webkit = true };
     pub const MOZ = VendorPrefix{ .moz = true };
+    pub const MS = VendorPrefix{ .ms = true };
+    pub const O = VendorPrefix{ .o = true };
 
     /// Fields listed here so we can iterate them in the order we want
     pub const FIELDS: []const []const u8 = &.{ "webkit", "moz", "ms", "o", "none" };
@@ -362,7 +365,7 @@ pub fn DefineShorthand(comptime T: type, comptime property_name: PropertyIdTag) 
             //             const property_id = @unionInit(
             //                 PropertyId,
             //                 field.name,
-            //                 if (@hasDecl(T.VendorPrefixMap, field.name)) vendor_prefix else {},
+            //                 if (@hasDecl(T.VendorPrefixMap, field.name)) vendor_prefix,
             //             );
             //             const value = property.longhand(&property_id);
             //             if (@as(PropertyIdTag, value) == @as(PropertyIdTag, property_id)) {
@@ -403,7 +406,7 @@ pub fn DefineShorthand(comptime T: type, comptime property_name: PropertyIdTag) 
             //         out[i] = @unionInit(
             //             PropertyId,
             //             field.name,
-            //             if (@hasField(T.VendorPrefixMap, field.name)) vendor_prefix else {},
+            //             if (@hasField(T.VendorPrefixMap, field.name)) vendor_prefix,
             //         );
             //     }
 
@@ -879,6 +882,8 @@ pub fn DefineEnumProperty(comptime T: type) type {
             // @panic("TODO renable this");
         }
 
+        pub fn deinit(_: *T, _: std.mem.Allocator) void {}
+
         pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
             return dest.writeStr(asStr(this));
         }
@@ -1290,6 +1295,20 @@ pub const DefaultAtRuleParser = struct {
         }
 
         pub fn onImportRule(_: *This, _: *ImportRule, _: u32, _: u32) void {}
+
+        pub fn onLayerRule(_: *This, _: *const bun.css.SmallList(LayerName, 1)) void {}
+
+        pub fn enclosingLayerLength(_: *This) u32 {
+            return 0;
+        }
+
+        pub fn setEnclosingLayer(_: *This, _: LayerName) void {}
+
+        pub fn pushToEnclosingLayer(_: *This, _: LayerName) void {}
+
+        pub fn resetEnclosingLayer(_: *This, _: u32) void {}
+
+        pub fn bumpAnonLayerCount(_: *This, _: i32) void {}
     };
 };
 
@@ -1301,7 +1320,22 @@ pub const BundlerAtRuleParser = struct {
     const This = @This();
     allocator: Allocator,
     import_records: *bun.BabyList(ImportRecord),
+    layer_names: bun.BabyList(LayerName) = .{},
     options: *const ParserOptions,
+
+    /// Having _named_ layers nested inside of an _anonymous_ layer
+    /// has no effect:
+    ///
+    /// ```css
+    /// @layer {
+    ///   @layer foo { /* layer 1 */ }
+    ///   @layer foo { /* also layer 1 */ }
+    /// }
+    /// ```
+    ///
+    /// See: https://drafts.csswg.org/css-cascade-5/#example-787042b6
+    anon_layer_count: u32 = 0,
+    enclosing_layer: LayerName = .{},
 
     pub const CustomAtRuleParser = struct {
         pub const Prelude = if (ENABLE_TAILWIND_PARSING) union(enum) {
@@ -1364,6 +1398,50 @@ pub const BundlerAtRuleParser = struct {
                 },
             }) catch bun.outOfMemory();
         }
+
+        pub fn onLayerRule(this: *This, layers: *const bun.css.SmallList(LayerName, 1)) void {
+            if (this.anon_layer_count > 0) return;
+
+            this.layer_names.ensureUnusedCapacity(this.allocator, layers.len()) catch bun.outOfMemory();
+
+            for (layers.slice()) |*layer| {
+                if (this.enclosing_layer.v.len() > 0) {
+                    var cloned = LayerName{
+                        .v = SmallList([]const u8, 1){},
+                    };
+                    cloned.v.ensureTotalCapacity(this.allocator, this.enclosing_layer.v.len() + layer.v.len());
+                    cloned.v.appendSliceAssumeCapacity(this.enclosing_layer.v.slice());
+                    cloned.v.appendSliceAssumeCapacity(layer.v.slice());
+                    this.layer_names.push(this.allocator, cloned) catch bun.outOfMemory();
+                } else {
+                    this.layer_names.push(this.allocator, layer.deepClone(this.allocator)) catch bun.outOfMemory();
+                }
+            }
+        }
+
+        pub fn enclosingLayerLength(this: *This) u32 {
+            return this.enclosing_layer.v.len();
+        }
+
+        pub fn setEnclosingLayer(this: *This, layer: LayerName) void {
+            this.enclosing_layer = layer;
+        }
+
+        pub fn pushToEnclosingLayer(this: *This, name: LayerName) void {
+            this.enclosing_layer.v.appendSlice(this.allocator, name.v.slice());
+        }
+
+        pub fn resetEnclosingLayer(this: *This, len: u32) void {
+            this.enclosing_layer.v.setLen(len);
+        }
+
+        pub fn bumpAnonLayerCount(this: *This, amount: i32) void {
+            if (amount > 0) {
+                this.anon_layer_count += @intCast(amount);
+            } else {
+                this.anon_layer_count -= @intCast(@abs(amount));
+            }
+        }
     };
 };
 
@@ -1420,6 +1498,14 @@ pub fn ValidCustomAtRuleParser(comptime T: type) void {
     _ = T.CustomAtRuleParser.parseBlock;
 
     _ = T.CustomAtRuleParser.onImportRule;
+
+    _ = T.CustomAtRuleParser.onLayerRule;
+
+    _ = T.CustomAtRuleParser.enclosingLayerLength;
+    _ = T.CustomAtRuleParser.setEnclosingLayer;
+    _ = T.CustomAtRuleParser.pushToEnclosingLayer;
+    _ = T.CustomAtRuleParser.resetEnclosingLayer;
+    _ = T.CustomAtRuleParser.bumpAnonLayerCount;
 }
 
 pub fn ValidAtRuleParser(comptime T: type) void {
@@ -1504,7 +1590,7 @@ pub fn AtRulePrelude(comptime T: type) type {
         },
         page: ArrayList(css_rules.page.PageSelector),
         moz_document,
-        layer: ArrayList(LayerName),
+        layer: bun.css.SmallList(LayerName, 1),
         container: struct {
             name: ?css_rules.container.ContainerName,
             condition: css_rules.container.ContainerCondition,
@@ -1745,7 +1831,8 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                             this.state = .body;
                         }
                         var nested_parser = this.nested();
-                        return NestedRuleParser(AtRuleParserT).AtRuleParser.ruleWithoutBlock(&nested_parser, prelude, start);
+                        const result = NestedRuleParser(AtRuleParserT).AtRuleParser.ruleWithoutBlock(&nested_parser, prelude, start);
+                        return result;
                     },
                     .charset => return .{ .result = {} },
                     .unknown => {
@@ -1956,11 +2043,11 @@ pub fn NestedRuleParser(comptime T: type) type {
                             break :brk .moz_document;
                         },
                         .layer => {
-                            const names = switch (input.parseList(LayerName, LayerName.parse)) {
+                            const names = switch (bun.css.SmallList(LayerName, 1).parse(input)) {
                                 .result => |vv| vv,
                                 .err => |e| names: {
                                     if (e.kind == .basic and e.kind.basic == .end_of_input) {
-                                        break :names ArrayList(LayerName){};
+                                        break :names bun.css.SmallList(LayerName, 1){};
                                     }
                                     return .{ .err = e };
                                 },
@@ -2245,16 +2332,27 @@ pub fn NestedRuleParser(comptime T: type) type {
                         return .{ .result = {} };
                     },
                     .layer => {
-                        const name = if (prelude.layer.items.len == 0) null else if (prelude.layer.items.len == 1) names: {
-                            var out: LayerName = .{};
-                            std.mem.swap(LayerName, &out, &prelude.layer.items[0]);
-                            break :names out;
+                        const name = if (prelude.layer.len() == 0) null else if (prelude.layer.len() == 1) names: {
+                            break :names prelude.layer.at(0).*;
                         } else return .{ .err = input.newError(.at_rule_body_invalid) };
+
+                        T.CustomAtRuleParser.onLayerRule(this.at_rule_parser, &prelude.layer);
+                        const old_len = T.CustomAtRuleParser.enclosingLayerLength(this.at_rule_parser);
+                        if (name != null) {
+                            T.CustomAtRuleParser.pushToEnclosingLayer(this.at_rule_parser, name.?);
+                        } else {
+                            T.CustomAtRuleParser.bumpAnonLayerCount(this.at_rule_parser, 1);
+                        }
 
                         const rules = switch (this.parseStyleBlock(input)) {
                             .err => |e| return .{ .err = e },
                             .result => |v| v,
                         };
+
+                        if (name == null) {
+                            T.CustomAtRuleParser.bumpAnonLayerCount(this.at_rule_parser, -1);
+                        }
+                        T.CustomAtRuleParser.resetEnclosingLayer(this.at_rule_parser, old_len);
 
                         this.rules.v.append(input.allocator(), .{
                             .layer_block = css_rules.layer.LayerBlockRule(T.CustomAtRuleParser.AtRule){ .name = name, .rules = rules, .loc = loc },
@@ -2353,9 +2451,11 @@ pub fn NestedRuleParser(comptime T: type) type {
                 const loc = this.getLoc(start);
                 switch (prelude) {
                     .layer => {
-                        if (this.is_in_style_rule or prelude.layer.items.len == 0) {
+                        if (this.is_in_style_rule or prelude.layer.len() == 0) {
                             return .{ .err = {} };
                         }
+
+                        T.CustomAtRuleParser.onLayerRule(this.at_rule_parser, &prelude.layer);
 
                         this.rules.v.append(
                             this.allocator,
@@ -2681,6 +2781,9 @@ pub const BundlerStyleSheet = StyleSheet(BundlerAtRule);
 pub const BundlerCssRuleList = CssRuleList(BundlerAtRule);
 pub const BundlerCssRule = CssRule(BundlerAtRule);
 pub const BundlerLayerBlockRule = css_rules.layer.LayerBlockRule(BundlerAtRule);
+pub const BundlerSupportsRule = css_rules.supports.SupportsRule(BundlerAtRule);
+pub const BundlerMediaRule = css_rules.media.MediaRule(BundlerAtRule);
+pub const BundlerPrintResult = bun.css.PrintResult(BundlerAtRule);
 pub const BundlerTailwindState = struct {
     source: []const u8,
     index: bun.bundle_v2.Index,
@@ -2696,6 +2799,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
         license_comments: ArrayList([]const u8),
         options: ParserOptions,
         tailwind: if (AtRule == BundlerAtRule) ?*BundlerTailwindState else u0 = if (AtRule == BundlerAtRule) null else 0,
+        layer_names: bun.BabyList(LayerName) = .{},
 
         const This = @This();
 
@@ -2748,10 +2852,23 @@ pub fn StyleSheet(comptime AtRule: type) type {
             return .{ .result = {} };
         }
 
-        pub fn toCssWithWriter(this: *const @This(), allocator: Allocator, writer: anytype, options: css_printer.PrinterOptions, import_records: ?*const bun.BabyList(ImportRecord)) PrintErr!ToCssResultInternal {
+        pub fn toCssWithWriter(this: *const @This(), allocator: Allocator, writer: anytype, options: css_printer.PrinterOptions, import_records: ?*const bun.BabyList(ImportRecord)) PrintResult(ToCssResultInternal) {
             const W = @TypeOf(writer);
-            const project_root = options.project_root;
+
             var printer = Printer(@TypeOf(writer)).new(allocator, std.ArrayList(u8).init(allocator), writer, options, import_records);
+            const result = this.toCssWithWriterImpl(allocator, W, &printer, options, import_records) catch {
+                bun.assert(printer.error_kind != null);
+                return .{
+                    .err = printer.error_kind.?,
+                };
+            };
+
+            return .{ .result = result };
+        }
+
+        pub fn toCssWithWriterImpl(this: *const @This(), allocator: Allocator, comptime W: type, printer: *Printer(W), options: css_printer.PrinterOptions, import_records: ?*const bun.BabyList(ImportRecord)) PrintErr!ToCssResultInternal {
+            _ = import_records; // autofix
+            const project_root = options.project_root;
 
             // #[cfg(feature = "sourcemap")]
             // {
@@ -2774,7 +2891,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
                 var references = CssModuleReferences{};
                 printer.css_module = CssModule.new(allocator, config, &this.sources, project_root, &references);
 
-                try this.rules.toCss(W, &printer);
+                try this.rules.toCss(W, printer);
                 try printer.newline();
 
                 return ToCssResultInternal{
@@ -2788,7 +2905,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
                     .references = references,
                 };
             } else {
-                try this.rules.toCss(W, &printer);
+                try this.rules.toCss(W, printer);
                 try printer.newline();
                 return ToCssResultInternal{
                     .dependencies = printer.dependencies,
@@ -2799,18 +2916,21 @@ pub fn StyleSheet(comptime AtRule: type) type {
             }
         }
 
-        pub fn toCss(this: *const @This(), allocator: Allocator, options: css_printer.PrinterOptions, import_records: ?*const bun.BabyList(ImportRecord)) PrintErr!ToCssResult {
+        pub fn toCss(this: *const @This(), allocator: Allocator, options: css_printer.PrinterOptions, import_records: ?*const bun.BabyList(ImportRecord)) PrintResult(ToCssResult) {
             // TODO: this is not necessary
             // Make sure we always have capacity > 0: https://github.com/napi-rs/napi-rs/issues/1124.
             var dest = ArrayList(u8).initCapacity(allocator, 1) catch unreachable;
             const writer = dest.writer(allocator);
-            const result = try toCssWithWriter(this, allocator, writer, options, import_records);
-            return ToCssResult{
+            const result = switch (toCssWithWriter(this, allocator, writer, options, import_records)) {
+                .result => |v| v,
+                .err => |e| return .{ .err = e },
+            };
+            return .{ .result = ToCssResult{
                 .code = dest.items,
                 .dependencies = result.dependencies,
                 .exports = result.exports,
                 .references = result.references,
-            };
+            } };
         }
 
         pub fn parse(allocator: Allocator, code: []const u8, options: ParserOptions, import_records: ?*bun.BabyList(ImportRecord)) Maybe(This, Err(ParserError)) {
@@ -2823,6 +2943,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
                 .import_records = import_records,
                 .allocator = allocator,
                 .options = &options,
+                .layer_names = .{},
             };
             return parseWith(allocator, code, options, BundlerAtRuleParser, &at_rule_parser, import_records);
         }
@@ -2886,8 +3007,27 @@ pub fn StyleSheet(comptime AtRule: type) type {
                     .source_map_urls = source_map_urls,
                     .license_comments = license_comments,
                     .options = options,
+                    .layer_names = if (comptime P == BundlerAtRuleParser) at_rule_parser.layer_names else .{},
                 },
             };
+        }
+
+        pub fn debugLayerRuleSanityCheck(this: *const @This()) void {
+            if (comptime !bun.Environment.isDebug) return;
+
+            const layer_names_field_len = this.layer_names.len;
+            _ = layer_names_field_len; // autofix
+            var actual_layer_rules_len: usize = 0;
+
+            for (this.rules.v.items) |*rule| {
+                switch (rule.*) {
+                    .layer_block => {
+                        actual_layer_rules_len += 1;
+                    },
+                }
+            }
+
+            // bun.debugAssert()
         }
 
         pub fn containsTailwindDirectives(this: *const @This()) bool {
@@ -4764,7 +4904,7 @@ const Tokenizer = struct {
                         }
                     }
                     // else: escaped EOF, do nothing.
-                    // continue;
+                    continue;
                 },
                 0 => {
                     this.advance(1);
@@ -6474,6 +6614,18 @@ pub fn implementHash(comptime T: type, this: *const T, hasher: *std.hash.Wyhash)
     if (comptime bun.meta.isSimpleEqlType(T)) {
         return hasher.update(std.mem.asBytes(&this));
     }
+    if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
+        const list = switch (result) {
+            .array_list => this.items[0..],
+            .baby_list => this.sliceConst(),
+            .small_list => this.slice(),
+        };
+        bun.writeAnyToHasher(hasher, list.len);
+        for (list) |*item| {
+            generic.hash(tyinfo.Array.child, item, hasher);
+        }
+        return;
+    }
     if (comptime T == []const u8) {
         return hasher.update(this.*);
     }
@@ -6484,11 +6636,21 @@ pub fn implementHash(comptime T: type, this: *const T, hasher: *std.hash.Wyhash)
         @compileError("Invalid type for implementHash(): " ++ @typeName(T));
     }
     return switch (tyinfo) {
-        .Optional => unreachable,
-        .Pointer => unreachable,
+        .Optional => {
+            if (this.* == null) {
+                bun.writeAnyToHasher(hasher, "null");
+            } else {
+                bun.writeAnyToHasher(hasher, "some");
+                generic.hash(tyinfo.Optional.child, &this.*.?, hasher);
+            }
+        },
+        .Pointer => {
+            generic.hash(tyinfo.Pointer.child, &this.*, hasher);
+        },
         .Array => {
-            if (comptime @typeInfo(T) == .Optional) {
-                @compileError("Invalid type for implementHash(): " ++ @typeName(T));
+            bun.writeAnyToHasher(hasher, this.len);
+            for (this.*[0..]) |*item| {
+                generic.hash(tyinfo.Array.child, item, hasher);
             }
         },
         .Struct => {
@@ -6503,8 +6665,12 @@ pub fn implementHash(comptime T: type, this: *const T, hasher: *std.hash.Wyhash)
             }
             return;
         },
+        .Enum => {
+            bun.writeAnyToHasher(hasher, @intFromEnum(this.*));
+        },
         .Union => {
             if (tyinfo.Union.tag_type == null) @compileError("Unions must have a tag type");
+            bun.writeAnyToHasher(hasher, @intFromEnum(this.*));
             const enum_fields = bun.meta.EnumFields(T);
             inline for (enum_fields, std.meta.fields(T)) |enum_field, union_field| {
                 if (enum_field.value == @intFromEnum(this.*)) {
@@ -6576,9 +6742,9 @@ pub const to_css = struct {
         return s.items;
     }
 
-    pub fn fromList(comptime T: type, this: *const ArrayList(T), comptime W: type, dest: *Printer(W)) PrintErr!void {
-        const len = this.items.len;
-        for (this.items, 0..) |*val, idx| {
+    pub fn fromList(comptime T: type, this: []const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        const len = this.len;
+        for (this, 0..) |*val, idx| {
             try val.toCss(W, dest);
             if (idx < len - 1) {
                 try dest.delim(',', false);

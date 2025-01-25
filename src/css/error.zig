@@ -31,6 +31,26 @@ pub fn Err(comptime T: type) type {
         /// The location where the error occurred.
         loc: ?ErrorLocation,
 
+        pub fn fmt(
+            this: @This(),
+            comptime _: []const u8,
+            _: std.fmt.FormatOptions,
+            writer: anytype,
+        ) !void {
+            if (@hasDecl(T, "fmt")) {
+                try writer.print("{}", .{this.kind});
+                return;
+            }
+            @compileError("fmt not implemented for " ++ @typeName(T));
+        }
+
+        pub fn toJSString(this: @This(), allocator: Allocator, globalThis: *bun.JSC.JSGlobalObject) bun.JSC.JSValue {
+            var error_string = ArrayList(u8){};
+            defer error_string.deinit(allocator);
+            error_string.writer(allocator).print("{}", .{this.kind}) catch unreachable;
+            return bun.String.fromBytes(error_string.items).toJS(globalThis);
+        }
+
         pub fn fromParseError(err: ParseError(ParserError), filename: []const u8) Err(ParserError) {
             if (T != ParserError) {
                 @compileError("Called .fromParseError() when T is not ParserError");
@@ -191,6 +211,17 @@ pub const PrinterErrorKind = union(enum) {
     /// The CSS modules pattern must end with `[local]` for use in CSS grid.
     invalid_css_modules_pattern_in_grid,
     no_import_records,
+
+    pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        return switch (this) {
+            .ambiguous_url_in_custom_property => |data| writer.print("Ambiguous relative URL '{s}' in custom property declaration", .{data.url}),
+            .fmt_error => writer.writeAll("Formatting error occurred"),
+            .invalid_composes_nesting => writer.writeAll("The 'composes' property cannot be used within nested rules"),
+            .invalid_composes_selector => writer.writeAll("The 'composes' property can only be used with a simple class selector"),
+            .invalid_css_modules_pattern_in_grid => writer.writeAll("CSS modules pattern must end with '[local]' when used in CSS grid"),
+            .no_import_records => writer.writeAll("No import records found"),
+        };
+    }
 };
 
 /// A parser error.
@@ -244,7 +275,7 @@ pub const ParserError = union(enum) {
             .selector_error => |err| writer.print("Invalid selector. {s}", .{err}),
             .unexpected_import_rule => writer.writeAll("@import rules must come before any other rules except @charset and @layer"),
             .unexpected_namespace_rule => writer.writeAll("@namespace rules must come before any other rules except @charset, @import, and @layer"),
-            .unexpected_token => |token| writer.print("Unexpected token. {}", .{token}),
+            .unexpected_token => |token| writer.print("Unexpected token: {}", .{token}),
             .maximum_nesting_depth => writer.writeAll("Maximum CSS nesting depth exceeded"),
         };
     }

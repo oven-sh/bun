@@ -267,8 +267,7 @@ pub const Prompt = struct {
         // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
         // deleting the entire line
         const original_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (comptime Environment.isWindows)
-            bun.win32.unsetStdioModeFlags(0, bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT) catch null
-        else {};
+            bun.win32.unsetStdioModeFlags(0, bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT) catch null;
 
         defer if (comptime Environment.isWindows) {
             if (original_mode) |mode| {
@@ -635,13 +634,12 @@ pub const Crypto = struct {
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        const str, var bytes = bun.String.createUninitialized(.latin1, 36);
-        defer str.deref();
+        var str, var bytes = bun.String.createUninitialized(.latin1, 36);
 
         const uuid = globalThis.bunVM().rareData().nextUUID();
 
         uuid.print(bytes[0..36]);
-        return str.toJS(globalThis);
+        return str.transferToJS(globalThis);
     }
 
     comptime {
@@ -716,7 +714,7 @@ pub const Crypto = struct {
     }
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*Crypto {
-        return globalThis.throw("Crypto is not constructable", .{});
+        return JSC.Error.ERR_ILLEGAL_CONSTRUCTOR.throw(globalThis, "Crypto is not constructable", .{});
     }
 
     pub export fn CryptoObject__create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {

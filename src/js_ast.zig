@@ -2500,20 +2500,17 @@ pub const E = struct {
             if (s.isUTF8()) {
                 if (try strings.toUTF16Alloc(allocator, s.slice8(), false, false)) |utf16| {
                     var out, const chars = bun.String.createUninitialized(.utf16, utf16.len);
-                    defer out.deref();
                     @memcpy(chars, utf16);
-                    return out.toJS(globalObject);
+                    return out.transferToJS(globalObject);
                 } else {
                     var out, const chars = bun.String.createUninitialized(.latin1, s.slice8().len);
-                    defer out.deref();
                     @memcpy(chars, s.slice8());
-                    return out.toJS(globalObject);
+                    return out.transferToJS(globalObject);
                 }
             } else {
                 var out, const chars = bun.String.createUninitialized(.utf16, s.slice16().len);
-                defer out.deref();
                 @memcpy(chars, s.slice16());
-                return out.toJS(globalObject);
+                return out.transferToJS(globalObject);
             }
         }
 
@@ -7264,24 +7261,21 @@ pub const BundledAst = struct {
     pub fn addUrlForCss(
         this: *BundledAst,
         allocator: std.mem.Allocator,
-        experimental: Loader.Experimental,
         source: *const logger.Source,
         mime_type_: ?[]const u8,
         unique_key: ?[]const u8,
     ) void {
-        if (experimental.css) {
+        {
             const mime_type = if (mime_type_) |m| m else MimeType.byExtension(bun.strings.trimLeadingChar(std.fs.path.extension(source.path.text), '.')).value;
             const contents = source.contents;
             // TODO: make this configurable
             const COPY_THRESHOLD = 128 * 1024; // 128kb
             const should_copy = contents.len >= COPY_THRESHOLD and unique_key != null;
+            if (should_copy) return;
             this.url_for_css = url_for_css: {
-                // Copy it
-                if (should_copy) break :url_for_css unique_key.?;
 
                 // Encode as base64
                 const encode_len = bun.base64.encodeLen(contents);
-                if (encode_len == 0) return;
                 const data_url_prefix_len = "data:".len + mime_type.len + ";base64,".len;
                 const total_buffer_len = data_url_prefix_len + encode_len;
                 var encoded = allocator.alloc(u8, total_buffer_len) catch bun.outOfMemory();
@@ -8181,6 +8175,7 @@ pub const Macro = struct {
                 .allocator = default_allocator,
                 .args = resolver.opts.transform_options,
                 .log = log,
+                .is_main_thread = false,
                 .env_loader = env,
             });
 

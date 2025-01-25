@@ -4,7 +4,6 @@ import { itBundled } from "../../expectBundled";
 const runTest = (testTitle: string, input: string, expected: string) => {
   testTitle = testTitle.length === 0 ? input : testTitle;
   itBundled(testTitle, {
-    experimentalCss: true,
     files: {
       "/a.css": /* css */ `
 h1 {

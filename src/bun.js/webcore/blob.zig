@@ -830,7 +830,6 @@ pub const Blob = struct {
                         .recursive = true,
                         .always_return_none = true,
                     },
-                    .sync,
                 )) {
                     .result => {
                         this.mkdirp_if_not_exists = false;
@@ -929,6 +928,7 @@ pub const Blob = struct {
                     destination_blob.contentTypeOrMimeType(),
                     aws_options.acl,
                     proxy_url,
+                    aws_options.storage_class,
                     @ptrCast(&Wrapper.resolve),
                     Wrapper.new(.{
                         .promise = promise,
@@ -1057,6 +1057,7 @@ pub const Blob = struct {
                                 ctx,
                                 aws_options.options,
                                 aws_options.acl,
+                                aws_options.storage_class,
                                 destination_blob.contentTypeOrMimeType(),
                                 proxy_url,
                                 null,
@@ -1099,6 +1100,7 @@ pub const Blob = struct {
                             destination_blob.contentTypeOrMimeType(),
                             aws_options.acl,
                             proxy_url,
+                            aws_options.storage_class,
                             @ptrCast(&Wrapper.resolve),
                             Wrapper.new(.{
                                 .store = store,
@@ -1122,6 +1124,7 @@ pub const Blob = struct {
                             ctx,
                             s3.options,
                             aws_options.acl,
+                            aws_options.storage_class,
                             destination_blob.contentTypeOrMimeType(),
                             proxy_url,
                             null,
@@ -1311,6 +1314,7 @@ pub const Blob = struct {
                                     globalThis,
                                     aws_options.options,
                                     aws_options.acl,
+                                    aws_options.storage_class,
                                     destination_blob.contentTypeOrMimeType(),
                                     proxy_url,
                                     null,
@@ -1370,6 +1374,7 @@ pub const Blob = struct {
                                     globalThis,
                                     aws_options.options,
                                     aws_options.acl,
+                                    aws_options.storage_class,
                                     destination_blob.contentTypeOrMimeType(),
                                     proxy_url,
                                     null,
@@ -2578,6 +2583,7 @@ pub const Blob = struct {
                             bun.O.RDONLY
                         else
                             bun.O.WRONLY | bun.O.CREAT,
+                        0,
                     )) {
                         .result => |result| bun.toLibUVOwnedFD(result) catch {
                             _ = bun.sys.close(result);
@@ -2757,7 +2763,7 @@ pub const Blob = struct {
             pub fn throw(this: *CopyFileWindows, err: bun.sys.Error) void {
                 const globalThis = this.promise.strong.globalThis.?;
                 const promise = this.promise.swap();
-                const err_instance = err.toSystemError().toErrorInstance(globalThis);
+                const err_instance = err.toJSC(globalThis);
                 var event_loop = this.event_loop;
                 event_loop.enter();
                 defer event_loop.exit();
@@ -3507,6 +3513,8 @@ pub const Blob = struct {
         credentials: ?*S3Credentials,
         options: bun.S3.MultiPartUploadOptions = .{},
         acl: ?S3.ACL = null,
+        storage_class: ?S3.StorageClass = null,
+
         pub fn isSeekable(_: *const @This()) ?bool {
             return true;
         }
@@ -3517,7 +3525,7 @@ pub const Blob = struct {
         }
 
         pub fn getCredentialsWithOptions(this: *const @This(), options: ?JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!S3.S3CredentialsWithOptions {
-            return S3Credentials.getCredentialsWithOptions(this.getCredentials().*, this.options, options, this.acl, globalObject);
+            return S3Credentials.getCredentialsWithOptions(this.getCredentials().*, this.options, options, this.acl, this.storage_class, globalObject);
         }
 
         pub fn path(this: *@This()) []const u8 {
@@ -4102,6 +4110,7 @@ pub const Blob = struct {
                 globalThis,
                 aws_options.options,
                 aws_options.acl,
+                aws_options.storage_class,
                 this.contentTypeOrMimeType(),
                 proxy_url,
                 null,
@@ -4339,6 +4348,7 @@ pub const Blob = struct {
                         credentialsWithOptions.options,
                         this.contentTypeOrMimeType(),
                         proxy_url,
+                        credentialsWithOptions.storage_class,
                     );
                 }
             }
@@ -4349,6 +4359,7 @@ pub const Blob = struct {
                 .{},
                 this.contentTypeOrMimeType(),
                 proxy_url,
+                null,
             );
         }
         if (store.data != .file) {
@@ -4360,9 +4371,8 @@ pub const Blob = struct {
             const vm = globalThis.bunVM();
             const fd: bun.FileDescriptor = if (pathlike == .fd) pathlike.fd else brk: {
                 var file_path: bun.PathBuffer = undefined;
-                const path = pathlike.path.sliceZ(&file_path);
                 switch (bun.sys.open(
-                    path,
+                    pathlike.path.sliceZ(&file_path),
                     bun.O.WRONLY | bun.O.CREAT | bun.O.NONBLOCK,
                     write_permissions,
                 )) {
@@ -4370,10 +4380,10 @@ pub const Blob = struct {
                         break :brk result;
                     },
                     .err => |err| {
-                        return globalThis.throwValue(err.withPath(path).toJSC(globalThis));
+                        return globalThis.throwValue(err.withPath(pathlike.path.slice()).toJSC(globalThis));
                     },
                 }
-                unreachable;
+                @compileError(unreachable);
             };
 
             const is_stdout_or_stderr = brk: {

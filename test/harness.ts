@@ -494,6 +494,32 @@ if (expect.extend)
         };
       }
     },
+    toBeLatin1String(actual: unknown) {
+      if ((actual as string).isLatin1()) {
+        return {
+          pass: true,
+          message: () => `Expected ${actual} to be a Latin1 string`,
+        };
+      }
+
+      return {
+        pass: false,
+        message: () => `Expected ${actual} to be a Latin1 string`,
+      };
+    },
+    toBeUTF16String(actual: unknown) {
+      if ((actual as string).isUTF16()) {
+        return {
+          pass: true,
+          message: () => `Expected ${actual} to be a UTF16 string`,
+        };
+      }
+
+      return {
+        pass: false,
+        message: () => `Expected ${actual} to be a UTF16 string`,
+      };
+    },
   });
 
 export function ospath(path: string) {
@@ -1014,8 +1040,8 @@ export function mergeWindowEnvs(envs: Record<string, string | undefined>[]) {
   return flat;
 }
 
-export function tmpdirSync(pattern: string = "bun.test.") {
-  return fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), pattern));
+export function tmpdirSync(pattern: string = "bun.test."): string {
+  return fs.mkdtempSync(join(fs.realpathSync.native(os.tmpdir()), pattern));
 }
 
 export async function runBunInstall(
@@ -1027,10 +1053,25 @@ export async function runBunInstall(
     expectedExitCode?: number;
     savesLockfile?: boolean;
     production?: boolean;
+    frozenLockfile?: boolean;
+    saveTextLockfile?: boolean;
+    packages?: string[];
   },
 ) {
   const production = options?.production ?? false;
   const args = production ? [bunExe(), "install", "--production"] : [bunExe(), "install"];
+  if (options?.packages) {
+    args.push(...options.packages);
+  }
+  if (production) {
+    args.push("--production");
+  }
+  if (options?.frozenLockfile) {
+    args.push("--frozen-lockfile");
+  }
+  if (options?.saveTextLockfile) {
+    args.push("--save-text-lockfile");
+  }
   const { stdout, stderr, exited } = Bun.spawn({
     cmd: args,
     cwd,
@@ -1142,36 +1183,6 @@ String.prototype.isLatin1 = function () {
 String.prototype.isUTF16 = function () {
   return require("bun:internal-for-testing").jscInternals.isUTF16String(this);
 };
-
-if (expect.extend)
-  expect.extend({
-    toBeLatin1String(actual: unknown) {
-      if ((actual as string).isLatin1()) {
-        return {
-          pass: true,
-          message: () => `Expected ${actual} to be a Latin1 string`,
-        };
-      }
-
-      return {
-        pass: false,
-        message: () => `Expected ${actual} to be a Latin1 string`,
-      };
-    },
-    toBeUTF16String(actual: unknown) {
-      if ((actual as string).isUTF16()) {
-        return {
-          pass: true,
-          message: () => `Expected ${actual} to be a UTF16 string`,
-        };
-      }
-
-      return {
-        pass: false,
-        message: () => `Expected ${actual} to be a UTF16 string`,
-      };
-    },
-  });
 
 interface BunHarnessTestMatchers {
   toBeLatin1String(): void;
@@ -1490,24 +1501,33 @@ export class VerdaccioRegistry {
 
   stop() {
     rmSync(join(dirname(this.configPath), "htpasswd"), { force: true });
-    this.process?.kill();
+    this.process?.kill(0);
   }
 
-  async createTestDir() {
+  async createTestDir(bunfigOpts: BunfigOpts = {}) {
     const packageDir = tmpdirSync();
     const packageJson = join(packageDir, "package.json");
-    await write(
-      join(packageDir, "bunfig.toml"),
-      `
-      [install]
-      cache = "${join(packageDir, ".bun-cache")}"
-      registry = "${this.registryUrl()}"
-      `,
-    );
-
+    this.writeBunfig(packageDir, bunfigOpts);
     return { packageDir, packageJson };
   }
+
+  async writeBunfig(dir: string, opts: BunfigOpts = {}) {
+    let bunfig = `
+    [install]
+    cache = "${join(dir, ".bun-cache")}"
+    registry = "${this.registryUrl()}"
+    `;
+    if ("saveTextLockfile" in opts) {
+      bunfig += `saveTextLockfile = ${opts.saveTextLockfile}
+      `;
+    }
+    await write(join(dir, "bunfig.toml"), bunfig);
+  }
 }
+
+type BunfigOpts = {
+  saveTextLockfile?: boolean;
+};
 
 export async function readdirSorted(path: string): Promise<string[]> {
   const results = await readdir(path);

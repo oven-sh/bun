@@ -29,6 +29,14 @@ pub inline fn containsChar(self: string, char: u8) bool {
     return indexOfChar(self, char) != null;
 }
 
+pub inline fn containsCharT(comptime T: type, self: []const T, char: u8) bool {
+    return switch (T) {
+        u8 => containsChar(self, char),
+        u16 => std.mem.indexOfScalar(u16, self, char) != null,
+        else => @compileError("invalid type"),
+    };
+}
+
 pub inline fn contains(self: string, str: string) bool {
     return containsT(u8, self, str);
 }
@@ -832,7 +840,7 @@ pub fn startsWithGeneric(comptime T: type, self: []const T, str: []const T) bool
         return false;
     }
 
-    return eqlLong(bun.reinterpretSlice(u8, self[0..str.len]), str, false);
+    return eqlLong(bun.reinterpretSlice(u8, self[0..str.len]), bun.reinterpretSlice(u8, str[0..str.len]), false);
 }
 
 pub inline fn endsWith(self: string, str: string) bool {
@@ -1135,6 +1143,19 @@ pub fn hasPrefixCaseInsensitiveT(comptime T: type, str: []const T, prefix: []con
 
 pub fn hasPrefixCaseInsensitive(str: []const u8, prefix: []const u8) bool {
     return hasPrefixCaseInsensitiveT(u8, str, prefix);
+}
+
+pub fn eqlLongT(comptime T: type, a_str: []const T, b_str: []const T, comptime check_len: bool) bool {
+    if (comptime check_len) {
+        const len = b_str.len;
+        if (len == 0) {
+            return a_str.len == 0;
+        }
+        if (a_str.len != len) {
+            return false;
+        }
+    }
+    return eqlLong(bun.reinterpretSlice(u8, a_str), bun.reinterpretSlice(u8, b_str), false);
 }
 
 pub fn eqlLong(a_str: string, b_str: string, comptime check_len: bool) bool {
@@ -1880,19 +1901,49 @@ pub fn isWindowsAbsolutePathMissingDriveLetter(comptime T: type, chars: []const 
 
 pub fn fromWPath(buf: []u8, utf16: []const u16) [:0]const u8 {
     bun.unsafeAssert(buf.len > 0);
-    const encode_into_result = copyUTF16IntoUTF8(buf[0 .. buf.len - 1], []const u16, utf16, false);
+    const to_copy = trimPrefixComptime(u16, utf16, bun.windows.long_path_prefix);
+    const encode_into_result = copyUTF16IntoUTF8(buf[0 .. buf.len - 1], []const u16, to_copy, false);
     bun.unsafeAssert(encode_into_result.written < buf.len);
     buf[encode_into_result.written] = 0;
     return buf[0..encode_into_result.written :0];
 }
 
-pub fn toNTPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+pub fn withoutNTPrefix(comptime T: type, path: []const T) []const T {
+    if (comptime !Environment.isWindows) return path;
+    const cmp = if (T == u8)
+        hasPrefixComptime
+    else
+        hasPrefixComptimeUTF16;
+    if (cmp(path, &bun.windows.nt_object_prefix_u8)) {
+        return path[bun.windows.nt_object_prefix.len..];
+    }
+    if (cmp(path, &bun.windows.long_path_prefix_u8)) {
+        return path[bun.windows.long_path_prefix.len..];
+    }
+    if (cmp(path, &bun.windows.nt_unc_object_prefix_u8)) {
+        return path[bun.windows.nt_unc_object_prefix.len..];
+    }
+    return path;
+}
+
+pub fn toNTPath(wbuf: []u16, utf8: []const u8) [:0]u16 {
     if (!std.fs.path.isAbsoluteWindows(utf8)) {
         return toWPathNormalized(wbuf, utf8);
     }
 
+    if (strings.hasPrefixComptime(utf8, &bun.windows.nt_object_prefix_u8) or
+        strings.hasPrefixComptime(utf8, &bun.windows.nt_unc_object_prefix_u8))
+    {
+        return wbuf[0..toWPathNormalized(wbuf, utf8).len :0];
+    }
+
     // UNC absolute path, replace leading '\\' with '\??\UNC\'
     if (strings.hasPrefixComptime(utf8, "\\\\")) {
+        if (strings.hasPrefixComptime(utf8[2..], bun.windows.long_path_prefix_u8[2..])) {
+            const prefix = bun.windows.nt_object_prefix;
+            wbuf[0..prefix.len].* = prefix;
+            return wbuf[0 .. toWPathNormalized(wbuf[prefix.len..], utf8[4..]).len + prefix.len :0];
+        }
         const prefix = bun.windows.nt_unc_object_prefix;
         wbuf[0..prefix.len].* = prefix;
         return wbuf[0 .. toWPathNormalized(wbuf[prefix.len..], utf8[2..]).len + prefix.len :0];
@@ -1901,6 +1952,33 @@ pub fn toNTPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     const prefix = bun.windows.nt_object_prefix;
     wbuf[0..prefix.len].* = prefix;
     return wbuf[0 .. toWPathNormalized(wbuf[prefix.len..], utf8).len + prefix.len :0];
+}
+
+pub fn toNTPath16(wbuf: []u16, path: []const u16) [:0]u16 {
+    if (!std.fs.path.isAbsoluteWindowsWTF16(path)) {
+        return toWPathNormalized16(wbuf, path);
+    }
+
+    if (strings.hasPrefixComptimeUTF16(path, &bun.windows.nt_object_prefix_u8) or
+        strings.hasPrefixComptimeUTF16(path, &bun.windows.nt_unc_object_prefix_u8))
+    {
+        return wbuf[0..toWPathNormalized16(wbuf, path).len :0];
+    }
+
+    if (strings.hasPrefixComptimeUTF16(path, "\\\\")) {
+        if (strings.hasPrefixComptimeUTF16(path[2..], bun.windows.long_path_prefix_u8[2..])) {
+            const prefix = bun.windows.nt_object_prefix;
+            wbuf[0..prefix.len].* = prefix;
+            return wbuf[0 .. toWPathNormalized16(wbuf[prefix.len..], path[4..]).len + prefix.len :0];
+        }
+        const prefix = bun.windows.nt_unc_object_prefix;
+        wbuf[0..prefix.len].* = prefix;
+        return wbuf[0 .. toWPathNormalized16(wbuf[prefix.len..], path[2..]).len + prefix.len :0];
+    }
+
+    const prefix = bun.windows.nt_object_prefix;
+    wbuf[0..prefix.len].* = prefix;
+    return wbuf[0 .. toWPathNormalized16(wbuf[prefix.len..], path).len + prefix.len :0];
 }
 
 pub fn toNTMaxPath(buf: []u8, utf8: []const u8) [:0]const u8 {
@@ -1915,18 +1993,22 @@ pub fn toNTMaxPath(buf: []u8, utf8: []const u8) [:0]const u8 {
     return buf[0 .. toPathNormalized(buf[prefix.len..], utf8).len + prefix.len :0];
 }
 
-pub fn addNTPathPrefix(wbuf: []u16, utf16: []const u16) [:0]const u16 {
+pub fn addNTPathPrefix(wbuf: []u16, utf16: []const u16) [:0]u16 {
     wbuf[0..bun.windows.nt_object_prefix.len].* = bun.windows.nt_object_prefix;
     @memcpy(wbuf[bun.windows.nt_object_prefix.len..][0..utf16.len], utf16);
     wbuf[utf16.len + bun.windows.nt_object_prefix.len] = 0;
     return wbuf[0 .. utf16.len + bun.windows.nt_object_prefix.len :0];
 }
 
-pub fn addNTPathPrefixIfNeeded(wbuf: []u16, utf16: []const u16) [:0]const u16 {
+pub fn addNTPathPrefixIfNeeded(wbuf: []u16, utf16: []const u16) [:0]u16 {
     if (hasPrefixComptimeType(u16, utf16, bun.windows.nt_object_prefix)) {
         @memcpy(wbuf[0..utf16.len], utf16);
         wbuf[utf16.len] = 0;
         return wbuf[0..utf16.len :0];
+    }
+    if (hasPrefixComptimeType(u16, utf16, bun.windows.long_path_prefix)) {
+        // Replace prefix
+        return addNTPathPrefix(wbuf, utf16[bun.windows.long_path_prefix.len..]);
     }
     return addNTPathPrefix(wbuf, utf16);
 }
@@ -1936,7 +2018,7 @@ pub const toNTDir = toNTPath;
 
 pub fn toExtendedPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     bun.unsafeAssert(wbuf.len > 4);
-    wbuf[0..4].* = bun.windows.nt_maxpath_prefix;
+    wbuf[0..4].* = bun.windows.long_path_prefix;
     return wbuf[0 .. toWPathNormalized(wbuf[4..], utf8).len + 4 :0];
 }
 
@@ -1948,7 +2030,7 @@ pub fn toWPathNormalizeAutoExtend(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     return toWPathNormalized(wbuf, utf8);
 }
 
-pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]u16 {
     const renormalized = bun.PathBufferPool.get();
     defer bun.PathBufferPool.put(renormalized);
 
@@ -1961,6 +2043,20 @@ pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
 
     return toWPath(wbuf, path_to_use);
 }
+
+pub fn toWPathNormalized16(wbuf: []u16, path: []const u16) [:0]u16 {
+    var path_to_use = normalizeSlashesOnlyT(u16, wbuf, path, '\\', true);
+
+    // is there a trailing slash? Let's remove it before converting to UTF-16
+    if (path_to_use.len > 3 and bun.path.isSepAnyT(u16, path_to_use[path_to_use.len - 1])) {
+        path_to_use = path_to_use[0 .. path_to_use.len - 1];
+    }
+
+    wbuf[path_to_use.len] = 0;
+
+    return wbuf[0..path_to_use.len :0];
+}
+
 pub fn toPathNormalized(buf: []u8, utf8: []const u8) [:0]const u8 {
     const renormalized = bun.PathBufferPool.get();
     defer bun.PathBufferPool.put(renormalized);
@@ -1975,21 +2071,29 @@ pub fn toPathNormalized(buf: []u8, utf8: []const u8) [:0]const u8 {
     return toPath(buf, path_to_use);
 }
 
-pub fn normalizeSlashesOnly(buf: []u8, utf8: []const u8, comptime desired_slash: u8) []const u8 {
+pub fn normalizeSlashesOnlyT(comptime T: type, buf: []T, path: []const T, comptime desired_slash: u8, comptime always_copy: bool) []const T {
     comptime bun.unsafeAssert(desired_slash == '/' or desired_slash == '\\');
     const undesired_slash = if (desired_slash == '/') '\\' else '/';
 
-    if (bun.strings.containsChar(utf8, undesired_slash)) {
-        @memcpy(buf[0..utf8.len], utf8);
-        for (buf[0..utf8.len]) |*c| {
+    if (bun.strings.containsCharT(T, path, undesired_slash)) {
+        @memcpy(buf[0..path.len], path);
+        for (buf[0..path.len]) |*c| {
             if (c.* == undesired_slash) {
                 c.* = desired_slash;
             }
         }
-        return buf[0..utf8.len];
+        return buf[0..path.len];
     }
 
-    return utf8;
+    if (comptime always_copy) {
+        @memcpy(buf[0..path.len], path);
+        return buf[0..path.len];
+    }
+    return path;
+}
+
+pub fn normalizeSlashesOnly(buf: []u8, utf8: []const u8, comptime desired_slash: u8) []const u8 {
+    return normalizeSlashesOnlyT(u8, buf, utf8, desired_slash, false);
 }
 
 pub fn toWDirNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
@@ -2012,16 +2116,34 @@ pub fn toWDirNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     return toWDirPath(wbuf, path_to_use);
 }
 
-pub fn toWPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+pub fn toWPath(wbuf: []u16, utf8: []const u8) [:0]u16 {
     return toWPathMaybeDir(wbuf, utf8, false);
 }
-pub fn toPath(buf: []u8, utf8: []const u8) [:0]const u8 {
+
+pub fn toPath(buf: []u8, utf8: []const u8) [:0]u8 {
     return toPathMaybeDir(buf, utf8, false);
 }
 
 pub fn toWDirPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     return toWPathMaybeDir(wbuf, utf8, true);
 }
+
+pub fn toKernel32Path(wbuf: []u16, utf8: []const u8) [:0]u16 {
+    const path = if (hasPrefixComptime(utf8, bun.windows.nt_object_prefix_u8))
+        utf8[bun.windows.nt_object_prefix_u8.len..]
+    else
+        utf8;
+    if (hasPrefixComptime(path, bun.windows.long_path_prefix_u8)) {
+        return toWPath(wbuf, path);
+    }
+    if (utf8.len > 2 and bun.path.isDriveLetter(utf8[0]) and utf8[1] == ':' and bun.path.isSepAny(utf8[2])) {
+        wbuf[0..4].* = bun.windows.long_path_prefix;
+        const wpath = toWPath(wbuf[4..], path);
+        return wbuf[0 .. wpath.len + 4 :0];
+    }
+    return toWPath(wbuf, path);
+}
+
 fn isUNCPath(comptime T: type, path: []const T) bool {
     return path.len >= 3 and
         bun.path.Platform.windows.isSeparatorT(T, path[0]) and
@@ -2048,13 +2170,21 @@ pub fn assertIsValidWindowsPath(comptime T: type, path: []const T) void {
     }
 }
 
-pub fn toWPathMaybeDir(wbuf: []u16, utf8: []const u8, comptime add_trailing_lash: bool) [:0]const u16 {
+pub fn toWPathMaybeDir(wbuf: []u16, utf8: []const u8, comptime add_trailing_lash: bool) [:0]u16 {
     bun.unsafeAssert(wbuf.len > 0);
 
     var result = bun.simdutf.convert.utf8.to.utf16.with_errors.le(
         utf8,
         wbuf[0..wbuf.len -| (1 + @as(usize, @intFromBool(add_trailing_lash)))],
     );
+
+    // Many Windows APIs expect normalized path slashes, particularly when the
+    // long path prefix is added or the nt object prefix. To make this easier,
+    // but a little redundant, this function always normalizes the slashes here.
+    //
+    // An example of this is GetFileAttributesW(L"C:\\hello/world.txt") being OK
+    // but GetFileAttributesW(L"\\\\?\\C:\\hello/world.txt") is NOT
+    bun.path.dangerouslyConvertPathToWindowsInPlace(u16, wbuf[0..result.count]);
 
     if (add_trailing_lash and result.count > 0 and wbuf[result.count - 1] != '\\') {
         wbuf[result.count] = '\\';
@@ -2065,7 +2195,7 @@ pub fn toWPathMaybeDir(wbuf: []u16, utf8: []const u8, comptime add_trailing_lash
 
     return wbuf[0..result.count :0];
 }
-pub fn toPathMaybeDir(buf: []u8, utf8: []const u8, comptime add_trailing_lash: bool) [:0]const u8 {
+pub fn toPathMaybeDir(buf: []u8, utf8: []const u8, comptime add_trailing_lash: bool) [:0]u8 {
     bun.unsafeAssert(buf.len > 0);
 
     var len = utf8.len;
@@ -4529,6 +4659,14 @@ pub fn trimLeadingPattern2(slice_: []const u8, comptime byte1: u8, comptime byte
         }
     }
     return slice;
+}
+
+/// prefix is of type []const u8 or []const u16
+pub fn trimPrefixComptime(comptime T: type, buffer: []const T, comptime prefix: anytype) []const T {
+    return if (hasPrefixComptimeType(T, buffer, prefix))
+        buffer[prefix.len..]
+    else
+        buffer;
 }
 
 /// Get the line number and the byte offsets of `line_range_count` above the desired line number

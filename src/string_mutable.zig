@@ -19,6 +19,10 @@ pub const MutableString = struct {
         return MutableString.init(allocator, 2048);
     }
 
+    pub fn clone(self: *MutableString) !MutableString {
+        return MutableString.initCopy(self.allocator, self.list.items);
+    }
+
     pub const Writer = std.io.Writer(*@This(), OOM, MutableString.writeAll);
     pub fn writer(self: *MutableString) Writer {
         return Writer{

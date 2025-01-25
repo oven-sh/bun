@@ -627,7 +627,12 @@ function doSend(ex, self, ip, list, address, port, callback) {
 
   let err = null;
   let success = false;
-  const data = Buffer.concat(list);
+  let data;
+  if (list === undefined) data = new $Buffer(0);
+  else if (Array.isArray(list) && list.length === 1) {
+    const { buffer, byteOffset, byteLength } = list[0];
+    data = new $Buffer(buffer).slice(byteOffset).slice(0, byteLength);
+  } else data = Buffer.concat(list);
   try {
     if (port) {
       success = socket.send(data, port, ip);
@@ -652,7 +657,7 @@ function doSend(ex, self, ip, list, address, port, callback) {
 
   /*
   const req = new SendWrap();
-  req.list = list;  // Keep reference alive.
+  req.list = list; // Keep reference alive.
   req.address = address;
   req.port = port;
   if (callback) {
@@ -661,22 +666,19 @@ function doSend(ex, self, ip, list, address, port, callback) {
   }
 
   let err;
-  if (port)
-    err = state.handle.send(req, list, list.length, port, ip, !!callback);
-  else
-    err = state.handle.send(req, list, list.length, !!callback);
+  if (port) err = state.handle.send(req, list, list.length, port, ip, !!callback);
+  else err = state.handle.send(req, list, list.length, !!callback);
 
   if (err >= 1) {
     // Synchronous finish. The return code is msg_length + 1 so that we can
     // distinguish between synchronous success and asynchronous success.
-    if (callback)
-      process.nextTick(callback, null, err - 1);
+    if (callback) process.nextTick(callback, null, err - 1);
     return;
   }
 
   if (err && callback) {
     // Don't emit as error, dgram_legacy.js compatibility
-    const ex = new ExceptionWithHostPort(err, 'send', address, port);
+    const ex = new ExceptionWithHostPort(err, "send", address, port);
     process.nextTick(callback, ex);
   }
   */

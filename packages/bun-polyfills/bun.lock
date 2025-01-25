@@ -1,5 +1,5 @@
 {
-  "lockfileVersion": 1,
+  "lockfileVersion": 0,
   "workspaces": {
     "": {
       "name": "bun-polyfills",
@@ -20,9 +20,6 @@
       "peerDependencies": {
         "typescript": "^5.0.0",
       },
-      "optionalPeers": [
-        "typescript",
-      ],
     },
   },
   "packages": {

@@ -477,8 +477,7 @@ pub fn inspectTable(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) 
 
     try buffered_writer.flush();
 
-    var out = bun.String.createUTF8(array.slice());
-    return out.transferToJS(globalThis);
+    return bun.String.createUTF8ForJS(globalThis, array.slice());
 }
 
 pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {

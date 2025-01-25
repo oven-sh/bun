@@ -1128,7 +1128,6 @@ pub const Encoder = struct {
 
     pub fn toStringComptime(input: []const u8, global: *JSGlobalObject, comptime encoding: JSC.Node.Encoding) JSValue {
         var bun_string = toBunStringComptime(input, encoding);
-        defer bun_string.deref();
         return bun_string.transferToJS(global);
     }
 

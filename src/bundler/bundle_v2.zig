@@ -824,8 +824,8 @@ pub const BundleV2 = struct {
             path.* = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
             const loader: Loader = (brk: {
                 if (import_record.importer_source_index) |importer| {
-                    var record: *ImportRecord = &this.graph.ast.items(.import_records)[importer].slice()[import_record.import_record_index];
-                    if (record.loader()) |out_loader| {
+                    const record: *ImportRecord = &this.graph.ast.items(.import_records)[importer].slice()[import_record.import_record_index];
+                    if (record.loader) |out_loader| {
                         break :brk out_loader;
                     }
                 }
@@ -1329,10 +1329,7 @@ pub const BundleV2 = struct {
         this.graph.input_files.append(bun.default_allocator, .{
             .source = source,
             .loader = loader,
-            .side_effects = switch (loader) {
-                .text, .json, .toml, .file => _resolver.SideEffects.no_side_effects__pure_data,
-                else => _resolver.SideEffects.has_side_effects,
-            },
+            .side_effects = loader.sideEffects(),
         }) catch bun.outOfMemory();
         var task = this.graph.allocator.create(ParseTask) catch bun.outOfMemory();
         task.* = ParseTask.init(resolve_result, source_index, this);
@@ -1371,10 +1368,7 @@ pub const BundleV2 = struct {
         this.graph.input_files.append(bun.default_allocator, .{
             .source = source,
             .loader = loader,
-            .side_effects = switch (loader) {
-                .text, .json, .toml, .file => .no_side_effects__pure_data,
-                else => .has_side_effects,
-            },
+            .side_effects = loader.sideEffects(),
         }) catch bun.outOfMemory();
         var task = this.graph.allocator.create(ParseTask) catch bun.outOfMemory();
         task.* = .{
@@ -2666,12 +2660,12 @@ pub const BundleV2 = struct {
             }
 
             // By default, we treat .sqlite files as external.
-            if (import_record.tag == .with_type_sqlite) {
+            if (import_record.loader != null and import_record.loader.? == .sqlite) {
                 import_record.is_external_without_side_effects = true;
                 continue;
             }
 
-            if (import_record.tag == .with_type_sqlite_embedded) {
+            if (import_record.loader != null and import_record.loader.? == .sqlite_embedded) {
                 import_record.is_external_without_side_effects = true;
             }
 
@@ -2879,7 +2873,7 @@ pub const BundleV2 = struct {
 
             // Figure out the loader.
             {
-                if (import_record.tag.loader()) |loader| {
+                if (import_record.loader) |loader| {
                     resolve_task.loader = loader;
                 }
 
@@ -3767,10 +3761,10 @@ pub const ParseTask = struct {
                     ),
                 };
             },
-            .json => {
+            .json, .jsonc => |v| {
                 const trace = tracer(@src(), "ParseJSON");
                 defer trace.end();
-                const root = (try resolver.caches.json.parsePackageJSON(log, source, allocator, false)) orelse Expr.init(E.Object, E.Object{}, Logger.Loc.Empty);
+                const root = (try resolver.caches.json.parseJSON(log, source, allocator, if (v == .jsonc) .jsonc else .json, true)) orelse Expr.init(E.Object, E.Object{}, Logger.Loc.Empty);
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
             },
             .toml => {
@@ -7507,22 +7501,13 @@ pub const LinkerContext = struct {
                                 const source = &input_files[id];
                                 const loader = loaders[record.source_index.get()];
                                 switch (loader) {
-                                    .jsx, .js, .ts, .tsx, .napi, .sqlite, .json, .html => {
+                                    .jsx, .js, .ts, .tsx, .napi, .sqlite, .sqlite_embedded, .json, .jsonc, .html => {
                                         this.log.addErrorFmt(
                                             source,
                                             record.range.loc,
                                             this.allocator,
                                             "Cannot import a \".{s}\" file into a CSS file",
-                                            .{@tagName(loader)},
-                                        ) catch bun.outOfMemory();
-                                    },
-                                    .sqlite_embedded => {
-                                        this.log.addErrorFmt(
-                                            source,
-                                            record.range.loc,
-                                            this.allocator,
-                                            "Cannot import a \"sqlite_embedded\" file into a CSS file",
-                                            .{},
+                                            .{if (loader == .sqlite_embedded) "sqlite" else @tagName(loader)},
                                         ) catch bun.outOfMemory();
                                     },
                                     .css, .file, .toml, .wasm, .base64, .dataurl, .text, .bunsh => {},

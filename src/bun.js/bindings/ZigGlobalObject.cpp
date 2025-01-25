@@ -4238,6 +4238,10 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
 
             if (params.type() == ScriptFetchParameters::Type::HostDefined) {
                 typeAttributeString = params.hostDefinedImportType();
+            } else if (params.type() == ScriptFetchParameters::Type::JSON) {
+                typeAttributeString = "json"_s;
+            } else if (params.type() == ScriptFetchParameters::Type::WebAssembly) {
+                typeAttributeString = "webassembly"_s;
             }
         }
     }

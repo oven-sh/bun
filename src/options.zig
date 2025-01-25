@@ -635,6 +635,7 @@ pub const Loader = enum(u8) {
     css,
     file,
     json,
+    jsonc,
     toml,
     wasm,
     napi,
@@ -679,7 +680,7 @@ pub const Loader = enum(u8) {
         return switch (this) {
             .jsx, .js, .ts, .tsx => bun.http.MimeType.javascript,
             .css => bun.http.MimeType.css,
-            .toml, .json => bun.http.MimeType.json,
+            .toml, .json, .jsonc => bun.http.MimeType.json,
             .wasm => bun.http.MimeType.wasm,
             .html => bun.http.MimeType.html,
             else => bun.http.MimeType.other,
@@ -697,7 +698,7 @@ pub const Loader = enum(u8) {
 
     pub fn canBeRunByBun(this: Loader) bool {
         return switch (this) {
-            .jsx, .js, .ts, .tsx, .json, .wasm, .bunsh => true,
+            .jsx, .js, .ts, .tsx, .json, .jsonc, .wasm, .bunsh => true,
             else => false,
         };
     }
@@ -753,9 +754,10 @@ pub const Loader = enum(u8) {
         .{ "css", .css },
         .{ "file", .file },
         .{ "json", .json },
-        .{ "jsonc", .json },
+        .{ "jsonc", .jsonc },
         .{ "toml", .toml },
         .{ "wasm", .wasm },
+        .{ "napi", .napi },
         .{ "node", .napi },
         .{ "dataurl", .dataurl },
         .{ "base64", .base64 },
@@ -818,6 +820,7 @@ pub const Loader = enum(u8) {
             .html => .html,
             .file, .bunsh => .file,
             .json => .json,
+            .jsonc => .json,
             .toml => .toml,
             .wasm => .wasm,
             .napi => .napi,
@@ -867,7 +870,7 @@ pub const Loader = enum(u8) {
 
     pub fn isJavaScriptLikeOrJSON(loader: Loader) bool {
         return switch (loader) {
-            .jsx, .js, .ts, .tsx, .json => true,
+            .jsx, .js, .ts, .tsx, .json, .jsonc => true,
 
             // toml is included because we can serialize to the same AST as JSON
             .toml => true,
@@ -881,6 +884,13 @@ pub const Loader = enum(u8) {
         if (ext.len == 0 or (ext.len == 1 and ext[0] == '.')) return null;
 
         return obj.get(ext);
+    }
+
+    pub fn sideEffects(this: Loader) bun.resolver.SideEffects {
+        return switch (this) {
+            .text, .json, .jsonc, .toml, .file => bun.resolver.SideEffects.no_side_effects__pure_data,
+            else => bun.resolver.SideEffects.has_side_effects,
+        };
     }
 };
 
@@ -905,7 +915,7 @@ const default_loaders_posix = .{
     .{ ".txt", .text },
     .{ ".text", .text },
     .{ ".html", .html },
-    .{ ".jsonc", .json },
+    .{ ".jsonc", .jsonc },
 };
 const default_loaders_win32 = default_loaders_posix ++ .{
     .{ ".sh", .bunsh },

@@ -594,12 +594,6 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
     return this._write(data, encoding, cb);
   }
   try {
-    if (this[kIsPerformingIO] > 0) {
-      this.once(kIoDone, () => {
-        underscoreWriteFast.$call(this, data, encoding, cb);
-      });
-      return;
-    }
     if (fileSink === true) {
       fileSink = this[kWriteStreamFastPath] = Bun.file(this.path).writer();
       // @ts-expect-error
@@ -607,10 +601,7 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
     }
 
     const maybePromise = fileSink.write(data);
-    if (
-      $isPromise(maybePromise) &&
-      ($getPromiseInternalField(maybePromise, $promiseFieldFlags) & $promiseStateMask) === $promiseStatePending
-    ) {
+    if ($isPromise(maybePromise)) {
       const prevRefCount = this[kIsPerformingIO];
       this[kIsPerformingIO] = (prevRefCount === true ? 0 : prevRefCount || 0) + 1;
       if (cb)
@@ -687,13 +678,18 @@ writeStreamPrototype._destroy = function (err, cb) {
   // running in a thread pool. Therefore, file descriptors are not safe
   // to close while used in a pending read or write operation. Wait for
   // any pending IO (kIsPerformingIO) to complete (kIoDone).
-  if (this[kIsPerformingIO] > 0) {
-    this.once(kIoDone, er => {
-      close(this, err || er, cb);
-    });
-  } else {
-    close(this, err, cb);
+  const sink = this[kWriteStreamFastPath];
+  if (sink && sink !== true) {
+    const end = sink.end(err);
+    if ($isPromise(end)) {
+      end.then(() => {
+        cb(err);
+      }, cb);
+      return;
+    }
   }
+
+  cb(err);
 };
 
 writeStreamPrototype.close = function (this: FSStream, cb) {

@@ -440,12 +440,13 @@ pub fn nodeFSStatWatcherScheduler(rare: *RareData, vm: *JSC.VirtualMachine) *Sta
 pub fn s3DefaultClient(rare: *RareData, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
     return rare.s3_default_client.get() orelse {
         const vm = globalThis.bunVM();
-        var aws_options = bun.S3.S3Credentials.getCredentialsWithOptions(vm.transpiler.env.getS3Credentials(), .{}, null, null, globalThis) catch bun.outOfMemory();
+        var aws_options = bun.S3.S3Credentials.getCredentialsWithOptions(vm.transpiler.env.getS3Credentials(), .{}, null, null, null, globalThis) catch bun.outOfMemory();
         defer aws_options.deinit();
         const client = JSC.WebCore.S3Client.new(.{
             .credentials = aws_options.credentials.dupe(),
             .options = aws_options.options,
             .acl = aws_options.acl,
+            .storage_class = aws_options.storage_class,
         });
         const js_client = client.toJS(globalThis);
         js_client.ensureStillAlive();

@@ -227,8 +227,9 @@ pub fn constructS3FileWithS3CredentialsAndOptions(
     default_credentials: *S3.S3Credentials,
     default_options: bun.S3.MultiPartUploadOptions,
     default_acl: ?bun.S3.ACL,
+    default_storage_class: ?bun.S3.StorageClass,
 ) bun.JSError!Blob {
-    var aws_options = try S3.S3Credentials.getCredentialsWithOptions(default_credentials.*, default_options, options, default_acl, globalObject);
+    var aws_options = try S3.S3Credentials.getCredentialsWithOptions(default_credentials.*, default_options, options, default_acl, default_storage_class, globalObject);
     defer aws_options.deinit();
 
     const store = brk: {
@@ -241,6 +242,8 @@ pub fn constructS3FileWithS3CredentialsAndOptions(
     errdefer store.deinit();
     store.data.s3.options = aws_options.options;
     store.data.s3.acl = aws_options.acl;
+    store.data.s3.storage_class = aws_options.storage_class;
+
     var blob = Blob.initWithStore(store, globalObject);
     if (options) |opts| {
         if (opts.isObject()) {
@@ -248,7 +251,7 @@ pub fn constructS3FileWithS3CredentialsAndOptions(
                 inner: {
                     if (file_type.isString()) {
                         var allocator = bun.default_allocator;
-                        var str = file_type.toSlice(globalObject, bun.default_allocator);
+                        var str = try file_type.toSlice(globalObject, bun.default_allocator);
                         defer str.deinit();
                         const slice = str.slice();
                         if (!strings.isAllASCII(slice)) {
@@ -276,12 +279,14 @@ pub fn constructS3FileWithS3Credentials(
     options: ?JSC.JSValue,
     existing_credentials: S3.S3Credentials,
 ) bun.JSError!Blob {
-    var aws_options = try S3.S3Credentials.getCredentialsWithOptions(existing_credentials, .{}, options, null, globalObject);
+    var aws_options = try S3.S3Credentials.getCredentialsWithOptions(existing_credentials, .{}, options, null, null, globalObject);
     defer aws_options.deinit();
     const store = Blob.Store.initS3(path, null, aws_options.credentials, bun.default_allocator) catch bun.outOfMemory();
     errdefer store.deinit();
     store.data.s3.options = aws_options.options;
     store.data.s3.acl = aws_options.acl;
+    store.data.s3.storage_class = aws_options.storage_class;
+
     var blob = Blob.initWithStore(store, globalObject);
     if (options) |opts| {
         if (opts.isObject()) {
@@ -289,7 +294,7 @@ pub fn constructS3FileWithS3Credentials(
                 inner: {
                     if (file_type.isString()) {
                         var allocator = bun.default_allocator;
-                        var str = file_type.toSlice(globalObject, bun.default_allocator);
+                        var str = try file_type.toSlice(globalObject, bun.default_allocator);
                         defer str.deinit();
                         const slice = str.slice();
                         if (!strings.isAllASCII(slice)) {
@@ -465,12 +470,12 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *JSC.JSGlobalObject, extra_opt
         .path = path,
         .method = method,
         .acl = credentialsWithOptions.acl,
+        .storage_class = credentialsWithOptions.storage_class,
     }, .{ .expires = expires }) catch |sign_err| {
         return S3.throwSignError(sign_err, globalThis);
     };
     defer result.deinit();
-    var str = bun.String.fromUTF8(result.url);
-    return str.transferToJS(this.globalThis);
+    return bun.String.createUTF8ForJS(this.globalThis, result.url);
 }
 pub fn getBucketName(
     this: *const Blob,

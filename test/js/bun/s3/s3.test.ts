@@ -996,6 +996,22 @@ for (let credentials of allCredentials) {
             expect(url.includes("X-Amz-SignedHeaders")).toBe(true);
           });
 
+          it("should work with storage class", async () => {
+            const s3file = s3("s3://bucket/credentials-test", s3Options);
+            const url = s3file.presign({
+              expiresIn: 10,
+              storageClass: "GLACIER_IR",
+            });
+            expect(url).toBeDefined();
+            expect(url.includes("X-Amz-Expires=10")).toBe(true);
+            expect(url.includes("x-amz-storage-class=GLACIER_IR")).toBe(true);
+            expect(url.includes("X-Amz-Date")).toBe(true);
+            expect(url.includes("X-Amz-Signature")).toBe(true);
+            expect(url.includes("X-Amz-Credential")).toBe(true);
+            expect(url.includes("X-Amz-Algorithm")).toBe(true);
+            expect(url.includes("X-Amz-SignedHeaders")).toBe(true);
+          });
+
           it("s3().presign() should work", async () => {
             const url = s3("s3://bucket/credentials-test", s3Options).presign({
               expiresIn: 10,

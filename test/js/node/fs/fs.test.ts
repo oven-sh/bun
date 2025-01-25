@@ -2431,7 +2431,9 @@ describe("fs/promises", () => {
     expect(bun.length).toEqual(node.length);
     expect([...new Set(node.map(v => v.parentPath ?? v.path))]).toEqual([full]);
     expect([...new Set(bun.map(v => v.parentPath ?? v.path))]).toEqual([full]);
-    expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(node.map(v => join(v.path, v.name)).sort());
+    expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(
+      node.map(v => join(v.path, v.name)).sort(),
+    );
   }, 100000);
 
   it("readdir(path, {withFileTypes: true, recursive: true}) produces the same result as Node.js", async () => {
@@ -2466,7 +2468,9 @@ describe("fs/promises", () => {
     const node = JSON.parse(text);
     expect(bun.length).toEqual(node.length);
     expect(new Set(bun.map(v => v.parentPath ?? v.path))).toEqual(new Set(node.map(v => v.path)));
-    expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(node.map(v => join(v.path, v.name)).sort());
+    expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(
+      node.map(v => join(v.path, v.name)).sort(),
+    );
   }, 100000);
 
   it("readdirSync(path, {withFileTypes: true, recursive: true}) produces the same result as Node.js", async () => {
@@ -2501,7 +2505,9 @@ describe("fs/promises", () => {
     const node = JSON.parse(text);
     expect(bun.length).toEqual(node.length);
     expect(new Set(bun.map(v => v.parentPath ?? v.path))).toEqual(new Set(node.map(v => v.path)));
-    expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(node.map(v => join(v.path, v.name)).sort());
+    expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(
+      node.map(v => join(v.path, v.name)).sort(),
+    );
   }, 100000);
 
   for (let withFileTypes of [false, true] as const) {
@@ -3526,5 +3532,74 @@ it("fs.statfs should work with bigint", async () => {
   for (const k of ["type", "bsize", "blocks", "bfree", "bavail", "files", "ffree"]) {
     expect(stats).toHaveProperty(k);
     expect(stats[k]).toBeTypeOf("bigint");
+  }
+});
+
+it("fs.Stat constructor", () => {
+  expect(new Stats()).toMatchObject({
+    "atimeMs": undefined,
+    "birthtimeMs": undefined,
+    "blksize": undefined,
+    "blocks": undefined,
+    "ctimeMs": undefined,
+    "dev": undefined,
+    "gid": undefined,
+    "ino": undefined,
+    "mode": undefined,
+    "mtimeMs": undefined,
+    "nlink": undefined,
+    "rdev": undefined,
+    "size": undefined,
+    "uid": undefined,
+  });
+});
+
+it("fs.Stat constructor with options", () => {
+  // @ts-ignore
+  expect(new Stats(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)).toMatchObject({
+    atimeMs: 10,
+    birthtimeMs: 13,
+    blksize: 6,
+    blocks: 9,
+    ctimeMs: 12,
+    dev: 0,
+    gid: 4,
+    ino: 7,
+    mode: 1,
+    mtimeMs: 11,
+    nlink: 2,
+    rdev: 5,
+    size: 8,
+    uid: 3,
+  });
+});
+
+it("fs.Stat.atime reflects date matching Node.js behavior", () => {
+  {
+    const date = new Date();
+    const stats = new Stats(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    stats.atime = date;
+    expect(stats.atime).toBe(date);
+  }
+
+  {
+    const stats = new Stats();
+    expect(stats.atime.getTime()).toEqual(new Date(undefined).getTime());
+  }
+
+  {
+    const stats = new Stats();
+    const now = Date.now();
+    stats.atimeMs = now;
+    expect(stats.atime).toEqual(new Date(now));
+  }
+
+  {
+    const stats = new Stats();
+    stats.atimeMs = 0;
+    expect(stats.atime).toEqual(new Date(0));
+    const now = Date.now();
+    stats.atimeMs = now;
+    expect(stats.atime).toEqual(new Date(0));
   }
 });

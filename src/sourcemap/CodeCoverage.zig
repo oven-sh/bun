@@ -692,8 +692,7 @@ pub const ByteRangeMapping = struct {
             return globalThis.throwOutOfMemoryValue();
         };
 
-        var str = bun.String.createUTF8(mutable_str.slice());
-        return str.transferToJS(globalThis);
+        return bun.String.createUTF8ForJS(globalThis, mutable_str.slice());
     }
 
     pub fn compute(source_contents: []const u8, source_id: i32, source_url: bun.JSC.ZigString.Slice) ByteRangeMapping {

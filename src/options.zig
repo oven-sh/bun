@@ -697,7 +697,7 @@ pub const Loader = enum(u8) {
 
     pub fn canBeRunByBun(this: Loader) bool {
         return switch (this) {
-            .jsx, .js, .ts, .tsx, .json, .wasm, .bunsh => true,
+            .jsx, .js, .ts, .tsx, .wasm, .bunsh => true,
             else => false,
         };
     }

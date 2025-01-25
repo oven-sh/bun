@@ -346,7 +346,11 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
             },
 
             '\t' => {
-                try writer.writeAll("\\t");
+                if (quote_char == '`') {
+                    try writer.writeAll("\t");
+                } else {
+                    try writer.writeAll("\\t");
+                }
                 i += 1;
             },
 

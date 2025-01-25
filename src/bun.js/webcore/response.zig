@@ -3256,6 +3256,7 @@ pub const Fetch = struct {
                 .credentials = globalThis.bunVM().transpiler.env.getS3Credentials(),
                 .options = .{},
                 .acl = null,
+                .storage_class = null,
             };
             defer {
                 credentialsWithOptions.deinit();
@@ -3265,7 +3266,7 @@ pub const Fetch = struct {
                 if (try options.getTruthyComptime(globalThis, "s3")) |s3_options| {
                     if (s3_options.isObject()) {
                         s3_options.ensureStillAlive();
-                        credentialsWithOptions = try s3.S3Credentials.getCredentialsWithOptions(credentialsWithOptions.credentials, .{}, s3_options, null, globalThis);
+                        credentialsWithOptions = try s3.S3Credentials.getCredentialsWithOptions(credentialsWithOptions.credentials, .{}, s3_options, null, null, globalThis);
                     }
                 }
             }
@@ -3341,6 +3342,7 @@ pub const Fetch = struct {
                     globalThis,
                     credentialsWithOptions.options,
                     credentialsWithOptions.acl,
+                    credentialsWithOptions.storage_class,
                     if (headers) |h| h.getContentType() else null,
                     proxy_url,
                     @ptrCast(&Wrapper.resolve),

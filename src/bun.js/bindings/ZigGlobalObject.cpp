@@ -161,6 +161,8 @@
 #include "JSX509Certificate.h"
 #include "JSS3File.h"
 #include "S3Error.h"
+#include "ProcessBindingBuffer.h"
+
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
 #endif
@@ -3196,6 +3198,14 @@ void GlobalObject::finishCreation(VM& vm)
                 InternalModuleRegistry::create(
                     init.vm,
                     InternalModuleRegistry::createStructure(init.vm, init.owner)));
+        });
+
+    m_processBindingBuffer.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+            init.set(
+                ProcessBindingBuffer::create(
+                    init.vm,
+                    ProcessBindingBuffer::createStructure(init.vm, init.owner)));
         });
 
     m_processBindingConstants.initLater(

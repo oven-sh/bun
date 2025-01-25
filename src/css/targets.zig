@@ -186,7 +186,6 @@ pub const Features = packed struct(u32) {
     vendor_prefixes: bool = false,
     logical_properties: bool = false,
     __unused: u12 = 0,
-
     pub const selectors = Features.fromNames(&.{ "nesting", "not_selector_list", "dir_selector", "lang_selector_list", "is_selector" });
     pub const media_queries = Features.fromNames(&.{ "media_interval_syntax", "media_range_syntax", "custom_media_queries" });
     pub const colors = Features.fromNames(&.{ "color_function", "oklab_colors", "lab_colors", "p3_colors", "hex_alpha_colors", "space_separated_color_notation" });

@@ -1237,7 +1237,7 @@ pub const DescribeScope = struct {
         }
 
         this.pending_tests.deinit(allocator);
-        for (this.tests.items) |t| {
+        for (this.tests.items) |*t| {
             t.deinit(globalThis);
         }
         this.tests.clearAndFree(allocator);

@@ -2162,6 +2162,7 @@ pub const ModuleLoader = struct {
                         .source_url = input_specifier.createIfDifferent(path.text),
                         .hash = 0,
                         .tag = .esm,
+                        .module_info = null,
                     };
                 }
 
@@ -2177,6 +2178,7 @@ pub const ModuleLoader = struct {
                     .source_url = input_specifier.createIfDifferent(path.text),
                     .hash = 0,
                     .tag = .export_default_object,
+                    .module_info = null,
                 };
             },
 
@@ -2189,6 +2191,7 @@ pub const ModuleLoader = struct {
                         .source_url = input_specifier.createIfDifferent(path.text),
                         .hash = 0,
                         .tag = .esm,
+                        .module_info = null,
                     };
                 }
 

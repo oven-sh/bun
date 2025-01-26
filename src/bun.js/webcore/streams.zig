@@ -3630,10 +3630,17 @@ pub const FileSink = struct {
 
                     this.fd = fd;
                     this.is_socket = std.posix.S.ISSOCK(stat.mode);
+
                     this.nonblocking = is_nonblocking_tty or (this.pollable and switch (options.input_path) {
                         .path => true,
                         .fd => |fd_| bun.FDTag.get(fd_) == .none,
                     });
+
+                    if (!this.nonblocking and this.is_socket) {
+                        if (bun.sys.setNonblocking(fd) == .result) {
+                            this.nonblocking = true;
+                        }
+                    }
                 },
             }
         } else if (comptime Environment.isWindows) {

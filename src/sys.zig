@@ -3517,8 +3517,8 @@ pub fn dupWithFlags(fd: bun.FileDescriptor, flags: i32) Maybe(bun.FileDescriptor
     }
 
     if (flags != 0) {
-        const fd_flags: ArgType = @intCast(syscall.fcntl(@intCast(out), @as(i32, std.posix.F.GETFD), @as(ArgType, 0)));
-        _ = syscall.fcntl(@intCast(out), @as(i32, std.posix.F.SETFD), @as(ArgType, @intCast(fd_flags | @as(ArgType, @intCast(flags)))));
+        const fd_flags: ArgType = @intCast(syscall.fcntl(@intCast(out), @as(i32, std.posix.F.GETFL), @as(ArgType, 0)));
+        _ = syscall.fcntl(@intCast(out), @as(i32, std.posix.F.SETFL), @as(ArgType, @intCast(fd_flags | @as(ArgType, @intCast(flags)))));
     }
 
     return Maybe(bun.FileDescriptor){

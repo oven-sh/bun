@@ -916,11 +916,11 @@ describe("fetch() with streaming", () => {
           return new Response(
             new ReadableStream({
               async pull(controller) {
-                const firstChunk = data.slice(0, 64);
-                const secondChunk = data.slice(firstChunk.length);
+                const firstChunk = data.subarray(0, 64);
+                const secondChunk = data.subarray(firstChunk.length);
                 controller.enqueue(firstChunk);
                 await onReceivedHeaders.promise;
-                await Bun.sleep(64);
+                await Bun.sleep(128);
                 controller.enqueue(secondChunk);
                 controller.close();
               },

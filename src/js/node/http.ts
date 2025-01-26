@@ -1304,7 +1304,6 @@ function ensureReadableStreamController(run, chunk, encoding, callback) {
             firstWrite = undefined;
           }
           if (promise && $isPromise(promise)) {
-            console.error("Promise pending");
             promise.then(() => {
               run(controller, chunk, encoding, callback);
             });

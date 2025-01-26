@@ -4233,7 +4233,7 @@ pub const FileReader = struct {
 
     pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState) bool {
         var buf = init_buf;
-        log("onReadChunk() = {d} ({s})", .{ buf.len, @tagName(state) });
+        log("onReadChunk() = {d} ({s}) - read_inside_on_pull: {s}", .{ buf.len, @tagName(state), @tagName(this.read_inside_on_pull) });
 
         if (this.done) {
             this.reader.close();

@@ -4286,9 +4286,10 @@ pub const FileReader = struct {
                         if (this.buffered.capacity > 0) {
                             this.buffered.clearAndFree(bun.default_allocator);
                         }
-                        var taken = this.reader.takeBuffer();
 
-                        this.buffered = taken.moveToUnmanaged();
+                        if (this.reader.buffer().items.len != 0) {
+                            this.buffered = this.reader.buffer().moveToUnmanaged();
+                        }
                     }
 
                     var buffer = &this.buffered;

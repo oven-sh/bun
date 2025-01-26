@@ -663,14 +663,28 @@ describe("fetch() with streaming", () => {
     switch (compression) {
       case "gzip-libdeflate":
       case "gzip":
-        return Bun.gzipSync(data, { library: compression === "gzip-libdeflate" ? "libdeflate" : "zlib" });
+        return Bun.gzipSync(data, {
+          library: compression === "gzip-libdeflate" ? "libdeflate" : "zlib",
+          level: 1, // fastest compression
+        });
       case "deflate-libdeflate":
       case "deflate":
-        return Bun.deflateSync(data, { library: compression === "deflate-libdeflate" ? "libdeflate" : "zlib" });
+        return Bun.deflateSync(data, {
+          library: compression === "deflate-libdeflate" ? "libdeflate" : "zlib",
+          level: 1, // fastest compression
+        });
       case "deflate_with_headers":
-        return zlib.deflateSync(data);
+        return zlib.deflateSync(data, {
+          level: 1, // fastest compression
+        });
       case "br":
-        return zlib.brotliCompressSync(data);
+        return zlib.brotliCompressSync(data, {
+          params: {
+            [zlib.constants.BROTLI_PARAM_QUALITY]: 0,
+            [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_GENERIC,
+            [zlib.constants.BROTLI_PARAM_SIZE_HINT]: 0,
+          },
+        });
       default:
         return data;
     }
@@ -903,12 +917,13 @@ describe("fetch() with streaming", () => {
     });
 
     test(`Content-Length response works (multiple parts) with ${compression} compression`, async () => {
-      const rawBytes = Buffer.allocUnsafe(128 * 1024);
+      const rawBytes = Buffer.allocUnsafe(1024 * 1024);
       // Random data doesn't compress well. We need enough random data that
       // the compressed data is larger than 64 bytes.
       require("crypto").randomFillSync(rawBytes);
       const content = rawBytes.toString("hex");
       const contentBuffer = Buffer.from(content);
+
       const data = compress(compression, contentBuffer);
       var onReceivedHeaders = Promise.withResolvers();
       using server = Bun.serve({
@@ -918,13 +933,12 @@ describe("fetch() with streaming", () => {
             new ReadableStream({
               async pull(controller) {
                 // Split it halfway to maximize the chances that it will be split into multiple chunks.
-                // If we only look at the first 64 bytes then the first chunk
-                // might still be a single chunk since we're decompressing.
+                // If we only look at the first 64 bytes then the first chunk might still be a single chunk since we're
                 const firstChunk = data.subarray(0, data.length / 2);
                 const secondChunk = data.subarray(firstChunk.length);
                 controller.enqueue(firstChunk);
                 await onReceivedHeaders.promise;
-                await Bun.sleep(128);
+                await Bun.sleep(4);
                 controller.enqueue(secondChunk);
                 controller.close();
               },

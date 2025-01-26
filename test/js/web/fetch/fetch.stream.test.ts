@@ -932,8 +932,7 @@ describe("fetch() with streaming", () => {
           return new Response(
             new ReadableStream({
               async pull(controller) {
-                // Split it halfway to maximize the chances that it will be split into multiple chunks.
-                // If we only look at the first 64 bytes then the first chunk might still be a single chunk since we're
+                // Ensure we actually send it over the network in multiple chunks.
                 let tenth = (data.length / 10) | 0;
                 let remaining = data;
                 while (remaining.length > 0) {

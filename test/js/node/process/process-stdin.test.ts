@@ -2,7 +2,9 @@ import { test, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 
 test("pipe does the right thing", async () => {
-  const result = Bun.spawnSync({
+  // Note: Bun.spawnSync uses memfd_create on Linux for pipe, which means we see
+  // it as a file instead of a tty
+  const result = Bun.spawn({
     cmd: [bunExe(), "-e", "console.log(typeof process.stdin.ref)"],
     stdin: "pipe",
     stdout: "pipe",
@@ -10,12 +12,12 @@ test("pipe does the right thing", async () => {
     env: bunEnv,
   });
 
-  expect(result.stdout.toString().trim()).toBe("function");
-  expect(result.exitCode).toBe(0);
+  expect((await new Response(result.stdout).text()).trim()).toBe("function");
+  expect(await result.exited).toBe(0);
 });
 
 test("file does the right thing", async () => {
-  const result = Bun.spawnSync({
+  const result = Bun.spawn({
     cmd: [bunExe(), "-e", "console.log(typeof process.stdin.ref)"],
     stdin: Bun.file(import.meta.path),
     stdout: "pipe",
@@ -23,6 +25,6 @@ test("file does the right thing", async () => {
     env: bunEnv,
   });
 
-  expect(result.stdout.toString().trim()).toBe("undefined");
-  expect(result.exitCode).toBe(0);
+  expect((await new Response(result.stdout).text()).trim()).toBe("undefined");
+  expect(await result.exited).toBe(0);
 });

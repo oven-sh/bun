@@ -136,7 +136,7 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
 
   // tty.ReadStream is supposed to extend from net.Socket.
   // but we haven't made that work yet. Until then, we need to manually add some of net.Socket's methods
-  if (fdType !== BunProcessStdinFdType.file) {
+  if (isTTY || fdType !== BunProcessStdinFdType.file) {
     stream.ref = function () {
       ref();
       return this;

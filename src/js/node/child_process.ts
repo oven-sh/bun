@@ -553,7 +553,7 @@ function spawnSync(file, args, options) {
     } else if (typeof input === "string") {
       bunStdio[0] = Buffer.from(input, encoding || "utf8");
     } else {
-      throw $ERR_INVALID_ARG_TYPE(`options.stdio[0]`, ["Buffer", "TypedArray", "DataView", "string"], input);
+      throw $ERR_INVALID_ARG_TYPE(`options.stdio[0]`, ["string", "Buffer", "TypedArray", "DataView"], input);
     }
   }
 
@@ -1275,12 +1275,16 @@ class ChildProcess extends EventEmitter {
       env: env,
       detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,
       onExit: (handle, exitCode, signalCode, err) => {
-        if (hasSocketsToEagerlyLoad) {
-          this.stdio;
-        }
-        $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
         this.#handle = handle;
         this.pid = this.#handle.pid;
+        $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
+
+        if (hasSocketsToEagerlyLoad) {
+          process.nextTick(() => {
+            this.stdio;
+            $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
+          });
+        }
 
         process.nextTick(
           (exitCode, signalCode, err) => this.#handleOnExit(exitCode, signalCode, err),

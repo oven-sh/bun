@@ -165,6 +165,8 @@
 #include "JavaScriptCore/RemoteInspectorServer.h"
 #endif
 
+#include "NodeFSBinding.h"
+
 #if !OS(WINDOWS)
 #include <dlfcn.h>
 #endif
@@ -2873,6 +2875,16 @@ void GlobalObject::finishCreation(VM& vm)
                     jsDynamicCast<Zig::GlobalObject*>(init.owner)));
         });
 
+    m_JSStatsClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::initJSStatsClassStructure(init);
+        });
+
+    m_JSStatsBigIntClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::initJSBigIntStatsClassStructure(init);
+        });
+
     m_memoryFootprintStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
             init.set(
@@ -3826,6 +3838,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_lazyRequireCacheObject.visit(visitor);
     thisObject->m_lazyTestModuleObject.visit(visitor);
     thisObject->m_memoryFootprintStructure.visit(visitor);
+    thisObject->m_JSStatsClassStructure.visit(visitor);
+    thisObject->m_JSStatsBigIntClassStructure.visit(visitor);
     thisObject->m_NapiClassStructure.visit(visitor);
     thisObject->m_NapiExternalStructure.visit(visitor);
     thisObject->m_NAPIFunctionStructure.visit(visitor);

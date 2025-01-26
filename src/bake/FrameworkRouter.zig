@@ -1246,7 +1246,7 @@ pub const JSFrameworkRouter = struct {
             return global.throwInvalidArguments("parseRoutePattern takes two arguments", .{});
 
         const style_js, const filepath_js = frame.argumentsAsArray(2);
-        const filepath = try filepath_js.toSlice2(global, alloc);
+        const filepath = try filepath_js.toSlice(global, alloc);
         defer filepath.deinit();
         var style = try Style.fromJS(style_js, global);
         errdefer style.deinit();

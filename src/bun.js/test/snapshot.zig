@@ -41,6 +41,8 @@ pub const Snapshots = struct {
         has_matchers: bool,
         is_added: bool,
         kind: []const u8, // static lifetime
+        start_indent: ?[]const u8, // owned by Snapshots.allocator
+        end_indent: ?[]const u8, // owned by Snapshots.allocator
 
         fn lessThanFn(_: void, a: InlineSnapshotToWrite, b: InlineSnapshotToWrite) bool {
             if (a.line < b.line) return true;
@@ -298,7 +300,7 @@ pub const Snapshots = struct {
                     };
                     const fn_name = ils.kind;
                     if (!bun.strings.startsWith(file_text[next_start..], fn_name)) {
-                        try log.addErrorFmt(&source, .{ .start = @intCast(next_start) }, arena, "Failed to update inline snapshot: Could not find 'toMatchInlineSnapshot' here", .{});
+                        try log.addErrorFmt(&source, .{ .start = @intCast(next_start) }, arena, "Failed to update inline snapshot: Could not find '{s}' here", .{fn_name});
                         continue;
                     }
                     next_start += fn_name.len;
@@ -395,10 +397,49 @@ pub const Snapshots = struct {
                 try result_text.appendSlice(file_text[uncommitted_segment_end..final_start_usize]);
                 uncommitted_segment_end = final_end_usize;
 
+                // preserve existing indentation level, otherwise indent the same as the start position plus two spaces
+                var needs_more_spaces = false;
+                const start_indent = ils.start_indent orelse D: {
+                    const source_until_final_start = source.contents[0..final_start_usize];
+                    const line_start = if (std.mem.lastIndexOfScalar(u8, source_until_final_start, '\n')) |newline_loc| newline_loc + 1 else 0;
+                    const indent_count = for (source_until_final_start[line_start..], 0..) |char, j| {
+                        if (char != ' ' and char != '\t') break j;
+                    } else source_until_final_start[line_start..].len;
+                    needs_more_spaces = true;
+                    break :D source_until_final_start[line_start..][0..indent_count];
+                };
+
+                var re_indented_string = std.ArrayList(u8).init(arena);
+                defer re_indented_string.deinit();
+                const re_indented = if (ils.value.len > 0 and ils.value[0] == '\n') blk: {
+                    // append starting newline
+                    try re_indented_string.appendSlice("\n");
+                    var re_indented_source = ils.value[1..];
+                    while (re_indented_source.len > 0) {
+                        const next_newline = if (std.mem.indexOfScalar(u8, re_indented_source, '\n')) |a| a + 1 else re_indented_source.len;
+                        const segment = re_indented_source[0..next_newline];
+                        if (segment.len == 0) {
+                            // last line; loop already exited
+                            unreachable;
+                        } else if (bun.strings.eqlComptime(segment, "\n")) {
+                            // zero length line. no indent.
+                        } else {
+                            // regular line. indent.
+                            try re_indented_string.appendSlice(start_indent);
+                            if (needs_more_spaces) try re_indented_string.appendSlice("  ");
+                        }
+                        try re_indented_string.appendSlice(segment);
+                        re_indented_source = re_indented_source[next_newline..];
+                    }
+                    // indent before backtick
+                    try re_indented_string.appendSlice(ils.end_indent orelse start_indent);
+                    break :blk re_indented_string.items;
+                } else ils.value;
+
                 if (needs_pre_comma) try result_text.appendSlice(", ");
                 const result_text_writer = result_text.writer();
                 try result_text.appendSlice("`");
-                try bun.js_printer.writePreQuotedString(ils.value, @TypeOf(result_text_writer), result_text_writer, '`', false, false, .utf8);
+                try bun.js_printer.writePreQuotedString(re_indented, @TypeOf(result_text_writer), result_text_writer, '`', false, false, .utf8);
                 try result_text.appendSlice("`");
 
                 if (ils.is_added) Jest.runner.?.snapshots.added += 1;

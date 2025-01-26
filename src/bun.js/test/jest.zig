@@ -529,7 +529,7 @@ pub const Jest = struct {
         if (arguments.len < 1 or !arguments[0].isString()) {
             return globalObject.throw("Bun.jest() expects a string filename", .{});
         }
-        var str = arguments[0].toSlice(globalObject, bun.default_allocator);
+        var str = try arguments[0].toSlice(globalObject, bun.default_allocator);
         defer str.deinit();
         const slice = str.slice();
 
@@ -592,6 +592,14 @@ pub const TestScope = struct {
         expected: u32 = 0,
         actual: u32 = 0,
     };
+
+    pub fn deinit(this: *TestScope, globalThis: *JSGlobalObject) void {
+        if (this.label.len > 0) {
+            const label = this.label;
+            this.label = "";
+            getAllocator(globalThis).free(label);
+        }
+    }
 
     pub fn call(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
         return createScope(globalThis, callframe, "test()", true, .pass);
@@ -1158,8 +1166,7 @@ pub const DescribeScope = struct {
                     Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, 0, this);
                     i += 1;
                 }
-                this.tests.clearAndFree(allocator);
-                this.pending_tests.deinit(allocator);
+                this.deinit(globalObject);
                 return;
             }
             if (end == 0) {
@@ -1218,9 +1225,23 @@ pub const DescribeScope = struct {
                 _ = globalThis.bunVM().uncaughtException(globalThis, err, true);
             }
         }
+        this.deinit(globalThis);
+    }
 
-        this.pending_tests.deinit(getAllocator(globalThis));
-        this.tests.clearAndFree(getAllocator(globalThis));
+    pub fn deinit(this: *DescribeScope, globalThis: *JSGlobalObject) void {
+        const allocator = getAllocator(globalThis);
+
+        if (this.label.len > 0) {
+            const label = this.label;
+            this.label = "";
+            allocator.free(label);
+        }
+
+        this.pending_tests.deinit(allocator);
+        for (this.tests.items) |*t| {
+            t.deinit(globalThis);
+        }
+        this.tests.clearAndFree(allocator);
     }
 
     const ScopeStack = ObjectPool(std.ArrayListUnmanaged(*DescribeScope), null, true, 16);
@@ -1751,11 +1772,15 @@ inline fn createScope(
 
     const parent = DescribeScope.active.?;
     const allocator = getAllocator(globalThis);
-    const label = if (description == .zero)
-        ""
-    else
-        (description.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
-
+    const label = brk: {
+        if (description == .zero) {
+            break :brk "";
+        } else {
+            var slice = try description.toSlice(globalThis, allocator);
+            defer slice.deinit();
+            break :brk try allocator.dupe(u8, slice.slice());
+        }
+    };
     var tag_to_use = tag;
 
     if (tag_to_use == .only or parent.tag == .only) {
@@ -2058,11 +2083,17 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                 item.protect();
                 function_args[0] = item;
             }
-
-            const label = if (description.isEmptyOrUndefinedOrNull())
-                ""
-            else
-                (description.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
+            var _label: ?JSC.ZigString.Slice = null;
+            defer if (_label) |slice| slice.deinit();
+            const label = brk: {
+                if (description.isEmptyOrUndefinedOrNull()) {
+                    break :brk "";
+                } else {
+                    _label = try description.toSlice(globalThis, allocator);
+                    break :brk _label.?.slice();
+                }
+            };
+            // this returns a owned slice
             const formattedLabel = try formatLabel(globalThis, label, function_args, test_idx);
 
             const tag = parent.tag;
@@ -2087,6 +2118,8 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
             if (is_skip) {
                 parent.skip_count += 1;
                 function.unprotect();
+                // lets free the formatted label
+                allocator.free(formattedLabel);
             } else if (each_data.is_test) {
                 if (Jest.runner.?.only and tag != .only) {
                     return .undefined;

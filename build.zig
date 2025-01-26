@@ -152,6 +152,7 @@ pub fn getCpuModel(os: OperatingSystem, arch: Arch) ?Target.Query.CpuModel {
 
 pub fn build(b: *Build) !void {
     std.log.info("zig compiler v{s}", .{builtin.zig_version_string});
+    checked_file_exists = std.AutoHashMap(u64, void).init(b.allocator);
 
     b.zig_lib_dir = b.zig_lib_dir orelse b.path("vendor/zig/lib");
 
@@ -200,7 +201,10 @@ pub fn build(b: *Build) !void {
         b.option([]const u8, "codegen_path", "Set the generated code directory") orelse
             "build/debug/codegen",
     );
-    const codegen_embed = b.option(bool, "codegen_embed", "If codegen files should be embedded in the binary") orelse false;
+    const codegen_embed = b.option(bool, "codegen_embed", "If codegen files should be embedded in the binary") orelse switch (b.release_mode) {
+        .off => false,
+        else => true,
+    };
 
     const bun_version = b.option([]const u8, "version", "Value of `Bun.version`") orelse "0.0.0";
 
@@ -327,6 +331,25 @@ pub fn build(b: *Build) !void {
             .{ .os = .windows, .arch = .x86_64 },
         });
     }
+
+    // zig build translate-c-headers
+    {
+        const step = b.step("translate-c", "Copy generated translated-c-headers.zig to zig-out");
+        step.dependOn(&b.addInstallFile(getTranslateC(b, b.host, .Debug).getOutput(), "translated-c-headers.zig").step);
+    }
+
+    // zig build enum-extractor
+    {
+        // const step = b.step("enum-extractor", "Extract enum definitions (invoked by a code generator)");
+        // const exe = b.addExecutable(.{
+        //     .name = "enum_extractor",
+        //     .root_source_file = b.path("./src/generated_enum_extractor.zig"),
+        //     .target = b.graph.host,
+        //     .optimize = .Debug,
+        // });
+        // const run = b.addRunArtifact(exe);
+        // step.dependOn(&run.step);
+    }
 }
 
 pub fn addMultiCheck(
@@ -365,6 +388,25 @@ pub fn addMultiCheck(
             parent_step.dependOn(&obj.step);
         }
     }
+}
+
+fn getTranslateC(b: *Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) *Step.TranslateC {
+    const translate_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/c-headers-for-zig.h"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    inline for ([_](struct { []const u8, bool }){
+        .{ "WINDOWS", translate_c.target.result.os.tag == .windows },
+        .{ "POSIX", translate_c.target.result.os.tag != .windows },
+        .{ "LINUX", translate_c.target.result.os.tag == .linux },
+        .{ "DARWIN", translate_c.target.result.os.tag.isDarwin() },
+    }) |entry| {
+        const str, const value = entry;
+        translate_c.defineCMacroRaw(b.fmt("{s}={d}", .{ str, @intFromBool(value) }));
+    }
+    return translate_c;
 }
 
 pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
@@ -415,13 +457,8 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
     addInternalPackages(b, obj, opts);
     obj.root_module.addImport("build_options", opts.buildOptionsModule(b));
 
-    const translate_plugin_api = b.addTranslateC(.{
-        .root_source_file = b.path("./packages/bun-native-bundler-plugin-api/bundler_plugin.h"),
-        .target = opts.target,
-        .optimize = opts.optimize,
-        .link_libc = true,
-    });
-    obj.root_module.addImport("bun-native-bundler-plugin-api", translate_plugin_api.createModule());
+    const translate_c = getTranslateC(b, opts.target, opts.optimize);
+    obj.root_module.addImport("translated-c-headers", translate_c.createModule());
 
     return obj;
 }
@@ -445,9 +482,15 @@ pub fn addInstallObjectFile(
     }, b.fmt("{s}.o", .{name})).step;
 }
 
+var checked_file_exists: std.AutoHashMap(u64, void) = undefined;
 fn exists(path: []const u8) bool {
-    const file = std.fs.openFileAbsolute(path, .{ .mode = .read_only }) catch return false;
-    file.close();
+    const entry = checked_file_exists.getOrPut(std.hash.Wyhash.hash(0, path)) catch unreachable;
+    if (entry.found_existing) {
+        // It would've panicked.
+        return true;
+    }
+
+    std.fs.accessAbsolute(path, .{ .mode = .read_only }) catch return false;
     return true;
 }
 
@@ -489,36 +532,36 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
         .{ .file = "ZigGeneratedClasses.zig", .import = "ZigGeneratedClasses" },
         .{ .file = "ResolvedSourceTag.zig", .import = "ResolvedSourceTag" },
         .{ .file = "ErrorCode.zig", .import = "ErrorCode" },
-        .{ .file = "runtime.out.js" },
+        .{ .file = "runtime.out.js", .enable = opts.shouldEmbedCode() },
         .{ .file = "bake.client.js", .import = "bake-codegen/bake.client.js", .enable = opts.shouldEmbedCode() },
         .{ .file = "bake.error.js", .import = "bake-codegen/bake.error.js", .enable = opts.shouldEmbedCode() },
         .{ .file = "bake.server.js", .import = "bake-codegen/bake.server.js", .enable = opts.shouldEmbedCode() },
         .{ .file = "bun-error/index.js", .enable = opts.shouldEmbedCode() },
         .{ .file = "bun-error/bun-error.css", .enable = opts.shouldEmbedCode() },
         .{ .file = "fallback-decoder.js", .enable = opts.shouldEmbedCode() },
-        .{ .file = "node-fallbacks/assert.js" },
-        .{ .file = "node-fallbacks/buffer.js" },
-        .{ .file = "node-fallbacks/console.js" },
-        .{ .file = "node-fallbacks/constants.js" },
-        .{ .file = "node-fallbacks/crypto.js" },
-        .{ .file = "node-fallbacks/domain.js" },
-        .{ .file = "node-fallbacks/events.js" },
-        .{ .file = "node-fallbacks/http.js" },
-        .{ .file = "node-fallbacks/https.js" },
-        .{ .file = "node-fallbacks/net.js" },
-        .{ .file = "node-fallbacks/os.js" },
-        .{ .file = "node-fallbacks/path.js" },
-        .{ .file = "node-fallbacks/process.js" },
-        .{ .file = "node-fallbacks/punycode.js" },
-        .{ .file = "node-fallbacks/querystring.js" },
-        .{ .file = "node-fallbacks/stream.js" },
-        .{ .file = "node-fallbacks/string_decoder.js" },
-        .{ .file = "node-fallbacks/sys.js" },
-        .{ .file = "node-fallbacks/timers.js" },
-        .{ .file = "node-fallbacks/tty.js" },
-        .{ .file = "node-fallbacks/url.js" },
-        .{ .file = "node-fallbacks/util.js" },
-        .{ .file = "node-fallbacks/zlib.js" },
+        .{ .file = "node-fallbacks/assert.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/buffer.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/console.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/constants.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/crypto.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/domain.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/events.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/http.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/https.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/net.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/os.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/path.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/process.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/punycode.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/querystring.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/stream.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/string_decoder.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/sys.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/timers.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/tty.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/url.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/util.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/zlib.js", .enable = opts.shouldEmbedCode() },
     }) |entry| {
         if (!@hasField(@TypeOf(entry), "enable") or entry.enable) {
             const path = b.pathJoin(&.{ opts.codegen_path, entry.file });

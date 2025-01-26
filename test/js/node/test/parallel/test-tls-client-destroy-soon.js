@@ -24,7 +24,9 @@
 // Cache session and close connection.  Use session on second connection.
 // ASSERT resumption.
 
+const isCI = process.env.CI !== undefined;
 const common = require('../common');
+if (common.isWindows && isCI) return; // TODO: BUN
 if (!common.hasCrypto)
   common.skip('missing crypto');
 

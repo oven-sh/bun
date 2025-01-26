@@ -2,6 +2,7 @@ import { LoaderKeys } from "../api/schema";
 import NodeErrors from "../bun.js/bindings/ErrorCode.ts";
 import { sliceSourceCode } from "./builtin-parser";
 import { registerNativeCall } from "./generate-js2native";
+import jsclasses from "./../bun.js/bindings/js_classes";
 
 // This is a list of extra syntax replacements to do. Kind of like macros
 // These are only run on code itself, not string contents or comments.
@@ -13,11 +14,29 @@ export const replacements: ReplacementRule[] = [
   { from: /\bexport\s*default/g, to: "$exports =" },
 ];
 
+let error_i = 0;
 for (let i = 0; i < NodeErrors.length; i++) {
-  const [code] = NodeErrors[i];
+  const [code, _constructor, _name, ...other_constructors] = NodeErrors[i];
   replacements.push({
     from: new RegExp(`\\b\\__intrinsic__${code}\\(`, "g"),
-    to: `$makeErrorWithCode(${i}, `,
+    to: `$makeErrorWithCode(${error_i}, `,
+  });
+  error_i += 1;
+  for (const con of other_constructors) {
+    if (con == null) continue;
+    replacements.push({
+      from: new RegExp(`\\b\\__intrinsic__${code}_${con.name}\\(`, "g"),
+      to: `$makeErrorWithCode(${error_i}, `,
+    });
+    error_i += 1;
+  }
+}
+
+for (let id = 0; id < jsclasses.length; id++) {
+  const name = jsclasses[id][0];
+  replacements.push({
+    from: new RegExp(`\\b\\__intrinsic__inherits${name}\\(`, "g"),
+    to: `$inherits(${id}, `,
   });
 }
 
@@ -74,7 +93,8 @@ replacements.push({
 export const enums = {
   Loader: LoaderKeys,
   ImportKind: [
-    "entry-point",
+    "entry-point-run",
+    "entry-point-build",
     "import-statement",
     "require-call",
     "dynamic-import",
@@ -141,10 +161,16 @@ export interface ReplacementRule {
 }
 
 export const function_replacements = [
-  "$debug", "$assert", "$zig", "$newZigFunction", "$cpp", "$newCppFunction",
+  "$debug",
+  "$assert",
+  "$zig",
+  "$newZigFunction",
+  "$cpp",
+  "$newCppFunction",
   "$isPromiseResolved",
+  "$bindgenFn",
 ];
-const function_regexp = new RegExp(`__intrinsic__(${function_replacements.join("|").replaceAll('$', '')})`);
+const function_regexp = new RegExp(`__intrinsic__(${function_replacements.join("|").replaceAll("$", "")})`);
 
 /** Applies source code replacements as defined in `replacements` */
 export function applyReplacements(src: string, length: number) {
@@ -155,10 +181,7 @@ export function applyReplacements(src: string, length: number) {
     slice = slice.replace(replacement.from, replacement.to.replaceAll("$", "__intrinsic__").replaceAll("%", "$"));
   }
   let match;
-  if (
-    (match = slice.match(function_regexp)) &&
-    rest.startsWith("(")
-  ) {
+  if ((match = slice.match(function_regexp)) && rest.startsWith("(")) {
     const name = match[1];
     if (name === "debug") {
       const innerSlice = sliceSourceCode(rest, true);
@@ -178,7 +201,7 @@ export function applyReplacements(src: string, length: number) {
       }
       return [
         slice.slice(0, match.index) +
-          "(IS_BUN_DEVELOPMENT?$assert(" +
+          "!(IS_BUN_DEVELOPMENT?$assert(" +
           checkSlice.result.slice(1, -1) +
           "," +
           JSON.stringify(
@@ -233,9 +256,31 @@ export function applyReplacements(src: string, length: number) {
         // use a property on @lazy as a temporary holder for the expression. only in debug!
         args = `($assert(__intrinsic__isPromise(__intrinsic__lazy.temp=${inner.result.slice(0, -1)}))),(__intrinsic__getPromiseInternalField(__intrinsic__lazy.temp, __intrinsic__promiseFieldFlags) & __intrinsic__promiseStateMask) === (__intrinsic__lazy.temp = undefined, __intrinsic__promiseStateFulfilled))`;
       } else {
-        args = `((__intrinsic__getPromiseInternalField(${inner.result.slice(0,-1)}), __intrinsic__promiseFieldFlags) & __intrinsic__promiseStateMask) === __intrinsic__promiseStateFulfilled)`;
+        args = `((__intrinsic__getPromiseInternalField(${inner.result.slice(0, -1)}), __intrinsic__promiseFieldFlags) & __intrinsic__promiseStateMask) === __intrinsic__promiseStateFulfilled)`;
       }
       return [slice.slice(0, match.index) + args, inner.rest, true];
+    } else if (name === "bindgenFn") {
+      const inner = sliceSourceCode(rest, true);
+      let args;
+      try {
+        const str =
+          "[" +
+          inner.result
+            .slice(1, -1)
+            .replaceAll("'", '"')
+            .replace(/,[\s\n]*$/s, "") +
+          "]";
+        args = JSON.parse(str);
+      } catch {
+        throw new Error(`Call is not known at bundle-time: '$${name}${inner.result}'`);
+      }
+      if (args.length != 2 || typeof args[0] !== "string" || typeof args[1] !== "string") {
+        throw new Error(`$${name} takes two string arguments, but got '$${name}${inner.result}'`);
+      }
+
+      const id = registerNativeCall("bind", args[0], args[1], undefined);
+
+      return [slice.slice(0, match.index) + "__intrinsic__lazy(" + id + ")", inner.rest, true];
     } else {
       throw new Error("Unknown preprocessor macro " + name);
     }

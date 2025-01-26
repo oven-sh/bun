@@ -30,9 +30,9 @@ process.env.FOO = "hello";
 Bun supports `--env-file` to override which specific `.env` file to load. You can use `--env-file` when running scripts in bun's runtime, or when running package.json scripts.
 
 ```sh
-bun --env-file=.env.1 src/index.ts
+$ bun --env-file=.env.1 src/index.ts
 
-bun --env-file=.env.abc --env-file=.env.def run build
+$ bun --env-file=.env.abc --env-file=.env.def run build
 ```
 
 ### Quotation marks

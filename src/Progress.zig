@@ -18,8 +18,9 @@ const std = @import("std");
 const builtin = @import("builtin");
 const windows = std.os.windows;
 const testing = std.testing;
-const assert = (std.debug).assert;
+const assert = bun.assert;
 const Progress = @This();
+const bun = @import("root").bun;
 
 /// `null` if the current node (and its children) should
 /// not print on update()
@@ -64,7 +65,7 @@ done: bool = true,
 /// Protects the `refresh` function, as well as `node.recently_updated_child`.
 /// Without this, callsites would call `Node.end` and then free `Node` memory
 /// while it was still being accessed by the `refresh` function.
-update_mutex: std.Thread.Mutex = .{},
+update_mutex: bun.Mutex = .{},
 
 /// Keeps track of how many columns in the terminal have been output, so that
 /// we can move the cursor back later.

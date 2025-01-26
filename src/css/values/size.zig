@@ -67,6 +67,10 @@ pub fn Size2D(comptime T: type) type {
             };
         }
 
+        pub fn isCompatible(this: *const @This(), browsers: bun.css.targets.Browsers) bool {
+            return this.a.isCompatible(browsers) and this.b.isCompatible(browsers);
+        }
+
         pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
             return css.implementDeepClone(@This(), this, allocator);
         }

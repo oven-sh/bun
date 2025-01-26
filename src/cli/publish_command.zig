@@ -53,8 +53,8 @@ pub const PublishCommand = struct {
 
             normalized_pkg_info: string,
 
-            publish_script: if (directory_publish) ?[]const u8 else void = if (directory_publish) null else {},
-            postpublish_script: if (directory_publish) ?[]const u8 else void = if (directory_publish) null else {},
+            publish_script: if (directory_publish) ?[]const u8 else void = if (directory_publish) null,
+            postpublish_script: if (directory_publish) ?[]const u8 else void = if (directory_publish) null,
             script_env: if (directory_publish) *DotEnv.Loader else void,
 
             const FromTarballError = OOM || error{
@@ -242,7 +242,6 @@ pub const PublishCommand = struct {
                     json_source,
                     shasum,
                     integrity,
-                    abs_tarball_path,
                 );
 
                 Pack.Context.printSummary(
@@ -281,11 +280,10 @@ pub const PublishCommand = struct {
                 manager: *PackageManager,
             ) FromWorkspaceError!Context(directory_publish) {
                 var lockfile: Lockfile = undefined;
-                const load_from_disk_result = lockfile.loadFromDisk(
+                const load_from_disk_result = lockfile.loadFromCwd(
                     manager,
                     manager.allocator,
                     manager.log,
-                    manager.options.lockfile_path,
                     false,
                 );
 
@@ -684,8 +682,7 @@ pub const PublishCommand = struct {
         // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
         // deleting the entire line
         const original_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (comptime Environment.isWindows)
-            bun.win32.unsetStdioModeFlags(0, bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT) catch null
-        else {};
+            bun.win32.unsetStdioModeFlags(0, bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT) catch null;
 
         defer if (comptime Environment.isWindows) {
             if (original_mode) |mode| {
@@ -878,7 +875,6 @@ pub const PublishCommand = struct {
         json_source: logger.Source,
         shasum: sha.SHA1.Digest,
         integrity: sha.SHA512.Digest,
-        abs_tarball_path: stringZ,
     ) OOM!string {
         bun.assertWithLocation(json.isObject(), @src());
 
@@ -930,10 +926,12 @@ pub const PublishCommand = struct {
             .value = Expr.init(
                 E.String,
                 .{
-                    .data = try bun.fmt.allocPrint(allocator, "http://{s}/{s}/-/{s}", .{
-                        strings.withoutTrailingSlash(registry.url.href),
+                    .data = try bun.fmt.allocPrint(allocator, "http://{s}/{s}/-/{}", .{
+                        // always use replace https with http
+                        // https://github.com/npm/cli/blob/9281ebf8e428d40450ad75ba61bc6f040b3bf896/workspaces/libnpmpublish/lib/publish.js#L120
+                        strings.withoutTrailingSlash(strings.withoutPrefixComptime(registry.url.href, "https://")),
                         package_name,
-                        std.fs.path.basename(abs_tarball_path),
+                        Pack.fmtTarballFilename(package_name, package_version, .raw),
                     }),
                 },
                 logger.Loc.Empty,
@@ -1364,8 +1362,8 @@ pub const PublishCommand = struct {
 
         // "_attachments"
         {
-            try writer.print(",\"_attachments\":{{\"{s}\":{{\"content_type\":\"{s}\",\"data\":\"", .{
-                std.fs.path.basename(ctx.abs_tarball_path),
+            try writer.print(",\"_attachments\":{{\"{}\":{{\"content_type\":\"{s}\",\"data\":\"", .{
+                Pack.fmtTarballFilename(ctx.package_name, ctx.package_version, .raw),
                 "application/octet-stream",
             });
 

@@ -20,7 +20,6 @@ import {
   getEnv,
   writeFile,
   spawnSafe,
-  spawn,
   mkdir,
 } from "./utils.mjs";
 import { parseArgs } from "node:util";
@@ -76,10 +75,10 @@ async function doBuildkiteAgent(action) {
         command_user=${escape(username)}
 
         pidfile=${escape(pidPath)}
-        start_stop_daemon_args=" \
-          --background \
-          --make-pidfile \
-          --stdout ${escape(agentLogPath)} \
+        start_stop_daemon_args=" \\
+          --background \\
+          --make-pidfile \\
+          --stdout ${escape(agentLogPath)} \\
           --stderr ${escape(agentLogPath)}"
 
         depend() {
@@ -88,7 +87,6 @@ async function doBuildkiteAgent(action) {
         }
       `;
       writeFile(servicePath, service, { mode: 0o755 });
-      writeFile(`/etc/conf.d/buildkite-agent`, `rc_ulimit="-n 262144"`);
       await spawnSafe(["rc-update", "add", "buildkite-agent", "default"], { stdio: "inherit", privileged: true });
     }
 
@@ -143,7 +141,7 @@ async function doBuildkiteAgent(action) {
       shell = `"${cmd}" /S /C`;
     } else {
       const sh = which("sh", { required: true });
-      shell = `${sh} -e -c`;
+      shell = `${sh} -elc`;
     }
 
     const flags = ["enable-job-log-tmpfile", "no-feature-reporting"];

@@ -14,6 +14,8 @@ import {
   spawnSafe,
   spawnSyncSafe,
   startGroup,
+  spawnSshSafe,
+  spawnSsh,
   tmpdir,
   waitForPort,
   which,
@@ -29,777 +31,18 @@ import {
   rm,
   homedir,
   isWindows,
+  setupUserData,
   sha256,
   isPrivileged,
+  getUsernameForDistro,
 } from "./utils.mjs";
 import { basename, extname, join, relative, resolve } from "node:path";
 import { existsSync, mkdtempSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-
-/**
- * @link https://tart.run/
- * @link https://github.com/cirruslabs/tart
- */
-const tart = {
-  get name() {
-    return "tart";
-  },
-
-  /**
-   * @param {string[]} args
-   * @param {import("./utils.mjs").SpawnOptions} options
-   * @returns {Promise<unknown>}
-   */
-  async spawn(args, options) {
-    const tart = which("tart", { required: true });
-    const { json } = options || {};
-    const command = json ? [tart, ...args, "--format=json"] : [tart, ...args];
-
-    const { stdout } = await spawnSafe(command, options);
-    if (!json) {
-      return stdout;
-    }
-
-    try {
-      return JSON.parse(stdout);
-    } catch {
-      return;
-    }
-  },
-
-  /**
-   * @typedef {"sequoia" | "sonoma" | "ventura" | "monterey"} TartDistro
-   * @typedef {`ghcr.io/cirruslabs/macos-${TartDistro}-xcode`} TartImage
-   * @link https://github.com/orgs/cirruslabs/packages?repo_name=macos-image-templates
-   */
-
-  /**
-   * @param {Platform} platform
-   * @returns {TartImage}
-   */
-  getImage(platform) {
-    const { os, arch, release } = platform;
-    if (os !== "darwin" || arch !== "aarch64") {
-      throw new Error(`Unsupported platform: ${inspect(platform)}`);
-    }
-    const distros = {
-      "15": "sequoia",
-      "14": "sonoma",
-      "13": "ventura",
-      "12": "monterey",
-    };
-    const distro = distros[release];
-    if (!distro) {
-      throw new Error(`Unsupported macOS release: ${distro}`);
-    }
-    return `ghcr.io/cirruslabs/macos-${distro}-xcode`;
-  },
-
-  /**
-   * @typedef {Object} TartVm
-   * @property {string} Name
-   * @property {"running" | "stopped"} State
-   * @property {"local"} Source
-   * @property {number} Size
-   * @property {number} Disk
-   * @property {number} [CPU]
-   * @property {number} [Memory]
-   */
-
-  /**
-   * @returns {Promise<TartVm[]>}
-   */
-  async listVms() {
-    return this.spawn(["list"], { json: true });
-  },
-
-  /**
-   * @param {string} name
-   * @returns {Promise<TartVm | undefined>}
-   */
-  async getVm(name) {
-    const result = await this.spawn(["get", name], {
-      json: true,
-      throwOnError: error => !/does not exist/i.test(inspect(error)),
-    });
-    return {
-      Name: name,
-      ...result,
-    };
-  },
-
-  /**
-   * @param {string} name
-   * @returns {Promise<void>}
-   */
-  async stopVm(name) {
-    await this.spawn(["stop", name, "--timeout=0"], {
-      throwOnError: error => !/does not exist|is not running/i.test(inspect(error)),
-    });
-  },
-
-  /**
-   * @param {string} name
-   * @returns {Promise<void>}
-   */
-  async deleteVm(name) {
-    await this.stopVm(name);
-    await this.spawn(["delete", name], {
-      throwOnError: error => !/does not exist/i.test(inspect(error)),
-    });
-  },
-
-  /**
-   * @param {string} name
-   * @param {TartImage} image
-   * @returns {Promise<void>}
-   */
-  async cloneVm(name, image) {
-    const localName = image.split("/").pop();
-    const localVm = await this.getVm(localName);
-    if (localVm) {
-      const { Name } = localVm;
-      await this.spawn(["clone", Name, name]);
-      return;
-    }
-
-    console.log(`Cloning macOS image: ${image} (this will take a long time)`);
-    await this.spawn(["clone", image, localName]);
-    await this.spawn(["clone", localName, name]);
-  },
-
-  /**
-   * @typedef {Object} TartMount
-   * @property {boolean} [readOnly]
-   * @property {string} source
-   * @property {string} destination
-   */
-
-  /**
-   * @typedef {Object} TartVmOptions
-   * @property {number} [cpuCount]
-   * @property {number} [memoryGb]
-   * @property {number} [diskSizeGb]
-   * @property {boolean} [no-graphics]
-   * @property {boolean} [no-audio]
-   * @property {boolean} [no-clipboard]
-   * @property {boolean} [recovery]
-   * @property {boolean} [vnc]
-   * @property {boolean} [vnc-experimental]
-   * @property {boolean} [net-softnet]
-   * @property {TartMount[]} [dir]
-   */
-
-  /**
-   * @param {string} name
-   * @param {TartVmOptions} options
-   * @returns {Promise<void>}
-   */
-  async runVm(name, options = {}) {
-    const { cpuCount, memoryGb, diskSizeGb, dir, ...vmOptions } = options;
-
-    const setArgs = ["--random-mac", "--random-serial"];
-    if (cpuCount) {
-      setArgs.push(`--cpu=${cpuCount}`);
-    }
-    if (memoryGb) {
-      setArgs.push(`--memory=${memoryGb}`);
-    }
-    if (diskSizeGb) {
-      setArgs.push(`--disk-size=${diskSizeGb}`);
-    }
-    await this.spawn(["set", name, ...setArgs]);
-
-    const args = Object.entries(vmOptions)
-      .filter(([, value]) => value !== undefined)
-      .flatMap(([key, value]) => (typeof value === "boolean" ? (value ? [`--${key}`] : []) : [`--${key}=${value}`]));
-    if (dir?.length) {
-      args.push(
-        ...dir.map(({ source, destination, readOnly }) => `--dir=${source}:${destination}${readOnly ? ":ro" : ""}`),
-      );
-    }
-
-    // This command is blocking, so it needs to be detached and not awaited
-    this.spawn(["run", name, ...args], { detached: true });
-  },
-
-  /**
-   * @param {string} name
-   * @returns {Promise<string | undefined>}
-   */
-  async getVmIp(name) {
-    const stdout = await this.spawn(["ip", name], {
-      retryOnError: error => /no IP address found/i.test(inspect(error)),
-      throwOnError: error => !/does not exist/i.test(inspect(error)),
-    });
-    return stdout?.trim();
-  },
-
-  /**
-   * @param {MachineOptions} options
-   * @returns {Promise<Machine>}
-   */
-  async createMachine(options) {
-    const { name, imageName, cpuCount, memoryGb, diskSizeGb, rdp } = options;
-
-    const image = imageName || this.getImage(options);
-    const machineId = name || `i-${Math.random().toString(36).slice(2, 11)}`;
-    await this.cloneVm(machineId, image);
-
-    await this.runVm(machineId, {
-      cpuCount,
-      memoryGb,
-      diskSizeGb,
-      "net-softnet": isPrivileged(),
-      "no-audio": true,
-      "no-clipboard": true,
-      "no-graphics": true,
-      "vnc-experimental": rdp,
-    });
-
-    return this.toMachine(machineId);
-  },
-
-  /**
-   * @param {string} name
-   * @returns {Machine}
-   */
-  toMachine(name) {
-    const connect = async () => {
-      const hostname = await this.getVmIp(name);
-      return {
-        hostname,
-        // hardcoded by base images
-        username: "admin",
-        password: "admin",
-      };
-    };
-
-    const exec = async (command, options) => {
-      const connectOptions = await connect();
-      return spawnSsh({ ...connectOptions, command }, options);
-    };
-
-    const execSafe = async (command, options) => {
-      const connectOptions = await connect();
-      return spawnSshSafe({ ...connectOptions, command }, options);
-    };
-
-    const attach = async () => {
-      const connectOptions = await connect();
-      await spawnSshSafe({ ...connectOptions });
-    };
-
-    const upload = async (source, destination) => {
-      const connectOptions = await connect();
-      await spawnScp({ ...connectOptions, source, destination });
-    };
-
-    const rdp = async () => {
-      const connectOptions = await connect();
-      await spawnRdp({ ...connectOptions });
-    };
-
-    const close = async () => {
-      await this.deleteVm(name);
-    };
-
-    return {
-      cloud: "tart",
-      id: name,
-      spawn: exec,
-      spawnSafe: execSafe,
-      attach,
-      upload,
-      close,
-      [Symbol.asyncDispose]: close,
-    };
-  },
-};
-
-/**
- * @link https://docs.orbstack.dev/
- */
-const orbstack = {
-  get name() {
-    return "orbstack";
-  },
-
-  /**
-   * @typedef {Object} OrbstackImage
-   * @property {string} distro
-   * @property {string} version
-   * @property {string} arch
-   */
-
-  /**
-   * @param {Platform} platform
-   * @returns {OrbstackImage}
-   */
-  getImage(platform) {
-    const { os, arch, distro, release } = platform;
-    if (os !== "linux" || !/^debian|ubuntu|alpine|fedora|centos$/.test(distro)) {
-      throw new Error(`Unsupported platform: ${inspect(platform)}`);
-    }
-
-    return {
-      distro,
-      version: release,
-      arch: arch === "aarch64" ? "arm64" : "amd64",
-    };
-  },
-
-  /**
-   * @typedef {Object} OrbstackVm
-   * @property {string} id
-   * @property {string} name
-   * @property {"running"} state
-   * @property {OrbstackImage} image
-   * @property {OrbstackConfig} config
-   */
-
-  /**
-   * @typedef {Object} OrbstackConfig
-   * @property {string} default_username
-   * @property {boolean} isolated
-   */
-
-  /**
-   * @typedef {Object} OrbstackVmOptions
-   * @property {string} [name]
-   * @property {OrbstackImage} image
-   * @property {string} [username]
-   * @property {string} [password]
-   * @property {string} [userData]
-   */
-
-  /**
-   * @param {OrbstackVmOptions} options
-   * @returns {Promise<OrbstackVm>}
-   */
-  async createVm(options) {
-    const { name, image, username, password, userData } = options;
-    const { distro, version, arch } = image;
-    const uniqueId = name || `linux-${distro}-${version}-${arch}-${Math.random().toString(36).slice(2, 11)}`;
-
-    const args = [`--arch=${arch}`, `${distro}:${version}`, uniqueId];
-    if (username) {
-      args.push(`--user=${username}`);
-    }
-    if (password) {
-      args.push(`--set-password=${password}`);
-    }
-
-    let userDataPath;
-    if (userData) {
-      userDataPath = mkdtemp("orbstack-user-data-", "user-data.txt");
-      writeFile(userDataPath, userData);
-      args.push(`--user-data=${userDataPath}`);
-    }
-
-    try {
-      await spawnSafe($`orbctl create ${args}`);
-    } finally {
-      if (userDataPath) {
-        rm(userDataPath);
-      }
-    }
-
-    return this.inspectVm(uniqueId);
-  },
-
-  /**
-   * @param {string} name
-   */
-  async deleteVm(name) {
-    await spawnSafe($`orbctl delete ${name}`, {
-      throwOnError: error => !/machine not found/i.test(inspect(error)),
-    });
-  },
-
-  /**
-   * @param {string} name
-   * @returns {Promise<OrbstackVm | undefined>}
-   */
-  async inspectVm(name) {
-    const { exitCode, stdout } = await spawnSafe($`orbctl info ${name} --format=json`, {
-      throwOnError: error => !/machine not found/i.test(inspect(error)),
-    });
-    if (exitCode === 0) {
-      return JSON.parse(stdout);
-    }
-  },
-
-  /**
-   * @returns {Promise<OrbstackVm[]>}
-   */
-  async listVms() {
-    const { stdout } = await spawnSafe($`orbctl list --format=json`);
-    return JSON.parse(stdout);
-  },
-
-  /**
-   * @param {MachineOptions} options
-   * @returns {Promise<Machine>}
-   */
-  async createMachine(options) {
-    const { distro } = options;
-    const username = getUsername(distro);
-    const userData = getUserData({ ...options, username });
-
-    const image = this.getImage(options);
-    const vm = await this.createVm({
-      image,
-      username,
-      userData,
-    });
-
-    return this.toMachine(vm, options);
-  },
-
-  /**
-   * @param {OrbstackVm} vm
-   * @returns {Machine}
-   */
-  toMachine(vm) {
-    const { id, name, config } = vm;
-
-    const { default_username: username } = config;
-    const connectOptions = {
-      username,
-      hostname: `${name}@orb`,
-    };
-
-    const exec = async (command, options) => {
-      return spawnSsh({ ...connectOptions, command }, options);
-    };
-
-    const execSafe = async (command, options) => {
-      return spawnSshSafe({ ...connectOptions, command }, options);
-    };
-
-    const attach = async () => {
-      await spawnSshSafe({ ...connectOptions });
-    };
-
-    const upload = async (source, destination) => {
-      await spawnSafe(["orbctl", "push", `--machine=${name}`, source, destination]);
-    };
-
-    const close = async () => {
-      await this.deleteVm(name);
-    };
-
-    return {
-      cloud: "orbstack",
-      id,
-      name,
-      spawn: exec,
-      spawnSafe: execSafe,
-      upload,
-      attach,
-      close,
-      [Symbol.asyncDispose]: close,
-    };
-  },
-};
-
-const docker = {
-  get name() {
-    return "docker";
-  },
-
-  /**
-   * @typedef {"linux" | "darwin" | "windows"} DockerOs
-   * @typedef {"amd64" | "arm64"} DockerArch
-   * @typedef {`${DockerOs}/${DockerArch}`} DockerPlatform
-   */
-
-  /**
-   * @param {Platform} platform
-   * @returns {DockerPlatform}
-   */
-  getPlatform(platform) {
-    const { os, arch } = platform;
-    if (arch === "aarch64") {
-      return `${os}/arm64`;
-    } else if (arch === "x64") {
-      return `${os}/amd64`;
-    }
-    throw new Error(`Unsupported platform: ${inspect(platform)}`);
-  },
-
-  /**
-   * @typedef DockerSpawnOptions
-   * @property {DockerPlatform} [platform]
-   * @property {boolean} [json]
-   */
-
-  /**
-   * @param {string[]} args
-   * @param {DockerSpawnOptions & import("./utils.mjs").SpawnOptions} [options]
-   * @returns {Promise<unknown>}
-   */
-  async spawn(args, options = {}) {
-    const docker = which("docker", { required: true });
-
-    let env = { ...process.env };
-    if (isCI) {
-      env["BUILDKIT_PROGRESS"] = "plain";
-    }
-
-    const { json, platform } = options;
-    if (json) {
-      args.push("--format=json");
-    }
-    if (platform) {
-      args.push(`--platform=${platform}`);
-    }
-
-    const { error, stdout } = await spawnSafe($`${docker} ${args}`, { env, ...options });
-    if (error) {
-      return;
-    }
-    if (!json) {
-      return stdout;
-    }
-
-    try {
-      return JSON.parse(stdout);
-    } catch {
-      return;
-    }
-  },
-
-  /**
-   * @typedef {Object} DockerImage
-   * @property {string} Id
-   * @property {string[]} RepoTags
-   * @property {string[]} RepoDigests
-   * @property {string} Created
-   * @property {DockerOs} Os
-   * @property {DockerArch} Architecture
-   * @property {number} Size
-   */
-
-  /**
-   * @param {string} url
-   * @param {DockerPlatform} [platform]
-   * @returns {Promise<boolean>}
-   */
-  async pullImage(url, platform) {
-    const done = await this.spawn($`pull ${url}`, {
-      platform,
-      throwOnError: error => !/No such image|manifest unknown/i.test(inspect(error)),
-    });
-    return !!done;
-  },
-
-  /**
-   * @param {string} url
-   * @param {DockerPlatform} [platform]
-   * @returns {Promise<DockerImage | undefined>}
-   */
-  async inspectImage(url, platform) {
-    /** @type {DockerImage[]} */
-    const images = await this.spawn($`image inspect ${url}`, {
-      json: true,
-      throwOnError: error => !/No such image/i.test(inspect(error)),
-    });
-
-    if (!images) {
-      const pulled = await this.pullImage(url, platform);
-      if (pulled) {
-        return this.inspectImage(url, platform);
-      }
-    }
-
-    const { os, arch } = platform || {};
-    return images
-      ?.filter(({ Os, Architecture }) => !os || !arch || (Os === os && Architecture === arch))
-      ?.find((a, b) => (a.Created < b.Created ? 1 : -1));
-  },
-
-  /**
-   * @typedef {Object} DockerContainer
-   * @property {string} Id
-   * @property {string} Name
-   * @property {string} Image
-   * @property {string} Created
-   * @property {DockerContainerState} State
-   * @property {DockerContainerNetworkSettings} NetworkSettings
-   */
-
-  /**
-   * @typedef {Object} DockerContainerState
-   * @property {"exited" | "running"} Status
-   * @property {number} [Pid]
-   * @property {number} ExitCode
-   * @property {string} [Error]
-   * @property {string} StartedAt
-   * @property {string} FinishedAt
-   */
-
-  /**
-   * @typedef {Object} DockerContainerNetworkSettings
-   * @property {string} [IPAddress]
-   */
-
-  /**
-   * @param {string} containerId
-   * @returns {Promise<DockerContainer | undefined>}
-   */
-  async inspectContainer(containerId) {
-    const containers = await this.spawn($`container inspect ${containerId}`, { json: true });
-    return containers?.find(a => a.Id === containerId);
-  },
-
-  /**
-   * @returns {Promise<DockerContainer[]>}
-   */
-  async listContainers() {
-    const containers = await this.spawn($`container ls --all`, { json: true });
-    return containers || [];
-  },
-
-  /**
-   * @typedef {Object} DockerRunOptions
-   * @property {string[]} [command]
-   * @property {DockerPlatform} [platform]
-   * @property {string} [name]
-   * @property {boolean} [detach]
-   * @property {"always" | "never"} [pull]
-   * @property {boolean} [rm]
-   * @property {"no" | "on-failure" | "always"} [restart]
-   */
-
-  /**
-   * @param {string} url
-   * @param {DockerRunOptions} [options]
-   * @returns {Promise<DockerContainer>}
-   */
-  async runContainer(url, options = {}) {
-    const { detach, command = [], ...containerOptions } = options;
-    const args = Object.entries(containerOptions)
-      .filter(([_, value]) => typeof value !== "undefined")
-      .map(([key, value]) => (typeof value === "boolean" ? `--${key}` : `--${key}=${value}`));
-    if (detach) {
-      args.push("--detach");
-    } else {
-      args.push("--tty", "--interactive");
-    }
-
-    const stdio = detach ? "pipe" : "inherit";
-    const result = await this.spawn($`run ${args} ${url} ${command}`, { stdio });
-    if (!detach) {
-      return;
-    }
-
-    const containerId = result.trim();
-    const container = await this.inspectContainer(containerId);
-    if (!container) {
-      throw new Error(`Failed to run container: ${inspect(result)}`);
-    }
-    return container;
-  },
-
-  /**
-   * @param {Platform} platform
-   * @returns {Promise<DockerImage>}
-   */
-  async getBaseImage(platform) {
-    const { os, distro, release } = platform;
-    const dockerPlatform = this.getPlatform(platform);
-
-    let url;
-    if (os === "linux") {
-      if (distro === "debian" || distro === "ubuntu" || distro === "alpine") {
-        url = `docker.io/library/${distro}:${release}`;
-      } else if (distro === "amazonlinux") {
-        url = `public.ecr.aws/amazonlinux/amazonlinux:${release}`;
-      }
-    }
-
-    if (url) {
-      const image = await this.inspectImage(url, dockerPlatform);
-      if (image) {
-        return image;
-      }
-    }
-
-    throw new Error(`Unsupported platform: ${inspect(platform)}`);
-  },
-
-  /**
-   * @param {DockerContainer} container
-   * @param {MachineOptions} [options]
-   * @returns {Machine}
-   */
-  toMachine(container, options = {}) {
-    const { Id: containerId } = container;
-
-    const exec = (command, options) => {
-      return spawn(["docker", "exec", containerId, ...command], options);
-    };
-
-    const execSafe = (command, options) => {
-      return spawnSafe(["docker", "exec", containerId, ...command], options);
-    };
-
-    const upload = async (source, destination) => {
-      await spawn(["docker", "cp", source, `${containerId}:${destination}`]);
-    };
-
-    const attach = async () => {
-      const { exitCode, error } = await spawn(["docker", "exec", "-it", containerId, "sh"], {
-        stdio: "inherit",
-      });
-
-      if (exitCode === 0 || exitCode === 130) {
-        return;
-      }
-
-      throw error;
-    };
-
-    const snapshot = async name => {
-      await spawn(["docker", "commit", containerId]);
-    };
-
-    const kill = async () => {
-      await spawn(["docker", "kill", containerId]);
-    };
-
-    return {
-      cloud: "docker",
-      id: containerId,
-      spawn: exec,
-      spawnSafe: execSafe,
-      upload,
-      attach,
-      close: kill,
-      [Symbol.asyncDispose]: kill,
-    };
-  },
-
-  /**
-   * @param {MachineOptions} options
-   * @returns {Promise<Machine>}
-   */
-  async createMachine(options) {
-    const { Id: imageId, Os, Architecture } = await docker.getBaseImage(options);
-
-    const container = await docker.runContainer(imageId, {
-      platform: `${Os}/${Architecture}`,
-      command: ["sleep", "1d"],
-      detach: true,
-      rm: true,
-      restart: "no",
-    });
-
-    return this.toMachine(container, options);
-  },
-};
+import { orbstack } from "./orbstack.mjs";
+import { docker } from "./docker.mjs";
+import { google } from "./google.mjs";
+import { tart } from "./tart.mjs";
 
 const aws = {
   get name() {
@@ -1196,8 +439,9 @@ const aws = {
       return device;
     });
 
-    const username = getUsername(Name);
+    const username = getUsernameForDistro(Name);
 
+    // Only include minimal cloud-init for SSH access
     let userData = getUserData({ ...options, username });
     if (os === "windows") {
       userData = `<powershell>${userData}</powershell><powershellArguments>-ExecutionPolicy Unrestricted -NoProfile -NonInteractive</powershellArguments><persist>true</persist>`;
@@ -1252,7 +496,11 @@ const aws = {
       ["instance-market-options"]: marketOptions,
     });
 
-    return aws.toMachine(instance, { ...options, username, keyPath });
+    const machine = aws.toMachine(instance, { ...options, username, keyPath });
+
+    await setupUserData(machine, options);
+
+    return machine;
   },
 
   /**
@@ -1278,6 +526,29 @@ const aws = {
         ?.map(({ privatePath }) => privatePath);
 
       return { hostname: PublicIpAddress, username, identityPaths };
+    };
+
+    const waitForSsh = async () => {
+      const connectOptions = await connect();
+      const { hostname, username, identityPaths } = connectOptions;
+
+      // Try to connect until it succeeds
+      for (let i = 0; i < 30; i++) {
+        try {
+          await spawnSshSafe({
+            hostname,
+            username,
+            identityPaths,
+            command: ["true"],
+          });
+          return;
+        } catch (error) {
+          if (i === 29) {
+            throw error;
+          }
+          await new Promise(resolve => setTimeout(resolve, 5000));
+        }
+      }
     };
 
     const spawn = async (command, options) => {
@@ -1337,518 +608,10 @@ const aws = {
       attach,
       rdp,
       snapshot,
+      waitForSsh,
       close: terminate,
       [Symbol.asyncDispose]: terminate,
     };
-  },
-};
-
-const google = {
-  get cloud() {
-    return "google";
-  },
-
-  /**
-   * @param {string[]} args
-   * @param {import("./utils.mjs").SpawnOptions} [options]
-   * @returns {Promise<unknown>}
-   */
-  async spawn(args, options = {}) {
-    const gcloud = which("gcloud", { required: true });
-
-    let env = { ...process.env };
-    // if (isCI) {
-    //   env; // TODO: Add Google Cloud credentials
-    // } else {
-    //   env["TERM"] = "dumb";
-    // }
-
-    const { stdout } = await spawnSafe($`${gcloud} ${args} --format json`, {
-      env,
-      ...options,
-    });
-    try {
-      return JSON.parse(stdout);
-    } catch {
-      return;
-    }
-  },
-
-  /**
-   * @param {Record<string, string | undefined>} [options]
-   * @returns {string[]}
-   */
-  getFilters(options = {}) {
-    const filter = Object.entries(options)
-      .filter(([, value]) => value !== undefined)
-      .map(([key, value]) => [value.includes("*") ? `${key}~${value}` : `${key}=${value}`])
-      .join(" AND ");
-    return filter ? ["--filter", filter] : [];
-  },
-
-  /**
-   * @param {Record<string, string | boolean | undefined>} options
-   * @returns {string[]}
-   */
-  getFlags(options) {
-    return Object.entries(options)
-      .filter(([, value]) => value !== undefined)
-      .flatMap(([key, value]) => {
-        if (typeof value === "boolean") {
-          return value ? [`--${key}`] : [];
-        }
-        return [`--${key}=${value}`];
-      });
-  },
-
-  /**
-   * @param {Record<string, string | boolean | undefined>} options
-   * @returns {string}
-   * @link https://cloud.google.com/sdk/gcloud/reference/topic/escaping
-   */
-  getMetadata(options) {
-    const delimiter = Math.random().toString(36).substring(2, 15);
-    const entries = Object.entries(options)
-      .map(([key, value]) => `${key}=${value}`)
-      .join(delimiter);
-    return `^${delimiter}^${entries}`;
-  },
-
-  /**
-   * @param {string} name
-   * @returns {string}
-   */
-  getLabel(name) {
-    return name.replace(/[^a-z0-9_-]/g, "-").toLowerCase();
-  },
-
-  /**
-   * @typedef {Object} GoogleImage
-   * @property {string} id
-   * @property {string} name
-   * @property {string} family
-   * @property {"X86_64" | "ARM64"} architecture
-   * @property {string} diskSizeGb
-   * @property {string} selfLink
-   * @property {"READY"} status
-   * @property {string} creationTimestamp
-   */
-
-  /**
-   * @param {Partial<GoogleImage>} [options]
-   * @returns {Promise<GoogleImage[]>}
-   * @link https://cloud.google.com/sdk/gcloud/reference/compute/images/list
-   */
-  async listImages(options) {
-    const filters = google.getFilters(options);
-    const images = await google.spawn($`compute images list ${filters} --preview-images --show-deprecated`);
-    return images.sort((a, b) => (a.creationTimestamp < b.creationTimestamp ? 1 : -1));
-  },
-
-  /**
-   * @param {Record<string, string | boolean | undefined>} options
-   * @returns {Promise<GoogleImage>}
-   * @link https://cloud.google.com/sdk/gcloud/reference/compute/images/create
-   */
-  async createImage(options) {
-    const { name, ...otherOptions } = options;
-    const flags = this.getFlags(otherOptions);
-    const imageId = name || "i-" + Math.random().toString(36).substring(2, 15);
-    return this.spawn($`compute images create ${imageId} ${flags}`);
-  },
-
-  /**
-   * @typedef {Object} GoogleInstance
-   * @property {string} id
-   * @property {string} name
-   * @property {"RUNNING"} status
-   * @property {string} machineType
-   * @property {string} zone
-   * @property {GoogleDisk[]} disks
-   * @property {GoogleNetworkInterface[]} networkInterfaces
-   * @property {object} [scheduling]
-   * @property {"STANDARD" | "SPOT"} [scheduling.provisioningModel]
-   * @property {boolean} [scheduling.preemptible]
-   * @property {Record<string, string | undefined>} [labels]
-   * @property {string} selfLink
-   * @property {string} creationTimestamp
-   */
-
-  /**
-   * @typedef {Object} GoogleDisk
-   * @property {string} deviceName
-   * @property {boolean} boot
-   * @property {"X86_64" | "ARM64"} architecture
-   * @property {string[]} [licenses]
-   * @property {number} diskSizeGb
-   */
-
-  /**
-   * @typedef {Object} GoogleNetworkInterface
-   * @property {"IPV4_ONLY" | "IPV4_IPV6" | "IPV6_ONLY"} stackType
-   * @property {string} name
-   * @property {string} network
-   * @property {string} networkIP
-   * @property {string} subnetwork
-   * @property {GoogleAccessConfig[]} accessConfigs
-   */
-
-  /**
-   * @typedef {Object} GoogleAccessConfig
-   * @property {string} name
-   * @property {"ONE_TO_ONE_NAT" | "INTERNAL_NAT"} type
-   * @property {string} [natIP]
-   */
-
-  /**
-   * @param {Record<string, string | boolean | undefined>} options
-   * @returns {Promise<GoogleInstance>}
-   * @link https://cloud.google.com/sdk/gcloud/reference/compute/instances/create
-   */
-  async createInstance(options) {
-    const { name, ...otherOptions } = options || {};
-    const flags = this.getFlags(otherOptions);
-    const instanceId = name || "i-" + Math.random().toString(36).substring(2, 15);
-    const [instance] = await this.spawn($`compute instances create ${instanceId} ${flags}`);
-    return instance;
-  },
-
-  /**
-   * @param {string} instanceId
-   * @param {string} zoneId
-   * @returns {Promise<void>}
-   * @link https://cloud.google.com/sdk/gcloud/reference/compute/instances/stop
-   */
-  async stopInstance(instanceId, zoneId) {
-    await this.spawn($`compute instances stop ${instanceId} --zone=${zoneId}`);
-  },
-
-  /**
-   * @param {string} instanceId
-   * @param {string} zoneId
-   * @returns {Promise<void>}
-   * @link https://cloud.google.com/sdk/gcloud/reference/compute/instances/delete
-   */
-  async deleteInstance(instanceId, zoneId) {
-    await this.spawn($`compute instances delete ${instanceId} --delete-disks=all --zone=${zoneId}`, {
-      throwOnError: error => !/not found/i.test(inspect(error)),
-    });
-  },
-
-  /**
-   * @param {string} instanceId
-   * @param {string} username
-   * @param {string} zoneId
-   * @param {object} [options]
-   * @param {boolean} [options.wait]
-   * @returns {Promise<string | undefined>}
-   * @link https://cloud.google.com/sdk/gcloud/reference/compute/reset-windows-password
-   */
-  async resetWindowsPassword(instanceId, username, zoneId, options = {}) {
-    const attempts = options.wait ? 15 : 1;
-    for (let i = 0; i < attempts; i++) {
-      const result = await this.spawn(
-        $`compute reset-windows-password ${instanceId} --user=${username} --zone=${zoneId}`,
-        {
-          throwOnError: error => !/instance may not be ready for use/i.test(inspect(error)),
-        },
-      );
-      if (result) {
-        const { password } = result;
-        if (password) {
-          return password;
-        }
-      }
-      await new Promise(resolve => setTimeout(resolve, 60000 * i));
-    }
-  },
-
-  /**
-   * @param {Partial<GoogleInstance>} options
-   * @returns {Promise<GoogleInstance[]>}
-   */
-  async listInstances(options) {
-    const filters = this.getFilters(options);
-    const instances = await this.spawn($`compute instances list ${filters}`);
-    return instances.sort((a, b) => (a.creationTimestamp < b.creationTimestamp ? 1 : -1));
-  },
-
-  /**
-   * @param {MachineOptions} options
-   * @returns {Promise<GoogleImage>}
-   */
-  async getMachineImage(options) {
-    const { os, arch, distro, release } = options;
-    const architecture = arch === "aarch64" ? "ARM64" : "X86_64";
-
-    /** @type {string | undefined} */
-    let family;
-    if (os === "linux") {
-      if (!distro || distro === "debian") {
-        family = `debian-${release || "*"}`;
-      } else if (distro === "ubuntu") {
-        family = `ubuntu-${release?.replace(/\./g, "") || "*"}`;
-      } else if (distro === "fedora") {
-        family = `fedora-coreos-${release || "*"}`;
-      } else if (distro === "rhel") {
-        family = `rhel-${release || "*"}`;
-      }
-    } else if (os === "windows" && arch === "x64") {
-      if (!distro || distro === "server") {
-        family = `windows-${release || "*"}`;
-      }
-    }
-
-    if (family) {
-      const images = await this.listImages({ family, architecture });
-      if (images.length) {
-        const [image] = images;
-        return image;
-      }
-    }
-
-    throw new Error(`Unsupported platform: ${inspect(options)}`);
-  },
-
-  /**
-   * @param {MachineOptions} options
-   * @returns {Promise<Machine>}
-   */
-  async createMachine(options) {
-    const { name, os, arch, distro, instanceType, tags, preemptible, detached } = options;
-    const image = await google.getMachineImage(options);
-    const { selfLink: imageUrl } = image;
-
-    const username = getUsername(distro || os);
-    const userData = getUserData({ ...options, username });
-
-    /** @type {Record<string, string>} */
-    let metadata;
-    if (os === "windows") {
-      metadata = {
-        "enable-windows-ssh": "TRUE",
-        "sysprep-specialize-script-ps1": userData,
-      };
-    } else {
-      metadata = {
-        "user-data": userData,
-      };
-    }
-
-    const instance = await google.createInstance({
-      "name": name,
-      "zone": "us-central1-a",
-      "image": imageUrl,
-      "machine-type": instanceType || (arch === "aarch64" ? "t2a-standard-2" : "t2d-standard-2"),
-      "boot-disk-auto-delete": true,
-      "boot-disk-size": `${getDiskSize(options)}GB`,
-      "metadata": this.getMetadata(metadata),
-      "labels": Object.entries(tags || {})
-        .filter(([, value]) => value !== undefined)
-        .map(([key, value]) => `${this.getLabel(key)}=${value}`)
-        .join(","),
-      "provisioning-model": preemptible ? "SPOT" : "STANDARD",
-      "instance-termination-action": preemptible || !detached ? "DELETE" : undefined,
-      "no-restart-on-failure": true,
-      "threads-per-core": 1,
-      "max-run-duration": detached ? undefined : "6h",
-    });
-
-    return this.toMachine(instance, options);
-  },
-
-  /**
-   * @param {GoogleInstance} instance
-   * @param {MachineOptions} [options]
-   * @returns {Machine}
-   */
-  toMachine(instance, options = {}) {
-    const { id: instanceId, name, zone: zoneUrl, machineType: machineTypeUrl, labels } = instance;
-    const machineType = machineTypeUrl.split("/").pop();
-    const zoneId = zoneUrl.split("/").pop();
-
-    let os, arch, distro, release;
-    const { disks = [] } = instance;
-    for (const { boot, architecture, licenses = [] } of disks) {
-      if (!boot) {
-        continue;
-      }
-
-      if (architecture === "X86_64") {
-        arch = "x64";
-      } else if (architecture === "ARM64") {
-        arch = "aarch64";
-      }
-
-      for (const license of licenses) {
-        const linuxMatch = /(debian|ubuntu|fedora|rhel)-(\d+)/i.exec(license);
-        if (linuxMatch) {
-          os = "linux";
-          [, distro, release] = linuxMatch;
-        } else {
-          const windowsMatch = /windows-server-(\d+)-dc-core/i.exec(license);
-          if (windowsMatch) {
-            os = "windows";
-            distro = "windowsserver";
-            [, release] = windowsMatch;
-          }
-        }
-      }
-    }
-
-    let publicIp;
-    const { networkInterfaces = [] } = instance;
-    for (const { accessConfigs = [] } of networkInterfaces) {
-      for (const { type, natIP } of accessConfigs) {
-        if (type === "ONE_TO_ONE_NAT" && natIP) {
-          publicIp = natIP;
-        }
-      }
-    }
-
-    let preemptible;
-    const { scheduling } = instance;
-    if (scheduling) {
-      const { provisioningModel, preemptible: isPreemptible } = scheduling;
-      preemptible = provisioningModel === "SPOT" || isPreemptible;
-    }
-
-    /**
-     * @returns {SshOptions}
-     */
-    const connect = () => {
-      if (!publicIp) {
-        throw new Error(`Failed to find public IP for instance: ${name}`);
-      }
-
-      /** @type {string | undefined} */
-      let username;
-
-      const { os, distro } = options;
-      if (os || distro) {
-        username = getUsername(distro || os);
-      }
-
-      return { hostname: publicIp, username };
-    };
-
-    const spawn = async (command, options) => {
-      const connectOptions = connect();
-      return spawnSsh({ ...connectOptions, command }, options);
-    };
-
-    const spawnSafe = async (command, options) => {
-      const connectOptions = connect();
-      return spawnSshSafe({ ...connectOptions, command }, options);
-    };
-
-    const rdp = async () => {
-      const { hostname, username } = connect();
-      const rdpUsername = `${username}-rdp`;
-      const password = await google.resetWindowsPassword(instanceId, rdpUsername, zoneId, { wait: true });
-      return { hostname, username: rdpUsername, password };
-    };
-
-    const attach = async () => {
-      const connectOptions = connect();
-      await spawnSshSafe({ ...connectOptions });
-    };
-
-    const upload = async (source, destination) => {
-      const connectOptions = connect();
-      await spawnScp({ ...connectOptions, source, destination });
-    };
-
-    const snapshot = async name => {
-      const stopResult = await this.stopInstance(instanceId, zoneId);
-      console.log(stopResult);
-      const image = await this.createImage({
-        ["source-disk"]: instanceId,
-        ["zone"]: zoneId,
-        ["name"]: name || `${instanceId}-snapshot-${Date.now()}`,
-      });
-      console.log(image);
-      return;
-    };
-
-    const terminate = async () => {
-      await google.deleteInstance(instanceId, zoneId);
-    };
-
-    return {
-      cloud: "google",
-      os,
-      arch,
-      distro,
-      release,
-      id: instanceId,
-      imageId: undefined,
-      name,
-      instanceType: machineType,
-      region: zoneId,
-      publicIp,
-      preemptible,
-      labels,
-      spawn,
-      spawnSafe,
-      rdp,
-      attach,
-      upload,
-      snapshot,
-      close: terminate,
-      [Symbol.asyncDispose]: terminate,
-    };
-  },
-
-  /**
-   * @param {Record<string, string>} [labels]
-   * @returns {Promise<Machine[]>}
-   */
-  async getMachines(labels) {
-    const filters = labels ? this.getFilters({ labels }) : {};
-    const instances = await google.listInstances(filters);
-    return instances.map(instance => this.toMachine(instance));
-  },
-
-  /**
-   * @param {MachineOptions} options
-   * @returns {Promise<MachineImage>}
-   */
-  async getImage(options) {
-    const { os, arch, distro, release } = options;
-    const architecture = arch === "aarch64" ? "ARM64" : "X86_64";
-
-    let name;
-    let username;
-    if (os === "linux") {
-      if (distro === "debian") {
-        name = `debian-${release}-*`;
-        username = "admin";
-      } else if (distro === "ubuntu") {
-        name = `ubuntu-${release.replace(/\./g, "")}-*`;
-        username = "ubuntu";
-      }
-    } else if (os === "windows" && arch === "x64") {
-      if (distro === "server") {
-        name = `windows-server-${release}-dc-core-*`;
-        username = "administrator";
-      }
-    }
-
-    if (name && username) {
-      const images = await google.listImages({ name, architecture });
-      if (images.length) {
-        const [image] = images;
-        const { name, selfLink } = image;
-        return {
-          id: selfLink,
-          name,
-          username,
-        };
-      }
-    }
-
-    throw new Error(`Unsupported platform: ${inspect(platform)}`);
   },
 };
 
@@ -1864,11 +627,15 @@ const google = {
  * @param {CloudInit} cloudInit
  * @returns {string}
  */
-function getUserData(cloudInit) {
-  const { os } = cloudInit;
+export function getUserData(cloudInit) {
+  const { os, userData } = cloudInit;
+
+  // For Windows, use PowerShell script
   if (os === "windows") {
     return getWindowsStartupScript(cloudInit);
   }
+
+  // For Linux, just set up SSH access
   return getCloudInit(cloudInit);
 }
 
@@ -1879,7 +646,7 @@ function getUserData(cloudInit) {
 function getCloudInit(cloudInit) {
   const username = cloudInit["username"] || "root";
   const password = cloudInit["password"] || crypto.randomUUID();
-  const authorizedKeys = JSON.stringify(cloudInit["sshKeys"]?.map(({ publicKey }) => publicKey) || []);
+  const authorizedKeys = cloudInit["sshKeys"]?.map(({ publicKey }) => publicKey) || [];
 
   let sftpPath = "/usr/lib/openssh/sftp-server";
   switch (cloudInit["distro"]) {
@@ -1902,22 +669,36 @@ function getCloudInit(cloudInit) {
 
   // https://cloudinit.readthedocs.io/en/stable/
   return `#cloud-config
-    write_files:
-      - path: /etc/ssh/sshd_config
-        content: |
-          PermitRootLogin yes
-          PasswordAuthentication no
-          PubkeyAuthentication yes
-          UsePAM yes
-          UseLogin yes
-          Subsystem sftp ${sftpPath}
-    chpasswd:
-      expire: false
-      list: ${JSON.stringify(users)}
-    disable_root: false
-    ssh_pwauth: true
-    ssh_authorized_keys: ${authorizedKeys}
-  `;
+users:
+  - name: ${username}
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys:
+${authorizedKeys.map(key => `      - ${key}`).join("\n")}
+
+write_files:
+  - path: /etc/ssh/sshd_config
+    permissions: '0644'
+    owner: root:root
+    content: |
+      Port 22
+      Protocol 2
+      HostKey /etc/ssh/ssh_host_rsa_key
+      HostKey /etc/ssh/ssh_host_ecdsa_key
+      HostKey /etc/ssh/ssh_host_ed25519_key
+      SyslogFacility AUTHPRIV
+      PermitRootLogin yes
+      AuthorizedKeysFile .ssh/authorized_keys
+      PasswordAuthentication no
+      ChallengeResponseAuthentication no
+      GSSAPIAuthentication yes
+      GSSAPICleanupCredentials no
+      UsePAM yes
+      X11Forwarding yes
+      PrintMotd no
+      AcceptEnv LANG LC_*
+      Subsystem sftp ${sftpPath}
+`;
 }
 
 /**
@@ -2003,38 +784,10 @@ function getWindowsStartupScript(cloudInit) {
 }
 
 /**
- * @param {string} distro
- * @returns {string}
- */
-function getUsername(distro) {
-  if (/windows/i.test(distro)) {
-    return "administrator";
-  }
-
-  if (/alpine|centos/i.test(distro)) {
-    return "root";
-  }
-
-  if (/debian/i.test(distro)) {
-    return "admin";
-  }
-
-  if (/ubuntu/i.test(distro)) {
-    return "ubuntu";
-  }
-
-  if (/amazon|amzn|al\d+|rhel/i.test(distro)) {
-    return "ec2-user";
-  }
-
-  throw new Error(`Unsupported distro: ${distro}`);
-}
-
-/**
  * @param {MachineOptions} options
  * @returns {number}
  */
-function getDiskSize(options) {
+export function getDiskSize(options) {
   const { os, diskSizeGb } = options;
 
   if (diskSizeGb) {
@@ -2165,80 +918,6 @@ async function getGithubOrgSshKeys(organization) {
  * @property {string[]} [identityPaths]
  * @property {number} [retries]
  */
-
-/**
- * @param {SshOptions} options
- * @param {import("./utils.mjs").SpawnOptions} [spawnOptions]
- * @returns {Promise<import("./utils.mjs").SpawnResult>}
- */
-async function spawnSsh(options, spawnOptions = {}) {
-  const { hostname, port, username, identityPaths, password, retries = 10, command: spawnCommand } = options;
-
-  if (!hostname.includes("@")) {
-    await waitForPort({
-      hostname,
-      port: port || 22,
-    });
-  }
-
-  const logPath = mkdtemp("ssh-", "ssh.log");
-  const command = ["ssh", hostname, "-v", "-C", "-E", logPath, "-o", "StrictHostKeyChecking=no"];
-  if (!password) {
-    command.push("-o", "BatchMode=yes");
-  }
-  if (port) {
-    command.push("-p", port);
-  }
-  if (username) {
-    command.push("-l", username);
-  }
-  if (password) {
-    const sshPass = which("sshpass", { required: true });
-    command.unshift(sshPass, "-p", password);
-  } else if (identityPaths) {
-    command.push(...identityPaths.flatMap(path => ["-i", path]));
-  }
-  const stdio = spawnCommand ? "pipe" : "inherit";
-  if (spawnCommand) {
-    command.push(...spawnCommand);
-  }
-
-  /** @type {import("./utils.mjs").SpawnResult} */
-  let result;
-  for (let i = 0; i < retries; i++) {
-    result = await spawn(command, { stdio, ...spawnOptions, throwOnError: undefined });
-
-    const { exitCode } = result;
-    if (exitCode !== 255) {
-      break;
-    }
-
-    const sshLogs = readFile(logPath, { encoding: "utf-8" });
-    if (sshLogs.includes("Authenticated")) {
-      break;
-    }
-
-    await new Promise(resolve => setTimeout(resolve, (i + 1) * 15000));
-  }
-
-  if (spawnOptions?.throwOnError) {
-    const { error } = result;
-    if (error) {
-      throw error;
-    }
-  }
-
-  return result;
-}
-
-/**
- * @param {SshOptions} options
- * @param {import("./utils.mjs").SpawnOptions} [spawnOptions]
- * @returns {Promise<import("./utils.mjs").SpawnResult>}
- */
-async function spawnSshSafe(options, spawnOptions = {}) {
-  return spawnSsh(options, { throwOnError: true, ...spawnOptions });
-}
 
 /**
  * @typedef ScpOptions
@@ -2400,6 +1079,7 @@ function getCloud(name) {
  * @property {string} [publicIp]
  * @property {boolean} [preemptible]
  * @property {Record<string, string>} tags
+ * @property {string} [userData]
  * @property {(command: string[], options?: import("./utils.mjs").SpawnOptions) => Promise<import("./utils.mjs").SpawnResult>} spawn
  * @property {(command: string[], options?: import("./utils.mjs").SpawnOptions) => Promise<import("./utils.mjs").SpawnResult>} spawnSafe
  * @property {(source: string, destination: string) => Promise<void>} upload
@@ -2429,6 +1109,7 @@ function getCloud(name) {
  * @property {boolean} [bootstrap]
  * @property {boolean} [ci]
  * @property {boolean} [rdp]
+ * @property {string} [userData]
  * @property {SshKey[]} sshKeys
  */
 
@@ -2466,11 +1147,14 @@ async function main() {
       "ci": { type: "boolean" },
       "rdp": { type: "boolean" },
       "vnc": { type: "boolean" },
+      "feature": { type: "string", multiple: true },
+      "user-data": { type: "string" },
       "authorized-user": { type: "string", multiple: true },
       "authorized-org": { type: "string", multiple: true },
       "no-bootstrap": { type: "boolean" },
       "buildkite-token": { type: "string" },
       "tailscale-authkey": { type: "string" },
+      "docker": { type: "boolean" },
     },
   });
 
@@ -2513,16 +1197,38 @@ async function main() {
     detached: !!args["detached"],
     bootstrap: args["no-bootstrap"] !== true,
     ci: !!args["ci"],
+    features: args["feature"],
     rdp: !!args["rdp"] || !!args["vnc"],
     sshKeys,
+    userData: args["user-data"] ? readFile(args["user-data"]) : undefined,
   };
 
-  const { detached, bootstrap, ci, os, arch, distro, release } = options;
-  const name = distro ? `${os}-${arch}-${distro}-${release}` : `${os}-${arch}-${release}`;
+  let { detached, bootstrap, ci, os, arch, distro, release, features } = options;
 
-  let bootstrapPath, agentPath;
+  let name = `${os}-${arch}-${(release || "").replace(/\./g, "")}`;
+
+  if (distro) {
+    name += `-${distro}`;
+  }
+
+  if (distro === "alpine") {
+    name += `-musl`;
+  }
+
+  if (features?.length) {
+    name += `-with-${features.join("-")}`;
+  }
+
+  let bootstrapPath, agentPath, dockerfilePath;
   if (bootstrap) {
-    bootstrapPath = resolve(import.meta.dirname, os === "windows" ? "bootstrap.ps1" : "bootstrap.sh");
+    bootstrapPath = resolve(
+      import.meta.dirname,
+      os === "windows"
+        ? "bootstrap.ps1"
+        : features?.includes("docker")
+          ? "../.buildkite/Dockerfile-bootstrap.sh"
+          : "bootstrap.sh",
+    );
     if (!existsSync(bootstrapPath)) {
       throw new Error(`Script not found: ${bootstrapPath}`);
     }
@@ -2535,6 +1241,14 @@ async function main() {
       const tmpPath = mkdtempSync(join(tmpdir(), "agent-"));
       agentPath = join(tmpPath, "agent.mjs");
       await spawnSafe($`${npx} esbuild ${entryPath} --bundle --platform=node --format=esm --outfile=${agentPath}`);
+    }
+
+    if (features?.includes("docker")) {
+      dockerfilePath = resolve(import.meta.dirname, "../.buildkite/Dockerfile");
+
+      if (!existsSync(dockerfilePath)) {
+        throw new Error(`Dockerfile not found: ${dockerfilePath}`);
+      }
     }
   }
 
@@ -2625,12 +1339,31 @@ async function main() {
           await machine.spawnSafe(["powershell", remotePath, ...args], { stdio: "inherit" });
         });
       } else {
-        const remotePath = "/tmp/bootstrap.sh";
-        const args = ci ? ["--ci"] : [];
-        await startGroup("Running bootstrap...", async () => {
-          await machine.upload(bootstrapPath, remotePath);
-          await machine.spawnSafe(["sh", remotePath, ...args], { stdio: "inherit" });
-        });
+        if (!features?.includes("docker")) {
+          const remotePath = "/tmp/bootstrap.sh";
+          const args = ci ? ["--ci"] : [];
+          for (const feature of features || []) {
+            args.push(`--${feature}`);
+          }
+          await startGroup("Running bootstrap...", async () => {
+            await machine.upload(bootstrapPath, remotePath);
+            await machine.spawnSafe(["sh", remotePath, ...args], { stdio: "inherit" });
+          });
+        } else if (dockerfilePath) {
+          const remotePath = "/tmp/bootstrap.sh";
+
+          await startGroup("Running Docker bootstrap...", async () => {
+            await machine.upload(bootstrapPath, remotePath);
+            console.log("Uploaded bootstrap.sh");
+            await machine.upload(dockerfilePath, "/tmp/Dockerfile");
+            console.log("Uploaded Dockerfile");
+            await machine.upload(agentPath, "/tmp/agent.mjs");
+            console.log("Uploaded agent.mjs");
+            agentPath = "";
+            bootstrapPath = "";
+            await machine.spawnSafe(["sudo", "bash", remotePath], { stdio: "inherit", cwd: "/tmp" });
+          });
+        }
       }
     }
 
@@ -2639,7 +1372,7 @@ async function main() {
         const remotePath = "C:\\buildkite-agent\\agent.mjs";
         await startGroup("Installing agent...", async () => {
           await machine.upload(agentPath, remotePath);
-          if (cloud.name === "docker") {
+          if (cloud.name === "docker" || features?.includes("docker")) {
             return;
           }
           await machine.spawnSafe(["node", remotePath, "install"], { stdio: "inherit" });

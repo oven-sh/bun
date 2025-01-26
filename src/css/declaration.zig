@@ -15,12 +15,15 @@ const ArrayList = std.ArrayListUnmanaged;
 pub const DeclarationList = ArrayList(css.Property);
 
 const BackgroundHandler = css.css_properties.background.BackgroundHandler;
+const BorderHandler = css.css_properties.border.BorderHandler;
 const FallbackHandler = css.css_properties.prefix_handler.FallbackHandler;
 const MarginHandler = css.css_properties.margin_padding.MarginHandler;
 const PaddingHandler = css.css_properties.margin_padding.PaddingHandler;
 const ScrollMarginHandler = css.css_properties.margin_padding.ScrollMarginHandler;
+const FontHandler = css.css_properties.font.FontHandler;
 const InsetHandler = css.css_properties.margin_padding.InsetHandler;
 const SizeHandler = css.css_properties.size.SizeHandler;
+const FlexHandler = css.css_properties.flex.FlexHandler;
 
 /// A CSS declaration block.
 ///
@@ -47,7 +50,7 @@ pub const DeclarationBlock = struct {
             var arraylist = ArrayList(u8){};
             const w = arraylist.writer(bun.default_allocator);
             defer arraylist.deinit(bun.default_allocator);
-            var printer = css.Printer(@TypeOf(w)).new(bun.default_allocator, std.ArrayList(u8).init(bun.default_allocator), w, .{}, null);
+            var printer = css.Printer(@TypeOf(w)).new(bun.default_allocator, std.ArrayList(u8).init(bun.default_allocator), w, css.PrinterOptions.default(), null);
             defer printer.deinit();
             this.self.toCss(@TypeOf(w), &printer) catch |e| return try writer.print("<error writing declaration block: {s}>\n", .{@errorName(e)});
             try writer.writeAll(arraylist.items);
@@ -329,10 +332,13 @@ pub fn parse_declaration(
 
 pub const DeclarationHandler = struct {
     background: BackgroundHandler = .{},
+    border: BorderHandler = .{},
+    flex: FlexHandler = .{},
     size: SizeHandler = .{},
     margin: MarginHandler = .{},
     padding: PaddingHandler = .{},
     scroll_margin: ScrollMarginHandler = .{},
+    font: FontHandler = .{},
     inset: InsetHandler = .{},
     fallback: FallbackHandler = .{},
     direction: ?css.css_properties.text.Direction,
@@ -351,10 +357,13 @@ pub const DeclarationHandler = struct {
         // }
 
         this.background.finalize(&this.decls, context);
+        this.border.finalize(&this.decls, context);
+        this.flex.finalize(&this.decls, context);
         this.size.finalize(&this.decls, context);
         this.margin.finalize(&this.decls, context);
         this.padding.finalize(&this.decls, context);
         this.scroll_margin.finalize(&this.decls, context);
+        this.font.finalize(&this.decls, context);
         this.inset.finalize(&this.decls, context);
         this.fallback.finalize(&this.decls, context);
     }
@@ -362,10 +371,13 @@ pub const DeclarationHandler = struct {
     pub fn handleProperty(this: *DeclarationHandler, property: *const css.Property, context: *css.PropertyHandlerContext) bool {
         // return this.background.handleProperty(property, &this.decls, context);
         return this.background.handleProperty(property, &this.decls, context) or
+            this.border.handleProperty(property, &this.decls, context) or
+            this.flex.handleProperty(property, &this.decls, context) or
             this.size.handleProperty(property, &this.decls, context) or
             this.margin.handleProperty(property, &this.decls, context) or
             this.padding.handleProperty(property, &this.decls, context) or
             this.scroll_margin.handleProperty(property, &this.decls, context) or
+            this.font.handleProperty(property, &this.decls, context) or
             this.inset.handleProperty(property, &this.decls, context) or
             this.fallback.handleProperty(property, &this.decls, context);
     }

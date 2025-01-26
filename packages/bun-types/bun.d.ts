@@ -17,6 +17,8 @@ declare module "bun" {
   import type { FFIFunctionCallableSymbol } from "bun:ffi";
   import type { Encoding as CryptoEncoding } from "crypto";
   import type { CipherNameAndProtocol, EphemeralKeyInfo, PeerCertificate } from "tls";
+  import type { Stats } from "node:fs";
+  import type { X509Certificate } from "node:crypto";
   interface Env {
     NODE_ENV?: string;
     /**
@@ -175,6 +177,8 @@ declare module "bun" {
      * ```
      */
     blob(): Blob;
+
+    bytes(): Uint8Array;
   }
 
   class ShellPromise extends Promise<ShellOutput> {
@@ -529,7 +533,7 @@ declare module "bun" {
    */
   // tslint:disable-next-line:unified-signatures
   function write(
-    destination: BunFile | Bun.PathLike,
+    destination: BunFile | S3File | Bun.PathLike,
     input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | Bun.BlobPart[],
     options?: {
       /** If writing to a PathLike, set the permissions of the file. */
@@ -1034,6 +1038,10 @@ declare module "bun" {
       errors: number;
       totalCount: number;
     };
+
+    ADDRCONFIG: number;
+    ALL: number;
+    V4MAPPED: number;
   };
 
   interface DNSLookup {
@@ -1210,7 +1218,1102 @@ declare module "bun" {
      * For empty Blob, this always returns true.
      */
     exists(): Promise<boolean>;
+
+    /**
+     * Write data to the file. This is equivalent to using {@link Bun.write} with a {@link BunFile}.
+     * @param data - The data to write.
+     * @param options - The options to use for the write.
+     */
+    write(
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile,
+      options?: { highWaterMark?: number },
+    ): Promise<number>;
+
+    /**
+     * Deletes the file.
+     */
+    unlink(): Promise<void>;
+
+    /**
+     * Deletes the file. ( same as unlink )
+     */
+    delete(): Promise<void>;
+
+    /**
+     *  Provides useful information about the file.
+     */
+    stat(): Promise<Stats>;
   }
+  interface NetworkSink extends FileSink {
+    /**
+     * Write a chunk of data to the network.
+     *
+     * If the network is not writable yet, the data is buffered.
+     */
+    write(chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer): number;
+    /**
+     * Flush the internal buffer, committing the data to the network.
+     */
+    flush(): number | Promise<number>;
+    /**
+     * Finish the upload. This also flushes the internal buffer.
+     */
+    end(error?: Error): number | Promise<number>;
+
+    /**
+     * Get the stat of the file.
+     */
+    stat(): Promise<Stats>;
+  }
+
+  var S3Client: S3Client;
+  var s3: S3Client;
+
+  /**
+   * Configuration options for S3 operations
+   */
+  interface S3Options extends BlobPropertyBag {
+    /**
+     * The Access Control List (ACL) policy for the file.
+     * Controls who can access the file and what permissions they have.
+     *
+     * @example
+     *     // Setting public read access
+     *     const file = s3("public-file.txt", {
+     *       acl: "public-read",
+     *       bucket: "my-bucket"
+     *     });
+     *
+     * @example
+     *     // Using with presigned URLs
+     *     const url = file.presign({
+     *       acl: "public-read",
+     *       expiresIn: 3600
+     *     });
+     */
+    acl?:
+      | "private"
+      | "public-read"
+      | "public-read-write"
+      | "aws-exec-read"
+      | "authenticated-read"
+      | "bucket-owner-read"
+      | "bucket-owner-full-control"
+      | "log-delivery-write";
+
+    /**
+     * The S3 bucket name. Can be set via `S3_BUCKET` or `AWS_BUCKET` environment variables.
+     *
+     * @example
+     *     // Using explicit bucket
+     *     const file = s3("my-file.txt", { bucket: "my-bucket" });
+     *
+     * @example
+     *     // Using environment variables
+     *     // With S3_BUCKET=my-bucket in .env
+     *     const file = s3("my-file.txt");
+     */
+    bucket?: string;
+
+    /**
+     * The AWS region. Can be set via `S3_REGION` or `AWS_REGION` environment variables.
+     *
+     * @example
+     *     const file = s3("my-file.txt", {
+     *       bucket: "my-bucket",
+     *       region: "us-west-2"
+     *     });
+     */
+    region?: string;
+
+    /**
+     * The access key ID for authentication.
+     * Can be set via `S3_ACCESS_KEY_ID` or `AWS_ACCESS_KEY_ID` environment variables.
+     */
+    accessKeyId?: string;
+
+    /**
+     * The secret access key for authentication.
+     * Can be set via `S3_SECRET_ACCESS_KEY` or `AWS_SECRET_ACCESS_KEY` environment variables.
+     */
+    secretAccessKey?: string;
+
+    /**
+     * Optional session token for temporary credentials.
+     * Can be set via `S3_SESSION_TOKEN` or `AWS_SESSION_TOKEN` environment variables.
+     *
+     * @example
+     *     // Using temporary credentials
+     *     const file = s3("my-file.txt", {
+     *       accessKeyId: tempAccessKey,
+     *       secretAccessKey: tempSecretKey,
+     *       sessionToken: tempSessionToken
+     *     });
+     */
+    sessionToken?: string;
+
+    /**
+     * The S3-compatible service endpoint URL.
+     * Can be set via `S3_ENDPOINT` or `AWS_ENDPOINT` environment variables.
+     *
+     * @example
+     *     // AWS S3
+     *     const file = s3("my-file.txt", {
+     *       endpoint: "https://s3.us-east-1.amazonaws.com"
+     *     });
+     *
+     * @example
+     *     // Cloudflare R2
+     *     const file = s3("my-file.txt", {
+     *       endpoint: "https://<account-id>.r2.cloudflarestorage.com"
+     *     });
+     *
+     * @example
+     *     // DigitalOcean Spaces
+     *     const file = s3("my-file.txt", {
+     *       endpoint: "https://<region>.digitaloceanspaces.com"
+     *     });
+     *
+     * @example
+     *     // MinIO (local development)
+     *     const file = s3("my-file.txt", {
+     *       endpoint: "http://localhost:9000"
+     *     });
+     */
+    endpoint?: string;
+
+    /**
+     * The size of each part in multipart uploads (in bytes).
+     * - Minimum: 5 MiB
+     * - Maximum: 5120 MiB
+     * - Default: 5 MiB
+     *
+     * @example
+     *     // Configuring multipart uploads
+     *     const file = s3("large-file.dat", {
+     *       partSize: 10 * 1024 * 1024, // 10 MiB parts
+     *       queueSize: 4  // Upload 4 parts in parallel
+     *     });
+     *
+     *     const writer = file.writer();
+     *     // ... write large file in chunks
+     */
+    partSize?: number;
+
+    /**
+     * Number of parts to upload in parallel for multipart uploads.
+     * - Default: 5
+     * - Maximum: 255
+     *
+     * Increasing this value can improve upload speeds for large files
+     * but will use more memory.
+     */
+    queueSize?: number;
+
+    /**
+     * Number of retry attempts for failed uploads.
+     * - Default: 3
+     * - Maximum: 255
+     *
+     * @example
+     *    // Setting retry attempts
+     *     const file = s3("my-file.txt", {
+     *       retry: 5 // Retry failed uploads up to 5 times
+     *     });
+     */
+    retry?: number;
+
+    /**
+     * The Content-Type of the file.
+     * Automatically set based on file extension when possible.
+     *
+     * @example
+     *    // Setting explicit content type
+     *     const file = s3("data.bin", {
+     *       type: "application/octet-stream"
+     *     });
+     */
+    type?: string;
+
+    /**
+     * By default, Amazon S3 uses the STANDARD Storage Class to store newly created objects.
+     *
+     * @example
+     *    // Setting explicit Storage class
+     *     const file = s3("my-file.json", {
+     *       storageClass: "STANDARD_IA"
+     *     });
+     */
+    storageClass?:
+      | "STANDARD"
+      | "DEEP_ARCHIVE"
+      | "EXPRESS_ONEZONE"
+      | "GLACIER"
+      | "GLACIER_IR"
+      | "INTELLIGENT_TIERING"
+      | "ONEZONE_IA"
+      | "OUTPOSTS"
+      | "REDUCED_REDUNDANCY"
+      | "SNOW"
+      | "STANDARD_IA";
+
+    /**
+     * @deprecated The size of the internal buffer in bytes. Defaults to 5 MiB. use `partSize` and `queueSize` instead.
+     */
+    highWaterMark?: number;
+  }
+
+  /**
+   * Options for generating presigned URLs
+   */
+  interface S3FilePresignOptions extends S3Options {
+    /**
+     * Number of seconds until the presigned URL expires.
+     * - Default: 86400 (1 day)
+     *
+     * @example
+     *     // Short-lived URL
+     *     const url = file.presign({
+     *       expiresIn: 3600 // 1 hour
+     *     });
+     *
+     * @example
+     *     // Long-lived public URL
+     *     const url = file.presign({
+     *       expiresIn: 7 * 24 * 60 * 60, // 7 days
+     *       acl: "public-read"
+     *     });
+     */
+    expiresIn?: number;
+
+    /**
+     * The HTTP method allowed for the presigned URL.
+     *
+     * @example
+     *     // GET URL for downloads
+     *     const downloadUrl = file.presign({
+     *       method: "GET",
+     *       expiresIn: 3600
+     *     });
+     *
+     * @example
+     *     // PUT URL for uploads
+     *     const uploadUrl = file.presign({
+     *       method: "PUT",
+     *       expiresIn: 3600,
+     *       type: "application/json"
+     *     });
+     */
+    method?: "GET" | "POST" | "PUT" | "DELETE" | "HEAD";
+  }
+
+  interface S3Stats {
+    size: number;
+    lastModified: Date;
+    etag: string;
+    type: string;
+  }
+
+  /**
+   * Represents a file in an S3-compatible storage service.
+   * Extends the Blob interface for compatibility with web APIs.
+   */
+  interface S3File extends Blob {
+    /**
+     * The size of the file in bytes.
+     * This is a Promise because it requires a network request to determine the size.
+     *
+     * @example
+     *     // Getting file size
+     *     const size = await file.size;
+     *     console.log(`File size: ${size} bytes`);
+     *
+     * @example
+     *     // Check if file is larger than 1MB
+     *     if (await file.size > 1024 * 1024) {
+     *       console.log("Large file detected");
+     *     }
+     */
+    /**
+     * TODO: figure out how to get the typescript types to not error for this property.
+     */
+    // size: Promise<number>;
+
+    /**
+     * Creates a new S3File representing a slice of the original file.
+     * Uses HTTP Range headers for efficient partial downloads.
+     *
+     * @param begin - Starting byte offset
+     * @param end - Ending byte offset (exclusive)
+     * @param contentType - Optional MIME type for the slice
+     * @returns A new S3File representing the specified range
+     *
+     * @example
+     *  // Reading file header
+     *     const header = file.slice(0, 1024);
+     *     const headerText = await header.text();
+     *
+     * @example
+     *     // Reading with content type
+     *     const jsonSlice = file.slice(1024, 2048, "application/json");
+     *     const data = await jsonSlice.json();
+     *
+     * @example
+     *     // Reading from offset to end
+     *     const remainder = file.slice(1024);
+     *     const content = await remainder.text();
+     */
+    slice(begin?: number, end?: number, contentType?: string): S3File;
+    slice(begin?: number, contentType?: string): S3File;
+    slice(contentType?: string): S3File;
+
+    /**
+     * Creates a writable stream for uploading data.
+     * Suitable for large files as it uses multipart upload.
+     *
+     * @param options - Configuration for the upload
+     * @returns A NetworkSink for writing data
+     *
+     * @example
+     *     // Basic streaming write
+     *     const writer = file.writer({
+     *       type: "application/json"
+     *     });
+     *     writer.write('{"hello": ');
+     *     writer.write('"world"}');
+     *     await writer.end();
+     *
+     * @example
+     *     // Optimized large file upload
+     *     const writer = file.writer({
+     *       partSize: 10 * 1024 * 1024, // 10MB parts
+     *       queueSize: 4, // Upload 4 parts in parallel
+     *       retry: 3 // Retry failed parts
+     *     });
+     *
+     *     // Write large chunks of data efficiently
+     *     for (const chunk of largeDataChunks) {
+     *       writer.write(chunk);
+     *     }
+     *     await writer.end();
+     *
+     * @example
+     *     // Error handling
+     *     const writer = file.writer();
+     *     try {
+     *       writer.write(data);
+     *       await writer.end();
+     *     } catch (err) {
+     *       console.error('Upload failed:', err);
+     *       // Writer will automatically abort multipart upload on error
+     *     }
+     */
+    writer(options?: S3Options): NetworkSink;
+
+    /**
+     * Gets a readable stream of the file's content.
+     * Useful for processing large files without loading them entirely into memory.
+     *
+     * @returns A ReadableStream for the file content
+     *
+     * @example
+     *     // Basic streaming read
+     *     const stream = file.stream();
+     *     for await (const chunk of stream) {
+     *       console.log('Received chunk:', chunk);
+     *     }
+     *
+     * @example
+     *     // Piping to response
+     *     const stream = file.stream();
+     *     return new Response(stream, {
+     *       headers: { 'Content-Type': file.type }
+     *     });
+     *
+     * @example
+     *     // Processing large files
+     *     const stream = file.stream();
+     *     const textDecoder = new TextDecoder();
+     *     for await (const chunk of stream) {
+     *       const text = textDecoder.decode(chunk);
+     *       // Process text chunk by chunk
+     *     }
+     */
+    readonly readable: ReadableStream;
+    stream(): ReadableStream;
+
+    /**
+     * The name or path of the file in the bucket.
+     *
+     * @example
+     * const file = s3("folder/image.jpg");
+     * console.log(file.name); // "folder/image.jpg"
+     */
+    readonly name?: string;
+
+    /**
+     * The bucket name containing the file.
+     *
+     * @example
+     *    const file = s3("s3://my-bucket/file.txt");
+     *    console.log(file.bucket); // "my-bucket"
+     */
+    readonly bucket?: string;
+
+    /**
+     * Checks if the file exists in S3.
+     * Uses HTTP HEAD request to efficiently check existence without downloading.
+     *
+     * @returns Promise resolving to true if file exists, false otherwise
+     *
+     * @example
+     *     // Basic existence check
+     *    if (await file.exists()) {
+     *      console.log("File exists in S3");
+     *    }
+     *
+     * @example
+     *  // With error handling
+     *  try {
+     *    const exists = await file.exists();
+     *    if (!exists) {
+     *      console.log("File not found");
+     *    }
+     *  } catch (err) {
+     *    console.error("Error checking file:", err);
+     *  }
+     */
+    exists(): Promise<boolean>;
+
+    /**
+     * Uploads data to S3.
+     * Supports various input types and automatically handles large files.
+     *
+     * @param data - The data to upload
+     * @param options - Upload configuration options
+     * @returns Promise resolving to number of bytes written
+     *
+     * @example
+     *     // Writing string data
+     *     await file.write("Hello World", {
+     *       type: "text/plain"
+     *     });
+     *
+     * @example
+     *     // Writing JSON
+     *     const data = { hello: "world" };
+     *     await file.write(JSON.stringify(data), {
+     *       type: "application/json"
+     *     });
+     *
+     * @example
+     *     // Writing from Response
+     *     const response = await fetch("https://example.com/data");
+     *     await file.write(response);
+     *
+     * @example
+     *     // Writing with ACL
+     *     await file.write(data, {
+     *       acl: "public-read",
+     *       type: "application/octet-stream"
+     *     });
+     */
+    write(
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile | S3File | Blob,
+      options?: S3Options,
+    ): Promise<number>;
+
+    /**
+     * Generates a presigned URL for the file.
+     * Allows temporary access to the file without exposing credentials.
+     *
+     * @param options - Configuration for the presigned URL
+     * @returns Presigned URL string
+     *
+     * @example
+     *     // Basic download URL
+     *     const url = file.presign({
+     *       expiresIn: 3600 // 1 hour
+     *     });
+     *
+     * @example
+     *     // Upload URL with specific content type
+     *     const uploadUrl = file.presign({
+     *       method: "PUT",
+     *       expiresIn: 3600,
+     *       type: "image/jpeg",
+     *       acl: "public-read"
+     *     });
+     *
+     * @example
+     *     // URL with custom permissions
+     *     const url = file.presign({
+     *       method: "GET",
+     *       expiresIn: 7 * 24 * 60 * 60, // 7 days
+     *       acl: "public-read"
+     *     });
+     */
+    presign(options?: S3FilePresignOptions): string;
+
+    /**
+     * Deletes the file from S3.
+     *
+     * @returns Promise that resolves when deletion is complete
+     *
+     * @example
+     *     // Basic deletion
+     *     await file.delete();
+     *
+     * @example
+     *     // With error handling
+     *     try {
+     *       await file.delete();
+     *       console.log("File deleted successfully");
+     *     } catch (err) {
+     *       console.error("Failed to delete file:", err);
+     *     }
+     */
+    delete(): Promise<void>;
+
+    /**
+     * Alias for delete() method.
+     * Provided for compatibility with Node.js fs API naming.
+     *
+     * @example
+     * await file.unlink();
+     */
+    unlink: S3File["delete"];
+
+    /**
+     * Get the stat of a file in an S3-compatible storage service.
+     *
+     * @returns Promise resolving to S3Stat
+     */
+    stat(): Promise<S3Stats>;
+  }
+
+  /**
+   * A configured S3 bucket instance for managing files.
+   * The instance is callable to create S3File instances and provides methods
+   * for common operations.
+   *
+   * @example
+   *     // Basic bucket setup
+   *     const bucket = new S3Client({
+   *       bucket: "my-bucket",
+   *       accessKeyId: "key",
+   *       secretAccessKey: "secret"
+   *     });
+   *
+   *     // Get file instance
+   *     const file = bucket("image.jpg");
+   *
+   *     // Common operations
+   *     await bucket.write("data.json", JSON.stringify({hello: "world"}));
+   *     const url = bucket.presign("file.pdf");
+   *     await bucket.unlink("old.txt");
+   */
+  type S3Client = {
+    /**
+     * Create a new instance of an S3 bucket so that credentials can be managed
+     * from a single instance instead of being passed to every method.
+     *
+     * @param options The default options to use for the S3 client. Can be
+     * overriden by passing options to the methods.
+     *
+     * ## Keep S3 credentials in a single instance
+     *
+     * @example
+     *     const bucket = new Bun.S3Client({
+     *       accessKeyId: "your-access-key",
+     *       secretAccessKey: "your-secret-key",
+     *       bucket: "my-bucket",
+     *       endpoint: "https://s3.us-east-1.amazonaws.com",
+     *       sessionToken: "your-session-token",
+     *     });
+     *
+     *     // S3Client is callable, so you can do this:
+     *     const file = bucket.file("my-file.txt");
+     *
+     *     // or this:
+     *     await file.write("Hello Bun!");
+     *     await file.text();
+     *
+     *     // To delete the file:
+     *     await bucket.delete("my-file.txt");
+     *
+     *     // To write a file without returning the instance:
+     *     await bucket.write("my-file.txt", "Hello Bun!");
+     *
+     */
+    new (options?: S3Options): S3Client;
+
+    /**
+     * Creates an S3File instance for the given path.
+     *
+     * @example
+     * const file = bucket.file("image.jpg");
+     * await file.write(imageData);
+     * const configFile = bucket("config.json", {
+     *   type: "application/json",
+     *   acl: "private"
+     * });
+     */
+    file(path: string, options?: S3Options): S3File;
+
+    /**
+     * Writes data directly to a path in the bucket.
+     * Supports strings, buffers, streams, and web API types.
+     *
+     * @example
+     *     // Write string
+     *     await bucket.write("hello.txt", "Hello World");
+     *
+     *     // Write JSON with type
+     *     await bucket.write(
+     *       "data.json",
+     *       JSON.stringify({hello: "world"}),
+     *       {type: "application/json"}
+     *     );
+     *
+     *     // Write from fetch
+     *     const res = await fetch("https://example.com/data");
+     *     await bucket.write("data.bin", res);
+     *
+     *     // Write with ACL
+     *     await bucket.write("public.html", html, {
+     *       acl: "public-read",
+     *       type: "text/html"
+     *     });
+     */
+    write(
+      path: string,
+      data:
+        | string
+        | ArrayBufferView
+        | ArrayBuffer
+        | SharedArrayBuffer
+        | Request
+        | Response
+        | BunFile
+        | S3File
+        | Blob
+        | File,
+      options?: S3Options,
+    ): Promise<number>;
+
+    /**
+     * Generate a presigned URL for temporary access to a file.
+     * Useful for generating upload/download URLs without exposing credentials.
+     *
+     * @example
+     *     // Download URL
+     *     const downloadUrl = bucket.presign("file.pdf", {
+     *       expiresIn: 3600 // 1 hour
+     *     });
+     *
+     *     // Upload URL
+     *     const uploadUrl = bucket.presign("uploads/image.jpg", {
+     *       method: "PUT",
+     *       expiresIn: 3600,
+     *       type: "image/jpeg",
+     *       acl: "public-read"
+     *     });
+     *
+     *     // Long-lived public URL
+     *     const publicUrl = bucket.presign("public/doc.pdf", {
+     *       expiresIn: 7 * 24 * 60 * 60, // 7 days
+     *       acl: "public-read"
+     *     });
+     */
+    presign(path: string, options?: S3FilePresignOptions): string;
+
+    /**
+     * Delete a file from the bucket.
+     *
+     * @example
+     *     // Simple delete
+     *     await bucket.unlink("old-file.txt");
+     *
+     *     // With error handling
+     *     try {
+     *       await bucket.unlink("file.dat");
+     *       console.log("File deleted");
+     *     } catch (err) {
+     *       console.error("Delete failed:", err);
+     *     }
+     */
+    unlink(path: string, options?: S3Options): Promise<void>;
+    delete: S3Client["unlink"];
+
+    /**
+     * Get the size of a file in bytes.
+     * Uses HEAD request to efficiently get size.
+     *
+     * @example
+     *     // Get size
+     *     const bytes = await bucket.size("video.mp4");
+     *     console.log(`Size: ${bytes} bytes`);
+     *
+     *     // Check if file is large
+     *     if (await bucket.size("data.zip") > 100 * 1024 * 1024) {
+     *       console.log("File is larger than 100MB");
+     *     }
+     */
+    size(path: string, options?: S3Options): Promise<number>;
+
+    /**
+     * Check if a file exists in the bucket.
+     * Uses HEAD request to check existence.
+     *
+     * @example
+     *     // Check existence
+     *     if (await bucket.exists("config.json")) {
+     *       const file = bucket("config.json");
+     *       const config = await file.json();
+     *     }
+     *
+     *     // With error handling
+     *     try {
+     *       if (!await bucket.exists("required.txt")) {
+     *         throw new Error("Required file missing");
+     *       }
+     *     } catch (err) {
+     *       console.error("Check failed:", err);
+     *     }
+     */
+    exists(path: string, options?: S3Options): Promise<boolean>;
+    /**
+     * Get the stat of a file in an S3-compatible storage service.
+     *
+     * @param path The path to the file.
+     * @param options The options to use for the S3 client.
+     */
+    stat(path: string, options?: S3Options): Promise<S3Stats>;
+  };
+  /**
+   * Configuration options for SQL client connection and behavior
+   *  @example
+   * const config: SQLOptions = {
+   *   host: 'localhost',
+   *   port: 5432,
+   *   user: 'dbuser',
+   *   password: 'secretpass',
+   *   database: 'myapp',
+   *   idleTimeout: 30000,
+   *   max: 20,
+   *   onconnect: (client) => {
+   *     console.log('Connected to database');
+   *   }
+   * };
+   */
+  type SQLOptions = {
+    /** Connection URL (can be string or URL object) */
+    url: URL | string;
+    /** Database server hostname */
+    host: string;
+    /** Database server port number */
+    port: number | string;
+    /** Database user for authentication */
+    username: string;
+    /** Database password for authentication */
+    password: string;
+    /** Name of the database to connect to */
+    database: string;
+    /** Database adapter/driver to use */
+    adapter: string;
+    /** Maximum time in milliseconds to wait for connection to become available */
+    idleTimeout: number;
+    /** Maximum time in milliseconds to wait when establishing a connection */
+    connectionTimeout: number;
+    /** Maximum lifetime in milliseconds of a connection */
+    maxLifetime: number;
+    /** Whether to use TLS/SSL for the connection */
+    tls: boolean;
+    /** Callback function executed when a connection is established */
+    onconnect: (client: SQL) => void;
+    /** Callback function executed when a connection is closed */
+    onclose: (client: SQL) => void;
+    /** Maximum number of connections in the pool */
+    max: number;
+    /** By default values outside i32 range are returned as strings. If this is true, values outside i32 range are returned as BigInts. */
+    bigint: boolean;
+  };
+
+  /**
+   * Represents a SQL query that can be executed, with additional control methods
+   * Extends Promise to allow for async/await usage
+   */
+  interface SQLQuery extends Promise<any> {
+    /** Indicates if the query is currently executing */
+    active: boolean;
+    /** Indicates if the query has been cancelled */
+    cancelled: boolean;
+    /** Cancels the executing query */
+    cancel(): SQLQuery;
+    /** Executes the query */
+    execute(): SQLQuery;
+    /** Returns the raw query result */
+    raw(): SQLQuery;
+    /** Returns only the values from the query result */
+    values(): SQLQuery;
+  }
+
+  /**
+   * Callback function type for transaction contexts
+   * @param sql Function to execute SQL queries within the transaction
+   */
+  type SQLTransactionContextCallback = (sql: TransactionSQL) => Promise<any> | Array<SQLQuery>;
+  /**
+   * Callback function type for savepoint contexts
+   * @param sql Function to execute SQL queries within the savepoint
+   */
+  type SQLSavepointContextCallback = (sql: SavepointSQL) => Promise<any> | Array<SQLQuery>;
+
+  /**
+   * Main SQL client interface providing connection and transaction management
+   */
+  interface SQL {
+    /** Creates a new SQL client instance
+     * @example
+     * const sql = new SQL("postgres://localhost:5432/mydb");
+     * const sql = new SQL(new URL("postgres://localhost:5432/mydb"));
+     */
+    new (connectionString: string | URL): SQL;
+    /** Creates a new SQL client instance with options
+     * @example
+     * const sql = new SQL("postgres://localhost:5432/mydb", { idleTimeout: 1000 });
+     */
+    new (connectionString: string | URL, options: SQLOptions): SQL;
+    /** Creates a new SQL client instance with options
+     * @example
+     * const sql = new SQL({ url: "postgres://localhost:5432/mydb", idleTimeout: 1000 });
+     */
+    new (options?: SQLOptions): SQL;
+    /** Executes a SQL query using template literals
+     * @example
+     * const [user] = await sql`select * from users where id = ${1}`;
+     */
+    (strings: string | TemplateStringsArray, ...values: any[]): SQLQuery;
+    /**
+     * Helper function to allow easy use to insert values into a query
+     * @example
+     * const result = await sql`insert into users ${sql(users)} RETURNING *`;
+     */
+    (obj: any): SQLQuery;
+    /** Commits a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL
+     * @example
+     * await sql.commitDistributed("my_distributed_transaction");
+     */
+    commitDistributed(name: string): Promise<undefined>;
+    /** Rolls back a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL
+     * @example
+     * await sql.rollbackDistributed("my_distributed_transaction");
+     */
+    rollbackDistributed(name: string): Promise<undefined>;
+    /** Waits for the database connection to be established
+     * @example
+     * await sql.connect();
+     */
+    connect(): Promise<SQL>;
+    /** Closes the database connection with optional timeout in seconds. If timeout is 0, it will close immediately, if is not provided it will wait for all queries to finish before closing.
+     * @example
+     * await sql.close({ timeout: 1 });
+     */
+    close(options?: { timeout?: number }): Promise<undefined>;
+    /** Closes the database connection with optional timeout in seconds. If timeout is 0, it will close immediately, if is not provided it will wait for all queries to finish before closing.
+     * @alias close
+     * @example
+     * await sql.end({ timeout: 1 });
+     */
+    end(options?: { timeout?: number }): Promise<undefined>;
+    /** Flushes any pending operations */
+    flush(): void;
+    /**  The reserve method pulls out a connection from the pool, and returns a client that wraps the single connection.
+     *   This can be used for running queries on an isolated connection.
+     *   Calling reserve in a reserved Sql will return a new reserved connection, not the same connection (behavior matches postgres package).
+     * @example
+     * const reserved = await sql.reserve();
+     * await reserved`select * from users`;
+     * await reserved.release();
+     * // with in a production scenario would be something more like
+     * const reserved = await sql.reserve();
+     * try {
+     *   // ... queries
+     * } finally {
+     *   await reserved.release();
+     * }
+     * //To make it simpler bun supportsSymbol.dispose and Symbol.asyncDispose
+     * {
+     * // always release after context (safer)
+     * using reserved = await sql.reserve()
+     * await reserved`select * from users`
+     * }
+     */
+    reserve(): Promise<ReservedSQL>;
+    /** Begins a new transaction
+     * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.begin will resolve with the returned value from the callback function.
+     * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
+     * @example
+     * const [user, account] = await sql.begin(async sql => {
+     *   const [user] = await sql`
+     *     insert into users (
+     *       name
+     *     ) values (
+     *       'Murray'
+     *     )
+     *     returning *
+     *   `
+     *   const [account] = await sql`
+     *     insert into accounts (
+     *       user_id
+     *     ) values (
+     *       ${ user.user_id }
+     *     )
+     *     returning *
+     *   `
+     *   return [user, account]
+     * })
+     */
+    begin(fn: SQLTransactionContextCallback): Promise<any>;
+    /** Begins a new transaction with options
+     * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.begin will resolve with the returned value from the callback function.
+     * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
+     * @example
+     * const [user, account] = await sql.begin("read write", async sql => {
+     *   const [user] = await sql`
+     *     insert into users (
+     *       name
+     *     ) values (
+     *       'Murray'
+     *     )
+     *     returning *
+     *   `
+     *   const [account] = await sql`
+     *     insert into accounts (
+     *       user_id
+     *     ) values (
+     *       ${ user.user_id }
+     *     )
+     *     returning *
+     *   `
+     *   return [user, account]
+     * })
+     */
+    begin(options: string, fn: SQLTransactionContextCallback): Promise<any>;
+    /** Alternative method to begin a transaction
+     * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.transaction will resolve with the returned value from the callback function.
+     * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
+     * @alias begin
+     * @example
+     * const [user, account] = await sql.transaction(async sql => {
+     *   const [user] = await sql`
+     *     insert into users (
+     *       name
+     *     ) values (
+     *       'Murray'
+     *     )
+     *     returning *
+     *   `
+     *   const [account] = await sql`
+     *     insert into accounts (
+     *       user_id
+     *     ) values (
+     *       ${ user.user_id }
+     *     )
+     *     returning *
+     *   `
+     *   return [user, account]
+     * })
+     */
+    transaction(fn: SQLTransactionContextCallback): Promise<any>;
+    /** Alternative method to begin a transaction with options
+     * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.transaction will resolve with the returned value from the callback function.
+     * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
+     * @alias begin
+     * @example
+     * const [user, account] = await sql.transaction("read write", async sql => {
+     *   const [user] = await sql`
+     *     insert into users (
+     *       name
+     *     ) values (
+     *       'Murray'
+     *     )
+     *     returning *
+     *   `
+     *   const [account] = await sql`
+     *     insert into accounts (
+     *       user_id
+     *     ) values (
+     *       ${ user.user_id }
+     *     )
+     *     returning *
+     *   `
+     *   return [user, account]
+     * })
+     */
+    transaction(options: string, fn: SQLTransactionContextCallback): Promise<any>;
+    /** Begins a distributed transaction
+     * Also know as Two-Phase Commit, in a distributed transaction, Phase 1 involves the coordinator preparing nodes by ensuring data is written and ready to commit, while Phase 2 finalizes with nodes committing or rolling back based on the coordinator's decision, ensuring durability and releasing locks.
+     * In PostgreSQL and MySQL distributed transactions persist beyond the original session, allowing privileged users or coordinators to commit/rollback them, ensuring support for distributed transactions, recovery, and administrative tasks.
+     * beginDistributed will automatic rollback if any exception are not caught, and you can commit and rollback later if everything goes well.
+     * PostgreSQL natively supports distributed transactions using PREPARE TRANSACTION, while MySQL uses XA Transactions, and MSSQL also supports distributed/XA transactions. However, in MSSQL, distributed transactions are tied to the original session, the DTC coordinator, and the specific connection.
+     * These transactions are automatically committed or rolled back following the same rules as regular transactions, with no option for manual intervention from other sessions, in MSSQL distributed transactions are used to coordinate transactions using Linked Servers.
+     * @example
+     * await sql.beginDistributed("numbers", async sql => {
+     *   await sql`create table if not exists numbers (a int)`;
+     *   await sql`insert into numbers values(1)`;
+     * });
+     * // later you can call
+     * await sql.commitDistributed("numbers");
+     * // or await sql.rollbackDistributed("numbers");
+     */
+    beginDistributed(name: string, fn: SQLTransactionContextCallback): Promise<any>;
+    /** Alternative method to begin a distributed transaction
+     * @alias beginDistributed
+     */
+    distributed(name: string, fn: SQLTransactionContextCallback): Promise<any>;
+    /**If you know what you're doing, you can use unsafe to pass any string you'd like.
+     * Please note that this can lead to SQL injection if you're not careful.
+     * You can also nest sql.unsafe within a safe sql expression. This is useful if only part of your fraction has unsafe elements.
+     * @example
+     * const result = await sql.unsafe(`select ${danger} from users where id = ${dragons}`)
+     */
+    unsafe(string: string, values?: any[]): SQLQuery;
+
+    /** Current client options */
+    options: SQLOptions;
+
+    [Symbol.asyncDispose](): Promise<any>;
+  }
+
+  /**
+   * Represents a reserved connection from the connection pool
+   * Extends SQL with additional release functionality
+   */
+  interface ReservedSQL extends SQL {
+    /** Releases the client back to the connection pool */
+    release(): void;
+    [Symbol.dispose](): void;
+  }
+
+  /**
+   * Represents a client within a transaction context
+   * Extends SQL with savepoint functionality
+   */
+  interface TransactionSQL extends SQL {
+    /** Creates a savepoint within the current transaction */
+    savepoint(name: string, fn: SQLSavepointContextCallback): Promise<any>;
+    savepoint(fn: SQLSavepointContextCallback): Promise<any>;
+  }
+  /**
+   * Represents a savepoint within a transaction
+   */
+  interface SavepointSQL extends SQL {}
+
+  var sql: SQL;
+  var postgres: SQL;
+  var SQL: SQL;
 
   /**
    *   This lets you use macros as regular imports
@@ -1244,6 +2347,9 @@ declare module "bun" {
     crc32: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer) => number;
     cityHash32: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer) => number;
     cityHash64: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: bigint) => bigint;
+    xxHash32: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: number) => number;
+    xxHash64: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: bigint) => bigint;
+    xxHash3: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: bigint) => bigint;
     murmur32v3: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: number) => number;
     murmur32v2: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: number) => number;
     murmur64v2: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: bigint) => bigint;
@@ -1491,7 +2597,8 @@ declare module "bun" {
     | "import-rule"
     | "url-token"
     | "internal"
-    | "entry-point";
+    | "entry-point-run"
+    | "entry-point-build";
 
   interface Import {
     path: string;
@@ -1544,7 +2651,7 @@ declare module "bun" {
     define?: Record<string, string>;
     // origin?: string; // e.g. http://mydomain.com
     loader?: { [k in string]: Loader };
-    sourcemap?: "none" | "linked" | "inline" | "external" | "linked"; // default: "none", true -> "inline"
+    sourcemap?: "none" | "linked" | "inline" | "external" | "linked" | boolean; // default: "none", true -> "inline"
     /**
      * package.json `exports` conditions used when resolving imports
      *
@@ -1553,6 +2660,26 @@ declare module "bun" {
      * https://nodejs.org/api/packages.html#exports
      */
     conditions?: Array<string> | string;
+
+    /**
+     * Controls how environment variables are handled during bundling.
+     *
+     * Can be one of:
+     * - `"inline"`: Injects environment variables into the bundled output by converting `process.env.FOO`
+     *   references to string literals containing the actual environment variable values
+     * - `"disable"`: Disables environment variable injection entirely
+     * - A string ending in `*`: Inlines environment variables that match the given prefix.
+     *   For example, `"MY_PUBLIC_*"` will only include env vars starting with "MY_PUBLIC_"
+     *
+     * @example
+     * ```ts
+     * Bun.build({
+     *   env: "MY_PUBLIC_*",
+     *   entrypoints: ["src/index.ts"],
+     * })
+     * ```
+     */
+    env?: "inline" | "disable" | `${string}*`;
     minify?:
       | boolean
       | {
@@ -1608,16 +2735,16 @@ declare module "bun" {
     footer?: string;
 
     /**
-     * **Experimental**
-     *
-     * Enable CSS support.
-     */
-    experimentalCss?: boolean;
-
-    /**
      * Drop function calls to matching property accesses.
      */
     drop?: string[];
+
+    /**
+     * When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
+     * When set to `false`, the `success` property of the returned object will be `false` when a build failure happens.
+     * This defaults to `true`.
+     */
+    throw?: boolean;
   }
 
   namespace Password {
@@ -1848,8 +2975,228 @@ declare module "bun" {
     logs: Array<BuildMessage | ResolveMessage>;
   }
 
-  function build(config: BuildConfig): Promise<BuildOutput>;
+  /**
+   * Bundles JavaScript, TypeScript, CSS, HTML and other supported files into optimized outputs.
+   *
+   * @param {Object} config - Build configuration options
+   * @returns {Promise<BuildOutput>} Promise that resolves to build output containing generated artifacts and build status
+   * @throws {AggregateError} When build fails and config.throw is true (default in Bun 1.2+)
+   *
+   * @example Basic usage - Bundle a single entrypoint and check results
+   ```ts
+   const result = await Bun.build({
+     entrypoints: ['./src/index.tsx'],
+     outdir: './dist'
+   });
 
+    if (!result.success) {
+      console.error('Build failed:', result.logs);
+      process.exit(1);
+    }
+   ```
+    *
+    * @example Set up multiple entrypoints with code splitting enabled
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/app.tsx', './src/admin.tsx'],
+      outdir: './dist',
+      splitting: true,
+      sourcemap: "external"
+    });
+    ```
+    *
+    * @example Configure minification and optimization settings
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      minify: {
+        whitespace: true,
+        identifiers: true,
+        syntax: true
+      },
+      drop: ['console', 'debugger']
+    });
+    ```
+    *
+    * @example Set up custom loaders and mark packages as external
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      loader: {
+        '.png': 'dataurl',
+        '.svg': 'file',
+        '.txt': 'text',
+        '.json': 'json'
+      },
+      external: ['react', 'react-dom']
+    });
+    ```
+    *
+    * @example Configure environment variable handling with different modes
+    ```ts
+    // Inline all environment variables
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      env: 'inline'
+    });
+
+    // Only include specific env vars
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      env: 'PUBLIC_*'
+    });
+    ```
+    *
+    * @example Set up custom naming patterns for all output types
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      naming: {
+        entry: '[dir]/[name]-[hash].[ext]',
+        chunk: 'chunks/[name]-[hash].[ext]',
+        asset: 'assets/[name]-[hash].[ext]'
+      }
+    });
+    ```
+    @example Work with build artifacts in different formats
+    ```ts
+    const result = await Bun.build({
+      entrypoints: ['./src/index.tsx']
+    });
+
+    for (const artifact of result.outputs) {
+      const text = await artifact.text();
+      const buffer = await artifact.arrayBuffer();
+      const bytes = await artifact.bytes();
+
+      new Response(artifact);
+      await Bun.write(artifact.path, artifact);
+    }
+    ```
+    @example Implement comprehensive error handling with position info
+    ```ts
+    try {
+      const result = await Bun.build({
+        entrypoints: ['./src/index.tsx'],
+      });
+    } catch (e) {
+      const error = e as AggregateError;
+      console.error('Build failed:');
+      for (const msg of error.errors) {
+        if ('position' in msg) {
+          console.error(
+            `${msg.message} at ${msg.position?.file}:${msg.position?.line}:${msg.position?.column}`
+          );
+        } else {
+          console.error(msg.message);
+        }
+      }
+    }
+    ```
+    @example Set up Node.js target with specific configurations
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/server.ts'],
+      outdir: './dist',
+      target: 'node',
+      format: 'cjs',
+      sourcemap: 'external',
+      minify: false,
+      packages: 'external'
+    });
+    ```
+    *
+    * @example Configure experimental CSS bundling with multiple themes
+    ```ts
+    await Bun.build({
+      entrypoints: [
+        './src/styles.css',
+        './src/themes/dark.css',
+        './src/themes/light.css'
+      ],
+      outdir: './dist/css',
+    });
+    ```
+    @example Define compile-time constants and version information
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      define: {
+        'process.env.NODE_ENV': JSON.stringify('production'),
+        'CONSTANTS.VERSION': JSON.stringify('1.0.0'),
+        'CONSTANTS.BUILD_TIME': JSON.stringify(new Date().toISOString())
+      }
+    });
+    ```
+    @example Create a custom plugin for handling special file types
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      plugins: [
+        {
+          name: 'my-plugin',
+          setup(build) {
+            build.onLoad({ filter: /\.custom$/ }, async (args) => {
+              const content = await Bun.file(args.path).text();
+              return {
+                contents: `export default ${JSON.stringify(content)}`,
+                loader: 'js'
+              };
+            });
+          }
+        }
+      ]
+    });
+    ```
+    @example Enable bytecode generation for faster startup
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/server.ts'],
+      outdir: './dist',
+      target: 'bun',
+      format: 'cjs',
+      bytecode: true
+    });
+    ```
+    @example Add custom banner and footer to output files
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      banner: '"use client";\n// Built with Bun',
+      footer: '// Generated on ' + new Date().toISOString()
+    });
+    ```
+    @example Configure CDN public path for asset loading
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      publicPath: 'https://cdn.example.com/assets/',
+      loader: {
+        '.png': 'file',
+        '.svg': 'file'
+      }
+    });
+    ```
+    @example Set up package export conditions for different environments
+    ```ts
+    await Bun.build({
+      entrypoints: ['./src/index.tsx'],
+      outdir: './dist',
+      conditions: ['production', 'browser', 'module'],
+      packages: 'external'
+    });
+    ```
+  */
+  function build(config: BuildConfig): Promise<BuildOutput>;
   /**
    * A status that represents the outcome of a sent message.
    *
@@ -2131,6 +3478,8 @@ declare module "bun" {
      * });
      */
     data: T;
+
+    getBufferedAmount(): number;
   }
 
   /**
@@ -2385,13 +3734,19 @@ declare module "bun" {
     port?: string | number;
 
     /**
-     * If the `SO_REUSEPORT` flag should be set.
+     * Whether the `SO_REUSEPORT` flag should be set.
      *
      * This allows multiple processes to bind to the same port, which is useful for load balancing.
      *
      * @default false
      */
     reusePort?: boolean;
+
+    /**
+     * Whether the `IPV6_V6ONLY` flag should be set.
+     * @default false
+     */
+    ipv6Only?: boolean;
 
     /**
      * What hostname should the server listen on?
@@ -2965,7 +4320,7 @@ declare module "bun" {
    *   "Hello, world!"
    * );
    * ```
-   * @param path The path to the file (lazily loaded)
+   * @param path The path to the file (lazily loaded) if the path starts with `s3://` it will behave like {@link S3File}
    */
   // tslint:disable-next-line:unified-signatures
   function file(path: string | URL, options?: BlobPropertyBag): BunFile;
@@ -2991,7 +4346,7 @@ declare module "bun" {
    * console.log(file.type); // "application/json"
    * ```
    *
-   * @param path The path to the file as a byte buffer (the buffer is copied)
+   * @param path The path to the file as a byte buffer (the buffer is copied) if the path starts with `s3://` it will behave like {@link S3File}
    */
   // tslint:disable-next-line:unified-signatures
   function file(path: ArrayBufferLike | Uint8Array, options?: BlobPropertyBag): BunFile;
@@ -3319,9 +4674,24 @@ declare module "bun" {
   function nanoseconds(): number;
 
   /**
-   * Generate a heap snapshot for seeing where the heap is being used
+   * Show precise statistics about memory usage of your application
+   *
+   * Generate a heap snapshot in JavaScriptCore's format that can be viewed with `bun --inspect` or Safari's Web Inspector
    */
-  function generateHeapSnapshot(): HeapSnapshot;
+  function generateHeapSnapshot(format?: "jsc"): HeapSnapshot;
+
+  /**
+   * Show precise statistics about memory usage of your application
+   *
+   * Generate a V8 Heap Snapshot that can be used with Chrome DevTools & Visual Studio Code
+   *
+   * This is a JSON string that can be saved to a file.
+   * ```ts
+   * const snapshot = Bun.generateHeapSnapshot("v8");
+   * await Bun.write("heap.heapsnapshot", snapshot);
+   * ```
+   */
+  function generateHeapSnapshot(format: "v8"): string;
 
   /**
    * The next time JavaScriptCore is idle, clear unused memory and attempt to reduce the heap size.
@@ -3786,7 +5156,7 @@ declare module "bun" {
     | "browser";
 
   /** https://bun.sh/docs/bundler/loaders */
-  type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text" | "css";
+  type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text" | "css" | "html";
 
   interface PluginConstraints {
     /**
@@ -3899,7 +5269,7 @@ declare module "bun" {
      * The namespace of the importer.
      */
     namespace: string;
-    /** 
+    /**
      * The directory to perform file-based resolutions in.
      */
     resolveDir: string;
@@ -4117,6 +5487,21 @@ declare module "bun" {
    */
   const isMainThread: boolean;
 
+  /**
+   * Used when importing an HTML file at runtime.
+   *
+   * @example
+   *
+   * ```ts
+   * import app from "./index.html";
+   * ```
+   *
+   * Bun.build support for this isn't imlpemented yet.
+   */
+  interface HTMLBundle {
+    index: string;
+  }
+
   interface Socket<Data = undefined> extends Disposable {
     /**
      * Write `data` to the socket
@@ -4285,6 +5670,7 @@ declare module "bun" {
      * socket has been destroyed, `null` will be returned.
      */
     getCertificate(): PeerCertificate | object | null;
+    getX509Certificate(): X509Certificate | undefined;
 
     /**
      * Returns an object containing information on the negotiated cipher suite.
@@ -4323,6 +5709,7 @@ declare module "bun" {
      * @return A certificate object.
      */
     getPeerCertificate(): PeerCertificate;
+    getPeerX509Certificate(): X509Certificate;
 
     /**
      * See [SSL\_get\_shared\_sigalgs](https://www.openssl.org/docs/man1.1.1/man3/SSL_get_shared_sigalgs.html) for more information.
@@ -5586,9 +6973,70 @@ declare module "bun" {
      */
     timestamp?: number | Date,
   ): Buffer;
-}
 
-// extends lib.dom.d.ts
-interface BufferEncodingOption {
-  encoding?: BufferEncoding;
+  /**
+   * Types for `bun.lock`
+   */
+  type BunLockFile = {
+    lockfileVersion: 0 | 1;
+    workspaces: {
+      [workspace: string]: BunLockFileWorkspacePackage;
+    };
+    overrides?: Record<string, string>;
+    patchedDependencies?: Record<string, string>;
+    trustedDependencies?: string[];
+
+    /**
+     * ```
+     * INFO = { prod/dev/optional/peer dependencies, os, cpu, libc (TODO), bin, binDir }
+     *
+     * // first index is resolution for each type of package
+     * npm         -> [ "name@version", registry (TODO: remove if default), INFO, integrity]
+     * symlink     -> [ "name@link:path", INFO ]
+     * folder      -> [ "name@file:path", INFO ]
+     * workspace   -> [ "name@workspace:path" ] // workspace is only path
+     * tarball     -> [ "name@tarball", INFO ]
+     * root        -> [ "name@root:", { bin, binDir } ]
+     * git         -> [ "name@git+repo", INFO, .bun-tag string (TODO: remove this) ]
+     * github      -> [ "name@github:user/repo", INFO, .bun-tag string (TODO: remove this) ]
+     * ```
+     * */
+    packages: {
+      [pkg: string]: BunLockFilePackageArray;
+    };
+  };
+
+  type BunLockFileBasePackageInfo = {
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+    optionalDependencies?: Record<string, string>;
+    peerDependencies?: Record<string, string>;
+    optionalPeers?: string[];
+    bin?: string | Record<string, string>;
+    binDir?: string;
+  };
+
+  type BunLockFileWorkspacePackage = BunLockFileBasePackageInfo & {
+    name?: string;
+    version?: string;
+  };
+
+  type BunLockFilePackageInfo = BunLockFileBasePackageInfo & {
+    os?: string | string[];
+    cpu?: string | string[];
+    bundled?: true;
+  };
+
+  /** @see {@link BunLockFile.packages} for more info */
+  type BunLockFilePackageArray =
+    /** npm */
+    | [pkg: string, registry: string, info: BunLockFilePackageInfo, integrity: string]
+    /** symlink, folder, tarball */
+    | [pkg: string, info: BunLockFilePackageInfo]
+    /** workspace */
+    | [pkg: string]
+    /** git, github */
+    | [pkg: string, info: BunLockFilePackageInfo, bunTag: string]
+    /** root */
+    | [pkg: string, info: Pick<BunLockFileBasePackageInfo, "bin" | "binDir">];
 }

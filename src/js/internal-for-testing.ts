@@ -5,15 +5,10 @@
 // In a debug build, the import is always allowed.
 // It is disallowed in release builds unless run in Bun's CI.
 
-/// <reference path="./private.d.ts" />
+const fmtBinding = $bindgenFn("fmt.bind.ts", "fmtString");
 
-const fmtBinding = $newZigFunction("fmt.zig", "fmt_js_test_bindings.jsFunctionStringFormatter", 2) as (
-  code: string,
-  id: number,
-) => string;
-
-export const quickAndDirtyJavaScriptSyntaxHighlighter = (code: string) => fmtBinding(code, 0);
-export const escapePowershell = (code: string) => fmtBinding(code, 1);
+export const highlightJavaScript = (code: string) => fmtBinding(code, "highlight-javascript");
+export const escapePowershell = (code: string) => fmtBinding(code, "escape-powershell");
 
 export const TLSBinding = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
 
@@ -58,8 +53,12 @@ export const iniInternals = {
 
 export const cssInternals = {
   minifyTestWithOptions: $newZigFunction("css_internals.zig", "minifyTestWithOptions", 3),
+  minifyErrorTestWithOptions: $newZigFunction("css_internals.zig", "minifyErrorTestWithOptions", 3),
   testWithOptions: $newZigFunction("css_internals.zig", "testWithOptions", 3),
   prefixTestWithOptions: $newZigFunction("css_internals.zig", "prefixTestWithOptions", 3),
+  minifyTest: $newZigFunction("css_internals.zig", "minifyTest", 3),
+  prefixTest: $newZigFunction("css_internals.zig", "prefixTest", 3),
+  _test: $newZigFunction("css_internals.zig", "_test", 3),
   attrTest: $newZigFunction("css_internals.zig", "attrTest", 3),
 };
 
@@ -146,6 +145,22 @@ export const isModuleResolveFilenameSlowPathEnabled: () => boolean = $newCppFunc
 export const frameworkRouterInternals = $zig("FrameworkRouter.zig", "JSFrameworkRouter.getBindings") as {
   parseRoutePattern: (style: string, pattern: string) => null | { kind: string; pattern: string };
   FrameworkRouter: {
-    new(opts: any): any;
+    new (opts: any): any;
   };
+};
+
+export const bindgen = $zig("bindgen_test.zig", "getBindgenTestFunctions") as {
+  add: (a: any, b: any) => number;
+  requiredAndOptionalArg: (a: any, b?: any, c?: any, d?: any) => number;
+};
+
+export const noOpForTesting = $cpp("NoOpForTesting.cpp", "createNoOpForTesting");
+export const Dequeue = require("internal/fifo");
+
+export const fs = require("node:fs/promises").$data;
+
+export const fsStreamInternals = {
+  writeStreamFastPath(str) {
+    return str[require("internal/fs/streams").kWriteStreamFastPath];
+  },
 };

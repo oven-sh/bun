@@ -66,25 +66,20 @@ const Wasi = {
     return Date.now();
   },
   environ_sizes_get() {
-    debugger;
     return 0;
   },
   environ_get(__environ: unknown, environ_buf: unknown) {
-    debugger;
     return 0;
   },
 
   fd_close(fd: number) {
-    debugger;
     return 0;
   },
   proc_exit() {},
 
   fd_seek(fd: number, offset_bigint: bigint, whence: unknown, newOffset: unknown) {
-    debugger;
   },
   fd_write(fd: unknown, iov: unknown, iovcnt: unknown, pnum: unknown) {
-    debugger;
   },
 };
 

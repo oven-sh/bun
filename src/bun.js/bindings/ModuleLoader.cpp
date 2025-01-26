@@ -642,7 +642,7 @@ JSValue fetchCommonJSModule(
 
     }
     // TOML and JSONC may go through here
-    else if (res->result.value.tag == SyntheticModuleType::ExportsObject) {
+    else if (res->result.value.tag == SyntheticModuleType::ExportsObject || res->result.value.tag == SyntheticModuleType::ExportDefaultObject) {
         JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
         if (!value) {
             JSC::throwException(globalObject, scope, JSC::createSyntaxError(globalObject, "Failed to parse Object"_s));
@@ -846,6 +846,21 @@ static JSValue fetchESMSourceCode(
 
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
         auto function = generateJSValueModuleSourceCode(
+            globalObject,
+            value);
+        auto source = JSC::SourceCode(
+            JSC::SyntheticSourceProvider::create(WTFMove(function),
+                JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
+        JSC::ensureStillAliveHere(value);
+        return rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTFMove(source)));
+    } else if (res->result.value.tag == SyntheticModuleType::ExportDefaultObject) {
+        JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
+        if (!value) {
+            return reject(JSC::JSValue(JSC::createSyntaxError(globalObject, "Failed to parse Object"_s)));
+        }
+
+        // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
+        auto function = generateJSValueExportDefaultObjectSourceCode(
             globalObject,
             value);
         auto source = JSC::SourceCode(

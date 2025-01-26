@@ -1,16 +1,20 @@
 import { which } from "bun";
 import { afterAll, describe, expect, it } from "bun:test";
 import child_process from "child_process";
-import { tempDirWithFiles } from "harness";
-
+import { tempDirWithFiles, isLinux } from "harness";
 const dockerCLI = which("docker") as string;
 function isDockerEnabled(): boolean {
   if (!dockerCLI) {
     return false;
   }
 
+  // TODO: investigate why its not starting on Linux arm64
+  if (isLinux && process.arch === "arm64") {
+    return false;
+  }
+
   try {
-    const info = child_process.execSync(`${dockerCLI} info`, { stdio: "ignore" });
+    const info = child_process.execSync(`${dockerCLI} info`, { stdio: ["ignore", "pipe", "inherit"] });
     return info.toString().indexOf("Server Version:") !== -1;
   } catch {
     return false;
@@ -19,7 +23,7 @@ function isDockerEnabled(): boolean {
 
 if (isDockerEnabled()) {
   describe("autobahn", async () => {
-    const url = "ws://localhost:9001";
+    const url = "ws://localhost:9002";
     const agent = encodeURIComponent("bun/1.0.0");
     let docker: child_process.ChildProcessWithoutNullStreams | null = null;
     const { promise, resolve } = Promise.withResolvers();
@@ -29,7 +33,7 @@ if (isDockerEnabled()) {
     // ],
     const CWD = tempDirWithFiles("autobahn", {
       "fuzzingserver.json": `{
-        "url": "ws://127.0.0.1:9001",
+        "url": "ws://127.0.0.1:9002",
         "outdir": "./",
         "cases": ["*"],
         "exclude-agent-cases": {}
@@ -48,7 +52,7 @@ if (isDockerEnabled()) {
         "-v",
         `${CWD}:/reports`,
         "-p",
-        "9001:9001",
+        "9002:9002",
         "--name",
         "fuzzingserver",
         "crossbario/autobahn-testsuite",

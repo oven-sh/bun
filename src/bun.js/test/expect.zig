@@ -741,9 +741,9 @@ pub const Expect = struct {
                 }
             }
         } else if (value.isStringLiteral() and expected.isStringLiteral()) {
-            const value_string = value.toSlice(globalThis, default_allocator);
+            const value_string = try value.toSlice(globalThis, default_allocator);
             defer value_string.deinit();
-            const expected_string = expected.toSlice(globalThis, default_allocator);
+            const expected_string = try expected.toSlice(globalThis, default_allocator);
             defer expected_string.deinit();
 
             if (expected_string.len == 0) { // edge case empty string is always contained
@@ -2172,6 +2172,10 @@ pub const Expect = struct {
                         break :brk innerConstructorValue;
                     }
                 }
+            } else if (value.isString()) {
+                // `.toThrow("") behaves the same as `.toThrow()`
+                const s = value.toString(globalThis);
+                if (s.length() == 0) break :brk .zero;
             }
             break :brk value;
         };
@@ -2298,7 +2302,7 @@ pub const Expect = struct {
                     // partial match
                     const expected_slice = try expected_value.toSliceOrNull(globalThis);
                     defer expected_slice.deinit();
-                    const received_slice = received_message.toSlice(globalThis, globalThis.allocator());
+                    const received_slice = try received_message.toSlice(globalThis, globalThis.allocator());
                     defer received_slice.deinit();
                     if (strings.contains(received_slice.slice(), expected_slice.slice())) return .undefined;
                 }
@@ -2542,14 +2546,17 @@ pub const Expect = struct {
         var hint = hint_string.toSlice(default_allocator);
         defer hint.deinit();
 
-        const value: JSValue = try this.fnToErrStringOrUndefined(globalThis, try this.getValue(globalThis, thisValue, "toThrowErrorMatchingSnapshot", "<green>properties<r><d>, <r>hint"));
+        const value: JSValue = (try this.fnToErrStringOrUndefined(globalThis, try this.getValue(globalThis, thisValue, "toThrowErrorMatchingSnapshot", "<green>properties<r><d>, <r>hint"))) orelse {
+            const signature = comptime getSignature("toThrowErrorMatchingSnapshot", "", false);
+            return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Received function did not throw\n", .{});
+        };
 
         return this.snapshot(globalThis, value, null, hint.slice(), "toThrowErrorMatchingSnapshot");
     }
-    fn fnToErrStringOrUndefined(this: *Expect, globalThis: *JSGlobalObject, value: JSValue) !JSValue {
+    fn fnToErrStringOrUndefined(this: *Expect, globalThis: *JSGlobalObject, value: JSValue) !?JSValue {
         const err_value, _ = try this.getValueAsToThrow(globalThis, value);
 
-        var err_value_res = err_value orelse JSValue.undefined;
+        var err_value_res = err_value orelse return null;
         if (err_value_res.isAnyError()) {
             const message = try err_value_res.getTruthyComptime(globalThis, "message") orelse JSValue.undefined;
             err_value_res = message;
@@ -2592,7 +2599,10 @@ pub const Expect = struct {
 
         const expected_slice: ?[]const u8 = if (has_expected) expected.slice() else null;
 
-        const value: JSValue = try this.fnToErrStringOrUndefined(globalThis, try this.getValue(globalThis, thisValue, "toThrowErrorMatchingInlineSnapshot", "<green>properties<r><d>, <r>hint"));
+        const value: JSValue = (try this.fnToErrStringOrUndefined(globalThis, try this.getValue(globalThis, thisValue, "toThrowErrorMatchingInlineSnapshot", "<green>properties<r><d>, <r>hint"))) orelse {
+            const signature = comptime getSignature("toThrowErrorMatchingInlineSnapshot", "", false);
+            return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Received function did not throw\n", .{});
+        };
 
         return this.inlineSnapshot(globalThis, callFrame, value, null, expected_slice, "toThrowErrorMatchingInlineSnapshot");
     }
@@ -2648,6 +2658,77 @@ pub const Expect = struct {
         const value = try this.getValue(globalThis, thisValue, "toMatchInlineSnapshot", "<green>properties<r><d>, <r>hint");
         return this.inlineSnapshot(globalThis, callFrame, value, property_matchers, expected_slice, "toMatchInlineSnapshot");
     }
+    const TrimResult = struct { trimmed: []const u8, start_indent: ?[]const u8, end_indent: ?[]const u8 };
+    fn trimLeadingWhitespaceForInlineSnapshot(str_in: []const u8, trimmed_buf: []u8) TrimResult {
+        std.debug.assert(trimmed_buf.len == str_in.len);
+        var src = str_in;
+        var dst = trimmed_buf[0..];
+        const give_up: TrimResult = .{ .trimmed = str_in, .start_indent = null, .end_indent = null };
+        // if the line is all whitespace, trim fully
+        // the first line containing a character determines the max trim count
+
+        // read first line (should be all-whitespace)
+        const first_newline = std.mem.indexOf(u8, src, "\n") orelse return give_up;
+        for (src[0..first_newline]) |char| if (char != ' ' and char != '\t') return give_up;
+        src = src[first_newline + 1 ..];
+
+        // read first real line and get indent
+        const indent_len = for (src, 0..) |char, i| {
+            if (char != ' ' and char != '\t') break i;
+        } else src.len;
+        if (indent_len == 0) return give_up; // no indent to trim; save time
+        const indent_str = src[0..indent_len];
+        // we're committed now
+        dst[0] = '\n';
+        dst = dst[1..];
+        src = src[indent_len..];
+        const second_newline = (std.mem.indexOf(u8, src, "\n") orelse return give_up) + 1;
+        @memcpy(dst[0..second_newline], src[0..second_newline]);
+        src = src[second_newline..];
+        dst = dst[second_newline..];
+
+        while (src.len > 0) {
+            // try read indent
+            const max_indent_len = @min(src.len, indent_len);
+            const line_indent_len = for (src[0..max_indent_len], 0..) |char, i| {
+                if (char != ' ' and char != '\t') break i;
+            } else max_indent_len;
+            src = src[line_indent_len..];
+
+            if (line_indent_len < max_indent_len) {
+                if (src.len == 0) {
+                    // perfect; done
+                    break;
+                }
+                if (src[0] == '\n') {
+                    // this line has less indentation than the first line, but it's empty so that's okay.
+                    dst[0] = '\n';
+                    src = src[1..];
+                    dst = dst[1..];
+                    continue;
+                }
+                // this line had less indentation than the first line, but wasn't empty. give up.
+                return give_up;
+            } else {
+                // this line has the same or more indentation than the first line. copy it.
+                const line_newline = (std.mem.indexOf(u8, src, "\n") orelse {
+                    // this is the last line. if it's not all whitespace, give up
+                    for (src) |char| {
+                        if (char != ' ' and char != '\t') return give_up;
+                    }
+                    break;
+                }) + 1;
+                @memcpy(dst[0..line_newline], src[0..line_newline]);
+                src = src[line_newline..];
+                dst = dst[line_newline..];
+            }
+        }
+        const end_indent = if (std.mem.lastIndexOfScalar(u8, str_in, '\n')) |c| c + 1 else return give_up; // there has to have been at least a single newline to get here
+        for (str_in[end_indent..]) |c| if (c != ' ' and c != 't') return give_up; // we already checked, but the last line is not all whitespace again
+
+        // done
+        return .{ .trimmed = trimmed_buf[0 .. trimmed_buf.len - dst.len], .start_indent = indent_str, .end_indent = str_in[end_indent..] };
+    }
     fn inlineSnapshot(
         this: *Expect,
         globalThis: *JSGlobalObject,
@@ -2670,20 +2751,28 @@ pub const Expect = struct {
         defer pretty_value.deinit();
         try this.matchAndFmtSnapshot(globalThis, value, property_matchers, &pretty_value, fn_name);
 
+        var start_indent: ?[]const u8 = null;
+        var end_indent: ?[]const u8 = null;
         if (result) |saved_value| {
-            if (strings.eqlLong(pretty_value.slice(), saved_value, true)) {
+            const buf = try Jest.runner.?.snapshots.allocator.alloc(u8, saved_value.len);
+            defer Jest.runner.?.snapshots.allocator.free(buf);
+            const trim_res = trimLeadingWhitespaceForInlineSnapshot(saved_value, buf);
+
+            if (strings.eqlLong(pretty_value.slice(), trim_res.trimmed, true)) {
                 Jest.runner.?.snapshots.passed += 1;
                 return .undefined;
             } else if (update) {
                 Jest.runner.?.snapshots.passed += 1;
                 needs_write = true;
+                start_indent = trim_res.start_indent;
+                end_indent = trim_res.end_indent;
             } else {
                 Jest.runner.?.snapshots.failed += 1;
                 const signature = comptime getSignature(fn_name, "<green>expected<r>", false);
                 const fmt = signature ++ "\n\n{any}\n";
                 const diff_format = DiffFormatter{
                     .received_string = pretty_value.slice(),
-                    .expected_string = saved_value,
+                    .expected_string = trim_res.trimmed,
                     .globalThis = globalThis,
                 };
 
@@ -2729,6 +2818,8 @@ pub const Expect = struct {
                 .has_matchers = property_matchers != null,
                 .is_added = result == null,
                 .kind = fn_name,
+                .start_indent = if (start_indent) |ind| try Jest.runner.?.snapshots.allocator.dupe(u8, ind) else null,
+                .end_indent = if (end_indent) |ind| try Jest.runner.?.snapshots.allocator.dupe(u8, ind) else null,
             });
         }
 
@@ -2882,9 +2973,9 @@ pub const Expect = struct {
                     }.anythingInIterator);
                     pass = !any_properties_in_iterator;
                 } else {
-                    var props_iter = JSC.JSPropertyIterator(.{
+                    var props_iter = try JSC.JSPropertyIterator(.{
                         .skip_empty_name = false,
-
+                        .own_properties_only = false,
                         .include_value = true,
                     }).init(globalThis, value);
                     defer props_iter.deinit();
@@ -3437,9 +3528,9 @@ pub const Expect = struct {
         var pass = value.isString() and expected.isString();
 
         if (pass) {
-            const value_slice = value.toSlice(globalThis, default_allocator);
+            const value_slice = try value.toSlice(globalThis, default_allocator);
             defer value_slice.deinit();
-            const expected_slice = expected.toSlice(globalThis, default_allocator);
+            const expected_slice = try expected.toSlice(globalThis, default_allocator);
             defer expected_slice.deinit();
 
             const value_utf8 = value_slice.slice();
@@ -4060,6 +4151,37 @@ pub const Expect = struct {
         return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: \\>= <green>1<r>\n" ++ "Received number of calls: <red>{any}<r>\n", .{calls.getLength(globalThis)});
     }
 
+    pub fn toHaveBeenCalledOnce(this: *Expect, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
+        JSC.markBinding(@src());
+
+        const thisValue = callframe.this();
+        defer this.postMatch(globalThis);
+        const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveBeenCalledOnce", "<green>expected<r>");
+
+        incrementExpectCallCounter();
+
+        const calls = JSMockFunction__getCalls(value);
+
+        if (calls == .zero or !calls.jsType().isArray()) {
+            return globalThis.throw("Expected value must be a mock function: {}", .{value});
+        }
+
+        var pass = @as(i32, @intCast(calls.getLength(globalThis))) == 1;
+
+        const not = this.flags.not;
+        if (not) pass = !pass;
+        if (pass) return .undefined;
+
+        // handle failure
+        if (not) {
+            const signature = comptime getSignature("toHaveBeenCalledOnce", "<green>expected<r>", true);
+            return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: not <green>1<r>\n" ++ "Received number of calls: <red>{d}<r>\n", .{calls.getLength(globalThis)});
+        }
+
+        const signature = comptime getSignature("toHaveBeenCalledOnce", "<green>expected<r>", false);
+        return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: <green>1<r>\n" ++ "Received number of calls: <red>{d}<r>\n", .{calls.getLength(globalThis)});
+    }
+
     pub fn toHaveBeenCalledTimes(this: *Expect, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
 
@@ -4161,7 +4283,7 @@ pub const Expect = struct {
         JSC.markBinding(@src());
 
         const thisValue = callframe.this();
-        const arguments = callframe.argumentsPtr()[0..callframe.argumentsCount()];
+        const arguments = callframe.arguments();
         defer this.postMatch(globalThis);
         const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveBeenCalledWith", "<green>expected<r>");
 
@@ -4220,7 +4342,7 @@ pub const Expect = struct {
         JSC.markBinding(@src());
 
         const thisValue = callframe.this();
-        const arguments = callframe.argumentsPtr()[0..callframe.argumentsCount()];
+        const arguments = callframe.arguments();
         defer this.postMatch(globalThis);
         const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveBeenLastCalledWith", "<green>expected<r>");
 
@@ -4278,7 +4400,7 @@ pub const Expect = struct {
         JSC.markBinding(@src());
 
         const thisValue = callframe.this();
-        const arguments = callframe.argumentsPtr()[0..callframe.argumentsCount()];
+        const arguments = callframe.arguments();
         defer this.postMatch(globalThis);
         const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveBeenNthCalledWith", "<green>expected<r>");
 
@@ -4494,13 +4616,14 @@ pub const Expect = struct {
 
         const matchers_to_register = args[0];
         {
-            var iter = JSC.JSPropertyIterator(.{
+            var iter = try JSC.JSPropertyIterator(.{
                 .skip_empty_name = false,
                 .include_value = true,
+                .own_properties_only = false,
             }).init(globalThis, matchers_to_register);
             defer iter.deinit();
 
-            while (iter.next()) |*matcher_name| {
+            while (try iter.next()) |*matcher_name| {
                 const matcher_fn: JSValue = iter.value;
 
                 if (!matcher_fn.jsType().isFunction()) {
@@ -4633,7 +4756,6 @@ pub const Expect = struct {
             if (result.isObject()) {
                 if (try result.get(globalThis, "pass")) |pass_value| {
                     pass = pass_value.toBoolean();
-                    if (globalThis.hasException()) return false;
 
                     if (result.fastGet(globalThis, .message)) |message_value| {
                         if (!message_value.isString() and !message_value.isCallable(globalThis.vm())) {
@@ -4721,12 +4843,11 @@ pub const Expect = struct {
         incrementExpectCallCounter();
 
         // prepare the args array
-        const args_ptr = callFrame.argumentsPtr();
-        const args_count = callFrame.argumentsCount();
+        const args = callFrame.arguments();
         var allocator = std.heap.stackFallback(8 * @sizeOf(JSValue), globalThis.allocator());
-        var matcher_args = try std.ArrayList(JSValue).initCapacity(allocator.get(), args_count + 1);
+        var matcher_args = try std.ArrayList(JSValue).initCapacity(allocator.get(), args.len + 1);
         matcher_args.appendAssumeCapacity(value);
-        for (0..args_count) |i| matcher_args.appendAssumeCapacity(args_ptr[i]);
+        for (args) |arg| matcher_args.appendAssumeCapacity(arg);
 
         _ = try executeCustomMatcher(globalThis, matcher_name, matcher_fn, matcher_args.items, expect.flags, false);
 
@@ -5202,14 +5323,13 @@ pub const ExpectCustomAsymmetricMatcher = struct {
         ExpectCustomAsymmetricMatcher.matcherFnSetCached(instance_jsvalue, globalThis, matcher_fn);
 
         // capture the args as a JS array saved in the instance, so the matcher can be executed later on with them
-        const args_ptr = callFrame.argumentsPtr();
-        const args_count: usize = callFrame.argumentsCount();
-        var args = JSValue.createEmptyArray(globalThis, args_count);
-        for (0..args_count) |i| {
-            args.putIndex(globalThis, @truncate(i), args_ptr[i]);
+        const args = callFrame.arguments();
+        const array = JSValue.createEmptyArray(globalThis, args.len);
+        for (args, 0..) |arg, i| {
+            array.putIndex(globalThis, @truncate(i), arg);
         }
-        args.ensureStillAlive();
-        ExpectCustomAsymmetricMatcher.capturedArgsSetCached(instance_jsvalue, globalThis, args);
+        ExpectCustomAsymmetricMatcher.capturedArgsSetCached(instance_jsvalue, globalThis, array);
+        array.ensureStillAlive();
 
         // return the same instance, now fully initialized including the captured args (previously it was incomplete)
         return instance_jsvalue;
@@ -5390,9 +5510,7 @@ pub const ExpectMatcherUtils = struct {
 
         try buffered_writer.flush();
 
-        const str = bun.String.createUTF8(mutable_string.toOwnedSlice());
-        defer str.deref();
-        return str.toJS(globalThis);
+        return bun.String.createUTF8ForJS(globalThis, mutable_string.slice());
     }
 
     inline fn printValueCatched(globalThis: *JSGlobalObject, value: JSValue, comptime color_or_null: ?[]const u8) JSValue {
@@ -5511,3 +5629,113 @@ fn incrementExpectCallCounter() void {
 }
 
 const assert = bun.assert;
+
+fn testTrimLeadingWhitespaceForSnapshot(src: []const u8, expected: []const u8) !void {
+    const cpy = try std.testing.allocator.alloc(u8, src.len);
+    defer std.testing.allocator.free(cpy);
+
+    const res = Expect.trimLeadingWhitespaceForInlineSnapshot(src, cpy);
+    sanityCheck(src, res);
+
+    try std.testing.expectEqualStrings(expected, res.trimmed);
+}
+fn sanityCheck(input: []const u8, res: Expect.TrimResult) void {
+    // sanity check: output has same number of lines & all input lines endWith output lines
+    var input_iter = std.mem.splitScalar(u8, input, '\n');
+    var output_iter = std.mem.splitScalar(u8, res.trimmed, '\n');
+    while (true) {
+        const next_input = input_iter.next();
+        const next_output = output_iter.next();
+        if (next_input == null) {
+            std.debug.assert(next_output == null);
+            break;
+        }
+        std.debug.assert(next_output != null);
+        std.debug.assert(std.mem.endsWith(u8, next_input.?, next_output.?));
+    }
+}
+fn testOne(input: []const u8) anyerror!void {
+    const cpy = try std.testing.allocator.alloc(u8, input.len);
+    defer std.testing.allocator.free(cpy);
+    const res = Expect.trimLeadingWhitespaceForInlineSnapshot(input, cpy);
+    sanityCheck(input, res);
+}
+
+test "Expect.trimLeadingWhitespaceForInlineSnapshot" {
+    try testTrimLeadingWhitespaceForSnapshot(
+        \\
+        \\Hello, world!
+        \\
+    ,
+        \\
+        \\Hello, world!
+        \\
+    );
+    try testTrimLeadingWhitespaceForSnapshot(
+        \\
+        \\  Hello, world!
+        \\               
+    ,
+        \\
+        \\Hello, world!
+        \\
+    );
+    try testTrimLeadingWhitespaceForSnapshot(
+        \\
+        \\  Object{
+        \\    key: value
+        \\  }
+        \\
+    ,
+        \\
+        \\Object{
+        \\  key: value
+        \\}
+        \\
+    );
+    try testTrimLeadingWhitespaceForSnapshot(
+        \\
+        \\  Object{
+        \\  key: value
+        \\
+        \\  }
+        \\                
+    ,
+        \\
+        \\Object{
+        \\key: value
+        \\
+        \\}
+        \\
+    );
+    try testTrimLeadingWhitespaceForSnapshot(
+        \\
+        \\    Object{
+        \\  key: value
+        \\  }
+        \\                
+    ,
+        \\
+        \\    Object{
+        \\  key: value
+        \\  }
+        \\                
+    );
+    try testTrimLeadingWhitespaceForSnapshot(
+        \\
+        \\  "æ™
+        \\
+        \\  !!!!*5897yhduN"'\`Il"
+        \\
+    ,
+        \\
+        \\"æ™
+        \\
+        \\!!!!*5897yhduN"'\`Il"
+        \\
+    );
+}
+
+test "fuzz Expect.trimLeadingWhitespaceForInlineSnapshot" {
+    try std.testing.fuzz(testOne, .{});
+}

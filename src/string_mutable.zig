@@ -19,6 +19,10 @@ pub const MutableString = struct {
         return MutableString.init(allocator, 2048);
     }
 
+    pub fn clone(self: *MutableString) !MutableString {
+        return MutableString.initCopy(self.allocator, self.list.items);
+    }
+
     pub const Writer = std.io.Writer(*@This(), OOM, MutableString.writeAll);
     pub fn writer(self: *MutableString) Writer {
         return Writer{
@@ -306,18 +310,18 @@ pub const MutableString = struct {
 
         const max = 2048;
 
-        pub const Writer = std.io.Writer(*BufferedWriter, anyerror, BufferedWriter.writeAll);
+        pub const Writer = std.io.Writer(*BufferedWriter, OOM, BufferedWriter.writeAll);
 
         inline fn remain(this: *BufferedWriter) []u8 {
             return this.buffer[this.pos..];
         }
 
-        pub fn flush(this: *BufferedWriter) !void {
+        pub fn flush(this: *BufferedWriter) OOM!void {
             _ = try this.context.writeAll(this.buffer[0..this.pos]);
             this.pos = 0;
         }
 
-        pub fn writeAll(this: *BufferedWriter, bytes: []const u8) anyerror!usize {
+        pub fn writeAll(this: *BufferedWriter, bytes: []const u8) OOM!usize {
             const pending = bytes;
 
             if (pending.len >= max) {
@@ -342,7 +346,7 @@ pub const MutableString = struct {
         /// Write a E.String to the buffer.
         /// This automatically encodes UTF-16 into UTF-8 using
         /// the same code path as TextEncoder
-        pub fn writeString(this: *BufferedWriter, bytes: *E.String) anyerror!usize {
+        pub fn writeString(this: *BufferedWriter, bytes: *E.String) OOM!usize {
             if (bytes.isUTF8()) {
                 return try this.writeAll(bytes.slice(this.context.allocator));
             }
@@ -353,7 +357,7 @@ pub const MutableString = struct {
         /// Write a UTF-16 string to the (UTF-8) buffer
         /// This automatically encodes UTF-16 into UTF-8 using
         /// the same code path as TextEncoder
-        pub fn writeAll16(this: *BufferedWriter, bytes: []const u16) anyerror!usize {
+        pub fn writeAll16(this: *BufferedWriter, bytes: []const u16) OOM!usize {
             const pending = bytes;
 
             if (pending.len >= max) {
@@ -385,7 +389,7 @@ pub const MutableString = struct {
             return pending.len;
         }
 
-        pub fn writeHTMLAttributeValueString(this: *BufferedWriter, str: *E.String) anyerror!void {
+        pub fn writeHTMLAttributeValueString(this: *BufferedWriter, str: *E.String) OOM!void {
             if (str.isUTF8()) {
                 try this.writeHTMLAttributeValue(str.slice(this.context.allocator));
                 return;
@@ -394,7 +398,7 @@ pub const MutableString = struct {
             try this.writeHTMLAttributeValue16(str.slice16());
         }
 
-        pub fn writeHTMLAttributeValue(this: *BufferedWriter, bytes: []const u8) anyerror!void {
+        pub fn writeHTMLAttributeValue(this: *BufferedWriter, bytes: []const u8) OOM!void {
             var items = bytes;
             while (items.len > 0) {
                 // TODO: SIMD
@@ -416,7 +420,7 @@ pub const MutableString = struct {
             }
         }
 
-        pub fn writeHTMLAttributeValue16(this: *BufferedWriter, bytes: []const u16) anyerror!void {
+        pub fn writeHTMLAttributeValue16(this: *BufferedWriter, bytes: []const u16) OOM!void {
             var items = bytes;
             while (items.len > 0) {
                 if (strings.indexOfAny16(items, "\"<>")) |j| {

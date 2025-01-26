@@ -26,22 +26,22 @@ import {
   getBuildUrl,
   getEnv,
   getFileUrl,
-  getLoggedInUserCount,
+  getLoggedInUserCountOrDetails,
   getShell,
   getWindowsExitReason,
-  isArm64,
   isBuildkite,
   isCI,
   isGithubAction,
   isMacOS,
   isWindows,
+  isX64,
   printEnvironment,
   startGroup,
   tmpdir,
   unzip,
 } from "./utils.mjs";
 import { userInfo } from "node:os";
-
+let isQuiet = false;
 const cwd = import.meta.dirname ? dirname(import.meta.dirname) : process.cwd();
 const testsPath = join(cwd, "test");
 
@@ -49,9 +49,21 @@ const spawnTimeout = 5_000;
 const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
 
+function getNodeParallelTestTimeout(testPath) {
+  if (testPath.includes("test-dns")) {
+    return 90_000;
+  }
+  return 10_000;
+}
+
 const { values: options, positionals: filters } = parseArgs({
   allowPositionals: true,
   options: {
+    ["node-tests"]: {
+      type: "boolean",
+      default: false,
+    },
+    /** Path to bun binary */
     ["exec-path"]: {
       type: "string",
       default: "bun",
@@ -86,6 +98,10 @@ const { values: options, positionals: filters } = parseArgs({
       multiple: true,
       default: undefined,
     },
+    ["quiet"]: {
+      type: "boolean",
+      default: false,
+    },
     ["smoke"]: {
       type: "string",
       default: undefined,
@@ -94,8 +110,16 @@ const { values: options, positionals: filters } = parseArgs({
       type: "string",
       default: undefined,
     },
+    ["retries"]: {
+      type: "string",
+      default: isCI ? "4" : "0", // N retries = N+1 attempts
+    },
   },
 });
+
+if (options["quiet"]) {
+  isQuiet = true;
+}
 
 /**
  *
@@ -108,13 +132,13 @@ async function runTests() {
   } else {
     execPath = getExecPath(options["exec-path"]);
   }
-  console.log("Bun:", execPath);
+  !isQuiet && console.log("Bun:", execPath);
 
   const revision = getRevision(execPath);
-  console.log("Revision:", revision);
+  !isQuiet && console.log("Revision:", revision);
 
   const tests = getRelevantTests(testsPath);
-  console.log("Running tests:", tests.length);
+  !isQuiet && console.log("Running tests:", tests.length);
 
   /** @type {VendorTest[] | undefined} */
   let vendorTests;
@@ -123,13 +147,17 @@ async function runTests() {
     vendorTests = await getVendorTests(cwd);
     if (vendorTests.length) {
       vendorTotal = vendorTests.reduce((total, { testPaths }) => total + testPaths.length + 1, 0);
-      console.log("Running vendor tests:", vendorTotal);
+      !isQuiet && console.log("Running vendor tests:", vendorTotal);
     }
   }
 
   let i = 0;
   let total = vendorTotal + tests.length + 2;
-  const results = [];
+
+  const okResults = [];
+  const flakyResults = [];
+  const failedResults = [];
+  const maxAttempts = 1 + (parseInt(options["retries"]) || 0);
 
   /**
    * @param {string} title
@@ -137,83 +165,128 @@ async function runTests() {
    * @returns {Promise<TestResult>}
    */
   const runTest = async (title, fn) => {
-    const label = `${getAnsi("gray")}[${++i}/${total}]${getAnsi("reset")} ${title}`;
-    const result = await startGroup(label, fn);
-    results.push(result);
+    const index = ++i;
 
-    if (isBuildkite) {
-      const { ok, error, stdoutPreview } = result;
-      if (title.startsWith("vendor")) {
-        const markdown = formatTestToMarkdown({ ...result, testPath: title });
-        if (markdown) {
-          reportAnnotationToBuildKite({ label: title, content: markdown, style: "warning", priority: 5 });
-        }
-      } else {
-        const markdown = formatTestToMarkdown(result);
-        if (markdown) {
-          reportAnnotationToBuildKite({ label: title, content: markdown, style: "error" });
-        }
+    let result, failure, flaky;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (attempt > 1) {
+        await new Promise(resolve => setTimeout(resolve, 5000 + Math.random() * 10_000));
       }
 
-      if (!ok) {
-        const label = `${getAnsi("red")}[${i}/${total}] ${title} - ${error}${getAnsi("reset")}`;
-        startGroup(label, () => {
-          process.stderr.write(stdoutPreview);
-        });
+      result = await startGroup(
+        attempt === 1
+          ? `${getAnsi("gray")}[${index}/${total}]${getAnsi("reset")} ${title}`
+          : `${getAnsi("gray")}[${index}/${total}]${getAnsi("reset")} ${title} ${getAnsi("gray")}[attempt #${attempt}]${getAnsi("reset")}`,
+        fn,
+      );
+
+      const { ok, stdoutPreview, error } = result;
+      if (ok) {
+        if (failure) {
+          flakyResults.push(failure);
+        } else {
+          okResults.push(result);
+        }
+        break;
+      }
+
+      const color = attempt >= maxAttempts ? "red" : "yellow";
+      const label = `${getAnsi(color)}[${index}/${total}] ${title} - ${error}${getAnsi("reset")}`;
+      startGroup(label, () => {
+        process.stderr.write(stdoutPreview);
+      });
+
+      failure ||= result;
+      flaky ||= true;
+
+      if (attempt >= maxAttempts || isAlwaysFailure(error)) {
+        flaky = false;
+        failedResults.push(failure);
+      }
+    }
+
+    if (!failure) {
+      return result;
+    }
+
+    if (isBuildkite) {
+      // Group flaky tests together, regardless of the title
+      const context = flaky ? "flaky" : title;
+      const style = flaky || title.startsWith("vendor") ? "warning" : "error";
+
+      if (title.startsWith("vendor")) {
+        const content = formatTestToMarkdown({ ...failure, testPath: title });
+        if (content) {
+          reportAnnotationToBuildKite({ context, label: title, content, style });
+        }
+      } else {
+        const content = formatTestToMarkdown(failure);
+        if (content) {
+          reportAnnotationToBuildKite({ context, label: title, content, style });
+        }
       }
     }
 
     if (isGithubAction) {
       const summaryPath = process.env["GITHUB_STEP_SUMMARY"];
       if (summaryPath) {
-        const longMarkdown = formatTestToMarkdown(result);
+        const longMarkdown = formatTestToMarkdown(failure);
         appendFileSync(summaryPath, longMarkdown);
       }
-      const shortMarkdown = formatTestToMarkdown(result, true);
+      const shortMarkdown = formatTestToMarkdown(failure, true);
       appendFileSync("comment.md", shortMarkdown);
     }
 
-    if (options["bail"] && !result.ok) {
+    if (options["bail"]) {
       process.exit(getExitCode("fail"));
     }
 
     return result;
   };
 
-  for (const path of [cwd, testsPath]) {
-    const title = relative(cwd, join(path, "package.json")).replace(/\\/g, "/");
-    await runTest(title, async () => spawnBunInstall(execPath, { cwd: path }));
+  if (!isQuiet) {
+    for (const path of [cwd, testsPath]) {
+      const title = relative(cwd, join(path, "package.json")).replace(/\\/g, "/");
+      await runTest(title, async () => spawnBunInstall(execPath, { cwd: path }));
+    }
   }
 
-  if (results.every(({ ok }) => ok)) {
+  if (!failedResults.length) {
     for (const testPath of tests) {
-      const title = relative(cwd, join(testsPath, testPath)).replace(/\\/g, "/");
-      if (title.startsWith("test/js/node/test/parallel/")) {
+      const absoluteTestPath = join(testsPath, testPath);
+      const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
+      if (isNodeParallelTest(testPath)) {
+        const runWithBunTest = title.includes("needs-test") || readFileSync(absoluteTestPath, "utf-8").includes('bun:test');
+        const subcommand = runWithBunTest ? "test" : "run";
         await runTest(title, async () => {
           const { ok, error, stdout } = await spawnBun(execPath, {
             cwd: cwd,
-            args: [title],
-            timeout: spawnTimeout,
+            args: [subcommand, "--config=./bunfig.node-test.toml", absoluteTestPath],
+            timeout: getNodeParallelTestTimeout(title),
             env: {
               FORCE_COLOR: "0",
+              NO_COLOR: "1",
+              BUN_DEBUG_QUIET_LOGS: "1",
             },
             stdout: chunk => pipeTestStdout(process.stdout, chunk),
             stderr: chunk => pipeTestStdout(process.stderr, chunk),
           });
+          const mb = 1024 ** 3;
+          const stdoutPreview = stdout.slice(0, mb).split("\n").slice(0, 50).join("\n");
           return {
             testPath: title,
-            ok,
+            ok: ok,
             status: ok ? "pass" : "fail",
-            error,
+            error: error,
             errors: [],
             tests: [],
-            stdout,
-            stdoutPreview: "",
+            stdout: stdout,
+            stdoutPreview: stdoutPreview,
           };
         });
-        continue;
+      } else {
+        await runTest(title, async () => spawnBunTest(execPath, join("test", testPath)));
       }
-      await runTest(title, async () => spawnBunTest(execPath, join("test", testPath)));
     }
   }
 
@@ -254,21 +327,37 @@ async function runTests() {
     }
   }
 
-  const failedTests = results.filter(({ ok }) => !ok);
   if (isGithubAction) {
-    reportOutputToGitHubAction("failing_tests_count", failedTests.length);
-    const markdown = formatTestToMarkdown(failedTests);
+    reportOutputToGitHubAction("failing_tests_count", failedResults.length);
+    const markdown = formatTestToMarkdown(failedResults);
     reportOutputToGitHubAction("failing_tests", markdown);
   }
 
-  if (!isCI) {
-    console.log("-------");
-    console.log("passing", results.length - failedTests.length, "/", results.length);
-    for (const { testPath } of failedTests) {
-      console.log("-", testPath);
+  if (!isCI && !isQuiet) {
+    console.table({
+      "Total Tests": okResults.length + failedResults.length + flakyResults.length,
+      "Passed Tests": okResults.length,
+      "Failing Tests": failedResults.length,
+      "Flaky Tests": flakyResults.length,
+    });
+
+    if (failedResults.length) {
+      console.log(`${getAnsi("red")}Failing Tests:${getAnsi("reset")}`);
+      for (const { testPath } of failedResults) {
+        console.log(`${getAnsi("red")}- ${testPath}${getAnsi("reset")}`);
+      }
+    }
+
+    if (flakyResults.length) {
+      console.log(`${getAnsi("yellow")}Flaky Tests:${getAnsi("reset")}`);
+      for (const { testPath } of flakyResults) {
+        console.log(`${getAnsi("yellow")}- ${testPath}${getAnsi("reset")}`);
+      }
     }
   }
-  return results;
+
+  // Exclude flaky tests from the final results
+  return [...okResults, ...failedResults];
 }
 
 /**
@@ -454,7 +543,7 @@ async function spawnSafe(options) {
 }
 
 /**
- * @param {string} execPath
+ * @param {string} execPath Path to bun binary
  * @param {SpawnOptions} options
  * @returns {Promise<SpawnResult>}
  */
@@ -482,9 +571,11 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     // Used in Node.js tests.
     TEST_TMPDIR: tmpdirPath,
   };
+
   if (env) {
     Object.assign(bunEnv, env);
   }
+
   if (isWindows) {
     delete bunEnv["PATH"];
     bunEnv["Path"] = path;
@@ -775,17 +866,30 @@ function isJavaScriptTest(path) {
 }
 
 /**
+ * @param {string} testPath
+ * @returns {boolean}
+ */
+function isNodeParallelTest(testPath) {
+  return testPath.replaceAll(sep, "/").includes("js/node/test/parallel/");
+}
+
+/**
  * @param {string} path
  * @returns {boolean}
  */
 function isTest(path) {
-  if (path.startsWith("js/node/test/parallel/") && isMacOS && isArm64) return true;
+  if (isNodeParallelTest(path) && targetDoesRunNodeTests()) return true;
   if (path.replaceAll(sep, "/").startsWith("js/node/cluster/test-") && path.endsWith(".ts")) return true;
   return isTestStrict(path);
 }
 
 function isTestStrict(path) {
   return isJavaScript(path) && /\.test|spec\./.test(basename(path));
+}
+
+function targetDoesRunNodeTests() {
+  if (isMacOS && isX64) return false;
+  return true;
 }
 
 /**
@@ -796,6 +900,9 @@ function isHidden(path) {
   return /node_modules|node.js/.test(dirname(path)) || /^\./.test(basename(path));
 }
 
+/** Files with these extensions are not treated as test cases */
+const IGNORED_EXTENSIONS = new Set([".md"]);
+
 /**
  * @param {string} cwd
  * @returns {string[]}
@@ -805,8 +912,9 @@ function getTests(cwd) {
     const dirname = join(cwd, path);
     for (const entry of readdirSync(dirname, { encoding: "utf-8", withFileTypes: true })) {
       const { name } = entry;
+      const ext = name.slice(name.lastIndexOf("."));
       const filename = join(path, name);
-      if (isHidden(filename)) {
+      if (isHidden(filename) || IGNORED_EXTENSIONS.has(ext)) {
         continue;
       }
       if (entry.isFile() && isTest(filename)) {
@@ -949,9 +1057,13 @@ async function getVendorTests(cwd) {
  * @returns {string[]}
  */
 function getRelevantTests(cwd) {
-  const tests = getTests(cwd);
+  let tests = getTests(cwd);
   const availableTests = [];
   const filteredTests = [];
+
+  if (options["node-tests"]) {
+    tests = tests.filter(isNodeParallelTest);
+  }
 
   const isMatch = (testPath, filter) => {
     return testPath.replace(/\\/g, "/").includes(filter);
@@ -969,7 +1081,7 @@ function getRelevantTests(cwd) {
   const includes = options["include"]?.flatMap(getFilter);
   if (includes?.length) {
     availableTests.push(...tests.filter(testPath => includes.some(filter => isMatch(testPath, filter))));
-    console.log("Including tests:", includes, availableTests.length, "/", tests.length);
+    !isQuiet && console.log("Including tests:", includes, availableTests.length, "/", tests.length);
   } else {
     availableTests.push(...tests);
   }
@@ -984,7 +1096,7 @@ function getRelevantTests(cwd) {
           availableTests.splice(index, 1);
         }
       }
-      console.log("Excluding tests:", excludes, excludedTests.length, "/", availableTests.length);
+      !isQuiet && console.log("Excluding tests:", excludes, excludedTests.length, "/", availableTests.length);
     }
   }
 
@@ -992,7 +1104,7 @@ function getRelevantTests(cwd) {
   const maxShards = parseInt(options["max-shards"]);
   if (filters?.length) {
     filteredTests.push(...availableTests.filter(testPath => filters.some(filter => isMatch(testPath, filter))));
-    console.log("Filtering tests:", filteredTests.length, "/", availableTests.length);
+    !isQuiet && console.log("Filtering tests:", filteredTests.length, "/", availableTests.length);
   } else if (options["smoke"] !== undefined) {
     const smokePercent = parseFloat(options["smoke"]) || 0.01;
     const smokeCount = Math.ceil(availableTests.length * smokePercent);
@@ -1002,23 +1114,24 @@ function getRelevantTests(cwd) {
       smokeTests.add(availableTests[randomIndex]);
     }
     filteredTests.push(...Array.from(smokeTests));
-    console.log("Smoking tests:", filteredTests.length, "/", availableTests.length);
+    !isQuiet && console.log("Smoking tests:", filteredTests.length, "/", availableTests.length);
   } else if (maxShards > 1) {
     for (let i = 0; i < availableTests.length; i++) {
       if (i % maxShards === shardId) {
         filteredTests.push(availableTests[i]);
       }
     }
-    console.log(
-      "Sharding tests:",
-      shardId,
-      "/",
-      maxShards,
-      "with tests",
-      filteredTests.length,
-      "/",
-      availableTests.length,
-    );
+    !isQuiet &&
+      console.log(
+        "Sharding tests:",
+        shardId,
+        "/",
+        maxShards,
+        "with tests",
+        filteredTests.length,
+        "/",
+        availableTests.length,
+      );
   } else {
     filteredTests.push(...availableTests);
   }
@@ -1267,6 +1380,7 @@ function listArtifactsFromBuildKite(glob, step) {
 
 /**
  * @typedef {object} BuildkiteAnnotation
+ * @property {string} [context]
  * @property {string} label
  * @property {string} content
  * @property {"error" | "warning" | "info"} [style]
@@ -1277,10 +1391,10 @@ function listArtifactsFromBuildKite(glob, step) {
 /**
  * @param {BuildkiteAnnotation} annotation
  */
-function reportAnnotationToBuildKite({ label, content, style = "error", priority = 3, attempt = 0 }) {
+function reportAnnotationToBuildKite({ context, label, content, style = "error", priority = 3, attempt = 0 }) {
   const { error, status, signal, stderr } = spawnSync(
     "buildkite-agent",
-    ["annotate", "--append", "--style", `${style}`, "--context", `${label}`, "--priority", `${priority}`],
+    ["annotate", "--append", "--style", `${style}`, "--context", `${context || label}`, "--priority", `${priority}`],
     {
       input: content,
       stdio: ["pipe", "ignore", "pipe"],
@@ -1299,7 +1413,7 @@ function reportAnnotationToBuildKite({ label, content, style = "error", priority
   const buildLabel = getTestLabel();
   const buildUrl = getBuildUrl();
   const platform = buildUrl ? `<a href="${buildUrl}">${buildLabel}</a>` : buildLabel;
-  let errorMessage = `<details><summary><a><code>${label}</code></a> - annotation error on ${platform}</summary>`;
+  let errorMessage = `<details><summary><code>${label}</code> - annotation error on ${platform}</summary>`;
   if (stderr) {
     errorMessage += `\n\n\`\`\`terminal\n${escapeCodeBlock(stderr)}\n\`\`\`\n\n</details>\n\n`;
   }
@@ -1439,6 +1553,13 @@ function getExitCode(outcome) {
   return 1;
 }
 
+// A flaky segfault, sigtrap, or sigill must never be ignored.
+// If it happens in CI, it will happen to our users.
+function isAlwaysFailure(error) {
+  error = ((error || "") + "").toLowerCase().trim();
+  return error.includes("segmentation fault") || error.includes("sigill") || error.includes("sigtrap");
+}
+
 /**
  * @param {string} signal
  */
@@ -1454,7 +1575,9 @@ export async function main() {
     process.on(signal, () => onExit(signal));
   }
 
-  printEnvironment();
+  if (!isQuiet) {
+    printEnvironment();
+  }
 
   // FIXME: Some DNS tests hang unless we set the DNS server to 8.8.8.8
   // It also appears to hang on 1.1.1.1, which could explain this issue:
@@ -1471,17 +1594,21 @@ export async function main() {
 
   let waitForUser = false;
   while (isCI) {
-    const userCount = getLoggedInUserCount();
+    const userCount = getLoggedInUserCountOrDetails();
     if (!userCount) {
       if (waitForUser) {
-        console.log("No users logged in, exiting runner...");
+        !isQuiet && console.log("No users logged in, exiting runner...");
       }
       break;
     }
 
     if (!waitForUser) {
       startGroup("Summary");
-      console.warn(`Found ${userCount} users logged in, keeping the runner alive until logout...`);
+      if (typeof userCount === "number") {
+        console.warn(`Found ${userCount} users logged in, keeping the runner alive until logout...`);
+      } else {
+        console.warn(userCount);
+      }
       waitForUser = true;
     }
 

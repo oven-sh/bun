@@ -238,6 +238,17 @@ By default Bun uses caret ranges; if the `latest` version of a package is `2.4.1
 exact = false
 ```
 
+### `install.saveTextLockfile`
+
+If false, generate a binary `bun.lockb` instead of a text-based `bun.lock` file when running `bun install` and no lockfile is present.
+
+Default `true` (since Bun v1.2).
+
+```toml
+[install]
+saveTextLockfile = false
+```
+
 <!--
 ### `install.prefer`
 
@@ -304,7 +315,7 @@ Valid values are:
 
 ### `install.frozenLockfile`
 
-When true, `bun install` will not update `bun.lockb`. Default `false`. If `package.json` and the existing `bun.lockb` are not in agreement, this will error.
+When true, `bun install` will not update `bun.lock`. Default `false`. If `package.json` and the existing `bun.lock` are not in agreement, this will error.
 
 ```toml
 [install]
@@ -412,7 +423,7 @@ Whether to generate a lockfile on `bun install`. Default `true`.
 save = true
 ```
 
-Whether to generate a non-Bun lockfile alongside `bun.lockb`. (A `bun.lockb` will always be created.) Currently `"yarn"` is the only supported value.
+Whether to generate a non-Bun lockfile alongside `bun.lock`. (A `bun.lock` will always be created.) Currently `"yarn"` is the only supported value.
 
 ```toml
 [install.lockfile]

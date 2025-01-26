@@ -232,7 +232,7 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
             };
         }
 
-        input = args[0].toSlice(globalThis, bun.default_allocator);
+        input = try args[0].toSlice(globalThis, bun.default_allocator);
 
         var parser_input = css.ParserInput.new(allocator, input.slice());
         var parser = css.Parser.new(&parser_input, null);
@@ -420,13 +420,14 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
 
             // Fallback to CSS string output
             var dest = std.ArrayListUnmanaged(u8){};
+            defer dest.deinit(allocator);
             const writer = dest.writer(allocator);
 
             var printer = css.Printer(@TypeOf(writer)).new(
                 allocator,
                 std.ArrayList(u8).init(allocator),
                 writer,
-                .{},
+                css.PrinterOptions.default(),
                 null,
             );
 
@@ -434,8 +435,7 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
                 return globalThis.throw("color() internal error: {s}", .{@errorName(err)});
             };
 
-            var out = bun.String.createUTF8(dest.items);
-            return out.transferToJS(globalThis);
+            return bun.String.createUTF8ForJS(globalThis, dest.items);
         },
     }
 }

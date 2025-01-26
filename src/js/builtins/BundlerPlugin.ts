@@ -1,11 +1,4 @@
-import type {
-  BuildConfig,
-  BunPlugin,
-  OnLoadCallback,
-  OnResolveCallback,
-  PluginBuilder,
-  PluginConstraints,
-} from "bun";
+import type { BuildConfig, BunPlugin, OnLoadCallback, OnResolveCallback, PluginBuilder, PluginConstraints } from "bun";
 type AnyFunction = (...args: any[]) => any;
 
 interface BundlerPlugin {
@@ -48,6 +41,66 @@ interface PluginBuilderExt extends PluginBuilder {
 
 type BeforeOnParseExternal = unknown;
 
+/**
+ * Used by Bun.serve() to resolve and load plugins.
+ */
+export function loadAndResolvePluginsForServe(
+  this: BundlerPlugin,
+  plugins: string[],
+  bunfig_folder: string,
+  runSetupFn: typeof runSetupFunction,
+) {
+  // Same config as created in HTMLBundle.init
+  let config: BuildConfigExt = {
+    experimentalCss: true,
+    experimentalHtml: true,
+    target: "browser",
+    root: bunfig_folder,
+  };
+
+  let bundlerPlugin = this;
+  let promiseResult = (async (
+    plugins: string[],
+    bunfig_folder: string,
+    runSetupFn: typeof runSetupFunction,
+    bundlerPlugin: BundlerPlugin,
+  ) => {
+    let onstart_promises_array: Array<Promise<any>> | undefined = undefined;
+    for (let i = 0; i < plugins.length; i++) {
+      let pluginModuleResolved = await Bun.resolve(plugins[i], bunfig_folder);
+
+      let pluginModuleRaw = await import(pluginModuleResolved);
+      if (!pluginModuleRaw || !pluginModuleRaw.default) {
+        throw new TypeError(`Expected "${plugins[i]}" to be a module which default exports a bundler plugin.`);
+      }
+      let pluginModule = pluginModuleRaw.default;
+      if (!pluginModule || pluginModule.name === undefined || pluginModule.setup === undefined) {
+        throw new TypeError(`"${plugins[i]}" is not a valid bundler plugin.`);
+      }
+      onstart_promises_array = await runSetupFn.$apply(bundlerPlugin, [
+        pluginModule.setup,
+        config,
+        onstart_promises_array,
+        i === plugins.length - 1,
+        false,
+      ]);
+    }
+    if (onstart_promises_array !== undefined) {
+      await Promise.all(onstart_promises_array);
+    }
+  })(plugins, bunfig_folder, runSetupFn, bundlerPlugin);
+
+  return promiseResult;
+}
+
+/**
+ * This function runs the given `setup` function.
+ * The `setup` function may define `onLoad`, `onResolve`, `onBeforeParse`, `onStart` callbacks.
+ * Those callbacks will be added to the `BundlerPlugin` via cpp functions like `.addFilter()` (see JSBundlerPlugin.cpp)
+ *
+ * Any `onStart()` callbacks are invoked here and their promises appended to the `promises` array parameter.
+ * The `promises` parameter remains undefined if no `onStart()` callbacks are defined.
+ */
 export function runSetupFunction(
   this: BundlerPlugin,
   setup: Setup,
@@ -55,7 +108,7 @@ export function runSetupFunction(
   promises: Array<Promise<any>> | undefined,
   is_last: boolean,
   isBake: boolean,
-) {
+): Promise<Array<Promise<any>>> | undefined {
   this.promises = promises;
   var onLoadPlugins = new Map<string, [RegExp, AnyFunction][]>();
   var onResolvePlugins = new Map<string, [RegExp, AnyFunction][]>();
@@ -73,8 +126,10 @@ export function runSetupFunction(
     if (map === onBeforeParsePlugins) {
       isOnBeforeParse = true;
       // TODO: how to check if it a napi module here?
-      if (!callback) {
-        throw new TypeError("onBeforeParse `napiModule` must be a Napi module");
+      if (!callback || !$isObject(callback) || !callback.$napiDlopenHandle) {
+        throw new TypeError(
+          "onBeforeParse `napiModule` must be a Napi module which exports the `BUN_PLUGIN_NAME` symbol.",
+        );
       }
 
       if (typeof symbol !== "string") {
@@ -134,7 +189,7 @@ export function runSetupFunction(
 
   const self = this;
   function onStart(callback) {
-    if(isBake) {
+    if (isBake) {
       throw new TypeError("onStart() is not supported in Bake yet");
     }
     if (!$isCallable(callback)) {
@@ -370,7 +425,14 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
   }
 }
 
-export function runOnLoadPlugins(this: BundlerPlugin, internalID, path, namespace, defaultLoaderId, isServerSide: boolean) {
+export function runOnLoadPlugins(
+  this: BundlerPlugin,
+  internalID,
+  path,
+  namespace,
+  defaultLoaderId,
+  isServerSide: boolean,
+) {
   const LOADERS_MAP = $LoaderLabelToId;
   const loaderName = $LoaderIdToLabel[defaultLoaderId];
 
@@ -411,15 +473,15 @@ export function runOnLoadPlugins(this: BundlerPlugin, internalID, path, namespac
         }
 
         var { contents, loader = defaultLoader } = result as any;
-        if ((loader as any) === 'object') {
-          if (!('exports' in result)) {
+        if ((loader as any) === "object") {
+          if (!("exports" in result)) {
             throw new TypeError('onLoad plugin returning loader: "object" must have "exports" property');
           }
           try {
             contents = JSON.stringify(result.exports);
-            loader = 'json';
+            loader = "json";
           } catch (e) {
-            throw new TypeError('When using Bun.build, onLoad plugin must return a JSON-serializable object: ' + e) ;
+            throw new TypeError("When using Bun.build, onLoad plugin must return a JSON-serializable object: " + e);
           }
         }
 

@@ -3,10 +3,6 @@
 set -eo pipefail
 
 function assert_main() {
-  if [ "$RELEASE" == "1" ]; then
-    echo "info: Skipping canary release because this is a release build"
-    exit 0
-  fi
   if [ -z "$BUILDKITE_REPO" ]; then
     echo "error: Cannot find repository for this build"
     exit 1
@@ -194,8 +190,6 @@ function create_release() {
   local artifacts=(
     bun-darwin-aarch64.zip
     bun-darwin-aarch64-profile.zip
-    bun-darwin-x64.zip
-    bun-darwin-x64-profile.zip
     bun-linux-aarch64.zip
     bun-linux-aarch64-profile.zip
     bun-linux-x64.zip
@@ -237,8 +231,7 @@ function create_release() {
 }
 
 function assert_canary() {
-  local canary="$(buildkite-agent meta-data get canary 2>/dev/null)"
-  if [ -z "$canary" ] || [ "$canary" == "0" ]; then
+  if [ -z "$CANARY" ] || [ "$CANARY" == "0" ]; then
     echo "warn: Skipping release because this is not a canary build"
     exit 0
   fi

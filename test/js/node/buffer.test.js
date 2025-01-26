@@ -1205,7 +1205,7 @@ for (let withOverridenBufferWrite of [false, true]) {
       it("toLocaleString()", () => {
         const buf = Buffer.from("test");
         expect(buf.toLocaleString()).toBe(buf.toString());
-        // expect(Buffer.prototype.toLocaleString).toBe(Buffer.prototype.toString);
+        expect(Buffer.prototype.toLocaleString).toBe(Buffer.prototype.toString);
       });
 
       it("alloc() should throw on invalid data", () => {
@@ -2970,4 +2970,13 @@ describe("serialization", () => {
     const receiver = (key, value) => (value && value.type === "Buffer" ? Buffer.from(value.data) : value);
     expect(JSON.parse(string, receiver)).toEqual(buffer);
   });
+});
+
+it("should not trim utf-8 start bytes at end of string", () => {
+  // always worked
+  const buf1 = Buffer.from("e136e1", "hex");
+  expect(buf1.toString("utf-8")).toEqual("\uFFFD6\uFFFD");
+  // bugged
+  const buf2 = Buffer.from("36e1", "hex");
+  expect(buf2.toString("utf-8")).toEqual("6\uFFFD");
 });

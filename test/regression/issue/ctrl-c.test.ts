@@ -1,5 +1,50 @@
 import { expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
+import { join } from "path";
+
+test.skipIf(isWindows)("verify that we can call sigint 4096 times", () => {
+  const dir = tempDirWithFiles("ctrlc", {
+    "index.js": /*js*/ `
+      let count = 0;
+        process.exitCode = 1;
+
+        const handler = () => {
+          count++;
+          console.count("SIGINT");
+          if (count === 1024 * 4) {
+            process.off("SIGINT", handler);
+            process.exitCode = 0;
+            clearTimeout(timer);
+          }
+        };
+        process.on("SIGINT", handler);
+        var timer = setTimeout(() => {}, 999999);
+        var remaining = 1024 * 4;
+
+        function go() {
+          for (var i = 0, end = Math.min(1024, remaining); i < end; i++) {
+            process.kill(process.pid, "SIGINT");
+          }
+          remaining -= i;
+
+          if (remaining > 0) {
+            setTimeout(go, 10);
+          }
+        }
+        go();
+    `,
+  });
+
+  const result = Bun.spawnSync({
+    cmd: [bunExe(), join(dir, "index.js")],
+    cwd: dir,
+    env: bunEnv,
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.signalCode).toBeUndefined();
+});
 
 test.skipIf(isWindows)("verify that we forward SIGINT from parent to child in bun run", () => {
   const dir = tempDirWithFiles("ctrlc", {
@@ -16,12 +61,12 @@ test.skipIf(isWindows)("verify that we forward SIGINT from parent to child in bu
     {
       "name": "ctrlc",
       "scripts": {
-        "start": "${bunExe()} index.js"
+        "start": " ${bunExe()} index.js"
       }
     }
   `,
   });
-
+  console.log(dir);
   const result = Bun.spawnSync({
     cmd: [bunExe(), "start"],
     cwd: dir,
@@ -90,14 +135,18 @@ for (const mode of [
       killed: proc.killed,
       exitCode: proc.exitCode,
       signalCode: proc.signalCode,
-    }).toEqual(isWindows ? {
-      killed: true,
-      exitCode: 1,
-      signalCode: null,
-    } : {
-      killed: true,
-      exitCode: null,
-      signalCode: "SIGINT",
-    });
+    }).toEqual(
+      isWindows
+        ? {
+            killed: true,
+            exitCode: 1,
+            signalCode: null,
+          }
+        : {
+            killed: true,
+            exitCode: null,
+            signalCode: "SIGINT",
+          },
+    );
   });
 }

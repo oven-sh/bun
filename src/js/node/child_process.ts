@@ -1120,12 +1120,14 @@ class ChildProcess extends EventEmitter {
       }
     }
 
+    const handle = this.#handle;
     const io = this.#stdioOptions[i];
     switch (i) {
       case 0: {
         switch (io) {
           case "pipe": {
-            const stdin = this.#handle.stdin;
+            const stdin = handle?.stdin;
+
             if (!stdin)
               // This can happen if the process was already killed.
               return new ShimmedStdin();
@@ -1143,7 +1145,7 @@ class ChildProcess extends EventEmitter {
       case 1: {
         switch (io) {
           case "pipe": {
-            const value = this.#handle[fdToStdioName(i) as any as number];
+            const value = handle?.[fdToStdioName(i as 1 | 2)!];
             // This can happen if the process was already killed.
             if (!value) return new ShimmedStdioOutStream();
 
@@ -1163,7 +1165,7 @@ class ChildProcess extends EventEmitter {
         switch (io) {
           case "pipe":
             if (!NetModule) NetModule = require("node:net");
-            const fd = this.#handle.stdio[i];
+            const fd = handle && handle.stdio[i];
             if (!fd) return null;
             return new NetModule.connect({ fd });
         }
@@ -1480,7 +1482,7 @@ function isNodeStreamWritable(item) {
   return true;
 }
 
-function fdToStdioName(fd) {
+function fdToStdioName(fd: number) {
   switch (fd) {
     case 0:
       return "stdin";

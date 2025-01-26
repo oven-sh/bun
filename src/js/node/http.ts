@@ -857,7 +857,7 @@ IncomingMessage.prototype = {
       this.complete = true;
       this.push(null);
     } else if (this[bodyStreamSymbol] == null) {
-      const reader = this[reqSymbol].body?.getReader() as ReadableStreamDefaultReader;
+      const reader = this[reqSymbol]?.body?.getReader() as ReadableStreamDefaultReader;
       if (!reader) {
         this.complete = true;
         this.push(null);
@@ -968,27 +968,19 @@ $setPrototypeDirect.$call(IncomingMessage.prototype, Readable.prototype);
 $setPrototypeDirect.$call(IncomingMessage, Readable);
 
 async function consumeStream(self, reader: ReadableStreamDefaultReader) {
-  var done = false,
-    value,
-    aborted = false;
+  var aborted = false;
   try {
     while (true) {
-      const result = reader.readMany();
-      if ($isPromise(result)) {
-        ({ done, value } = await result);
-      } else {
-        ({ done, value } = result);
+      var { done, value } = await reader.read();
+      if (done) {
+        break;
       }
+
       if (self.destroyed || (aborted = self[abortedSymbol])) {
         break;
       }
-      for (var v of value) {
-        self.push(v);
-      }
 
-      if (self.destroyed || (aborted = self[abortedSymbol]) || done) {
-        break;
-      }
+      self.push(value);
     }
   } catch (err) {
     if (aborted || self.destroyed) return;
@@ -1546,12 +1538,19 @@ class ClientRequest extends OutgoingMessage {
 
   _write(chunk, encoding, callback) {
     if (this.#controller) {
+      let promise;
       if (typeof chunk === "string") {
-        this.#controller.write(Buffer.from(chunk, encoding));
+        promise = this.#controller.write(Buffer.from(chunk, encoding));
       } else {
-        this.#controller.write(chunk);
+        promise = this.#controller.write(chunk);
       }
-      process.nextTick(callback);
+      if ($isPromise(promise)) {
+        promise.then(() => {
+          callback(null);
+        });
+      } else {
+        callback(null);
+      }
       return;
     }
     if (!this.#bodyChunks) {

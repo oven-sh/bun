@@ -55,12 +55,7 @@ export function asyncIterator(this: Console) {
       }
 
       while (true) {
-        const firstResult = reader.readMany();
-        if ($isPromise(firstResult)) {
-          ({ done, value } = await firstResult);
-        } else {
-          ({ done, value } = firstResult);
-        }
+        ({ done, value } = await reader.read());
 
         if (done) {
           if (pendingChunk) {
@@ -69,33 +64,30 @@ export function asyncIterator(this: Console) {
           return;
         }
 
-        // we assume it was given line-by-line
-        for (idx = 0, value_len = value.length; idx < value_len; idx++) {
-          actualChunk = value[idx];
-          if (pendingChunk) {
-            actualChunk = Buffer.concat([pendingChunk, actualChunk]);
-            pendingChunk = undefined;
-          }
-
-          last = 0;
-          // TODO: "\r", 0x4048, 0x4049, 0x404A, 0x404B, 0x404C, 0x404D, 0x404E, 0x404F
-          i = indexOf(actualChunk, last);
-          while (i !== -1) {
-            // This yield may end the function, in that case we need to be able to recover state
-            // if the iterator was fired up again.
-            yield decoder.decode(
-              actualChunk.subarray(
-                last,
-                process.platform === "win32" ? (actualChunk[i - 1] === 0x0d /* \r */ ? i - 1 : i) : i,
-              ),
-            );
-            last = i + 1;
-            i = indexOf(actualChunk, last);
-          }
-          i = -1;
-
-          pendingChunk = actualChunk.subarray(last);
+        actualChunk = value as unknown as Uint8Array;
+        if (pendingChunk) {
+          actualChunk = Buffer.concat([pendingChunk, actualChunk]);
+          pendingChunk = undefined;
         }
+
+        last = 0;
+        // TODO: "\r", 0x4048, 0x4049, 0x404A, 0x404B, 0x404C, 0x404D, 0x404E, 0x404F
+        i = indexOf(actualChunk, last);
+        while (i !== -1) {
+          // This yield may end the function, in that case we need to be able to recover state
+          // if the iterator was fired up again.
+          yield decoder.decode(
+            actualChunk.subarray(
+              last,
+              process.platform === "win32" ? (actualChunk[i - 1] === 0x0d /* \r */ ? i - 1 : i) : i,
+            ),
+          );
+          last = i + 1;
+          i = indexOf(actualChunk, last);
+        }
+        i = -1;
+
+        pendingChunk = actualChunk.subarray(last);
         actualChunk = undefined!;
       }
     } catch (e) {

@@ -17,7 +17,6 @@ const fetchFixture4 = join(import.meta.dir, "fetch-leak-test-fixture-4.js");
 let server: Server;
 function startServer({ fetch, ...options }: ServeOptions) {
   server = serve({
-    idleTimeout: 0,
     ...options,
     fetch,
     port: 0,
@@ -1315,16 +1314,9 @@ describe("Response", () => {
         method: "POST",
         body: await Bun.file(import.meta.dir + "/fixtures/file.txt").arrayBuffer(),
       });
-      const input = await response.bytes();
+      var input = await response.arrayBuffer();
       var output = await Bun.file(import.meta.dir + "/fixtures/file.txt").stream();
-      let chunks: Uint8Array[] = [];
-      const reader = output.getReader();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-      }
-      expect(input).toEqual(Buffer.concat(chunks));
+      expect(new Uint8Array(input)).toEqual((await output.getReader().read()).value);
     });
   });
 
@@ -2026,31 +2018,35 @@ describe("http/1.1 response body length", () => {
 });
 describe("fetch Response life cycle", () => {
   it("should not keep Response alive if not consumed", async () => {
-    let deferred = Promise.withResolvers<string>();
-
-    await using serverProcess = Bun.spawn({
+    const serverProcess = Bun.spawn({
       cmd: [bunExe(), "--smol", fetchFixture3],
       stderr: "inherit",
-      stdout: "inherit",
-      stdin: "inherit",
+      stdout: "pipe",
+      stdin: "ignore",
       env: bunEnv,
-      ipc(message) {
-        deferred.resolve(message);
-      },
     });
 
-    const serverUrl = await deferred.promise;
-    await using clientProcess = Bun.spawn({
+    async function getServerUrl() {
+      const reader = serverProcess.stdout.getReader();
+      const { done, value } = await reader.read();
+      return new TextDecoder().decode(value);
+    }
+    const serverUrl = await getServerUrl();
+    const clientProcess = Bun.spawn({
       cmd: [bunExe(), "--smol", fetchFixture4, serverUrl],
       stderr: "inherit",
-      stdout: "inherit",
-      stdin: "inherit",
+      stdout: "pipe",
+      stdin: "ignore",
       env: bunEnv,
     });
-    expect(await clientProcess.exited).toBe(0);
+    try {
+      expect(await clientProcess.exited).toBe(0);
+    } finally {
+      serverProcess.kill();
+    }
   });
   it("should allow to get promise result after response is GC'd", async () => {
-    using server = Bun.serve({
+    const server = Bun.serve({
       port: 0,
       async fetch(request: Request) {
         return new Response(
@@ -2239,7 +2235,6 @@ describe("fetch should allow duplex", () => {
   it("should work in redirects .manual when using duplex", async () => {
     using server = Bun.serve({
       port: 0,
-      idleTimeout: 0,
       async fetch(req) {
         if (req.url.indexOf("/redirect") === -1) {
           return Response.redirect("/");
@@ -2303,11 +2298,7 @@ it("should allow to follow redirect if connection is closed, abort should work e
     await once(server.listen(0), "listening");
 
     try {
-      let { address, port } = server.address() as AddressInfo;
-      if (address === "::") {
-        address = "[::]";
-      }
-      const response = await fetch(`http://${address}:${port}/redirect`, {
+      const response = await fetch(`http://localhost:${(server.address() as AddressInfo).port}/redirect`, {
         signal: AbortSignal.timeout(150),
       });
       if (type === "delay") {

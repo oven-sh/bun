@@ -908,15 +908,15 @@ describe("fetch() with streaming", () => {
       // the compressed data is larger than 64 bytes.
       require("crypto").randomFillSync(rawBytes);
       const content = rawBytes.toString("hex");
+      const data = compress(compression, Buffer.from(content));
       var onReceivedHeaders = Promise.withResolvers();
       using server = Bun.serve({
         port: 0,
         async fetch(req) {
-          const data = compress(compression, Buffer.from(content));
           return new Response(
             new ReadableStream({
               async pull(controller) {
-                const firstChunk = data.subarray(0, 64);
+                const firstChunk = data.subarray(0, data.length / 2);
                 const secondChunk = data.subarray(firstChunk.length);
                 controller.enqueue(firstChunk);
                 await onReceivedHeaders.promise;
@@ -952,15 +952,13 @@ describe("fetch() with streaming", () => {
       gcTick(false);
       const reader = res.body?.getReader();
 
-      let buffer = Buffer.alloc(0);
-      let parts = 0;
+      let chunks = [];
       while (true) {
         gcTick(false);
 
         const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
         if (value) {
-          buffer = Buffer.concat([buffer, value]);
-          parts++;
+          chunks.push(value!);
         }
         if (done) {
           break;
@@ -968,8 +966,8 @@ describe("fetch() with streaming", () => {
       }
 
       gcTick(false);
-      expect(buffer.toString("utf8")).toBe(content);
-      expect(parts).toBeGreaterThan(1);
+      expect(Buffer.concat(chunks).toString("utf8")).toBe(content);
+      expect(chunks.length).toBeGreaterThan(1);
     });
 
     test(`Extra data should be ignored on streaming (multiple chunks, TCP server) with ${compression} compression`, async () => {

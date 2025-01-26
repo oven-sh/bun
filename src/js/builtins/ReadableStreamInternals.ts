@@ -1893,6 +1893,9 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
 
         if (remaining > 0) {
           toEnqueue = view.subarray(0, result);
+          view = view.subarray(result);
+        } else {
+          view = undefined;
         }
 
         controller.enqueue(toEnqueue);
@@ -1940,11 +1943,13 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
 
       closer[0] = false;
 
-      for (let drainResult = handle.drain(); drainResult; closer[0] = false, drainResult = handle.drain()) {
-        this.$data = this.#onNativeReadableStreamResult(drainResult, this.$data, closer[0], controller);
-        if (this.#closed) return;
+      if (this.$data) {
+        let drainResult = handle.drain();
+        if (drainResult) {
+          this.$data = this.#onNativeReadableStreamResult(drainResult, this.$data, closer[0], controller);
+          return;
+        }
       }
-      if (this.#closed) return;
 
       const view = this.#getInternalBuffer(this.autoAllocateChunkSize);
       const result = handle.pull(view, closer);

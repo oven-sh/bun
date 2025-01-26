@@ -908,7 +908,8 @@ describe("fetch() with streaming", () => {
       // the compressed data is larger than 64 bytes.
       require("crypto").randomFillSync(rawBytes);
       const content = rawBytes.toString("hex");
-      const data = compress(compression, Buffer.from(content));
+      const contentBuffer = Buffer.from(content);
+      const data = compress(compression, contentBuffer);
       var onReceivedHeaders = Promise.withResolvers();
       using server = Bun.serve({
         port: 0,
@@ -916,6 +917,9 @@ describe("fetch() with streaming", () => {
           return new Response(
             new ReadableStream({
               async pull(controller) {
+                // Split it halfway to maximize the chances that it will be split into multiple chunks.
+                // If we only look at the first 64 bytes then the first chunk
+                // might still be a single chunk since we're decompressing.
                 const firstChunk = data.subarray(0, data.length / 2);
                 const secondChunk = data.subarray(firstChunk.length);
                 controller.enqueue(firstChunk);
@@ -952,13 +956,21 @@ describe("fetch() with streaming", () => {
       gcTick(false);
       const reader = res.body?.getReader();
 
-      let chunks = [];
+      let chunks: Uint8Array[] = [];
+      let currentRange = 0;
       while (true) {
         gcTick(false);
 
         const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
         if (value) {
-          chunks.push(value!);
+          chunks.push(value);
+
+          // Check the content is what is expected at this time.
+          // We're avoiding calling .buffer since that changes the internal representation in JSC and we want to test the raw data.
+          expect(contentBuffer.compare(value, undefined, undefined, currentRange, currentRange + value.length)).toEqual(
+            0,
+          );
+          currentRange += value.length;
         }
         if (done) {
           break;
@@ -968,6 +980,16 @@ describe("fetch() with streaming", () => {
       gcTick(false);
       expect(Buffer.concat(chunks).toString("utf8")).toBe(content);
       expect(chunks.length).toBeGreaterThan(1);
+
+      currentRange = 0;
+      for (const chunk of chunks) {
+        // Check that each chunk hasn't been modified.
+        // We want to be 100% sure that there is no accidental memory re-use here.
+        expect(contentBuffer.compare(chunk, undefined, undefined, currentRange, currentRange + chunk.length)).toEqual(
+          0,
+        );
+        currentRange += chunk.length;
+      }
     });
 
     test(`Extra data should be ignored on streaming (multiple chunks, TCP server) with ${compression} compression`, async () => {

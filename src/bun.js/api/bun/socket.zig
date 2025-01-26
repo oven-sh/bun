@@ -912,7 +912,7 @@ pub const Listener = struct {
         if (!hostname.isString()) {
             return global.throwInvalidArguments("hostname pattern expects a string", .{});
         }
-        const host_str = hostname.toSlice(
+        const host_str = try hostname.toSlice(
             global,
             bun.default_allocator,
         );

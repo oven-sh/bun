@@ -259,17 +259,17 @@ pub const LoadResult = union(enum) {
         };
     }
 
-    pub fn saveFormat(this: LoadResult, manager: *const PackageManager) LockfileFormat {
+    pub fn saveFormat(this: LoadResult, options: *const PackageManager.Options) LockfileFormat {
         switch (this) {
             .not_found => {
                 // saving a lockfile for a new project. default to text lockfile
                 // unless saveTextLockfile is false in bunfig
-                const save_text_lockfile = manager.options.save_text_lockfile orelse true;
+                const save_text_lockfile = options.save_text_lockfile orelse true;
                 return if (save_text_lockfile) .text else .binary;
             },
             .err => |err| {
                 // an error occured, but we still loaded from an existing lockfile
-                if (manager.options.save_text_lockfile) |save_text_lockfile| {
+                if (options.save_text_lockfile) |save_text_lockfile| {
                     if (save_text_lockfile) {
                         return .text;
                     }
@@ -278,7 +278,7 @@ pub const LoadResult = union(enum) {
             },
             .ok => |ok| {
                 // loaded from an existing lockfile
-                if (manager.options.save_text_lockfile) |save_text_lockfile| {
+                if (options.save_text_lockfile) |save_text_lockfile| {
                     if (save_text_lockfile) {
                         return .text;
                     }
@@ -429,7 +429,7 @@ pub fn loadFromDir(
                 var buffered_writer = writer_buf.bufferedWriter();
                 const writer = buffered_writer.writer();
 
-                TextLockfile.Stringifier.saveFromBinary(allocator, result.ok.lockfile, writer) catch |err| {
+                TextLockfile.Stringifier.saveFromBinary(allocator, result.ok.lockfile, &result, writer) catch |err| {
                     Output.panic("failed to convert binary lockfile to text lockfile: {s}", .{@errorName(err)});
                 };
 
@@ -2504,7 +2504,8 @@ pub fn verifyData(this: *const Lockfile) !void {
     }
 }
 
-pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbose_log: bool) void {
+pub fn saveToDisk(this: *Lockfile, load_result: *const LoadResult, options: *const PackageManager.Options) void {
+    const save_format = load_result.saveFormat(options);
     if (comptime Environment.allow_assert) {
         this.verifyData() catch |err| {
             Output.prettyErrorln("<r><red>error:<r> failed to verify lockfile: {s}", .{@errorName(err)});
@@ -2519,7 +2520,7 @@ pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbo
             var buffered_writer = writer_buf.bufferedWriter();
             const writer = buffered_writer.writer();
 
-            TextLockfile.Stringifier.saveFromBinary(bun.default_allocator, this, writer) catch |err| switch (err) {
+            TextLockfile.Stringifier.saveFromBinary(bun.default_allocator, this, load_result, writer) catch |err| switch (err) {
                 error.OutOfMemory => bun.outOfMemory(),
             };
 
@@ -2534,7 +2535,7 @@ pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbo
 
         var total_size: usize = 0;
         var end_pos: usize = 0;
-        Lockfile.Serializer.save(this, verbose_log, &bytes, &total_size, &end_pos) catch |err| {
+        Lockfile.Serializer.save(this, options.log_level.isVerbose(), &bytes, &total_size, &end_pos) catch |err| {
             Output.err(err, "failed to serialize lockfile", .{});
             Global.crash();
         };

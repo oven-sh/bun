@@ -1238,15 +1238,24 @@ ServerResponse.prototype._implicitHeader = function () {
 
 ServerResponse.prototype._write = function (chunk, encoding, callback) {
   if (this[firstWriteSymbol] === undefined && !this.headersSent) {
-    this[firstWriteSymbol] = chunk;
+    this[firstWriteSymbol] =
+      encoding && encoding !== "utf-8" && encoding !== "utf8" && typeof chunk === "string"
+        ? Buffer.from(chunk, encoding)
+        : chunk;
     callback();
     return;
   }
 
-  ensureReadableStreamController.$call(this, controller => {
-    controller.write(chunk);
-    callback();
-  });
+  ensureReadableStreamController.$call(
+    this,
+    (controller, chunk, encoding, callback) => {
+      controller.write(chunk);
+      callback();
+    },
+    chunk,
+    encoding,
+    callback,
+  );
 };
 
 ServerResponse.prototype._writev = function (chunks, callback) {
@@ -1256,18 +1265,30 @@ ServerResponse.prototype._writev = function (chunks, callback) {
     return;
   }
 
-  ensureReadableStreamController.$call(this, controller => {
-    for (const chunk of chunks) {
-      controller.write(chunk.chunk);
-    }
-
-    callback();
-  });
+  ensureReadableStreamController.$call(
+    this,
+    (controller, chunks, _, callback) => {
+      let promise;
+      for (const chunk of chunks) {
+        promise = controller.write(chunk.chunk);
+      }
+      if (promise && $isPromise(promise)) {
+        promise.then(() => {
+          callback();
+        });
+      } else {
+        callback();
+      }
+    },
+    chunks,
+    undefined,
+    callback,
+  );
 };
 
-function ensureReadableStreamController(run) {
+function ensureReadableStreamController(run, chunk, encoding, callback) {
   const thisController = this[controllerSymbol];
-  if (thisController) return run(thisController);
+  if (thisController) return run(thisController, chunk, encoding, callback);
   this.headersSent = true;
   let firstWrite = this[firstWriteSymbol];
   this[controllerSymbol] = undefined;
@@ -1277,9 +1298,19 @@ function ensureReadableStreamController(run) {
         type: "direct",
         pull: controller => {
           this[controllerSymbol] = controller;
-          if (firstWrite) controller.write(firstWrite);
-          firstWrite = undefined;
-          run(controller);
+          let promise = undefined;
+          if (firstWrite) {
+            promise = controller.write(firstWrite);
+            firstWrite = undefined;
+          }
+          if (promise && $isPromise(promise)) {
+            console.error("Promise pending");
+            promise.then(() => {
+              run(controller, chunk, encoding, callback);
+            });
+          } else {
+            run(controller, chunk, encoding, callback);
+          }
           if (!this[finishedSymbol]) {
             const { promise, resolve } = $newPromiseCapability(GlobalPromise);
             this[deferredSymbol] = resolve;
@@ -1330,19 +1361,25 @@ ServerResponse.prototype._final = function (callback) {
   }
 
   this[finishedSymbol] = true;
-  ensureReadableStreamController.$call(this, controller => {
-    controller.end();
-    if (shouldEmitClose) {
-      req.complete = true;
-      process.nextTick(emitRequestCloseNT, req);
-    }
-    callback();
-    const deferred = this[deferredSymbol];
-    if (deferred) {
-      this[deferredSymbol] = undefined;
-      deferred();
-    }
-  });
+  ensureReadableStreamController.$call(
+    this,
+    (controller, chunk, encoding, callback) => {
+      controller.end();
+      if (shouldEmitClose) {
+        req.complete = true;
+        process.nextTick(emitRequestCloseNT, req);
+      }
+      callback();
+      const deferred = this[deferredSymbol];
+      if (deferred) {
+        this[deferredSymbol] = undefined;
+        deferred();
+      }
+    },
+    undefined,
+    undefined,
+    callback,
+  );
 };
 
 ServerResponse.prototype.writeProcessing = function () {
@@ -1537,12 +1574,17 @@ class ClientRequest extends OutgoingMessage {
   }
 
   _write(chunk, encoding, callback) {
-    if (this.#controller) {
+    const controller = this.#controller;
+    if (controller) {
       let promise;
       if (typeof chunk === "string") {
-        promise = this.#controller.write(Buffer.from(chunk, encoding));
+        if (encoding === "utf-8" || encoding === "utf8" || !encoding) {
+          promise = controller.write(chunk);
+        } else {
+          promise = controller.write(Buffer.from(chunk, encoding));
+        }
       } else {
-        promise = this.#controller.write(chunk);
+        promise = controller.write(chunk);
       }
       if ($isPromise(promise)) {
         promise.then(() => {

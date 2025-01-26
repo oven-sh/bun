@@ -934,12 +934,17 @@ describe("fetch() with streaming", () => {
               async pull(controller) {
                 // Split it halfway to maximize the chances that it will be split into multiple chunks.
                 // If we only look at the first 64 bytes then the first chunk might still be a single chunk since we're
-                const firstChunk = data.subarray(0, data.length / 2);
-                const secondChunk = data.subarray(firstChunk.length);
-                controller.enqueue(firstChunk);
-                await onReceivedHeaders.promise;
-                await Bun.sleep(4);
-                controller.enqueue(secondChunk);
+                let tenth = (data.length / 10) | 0;
+                let remaining = data;
+                while (remaining.length > 0) {
+                  const chunk = remaining.subarray(0, Math.min(tenth, remaining.length));
+                  controller.enqueue(chunk);
+                  if (remaining === data) {
+                    await onReceivedHeaders.promise;
+                  }
+                  remaining = remaining.subarray(chunk.length);
+                  await Bun.sleep(1);
+                }
                 controller.close();
               },
             }),

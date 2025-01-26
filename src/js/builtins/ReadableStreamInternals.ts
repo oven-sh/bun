@@ -1866,7 +1866,11 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
     }
 
     #getInternalBuffer(chunkSize) {
-      return new Uint8Array(chunkSize);
+      var chunk = this.$data;
+      if (!chunk || chunk.length < chunkSize) {
+        this.$data = chunk = new Uint8Array(chunkSize);
+      }
+      return chunk;
     }
 
     #handleArrayBufferViewResult(result, view, isClosed, controller) {
@@ -1936,9 +1940,9 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
 
       closer[0] = false;
 
-      for (let drainResult = handle.drain(); drainResult; drainResult = handle.drain()) {
-        this.$data = this.#onNativeReadableStreamResult(drainResult, this.$data, (closer[0] = false), controller);
-        if ((this.#closed = closer[0])) return;
+      for (let drainResult = handle.drain(); drainResult; closer[0] = false, drainResult = handle.drain()) {
+        this.$data = this.#onNativeReadableStreamResult(drainResult, this.$data, closer[0], controller);
+        if (this.#closed) return;
       }
       if (this.#closed) return;
 

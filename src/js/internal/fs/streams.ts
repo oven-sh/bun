@@ -47,8 +47,6 @@ const kWriteFastSimpleBuffering = Symbol("writeFastSimpleBuffering");
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
 const kFs = Symbol("kFs");
-const kIoDone = Symbol("kIoDone");
-const kIsPerformingIO = Symbol("kIsPerformingIO");
 
 const {
   read: fileHandlePrototypeRead,
@@ -208,7 +206,6 @@ function ReadStream(this: FSStream, path, options): void {
       throw $ERR_OUT_OF_RANGE("start", `<= "end" (here: ${end})`, start);
     }
   }
-  this[kIsPerformingIO] = false;
 
   this[kReadStreamFastPath] =
     start === 0 &&
@@ -312,16 +309,7 @@ readStreamPrototype._read = function (n) {
 
   const buf = Buffer.allocUnsafeSlow(n);
 
-  this[kIsPerformingIO] = true;
   this[kFs].read(this.fd, buf, 0, n, this.pos, (er, bytesRead, buf) => {
-    this[kIsPerformingIO] = false;
-
-    // Tell ._destroy() that it's safe to close the fd now.
-    if (this.destroyed) {
-      this.emit(kIoDone, er);
-      return;
-    }
-
     if (er) {
       require("internal/streams/destroy").errorOrDestroy(this, er);
     } else if (bytesRead > 0) {
@@ -354,8 +342,8 @@ readStreamPrototype._destroy = function (this: FSStream, err, cb) {
   // running in a thread pool. Therefore, file descriptors are not safe
   // to close while used in a pending read or write operation. Wait for
   // any pending IO (kIsPerformingIO) to complete (kIoDone).
-  if (this[kIsPerformingIO]) {
-    this.once(kIoDone, er => close(this, err || er, cb));
+  if (this[kReadStreamFastPath]) {
+    this.once(kReadStreamFastPath, er => close(this, err || er, cb));
   } else {
     close(this, err, cb);
   }
@@ -570,19 +558,34 @@ function writevAll(chunks, size, pos, cb, retries = 0) {
 }
 
 function _write(data, encoding, cb) {
-  this[kIsPerformingIO] = true;
-  writeAll.$call(this, data, data.length, this.pos, er => {
-    this[kIsPerformingIO] = false;
-    if (this.destroyed) {
-      // Tell ._destroy() that it's safe to close the fd now.
-      cb(er);
-      return this.emit(kIoDone, er);
+  const fileSink = this[kWriteStreamFastPath];
+
+  if (fileSink && fileSink !== true) {
+    const maybePromise = fileSink.write(data);
+    if ($isPromise(maybePromise)) {
+      maybePromise
+        .then(() => {
+          this.emit("drain"); // Emit drain event
+          cb(null);
+        })
+        .catch(cb);
+      return false; // Indicate backpressure
+    } else {
+      cb(null);
+      return true; // No backpressure
     }
+  } else {
+    writeAll.$call(this, data, data.length, this.pos, er => {
+      if (this.destroyed) {
+        cb(er);
+        return;
+      }
+      cb(er);
+    });
 
-    cb(er);
-  });
-
-  if (this.pos !== undefined) this.pos += data.length;
+    if (this.pos !== undefined) this.pos += data.length;
+    // Don't return anything for legacy path - matches Node.js behavior
+  }
 }
 writeStreamPrototype._write = _write;
 
@@ -602,19 +605,15 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
 
     const maybePromise = fileSink.write(data);
     if ($isPromise(maybePromise)) {
-      const prevRefCount = this[kIsPerformingIO];
-      this[kIsPerformingIO] = (prevRefCount === true ? 0 : prevRefCount || 0) + 1;
-      if (cb)
-        maybePromise.then(() => {
-          cb(null);
-          this[kIsPerformingIO] -= 1;
-          this.emit(kIoDone, null);
-        }, cb);
+      maybePromise.then(() => {
+        cb(null);
+        this.emit("drain");
+      }, cb);
       return false;
     } else {
       if (cb) process.nextTick(cb, null);
+      return true;
     }
-    return true;
   } catch (e) {
     if (cb) process.nextTick(cb, e);
     return false;
@@ -634,14 +633,31 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
   if (typeof cb !== "function") {
     cb = streamNoop;
   }
-  const result: any = this._write(data, encoding, cb);
-  if (this.write === writeFast) {
-    this.write = writablePrototypeWrite;
+
+  const fileSink = this[kWriteStreamFastPath];
+  if (fileSink && fileSink !== true) {
+    const maybePromise = fileSink.write(data);
+    if ($isPromise(maybePromise)) {
+      maybePromise
+        .then(() => {
+          this.emit("drain"); // Emit drain event
+          cb(null);
+        })
+        .catch(cb);
+      return false; // Indicate backpressure
+    } else {
+      cb(null);
+      return true; // No backpressure
+    }
   } else {
-    // test-console-group.js
-    this[kWriteMonkeyPatchDefense] = true;
+    const result: any = this._write(data, encoding, cb);
+    if (this.write === writeFast) {
+      this.write = writablePrototypeWrite;
+    } else {
+      this[kWriteMonkeyPatchDefense] = true;
+    }
+    return result;
   }
-  return result;
 }
 
 writeStreamPrototype._writev = function (data, cb) {
@@ -651,45 +667,49 @@ writeStreamPrototype._writev = function (data, cb) {
 
   for (let i = 0; i < len; i++) {
     const chunk = data[i].chunk;
-
     chunks[i] = chunk;
     size += chunk.length;
   }
 
-  this[kIsPerformingIO] = true;
-  writevAll.$call(this, chunks, size, this.pos, er => {
-    this[kIsPerformingIO] = false;
-    if (this.destroyed) {
-      // Tell ._destroy() that it's safe to close the fd now.
-      cb(er);
-      return this.emit(kIoDone, er);
+  const fileSink = this[kWriteStreamFastPath];
+  if (fileSink && fileSink !== true) {
+    const maybePromise = fileSink.write(Buffer.concat(chunks));
+    if ($isPromise(maybePromise)) {
+      maybePromise
+        .then(() => {
+          this.emit("drain");
+          cb(null);
+        })
+        .catch(cb);
+      return false;
+    } else {
+      cb(null);
+      return true;
     }
+  } else {
+    writevAll.$call(this, chunks, size, this.pos, er => {
+      if (this.destroyed) {
+        cb(er);
+        return;
+      }
+      cb(er);
+    });
 
-    cb(er);
-  });
-
-  if (this.pos !== undefined) this.pos += size;
+    if (this.pos !== undefined) this.pos += size;
+    // Don't return anything for legacy path - matches Node.js behavior
+  }
 };
 
 writeStreamPrototype._destroy = function (err, cb) {
-  // Usually for async IO it is safe to close a file descriptor
-  // even when there are pending operations. However, due to platform
-  // differences file IO is implemented using synchronous operations
-  // running in a thread pool. Therefore, file descriptors are not safe
-  // to close while used in a pending read or write operation. Wait for
-  // any pending IO (kIsPerformingIO) to complete (kIoDone).
   const sink = this[kWriteStreamFastPath];
   if (sink && sink !== true) {
     const end = sink.end(err);
     if ($isPromise(end)) {
-      end.then(() => {
-        cb(err);
-      }, cb);
+      end.then(() => cb(err), cb);
       return;
     }
   }
-
-  cb(err);
+  close(this, err, cb);
 };
 
 writeStreamPrototype.close = function (this: FSStream, cb) {
@@ -724,7 +744,7 @@ Object.defineProperty(writeStreamPrototype, "autoClose", {
   },
 });
 
-Object.$defineProperty(writeStreamPrototype, "pending", {
+Object.defineProperty(writeStreamPrototype, "pending", {
   get() {
     return this.fd === null;
   },

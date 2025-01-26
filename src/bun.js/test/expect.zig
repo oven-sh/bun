@@ -741,9 +741,9 @@ pub const Expect = struct {
                 }
             }
         } else if (value.isStringLiteral() and expected.isStringLiteral()) {
-            const value_string = value.toSlice(globalThis, default_allocator);
+            const value_string = try value.toSlice(globalThis, default_allocator);
             defer value_string.deinit();
-            const expected_string = expected.toSlice(globalThis, default_allocator);
+            const expected_string = try expected.toSlice(globalThis, default_allocator);
             defer expected_string.deinit();
 
             if (expected_string.len == 0) { // edge case empty string is always contained
@@ -2302,7 +2302,7 @@ pub const Expect = struct {
                     // partial match
                     const expected_slice = try expected_value.toSliceOrNull(globalThis);
                     defer expected_slice.deinit();
-                    const received_slice = received_message.toSlice(globalThis, globalThis.allocator());
+                    const received_slice = try received_message.toSlice(globalThis, globalThis.allocator());
                     defer received_slice.deinit();
                     if (strings.contains(received_slice.slice(), expected_slice.slice())) return .undefined;
                 }
@@ -3528,9 +3528,9 @@ pub const Expect = struct {
         var pass = value.isString() and expected.isString();
 
         if (pass) {
-            const value_slice = value.toSlice(globalThis, default_allocator);
+            const value_slice = try value.toSlice(globalThis, default_allocator);
             defer value_slice.deinit();
-            const expected_slice = expected.toSlice(globalThis, default_allocator);
+            const expected_slice = try expected.toSlice(globalThis, default_allocator);
             defer expected_slice.deinit();
 
             const value_utf8 = value_slice.slice();
@@ -5510,7 +5510,7 @@ pub const ExpectMatcherUtils = struct {
 
         try buffered_writer.flush();
 
-        return bun.String.createUTF8ForJS(globalThis, mutable_string.toOwnedSlice());
+        return bun.String.createUTF8ForJS(globalThis, mutable_string.slice());
     }
 
     inline fn printValueCatched(globalThis: *JSGlobalObject, value: JSValue, comptime color_or_null: ?[]const u8) JSValue {

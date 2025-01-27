@@ -2207,7 +2207,7 @@ pub const Arguments = struct {
         }
 
         pub fn deinitAndUnprotect(this: *MkdirTemp) void {
-            this.prefix.deinit();
+            this.prefix.deinitAndUnprotect();
         }
 
         pub fn toThreadSafe(this: *MkdirTemp) void {
@@ -2713,6 +2713,9 @@ pub const Arguments = struct {
 
         pub fn deinitAndUnprotect(self: ReadFile) void {
             self.path.deinitAndUnprotect();
+            if (self.signal) |signal| {
+                signal.unref();
+            }
         }
 
         pub fn toThreadSafe(self: *ReadFile) void {
@@ -2802,6 +2805,9 @@ pub const Arguments = struct {
         pub fn deinitAndUnprotect(self: *WriteFile) void {
             self.file.deinitAndUnprotect();
             self.data.deinitAndUnprotect();
+            if (self.signal) |signal| {
+                signal.unref();
+            }
         }
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!WriteFile {
             const path = try PathOrFileDescriptor.fromJS(ctx, arguments, bun.default_allocator) orelse {
@@ -3019,7 +3025,7 @@ pub const Arguments = struct {
         dest: PathLike,
         mode: Constants.Copyfile,
 
-        pub fn deinit(this: CopyFile) void {
+        pub fn deinit(this: *const CopyFile) void {
             this.src.deinit();
             this.dest.deinit();
         }
@@ -3029,7 +3035,7 @@ pub const Arguments = struct {
             this.dest.toThreadSafe();
         }
 
-        pub fn deinitAndUnprotect(this: *CopyFile) void {
+        pub fn deinitAndUnprotect(this: *const CopyFile) void {
             this.src.deinitAndUnprotect();
             this.dest.deinitAndUnprotect();
         }
@@ -3072,7 +3078,7 @@ pub const Arguments = struct {
             deinit_paths: bool = true,
         };
 
-        fn deinit(this: *Cp) void {
+        pub fn deinit(this: *const Cp) void {
             if (this.flags.deinit_paths) {
                 this.src.deinit();
                 this.dest.deinit();

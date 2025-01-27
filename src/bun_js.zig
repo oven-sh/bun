@@ -96,9 +96,6 @@ pub const Run = struct {
         b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
 
         b.options.serve_plugins = ctx.args.serve_plugins;
-        b.options.serve_minify_identifiers = ctx.bundler_options.minify_identifiers;
-        b.options.serve_minify_whitespace = ctx.bundler_options.minify_whitespace;
-        b.options.serve_minify_syntax = ctx.bundler_options.minify_syntax;
         b.options.bunfig_path = ctx.args.bunfig_path;
 
         // b.options.minify_syntax = ctx.bundler_options.minify_syntax;

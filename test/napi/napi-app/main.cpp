@@ -345,8 +345,14 @@ napi_value test_napi_handle_scope_nesting(const Napi::CallbackInfo &info) {
 
 napi_value constructor(napi_env env, napi_callback_info info) {
   napi_value this_value;
-  assert(napi_get_cb_info(env, info, nullptr, nullptr, &this_value, nullptr) ==
+  void *data = nullptr;
+  assert(napi_get_cb_info(env, info, nullptr, nullptr, &this_value, &data) ==
          napi_ok);
+  if (data) {
+    printf("constructor data = %d\n", *reinterpret_cast<int *>(data));
+  } else {
+    printf("constructor data = nullptr\n");
+  }
   napi_value property_value;
   assert(napi_create_string_utf8(env, "meow", NAPI_AUTO_LENGTH,
                                  &property_value) == napi_ok);
@@ -358,10 +364,12 @@ napi_value constructor(napi_env env, napi_callback_info info) {
 }
 
 napi_value get_class_with_constructor(const Napi::CallbackInfo &info) {
+  static int data = 500;
   napi_env env = info.Env();
   napi_value napi_class;
   assert(napi_define_class(env, "NapiClass", NAPI_AUTO_LENGTH, constructor,
-                           nullptr, 0, nullptr, &napi_class) == napi_ok);
+                           static_cast<void *>(&data), 0, nullptr,
+                           &napi_class) == napi_ok);
   return napi_class;
 }
 
@@ -1074,6 +1082,67 @@ static napi_value create_weird_bigints(const Napi::CallbackInfo &info) {
     NODE_API_CALL(env, napi_set_element(env, array, (uint32_t)i, bigints[i]));
   }
   return array;
+}
+
+// returns an array of objects with a variety of differently-configured
+// properties
+static napi_value
+create_objects_with_properties(const Napi::CallbackInfo &info) {
+  static int data = 123;
+  napi_callback method = [](napi_env env,
+                            napi_callback_info info) -> napi_value {};
+  napi_callback getter = [](napi_env env,
+                            napi_callback_info info) -> napi_value {};
+  napi_callback setter = [](napi_env env,
+                            napi_callback_info info) -> napi_value {};
+  napi_value name_string;
+  NODE_API_CALL(env, napi_create_string_utf8(env, "name_string",
+                                             NAPI_AUTO_LENGTH, &name_string));
+  napi_value name_symbol;
+  NODE_API_CALL(env, napi_create_symbol(env, name_string, &name_symbol));
+  napi_value value;
+  NODE_API_CALL(env, napi_create_int32(env, 5, &value));
+
+  std::vector<napi_property_descriptor> properties;
+  for (const char *utf8name : std::to_array({nullptr, "utf8name"})) {
+    for (napi_value name : std::to_array({nullptr, name_string, name_symbol})) {
+      for (napi_callback method : std::to_array({nullptr, method})) {
+        for (napi_callback getter : std::to_array({nullptr, getter})) {
+          for (napi_callback setter : std::to_array({nullptr, setter})) {
+            for (napi_value value : std::to_array({nullptr, value})) {
+              for (napi_property_attributes writable :
+                   std::to_array({0, napi_writable})) {
+                for (napi_property_attributes enumerable :
+                     std::to_array({0, napi_enumerable})) {
+                  for (napi_property_attributes configurable :
+                       std::to_array({0, napi_configurable})) {
+                    for (napi_property_attributes static_ :
+                         std::to_array({0, napi_static})) {
+                      properties.push_back({
+                          .utf8name = utf8name,
+                          .name = name,
+                          .method = method,
+                          .getter = getter,
+                          .setter = setter,
+                          .value = value,
+                          .attributes =
+                              writable | enumerable | configurable | static_,
+                          .data = &data,
+                      });
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // axes:
+  // how named?
+  //
 }
 
 Napi::Value RunCallback(const Napi::CallbackInfo &info) {

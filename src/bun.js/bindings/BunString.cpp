@@ -328,7 +328,6 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
             return { .tag = BunStringTag::Dead };
         }
         RELEASE_ASSERT(simdutf::convert_utf8_to_utf16(bytes, length, ptr.data()) == u16Length);
-        impl->ref();
         return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
     }
 
@@ -336,8 +335,8 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
     if (UNLIKELY(str.isNull())) {
         return { .tag = BunStringTag::Dead };
     }
-    str.impl()->ref();
-    return Bun::toString(str);
+    auto impl = str.releaseImpl();
+    return Bun::toString(impl.leakRef());
 }
 
 extern "C" BunString BunString__fromLatin1(const char* bytes, size_t length)
@@ -481,6 +480,8 @@ extern "C" JSC__JSValue BunString__toJSDOMURL(JSC::JSGlobalObject* lexicalGlobal
 
     auto object = WebCore::DOMURL::create(str, String());
     auto jsValue = WebCore::toJSNewlyCreated<WebCore::IDLInterface<WebCore::DOMURL>>(*lexicalGlobalObject, globalObject, throwScope, WTFMove(object));
+    auto* jsDOMURL = jsCast<WebCore::JSDOMURL*>(jsValue.asCell());
+    vm.heap.reportExtraMemoryAllocated(jsDOMURL, jsDOMURL->wrapped().memoryCostForGC());
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(jsValue));
 }
 
@@ -658,6 +659,34 @@ WTF::String BunString::toWTFString(ZeroCopyTag) const
     } else if (this->tag == BunStringTag::WTFStringImpl) {
         ASSERT(this->impl.wtf->refCount() > 0 && !this->impl.wtf->isEmpty());
         return WTF::String(this->impl.wtf);
+    }
+
+    return WTF::String();
+}
+
+WTF::String BunString::transferToWTFString()
+{
+    if (this->tag == BunStringTag::ZigString) {
+        if (Zig::isTaggedUTF8Ptr(this->impl.zig.ptr)) {
+            auto str = Zig::toStringCopy(this->impl.zig);
+            *this = Zig::BunStringEmpty;
+            return str;
+        } else {
+            auto str = Zig::toString(this->impl.zig);
+            *this = Zig::BunStringEmpty;
+            return str;
+        }
+    } else if (this->tag == BunStringTag::StaticZigString) {
+        auto str = Zig::toStringStatic(this->impl.zig);
+        *this = Zig::BunStringEmpty;
+        return str;
+    } else if (this->tag == BunStringTag::WTFStringImpl) {
+        ASSERT(this->impl.wtf->refCount() > 0 && !this->impl.wtf->isEmpty());
+
+        auto str = WTF::String(this->impl.wtf);
+        this->impl.wtf->deref();
+        *this = Zig::BunStringEmpty;
+        return str;
     }
 
     return WTF::String();

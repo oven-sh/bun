@@ -5330,7 +5330,7 @@ pub const JSValue = enum(i64) {
         return getOwnTruthy(this, global, property);
     }
 
-    pub fn truthyPropertyValue(prop: JSValue) ?JSValue {
+    fn truthyPropertyValue(prop: JSValue) ?JSValue {
         return switch (prop) {
             .zero => unreachable,
 

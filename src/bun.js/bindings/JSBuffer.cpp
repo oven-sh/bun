@@ -1618,11 +1618,12 @@ static inline JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObj
     case WebCore::BufferEncodingType::base64url:
     case WebCore::BufferEncodingType::hex: {
         ret = Bun__encoding__toString(reinterpret_cast<const unsigned char*>(castedThis->vector()) + offset, length, lexicalGlobalObject, static_cast<uint8_t>(encoding));
+        RETURN_IF_EXCEPTION(scope, {});
         break;
     }
     default: {
         throwTypeError(lexicalGlobalObject, scope, "Unsupported encoding? This shouldn't happen"_s);
-        break;
+        return {};
     }
     }
 

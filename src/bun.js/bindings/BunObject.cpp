@@ -653,18 +653,19 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
 
     // ban url-encoded slashes. '/' on posix, '/' and '\' on windows.
     const StringView p = url.path();
-
+    if (p.contains('%')) {
 #if OS(WINDOWS)
-    if (p.contains("%2f"_s) || p.contains("%5c"_s)) {
-        Bun::ERR::INVALID_FILE_URL_PATH(scope, globalObject, "must not include encoded \\ or / characters"_s);
-        return {};
-    }
+        if (p.contains("%2f"_s) || p.contains("%5c"_s) || p.contains("%2F"_s) || p.contains("%5C"_s)) {
+            Bun::ERR::INVALID_FILE_URL_PATH(scope, globalObject, "must not include encoded \\ or / characters"_s);
+            return {};
+        }
 #else
-    if (p.contains("%2f"_s)) {
-        Bun::ERR::INVALID_FILE_URL_PATH(scope, globalObject, "must not include encoded / characters"_s);
-        return {};
-    }
+        if (p.contains("%2f"_s) || p.contains("%2F"_s)) {
+            Bun::ERR::INVALID_FILE_URL_PATH(scope, globalObject, "must not include encoded / characters"_s);
+            return {};
+        }
 #endif
+    }
 
     auto fileSystemPath = url.fileSystemPath();
 

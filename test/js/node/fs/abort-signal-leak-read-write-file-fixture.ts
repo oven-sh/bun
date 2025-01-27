@@ -28,5 +28,5 @@ Bun.gc(true);
 
 const rss = (process.memoryUsage().rss / 1024 / 1024) | 0;
 if (rss > 170) {
-  throw new Error(`Memory leak detected: ${rss} MB, expected < 250 MB`);
+  throw new Error(`Memory leak detected: ${rss} MB, expected < 170 MB`);
 }

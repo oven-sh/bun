@@ -438,6 +438,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 
     EncodedJSValue exportsValue = JSC::JSValue::encode(exports);
     JSC::JSValue resultValue = JSValue::decode(napi_register_module_v1(globalObject, exportsValue));
+    // If a module returns `nullptr` (cast to a napi_value) from its register function, we should
+    // use the `exports` value (which may have had properties added to it) as the return value of
+    // `require()`.
+    if (resultValue.isEmpty()) {
+        resultValue = exports;
+    }
 
     if (auto resultObject = resultValue.getObject()) {
 #if OS(DARWIN) || OS(LINUX)

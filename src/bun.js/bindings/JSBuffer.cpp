@@ -2447,7 +2447,9 @@ static inline JSC::EncodedJSValue createJSBufferFromJS(JSC::JSGlobalObject* lexi
         if (args.at(1).isString()) {
             return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "string"_s, "string"_s, distinguishingArg);
         }
-        return JSValue::encode(allocBuffer(lexicalGlobalObject, distinguishingArg.asAnyInt()));
+        auto anyint = distinguishingArg.asAnyInt();
+        if (anyint < 0 or anyint > Bun::Buffer::kMaxLength) return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "size"_s, 0, Bun::Buffer::kMaxLength, distinguishingArg);
+        return JSValue::encode(allocBuffer(lexicalGlobalObject, anyint));
     } else if (distinguishingArg.isNumber()) {
         JSValue lengthValue = distinguishingArg;
         Bun::V::validateNumber(throwScope, lexicalGlobalObject, lengthValue, "size"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength));

@@ -20,6 +20,9 @@
       "peerDependencies": {
         "typescript": "^5.0.0",
       },
+      "optionalPeers": [
+        "typescript",
+      ],
     },
   },
   "packages": {

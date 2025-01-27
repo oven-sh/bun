@@ -583,7 +583,11 @@ interface String {
 }
 
 declare var $Buffer: {
-  new (a: any, b?: any, c?: any): Buffer;
+  new (array: Array): Buffer;
+  new (arrayBuffer: ArrayBuffer, byteOffset?: number, length?: number): Buffer;
+  new (buffer: Buffer): Buffer;
+  new (size: number): Buffer;
+  new (string: string, encoding?: BufferEncoding): Buffer;
 };
 
 declare interface Error {

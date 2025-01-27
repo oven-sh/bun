@@ -2399,65 +2399,34 @@ EncodedJSValue constructBufferFromArrayBuffer(JSC::ThrowScope& throwScope, JSGlo
     auto* jsBuffer = jsCast<JSC::JSArrayBuffer*>(arrayBufferValue.asCell());
     RefPtr<ArrayBuffer> buffer = jsBuffer->impl();
     if (buffer->isDetached()) {
-        throwTypeError(globalObject, throwScope, "Buffer is detached"_s);
-        return {};
+        return throwVMTypeError(globalObject, throwScope, "Buffer is detached"_s);
     }
     size_t byteLength = buffer->byteLength();
-    double byteLengthD = byteLength;
-
-    // This closely matches `new Uint8Array(buffer, byteOffset, length)` in JavaScriptCore's implementation.
-    // See Source/JavaScriptCore/runtime/JSGenericTypedArrayViewConstructorInlines.h
     size_t offset = 0;
-    std::optional<size_t> length;
-    size_t maxLength = byteLength;
-    if (argsCount > 1) {
+    size_t length = byteLength;
 
-        if (!offsetValue.isUndefined()) {
-            offsetValue = jsDoubleNumber(offsetValue.toNumber(lexicalGlobalObject));
-            RETURN_IF_EXCEPTION(throwScope, {});
-            if (std::isnan(offsetValue.asNumber())) offsetValue = jsNumber(0);
-            if ((byteLengthD - offsetValue.asNumber()) < 0) return Bun::ERR::BUFFER_OUT_OF_BOUNDS(throwScope, lexicalGlobalObject, "offset"_s);
-            maxLength = byteLengthD - offsetValue.asNumber();
-            offset = offsetValue.asNumber();
-        }
-
-        if (!lengthValue.isUndefined()) {
-            lengthValue = jsDoubleNumber(lengthValue.toNumber(lexicalGlobalObject));
-            RETURN_IF_EXCEPTION(throwScope, {});
-            if (std::isnan(lengthValue.asNumber())) lengthValue = jsNumber(0);
-            length = lengthValue.asNumber();
-            if (length > 0) {
-                if (length > maxLength) {
-                    return Bun::ERR::BUFFER_OUT_OF_BOUNDS(throwScope, lexicalGlobalObject, "length"_s);
-                }
-            } else {
-                length = 0;
-            }
-        }
+    if (!offsetValue.isUndefined()) {
+        double offsetD = offsetValue.toNumber(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (std::isnan(offsetD)) offsetD = 0;
+        offset = offsetD;
+        if (offset > byteLength) return Bun::ERR::BUFFER_OUT_OF_BOUNDS(throwScope, lexicalGlobalObject, "offset"_s);
+        length -= offset;
     }
 
-    if (offset > byteLength) {
-        return Bun::ERR::BUFFER_OUT_OF_BOUNDS(throwScope, globalObject, "offset"_s);
-    }
-
-    if (!length.has_value()) {
-        if (buffer->isResizableOrGrowableShared()) {
-            if (UNLIKELY(offset > byteLength)) {
-                return Bun::ERR::BUFFER_OUT_OF_BOUNDS(throwScope, globalObject, "byteOffset"_s);
-            }
-        } else {
-            length = (byteLength - offset);
-        }
-    }
-    if (offset + length.value() > byteLength) {
-        return Bun::ERR::BUFFER_OUT_OF_BOUNDS(throwScope, globalObject, "length"_s);
+    if (!lengthValue.isUndefined()) {
+        double lengthD = lengthValue.toNumber(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (std::isnan(lengthD)) lengthD = 0;
+        length = lengthD;
+        if (length > byteLength - offset) return Bun::ERR::BUFFER_OUT_OF_BOUNDS(throwScope, lexicalGlobalObject, "length"_s);
     }
 
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
     auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(buffer), offset, length);
     if (UNLIKELY(!uint8Array)) {
         throwOutOfMemoryError(globalObject, throwScope);
-        return JSC::JSValue::encode({});
+        return {};
     }
 
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
@@ -2479,18 +2448,17 @@ static inline JSC::EncodedJSValue createJSBufferFromJS(JSC::JSGlobalObject* lexi
         if (args.at(1).isString()) {
             return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "string"_s, "string"_s, distinguishingArg);
         }
-        return JSBuffer__bufferFromLength(lexicalGlobalObject, distinguishingArg.asAnyInt());
+        return JSValue::encode(allocBuffer(lexicalGlobalObject, distinguishingArg.asAnyInt()));
     } else if (distinguishingArg.isNumber()) {
         JSValue lengthValue = distinguishingArg;
         Bun::V::validateNumber(throwScope, lexicalGlobalObject, lengthValue, "size"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength));
         RETURN_IF_EXCEPTION(throwScope, {});
         size_t length = lengthValue.toLength(lexicalGlobalObject);
-        return JSBuffer__bufferFromLength(lexicalGlobalObject, length);
+        return JSValue::encode(allocBuffer(lexicalGlobalObject, length));
     } else if (distinguishingArg.isUndefinedOrNull() || distinguishingArg.isBoolean()) {
         auto arg_string = distinguishingArg.toWTFString(globalObject);
         auto message = makeString("The first argument must be of type string or an instance of Buffer, ArrayBuffer, Array or an Array-like object. Received "_s, arg_string);
-        throwTypeError(lexicalGlobalObject, throwScope, message);
-        return {};
+        return throwVMTypeError(globalObject, throwScope, message);
     } else if (distinguishingArg.isCell()) {
         auto type = distinguishingArg.asCell()->type();
         switch (type) {

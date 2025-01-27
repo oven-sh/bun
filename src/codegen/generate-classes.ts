@@ -2281,7 +2281,7 @@ JSC_DEFINE_HOST_FUNCTION(Zig::jsFunctionInherits, (JSC::JSGlobalObject * globalO
     switch (id) {
 ${jsclasses
   .map(v => v[0])
-  .map((v, i) => `    case ${i}: return JSValue::encode(jsBoolean(cell->inherits<WebCore::JS${v}>()));`)
+  .map((v, i) => `    case ${i}: return JSValue::encode(jsBoolean(jsDynamicCast<WebCore::JS${v}*>(cell) != nullptr));`)
   .join("\n")}
     }
     return JSValue::encode(jsBoolean(false));

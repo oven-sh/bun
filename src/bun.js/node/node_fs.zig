@@ -2707,6 +2707,7 @@ pub const Arguments = struct {
         pub fn deinit(self: ReadFile) void {
             self.path.deinit();
             if (self.signal) |signal| {
+                signal.pendingActivityUnref();
                 signal.unref();
             }
         }
@@ -2714,6 +2715,7 @@ pub const Arguments = struct {
         pub fn deinitAndUnprotect(self: ReadFile) void {
             self.path.deinitAndUnprotect();
             if (self.signal) |signal| {
+                signal.pendingActivityUnref();
                 signal.unref();
             }
         }
@@ -2732,7 +2734,10 @@ pub const Arguments = struct {
             var flag = FileSystemFlags.r;
 
             var abort_signal: ?*AbortSignal = null;
-            errdefer if (abort_signal) |signal| signal.unref();
+            errdefer if (abort_signal) |signal| {
+                signal.pendingActivityUnref();
+                signal.unref();
+            };
 
             if (arguments.next()) |arg| {
                 arguments.eat();
@@ -2750,6 +2755,7 @@ pub const Arguments = struct {
                     if (try arg.getTruthy(ctx, "signal")) |value| {
                         if (AbortSignal.fromJS(value)) |signal| {
                             abort_signal = signal.ref();
+                            signal.pendingActivityRef();
                         } else {
                             return ctx.throwInvalidArgumentTypeValue("signal", "AbortSignal", value);
                         }
@@ -2793,6 +2799,7 @@ pub const Arguments = struct {
             self.file.deinit();
             self.data.deinit();
             if (self.signal) |signal| {
+                signal.pendingActivityUnref();
                 signal.unref();
             }
         }
@@ -2806,6 +2813,7 @@ pub const Arguments = struct {
             self.file.deinitAndUnprotect();
             self.data.deinitAndUnprotect();
             if (self.signal) |signal| {
+                signal.pendingActivityUnref();
                 signal.unref();
             }
         }
@@ -2823,6 +2831,12 @@ pub const Arguments = struct {
             var flag = FileSystemFlags.w;
             var mode: Mode = default_permission;
             var abort_signal: ?*AbortSignal = null;
+
+            errdefer if (abort_signal) |signal| {
+                signal.pendingActivityUnref();
+                signal.unref();
+            };
+
             var flush: bool = false;
             if (data_value.isString()) {
                 encoding = Encoding.utf8;
@@ -2848,6 +2862,7 @@ pub const Arguments = struct {
                     if (try arg.getTruthy(ctx, "signal")) |value| {
                         if (AbortSignal.fromJS(value)) |signal| {
                             abort_signal = signal.ref();
+                            signal.pendingActivityRef();
                         } else {
                             return ctx.throwInvalidArgumentTypeValue("signal", "AbortSignal", value);
                         }

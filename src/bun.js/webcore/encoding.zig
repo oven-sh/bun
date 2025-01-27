@@ -892,7 +892,7 @@ pub const TextDecoder = struct {
         if (arguments.len > 0) {
             // encoding
             if (arguments[0].isString()) {
-                var str = arguments[0].toSlice(globalThis, bun.default_allocator);
+                var str = try arguments[0].toSlice(globalThis, bun.default_allocator);
                 defer if (str.isAllocated()) str.deinit();
 
                 if (EncodingLabel.which(str.slice())) |label| {
@@ -1128,7 +1128,6 @@ pub const Encoder = struct {
 
     pub fn toStringComptime(input: []const u8, global: *JSGlobalObject, comptime encoding: JSC.Node.Encoding) JSValue {
         var bun_string = toBunStringComptime(input, encoding);
-        defer bun_string.deref();
         return bun_string.transferToJS(global);
     }
 
@@ -1154,7 +1153,14 @@ pub const Encoder = struct {
                 return str;
             },
             .buffer, .utf8 => {
-                return bun.String.createUTF8(input);
+                const converted = strings.toUTF16Alloc(bun.default_allocator, input, false, false) catch return bun.String.dead;
+                if (converted) |utf16| {
+                    return bun.String.createExternalGloballyAllocated(.utf16, utf16);
+                }
+
+                // If we get here, it means we can safely assume the string is 100% ASCII characters
+                // For this, we rely on WebKit to manage the memory.
+                return bun.String.createLatin1(input);
             },
             .ucs2, .utf16le => {
                 // Avoid incomplete characters
@@ -1177,16 +1183,17 @@ pub const Encoder = struct {
             },
 
             .base64url => {
-                const str, const chars = bun.String.createUninitialized(.latin1, bun.base64.urlSafeEncodeLen(input));
-                _ = bun.base64.encodeURLSafe(chars, input);
-                return str;
+                const to_len = bun.base64.urlSafeEncodeLen(input);
+                const to = bun.default_allocator.alloc(u8, to_len) catch return bun.String.dead;
+                const wrote = bun.base64.encodeURLSafe(to, input);
+                return bun.String.createExternalGloballyAllocated(.latin1, to[0..wrote]);
             },
 
             .base64 => {
                 const to_len = bun.base64.encodeLen(input);
-                const str, const chars = bun.String.createUninitialized(.latin1, to_len);
-                _ = bun.base64.encode(chars, input);
-                return str;
+                const to = bun.default_allocator.alloc(u8, to_len) catch return bun.String.dead;
+                const wrote = bun.base64.encode(to, input);
+                return bun.String.createExternalGloballyAllocated(.latin1, to[0..wrote]);
             },
         }
     }

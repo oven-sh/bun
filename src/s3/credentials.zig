@@ -161,6 +161,9 @@ pub const S3Credentials = struct {
                         } else {
                             return globalObject.throwInvalidArgumentTypeValue("bucket", "string", js_value);
                         }
+                    } else if (js_value.isNull()) {
+                        new_credentials.credentials.sessionToken = "";
+                        new_credentials.changed_credentials = true;
                     }
                 }
 

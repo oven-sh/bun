@@ -1620,7 +1620,7 @@ fn testSupersetOf(empty: anytype, full: anytype, even: anytype, odd: anytype, le
 fn testBitSet(a: anytype, b: anytype, len: usize) !void {
     try testing.expectEqual(len, a.capacity());
     try testing.expectEqual(len, b.capacity());
-    const needs_ptr = @hasField(std.meta.Child(@TypeOf(a)), "masks") and @typeInfo(@TypeOf(@field(a, "masks"))) != .Pointer;
+    const needs_ptr = @hasField(std.meta.Child(@TypeOf(a)), "masks") and @typeInfo(@TypeOf(@field(a, "masks"))) != .pointer;
 
     {
         for (0..len) |i| {
@@ -1844,7 +1844,7 @@ fn fillOdd(set: anytype, len: usize) void {
 fn testPureBitSet(comptime Set: type) !void {
     var empty_ = Set.initEmpty();
     var full_ = Set.initFull();
-    const needs_ptr = @hasField(Set, "masks") and @typeInfo(@TypeOf(empty_.masks)) != .Pointer;
+    const needs_ptr = @hasField(Set, "masks") and @typeInfo(@TypeOf(empty_.masks)) != .pointer;
 
     var even_ = even: {
         var bit_set = Set.initEmpty();
@@ -1900,7 +1900,7 @@ fn testPureBitSet(comptime Set: type) !void {
     try testing.expect(full.differenceWith(even).eql(odd));
 }
 
-fn testStaticBitSet(comptime Set: type, comptime Container: @Type(.EnumLiteral)) !void {
+fn testStaticBitSet(comptime Set: type, comptime Container: @Type(.enum_literal)) !void {
     var a = Set.initEmpty();
     var b = Set.initFull();
     try testing.expectEqual(@as(usize, 0), a.count());

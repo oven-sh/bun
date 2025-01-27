@@ -1993,7 +1993,7 @@ pub const ares_addr_port_node = struct_ares_addr_port_node;
 
 comptime {
     const Bun__canonicalizeIP = JSC.toJSHostFunction(Bun__canonicalizeIP_);
-    @export(Bun__canonicalizeIP, .{ .name = "Bun__canonicalizeIP" });
+    @export(&Bun__canonicalizeIP, .{ .name = "Bun__canonicalizeIP" });
 }
 pub fn Bun__canonicalizeIP_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());

@@ -14,9 +14,9 @@ pub inline fn isZigString(comptime T: type) bool {
     return comptime blk: {
         // Only pointer types can be strings, no optionals
         const info = @typeInfo(T);
-        if (info != .Pointer) break :blk false;
+        if (info != .pointer) break :blk false;
 
-        const ptr = &info.Pointer;
+        const ptr = &info.pointer;
         // Check for CV qualifiers that would prevent coerction to []const u8
         if (ptr.is_volatile or ptr.is_allowzero) break :blk false;
 
@@ -26,7 +26,7 @@ pub inline fn isZigString(comptime T: type) bool {
         }
 
         // Otherwise check if it's an array type that coerces to slice.
-        if (ptr.size == .One) {
+        if (ptr.size == .one) {
             const child = @typeInfo(ptr.child);
             if (child == .Array) {
                 const arr = &child.Array;
@@ -40,7 +40,7 @@ pub inline fn isZigString(comptime T: type) bool {
 
 pub inline fn isSlice(comptime T: type) bool {
     const info = @typeInfo(T);
-    return info == .Pointer and info.Pointer.size == .Slice;
+    return info == .pointer and info.pointer.size == .Slice;
 }
 
 pub inline fn isNumber(comptime T: type) bool {
@@ -59,7 +59,7 @@ pub inline fn isContainer(comptime T: type) bool {
 
 pub inline fn isSingleItemPtr(comptime T: type) bool {
     const info = @typeInfo(T);
-    return info == .Pointer and .Pointer.size == .One;
+    return info == .pointer and .pointer.size == .one;
 }
 
 pub fn isExternContainer(comptime T: type) bool {
@@ -72,14 +72,14 @@ pub fn isExternContainer(comptime T: type) bool {
 
 pub fn isConstPtr(comptime T: type) bool {
     const info = @typeInfo(T);
-    return info == .Pointer and info.Pointer.is_const;
+    return info == .pointer and info.pointer.is_const;
 }
 
 pub fn isIndexable(comptime T: type) bool {
     const info = @typeInfo(T);
     return switch (info) {
-        .Pointer => |ptr| switch (ptr.size) {
-            .One => @typeInfo(ptr.child) == .Array,
+        .pointer => |ptr| switch (ptr.size) {
+            .one => @typeInfo(ptr.child) == .Array,
             else => true,
         },
         .Array, .Vector => true,

@@ -56,7 +56,7 @@ var custom_ssl_context_map = std.AutoArrayHashMap(*SSLConfig, *NewHTTPContext(tr
 
 pub var max_http_header_size: usize = 16 * 1024;
 comptime {
-    @export(max_http_header_size, .{ .name = "BUN_DEFAULT_MAX_HTTP_HEADER_SIZE" });
+    @export(&max_http_header_size, .{ .name = "BUN_DEFAULT_MAX_HTTP_HEADER_SIZE" });
 }
 
 const print_every = 0;
@@ -2462,13 +2462,13 @@ pub const AsyncHTTP = struct {
     }
 
     pub fn signalHeaderProgress(this: *AsyncHTTP) void {
-        @fence(.release);
+        // @fence(.release);
         var progress = this.signals.header_progress orelse return;
         progress.store(true, .release);
     }
 
     pub fn enableBodyStreaming(this: *AsyncHTTP) void {
-        @fence(.release);
+        // @fence(.release);
         var stream = this.signals.body_streaming orelse return;
         stream.store(true, .release);
     }

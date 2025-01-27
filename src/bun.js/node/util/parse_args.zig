@@ -652,7 +652,7 @@ pub fn parseArgs(
 
 comptime {
     const parseArgsFn = JSC.toJSHostFunction(parseArgs);
-    @export(parseArgsFn, .{ .name = "Bun__NodeUtil__jsParseArgs" });
+    @export(&parseArgsFn, .{ .name = "Bun__NodeUtil__jsParseArgs" });
 }
 
 pub fn parseArgsImpl(globalThis: *JSGlobalObject, config_obj: JSValue) bun.JSError!JSValue {

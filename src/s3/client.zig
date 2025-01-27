@@ -282,9 +282,9 @@ pub const Export = shim.exportFunctions(.{
 });
 comptime {
     const jsonResolveRequestStream = JSC.toJSHostFunction(onUploadStreamResolveRequestStream);
-    @export(jsonResolveRequestStream, .{ .name = Export[0].symbol_name });
+    @export(&jsonResolveRequestStream, .{ .name = Export[0].symbol_name });
     const jsonRejectRequestStream = JSC.toJSHostFunction(onUploadStreamRejectRequestStream);
-    @export(jsonRejectRequestStream, .{ .name = Export[1].symbol_name });
+    @export(&jsonRejectRequestStream, .{ .name = Export[1].symbol_name });
 }
 
 /// consumes the readable stream and upload to s3

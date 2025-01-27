@@ -4083,9 +4083,9 @@ pub const Blob = struct {
     });
     comptime {
         const jsonResolveRequestStream = JSC.toJSHostFunction(onFileStreamResolveRequestStream);
-        @export(jsonResolveRequestStream, .{ .name = Export[0].symbol_name });
+        @export(&jsonResolveRequestStream, .{ .name = Export[0].symbol_name });
         const jsonRejectRequestStream = JSC.toJSHostFunction(onFileStreamRejectRequestStream);
-        @export(jsonRejectRequestStream, .{ .name = Export[1].symbol_name });
+        @export(&jsonRejectRequestStream, .{ .name = Export[1].symbol_name });
     }
     pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *JSC.JSGlobalObject, readable_stream: JSC.WebCore.ReadableStream, extra_options: ?JSValue) JSC.JSValue {
         var store = this.store orelse {

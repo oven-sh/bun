@@ -5,8 +5,8 @@ pub usingnamespace std.meta;
 
 pub fn OptionalChild(comptime T: type) type {
     const tyinfo = @typeInfo(T);
-    if (tyinfo != .Pointer) @compileError("OptionalChild(T) requires that T be a pointer to an optional type.");
-    const child = @typeInfo(tyinfo.Pointer.child);
+    if (tyinfo != .pointer) @compileError("OptionalChild(T) requires that T be a pointer to an optional type.");
+    const child = @typeInfo(tyinfo.pointer.child);
     if (child != .Optional) @compileError("OptionalChild(T) requires that T be a pointer to an optional type.");
     return child.Optional.child;
 }
@@ -103,8 +103,8 @@ pub fn banFieldType(comptime Container: type, comptime T: type) void {
 // *[n]T -> T
 pub fn Item(comptime T: type) type {
     switch (@typeInfo(T)) {
-        .Pointer => |ptr| {
-            if (ptr.size == .One) {
+        .pointer => |ptr| {
+            if (ptr.size == .one) {
                 switch (@typeInfo(ptr.child)) {
                     .Array => |array| {
                         return array.child;

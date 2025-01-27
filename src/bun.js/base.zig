@@ -44,8 +44,8 @@ pub fn toJS(globalObject: *JSC.JSGlobalObject, comptime ValueType: type, value: 
         if (@typeInfo(ValueType) == .Optional) {
             CurrentType = @typeInfo(ValueType).Optional.child;
         }
-        break :brk if (@typeInfo(CurrentType) == .Pointer and @typeInfo(CurrentType).Pointer.size == .One)
-            @typeInfo(CurrentType).Pointer.child
+        break :brk if (@typeInfo(CurrentType) == .pointer and @typeInfo(CurrentType).pointer.size == .one)
+            @typeInfo(CurrentType).pointer.child
         else
             CurrentType;
     };
@@ -902,7 +902,7 @@ pub const DOMEffect = struct {
 };
 
 fn DOMCallArgumentType(comptime Type: type) []const u8 {
-    const ChildType = if (@typeInfo(Type) == .Pointer) std.meta.Child(Type) else Type;
+    const ChildType = if (@typeInfo(Type) == .pointer) std.meta.Child(Type) else Type;
     return switch (ChildType) {
         i8, u8, i16, u16, i32 => "JSC::SpecInt32Only",
         u32, i64, u64 => "JSC::SpecInt52Any",
@@ -915,7 +915,7 @@ fn DOMCallArgumentType(comptime Type: type) []const u8 {
 }
 
 fn DOMCallArgumentTypeWrapper(comptime Type: type) []const u8 {
-    const ChildType = if (@typeInfo(Type) == .Pointer) std.meta.Child(Type) else Type;
+    const ChildType = if (@typeInfo(Type) == .pointer) std.meta.Child(Type) else Type;
     return switch (ChildType) {
         i32 => "int32_t",
         f64 => "double",
@@ -929,7 +929,7 @@ fn DOMCallArgumentTypeWrapper(comptime Type: type) []const u8 {
 }
 
 fn DOMCallResultType(comptime Type: type) []const u8 {
-    const ChildType = if (@typeInfo(Type) == .Pointer) std.meta.Child(Type) else Type;
+    const ChildType = if (@typeInfo(Type) == .pointer) std.meta.Child(Type) else Type;
     return switch (ChildType) {
         i32 => "JSC::SpecInt32Only",
         bool => "JSC::SpecBoolean",
@@ -981,8 +981,8 @@ pub fn DOMCall(
 
         comptime {
             if (!JSC.is_bindgen) {
-                @export(slowpath, .{ .name = shim.symbolName("slowpath") });
-                @export(fastpath, .{ .name = shim.symbolName("fastpath") });
+                @export(&slowpath, .{ .name = shim.symbolName("slowpath") });
+                @export(&fastpath, .{ .name = shim.symbolName("fastpath") });
             }
         }
     };

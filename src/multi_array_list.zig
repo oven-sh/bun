@@ -25,10 +25,10 @@ pub fn MultiArrayList(comptime T: type) type {
         capacity: usize = 0,
 
         pub const Elem = switch (@typeInfo(T)) {
-            .Struct => T,
-            .Union => |u| struct {
+            .@"struct" => T,
+            .@"union" => |u| struct {
                 pub const Bare =
-                    @Type(.{ .Union = .{
+                    @Type(.{ .@"union" = .{
                     .layout = u.layout,
                     .tag_type = null,
                     .fields = u.fields,

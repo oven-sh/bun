@@ -5617,7 +5617,7 @@ fn NewParser_(
             }
 
             // Output.print("\nStmt: {s} - {d}\n", .{ @typeName(@TypeOf(t)), loc.start });
-            if (@typeInfo(Type) == .Pointer) {
+            if (@typeInfo(Type) == .pointer) {
                 // ExportFrom normally becomes import records during the visiting pass
                 // However, we skip the visiting pass in this mode
                 // So we must generate a minimum version of it here.
@@ -5707,7 +5707,7 @@ fn NewParser_(
             }
 
             // Output.print("\nExpr: {s} - {d}\n", .{ @typeName(@TypeOf(t)), loc.start });
-            if (@typeInfo(Type) == .Pointer) {
+            if (@typeInfo(Type) == .pointer) {
                 if (comptime only_scan_imports_and_do_not_visit) {
                     if (Type == *E.Call) {
                         const call: *E.Call = t;
@@ -5743,7 +5743,7 @@ fn NewParser_(
         }
 
         pub fn b(p: *P, t: anytype, loc: logger.Loc) Binding {
-            if (@typeInfo(@TypeOf(t)) == .Pointer) {
+            if (@typeInfo(@TypeOf(t)) == .pointer) {
                 return Binding.init(t, loc);
             } else {
                 return Binding.alloc(p.allocator, t, loc);

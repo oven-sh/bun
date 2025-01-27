@@ -3205,7 +3205,7 @@ pub const Stmt = struct {
     pub fn StoredData(tag: Tag) type {
         const T = std.meta.FieldType(Data, tag);
         return switch (@typeInfo(T)) {
-            .Pointer => |ptr| ptr.child,
+            .pointer => |ptr| ptr.child,
             else => T,
         };
     }
@@ -6044,7 +6044,7 @@ pub const Expr = struct {
             p: anytype,
             comptime kind: enum { loose, strict },
         ) Equality {
-            comptime bun.assert(@typeInfo(@TypeOf(p)).Pointer.size == .One); // pass *Parser
+            comptime bun.assert(@typeInfo(@TypeOf(p)).pointer.size == .one); // pass *Parser
 
             // https://dorey.github.io/JavaScript-Equality-Table/
             switch (left) {
@@ -6332,7 +6332,7 @@ pub const Expr = struct {
     pub fn StoredData(tag: Tag) type {
         const T = std.meta.FieldType(Data, tag);
         return switch (@typeInfo(T)) {
-            .Pointer => |ptr| ptr.child,
+            .pointer => |ptr| ptr.child,
             else => T,
         };
     }

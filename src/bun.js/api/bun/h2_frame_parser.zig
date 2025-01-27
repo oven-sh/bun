@@ -530,7 +530,7 @@ const Handlers = struct {
     globalObject: *JSC.JSGlobalObject,
     strong_ctx: JSC.Strong = .{},
 
-    pub fn callEventHandler(this: *Handlers, comptime event: @Type(.EnumLiteral), thisValue: JSValue, data: []const JSValue) bool {
+    pub fn callEventHandler(this: *Handlers, comptime event: @Type(.enum_literal), thisValue: JSValue, data: []const JSValue) bool {
         const callback = @field(this, @tagName(event));
         if (callback == .zero) {
             return false;
@@ -546,7 +546,7 @@ const Handlers = struct {
         return true;
     }
 
-    pub fn callEventHandlerWithResult(this: *Handlers, comptime event: @Type(.EnumLiteral), thisValue: JSValue, data: []const JSValue) JSValue {
+    pub fn callEventHandlerWithResult(this: *Handlers, comptime event: @Type(.enum_literal), thisValue: JSValue, data: []const JSValue) JSValue {
         const callback = @field(this, @tagName(event));
         if (callback == .zero) {
             return JSC.JSValue.zero;
@@ -1353,7 +1353,7 @@ pub const H2FrameParser = struct {
         _ = this.write(&buffer);
     }
 
-    pub fn dispatch(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue) void {
+    pub fn dispatch(this: *H2FrameParser, comptime event: @Type(.enum_literal), value: JSC.JSValue) void {
         JSC.markBinding(@src());
 
         const ctx_value = this.strong_ctx.get() orelse return;
@@ -1361,7 +1361,7 @@ pub const H2FrameParser = struct {
         _ = this.handlers.callEventHandler(event, ctx_value, &[_]JSC.JSValue{ ctx_value, value });
     }
 
-    pub fn call(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue) JSValue {
+    pub fn call(this: *H2FrameParser, comptime event: @Type(.enum_literal), value: JSC.JSValue) JSValue {
         JSC.markBinding(@src());
 
         const ctx_value = this.strong_ctx.get() orelse return .zero;
@@ -1373,7 +1373,7 @@ pub const H2FrameParser = struct {
 
         _ = this.handlers.callWriteCallback(callback, &[_]JSC.JSValue{});
     }
-    pub fn dispatchWithExtra(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue, extra: JSC.JSValue) void {
+    pub fn dispatchWithExtra(this: *H2FrameParser, comptime event: @Type(.enum_literal), value: JSC.JSValue, extra: JSC.JSValue) void {
         JSC.markBinding(@src());
 
         const ctx_value = this.strong_ctx.get() orelse return;
@@ -1382,7 +1382,7 @@ pub const H2FrameParser = struct {
         _ = this.handlers.callEventHandler(event, ctx_value, &[_]JSC.JSValue{ ctx_value, value, extra });
     }
 
-    pub fn dispatchWith2Extra(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue, extra: JSC.JSValue, extra2: JSC.JSValue) void {
+    pub fn dispatchWith2Extra(this: *H2FrameParser, comptime event: @Type(.enum_literal), value: JSC.JSValue, extra: JSC.JSValue, extra2: JSC.JSValue) void {
         JSC.markBinding(@src());
 
         const ctx_value = this.strong_ctx.get() orelse return;
@@ -1391,7 +1391,7 @@ pub const H2FrameParser = struct {
         extra2.ensureStillAlive();
         _ = this.handlers.callEventHandler(event, ctx_value, &[_]JSC.JSValue{ ctx_value, value, extra, extra2 });
     }
-    pub fn dispatchWith3Extra(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue, extra: JSC.JSValue, extra2: JSC.JSValue, extra3: JSC.JSValue) void {
+    pub fn dispatchWith3Extra(this: *H2FrameParser, comptime event: @Type(.enum_literal), value: JSC.JSValue, extra: JSC.JSValue, extra2: JSC.JSValue, extra3: JSC.JSValue) void {
         JSC.markBinding(@src());
 
         const ctx_value = this.strong_ctx.get() orelse return;

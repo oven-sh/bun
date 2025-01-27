@@ -560,8 +560,8 @@ pub const Jest = struct {
 
     comptime {
         if (!JSC.is_bindgen) {
-            @export(Bun__Jest__createTestModuleObject, .{ .name = "Bun__Jest__createTestModuleObject" });
-            @export(Bun__Jest__createTestPreloadObject, .{ .name = "Bun__Jest__createTestPreloadObject" });
+            @export(&Bun__Jest__createTestModuleObject, .{ .name = "Bun__Jest__createTestModuleObject" });
+            @export(&Bun__Jest__createTestPreloadObject, .{ .name = "Bun__Jest__createTestPreloadObject" });
         }
     }
 };
@@ -812,10 +812,10 @@ pub const TestScope = struct {
     pub const name = "TestScope";
     pub const shim = JSC.Shimmer("Bun", name, @This());
     comptime {
-        @export(jsOnResolve, .{
+        @export(&jsOnResolve, .{
             .name = shim.symbolName("onResolve"),
         });
-        @export(jsOnReject, .{
+        @export(&jsOnReject, .{
             .name = shim.symbolName("onReject"),
         });
     }

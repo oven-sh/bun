@@ -87,7 +87,7 @@ const HashMapPool = struct {
 
 fn newExpr(t: anytype, loc: logger.Loc) Expr {
     const Type = @TypeOf(t);
-    if (comptime @typeInfo(Type) == .Pointer) {
+    if (comptime @typeInfo(Type) == .pointer) {
         @compileError("Unexpected pointer");
     }
 
@@ -561,8 +561,8 @@ pub fn toAST(
                 .loc = logger.Loc{},
             };
         },
-        .Pointer => |ptr_info| switch (ptr_info.size) {
-            .One => switch (@typeInfo(ptr_info.child)) {
+        .pointer => |ptr_info| switch (ptr_info.size) {
+            .one => switch (@typeInfo(ptr_info.child)) {
                 .Array => {
                     const Slice = []const std.meta.Elem(ptr_info.child);
                     return try toAST(allocator, Slice, value.*);

@@ -4074,7 +4074,7 @@ pub const Delimiters = packed struct(u8) {
 
     const NONE: Delimiters = .{};
 
-    pub fn getDelimiter(comptime tag: @TypeOf(.EnumLiteral)) Delimiters {
+    pub fn getDelimiter(comptime tag: @TypeOf(.enum_literal)) Delimiters {
         var empty = Delimiters{};
         @field(empty, @tagName(tag)) = true;
         return empty;
@@ -6499,7 +6499,7 @@ pub inline fn implementDeepClone(comptime T: type, this: *const T, allocator: Al
         return this.*;
     }
 
-    if (comptime @typeInfo(T) == .Pointer) {
+    if (comptime @typeInfo(T) == .pointer) {
         const TT = std.meta.Child(T);
         return implementEql(TT, this.*);
     }
@@ -6551,7 +6551,7 @@ pub fn implementEql(comptime T: type, this: *const T, other: *const T) bool {
     if (comptime T == []const u8) {
         return bun.strings.eql(this.*, other.*);
     }
-    if (comptime @typeInfo(T) == .Pointer) {
+    if (comptime @typeInfo(T) == .pointer) {
         const TT = std.meta.Child(T);
         return implementEql(TT, this.*, other.*);
     }
@@ -6562,7 +6562,7 @@ pub fn implementEql(comptime T: type, this: *const T, other: *const T) bool {
     }
     return switch (tyinfo) {
         .Optional => @compileError("Handled above, this means Zack wrote a bug."),
-        .Pointer => @compileError("Handled above, this means Zack wrote a bug."),
+        .pointer => @compileError("Handled above, this means Zack wrote a bug."),
         .Array => {
             const Child = std.meta.Child(T);
             if (comptime bun.meta.isSimpleEqlType(Child)) {
@@ -6629,7 +6629,7 @@ pub fn implementHash(comptime T: type, this: *const T, hasher: *std.hash.Wyhash)
     if (comptime T == []const u8) {
         return hasher.update(this.*);
     }
-    if (comptime @typeInfo(T) == .Pointer) {
+    if (comptime @typeInfo(T) == .pointer) {
         @compileError("Invalid type for implementHash(): " ++ @typeName(T));
     }
     if (comptime @typeInfo(T) == .Optional) {
@@ -6644,8 +6644,8 @@ pub fn implementHash(comptime T: type, this: *const T, hasher: *std.hash.Wyhash)
                 generic.hash(tyinfo.Optional.child, &this.*.?, hasher);
             }
         },
-        .Pointer => {
-            generic.hash(tyinfo.Pointer.child, &this.*, hasher);
+        .pointer => {
+            generic.hash(tyinfo.pointer.child, &this.*, hasher);
         },
         .Array => {
             bun.writeAnyToHasher(hasher, this.len);

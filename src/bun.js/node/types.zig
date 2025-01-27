@@ -202,7 +202,7 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
                     else => switch (@typeInfo(ReturnType)) {
                         .Int, .Float, .ComptimeInt, .ComptimeFloat => JSC.JSValue.jsNumber(r),
                         .Struct, .Enum, .Opaque, .Union => r.toJS(globalObject),
-                        .Pointer => {
+                        .pointer => {
                             if (bun.trait.isZigString(ReturnType))
                                 JSC.ZigString.init(bun.asByteSlice(r)).withEncoding().toJS(globalObject);
 
@@ -2203,7 +2203,7 @@ pub const Process = struct {
 
     comptime {
         if (Environment.export_cpp_apis and Environment.isWindows) {
-            @export(Bun__Process__editWindowsEnvVar, .{ .name = "Bun__Process__editWindowsEnvVar" });
+            @export(&Bun__Process__editWindowsEnvVar, .{ .name = "Bun__Process__editWindowsEnvVar" });
         }
     }
 

@@ -2306,7 +2306,7 @@ const GitHandler = struct {
         else
             run(destination, PATH, false) catch false;
 
-        @fence(.acquire);
+        // @fence(.acquire);
         success.store(
             if (outcome)
                 1
@@ -2318,7 +2318,7 @@ const GitHandler = struct {
     }
 
     pub fn wait() bool {
-        @fence(.release);
+        // @fence(.release);
 
         while (success.load(.acquire) == 0) {
             Futex.wait(&success, 0, 1000) catch continue;

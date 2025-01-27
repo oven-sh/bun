@@ -7,7 +7,7 @@ const headers = @import("./headers.zig");
 
 fn isNullableType(comptime Type: type) bool {
     return @typeInfo(Type) == .Optional or
-        (@typeInfo(Type) == .Pointer and @typeInfo(Type).Pointer.is_allowzero);
+        (@typeInfo(Type) == .pointer and @typeInfo(Type).pointer.is_allowzero);
 }
 
 const log = @import("../../output.zig").scoped(.CPP, true);
@@ -47,8 +47,8 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
 
         //     var ReturnTypeInfo: std.builtin.Type = @typeInfo(FromType);
 
-        //     if (ReturnTypeInfo == .Pointer and NewReturnType != *anyopaque) {
-        //         NewReturnType = ReturnTypeInfo.Pointer.child;
+        //     if (ReturnTypeInfo == .pointer and NewReturnType != *anyopaque) {
+        //         NewReturnType = ReturnTypeInfo.pointer.child;
         //         ReturnTypeInfo = @typeInfo(NewReturnType);
         //     }
 
@@ -95,8 +95,8 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
         };
 
         fn pointerChild(comptime Type: type) type {
-            if (@typeInfo(Type) == .Pointer) {
-                return @typeInfo(Type).Pointer.child_type;
+            if (@typeInfo(Type) == .pointer) {
+                return @typeInfo(Type).pointer.child_type;
             }
 
             return Type;

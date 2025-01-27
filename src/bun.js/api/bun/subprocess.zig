@@ -279,7 +279,7 @@ pub const Subprocess = struct {
     }
 
     pub fn updateHasPendingActivity(this: *Subprocess) void {
-        @fence(.seq_cst);
+        // @fence(.seq_cst);
         if (comptime Environment.isDebug) {
             log("updateHasPendingActivity() {any} -> {any}", .{
                 this.has_pending_activity.raw,
@@ -342,7 +342,7 @@ pub const Subprocess = struct {
     }
 
     pub fn hasPendingActivity(this: *Subprocess) callconv(.C) bool {
-        @fence(.acquire);
+        // @fence(.acquire);
         return this.has_pending_activity.load(.acquire);
     }
 
@@ -684,7 +684,7 @@ pub const Subprocess = struct {
         return this.process.kill(@intCast(sig));
     }
 
-    fn hasCalledGetter(this: *Subprocess, comptime getter: @Type(.EnumLiteral)) bool {
+    fn hasCalledGetter(this: *Subprocess, comptime getter: @Type(.enum_literal)) bool {
         return this.observable_getters.contains(getter);
     }
 
@@ -1570,7 +1570,7 @@ pub const Subprocess = struct {
         }
     }
 
-    fn closeIO(this: *Subprocess, comptime io: @Type(.EnumLiteral)) void {
+    fn closeIO(this: *Subprocess, comptime io: @Type(.enum_literal)) void {
         if (this.closed.contains(io)) return;
         this.closed.insert(io);
 

@@ -27,7 +27,7 @@ pub export fn memmem(haystack: ?[*]const u8, haystacklen: usize, needle: ?[*]con
 }
 
 comptime {
-    @export(memmem, .{ .name = "zig_memmem" });
+    @export(&memmem, .{ .name = "zig_memmem" });
 }
 
 pub const lstat = blk: {

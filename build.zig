@@ -19,7 +19,7 @@ const OperatingSystem = @import("src/env.zig").OperatingSystem;
 const pathRel = fs.path.relative;
 
 /// Do not rename this constant. It is scanned by some scripts to determine which zig version to install.
-const recommended_zig_version = "0.13.0";
+const recommended_zig_version = "0.14.0-dev.2928+814f33105";
 
 comptime {
     if (!std.mem.eql(u8, builtin.zig_version_string, recommended_zig_version)) {
@@ -154,14 +154,11 @@ pub fn build(b: *Build) !void {
     std.log.info("zig compiler v{s}", .{builtin.zig_version_string});
     checked_file_exists = std.AutoHashMap(u64, void).init(b.allocator);
 
-    b.zig_lib_dir = b.zig_lib_dir orelse b.path("vendor/zig/lib");
-
-    // TODO: Upgrade path for 0.14.0
-    // b.graph.zig_lib_directory = brk: {
-    //     const sub_path = "vendor/zig/lib";
-    //     const dir = try b.build_root.handle.openDir(sub_path, .{});
-    //     break :brk .{ .handle = dir, .path = try b.build_root.join(b.graph.arena, &.{sub_path}) };
-    // };
+    b.graph.zig_lib_directory = brk: {
+        const sub_path = "vendor/zig/lib";
+        const dir = try b.build_root.handle.openDir(sub_path, .{});
+        break :brk .{ .handle = dir, .path = try b.build_root.join(b.graph.arena, &.{sub_path}) };
+    };
 
     var target_query = b.standardTargetOptionsQueryOnly(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -335,7 +332,7 @@ pub fn build(b: *Build) !void {
     // zig build translate-c-headers
     {
         const step = b.step("translate-c", "Copy generated translated-c-headers.zig to zig-out");
-        step.dependOn(&b.addInstallFile(getTranslateC(b, b.host, .Debug).getOutput(), "translated-c-headers.zig").step);
+        step.dependOn(&b.addInstallFile(getTranslateC(b, b.resolveTargetQuery(.{}), .Debug).getOutput(), "translated-c-headers.zig").step);
     }
 
     // zig build enum-extractor
@@ -363,7 +360,7 @@ pub fn addMultiCheck(
             const check_target = b.resolveTargetQuery(.{
                 .os_tag = OperatingSystem.stdOSTag(check.os),
                 .cpu_arch = check.arch,
-                .cpu_model = getCpuModel(check.os, check.arch) orelse .determined_by_cpu_arch,
+                .cpu_model = getCpuModel(check.os, check.arch) orelse .determined_by_arch_os,
                 .os_version_min = getOSVersionMin(check.os),
                 .glibc_version = if (check.musl) null else getOSGlibCVersion(check.os),
             });
@@ -429,7 +426,6 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
         .strip = false, // stripped at the end
     });
     obj.bundle_compiler_rt = false;
-    obj.formatted_panics = true;
     obj.root_module.omit_frame_pointer = false;
 
     // Link libc
@@ -474,6 +470,11 @@ pub fn addInstallObjectFile(
     name: []const u8,
     out_mode: ObjectFormat,
 ) *Step {
+    if (@import("builtin").os.tag != .windows and b.graph.env_map.get("COMPILE_ERRORS_ONLY") != null) {
+        const failstep = b.addSystemCommand(&.{"COMPILE_ERRORS_ONLY set but there were no compile errors"});
+        failstep.step.dependOn(&compile.step);
+        return &failstep.step;
+    }
     // bin always needed to be computed or else the compilation will do nothing. zig build system bug?
     const bin = compile.getEmittedBin();
     return &b.addInstallFile(switch (out_mode) {
@@ -614,7 +615,7 @@ const WindowsShim = struct {
             .optimize = .ReleaseFast,
             .use_llvm = true,
             .use_lld = true,
-            .unwind_tables = false,
+            .unwind_tables = .none,
             .omit_frame_pointer = true,
             .strip = true,
             .linkage = .static,

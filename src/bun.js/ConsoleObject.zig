@@ -3691,17 +3691,17 @@ pub fn screenshot(
 ) callconv(JSC.conv) void {}
 
 comptime {
-    @export(messageWithTypeAndLevel, .{ .name = shim.symbolName("messageWithTypeAndLevel") });
-    @export(count, .{ .name = shim.symbolName("count") });
-    @export(countReset, .{ .name = shim.symbolName("countReset") });
-    @export(time, .{ .name = shim.symbolName("time") });
-    @export(timeLog, .{ .name = shim.symbolName("timeLog") });
-    @export(timeEnd, .{ .name = shim.symbolName("timeEnd") });
-    @export(profile, .{ .name = shim.symbolName("profile") });
-    @export(profileEnd, .{ .name = shim.symbolName("profileEnd") });
-    @export(takeHeapSnapshot, .{ .name = shim.symbolName("takeHeapSnapshot") });
-    @export(timeStamp, .{ .name = shim.symbolName("timeStamp") });
-    @export(record, .{ .name = shim.symbolName("record") });
-    @export(recordEnd, .{ .name = shim.symbolName("recordEnd") });
-    @export(screenshot, .{ .name = shim.symbolName("screenshot") });
+    @export(&messageWithTypeAndLevel, .{ .name = shim.symbolName("messageWithTypeAndLevel") });
+    @export(&count, .{ .name = shim.symbolName("count") });
+    @export(&countReset, .{ .name = shim.symbolName("countReset") });
+    @export(&time, .{ .name = shim.symbolName("time") });
+    @export(&timeLog, .{ .name = shim.symbolName("timeLog") });
+    @export(&timeEnd, .{ .name = shim.symbolName("timeEnd") });
+    @export(&profile, .{ .name = shim.symbolName("profile") });
+    @export(&profileEnd, .{ .name = shim.symbolName("profileEnd") });
+    @export(&takeHeapSnapshot, .{ .name = shim.symbolName("takeHeapSnapshot") });
+    @export(&timeStamp, .{ .name = shim.symbolName("timeStamp") });
+    @export(&record, .{ .name = shim.symbolName("record") });
+    @export(&recordEnd, .{ .name = shim.symbolName("recordEnd") });
+    @export(&screenshot, .{ .name = shim.symbolName("screenshot") });
 }

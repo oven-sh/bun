@@ -417,7 +417,7 @@ pub fn _dlsym(handle: ?*anyopaque, name: [:0]const u8) ?*anyopaque {
 }
 
 pub fn dlsymWithHandle(comptime Type: type, comptime name: [:0]const u8, comptime handle_getter: fn () ?*anyopaque) ?Type {
-    if (comptime @typeInfo(Type) != .Pointer) {
+    if (comptime @typeInfo(Type) != .pointer) {
         @compileError("dlsym must be a pointer type (e.g. ?const *fn()). Received " ++ @typeName(Type) ++ ".");
     }
 

@@ -43,7 +43,7 @@ pub fn assertNoUninitializedPadding(comptime T: type) void {
             assertNoUninitializedPadding(a.child);
             return;
         },
-        .Pointer => |ptr| {
+        .pointer => |ptr| {
             // Pointers aren't allowed, but this just makes the assertion easier to invoke.
             assertNoUninitializedPadding(ptr.child);
             return;
@@ -62,7 +62,7 @@ pub fn assertNoUninitializedPadding(comptime T: type) void {
             .Union => assertNoUninitializedPadding(field.type),
             .Array => |a| assertNoUninitializedPadding(a.child),
             .Optional => |a| assertNoUninitializedPadding(a.child),
-            .Pointer => {
+            .pointer => {
                 @compileError("Expected no pointer types in " ++ @typeName(T) ++ ", found field '" ++ field.name ++ "' of type '" ++ @typeName(field.type) ++ "'");
             },
             else => {},

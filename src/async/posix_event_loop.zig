@@ -782,7 +782,7 @@ pub const FilePoll = struct {
     });
 
     comptime {
-        @export(onTick, .{ .name = "Bun__internal_dispatch_ready_poll" });
+        @export(&onTick, .{ .name = "Bun__internal_dispatch_ready_poll" });
     }
 
     const timeout = std.mem.zeroes(std.posix.timespec);

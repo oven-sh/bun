@@ -5619,9 +5619,9 @@ extern fn Expect__getPrototype(globalThis: *JSGlobalObject) JSValue;
 extern fn ExpectStatic__getPrototype(globalThis: *JSGlobalObject) JSValue;
 
 comptime {
-    @export(ExpectMatcherUtils.createSingleton, .{ .name = "ExpectMatcherUtils_createSigleton" });
-    @export(Expect.readFlagsAndProcessPromise, .{ .name = "Expect_readFlagsAndProcessPromise" });
-    @export(ExpectCustomAsymmetricMatcher.execute, .{ .name = "ExpectCustomAsymmetricMatcher__execute" });
+    @export(&ExpectMatcherUtils.createSingleton, .{ .name = "ExpectMatcherUtils_createSigleton" });
+    @export(&Expect.readFlagsAndProcessPromise, .{ .name = "Expect_readFlagsAndProcessPromise" });
+    @export(&ExpectCustomAsymmetricMatcher.execute, .{ .name = "ExpectCustomAsymmetricMatcher__execute" });
 }
 
 fn incrementExpectCallCounter() void {

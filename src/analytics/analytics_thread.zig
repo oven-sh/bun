@@ -126,8 +126,8 @@ pub const Features = struct {
     pub var s3: usize = 0;
 
     comptime {
-        @export(napi_module_register, .{ .name = "Bun__napi_module_register_count" });
-        @export(process_dlopen, .{ .name = "Bun__process_dlopen_count" });
+        @export(&napi_module_register, .{ .name = "Bun__napi_module_register_count" });
+        @export(&process_dlopen, .{ .name = "Bun__process_dlopen_count" });
     }
 
     pub fn formatter() Formatter {
@@ -145,7 +145,7 @@ pub const Features = struct {
                     _ = &f;
                     const Field = @TypeOf(f);
                     const FieldT: std.builtin.Type = @typeInfo(Field);
-                    if (FieldT.Pointer.child != usize) continue;
+                    if (FieldT.pointer.child != usize) continue;
                     buffer[count] = decl.name;
                     count += 1;
                 }

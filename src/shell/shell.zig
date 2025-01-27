@@ -1146,7 +1146,7 @@ pub const Parser = struct {
         return expr;
     }
 
-    fn extractIfClauseTextToken(comptime if_clause_token: @TypeOf(.EnumLiteral)) []const u8 {
+    fn extractIfClauseTextToken(comptime if_clause_token: @TypeOf(.enum_literal)) []const u8 {
         const tagname = comptime switch (if_clause_token) {
             .@"if" => "if",
             .@"else" => "else",
@@ -1158,7 +1158,7 @@ pub const Parser = struct {
         return tagname;
     }
 
-    fn expectIfClauseTextToken(self: *Parser, comptime if_clause_token: @TypeOf(.EnumLiteral)) Token {
+    fn expectIfClauseTextToken(self: *Parser, comptime if_clause_token: @TypeOf(.enum_literal)) Token {
         const tagname = comptime extractIfClauseTextToken(if_clause_token);
         if (bun.Environment.allow_assert) assert(@as(TokenTag, self.peek()) == .Text);
         if (self.peek() == .Text and
@@ -1172,14 +1172,14 @@ pub const Parser = struct {
         @panic("Expected: " ++ @tagName(if_clause_token));
     }
 
-    fn isIfClauseTextToken(self: *Parser, comptime if_clause_token: @TypeOf(.EnumLiteral)) bool {
+    fn isIfClauseTextToken(self: *Parser, comptime if_clause_token: @TypeOf(.enum_literal)) bool {
         return switch (self.peek()) {
             .Text => |range| self.isIfClauseTextTokenImpl(range, if_clause_token),
             else => false,
         };
     }
 
-    fn isIfClauseTextTokenImpl(self: *Parser, range: Token.TextRange, comptime if_clause_token: @TypeOf(.EnumLiteral)) bool {
+    fn isIfClauseTextTokenImpl(self: *Parser, range: Token.TextRange, comptime if_clause_token: @TypeOf(.enum_literal)) bool {
         const tagname = comptime extractIfClauseTextToken(if_clause_token);
         return bun.strings.eqlComptime(self.text(range), tagname);
     }

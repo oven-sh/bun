@@ -84,7 +84,7 @@ fn escapeXml(str: string, writer: anytype) !void {
         try writer.writeAll(str[last..]);
     }
 }
-fn fmtStatusTextLine(comptime status: @Type(.EnumLiteral), comptime emoji_or_color: bool) []const u8 {
+fn fmtStatusTextLine(comptime status: @Type(.enum_literal), comptime emoji_or_color: bool) []const u8 {
     comptime {
         // emoji and color might be split into two different options in the future
         // some terminals support color, but not emoji.
@@ -108,7 +108,7 @@ fn fmtStatusTextLine(comptime status: @Type(.EnumLiteral), comptime emoji_or_col
     }
 }
 
-fn writeTestStatusLine(comptime status: @Type(.EnumLiteral), writer: anytype) void {
+fn writeTestStatusLine(comptime status: @Type(.enum_literal), writer: anytype) void {
     if (Output.enable_ansi_colors_stderr)
         writer.print(fmtStatusTextLine(status, true), .{}) catch unreachable
     else

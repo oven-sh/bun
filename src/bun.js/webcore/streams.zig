@@ -1983,17 +1983,17 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
         }
 
         comptime {
-            @export(finalize, .{ .name = shim.symbolName("finalize") });
-            @export(jsWrite, .{ .name = shim.symbolName("write") });
-            @export(jsGetInternalFd, .{ .name = shim.symbolName("getInternalFd") });
-            @export(close, .{ .name = shim.symbolName("close") });
-            @export(jsFlush, .{ .name = shim.symbolName("flush") });
-            @export(jsStart, .{ .name = shim.symbolName("start") });
-            @export(jsEnd, .{ .name = shim.symbolName("end") });
-            @export(jsConstruct, .{ .name = shim.symbolName("construct") });
-            @export(endWithSink, .{ .name = shim.symbolName("endWithSink") });
-            @export(updateRef, .{ .name = shim.symbolName("updateRef") });
-            @export(memoryCost, .{ .name = shim.symbolName("memoryCost") });
+            @export(&finalize, .{ .name = shim.symbolName("finalize") });
+            @export(&jsWrite, .{ .name = shim.symbolName("write") });
+            @export(&jsGetInternalFd, .{ .name = shim.symbolName("getInternalFd") });
+            @export(&close, .{ .name = shim.symbolName("close") });
+            @export(&jsFlush, .{ .name = shim.symbolName("flush") });
+            @export(&jsStart, .{ .name = shim.symbolName("start") });
+            @export(&jsEnd, .{ .name = shim.symbolName("end") });
+            @export(&jsConstruct, .{ .name = shim.symbolName("construct") });
+            @export(&endWithSink, .{ .name = shim.symbolName("endWithSink") });
+            @export(&updateRef, .{ .name = shim.symbolName("updateRef") });
+            @export(&memoryCost, .{ .name = shim.symbolName("memoryCost") });
 
             shim.assertJSFunction(.{
                 write,
@@ -3447,7 +3447,7 @@ pub const FileSink = struct {
 
     comptime {
         if (Environment.isWindows) {
-            @export(Bun__ForceFileSinkToBeSynchronousOnWindows, .{ .name = "Bun__ForceFileSinkToBeSynchronousOnWindows" });
+            @export(&Bun__ForceFileSinkToBeSynchronousOnWindows, .{ .name = "Bun__ForceFileSinkToBeSynchronousOnWindows" });
         }
     }
 

@@ -607,7 +607,7 @@ pub const GarbageCollectionController = struct {
     //
     // When the heap size is increasing, we always switch to fast mode
     // When the heap size has been the same or less for 30 seconds, we switch to slow mode
-    pub fn updateGCRepeatTimer(this: *GarbageCollectionController, comptime setting: @Type(.EnumLiteral)) void {
+    pub fn updateGCRepeatTimer(this: *GarbageCollectionController, comptime setting: @Type(.enum_literal)) void {
         if (setting == .fast and !this.gc_repeating_timer_fast) {
             this.gc_repeating_timer_fast = true;
             this.gc_repeating_timer.set(this, onGCRepeatingTimer, this.gc_timer_interval, this.gc_timer_interval);
@@ -2205,7 +2205,7 @@ pub const EventLoopHandle = union(enum) {
         };
     }
 
-    pub fn cast(this: EventLoopHandle, comptime as: @Type(.EnumLiteral)) if (as == .js) *JSC.EventLoop else *MiniEventLoop {
+    pub fn cast(this: EventLoopHandle, comptime as: @Type(.enum_literal)) if (as == .js) *JSC.EventLoop else *MiniEventLoop {
         if (as == .js) {
             if (this != .js) @panic("Expected *JSC.EventLoop but got *MiniEventLoop");
             return this.js;
@@ -2330,7 +2330,7 @@ pub const EventLoopTask = union {
     js: ConcurrentTask,
     mini: JSC.AnyTaskWithExtraContext,
 
-    pub fn init(comptime kind: @TypeOf(.EnumLiteral)) EventLoopTask {
+    pub fn init(comptime kind: @TypeOf(.enum_literal)) EventLoopTask {
         switch (kind) {
             .js => return .{ .js = ConcurrentTask{} },
             .mini => return .{ .mini = JSC.AnyTaskWithExtraContext{} },

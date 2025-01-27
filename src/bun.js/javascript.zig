@@ -432,7 +432,7 @@ extern fn Bun__Process__queueNextTick1(*JSC.ZigGlobalObject, JSC.JSValue, JSC.JS
 
 comptime {
     const Bun__Process__send = JSC.toJSHostFunction(Bun__Process__send_);
-    @export(Bun__Process__send, .{ .name = "Bun__Process__send" });
+    @export(&Bun__Process__send, .{ .name = "Bun__Process__send" });
 }
 pub fn Bun__Process__send_(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
@@ -579,7 +579,7 @@ const WindowsOnly = struct {
 
 comptime {
     if (Environment.isWindows) {
-        @export(WindowsOnly.Bun__ZigGlobalObject__uvLoop, .{ .name = "Bun__ZigGlobalObject__uvLoop" });
+        @export(&WindowsOnly.Bun__ZigGlobalObject__uvLoop, .{ .name = "Bun__ZigGlobalObject__uvLoop" });
     }
 }
 
@@ -1402,10 +1402,10 @@ pub const VirtualMachine = struct {
     }
 
     comptime {
-        @export(scriptExecutionStatus, .{ .name = "Bun__VM__scriptExecutionStatus" });
-        @export(setEntryPointEvalResultESM, .{ .name = "Bun__VM__setEntryPointEvalResultESM" });
-        @export(setEntryPointEvalResultCJS, .{ .name = "Bun__VM__setEntryPointEvalResultCJS" });
-        @export(specifierIsEvalEntryPoint, .{ .name = "Bun__VM__specifierIsEvalEntryPoint" });
+        @export(&scriptExecutionStatus, .{ .name = "Bun__VM__scriptExecutionStatus" });
+        @export(&setEntryPointEvalResultESM, .{ .name = "Bun__VM__setEntryPointEvalResultESM" });
+        @export(&setEntryPointEvalResultCJS, .{ .name = "Bun__VM__setEntryPointEvalResultCJS" });
+        @export(&specifierIsEvalEntryPoint, .{ .name = "Bun__VM__specifierIsEvalEntryPoint" });
     }
 
     pub fn onExit(this: *VirtualMachine) void {
@@ -4949,8 +4949,8 @@ pub var synthetic_allocation_limit: usize = std.math.maxInt(u32);
 pub var string_allocation_limit: usize = std.math.maxInt(u32);
 
 comptime {
-    @export(synthetic_allocation_limit, .{ .name = "Bun__syntheticAllocationLimit" });
-    @export(string_allocation_limit, .{ .name = "Bun__stringSyntheticAllocationLimit" });
+    @export(&synthetic_allocation_limit, .{ .name = "Bun__syntheticAllocationLimit" });
+    @export(&string_allocation_limit, .{ .name = "Bun__stringSyntheticAllocationLimit" });
 }
 
 pub fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {

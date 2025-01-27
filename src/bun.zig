@@ -345,11 +345,11 @@ pub inline fn cast(comptime To: type, value: anytype) To {
 
 pub fn len(value: anytype) usize {
     return switch (@typeInfo(@TypeOf(value))) {
-        .Array => |info| info.len,
+        .array => |info| info.len,
         .Vector => |info| info.len,
-        .Pointer => |info| switch (info.size) {
-            .One => switch (@typeInfo(info.child)) {
-                .Array => |array| brk: {
+        .pointer => |info| switch (info.size) {
+            .one => switch (@typeInfo(info.child)) {
+                .array => |array| brk: {
                     if (array.sentinel != null) {
                         @compileError("use bun.sliceTo");
                     }
@@ -383,11 +383,11 @@ fn Span(comptime T: type) type {
         .Optional => |optional_info| {
             return ?Span(optional_info.child);
         },
-        .Pointer => |ptr_info| {
+        .pointer => |ptr_info| {
             var new_ptr_info = ptr_info;
             switch (ptr_info.size) {
-                .One => switch (@typeInfo(ptr_info.child)) {
-                    .Array => |info| {
+                .one => switch (@typeInfo(ptr_info.child)) {
+                    .array => |info| {
                         new_ptr_info.child = info.child;
                         new_ptr_info.sentinel = info.sentinel;
                     },
@@ -400,7 +400,7 @@ fn Span(comptime T: type) type {
                 .Many, .Slice => {},
             }
             new_ptr_info.size = .Slice;
-            return @Type(.{ .Pointer = new_ptr_info });
+            return @Type(.{ .pointer = new_ptr_info });
         },
         else => @compileError("invalid type given to std.mem.Span: " ++ @typeName(T)),
     }
@@ -416,7 +416,7 @@ pub fn span(ptr: anytype) Span(@TypeOf(ptr)) {
     }
     const Result = Span(@TypeOf(ptr));
     const l = len(ptr);
-    const ptr_info = @typeInfo(Result).Pointer;
+    const ptr_info = @typeInfo(Result).pointer;
     if (ptr_info.sentinel) |s_ptr| {
         const s = @as(*align(1) const ptr_info.child, @ptrCast(s_ptr)).*;
         return ptr[0..l :s];
@@ -1468,9 +1468,9 @@ pub fn getFdPathW(fd_: anytype, buf: *WPathBuffer) ![]u16 {
 
 fn lenSliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) usize {
     switch (@typeInfo(@TypeOf(ptr))) {
-        .Pointer => |ptr_info| switch (ptr_info.size) {
-            .One => switch (@typeInfo(ptr_info.child)) {
-                .Array => |array_info| {
+        .pointer => |ptr_info| switch (ptr_info.size) {
+            .one => switch (@typeInfo(ptr_info.child)) {
+                .array => |array_info| {
                     if (array_info.sentinel) |sentinel_ptr| {
                         const sentinel = @as(*align(1) const array_info.child, @ptrCast(sentinel_ptr)).*;
                         if (sentinel == end) {
@@ -1515,12 +1515,12 @@ fn SliceTo(comptime T: type, comptime end: meta.Elem(T)) type {
         .Optional => |optional_info| {
             return ?SliceTo(optional_info.child, end);
         },
-        .Pointer => |ptr_info| {
+        .pointer => |ptr_info| {
             var new_ptr_info = ptr_info;
             new_ptr_info.size = .Slice;
             switch (ptr_info.size) {
-                .One => switch (@typeInfo(ptr_info.child)) {
-                    .Array => |array_info| {
+                .one => switch (@typeInfo(ptr_info.child)) {
+                    .array => |array_info| {
                         new_ptr_info.child = array_info.child;
                         // The return type must only be sentinel terminated if we are guaranteed
                         // to find the value searched for, which is only the case if it matches
@@ -1556,7 +1556,7 @@ fn SliceTo(comptime T: type, comptime end: meta.Elem(T)) type {
                     new_ptr_info.is_allowzero = false;
                 },
             }
-            return @Type(.{ .Pointer = new_ptr_info });
+            return @Type(.{ .pointer = new_ptr_info });
         },
         else => {},
     }
@@ -1577,7 +1577,7 @@ pub fn sliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) SliceTo(@Typ
     }
     const Result = SliceTo(@TypeOf(ptr), end);
     const length = lenSliceTo(ptr, end);
-    const ptr_info = @typeInfo(Result).Pointer;
+    const ptr_info = @typeInfo(Result).pointer;
     if (ptr_info.sentinel) |s_ptr| {
         const s = @as(*align(1) const ptr_info.child, @ptrCast(s_ptr)).*;
         return ptr[0..length :s];
@@ -1693,7 +1693,7 @@ pub const failing_allocator = std.mem.Allocator{ .ptr = undefined, .vtable = &.{
 var __reload_in_progress__ = std.atomic.Value(bool).init(false);
 threadlocal var __reload_in_progress__on_current_thread = false;
 pub fn isProcessReloadInProgressOnAnotherThread() bool {
-    @fence(.acquire);
+    // @fence(.acquire);
     return __reload_in_progress__.load(.monotonic) and !__reload_in_progress__on_current_thread;
 }
 
@@ -3330,13 +3330,13 @@ pub fn iterateDir(dir: std.fs.Dir) DirIterator.Iterator {
 }
 
 fn ReinterpretSliceType(comptime T: type, comptime slice: type) type {
-    const is_const = @typeInfo(slice).Pointer.is_const;
+    const is_const = @typeInfo(slice).pointer.is_const;
     return if (is_const) []const T else []T;
 }
 
 /// Zig has a todo for @ptrCast changing the `.len`. This is the workaround
 pub fn reinterpretSlice(comptime T: type, slice: anytype) ReinterpretSliceType(T, @TypeOf(slice)) {
-    const is_const = @typeInfo(@TypeOf(slice)).Pointer.is_const;
+    const is_const = @typeInfo(@TypeOf(slice)).pointer.is_const;
     const bytes = std.mem.sliceAsBytes(slice);
     const new_ptr = @as(if (is_const) [*]const T else [*]T, @ptrCast(@alignCast(bytes.ptr)));
     return new_ptr[0..@divTrunc(bytes.len, @sizeOf(T))];
@@ -4182,11 +4182,11 @@ pub inline fn wrappingNegation(val: anytype) @TypeOf(val) {
 
 fn assertNoPointers(T: type) void {
     switch (@typeInfo(T)) {
-        .Pointer => @compileError("no pointers!"),
+        .pointer => @compileError("no pointers!"),
         inline .Struct, .Union => |s| for (s.fields) |field| {
             assertNoPointers(field.type);
         },
-        .Array => |a| assertNoPointers(a.child),
+        .array => |a| assertNoPointers(a.child),
         else => {},
     }
 }

@@ -948,7 +948,7 @@ pub const PathLike = union(enum) {
         return sliceZWithForceCopy(this, buf, false);
     }
 
-    pub inline fn osPathKernel32(this: PathLike, buf: *bun.PathBuffer) bun.OSPathSliceZ {
+    pub fn osPathKernel32(this: PathLike, buf: *bun.PathBuffer) callconv(bun.callconv_inline) bun.OSPathSliceZ {
         if (comptime Environment.isWindows) {
             const s = this.slice();
             const b = bun.PathBufferPool.get();
@@ -958,7 +958,7 @@ pub const PathLike = union(enum) {
                 const normal = path_handler.normalizeBuf(resolve, b, .windows);
                 return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), normal);
             }
-            const normal = path_handler.normalizeBuf(s, b, .windows);
+            const normal = path_handler.normalizeStringBuf(s, b, true, .windows, false);
             return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), normal);
         }
 

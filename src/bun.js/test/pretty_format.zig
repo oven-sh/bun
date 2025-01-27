@@ -933,7 +933,7 @@ pub const JestPrettyFormat = struct {
 
             switch (comptime Format) {
                 .StringPossiblyFormatted => {
-                    var str = value.toSlice(this.globalThis, bun.default_allocator);
+                    var str = try value.toSlice(this.globalThis, bun.default_allocator);
                     defer str.deinit();
                     this.addForNewLine(str.len);
                     const slice = str.slice();

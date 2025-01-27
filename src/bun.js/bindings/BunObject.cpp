@@ -292,13 +292,23 @@ static JSValue constructPluginObject(VM& vm, JSObject* bunObject)
     return pluginFunction;
 }
 
-static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject)
+static JSValue defaultBunSQLObject(VM& vm, JSObject* bunObject)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(bunObject->globalObject());
     JSValue sqlValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::BunSql);
     RETURN_IF_EXCEPTION(scope, {});
     return sqlValue.getObject()->get(globalObject, vm.propertyNames->defaultKeyword);
+}
+
+static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(bunObject->globalObject());
+    JSValue sqlValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::BunSql);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto clientData = WebCore::clientData(vm);
+    return sqlValue.getObject()->get(globalObject, clientData->builtinNames().SQLPublicName());
 }
 
 extern "C" JSC::EncodedJSValue JSPasswordObject__create(JSGlobalObject*);
@@ -540,14 +550,20 @@ JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGl
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto pathValue = callFrame->argument(0);
 
-    WTF::String pathString = pathValue.toWTFString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode({}));
+    JSValue jsValue;
 
-    pathString = pathResolveWTFString(lexicalGlobalObject, pathString);
+    {
+        WTF::String pathString = pathValue.toWTFString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode({}));
+        pathString = pathResolveWTFString(lexicalGlobalObject, pathString);
 
-    auto fileURL = WTF::URL::fileURLWithFileSystemPath(pathString);
-    auto object = WebCore::DOMURL::create(fileURL.string(), String());
-    auto jsValue = WebCore::toJSNewlyCreated<IDLInterface<DOMURL>>(*lexicalGlobalObject, globalObject, throwScope, WTFMove(object));
+        auto fileURL = WTF::URL::fileURLWithFileSystemPath(pathString);
+        auto object = WebCore::DOMURL::create(fileURL.string(), String());
+        jsValue = WebCore::toJSNewlyCreated<IDLInterface<DOMURL>>(*lexicalGlobalObject, globalObject, throwScope, WTFMove(object));
+    }
+
+    auto* jsDOMURL = jsCast<JSDOMURL*>(jsValue.asCell());
+    vm.heap.reportExtraMemoryAllocated(jsDOMURL, jsDOMURL->wrapped().memoryCostForGC());
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(jsValue));
 }
 
@@ -604,23 +620,58 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
             url = WTF::URL(arg0.toWTFString(globalObject));
             RETURN_IF_EXCEPTION(scope, {});
         } else {
-            throwTypeError(globalObject, scope, "Argument must be a URL"_s);
+            Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "url"_s, "string"_s, arg0);
             return {};
         }
     } else {
         url = domURL->href();
     }
 
+    /// cannot turn non-`file://` URLs into file paths
     if (UNLIKELY(!url.protocolIsFile())) {
-        throwTypeError(globalObject, scope, "Argument must be a file URL"_s);
+        Bun::ERR::INVALID_URL_SCHEME(scope, globalObject, "file"_s);
         return {};
+    }
+
+// NOTE: On Windows, WTF::URL::fileSystemPath will handle UNC paths
+// (`file:\\server\share\etc` -> `\\server\share\etc`), so hostname check only
+// needs to happen on posix systems
+#if !OS(WINDOWS)
+    // file://host/path is illegal if `host` is not `localhost`.
+    // Should be `file:///` instead
+    if (UNLIKELY(url.host().length() > 0 && url.host() != "localhost"_s)) {
+
+#if OS(DARWIN)
+        Bun::ERR::INVALID_FILE_URL_HOST(scope, globalObject, "darwin"_s);
+        return {};
+#else
+        Bun::ERR::INVALID_FILE_URL_HOST(scope, globalObject, "linux"_s);
+        return {};
+#endif
+    }
+#endif
+
+    // ban url-encoded slashes. '/' on posix, '/' and '\' on windows.
+    const StringView p = url.path();
+    if (p.contains('%')) {
+#if OS(WINDOWS)
+        if (p.contains("%2f"_s) || p.contains("%5c"_s) || p.contains("%2F"_s) || p.contains("%5C"_s)) {
+            Bun::ERR::INVALID_FILE_URL_PATH(scope, globalObject, "must not include encoded \\ or / characters"_s);
+            return {};
+        }
+#else
+        if (p.contains("%2f"_s) || p.contains("%2F"_s)) {
+            Bun::ERR::INVALID_FILE_URL_PATH(scope, globalObject, "must not include encoded / characters"_s);
+            return {};
+        }
+#endif
     }
 
     auto fileSystemPath = url.fileSystemPath();
 
 #if OS(WINDOWS)
     if (!isAbsolutePath(fileSystemPath)) {
-        throwTypeError(globalObject, scope, "File URL path must be absolute"_s);
+        Bun::ERR::INVALID_FILE_URL_PATH(scope, globalObject, "must be an absolute path"_s);
         return {};
     }
 #endif
@@ -648,6 +699,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     Transpiler                                     BunObject_getter_wrap_Transpiler                                    DontDelete|PropertyCallback
     embeddedFiles                                  BunObject_getter_wrap_embeddedFiles                                 DontDelete|PropertyCallback
     S3Client                                       BunObject_getter_wrap_S3Client                                      DontDelete|PropertyCallback
+    s3                                             BunObject_getter_wrap_s3                                            DontDelete|PropertyCallback
     allocUnsafe                                    BunObject_callback_allocUnsafe                                      DontDelete|Function 1
     argv                                           BunObject_getter_wrap_argv                                          DontDelete|PropertyCallback
     build                                          BunObject_callback_build                                            DontDelete|Function 1
@@ -700,8 +752,9 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     resolveSync                                    BunObject_callback_resolveSync                                      DontDelete|Function 1
     revision                                       constructBunRevision                                                ReadOnly|DontDelete|PropertyCallback
     semver                                         BunObject_getter_wrap_semver                                        ReadOnly|DontDelete|PropertyCallback
-    s3                                             BunObject_callback_s3                                               DontDelete|Function 1
-    sql                                            constructBunSQLObject                                               DontDelete|PropertyCallback
+    sql                                            defaultBunSQLObject                                                 DontDelete|PropertyCallback
+    postgres                                       defaultBunSQLObject                                                 DontDelete|PropertyCallback
+    SQL                                            constructBunSQLObject                                               DontDelete|PropertyCallback
     serve                                          BunObject_callback_serve                                            DontDelete|Function 1
     sha                                            BunObject_callback_sha                                              DontDelete|Function 1
     shrink                                         BunObject_callback_shrink                                           DontDelete|Function 1

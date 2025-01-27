@@ -2,7 +2,7 @@ import { define } from "../../codegen/class-definitions";
 
 function generate(ssl) {
   return define({
-    name: ssl ? "TCPSocket" : "TLSSocket",
+    name: !ssl ? "TCPSocket" : "TLSSocket",
     JSType: "0b11101110",
     hasPendingActivity: true,
     noConstructor: true,
@@ -81,10 +81,7 @@ function generate(ssl) {
         fn: "getPeerCertificate",
         length: 1,
       },
-      getCertificate: {
-        fn: "getCertificate",
-        length: 0,
-      },
+
       authorized: {
         getter: "getAuthorized",
       },
@@ -200,12 +197,27 @@ function generate(ssl) {
         length: 2,
         privateSymbol: "end",
       },
+      getCertificate: {
+        fn: "getCertificate",
+        length: 0,
+      },
+      ...(ssl ? sslOnly : {}),
     },
     finalize: true,
     construct: true,
     klass: {},
   });
 }
+const sslOnly = {
+  getPeerX509Certificate: {
+    fn: "getPeerX509Certificate",
+    length: 0,
+  },
+  getX509Certificate: {
+    fn: "getX509Certificate",
+    length: 0,
+  },
+} as const;
 export default [
   generate(true),
   generate(false),
@@ -318,6 +330,42 @@ export default [
       },
       closed: {
         getter: "getClosed",
+      },
+      setBroadcast: {
+        fn: "setBroadcast",
+        length: 1,
+      },
+      setTTL: {
+        fn: "setTTL",
+        length: 1,
+      },
+      setMulticastTTL: {
+        fn: "setMulticastTTL",
+        length: 1,
+      },
+      setMulticastLoopback: {
+        fn: "setMulticastLoopback",
+        length: 1,
+      },
+      setMulticastInterface: {
+        fn: "setMulticastInterface",
+        length: 1,
+      },
+      addMembership: {
+        fn: "addMembership",
+        length: 2,
+      },
+      dropMembership: {
+        fn: "dropMembership",
+        length: 2,
+      },
+      addSourceSpecificMembership: {
+        fn: "addSourceSpecificMembership",
+        length: 3,
+      },
+      dropSourceSpecificMembership: {
+        fn: "dropSourceSpecificMembership",
+        length: 3,
       },
     },
     klass: {},

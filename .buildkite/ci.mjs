@@ -462,6 +462,7 @@ function getBuildZigStep(platform, options) {
     cancel_on_build_failing: isMergeQueue(),
     env: getBuildEnv(platform, options),
     command: `bun run build:ci --target bun-zig --toolchain ${toolchain}`,
+    timeout_in_minutes: 25,
   };
 }
 

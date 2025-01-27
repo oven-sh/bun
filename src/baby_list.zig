@@ -111,8 +111,9 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         fn assertValidDeepClone(comptime T: type) void {
+            if (@hasDecl(T, "deepClone")) return;
             return switch (T) {
-                bun.JSAst.Expr, bun.JSAst.G.Property, bun.css.ImportConditions => {},
+                bun.JSAst.Expr, bun.JSAst.G.Property, bun.css.ImportConditions, bun.css.LayerName => {},
                 else => {
                     @compileError("Unsupported type for BabyList.deepClone(): " ++ @typeName(Type));
                 },
@@ -130,11 +131,12 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         /// Same as `deepClone` but doesn't return an error
-        pub fn deepClone2(this: @This(), allocator: std.mem.Allocator) @This() {
+        pub fn deepClone2(this: *const @This(), allocator: std.mem.Allocator) @This() {
             assertValidDeepClone(Type);
             var list_ = initCapacity(allocator, this.len) catch bun.outOfMemory();
-            for (this.slice()) |item| {
-                list_.appendAssumeCapacity(item.deepClone(allocator));
+            list_.len = this.len;
+            for (this.sliceConst(), list_.slice()) |*old, *new| {
+                new.* = old.deepClone(allocator);
             }
 
             return list_;
@@ -305,6 +307,12 @@ pub fn BabyList(comptime Type: type) type {
             const writer = list__.writer();
             try writer.print(fmt, args);
 
+            this.update(list__);
+        }
+
+        pub fn insert(this: *@This(), allocator: std.mem.Allocator, index: usize, val: Type) !void {
+            var list__ = this.listManaged(allocator);
+            try list__.insert(index, val);
             this.update(list__);
         }
 

@@ -152,19 +152,6 @@ export default "Hello, world!";
 
 {% /codetabs %}
 
-### `wasm`
-
-**WebAssembly loader**. Default for `.wasm`.
-
-In the runtime, WebAssembly files can be directly imported. The file is read and returned as a `WebAssembly.Module`.
-
-```ts
-import wasm from "./module.wasm";
-console.log(wasm); // => WebAssembly.Module
-```
-
-In the bundler, `.wasm` files are handled using the [`file`](#file) loader.
-
 ### `napi`
 
 **Native addon loader**. Default for `.node`.
@@ -206,13 +193,6 @@ Otherwise, the database to embed is copied into the `outdir` with a hashed filen
 ### `html`
 
 **HTML loader**. Default for `.html` after Bun v1.2.0.
-
-To enable the html loader:
-
-- For `Bun.build`: set `html: true`
-- For `bun build`: `--experimental-html` CLI flag
-
-You most likely want to use the `html` loader in conjunction with `experimentalCss: true` or `--experimental-css`.
 
 The html loader processes HTML files and bundles any referenced assets. It will:
 

@@ -1,6 +1,8 @@
 
+
 #include "root.h"
 
+#include "ZigGlobalObject.h"
 #include "JavaScriptCore/ExceptionHelpers.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/Error.h"
@@ -76,6 +78,8 @@
 // #include <JavaScriptCore/JSTypedArrayViewPrototype.h>
 #include <JavaScriptCore/JSArrayBufferViewInlines.h>
 
+extern "C" bool Bun__Node__ZeroFillBuffers;
+
 using namespace JSC;
 using namespace WebCore;
 
@@ -108,6 +112,24 @@ static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap64);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_toString);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_write);
 #pragma clang diagnostic pop
+
+extern "C" EncodedJSValue WebCore_BufferEncodingType_toJS(JSC::JSGlobalObject* lexicalGlobalObject, WebCore::BufferEncodingType encoding)
+{
+    // clang-format off
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    switch (encoding) {
+    case WebCore::BufferEncodingType::utf8:      return JSC::JSValue::encode(globalObject->commonStrings().utf8String(globalObject));
+    case WebCore::BufferEncodingType::ucs2:      return JSC::JSValue::encode(globalObject->commonStrings().ucs2String(globalObject));
+    case WebCore::BufferEncodingType::utf16le:   return JSC::JSValue::encode(globalObject->commonStrings().utf16leString(globalObject));
+    case WebCore::BufferEncodingType::latin1:    return JSC::JSValue::encode(globalObject->commonStrings().latin1String(globalObject));
+    case WebCore::BufferEncodingType::ascii:     return JSC::JSValue::encode(globalObject->commonStrings().asciiString(globalObject));
+    case WebCore::BufferEncodingType::base64:    return JSC::JSValue::encode(globalObject->commonStrings().base64String(globalObject));
+    case WebCore::BufferEncodingType::base64url: return JSC::JSValue::encode(globalObject->commonStrings().base64urlString(globalObject));
+    case WebCore::BufferEncodingType::hex:       return JSC::JSValue::encode(globalObject->commonStrings().hexString(globalObject));
+    case WebCore::BufferEncodingType::buffer:    return JSC::JSValue::encode(globalObject->commonStrings().bufferString(globalObject));
+    }
+    // clang-format on
+}
 
 namespace Bun {
 
@@ -356,6 +378,12 @@ static inline JSC::EncodedJSValue writeToBuffer(JSC::JSGlobalObject* lexicalGlob
     return JSC::JSValue::encode(JSC::jsNumber(written));
 }
 
+JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, Ref<JSC::ArrayBuffer>&& backingStore)
+{
+    size_t length = backingStore->byteLength();
+    return JSC::JSUint8Array::create(lexicalGlobalObject, defaultGlobalObject(lexicalGlobalObject)->JSBufferSubclassStructure(), WTFMove(backingStore), 0, length);
+}
+
 JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const uint8_t* ptr, size_t length)
 {
     auto* buffer = createUninitializedBuffer(lexicalGlobalObject, length);
@@ -430,6 +458,7 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocUnsafeBody(JS
     size_t length = lengthValue.toLength(lexicalGlobalObject);
     auto result = allocBufferUnsafe(lexicalGlobalObject, length);
     RETURN_IF_EXCEPTION(throwScope, {});
+    if (Bun__Node__ZeroFillBuffers) memset(result->typedVector(), 0, length);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
 
@@ -754,20 +783,15 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_compareBody(JSC::J
 
 static inline JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = lexicalGlobalObject->vm();
 
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    if (callFrame->argumentCount() < 1) {
-        return constructBufferEmpty(lexicalGlobalObject);
-    }
+    auto listValue = callFrame->argument(0);
 
-    auto arrayValue = callFrame->uncheckedArgument(0);
-    auto array = JSC::jsDynamicCast<JSC::JSArray*>(arrayValue);
-    if (!array) {
-        throwTypeError(lexicalGlobalObject, throwScope, "Argument must be an array"_s);
-        return {};
-    }
+    Bun::V::validateArray(throwScope, lexicalGlobalObject, listValue, "list"_s, jsUndefined());
+    RETURN_IF_EXCEPTION(throwScope, {});
 
+    auto array = JSC::jsDynamicCast<JSC::JSArray*>(listValue);
     size_t arrayLength = array->length();
     if (arrayLength < 1) {
         RELEASE_AND_RETURN(throwScope, constructBufferEmpty(lexicalGlobalObject));
@@ -787,21 +811,18 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JS
     }
 
     for (unsigned i = 0; i < arrayLength; i++) {
-        auto element = array->getIndex(lexicalGlobalObject, i);
+        JSValue element = array->getIndex(lexicalGlobalObject, i);
         RETURN_IF_EXCEPTION(throwScope, {});
 
         auto* typedArray = JSC::jsDynamicCast<JSC::JSUint8Array*>(element);
         if (!typedArray) {
-            throwTypeError(lexicalGlobalObject, throwScope, "Buffer.concat expects Uint8Array"_s);
-            return {};
+            return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, makeString("list["_s, i, "]"_s), "Buffer or Uint8Array"_s, element);
         }
-
         if (UNLIKELY(typedArray->isDetached())) {
-            throwVMTypeError(lexicalGlobalObject, throwScope, "Uint8Array is detached"_s);
-            return {};
+            return throwVMTypeError(lexicalGlobalObject, throwScope, "ArrayBufferView is detached"_s);
         }
 
-        auto length = typedArray->length();
+        auto length = typedArray->byteLength();
 
         if (length > 0)
             args.append(element);
@@ -841,14 +862,14 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JS
 
     size_t remain = byteLength;
     auto* head = outBuffer->typedVector();
-    const int arrayLengthI = arrayLength;
+    const int arrayLengthI = args.size();
     for (int i = 0; i < arrayLengthI && remain > 0; i++) {
-        auto* typedArray = JSC::jsCast<JSC::JSUint8Array*>(args.at(i));
-        size_t length = std::min(remain, typedArray->length());
+        auto* bufferView = JSC::jsCast<JSC::JSArrayBufferView*>(args.at(i));
+        size_t length = std::min(remain, bufferView->byteLength());
 
         ASSERT_WITH_MESSAGE(length > 0, "length should be greater than 0. This should be checked before appending to the MarkedArgumentBuffer.");
 
-        auto* source = typedArray->typedVector();
+        auto* source = bufferView->vector();
         ASSERT(source);
         memcpy(head, source, length);
 
@@ -1597,11 +1618,12 @@ static inline JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObj
     case WebCore::BufferEncodingType::base64url:
     case WebCore::BufferEncodingType::hex: {
         ret = Bun__encoding__toString(reinterpret_cast<const unsigned char*>(castedThis->vector()) + offset, length, lexicalGlobalObject, static_cast<uint8_t>(encoding));
+        RETURN_IF_EXCEPTION(scope, {});
         break;
     }
     default: {
         throwTypeError(lexicalGlobalObject, scope, "Unsupported encoding? This shouldn't happen"_s);
-        break;
+        return {};
     }
     }
 
@@ -2275,6 +2297,8 @@ void JSBufferPrototype::finishCreation(VM& vm, JSC::JSGlobalObject* globalThis)
     Base::finishCreation(vm);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
     reifyStaticProperties(vm, JSBuffer::info(), JSBufferPrototypeTableValues, *this);
+
+    ALIAS("toLocaleString", "toString");
 
     ALIAS("readUintBE", "readUIntBE");
     ALIAS("readUintLE", "readUIntLE");

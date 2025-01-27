@@ -283,7 +283,7 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
       ${Object.entries(property_defs)
         .map(([name, meta]) => {
           if (meta.valid_prefixes !== undefined)
-            return `.${escapeIdent(name)} => |*v| css.generic.eql(${meta.ty}, &v[0], &v[0]) and v[1].eq(rhs.${escapeIdent(name)}[1]),`;
+            return `.${escapeIdent(name)} => |*v| css.generic.eql(${meta.ty}, &v[0], &rhs.${escapeIdent(name)}[0]) and v[1].eq(rhs.${escapeIdent(name)}[1]),`;
           return `.${escapeIdent(name)} => |*v| css.generic.eql(${meta.ty}, v, &rhs.${escapeIdent(name)}),`;
         })
         .join("\n")}
@@ -358,6 +358,7 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
   return `
   /// Returns the property name, without any vendor prefixes.
   pub inline fn name(this: *const PropertyId) []const u8 {
+      if (this.* == .custom) return this.custom.asStr();
       return @tagName(this.*);
   }
 

@@ -33,7 +33,7 @@ Running `bun install` will:
 
 - **Install** all `dependencies`, `devDependencies`, and `optionalDependencies`. Bun will install `peerDependencies` by default.
 - **Run** your project's `{pre|post}install` and `{pre|post}prepare` scripts at the appropriate time. For security reasons Bun _does not execute_ lifecycle scripts of installed dependencies.
-- **Write** a `bun.lockb` lockfile to the project root.
+- **Write** a `bun.lock` lockfile to the project root.
 
 ## Logging
 
@@ -93,7 +93,7 @@ $ bun install --filter '!pkg-c'
 $ bun install --filter './packages/pkg-a'
 ```
 
-For more information on filtering with `bun install`, refer to [Package Manager > Filtering](https://bun.sh/docs/cli/install#bun-install-and-bun-outdated)
+For more information on filtering with `bun install`, refer to [Package Manager > Filtering](https://bun.sh/docs/cli/filter#bun-install-and-bun-outdated)
 
 ## Overrides and resolutions
 
@@ -136,13 +136,13 @@ To install in production mode (i.e. without `devDependencies` or `optionalDepend
 $ bun install --production
 ```
 
-For reproducible installs, use `--frozen-lockfile`. This will install the exact versions of each package specified in the lockfile. If your `package.json` disagrees with `bun.lockb`, Bun will exit with an error. The lockfile will not be updated.
+For reproducible installs, use `--frozen-lockfile`. This will install the exact versions of each package specified in the lockfile. If your `package.json` disagrees with `bun.lock`, Bun will exit with an error. The lockfile will not be updated.
 
 ```bash
 $ bun install --frozen-lockfile
 ```
 
-For more information on Bun's binary lockfile `bun.lockb`, refer to [Package manager > Lockfile](https://bun.sh/docs/install/lockfile).
+For more information on Bun's lockfile `bun.lock`, refer to [Package manager > Lockfile](https://bun.sh/docs/install/lockfile).
 
 ## Omitting dependencies
 

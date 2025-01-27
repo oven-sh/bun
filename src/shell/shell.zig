@@ -55,7 +55,7 @@ pub const ShellErr = union(enum) {
     pub fn newSys(e: anytype) @This() {
         return .{
             .sys = switch (@TypeOf(e)) {
-                Syscall.Error => e.toSystemError(),
+                Syscall.Error => e.toShellSystemError(),
                 JSC.SystemError => e,
                 else => @compileError("Invalid `e`: " ++ @typeName(e)),
             },

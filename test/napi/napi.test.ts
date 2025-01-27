@@ -383,6 +383,14 @@ describe("napi", () => {
       checkSameOutput("test_extended_error_messages", []);
     });
   });
+
+  it.each([
+    ["nullptr", { number: 123 }],
+    ["null", null],
+    ["undefined", undefined],
+  ])("works when the module register function returns %s", (returnKind, expected) => {
+    expect(require(`./napi-app/build/Release/${returnKind}_addon.node`)).toEqual(expected);
+  });
 });
 
 function checkSameOutput(test: string, args: any[] | string) {

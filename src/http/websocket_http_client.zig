@@ -161,7 +161,7 @@ const CppWebSocket = opaque {
         defer loop.exit();
         WebSocket__didAbruptClose(this, reason);
     }
-    pub fn didClose(this: *CppWebSocket, code: u16, reason: *const bun.String) void {
+    pub fn didClose(this: *CppWebSocket, code: u16, reason: *bun.String) void {
         const loop = JSC.VirtualMachine.get().eventLoop();
         loop.enter();
         defer loop.exit();
@@ -1846,7 +1846,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this.deref();
         }
 
-        fn dispatchClose(this: *WebSocket, code: u16, reason: *const bun.String) void {
+        fn dispatchClose(this: *WebSocket, code: u16, reason: *bun.String) void {
             var out = this.outgoing_websocket orelse return;
             this.poll_ref.unref(this.globalThis.bunVM());
             JSC.markBinding(@src());

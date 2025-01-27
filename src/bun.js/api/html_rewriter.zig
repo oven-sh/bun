@@ -1374,7 +1374,7 @@ pub const Comment = struct {
     ) callconv(.C) bool {
         if (this.comment == null)
             return false;
-        var text = value.toSlice(global, bun.default_allocator);
+        var text = value.toSlice(global, bun.default_allocator) catch return false;
         defer text.deinit();
         this.comment.?.setText(text.slice()) catch {
             global.throwValue(createLOLHTMLError(global)) catch {};
@@ -1517,7 +1517,7 @@ pub const EndTag = struct {
     ) callconv(.C) bool {
         if (this.end_tag == null)
             return false;
-        var text = value.toSlice(global, bun.default_allocator);
+        var text = value.toSlice(global, bun.default_allocator) catch return false;
         defer text.deinit();
         this.end_tag.?.setName(text.slice()) catch {
             global.throwValue(createLOLHTMLError(global)) catch {};
@@ -1826,8 +1826,7 @@ pub const Element = struct {
     ) bool {
         if (this.element == null)
             return false;
-
-        var text = value.toSlice(global, bun.default_allocator);
+        var text = value.toSlice(global, bun.default_allocator) catch return false;
         defer text.deinit();
 
         this.element.?.setTagName(text.slice()) catch {

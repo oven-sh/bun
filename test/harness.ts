@@ -1056,6 +1056,7 @@ export async function runBunInstall(
     frozenLockfile?: boolean;
     saveTextLockfile?: boolean;
     packages?: string[];
+    verbose?: boolean;
   },
 ) {
   const production = options?.production ?? false;
@@ -1071,6 +1072,9 @@ export async function runBunInstall(
   }
   if (options?.saveTextLockfile) {
     args.push("--save-text-lockfile");
+  }
+  if (options?.verbose) {
+    args.push("--verbose");
   }
   const { stdout, stderr, exited } = Bun.spawn({
     cmd: args,
@@ -1452,6 +1456,7 @@ export class VerdaccioRegistry {
   process: ChildProcess | undefined;
   configPath: string;
   packagesPath: string;
+  users: Record<string, string> = {};
 
   constructor(opts?: { configPath?: string; packagesPath?: string; verbose?: boolean }) {
     this.port = randomPort();
@@ -1504,10 +1509,53 @@ export class VerdaccioRegistry {
     this.process?.kill(0);
   }
 
+  /**
+   * returns auth token
+   */
+  async generateUser(username: string, password: string): Promise<string> {
+    if (this.users[username]) {
+      throw new Error(`User ${username} already exists`);
+    } else this.users[username] = password;
+
+    const url = `http://localhost:${this.port}/-/user/org.couchdb.user:${username}`;
+    const user = {
+      name: username,
+      password: password,
+      email: `${username}@example.com`,
+    };
+
+    const response = await fetch(url, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(user),
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      return data.token;
+    }
+
+    throw new Error("Failed to create user:", response.statusText);
+  }
+
+  async authBunfig(user: string) {
+    const authToken = await this.generateUser(user, user);
+    return `
+        [install]
+        cache = false
+        registry = { url = "http://localhost:${this.port}/", token = "${authToken}" }
+        `;
+  }
+
   async createTestDir(bunfigOpts: BunfigOpts = {}) {
+    await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
+    await rm(join(this.packagesPath, "private-pkg-dont-touch"), { force: true });
     const packageDir = tmpdirSync();
     const packageJson = join(packageDir, "package.json");
     this.writeBunfig(packageDir, bunfigOpts);
+    this.users = {};
     return { packageDir, packageJson };
   }
 
@@ -1515,11 +1563,13 @@ export class VerdaccioRegistry {
     let bunfig = `
     [install]
     cache = "${join(dir, ".bun-cache")}"
-    registry = "${this.registryUrl()}"
     `;
     if ("saveTextLockfile" in opts) {
       bunfig += `saveTextLockfile = ${opts.saveTextLockfile}
       `;
+    }
+    if (!opts.npm) {
+      bunfig += `registry = "${this.registryUrl()}"`;
     }
     await write(join(dir, "bunfig.toml"), bunfig);
   }
@@ -1527,6 +1577,7 @@ export class VerdaccioRegistry {
 
 type BunfigOpts = {
   saveTextLockfile?: boolean;
+  npm?: boolean;
 };
 
 export async function readdirSorted(path: string): Promise<string[]> {

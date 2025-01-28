@@ -269,20 +269,6 @@ inline fn globMatchImpl(state: *State, glob: []const u8, path: []const u8) bool 
     return true;
 }
 
-fn matchBraceBranch(state: *State, glob: []const u8, path: []const u8, open_brace_index: u32, close_brace_index: u32, branch_index: u32, buffer: *std.ArrayList(u8)) bool {
-    buffer.appendSliceAssumeCapacity(glob[branch_index..state.glob_index]);
-    buffer.appendSliceAssumeCapacity(glob[close_brace_index + 1 ..]);
-
-    defer buffer.shrinkRetainingCapacity(open_brace_index); // clear items past prefix, without decreasing allocated capacity();
-
-    var branch_state = state.*;
-    branch_state.glob_index = open_brace_index;
-    branch_state.depth += 1;
-
-    const matched = globMatchImpl(&branch_state, buffer.items, path);
-    return matched;
-}
-
 fn matchBrace(state: *State, glob: []const u8, path: []const u8) bool {
     if (state.depth + 1 > BRACE_DEPTH_MAX) {
         return false; // Invalid pattern! Too many nested braces
@@ -343,15 +329,18 @@ fn matchBrace(state: *State, glob: []const u8, path: []const u8) bool {
     };
     defer buffer.deinit();
 
-    // prefix is common among all calls to matchBraceBranch
-    // calls to matchBraceBranch reset the length to open_brace_index to leave this prefix constant between calls
+    // prefix is common among all branches
+    // if checking a branch fails to match, buffer is truncated to include only the prefix
     buffer.appendSliceAssumeCapacity(glob[0..open_brace_index]);
 
     if (is_empty) {
-        // by passing state.glob_index as the branch_index, we ensure the slice [branch_index..state.glob_index] is empty
-        // therefore we match path against the prefix and postfix around the empty braces,
-        // i.e. for glob `b{{}}m` match `bm` against path instead of `b{}m`
-        return matchBraceBranch(state, glob, path, open_brace_index, close_brace_index, state.glob_index, &buffer);
+        // add tail to buffer
+        // e.g. for glob `b{{}}m` match `bm` against path instead of `b{}m`
+        buffer.appendSliceAssumeCapacity(glob[close_brace_index + 1..]);
+        var branch_state = state.*;
+        branch_state.glob_index = open_brace_index;
+        branch_state.depth += 1;
+        return globMatchImpl(&branch_state, buffer.items, path);
     }
 
     var branch_index: u32 = 0;
@@ -367,32 +356,39 @@ fn matchBrace(state: *State, glob: []const u8, path: []const u8) bool {
             '}' => if (!in_brackets) {
                 brace_depth -= 1;
                 if (brace_depth == 0) {
-                    if (matchBraceBranch(
-                        state,
-                        glob,
-                        path,
-                        open_brace_index,
-                        close_brace_index,
-                        branch_index,
-                        &buffer,
-                    )) {
+                    // add branch to buffer
+                    buffer.appendSliceAssumeCapacity(glob[branch_index..state.glob_index]);
+                    // add tail to buffer
+                    buffer.appendSliceAssumeCapacity(glob[close_brace_index + 1 ..]);
+
+                    var branch_state = state.*;
+                    branch_state.glob_index = open_brace_index;
+                    branch_state.depth += 1;
+
+                    const matched = globMatchImpl(&branch_state, buffer.items, path);
+                    if (matched) {
                         return true;
                     }
+
                     break;
                 }
             },
             ',' => if (brace_depth == 1) {
-                if (matchBraceBranch(
-                    state,
-                    glob,
-                    path,
-                    open_brace_index,
-                    close_brace_index,
-                    branch_index,
-                    &buffer,
-                )) {
+                // add branch to buffer
+                buffer.appendSliceAssumeCapacity(glob[branch_index..state.glob_index]);
+                // add tail to buffer
+                buffer.appendSliceAssumeCapacity(glob[close_brace_index + 1 ..]);
+
+                var branch_state = state.*;
+                branch_state.glob_index = open_brace_index;
+                branch_state.depth += 1;
+
+                const matched = globMatchImpl(&branch_state, buffer.items, path);
+                if (matched) {
                     return true;
                 }
+
+                buffer.shrinkRetainingCapacity(open_brace_index); // clear items past prefix, without decreasing allocated capacity
                 branch_index = state.glob_index + 1;
             },
             '[' => if (!in_brackets) {

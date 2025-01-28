@@ -3584,6 +3584,197 @@ pub const Blob = struct {
 
             return value;
         }
+        pub fn deleteObjects(this: *@This(), store: *Store, globalThis: *JSC.JSGlobalObject, object_keys: JSValue, extra_options: ?JSValue) bun.JSError!JSValue {
+            if (!object_keys.isArray()) {
+                return globalThis.throwInvalidArguments("S3Client.deleteObjects() needs an array of S3DeleteObjectsObjectIdentifier as it's first argument", .{});
+            }
+
+            const Wrapper = struct {
+                promise: JSC.JSPromise.Strong,
+                store: *Store,
+
+                pub usingnamespace bun.New(@This());
+
+                pub fn resolve(result: S3.S3DeleteObjectsResult, self: *@This()) void {
+                    defer self.deinit();
+                    const globalObject = self.promise.globalObject().?;
+                    switch (result) {
+                        .success => |_success| {
+                            const jsResult = JSValue.createEmptyObject(globalObject, 2);
+
+                            if (_success.deleted) |del| {
+                                defer del.deinit();
+                                const array = JSValue.createEmptyArray(globalObject, del.items.len);
+
+                                for (del.items, 0..) |item, i| {
+                                    const deletedObject = JSValue.createEmptyObject(globalObject, 1);
+                                    deletedObject.put(globalObject, JSC.ZigString.static("Key"), bun.String.init(item.key).toJS(globalObject));
+
+                                    if (item.versionId) |version_id| {
+                                        deletedObject.put(globalObject, JSC.ZigString.static("VersionId"), bun.String.init(version_id).toJS(globalObject));
+                                    }
+
+                                    if (item.deleteMarker) |deleteMarker| {
+                                        deletedObject.put(globalObject, JSC.ZigString.static("DeleteMarker"), JSValue.jsBoolean(deleteMarker));
+                                    }
+
+                                    if (item.deleteMarkerVersionId) |deleteMarkerVersionId| {
+                                        deletedObject.put(globalObject, JSC.ZigString.static("DeleteMarkerVersionId"), bun.String.init(deleteMarkerVersionId).toJS(globalObject));
+                                    }
+
+                                    array.putIndex(globalObject, @intCast(i), deletedObject);
+                                }
+
+                                jsResult.put(globalObject, JSC.ZigString.static("Deleted"), array);
+                            }
+
+                            if (_success.errors) |errors| {
+                                defer errors.deinit();
+                                const array = JSValue.createEmptyArray(globalObject, errors.items.len);
+
+                                for (errors.items, 0..) |item, i| {
+                                    const failedObject = JSValue.createEmptyObject(globalObject, 1);
+
+                                    if (item.key) |key| {
+                                        failedObject.put(globalObject, JSC.ZigString.static("Key"), bun.String.init(key).toJS(globalObject));
+                                    }
+
+                                    if (item.versionId) |version_id| {
+                                        failedObject.put(globalObject, JSC.ZigString.static("VersionId"), bun.String.init(version_id).toJS(globalObject));
+                                    }
+
+                                    if (item.code) |code| {
+                                        failedObject.put(globalObject, JSC.ZigString.static("Code"), bun.String.init(code).toJS(globalObject));
+                                    }
+
+                                    if (item.message) |message| {
+                                        failedObject.put(globalObject, JSC.ZigString.static("Message"), bun.String.init(message).toJS(globalObject));
+                                    }
+
+                                    array.putIndex(globalObject, @intCast(i), failedObject);
+                                }
+
+                                jsResult.put(globalObject, JSC.ZigString.static("Errors"), array);
+                            }
+
+                            self.promise.resolve(globalObject, jsResult);
+                        },
+
+                        inline .not_found, .failure => |err| {
+                            self.promise.reject(globalObject, err.toJS(globalObject, self.store.getPath()));
+                        },
+                    }
+                }
+
+                fn deinit(self: *@This()) void {
+                    self.store.deref();
+                    self.promise.deinit();
+                    self.destroy();
+                }
+            };
+
+            const promise = JSC.JSPromise.Strong.init(globalThis);
+            const value = promise.value();
+            const proxy_url = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
+            const proxy = if (proxy_url) |url| url.href else null;
+            var aws_options = try this.getCredentialsWithOptions(extra_options, globalThis);
+            defer aws_options.deinit();
+
+            var delete_objects_request_body: bun.ByteList = .{};
+
+            delete_objects_request_body.append(store.allocator, "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Delete xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">") catch bun.outOfMemory();
+
+            const iter = JSC.JSArrayIterator.init(object_keys, globalThis);
+            var length_iter = iter;
+
+            while (length_iter.next()) |object_identifier_js| {
+                if (object_identifier_js.isString()) {
+                    var object_key: JSC.ZigString = JSC.ZigString.Empty;
+                    object_identifier_js.toZigString(&object_key, globalThis);
+
+                    delete_objects_request_body.appendFmt(store.allocator, "<Object><Key>{s}</Key></Object>", .{object_key.slice()}) catch bun.outOfMemory();
+                } else if (object_identifier_js.isObject()) {
+                    if (try object_identifier_js.getTruthyComptime(globalThis, "Key")) |object_key_js| {
+                        if (!object_key_js.isString()) {
+                            return globalThis.throwInvalidArguments("S3Client.deleteObjects() needs an array of S3DeleteObjectsObjectIdentifier as it's first argument. 'Key' at index {d} is not a string.", .{length_iter.i - 1});
+                        }
+
+                        var object_key: JSC.ZigString = JSC.ZigString.Empty;
+                        object_key_js.toZigString(&object_key, globalThis);
+
+                        delete_objects_request_body.appendFmt(store.allocator, "<Object><Key>{s}</Key>", .{object_key.slice()}) catch bun.outOfMemory();
+
+                        if (try object_identifier_js.getTruthyComptime(globalThis, "VersionId")) |version_id_js| {
+                            if (!version_id_js.isEmptyOrUndefinedOrNull() and !version_id_js.isString()) {
+                                return globalThis.throwInvalidArguments("S3Client.deleteObjects() needs an array of S3DeleteObjectsObjectIdentifier as it's first argument. Optional 'VersionId' at index {d} is not a string.", .{length_iter.i - 1});
+                            }
+
+                            var version_id: JSC.ZigString = JSC.ZigString.Empty;
+                            version_id_js.toZigString(&version_id, globalThis);
+                            delete_objects_request_body.appendFmt(store.allocator, "<VersionId>{s}</VersionId>", .{version_id.slice()}) catch bun.outOfMemory();
+                        }
+
+                        if (try object_identifier_js.getTruthyComptime(globalThis, "ETag")) |etag_js| {
+                            if (!etag_js.isEmptyOrUndefinedOrNull() and !etag_js.isString()) {
+                                return globalThis.throwInvalidArguments("S3Client.deleteObjects() needs an array of S3DeleteObjectsObjectIdentifier as it's first argument. Optional 'ETag' at index {d} is not a string.", .{length_iter.i - 1});
+                            }
+
+                            var etag = ZigString.Empty;
+                            etag_js.toZigString(&etag, globalThis);
+                            delete_objects_request_body.appendFmt(store.allocator, "<ETag>{s}</ETag>", .{etag.slice()}) catch bun.outOfMemory();
+                        }
+
+                        if (try object_identifier_js.getTruthyComptime(globalThis, "LastModifiedTime")) |last_modified_time_js| {
+                            if (!last_modified_time_js.isEmptyOrUndefinedOrNull() and !last_modified_time_js.isString()) {
+                                return globalThis.throwInvalidArguments("S3Client.deleteObjects() needs an array of S3DeleteObjectsObjectIdentifier as it's first argument. Optional 'LastModifiedTime' at index {d} is not a string.", .{length_iter.i - 1});
+                            }
+
+                            var last_modified_time: JSC.ZigString = JSC.ZigString.Empty;
+                            last_modified_time_js.toZigString(&last_modified_time, globalThis);
+                            delete_objects_request_body.appendFmt(store.allocator, "<LastModifiedTime>{s}</LastModifiedTime>", .{last_modified_time.slice()}) catch bun.outOfMemory();
+                        }
+
+                        if (try object_identifier_js.getTruthyComptime(globalThis, "Size")) |size_js| {
+                            if (!size_js.isEmptyOrUndefinedOrNull() and !size_js.isNumber()) {
+                                return globalThis.throwInvalidArguments("S3Client.deleteObjects() needs an array of S3DeleteObjectsObjectIdentifier as it's first argument. Optional 'Size' at index {d} is not a number.", .{length_iter.i - 1});
+                            }
+
+                            var size = ZigString.Empty;
+                            size_js.toZigString(&size, globalThis);
+
+                            delete_objects_request_body.appendFmt(store.allocator, "<Size>{s}</Size>", .{size.slice()}) catch bun.outOfMemory();
+                        }
+
+                        delete_objects_request_body.append(store.allocator, "</Object>") catch bun.outOfMemory();
+                    }
+                } else {
+                    return globalThis.throwInvalidArguments("S3Client.deleteObjects() needs an array of S3DeleteObjectsObjectIdentifier as it's first argument. Element at index {d} is not a string.", .{length_iter.i - 1});
+                }
+            }
+
+            if (extra_options) |opt| {
+                if (opt.isObject()) {
+                    if (try opt.getBooleanLoose(globalThis, "quiet")) |quiet| {
+                        if (quiet == true) {
+                            delete_objects_request_body.append(store.allocator, "<Quiet>true</Quiet>") catch bun.outOfMemory();
+                        }
+                    }
+                }
+            }
+
+            delete_objects_request_body.append(store.allocator, "</Delete>") catch bun.outOfMemory();
+
+            const req_body_slice = delete_objects_request_body.slice();
+
+            S3.deleteObjects(&aws_options.credentials, req_body_slice, @ptrCast(&Wrapper.resolve), Wrapper.new(.{
+                .promise = promise,
+                .store = store, // store is needed in case of not found error
+            }), proxy);
+            store.ref();
+
+            return value;
+        }
+
         pub fn initWithReferencedCredentials(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: *S3Credentials) S3Store {
             credentials.ref();
             return .{

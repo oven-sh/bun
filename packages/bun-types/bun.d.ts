@@ -3793,13 +3793,19 @@ declare module "bun" {
     port?: string | number;
 
     /**
-     * If the `SO_REUSEPORT` flag should be set.
+     * Whether the `SO_REUSEPORT` flag should be set.
      *
      * This allows multiple processes to bind to the same port, which is useful for load balancing.
      *
      * @default false
      */
     reusePort?: boolean;
+
+    /**
+     * Whether the `IPV6_V6ONLY` flag should be set.
+     * @default false
+     */
+    ipv6Only?: boolean;
 
     /**
      * What hostname should the server listen on?
@@ -7031,7 +7037,7 @@ declare module "bun" {
    * Types for `bun.lock`
    */
   type BunLockFile = {
-    lockfileVersion: 0;
+    lockfileVersion: 0 | 1;
     workspaces: {
       [workspace: string]: BunLockFileWorkspacePackage;
     };
@@ -7043,10 +7049,11 @@ declare module "bun" {
      * ```
      * INFO = { prod/dev/optional/peer dependencies, os, cpu, libc (TODO), bin, binDir }
      *
+     * // first index is resolution for each type of package
      * npm         -> [ "name@version", registry (TODO: remove if default), INFO, integrity]
      * symlink     -> [ "name@link:path", INFO ]
      * folder      -> [ "name@file:path", INFO ]
-     * workspace   -> [ "name@workspace:path", INFO ]
+     * workspace   -> [ "name@workspace:path" ] // workspace is only path
      * tarball     -> [ "name@tarball", INFO ]
      * root        -> [ "name@root:", { bin, binDir } ]
      * git         -> [ "name@git+repo", INFO, .bun-tag string (TODO: remove this) ]
@@ -7064,6 +7071,8 @@ declare module "bun" {
     optionalDependencies?: Record<string, string>;
     peerDependencies?: Record<string, string>;
     optionalPeers?: string[];
+    bin?: string | Record<string, string>;
+    binDir?: string;
   };
 
   type BunLockFileWorkspacePackage = BunLockFileBasePackageInfo & {
@@ -7074,8 +7083,6 @@ declare module "bun" {
   type BunLockFilePackageInfo = BunLockFileBasePackageInfo & {
     os?: string | string[];
     cpu?: string | string[];
-    bin?: Record<string, string>;
-    binDir?: string;
     bundled?: true;
   };
 
@@ -7083,10 +7090,12 @@ declare module "bun" {
   type BunLockFilePackageArray =
     /** npm */
     | [pkg: string, registry: string, info: BunLockFilePackageInfo, integrity: string]
-    /** symlink, folder, tarball, workspace */
+    /** symlink, folder, tarball */
     | [pkg: string, info: BunLockFilePackageInfo]
+    /** workspace */
+    | [pkg: string]
     /** git, github */
     | [pkg: string, info: BunLockFilePackageInfo, bunTag: string]
     /** root */
-    | [pkg: string, info: Pick<BunLockFilePackageInfo, "bin" | "binDir">];
+    | [pkg: string, info: Pick<BunLockFileBasePackageInfo, "bin" | "binDir">];
 }

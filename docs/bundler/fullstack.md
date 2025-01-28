@@ -6,7 +6,7 @@ To get started, import your HTML files and pass them to the `static` option in `
 import dashboard from "./dashboard.html";
 import homepage from "./index.html";
 
-Bun.serve({
+const server = Bun.serve({
   // Add HTML imports to `static`
   static: {
     // Bundle & route index.html to "/"
@@ -32,6 +32,8 @@ Bun.serve({
     return new Response("Not Found", { status: 404 });
   },
 });
+
+console.log(`Listening on ${server.url}`)
 ```
 
 ```bash
@@ -107,7 +109,7 @@ To use React in your client-side code, import `react-dom/client` and render your
 {% codetabs %}
 
 ```ts#src/backend.ts
-import dashboard from "./public/dashboard.html";
+import dashboard from "../public/dashboard.html";
 import { serve } from "bun";
 
 serve({
@@ -204,18 +206,19 @@ To configure plugins for `Bun.serve`, add a `plugins` array in the `[serve.stati
 
 ### Using TailwindCSS in HTML routes
 
-For example, enable TailwindCSS on your routes by adding add the `bun-plugin-tailwind` plugin:
+For example, enable TailwindCSS on your routes by installing and adding the `bun-plugin-tailwind` plugin:
 
-```toml
+```sh
+$ bun add bun-plugin-tailwind
+```
+```toml#bunfig.toml
 [serve.static]
 plugins = ["bun-plugin-tailwind"]
-
 ```
 
 This will allow you to use TailwindCSS utility classes in your HTML and CSS files. All you need to do is import `tailwindcss` somewhere:
 
-```html
-<!-- index.html -->
+```html#index.html
 <!doctype html>
 <html>
   <head>
@@ -230,14 +233,15 @@ This will allow you to use TailwindCSS utility classes in your HTML and CSS file
 
 Or in your CSS:
 
-```css
-/* style.css */
+```css#style.css
 @import "tailwindcss";
 ```
 
+### Custom plugins
+
 Any JS file or module which exports a [valid bundler plugin object](https://bun.sh/docs/bundler/plugins#usage) (essentially an object with a `name` and `setup` field) can be placed inside the `plugins` array:
 
-```toml
+```toml#bunfig.toml
 [serve.static]
 plugins = ["./my-plugin-implementation.ts"]
 ```

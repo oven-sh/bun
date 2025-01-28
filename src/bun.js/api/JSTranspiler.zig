@@ -660,7 +660,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                         const replacementValue = JSC.JSObject.getIndex(value, globalThis, 1);
                         if (exportReplacementValue(replacementValue, globalThis)) |to_replace| {
                             const replacementKey = JSC.JSObject.getIndex(value, globalThis, 0);
-                            var slice = (try replacementKey.toSlice(globalThis, bun.default_allocator).cloneIfNeeded(bun.default_allocator));
+                            var slice = (try (try replacementKey.toSlice(globalThis, bun.default_allocator)).cloneIfNeeded(bun.default_allocator));
                             const replacement_name = slice.slice();
 
                             if (!JSLexer.isIdentifier(replacement_name)) {

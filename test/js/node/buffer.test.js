@@ -1205,7 +1205,7 @@ for (let withOverridenBufferWrite of [false, true]) {
       it("toLocaleString()", () => {
         const buf = Buffer.from("test");
         expect(buf.toLocaleString()).toBe(buf.toString());
-        // expect(Buffer.prototype.toLocaleString).toBe(Buffer.prototype.toString);
+        expect(Buffer.prototype.toLocaleString).toBe(Buffer.prototype.toString);
       });
 
       it("alloc() should throw on invalid data", () => {

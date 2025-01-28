@@ -68,7 +68,7 @@ public:
     using ThreadSafeRefCounted::ref;
 
     void terminate();
-    bool wasTerminated() const { return m_wasTerminated; }
+    bool wasTerminated() const { return m_terminationFlags & TerminatedFlag; }
     bool hasPendingActivity() const;
     bool updatePtr();
 
@@ -120,6 +120,11 @@ private:
 
     static void networkStateChanged(bool isOnLine);
 
+    static constexpr uint8_t OnlineFlag = 1 << 0;
+    static constexpr uint8_t ClosingFlag = 1 << 1;
+    static constexpr uint8_t TerminateRequestedFlag = 1 << 0;
+    static constexpr uint8_t TerminatedFlag = 1 << 1;
+
     // RefPtr<WorkerScriptLoader> m_scriptLoader;
     WorkerOptions m_options;
     String m_identifier;
@@ -132,10 +137,11 @@ private:
     Deque<RefPtr<Event>> m_pendingEvents;
     Lock m_pendingTasksMutex;
     Deque<Function<void(ScriptExecutionContext&)>> m_pendingTasks;
-    std::atomic<bool> m_wasTerminated { false };
     bool m_didStartWorkerGlobalScope { false };
-    bool m_isOnline { false };
-    bool m_isClosing { false };
+    // Tracks OnlineFlag and ClosingFlag
+    std::atomic<uint8_t> m_onlineClosingFlags { 0 };
+    // Tracks TerminateRequestedFlag and TerminatedFlag
+    std::atomic<uint8_t> m_terminationFlags { 0 };
     const ScriptExecutionContextIdentifier m_clientIdentifier;
     void* impl_ { nullptr };
 };

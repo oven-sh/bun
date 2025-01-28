@@ -1691,7 +1691,7 @@ pub const InternalDNS = struct {
         defer hostname_slice.deinit();
 
         if (hostname_or_url.isString()) {
-            hostname_slice = hostname_or_url.toSlice(globalThis, bun.default_allocator);
+            hostname_slice = try hostname_or_url.toSlice(globalThis, bun.default_allocator);
         } else {
             return globalThis.throwInvalidArguments("hostname must be a string", .{});
         }

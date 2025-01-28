@@ -1697,7 +1697,7 @@ pub const Blob = struct {
                 if (try options.get(globalThis, "type")) |content_type| {
                     inner: {
                         if (content_type.isString()) {
-                            var content_type_str = content_type.toSlice(globalThis, bun.default_allocator);
+                            var content_type_str = try content_type.toSlice(globalThis, bun.default_allocator);
                             defer content_type_str.deinit();
                             const slice = content_type_str.slice();
                             if (!strings.isAllASCII(slice)) {
@@ -1799,7 +1799,7 @@ pub const Blob = struct {
                     inner: {
                         if (file_type.isString()) {
                             var allocator = bun.default_allocator;
-                            var str = file_type.toSlice(globalObject, bun.default_allocator);
+                            var str = try file_type.toSlice(globalObject, bun.default_allocator);
                             defer str.deinit();
                             const slice = str.slice();
                             if (!strings.isAllASCII(slice)) {
@@ -4169,7 +4169,7 @@ pub const Blob = struct {
                     if (!content_type.isString()) {
                         return globalThis.throwInvalidArgumentType("write", "options.type", "string");
                     }
-                    var content_type_str = content_type.toSlice(globalThis, bun.default_allocator);
+                    var content_type_str = try content_type.toSlice(globalThis, bun.default_allocator);
                     defer content_type_str.deinit();
                     const slice = content_type_str.slice();
                     if (strings.isAllASCII(slice)) {
@@ -4513,7 +4513,7 @@ pub const Blob = struct {
                         if (!content_type.isString()) {
                             return globalThis.throwInvalidArgumentType("write", "options.type", "string");
                         }
-                        var content_type_str = content_type.toSlice(globalThis, bun.default_allocator);
+                        var content_type_str = try content_type.toSlice(globalThis, bun.default_allocator);
                         defer content_type_str.deinit();
                         const slice = content_type_str.slice();
                         if (strings.isAllASCII(slice)) {
@@ -5066,7 +5066,7 @@ pub const Blob = struct {
                         if (try options.get(globalThis, "type")) |content_type| {
                             inner: {
                                 if (content_type.isString()) {
-                                    var content_type_str = content_type.toSlice(globalThis, bun.default_allocator);
+                                    var content_type_str = try content_type.toSlice(globalThis, bun.default_allocator);
                                     defer content_type_str.deinit();
                                     const slice = content_type_str.slice();
                                     if (!strings.isAllASCII(slice)) {
@@ -5779,7 +5779,7 @@ pub const Blob = struct {
                 JSC.JSValue.JSType.StringObject,
                 JSC.JSValue.JSType.DerivedStringObject,
                 => {
-                    var sliced = current.toSlice(global, bun.default_allocator);
+                    var sliced = try current.toSlice(global, bun.default_allocator);
                     const allocator = sliced.allocator.get();
                     could_have_non_ascii = could_have_non_ascii or !sliced.allocator.isWTFAllocator();
                     joiner.push(sliced.slice(), allocator);
@@ -5805,7 +5805,7 @@ pub const Blob = struct {
                                 .StringObject,
                                 .DerivedStringObject,
                                 => {
-                                    var sliced = item.toSlice(global, bun.default_allocator);
+                                    var sliced = try item.toSlice(global, bun.default_allocator);
                                     const allocator = sliced.allocator.get();
                                     could_have_non_ascii = could_have_non_ascii or !sliced.allocator.isWTFAllocator();
                                     joiner.push(sliced.slice(), allocator);
@@ -5888,7 +5888,7 @@ pub const Blob = struct {
                 },
 
                 else => {
-                    var sliced = current.toSlice(global, bun.default_allocator);
+                    var sliced = try current.toSlice(global, bun.default_allocator);
                     if (global.hasException()) {
                         const end_result = try joiner.done(bun.default_allocator);
                         bun.default_allocator.free(end_result);

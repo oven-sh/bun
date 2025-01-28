@@ -3705,6 +3705,10 @@ pub fn NewApp(comptime ssl: bool) type {
                 return uws_res_has_responded(ssl_flag, res.downcast());
             }
 
+            pub fn abort(res: *Response) void {
+                uws_res_abort(ssl_flag, res.downcast());
+            }
+
             pub fn getNativeHandle(res: *Response) bun.FileDescriptor {
                 if (comptime Environment.isWindows) {
                     // on windows uSockets exposes SOCKET
@@ -4613,3 +4617,5 @@ pub fn onThreadExit() void {
 extern fn uws_app_clear_routes(ssl_flag: c_int, app: *uws_app_t) void;
 
 pub extern fn us_socket_upgrade_to_tls(s: *Socket, new_context: *SocketContext, sni: ?[*:0]const u8) ?*Socket;
+
+extern fn uws_res_abort(ssl_flag: c_int, res: *uws_res) void;

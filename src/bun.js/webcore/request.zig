@@ -131,6 +131,14 @@ pub const Request = struct {
             return this.function.has();
         }
 
+        pub fn triggerAtTopOfEventLoop(this: *InternalJSEventCallback, eventType: EventType, globalThis: *JSC.JSGlobalObject) void {
+            if (this.function.get()) |callback| {
+                globalThis.bunVM().eventLoop().runCallback(callback, globalThis, .undefined, &.{JSC.JSValue.jsNumber(
+                    @intFromEnum(eventType),
+                )});
+            }
+        }
+
         pub fn trigger(this: *InternalJSEventCallback, eventType: EventType, globalThis: *JSC.JSGlobalObject) bool {
             if (this.function.get()) |callback| {
                 _ = callback.call(globalThis, JSC.JSValue.jsUndefined(), &.{JSC.JSValue.jsNumber(

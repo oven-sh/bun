@@ -1207,6 +1207,16 @@ extern "C"
     }
   }
 
+  void uws_res_abort(int ssl, uws_res_r res) {
+    if (ssl) {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      uwsRes->abort();
+    } else {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      uwsRes->abort();
+    }
+  }
+
   void uws_res_end_without_body(int ssl, uws_res_r res, bool close_connection)
   {
     if (ssl)

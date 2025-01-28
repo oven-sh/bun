@@ -4224,6 +4224,21 @@ declare module "bun" {
     requestIP(request: Request): SocketAddress | null;
 
     /**
+     * Abort an in-flight HTTP(s) request, triggering the `"abort"` event and leading to a TCP RST ("Connection reset by peer")
+     *
+     * @param request The request to abort
+     * @returns true if the request was aborted, false if it was already aborted or if the request is not in-flight
+     *
+     * If called multiple times, it will only return true the first time.
+     *
+     * The associated `AbortSignal` will be signaled, causing the `"abort"`
+     * event to fire. If a `ReadableStream` is attached to the `Response`, it will
+     * be cancelled. If the request body has a pending promise (like `.text()`), it will
+     * be rejected.
+     */
+    abort(request: Request): boolean;
+
+    /**
      * Reset the idleTimeout of the given Request to the number in seconds. 0 means no timeout.
      *
      * @example

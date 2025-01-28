@@ -207,7 +207,6 @@ function ReadStream(this: FSStream, path, options): void {
       throw $ERR_OUT_OF_RANGE("start", `<= "end" (here: ${end})`, start);
     }
   }
-  this[kPendingWrites] = 0;
 
   this[kReadStreamFastPath] =
     start === 0 &&
@@ -472,6 +471,7 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
   this.start = start;
   this.pos = undefined;
   this.bytesWritten = 0;
+  this[kPendingWrites] = 0;
 
   if (start !== undefined) {
     validateInteger(start, "start", 0);

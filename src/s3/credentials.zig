@@ -163,6 +163,7 @@ pub const S3Credentials = struct {
                         }
                     } else if (js_value.isNull()) {
                         new_credentials.credentials.sessionToken = "";
+                        new_credentials._sessionTokenSlice = null;
                         new_credentials.changed_credentials = true;
                     }
                 }

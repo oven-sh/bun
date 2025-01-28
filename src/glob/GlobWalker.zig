@@ -1766,7 +1766,8 @@ pub fn GlobWalker_(
 /// One such stack buffer is created recursively for each pair of braces
 /// therefore this value should be tuned to use a sane amount of memory even at the highest allowed brace depth
 /// and for arbitrarily many non-nested braces (i.e. `{a,b}{c,d}`) while reducing the number of allocations.
-const GLOB_STACK_BUF_SIZE = 64  * @divExact(@sizeOf(u32), @sizeOf(u8)); // x4 because buf is used to hold u32 codepoints rather than u8 bytes
+/// NOTE: actual stack allocated size will be 4x this value as it is used to store u32 codepoints rather than u8 bytes
+const GLOB_STACK_BUF_SIZE = 64;
 const BRACE_DEPTH_MAX = 10;
 
 // From: https://github.com/The-King-of-Toasters/globlin
@@ -1844,12 +1845,8 @@ pub const MatchResult = enum {
 ///     Used to escape any of the special characters above.
 // TODO: consider renaming to just match
 pub fn matchImpl(alloc: Allocator, glob: []const u32, path: []const u8) MatchResult {
-    var arena = std.heap.ArenaAllocator.init(alloc);
-    const arena_allocator = arena.allocator();
-    defer arena.deinit();
-
     const path_iter = CodepointIterator.init(path);
-    var state = GlobState.init(&path_iter,  arena_allocator);
+    var state = GlobState.init(&path_iter,  alloc);
 
     var negated = false;
     while (state.glob_index < glob.len and glob[state.glob_index] == '!') {
@@ -2019,12 +2016,11 @@ inline fn globMatchImpl(state: *GlobState, glob: []const u32, path_iter: *const 
     return true;
 }
 
-fn matchBraceBranch(state: *GlobState, glob: []const u32, path_iter: *const CodepointIterator, path_len: u32, open_brace_index: u32, close_brace_index: u32, branch_index: u32, buffer: *std.ArrayList(u32)) !bool {
-    try buffer.appendSlice(glob[0..open_brace_index]);
-    try buffer.appendSlice(glob[branch_index..state.glob_index]);
-    try buffer.appendSlice(glob[close_brace_index + 1 ..]);
+fn matchBraceBranch(state: *GlobState, glob: []const u32, path_iter: *const CodepointIterator, path_len: u32, open_brace_index: u32, close_brace_index: u32, branch_index: u32, buffer: *std.ArrayList(u32)) bool {
+    buffer.appendSliceAssumeCapacity(glob[branch_index..state.glob_index]);
+    buffer.appendSliceAssumeCapacity(glob[close_brace_index + 1 ..]);
 
-    defer buffer.clearRetainingCapacity();
+    defer buffer.shrinkRetainingCapacity(open_brace_index); // clear items past prefix, without decreasing allocated capacity
 
     var branch_state = state.*;
     branch_state.glob_index = open_brace_index;
@@ -2042,8 +2038,12 @@ fn matchBrace(state: *GlobState, glob: []const u32, path_iter: *const CodepointI
     var in_brackets = false;
     var is_empty = true;
 
+    const open_brace_index = state.glob_index;
     var close_brace_index: u32 = 0;
     var glob_index: u32 = state.glob_index;
+
+    var max_branch_len: u32 = 0;
+    var last_branch_start_index = open_brace_index + 1;
 
     // TODO: track depth & max depth
     while (glob_index < glob.len) : (glob_index += 1) {
@@ -2055,6 +2055,7 @@ fn matchBrace(state: *GlobState, glob: []const u32, path_iter: *const CodepointI
             '}' => if (!in_brackets) {
                 brace_depth -= 1;
                 if (brace_depth == 0) {
+                    max_branch_len = @max(max_branch_len, glob_index - last_branch_start_index);
                     close_brace_index = glob_index;
                     break;
                 }
@@ -2064,27 +2065,44 @@ fn matchBrace(state: *GlobState, glob: []const u32, path_iter: *const CodepointI
             },
             ']' => in_brackets = false,
             '\\' => glob_index += 1,
+            ',' => if (brace_depth == 1) {
+                max_branch_len = @max(max_branch_len, glob_index - last_branch_start_index);
+                last_branch_start_index = glob_index + 1;
+            },
             else => {},
         }
     }
 
     if (brace_depth != 0) {
         // Invalid pattern!
-        std.debug.print("Invalid Pattern - Braces Mismatched! (by {d})", .{brace_depth});
+        // std.debug.print("Invalid Pattern - Braces Mismatched! (by {d})", .{brace_depth});
         return false;
     }
 
-    const open_brace_index = state.glob_index;
+    // the maximum length of the options described by the braces.
+    // eg. for `{1,23,456}` the max_sub_len is 3
+    const max_sub_len = open_brace_index + max_branch_len + (glob.len - (close_brace_index + 1));
 
-    var alloc = std.heap.stackFallback(GLOB_STACK_BUF_SIZE, state.allocator);
-    var buffer = std.ArrayList(u32).init(alloc.get());
+    // PERF: doing the following results in a large performance improvement over using std.heap.stackFallback
+    var buffer = if (max_sub_len <= GLOB_STACK_BUF_SIZE) blk: {
+        var buf: [GLOB_STACK_BUF_SIZE * @divExact(@sizeOf(u32), @sizeOf(u8))]u8 = undefined; // x4 because buf is used to hold u32 codepoints rather than u8 bytes
+        var fixed_buf_alloc = std.heap.FixedBufferAllocator.init(&buf);
+        const buf_alloc = fixed_buf_alloc.allocator();
+        break :blk std.ArrayList(u32).initCapacity(buf_alloc, GLOB_STACK_BUF_SIZE) catch unreachable;
+    } else blk: {
+        break :blk std.ArrayList(u32).initCapacity(state.allocator, max_sub_len) catch unreachable;
+    };
     defer buffer.deinit();
+
+    // prefix is common among all calls to matchBraceBranch
+    // calls to matchBraceBranch reset the length to open_brace_index to leave this prefix constant between calls
+    buffer.appendSliceAssumeCapacity(glob[0..open_brace_index]);
 
     if (is_empty) {
         // by passing state.glob_index as the branch_index, we ensure the slice [branch_index..state.glob_index] is empty
         // therefore we match path against the prefix and postfix around the empty braces,
         // i.e. for glob `b{{}}m` match `bm` against path instead of `b{}m`
-        return matchBraceBranch(state, glob, path_iter, path_len, open_brace_index, close_brace_index, state.glob_index, &buffer) catch unreachable;
+        return matchBraceBranch(state, glob, path_iter, path_len, open_brace_index, close_brace_index, state.glob_index, &buffer);
     }
 
     var branch_index: u32 = 0;
@@ -2109,7 +2127,7 @@ fn matchBrace(state: *GlobState, glob: []const u32, path_iter: *const CodepointI
                         close_brace_index,
                         branch_index,
                         &buffer,
-                    ) catch unreachable) {
+                    )) {
                         return true;
                     }
                     break;
@@ -2125,7 +2143,7 @@ fn matchBrace(state: *GlobState, glob: []const u32, path_iter: *const CodepointI
                     close_brace_index,
                     branch_index,
                     &buffer,
-                ) catch unreachable) {
+                )) {
                     return true;
                 }
                 branch_index = state.glob_index + 1;

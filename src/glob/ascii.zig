@@ -99,11 +99,7 @@ const Wildcard = struct {
 // TODO: consider just taking arena and resetting to initial state,
 // all usages of this function pass in Arena.allocator()
 pub fn match(alloc: Allocator, glob: []const u8, path: []const u8) MatchResult {
-    var arena = std.heap.ArenaAllocator.init(alloc);
-    const arena_allocator = arena.allocator();
-    defer arena.deinit();
-
-    var state = State{ .allocator = arena_allocator };
+    var state = State{ .allocator = alloc };
 
     var negated = false;
     while (state.glob_index < glob.len and glob[state.glob_index] == '!') {
@@ -273,12 +269,11 @@ inline fn globMatchImpl(state: *State, glob: []const u8, path: []const u8) bool 
     return true;
 }
 
-fn matchBraceBranch(state: *State, glob: []const u8, path: []const u8, open_brace_index: u32, close_brace_index: u32, branch_index: u32, buffer: *std.ArrayList(u8)) !bool {
-    try buffer.appendSlice(glob[0..open_brace_index]);
-    try buffer.appendSlice(glob[branch_index..state.glob_index]);
-    try buffer.appendSlice(glob[close_brace_index + 1 ..]);
+fn matchBraceBranch(state: *State, glob: []const u8, path: []const u8, open_brace_index: u32, close_brace_index: u32, branch_index: u32, buffer: *std.ArrayList(u8)) bool {
+    buffer.appendSliceAssumeCapacity(glob[branch_index..state.glob_index]);
+    buffer.appendSliceAssumeCapacity(glob[close_brace_index + 1 ..]);
 
-    defer buffer.clearRetainingCapacity();
+    defer buffer.shrinkRetainingCapacity(open_brace_index); // clear items past prefix, without decreasing allocated capacity();
 
     var branch_state = state.*;
     branch_state.glob_index = open_brace_index;
@@ -296,8 +291,12 @@ fn matchBrace(state: *State, glob: []const u8, path: []const u8) bool {
     var in_brackets = false;
     var is_empty = true;
 
+    const open_brace_index = state.glob_index;
     var close_brace_index: u32 = 0;
     var glob_index: u32 = state.glob_index;
+
+    var max_branch_len: u32 = 0;
+    var last_branch_start_index = open_brace_index + 1;
 
     while (glob_index < glob.len) : (glob_index += 1) {
         is_empty = is_empty and (glob[glob_index] == '{' or glob[glob_index] == '}');
@@ -308,6 +307,7 @@ fn matchBrace(state: *State, glob: []const u8, path: []const u8) bool {
             '}' => if (!in_brackets) {
                 brace_depth -= 1;
                 if (brace_depth == 0) {
+                    max_branch_len = @max(max_branch_len, glob_index - last_branch_start_index);
                     close_brace_index = glob_index;
                     break;
                 }
@@ -317,6 +317,10 @@ fn matchBrace(state: *State, glob: []const u8, path: []const u8) bool {
             },
             ']' => in_brackets = false,
             '\\' => glob_index += 1,
+            ',' => if (brace_depth == 1) {
+                max_branch_len = @max(max_branch_len, glob_index - last_branch_start_index);
+                last_branch_start_index = glob_index + 1;
+            },
             else => {},
         }
     }
@@ -326,20 +330,31 @@ fn matchBrace(state: *State, glob: []const u8, path: []const u8) bool {
         return false; // Invalid pattern!
     }
 
-    const open_brace_index = state.glob_index;
+    const max_sub_len = open_brace_index + max_branch_len + (glob.len - (close_brace_index + 1));
 
-    var alloc = std.heap.stackFallback(GLOB_STACK_BUF_SIZE, state.allocator);
-    var buffer = std.ArrayList(u8).init(alloc.get());
+    // PERF: doing the following results in a large performance improvement over using std.heap.stackFallback
+    var buffer = if (max_sub_len <= GLOB_STACK_BUF_SIZE) blk: {
+        var buf: [GLOB_STACK_BUF_SIZE]u8 = undefined;
+        var fixed_buf_alloc = std.heap.FixedBufferAllocator.init(&buf);
+        const buf_alloc = fixed_buf_alloc.allocator();
+        break :blk std.ArrayList(u8).initCapacity(buf_alloc, GLOB_STACK_BUF_SIZE) catch unreachable;
+    } else blk: {
+        break :blk std.ArrayList(u8).initCapacity(state.allocator, max_sub_len) catch unreachable;
+    };
     defer buffer.deinit();
+
+    // prefix is common among all calls to matchBraceBranch
+    // calls to matchBraceBranch reset the length to open_brace_index to leave this prefix constant between calls
+    buffer.appendSliceAssumeCapacity(glob[0..open_brace_index]);
 
     if (is_empty) {
         // by passing state.glob_index as the branch_index, we ensure the slice [branch_index..state.glob_index] is empty
         // therefore we match path against the prefix and postfix around the empty braces,
         // i.e. for glob `b{{}}m` match `bm` against path instead of `b{}m`
-        return matchBraceBranch(state, glob, path, open_brace_index, close_brace_index, state.glob_index, &buffer) catch unreachable;
+        return matchBraceBranch(state, glob, path, open_brace_index, close_brace_index, state.glob_index, &buffer);
     }
 
-    var branch_index: usize = 0;
+    var branch_index: u32 = 0;
 
     while (state.glob_index < glob.len) : (state.glob_index += 1) {
         switch (glob[state.glob_index]) {
@@ -360,7 +375,7 @@ fn matchBrace(state: *State, glob: []const u8, path: []const u8) bool {
                         close_brace_index,
                         branch_index,
                         &buffer,
-                    ) catch unreachable) {
+                    )) {
                         return true;
                     }
                     break;
@@ -375,7 +390,7 @@ fn matchBrace(state: *State, glob: []const u8, path: []const u8) bool {
                     close_brace_index,
                     branch_index,
                     &buffer,
-                ) catch unreachable) {
+                )) {
                     return true;
                 }
                 branch_index = state.glob_index + 1;
@@ -397,7 +412,7 @@ inline fn isSeparator(c: u8) bool {
     return c == '/';
 }
 
-inline fn unescape(c: *u8, glob: []const u8, glob_index: *usize) bool {
+inline fn unescape(c: *u8, glob: []const u8, glob_index: *u32) bool {
     if (c.* == '\\') {
         glob_index.* += 1;
         if (glob_index.* >= glob.len)
@@ -416,7 +431,7 @@ inline fn unescape(c: *u8, glob: []const u8, glob_index: *usize) bool {
     return true;
 }
 
-inline fn skipGlobstars(glob: []const u8, glob_index: *usize) void {
+inline fn skipGlobstars(glob: []const u8, glob_index: *u32) void {
     glob_index.* += 2;
 
     while (glob_index.* + 4 <= glob.len and std.mem.eql(u8, glob[glob_index.*..][0..4], "/**/")) {

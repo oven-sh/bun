@@ -53,6 +53,73 @@ describe("bun build", () => {
     }
   });
 
+  // on windows you can't overwrite PATH
+  test.skipIf(isWindows)("running a standalone binary and run its own bun", () => {
+    const tmp = tmpdirSync();
+    const src = path.join(tmp, "index.js");
+    fs.writeFileSync(src, "console.log(await Bun.$`bun --version`.text());", { encoding: "utf8" });
+    const outfile = path.join(tmp, "index.exe");
+
+    expect(["build", src, "--compile", "--outfile", outfile]).toRun();
+
+    const { exitCode, stderr, stdout } = Bun.spawnSync({
+      cmd: [outfile],
+      env: {
+        ...bunEnv,
+        PATH: "",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stdout.toString("utf8")).toBe(`${Bun.version}\n\n`);
+    expect(stderr.toString("utf8")).toBeEmpty();
+    expect(exitCode).toBe(0);
+
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  test("BUN_SKIP_STANDALONE_MODULE_GRAPH=1 to bypass running the standalone code and skip to bun cli", () => {
+    const tmp = tmpdirSync();
+    const src = path.join(tmp, "index.js");
+    fs.writeFileSync(src, "console.log('hello world');", { encoding: "utf8" });
+    const outfile = path.join(tmp, "index.exe");
+
+    expect(["build", src, "--compile", "--outfile", outfile]).toRun();
+
+    const {
+      exitCode: exitCode1,
+      stderr: stderr1,
+      stdout: stdout1,
+    } = Bun.spawnSync({
+      cmd: [outfile, "--version"],
+      env: {
+        ...bunEnv,
+        BUN_SKIP_STANDALONE_MODULE_GRAPH: "1",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stdout1.toString("utf8")).toBe(`${Bun.version}\n`);
+    expect(stderr1.toString("utf8")).toBeEmpty();
+    expect(exitCode1).toBe(0);
+
+    const {
+      exitCode: exitCode2,
+      stderr: stderr2,
+      stdout: stdout2,
+    } = Bun.spawnSync({
+      cmd: [outfile, "--version"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stdout2.toString("utf8")).toBe(`hello world\n`);
+    expect(stderr2.toString("utf8")).toBeEmpty();
+    expect(exitCode2).toBe(0);
+
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
   test("works with utf8 bom", () => {
     const tmp = tmpdirSync();
     const src = path.join(tmp, "index.js");

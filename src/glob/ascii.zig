@@ -23,6 +23,8 @@
 // THE SOFTWARE.
 
 const std = @import("std");
+const bun = @import("root").bun;
+
 const Allocator = std.mem.Allocator;
 
 /// used in matchBrace to determine the size of the stack buffer used in the stack fallback allocator
@@ -325,7 +327,7 @@ fn matchBrace(state: *State, glob: []const u8, path: []const u8) bool {
         const buf_alloc = fixed_buf_alloc.allocator();
         break :blk std.ArrayList(u8).initCapacity(buf_alloc, GLOB_STACK_BUF_SIZE) catch unreachable;
     } else blk: {
-        break :blk std.ArrayList(u8).initCapacity(state.allocator, max_sub_len) catch unreachable;
+        break :blk std.ArrayList(u8).initCapacity(state.allocator, max_sub_len) catch bun.outOfMemory();
     };
     defer buffer.deinit();
 

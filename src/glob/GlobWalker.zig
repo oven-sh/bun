@@ -2076,7 +2076,7 @@ fn matchBrace(state: *GlobState, glob: []const u32, path_iter: *const CodepointI
         const buf_alloc = fixed_buf_alloc.allocator();
         break :blk std.ArrayList(u32).initCapacity(buf_alloc, GLOB_STACK_BUF_SIZE) catch unreachable;
     } else blk: {
-        break :blk std.ArrayList(u32).initCapacity(state.allocator, max_sub_len) catch unreachable;
+        break :blk std.ArrayList(u32).initCapacity(state.allocator, max_sub_len) catch bun.outOfMemory();
     };
     defer buffer.deinit();
 

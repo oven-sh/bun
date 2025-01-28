@@ -108,6 +108,7 @@ typedef int mode_t;
 #include <cstring>
 extern "C" bool Bun__Node__ProcessNoDeprecation;
 extern "C" bool Bun__Node__ProcessThrowDeprecation;
+extern "C" int32_t bun_stdio_tty[3];
 
 namespace Bun {
 
@@ -2162,6 +2163,8 @@ static JSValue constructStderr(VM& vm, JSObject* processObject)
 #define STDIN_FILENO 0
 #endif
 
+extern "C" int32_t Bun__Process__getStdinFdType(void*);
+
 static JSValue constructStdin(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
@@ -2169,7 +2172,8 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdinStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
     args.append(JSC::jsNumber(STDIN_FILENO));
-
+    args.append(jsBoolean(bun_stdio_tty[STDIN_FILENO]));
+    args.append(jsNumber(Bun__Process__getStdinFdType(Bun::vm(vm))));
     JSC::CallData callData = JSC::getCallData(getStdioWriteStream);
 
     NakedPtr<JSC::Exception> returnedException = nullptr;

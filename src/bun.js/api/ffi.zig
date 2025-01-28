@@ -679,7 +679,7 @@ pub const FFI = struct {
                     if (!value.isString()) {
                         return globalThis.throwInvalidArgumentTypeValue("flags", "array of strings", value);
                     }
-                    const slice = value.toSlice(globalThis, bun.default_allocator);
+                    const slice = try value.toSlice(globalThis, bun.default_allocator);
                     if (slice.len == 0) continue;
                     defer slice.deinit();
                     flags.append(' ') catch bun.outOfMemory();
@@ -1348,7 +1348,7 @@ pub const FFI = struct {
                     return ZigString.static("param must be a string (type name) or number").toErrorInstance(global);
                 }
 
-                var type_name = val.toSlice(global, allocator);
+                var type_name = try val.toSlice(global, allocator);
                 defer type_name.deinit();
                 abi_types.appendAssumeCapacity(ABIType.label.get(type_name.slice()) orelse {
                     abi_types.clearAndFree(allocator);
@@ -1380,7 +1380,7 @@ pub const FFI = struct {
                 }
             }
 
-            var ret_slice = ret_value.toSlice(global, allocator);
+            var ret_slice = try ret_value.toSlice(global, allocator);
             defer ret_slice.deinit();
             return_type = ABIType.label.get(ret_slice.slice()) orelse {
                 abi_types.clearAndFree(allocator);

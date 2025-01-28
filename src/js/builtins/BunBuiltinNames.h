@@ -261,6 +261,11 @@ using namespace JSC;
     macro(napiWrappedContents) \
     macro(fastPath) \
     macro(SQL) \
+    macro(atimeMs) \
+    macro(mtimeMs) \
+    macro(ctimeMs) \
+    macro(birthtimeMs) \
+    macro(mode) \
     BUN_ADDITIONAL_BUILTIN_NAMES(macro)
 // --- END of BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME ---
 

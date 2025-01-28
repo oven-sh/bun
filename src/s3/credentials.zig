@@ -4,6 +4,8 @@ const std = @import("std");
 
 const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploadOptions;
 const ACL = @import("./acl.zig").ACL;
+const StorageClass = @import("./storage_class.zig").StorageClass;
+
 const JSC = bun.JSC;
 const RareData = JSC.RareData;
 const strings = bun.strings;
@@ -16,7 +18,7 @@ pub const S3Credentials = struct {
     endpoint: []const u8,
     bucket: []const u8,
     sessionToken: []const u8,
-
+    storage_class: ?StorageClass = null,
     /// Important for MinIO support.
     insecure_http: bool = false,
 
@@ -42,12 +44,14 @@ pub const S3Credentials = struct {
 
         return hasher.final();
     }
-    pub fn getCredentialsWithOptions(this: S3Credentials, default_options: MultiPartUploadOptions, options: ?JSC.JSValue, default_acl: ?ACL, globalObject: *JSC.JSGlobalObject) bun.JSError!S3CredentialsWithOptions {
+    pub fn getCredentialsWithOptions(this: S3Credentials, default_options: MultiPartUploadOptions, options: ?JSC.JSValue, default_acl: ?ACL, default_storage_class: ?StorageClass, globalObject: *JSC.JSGlobalObject) bun.JSError!S3CredentialsWithOptions {
+        bun.analytics.Features.s3 += 1;
         // get ENV config
         var new_credentials = S3CredentialsWithOptions{
             .credentials = this,
             .options = default_options,
             .acl = default_acl,
+            .storage_class = default_storage_class,
         };
         errdefer {
             new_credentials.deinit();
@@ -197,6 +201,10 @@ pub const S3Credentials = struct {
                 if (try opts.getOptionalEnum(globalObject, "acl", ACL)) |acl| {
                     new_credentials.acl = acl;
                 }
+
+                if (try opts.getOptionalEnum(globalObject, "storageClass", StorageClass)) |storage_class| {
+                    new_credentials.storage_class = storage_class;
+                }
             }
         }
         return new_credentials;
@@ -313,7 +321,9 @@ pub const S3Credentials = struct {
         content_disposition: []const u8 = "",
         session_token: []const u8 = "",
         acl: ?ACL = null,
-        _headers: [7]picohttp.Header = .{
+        storage_class: ?StorageClass = null,
+        _headers: [8]picohttp.Header = .{
+            .{ .name = "", .value = "" },
             .{ .name = "", .value = "" },
             .{ .name = "", .value = "" },
             .{ .name = "", .value = "" },
@@ -375,6 +385,7 @@ pub const S3Credentials = struct {
         search_params: ?[]const u8 = null,
         content_disposition: ?[]const u8 = null,
         acl: ?ACL = null,
+        storage_class: ?StorageClass = null,
     };
 
     pub fn guessRegion(endpoint: []const u8) []const u8 {
@@ -448,6 +459,8 @@ pub const S3Credentials = struct {
 
         const acl: ?[]const u8 = if (signOptions.acl) |acl_value| acl_value.toString() else null;
 
+        const storage_class: ?[]const u8 = if (signOptions.storage_class) |storage_class| storage_class.toString() else null;
+
         if (this.accessKeyId.len == 0 or this.secretAccessKey.len == 0) return error.MissingCredentials;
         const signQuery = signQueryOption != null;
         const expires = if (signQueryOption) |options| options.expires else 0;
@@ -519,32 +532,64 @@ pub const S3Credentials = struct {
 
         const amz_day = amz_date[0..8];
         const signed_headers = if (signQuery) "host" else brk: {
-            if (acl != null) {
-                if (content_disposition != null) {
-                    if (session_token != null) {
-                        break :brk "content-disposition;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+            if (storage_class != null) {
+                if (acl != null) {
+                    if (content_disposition != null) {
+                        if (session_token != null) {
+                            break :brk "content-disposition;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-storage-class;x-amz-security-token";
+                        } else {
+                            break :brk "content-disposition;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
+                        }
                     } else {
-                        break :brk "content-disposition;host;x-amz-acl;x-amz-content-sha256;x-amz-date";
+                        if (session_token != null) {
+                            break :brk "host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-storage-class;x-amz-security-token";
+                        } else {
+                            break :brk "host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
+                        }
                     }
                 } else {
-                    if (session_token != null) {
-                        break :brk "host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                    if (content_disposition != null) {
+                        if (session_token != null) {
+                            break :brk "content-disposition;host;x-amz-content-sha256;x-amz-date;x-amz-storage-class;x-amz-security-token";
+                        } else {
+                            break :brk "content-disposition;host;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
+                        }
                     } else {
-                        break :brk "host;x-amz-acl;x-amz-content-sha256;x-amz-date";
+                        if (session_token != null) {
+                            break :brk "host;x-amz-content-sha256;x-amz-date;x-amz-storage-class;x-amz-security-token";
+                        } else {
+                            break :brk "host;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
+                        }
                     }
                 }
             } else {
-                if (content_disposition != null) {
-                    if (session_token != null) {
-                        break :brk "content-disposition;host;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                if (acl != null) {
+                    if (content_disposition != null) {
+                        if (session_token != null) {
+                            break :brk "content-disposition;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                        } else {
+                            break :brk "content-disposition;host;x-amz-acl;x-amz-content-sha256;x-amz-date";
+                        }
                     } else {
-                        break :brk "content-disposition;host;x-amz-content-sha256;x-amz-date";
+                        if (session_token != null) {
+                            break :brk "host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                        } else {
+                            break :brk "host;x-amz-acl;x-amz-content-sha256;x-amz-date";
+                        }
                     }
                 } else {
-                    if (session_token != null) {
-                        break :brk "host;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                    if (content_disposition != null) {
+                        if (session_token != null) {
+                            break :brk "content-disposition;host;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                        } else {
+                            break :brk "content-disposition;host;x-amz-content-sha256;x-amz-date";
+                        }
                     } else {
-                        break :brk "host;x-amz-content-sha256;x-amz-date";
+                        if (session_token != null) {
+                            break :brk "host;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                        } else {
+                            break :brk "host;x-amz-content-sha256;x-amz-date";
+                        }
                     }
                 }
             }
@@ -596,17 +641,33 @@ pub const S3Credentials = struct {
                     encoded_session_token = encodeURIComponent(token, &token_encoded_buffer, true) catch return error.InvalidSessionToken;
                 }
                 const canonical = brk_canonical: {
-                    if (acl) |acl_value| {
-                        if (encoded_session_token) |token| {
-                            break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Acl={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, host, signed_headers, aws_content_hash });
+                    if (storage_class) |storage_class_value| {
+                        if (acl) |acl_value| {
+                            if (encoded_session_token) |token| {
+                                break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Acl={s}&x-amz-storage-class={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, acl_value, storage_class_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, host, signed_headers, aws_content_hash });
+                            } else {
+                                break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Acl={s}&x-amz-storage-class={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, acl_value, storage_class_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, host, signed_headers, aws_content_hash });
+                            }
                         } else {
-                            break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Acl={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, host, signed_headers, aws_content_hash });
+                            if (encoded_session_token) |token| {
+                                break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nx-amz-storage-class={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, storage_class_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, host, signed_headers, aws_content_hash });
+                            } else {
+                                break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nx-amz-storage-class={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, storage_class_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, host, signed_headers, aws_content_hash });
+                            }
                         }
                     } else {
-                        if (encoded_session_token) |token| {
-                            break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, host, signed_headers, aws_content_hash });
+                        if (acl) |acl_value| {
+                            if (encoded_session_token) |token| {
+                                break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Acl={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, host, signed_headers, aws_content_hash });
+                            } else {
+                                break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Acl={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, host, signed_headers, aws_content_hash });
+                            }
                         } else {
-                            break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, host, signed_headers, aws_content_hash });
+                            if (encoded_session_token) |token| {
+                                break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, host, signed_headers, aws_content_hash });
+                            } else {
+                                break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, host, signed_headers, aws_content_hash });
+                            }
                         }
                     }
                 };
@@ -616,65 +677,130 @@ pub const S3Credentials = struct {
                 const signValue = try std.fmt.bufPrint(&tmp_buffer, "AWS4-HMAC-SHA256\n{s}\n{s}/{s}/{s}/aws4_request\n{s}", .{ amz_date, amz_day, region, service_name, bun.fmt.bytesToHex(sha_digest[0..bun.sha.SHA256.digest], .lower) });
 
                 const signature = bun.hmac.generate(sigDateRegionServiceReq, signValue, .sha256, &hmac_sig_service) orelse return error.FailedToGenerateSignature;
-                if (acl) |acl_value| {
-                    if (encoded_session_token) |token| {
-                        break :brk try std.fmt.allocPrint(
-                            bun.default_allocator,
-                            "{s}://{s}{s}?X-Amz-Acl={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                            .{ protocol, host, normalizedPath, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
-                        );
+
+                if (storage_class) |storage_class_value| {
+                    if (acl) |acl_value| {
+                        if (encoded_session_token) |token| {
+                            break :brk try std.fmt.allocPrint(
+                                bun.default_allocator,
+                                "{s}://{s}{s}?X-Amz-Acl={s}&x-amz-storage-class={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
+                                .{ protocol, host, normalizedPath, acl_value, storage_class_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                            );
+                        } else {
+                            break :brk try std.fmt.allocPrint(
+                                bun.default_allocator,
+                                "{s}://{s}{s}?X-Amz-Acl={s}&x-amz-storage-class={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
+                                .{ protocol, host, normalizedPath, acl_value, storage_class_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                            );
+                        }
                     } else {
-                        break :brk try std.fmt.allocPrint(
-                            bun.default_allocator,
-                            "{s}://{s}{s}?X-Amz-Acl={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                            .{ protocol, host, normalizedPath, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
-                        );
+                        if (encoded_session_token) |token| {
+                            break :brk try std.fmt.allocPrint(
+                                bun.default_allocator,
+                                "{s}://{s}{s}?x-amz-storage-class={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
+                                .{ protocol, host, normalizedPath, storage_class_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                            );
+                        } else {
+                            break :brk try std.fmt.allocPrint(
+                                bun.default_allocator,
+                                "{s}://{s}{s}?x-amz-storage-class={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
+                                .{ protocol, host, normalizedPath, storage_class_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                            );
+                        }
                     }
                 } else {
-                    if (encoded_session_token) |token| {
-                        break :brk try std.fmt.allocPrint(
-                            bun.default_allocator,
-                            "{s}://{s}{s}?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                            .{ protocol, host, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
-                        );
+                    if (acl) |acl_value| {
+                        if (encoded_session_token) |token| {
+                            break :brk try std.fmt.allocPrint(
+                                bun.default_allocator,
+                                "{s}://{s}{s}?X-Amz-Acl={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
+                                .{ protocol, host, normalizedPath, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                            );
+                        } else {
+                            break :brk try std.fmt.allocPrint(
+                                bun.default_allocator,
+                                "{s}://{s}{s}?X-Amz-Acl={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
+                                .{ protocol, host, normalizedPath, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                            );
+                        }
                     } else {
-                        break :brk try std.fmt.allocPrint(
-                            bun.default_allocator,
-                            "{s}://{s}{s}?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                            .{ protocol, host, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
-                        );
+                        if (encoded_session_token) |token| {
+                            break :brk try std.fmt.allocPrint(
+                                bun.default_allocator,
+                                "{s}://{s}{s}?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
+                                .{ protocol, host, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                            );
+                        } else {
+                            break :brk try std.fmt.allocPrint(
+                                bun.default_allocator,
+                                "{s}://{s}{s}?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
+                                .{ protocol, host, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                            );
+                        }
                     }
                 }
             } else {
                 var encoded_content_disposition_buffer: [255]u8 = undefined;
                 const encoded_content_disposition: []const u8 = if (content_disposition) |cd| encodeURIComponent(cd, &encoded_content_disposition_buffer, true) catch return error.ContentTypeIsTooLong else "";
                 const canonical = brk_canonical: {
-                    if (acl) |acl_value| {
-                        if (content_disposition != null) {
-                            if (session_token) |token| {
-                                break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, host, acl_value, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
+                    if (storage_class) |storage_class_value| {
+                        if (acl) |acl_value| {
+                            if (content_disposition != null) {
+                                if (session_token) |token| {
+                                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-storage-class:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, host, acl_value, aws_content_hash, amz_date, storage_class_value, token, signed_headers, aws_content_hash });
+                                } else {
+                                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, host, acl_value, aws_content_hash, amz_date, storage_class_value, signed_headers, aws_content_hash });
+                                }
                             } else {
-                                break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, host, acl_value, aws_content_hash, amz_date, signed_headers, aws_content_hash });
+                                if (session_token) |token| {
+                                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-storage-class:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", host, acl_value, aws_content_hash, amz_date, storage_class_value, token, signed_headers, aws_content_hash });
+                                } else {
+                                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", host, acl_value, aws_content_hash, amz_date, storage_class_value, signed_headers, aws_content_hash });
+                                }
                             }
                         } else {
-                            if (session_token) |token| {
-                                break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", host, acl_value, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
+                            if (content_disposition != null) {
+                                if (session_token) |token| {
+                                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-storage-class:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, host, aws_content_hash, amz_date, storage_class_value, token, signed_headers, aws_content_hash });
+                                } else {
+                                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, host, aws_content_hash, amz_date, storage_class_value, signed_headers, aws_content_hash });
+                                }
                             } else {
-                                break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", host, acl_value, aws_content_hash, amz_date, signed_headers, aws_content_hash });
+                                if (session_token) |token| {
+                                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-storage-class:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", host, aws_content_hash, amz_date, storage_class_value, token, signed_headers, aws_content_hash });
+                                } else {
+                                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", host, aws_content_hash, amz_date, storage_class_value, signed_headers, aws_content_hash });
+                                }
                             }
                         }
                     } else {
-                        if (content_disposition != null) {
-                            if (session_token) |token| {
-                                break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, host, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
+                        if (acl) |acl_value| {
+                            if (content_disposition != null) {
+                                if (session_token) |token| {
+                                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, host, acl_value, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
+                                } else {
+                                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, host, acl_value, aws_content_hash, amz_date, signed_headers, aws_content_hash });
+                                }
                             } else {
-                                break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, host, aws_content_hash, amz_date, signed_headers, aws_content_hash });
+                                if (session_token) |token| {
+                                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", host, acl_value, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
+                                } else {
+                                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", host, acl_value, aws_content_hash, amz_date, signed_headers, aws_content_hash });
+                                }
                             }
                         } else {
-                            if (session_token) |token| {
-                                break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", host, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
+                            if (content_disposition != null) {
+                                if (session_token) |token| {
+                                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, host, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
+                                } else {
+                                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, host, aws_content_hash, amz_date, signed_headers, aws_content_hash });
+                                }
                             } else {
-                                break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", host, aws_content_hash, amz_date, signed_headers, aws_content_hash });
+                                if (session_token) |token| {
+                                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", host, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
+                                } else {
+                                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", host, aws_content_hash, amz_date, signed_headers, aws_content_hash });
+                                }
                             }
                         }
                     }
@@ -705,6 +831,7 @@ pub const S3Credentials = struct {
                 .authorization = "",
                 .acl = signOptions.acl,
                 .url = authorization,
+                .storage_class = signOptions.storage_class,
             };
         }
 
@@ -713,12 +840,14 @@ pub const S3Credentials = struct {
             .host = host,
             .authorization = authorization,
             .acl = signOptions.acl,
+            .storage_class = signOptions.storage_class,
             .url = try std.fmt.allocPrint(bun.default_allocator, "{s}://{s}{s}{s}", .{ protocol, host, normalizedPath, if (search_params) |s| s else "" }),
             ._headers = [_]picohttp.Header{
                 .{ .name = "x-amz-content-sha256", .value = aws_content_hash },
                 .{ .name = "x-amz-date", .value = amz_date },
                 .{ .name = "Host", .value = host },
                 .{ .name = "Authorization", .value = authorization[0..] },
+                .{ .name = "", .value = "" },
                 .{ .name = "", .value = "" },
                 .{ .name = "", .value = "" },
                 .{ .name = "", .value = "" },
@@ -745,6 +874,11 @@ pub const S3Credentials = struct {
             result._headers_len += 1;
         }
 
+        if (storage_class) |storage_class_value| {
+            result._headers[result._headers_len] = .{ .name = "x-amz-storage-class", .value = storage_class_value };
+            result._headers_len += 1;
+        }
+
         return result;
     }
 };
@@ -753,6 +887,7 @@ pub const S3CredentialsWithOptions = struct {
     credentials: S3Credentials,
     options: MultiPartUploadOptions = .{},
     acl: ?ACL = null,
+    storage_class: ?StorageClass = null,
     /// indicates if the credentials have changed
     changed_credentials: bool = false,
 

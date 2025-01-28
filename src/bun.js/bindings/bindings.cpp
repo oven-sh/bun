@@ -2522,6 +2522,10 @@ bool JSC__JSValue__jestDeepMatch(JSC__JSValue JSValue0, JSC__JSValue JSValue1, J
     return Bun__deepMatch<true>(obj, &objVisited, subset, &subsetVisited, globalObject, &scope, &gcBuffer, replacePropsWithAsymmetricMatchers, false);
 }
 
+extern "C" bool Bun__JSValue__isAsyncContextFrame(JSC__JSValue value) {
+    return jsDynamicCast<AsyncContextFrame*>(JSValue::decode(value)) != nullptr;
+}
+
 extern "C" JSC__JSValue Bun__JSValue__call(JSContextRef ctx, JSC__JSValue object,
     JSC__JSValue thisObject, size_t argumentCount,
     const JSValueRef* arguments)

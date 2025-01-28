@@ -43,7 +43,7 @@ it("shouldn't crash when async test runner callback throws", async () => {
     expect(err).toContain("error: ##123##");
     expect(err).toContain("error: ##456##");
     expect(stdout).toBeDefined();
-    expect(await new Response(stdout).text()).toBe("");
+    expect(await new Response(stdout).text()).toBe(`bun test ${Bun.version_with_sha}\n`);
     expect(await exited).toBe(1);
   } finally {
     await rm(test_dir, { force: true, recursive: true });
@@ -189,19 +189,19 @@ test("describe scope throwing doesn't block other tests from running", async () 
     it("test enqueued before a describe scope throws is never run", () => {
       throw new Error("This test failed");
     });
-  
+
     throw "This test passed. Ignore the error message";
-  
+
     it("test enqueued after a describe scope throws is never run", () => {
       throw new Error("This test failed");
     });
   });
-  
+
   it("a describe scope throwing doesn't cause all other tests in the file to fail", () => {
     console.log(
       String.fromCharCode(...[73, 32, 104, 97, 118, 101, 32, 98, 101, 101, 110, 32, 114, 101, 97, 99, 104, 101, 100, 33]),
     );
-  });  
+  });
 `;
 
   const dir = tmpdirSync();
@@ -303,7 +303,7 @@ it("should return non-zero exit code for invalid syntax", async () => {
     expect(err).toContain(" 1 fail");
     expect(err).toContain("Ran 1 tests across 1 files");
     expect(stdout).toBeDefined();
-    expect(await new Response(stdout).text()).toBe("");
+    expect(await new Response(stdout).text()).toBe(`bun test ${Bun.version_with_sha}\n`);
     expect(await exited).toBe(1);
   } finally {
     await rm(test_dir, { force: true, recursive: true });
@@ -331,7 +331,7 @@ it("invalid syntax counts towards bail", async () => {
     expect(err).not.toContain("DO NOT RUN ME");
     expect(err).toContain("Ran 3 tests across 3 files");
     expect(stdout).toBeDefined();
-    expect(await new Response(stdout).text()).toBe("");
+    expect(await new Response(stdout).text()).toBe(`bun test ${Bun.version_with_sha}\n`);
     expect(await exited).toBe(1);
   } finally {
     // await rm(test_dir, { force: true, recursive: true });
@@ -584,6 +584,7 @@ it("test --preload supports global lifecycle hooks", () => {
   });
   expect(stdout.toString().trim()).toBe(
     `
+bun test ${Bun.version_with_sha}
 beforeAll: #1
 beforeAll: #2
 beforeAll: TEST-FILE
@@ -661,7 +662,14 @@ describe("empty", () => {
     expect(err).toContain("0 fail");
     expect(stdout).toBeDefined();
     const out = await new Response(stdout).text();
-    expect(out.split(/\r?\n/)).toEqual(["before all", "before all scoped", "after all scoped", "after all", ""]);
+    expect(out.split(/\r?\n/)).toEqual([
+      `bun test ${Bun.version_with_sha}`,
+      "before all",
+      "before all scoped",
+      "after all scoped",
+      "after all",
+      "",
+    ]);
     expect(await exited).toBe(0);
   } finally {
     await rm(test_dir, { force: true, recursive: true });

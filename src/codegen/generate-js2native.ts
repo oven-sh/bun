@@ -4,7 +4,7 @@
 // For the actual parsing, see replacements.ts
 
 import path, { basename, sep } from "path";
-import { readdirRecursiveWithExclusionsAndExtensionsSync } from "./helpers";
+import { cap, readdirRecursiveWithExclusionsAndExtensionsSync } from "./helpers";
 
 //
 interface NativeCall {
@@ -18,14 +18,14 @@ interface NativeCall {
 interface WrapperCall {
   type: NativeCallType;
   wrap_kind: "new-function";
-  symbol_taget: string;
+  symbol_target: string;
   symbol_generated: string;
   display_name: string;
   call_length: number;
   filename: string;
 }
 
-type NativeCallType = "zig" | "cpp";
+type NativeCallType = "zig" | "cpp" | "bind";
 
 const nativeCalls: NativeCall[] = [];
 const wrapperCalls: WrapperCall[] = [];
@@ -33,7 +33,7 @@ const wrapperCalls: WrapperCall[] = [];
 const sourceFiles = readdirRecursiveWithExclusionsAndExtensionsSync(
   path.join(import.meta.dir, "../"),
   ["deps", "node_modules", "WebKit"],
-  [".cpp", ".zig"],
+  [".cpp", ".zig", ".bind.ts"],
 );
 
 function callBaseName(x: string) {
@@ -41,15 +41,15 @@ function callBaseName(x: string) {
 }
 
 function resolveNativeFileId(call_type: NativeCallType, filename: string) {
-  if (!filename.endsWith("." + call_type)) {
-    throw new Error(
-      `Expected filename for $${call_type} to have .${call_type} extension, got ${JSON.stringify(filename)}`,
-    );
+  const ext = call_type === "bind" ? ".bind.ts" : `.${call_type}`;
+  if (!filename.endsWith(ext)) {
+    throw new Error(`Expected filename for $${call_type} to have ${ext} extension, got ${JSON.stringify(filename)}`);
   }
 
   const resolved = sourceFiles.find(file => file.endsWith(sep + filename));
   if (!resolved) {
-    throw new Error(`Could not find file ${filename} in $${call_type} call`);
+    const fnName = call_type === "bind" ? "bindgenFn" : call_type;
+    throw new Error(`Could not find file ${filename} in $${fnName} call`);
   }
 
   if (call_type === "zig") {
@@ -91,7 +91,7 @@ export function registerNativeCall(
     wrapperCalls.push({
       type: call_type,
       wrap_kind: "new-function",
-      symbol_taget: symbol,
+      symbol_target: symbol,
       symbol_generated: "js2native_wrap_" + symbol.replace(/[^A-Za-z]/g, "_"),
       display_name: callBaseName(symbol),
       call_length: create_fn_len,
@@ -135,8 +135,8 @@ export function getJS2NativeCPP() {
       call => (
         externs.push(`extern "C" SYSV_ABI JSC::EncodedJSValue ${symbol(call)}_workaround(Zig::GlobalObject*);` + "\n"),
         [
-          `JSC::JSValue ${symbol(call)}(Zig::GlobalObject* global) {`,
-          `  return JSValue::decode(${symbol(call)}_workaround(global));`,
+          `static ALWAYS_INLINE JSC::JSValue ${symbol(call)}(Zig::GlobalObject* global) {`,
+          `    return JSValue::decode(${symbol(call)}_workaround(global));`,
           `}` + "\n\n",
         ]
       ),
@@ -149,14 +149,20 @@ export function getJS2NativeCPP() {
           externs.push(
             `BUN_DECLARE_HOST_FUNCTION(${symbol({
               type: "zig",
-              symbol: x.symbol_taget,
+              symbol: x.symbol_target,
+              filename: x.filename,
             })});`,
           ),
         "") || "",
-        `JSC::JSValue ${x.symbol_generated}(Zig::GlobalObject* globalObject) {`,
+        `static ALWAYS_INLINE JSC::JSValue ${x.symbol_generated}(Zig::GlobalObject* globalObject) {`,
         `  return JSC::JSFunction::create(globalObject->vm(), globalObject, ${x.call_length}, ${JSON.stringify(
           x.display_name,
-        )}_s, ${symbol({ type: x.type, symbol: x.symbol_taget })}, JSC::ImplementationVisibility::Public);`,
+        )}_s, ${symbol({
+          type: x.type,
+          symbol: x.symbol_target,
+
+          filename: x.filename,
+        })}, JSC::ImplementationVisibility::Public);`,
         `}`,
       ].join("\n");
     }
@@ -174,26 +180,42 @@ export function getJS2NativeCPP() {
     "using namespace WebCore;" + "\n",
     ...nativeCallStrings,
     ...wrapperCallStrings,
+    ...nativeCalls
+      .filter(x => x.type === "bind")
+      .map(
+        x =>
+          `extern "C" SYSV_ABI JSC::EncodedJSValue js2native_bindgen_${basename(x.filename.replace(/\.bind\.ts$/, ""))}_${x.symbol}(Zig::GlobalObject*);`,
+      ),
     `typedef JSC::JSValue (*JS2NativeFunction)(Zig::GlobalObject*);`,
-    `static JS2NativeFunction js2nativePointers[] = {`,
-    ...nativeCalls.map(x => `  ${cppPointer(x)},`),
-    `};`,
-    `};`,
+    `static ALWAYS_INLINE JSC::JSValue callJS2Native(int32_t index, Zig::GlobalObject* global) {`,
+    ` switch(index) {`,
+    ...nativeCalls.map(
+      x =>
+        `    case ${x.id}: return ${
+          x.type === "bind"
+            ? `JSC::JSValue::decode(js2native_bindgen_${basename(x.filename.replace(/\.bind\.ts$/, ""))}_${x.symbol}(global))`
+            : `${symbol(x)}(global)`
+        };`,
+    ),
+    `    default:`,
+    `      __builtin_unreachable();`,
+    `  }`,
+    `}`,
     `#define JS2NATIVE_COUNT ${nativeCalls.length}`,
+    "}",
   ].join("\n");
 }
 
 export function getJS2NativeZig(gs2NativeZigPath: string) {
   return [
     "//! This file is generated by src/codegen/generate-js2native.ts based on seen calls to the $zig() JS macro",
-    `const JSC = @import("root").bun.JSC;`,
+    `const bun = @import("root").bun;`,
+    `const JSC = bun.JSC;`,
     ...nativeCalls
       .filter(x => x.type === "zig")
       .flatMap(call => [
         `export fn ${symbol(call)}_workaround(global: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSValue {`,
-        `  return @import(${JSON.stringify(path.relative(path.dirname(gs2NativeZigPath), call.filename))}).${
-          call.symbol
-        }(global);`,
+        `  return JSC.toJSHostValue(global, @import(${JSON.stringify(path.relative(path.dirname(gs2NativeZigPath), call.filename))}).${call.symbol}(global));`,
         "}",
       ]),
     ...wrapperCalls
@@ -201,18 +223,24 @@ export function getJS2NativeZig(gs2NativeZigPath: string) {
       .flatMap(x => [
         `export fn ${symbol({
           type: "zig",
-          symbol: x.symbol_taget,
+          symbol: x.symbol_target,
+          filename: x.filename,
         })}(global: *JSC.JSGlobalObject, call_frame: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {`,
-        `
-          const function = @import(${JSON.stringify(path.relative(path.dirname(gs2NativeZigPath), x.filename))});
-          return @call(.always_inline, function.${x.symbol_taget}, .{global, call_frame});`,
+        `    const function = @import(${JSON.stringify(path.relative(path.dirname(gs2NativeZigPath), x.filename))});`,
+        `    return @call(.always_inline, JSC.toJSHostFunction(function.${x.symbol_target}), .{global, call_frame});`,
         "}",
       ]),
     "comptime {",
-    ...nativeCalls.filter(x => x.type === "zig").flatMap(call => `  _ = &${symbol(call)}_workaround;`),
-    ...wrapperCalls
-      .filter(x => x.type === "zig")
-      .flatMap(x => `  _ = &${symbol({ type: "zig", symbol: x.symbol_taget })};`),
+    ...nativeCalls
+      .filter(x => x.type === "bind")
+      .flatMap(x => {
+        const base = basename(x.filename.replace(/\.bind\.ts$/, ""));
+        return [
+          `    @export(bun.gen.${base}.create${cap(x.symbol)}Callback, .{ .name = ${JSON.stringify(
+            `js2native_bindgen_${base}_${x.symbol}`,
+          )} });`,
+        ];
+      }),
     "}",
   ].join("\n");
 }

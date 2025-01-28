@@ -3,7 +3,7 @@ const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const VirtualMachine = JSC.VirtualMachine;
 const Allocator = std.mem.Allocator;
-const Lock = @import("../lock.zig").Lock;
+const Lock = bun.Mutex;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 const Fetch = JSC.WebCore.Fetch;
@@ -18,6 +18,10 @@ const ReadFileTask = WebCore.Blob.ReadFile.ReadFileTask;
 const WriteFileTask = WebCore.Blob.WriteFile.WriteFileTask;
 const napi_async_work = JSC.napi.napi_async_work;
 const FetchTasklet = Fetch.FetchTasklet;
+const S3 = bun.S3;
+const S3HttpSimpleTask = S3.S3HttpSimpleTask;
+const S3HttpDownloadStreamingTask = S3.S3HttpDownloadStreamingTask;
+
 const JSValue = JSC.JSValue;
 const js = JSC.C;
 const Waker = bun.Async.Waker;
@@ -368,6 +372,7 @@ const Link = JSC.Node.Async.link;
 const Symlink = JSC.Node.Async.symlink;
 const Readlink = JSC.Node.Async.readlink;
 const Realpath = JSC.Node.Async.realpath;
+const RealpathNonNative = JSC.Node.Async.realpathNonNative;
 const Mkdir = JSC.Node.Async.mkdir;
 const Fsync = JSC.Node.Async.fsync;
 const Rename = JSC.Node.Async.rename;
@@ -379,6 +384,7 @@ const Exists = JSC.Node.Async.exists;
 const Futimes = JSC.Node.Async.futimes;
 const Lchmod = JSC.Node.Async.lchmod;
 const Lchown = JSC.Node.Async.lchown;
+const StatFS = JSC.Node.Async.statfs;
 const Unlink = JSC.Node.Async.unlink;
 const NativeZlib = JSC.API.NativeZlib;
 const NativeBrotli = JSC.API.NativeBrotli;
@@ -406,84 +412,90 @@ const ServerAllConnectionsClosedTask = @import("./api/server.zig").ServerAllConn
 
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
-    FetchTasklet,
+    Access,
+    AnyTask,
+    AppendFile,
     AsyncGlobWalkTask,
     AsyncTransformTask,
-    ReadFileTask,
-    CopyFilePromiseTask,
-    WriteFileTask,
-    AnyTask,
-    ManagedTask,
-    ShellIOReaderAsyncDeinit,
-    ShellIOWriterAsyncDeinit,
-    napi_async_work,
-    ThreadSafeFunction,
-    CppTask,
-    HotReloadTask,
-    PollPendingModulesTask,
-    GetAddrInfoRequestTask,
-    FSWatchTask,
-    JSCDeferredWorkTask,
-    Stat,
-    Lstat,
-    Fstat,
-    Open,
-    ReadFile,
-    WriteFile,
-    CopyFile,
-    Read,
-    Write,
-    Truncate,
-    FTruncate,
-    Readdir,
-    ReaddirRecursive,
-    Close,
-    Rm,
-    Rmdir,
-    Chown,
-    FChown,
-    Utimes,
-    Lutimes,
+    bun.bake.DevServer.HotReloadEvent,
+    bun.bundle_v2.DeferredBatchTask,
+    bun.shell.Interpreter.Builtin.Yes.YesTask,
     Chmod,
-    Fchmod,
-    Link,
-    Symlink,
-    Readlink,
-    Realpath,
-    Mkdir,
-    Fsync,
-    Fdatasync,
-    Writev,
-    Readv,
-    Rename,
-    Access,
-    AppendFile,
-    Mkdtemp,
+    Chown,
+    Close,
+    CopyFile,
+    CopyFilePromiseTask,
+    CppTask,
     Exists,
+    Fchmod,
+    FChown,
+    Fdatasync,
+    FetchTasklet,
+    Fstat,
+    FSWatchTask,
+    Fsync,
+    FTruncate,
     Futimes,
+    GetAddrInfoRequestTask,
+    HotReloadTask,
+    JSCDeferredWorkTask,
     Lchmod,
     Lchown,
-    Unlink,
-    NativeZlib,
+    Link,
+    Lstat,
+    Lutimes,
+    ManagedTask,
+    Mkdir,
+    Mkdtemp,
+    napi_async_work,
     NativeBrotli,
-    ShellGlobTask,
-    ShellRmTask,
-    ShellRmDirTask,
-    ShellMvCheckTargetTask,
-    ShellMvBatchedTask,
-    ShellLsTask,
-    ShellMkdirTask,
-    ShellTouchTask,
-    ShellCpTask,
-    ShellCondExprStatTask,
+    NativeZlib,
+    Open,
+    PollPendingModulesTask,
+    PosixSignalTask,
+    ProcessWaiterThreadTask,
+    Read,
+    Readdir,
+    ReaddirRecursive,
+    ReadFile,
+    ReadFileTask,
+    Readlink,
+    Readv,
+    Realpath,
+    RealpathNonNative,
+    Rename,
+    Rm,
+    Rmdir,
+    RuntimeTranspilerStore,
+    S3HttpDownloadStreamingTask,
+    S3HttpSimpleTask,
+    ServerAllConnectionsClosedTask,
     ShellAsync,
     ShellAsyncSubprocessDone,
+    ShellCondExprStatTask,
+    ShellCpTask,
+    ShellGlobTask,
+    ShellIOReaderAsyncDeinit,
+    ShellIOWriterAsyncDeinit,
+    ShellLsTask,
+    ShellMkdirTask,
+    ShellMvBatchedTask,
+    ShellMvCheckTargetTask,
+    ShellRmDirTask,
+    ShellRmTask,
+    ShellTouchTask,
+    Stat,
+    StatFS,
+    Symlink,
+    ThreadSafeFunction,
     TimerObject,
-    bun.shell.Interpreter.Builtin.Yes.YesTask,
-    // bun.kit.DevServer.HotReloadTask,
-    ProcessWaiterThreadTask,
-    RuntimeTranspilerStore,
-    ServerAllConnectionsClosedTask,
+    Truncate,
+    Unlink,
+    Utimes,
+    Write,
+    WriteFile,
+    WriteFileTask,
+    Writev,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
@@ -545,6 +557,7 @@ pub const GarbageCollectionController = struct {
         const actual = uws.Loop.get();
         this.gc_timer = uws.Timer.createFallthrough(actual, this);
         this.gc_repeating_timer = uws.Timer.createFallthrough(actual, this);
+        actual.internal_loop_data.jsc_vm = vm.jsc;
 
         if (comptime Environment.isDebug) {
             if (bun.getenvZ("BUN_TRACK_LAST_FN_NAME") != null) {
@@ -553,7 +566,7 @@ pub const GarbageCollectionController = struct {
         }
 
         var gc_timer_interval: i32 = 1000;
-        if (vm.bundler.env.get("BUN_GC_TIMER_INTERVAL")) |timer| {
+        if (vm.transpiler.env.get("BUN_GC_TIMER_INTERVAL")) |timer| {
             if (std.fmt.parseInt(i32, timer, 10)) |parsed| {
                 if (parsed > 0) {
                     gc_timer_interval = parsed;
@@ -562,7 +575,7 @@ pub const GarbageCollectionController = struct {
         }
         this.gc_timer_interval = gc_timer_interval;
 
-        this.disabled = vm.bundler.env.has("BUN_GC_TIMER_DISABLE");
+        this.disabled = vm.transpiler.env.has("BUN_GC_TIMER_DISABLE");
 
         if (!this.disabled)
             this.gc_repeating_timer.set(this, onGCRepeatingTimer, gc_timer_interval, gc_timer_interval);
@@ -774,11 +787,25 @@ pub const EventLoop = struct {
     waker: ?Waker = null,
     forever_timer: ?*uws.Timer = null,
     deferred_tasks: DeferredTaskQueue = .{},
-    uws_loop: if (Environment.isWindows) ?*uws.Loop else void = if (Environment.isWindows) null else {},
+    uws_loop: if (Environment.isWindows) ?*uws.Loop else void = if (Environment.isWindows) null,
 
     debug: Debug = .{},
     entered_event_loop_count: isize = 0,
     concurrent_ref: std.atomic.Value(i32) = std.atomic.Value(i32).init(0),
+
+    signal_handler: if (Environment.isPosix) ?*PosixSignalHandle else void = if (Environment.isPosix) null,
+
+    pub export fn Bun__ensureSignalHandler() void {
+        if (Environment.isPosix) {
+            if (JSC.VirtualMachine.getMainThreadVM()) |vm| {
+                const this = vm.eventLoop();
+                if (this.signal_handler == null) {
+                    this.signal_handler = PosixSignalHandle.new(.{});
+                    @memset(&this.signal_handler.?.signals, 0);
+                }
+            }
+        }
+    }
 
     pub const Debug = if (Environment.isDebug) struct {
         is_inside_tick_queue: bool = false,
@@ -873,9 +900,19 @@ pub const EventLoop = struct {
     pub fn runCallback(this: *EventLoop, callback: JSC.JSValue, globalObject: *JSC.JSGlobalObject, thisValue: JSC.JSValue, arguments: []const JSC.JSValue) void {
         this.enter();
         defer this.exit();
-
         _ = callback.call(globalObject, thisValue, arguments) catch |err|
             globalObject.reportActiveExceptionAsUnhandled(err);
+    }
+
+    pub fn runCallbackWithResult(this: *EventLoop, callback: JSC.JSValue, globalObject: *JSC.JSGlobalObject, thisValue: JSC.JSValue, arguments: []const JSC.JSValue) JSC.JSValue {
+        this.enter();
+        defer this.exit();
+
+        const result = callback.call(globalObject, thisValue, arguments) catch |err| {
+            globalObject.reportActiveExceptionAsUnhandled(err);
+            return .zero;
+        };
+        return result;
     }
 
     fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, comptime queue_name: []const u8) u32 {
@@ -978,6 +1015,15 @@ pub const EventLoop = struct {
                     var fetch_task: *Fetch.FetchTasklet = task.get(Fetch.FetchTasklet).?;
                     fetch_task.onProgressUpdate();
                 },
+                .S3HttpSimpleTask => {
+                    var s3_task: *S3HttpSimpleTask = task.get(S3HttpSimpleTask).?;
+                    s3_task.onResponse();
+                },
+                .S3HttpDownloadStreamingTask => {
+                    var s3_task: *S3HttpDownloadStreamingTask = task.get(S3HttpDownloadStreamingTask).?;
+                    s3_task.onResponse();
+                },
+
                 @field(Task.Tag, @typeName(AsyncGlobWalkTask)) => {
                     var globWalkTask: *AsyncGlobWalkTask = task.get(AsyncGlobWalkTask).?;
                     globWalkTask.*.runFromJS();
@@ -999,7 +1045,7 @@ pub const EventLoop = struct {
                 },
                 .ThreadSafeFunction => {
                     var transform_task: *ThreadSafeFunction = task.as(ThreadSafeFunction);
-                    transform_task.call();
+                    transform_task.onDispatch();
                 },
                 @field(Task.Tag, @typeName(ReadFileTask)) => {
                     var transform_task: *ReadFileTask = task.get(ReadFileTask).?;
@@ -1023,13 +1069,10 @@ pub const EventLoop = struct {
                     // special case: we return
                     return 0;
                 },
-                // @field(Task.Tag, @typeName(bun.kit.DevServer.HotReloadTask)) => {
-                //     const transform_task = task.get(bun.kit.DevServer.HotReloadTask).?;
-                //     transform_task.*.run();
-                //     transform_task.deinit();
-                //     // special case: we return
-                //     return 0;
-                // },
+                @field(Task.Tag, typeBaseName(@typeName(bun.bake.DevServer.HotReloadEvent))) => {
+                    const hmr_task: *bun.bake.DevServer.HotReloadEvent = task.get(bun.bake.DevServer.HotReloadEvent).?;
+                    hmr_task.run();
+                },
                 @field(Task.Tag, typeBaseName(@typeName(FSWatchTask))) => {
                     var transform_task: *FSWatchTask = task.get(FSWatchTask).?;
                     transform_task.*.run();
@@ -1173,6 +1216,10 @@ pub const EventLoop = struct {
                     var any: *Realpath = task.get(Realpath).?;
                     any.runFromJSThread();
                 },
+                @field(Task.Tag, typeBaseName(@typeName(RealpathNonNative))) => {
+                    var any: *RealpathNonNative = task.get(RealpathNonNative).?;
+                    any.runFromJSThread();
+                },
                 @field(Task.Tag, typeBaseName(@typeName(Mkdir))) => {
                     var any: *Mkdir = task.get(Mkdir).?;
                     any.runFromJSThread();
@@ -1242,6 +1289,17 @@ pub const EventLoop = struct {
                     var any: *ServerAllConnectionsClosedTask = task.get(ServerAllConnectionsClosedTask).?;
                     any.runFromJSThread(virtual_machine);
                 },
+                @field(Task.Tag, typeBaseName(@typeName(bun.bundle_v2.DeferredBatchTask))) => {
+                    var any: *bun.bundle_v2.DeferredBatchTask = task.get(bun.bundle_v2.DeferredBatchTask).?;
+                    any.runOnJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(PosixSignalTask))) => {
+                    PosixSignalTask.runFromJSThread(@intCast(task.asUintptr()), global);
+                },
+                @field(Task.Tag, typeBaseName(@typeName(StatFS))) => {
+                    var any: *StatFS = task.get(StatFS).?;
+                    any.runFromJSThread();
+                },
 
                 else => {
                     bun.Output.panic("Unexpected tag: {s}", .{@tagName(task.tag())});
@@ -1295,6 +1353,12 @@ pub const EventLoop = struct {
 
     pub fn tickConcurrentWithCount(this: *EventLoop) usize {
         this.updateCounts();
+
+        if (comptime Environment.isPosix) {
+            if (this.signal_handler) |signal_handler| {
+                signal_handler.drain(this);
+            }
+        }
 
         var concurrent = this.concurrent_tasks.popBatch();
         const count = concurrent.count;
@@ -1367,7 +1431,7 @@ pub const EventLoop = struct {
 
         if (loop.isActive()) {
             this.processGCTimer();
-            var event_loop_sleep_timer = if (comptime Environment.isDebug) std.time.Timer.start() catch unreachable else {};
+            var event_loop_sleep_timer = if (comptime Environment.isDebug) std.time.Timer.start() catch unreachable;
             // for the printer, this is defined:
             var timespec: bun.timespec = if (Environment.isDebug) .{ .sec = 0, .nsec = 0 } else undefined;
             loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec)) &timespec else null);
@@ -1425,6 +1489,7 @@ pub const EventLoop = struct {
         }
 
         this.processGCTimer();
+        this.processGCTimer();
         loop.tick();
 
         ctx.onAfterEventLoop();
@@ -1473,38 +1538,36 @@ pub const EventLoop = struct {
 
     pub fn tick(this: *EventLoop) void {
         JSC.markBinding(@src());
-        {
-            this.entered_event_loop_count += 1;
-            this.debug.enter();
-            defer {
-                this.entered_event_loop_count -= 1;
-                this.debug.exit();
-            }
-
-            const ctx = this.virtual_machine;
-            this.tickConcurrent();
-            this.processGCTimer();
-
-            const global = ctx.global;
-            const global_vm = ctx.jsc;
-
-            while (true) {
-                while (this.tickWithCount(ctx) > 0) : (this.global.handleRejectedPromises()) {
-                    this.tickConcurrent();
-                } else {
-                    this.drainMicrotasksWithGlobal(global, global_vm);
-                    this.tickConcurrent();
-                    if (this.tasks.count > 0) continue;
-                }
-                break;
-            }
-
-            while (this.tickWithCount(ctx) > 0) {
-                this.tickConcurrent();
-            }
-
-            this.global.handleRejectedPromises();
+        this.entered_event_loop_count += 1;
+        this.debug.enter();
+        defer {
+            this.entered_event_loop_count -= 1;
+            this.debug.exit();
         }
+
+        const ctx = this.virtual_machine;
+        this.tickConcurrent();
+        this.processGCTimer();
+
+        const global = ctx.global;
+        const global_vm = ctx.jsc;
+
+        while (true) {
+            while (this.tickWithCount(ctx) > 0) : (this.global.handleRejectedPromises()) {
+                this.tickConcurrent();
+            } else {
+                this.drainMicrotasksWithGlobal(global, global_vm);
+                this.tickConcurrent();
+                if (this.tasks.count > 0) continue;
+            }
+            break;
+        }
+
+        while (this.tickWithCount(ctx) > 0) {
+            this.tickConcurrent();
+        }
+
+        this.global.handleRejectedPromises();
     }
 
     pub fn waitForPromise(this: *EventLoop, promise: JSC.AnyPromise) void {
@@ -2014,11 +2077,11 @@ pub const AnyEventLoop = union(enum) {
 
     pub const Task = AnyTaskWithExtraContext;
 
-    pub fn fromJSC(
-        this: *AnyEventLoop,
-        jsc: *EventLoop,
-    ) void {
-        this.* = .{ .js = jsc };
+    pub fn iterationNumber(this: *const AnyEventLoop) u64 {
+        return switch (this.*) {
+            .js => this.js.usocketsLoop().iterationNumber(),
+            .mini => this.mini.loop.iterationNumber(),
+        };
     }
 
     pub fn wakeup(this: *AnyEventLoop) void {
@@ -2102,7 +2165,7 @@ pub const AnyEventLoop = union(enum) {
     ) void {
         switch (this.*) {
             .js => {
-                unreachable; // TODO:
+                bun.todoPanic(@src(), "AnyEventLoop.enqueueTaskConcurrent", .{});
                 // const TaskType = AnyTask.New(Context, Callback);
                 // @field(ctx, field) = TaskType.init(ctx);
                 // var concurrent = bun.default_allocator.create(ConcurrentTask) catch unreachable;
@@ -2236,7 +2299,7 @@ pub const EventLoopHandle = union(enum) {
 
     pub inline fn createNullDelimitedEnvMap(this: @This(), alloc: Allocator) ![:null]?[*:0]u8 {
         return switch (this) {
-            .js => this.js.virtual_machine.bundler.env.map.createNullDelimitedEnvMap(alloc),
+            .js => this.js.virtual_machine.transpiler.env.map.createNullDelimitedEnvMap(alloc),
             .mini => this.mini.env.?.map.createNullDelimitedEnvMap(alloc),
         };
     }
@@ -2250,14 +2313,14 @@ pub const EventLoopHandle = union(enum) {
 
     pub inline fn topLevelDir(this: EventLoopHandle) []const u8 {
         return switch (this) {
-            .js => this.js.virtual_machine.bundler.fs.top_level_dir,
+            .js => this.js.virtual_machine.transpiler.fs.top_level_dir,
             .mini => this.mini.top_level_dir,
         };
     }
 
     pub inline fn env(this: EventLoopHandle) *bun.DotEnv.Loader {
         return switch (this) {
-            .js => this.js.virtual_machine.bundler.env,
+            .js => this.js.virtual_machine.transpiler.env,
             .mini => this.mini.env.?,
         };
     }
@@ -2286,4 +2349,100 @@ pub const EventLoopTask = union {
 pub const EventLoopTaskPtr = union {
     js: *ConcurrentTask,
     mini: *JSC.AnyTaskWithExtraContext,
+};
+
+pub const PosixSignalHandle = struct {
+    const buffer_size = 8192;
+
+    signals: [buffer_size]u8 = undefined,
+
+    // Producer index (signal handler writes).
+    tail: std.atomic.Value(u16) = std.atomic.Value(u16).init(0),
+    // Consumer index (main thread reads).
+    head: std.atomic.Value(u16) = std.atomic.Value(u16).init(0),
+
+    const log = bun.Output.scoped(.PosixSignalHandle, true);
+
+    pub usingnamespace bun.New(@This());
+
+    /// Called by the signal handler (single producer).
+    /// Returns `true` if enqueued successfully, or `false` if the ring is full.
+    pub fn enqueue(this: *PosixSignalHandle, signal: u8) bool {
+        // Read the current tail and head (Acquire to ensure we have up‐to‐date values).
+        const old_tail = this.tail.load(.acquire);
+        const head_val = this.head.load(.acquire);
+
+        // Compute the next tail (wrapping around buffer_size).
+        const next_tail = (old_tail +% 1) % buffer_size;
+
+        // Check if the ring is full.
+        if (next_tail == (head_val % buffer_size)) {
+            // The ring buffer is full.
+            // We cannot block or wait here (since we're in a signal handler).
+            // So we just drop the signal or log if desired.
+            log("signal queue is full; dropping", .{});
+            return false;
+        }
+
+        // Store the signal into the ring buffer slot (Release to ensure data is visible).
+        @atomicStore(u8, &this.signals[old_tail % buffer_size], signal, .release);
+
+        // Publish the new tail (Release so that the consumer sees the updated tail).
+        this.tail.store(old_tail +% 1, .release);
+
+        JSC.VirtualMachine.getMainThreadVM().?.eventLoop().wakeup();
+
+        return true;
+    }
+
+    /// This is the signal handler entry point. Calls enqueue on the ring buffer.
+    /// Note: Must be minimal logic here. Only do atomics & signal‐safe calls.
+    export fn Bun__onPosixSignal(number: i32) void {
+        const vm = JSC.VirtualMachine.getMainThreadVM().?;
+        _ = vm.eventLoop().signal_handler.?.enqueue(@intCast(number));
+    }
+
+    /// Called by the main thread (single consumer).
+    /// Returns `null` if the ring is empty, or the next signal otherwise.
+    pub fn dequeue(this: *PosixSignalHandle) ?u8 {
+        // Read the current head and tail.
+        const old_head = this.head.load(.acquire);
+        const tail_val = this.tail.load(.acquire);
+
+        // If head == tail, the ring is empty.
+        if (old_head == tail_val) {
+            return null; // No available items
+        }
+
+        const slot_index = old_head % buffer_size;
+        // Acquire load of the stored signal to get the item.
+        const signal = @atomicRmw(u8, &this.signals[slot_index], .Xchg, 0, .acq_rel);
+
+        // Publish the updated head (Release).
+        this.head.store(old_head +% 1, .release);
+
+        return signal;
+    }
+
+    /// Drain as many signals as possible and enqueue them as tasks in the event loop.
+    /// Called by the main thread.
+    pub fn drain(this: *PosixSignalHandle, event_loop: *JSC.EventLoop) void {
+        while (this.dequeue()) |signal| {
+            // Example: wrap the signal into a Task structure
+            var posix_signal_task: PosixSignalTask = undefined;
+            var task = JSC.Task.init(&posix_signal_task);
+            task.setUintptr(signal);
+            event_loop.enqueueTask(task);
+        }
+    }
+};
+
+pub const PosixSignalTask = struct {
+    number: u8,
+    extern "C" fn Bun__onSignalForJS(number: i32, globalObject: *JSC.JSGlobalObject) void;
+
+    pub usingnamespace bun.New(@This());
+    pub fn runFromJSThread(number: u8, globalObject: *JSC.JSGlobalObject) void {
+        Bun__onSignalForJS(number, globalObject);
+    }
 };

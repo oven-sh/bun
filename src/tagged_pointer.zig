@@ -153,6 +153,14 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
             return this.repr.get(Type);
         }
 
+        pub inline fn setUintptr(this: *This, value: AddressableSize) void {
+            this.repr._ptr = value;
+        }
+
+        pub inline fn asUintptr(this: This) AddressableSize {
+            return this.repr._ptr;
+        }
+
         pub inline fn is(this: This, comptime Type: type) bool {
             comptime assert_type(Type);
             return this.repr.data == comptime @intFromEnum(@field(Tag, typeBaseName(@typeName(Type))));

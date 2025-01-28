@@ -1,5 +1,60 @@
 // GENERATED - DO NOT EDIT
 export namespace JSC {
+  export namespace Audit {
+    /**
+     * Creates the `WebInspectorAudit` object that is passed to run. Must call teardown before calling setup more than once.
+     * @request `Audit.setup`
+     */
+    export type SetupRequest = {
+      /**
+       * Specifies in which isolated context to run the test. Each content script lives in an isolated context and this parameter may be used to specify one of those contexts. If the parameter is omitted or 0 the evaluation will be performed in the context of the inspected page.
+       */
+      contextId?: Runtime.ExecutionContextId | undefined;
+    };
+    /**
+     * Creates the `WebInspectorAudit` object that is passed to run. Must call teardown before calling setup more than once.
+     * @response `Audit.setup`
+     */
+    export type SetupResponse = {};
+    /**
+     * Parses and evaluates the given test string and sends back the result. Returned values are saved to the "audit" object group. Call setup before and teardown after if the `WebInspectorAudit` object should be passed into the test.
+     * @request `Audit.run`
+     */
+    export type RunRequest = {
+      /**
+       * Test string to parse and evaluate.
+       */
+      test: string;
+      /**
+       * Specifies in which isolated context to run the test. Each content script lives in an isolated context and this parameter may be used to specify one of those contexts. If the parameter is omitted or 0 the evaluation will be performed in the context of the inspected page.
+       */
+      contextId?: Runtime.ExecutionContextId | undefined;
+    };
+    /**
+     * Parses and evaluates the given test string and sends back the result. Returned values are saved to the "audit" object group. Call setup before and teardown after if the `WebInspectorAudit` object should be passed into the test.
+     * @response `Audit.run`
+     */
+    export type RunResponse = {
+      /**
+       * Evaluation result.
+       */
+      result: Runtime.RemoteObject;
+      /**
+       * True if the result was thrown during the evaluation.
+       */
+      wasThrown?: boolean | undefined;
+    };
+    /**
+     * Destroys the `WebInspectorAudit` object that is passed to run. Must call setup before calling teardown.
+     * @request `Audit.teardown`
+     */
+    export type TeardownRequest = {};
+    /**
+     * Destroys the `WebInspectorAudit` object that is passed to run. Must call setup before calling teardown.
+     * @response `Audit.teardown`
+     */
+    export type TeardownResponse = {};
+  }
   export namespace Console {
     /**
      * Channels for different types of log messages.
@@ -29,7 +84,7 @@ export namespace JSC {
     /**
      * The reason the console is being cleared.
      */
-    export type ClearReason = "console-api" | "main-frame-navigation";
+    export type ClearReason = "console-api" | "frontend" | "main-frame-navigation";
     /**
      * Logging channel.
      */
@@ -225,6 +280,18 @@ export namespace JSC {
      */
     export type ClearMessagesResponse = {};
     /**
+     * Control whether calling <code>console.clear()</code> has an effect in Web Inspector. Defaults to true.
+     * @request `Console.setConsoleClearAPIEnabled`
+     */
+    export type SetConsoleClearAPIEnabledRequest = {
+      enable: boolean;
+    };
+    /**
+     * Control whether calling <code>console.clear()</code> has an effect in Web Inspector. Defaults to true.
+     * @response `Console.setConsoleClearAPIEnabled`
+     */
+    export type SetConsoleClearAPIEnabledResponse = {};
+    /**
      * List of the different message sources that are non-default logging channels.
      * @request `Console.getLoggingChannels`
      */
@@ -258,81 +325,6 @@ export namespace JSC {
      * @response `Console.setLoggingChannelLevel`
      */
     export type SetLoggingChannelLevelResponse = {};
-  }
-  export namespace CPUProfiler {
-    /**
-     * CPU usage for an individual thread.
-     */
-    export type ThreadInfo = {
-      /**
-       * Some thread identification information.
-       */
-      name: string;
-      /**
-       * CPU usage for this thread. This should not exceed 100% for an individual thread.
-       */
-      usage: number;
-      /**
-       * Type of thread. There should be a single main thread.
-       */
-      type?: "main" | "webkit" | undefined;
-      /**
-       * A thread may be associated with a target, such as a Worker, in the process.
-       */
-      targetId?: string | undefined;
-    };
-    export type Event = {
-      timestamp: number;
-      /**
-       * Percent of total cpu usage. If there are multiple cores the usage may be greater than 100%.
-       */
-      usage: number;
-      /**
-       * Per-thread CPU usage information. Does not include the main thread.
-       */
-      threads?: ThreadInfo[] | undefined;
-    };
-    /**
-     * Tracking started.
-     * @event `CPUProfiler.trackingStart`
-     */
-    export type TrackingStartEvent = {
-      timestamp: number;
-    };
-    /**
-     * Periodic tracking updates with event data.
-     * @event `CPUProfiler.trackingUpdate`
-     */
-    export type TrackingUpdateEvent = {
-      event: Event;
-    };
-    /**
-     * Tracking stopped.
-     * @event `CPUProfiler.trackingComplete`
-     */
-    export type TrackingCompleteEvent = {
-      timestamp: number;
-    };
-    /**
-     * Start tracking cpu usage.
-     * @request `CPUProfiler.startTracking`
-     */
-    export type StartTrackingRequest = {};
-    /**
-     * Start tracking cpu usage.
-     * @response `CPUProfiler.startTracking`
-     */
-    export type StartTrackingResponse = {};
-    /**
-     * Stop tracking cpu usage. This will produce a `trackingComplete` event.
-     * @request `CPUProfiler.stopTracking`
-     */
-    export type StopTrackingRequest = {};
-    /**
-     * Stop tracking cpu usage. This will produce a `trackingComplete` event.
-     * @response `CPUProfiler.stopTracking`
-     */
-    export type StopTrackingResponse = {};
   }
   export namespace Debugger {
     /**
@@ -1192,23 +1184,27 @@ export namespace JSC {
       savedResultIndex?: number | undefined;
     };
     /**
-     * Sets whether the given URL should be in the list of blackboxed scripts, which are ignored when pausing/stepping/debugging.
+     * Sets whether the given URL should be in the list of blackboxed scripts, which are ignored when pausing.
      * @request `Debugger.setShouldBlackboxURL`
      */
     export type SetShouldBlackboxURLRequest = {
       url: string;
       shouldBlackbox: boolean;
       /**
-       * If true, <code>url</code> is case sensitive.
+       * If <code>true</code>, <code>url</code> is case sensitive.
        */
       caseSensitive?: boolean | undefined;
       /**
-       * If true, treat <code>url</code> as regular expression.
+       * If <code>true</code>, treat <code>url</code> as regular expression.
        */
       isRegex?: boolean | undefined;
+      /**
+       * If provided, limits where in the script the debugger will skip pauses. Expected structure is a repeated <code>[startLine, startColumn, endLine, endColumn]</code>. Ignored if <code>shouldBlackbox</code> is <code>false</code>.
+       */
+      sourceRanges?: number[] | undefined;
     };
     /**
-     * Sets whether the given URL should be in the list of blackboxed scripts, which are ignored when pausing/stepping/debugging.
+     * Sets whether the given URL should be in the list of blackboxed scripts, which are ignored when pausing.
      * @response `Debugger.setShouldBlackboxURL`
      */
     export type SetShouldBlackboxURLResponse = {};
@@ -1224,21 +1220,6 @@ export namespace JSC {
      * @response `Debugger.setBlackboxBreakpointEvaluations`
      */
     export type SetBlackboxBreakpointEvaluationsResponse = {};
-  }
-  export namespace GenericTypes {
-    /**
-     * Search match in a resource.
-     */
-    export type SearchMatch = {
-      /**
-       * Line number in resource content.
-       */
-      lineNumber: number;
-      /**
-       * Line with match content.
-       */
-      lineContent: string;
-    };
   }
   export namespace Heap {
     /**
@@ -1448,1006 +1429,78 @@ export namespace JSC {
      */
     export type InitializedResponse = {};
   }
-  export namespace Network {
+  export namespace LifecycleReporter {
     /**
-     * Unique loader identifier.
+     * undefined
+     * @event `LifecycleReporter.reload`
      */
-    export type LoaderId = string;
+    export type ReloadEvent = {};
     /**
-     * Unique frame identifier.
+     * undefined
+     * @event `LifecycleReporter.error`
      */
-    export type FrameId = string;
-    /**
-     * Unique request identifier.
-     */
-    export type RequestId = string;
-    /**
-     * Elapsed seconds since frontend connected.
-     */
-    export type Timestamp = number;
-    /**
-     * Number of seconds since epoch.
-     */
-    export type Walltime = number;
-    /**
-     * Controls how much referrer information is sent with the request
-     */
-    export type ReferrerPolicy =
-      | "empty-string"
-      | "no-referrer"
-      | "no-referrer-when-downgrade"
-      | "same-origin"
-      | "origin"
-      | "strict-origin"
-      | "origin-when-cross-origin"
-      | "strict-origin-when-cross-origin"
-      | "unsafe-url";
-    /**
-     * Request / response headers as keys / values of JSON object.
-     */
-    export type Headers = Record<string, unknown>;
-    /**
-     * Timing information for the request.
-     */
-    export type ResourceTiming = {
+    export type ErrorEvent = {
       /**
-       * Request is initiated
+       * string associated with the error
        */
-      startTime: Timestamp;
+      message: string;
       /**
-       * Started redirect resolution.
+       * If an Error instance, the error.name property
        */
-      redirectStart: Timestamp;
+      name: string;
       /**
-       * Finished redirect resolution.
+       * Array of URLs associated with the error
        */
-      redirectEnd: Timestamp;
+      urls: string[];
       /**
-       * Resource fetching started.
+       * Line, column pairs associated with the error. Already sourcemapped.
        */
-      fetchStart: Timestamp;
+      lineColumns: number[];
       /**
-       * Started DNS address resolve in milliseconds relative to fetchStart.
+       * Source code preview associated with the error for up to 5 lines before the error, relative to the first non-internal stack frame.
        */
-      domainLookupStart: number;
-      /**
-       * Finished DNS address resolve in milliseconds relative to fetchStart.
-       */
-      domainLookupEnd: number;
-      /**
-       * Started connecting to the remote host in milliseconds relative to fetchStart.
-       */
-      connectStart: number;
-      /**
-       * Connected to the remote host in milliseconds relative to fetchStart.
-       */
-      connectEnd: number;
-      /**
-       * Started SSL handshake in milliseconds relative to fetchStart.
-       */
-      secureConnectionStart: number;
-      /**
-       * Started sending request in milliseconds relative to fetchStart.
-       */
-      requestStart: number;
-      /**
-       * Started receiving response headers in milliseconds relative to fetchStart.
-       */
-      responseStart: number;
-      /**
-       * Finished receiving response headers in milliseconds relative to fetchStart.
-       */
-      responseEnd: number;
+      sourceLines: string[];
     };
     /**
-     * HTTP request data.
-     */
-    export type Request = {
-      /**
-       * Request URL.
-       */
-      url: string;
-      /**
-       * HTTP request method.
-       */
-      method: string;
-      /**
-       * HTTP request headers.
-       */
-      headers: Headers;
-      /**
-       * HTTP POST request data.
-       */
-      postData?: string | undefined;
-      /**
-       * The level of included referrer information.
-       */
-      referrerPolicy?: ReferrerPolicy | undefined;
-      /**
-       * The base64 cryptographic hash of the resource.
-       */
-      integrity?: string | undefined;
-    };
-    /**
-     * HTTP response data.
-     */
-    export type Response = {
-      /**
-       * Response URL. This URL can be different from CachedResource.url in case of redirect.
-       */
-      url: string;
-      /**
-       * HTTP response status code.
-       */
-      status: number;
-      /**
-       * HTTP response status text.
-       */
-      statusText: string;
-      /**
-       * HTTP response headers.
-       */
-      headers: Headers;
-      /**
-       * Resource mimeType as determined by the browser.
-       */
-      mimeType: string;
-      /**
-       * Specifies where the response came from.
-       */
-      source: "unknown" | "network" | "memory-cache" | "disk-cache" | "service-worker" | "inspector-override";
-      /**
-       * Refined HTTP request headers that were actually transmitted over the network.
-       */
-      requestHeaders?: Headers | undefined;
-      /**
-       * Timing information for the given request.
-       */
-      timing?: ResourceTiming | undefined;
-      /**
-       * The security information for the given request.
-       */
-      security?: Security.Security | undefined;
-    };
-    /**
-     * Network load metrics.
-     */
-    export type Metrics = {
-      /**
-       * Network protocol. ALPN Protocol ID Identification Sequence, as per RFC 7301 (for example, http/2, http/1.1, spdy/3.1)
-       */
-      protocol?: string | undefined;
-      /**
-       * Network priority.
-       */
-      priority?: "low" | "medium" | "high" | undefined;
-      /**
-       * Connection identifier.
-       */
-      connectionIdentifier?: string | undefined;
-      /**
-       * Remote IP address.
-       */
-      remoteAddress?: string | undefined;
-      /**
-       * Refined HTTP request headers that were actually transmitted over the network.
-       */
-      requestHeaders?: Headers | undefined;
-      /**
-       * Total HTTP request header bytes sent over the network.
-       */
-      requestHeaderBytesSent?: number | undefined;
-      /**
-       * Total HTTP request body bytes sent over the network.
-       */
-      requestBodyBytesSent?: number | undefined;
-      /**
-       * Total HTTP response header bytes received over the network.
-       */
-      responseHeaderBytesReceived?: number | undefined;
-      /**
-       * Total HTTP response body bytes received over the network.
-       */
-      responseBodyBytesReceived?: number | undefined;
-      /**
-       * Total decoded response body size in bytes.
-       */
-      responseBodyDecodedSize?: number | undefined;
-      /**
-       * Connection information for the completed request.
-       */
-      securityConnection?: Security.Connection | undefined;
-      /**
-       * Whether or not the connection was proxied through a server. If <code>true</code>, the <code>remoteAddress</code> will be for the proxy server, not the server that provided the resource to the proxy server.
-       */
-      isProxyConnection?: boolean | undefined;
-    };
-    /**
-     * WebSocket request data.
-     */
-    export type WebSocketRequest = {
-      /**
-       * HTTP response headers.
-       */
-      headers: Headers;
-    };
-    /**
-     * WebSocket response data.
-     */
-    export type WebSocketResponse = {
-      /**
-       * HTTP response status code.
-       */
-      status: number;
-      /**
-       * HTTP response status text.
-       */
-      statusText: string;
-      /**
-       * HTTP response headers.
-       */
-      headers: Headers;
-    };
-    /**
-     * WebSocket frame data.
-     */
-    export type WebSocketFrame = {
-      /**
-       * WebSocket frame opcode.
-       */
-      opcode: number;
-      /**
-       * WebSocket frame mask.
-       */
-      mask: boolean;
-      /**
-       * WebSocket frame payload data, binary frames (opcode = 2) are base64-encoded.
-       */
-      payloadData: string;
-      /**
-       * WebSocket frame payload length in bytes.
-       */
-      payloadLength: number;
-    };
-    /**
-     * Information about the cached resource.
-     */
-    export type CachedResource = {
-      /**
-       * Resource URL. This is the url of the original network request.
-       */
-      url: string;
-      /**
-       * Type of this resource.
-       */
-      type: Page.ResourceType;
-      /**
-       * Cached response data.
-       */
-      response?: Response | undefined;
-      /**
-       * Cached response body size.
-       */
-      bodySize: number;
-      /**
-       * URL of source map associated with this resource (if any).
-       */
-      sourceMapURL?: string | undefined;
-    };
-    /**
-     * Information about the request initiator.
-     */
-    export type Initiator = {
-      /**
-       * Type of this initiator.
-       */
-      type: "parser" | "script" | "other";
-      /**
-       * Initiator JavaScript stack trace, set for Script only.
-       */
-      stackTrace?: Console.StackTrace | undefined;
-      /**
-       * Initiator URL, set for Parser type only.
-       */
-      url?: string | undefined;
-      /**
-       * Initiator line number, set for Parser type only.
-       */
-      lineNumber?: number | undefined;
-      /**
-       * Set if the load was triggered by a DOM node, in addition to the other initiator information.
-       */
-      nodeId?: DOM.NodeId | undefined;
-    };
-    /**
-     * Different stages of a network request.
-     */
-    export type NetworkStage = "request" | "response";
-    /**
-     * Different stages of a network request.
-     */
-    export type ResourceErrorType = "General" | "AccessControl" | "Cancellation" | "Timeout";
-    /**
-     * Fired when page is about to send HTTP request.
-     * @event `Network.requestWillBeSent`
-     */
-    export type RequestWillBeSentEvent = {
-      /**
-       * Request identifier.
-       */
-      requestId: RequestId;
-      /**
-       * Frame identifier.
-       */
-      frameId: FrameId;
-      /**
-       * Loader identifier.
-       */
-      loaderId: LoaderId;
-      /**
-       * URL of the document this request is loaded for.
-       */
-      documentURL: string;
-      /**
-       * Request data.
-       */
-      request: Request;
-      timestamp: Timestamp;
-      walltime: Walltime;
-      /**
-       * Request initiator.
-       */
-      initiator: Initiator;
-      /**
-       * Redirect response data.
-       */
-      redirectResponse?: Response | undefined;
-      /**
-       * Resource type.
-       */
-      type?: Page.ResourceType | undefined;
-      /**
-       * Identifier for the context of where the load originated. In general this is the target identifier. For Workers this will be the workerId.
-       */
-      targetId?: string | undefined;
-    };
-    /**
-     * Fired when HTTP response is available.
-     * @event `Network.responseReceived`
-     */
-    export type ResponseReceivedEvent = {
-      /**
-       * Request identifier.
-       */
-      requestId: RequestId;
-      /**
-       * Frame identifier.
-       */
-      frameId: FrameId;
-      /**
-       * Loader identifier.
-       */
-      loaderId: LoaderId;
-      /**
-       * Timestamp.
-       */
-      timestamp: Timestamp;
-      /**
-       * Resource type.
-       */
-      type: Page.ResourceType;
-      /**
-       * Response data.
-       */
-      response: Response;
-    };
-    /**
-     * Fired when data chunk was received over the network.
-     * @event `Network.dataReceived`
-     */
-    export type DataReceivedEvent = {
-      /**
-       * Request identifier.
-       */
-      requestId: RequestId;
-      /**
-       * Timestamp.
-       */
-      timestamp: Timestamp;
-      /**
-       * Data chunk length.
-       */
-      dataLength: number;
-      /**
-       * Actual bytes received (might be less than dataLength for compressed encodings).
-       */
-      encodedDataLength: number;
-    };
-    /**
-     * Fired when HTTP request has finished loading.
-     * @event `Network.loadingFinished`
-     */
-    export type LoadingFinishedEvent = {
-      /**
-       * Request identifier.
-       */
-      requestId: RequestId;
-      /**
-       * Timestamp.
-       */
-      timestamp: Timestamp;
-      /**
-       * URL of source map associated with this resource (if any).
-       */
-      sourceMapURL?: string | undefined;
-      /**
-       * Network metrics.
-       */
-      metrics?: Metrics | undefined;
-    };
-    /**
-     * Fired when HTTP request has failed to load.
-     * @event `Network.loadingFailed`
-     */
-    export type LoadingFailedEvent = {
-      /**
-       * Request identifier.
-       */
-      requestId: RequestId;
-      /**
-       * Timestamp.
-       */
-      timestamp: Timestamp;
-      /**
-       * User friendly error message.
-       */
-      errorText: string;
-      /**
-       * True if loading was canceled.
-       */
-      canceled?: boolean | undefined;
-    };
-    /**
-     * Fired when HTTP request has been served from memory cache.
-     * @event `Network.requestServedFromMemoryCache`
-     */
-    export type RequestServedFromMemoryCacheEvent = {
-      /**
-       * Request identifier.
-       */
-      requestId: RequestId;
-      /**
-       * Frame identifier.
-       */
-      frameId: FrameId;
-      /**
-       * Loader identifier.
-       */
-      loaderId: LoaderId;
-      /**
-       * URL of the document this request is loaded for.
-       */
-      documentURL: string;
-      /**
-       * Timestamp.
-       */
-      timestamp: Timestamp;
-      /**
-       * Request initiator.
-       */
-      initiator: Initiator;
-      /**
-       * Cached resource data.
-       */
-      resource: CachedResource;
-    };
-    /**
-     * Fired when HTTP request has been intercepted. The frontend must respond with <code>Network.interceptContinue</code>, <code>Network.interceptWithRequest</code>` or <code>Network.interceptWithResponse</code>` to resolve this request.
-     * @event `Network.requestIntercepted`
-     */
-    export type RequestInterceptedEvent = {
-      /**
-       * Identifier for this intercepted network. Corresponds with an earlier <code>Network.requestWillBeSent</code>.
-       */
-      requestId: RequestId;
-      /**
-       * Original request content that would proceed if this is continued.
-       */
-      request: Request;
-    };
-    /**
-     * Fired when HTTP response has been intercepted. The frontend must response with <code>Network.interceptContinue</code> or <code>Network.interceptWithResponse</code>` to continue this response.
-     * @event `Network.responseIntercepted`
-     */
-    export type ResponseInterceptedEvent = {
-      /**
-       * Identifier for this intercepted network. Corresponds with an earlier <code>Network.requestWillBeSent</code>.
-       */
-      requestId: RequestId;
-      /**
-       * Original response content that would proceed if this is continued.
-       */
-      response: Response;
-    };
-    /**
-     * Fired when WebSocket is about to initiate handshake.
-     * @event `Network.webSocketWillSendHandshakeRequest`
-     */
-    export type WebSocketWillSendHandshakeRequestEvent = {
-      /**
-       * Request identifier.
-       */
-      requestId: RequestId;
-      timestamp: Timestamp;
-      walltime: Walltime;
-      /**
-       * WebSocket request data.
-       */
-      request: WebSocketRequest;
-    };
-    /**
-     * Fired when WebSocket handshake response becomes available.
-     * @event `Network.webSocketHandshakeResponseReceived`
-     */
-    export type WebSocketHandshakeResponseReceivedEvent = {
-      /**
-       * Request identifier.
-       */
-      requestId: RequestId;
-      timestamp: Timestamp;
-      /**
-       * WebSocket response data.
-       */
-      response: WebSocketResponse;
-    };
-    /**
-     * Fired upon WebSocket creation.
-     * @event `Network.webSocketCreated`
-     */
-    export type WebSocketCreatedEvent = {
-      /**
-       * Request identifier.
-       */
-      requestId: RequestId;
-      /**
-       * WebSocket request URL.
-       */
-      url: string;
-    };
-    /**
-     * Fired when WebSocket is closed.
-     * @event `Network.webSocketClosed`
-     */
-    export type WebSocketClosedEvent = {
-      /**
-       * Request identifier.
-       */
-      requestId: RequestId;
-      /**
-       * Timestamp.
-       */
-      timestamp: Timestamp;
-    };
-    /**
-     * Fired when WebSocket frame is received.
-     * @event `Network.webSocketFrameReceived`
-     */
-    export type WebSocketFrameReceivedEvent = {
-      /**
-       * Request identifier.
-       */
-      requestId: RequestId;
-      /**
-       * Timestamp.
-       */
-      timestamp: Timestamp;
-      /**
-       * WebSocket response data.
-       */
-      response: WebSocketFrame;
-    };
-    /**
-     * Fired when WebSocket frame error occurs.
-     * @event `Network.webSocketFrameError`
-     */
-    export type WebSocketFrameErrorEvent = {
-      /**
-       * Request identifier.
-       */
-      requestId: RequestId;
-      /**
-       * Timestamp.
-       */
-      timestamp: Timestamp;
-      /**
-       * WebSocket frame error message.
-       */
-      errorMessage: string;
-    };
-    /**
-     * Fired when WebSocket frame is sent.
-     * @event `Network.webSocketFrameSent`
-     */
-    export type WebSocketFrameSentEvent = {
-      /**
-       * Request identifier.
-       */
-      requestId: RequestId;
-      /**
-       * Timestamp.
-       */
-      timestamp: Timestamp;
-      /**
-       * WebSocket response data.
-       */
-      response: WebSocketFrame;
-    };
-    /**
-     * Enables network tracking, network events will now be delivered to the client.
-     * @request `Network.enable`
+     * Enables LifecycleReporter domain events.
+     * @request `LifecycleReporter.enable`
      */
     export type EnableRequest = {};
     /**
-     * Enables network tracking, network events will now be delivered to the client.
-     * @response `Network.enable`
+     * Enables LifecycleReporter domain events.
+     * @response `LifecycleReporter.enable`
      */
     export type EnableResponse = {};
     /**
-     * Disables network tracking, prevents network events from being sent to the client.
-     * @request `Network.disable`
+     * Disables LifecycleReporter domain events.
+     * @request `LifecycleReporter.disable`
      */
     export type DisableRequest = {};
     /**
-     * Disables network tracking, prevents network events from being sent to the client.
-     * @response `Network.disable`
+     * Disables LifecycleReporter domain events.
+     * @response `LifecycleReporter.disable`
      */
     export type DisableResponse = {};
     /**
-     * Specifies whether to always send extra HTTP headers with the requests from this page.
-     * @request `Network.setExtraHTTPHeaders`
+     * Prevents the process from exiting.
+     * @request `LifecycleReporter.preventExit`
      */
-    export type SetExtraHTTPHeadersRequest = {
-      /**
-       * Map with extra HTTP headers.
-       */
-      headers: Headers;
-    };
+    export type PreventExitRequest = {};
     /**
-     * Specifies whether to always send extra HTTP headers with the requests from this page.
-     * @response `Network.setExtraHTTPHeaders`
+     * Prevents the process from exiting.
+     * @response `LifecycleReporter.preventExit`
      */
-    export type SetExtraHTTPHeadersResponse = {};
+    export type PreventExitResponse = {};
     /**
-     * Returns content served for the given request.
-     * @request `Network.getResponseBody`
+     * Does not prevent the process from exiting.
+     * @request `LifecycleReporter.stopPreventingExit`
      */
-    export type GetResponseBodyRequest = {
-      /**
-       * Identifier of the network request to get content for.
-       */
-      requestId: RequestId;
-    };
+    export type StopPreventingExitRequest = {};
     /**
-     * Returns content served for the given request.
-     * @response `Network.getResponseBody`
+     * Does not prevent the process from exiting.
+     * @response `LifecycleReporter.stopPreventingExit`
      */
-    export type GetResponseBodyResponse = {
-      /**
-       * Response body.
-       */
-      body: string;
-      /**
-       * True, if content was sent as base64.
-       */
-      base64Encoded: boolean;
-    };
-    /**
-     * Toggles whether the resource cache may be used when loading resources in the inspected page. If <code>true</code>, the resource cache will not be used when loading resources.
-     * @request `Network.setResourceCachingDisabled`
-     */
-    export type SetResourceCachingDisabledRequest = {
-      /**
-       * Whether to prevent usage of the resource cache.
-       */
-      disabled: boolean;
-    };
-    /**
-     * Toggles whether the resource cache may be used when loading resources in the inspected page. If <code>true</code>, the resource cache will not be used when loading resources.
-     * @response `Network.setResourceCachingDisabled`
-     */
-    export type SetResourceCachingDisabledResponse = {};
-    /**
-     * Loads a resource in the context of a frame on the inspected page without cross origin checks.
-     * @request `Network.loadResource`
-     */
-    export type LoadResourceRequest = {
-      /**
-       * Frame to load the resource from.
-       */
-      frameId: FrameId;
-      /**
-       * URL of the resource to load.
-       */
-      url: string;
-    };
-    /**
-     * Loads a resource in the context of a frame on the inspected page without cross origin checks.
-     * @response `Network.loadResource`
-     */
-    export type LoadResourceResponse = {
-      /**
-       * Resource content.
-       */
-      content: string;
-      /**
-       * Resource mimeType.
-       */
-      mimeType: string;
-      /**
-       * HTTP response status code.
-       */
-      status: number;
-    };
-    /**
-     * Fetches a serialized secure certificate for the given requestId to be displayed via InspectorFrontendHost.showCertificate.
-     * @request `Network.getSerializedCertificate`
-     */
-    export type GetSerializedCertificateRequest = {
-      requestId: RequestId;
-    };
-    /**
-     * Fetches a serialized secure certificate for the given requestId to be displayed via InspectorFrontendHost.showCertificate.
-     * @response `Network.getSerializedCertificate`
-     */
-    export type GetSerializedCertificateResponse = {
-      /**
-       * Represents a base64 encoded WebCore::CertificateInfo object.
-       */
-      serializedCertificate: string;
-    };
-    /**
-     * Resolves JavaScript WebSocket object for given request id.
-     * @request `Network.resolveWebSocket`
-     */
-    export type ResolveWebSocketRequest = {
-      /**
-       * Identifier of the WebSocket resource to resolve.
-       */
-      requestId: RequestId;
-      /**
-       * Symbolic group name that can be used to release multiple objects.
-       */
-      objectGroup?: string | undefined;
-    };
-    /**
-     * Resolves JavaScript WebSocket object for given request id.
-     * @response `Network.resolveWebSocket`
-     */
-    export type ResolveWebSocketResponse = {
-      /**
-       * JavaScript object wrapper for given node.
-       */
-      object: Runtime.RemoteObject;
-    };
-    /**
-     * Enable interception of network requests.
-     * @request `Network.setInterceptionEnabled`
-     */
-    export type SetInterceptionEnabledRequest = {
-      enabled: boolean;
-    };
-    /**
-     * Enable interception of network requests.
-     * @response `Network.setInterceptionEnabled`
-     */
-    export type SetInterceptionEnabledResponse = {};
-    /**
-     * Add an interception.
-     * @request `Network.addInterception`
-     */
-    export type AddInterceptionRequest = {
-      /**
-       * URL pattern to intercept, intercept everything if not specified or empty
-       */
-      url: string;
-      /**
-       * Stage to intercept.
-       */
-      stage: NetworkStage;
-      /**
-       * If false, ignores letter casing of `url` parameter.
-       */
-      caseSensitive?: boolean | undefined;
-      /**
-       * If true, treats `url` parameter as a regular expression.
-       */
-      isRegex?: boolean | undefined;
-    };
-    /**
-     * Add an interception.
-     * @response `Network.addInterception`
-     */
-    export type AddInterceptionResponse = {};
-    /**
-     * Remove an interception.
-     * @request `Network.removeInterception`
-     */
-    export type RemoveInterceptionRequest = {
-      url: string;
-      /**
-       * Stage to intercept.
-       */
-      stage: NetworkStage;
-      /**
-       * If false, ignores letter casing of `url` parameter.
-       */
-      caseSensitive?: boolean | undefined;
-      /**
-       * If true, treats `url` parameter as a regular expression.
-       */
-      isRegex?: boolean | undefined;
-    };
-    /**
-     * Remove an interception.
-     * @response `Network.removeInterception`
-     */
-    export type RemoveInterceptionResponse = {};
-    /**
-     * Continue request or response without modifications.
-     * @request `Network.interceptContinue`
-     */
-    export type InterceptContinueRequest = {
-      /**
-       * Identifier for the intercepted Network request or response to continue.
-       */
-      requestId: RequestId;
-      /**
-       * Stage to continue.
-       */
-      stage: NetworkStage;
-    };
-    /**
-     * Continue request or response without modifications.
-     * @response `Network.interceptContinue`
-     */
-    export type InterceptContinueResponse = {};
-    /**
-     * Replace intercepted request with the provided one.
-     * @request `Network.interceptWithRequest`
-     */
-    export type InterceptWithRequestRequest = {
-      /**
-       * Identifier for the intercepted Network request or response to continue.
-       */
-      requestId: RequestId;
-      /**
-       * HTTP request url.
-       */
-      url?: string | undefined;
-      /**
-       * HTTP request method.
-       */
-      method?: string | undefined;
-      /**
-       * HTTP response headers. Pass through original values if unmodified.
-       */
-      headers?: Headers | undefined;
-      /**
-       * HTTP POST request data, base64-encoded.
-       */
-      postData?: string | undefined;
-    };
-    /**
-     * Replace intercepted request with the provided one.
-     * @response `Network.interceptWithRequest`
-     */
-    export type InterceptWithRequestResponse = {};
-    /**
-     * Provide response content for an intercepted response.
-     * @request `Network.interceptWithResponse`
-     */
-    export type InterceptWithResponseRequest = {
-      /**
-       * Identifier for the intercepted Network response to modify.
-       */
-      requestId: RequestId;
-      content: string;
-      /**
-       * True, if content was sent as base64.
-       */
-      base64Encoded: boolean;
-      /**
-       * MIME Type for the data.
-       */
-      mimeType?: string | undefined;
-      /**
-       * HTTP response status code. Pass through original values if unmodified.
-       */
-      status?: number | undefined;
-      /**
-       * HTTP response status text. Pass through original values if unmodified.
-       */
-      statusText?: string | undefined;
-      /**
-       * HTTP response headers. Pass through original values if unmodified.
-       */
-      headers?: Headers | undefined;
-    };
-    /**
-     * Provide response content for an intercepted response.
-     * @response `Network.interceptWithResponse`
-     */
-    export type InterceptWithResponseResponse = {};
-    /**
-     * Provide response for an intercepted request. Request completely bypasses the network in this case and is immediately fulfilled with the provided data.
-     * @request `Network.interceptRequestWithResponse`
-     */
-    export type InterceptRequestWithResponseRequest = {
-      /**
-       * Identifier for the intercepted Network response to modify.
-       */
-      requestId: RequestId;
-      content: string;
-      /**
-       * True, if content was sent as base64.
-       */
-      base64Encoded: boolean;
-      /**
-       * MIME Type for the data.
-       */
-      mimeType: string;
-      /**
-       * HTTP response status code.
-       */
-      status: number;
-      /**
-       * HTTP response status text.
-       */
-      statusText: string;
-      /**
-       * HTTP response headers.
-       */
-      headers: Headers;
-    };
-    /**
-     * Provide response for an intercepted request. Request completely bypasses the network in this case and is immediately fulfilled with the provided data.
-     * @response `Network.interceptRequestWithResponse`
-     */
-    export type InterceptRequestWithResponseResponse = {};
-    /**
-     * Fail request with given error type.
-     * @request `Network.interceptRequestWithError`
-     */
-    export type InterceptRequestWithErrorRequest = {
-      /**
-       * Identifier for the intercepted Network request to fail.
-       */
-      requestId: RequestId;
-      /**
-       * Deliver error reason for the request failure.
-       */
-      errorType: ResourceErrorType;
-    };
-    /**
-     * Fail request with given error type.
-     * @response `Network.interceptRequestWithError`
-     */
-    export type InterceptRequestWithErrorResponse = {};
-    /**
-     * Emulate various network conditions (e.g. bytes per second, latency, etc.).
-     * @request `Network.setEmulatedConditions`
-     */
-    export type SetEmulatedConditionsRequest = {
-      /**
-       * Limits the bytes per second of requests if positive. Removes any limits if zero or not provided.
-       */
-      bytesPerSecondLimit?: number | undefined;
-    };
-    /**
-     * Emulate various network conditions (e.g. bytes per second, latency, etc.).
-     * @response `Network.setEmulatedConditions`
-     */
-    export type SetEmulatedConditionsResponse = {};
+    export type StopPreventingExitResponse = {};
   }
   export namespace Runtime {
     /**
@@ -3453,14 +2506,88 @@ export namespace JSC {
      */
     export type StopTrackingResponse = {};
   }
+  export namespace TestReporter {
+    export type TestStatus = "pass" | "fail" | "timeout" | "skip" | "todo";
+    /**
+     * undefined
+     * @event `TestReporter.found`
+     */
+    export type FoundEvent = {
+      /**
+       * Unique identifier of the test that was found.
+       */
+      id: number;
+      /**
+       * Unique identifier of the script the test is in. Available when the debugger is attached.
+       */
+      scriptId?: Debugger.ScriptId | undefined;
+      /**
+       * url of the script the test is in. Available when the debugger is not attached.
+       */
+      url?: string | undefined;
+      /**
+       * Line number in the script that started the test.
+       */
+      line: number;
+      /**
+       * Name of the test that started.
+       */
+      name?: string | undefined;
+    };
+    /**
+     * undefined
+     * @event `TestReporter.start`
+     */
+    export type StartEvent = {
+      /**
+       * Unique identifier of the test that started.
+       */
+      id: number;
+    };
+    /**
+     * undefined
+     * @event `TestReporter.end`
+     */
+    export type EndEvent = {
+      /**
+       * Unique identifier of the test that ended.
+       */
+      id: number;
+      /**
+       * Status of the test that ended.
+       */
+      status: TestStatus;
+      /**
+       * Elapsed time in milliseconds since the test started.
+       */
+      elapsed: number;
+    };
+    /**
+     * Enables TestReporter domain events.
+     * @request `TestReporter.enable`
+     */
+    export type EnableRequest = {};
+    /**
+     * Enables TestReporter domain events.
+     * @response `TestReporter.enable`
+     */
+    export type EnableResponse = {};
+    /**
+     * Disables TestReporter domain events.
+     * @request `TestReporter.disable`
+     */
+    export type DisableRequest = {};
+    /**
+     * Disables TestReporter domain events.
+     * @response `TestReporter.disable`
+     */
+    export type DisableResponse = {};
+  }
   export type EventMap = {
     "Console.messageAdded": Console.MessageAddedEvent;
     "Console.messageRepeatCountUpdated": Console.MessageRepeatCountUpdatedEvent;
     "Console.messagesCleared": Console.MessagesClearedEvent;
     "Console.heapSnapshot": Console.HeapSnapshotEvent;
-    "CPUProfiler.trackingStart": CPUProfiler.TrackingStartEvent;
-    "CPUProfiler.trackingUpdate": CPUProfiler.TrackingUpdateEvent;
-    "CPUProfiler.trackingComplete": CPUProfiler.TrackingCompleteEvent;
     "Debugger.globalObjectCleared": Debugger.GlobalObjectClearedEvent;
     "Debugger.scriptParsed": Debugger.ScriptParsedEvent;
     "Debugger.scriptFailedToParse": Debugger.ScriptFailedToParseEvent;
@@ -3474,34 +2601,26 @@ export namespace JSC {
     "Heap.trackingComplete": Heap.TrackingCompleteEvent;
     "Inspector.evaluateForTestInFrontend": Inspector.EvaluateForTestInFrontendEvent;
     "Inspector.inspect": Inspector.InspectEvent;
-    "Network.requestWillBeSent": Network.RequestWillBeSentEvent;
-    "Network.responseReceived": Network.ResponseReceivedEvent;
-    "Network.dataReceived": Network.DataReceivedEvent;
-    "Network.loadingFinished": Network.LoadingFinishedEvent;
-    "Network.loadingFailed": Network.LoadingFailedEvent;
-    "Network.requestServedFromMemoryCache": Network.RequestServedFromMemoryCacheEvent;
-    "Network.requestIntercepted": Network.RequestInterceptedEvent;
-    "Network.responseIntercepted": Network.ResponseInterceptedEvent;
-    "Network.webSocketWillSendHandshakeRequest": Network.WebSocketWillSendHandshakeRequestEvent;
-    "Network.webSocketHandshakeResponseReceived": Network.WebSocketHandshakeResponseReceivedEvent;
-    "Network.webSocketCreated": Network.WebSocketCreatedEvent;
-    "Network.webSocketClosed": Network.WebSocketClosedEvent;
-    "Network.webSocketFrameReceived": Network.WebSocketFrameReceivedEvent;
-    "Network.webSocketFrameError": Network.WebSocketFrameErrorEvent;
-    "Network.webSocketFrameSent": Network.WebSocketFrameSentEvent;
+    "LifecycleReporter.reload": LifecycleReporter.ReloadEvent;
+    "LifecycleReporter.error": LifecycleReporter.ErrorEvent;
     "Runtime.executionContextCreated": Runtime.ExecutionContextCreatedEvent;
     "ScriptProfiler.trackingStart": ScriptProfiler.TrackingStartEvent;
     "ScriptProfiler.trackingUpdate": ScriptProfiler.TrackingUpdateEvent;
     "ScriptProfiler.trackingComplete": ScriptProfiler.TrackingCompleteEvent;
+    "TestReporter.found": TestReporter.FoundEvent;
+    "TestReporter.start": TestReporter.StartEvent;
+    "TestReporter.end": TestReporter.EndEvent;
   };
   export type RequestMap = {
+    "Audit.setup": Audit.SetupRequest;
+    "Audit.run": Audit.RunRequest;
+    "Audit.teardown": Audit.TeardownRequest;
     "Console.enable": Console.EnableRequest;
     "Console.disable": Console.DisableRequest;
     "Console.clearMessages": Console.ClearMessagesRequest;
+    "Console.setConsoleClearAPIEnabled": Console.SetConsoleClearAPIEnabledRequest;
     "Console.getLoggingChannels": Console.GetLoggingChannelsRequest;
     "Console.setLoggingChannelLevel": Console.SetLoggingChannelLevelRequest;
-    "CPUProfiler.startTracking": CPUProfiler.StartTrackingRequest;
-    "CPUProfiler.stopTracking": CPUProfiler.StopTrackingRequest;
     "Debugger.enable": Debugger.EnableRequest;
     "Debugger.disable": Debugger.DisableRequest;
     "Debugger.setAsyncStackTraceDepth": Debugger.SetAsyncStackTraceDepthRequest;
@@ -3542,23 +2661,10 @@ export namespace JSC {
     "Inspector.enable": Inspector.EnableRequest;
     "Inspector.disable": Inspector.DisableRequest;
     "Inspector.initialized": Inspector.InitializedRequest;
-    "Network.enable": Network.EnableRequest;
-    "Network.disable": Network.DisableRequest;
-    "Network.setExtraHTTPHeaders": Network.SetExtraHTTPHeadersRequest;
-    "Network.getResponseBody": Network.GetResponseBodyRequest;
-    "Network.setResourceCachingDisabled": Network.SetResourceCachingDisabledRequest;
-    "Network.loadResource": Network.LoadResourceRequest;
-    "Network.getSerializedCertificate": Network.GetSerializedCertificateRequest;
-    "Network.resolveWebSocket": Network.ResolveWebSocketRequest;
-    "Network.setInterceptionEnabled": Network.SetInterceptionEnabledRequest;
-    "Network.addInterception": Network.AddInterceptionRequest;
-    "Network.removeInterception": Network.RemoveInterceptionRequest;
-    "Network.interceptContinue": Network.InterceptContinueRequest;
-    "Network.interceptWithRequest": Network.InterceptWithRequestRequest;
-    "Network.interceptWithResponse": Network.InterceptWithResponseRequest;
-    "Network.interceptRequestWithResponse": Network.InterceptRequestWithResponseRequest;
-    "Network.interceptRequestWithError": Network.InterceptRequestWithErrorRequest;
-    "Network.setEmulatedConditions": Network.SetEmulatedConditionsRequest;
+    "LifecycleReporter.enable": LifecycleReporter.EnableRequest;
+    "LifecycleReporter.disable": LifecycleReporter.DisableRequest;
+    "LifecycleReporter.preventExit": LifecycleReporter.PreventExitRequest;
+    "LifecycleReporter.stopPreventingExit": LifecycleReporter.StopPreventingExitRequest;
     "Runtime.parse": Runtime.ParseRequest;
     "Runtime.evaluate": Runtime.EvaluateRequest;
     "Runtime.awaitPromise": Runtime.AwaitPromiseRequest;
@@ -3581,15 +2687,19 @@ export namespace JSC {
     "Runtime.getBasicBlocks": Runtime.GetBasicBlocksRequest;
     "ScriptProfiler.startTracking": ScriptProfiler.StartTrackingRequest;
     "ScriptProfiler.stopTracking": ScriptProfiler.StopTrackingRequest;
+    "TestReporter.enable": TestReporter.EnableRequest;
+    "TestReporter.disable": TestReporter.DisableRequest;
   };
   export type ResponseMap = {
+    "Audit.setup": Audit.SetupResponse;
+    "Audit.run": Audit.RunResponse;
+    "Audit.teardown": Audit.TeardownResponse;
     "Console.enable": Console.EnableResponse;
     "Console.disable": Console.DisableResponse;
     "Console.clearMessages": Console.ClearMessagesResponse;
+    "Console.setConsoleClearAPIEnabled": Console.SetConsoleClearAPIEnabledResponse;
     "Console.getLoggingChannels": Console.GetLoggingChannelsResponse;
     "Console.setLoggingChannelLevel": Console.SetLoggingChannelLevelResponse;
-    "CPUProfiler.startTracking": CPUProfiler.StartTrackingResponse;
-    "CPUProfiler.stopTracking": CPUProfiler.StopTrackingResponse;
     "Debugger.enable": Debugger.EnableResponse;
     "Debugger.disable": Debugger.DisableResponse;
     "Debugger.setAsyncStackTraceDepth": Debugger.SetAsyncStackTraceDepthResponse;
@@ -3630,23 +2740,10 @@ export namespace JSC {
     "Inspector.enable": Inspector.EnableResponse;
     "Inspector.disable": Inspector.DisableResponse;
     "Inspector.initialized": Inspector.InitializedResponse;
-    "Network.enable": Network.EnableResponse;
-    "Network.disable": Network.DisableResponse;
-    "Network.setExtraHTTPHeaders": Network.SetExtraHTTPHeadersResponse;
-    "Network.getResponseBody": Network.GetResponseBodyResponse;
-    "Network.setResourceCachingDisabled": Network.SetResourceCachingDisabledResponse;
-    "Network.loadResource": Network.LoadResourceResponse;
-    "Network.getSerializedCertificate": Network.GetSerializedCertificateResponse;
-    "Network.resolveWebSocket": Network.ResolveWebSocketResponse;
-    "Network.setInterceptionEnabled": Network.SetInterceptionEnabledResponse;
-    "Network.addInterception": Network.AddInterceptionResponse;
-    "Network.removeInterception": Network.RemoveInterceptionResponse;
-    "Network.interceptContinue": Network.InterceptContinueResponse;
-    "Network.interceptWithRequest": Network.InterceptWithRequestResponse;
-    "Network.interceptWithResponse": Network.InterceptWithResponseResponse;
-    "Network.interceptRequestWithResponse": Network.InterceptRequestWithResponseResponse;
-    "Network.interceptRequestWithError": Network.InterceptRequestWithErrorResponse;
-    "Network.setEmulatedConditions": Network.SetEmulatedConditionsResponse;
+    "LifecycleReporter.enable": LifecycleReporter.EnableResponse;
+    "LifecycleReporter.disable": LifecycleReporter.DisableResponse;
+    "LifecycleReporter.preventExit": LifecycleReporter.PreventExitResponse;
+    "LifecycleReporter.stopPreventingExit": LifecycleReporter.StopPreventingExitResponse;
     "Runtime.parse": Runtime.ParseResponse;
     "Runtime.evaluate": Runtime.EvaluateResponse;
     "Runtime.awaitPromise": Runtime.AwaitPromiseResponse;
@@ -3669,6 +2766,8 @@ export namespace JSC {
     "Runtime.getBasicBlocks": Runtime.GetBasicBlocksResponse;
     "ScriptProfiler.startTracking": ScriptProfiler.StartTrackingResponse;
     "ScriptProfiler.stopTracking": ScriptProfiler.StopTrackingResponse;
+    "TestReporter.enable": TestReporter.EnableResponse;
+    "TestReporter.disable": TestReporter.DisableResponse;
   };
 
   export type Event<T extends keyof EventMap = keyof EventMap> = {

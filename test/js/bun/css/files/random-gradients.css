@@ -1,0 +1,112 @@
+.gradient-1 {
+    background: linear-gradient(45deg, #ff6b6b, #4ecdc4);
+}
+
+.gradient-2 {
+    background: radial-gradient(circle, #ffd166, #06d6a0);
+}
+
+.gradient-3 {
+    background: conic-gradient(from 45deg, #118ab2, #ef476f, #ffd166);
+}
+
+.gradient-4 {
+    background: linear-gradient(to right, #e76f51, #f4a261, #e9c46a);
+}
+
+.gradient-5 {
+    background: repeating-linear-gradient(45deg, #2a9d8f, #2a9d8f 10px, #264653 10px, #264653 20px);
+}
+
+.gradient-6 {
+    background: linear-gradient(135deg, #540d6e, #ee4266, #ffd23f);
+}
+
+.gradient-7 {
+    background: radial-gradient(ellipse at top left, #3a86ff, #8338ec, #ff006e);
+}
+
+.gradient-8 {
+    background: linear-gradient(to bottom right, #f72585, #7209b7, #3a0ca3, #4361ee);
+}
+
+.gradient-9 {
+    background: repeating-radial-gradient(circle at 50% 50%, #b5179e, #b5179e 10px, #7209b7 10px, #7209b7 20px);
+}
+
+.gradient-10 {
+    background: conic-gradient(at 70% 30%, #ff9e00, #ff0000, #ff00bf, #a033ff, #0096ff);
+}
+
+.lmao {
+  background: rgb(2,0,36);
+  background: -moz-linear-gradient(90deg, rgba(2,0,36,1) 0%, rgba(9,9,121,1) 35%, rgba(0,212,255,1) 100%);
+  background: -webkit-linear-gradient(90deg, rgba(2,0,36,1) 0%, rgba(9,9,121,1) 35%, rgba(0,212,255,1) 100%);
+  background: linear-gradient(90deg, rgba(2,0,36,1) 0%, rgba(9,9,121,1) 35%, rgba(0,212,255,1) 100%);
+  filter: progid:DXImageTransform.Microsoft.gradient(startColorstr="#020024",endColorstr="#00d4ff",GradientType=1);
+}
+
+.lol {
+  background: rgb(238,174,202);
+  background: -moz-radial-gradient(circle, rgba(238,174,202,1) 0%, rgba(251,0,0,1) 25%, rgba(255,169,0,1) 33%, rgba(150,107,159,1) 47%, rgba(126,88,147,1) 60%, rgba(123,9,241,1) 72%, rgba(51,31,111,0.7749474789915967) 100%);
+  background: -webkit-radial-gradient(circle, rgba(238,174,202,1) 0%, rgba(251,0,0,1) 25%, rgba(255,169,0,1) 33%, rgba(150,107,159,1) 47%, rgba(126,88,147,1) 60%, rgba(123,9,241,1) 72%, rgba(51,31,111,0.7749474789915967) 100%);
+  background: radial-gradient(circle, rgba(238,174,202,1) 0%, rgba(251,0,0,1) 25%, rgba(255,169,0,1) 33%, rgba(150,107,159,1) 47%, rgba(126,88,147,1) 60%, rgba(123,9,241,1) 72%, rgba(51,31,111,0.7749474789915967) 100%);
+  filter: progid:DXImageTransform.Microsoft.gradient(startColorstr="#eeaeca",endColorstr="#331f6f",GradientType=1);
+}
+
+.gradient-11 {
+    background: conic-gradient(from 217deg at 82% 65%, #ff6b6b 0deg, #4ecdc4 72deg, #45b7d1 144deg, #f8a5c2 216deg, #c3f0ca 288deg, #ff6b6b 360deg);
+}
+
+.gradient-12 {
+    background: repeating-radial-gradient(circle at 10% 20%, #ff9a8b 0%, #ff6a88 5%, #ff99ac 10%, #ff9a8b 15%);
+}
+
+.gradient-13 {
+    background: linear-gradient(45deg, #8a2387, #e94057, #f27121),
+                linear-gradient(135deg, #00c6ff, #0072ff);
+    background-blend-mode: multiply;
+}
+
+.gradient-14 {
+    background: radial-gradient(circle at top right, #ff0844, #ffb199),
+                radial-gradient(circle at bottom left, #21d4fd, #b721ff);
+    background-blend-mode: screen;
+}
+
+.gradient-15 {
+    background: repeating-conic-gradient(from 45deg, #3f5efb 0deg 10deg, #fc466b 10deg 20deg, #3f5efb 20deg 30deg);
+}
+
+.gradient-16 {
+    background: 
+        linear-gradient(217deg, rgba(255,0,0,.8), rgba(255,0,0,0) 70.71%),
+        linear-gradient(127deg, rgba(0,255,0,.8), rgba(0,255,0,0) 70.71%),
+        linear-gradient(336deg, rgba(0,0,255,.8), rgba(0,0,255,0) 70.71%);
+}
+
+.gradient-17 {
+    background: 
+        radial-gradient(circle at 50% -20%, #ff758c, transparent 80%),
+        radial-gradient(circle at 50% 120%, #ff7eb3, transparent 80%);
+}
+
+.gradient-18 {
+    background-image: 
+        repeating-linear-gradient(45deg, #3f87a6 0px, #3f87a6 20px, #ebf8e1 20px, #ebf8e1 40px),
+        repeating-linear-gradient(-45deg, #f69d3c 0px, #f69d3c 20px, #3f87a6 20px, #3f87a6 40px);
+}
+
+.gradient-19 {
+    background: 
+        linear-gradient(to right, #fa709a 0%, #fee140 100%),
+        linear-gradient(to top, #30cfd0 0%, #330867 100%);
+    background-blend-mode: soft-light;
+}
+
+.gradient-20 {
+    background: 
+        radial-gradient(circle at 30% 107%, #fdf497 0%, #fdf497 5%, #fd5949 45%, #d6249f 60%, #285aeb 90%),
+        linear-gradient(135deg, #79f1a4 10%, #0e5cad 100%);
+    background-blend-mode: overlay;
+}

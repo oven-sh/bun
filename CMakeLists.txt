@@ -43,10 +43,9 @@ include(BuildBun)
 
 # --- Analysis ---
 
-include(RunClangFormat)
-include(RunClangTidy)
-include(RunZigFormat)
-
-if (ENABLE_PRETTIER)
+if(ENABLE_ANALYSIS)
+  include(RunClangFormat)
+  include(RunClangTidy)
+  include(RunZigFormat)
   include(RunPrettier)
 endif()

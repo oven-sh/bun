@@ -14,14 +14,7 @@ pub fn NewWorkPool(comptime max_threads: ?usize) type {
             @setCold(true);
 
             pool = ThreadPool.init(.{
-                .max_threads = max_threads orelse @max(2, max_threads: {
-                    if (bun.getenvZ("GOMAXPROCS")) |max_procs| try_override: {
-                        break :max_threads std.fmt.parseInt(u32, max_procs, 10) catch
-                            break :try_override;
-                    }
-
-                    break :max_threads @as(u32, @truncate(std.Thread.getCpuCount() catch 0));
-                }),
+                .max_threads = max_threads orelse bun.getThreadCount(),
                 .stack_size = ThreadPool.default_thread_stack_size,
             });
             return &pool;

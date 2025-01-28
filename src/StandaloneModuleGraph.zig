@@ -168,7 +168,7 @@ pub const StandaloneModuleGraph = struct {
         none,
 
         /// It probably is not possible to run two decoding jobs on the same file
-        var init_lock: bun.Lock = .{};
+        var init_lock: bun.Mutex = .{};
 
         pub fn load(this: *LazySourceMap) ?*SourceMap.ParsedSourceMap {
             init_lock.lock();
@@ -430,7 +430,11 @@ pub const StandaloneModuleGraph = struct {
     else
         std.mem.page_size;
 
-    pub fn inject(bytes: []const u8, self_exe: [:0]const u8) bun.FileDescriptor {
+    pub const InjectOptions = struct {
+        windows_hide_console: bool = false,
+    };
+
+    pub fn inject(bytes: []const u8, self_exe: [:0]const u8, inject_options: InjectOptions) bun.FileDescriptor {
         var buf: bun.PathBuffer = undefined;
         var zname: [:0]const u8 = bun.span(bun.fs.FileSystem.instance.tmpname("bun-build", &buf, @as(u64, @bitCast(std.time.milliTimestamp()))) catch |err| {
             Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get temporary file name: {s}", .{@errorName(err)});
@@ -439,6 +443,11 @@ pub const StandaloneModuleGraph = struct {
 
         const cleanup = struct {
             pub fn toClean(name: [:0]const u8, fd: bun.FileDescriptor) void {
+                // Ensure we own the file
+                if (Environment.isPosix) {
+                    // Make the file writable so we can delete it
+                    _ = Syscall.fchmod(fd, 0o777);
+                }
                 _ = Syscall.close(fd);
                 _ = Syscall.unlink(name);
             }
@@ -464,12 +473,11 @@ pub const StandaloneModuleGraph = struct {
                 const file = bun.sys.openFileAtWindows(
                     bun.invalid_fd,
                     out,
-                    // access_mask
-                    w.SYNCHRONIZE | w.GENERIC_WRITE | w.DELETE,
-                    // create disposition
-                    w.FILE_OPEN,
-                    // create options
-                    w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+                    .{
+                        .access_mask = w.SYNCHRONIZE | w.GENERIC_WRITE | w.GENERIC_READ | w.DELETE,
+                        .disposition = w.FILE_OPEN,
+                        .options = w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+                    },
                 ).unwrap() catch |e| {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}", .{e});
                     Global.exit(1);
@@ -632,6 +640,15 @@ pub const StandaloneModuleGraph = struct {
             _ = bun.C.fchmod(cloned_executable_fd.int(), 0o777);
         }
 
+        if (Environment.isWindows and inject_options.windows_hide_console) {
+            bun.windows.editWin32BinarySubsystem(.{ .handle = cloned_executable_fd }, .windows_gui) catch |err| {
+                Output.err(err, "failed to disable console on executable", .{});
+                cleanup(zname, cloned_executable_fd);
+
+                Global.exit(1);
+            };
+        }
+
         return cloned_executable_fd;
     }
 
@@ -659,6 +676,8 @@ pub const StandaloneModuleGraph = struct {
         outfile: []const u8,
         env: *bun.DotEnv.Loader,
         output_format: bun.options.Format,
+        windows_hide_console: bool,
+        windows_icon: ?[]const u8,
     ) !void {
         const bytes = try toBytes(allocator, module_prefix, output_files, output_format);
         if (bytes.len == 0) return;
@@ -675,6 +694,7 @@ pub const StandaloneModuleGraph = struct {
                     Output.err(err, "failed to download cross-compiled bun executable", .{});
                     Global.exit(1);
                 },
+            .{ .windows_hide_console = windows_hide_console },
         );
         fd.assertKind(.system);
 
@@ -699,6 +719,15 @@ pub const StandaloneModuleGraph = struct {
 
                 Global.exit(1);
             };
+            _ = bun.sys.close(fd);
+
+            if (windows_icon) |icon_utf8| {
+                var icon_buf: bun.OSPathBuffer = undefined;
+                const icon = bun.strings.toWPathNormalized(&icon_buf, icon_utf8);
+                bun.windows.rescle.setIcon(outfile_slice, icon) catch {
+                    Output.warn("Failed to set executable icon", .{});
+                };
+            }
             return;
         }
 
@@ -923,7 +952,7 @@ pub const StandaloneModuleGraph = struct {
                 const image_path = image_path_unicode_string.Buffer.?[0 .. image_path_unicode_string.Length / 2];
 
                 var nt_path_buf: bun.WPathBuffer = undefined;
-                const nt_path = bun.strings.addNTPathPrefix(&nt_path_buf, image_path);
+                const nt_path = bun.strings.addNTPathPrefixIfNeeded(&nt_path_buf, image_path);
 
                 const basename_start = std.mem.lastIndexOfScalar(u16, nt_path, '\\') orelse
                     return error.FileNotFound;
@@ -935,12 +964,11 @@ pub const StandaloneModuleGraph = struct {
                 return bun.sys.openFileAtWindows(
                     bun.FileDescriptor.cwd(),
                     nt_path,
-                    // access_mask
-                    w.SYNCHRONIZE | w.GENERIC_READ,
-                    // create disposition
-                    w.FILE_OPEN,
-                    // create options
-                    w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+                    .{
+                        .access_mask = w.SYNCHRONIZE | w.GENERIC_READ,
+                        .disposition = w.FILE_OPEN,
+                        .options = w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+                    },
                 ).unwrap() catch {
                     return error.FileNotFound;
                 };
@@ -1039,7 +1067,7 @@ pub const StandaloneModuleGraph = struct {
             bun.JSAst.Expr.Data.Store.reset();
             bun.JSAst.Stmt.Data.Store.reset();
         }
-        var json = bun.JSON.ParseJSON(&json_src, &log, arena, false) catch
+        var json = bun.JSON.parse(&json_src, &log, arena, false) catch
             return error.InvalidSourceMap;
 
         const mappings_str = json.get("mappings") orelse
@@ -1072,7 +1100,7 @@ pub const StandaloneModuleGraph = struct {
             if (item.data != .e_string)
                 return error.InvalidSourceMap;
 
-            const decoded = try item.data.e_string.stringDecodedUTF8(arena);
+            const decoded = try item.data.e_string.stringCloned(arena);
 
             const offset = string_payload.items.len;
             try string_payload.appendSlice(decoded);
@@ -1089,7 +1117,7 @@ pub const StandaloneModuleGraph = struct {
             if (item.data != .e_string)
                 return error.InvalidSourceMap;
 
-            const utf8 = try item.data.e_string.stringDecodedUTF8(arena);
+            const utf8 = try item.data.e_string.stringCloned(arena);
             defer arena.free(utf8);
 
             const offset = string_payload.items.len;

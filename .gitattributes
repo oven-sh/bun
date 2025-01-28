@@ -49,3 +49,5 @@ vendor/brotli/** linguist-vendored
 
 test/js/node/test/fixtures linguist-vendored
 test/js/node/test/common linguist-vendored
+
+test/js/bun/css/files linguist-vendored

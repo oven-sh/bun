@@ -58,6 +58,10 @@ pub const Percentage = struct {
         }
     }
 
+    pub inline fn eql(this: *const Percentage, other: *const Percentage) bool {
+        return this.v == other.v;
+    }
+
     pub fn add(lhs: Percentage, _: std.mem.Allocator, rhs: Percentage) Percentage {
         return Percentage{ .v = lhs.v + rhs.v };
     }
@@ -139,22 +143,6 @@ pub fn DimensionPercentage(comptime D: type) type {
 
         const This = @This();
 
-        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
-            return switch (this.*) {
-                .dimension => |d| if (comptime needs_deepclone) .{ .dimension = d.deepClone(allocator) } else this.*,
-                .percentage => return this.*,
-                .calc => |calc| .{ .calc = bun.create(allocator, Calc(DimensionPercentage(D)), calc.deepClone(allocator)) },
-            };
-        }
-
-        pub fn deinit(this: *const @This(), allocator: std.mem.Allocator) void {
-            return switch (this.*) {
-                .dimension => |d| if (comptime @hasDecl(D, "deinit")) d.deinit(allocator),
-                .percentage => {},
-                .calc => |calc| calc.deinit(allocator),
-            };
-        }
-
         pub fn parse(input: *css.Parser) Result(@This()) {
             if (input.tryParse(Calc(This).parse, .{}).asValue()) |calc_value| {
                 if (calc_value == .value) return .{ .result = calc_value.value.* };
@@ -182,22 +170,46 @@ pub fn DimensionPercentage(comptime D: type) type {
             };
         }
 
-        pub fn zero() This {
-            return .{
-                .percentage = .{
-                    .value = switch (D) {
-                        f32 => 0.0,
-                        else => @compileError("TODO implement .zero() for " + @typeName(D)),
-                    },
-                },
+        pub fn isCompatible(this: *const @This(), browsers: css.targets.Browsers) bool {
+            return switch (this.*) {
+                .dimension => |*d| d.isCompatible(browsers),
+                .calc => |c| c.isCompatible(browsers),
+                .percentage => true,
             };
+        }
+
+        pub fn eql(this: *const This, other: *const This) bool {
+            return css.implementEql(@This(), this, other);
+        }
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
+            return switch (this.*) {
+                .dimension => |d| if (comptime needs_deepclone) .{ .dimension = d.deepClone(allocator) } else this.*,
+                .percentage => return this.*,
+                .calc => |calc| .{ .calc = bun.create(allocator, Calc(DimensionPercentage(D)), calc.deepClone(allocator)) },
+            };
+        }
+
+        pub fn deinit(this: *const @This(), allocator: std.mem.Allocator) void {
+            return switch (this.*) {
+                .dimension => |d| if (comptime @hasDecl(D, "deinit")) d.deinit(allocator),
+                .percentage => {},
+                .calc => |calc| calc.deinit(allocator),
+            };
+        }
+
+        pub fn zero() This {
+            return This{ .dimension = switch (D) {
+                f32 => 0.0,
+                else => D.zero(),
+            } };
         }
 
         pub fn isZero(this: *const This) bool {
             return switch (this.*) {
                 .dimension => |*d| switch (D) {
                     f32 => d == 0.0,
-                    else => @compileError("TODO implement .isZero() for " + @typeName(D)),
+                    else => d.isZero(),
                 },
                 .percentage => |*p| p.isZero(),
                 else => false,
@@ -220,21 +232,193 @@ pub fn DimensionPercentage(comptime D: type) type {
         }
 
         pub fn add(this: This, allocator: std.mem.Allocator, other: This) This {
-            _ = this; // autofix
-            _ = allocator; // autofix
-            _ = other; // autofix
-            @panic(css.todo_stuff.depth);
+            // Unwrap calc(...) functions so we can add inside.
+            // Then wrap the result in a calc(...) again if necessary.
+            const a = unwrapCalc(this, allocator);
+            const b = unwrapCalc(other, allocator);
+            const res = a.addInternal(allocator, b);
+            return switch (res) {
+                .calc => |c| switch (c.*) {
+                    .value => |l| l.*,
+                    .function => |f| if (f.* != .calc) .{
+                        .calc = bun.create(allocator, Calc(DimensionPercentage(D)), .{
+                            .function = f,
+                        }),
+                    } else .{
+                        .calc = bun.create(allocator, Calc(DimensionPercentage(D)), .{
+                            .function = bun.create(
+                                allocator,
+                                css.css_values.calc.MathFunction(DimensionPercentage(D)),
+                                .{ .calc = c.* },
+                            ),
+                        }),
+                    },
+                    else => .{
+                        .calc = bun.create(allocator, Calc(DimensionPercentage(D)), .{
+                            .function = bun.create(
+                                allocator,
+                                css.css_values.calc.MathFunction(DimensionPercentage(D)),
+                                .{ .calc = c.* },
+                            ),
+                        }),
+                    },
+                },
+                else => res,
+            };
+        }
+
+        fn addInternal(this: This, allocator: std.mem.Allocator, other: This) This {
+            if (this.addRecursive(allocator, &other)) |res| return res;
+            return this.addImpl(allocator, other);
+        }
+
+        fn addRecursive(this: *const This, allocator: std.mem.Allocator, other: *const This) ?This {
+            if (this.* == .dimension and other.* == .dimension) {
+                if (this.dimension.tryAdd(allocator, &other.dimension)) |res| {
+                    return .{ .dimension = res };
+                }
+            } else if (this.* == .percentage and other.* == .percentage) {
+                return .{ .percentage = .{ .v = this.percentage.v + other.percentage.v } };
+            } else if (this.* == .calc) {
+                switch (this.calc.*) {
+                    .value => |v| return v.addRecursive(allocator, other),
+                    .sum => |sum| {
+                        const left_calc = This{ .calc = sum.left };
+                        if (left_calc.addRecursive(allocator, other)) |res| {
+                            return res.add(allocator, This{ .calc = sum.right });
+                        }
+
+                        const right_calc = This{ .calc = sum.right };
+                        if (right_calc.addRecursive(allocator, other)) |res| {
+                            return (This{ .calc = sum.left }).add(allocator, res);
+                        }
+                    },
+                    else => {},
+                }
+            } else if (other.* == .calc) {
+                switch (other.calc.*) {
+                    .value => |v| return this.addRecursive(allocator, v),
+                    .sum => |sum| {
+                        const left_calc = This{ .calc = sum.left };
+                        if (this.addRecursive(allocator, &left_calc)) |res| {
+                            return res.add(allocator, This{ .calc = sum.right });
+                        }
+
+                        const right_calc = This{ .calc = sum.right };
+                        if (this.addRecursive(allocator, &right_calc)) |res| {
+                            return (This{ .calc = sum.left }).add(allocator, res);
+                        }
+                    },
+                    else => {},
+                }
+            }
+
+            return null;
+        }
+
+        fn addImpl(this: This, allocator: std.mem.Allocator, other: This) This {
+            var a = this;
+            var b = other;
+
+            if (a.isZero()) return b;
+            if (b.isZero()) return a;
+
+            if (a.isSignNegative() and b.isSignPositive()) {
+                std.mem.swap(This, &a, &b);
+            }
+
+            if (a == .calc and b == .calc) {
+                return .{ .calc = bun.create(allocator, Calc(DimensionPercentage(D)), a.calc.add(allocator, b.calc.*)) };
+            } else if (a == .calc) {
+                if (a.calc.* == .value) {
+                    return a.calc.value.add(allocator, b);
+                } else {
+                    return .{
+                        .calc = bun.create(
+                            allocator,
+                            Calc(DimensionPercentage(D)),
+                            .{ .sum = .{
+                                .left = bun.create(allocator, Calc(DimensionPercentage(D)), a.calc.*),
+                                .right = bun.create(allocator, Calc(DimensionPercentage(D)), b.intoCalc(allocator)),
+                            } },
+                        ),
+                    };
+                }
+            } else if (b == .calc) {
+                if (b.calc.* == .value) {
+                    return a.add(allocator, b.calc.value.*);
+                } else {
+                    return .{
+                        .calc = bun.create(
+                            allocator,
+                            Calc(DimensionPercentage(D)),
+                            .{ .sum = .{
+                                .left = bun.create(allocator, Calc(DimensionPercentage(D)), a.intoCalc(allocator)),
+                                .right = bun.create(allocator, Calc(DimensionPercentage(D)), b.calc.*),
+                            } },
+                        ),
+                    };
+                }
+            } else {
+                return .{
+                    .calc = bun.create(
+                        allocator,
+                        Calc(DimensionPercentage(D)),
+                        .{ .sum = .{
+                            .left = bun.create(allocator, Calc(DimensionPercentage(D)), a.intoCalc(allocator)),
+                            .right = bun.create(allocator, Calc(DimensionPercentage(D)), b.intoCalc(allocator)),
+                        } },
+                    ),
+                };
+            }
+        }
+
+        inline fn isSignPositive(this: This) bool {
+            const sign = this.trySign() orelse return false;
+            return css.signfns.isSignPositive(sign);
+        }
+
+        inline fn isSignNegative(this: This) bool {
+            const sign = this.trySign() orelse return false;
+            return css.signfns.isSignNegative(sign);
+        }
+
+        fn unwrapCalc(this: This, allocator: std.mem.Allocator) This {
+            return switch (this) {
+                .calc => |calc| switch (calc.*) {
+                    .function => |f| switch (f.*) {
+                        .calc => |c2| .{ .calc = bun.create(allocator, Calc(DimensionPercentage(D)), c2) },
+                        else => .{ .calc = bun.create(
+                            allocator,
+                            Calc(DimensionPercentage(D)),
+                            .{
+                                .function = bun.create(
+                                    allocator,
+                                    css.css_values.calc.MathFunction(DimensionPercentage(D)),
+                                    f.*,
+                                ),
+                            },
+                        ) },
+                    },
+                    else => .{ .calc = calc },
+                },
+                else => this,
+            };
         }
 
         pub fn partialCmp(this: *const This, other: *const This) ?std.math.Order {
-            _ = this; // autofix
-            _ = other; // autofix
-            @panic(css.todo_stuff.depth);
+            if (this.* == .dimension and other.* == .dimension) {
+                return this.dimension.partialCmp(&other.dimension);
+            } else if (this.* == .percentage and other.* == .percentage) {
+                return this.percentage.partialCmp(&other.percentage);
+            } else {
+                return null;
+            }
         }
 
         pub fn trySign(this: *const This) ?f32 {
             return switch (this.*) {
-                .dimension => |d| d.trySign(),
+                .dimension => |*d| css.generic.trySign(@TypeOf(d.*), d),
                 .percentage => |p| p.trySign(),
                 .calc => |c| c.trySign(),
             };
@@ -263,6 +447,13 @@ pub fn DimensionPercentage(comptime D: type) type {
             if (this.* == .percentage and other.* == .percentage) return .{ .percentage = Percentage{ .v = op_fn(ctx, this.percentage.v, other.percentage.v) } };
             return null;
         }
+
+        pub fn intoCalc(this: This, allocator: std.mem.Allocator) Calc(DimensionPercentage(D)) {
+            return switch (this) {
+                .calc => |calc| calc.*,
+                else => .{ .value = bun.create(allocator, This, this) },
+            };
+        }
     };
 }
 
@@ -274,24 +465,41 @@ pub const NumberOrPercentage = union(enum) {
     percentage: Percentage,
 
     // TODO: implement this
-    // pub usingnamespace css.DeriveParse(@This());
-    // pub usingnamespace css.DeriveToCss(@This());
+    pub usingnamespace css.DeriveParse(@This());
+    pub usingnamespace css.DeriveToCss(@This());
 
-    pub fn parse(input: *css.Parser) Result(NumberOrPercentage) {
-        _ = input; // autofix
-        @panic(css.todo_stuff.depth);
+    // pub fn parse(input: *css.Parser) Result(NumberOrPercentage) {
+    //     _ = input; // autofix
+    //     @panic(css.todo_stuff.depth);
+    // }
+
+    // pub fn toCss(this: *const NumberOrPercentage, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    //     _ = this; // autofix
+    //     _ = dest; // autofix
+    //     @panic(css.todo_stuff.depth);
+    // }
+
+    pub fn deepClone(this: *const NumberOrPercentage, allocator: std.mem.Allocator) NumberOrPercentage {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 
-    pub fn toCss(this: *const NumberOrPercentage, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
-        _ = this; // autofix
-        _ = dest; // autofix
-        @panic(css.todo_stuff.depth);
+    pub fn eql(this: *const NumberOrPercentage, other: *const NumberOrPercentage) bool {
+        return switch (this.*) {
+            .number => |*a| switch (other.*) {
+                .number => a.* == other.number,
+                .percentage => false,
+            },
+            .percentage => |*a| switch (other.*) {
+                .number => false,
+                .percentage => a.eql(&other.percentage),
+            },
+        };
     }
 
     pub fn intoF32(this: *const @This()) f32 {
         return switch (this.*) {
             .number => this.number,
-            .percentage => this.percentage.v(),
+            .percentage => this.percentage.v,
         };
     }
 };

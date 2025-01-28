@@ -3,10 +3,6 @@
 set -eo pipefail
 
 function assert_main() {
-  if [ "$RELEASE" == "1" ]; then
-    echo "info: Skipping canary release because this is a release build"
-    exit 0
-  fi
   if [ -z "$BUILDKITE_REPO" ]; then
     echo "error: Cannot find repository for this build"
     exit 1
@@ -162,6 +158,27 @@ function upload_s3_file() {
   run_command aws --endpoint-url="$AWS_ENDPOINT" s3 cp "$file" "s3://$AWS_BUCKET/$folder/$file"
 }
 
+function send_bench_webhook() {
+  if [ -z "$BENCHMARK_URL" ]; then
+    echo "error: \$BENCHMARK_URL is not set"
+    # exit 1 # TODO: this isn't live yet
+    return
+  fi
+
+  local tag="$1"
+  local commit="$BUILDKITE_COMMIT"
+  local artifact_path="${commit}"
+
+  if [ "$tag" == "canary" ]; then
+    artifact_path="${commit}-canary"
+  fi
+
+  local artifact_url="https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/$artifact_path/bun-linux-x64.zip"
+  local webhook_url="$BENCHMARK_URL?tag=$tag&commit=$commit&artifact_url=$artifact_url"
+  
+  curl -X POST "$webhook_url"
+}
+
 function create_release() {
   assert_main
   assert_buildkite_agent
@@ -173,14 +190,18 @@ function create_release() {
   local artifacts=(
     bun-darwin-aarch64.zip
     bun-darwin-aarch64-profile.zip
-    bun-darwin-x64.zip
-    bun-darwin-x64-profile.zip
     bun-linux-aarch64.zip
     bun-linux-aarch64-profile.zip
     bun-linux-x64.zip
     bun-linux-x64-profile.zip
     bun-linux-x64-baseline.zip
     bun-linux-x64-baseline-profile.zip
+    bun-linux-aarch64-musl.zip
+    bun-linux-aarch64-musl-profile.zip
+    bun-linux-x64-musl.zip
+    bun-linux-x64-musl-profile.zip
+    bun-linux-x64-musl-baseline.zip
+    bun-linux-x64-musl-baseline-profile.zip
     bun-windows-x64.zip
     bun-windows-x64-profile.zip
     bun-windows-x64-baseline.zip
@@ -206,11 +227,11 @@ function create_release() {
 
   update_github_release "$tag"
   create_sentry_release "$tag"
+  send_bench_webhook "$tag"
 }
 
 function assert_canary() {
-  local canary="$(buildkite-agent meta-data get canary 2>/dev/null)"
-  if [ -z "$canary" ] || [ "$canary" == "0" ]; then
+  if [ -z "$CANARY" ] || [ "$CANARY" == "0" ]; then
     echo "warn: Skipping release because this is not a canary build"
     exit 0
   fi

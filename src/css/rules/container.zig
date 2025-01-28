@@ -39,6 +39,10 @@ pub const ContainerName = struct {
     pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
         return try CustomIdentFns.toCss(&this.v, W, dest);
     }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 pub const ContainerNameFns = ContainerName;
@@ -101,6 +105,10 @@ pub const StyleQuery = union(enum) {
         operator: css.media_query.Operator,
         /// The conditions for the operator.
         conditions: ArrayList(StyleQuery),
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
     },
 
     pub fn toCss(this: *const StyleQuery, comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -175,6 +183,10 @@ pub const StyleQuery = union(enum) {
     pub fn parseStyleQuery(input: *css.Parser) Result(@This()) {
         return .{ .err = input.newErrorForNextToken() };
     }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 pub const ContainerCondition = union(enum) {
@@ -188,6 +200,10 @@ pub const ContainerCondition = union(enum) {
         operator: css.media_query.Operator,
         /// The conditions for the operator.
         conditions: ArrayList(ContainerCondition),
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
     },
     /// A style query.
     style: StyleQuery,
@@ -286,6 +302,10 @@ pub const ContainerCondition = union(enum) {
             .style => false,
         };
     }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 /// A [@container](https://drafts.csswg.org/css-contain-3/#container-rule) rule.
@@ -326,6 +346,10 @@ pub fn ContainerRule(comptime R: type) type {
             dest.dedent();
             try dest.newline();
             try dest.writeChar('}');
+        }
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
+            return css.implementDeepClone(@This(), this, allocator);
         }
     };
 }

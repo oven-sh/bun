@@ -95,7 +95,7 @@ register_command(
 if(GIT_CHANGED_SOURCES)
   set(PRETTIER_CHANGED_SOURCES)
   foreach(source ${PRETTIER_SOURCES})
-    list(FIND PRETTIER_CHANGED_SOURCES ${source} index)
+    list(FIND GIT_CHANGED_SOURCES ${source} index)
     if(NOT ${index} EQUAL -1)
       list(APPEND PRETTIER_CHANGED_SOURCES ${source})
     endif()

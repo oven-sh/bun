@@ -78,7 +78,7 @@ NapiHandleScopeImpl::Slot* NapiHandleScopeImpl::reserveSlot()
     return &m_storage.last();
 }
 
-NapiHandleScopeImpl* NapiHandleScope::push(Zig::GlobalObject* globalObject, bool escapable)
+NapiHandleScopeImpl* NapiHandleScope::open(Zig::GlobalObject* globalObject, bool escapable)
 {
     auto& vm = globalObject->vm();
     // Do not create a new handle scope while a finalizer is in progress
@@ -101,8 +101,12 @@ NapiHandleScopeImpl* NapiHandleScope::push(Zig::GlobalObject* globalObject, bool
     return impl;
 }
 
-void NapiHandleScope::pop(Zig::GlobalObject* globalObject, NapiHandleScopeImpl* current)
+void NapiHandleScope::close(Zig::GlobalObject* globalObject, NapiHandleScopeImpl* current)
 {
+    // napi handle scopes may be null pointers if created inside a finalizer
+    if (!current) {
+        return;
+    }
     RELEASE_ASSERT_WITH_MESSAGE(current == globalObject->m_currentNapiHandleScopeImpl.get(),
         "Unbalanced napi_handle_scope opens and closes");
     if (auto* parent = current->parent()) {
@@ -114,23 +118,23 @@ void NapiHandleScope::pop(Zig::GlobalObject* globalObject, NapiHandleScopeImpl* 
 
 NapiHandleScope::NapiHandleScope(Zig::GlobalObject* globalObject)
     : m_globalObject(globalObject)
-    , m_impl(NapiHandleScope::push(globalObject, false))
+    , m_impl(NapiHandleScope::open(globalObject, false))
 {
 }
 
 NapiHandleScope::~NapiHandleScope()
 {
-    NapiHandleScope::pop(m_globalObject, m_impl);
+    NapiHandleScope::close(m_globalObject, m_impl);
 }
 
-extern "C" NapiHandleScopeImpl* NapiHandleScope__push(Zig::GlobalObject* globalObject, bool escapable)
+extern "C" NapiHandleScopeImpl* NapiHandleScope__open(Zig::GlobalObject* globalObject, bool escapable)
 {
-    return NapiHandleScope::push(globalObject, escapable);
+    return NapiHandleScope::open(globalObject, escapable);
 }
 
-extern "C" void NapiHandleScope__pop(Zig::GlobalObject* globalObject, NapiHandleScopeImpl* current)
+extern "C" void NapiHandleScope__close(Zig::GlobalObject* globalObject, NapiHandleScopeImpl* current)
 {
-    return NapiHandleScope::pop(globalObject, current);
+    return NapiHandleScope::close(globalObject, current);
 }
 
 extern "C" void NapiHandleScope__append(Zig::GlobalObject* globalObject, JSC::EncodedJSValue value)

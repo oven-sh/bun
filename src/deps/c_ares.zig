@@ -192,47 +192,46 @@ pub const Options = extern struct {
     evsys: ares_evsys_t = 0,
     server_failover_opts: struct_ares_server_failover_options = @import("std").mem.zeroes(struct_ares_server_failover_options),
 };
+
 pub const struct_hostent = extern struct {
-    h_name: [*c]u8,
-    h_aliases: [*c][*c]u8,
-    h_addrtype: c_int,
-    h_length: c_int,
-    h_addr_list: [*c][*c]u8,
+    h_name: ?[*:0]u8,
+    h_aliases: ?[*:null]?[*:0]u8,
+    h_addrtype: hostent_int,
+    h_length: hostent_int,
+    h_addr_list: ?[*:null]?[*:0]u8,
+
+    // hostent in glibc uses int for h_addrtype and h_length, whereas hostent in winsock2.h uses short.
+    const hostent_int = if (bun.Environment.isWindows) c_short else c_int;
 
     pub fn toJSResponse(this: *struct_hostent, _: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime lookup_name: []const u8) JSC.JSValue {
-
-        // A cname lookup always returns a single record but we follow the common API here.
         if (comptime strings.eqlComptime(lookup_name, "cname")) {
-            if (this.h_name != null) {
-                const array = JSC.JSValue.createEmptyArray(globalThis, 1);
-                const h_name_len = bun.len(this.h_name);
-                const h_name_slice = this.h_name[0..h_name_len];
-                array.putIndex(globalThis, 0, JSC.ZigString.fromUTF8(h_name_slice).toJS(globalThis));
-                return array;
-            }
-            return JSC.JSValue.createEmptyArray(globalThis, 0);
-        } else {
-            if (this.h_aliases == null) {
+            // A cname lookup always returns a single record but we follow the common API here.
+            if (this.h_name == null) {
                 return JSC.JSValue.createEmptyArray(globalThis, 0);
             }
-
-            var count: u32 = 0;
-            while (this.h_aliases[count] != null) {
-                count += 1;
-            }
-
-            const array = JSC.JSValue.createEmptyArray(globalThis, count);
-            count = 0;
-
-            while (this.h_aliases[count]) |alias| {
-                const alias_len = bun.len(alias);
-                const alias_slice = alias[0..alias_len];
-                array.putIndex(globalThis, count, JSC.ZigString.fromUTF8(alias_slice).toJS(globalThis));
-                count += 1;
-            }
-
-            return array;
+            return bun.String.toJSArray(globalThis, &[_]bun.String{bun.String.fromUTF8(this.h_name.?[0..bun.len(this.h_name.?)])});
         }
+
+        if (this.h_aliases == null) {
+            return JSC.JSValue.createEmptyArray(globalThis, 0);
+        }
+
+        var count: u32 = 0;
+        while (this.h_aliases.?[count] != null) {
+            count += 1;
+        }
+
+        const array = JSC.JSValue.createEmptyArray(globalThis, count);
+        count = 0;
+
+        while (this.h_aliases.?[count]) |alias| {
+            const alias_len = bun.len(alias);
+            const alias_slice = alias[0..alias_len];
+            array.putIndex(globalThis, count, JSC.ZigString.fromUTF8(alias_slice).toJS(globalThis));
+            count += 1;
+        }
+
+        return array;
     }
 
     pub fn Callback(comptime Type: type) type {
@@ -269,7 +268,17 @@ pub const struct_hostent = extern struct {
                 }
 
                 var start: [*c]struct_hostent = undefined;
-                if (comptime strings.eqlComptime(lookup_name, "ns")) {
+                if (comptime strings.eqlComptime(lookup_name, "cname")) {
+                    var addrttls: [256]struct_ares_addrttl = undefined;
+                    var naddrttls: i32 = 256;
+
+                    const result = ares_parse_a_reply(buffer, buffer_length, &start, &addrttls, &naddrttls);
+                    if (result != ARES_SUCCESS) {
+                        function(this, Error.get(result), timeouts, null);
+                        return;
+                    }
+                    function(this, null, timeouts, start);
+                } else if (comptime strings.eqlComptime(lookup_name, "ns")) {
                     const result = ares_parse_ns_reply(buffer, buffer_length, &start);
                     if (result != ARES_SUCCESS) {
                         function(this, Error.get(result), timeouts, null);
@@ -283,16 +292,8 @@ pub const struct_hostent = extern struct {
                         return;
                     }
                     function(this, null, timeouts, start);
-                } else if (comptime strings.eqlComptime(lookup_name, "cname")) {
-                    var addrttls: [256]struct_ares_addrttl = undefined;
-                    var naddrttls: i32 = 256;
-
-                    const result = ares_parse_a_reply(buffer, buffer_length, &start, &addrttls, &naddrttls);
-                    if (result != ARES_SUCCESS) {
-                        function(this, Error.get(result), timeouts, null);
-                        return;
-                    }
-                    function(this, null, timeouts, start);
+                } else {
+                    @compileError(std.fmt.comptimePrint("Unsupported struct_hostent record type: {s}", .{lookup_name}));
                 }
             }
         }.handle;
@@ -300,6 +301,129 @@ pub const struct_hostent = extern struct {
 
     pub fn deinit(this: *struct_hostent) void {
         ares_free_hostent(this);
+    }
+};
+
+pub const hostent_with_ttls = struct {
+    hostent: *struct_hostent,
+    ttls: [256]c_int = [_]c_int{-1} ** 256,
+
+    pub fn toJSResponse(this: *hostent_with_ttls, _: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime lookup_name: []const u8) JSC.JSValue {
+        if (comptime strings.eqlComptime(lookup_name, "a") or strings.eqlComptime(lookup_name, "aaaa")) {
+            if (this.hostent.h_addr_list == null) {
+                return JSC.JSValue.createEmptyArray(globalThis, 0);
+            }
+
+            var count: u32 = 0;
+            while (this.hostent.h_addr_list.?[count] != null) {
+                count += 1;
+            }
+
+            const array = JSC.JSValue.createEmptyArray(globalThis, count);
+            count = 0;
+
+            const addressKey = JSC.ZigString.static("address").withEncoding();
+            const ttlKey = JSC.ZigString.static("ttl").withEncoding();
+
+            while (this.hostent.h_addr_list.?[count]) |addr| : (count += 1) {
+                const addrString = (if (this.hostent.h_addrtype == AF.INET6)
+                    bun.dns.addressToJS(&std.net.Address.initIp6(addr[0..16].*, 0, 0, 0), globalThis)
+                else
+                    bun.dns.addressToJS(&std.net.Address.initIp4(addr[0..4].*, 0), globalThis)) catch return globalThis.throwOutOfMemoryValue();
+
+                const ttl: ?c_int = if (count < this.ttls.len) this.ttls[count] else null;
+                const resultObject = JSC.JSValue.createObject2(globalThis, &addressKey, &ttlKey, addrString, if (ttl) |val| JSC.jsNumber(val) else .undefined);
+                array.putIndex(globalThis, count, resultObject);
+            }
+
+            return array;
+        } else {
+            @compileError(std.fmt.comptimePrint("Unsupported hostent_with_ttls record type: {s}", .{lookup_name}));
+        }
+    }
+
+    pub fn Callback(comptime Type: type) type {
+        return fn (*Type, status: ?Error, timeouts: i32, results: ?*hostent_with_ttls) void;
+    }
+
+    pub fn hostCallbackWrapper(
+        comptime Type: type,
+        comptime function: Callback(Type),
+    ) ares_host_callback {
+        return &struct {
+            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, hostent: ?*hostent_with_ttls) callconv(.C) void {
+                const this = bun.cast(*Type, ctx.?);
+                if (status != ARES_SUCCESS) {
+                    function(this, Error.get(status), timeouts, null);
+                    return;
+                }
+                function(this, null, timeouts, hostent);
+            }
+        }.handle;
+    }
+
+    pub fn callbackWrapper(
+        comptime lookup_name: []const u8,
+        comptime Type: type,
+        comptime function: Callback(Type),
+    ) ares_callback {
+        return &struct {
+            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
+                const this = bun.cast(*Type, ctx.?);
+                if (status != ARES_SUCCESS) {
+                    function(this, Error.get(status), timeouts, null);
+                    return;
+                }
+
+                switch (parse(lookup_name, buffer, buffer_length)) {
+                    .result => |result| function(this, null, timeouts, result),
+                    .err => |err| function(this, err, timeouts, null),
+                }
+            }
+        }.handle;
+    }
+
+    pub fn parse(comptime lookup_name: []const u8, buffer: [*c]u8, buffer_length: c_int) JSC.Node.Maybe(*hostent_with_ttls, Error) {
+        var start: ?*struct_hostent = null;
+
+        if (comptime strings.eqlComptime(lookup_name, "a")) {
+            var addrttls: [256]struct_ares_addrttl = undefined;
+            var naddrttls: c_int = 256;
+
+            const result = ares_parse_a_reply(buffer, buffer_length, &start, &addrttls, &naddrttls);
+            if (result != ARES_SUCCESS) {
+                return .{ .err = Error.get(result).? };
+            }
+            var with_ttls = bun.default_allocator.create(hostent_with_ttls) catch bun.outOfMemory();
+            with_ttls.hostent = start.?;
+            for (addrttls[0..@intCast(naddrttls)], 0..) |ttl, i| {
+                with_ttls.ttls[i] = ttl.ttl;
+            }
+            return .{ .result = with_ttls };
+        }
+
+        if (comptime strings.eqlComptime(lookup_name, "aaaa")) {
+            var addr6ttls: [256]struct_ares_addr6ttl = undefined;
+            var naddr6ttls: c_int = 256;
+
+            const result = ares_parse_aaaa_reply(buffer, buffer_length, &start, &addr6ttls, &naddr6ttls);
+            if (result != ARES_SUCCESS) {
+                return .{ .err = Error.get(result).? };
+            }
+            var with_ttls = bun.default_allocator.create(hostent_with_ttls) catch bun.outOfMemory();
+            with_ttls.hostent = start.?;
+            for (addr6ttls[0..@intCast(naddr6ttls)], 0..) |ttl, i| {
+                with_ttls.ttls[i] = ttl.ttl;
+            }
+            return .{ .result = with_ttls };
+        }
+
+        @compileError(std.fmt.comptimePrint("Unsupported hostent_with_ttls record type: {s}", .{lookup_name}));
+    }
+
+    pub fn deinit(this: *hostent_with_ttls) void {
+        this.hostent.deinit();
+        bun.default_allocator.destroy(this);
     }
 };
 
@@ -351,7 +475,7 @@ pub const struct_nameinfo = extern struct {
     }
 };
 
-pub const struct_timeval = opaque {};
+pub const struct_timeval = std.posix.timeval;
 pub const struct_Channeldata = opaque {};
 pub const AddrInfo_cname = extern struct {
     ttl: c_int,
@@ -389,10 +513,7 @@ pub const AddrInfo = extern struct {
         globalThis: *JSC.JSGlobalObject,
     ) JSC.JSValue {
         var node = addr_info.node orelse return JSC.JSValue.createEmptyArray(globalThis, 0);
-        const array = JSC.JSValue.createEmptyArray(
-            globalThis,
-            node.count(),
-        );
+        const array = JSC.JSValue.createEmptyArray(globalThis, node.count());
 
         {
             var j: u32 = 0;
@@ -462,8 +583,13 @@ pub const AddrInfo_hints = extern struct {
     }
 };
 
+pub const ChannelOptions = struct {
+    timeout: ?i32 = null,
+    tries: ?i32 = null,
+};
+
 pub const Channel = opaque {
-    pub fn init(comptime Container: type, this: *Container) ?Error {
+    pub fn init(comptime Container: type, this: *Container, options: ChannelOptions) ?Error {
         var channel: *Channel = undefined;
 
         libraryInit();
@@ -483,8 +609,8 @@ pub const Channel = opaque {
         opts.flags = ARES_FLAG_NOCHECKRESP;
         opts.sock_state_cb = &SockStateWrap.onSockState;
         opts.sock_state_cb_data = @as(*anyopaque, @ptrCast(this));
-        opts.timeout = -1;
-        opts.tries = 4;
+        opts.timeout = options.timeout orelse -1;
+        opts.tries = options.tries orelse 4;
 
         const optmask: c_int =
             ARES_OPT_FLAGS | ARES_OPT_TIMEOUTMS |
@@ -497,6 +623,10 @@ pub const Channel = opaque {
 
         this.channel = channel;
         return null;
+    }
+
+    pub fn deinit(this: *Channel) void {
+        ares_destroy(this);
     }
 
     ///
@@ -719,6 +849,7 @@ pub extern fn ares_create_query(name: [*c]const u8, dnsclass: c_int, @"type": c_
 pub extern fn ares_mkquery(name: [*c]const u8, dnsclass: c_int, @"type": c_int, id: c_ushort, rd: c_int, buf: [*c][*c]u8, buflen: [*c]c_int) c_int;
 pub extern fn ares_expand_name(encoded: [*c]const u8, abuf: [*c]const u8, alen: c_int, s: [*c][*c]u8, enclen: [*c]c_long) c_int;
 pub extern fn ares_expand_string(encoded: [*c]const u8, abuf: [*c]const u8, alen: c_int, s: [*c][*c]u8, enclen: [*c]c_long) c_int;
+pub extern fn ares_queue_active_queries(channel: *const Channel) usize;
 const union_unnamed_2 = extern union {
     _S6_u8: [16]u8,
 };
@@ -726,7 +857,7 @@ pub const struct_ares_in6_addr = extern struct {
     _S6_un: union_unnamed_2,
 };
 pub const struct_ares_addrttl = extern struct {
-    ipaddr: struct_in_addr,
+    ipaddr: u32,
     ttl: c_int,
 };
 pub const struct_ares_addr6ttl = extern struct {
@@ -1009,6 +1140,28 @@ pub const struct_ares_txt_reply = extern struct {
         return array;
     }
 
+    pub fn toJSForAny(this: *struct_ares_txt_reply, _: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
+        var count: usize = 0;
+        var txt: ?*struct_ares_txt_reply = this;
+        while (txt != null) : (txt = txt.?.next) {
+            count += 1;
+        }
+
+        const array = JSC.JSValue.createEmptyArray(globalThis, count);
+
+        txt = this;
+        var i: u32 = 0;
+        while (txt != null) : (txt = txt.?.next) {
+            var node = txt.?;
+            array.putIndex(globalThis, i, JSC.ZigString.fromUTF8(node.txt[0..node.length]).toJS(globalThis));
+            i += 1;
+        }
+
+        return JSC.JSObject.create(.{
+            .entries = array,
+        }, globalThis).toJS();
+    }
+
     pub fn Callback(comptime Type: type) type {
         return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_ares_txt_reply) void;
     }
@@ -1218,6 +1371,207 @@ pub const struct_ares_uri_reply = extern struct {
     uri: [*c]u8,
     ttl: c_int,
 };
+
+pub const struct_any_reply = struct {
+    a_reply: ?*hostent_with_ttls = null,
+    aaaa_reply: ?*hostent_with_ttls = null,
+    mx_reply: ?*struct_ares_mx_reply = null,
+    ns_reply: ?*struct_hostent = null,
+    txt_reply: ?*struct_ares_txt_reply = null,
+    srv_reply: ?*struct_ares_srv_reply = null,
+    ptr_reply: ?*struct_hostent = null,
+    naptr_reply: ?*struct_ares_naptr_reply = null,
+    soa_reply: ?*struct_ares_soa_reply = null,
+    caa_reply: ?*struct_ares_caa_reply = null,
+
+    pub fn toJSResponse(this: *struct_any_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
+        var stack = std.heap.stackFallback(2048, parent_allocator);
+        var arena = bun.ArenaAllocator.init(stack.get());
+        defer arena.deinit();
+
+        const allocator = arena.allocator();
+
+        return this.toJS(globalThis, allocator);
+    }
+
+    fn append(globalThis: *JSC.JSGlobalObject, array: JSC.JSValue, i: *u32, response: JSC.JSValue, comptime lookup_name: []const u8) void {
+        const transformed = if (response.isString())
+            JSC.JSObject.create(.{
+                .value = response,
+            }, globalThis).toJS()
+        else blk: {
+            bun.assert(response.isObject());
+            break :blk response;
+        };
+
+        var upper = comptime lookup_name[0..lookup_name.len].*;
+        inline for (&upper) |*char| {
+            char.* = std.ascii.toUpper(char.*);
+        }
+
+        transformed.put(globalThis, "type", bun.String.ascii(&upper).toJS(globalThis));
+        array.putIndex(globalThis, i.*, transformed);
+        i.* += 1;
+    }
+
+    fn appendAll(globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator, array: JSC.JSValue, i: *u32, reply: anytype, comptime lookup_name: []const u8) void {
+        const response: JSC.JSValue = if (comptime @hasDecl(@TypeOf(reply.*), "toJSForAny"))
+            reply.toJSForAny(allocator, globalThis, lookup_name)
+        else
+            reply.toJSResponse(allocator, globalThis, lookup_name);
+
+        if (response.isArray()) {
+            var iterator = response.arrayIterator(globalThis);
+            while (iterator.next()) |item| {
+                append(globalThis, array, i, item, lookup_name);
+            }
+        } else {
+            append(globalThis, array, i, response, lookup_name);
+        }
+    }
+
+    pub fn toJS(this: *struct_any_reply, globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator) JSC.JSValue {
+        const array = JSC.JSValue.createEmptyArray(globalThis, blk: {
+            var len: usize = 0;
+            inline for (comptime @typeInfo(struct_any_reply).Struct.fields) |field| {
+                if (comptime std.mem.endsWith(u8, field.name, "_reply")) {
+                    len += @intFromBool(@field(this, field.name) != null);
+                }
+            }
+            break :blk len;
+        });
+
+        var i: u32 = 0;
+
+        inline for (comptime @typeInfo(struct_any_reply).Struct.fields) |field| {
+            if (comptime std.mem.endsWith(u8, field.name, "_reply")) {
+                if (@field(this, field.name)) |reply| {
+                    const lookup_name = comptime field.name[0 .. field.name.len - "_reply".len];
+                    appendAll(globalThis, allocator, array, &i, reply, lookup_name);
+                }
+            }
+        }
+
+        return array;
+    }
+
+    pub fn Callback(comptime Type: type) type {
+        return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_any_reply) void;
+    }
+
+    pub fn callbackWrapper(
+        comptime _: []const u8,
+        comptime Type: type,
+        comptime function: Callback(Type),
+    ) ares_callback {
+        return &struct {
+            pub fn handleAny(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
+                const this = bun.cast(*Type, ctx.?);
+                if (status != ARES_SUCCESS) {
+                    function(this, Error.get(status), timeouts, null);
+                    return;
+                }
+
+                var any_success = false;
+                var last_error: ?c_int = null;
+                var reply = bun.default_allocator.create(struct_any_reply) catch bun.outOfMemory();
+                reply.* = .{};
+
+                switch (hostent_with_ttls.parse("a", buffer, buffer_length)) {
+                    .result => |result| {
+                        reply.a_reply = result;
+                        any_success = true;
+                    },
+                    .err => |err| last_error = @intFromEnum(err),
+                }
+
+                switch (hostent_with_ttls.parse("aaaa", buffer, buffer_length)) {
+                    .result => |result| {
+                        reply.aaaa_reply = result;
+                        any_success = true;
+                    },
+                    .err => |err| last_error = @intFromEnum(err),
+                }
+
+                var result = ares_parse_mx_reply(buffer, buffer_length, &reply.mx_reply);
+                if (result == ARES_SUCCESS) {
+                    any_success = true;
+                } else {
+                    last_error = result;
+                }
+
+                result = ares_parse_ns_reply(buffer, buffer_length, &reply.ns_reply);
+                if (result == ARES_SUCCESS) {
+                    any_success = true;
+                } else {
+                    last_error = result;
+                }
+
+                result = ares_parse_txt_reply(buffer, buffer_length, &reply.txt_reply);
+                if (result == ARES_SUCCESS) {
+                    any_success = true;
+                } else {
+                    last_error = result;
+                }
+
+                result = ares_parse_srv_reply(buffer, buffer_length, &reply.srv_reply);
+                if (result == ARES_SUCCESS) {
+                    any_success = true;
+                } else {
+                    last_error = result;
+                }
+
+                result = ares_parse_ptr_reply(buffer, buffer_length, null, 0, AF.INET, &reply.ptr_reply);
+                if (result == ARES_SUCCESS) {
+                    any_success = true;
+                } else {
+                    last_error = result;
+                }
+
+                result = ares_parse_naptr_reply(buffer, buffer_length, &reply.naptr_reply);
+                if (result == ARES_SUCCESS) {
+                    any_success = true;
+                } else {
+                    last_error = result;
+                }
+
+                result = ares_parse_soa_reply(buffer, buffer_length, &reply.soa_reply);
+                if (result == ARES_SUCCESS) {
+                    any_success = true;
+                } else {
+                    last_error = result;
+                }
+
+                result = ares_parse_caa_reply(buffer, buffer_length, &reply.caa_reply);
+                if (result == ARES_SUCCESS) {
+                    any_success = true;
+                } else {
+                    last_error = result;
+                }
+
+                if (!any_success) {
+                    reply.deinit();
+                    function(this, Error.get(last_error.?), timeouts, null);
+                    return;
+                }
+
+                function(this, null, timeouts, reply);
+            }
+        }.handleAny;
+    }
+
+    pub fn deinit(this: *struct_any_reply) void {
+        inline for (@typeInfo(struct_any_reply).Struct.fields) |field| {
+            if (comptime std.mem.endsWith(u8, field.name, "_reply")) {
+                if (@field(this, field.name)) |reply| {
+                    reply.deinit();
+                }
+            }
+        }
+
+        bun.default_allocator.destroy(this);
+    }
+};
 pub extern fn ares_parse_a_reply(abuf: [*c]const u8, alen: c_int, host: [*c]?*struct_hostent, addrttls: [*c]struct_ares_addrttl, naddrttls: [*c]c_int) c_int;
 pub extern fn ares_parse_aaaa_reply(abuf: [*c]const u8, alen: c_int, host: [*c]?*struct_hostent, addrttls: [*c]struct_ares_addr6ttl, naddrttls: [*c]c_int) c_int;
 pub extern fn ares_parse_caa_reply(abuf: [*c]const u8, alen: c_int, caa_out: [*c][*c]struct_ares_caa_reply) c_int;
@@ -1288,6 +1642,7 @@ pub const ARES_ELOADIPHLPAPI = 22;
 pub const ARES_EADDRGETNETWORKPARAMS = 23;
 pub const ARES_ECANCELLED = 24;
 pub const ARES_ESERVICE = 25;
+pub const ARES_ENOSERVER = 26;
 
 pub const Error = enum(i32) {
     ENODATA = ARES_ENODATA,
@@ -1315,25 +1670,105 @@ pub const Error = enum(i32) {
     EADDRGETNETWORKPARAMS = ARES_EADDRGETNETWORKPARAMS,
     ECANCELLED = ARES_ECANCELLED,
     ESERVICE = ARES_ESERVICE,
+    ENOSERVER = ARES_ENOSERVER,
+
+    const Deferred = struct {
+        errno: Error,
+        syscall: []const u8,
+        hostname: ?bun.String,
+        promise: JSC.JSPromise.Strong,
+
+        pub usingnamespace bun.New(@This());
+
+        pub fn init(errno: Error, syscall: []const u8, hostname: ?bun.String, promise: JSC.JSPromise.Strong) *Deferred {
+            return Deferred.new(.{
+                .errno = errno,
+                .syscall = syscall,
+                .hostname = hostname,
+                .promise = promise,
+            });
+        }
+
+        pub fn reject(this: *Deferred, globalThis: *JSC.JSGlobalObject) void {
+            const system_error = JSC.SystemError{
+                .errno = @intFromEnum(this.errno),
+                .code = bun.String.static(this.errno.code()),
+                .message = if (this.hostname) |hostname| bun.String.createFormat("{s} {s} {s}", .{ this.syscall, this.errno.code()[4..], hostname }) catch bun.outOfMemory() else bun.String.empty,
+                .syscall = bun.String.createUTF8(this.syscall),
+                .hostname = this.hostname orelse bun.String.empty,
+            };
+
+            const instance = system_error.toErrorInstance(globalThis);
+            instance.put(globalThis, "name", bun.String.static("DNSException").toJS(globalThis));
+
+            this.promise.reject(globalThis, instance);
+            this.hostname = null;
+            this.deinit();
+        }
+
+        pub fn rejectLater(this: *Deferred, globalThis: *JSC.JSGlobalObject) void {
+            const Context = struct {
+                deferred: *Deferred,
+                globalThis: *JSC.JSGlobalObject,
+                pub fn callback(context: *@This()) void {
+                    context.deferred.reject(context.globalThis);
+                }
+            };
+
+            const context = bun.default_allocator.create(Context) catch bun.outOfMemory();
+            context.deferred = this;
+            context.globalThis = globalThis;
+            // TODO(@heimskr): new custom Task type
+            globalThis.bunVM().enqueueTask(JSC.ManagedTask.New(Context, Context.callback).init(context));
+        }
+
+        pub fn deinit(this: *@This()) void {
+            if (this.hostname) |hostname| {
+                hostname.deref();
+            }
+            this.promise.deinit();
+            this.destroy();
+        }
+    };
+
+    pub fn toDeferred(this: Error, syscall: []const u8, hostname: ?[]const u8, promise: *JSC.JSPromise.Strong) *Deferred {
+        const host_string: ?bun.String = if (hostname) |host|
+            bun.String.createUTF8(host)
+        else
+            null;
+        defer promise.* = .{};
+        return Deferred.init(this, syscall, host_string, promise.*);
+    }
 
     pub fn toJS(this: Error, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        const error_value = globalThis.createErrorInstance("{s}", .{this.label()});
-        error_value.put(
-            globalThis,
-            JSC.ZigString.static("name"),
-            JSC.ZigString.init("DNSException").toJS(globalThis),
-        );
-        error_value.put(
-            globalThis,
-            JSC.ZigString.static("code"),
-            JSC.ZigString.init(this.code()).toJS(globalThis),
-        );
-        error_value.put(
-            globalThis,
-            JSC.ZigString.static("errno"),
-            JSC.jsNumber(@intFromEnum(this)),
-        );
-        return error_value;
+        const instance = (JSC.SystemError{
+            .errno = @intFromEnum(this),
+            .code = bun.String.static(this.code()),
+        }).toErrorInstance(globalThis);
+        instance.put(globalThis, "name", bun.String.static("DNSException").toJS(globalThis));
+        return instance;
+    }
+
+    pub fn toJSWithSyscall(this: Error, globalThis: *JSC.JSGlobalObject, comptime syscall: []const u8) JSC.JSValue {
+        const instance = (JSC.SystemError{
+            .errno = @intFromEnum(this),
+            .code = bun.String.static(this.code()),
+            .syscall = bun.String.static((syscall ++ "\x00")[0..syscall.len :0]),
+        }).toErrorInstance(globalThis);
+        instance.put(globalThis, "name", bun.String.static("DNSException").toJS(globalThis));
+        return instance;
+    }
+
+    pub fn toJSWithSyscallAndHostname(this: Error, globalThis: *JSC.JSGlobalObject, comptime syscall: []const u8, hostname: []const u8) JSC.JSValue {
+        const instance = (JSC.SystemError{
+            .errno = @intFromEnum(this),
+            .code = bun.String.static(this.code()),
+            .message = bun.String.createFormat("{s} {s} {s}", .{ syscall, this.code()[4..], hostname }) catch bun.outOfMemory(),
+            .syscall = bun.String.static((syscall ++ "\x00")[0..syscall.len :0]),
+            .hostname = bun.String.createUTF8(hostname),
+        }).toErrorInstance(globalThis);
+        instance.put(globalThis, "name", bun.String.static("DNSException").toJS(globalThis));
+        return instance;
     }
 
     pub fn initEAI(rc: i32) ?Error {
@@ -1422,6 +1857,7 @@ pub const Error = enum(i32) {
         .{ .EADDRGETNETWORKPARAMS, "DNS_EADDRGETNETWORKPARAMS" },
         .{ .ECANCELLED, "DNS_ECANCELLED" },
         .{ .ESERVICE, "DNS_ESERVICE" },
+        .{ .ENOSERVER, "DNS_ENOSERVER" },
     });
 
     pub const label = bun.enumMap(Error, .{
@@ -1450,6 +1886,7 @@ pub const Error = enum(i32) {
         .{ .EADDRGETNETWORKPARAMS, "EADDRGETNETWORKPARAMS" },
         .{ .ECANCELLED, "DNS query cancelled" },
         .{ .ESERVICE, "Service not available" },
+        .{ .ENOSERVER, "No DNS servers were configured" },
     });
 
     pub fn get(rc: i32) ?Error {
@@ -1460,8 +1897,8 @@ pub const Error = enum(i32) {
 
         return switch (rc) {
             0 => null,
-            1...ARES_ESERVICE => @as(Error, @enumFromInt(rc)),
-            -ARES_ESERVICE...-1 => @as(Error, @enumFromInt(-rc)),
+            1...ARES_ENOSERVER => @as(Error, @enumFromInt(rc)),
+            -ARES_ENOSERVER...-1 => @as(Error, @enumFromInt(-rc)),
             else => unreachable,
         };
     }
@@ -1554,18 +1991,17 @@ pub const ares_uri_reply = struct_ares_uri_reply;
 pub const ares_addr_node = struct_ares_addr_node;
 pub const ares_addr_port_node = struct_ares_addr_port_node;
 
-pub export fn Bun__canonicalizeIP(
-    ctx: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) callconv(JSC.conv) JSC.JSValue {
+comptime {
+    const Bun__canonicalizeIP = JSC.toJSHostFunction(Bun__canonicalizeIP_);
+    @export(Bun__canonicalizeIP, .{ .name = "Bun__canonicalizeIP" });
+}
+pub fn Bun__canonicalizeIP_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
 
-    const globalThis = ctx.ptr();
-    const arguments = callframe.arguments(1);
+    const arguments = callframe.arguments_old(1);
 
     if (arguments.len == 0) {
-        globalThis.throwInvalidArguments("canonicalizeIP() expects a string but received no arguments.", .{});
-        return .zero;
+        return globalThis.throwInvalidArguments("canonicalizeIP() expects a string but received no arguments.", .{});
     }
     // windows uses 65 bytes for ipv6 addresses and linux/macos uses 46
     const INET6_ADDRSTRLEN = if (comptime bun.Environment.isWindows) 65 else 46;
@@ -1605,8 +2041,8 @@ pub export fn Bun__canonicalizeIP(
         return JSC.ZigString.init(ip_addr[0..size]).toJS(globalThis);
     } else {
         if (!globalThis.hasException())
-            globalThis.throwInvalidArguments("address must be a string", .{});
-        return .zero;
+            return globalThis.throwInvalidArguments("address must be a string", .{});
+        return error.JSError;
     }
 }
 
@@ -1655,9 +2091,4 @@ pub fn getSockaddr(addr: []const u8, port: u16, sa: *std.posix.sockaddr) c_int {
     return -1;
 }
 
-comptime {
-    if (!JSC.is_bindgen) {
-        _ = Bun__canonicalizeIP;
-    }
-}
 const GetAddrInfo = bun.dns.GetAddrInfo;

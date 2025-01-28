@@ -5,7 +5,7 @@ const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
 const strings = bun.strings;
-const json_parser = bun.JSON;
+const JSON = bun.JSON;
 const Glob = @import("../glob.zig");
 
 const Package = @import("../install/lockfile.zig").Package;
@@ -34,7 +34,7 @@ fn globIgnoreFn(val: []const u8) bool {
     return false;
 }
 
-const GlobWalker = Glob.GlobWalker_(globIgnoreFn, Glob.DirEntryAccessor, false);
+const GlobWalker = Glob.GlobWalker(globIgnoreFn, Glob.walk.DirEntryAccessor, false);
 
 pub fn getCandidatePackagePatterns(allocator: std.mem.Allocator, log: *bun.logger.Log, out_patterns: *std.ArrayList([]u8), workdir_: []const u8, root_buf: *bun.PathBuffer) ![]const u8 {
     bun.JSAst.Expr.Data.Store.create();
@@ -65,7 +65,7 @@ pub fn getCandidatePackagePatterns(allocator: std.mem.Allocator, log: *bun.logge
         };
         defer allocator.free(json_source.contents);
 
-        const json = try json_parser.ParsePackageJSONUTF8(&json_source, log, allocator);
+        const json = try JSON.parsePackageJSONUTF8(&json_source, log, allocator);
 
         const prop = json.asProperty("workspaces") orelse continue;
 
@@ -187,7 +187,7 @@ pub const FilterSet = struct {
 
     pub fn matchesPath(self: *const FilterSet, path: []const u8) bool {
         for (self.filters) |filter| {
-            if (Glob.matchImpl(filter.codepoints, path).matches()) {
+            if (Glob.walk.matchImpl(filter.codepoints, path).matches()) {
                 return true;
             }
         }
@@ -200,7 +200,7 @@ pub const FilterSet = struct {
                 .name => name,
                 .path => path,
             };
-            if (Glob.matchImpl(filter.codepoints, target).matches()) {
+            if (Glob.walk.matchImpl(filter.codepoints, target).matches()) {
                 return true;
             }
         }

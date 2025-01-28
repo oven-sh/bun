@@ -166,6 +166,10 @@ pub const KeyframesName = union(enum) {
             },
         }
     }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 pub const KeyframeSelector = union(enum) {
@@ -205,6 +209,10 @@ pub const KeyframeSelector = union(enum) {
             },
         }
     }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 /// An individual keyframe within an `@keyframes` rule.
@@ -229,6 +237,10 @@ pub const Keyframe = struct {
         }
 
         try this.declarations.toCssBlock(W, dest);
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };
 
@@ -294,6 +306,10 @@ pub const KeyframesRule = struct {
     pub fn getFallbacks(this: *This, comptime T: type, targets: *const css.targets.Targets) []css.CssRule(T) {
         _ = this; // autofix
         _ = targets; // autofix
-        @panic(css.todo_stuff.depth);
+        @compileError(css.todo_stuff.depth);
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };

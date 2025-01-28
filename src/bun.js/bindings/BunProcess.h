@@ -36,6 +36,7 @@ public:
     }
 
     DECLARE_EXPORT_INFO;
+    bool m_reportOnUncaughtException = false;
 
     static void destroy(JSC::JSCell* cell)
     {
@@ -103,5 +104,7 @@ public:
     inline JSObject* bindingUV() { return m_bindingUV.getInitializedOnMainThread(this); }
     inline JSObject* bindingNatives() { return m_bindingNatives.getInitializedOnMainThread(this); }
 };
+
+bool isSignalName(WTF::String input);
 
 } // namespace Bun

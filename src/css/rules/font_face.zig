@@ -89,6 +89,10 @@ pub const FontFaceProperty = union(enum) {
             },
         };
     }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 /// A contiguous range of Unicode code points.
@@ -416,6 +420,10 @@ pub const FontFormat = union(enum) {
             .string => try dest.writeStr(this.string),
         }
     }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 /// A value for the [src](https://drafts.csswg.org/css-fonts/#src-desc)
@@ -460,6 +468,10 @@ pub const Source = union(enum) {
                 try dest.writeChar(')');
             },
         }
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };
 
@@ -579,9 +591,13 @@ pub const UrlSource = struct {
         if (this.tech.items.len != 0) {
             try dest.whitespace();
             try dest.writeStr("tech(");
-            try css.to_css.fromList(FontTechnology, &this.tech, W, dest);
+            try css.to_css.fromList(FontTechnology, this.tech.items, W, dest);
             try dest.writeChar(')');
         }
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };
 
@@ -613,6 +629,10 @@ pub const FontFaceRule = struct {
         dest.dedent();
         try dest.newline();
         try dest.writeChar('}');
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };
 

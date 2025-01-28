@@ -24,11 +24,10 @@ pub fn MediaRule(comptime R: type) type {
 
         const This = @This();
 
-        pub fn minify(this: *This, context: *css.MinifyContext, parent_is_unused: bool) Maybe(bool, css.MinifyError) {
-            _ = this; // autofix
-            _ = context; // autofix
-            _ = parent_is_unused; // autofix
-            @panic(css.todo_stuff.depth);
+        pub fn minify(this: *This, context: *css.MinifyContext, parent_is_unused: bool) css.MinifyErr!bool {
+            try this.rules.minify(context, parent_is_unused);
+
+            return this.rules.v.items.len == 0 or this.query.neverMatches();
         }
 
         pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -36,7 +35,6 @@ pub fn MediaRule(comptime R: type) type {
                 try this.rules.toCss(W, dest);
                 return;
             }
-
             // #[cfg(feature = "sourcemap")]
             // dest.addMapping(this.loc);
 
@@ -50,6 +48,10 @@ pub fn MediaRule(comptime R: type) type {
             dest.dedent();
             try dest.newline();
             return dest.writeChar('}');
+        }
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
+            return css.implementDeepClone(@This(), this, allocator);
         }
     };
 }

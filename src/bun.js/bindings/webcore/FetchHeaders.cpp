@@ -205,7 +205,7 @@ ExceptionOr<void> FetchHeaders::append(const String& name, const String& value)
 }
 
 // https://fetch.spec.whatwg.org/#dom-headers-delete
-ExceptionOr<void> FetchHeaders::remove(const String& name)
+ExceptionOr<void> FetchHeaders::remove(const StringView name)
 {
     if (!isValidHTTPToken(name))
         return Exception { TypeError, makeString("Invalid header name: '"_s, name, "'"_s) };
@@ -232,14 +232,14 @@ size_t FetchHeaders::memoryCost() const
     return m_headers.memoryCost() + sizeof(*this);
 }
 
-ExceptionOr<String> FetchHeaders::get(const String& name) const
+ExceptionOr<String> FetchHeaders::get(const StringView name) const
 {
     if (!isValidHTTPToken(name))
         return Exception { TypeError, makeString("Invalid header name: '"_s, name, "'"_s) };
     return m_headers.get(name);
 }
 
-ExceptionOr<bool> FetchHeaders::has(const String& name) const
+ExceptionOr<bool> FetchHeaders::has(const StringView name) const
 {
     if (!isValidHTTPToken(name))
         return Exception { TypeError, makeString("Invalid header name: '"_s, name, '"') };
@@ -338,7 +338,7 @@ std::optional<KeyValuePair<String, String>> FetchHeaders::Iterator::next()
         if (key.isNull()) {
             if (m_cookieIndex < setCookieHeaders.size()) {
                 String value = setCookieHeaders[m_cookieIndex++];
-                return KeyValuePair<String, String> { WTF::staticHeaderNames[static_cast<uint8_t>(HTTPHeaderName::SetCookie)], WTFMove(value) };
+                return KeyValuePair<String, String> { WTF::httpHeaderNameStringImpl(HTTPHeaderName::SetCookie), WTFMove(value) };
             }
             m_currentIndex++;
             continue;

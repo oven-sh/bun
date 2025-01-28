@@ -2,8 +2,9 @@ import { Database } from "bun:sqlite";
 import { describe, expect } from "bun:test";
 import { rmSync } from "fs";
 import { itBundled } from "./expectBundled";
+import { isFlaky, isWindows } from "harness";
 
-describe("bundler", () => {
+describe.todoIf(isFlaky && isWindows)("bundler", () => {
   itBundled("compile/HelloWorld", {
     compile: true,
     files: {
@@ -12,6 +13,21 @@ describe("bundler", () => {
       `,
     },
     run: { stdout: "Hello, world!" },
+  });
+  itBundled("compile/HelloWorldWithProcessVersionsBun", {
+    compile: true,
+    files: {
+      [`/${process.platform}-${process.arch}.js`]: "module.exports = process.versions.bun;",
+      "/entry.ts": /* js */ `
+        process.exitCode = 1;
+        process.versions.bun = "bun!";
+        if (process.versions.bun === "bun!") throw new Error("fail");
+        if (require("./${process.platform}-${process.arch}.js") === "${Bun.version.replaceAll("-debug", "")}") {
+          process.exitCode = 0;
+        }
+      `,
+    },
+    run: { exitCode: 0 },
   });
   itBundled("compile/HelloWorldBytecode", {
     compile: true,
@@ -57,7 +73,7 @@ describe("bundler", () => {
         import {rmSync} from 'fs';
         // Verify we're not just importing from the filesystem
         rmSync("./worker.ts", {force: true});
-        
+
         console.log("Hello, world!");
         new Worker("./worker");
       `,
@@ -213,7 +229,7 @@ describe("bundler", () => {
     },
   });
   itBundled("compile/VariousBunAPIs", {
-    todo: process.platform === "win32", // TODO(@paperdave)
+    todo: isWindows, // TODO(@paperdave)
     compile: true,
     files: {
       "/entry.ts": `

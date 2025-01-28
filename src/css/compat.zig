@@ -219,8 +219,8 @@ pub const Feature = enum {
     webkit_fill_available_size,
     x_resolution_unit,
 
-    pub fn isCompatible(this: *const Feature, browsers: Browsers) bool {
-        switch (this.*) {
+    pub fn isCompatible(this: Feature, browsers: Browsers) bool {
+        switch (this) {
             .selectors2 => {
                 if (browsers.ie) |version| {
                     if (version < 458752) {

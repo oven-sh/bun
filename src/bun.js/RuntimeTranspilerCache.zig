@@ -4,7 +4,13 @@
 /// Version 5: `require.main === module` no longer marks a module as CJS
 /// Version 6: `use strict` is preserved in CommonJS modules when at the top of the file
 /// Version 7: Several bundler changes that are likely to impact the runtime as well.
-const expected_version = 7;
+/// Version 8: Fix for generated symbols
+/// Version 9: String printing changes
+/// Version 10: Constant folding for ''.charCodeAt(n)
+/// Version 11: Fix \uFFFF printing regression
+/// Version 12: "use strict"; makes it CommonJS if we otherwise don't know which one to pick.
+/// Version 13: Hoist `import.meta.require` definition, see #15738
+const expected_version = 13;
 
 const bun = @import("root").bun;
 const std = @import("std");

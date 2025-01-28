@@ -132,7 +132,7 @@ pub fn parseJSON(
         bun.JSAst.Stmt.Data.Store.reset();
     }
     debug("parse (JSON, {d} bytes)", .{source.len});
-    var json = bun.JSON.ParseJSON(&json_src, &log, arena, false) catch {
+    var json = bun.JSON.parse(&json_src, &log, arena, false) catch {
         return error.InvalidJSON;
     };
 
@@ -179,10 +179,7 @@ pub fn parseJSON(
         if (item.data != .e_string)
             return error.InvalidSourceMap;
 
-        const utf16_decode = try bun.js_lexer.decodeStringLiteralEscapeSequencesToUTF16(item.data.e_string.string(arena) catch bun.outOfMemory(), arena);
-        defer arena.free(utf16_decode);
-        source_paths_slice.?[i] = bun.strings.toUTF8Alloc(alloc, utf16_decode) catch
-            return error.InvalidSourceMap;
+        source_paths_slice.?[i] = try alloc.dupe(u8, try item.data.e_string.string(alloc));
 
         i += 1;
     };
@@ -229,11 +226,7 @@ pub fn parseJSON(
             break :content null;
         }
 
-        const utf16_decode = try bun.js_lexer.decodeStringLiteralEscapeSequencesToUTF16(str, arena);
-        defer arena.free(utf16_decode);
-
-        break :content bun.strings.toUTF8Alloc(alloc, utf16_decode) catch
-            return error.InvalidSourceMap;
+        break :content try alloc.dupe(u8, str);
     } else null;
 
     return .{
@@ -614,6 +607,9 @@ pub const ParseResult = union(enum) {
                 .location = Logger.Location{
                     .file = path,
                     .offset = this.loc.toUsize(),
+                    // TODO: populate correct line and column information
+                    .line = -1,
+                    .column = -1,
                 },
                 .text = this.msg,
             };

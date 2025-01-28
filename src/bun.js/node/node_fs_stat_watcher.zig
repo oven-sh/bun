@@ -4,7 +4,7 @@ const bun = @import("root").bun;
 const Fs = @import("../../fs.zig");
 const Path = @import("../../resolver/resolve_path.zig");
 const Encoder = JSC.WebCore.Encoder;
-const Mutex = @import("../../lock.zig").Lock;
+const Mutex = bun.Mutex;
 const uws = @import("../../deps/uws.zig");
 
 const PathWatcher = @import("./path_watcher.zig");
@@ -26,9 +26,9 @@ const log = bun.Output.scoped(.StatWatcher, false);
 
 fn statToJSStats(globalThis: *JSC.JSGlobalObject, stats: bun.Stat, bigint: bool) JSC.JSValue {
     if (bigint) {
-        return StatsBig.new(StatsBig.init(stats)).toJS(globalThis);
+        return StatsBig.init(stats).toJS(globalThis);
     } else {
-        return StatsSmall.new(StatsSmall.init(stats)).toJS(globalThis);
+        return StatsSmall.init(stats).toJS(globalThis);
     }
 }
 
@@ -234,21 +234,11 @@ pub const StatWatcher = struct {
 
         global_this: JSC.C.JSContextRef,
 
-        pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Arguments {
+        pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Arguments {
             const vm = ctx.vm();
-            const path = PathLike.fromJSWithAllocator(ctx, arguments, bun.default_allocator, exception) orelse {
-                if (exception.* == null) {
-                    JSC.throwInvalidArguments(
-                        "filename must be a string or TypedArray",
-                        .{},
-                        ctx,
-                        exception,
-                    );
-                }
-                return null;
+            const path = try PathLike.fromJSWithAllocator(ctx, arguments, bun.default_allocator) orelse {
+                return ctx.throwInvalidArguments("filename must be a string or TypedArray", .{});
             };
-
-            if (exception.* != null) return null;
 
             var listener: JSC.JSValue = .zero;
             var persistent: bool = true;
@@ -259,20 +249,14 @@ pub const StatWatcher = struct {
                 // options
                 if (options_or_callable.isObject()) {
                     // default true
-                    persistent = (options_or_callable.getOptional(ctx, "persistent", bool) catch return null) orelse true;
+                    persistent = (try options_or_callable.getBooleanStrict(ctx, "persistent")) orelse true;
 
                     // default false
-                    bigint = (options_or_callable.getOptional(ctx, "bigint", bool) catch return null) orelse false;
+                    bigint = (try options_or_callable.getBooleanStrict(ctx, "bigint")) orelse false;
 
-                    if (options_or_callable.get(ctx, "interval")) |interval_| {
+                    if (try options_or_callable.get(ctx, "interval")) |interval_| {
                         if (!interval_.isNumber() and !interval_.isAnyInt()) {
-                            JSC.throwInvalidArguments(
-                                "interval must be a number.",
-                                .{},
-                                ctx,
-                                exception,
-                            );
-                            return null;
+                            return ctx.throwInvalidArguments("interval must be a number", .{});
                         }
                         interval = interval_.coerce(i32, ctx);
                     }
@@ -286,8 +270,7 @@ pub const StatWatcher = struct {
             }
 
             if (listener == .zero) {
-                exception.* = JSC.toInvalidArguments("Expected \"listener\" callback", .{}, ctx).asObjectRef();
-                return null;
+                return ctx.throwInvalidArguments("Expected \"listener\" callback", .{});
             }
 
             return Arguments{
@@ -309,7 +292,7 @@ pub const StatWatcher = struct {
         }
     };
 
-    pub fn doRef(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn doRef(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         if (!this.closed and !this.persistent) {
             this.persistent = true;
             this.poll_ref.ref(this.ctx);
@@ -317,7 +300,7 @@ pub const StatWatcher = struct {
         return .undefined;
     }
 
-    pub fn doUnref(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn doUnref(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         if (this.persistent) {
             this.persistent = false;
             this.poll_ref.unref(this.ctx);
@@ -343,7 +326,7 @@ pub const StatWatcher = struct {
         this.last_jsvalue.clear();
     }
 
-    pub fn doClose(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn doClose(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         this.close();
         return .undefined;
     }
@@ -358,17 +341,18 @@ pub const StatWatcher = struct {
         watcher: *StatWatcher,
         task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
 
+        pub usingnamespace bun.New(@This());
+
         pub fn createAndSchedule(
             watcher: *StatWatcher,
         ) void {
-            var task = bun.default_allocator.create(InitialStatTask) catch bun.outOfMemory();
-            task.* = .{ .watcher = watcher };
+            const task = InitialStatTask.new(.{ .watcher = watcher });
             JSC.WorkPool.schedule(&task.task);
         }
 
         fn workPoolCallback(task: *JSC.WorkPoolTask) void {
             const initial_stat_task: *InitialStatTask = @fieldParentPtr("task", task);
-            defer bun.default_allocator.destroy(initial_stat_task);
+            defer initial_stat_task.destroy();
             const this = initial_stat_task.watcher;
 
             if (this.closed) {
@@ -426,6 +410,10 @@ pub const StatWatcher = struct {
             },
         ) catch |err| this.globalThis.reportActiveExceptionAsUnhandled(err);
 
+        if (this.closed) {
+            this.used_by_scheduler_thread.store(false, .release);
+            return;
+        }
         vm.rareData().nodeFSStatWatcherScheduler(vm).append(this);
     }
 
@@ -467,7 +455,8 @@ pub const StatWatcher = struct {
     pub fn init(args: Arguments) !*StatWatcher {
         log("init", .{});
 
-        var buf: bun.PathBuffer = undefined;
+        const buf = bun.PathBufferPool.get();
+        defer bun.PathBufferPool.put(buf);
         var slice = args.path.slice();
         if (bun.strings.startsWith(slice, "file://")) {
             slice = slice[6..];
@@ -476,7 +465,7 @@ pub const StatWatcher = struct {
         var parts = [_]string{slice};
         const file_path = Path.joinAbsStringBuf(
             Fs.FileSystem.instance.top_level_dir,
-            &buf,
+            buf,
             &parts,
             .auto,
         );
@@ -500,7 +489,7 @@ pub const StatWatcher = struct {
             // Instant.now will not fail on our target platforms.
             .last_check = std.time.Instant.now() catch unreachable,
             // InitStatTask is responsible for setting this
-            .last_stat = undefined,
+            .last_stat = std.mem.zeroes(bun.Stat),
             .last_jsvalue = JSC.Strong.init(),
         };
         errdefer this.deinit();

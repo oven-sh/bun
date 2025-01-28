@@ -1,26 +1,11 @@
 # https://clang.llvm.org/docs/ClangFormat.html
 
-find_command(
-  VARIABLE
-    CLANG_FORMAT_PROGRAM
-  COMMAND
-    clang-format
-  REQUIRED
-    OFF
+file(GLOB BUN_H_SOURCES LIST_DIRECTORIES false ${CONFIGURE_DEPENDS}
+  ${CWD}/src/bun.js/bindings/*.h
+  ${CWD}/src/bun.js/modules/*.h
 )
 
-set(CLANG_FORMAT_SOURCES ${BUN_C_SOURCES} ${BUN_CXX_SOURCES})
-
-register_command(
-  TARGET
-    clang-format-version
-  COMMENT
-    "Print clang-format version"
-  COMMAND
-    ${CLANG_FORMAT_PROGRAM}
-      --version
-  ALWAYS_RUN
-)
+set(CLANG_FORMAT_SOURCES ${BUN_C_SOURCES} ${BUN_CXX_SOURCES} ${BUN_H_SOURCES})
 
 register_command(
   TARGET

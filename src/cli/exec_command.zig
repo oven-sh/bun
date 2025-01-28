@@ -16,7 +16,7 @@ pub const ExecCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
         const script = ctx.positionals[1];
         // this is a hack: make dummy bundler so we can use its `.runEnvLoader()` function to populate environment variables probably should split out the functionality
-        var bundle = try bun.Bundler.init(
+        var bundle = try bun.Transpiler.init(
             ctx.allocator,
             ctx.log,
             try @import("../bun.js/config.zig").configureTransformOptionsForBunVM(ctx.allocator, ctx.args),
@@ -29,7 +29,7 @@ pub const ExecCommand = struct {
         const cwd = switch (bun.sys.getcwd(&buf)) {
             .result => |p| p,
             .err => |e| {
-                Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ script, e.toSystemError() });
+                Output.err(e, "failed to run script <b>{s}<r>", .{script});
                 Global.exit(1);
             },
         };
@@ -39,8 +39,8 @@ pub const ExecCommand = struct {
         };
         const script_path = bun.path.join(parts, .auto);
 
-        const code = bun.shell.Interpreter.initAndRunFromSource(ctx, mini, script_path, script) catch |err| {
-            Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ script_path, @errorName(err) });
+        const code = bun.shell.Interpreter.initAndRunFromSource(ctx, mini, script_path, script, null) catch |err| {
+            Output.err(err, "failed to run script <b>{s}<r>", .{script_path});
             Global.exit(1);
         };
 

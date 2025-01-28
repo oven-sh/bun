@@ -3,6 +3,8 @@ const { throwNotImplemented } = require("internal/shared");
 
 const vm = $cpp("NodeVM.cpp", "Bun::createNodeVMBinding");
 
+const ObjectFreeze = Object.freeze;
+
 const { createContext, isContext, Script, runInNewContext, runInThisContext } = vm;
 
 function runInContext(code, context, options) {
@@ -38,6 +40,12 @@ class SyntheticModule {
   }
 }
 
+const constants = {
+  __proto__: null,
+  USE_MAIN_CONTEXT_DEFAULT_LOADER: Symbol("vm_dynamic_import_main_context_default"),
+  DONT_CONTEXTIFY: Symbol("vm_context_no_contextify"),
+};
+
 export default {
   createContext,
   runInContext,
@@ -51,4 +59,5 @@ export default {
   SourceTextModule,
   SyntheticModule,
   createScript,
+  constants: ObjectFreeze(constants),
 };

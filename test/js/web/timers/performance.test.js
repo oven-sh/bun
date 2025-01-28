@@ -1,6 +1,19 @@
 import { expect, it } from "bun:test";
 import { isWindows } from "harness";
 
+it("performance.clearResourceTimings()", () => {
+  performance.clearResourceTimings();
+});
+
+it("performance.setResourceTimingBufferSize()", () => {
+  performance.setResourceTimingBufferSize(10);
+});
+
+it("performance.onresourcetimingbufferfull", () => {
+  performance.onresourcetimingbufferfull = () => {};
+  performance.onresourcetimingbufferfull();
+});
+
 it("performance.now() should be monotonic", () => {
   const first = performance.now();
   const second = performance.now();

@@ -53,6 +53,8 @@ pub const DefineData = struct {
     // have any observable side effects.
     call_can_be_unwrapped_if_unused: bool = false,
 
+    method_call_must_be_replaced_with_undefined: bool = false,
+
     pub fn isUndefined(self: *const DefineData) bool {
         return self.valueless;
     }
@@ -64,81 +66,99 @@ pub const DefineData = struct {
         };
     }
 
+    pub fn initStaticString(str: *const js_ast.E.String) DefineData {
+        return .{
+            .value = .{ .e_string = @constCast(str) },
+            .can_be_removed_if_unused = true,
+        };
+    }
+
     pub fn merge(a: DefineData, b: DefineData) DefineData {
         return DefineData{
             .value = b.value,
             .can_be_removed_if_unused = a.can_be_removed_if_unused,
             .call_can_be_unwrapped_if_unused = a.call_can_be_unwrapped_if_unused,
             .original_name = b.original_name,
+            .valueless = a.method_call_must_be_replaced_with_undefined or b.method_call_must_be_replaced_with_undefined,
+            .method_call_must_be_replaced_with_undefined = a.method_call_must_be_replaced_with_undefined or b.method_call_must_be_replaced_with_undefined,
         };
     }
 
-    pub fn fromMergeableInput(defines: RawDefines, user_defines: *UserDefines, log: *logger.Log, allocator: std.mem.Allocator) !void {
-        try user_defines.ensureUnusedCapacity(@truncate(defines.count()));
-        var iter = defines.iterator();
-        while (iter.next()) |entry| {
-            var keySplitter = std.mem.split(u8, entry.key_ptr.*, ".");
-            while (keySplitter.next()) |part| {
-                if (!js_lexer.isIdentifier(part)) {
-                    if (strings.eql(part, entry.key_ptr)) {
-                        try log.addErrorFmt(null, logger.Loc{}, allocator, "define key \"{s}\" must be a valid identifier", .{entry.key_ptr.*});
-                    } else {
-                        try log.addErrorFmt(null, logger.Loc{}, allocator, "define key \"{s}\" contains invalid identifier \"{s}\"", .{ part, entry.value_ptr.* });
-                    }
-                    break;
+    pub fn fromMergeableInputEntry(user_defines: *UserDefines, key: []const u8, value_str: []const u8, value_is_undefined: bool, method_call_must_be_replaced_with_undefined: bool, log: *logger.Log, allocator: std.mem.Allocator) !void {
+        var keySplitter = std.mem.split(u8, key, ".");
+        while (keySplitter.next()) |part| {
+            if (!js_lexer.isIdentifier(part)) {
+                if (strings.eql(part, key)) {
+                    try log.addErrorFmt(null, logger.Loc{}, allocator, "define key \"{s}\" must be a valid identifier", .{key});
+                } else {
+                    try log.addErrorFmt(null, logger.Loc{}, allocator, "define key \"{s}\" contains invalid identifier \"{s}\"", .{ part, value_str });
                 }
+                break;
             }
-
-            // check for nested identifiers
-            var valueSplitter = std.mem.split(u8, entry.value_ptr.*, ".");
-            var isIdent = true;
-
-            while (valueSplitter.next()) |part| {
-                if (!js_lexer.isIdentifier(part) or js_lexer.Keywords.has(part)) {
-                    isIdent = false;
-                    break;
-                }
-            }
-
-            if (isIdent) {
-                // Special-case undefined. it's not an identifier here
-                // https://github.com/evanw/esbuild/issues/1407
-                const value = if (strings.eqlComptime(entry.value_ptr.*, "undefined"))
-                    js_ast.Expr.Data{ .e_undefined = js_ast.E.Undefined{} }
-                else
-                    js_ast.Expr.Data{ .e_identifier = .{
-                        .ref = Ref.None,
-                        .can_be_removed_if_unused = true,
-                    } };
-
-                user_defines.putAssumeCapacity(
-                    entry.key_ptr.*,
-                    DefineData{
-                        .value = value,
-                        .original_name = entry.value_ptr.*,
-                        .can_be_removed_if_unused = true,
-                    },
-                );
-                continue;
-            }
-            const _log = log;
-            var source = logger.Source{
-                .contents = entry.value_ptr.*,
-                .path = defines_path,
-                .key_path = fs.Path.initWithNamespace("defines", "internal"),
-            };
-            const expr = try json_parser.ParseEnvJSON(&source, _log, allocator);
-            const cloned = try expr.data.deepClone(allocator);
-            user_defines.putAssumeCapacity(entry.key_ptr.*, DefineData{
-                .value = cloned,
-                .can_be_removed_if_unused = expr.isPrimitiveLiteral(),
-            });
         }
+
+        // check for nested identifiers
+        var valueSplitter = std.mem.split(u8, value_str, ".");
+        var isIdent = true;
+
+        while (valueSplitter.next()) |part| {
+            if (!js_lexer.isIdentifier(part) or js_lexer.Keywords.has(part)) {
+                isIdent = false;
+                break;
+            }
+        }
+
+        if (isIdent) {
+            // Special-case undefined. it's not an identifier here
+            // https://github.com/evanw/esbuild/issues/1407
+            const value = if (value_is_undefined or strings.eqlComptime(value_str, "undefined"))
+                js_ast.Expr.Data{ .e_undefined = js_ast.E.Undefined{} }
+            else
+                js_ast.Expr.Data{ .e_identifier = .{
+                    .ref = Ref.None,
+                    .can_be_removed_if_unused = true,
+                } };
+
+            user_defines.putAssumeCapacity(
+                key,
+                DefineData{
+                    .value = value,
+                    .original_name = value_str,
+                    .can_be_removed_if_unused = true,
+                    .valueless = value_is_undefined,
+                    .method_call_must_be_replaced_with_undefined = method_call_must_be_replaced_with_undefined,
+                },
+            );
+            return;
+        }
+        const _log = log;
+        var source = logger.Source{
+            .contents = value_str,
+            .path = defines_path,
+        };
+        const expr = try json_parser.parseEnvJSON(&source, _log, allocator);
+        const cloned = try expr.data.deepClone(allocator);
+        user_defines.putAssumeCapacity(key, DefineData{
+            .value = cloned,
+            .can_be_removed_if_unused = expr.isPrimitiveLiteral(),
+            .valueless = value_is_undefined,
+            .method_call_must_be_replaced_with_undefined = method_call_must_be_replaced_with_undefined,
+        });
     }
 
-    pub fn fromInput(defines: RawDefines, log: *logger.Log, allocator: std.mem.Allocator) !UserDefines {
+    pub fn fromInput(defines: RawDefines, drop: []const []const u8, log: *logger.Log, allocator: std.mem.Allocator) !UserDefines {
         var user_defines = UserDefines.init(allocator);
-        try fromMergeableInput(defines, &user_defines, log, allocator);
+        var iterator = defines.iterator();
+        try user_defines.ensureUnusedCapacity(@truncate(defines.count() + drop.len));
+        while (iterator.next()) |entry| {
+            try fromMergeableInputEntry(&user_defines, entry.key_ptr.*, entry.value_ptr.*, false, false, log, allocator);
+        }
+
+        for (drop) |drop_item| {
+            if (drop_item.len > 0) {
+                try fromMergeableInputEntry(&user_defines, drop_item, "", true, true, log, allocator);
+            }
+        }
 
         return user_defines;
     }
@@ -170,6 +190,7 @@ const inf_val = js_ast.E.Number{ .value = std.math.inf(f64) };
 pub const Define = struct {
     identifiers: bun.StringHashMap(IdentifierDefine),
     dots: bun.StringHashMap([]DotDefine),
+    drop_debugger: bool,
     allocator: std.mem.Allocator,
 
     pub const Data = DefineData;
@@ -236,11 +257,12 @@ pub const Define = struct {
         }
     }
 
-    pub fn init(allocator: std.mem.Allocator, _user_defines: ?UserDefines, string_defines: ?UserDefinesArray) bun.OOM!*@This() {
-        var define = try allocator.create(Define);
+    pub fn init(allocator: std.mem.Allocator, _user_defines: ?UserDefines, string_defines: ?UserDefinesArray, drop_debugger: bool) bun.OOM!*@This() {
+        const define = try allocator.create(Define);
         define.allocator = allocator;
         define.identifiers = bun.StringHashMap(IdentifierDefine).init(allocator);
         define.dots = bun.StringHashMap([]DotDefine).init(allocator);
+        define.drop_debugger = drop_debugger;
         try define.dots.ensureTotalCapacity(124);
 
         const value_define = DefineData{

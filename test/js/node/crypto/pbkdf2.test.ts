@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const common = require("../test/common");
 
 import { describe, expect, jest, test } from "bun:test";
 function testPBKDF2_(password, salt, iterations, keylen, expected) {
@@ -69,13 +70,18 @@ testPBKDF2("password", "salt", 32, 32, "64c486c55d30d4c5a079b8823b7d7cb37ff0556f
 testPBKDF2("", "", 1, 32, "f7ce0b653d2d72a4108cf5abe912ffdd777616dbbb27a70e8204f3ae2d0f6fad", "hex");
 
 describe("invalid inputs", () => {
-  for (let input of ["test", {}, [], true, undefined, null]) {
+  for (let input of ["test", [], true, undefined, null]) {
     test(`${input} is invalid`, () => {
       expect(() => crypto.pbkdf2("pass", "salt", input, 8, "sha256")).toThrow(
-        `The "iteration count" argument must be of type integer. Received "${typeof input}"`,
+        `The "iterations" argument must be of type number.${common.invalidArgTypeHelper(input)}`,
       );
     });
   }
+  test(`{} is invalid`, () => {
+    expect(() => crypto.pbkdf2("pass", "salt", {}, 8, "sha256")).toThrow(
+      `The "iterations" argument must be of type number.${common.invalidArgTypeHelper({})}`,
+    );
+  });
 
   test("invalid length", () => {
     expect(() => crypto.pbkdf2("password", "salt", 1, -1, "sha256")).toThrow();
@@ -92,7 +98,7 @@ describe("invalid inputs", () => {
       });
       expect(() => {
         crypto.pbkdf2("password", "salt", 1, input, "sha256", outer);
-      }).toThrow("keylen must be > 0 and < 2147483647");
+      }).toThrow(`The value of "keylen" is out of range. It must be >= 0 and <= 2147483647. Received ${input}`);
       expect(outer).not.toHaveBeenCalled();
     });
   });
@@ -108,20 +114,22 @@ describe("invalid inputs", () => {
       thrown = e as Error;
     }
     expect(thrown.code).toBe("ERR_CRYPTO_INVALID_DIGEST");
-    expect(thrown.message).toBe('Unsupported algorithm "md55"');
+    expect(thrown.message).toBe("Invalid digest: md55");
   });
 });
 
 [Infinity, -Infinity, NaN].forEach(input => {
   test(`${input} keylen`, () => {
     expect(() => crypto.pbkdf2("password", "salt", 1, input, "sha256")).toThrow(
-      `The \"keylen\" argument must be of type integer. Received "number"`,
+      `The value of "keylen" is out of range. It must be an integer. Received ${input}`,
     );
   });
 });
 
 [-1, 2147483648, 4294967296].forEach(input => {
   test(`${input} keylen`, () => {
-    expect(() => crypto.pbkdf2("password", "salt", 1, input, "sha256")).toThrow("keylen must be > 0 and < 2147483647");
+    expect(() => crypto.pbkdf2("password", "salt", 1, input, "sha256")).toThrow(
+      `The value of "keylen" is out of range. It must be >= 0 and <= 2147483647. Received ${input}`,
+    );
   });
 });

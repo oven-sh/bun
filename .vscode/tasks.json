@@ -2,50 +2,57 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "type": "process",
-      "label": "Install Dependencies",
-      "command": "scripts/all-dependencies.sh",
-      "windows": {
-        "command": "scripts/all-dependencies.ps1",
-      },
-      "icon": {
-        "id": "arrow-down",
-      },
-      "options": {
-        "cwd": "${workspaceFolder}",
-      },
-    },
-    {
-      "type": "process",
-      "label": "Setup Environment",
-      "dependsOn": ["Install Dependencies"],
-      "command": "scripts/setup.sh",
-      "windows": {
-        "command": "scripts/setup.ps1",
-      },
-      "icon": {
-        "id": "check",
-      },
-      "options": {
-        "cwd": "${workspaceFolder}",
-      },
-    },
-    {
-      "type": "process",
       "label": "Build Bun",
-      "dependsOn": ["Setup Environment"],
-      "command": "bun",
-      "args": ["run", "build"],
-      "icon": {
-        "id": "gear",
+      "type": "shell",
+      "command": "bun run build",
+      "group": {
+        "kind": "build",
+        "isDefault": true,
       },
-      "options": {
-        "cwd": "${workspaceFolder}",
-      },
-      "isBuildCommand": true,
-      "runOptions": {
-        "instanceLimit": 1,
-        "reevaluateOnRerun": true,
+      "problemMatcher": [
+        {
+          "owner": "zig",
+          "fileLocation": ["relative", "${workspaceFolder}"],
+          "pattern": [
+            {
+              "regexp": "^(.+?):(\\d+):(\\d+): (error|warning|note): (.+)$",
+              "file": 1,
+              "line": 2,
+              "column": 3,
+              "severity": 4,
+              "message": 5,
+            },
+            {
+              "regexp": "^\\s+(.+)$",
+              "message": 1,
+              "loop": true,
+            },
+          ],
+        },
+        {
+          "owner": "clang",
+          "fileLocation": ["relative", "${workspaceFolder}"],
+          "pattern": [
+            {
+              "regexp": "^([^:]+):(\\d+):(\\d+):\\s+(warning|error|note|remark):\\s+(.*)$",
+              "file": 1,
+              "line": 2,
+              "column": 3,
+              "severity": 4,
+              "message": 5,
+            },
+            {
+              "regexp": "^\\s*(.*)$",
+              "message": 1,
+              "loop": true,
+            },
+          ],
+        },
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true,
       },
     },
   ],

@@ -19,7 +19,7 @@ pub fn throwErrInvalidArgValue(
     comptime fmt: [:0]const u8,
     args: anytype,
 ) bun.JSError {
-    @setCold(true);
+    @branchHint(.cold);
     return globalThis.ERR_INVALID_ARG_VALUE(fmt, args).throw();
 }
 
@@ -28,7 +28,7 @@ pub fn throwErrInvalidArgTypeWithMessage(
     comptime fmt: [:0]const u8,
     args: anytype,
 ) bun.JSError {
-    @setCold(true);
+    @branchHint(.cold);
     return globalThis.ERR_INVALID_ARG_TYPE(fmt, args).throw();
 }
 
@@ -39,7 +39,7 @@ pub fn throwErrInvalidArgType(
     comptime expected_type: []const u8,
     value: JSValue,
 ) bun.JSError {
-    @setCold(true);
+    @branchHint(.cold);
     const actual_type = getTypeName(globalThis, value);
     return throwErrInvalidArgTypeWithMessage(globalThis, "The \"" ++ name_fmt ++ "\" property must be of type {s}, got {s}", name_args ++ .{ expected_type, actual_type });
 }
@@ -49,7 +49,7 @@ pub fn throwRangeError(
     comptime fmt: [:0]const u8,
     args: anytype,
 ) bun.JSError {
-    @setCold(true);
+    @branchHint(.cold);
     return globalThis.ERR_OUT_OF_RANGE(fmt, args).throw();
 }
 

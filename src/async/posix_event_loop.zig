@@ -226,7 +226,7 @@ pub const FilePoll = struct {
         return .pipe;
     }
 
-    pub fn onKQueueEvent(poll: *FilePoll, _: *Loop, kqueue_event: *const std.posix.system.kevent64_s) void {
+    pub fn onKQueueEvent(poll: *FilePoll, _: *Loop, kqueue_event: *const bun.kevent64_s) void {
         poll.updateFlags(Flags.fromKQueueEvent(kqueue_event.*));
         log("onKQueueEvent: {}", .{poll});
 
@@ -501,7 +501,7 @@ pub const FilePoll = struct {
             }
         }
 
-        pub fn fromKQueueEvent(kqueue_event: std.posix.system.kevent64_s) Flags.Set {
+        pub fn fromKQueueEvent(kqueue_event: bun.kevent64_s) Flags.Set {
             var flags = Flags.Set{};
             if (kqueue_event.filter == std.posix.system.EVFILT_READ) {
                 flags.insert(Flags.readable);
@@ -833,7 +833,7 @@ pub const FilePoll = struct {
                 return errno;
             }
         } else if (comptime Environment.isMac) {
-            var changelist = std.mem.zeroes([2]std.posix.system.kevent64_s);
+            var changelist = std.mem.zeroes([2]bun.kevent64_s);
             const one_shot_flag: u16 = if (!this.flags.contains(.one_shot))
                 0
             else if (one_shot == .dispatch)
@@ -1003,7 +1003,7 @@ pub const FilePoll = struct {
                 return errno;
             }
         } else if (comptime Environment.isMac) {
-            var changelist = std.mem.zeroes([2]std.posix.system.kevent64_s);
+            var changelist = std.mem.zeroes([2]bun.kevent64_s);
 
             changelist[0] = switch (flag) {
                 .readable => .{

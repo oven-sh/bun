@@ -14,8 +14,8 @@ pub fn OptionalChild(comptime T: type) type {
 pub fn EnumFields(comptime T: type) []const std.builtin.Type.EnumField {
     const tyinfo = @typeInfo(T);
     return switch (tyinfo) {
-        .Union => std.meta.fields(tyinfo.Union.tag_type.?),
-        .Enum => tyinfo.Enum.fields,
+        .@"union" => std.meta.fields(tyinfo.@"union".tag_type.?),
+        .@"enum" => tyinfo.@"enum".fields,
         else => {
             @compileError("Used `EnumFields(T)` on a type that is not an `enum` or a `union(enum)`");
         },

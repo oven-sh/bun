@@ -109,7 +109,7 @@ const ColonListType = @import("./cli/colon_list_type.zig").ColonListType;
 pub const LoaderColonList = ColonListType(Api.Loader, Arguments.loader_resolver);
 pub const DefineColonList = ColonListType(string, Arguments.noop_resolver);
 fn invalidTarget(diag: *clap.Diagnostic, _target: []const u8) noreturn {
-    @setCold(true);
+    @branchHint(.cold);
     diag.name.long = "target";
     diag.arg = _target;
     diag.report(Output.errorWriter(), error.InvalidTarget) catch {};
@@ -1250,7 +1250,7 @@ const AutoCommand = struct {
 
 pub const HelpCommand = struct {
     pub fn exec(allocator: std.mem.Allocator) !void {
-        @setCold(true);
+        @branchHint(.cold);
         execWithReason(allocator, .explicit);
     }
 
@@ -1388,7 +1388,7 @@ pub const HelpCommand = struct {
     }
 
     pub fn execWithReason(_: std.mem.Allocator, comptime reason: Reason) void {
-        @setCold(true);
+        @branchHint(.cold);
         printWithReason(reason, false);
 
         if (reason == .invalid_command) {
@@ -1400,7 +1400,7 @@ pub const HelpCommand = struct {
 
 pub const ReservedCommand = struct {
     pub fn exec(_: std.mem.Allocator) !void {
-        @setCold(true);
+        @branchHint(.cold);
         const command_name = for (bun.argv[1..]) |arg| {
             if (arg.len > 1 and arg[0] == '-') continue;
             break arg;
@@ -2651,13 +2651,13 @@ pub const Command = struct {
 };
 
 pub fn printVersionAndExit() noreturn {
-    @setCold(true);
+    @branchHint(.cold);
     Output.writer().writeAll(Global.package_json_version ++ "\n") catch {};
     Global.exit(0);
 }
 
 pub fn printRevisionAndExit() noreturn {
-    @setCold(true);
+    @branchHint(.cold);
     Output.writer().writeAll(Global.package_json_version_with_revision ++ "\n") catch {};
     Global.exit(0);
 }

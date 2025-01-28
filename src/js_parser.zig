@@ -2600,7 +2600,7 @@ const InvalidLoc = struct {
     };
 
     pub fn addError(loc: InvalidLoc, log: *logger.Log, source: *const logger.Source) void {
-        @setCold(true);
+        @branchHint(.cold);
         const text = switch (loc.kind) {
             .spread => "Unexpected trailing comma after rest element",
             .parentheses => "Unexpected parentheses in binding pattern",
@@ -9213,7 +9213,7 @@ fn NewParser_(
         }
 
         fn validateImportType(p: *P, import_tag: ImportRecord.Tag, stmt: *S.Import) !void {
-            @setCold(true);
+            @branchHint(.cold);
 
             if (import_tag.loader() != null) {
                 p.import_records.items[stmt.import_record_index].tag = import_tag;
@@ -14761,7 +14761,7 @@ fn NewParser_(
 
         pub fn panic(p: *P, comptime fmt: string, args: anytype) noreturn {
             p.panicLoc(fmt, args, null);
-            @setCold(true);
+            @branchHint(.cold);
         }
 
         pub fn panicLoc(p: *P, comptime fmt: string, args: anytype, loc: ?logger.Loc) noreturn {

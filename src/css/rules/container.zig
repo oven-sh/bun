@@ -62,7 +62,7 @@ pub const ContainerSizeFeatureId = enum {
     /// The [orientation](https://w3c.github.io/csswg-drafts/css-contain-3/#orientation) size container feature.
     orientation,
 
-    pub usingnamespace css.DeriveValueType(@This());
+    pub const valueType = css.DeriveValueType(@This()).valueType;
 
     pub const ValueTypeMap = .{
         .width = css.MediaFeatureType.length,

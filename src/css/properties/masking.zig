@@ -425,7 +425,11 @@ pub const MaskBorder = struct {
     /// How the mask image is interpreted.
     mode: MaskBorderMode,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"mask-border");
+    const define_shorthand_res = css.DefineShorthand(@This(), css.PropertyIdTag.@"mask-border");
+    pub const fromLonghands = define_shorthand_res.fromLonghands;
+    pub const longhands = define_shorthand_res.longhands;
+    pub const longhand = define_shorthand_res.longhand;
+    pub const setLonghand = define_shorthand_res.setLonghand;
 
     pub const PropertyFieldMap = .{
         .source = css.PropertyIdTag.@"mask-border-source",

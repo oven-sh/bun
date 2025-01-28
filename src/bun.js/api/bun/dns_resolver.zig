@@ -1802,7 +1802,11 @@ pub const DNSResolver = struct {
     pending_nameinfo_cache_cares: NameInfoPendingCache = NameInfoPendingCache.init(),
 
     pub usingnamespace JSC.Codegen.JSDNSResolver;
-    pub usingnamespace bun.NewRefCounted(@This(), deinit);
+    const ref_counted_res = bun.NewRefCounted(@This(), deinit);
+    pub const destroy = ref_counted_res.destroy;
+    pub const ref = ref_counted_res.ref;
+    pub const deref = ref_counted_res.deref;
+    pub const new = ref_counted_res.new;
 
     const PollsMap = std.AutoArrayHashMap(c_ares.ares_socket_t, *PollType);
 

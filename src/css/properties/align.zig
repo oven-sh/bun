@@ -742,7 +742,11 @@ pub const Gap = struct {
     /// The column gap.
     column: GapValue,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.gap);
+    const define_shorthand_res = css.DefineShorthand(@This(), css.PropertyIdTag.gap);
+    pub const fromLonghands = define_shorthand_res.fromLonghands;
+    pub const longhands = define_shorthand_res.longhands;
+    pub const longhand = define_shorthand_res.longhand;
+    pub const setLonghand = define_shorthand_res.setLonghand;
 
     pub const PropertyFieldMap = .{
         .row = "row-gap",
@@ -785,7 +789,11 @@ pub const PlaceItems = struct {
     /// The item justification.
     justify: JustifyItems,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"place-items");
+    const define_shorthand_res = css.DefineShorthand(@This(), css.PropertyIdTag.@"place-items");
+    pub const fromLonghands = define_shorthand_res.fromLonghands;
+    pub const longhands = define_shorthand_res.longhands;
+    pub const longhand = define_shorthand_res.longhand;
+    pub const setLonghand = define_shorthand_res.setLonghand;
 
     pub const PropertyFieldMap = .{
         .@"align" = "align-items",
@@ -857,7 +865,11 @@ pub const PlaceSelf = struct {
     /// The item justification.
     justify: JustifySelf,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"place-self");
+    const define_shorthand_res = css.DefineShorthand(@This(), css.PropertyIdTag.@"place-self");
+    pub const fromLonghands = define_shorthand_res.fromLonghands;
+    pub const longhands = define_shorthand_res.longhands;
+    pub const longhand = define_shorthand_res.longhand;
+    pub const setLonghand = define_shorthand_res.setLonghand;
 
     pub const PropertyFieldMap = .{
         .@"align" = "align-self",
@@ -951,7 +963,11 @@ pub const PlaceContent = struct {
     /// The content justification.
     justify: JustifyContent,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"place-content");
+    const define_shorthand_res = css.DefineShorthand(@This(), css.PropertyIdTag.@"place-content");
+    pub const fromLonghands = define_shorthand_res.fromLonghands;
+    pub const longhands = define_shorthand_res.longhands;
+    pub const longhand = define_shorthand_res.longhand;
+    pub const setLonghand = define_shorthand_res.setLonghand;
 
     pub const PropertyFieldMap = .{
         .@"align" = css.PropertyIdTag.@"align-content",

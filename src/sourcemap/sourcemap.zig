@@ -640,7 +640,11 @@ pub const ParsedSourceMap = struct {
 
     is_standalone_module_graph: bool = false,
 
-    pub usingnamespace bun.NewThreadSafeRefCounted(ParsedSourceMap, deinitFn);
+    const ref_counted_res = bun.NewThreadSafeRefCounted(ParsedSourceMap, deinitFn);
+    pub const destroy = ref_counted_res.destroy;
+    pub const ref = ref_counted_res.ref;
+    pub const deref = ref_counted_res.deref;
+    pub const new = ref_counted_res.new;
 
     const SourceContentPtr = packed struct(u64) {
         load_hint: SourceMapLoadHint = .none,

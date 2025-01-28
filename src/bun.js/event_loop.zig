@@ -693,7 +693,7 @@ pub const GarbageCollectionController = struct {
 
 export fn Bun__tickWhilePaused(paused: *bool) void {
     JSC.markBinding(@src());
-    JSC.VirtualMachine.get().eventLoop().tickWhilePaused(paused);
+    VirtualMachine.get().eventLoop().tickWhilePaused(paused);
 }
 
 comptime {
@@ -797,7 +797,7 @@ pub const EventLoop = struct {
 
     pub export fn Bun__ensureSignalHandler() void {
         if (Environment.isPosix) {
-            if (JSC.VirtualMachine.getMainThreadVM()) |vm| {
+            if (VirtualMachine.getMainThreadVM()) |vm| {
                 const this = vm.eventLoop();
                 if (this.signal_handler == null) {
                     this.signal_handler = PosixSignalHandle.new(.{});
@@ -1818,8 +1818,8 @@ pub const MiniEventLoop = struct {
     after_event_loop_callback_ctx: ?*anyopaque = null,
     after_event_loop_callback: ?JSC.OpaqueCallback = null,
     pipe_read_buffer: ?*PipeReadBuffer = null,
-    stdout_store: ?*JSC.WebCore.Blob.Store = null,
-    stderr_store: ?*JSC.WebCore.Blob.Store = null,
+    stdout_store: ?*WebCore.Blob.Store = null,
+    stderr_store: ?*WebCore.Blob.Store = null,
     const PipeReadBuffer = [256 * 1024]u8;
 
     pub threadlocal var globalInitialized: bool = false;

@@ -946,7 +946,7 @@ else if (@import("builtin").os.tag == .linux)
         }
 
         fn lockSlow(self: *Mutex, current_state: State) void {
-            @setCold(true);
+            @branchHint(.cold);
 
             var new_state = current_state;
             while (true) {
@@ -992,7 +992,7 @@ else if (@import("builtin").os.tag == .linux)
         }
 
         fn unlockSlow(self: *Mutex) void {
-            @setCold(true);
+            @branchHint(.cold);
 
             Futex.wake(@as(*const i32, @ptrCast(&self.state)));
         }

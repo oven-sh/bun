@@ -10116,7 +10116,7 @@ pub const Interpreter = struct {
             terminator: string = "",
             fixed_width: bool = false,
 
-            pub fn start(this: *@This()) Maybe(void) {
+            pub fn startSeq(this: *@This()) Maybe(void) {
                 const args = this.bltn.argsSlice();
                 var iter = bun.SliceIterator([*:0]const u8).init(args);
 

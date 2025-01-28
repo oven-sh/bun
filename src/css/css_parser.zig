@@ -527,9 +527,9 @@ pub fn DefineSizeShorthand(comptime T: type, comptime V: type) type {
 
 pub fn DeriveParse(comptime T: type) type {
     const tyinfo = @typeInfo(T);
-    const is_union_enum = tyinfo == .Union;
-    const enum_type = if (comptime is_union_enum) @typeInfo(tyinfo.Union.tag_type.?) else tyinfo;
-    const enum_actual_type = if (comptime is_union_enum) tyinfo.Union.tag_type.? else T;
+    const is_union_enum = tyinfo == .@"union";
+    const enum_type = if (comptime is_union_enum) @typeInfo(tyinfo.@"union".tag_type.?) else tyinfo;
+    const enum_actual_type = if (comptime is_union_enum) tyinfo.@"union".tag_type.? else T;
 
     const Map = bun.ComptimeEnumMap(enum_actual_type);
 
@@ -773,7 +773,7 @@ pub fn DeriveParse(comptime T: type) type {
 pub fn DeriveToCss(comptime T: type) type {
     const tyinfo = @typeInfo(T);
     const enum_fields = bun.meta.EnumFields(T);
-    const is_enum_or_union_enum = tyinfo == .Union or tyinfo == .Enum;
+    const is_enum_or_union_enum = tyinfo == .@"union" or tyinfo == .@"enum";
 
     return struct {
         pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -900,7 +900,7 @@ pub fn DefineEnumProperty(comptime T: type) type {
 }
 
 pub fn DeriveValueType(comptime T: type) type {
-    _ = @typeInfo(T).Enum;
+    _ = @typeInfo(T).@"enum";
 
     const ValueTypeMap = T.ValueTypeMap;
     const field_values: []const MediaFeatureType = field_values: {
@@ -927,7 +927,7 @@ pub fn DeriveValueType(comptime T: type) type {
 }
 
 fn consume_until_end_of_block(block_type: BlockType, tokenizer: *Tokenizer) void {
-    @setCold(true);
+    @branchHint(.cold);
     var stack = SmallList(BlockType, 16){};
     stack.appendAssumeCapacity(block_type);
 

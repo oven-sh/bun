@@ -1704,7 +1704,7 @@ pub const Printer = struct {
         input_lockfile_path: string,
         format: Format,
     ) !void {
-        @setCold(true);
+        @branchHint(.cold);
 
         // We truncate longer than allowed paths. We should probably throw an error instead.
         const path = input_lockfile_path[0..@min(input_lockfile_path.len, bun.MAX_PATH_BYTES)];

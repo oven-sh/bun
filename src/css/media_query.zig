@@ -708,7 +708,7 @@ pub const MediaFeatureId = enum {
     /// The non-standard -moz-device-pixel-ratio media feature.
     @"-moz-device-pixel-ratio",
 
-    pub usingnamespace css.DeriveValueType(@This());
+    pub const valueType = css.DeriveValueType(@This()).valueType;
 
     pub const ValueTypeMap = .{
         .width = MediaFeatureType.length,

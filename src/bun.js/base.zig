@@ -1,4 +1,4 @@
-pub const js = bun.JSC.C;
+pub const js = bun.JSC._disambiguate.C;
 const std = @import("std");
 const bun = @import("root").bun;
 const string = bun.string;
@@ -38,11 +38,11 @@ pub const Lifetime = enum {
 /// - Types with `toJS` or `toJSNewlyCreated` methods have them called
 /// - Slices are converted to JS arrays
 /// - Enums are converted to 32-bit numbers.
-pub fn toJS(globalObject: *JSC.JSGlobalObject, comptime ValueType: type, value: ValueType, comptime lifetime: Lifetime) JSC.JSValue {
+pub fn toJS(globalObject: *JSC.JSGlobalObject, comptime ValueType: type, value: ValueType, comptime lifetime: Lifetime) JSValue {
     const Type = comptime brk: {
         var CurrentType = ValueType;
-        if (@typeInfo(ValueType) == .Optional) {
-            CurrentType = @typeInfo(ValueType).Optional.child;
+        if (@typeInfo(ValueType) == .optional) {
+            CurrentType = @typeInfo(ValueType).optional.child;
         }
         break :brk if (@typeInfo(CurrentType) == .pointer and @typeInfo(CurrentType).pointer.size == .one)
             @typeInfo(CurrentType).pointer.child
@@ -51,12 +51,12 @@ pub fn toJS(globalObject: *JSC.JSGlobalObject, comptime ValueType: type, value: 
     };
 
     if (comptime bun.trait.isNumber(Type)) {
-        return JSC.JSValue.jsNumberWithType(Type, if (comptime Type != ValueType) value.* else value);
+        return JSValue.jsNumberWithType(Type, if (comptime Type != ValueType) value.* else value);
     }
 
     switch (comptime Type) {
         void => return .undefined,
-        bool => return JSC.JSValue.jsBoolean(if (comptime Type != ValueType) value.* else value),
+        bool => return JSValue.jsBoolean(if (comptime Type != ValueType) value.* else value),
         *JSC.JSGlobalObject => return value.toJSValue(),
         []const u8, [:0]const u8, [*:0]const u8, []u8, [:0]u8, [*:0]u8 => {
             return bun.String.createUTF8ForJS(globalObject, value);
@@ -70,7 +70,7 @@ pub fn toJS(globalObject: *JSC.JSGlobalObject, comptime ValueType: type, value: 
             }
             return bun.String.toJSArray(globalObject, value);
         },
-        JSC.JSValue => return if (Type != ValueType) value.* else value,
+        JSValue => return if (Type != ValueType) value.* else value,
 
         else => {
 
@@ -78,7 +78,7 @@ pub fn toJS(globalObject: *JSC.JSGlobalObject, comptime ValueType: type, value: 
             if (bun.trait.isSlice(Type)) {
                 const Child = comptime std.meta.Child(Type);
 
-                var array = JSC.JSValue.createEmptyArray(globalObject, value.len);
+                var array = JSValue.createEmptyArray(globalObject, value.len);
                 for (value, 0..) |*item, i| {
                     const res = toJS(globalObject, *const Child, item, lifetime);
                     if (res == .zero) return .zero;
@@ -103,7 +103,7 @@ pub fn toJS(globalObject: *JSC.JSGlobalObject, comptime ValueType: type, value: 
             if (@typeInfo(Type) == .Enum) {
                 // FIXME: creates non-normalized integers (e.g. u2), which
                 // aren't handled by `jsNumberWithType` rn
-                return JSC.JSValue.jsNumberWithType(u32, @as(u32, @intFromEnum(value)));
+                return JSValue.jsNumberWithType(u32, @as(u32, @intFromEnum(value)));
             }
 
             @compileError("dont know how to convert " ++ @typeName(ValueType) ++ " to JS");
@@ -165,7 +165,7 @@ pub fn createError(
     globalThis: *JSC.JSGlobalObject,
     comptime fmt: string,
     args: anytype,
-) JSC.JSValue {
+) JSValue {
     if (comptime std.meta.fields(@TypeOf(args)).len == 0) {
         var zig_str = JSC.ZigString.init(fmt);
         if (comptime !strings.isAllASCII(fmt)) {
@@ -192,8 +192,8 @@ fn toTypeErrorWithCode(
     comptime fmt: string,
     args: anytype,
     ctx: js.JSContextRef,
-) JSC.JSValue {
-    @setCold(true);
+) JSValue {
+    @branchHint(.cold);
     var zig_str: JSC.ZigString = undefined;
     if (comptime std.meta.fields(@TypeOf(args)).len == 0) {
         zig_str = JSC.ZigString.init(fmt);
@@ -205,7 +205,7 @@ fn toTypeErrorWithCode(
         zig_str.mark();
     }
     const code_str = ZigString.init(code);
-    return JSC.JSValue.createTypeError(&zig_str, &code_str, ctx);
+    return JSValue.createTypeError(&zig_str, &code_str, ctx);
 }
 
 pub fn toTypeError(
@@ -213,7 +213,7 @@ pub fn toTypeError(
     comptime fmt: [:0]const u8,
     args: anytype,
     ctx: js.JSContextRef,
-) JSC.JSValue {
+) JSValue {
     return code.fmt(ctx, fmt, args);
 }
 
@@ -223,7 +223,7 @@ pub fn throwInvalidArguments(
     ctx: js.JSContextRef,
     exception: ExceptionValueRef,
 ) void {
-    @setCold(true);
+    @branchHint(.cold);
     exception.* = JSC.Error.ERR_INVALID_ARG_TYPE.fmt(ctx, fmt, args).asObjectRef();
 }
 
@@ -231,8 +231,8 @@ pub fn toInvalidArguments(
     comptime fmt: [:0]const u8,
     args: anytype,
     ctx: js.JSContextRef,
-) JSC.JSValue {
-    @setCold(true);
+) JSValue {
+    @branchHint(.cold);
     return JSC.Error.ERR_INVALID_ARG_TYPE.fmt(ctx, fmt, args);
 }
 
@@ -254,18 +254,18 @@ pub const ArrayBuffer = extern struct {
     offset: usize = 0,
     len: usize = 0,
     byte_len: usize = 0,
-    typed_array_type: JSC.JSValue.JSType = .Cell,
-    value: JSC.JSValue = JSC.JSValue.zero,
+    typed_array_type: JSValue.JSType = .Cell,
+    value: JSValue = JSValue.zero,
     shared: bool = false,
 
-    extern fn JSBuffer__fromMmap(*JSC.JSGlobalObject, addr: *anyopaque, len: usize) JSC.JSValue;
+    extern fn JSBuffer__fromMmap(*JSC.JSGlobalObject, addr: *anyopaque, len: usize) JSValue;
 
     // 4 MB or so is pretty good for mmap()
     const mmap_threshold = 1024 * 1024 * 4;
 
     /// Only use this when reading from the file descriptor is _very_ cheap. Like, for example, an in-memory file descriptor.
     /// Do not use this for pipes, however tempting it may seem.
-    pub fn toJSBufferFromFd(fd: bun.FileDescriptor, size: usize, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJSBufferFromFd(fd: bun.FileDescriptor, size: usize, globalObject: *JSC.JSGlobalObject) JSValue {
         const buffer_value = Bun__createUint8ArrayForCopy(globalObject, null, size, true);
         if (buffer_value == .zero) {
             return .zero;
@@ -301,10 +301,10 @@ pub const ArrayBuffer = extern struct {
         return buffer_value;
     }
 
-    extern fn ArrayBuffer__fromSharedMemfd(fd: i64, globalObject: *JSC.JSGlobalObject, byte_offset: usize, byte_length: usize, total_size: usize, JSC.JSValue.JSType) JSC.JSValue;
+    extern fn ArrayBuffer__fromSharedMemfd(fd: i64, globalObject: *JSC.JSGlobalObject, byte_offset: usize, byte_length: usize, total_size: usize, JSValue.JSType) JSValue;
     pub const toArrayBufferFromSharedMemfd = ArrayBuffer__fromSharedMemfd;
 
-    pub fn toJSBufferFromMemfd(fd: bun.FileDescriptor, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
+    pub fn toJSBufferFromMemfd(fd: bun.FileDescriptor, globalObject: *JSC.JSGlobalObject) bun.JSError!JSValue {
         const stat = switch (bun.sys.fstat(fd)) {
             .err => |err| {
                 _ = bun.sys.close(fd);
@@ -356,7 +356,7 @@ pub const ArrayBuffer = extern struct {
 
         pub fn clear(this: *ArrayBuffer.Strong) void {
             var ref: *JSC.napi.Ref = this.ref orelse return;
-            ref.set(JSC.JSValue.zero);
+            ref.set(JSValue.zero);
         }
 
         pub fn slice(this: *const ArrayBuffer.Strong) []u8 {
@@ -386,7 +386,7 @@ pub const ArrayBuffer = extern struct {
         };
     }
 
-    pub fn createEmpty(globalThis: *JSC.JSGlobalObject, comptime kind: JSC.JSValue.JSType) JSValue {
+    pub fn createEmpty(globalThis: *JSC.JSGlobalObject, comptime kind: JSValue.JSType) JSValue {
         JSC.markBinding(@src());
 
         return switch (comptime kind) {
@@ -419,7 +419,7 @@ pub const ArrayBuffer = extern struct {
     extern "C" fn Bun__createUint8ArrayForCopy(*JSC.JSGlobalObject, ptr: ?*const anyopaque, len: usize, buffer: bool) JSValue;
     extern "C" fn Bun__createArrayBufferForCopy(*JSC.JSGlobalObject, ptr: ?*const anyopaque, len: usize) JSValue;
 
-    pub fn fromTypedArray(ctx: JSC.C.JSContextRef, value: JSC.JSValue) ArrayBuffer {
+    pub fn fromTypedArray(ctx: js.JSContextRef, value: JSValue) ArrayBuffer {
         var out = std.mem.zeroes(ArrayBuffer);
         const was = value.asArrayBuffer_(ctx, &out);
         bun.assert(was);
@@ -427,12 +427,12 @@ pub const ArrayBuffer = extern struct {
         return out;
     }
 
-    extern "C" fn JSArrayBuffer__fromDefaultAllocator(*JSC.JSGlobalObject, ptr: [*]u8, len: usize) JSC.JSValue;
-    pub fn toJSFromDefaultAllocator(globalThis: *JSC.JSGlobalObject, bytes: []u8) JSC.JSValue {
+    extern "C" fn JSArrayBuffer__fromDefaultAllocator(*JSC.JSGlobalObject, ptr: [*]u8, len: usize) JSValue;
+    pub fn toJSFromDefaultAllocator(globalThis: *JSC.JSGlobalObject, bytes: []u8) JSValue {
         return JSArrayBuffer__fromDefaultAllocator(globalThis, bytes.ptr, bytes.len);
     }
 
-    pub fn fromDefaultAllocator(globalThis: *JSC.JSGlobalObject, bytes: []u8, comptime typed_array_type: JSC.JSValue.JSType) JSC.JSValue {
+    pub fn fromDefaultAllocator(globalThis: *JSC.JSGlobalObject, bytes: []u8, comptime typed_array_type: JSValue.JSType) JSValue {
         return switch (typed_array_type) {
             .ArrayBuffer => JSArrayBuffer__fromDefaultAllocator(globalThis, bytes.ptr, bytes.len),
             .Uint8Array => JSC.JSUint8Array.fromBytes(globalThis, bytes),
@@ -440,11 +440,11 @@ pub const ArrayBuffer = extern struct {
         };
     }
 
-    pub fn fromBytes(bytes: []u8, typed_array_type: JSC.JSValue.JSType) ArrayBuffer {
+    pub fn fromBytes(bytes: []u8, typed_array_type: JSValue.JSType) ArrayBuffer {
         return ArrayBuffer{ .offset = 0, .len = @as(u32, @intCast(bytes.len)), .byte_len = @as(u32, @intCast(bytes.len)), .typed_array_type = typed_array_type, .ptr = bytes.ptr };
     }
 
-    pub fn toJSUnchecked(this: ArrayBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.JSValue {
+    pub fn toJSUnchecked(this: ArrayBuffer, ctx: js.JSContextRef, exception: js.ExceptionRef) JSValue {
 
         // The reason for this is
         // JSC C API returns a detached arraybuffer
@@ -464,7 +464,7 @@ pub const ArrayBuffer = extern struct {
         }
 
         if (this.typed_array_type == .ArrayBuffer) {
-            return JSC.JSValue.fromRef(JSC.C.JSObjectMakeArrayBufferWithBytesNoCopy(
+            return JSValue.fromRef(js.JSObjectMakeArrayBufferWithBytesNoCopy(
                 ctx,
                 this.ptr,
                 this.byte_len,
@@ -474,7 +474,7 @@ pub const ArrayBuffer = extern struct {
             ));
         }
 
-        return JSC.JSValue.fromRef(JSC.C.JSObjectMakeTypedArrayWithBytesNoCopy(
+        return JSValue.fromRef(js.JSObjectMakeTypedArrayWithBytesNoCopy(
             ctx,
             this.typed_array_type.toC(),
             this.ptr,
@@ -487,7 +487,7 @@ pub const ArrayBuffer = extern struct {
 
     const log = Output.scoped(.ArrayBuffer, false);
 
-    pub fn toJS(this: ArrayBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.JSValue {
+    pub fn toJS(this: ArrayBuffer, ctx: js.JSContextRef, exception: js.ExceptionRef) JSValue {
         if (this.value != .zero) {
             return this.value;
         }
@@ -497,7 +497,7 @@ pub const ArrayBuffer = extern struct {
             log("toJS but will never free: {d} bytes", .{this.len});
 
             if (this.typed_array_type == .ArrayBuffer) {
-                return JSC.JSValue.fromRef(JSC.C.JSObjectMakeArrayBufferWithBytesNoCopy(
+                return JSValue.fromRef(js.JSObjectMakeArrayBufferWithBytesNoCopy(
                     ctx,
                     this.ptr,
                     this.byte_len,
@@ -507,7 +507,7 @@ pub const ArrayBuffer = extern struct {
                 ));
             }
 
-            return JSC.JSValue.fromRef(JSC.C.JSObjectMakeTypedArrayWithBytesNoCopy(
+            return JSValue.fromRef(js.JSObjectMakeTypedArrayWithBytesNoCopy(
                 ctx,
                 this.typed_array_type.toC(),
                 this.ptr,
@@ -523,17 +523,17 @@ pub const ArrayBuffer = extern struct {
 
     pub fn toJSWithContext(
         this: ArrayBuffer,
-        ctx: JSC.C.JSContextRef,
+        ctx: js.JSContextRef,
         deallocator: ?*anyopaque,
-        callback: JSC.C.JSTypedArrayBytesDeallocator,
-        exception: JSC.C.ExceptionRef,
-    ) JSC.JSValue {
+        callback: js.JSTypedArrayBytesDeallocator,
+        exception: js.ExceptionRef,
+    ) JSValue {
         if (this.value != .zero) {
             return this.value;
         }
 
         if (this.typed_array_type == .ArrayBuffer) {
-            return JSC.JSValue.fromRef(JSC.C.JSObjectMakeArrayBufferWithBytesNoCopy(
+            return JSValue.fromRef(js.JSObjectMakeArrayBufferWithBytesNoCopy(
                 ctx,
                 this.ptr,
                 this.byte_len,
@@ -543,7 +543,7 @@ pub const ArrayBuffer = extern struct {
             ));
         }
 
-        return JSC.JSValue.fromRef(JSC.C.JSObjectMakeTypedArrayWithBytesNoCopy(
+        return JSValue.fromRef(js.JSObjectMakeTypedArrayWithBytesNoCopy(
             ctx,
             this.typed_array_type.toC(),
             this.ptr,
@@ -595,14 +595,14 @@ pub const MarkedArrayBuffer = struct {
         return this.buffer.stream();
     }
 
-    pub fn fromTypedArray(ctx: JSC.C.JSContextRef, value: JSC.JSValue) MarkedArrayBuffer {
+    pub fn fromTypedArray(ctx: js.JSContextRef, value: JSValue) MarkedArrayBuffer {
         return MarkedArrayBuffer{
             .allocator = null,
             .buffer = ArrayBuffer.fromTypedArray(ctx, value),
         };
     }
 
-    pub fn fromArrayBuffer(ctx: JSC.C.JSContextRef, value: JSC.JSValue) MarkedArrayBuffer {
+    pub fn fromArrayBuffer(ctx: js.JSContextRef, value: JSValue) MarkedArrayBuffer {
         return MarkedArrayBuffer{
             .allocator = null,
             .buffer = ArrayBuffer.fromArrayBuffer(ctx, value),
@@ -611,15 +611,15 @@ pub const MarkedArrayBuffer = struct {
 
     pub fn fromString(str: []const u8, allocator: std.mem.Allocator) !MarkedArrayBuffer {
         const buf = try allocator.dupe(u8, str);
-        return MarkedArrayBuffer.fromBytes(buf, allocator, JSC.JSValue.JSType.Uint8Array);
+        return MarkedArrayBuffer.fromBytes(buf, allocator, JSValue.JSType.Uint8Array);
     }
 
-    pub fn fromJS(global: *JSC.JSGlobalObject, value: JSC.JSValue) ?MarkedArrayBuffer {
+    pub fn fromJS(global: *JSC.JSGlobalObject, value: JSValue) ?MarkedArrayBuffer {
         const array_buffer = value.asArrayBuffer(global) orelse return null;
         return MarkedArrayBuffer{ .buffer = array_buffer, .allocator = null };
     }
 
-    pub fn fromBytes(bytes: []u8, allocator: std.mem.Allocator, typed_array_type: JSC.JSValue.JSType) MarkedArrayBuffer {
+    pub fn fromBytes(bytes: []u8, allocator: std.mem.Allocator, typed_array_type: JSValue.JSType) MarkedArrayBuffer {
         return MarkedArrayBuffer{
             .buffer = ArrayBuffer.fromBytes(bytes, typed_array_type),
             .allocator = allocator,
@@ -644,14 +644,14 @@ pub const MarkedArrayBuffer = struct {
         }
     }
 
-    pub fn init(allocator: std.mem.Allocator, size: u32, typed_array_type: JSC.JSValue.JSType) !*MarkedArrayBuffer {
+    pub fn init(allocator: std.mem.Allocator, size: u32, typed_array_type: JSValue.JSType) !*MarkedArrayBuffer {
         const bytes = try allocator.alloc(u8, size);
         const container = try allocator.create(MarkedArrayBuffer);
         container.* = MarkedArrayBuffer.fromBytes(bytes, allocator, typed_array_type);
         return container;
     }
 
-    pub fn toNodeBuffer(this: *const MarkedArrayBuffer, ctx: js.JSContextRef) JSC.JSValue {
+    pub fn toNodeBuffer(this: *const MarkedArrayBuffer, ctx: js.JSContextRef) JSValue {
         return JSValue.createBufferWithCtx(ctx, this.buffer.byteSlice(), this.buffer.ptr, MarkedArrayBuffer_deallocator);
     }
 
@@ -681,15 +681,15 @@ pub const MarkedArrayBuffer = struct {
     }
 
     // TODO: refactor this
-    pub fn toJS(this: *const MarkedArrayBuffer, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        var exception = [_]JSC.C.JSValueRef{null};
+    pub fn toJS(this: *const MarkedArrayBuffer, globalObject: *JSC.JSGlobalObject) JSValue {
+        var exception = [_]js.JSValueRef{null};
         const obj = this.toJSObjectRef(globalObject, &exception);
 
         if (exception[0] != null) {
-            return globalObject.throwValue(JSC.JSValue.c(exception[0])) catch return .zero;
+            return globalObject.throwValue(JSValue.c(exception[0])) catch return .zero;
         }
 
-        return JSC.JSValue.c(obj);
+        return JSValue.c(obj);
     }
 };
 
@@ -775,7 +775,7 @@ pub export fn BlobArrayBuffer_deallocator(_: *anyopaque, blob: *anyopaque) void 
     // zig's memory allocator interface won't work here
     // mimalloc knows the size of things
     // but we don't
-    var store = bun.cast(*JSC.WebCore.Blob.Store, blob);
+    var store = bun.cast(*WebCore.Blob.Store, blob);
     store.deref();
 }
 
@@ -960,8 +960,8 @@ pub fn DOMCall(
         // so we have to add a small wrapper fujnction
         pub fn slowpath(
             globalObject: *JSC.JSGlobalObject,
-            thisValue: JSC.JSValue,
-            arguments_ptr: [*]const JSC.JSValue,
+            thisValue: JSValue,
+            arguments_ptr: [*]const JSValue,
             arguments_len: usize,
         ) callconv(JSC.conv) JSValue {
             return JSC.toJSHostValue(globalObject, @field(Container, functionName)(globalObject, thisValue, arguments_ptr[0..arguments_len]));
@@ -989,7 +989,7 @@ pub fn DOMCall(
 }
 
 pub fn InstanceMethodType(comptime Container: type) type {
-    return fn (instance: *Container, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue;
+    return fn (instance: *Container, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue;
 }
 
 pub fn wrapInstanceMethod(
@@ -999,7 +999,7 @@ pub fn wrapInstanceMethod(
 ) InstanceMethodType(Container) {
     return struct {
         const FunctionType = @TypeOf(@field(Container, name));
-        const FunctionTypeInfo: std.builtin.Type.Fn = @typeInfo(FunctionType).Fn;
+        const FunctionTypeInfo: std.builtin.Type.Fn = @typeInfo(FunctionType).@"fn";
         const Args = std.meta.ArgsTuple(FunctionType);
         const eater = if (auto_protect) JSC.Node.ArgumentsSlice.protectEatNext else JSC.Node.ArgumentsSlice.nextEat;
 
@@ -1007,22 +1007,22 @@ pub fn wrapInstanceMethod(
             this: *Container,
             globalThis: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) bun.JSError!JSC.JSValue {
+        ) bun.JSError!JSValue {
             const arguments = callframe.arguments_old(FunctionTypeInfo.params.len);
             var iter = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
             var args: Args = undefined;
 
             const has_exception_ref: bool = comptime brk: {
                 for (FunctionTypeInfo.params) |param| {
-                    if (param.type.? == JSC.C.ExceptionRef) {
+                    if (param.type.? == js.ExceptionRef) {
                         break :brk true;
                     }
                 }
 
                 break :brk false;
             };
-            var exception_value = [_]JSC.C.JSValueRef{null};
-            const exception: JSC.C.ExceptionRef = if (comptime has_exception_ref) &exception_value else undefined;
+            var exception_value = [_]js.JSValueRef{null};
+            const exception: js.ExceptionRef = if (comptime has_exception_ref) &exception_value else undefined;
 
             inline for (FunctionTypeInfo.params, 0..) |param, i| {
                 const ArgType = param.type.?;
@@ -1131,7 +1131,7 @@ pub fn wrapInstanceMethod(
                     ?JSValue => {
                         args[i] = eater(&iter);
                     },
-                    JSC.C.ExceptionRef => {
+                    js.ExceptionRef => {
                         args[i] = exception;
                     },
                     else => @compileError("Unexpected Type " ++ @typeName(ArgType)),
@@ -1160,14 +1160,14 @@ pub fn wrapStaticMethod(
 ) JSC.JSHostZigFunction {
     return struct {
         const FunctionType = @TypeOf(@field(Container, name));
-        const FunctionTypeInfo: std.builtin.Type.Fn = @typeInfo(FunctionType).Fn;
+        const FunctionTypeInfo: std.builtin.Type.Fn = @typeInfo(FunctionType).@"fn";
         const Args = std.meta.ArgsTuple(FunctionType);
         const eater = if (auto_protect) JSC.Node.ArgumentsSlice.protectEatNext else JSC.Node.ArgumentsSlice.nextEat;
 
         pub fn method(
             globalThis: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) bun.JSError!JSC.JSValue {
+        ) bun.JSError!JSValue {
             const arguments = callframe.arguments_old(FunctionTypeInfo.params.len);
             var iter = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
             var args: Args = undefined;
@@ -1336,7 +1336,7 @@ pub const BinaryType = enum(u4) {
     Float64Array,
     // DataView,
 
-    pub fn toJSType(this: BinaryType) JSC.JSValue.JSType {
+    pub fn toJSType(this: BinaryType) JSValue.JSType {
         return switch (this) {
             .ArrayBuffer => .ArrayBuffer,
             .Buffer => .Uint8Array,
@@ -1353,7 +1353,7 @@ pub const BinaryType = enum(u4) {
         };
     }
 
-    pub fn toTypedArrayType(this: BinaryType) JSC.C.JSTypedArrayType {
+    pub fn toTypedArrayType(this: BinaryType) js.JSTypedArrayType {
         return this.toJSType().toC();
     }
 
@@ -1410,7 +1410,7 @@ pub const BinaryType = enum(u4) {
             // These aren't documented, but they are supported
             .Uint16Array, .Uint32Array, .Int8Array, .Int16Array, .Int32Array, .Float16Array, .Float32Array, .Float64Array => {
                 const buffer = JSC.ArrayBuffer.create(globalThis, bytes, .ArrayBuffer);
-                return JSC.JSValue.c(JSC.C.JSObjectMakeTypedArrayWithArrayBuffer(globalThis, this.toTypedArrayType(), buffer.asObjectRef(), null));
+                return JSValue.c(js.JSObjectMakeTypedArrayWithArrayBuffer(globalThis, this.toTypedArrayType(), buffer.asObjectRef(), null));
             },
         }
     }

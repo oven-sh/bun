@@ -55,7 +55,7 @@ pub fn init(_: u12, _: u32, waker: Waker) !IO {
         .waker = waker,
     };
 }
-const Kevent64 = std.posix.system.kevent64_s;
+const Kevent64 = bun.kevent64_s;
 pub const Waker = struct {
     kq: os.fd_t,
     machport: *anyopaque = undefined,

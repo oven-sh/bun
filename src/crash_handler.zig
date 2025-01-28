@@ -178,7 +178,7 @@ pub fn crashHandler(
     error_return_trace: ?*std.builtin.StackTrace,
     begin_addr: ?usize,
 ) noreturn {
-    @setCold(true);
+    @branchHint(.cold);
 
     if (bun.Environment.isDebug)
         bun.Output.disableScopedDebugWriter();
@@ -706,7 +706,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
 }
 
 pub fn panicImpl(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, begin_addr: ?usize) noreturn {
-    @setCold(true);
+    @branchHint(.cold);
     crashHandler(
         if (bun.strings.eqlComptime(msg, "reached unreachable code"))
             .{ .@"unreachable" = {} }
@@ -796,10 +796,10 @@ pub fn updatePosixSegfaultHandler(act: ?*std.posix.Sigaction) !void {
         }
     }
 
-    try std.posix.sigaction(std.posix.SIG.SEGV, act, null);
-    try std.posix.sigaction(std.posix.SIG.ILL, act, null);
-    try std.posix.sigaction(std.posix.SIG.BUS, act, null);
-    try std.posix.sigaction(std.posix.SIG.FPE, act, null);
+    std.posix.sigaction(std.posix.SIG.SEGV, act, null);
+    std.posix.sigaction(std.posix.SIG.ILL, act, null);
+    std.posix.sigaction(std.posix.SIG.BUS, act, null);
+    std.posix.sigaction(std.posix.SIG.FPE, act, null);
 }
 
 var windows_segfault_handle: ?windows.HANDLE = null;
@@ -1481,7 +1481,7 @@ fn crash() noreturn {
 pub var verbose_error_trace = false;
 
 noinline fn coldHandleErrorReturnTrace(err_int_workaround_for_zig_ccall_bug: std.meta.Int(.unsigned, @bitSizeOf(anyerror)), trace: *std.builtin.StackTrace, comptime is_root: bool) void {
-    @setCold(true);
+    @branchHint(.cold);
     const err = @errorFromInt(err_int_workaround_for_zig_ccall_bug);
 
     // The format of the panic trace is slightly different in debug

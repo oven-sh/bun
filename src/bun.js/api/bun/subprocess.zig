@@ -48,8 +48,8 @@ pub const ResourceUsage = struct {
         var cpu = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
         const rusage = this.rusage;
 
-        const usrTime = JSValue.fromTimevalNoTruncate(globalObject, rusage.utime.tv_usec, rusage.utime.tv_sec);
-        const sysTime = JSValue.fromTimevalNoTruncate(globalObject, rusage.stime.tv_usec, rusage.stime.tv_sec);
+        const usrTime = JSValue.fromTimevalNoTruncate(globalObject, rusage.utime.usec, rusage.utime.sec);
+        const sysTime = JSValue.fromTimevalNoTruncate(globalObject, rusage.stime.usec, rusage.stime.sec);
 
         cpu.put(globalObject, JSC.ZigString.static("user"), usrTime);
         cpu.put(globalObject, JSC.ZigString.static("system"), sysTime);

@@ -40,7 +40,11 @@ pub const BorderImage = struct {
     /// How the border image is scaled and tiled.
     repeat: BorderImageRepeat,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-image");
+    const define_shorthand_res = css.DefineShorthand(@This(), css.PropertyIdTag.@"border-image");
+    pub const fromLonghands = define_shorthand_res.fromLonghands;
+    pub const longhands = define_shorthand_res.longhands;
+    pub const longhand = define_shorthand_res.longhand;
+    pub const setLonghand = define_shorthand_res.setLonghand;
 
     pub const PropertyFieldMap = .{
         .source = css.PropertyIdTag.@"border-image-source",

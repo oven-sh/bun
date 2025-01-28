@@ -94,7 +94,11 @@ pub const FlexFlow = struct {
     /// How the flex items wrap.
     wrap: FlexWrap,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"flex-flow");
+    const define_shorthand_res = css.DefineShorthand(@This(), css.PropertyIdTag.@"flex-flow");
+    pub const fromLonghands = define_shorthand_res.fromLonghands;
+    pub const longhands = define_shorthand_res.longhands;
+    pub const longhand = define_shorthand_res.longhand;
+    pub const setLonghand = define_shorthand_res.setLonghand;
 
     pub const PropertyFieldMap = .{
         .direction = css.PropertyIdTag.@"flex-direction",
@@ -170,7 +174,11 @@ pub const Flex = struct {
     /// The flex basis.
     basis: LengthPercentageOrAuto,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.flex);
+    const define_shorthand_res = css.DefineShorthand(@This(), css.PropertyIdTag.flex);
+    pub const fromLonghands = define_shorthand_res.fromLonghands;
+    pub const longhands = define_shorthand_res.longhands;
+    pub const longhand = define_shorthand_res.longhand;
+    pub const setLonghand = define_shorthand_res.setLonghand;
 
     pub const PropertyFieldMap = .{
         .grow = css.PropertyIdTag.@"flex-grow",

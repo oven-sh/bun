@@ -2727,7 +2727,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         }
 
         fn appendUnicodeCharToStrPool(self: *@This(), char: Chars.CodepointType) !void {
-            @setCold(true);
+            @branchHint(.cold);
 
             const ichar: i32 = @intCast(char);
             var bytes: [4]u8 = undefined;

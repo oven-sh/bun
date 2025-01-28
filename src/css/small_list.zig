@@ -575,7 +575,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
         }
 
         fn reserveOneUnchecked(this: *@This(), allocator: Allocator) void {
-            @setCold(true);
+            @branchHint(.cold);
             bun.assert(this.len() == this.capacity);
             const new_cap = growCapacity(this.capacity, this.len() + 1);
             this.tryGrow(allocator, new_cap);

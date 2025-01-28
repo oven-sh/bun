@@ -49,7 +49,7 @@ const Headers = WebCore.Headers;
 const String = bun.String;
 const Fetch = WebCore.Fetch;
 const FetchEvent = WebCore.FetchEvent;
-const js = bun.JSC.C;
+const js = bun.JSC._disambiguate.C;
 const JSC = bun.JSC;
 const JSError = @import("./base.zig").JSError;
 const d = @import("./base.zig").d;
@@ -424,7 +424,7 @@ export fn Bun__readOriginTimerStart(vm: *JSC.VirtualMachine) f64 {
     return @as(f64, @floatCast((@as(f64, @floatFromInt(vm.origin_timestamp)) + JSC.VirtualMachine.origin_relative_epoch) / 1_000_000.0));
 }
 
-pub export fn Bun__GlobalObject__hasIPC(global: *JSC.JSGlobalObject) bool {
+pub export fn Bun__GlobalObject__hasIPC(global: *JSGlobalObject) bool {
     return global.bunVM().ipc != null;
 }
 
@@ -434,7 +434,7 @@ comptime {
     const Bun__Process__send = JSC.toJSHostFunction(Bun__Process__send_);
     @export(&Bun__Process__send, .{ .name = "Bun__Process__send" });
 }
-pub fn Bun__Process__send_(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn Bun__Process__send_(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
     JSC.markBinding(@src());
     var message, var handle, var options_, var callback = callFrame.argumentsAsArray(4);
 
@@ -545,7 +545,7 @@ pub export fn Bun__queueTaskConcurrently(global: *JSGlobalObject, task: *JSC.Cpp
     );
 }
 
-pub export fn Bun__handleRejectedPromise(global: *JSGlobalObject, promise: *JSC.JSPromise) void {
+pub export fn Bun__handleRejectedPromise(global: *JSGlobalObject, promise: *JSPromise) void {
     JSC.markBinding(@src());
 
     const result = promise.result(global.vm());
@@ -691,7 +691,7 @@ export fn Bun__getVerboseFetchValue() i32 {
 }
 
 const body_value_pool_size = if (bun.heap_breakdown.enabled) 0 else 256;
-pub const BodyValueRef = bun.HiveRef(JSC.WebCore.Body.Value, body_value_pool_size);
+pub const BodyValueRef = bun.HiveRef(WebCore.Body.Value, body_value_pool_size);
 const BodyValueHiveAllocator = bun.HiveArray(BodyValueRef, body_value_pool_size).Fallback;
 
 const AutoKiller = struct {
@@ -788,13 +788,13 @@ pub const VirtualMachine = struct {
     event_loop_handle: ?*PlatformEventLoop = null,
     pending_unref_counter: i32 = 0,
     preload: []const string = &[_][]const u8{},
-    unhandled_pending_rejection_to_capture: ?*JSC.JSValue = null,
+    unhandled_pending_rejection_to_capture: ?*JSValue = null,
     standalone_module_graph: ?*bun.StandaloneModuleGraph = null,
     smol: bool = false,
     dns_result_order: DNSResolver.Order = .verbatim,
 
     hot_reload: bun.CLI.Command.HotReload = .none,
-    jsc: *JSC.VM = undefined,
+    jsc: *VM = undefined,
 
     /// hide bun:wrap from stack traces
     /// bun:wrap is very noisy
@@ -1267,7 +1267,7 @@ pub const VirtualMachine = struct {
     }
 
     pub fn garbageCollect(this: *const VirtualMachine, sync: bool) usize {
-        @setCold(true);
+        @branchHint(.cold);
         Global.mimalloc_cleanup(false);
         if (sync)
             return this.global.vm().runGC(true);
@@ -2948,7 +2948,7 @@ pub const VirtualMachine = struct {
     }
 
     pub noinline fn runErrorHandler(this: *VirtualMachine, result: JSValue, exception_list: ?*ExceptionList) void {
-        @setCold(true);
+        @branchHint(.cold);
         if (!result.isEmptyOrUndefinedOrNull())
             this.last_reported_error_for_dedupe = result;
 
@@ -2988,7 +2988,7 @@ pub const VirtualMachine = struct {
         }
     }
 
-    export fn Bun__logUnhandledException(exception: JSC.JSValue) void {
+    export fn Bun__logUnhandledException(exception: JSValue) void {
         get().runErrorHandler(exception, null);
     }
 
@@ -3538,7 +3538,7 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub export fn Bun__remapStackFramePositions(globalObject: *JSC.JSGlobalObject, frames: [*]JSC.ZigStackFrame, frames_count: usize) void {
+    pub export fn Bun__remapStackFramePositions(globalObject: *JSGlobalObject, frames: [*]JSC.ZigStackFrame, frames_count: usize) void {
         globalObject.bunVM().remapStackFramePositions(frames, frames_count);
     }
 
@@ -4197,7 +4197,7 @@ pub const VirtualMachine = struct {
     // In Github Actions, emit an annotation that renders the error and location.
     // https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#setting-an-error-message
     pub noinline fn printGithubAnnotation(exception: *JSC.ZigException) void {
-        @setCold(true);
+        @branchHint(.cold);
         const name = exception.name;
         const message = exception.message;
         const frames = exception.stack.frames();
@@ -4953,7 +4953,7 @@ comptime {
     @export(&string_allocation_limit, .{ .name = "Bun__stringSyntheticAllocationLimit" });
 }
 
-pub fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+pub fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const args = callframe.arguments_old(1).slice();
     if (args.len < 1) {
         return globalObject.throwNotEnoughArguments("setSyntheticAllocationLimitForTesting", 1, args.len);

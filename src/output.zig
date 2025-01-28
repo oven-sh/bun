@@ -488,7 +488,7 @@ pub fn disableBuffering() void {
 }
 
 pub fn panic(comptime fmt: string, args: anytype) noreturn {
-    @setCold(true);
+    @branchHint(.cold);
 
     if (isEmojiEnabled()) {
         std.debug.panic(comptime prettyFmt(fmt, true), args);

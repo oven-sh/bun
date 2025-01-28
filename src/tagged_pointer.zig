@@ -106,7 +106,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
         pub const type_map: TypeMap(Types) = result.ty_map;
         repr: TaggedPointer,
 
-        pub const Null = .{ .repr = .{ ._ptr = 0, .data = 0 } };
+        pub const Null: @This() = .{ .repr = .{ ._ptr = 0, .data = 0 } };
 
         pub fn clear(this: *@This()) void {
             this.* = Null;

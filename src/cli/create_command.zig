@@ -237,7 +237,7 @@ const BUN_CREATE_DIR = ".bun-create";
 var home_dir_buf: bun.PathBuffer = undefined;
 pub const CreateCommand = struct {
     pub fn exec(ctx: Command.Context, example_tag: Example.Tag, template: []const u8) !void {
-        @setCold(true);
+        @branchHint(.cold);
 
         Global.configureAllocator(.{ .long_running = false });
         HTTP.HTTPThread.init(&.{});

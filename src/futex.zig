@@ -28,7 +28,7 @@ const atomic = std.atomic;
 /// The checking of `ptr` and `expect`, along with blocking the caller, is done atomically
 /// and totally ordered (sequentially consistent) with respect to other wait()/wake() calls on the same `ptr`.
 pub fn wait(ptr: *const atomic.Value(u32), expect: u32, timeout_ns: ?u64) error{Timeout}!void {
-    @setCold(true);
+    @branchHint(.cold);
 
     // Avoid calling into the OS for no-op timeouts.
     if (timeout_ns) |t| {
@@ -42,7 +42,7 @@ pub fn wait(ptr: *const atomic.Value(u32), expect: u32, timeout_ns: ?u64) error{
 }
 
 pub fn waitForever(ptr: *const atomic.Value(u32), expect: u32) void {
-    @setCold(true);
+    @branchHint(.cold);
 
     while (true) {
         Impl.wait(ptr, expect, null) catch |err| switch (err) {
@@ -55,7 +55,7 @@ pub fn waitForever(ptr: *const atomic.Value(u32), expect: u32) void {
 
 /// Unblocks at most `max_waiters` callers blocked in a `wait()` call on `ptr`.
 pub fn wake(ptr: *const atomic.Value(u32), max_waiters: u32) void {
-    @setCold(true);
+    @branchHint(.cold);
 
     // Avoid calling into the OS if there's nothing to wake up.
     if (max_waiters == 0) {

@@ -5,6 +5,10 @@ pub usingnamespace @import("./bun.js/bindings/exports.zig");
 pub usingnamespace @import("./bun.js/event_loop.zig");
 pub usingnamespace @import("./bun.js/javascript.zig");
 pub usingnamespace @import("./bun.js/module_loader.zig");
+const parent = @This();
+pub const _disambiguate = struct {
+    pub const C = parent.C;
+};
 pub const is_bindgen = false;
 pub const Debugger = @import("./bun.js/bindings/Debugger.zig").Debugger;
 pub const napi = @import("./napi/napi.zig");

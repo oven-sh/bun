@@ -18,7 +18,11 @@ pub const LOLHTMLContext = struct {
     document_handlers: std.ArrayListUnmanaged(*DocumentHandler) = .{},
     ref_count: u32 = 1,
 
-    pub usingnamespace bun.NewRefCounted(@This(), deinit);
+    const ref_counted_res = bun.NewRefCounted(@This(), deinit);
+    pub const destroy = ref_counted_res.destroy;
+    pub const ref = ref_counted_res.ref;
+    pub const deref = ref_counted_res.deref;
+    pub const new = ref_counted_res.new;
 
     fn deinit(this: *LOLHTMLContext) void {
         for (this.selectors.items) |selector| {
@@ -1066,7 +1070,11 @@ pub const TextChunk = struct {
     ref_count: u32 = 1,
 
     pub usingnamespace JSC.Codegen.JSTextChunk;
-    pub usingnamespace bun.NewRefCounted(@This(), deinit);
+    const ref_counted_res = bun.NewRefCounted(@This(), deinit);
+    pub const destroy = ref_counted_res.destroy;
+    pub const ref = ref_counted_res.ref;
+    pub const deref = ref_counted_res.deref;
+    pub const new = ref_counted_res.new;
     pub fn init(text_chunk: *LOLHTML.TextChunk) *TextChunk {
         return TextChunk.new(.{ .text_chunk = text_chunk, .ref_count = 2 });
     }
@@ -1175,7 +1183,11 @@ pub const DocType = struct {
         return DocType.new(.{ .doctype = doctype, .ref_count = 2 });
     }
 
-    pub usingnamespace bun.NewRefCounted(@This(), deinit);
+    const ref_counted_res = bun.NewRefCounted(@This(), deinit);
+    pub const destroy = ref_counted_res.destroy;
+    pub const ref = ref_counted_res.ref;
+    pub const deref = ref_counted_res.deref;
+    pub const new = ref_counted_res.new;
     pub usingnamespace JSC.Codegen.JSDocType;
 
     /// The doctype name.
@@ -1242,7 +1254,11 @@ pub const DocEnd = struct {
     doc_end: ?*LOLHTML.DocEnd,
     ref_count: u32 = 1,
 
-    pub usingnamespace bun.NewRefCounted(@This(), deinit);
+    const ref_counted_res = bun.NewRefCounted(@This(), deinit);
+    pub const destroy = ref_counted_res.destroy;
+    pub const ref = ref_counted_res.ref;
+    pub const deref = ref_counted_res.deref;
+    pub const new = ref_counted_res.new;
     pub usingnamespace JSC.Codegen.JSDocEnd;
 
     pub fn init(doc_end: *LOLHTML.DocEnd) *DocEnd {
@@ -1291,7 +1307,11 @@ pub const Comment = struct {
     comment: ?*LOLHTML.Comment = null,
     ref_count: u32 = 1,
 
-    pub usingnamespace bun.NewRefCounted(@This(), deinit);
+    const ref_counted_res = bun.NewRefCounted(@This(), deinit);
+    pub const destroy = ref_counted_res.destroy;
+    pub const ref = ref_counted_res.ref;
+    pub const deref = ref_counted_res.deref;
+    pub const new = ref_counted_res.new;
     pub usingnamespace JSC.Codegen.JSComment;
 
     pub fn init(comment: *LOLHTML.Comment) *Comment {
@@ -1436,7 +1456,11 @@ pub const EndTag = struct {
     };
 
     pub usingnamespace JSC.Codegen.JSEndTag;
-    pub usingnamespace bun.NewRefCounted(@This(), deinit);
+    const ref_counted_res = bun.NewRefCounted(@This(), deinit);
+    pub const destroy = ref_counted_res.destroy;
+    pub const ref = ref_counted_res.ref;
+    pub const deref = ref_counted_res.deref;
+    pub const new = ref_counted_res.new;
 
     fn contentHandler(this: *EndTag, comptime Callback: (fn (*LOLHTML.EndTag, []const u8, bool) LOLHTML.Error!void), thisObject: JSValue, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
         if (this.end_tag == null)
@@ -1554,7 +1578,11 @@ pub const AttributeIterator = struct {
     }
 
     pub usingnamespace JSC.Codegen.JSAttributeIterator;
-    pub usingnamespace bun.NewRefCounted(@This(), deinit);
+    const ref_counted_res = bun.NewRefCounted(@This(), deinit);
+    pub const destroy = ref_counted_res.destroy;
+    pub const ref = ref_counted_res.ref;
+    pub const deref = ref_counted_res.deref;
+    pub const new = ref_counted_res.new;
 
     pub fn next(this: *AttributeIterator, globalObject: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         const done_label = JSC.ZigString.static("done");
@@ -1591,7 +1619,11 @@ pub const Element = struct {
     ref_count: u32 = 1,
 
     pub usingnamespace JSC.Codegen.JSElement;
-    pub usingnamespace bun.NewRefCounted(@This(), deinit);
+    const ref_counted_res = bun.NewRefCounted(@This(), deinit);
+    pub const destroy = ref_counted_res.destroy;
+    pub const ref = ref_counted_res.ref;
+    pub const deref = ref_counted_res.deref;
+    pub const new = ref_counted_res.new;
 
     pub fn init(element: *LOLHTML.Element) *Element {
         return Element.new(.{ .element = element, .ref_count = 2 });

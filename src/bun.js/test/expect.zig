@@ -4696,7 +4696,7 @@ pub const Expect = struct {
     };
 
     fn throwInvalidMatcherError(globalThis: *JSGlobalObject, matcher_name: bun.String, result: JSValue) bun.JSError {
-        @setCold(true);
+        @branchHint(.cold);
 
         var formatter = JSC.ConsoleObject.Formatter{
             .globalThis = globalThis,
@@ -4981,7 +4981,7 @@ pub const ExpectStatic = struct {
     }
 
     fn asyncChainingError(globalThis: *JSGlobalObject, flags: Expect.Flags, name: string) bun.JSError!JSValue {
-        @setCold(true);
+        @branchHint(.cold);
         const str = switch (flags.promise) {
             .resolves => "resolvesTo",
             .rejects => "rejectsTo",

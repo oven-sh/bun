@@ -19,7 +19,7 @@ const OperatingSystem = @import("src/env.zig").OperatingSystem;
 const pathRel = fs.path.relative;
 
 /// Do not rename this constant. It is scanned by some scripts to determine which zig version to install.
-const recommended_zig_version = "0.14.0-dev.2928+814f33105";
+const recommended_zig_version = "0.14.0-dev.2991+2e3194d19";
 
 comptime {
     if (!std.mem.eql(u8, builtin.zig_version_string, recommended_zig_version)) {
@@ -471,7 +471,7 @@ pub fn addInstallObjectFile(
     out_mode: ObjectFormat,
 ) *Step {
     if (@import("builtin").os.tag != .windows and b.graph.env_map.get("COMPILE_ERRORS_ONLY") != null) {
-        const failstep = b.addSystemCommand(&.{"COMPILE_ERRORS_ONLY set but there were no compile errors"});
+        const failstep = b.addFail("COMPILE_ERRORS_ONLY set but there were no compile errors");
         failstep.step.dependOn(&compile.step);
         return &failstep.step;
     }

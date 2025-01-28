@@ -67,7 +67,7 @@ pub const JSObject = extern struct {
     /// prototype (`null_prototype = false`) unless you have a good reason not
     /// to.
     fn createFromStructWithPrototype(comptime T: type, pojo: T, global: *JSGlobalObject, comptime null_prototype: bool) *JSObject {
-        const info: std.builtin.Type.Struct = @typeInfo(T).Struct;
+        const info: std.builtin.Type.Struct = @typeInfo(T).@"struct";
 
         const obj = obj: {
             const val = if (comptime null_prototype)
@@ -4109,8 +4109,8 @@ pub const JSValue = enum(i64) {
     /// This does not call [Symbol.toPrimitive] or [Symbol.toStringTag].
     /// This is only safe when you don't want to do conversions across non-primitive types.
     pub fn to(this: JSValue, comptime T: type) T {
-        if (@typeInfo(T) == .Enum) {
-            const Int = @typeInfo(T).Enum.tag_type;
+        if (@typeInfo(T) == .@"enum") {
+            const Int = @typeInfo(T).@"enum".tag_type;
             return @enumFromInt(this.to(Int));
         }
         return switch (comptime T) {
@@ -4475,8 +4475,8 @@ pub const JSValue = enum(i64) {
     extern fn JSBuffer__bufferFromPointerAndLengthAndDeinit(*JSGlobalObject, [*]u8, usize, ?*anyopaque, JSC.C.JSTypedArrayBytesDeallocator) JSValue;
 
     pub fn jsNumberWithType(comptime Number: type, number: Number) JSValue {
-        if (@typeInfo(Number) == .Enum) {
-            return jsNumberWithType(@typeInfo(Number).Enum.tag_type, @intFromEnum(number));
+        if (@typeInfo(Number) == .@"enum") {
+            return jsNumberWithType(@typeInfo(Number).@"enum".tag_type, @intFromEnum(number));
         }
         return switch (comptime Number) {
             JSValue => number,

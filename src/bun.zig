@@ -336,7 +336,7 @@ pub const OSPathSlice = []const OSPathChar;
 pub const OSPathBuffer = if (Environment.isWindows) WPathBuffer else PathBuffer;
 
 pub inline fn cast(comptime To: type, value: anytype) To {
-    if (@typeInfo(@TypeOf(value)) == .Int) {
+    if (@typeInfo(@TypeOf(value)) == .int) {
         return @ptrFromInt(@as(usize, value));
     }
 
@@ -1481,8 +1481,7 @@ fn lenSliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) usize {
                 },
                 else => {},
             },
-            .Many => if (ptr_info.sentinel) |sentinel_ptr| {
-                const sentinel = @as(*align(1) const ptr_info.child, @ptrCast(sentinel_ptr)).*;
+            .many => if (ptr_info.sentinel()) |sentinel| {
                 // We may be looking for something other than the sentinel,
                 // but iterating past the sentinel would be a bug so we need
                 // to check for both.
@@ -1490,13 +1489,12 @@ fn lenSliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) usize {
                 while (ptr[i] != end and ptr[i] != sentinel) i += 1;
                 return i;
             },
-            .C => {
+            .c => {
                 assert(ptr != null);
                 return std.mem.indexOfSentinel(ptr_info.child, end, ptr);
             },
-            .Slice => {
-                if (ptr_info.sentinel) |sentinel_ptr| {
-                    const sentinel = @as(*align(1) const ptr_info.child, @ptrCast(sentinel_ptr)).*;
+            .slice => {
+                if (ptr_info.sentinel()) |sentinel| {
                     if (sentinel == end) {
                         return std.mem.indexOfSentinel(ptr_info.child, sentinel, ptr);
                     }
@@ -1512,12 +1510,12 @@ fn lenSliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) usize {
 /// Helper for the return type of sliceTo()
 fn SliceTo(comptime T: type, comptime end: meta.Elem(T)) type {
     switch (@typeInfo(T)) {
-        .Optional => |optional_info| {
+        .optional => |optional_info| {
             return ?SliceTo(optional_info.child, end);
         },
         .pointer => |ptr_info| {
             var new_ptr_info = ptr_info;
-            new_ptr_info.size = .Slice;
+            new_ptr_info.size = .slice;
             switch (ptr_info.size) {
                 .one => switch (@typeInfo(ptr_info.child)) {
                     .array => |array_info| {
@@ -1536,21 +1534,20 @@ fn SliceTo(comptime T: type, comptime end: meta.Elem(T)) type {
                     },
                     else => {},
                 },
-                .Many, .Slice => {
+                .many, .slice => {
                     // The return type must only be sentinel terminated if we are guaranteed
                     // to find the value searched for, which is only the case if it matches
                     // the sentinel of the type passed.
-                    if (ptr_info.sentinel) |sentinel_ptr| {
-                        const sentinel = @as(*align(1) const ptr_info.child, @ptrCast(sentinel_ptr)).*;
+                    if (ptr_info.sentinel()) |sentinel| {
                         if (end == sentinel) {
-                            new_ptr_info.sentinel = &end;
+                            new_ptr_info.sentinel_ptr = &end;
                         } else {
-                            new_ptr_info.sentinel = null;
+                            new_ptr_info.sentinel_ptr = null;
                         }
                     }
                 },
-                .C => {
-                    new_ptr_info.sentinel = &end;
+                .c => {
+                    new_ptr_info.sentinel_ptr = &end;
                     // C pointers are always allowzero, but we don't want the return type to be.
                     assert(new_ptr_info.is_allowzero);
                     new_ptr_info.is_allowzero = false;
@@ -1571,15 +1568,14 @@ fn SliceTo(comptime T: type, comptime end: meta.Elem(T)) type {
 /// Pointer properties such as mutability and alignment are preserved.
 /// C pointers are assumed to be non-null.
 pub fn sliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) SliceTo(@TypeOf(ptr), end) {
-    if (@typeInfo(@TypeOf(ptr)) == .Optional) {
+    if (@typeInfo(@TypeOf(ptr)) == .optional) {
         const non_null = ptr orelse return null;
         return sliceTo(non_null, end);
     }
     const Result = SliceTo(@TypeOf(ptr), end);
     const length = lenSliceTo(ptr, end);
     const ptr_info = @typeInfo(Result).pointer;
-    if (ptr_info.sentinel) |s_ptr| {
-        const s = @as(*align(1) const ptr_info.child, @ptrCast(s_ptr)).*;
+    if (ptr_info.sentinel()) |s| {
         return ptr[0..length :s];
     } else {
         return ptr[0..length];
@@ -3045,12 +3041,12 @@ pub const Dirname = struct {
 };
 
 pub noinline fn outOfMemory() noreturn {
-    @setCold(true);
+    @branchHint(.cold);
     crash_handler.crashHandler(.out_of_memory, null, @returnAddress());
 }
 
 pub fn todoPanic(src: std.builtin.SourceLocation, comptime format: string, args: anytype) noreturn {
-    @setCold(true);
+    @branchHint(.cold);
     bun.Analytics.Features.todo_panic = 1;
     Output.panic("TODO: " ++ format ++ " ({s}:{d})", args ++ .{ src.file, src.line });
 }
@@ -3139,7 +3135,7 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
 
     for (std.meta.fields(T)) |field| {
         if (strings.eqlComptime(field.name, "ref_count")) {
-            if (field.default_value == null) {
+            if (field.default_value_ptr == null) {
                 @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
             }
         }
@@ -3199,7 +3195,7 @@ pub fn NewThreadSafeRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: 
 
     for (std.meta.fields(T)) |field| {
         if (strings.eqlComptime(field.name, "ref_count")) {
-            if (field.default_value == null) {
+            if (field.default_value_ptr == null) {
                 @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
             }
         }
@@ -3534,7 +3530,7 @@ noinline fn assertionFailure() noreturn {
         @compileError("assertion failure");
     }
 
-    @setCold(true);
+    @branchHint(.cold);
     Output.panic("Internal assertion failure", .{});
 }
 
@@ -3543,7 +3539,7 @@ noinline fn assertionFailureWithLocation(src: std.builtin.SourceLocation) noretu
         @compileError("assertion failure");
     }
 
-    @setCold(true);
+    @branchHint(.cold);
     Output.panic("Internal assertion failure {s}:{d}:{d}", .{
         src.file,
         src.line,
@@ -3812,7 +3808,7 @@ pub const UUID = @import("./bun.js/uuid.zig");
 /// call a first element '0' or '1' which makes integer type ambiguous.
 pub fn OrdinalT(comptime Int: type) type {
     return enum(Int) {
-        invalid = switch (@typeInfo(Int).Int.signedness) {
+        invalid = switch (@typeInfo(Int).int.signedness) {
             .unsigned => std.math.maxInt(Int),
             .signed => -1,
         },
@@ -4139,7 +4135,7 @@ pub fn Once(comptime f: anytype) type {
         }
 
         fn callSlow(self: *@This(), args: std.meta.ArgsTuple(@TypeOf(f))) Return {
-            @setCold(true);
+            @branchHint(.cold);
 
             self.mutex.lock();
             defer self.mutex.unlock();
@@ -4197,7 +4193,7 @@ pub inline fn writeAnyToHasher(hasher: anytype, thing: anytype) void {
 }
 
 pub inline fn isComptimeKnown(x: anytype) bool {
-    return comptime @typeInfo(@TypeOf(.{x})).Struct.fields[0].is_comptime;
+    return comptime @typeInfo(@TypeOf(.{x})).@"struct".fields[0].is_comptime;
 }
 
 pub inline fn itemOrNull(comptime T: type, slice: []const T, index: usize) ?T {
@@ -4314,7 +4310,7 @@ pub const StackCheck = struct {
 
 // Workaround for lack of branch hints.
 pub noinline fn throwStackOverflow() StackOverflow!void {
-    @setCold(true);
+    @branchHint(.cold);
     return error.StackOverflow;
 }
 const StackOverflow = error{StackOverflow};
@@ -4469,3 +4465,15 @@ pub fn CowSlice(T: type) type {
 }
 
 const Allocator = std.mem.Allocator;
+
+pub const kevent64_s = extern struct {
+    ident: u64,
+    filter: i16,
+    flags: u16,
+    fflags: u32,
+    data: i64,
+    udata: u64,
+    ext: [2]u64,
+};
+pub const natural_t = c_uint;
+pub const host_t = std.c.mach_port_t;

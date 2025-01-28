@@ -38,7 +38,11 @@ pub const BorderRadius = struct {
     /// The x and y radius values for the bottom left corner.
     bottom_left: Size2D(LengthPercentage),
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-radius");
+    const define_shorthand_res = css.DefineShorthand(@This(), css.PropertyIdTag.@"border-radius");
+    pub const fromLonghands = define_shorthand_res.fromLonghands;
+    pub const longhands = define_shorthand_res.longhands;
+    pub const longhand = define_shorthand_res.longhand;
+    pub const setLonghand = define_shorthand_res.setLonghand;
 
     pub const PropertyFieldMap = .{
         .top_left = "border-top-left-radius",

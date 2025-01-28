@@ -279,7 +279,7 @@ pub const Loop = struct {
             this.updateNow();
 
             assert(rc <= events_list.capacity);
-            const current_events: []std.posix.system.kevent64_s = events_list.items.ptr[0..@intCast(rc)];
+            const current_events: []bun.kevent64_s = events_list.items.ptr[0..@intCast(rc)];
 
             for (current_events) |event| {
                 Poll.onUpdateKQueue(event);
@@ -311,7 +311,7 @@ pub const Loop = struct {
     }
 };
 
-const EventType = if (Environment.isLinux) linux.epoll_event else std.posix.system.kevent64_s;
+const EventType = if (Environment.isLinux) linux.epoll_event else bun.kevent64_s;
 
 pub const Request = struct {
     next: ?*Request = null,
@@ -444,7 +444,7 @@ pub const Poll = struct {
         pub const Set = std.EnumSet(Flags);
         pub const Struct = std.enums.EnumFieldStruct(Flags, bool, false);
 
-        pub fn fromKQueueEvent(kqueue_event: std.posix.system.kevent64_s) Flags.Set {
+        pub fn fromKQueueEvent(kqueue_event: bun.kevent64_s) Flags.Set {
             var flags = Flags.Set{};
             if (kqueue_event.filter == std.posix.system.EVFILT_READ) {
                 flags.insert(Flags.readable);
@@ -496,7 +496,7 @@ pub const Poll = struct {
             tag: Pollable.Tag,
             poll: *Poll,
             fd: bun.FileDescriptor,
-            kqueue_event: *std.posix.system.kevent64_s,
+            kqueue_event: *bun.kevent64_s,
         ) void {
             log("register({s}, {})", .{ @tagName(action), fd });
             defer {
@@ -576,7 +576,7 @@ pub const Poll = struct {
     }
 
     pub fn onUpdateKQueue(
-        event: std.posix.system.kevent64_s,
+        event: bun.kevent64_s,
     ) void {
         if (event.filter == std.c.EVFILT_MACHPORT)
             return;

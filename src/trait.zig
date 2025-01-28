@@ -45,7 +45,7 @@ pub inline fn isSlice(comptime T: type) bool {
 
 pub inline fn isNumber(comptime T: type) bool {
     return switch (@typeInfo(T)) {
-        .Int, .Float, .ComptimeInt, .ComptimeFloat => true,
+        .int, .float, .comptime_int, .comptime_float => true,
         else => false,
     };
 }

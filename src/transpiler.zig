@@ -621,7 +621,7 @@ pub const Transpiler = struct {
     }
 
     pub noinline fn dumpEnvironmentVariables(transpiler: *const Transpiler) void {
-        @setCold(true);
+        @branchHint(.cold);
         const opts = std.json.StringifyOptions{
             .whitespace = .indent_2,
         };

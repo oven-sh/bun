@@ -6,7 +6,7 @@ pub const is_bindgen: bool = false;
 const headers = @import("./headers.zig");
 
 fn isNullableType(comptime Type: type) bool {
-    return @typeInfo(Type) == .Optional or
+    return @typeInfo(Type) == .optional or
         (@typeInfo(Type) == .pointer and @typeInfo(Type).pointer.is_allowzero);
 }
 
@@ -116,17 +116,17 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
                 var functions: [std.meta.fieldNames(FunctionsType).len]StaticExport = undefined;
                 for (std.meta.fieldNames(FunctionsType), 0..) |fn_name, i| {
                     const Function = @TypeOf(@field(Functions, fn_name));
-                    if (@typeInfo(Function) != .Fn) {
+                    if (@typeInfo(Function) != .@"fn") {
                         @compileError("Expected " ++ @typeName(Parent) ++ "." ++ @typeName(Function) ++ " to be a function but received " ++ @tagName(@typeInfo(Function)));
                     }
-                    const Fn: std.builtin.Type.Fn = @typeInfo(Function).Fn;
+                    const Fn: std.builtin.Type.Fn = @typeInfo(Function).@"fn";
                     if (Function == bun.JSC.JSHostFunctionTypeWithCCallConvForAssertions and bun.JSC.conv != .C) {
                         @compileError("Expected " ++ bun.meta.typeName(Function) ++ " to have a JSC.conv Calling Convention.");
                     } else if (Function == bun.JSC.JSHostFunctionType) {
                         //
                     } else if (Function == bun.JSC.JSHostZigFunction) {
                         //
-                    } else if (Fn.calling_convention != .C) {
+                    } else if (!Fn.calling_convention.eql(.c)) {
                         @compileError("Expected " ++ @typeName(Parent) ++ "." ++ @typeName(Function) ++ " to have a C Calling Convention.");
                     }
 
@@ -177,7 +177,7 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
         pub inline fn matchNullable(comptime ExpectedReturnType: type, comptime ExternReturnType: type, value: ExternReturnType) ExpectedReturnType {
             if (comptime isNullableType(ExpectedReturnType) != isNullableType(ExternReturnType)) {
                 return value.?;
-            } else if (comptime (@typeInfo(ExpectedReturnType) == .Enum) and (@typeInfo(ExternReturnType) != .Enum)) {
+            } else if (comptime (@typeInfo(ExpectedReturnType) == .@"enum") and (@typeInfo(ExternReturnType) != .@"enum")) {
                 return @as(ExpectedReturnType, @enumFromInt(value));
             } else {
                 return value;
@@ -189,7 +189,7 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
             if (!@hasDecl(Parent, typeName)) {
                 @compileError(@typeName(Parent) ++ " is missing cppFn: " ++ typeName);
             }
-            break :ret @typeInfo(@TypeOf(@field(Parent, typeName))).Fn.return_type.?;
+            break :ret @typeInfo(@TypeOf(@field(Parent, typeName))).@"fn".return_type.?;
         }) {
             log(comptime name ++ "__" ++ typeName, .{});
             @setEvalBranchQuota(99999);
@@ -197,16 +197,16 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
                 unreachable;
             } else {
                 const Fn = comptime @field(headers, symbolName(typeName));
-                if (@typeInfo(@TypeOf(Fn)).Fn.params.len > 0)
+                if (@typeInfo(@TypeOf(Fn)).@"fn".params.len > 0)
                     return matchNullable(
-                        comptime @typeInfo(@TypeOf(@field(Parent, typeName))).Fn.return_type.?,
-                        comptime @typeInfo(@TypeOf(Fn)).Fn.return_type.?,
+                        comptime @typeInfo(@TypeOf(@field(Parent, typeName))).@"fn".return_type.?,
+                        comptime @typeInfo(@TypeOf(Fn)).@"fn".return_type.?,
                         @call(.auto, Fn, args),
                     );
 
                 return matchNullable(
-                    comptime @typeInfo(@TypeOf(@field(Parent, typeName))).Fn.return_type.?,
-                    comptime @typeInfo(@TypeOf(Fn)).Fn.return_type.?,
+                    comptime @typeInfo(@TypeOf(@field(Parent, typeName))).@"fn".return_type.?,
+                    comptime @typeInfo(@TypeOf(Fn)).@"fn".return_type.?,
                     Fn(),
                 );
             }

@@ -3111,7 +3111,7 @@ pub const HardcodedModule = enum {
 };
 
 /// Support embedded .node files
-export fn Bun__resolveEmbeddedNodeFile(vm: *JSC.VirtualMachine, in_out_str: *bun.String) bool {
+export fn Bun__resolveEmbeddedNodeFile(vm: *VirtualMachine, in_out_str: *bun.String) bool {
     if (vm.standalone_module_graph == null) return false;
 
     const input_path = in_out_str.toUTF8(bun.default_allocator);

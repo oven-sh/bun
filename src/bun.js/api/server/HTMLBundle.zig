@@ -544,7 +544,12 @@ pub const HTMLBundleRoute = struct {
 };
 
 pub usingnamespace JSC.Codegen.JSHTMLBundle;
-pub usingnamespace bun.NewRefCounted(HTMLBundle, deinit);
+const ref_counted_res = bun.NewRefCounted(HTMLBundle, deinit);
+pub const destroy = ref_counted_res.destroy;
+pub const ref = ref_counted_res.ref;
+pub const deref = ref_counted_res.deref;
+pub const new = ref_counted_res.new;
+
 const bun = @import("root").bun;
 const std = @import("std");
 const JSC = bun.JSC;

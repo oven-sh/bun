@@ -2827,7 +2827,7 @@ pub const Blob = struct {
 
             fn truncate(this: *CopyFileWindows) void {
                 // TODO: optimize this
-                @setCold(true);
+                @branchHint(.cold);
 
                 var node_fs: JSC.Node.NodeFS = .{};
                 _ = node_fs.truncate(

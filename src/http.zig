@@ -3116,7 +3116,7 @@ pub const HTTPResponseMetadata = struct {
 };
 
 fn printRequest(request: picohttp.Request, url: string, ignore_insecure: bool, body: []const u8, curl: bool) void {
-    @setCold(true);
+    @branchHint(.cold);
     var request_ = request;
     request_.path = url;
 
@@ -3130,7 +3130,7 @@ fn printRequest(request: picohttp.Request, url: string, ignore_insecure: bool, b
 }
 
 fn printResponse(response: picohttp.Response) void {
-    @setCold(true);
+    @branchHint(.cold);
     Output.prettyErrorln("{}", .{response});
     Output.flush();
 }

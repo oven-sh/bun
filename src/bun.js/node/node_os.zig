@@ -187,10 +187,9 @@ fn cpusImplLinux(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
 extern fn bun_sysconf__SC_CLK_TCK() isize;
 fn cpusImplDarwin(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
     const local_bindings = @import("../../darwin_c.zig");
-    const c = std.c;
 
     // Fetch the CPU info structure
-    var num_cpus: c.natural_t = 0;
+    var num_cpus: bun.natural_t = 0;
     var info: [*]local_bindings.processor_cpu_load_info = undefined;
     var info_size: std.c.mach_msg_type_number_t = 0;
     if (local_bindings.host_processor_info(std.c.mach_host_self(), local_bindings.PROCESSOR_CPU_LOAD_INFO, &num_cpus, @as(*local_bindings.processor_info_array_t, @ptrCast(&info)), &info_size) != .SUCCESS) {

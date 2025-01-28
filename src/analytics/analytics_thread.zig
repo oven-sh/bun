@@ -216,7 +216,7 @@ pub const packed_features_list = brk: {
 };
 
 pub const PackedFeatures = @Type(.{
-    .Struct = .{
+    .@"struct" = .{
         .layout = .@"packed",
         .backing_integer = u64,
         .fields = brk: {
@@ -226,7 +226,7 @@ pub const PackedFeatures = @Type(.{
                 fields[i] = .{
                     .name = name,
                     .type = bool,
-                    .default_value = &false,
+                    .default_value_ptr = &false,
                     .is_comptime = false,
                     .alignment = 0,
                 };
@@ -236,7 +236,7 @@ pub const PackedFeatures = @Type(.{
                 fields[i] = .{
                     .name = std.fmt.comptimePrint("_{d}", .{i}),
                     .type = bool,
-                    .default_value = &false,
+                    .default_value_ptr = &false,
                     .is_comptime = false,
                     .alignment = 0,
                 };

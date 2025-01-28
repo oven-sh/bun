@@ -391,6 +391,9 @@ describe("napi", () => {
   ])("works when the module register function returns %s", (returnKind, expected) => {
     expect(require(`./napi-app/build/Release/${returnKind}_addon.node`)).toEqual(expected);
   });
+  it("works when the module register function throws", () => {
+    expect(() => require("./napi-app/build/Release/throw_addon.node")).toThrow(new Error("oops!"));
+  });
 });
 
 function checkSameOutput(test: string, args: any[] | string) {

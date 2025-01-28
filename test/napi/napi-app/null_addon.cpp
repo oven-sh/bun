@@ -39,6 +39,9 @@
   napi_value undefined;
   NODE_API_CALL(env, napi_get_undefined(env, &undefined));
   return undefined;
+#elif defined(MODULE_INIT_THROW)
+  napi_throw_error(env, "CODE_OOPS", "oops!");
+  return NULL;
 #else
 #error Define one of MODULE_INIT_RETURN_{NULLPTR,NULL,UNDEFINED} to determine what to return from NAPI_MODULE_INIT
 #endif

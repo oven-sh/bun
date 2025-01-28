@@ -677,6 +677,8 @@ const server = Bun.serve({
 });
 ```
 
+## WebSocket Configuration
+
 ### server.publish(topic, data, compress) - WebSocket Message Publishing
 
 The server can publish messages to all WebSocket clients subscribed to a topic:
@@ -701,8 +703,6 @@ The `publish()` method returns:
 - Number of bytes sent if successful
 - `0` if the message was dropped
 - `-1` if backpressure was applied
-
-## WebSocket Configuration
 
 ### WebSocket Handler Options
 

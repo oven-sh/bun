@@ -631,6 +631,13 @@ pub fn ensureNonBlocking(fd: anytype) void {
     _ = std.posix.fcntl(fd, std.posix.F.SETFL, current | O.NONBLOCK) catch 0;
 }
 
+pub fn isNonBlocking(fd: anytype) bool {
+    if (Environment.isWindows) {
+        @compileError("isNonBlocking() is not supported on Windows");
+    }
+    return (std.os.fcntl(fd, std.os.F.GETFL, 0) catch 0 & std.os.O.NONBLOCK) == std.os.O.NONBLOCK;
+}
+
 const global_scope_log = sys.syslog;
 pub fn isReadable(fd: FileDescriptor) PollFlag {
     if (comptime Environment.isWindows) {

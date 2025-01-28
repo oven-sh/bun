@@ -20,6 +20,7 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
+import type { BlockList as BlockListType } from "node:net";
 const { Duplex } = require("node:stream");
 const EventEmitter = require("node:events");
 const { addServerName, upgradeDuplexToTLS, isNamedPipeSocket, isIP, isIPv4, isIPv6 } = require("../internal/net");
@@ -1492,16 +1493,17 @@ function toNumber(x) {
   return (x = Number(x)) >= 0 ? x : false;
 }
 
-// TODO:
-class BlockList {
-  constructor() {}
+// // TODO:
+// class BlockList {
+//   constructor() {}
 
-  addSubnet(net, prefix, type) {}
+//   addSubnet(net, prefix, type) {}
 
-  check(address, type) {
-    return false;
-  }
-}
+//   check(address, type) {
+//     return false;
+//   }
+// }
+var BlockList: BlockListType | undefined;
 
 export default {
   createServer,
@@ -1520,7 +1522,9 @@ export default {
   getDefaultAutoSelectFamilyAttemptTimeout: $zig("node_net_binding.zig", "getDefaultAutoSelectFamilyAttemptTimeout"),
   setDefaultAutoSelectFamilyAttemptTimeout: $zig("node_net_binding.zig", "setDefaultAutoSelectFamilyAttemptTimeout"),
 
-  BlockList,
+  get BlockList(): BlockListType {
+    return (BlockList ??= require("internal/net/blocklist").BlockList);
+  },
   // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/net.js#L2456
   Stream: Socket,
 };

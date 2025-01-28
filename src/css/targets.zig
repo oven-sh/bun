@@ -58,11 +58,10 @@ pub const Targets = struct {
         return this.include.contains(flag) or (!this.exclude.contains(flag) and !this.isCompatible(feature));
     }
 
-    pub fn shouldCompileSame(this: *const Targets, comptime prop: @Type(.EnumLiteral)) bool {
-        const compat_feature: css.compat.Feature = prop;
+    pub fn shouldCompileSame(this: *const Targets, comptime compat_feature: css.compat.Feature) bool {
         const target_feature: css.targets.Features = target_feature: {
             var feature: css.targets.Features = .{};
-            @field(feature, @tagName(prop)) = true;
+            @field(feature, @tagName(compat_feature)) = true;
             break :target_feature feature;
         };
 
@@ -163,6 +162,8 @@ pub fn BrowsersImpl(comptime T: type) type {
         //     .opera = 67 << 16,
         // };
 
+        /// Ported from here:
+        /// https://github.com/vitejs/vite/blob/ac329685bba229e1ff43e3d96324f817d48abe48/packages/vite/src/node/plugins/css.ts#L3335
         pub fn convertFromString(esbuild_target: []const []const u8) anyerror!T {
             var browsers: T = .{};
 

@@ -162,303 +162,6 @@ export default [
     values: ["arguments", "callback"],
   }),
   define({
-    name: "Stats",
-    construct: true,
-    finalize: true,
-    klass: {},
-    JSType: "0b11101110",
-
-    // TODO: generate-classes needs to handle Object.create properly when
-    // functions are used. The functions need a fallback implementation to use
-    // getters.
-    supportsObjectCreate: true,
-
-    proto: {
-      isBlockDevice: {
-        fn: "isBlockDevice_",
-        length: 0,
-        enumerable: false,
-        DOMJIT: {
-          returns: "bool",
-          args: [],
-          pure: true,
-        },
-      },
-      isCharacterDevice: {
-        fn: "isCharacterDevice_",
-        length: 0,
-        enumerable: false,
-        DOMJIT: {
-          returns: "bool",
-          args: [],
-          pure: true,
-        },
-      },
-      isDirectory: {
-        fn: "isDirectory_",
-        length: 0,
-        enumerable: false,
-        DOMJIT: {
-          returns: "bool",
-          args: [],
-          pure: true,
-        },
-      },
-      isFIFO: {
-        fn: "isFIFO_",
-        length: 0,
-        enumerable: false,
-        DOMJIT: {
-          returns: "bool",
-          args: [],
-          pure: true,
-        },
-      },
-      isFile: {
-        fn: "isFile_",
-        length: 0,
-        enumerable: false,
-        DOMJIT: {
-          returns: "bool",
-          args: [],
-          pure: true,
-        },
-      },
-      isSocket: {
-        fn: "isSocket_",
-        length: 0,
-        enumerable: false,
-        DOMJIT: {
-          returns: "bool",
-          args: [],
-          pure: true,
-        },
-      },
-      isSymbolicLink: {
-        fn: "isSymbolicLink_",
-        length: 0,
-        enumerable: false,
-        DOMJIT: {
-          returns: "bool",
-          args: [],
-          pure: true,
-        },
-      },
-      dev: {
-        getter: "dev",
-      },
-      ino: {
-        getter: "ino",
-      },
-      mode: {
-        getter: "mode",
-      },
-      nlink: {
-        getter: "nlink",
-      },
-      uid: {
-        getter: "uid",
-      },
-      gid: {
-        getter: "gid",
-      },
-      rdev: {
-        getter: "rdev",
-      },
-      size: {
-        getter: "size",
-      },
-      blksize: {
-        getter: "blksize",
-      },
-      blocks: {
-        getter: "blocks",
-      },
-      atime: {
-        getter: "atime",
-        cache: true,
-      },
-      mtime: {
-        getter: "mtime",
-        cache: true,
-      },
-      ctime: {
-        getter: "ctime",
-        cache: true,
-      },
-      birthtime: {
-        getter: "birthtime",
-      },
-      atimeMs: {
-        getter: "atimeMs",
-      },
-      mtimeMs: {
-        getter: "mtimeMs",
-      },
-      ctimeMs: {
-        getter: "ctimeMs",
-      },
-      birthtimeMs: {
-        getter: "birthtimeMs",
-      },
-    },
-  }),
-  define({
-    name: "BigIntStats",
-    construct: true,
-    finalize: true,
-    klass: {},
-    JSType: "0b11101110",
-
-    // TODO: generate-classes needs to handle Object.create properly when
-    // functions are used. The functions need a fallback implementation to use
-    // getters.
-    supportsObjectCreate: true,
-
-    proto: {
-      isBlockDevice: {
-        fn: "isBlockDevice_",
-        length: 0,
-        enumerable: false,
-        DOMJIT: {
-          returns: "bool",
-          args: [],
-          pure: true,
-        },
-      },
-      isCharacterDevice: {
-        fn: "isCharacterDevice_",
-        length: 0,
-        enumerable: false,
-        DOMJIT: {
-          returns: "bool",
-          args: [],
-          pure: true,
-        },
-      },
-      isDirectory: {
-        fn: "isDirectory_",
-        length: 0,
-        enumerable: false,
-        DOMJIT: {
-          returns: "bool",
-          args: [],
-          pure: true,
-        },
-      },
-      isFIFO: {
-        fn: "isFIFO_",
-        length: 0,
-        enumerable: false,
-        DOMJIT: {
-          returns: "bool",
-          args: [],
-          pure: true,
-        },
-      },
-      isFile: {
-        fn: "isFile_",
-        length: 0,
-        enumerable: false,
-        DOMJIT: {
-          returns: "bool",
-          args: [],
-          pure: true,
-        },
-      },
-      isSocket: {
-        fn: "isSocket_",
-        length: 0,
-        enumerable: false,
-        DOMJIT: {
-          returns: "bool",
-          args: [],
-          pure: true,
-        },
-      },
-      isSymbolicLink: {
-        fn: "isSymbolicLink_",
-        length: 0,
-        enumerable: false,
-        DOMJIT: {
-          returns: "bool",
-          args: [],
-          pure: true,
-        },
-      },
-      dev: {
-        getter: "dev",
-      },
-      ino: {
-        getter: "ino",
-      },
-      mode: {
-        getter: "mode",
-      },
-      nlink: {
-        getter: "nlink",
-      },
-      uid: {
-        getter: "uid",
-      },
-      gid: {
-        getter: "gid",
-      },
-      rdev: {
-        getter: "rdev",
-      },
-      size: {
-        getter: "size",
-      },
-      blksize: {
-        getter: "blksize",
-      },
-      blocks: {
-        getter: "blocks",
-      },
-      atime: {
-        getter: "atime",
-        cache: true,
-      },
-      mtime: {
-        getter: "mtime",
-        cache: true,
-      },
-      ctime: {
-        getter: "ctime",
-        cache: true,
-      },
-      birthtime: {
-        getter: "birthtime",
-        cache: true,
-      },
-      atimeMs: {
-        getter: "atimeMs",
-      },
-      mtimeMs: {
-        getter: "mtimeMs",
-      },
-      ctimeMs: {
-        getter: "ctimeMs",
-      },
-      birthtimeMs: {
-        getter: "birthtimeMs",
-      },
-      atimeNs: {
-        getter: "atimeNs",
-      },
-      mtimeNs: {
-        getter: "mtimeNs",
-      },
-      ctimeNs: {
-        getter: "ctimeNs",
-      },
-      birthtimeNs: {
-        getter: "birthtimeNs",
-      },
-    },
-  }),
-  define({
     name: "Dirent",
     construct: true,
     finalize: true,
@@ -499,19 +202,12 @@ export default [
         fn: "isSymbolicLink",
         length: 0,
       },
-      name: {
-        getter: "getName",
-        cache: true,
-      },
-      path: {
-        getter: "getPath",
-        cache: true,
-      },
-      parentPath: {
-        // @since node v20.12.x
-        getter: "getPath",
-        cache: true,
-      },
+    },
+
+    own: {
+      name: "getName",
+      path: "getPath",
+      parentPath: "getPath",
     },
   }),
   define({
@@ -571,8 +267,6 @@ export default [
       mkdtempSync: { fn: "mkdtempSync", length: 2 },
       open: { fn: "open", length: 4 },
       openSync: { fn: "openSync", length: 3 },
-      opendir: { fn: "opendir", length: 3 },
-      opendirSync: { fn: "opendirSync", length: 2 },
       readdir: { fn: "readdir", length: 3 },
       readdirSync: { fn: "readdirSync", length: 2 },
       read: { fn: "read", length: 6 },
@@ -592,7 +286,9 @@ export default [
       rmdir: { fn: "rmdir", length: 3 },
       rmdirSync: { fn: "rmdirSync", length: 2 },
       stat: { fn: "stat", length: 1 },
+      statfs: { fn: "statfs", length: 2 },
       statSync: { fn: "statSync", length: 1 },
+      statfsSync: { fn: "statfsSync", length: 2 },
       symlink: { fn: "symlink", length: 4 },
       symlinkSync: { fn: "symlinkSync", length: 3 },
       truncate: { fn: "truncate", length: 3 },
@@ -610,17 +306,78 @@ export default [
       writeSync: { fn: "writeSync", length: 5 },
       writev: { fn: "writev", length: 4 },
       writevSync: { fn: "writevSync", length: 3 },
-      // TODO:
-      // Dir: { fn: 'Dir', length: 3 },
+      realpathNative: { fn: "realpathNative", length: 3 },
+      realpathNativeSync: { fn: "realpathNativeSync", length: 3 },
       Dirent: { getter: "getDirent" },
       Stats: { getter: "getStats" },
-      // ReadStream: { fn: 'ReadStream', length: 2 },
-      // WriteStream: { fn: 'WriteStream', length: 2 },
-      // FileReadStream: { fn: 'FileReadStream', length: 2 },
-      // FileWriteStream: { fn: 'FileWriteStream', length: 2 },
-      // _toUnixTimestamp: { fn: '_toUnixTimestamp', length: 1 }
-      // createReadStream: { fn: "createReadStream", length: 2 },
-      // createWriteStream: { fn: "createWriteStream", length: 2 },
+    },
+  }),
+  define({
+    name: "StatFs",
+    construct: true,
+    finalize: true,
+    klass: {},
+    JSType: "0b11101110",
+
+    supportsObjectCreate: true,
+
+    // TODO: make these own properties to pass test-fs-statfs.js
+    proto: {
+      type: {
+        getter: "fstype",
+      },
+      bsize: {
+        getter: "bsize",
+      },
+      blocks: {
+        getter: "blocks",
+      },
+      bfree: {
+        getter: "bfree",
+      },
+      bavail: {
+        getter: "bavail",
+      },
+      files: {
+        getter: "files",
+      },
+      ffree: {
+        getter: "ffree",
+      },
+    },
+  }),
+  define({
+    name: "BigIntStatFs",
+    construct: true,
+    finalize: true,
+    klass: {},
+    JSType: "0b11101110",
+
+    supportsObjectCreate: true,
+
+    // TODO: make these own properties to pass test-fs-statfs.js
+    proto: {
+      type: {
+        getter: "fstype",
+      },
+      bsize: {
+        getter: "bsize",
+      },
+      blocks: {
+        getter: "blocks",
+      },
+      bfree: {
+        getter: "bfree",
+      },
+      bavail: {
+        getter: "bavail",
+      },
+      files: {
+        getter: "files",
+      },
+      ffree: {
+        getter: "ffree",
+      },
     },
   }),
 ];

@@ -250,6 +250,8 @@
 pub use anyhow;
 pub use bun_macro::bun;
 
+pub mod sys;
+
 #[repr(transparent)]
 pub struct BunPluginName(*const c_char);
 
@@ -284,10 +286,6 @@ use std::{
     str::Utf8Error,
     sync::PoisonError,
 };
-
-pub mod sys {
-    include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
-}
 
 #[repr(C)]
 pub struct TaggedObject<T> {

@@ -1,20 +1,15 @@
 "use strict";
 
-const {
-  ArrayPrototypePush,
-  ArrayPrototypeSlice,
-  Error,
-  FunctionPrototype,
-  ObjectFreeze,
-  Proxy,
-  SafeSet,
-  SafeWeakMap,
-} = require("internal/primordials");
+const { SafeSet, SafeWeakMap } = require("internal/primordials");
 
 const AssertionError = require("internal/assert/assertion_error");
 const { validateUint32 } = require("internal/validators");
 
-const noop = FunctionPrototype;
+const ObjectFreeze = Object.freeze;
+const ArrayPrototypePush = Array.prototype.push;
+const ArrayPrototypeSlice = Array.prototype.slice;
+
+const noop = () => {};
 
 class CallTrackerContext {
   #expected;
@@ -29,8 +24,8 @@ class CallTrackerContext {
   }
 
   track(thisArg, args) {
-    const argsClone = ObjectFreeze(ArrayPrototypeSlice(args));
-    ArrayPrototypePush(this.#calls, ObjectFreeze({ thisArg, arguments: argsClone }));
+    const argsClone = ObjectFreeze(ArrayPrototypeSlice.$call(args));
+    ArrayPrototypePush.$call(this.#calls, ObjectFreeze({ thisArg, arguments: argsClone }));
   }
 
   get delta() {
@@ -41,7 +36,7 @@ class CallTrackerContext {
     this.#calls = [];
   }
   getCalls() {
-    return ObjectFreeze(ArrayPrototypeSlice(this.#calls));
+    return ObjectFreeze(ArrayPrototypeSlice.$call(this.#calls));
   }
 
   report() {
@@ -119,7 +114,7 @@ class CallTracker {
     for (const context of this.#callChecks) {
       const message = context.report();
       if (message !== undefined) {
-        ArrayPrototypePush(errors, message);
+        ArrayPrototypePush.$call(errors, message);
       }
     }
     return errors;

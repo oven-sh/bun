@@ -133,7 +133,7 @@ const GlobWalker = Glob.GlobWalker(ignoredWorkspacePaths, Glob.walk.SyscallAcces
 /// The version of the lockfile format, intended to prevent data corruption for format changes.
 format: FormatVersion = FormatVersion.current,
 
-text_lockfile_version: TextLockfile.Version = .v0,
+text_lockfile_version: TextLockfile.Version = TextLockfile.Version.current,
 
 meta_hash: MetaHash = zero_hash,
 
@@ -251,6 +251,52 @@ pub const LoadResult = union(enum) {
             .err => |err| err.format == .text,
             .ok => |ok| ok.format == .text,
         };
+    }
+
+    pub fn loadedFromBinaryLockfile(this: LoadResult) bool {
+        return switch (this) {
+            .not_found => false,
+            .err => |err| err.format == .binary,
+            .ok => |ok| ok.format == .binary,
+        };
+    }
+
+    pub fn saveFormat(this: LoadResult, options: *const PackageManager.Options) LockfileFormat {
+        switch (this) {
+            .not_found => {
+                // saving a lockfile for a new project. default to text lockfile
+                // unless saveTextLockfile is false in bunfig
+                const save_text_lockfile = options.save_text_lockfile orelse true;
+                return if (save_text_lockfile) .text else .binary;
+            },
+            .err => |err| {
+                // an error occured, but we still loaded from an existing lockfile
+                if (options.save_text_lockfile) |save_text_lockfile| {
+                    if (save_text_lockfile) {
+                        return .text;
+                    }
+                }
+                return err.format;
+            },
+            .ok => |ok| {
+                // loaded from an existing lockfile
+                if (options.save_text_lockfile) |save_text_lockfile| {
+                    if (save_text_lockfile) {
+                        return .text;
+                    }
+
+                    if (ok.was_migrated) {
+                        return .binary;
+                    }
+                }
+
+                if (ok.was_migrated) {
+                    return .text;
+                }
+
+                return ok.format;
+            },
+        }
     }
 
     pub const Step = enum { open_file, read_file, parse_file, migrating };
@@ -385,7 +431,7 @@ pub fn loadFromDir(
                 var buffered_writer = writer_buf.bufferedWriter();
                 const writer = buffered_writer.writer();
 
-                TextLockfile.Stringifier.saveFromBinary(allocator, result.ok.lockfile, writer) catch |err| {
+                TextLockfile.Stringifier.saveFromBinary(allocator, result.ok.lockfile, &result, writer) catch |err| {
                     Output.panic("failed to convert binary lockfile to text lockfile: {s}", .{@errorName(err)});
                 };
 
@@ -694,7 +740,7 @@ pub const Tree = struct {
             lockfile: *const Lockfile,
             manager: if (method == .filter) *const PackageManager else void,
             sort_buf: std.ArrayListUnmanaged(DependencyID) = .{},
-            workspace_filters: if (method == .filter) []const WorkspaceFilter else void = if (method == .filter) &.{} else {},
+            workspace_filters: if (method == .filter) []const WorkspaceFilter else void = if (method == .filter) &.{},
             install_root_dependencies: if (method == .filter) bool else void,
             path_buf: []u8,
 
@@ -1302,7 +1348,7 @@ pub fn cleanWithLogger(
     exact_versions: bool,
     comptime log_level: PackageManager.Options.LogLevel,
 ) !*Lockfile {
-    var timer: if (log_level.isVerbose()) std.time.Timer else void = if (comptime log_level.isVerbose()) try std.time.Timer.start() else {};
+    var timer: if (log_level.isVerbose()) std.time.Timer else void = if (comptime log_level.isVerbose()) try std.time.Timer.start();
 
     const old_trusted_dependencies = old.trusted_dependencies;
     const old_scripts = old.scripts;
@@ -1619,7 +1665,7 @@ pub fn hoist(
         Tree.invalid_id,
         method,
         &builder,
-        if (method == .filter) manager.options.log_level else {},
+        if (method == .filter) manager.options.log_level,
     );
 
     // This goes breadth-first
@@ -1629,7 +1675,7 @@ pub fn hoist(
             item.hoist_root_id,
             method,
             &builder,
-            if (method == .filter) manager.options.log_level else {},
+            if (method == .filter) manager.options.log_level,
         );
     }
 
@@ -2461,7 +2507,8 @@ pub fn verifyData(this: *const Lockfile) !void {
     }
 }
 
-pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbose_log: bool) void {
+pub fn saveToDisk(this: *Lockfile, load_result: *const LoadResult, options: *const PackageManager.Options) void {
+    const save_format = load_result.saveFormat(options);
     if (comptime Environment.allow_assert) {
         this.verifyData() catch |err| {
             Output.prettyErrorln("<r><red>error:<r> failed to verify lockfile: {s}", .{@errorName(err)});
@@ -2476,7 +2523,7 @@ pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbo
             var buffered_writer = writer_buf.bufferedWriter();
             const writer = buffered_writer.writer();
 
-            TextLockfile.Stringifier.saveFromBinary(bun.default_allocator, this, writer) catch |err| switch (err) {
+            TextLockfile.Stringifier.saveFromBinary(bun.default_allocator, this, load_result, writer) catch |err| switch (err) {
                 error.OutOfMemory => bun.outOfMemory(),
             };
 
@@ -2491,7 +2538,7 @@ pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbo
 
         var total_size: usize = 0;
         var end_pos: usize = 0;
-        Lockfile.Serializer.save(this, verbose_log, &bytes, &total_size, &end_pos) catch |err| {
+        Lockfile.Serializer.save(this, options.log_level.isVerbose(), &bytes, &total_size, &end_pos) catch |err| {
             Output.err(err, "failed to serialize lockfile", .{});
             Global.crash();
         };
@@ -2511,7 +2558,7 @@ pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbo
 
     const file = switch (File.openat(std.fs.cwd(), tmpname, bun.O.CREAT | bun.O.WRONLY, 0o777)) {
         .err => |err| {
-            Output.err(err, "failed to create temporary file to save lockfile\n{}", .{});
+            Output.err(err, "failed to create temporary file to save lockfile", .{});
             Global.crash();
         },
         .result => |f| f,
@@ -2521,7 +2568,7 @@ pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbo
         .err => |e| {
             file.close();
             _ = bun.sys.unlink(tmpname);
-            Output.err(e, "failed to write lockfile\n{}", .{});
+            Output.err(e, "failed to write lockfile", .{});
             Global.crash();
         },
         .result => {},
@@ -2537,7 +2584,7 @@ pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbo
             .err => |err| {
                 file.close();
                 _ = bun.sys.unlink(tmpname);
-                Output.err(err, "failed to change lockfile permissions\n{}", .{});
+                Output.err(err, "failed to change lockfile permissions", .{});
                 Global.crash();
             },
             .result => {},
@@ -4395,13 +4442,39 @@ pub const Package = extern struct {
                     // - in the same position
                     // - shifted by a constant offset
                     while (to_dep_id < to_deps_end) : (to_dep_id += 1) {
-                        if (from_dep.name_hash == to_lockfile.buffers.dependencies.items[to_dep_id].name_hash) break :found;
+                        if (from_dep.name_hash == to_lockfile.buffers.dependencies.items[to_dep_id].name_hash) {
+                            const from_is_workspace_only = from_dep.behavior.isWorkspaceOnly();
+                            const to_is_workspace_only = to_lockfile.buffers.dependencies.items[to_dep_id].behavior.isWorkspaceOnly();
+
+                            if (from_is_workspace_only and to_is_workspace_only) {
+                                break :found;
+                            }
+
+                            if (from_is_workspace_only or to_is_workspace_only) {
+                                continue;
+                            }
+
+                            break :found;
+                        }
                     }
 
                     // less common, o(n^2) case
                     to_dep_id = to_deps_off;
                     while (to_dep_id < prev_i) : (to_dep_id += 1) {
-                        if (from_dep.name_hash == to_lockfile.buffers.dependencies.items[to_dep_id].name_hash) break :found;
+                        if (from_dep.name_hash == to_lockfile.buffers.dependencies.items[to_dep_id].name_hash) {
+                            const from_is_workspace_only = from_dep.behavior.isWorkspaceOnly();
+                            const to_is_workspace_only = to_lockfile.buffers.dependencies.items[to_dep_id].behavior.isWorkspaceOnly();
+
+                            if (from_is_workspace_only and to_is_workspace_only) {
+                                break :found;
+                            }
+
+                            if (from_is_workspace_only or to_is_workspace_only) {
+                                continue;
+                            }
+
+                            break :found;
+                        }
                     }
 
                     // We found a removed dependency!
@@ -4542,16 +4615,18 @@ pub const Package = extern struct {
             // number of from_deps could be greater than to_deps.
             summary.add = @truncate((to_deps_len) -| (from_deps.len -| summary.remove));
 
-            const to_scripts = to_lockfile.packages.items(.scripts)[to_pkg_id];
-            const from_scripts = from_pkg_scripts[from_pkg_id];
-            inline for (Lockfile.Scripts.names) |hook| {
-                if (!@field(to_scripts, hook).eql(
-                    @field(from_scripts, hook),
-                    to_lockfile.buffers.string_bytes.items,
-                    from_lockfile.buffers.string_bytes.items,
-                )) {
-                    // We found a changed life-cycle script
-                    summary.update += 1;
+            if (from_pkg_id == 0) {
+                const to_scripts = to_lockfile.packages.items(.scripts)[to_pkg_id];
+                const from_scripts = from_pkg_scripts[from_pkg_id];
+                inline for (Lockfile.Scripts.names) |hook| {
+                    if (!@field(to_scripts, hook).eql(
+                        @field(from_scripts, hook),
+                        to_lockfile.buffers.string_bytes.items,
+                        from_lockfile.buffers.string_bytes.items,
+                    )) {
+                        // We found a changes life-cycle script
+                        summary.update += 1;
+                    }
                 }
             }
 
@@ -4687,8 +4762,6 @@ pub const Package = extern struct {
             bun.assert(dependency_version.tag != .npm and dependency_version.tag != .dist_tag);
         }
 
-        var found_workspace = false;
-
         switch (dependency_version.tag) {
             .folder => {
                 const relative = Path.relative(
@@ -4719,8 +4792,8 @@ pub const Package = extern struct {
                             &path,
                             log,
                         )) |dep| {
-                            found_workspace = true;
-                            dependency_version = dep;
+                            dependency_version.tag = dep.tag;
+                            dependency_version.value = dep.value;
                         }
                     } else {
                         // It doesn't satisfy, but a workspace shares the same name. Override the workspace with the other dependency
@@ -4743,7 +4816,6 @@ pub const Package = extern struct {
                     if (workspace_range) |range| {
                         if (workspace_version) |ver| {
                             if (range.satisfies(ver, buf, buf)) {
-                                dependency_version.literal = path;
                                 dependency_version.value.workspace = path;
                                 break :workspace;
                             }
@@ -4753,7 +4825,6 @@ pub const Package = extern struct {
                         const range_input = range.input.slice(lockfile.buffers.string_bytes.items);
                         const version_literal = strings.trim(range_input, &strings.whitespace_chars);
                         if (version_literal.len == 0 or range.@"is *"() or Semver.Version.isTaggedVersionOnly(version_literal)) {
-                            dependency_version.literal = path;
                             dependency_version.value.workspace = path;
                             break :workspace;
                         }
@@ -4773,13 +4844,12 @@ pub const Package = extern struct {
                         return error.InstallFailed;
                     }
 
-                    dependency_version.literal = path;
                     dependency_version.value.workspace = path;
                 } else {
                     const workspace = dependency_version.value.workspace.slice(buf);
                     const path = string_builder.append(String, if (strings.eqlComptime(workspace, "*")) "*" else brk: {
                         var buf2: bun.PathBuffer = undefined;
-                        break :brk Path.relativePlatform(
+                        const rel = Path.relativePlatform(
                             FileSystem.instance.top_level_dir,
                             Path.joinAbsStringBuf(
                                 FileSystem.instance.top_level_dir,
@@ -4790,15 +4860,18 @@ pub const Package = extern struct {
                                 },
                                 .auto,
                             ),
-                            .posix,
+                            .auto,
                             false,
                         );
+                        if (comptime Environment.isWindows) {
+                            bun.path.dangerouslyConvertPathToPosixInPlace(u8, Path.relative_to_common_path_buf[0..rel.len]);
+                        }
+                        break :brk rel;
                     });
                     if (comptime Environment.allow_assert) {
                         assert(path.len() > 0);
                         assert(!std.fs.path.isAbsolute(path.slice(buf)));
                     }
-                    dependency_version.literal = path;
                     dependency_version.value.workspace = path;
 
                     const workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, name_hash);

@@ -1,35 +1,26 @@
-import { describe, test, expect, beforeEach, beforeAll, afterAll, it } from "bun:test";
+import { describe, expect, test, beforeAll, afterAll, it } from "bun:test";
 import { spawn, file, write } from "bun";
 import { rm, exists } from "fs/promises";
+import { join } from "path";
 import {
   VerdaccioRegistry,
+  bunExe,
   bunEnv as env,
   stderrForInstall,
-  bunExe,
   runBunInstall,
   pack,
   tmpdirSync,
   isWindows,
 } from "harness";
-import { join } from "path";
 
-var verdaccio: VerdaccioRegistry;
-var packageDir: string;
-var packageJson: string;
+const registry = new VerdaccioRegistry();
 
 beforeAll(async () => {
-  verdaccio = new VerdaccioRegistry();
-  await verdaccio.start();
+  await registry.start();
 });
 
 afterAll(() => {
-  verdaccio.stop();
-});
-
-beforeEach(async () => {
-  ({ packageDir, packageJson } = await verdaccio.createTestDir());
-  env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
-  env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
+  registry.stop();
 });
 
 export async function publish(
@@ -115,7 +106,8 @@ describe("otp", async () => {
 
   for (const setAuthHeader of [true, false]) {
     test("mock web login" + (setAuthHeader ? "" : " (without auth header)"), async () => {
-      const token = await verdaccio.generateUser("otp" + (setAuthHeader ? "" : "noheader"), "otp");
+      const { packageDir, packageJson } = await registry.createTestDir();
+      const token = await registry.generateUser("otp" + (setAuthHeader ? "" : "noheader"), "otp");
 
       using mockRegistry = Bun.serve({
         port: 0,
@@ -127,7 +119,7 @@ describe("otp", async () => {
       cache = false
       registry = { url = "http://localhost:${mockRegistry.port}", token = "${token}" }`;
       await Promise.all([
-        rm(join(verdaccio.packagesPath, "otp-pkg-1"), { recursive: true, force: true }),
+        rm(join(registry.packagesPath, "otp-pkg-1"), { recursive: true, force: true }),
         write(join(packageDir, "bunfig.toml"), bunfig),
         write(
           packageJson,
@@ -147,7 +139,8 @@ describe("otp", async () => {
   }
 
   test("otp failure", async () => {
-    const token = await verdaccio.generateUser("otp-fail", "otp");
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const token = await registry.generateUser("otp-fail", "otp");
     using mockRegistry = Bun.serve({
       port: 0,
       fetch: mockRegistryFetch({ token, otpFail: true }),
@@ -159,7 +152,7 @@ describe("otp", async () => {
       registry = { url = "http://localhost:${mockRegistry.port}", token = "${token}" }`;
 
     await Promise.all([
-      rm(join(verdaccio.packagesPath, "otp-pkg-2"), { recursive: true, force: true }),
+      rm(join(registry.packagesPath, "otp-pkg-2"), { recursive: true, force: true }),
       write(join(packageDir, "bunfig.toml"), bunfig),
       write(
         packageJson,
@@ -180,12 +173,13 @@ describe("otp", async () => {
 
   for (const shouldIgnoreNotice of [false, true]) {
     test(`npm-notice with login url${shouldIgnoreNotice ? " (ignored)" : ""}`, async () => {
+      const { packageDir, packageJson } = await registry.createTestDir();
       // Situation: user has 2FA enabled account with faceid sign-in.
       // They run `bun publish` with --auth-type=legacy, prompting them
       // to enter their OTP. Because they have faceid sign-in, they don't
       // have a code to enter, so npm sends a message in the npm-notice
       // header with a url for logging in.
-      const token = await verdaccio.generateUser(`otp-notice${shouldIgnoreNotice ? "-ignore" : ""}`, "otp");
+      const token = await registry.generateUser(`otp-notice${shouldIgnoreNotice ? "-ignore" : ""}`, "otp");
       using mockRegistry = Bun.serve({
         port: 0,
         fetch: mockRegistryFetch({ token, npmNotice: true, xLocalCache: shouldIgnoreNotice }),
@@ -197,7 +191,7 @@ describe("otp", async () => {
         registry = { url = "http://localhost:${mockRegistry.port}", token = "${token}" }`;
 
       await Promise.all([
-        rm(join(verdaccio.packagesPath, "otp-pkg-3"), { recursive: true, force: true }),
+        rm(join(registry.packagesPath, "otp-pkg-3"), { recursive: true, force: true }),
         write(join(packageDir, "bunfig.toml"), bunfig),
         write(
           packageJson,
@@ -228,7 +222,8 @@ describe("otp", async () => {
   ];
   for (const envInfo of fakeCIEnvs) {
     test(`CI user agent name: ${envInfo.ci}`, async () => {
-      const token = await verdaccio.generateUser(`otp-${envInfo.ci}`, "otp");
+      const { packageDir, packageJson } = await registry.createTestDir();
+      const token = await registry.generateUser(`otp-${envInfo.ci}`, "otp");
       using mockRegistry = Bun.serve({
         port: 0,
         fetch: mockRegistryFetch({ token, expectedCI: envInfo.ci }),
@@ -240,7 +235,7 @@ describe("otp", async () => {
         registry = { url = "http://localhost:${mockRegistry.port}", token = "${token}" }`;
 
       await Promise.all([
-        rm(join(verdaccio.packagesPath, "otp-pkg-4"), { recursive: true, force: true }),
+        rm(join(registry.packagesPath, "otp-pkg-4"), { recursive: true, force: true }),
         write(join(packageDir, "bunfig.toml"), bunfig),
         write(
           packageJson,
@@ -264,9 +259,10 @@ describe("otp", async () => {
 });
 
 test("can publish a package then install it", async () => {
-  const bunfig = await verdaccio.authBunfig("basic");
+  const { packageDir, packageJson } = await registry.createTestDir();
+  const bunfig = await registry.authBunfig("basic");
   await Promise.all([
-    rm(join(verdaccio.packagesPath, "publish-pkg-1"), { recursive: true, force: true }),
+    rm(join(registry.packagesPath, "publish-pkg-1"), { recursive: true, force: true }),
     write(
       packageJson,
       JSON.stringify({
@@ -289,7 +285,8 @@ test("can publish a package then install it", async () => {
   expect(await exists(join(packageDir, "node_modules", "publish-pkg-1", "package.json"))).toBeTrue();
 });
 test("can publish from a tarball", async () => {
-  const bunfig = await verdaccio.authBunfig("tarball");
+  const { packageDir, packageJson } = await registry.createTestDir();
+  const bunfig = await registry.authBunfig("tarball");
   const json = {
     name: "publish-pkg-2",
     version: "2.2.2",
@@ -298,7 +295,7 @@ test("can publish from a tarball", async () => {
     },
   };
   await Promise.all([
-    rm(join(verdaccio.packagesPath, "publish-pkg-2"), { recursive: true, force: true }),
+    rm(join(registry.packagesPath, "publish-pkg-2"), { recursive: true, force: true }),
     write(packageJson, JSON.stringify(json)),
     write(join(packageDir, "bunfig.toml"), bunfig),
   ]);
@@ -314,7 +311,7 @@ test("can publish from a tarball", async () => {
   expect(await exists(join(packageDir, "node_modules", "publish-pkg-2", "package.json"))).toBeTrue();
 
   await Promise.all([
-    rm(join(verdaccio.packagesPath, "publish-pkg-2"), { recursive: true, force: true }),
+    rm(join(registry.packagesPath, "publish-pkg-2"), { recursive: true, force: true }),
     rm(join(packageDir, "bun.lockb"), { recursive: true, force: true }),
     rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
   ]);
@@ -325,8 +322,32 @@ test("can publish from a tarball", async () => {
   expect(err).not.toContain("warn:");
   expect(exitCode).toBe(0);
 
-  await runBunInstall(env, packageDir);
+  await runBunInstall(env, packageDir, { savesLockfile: false });
   expect(await file(join(packageDir, "node_modules", "publish-pkg-2", "package.json")).json()).toEqual(json);
+});
+test("can publish scoped packages", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  const bunfig = await registry.authBunfig("scoped-pkg");
+  const json = {
+    name: "@scoped/pkg-1",
+    version: "1.1.1",
+    dependencies: {
+      "@scoped/pkg-1": "1.1.1",
+    },
+  };
+  await Promise.all([
+    rm(join(registry.packagesPath, "@scoped", "pkg-1"), { recursive: true, force: true }),
+    write(packageJson, JSON.stringify(json)),
+    write(join(packageDir, "bunfig.toml"), bunfig),
+  ]);
+
+  const { out, err, exitCode } = await publish(env, packageDir);
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("warn:");
+  expect(exitCode).toBe(0);
+
+  await runBunInstall(env, packageDir);
+  expect(await file(join(packageDir, "node_modules", "@scoped", "pkg-1", "package.json")).json()).toEqual(json);
 });
 
 for (const info of [
@@ -335,15 +356,16 @@ for (const info of [
   { user: "bin3", directories: { bin: "bins" } },
 ]) {
   test(`can publish and install binaries with ${JSON.stringify(info)}`, async () => {
+    const { packageDir, packageJson } = await registry.createTestDir({ saveTextLockfile: false });
     const publishDir = tmpdirSync();
-    const bunfig = await verdaccio.authBunfig("binaries-" + info.user);
+    const bunfig = await registry.authBunfig("binaries-" + info.user);
 
     await Promise.all([
-      rm(join(verdaccio.packagesPath, "publish-pkg-bins"), { recursive: true, force: true }),
+      rm(join(registry.packagesPath, "publish-pkg-" + info.user), { recursive: true, force: true }),
       write(
         join(publishDir, "package.json"),
         JSON.stringify({
-          name: "publish-pkg-bins",
+          name: "publish-pkg-" + info.user,
           version: "1.1.1",
           ...info,
         }),
@@ -359,7 +381,7 @@ for (const info of [
         JSON.stringify({
           name: "foo",
           dependencies: {
-            "publish-pkg-bins": "1.1.1",
+            ["publish-pkg-" + info.user]: "1.1.1",
           },
         }),
       ),
@@ -368,7 +390,7 @@ for (const info of [
     const { out, err, exitCode } = await publish(env, publishDir);
     expect(err).not.toContain("error:");
     expect(err).not.toContain("warn:");
-    expect(out).toContain("+ publish-pkg-bins@1.1.1");
+    expect(out).toContain(`+ publish-pkg-${info.user}@1.1.1`);
     expect(exitCode).toBe(0);
 
     await runBunInstall(env, packageDir);
@@ -379,7 +401,14 @@ for (const info of [
       exists(join(packageDir, "node_modules", ".bin", isWindows ? "bin3.js.bunx" : "bin3.js")),
       exists(join(packageDir, "node_modules", ".bin", isWindows ? "bin4.js.bunx" : "bin4.js")),
       exists(join(packageDir, "node_modules", ".bin", isWindows ? "moredir" : "moredir/bin4.js")),
-      exists(join(packageDir, "node_modules", ".bin", isWindows ? "publish-pkg-bins.bunx" : "publish-pkg-bins")),
+      exists(
+        join(
+          packageDir,
+          "node_modules",
+          ".bin",
+          isWindows ? `publish-pkg-${info.user}.bunx` : "publish-pkg-" + info.user,
+        ),
+      ),
     ]);
 
     switch (info.user) {
@@ -400,10 +429,11 @@ for (const info of [
 }
 
 test("dependencies are installed", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
   const publishDir = tmpdirSync();
-  const bunfig = await verdaccio.authBunfig("manydeps");
+  const bunfig = await registry.authBunfig("manydeps");
   await Promise.all([
-    rm(join(verdaccio.packagesPath, "publish-pkg-deps"), { recursive: true, force: true }),
+    rm(join(registry.packagesPath, "publish-pkg-deps"), { recursive: true, force: true }),
     write(
       join(publishDir, "package.json"),
       JSON.stringify(
@@ -454,7 +484,8 @@ test("dependencies are installed", async () => {
 });
 
 test("can publish workspace package", async () => {
-  const bunfig = await verdaccio.authBunfig("workspace");
+  const { packageDir, packageJson } = await registry.createTestDir();
+  const bunfig = await registry.authBunfig("workspace");
   const pkgJson = {
     name: "publish-pkg-3",
     version: "3.3.3",
@@ -463,7 +494,7 @@ test("can publish workspace package", async () => {
     },
   };
   await Promise.all([
-    rm(join(verdaccio.packagesPath, "publish-pkg-3"), { recursive: true, force: true }),
+    rm(join(registry.packagesPath, "publish-pkg-3"), { recursive: true, force: true }),
     write(join(packageDir, "bunfig.toml"), bunfig),
     write(
       packageJson,
@@ -486,9 +517,10 @@ test("can publish workspace package", async () => {
 
 describe("--dry-run", async () => {
   test("does not publish", async () => {
-    const bunfig = await verdaccio.authBunfig("dryrun");
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const bunfig = await registry.authBunfig("dryrun");
     await Promise.all([
-      rm(join(verdaccio.packagesPath, "dry-run-1"), { recursive: true, force: true }),
+      rm(join(registry.packagesPath, "dry-run-1"), { recursive: true, force: true }),
       write(join(packageDir, "bunfig.toml"), bunfig),
       write(
         packageJson,
@@ -505,12 +537,13 @@ describe("--dry-run", async () => {
     const { out, err, exitCode } = await publish(env, packageDir, "--dry-run");
     expect(exitCode).toBe(0);
 
-    expect(await exists(join(verdaccio.packagesPath, "dry-run-1"))).toBeFalse();
+    expect(await exists(join(registry.packagesPath, "dry-run-1"))).toBeFalse();
   });
   test("does not publish from tarball path", async () => {
-    const bunfig = await verdaccio.authBunfig("dryruntarball");
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const bunfig = await registry.authBunfig("dryruntarball");
     await Promise.all([
-      rm(join(verdaccio.packagesPath, "dry-run-2"), { recursive: true, force: true }),
+      rm(join(registry.packagesPath, "dry-run-2"), { recursive: true, force: true }),
       write(join(packageDir, "bunfig.toml"), bunfig),
       write(
         packageJson,
@@ -529,7 +562,7 @@ describe("--dry-run", async () => {
     const { out, err, exitCode } = await publish(env, packageDir, "./dry-run-2-2.2.2.tgz", "--dry-run");
     expect(exitCode).toBe(0);
 
-    expect(await exists(join(verdaccio.packagesPath, "dry-run-2"))).toBeFalse();
+    expect(await exists(join(registry.packagesPath, "dry-run-2"))).toBeFalse();
   });
 });
 
@@ -561,9 +594,10 @@ postpack: \${fs.existsSync("postpack.txt")}\`)`;
 
   for (const arg of ["", "--dry-run"]) {
     test(`should run in order${arg ? " (--dry-run)" : ""}`, async () => {
-      const bunfig = await verdaccio.authBunfig("lifecycle" + (arg ? "dry" : ""));
+      const { packageDir, packageJson } = await registry.createTestDir();
+      const bunfig = await registry.authBunfig("lifecycle" + (arg ? "dry" : ""));
       await Promise.all([
-        rm(join(verdaccio.packagesPath, "publish-pkg-4"), { recursive: true, force: true }),
+        rm(join(registry.packagesPath, "publish-pkg-4"), { recursive: true, force: true }),
         write(packageJson, JSON.stringify(json)),
         write(join(packageDir, "script.js"), script),
         write(join(packageDir, "bunfig.toml"), bunfig),
@@ -593,9 +627,10 @@ postpack: \${fs.existsSync("postpack.txt")}\`)`;
   }
 
   test("--ignore-scripts", async () => {
-    const bunfig = await verdaccio.authBunfig("ignorescripts");
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const bunfig = await registry.authBunfig("ignorescripts");
     await Promise.all([
-      rm(join(verdaccio.packagesPath, "publish-pkg-5"), { recursive: true, force: true }),
+      rm(join(registry.packagesPath, "publish-pkg-5"), { recursive: true, force: true }),
       write(packageJson, JSON.stringify(json)),
       write(join(packageDir, "script.js"), script),
       write(join(packageDir, "bunfig.toml"), bunfig),
@@ -618,9 +653,10 @@ postpack: \${fs.existsSync("postpack.txt")}\`)`;
 });
 
 test("attempting to publish a private package should fail", async () => {
-  const bunfig = await verdaccio.authBunfig("privatepackage");
+  const { packageDir, packageJson } = await registry.createTestDir();
+  const bunfig = await registry.authBunfig("privatepackage");
   await Promise.all([
-    rm(join(verdaccio.packagesPath, "publish-pkg-6"), { recursive: true, force: true }),
+    rm(join(registry.packagesPath, "publish-pkg-6"), { recursive: true, force: true }),
     write(
       packageJson,
       JSON.stringify({
@@ -639,7 +675,7 @@ test("attempting to publish a private package should fail", async () => {
   let { out, err, exitCode } = await publish(env, packageDir);
   expect(exitCode).toBe(1);
   expect(err).toContain("error: attempted to publish a private package");
-  expect(await exists(join(verdaccio.packagesPath, "publish-pkg-6-6.6.6.tgz"))).toBeFalse();
+  expect(await exists(join(registry.packagesPath, "publish-pkg-6-6.6.6.tgz"))).toBeFalse();
 
   // try tarball
   await pack(packageDir, env);
@@ -651,9 +687,10 @@ test("attempting to publish a private package should fail", async () => {
 
 describe("access", async () => {
   test("--access", async () => {
-    const bunfig = await verdaccio.authBunfig("accessflag");
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const bunfig = await registry.authBunfig("accessflag");
     await Promise.all([
-      rm(join(verdaccio.packagesPath, "publish-pkg-7"), { recursive: true, force: true }),
+      rm(join(registry.packagesPath, "publish-pkg-7"), { recursive: true, force: true }),
       write(join(packageDir, "bunfig.toml"), bunfig),
       write(
         packageJson,
@@ -672,12 +709,13 @@ describe("access", async () => {
     ({ out, err, exitCode } = await publish(env, packageDir, "--access", "public"));
     expect(exitCode).toBe(0);
 
-    expect(await exists(join(verdaccio.packagesPath, "publish-pkg-7"))).toBeTrue();
+    expect(await exists(join(registry.packagesPath, "publish-pkg-7"))).toBeTrue();
   });
 
   for (const access of ["restricted", "public"]) {
     test(`access ${access}`, async () => {
-      const bunfig = await verdaccio.authBunfig("access" + access);
+      const { packageDir, packageJson } = await registry.createTestDir();
+      const bunfig = await registry.authBunfig("access" + access);
 
       const pkgJson = {
         name: "@secret/publish-pkg-8",
@@ -691,7 +729,7 @@ describe("access", async () => {
       };
 
       await Promise.all([
-        rm(join(verdaccio.packagesPath, "@secret", "publish-pkg-8"), { recursive: true, force: true }),
+        rm(join(registry.packagesPath, "@secret", "publish-pkg-8"), { recursive: true, force: true }),
         write(join(packageDir, "bunfig.toml"), bunfig),
         write(packageJson, JSON.stringify(pkgJson)),
       ]);
@@ -710,7 +748,8 @@ describe("access", async () => {
 
 describe("tag", async () => {
   test("can publish with a tag", async () => {
-    const bunfig = await verdaccio.authBunfig("simpletag");
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const bunfig = await registry.authBunfig("simpletag");
     const pkgJson = {
       name: "publish-pkg-9",
       version: "9.9.9",
@@ -719,7 +758,7 @@ describe("tag", async () => {
       },
     };
     await Promise.all([
-      rm(join(verdaccio.packagesPath, "publish-pkg-9"), { recursive: true, force: true }),
+      rm(join(registry.packagesPath, "publish-pkg-9"), { recursive: true, force: true }),
       write(join(packageDir, "bunfig.toml"), bunfig),
       write(packageJson, JSON.stringify(pkgJson)),
     ]);
@@ -733,6 +772,7 @@ describe("tag", async () => {
 });
 
 it("$npm_command is accurate during publish", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
   await write(
     packageJson,
     JSON.stringify({
@@ -743,8 +783,8 @@ it("$npm_command is accurate during publish", async () => {
       },
     }),
   );
-  await write(join(packageDir, "bunfig.toml"), await verdaccio.authBunfig("npm_command"));
-  await rm(join(verdaccio.packagesPath, "publish-pkg-10"), { recursive: true, force: true });
+  await write(join(packageDir, "bunfig.toml"), await registry.authBunfig("npm_command"));
+  await rm(join(registry.packagesPath, "publish-pkg-10"), { recursive: true, force: true });
   let { out, err, exitCode } = await publish(env, packageDir, "--tag", "simpletag");
   expect(err).toBe(`$ echo $npm_command\n`);
   expect(out.split("\n")).toEqual([
@@ -759,7 +799,7 @@ it("$npm_command is accurate during publish", async () => {
     expect.stringContaining(`Packed size: `),
     `Tag: simpletag`,
     `Access: default`,
-    `Registry: http://localhost:${verdaccio.port}/`,
+    `Registry: http://localhost:${registry.port}/`,
     ``,
     ` + publish-pkg-10@1.0.0`,
     `publish`,
@@ -769,6 +809,7 @@ it("$npm_command is accurate during publish", async () => {
 });
 
 it("$npm_lifecycle_event is accurate during publish", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
   await write(
     packageJson,
     `{
@@ -782,8 +823,8 @@ it("$npm_lifecycle_event is accurate during publish", async () => {
     }
     `,
   );
-  await write(join(packageDir, "bunfig.toml"), await verdaccio.authBunfig("npm_lifecycle_event"));
-  await rm(join(verdaccio.packagesPath, "publish-pkg-11"), { recursive: true, force: true });
+  await write(join(packageDir, "bunfig.toml"), await registry.authBunfig("npm_lifecycle_event"));
+  await rm(join(registry.packagesPath, "publish-pkg-11"), { recursive: true, force: true });
   let { out, err, exitCode } = await publish(env, packageDir, "--tag", "simpletag");
   expect(err).toBe(`$ echo 2 $npm_lifecycle_event\n$ echo 3 $npm_lifecycle_event\n`);
   expect(out.split("\n")).toEqual([
@@ -798,7 +839,7 @@ it("$npm_lifecycle_event is accurate during publish", async () => {
     expect.stringContaining(`Packed size: `),
     `Tag: simpletag`,
     `Access: default`,
-    `Registry: http://localhost:${verdaccio.port}/`,
+    `Registry: http://localhost:${registry.port}/`,
     ``,
     ` + publish-pkg-11@1.0.0`,
     `2 publish`,

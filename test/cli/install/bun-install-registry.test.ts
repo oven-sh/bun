@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { copyFileSync, mkdirSync } from "fs";
-import { cp, exists, mkdir, readlink, rm, writeFile } from "fs/promises";
+import { cp, exists, mkdir, readlink, rm, writeFile, lstat } from "fs/promises";
 import {
   assertManifestsPopulated,
   bunExe,
@@ -51,7 +51,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  ({ packageDir, packageJson } = await verdaccio.createTestDir());
+  ({ packageDir, packageJson } = await verdaccio.createTestDir({ saveTextLockfile: false }));
   env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
   env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
 });
@@ -1070,6 +1070,25 @@ test("--lockfile-only", async () => {
   expect((await Bun.file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234")).toBe(
     firstLockfile,
   );
+
+  // --silent works
+  const {
+    stdout,
+    stderr,
+    exited: exited2,
+  } = spawn({
+    cmd: [bunExe(), "install", "--lockfile-only", "--silent"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  expect(await exited2).toBe(0);
+  const out = await Bun.readableStreamToText(stdout);
+  const err = await Bun.readableStreamToText(stderr);
+  expect(out).toBe("");
+  expect(err).toBe("");
 });
 
 describe("bundledDependencies", () => {
@@ -1924,6 +1943,7 @@ test("manifest cache will invalidate when registry changes", async () => {
 [install]
 cache = "${cacheDir}"
 registry = "http://localhost:${port}"
+saveTextLockfile = false
       `,
     ),
     write(
@@ -4451,28 +4471,36 @@ describe("transitive file dependencies", () => {
       "package.json",
     );
     const results = await Promise.all([
-      exists(join(packageDir, "node_modules", "file-dep", "node_modules", "files", "package.json")),
+      (
+        await lstat(join(packageDir, "node_modules", "file-dep", "node_modules", "files", "package.json"))
+      ).isSymbolicLink(),
       readdirSorted(join(packageDir, "node_modules", "missing-file-dep", "node_modules")),
       exists(join(packageDir, "node_modules", "aliased-file-dep", "package.json")),
       isWindows
         ? file(await readlink(aliasedFileDepFilesPackageJson)).json()
         : file(aliasedFileDepFilesPackageJson).json(),
-      exists(
-        join(packageDir, "node_modules", "@scoped", "file-dep", "node_modules", "@scoped", "files", "package.json"),
-      ),
-      exists(
-        join(
-          packageDir,
-          "node_modules",
-          "@another-scope",
-          "file-dep",
-          "node_modules",
-          "@scoped",
-          "files",
-          "package.json",
-        ),
-      ),
-      exists(join(packageDir, "node_modules", "self-file-dep", "node_modules", "self-file-dep", "package.json")),
+      (
+        await lstat(
+          join(packageDir, "node_modules", "@scoped", "file-dep", "node_modules", "@scoped", "files", "package.json"),
+        )
+      ).isSymbolicLink(),
+      (
+        await lstat(
+          join(
+            packageDir,
+            "node_modules",
+            "@another-scope",
+            "file-dep",
+            "node_modules",
+            "@scoped",
+            "files",
+            "package.json",
+          ),
+        )
+      ).isSymbolicLink(),
+      (
+        await lstat(join(packageDir, "node_modules", "self-file-dep", "node_modules", "self-file-dep", "package.json"))
+      ).isSymbolicLink(),
     ]);
 
     expect(results).toEqual([
@@ -4502,38 +4530,46 @@ describe("transitive file dependencies", () => {
       file(join(packageDir, "node_modules", "@another-scope", "file-dep", "package.json")).json(),
       file(join(packageDir, "node_modules", "self-file-dep", "package.json")).json(),
 
-      exists(join(packageDir, "pkg1", "node_modules", "file-dep", "node_modules", "files", "package.json")), // true
+      (
+        await lstat(join(packageDir, "pkg1", "node_modules", "file-dep", "node_modules", "files", "package.json"))
+      ).isSymbolicLink(),
       readdirSorted(join(packageDir, "pkg1", "node_modules", "missing-file-dep", "node_modules")), // []
       exists(join(packageDir, "pkg1", "node_modules", "aliased-file-dep")), // false
-      exists(
-        join(
-          packageDir,
-          "pkg1",
-          "node_modules",
-          "@scoped",
-          "file-dep",
-          "node_modules",
-          "@scoped",
-          "files",
-          "package.json",
-        ),
-      ),
-      exists(
-        join(
-          packageDir,
-          "pkg1",
-          "node_modules",
-          "@another-scope",
-          "file-dep",
-          "node_modules",
-          "@scoped",
-          "files",
-          "package.json",
-        ),
-      ),
-      exists(
-        join(packageDir, "pkg1", "node_modules", "self-file-dep", "node_modules", "self-file-dep", "package.json"),
-      ),
+      (
+        await lstat(
+          join(
+            packageDir,
+            "pkg1",
+            "node_modules",
+            "@scoped",
+            "file-dep",
+            "node_modules",
+            "@scoped",
+            "files",
+            "package.json",
+          ),
+        )
+      ).isSymbolicLink(),
+      (
+        await lstat(
+          join(
+            packageDir,
+            "pkg1",
+            "node_modules",
+            "@another-scope",
+            "file-dep",
+            "node_modules",
+            "@scoped",
+            "files",
+            "package.json",
+          ),
+        )
+      ).isSymbolicLink(),
+      (
+        await lstat(
+          join(packageDir, "pkg1", "node_modules", "self-file-dep", "node_modules", "self-file-dep", "package.json"),
+        )
+      ).isSymbolicLink(),
       readdirSorted(join(packageDir, "pkg1", "node_modules")),
     ]);
 

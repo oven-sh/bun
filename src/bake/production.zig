@@ -109,7 +109,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         unresolved_config_entry_point = try std.fmt.allocPrint(ctx.allocator, "./{s}", .{unresolved_config_entry_point});
     }
 
-    const config_entry_point = b.resolver.resolve(cwd, unresolved_config_entry_point, .entry_point) catch |err| {
+    const config_entry_point = b.resolver.resolve(cwd, unresolved_config_entry_point, .entry_point_build) catch |err| {
         if (err == error.ModuleNotFound) {
             if (ctx.args.entry_points.len == 0) {
                 // Onboarding message
@@ -843,9 +843,6 @@ export fn BakeProdLoad(pt: *PerThread, key: bun.String) bun.String {
     defer utf8.deinit();
     if (pt.module_map.get(utf8.slice())) |value| {
         return pt.bundled_outputs[value.get()].value.toBunString();
-    }
-    for (pt.module_map.keys()) |keys| {
-        std.debug.print("key that does exist: {s}\n", .{keys});
     }
     return bun.String.dead;
 }

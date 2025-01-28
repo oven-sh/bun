@@ -32,8 +32,7 @@ pub const All = struct {
         .context = {},
     },
     active_timer_count: i32 = 0,
-    uv_timer: if (Environment.isWindows) uv.Timer else void =
-        if (Environment.isWindows) std.mem.zeroes(uv.Timer) else {},
+    uv_timer: if (Environment.isWindows) uv.Timer else void = if (Environment.isWindows) std.mem.zeroes(uv.Timer),
 
     // We split up the map here to avoid storing an extra "repeat" boolean
     maps: struct {
@@ -81,7 +80,7 @@ pub const All = struct {
             else
                 timespec{ .nsec = 0, .sec = 0 };
 
-            this.uv_timer.start(wait.ms(), 0, &onUVTimer);
+            this.uv_timer.start(wait.msUnsigned(), 0, &onUVTimer);
 
             if (this.active_timer_count > 0) {
                 this.uv_timer.ref();

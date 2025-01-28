@@ -45,7 +45,6 @@ declare module "bun" {
       // - publicPath is set by the user (TODO: add options.publicPath)
       // - emitDCEAnnotations is not useful
       // - banner and footer do not make sense in these multi-file builds
-      // - experimentalCss cannot be disabled
       // - disabling external would make it exclude imported files.
       // - plugins is specified in the framework object, and currently merge between client and server.
 
@@ -185,20 +184,20 @@ declare module "bun" {
        *         // name the user has given.
        *         "ClientComp",
        *     );
-       * 
+       *
        * When separateSSRGraph is disabled, the call looks like:
        *
        *     export const ClientComp = registerClientReference(
        *         function () { ... original user implementation here ... },
-       * 
+       *
        *         // The file path of the client-side file to import in the browser.
        *         "/_bun/d41d8cd0.js",
-       * 
+       *
        *         // The export within the client-side file to load. This is
        *         // not guaranteed to match the export name the user has given.
        *        "ClientComp",
        *     );
-       * 
+       *
        * While subtle, the parameters in `separateSSRGraph` mode are opaque
        * strings that have to be looked up in the server manifest. While when
        * there isn't a separate SSR graph, the two parameters are the actual
@@ -526,7 +525,7 @@ declare module "bun" {
      * Outside of server-components, this will be "client" when the target is
      * set to "browser" and "server" otherwise.
      */
-    side: 'server' | 'client';
+    side: "server" | "client";
   }
 }
 
@@ -590,7 +589,6 @@ declare module "bun:bake/server" {
     /** Export name */
     name: string;
   }
-
 }
 
 /** Available in client-side files. */

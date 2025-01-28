@@ -84,6 +84,13 @@ generateJSValueModuleSourceCode(JSC::JSGlobalObject* globalObject,
             value.getObject());
     }
 
+    return generateJSValueExportDefaultObjectSourceCode(globalObject, value);
+}
+
+JSC::SyntheticSourceProvider::SyntheticSourceGenerator
+generateJSValueExportDefaultObjectSourceCode(JSC::JSGlobalObject* globalObject,
+    JSC::JSValue value)
+{
     if (value.isCell())
         gcProtectNullTolerant(value.asCell());
     return [value](JSC::JSGlobalObject* lexicalGlobalObject,
@@ -93,6 +100,9 @@ generateJSValueModuleSourceCode(JSC::JSGlobalObject* globalObject,
         JSC::VM& vm = lexicalGlobalObject->vm();
         exportNames.append(vm.propertyNames->defaultKeyword);
         exportValues.append(value);
+        const Identifier& esModuleMarker = vm.propertyNames->__esModule;
+        exportNames.append(esModuleMarker);
+        exportValues.append(jsBoolean(true));
 
         if (value.isCell())
             gcUnprotectNullTolerant(value.asCell());

@@ -473,12 +473,12 @@ pub const Archiver = struct {
                             const file_handle_native = brk: {
                                 if (Environment.isWindows) {
                                     const flags = bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC;
-                                    switch (bun.sys.openatWindows(bun.toFD(dir_fd), path, flags)) {
+                                    switch (bun.sys.openatWindows(bun.toFD(dir_fd), path, flags, 0)) {
                                         .result => |fd| break :brk fd,
                                         .err => |e| switch (e.errno) {
                                             @intFromEnum(bun.C.E.PERM), @intFromEnum(bun.C.E.NOENT) => {
                                                 bun.MakePath.makePath(u16, dir, bun.Dirname.dirname(u16, path_slice) orelse return bun.errnoToZigErr(e.errno)) catch {};
-                                                break :brk try bun.sys.openatWindows(bun.toFD(dir_fd), path, flags).unwrap();
+                                                break :brk try bun.sys.openatWindows(bun.toFD(dir_fd), path, flags, 0).unwrap();
                                             },
                                             else => {
                                                 return bun.errnoToZigErr(e.errno);

@@ -101,7 +101,7 @@ exports[`should write plaintext lockfiles 1`] = `
 
 exports[`should escape names 1`] = `
 "{
-  "lockfileVersion": 0,
+  "lockfileVersion": 1,
   "workspaces": {
     "": {
       "name": "quote-in-dependency-name",
@@ -117,9 +117,9 @@ exports[`should escape names 1`] = `
     },
   },
   "packages": {
-    "\\"": ["\\"@workspace:packages/\\"", {}],
+    "\\"": ["\\"@workspace:packages/\\""],
 
-    "pkg1": ["pkg1@workspace:packages/pkg1", { "dependencies": { "\\"": "*" } }],
+    "pkg1": ["pkg1@workspace:packages/pkg1"],
   }
 }
 "

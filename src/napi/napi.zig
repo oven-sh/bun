@@ -372,13 +372,12 @@ pub export fn napi_create_string_utf8(env: napi_env, str: ?[*]const u8, length: 
 
     log("napi_create_string_utf8: {s}", .{slice});
 
-    var string = bun.String.createUTF8(slice);
-    if (string.tag == .Dead) {
-        return env.genericFailure();
+    const globalObject = env.toJS();
+    const string = bun.String.createUTF8ForJS(globalObject, slice);
+    if (globalObject.hasException()) {
+        return env.setLastError(.pending_exception);
     }
-
-    defer string.deref();
-    result.set(env, string.toJS(env.toJS()));
+    result.set(env, string);
     return env.ok();
 }
 pub export fn napi_create_string_utf16(env: napi_env, str: ?[*]const char16_t, length: usize, result_: ?*napi_value) napi_status {
@@ -407,11 +406,9 @@ pub export fn napi_create_string_utf16(env: napi_env, str: ?[*]const char16_t, l
     }
 
     var string, const chars = bun.String.createUninitialized(.utf16, slice.len);
-    defer string.deref();
-
     @memcpy(chars, slice);
 
-    result.set(env, string.toJS(env.toJS()));
+    result.set(env, string.transferToJS(env.toJS()));
     return env.ok();
 }
 pub extern fn napi_create_symbol(env: napi_env, description: napi_value, result: *napi_value) napi_status;
@@ -1882,7 +1879,7 @@ const V8API = if (!bun.Environment.isWindows) struct {
     //
     // dumpbin .\build\CMakeFiles\bun-debug.dir\src\bun.js\bindings\v8\*.cpp.obj /symbols | where-object { $_.Contains(' node::') -or $_.Contains(' v8::') } | foreach-object { (($_ -split "\|")[1] -split " ")[1] } | ForEach-Object { "extern fn @`"${_}`"() *anyopaque;" }
     //
-    // Bug @paperdave if you get stuck here
+    // Bug @paperclover if you get stuck here
     pub extern fn @"?TryGetCurrent@Isolate@v8@@SAPEAV12@XZ"() *anyopaque;
     pub extern fn @"?GetCurrent@Isolate@v8@@SAPEAV12@XZ"() *anyopaque;
     pub extern fn @"?GetCurrentContext@Isolate@v8@@QEAA?AV?$Local@VContext@v8@@@2@XZ"() *anyopaque;

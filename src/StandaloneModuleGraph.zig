@@ -785,6 +785,12 @@ pub const StandaloneModuleGraph = struct {
         const self_exe = openSelf() catch return null;
         defer _ = Syscall.close(self_exe);
 
+        if (bun.getenvZ("BUN_SKIP_STANDALONE_MODULE_GRAPH")) |v| {
+            if (v.len > 0 and !(v.len == 1 and v[0] == '0')) {
+                return null;
+            }
+        }
+
         var trailer_bytes: [4096]u8 = undefined;
         std.posix.lseek_END(self_exe.cast(), -4096) catch return null;
 

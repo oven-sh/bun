@@ -490,6 +490,7 @@ pub const Request = struct {
                     const href = bun.JSC.URL.hrefFromString(this.url);
                     // TODO: what is the right thing to do for invalid URLS?
                     if (!href.isEmpty()) {
+                        this.url.deref();
                         this.url = href;
                     }
 

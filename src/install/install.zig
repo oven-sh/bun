@@ -15004,7 +15004,7 @@ pub const PackageManager = struct {
 
         const lockfile_before_install = manager.lockfile;
 
-        const save_format = load_result.saveFormat(manager);
+        const save_format = load_result.saveFormat(&manager.options);
 
         if (manager.options.lockfile_only) {
             // save the lockfile and exit. make sure metahash is generated for binary lockfile
@@ -15021,7 +15021,7 @@ pub const PackageManager = struct {
                 // added/removed/updated direct dependencies.
                 Output.pretty(
                     \\
-                    \\Saved <green>{s}<r> ({d} package{s})
+                    \\Saved <green>{s}<r> ({d} package{s}) 
                 , .{
                     switch (save_format) {
                         .text => "bun.lock",
@@ -15342,7 +15342,7 @@ pub const PackageManager = struct {
             this.progress.refresh();
         }
 
-        this.lockfile.saveToDisk(save_format, this.options.log_level.isVerbose());
+        this.lockfile.saveToDisk(load_result, &this.options);
 
         // delete binary lockfile if saving text lockfile
         if (save_format == .text and load_result.loadedFromBinaryLockfile()) {

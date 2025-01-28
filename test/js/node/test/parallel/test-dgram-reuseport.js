@@ -12,6 +12,8 @@ function test() {
       socket2.close();
     }));
   }));
+  socket1.on('error', common.mustNotCall());
+  socket2.on('error', common.mustNotCall());
 }
 
 checkSupportReusePort().then(test, () => {

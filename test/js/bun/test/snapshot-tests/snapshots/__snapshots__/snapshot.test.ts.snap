@@ -607,3 +607,19 @@ exports[`snapshot numbering 4`] = `"snap"`;
 exports[`snapshot numbering 6`] = `"hello"`;
 
 exports[`snapshot numbering: hinted 1`] = `"hello"`;
+
+exports[`indented inline snapshots 4`] = `
+"\x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoMatchInlineSnapshot\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
+
+Expected: \x1B[2m
+\x1B[0m\x1B[32m                \x1B[0m\x1B[2m{
+  \x1B[0m\x1B[32m            \x1B[0m\x1B[2m"a": 2,
+\x1B[0m\x1B[32m                \x1B[0m\x1B[2m}
+\x1B[0m
+Received: \x1B[2m
+\x1B[0m\x1B[2m{
+  \x1B[0m\x1B[2m"a": 2,
+\x1B[0m\x1B[2m}
+\x1B[0m
+"
+`;

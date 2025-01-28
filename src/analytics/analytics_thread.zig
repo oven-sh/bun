@@ -122,6 +122,8 @@ pub const Features = struct {
     pub var workers_terminated: usize = 0;
     pub var napi_module_register: usize = 0;
     pub var process_dlopen: usize = 0;
+    pub var postgres_connections: usize = 0;
+    pub var s3: usize = 0;
 
     comptime {
         @export(napi_module_register, .{ .name = "Bun__napi_module_register_count" });

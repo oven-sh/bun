@@ -40,7 +40,7 @@ SYSV_ABI JSC::EncodedJSValue S3Error__toErrorInstance(const S3Error* arg0,
     JSC::JSObject* result = JSC::ErrorInstance::create(globalObject, prototype, message, options);
     result->putDirect(
         vm, vm.propertyNames->name,
-        JSC::JSValue(defaultGlobalObject(globalObject)->commonStrings().S3ErrorString(globalObject)),
+        JSC::JSValue(defaultGlobalObject(globalObject)->commonStrings().s3ErrorString(globalObject)),
         JSC::PropertyAttribute::DontEnum | 0);
     if (err.code.tag != BunStringTag::Empty) {
         JSC::JSValue code = Bun::toJS(globalObject, err.code);

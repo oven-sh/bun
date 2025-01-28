@@ -7,7 +7,7 @@ namespace Bun {
 using namespace JSC;
 
 #define PROCESS_BINDING_NOT_IMPLEMENTED(str)                                                                                                      \
-    JSC ::EncodedJSValue ProcessBinding_Buffer_##str(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)                                   \
+    JSC_DEFINE_HOST_FUNCTION(ProcessBinding_Buffer_##str, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame * callFrame))                \
     {                                                                                                                                             \
         {                                                                                                                                         \
             auto& vm = JSC::getVM(lexicalGlobalObject);                                                                                           \

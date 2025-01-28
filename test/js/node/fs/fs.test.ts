@@ -42,7 +42,7 @@ import fs, {
   writevSync,
 } from "node:fs";
 import * as os from "node:os";
-import { dirname, relative, resolve } from "node:path";
+import path, { dirname, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import _promises, { type FileHandle } from "node:fs/promises";
@@ -3601,5 +3601,48 @@ it("fs.Stat.atime reflects date matching Node.js behavior", () => {
     const now = Date.now();
     stats.atimeMs = now;
     expect(stats.atime).toEqual(new Date(0));
+  }
+});
+
+describe('kernel32 long path conversion does not mangle "../../path" into "path"', () => {
+  const tmp1 = tempDirWithFiles("longpath", {
+    "a/b/config": "true",
+  });
+  const tmp2 = tempDirWithFiles("longpath", {
+    "a/b/hello": "true",
+    "config": "true",
+  });
+  const workingDir1 = path.join(tmp1, "a/b");
+  const workingDir2 = path.join(tmp2, "a/b");
+  const nonExistTests = [
+    ["existsSync", 'assert.strictEqual(fs.existsSync("../../config"), false)'],
+    ["accessSync", 'assert.throws(() => fs.accessSync("../../config"), { code: "ENOENT" })'],
+  ];
+  const existTests = [
+    ["existsSync", 'assert.strictEqual(fs.existsSync("../../config"), true)'],
+    ["accessSync", 'assert.strictEqual(fs.accessSync("../../config"), null)'],
+  ];
+
+  for (const [name, code] of nonExistTests) {
+    it(`${name} (not existing)`, () => {
+      const { success } = spawnSync({
+        cmd: [bunExe(), "-e", code],
+        cwd: workingDir1,
+        stdio: ["ignore", "inherit", "inherit"],
+        env: bunEnv,
+      });
+      expect(success).toBeTrue();
+    });
+  }
+  for (const [name, code] of existTests) {
+    it(`${name} (existing)`, () => {
+      const { success } = spawnSync({
+        cmd: [bunExe(), "-e", code],
+        cwd: workingDir2,
+        stdio: ["ignore", "inherit", "inherit"],
+        env: bunEnv,
+      });
+      expect(success).toBeTrue();
+    });
   }
 });

@@ -656,7 +656,29 @@ pub const Bunfig = struct {
                             }
                         };
 
+                        // TODO: accept entire config object.
                         this.bunfig.serve_plugins = plugins;
+                        if (serve_obj.get("minify")) |minify| {
+                            if (minify.asBool()) |value| {
+                                this.bunfig.serve_minify_syntax = value;
+                                this.bunfig.serve_minify_whitespace = value;
+                                this.bunfig.serve_minify_identifiers = value;
+                            } else if (minify.isObject()) {
+                                if (minify.get("syntax")) |syntax| {
+                                    this.bunfig.serve_minify_syntax = syntax.asBool() orelse false;
+                                }
+
+                                if (minify.get("whitespace")) |whitespace| {
+                                    this.bunfig.serve_minify_whitespace = whitespace.asBool() orelse false;
+                                }
+
+                                if (minify.get("identifiers")) |identifiers| {
+                                    this.bunfig.serve_minify_identifiers = identifiers.asBool() orelse false;
+                                }
+                            } else {
+                                try this.addError(minify.loc, "Expected minify to be boolean or object");
+                            }
+                        }
                         this.bunfig.bunfig_path = bun.default_allocator.dupe(u8, this.source.path.text) catch bun.outOfMemory();
                     }
                 }

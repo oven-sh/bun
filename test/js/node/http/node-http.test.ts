@@ -1859,14 +1859,17 @@ it("#11425 http no payload limit", done => {
 });
 
 it("should emit events in the right order", async () => {
-  const { stdout, exited } = Bun.spawn({
+  const { stdout, stderr, exited } = Bun.spawn({
     cmd: [bunExe(), "run", path.join(import.meta.dir, "fixtures/log-events.mjs")],
     stdout: "pipe",
     stdin: "ignore",
-    stderr: "inherit",
+    stderr: "pipe",
     env: bunEnv,
   });
+  const err = await new Response(stderr).text();
+  expect(err).toBeEmpty();
   const out = await new Response(stdout).text();
+  // TODO prefinish and socket are not emitted in the right order
   expect(out.split("\n")).toEqual([
     `[ "req", "prefinish" ]`,
     `[ "req", "socket" ]`,
@@ -1881,7 +1884,6 @@ it("should emit events in the right order", async () => {
     // `[ "res", "close" ]`,
     "",
   ]);
-  expect(await exited).toBe(0);
 });
 
 it("destroy should end download", async () => {

@@ -232,9 +232,11 @@ pub const Run = struct {
         b.resolver.opts.global_cache = ctx.debug.global_cache;
         b.resolver.opts.prefer_offline_install = (ctx.debug.offline_mode_setting orelse .online) == .offline;
         b.resolver.opts.prefer_latest_install = (ctx.debug.offline_mode_setting orelse .online) == .latest;
+        b.resolver.opts.load_tsconfig_json = ctx.bundler_options.tsconfig.isEnabled();
         b.options.global_cache = b.resolver.opts.global_cache;
         b.options.prefer_offline_install = b.resolver.opts.prefer_offline_install;
         b.options.prefer_latest_install = b.resolver.opts.prefer_latest_install;
+        b.options.load_tsconfig_json = b.resolver.opts.load_tsconfig_json;
         b.resolver.env_loader = b.env;
 
         b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;

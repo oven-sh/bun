@@ -1,8 +1,18 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, beforeAll, expect, afterAll } from "bun:test";
+import { mkdirSync, writeFileSync, rmdirSync } from "fs";
 import { pathToFileURL } from "bun";
-import { mkdirSync, writeFileSync } from "fs";
 import { join, sep } from "path";
 import { bunExe, bunEnv, tempDirWithFiles, joinP, isWindows } from "harness";
+
+const env = { ...bunEnv };
+
+beforeAll(() => {
+  for (const key in env) {
+    if (key.startsWith("BUN_DEBUG_") && key !== "BUN_DEBUG_QUIET_LOGS") {
+      delete env[key];
+    }
+  }
+});
 
 it("spawn test file", () => {
   writePackageJSONImportsFixture();
@@ -404,5 +414,116 @@ describe("NODE_PATH test", () => {
 
     expect(exitCode).toBe(0);
     expect(stdout.toString().trim()).toBe("NODE_PATH from lib works");
+  });
+});
+/**
+ * When resolving imports, if `package.json` has `exports` fields that conflict
+ * with tsconfig paths, then `imports` should take precedence.
+ * notes:
+ * 1. self-referrential imports hit a different code path
+ * 2. resolve walks up the directory tree, finding the nearest tsconfig.json.
+ * 3. I *think* different logic happens when the resolved path (i.e. following symlinks)
+ *   is in node_modules instead of in the project directory.
+ *
+ * All of this is to say yes, this is a complicated test, but it broke
+ * playwright ¯\_(ツ)_/¯
+ */
+describe("when both package.json imports and tsconfig.json paths are present", () => {
+  let dir: string;
+  beforeAll(() => {
+    dir = tempDirWithFiles("package-json-imports", {
+      "bunfig.toml": /* toml */ `
+      tsconfig = false
+      `,
+      "tsconfig.json": /* json */ `
+      {
+        "compilerOptions": {
+          "baseUrl": ".",
+          "paths": {
+            "foo/lib/*": ["./packages/foo/src/*"]
+          }
+        }
+      }
+      `,
+      "package.json": /* json */ `
+      {
+        "name": "root",
+        "private": true,
+        "version": "0.1.0",
+        "workspaces": ["packages/*"],
+      }
+      `,
+      packages: {
+        foo: {
+          "package.json": /* json */ `
+          {
+            "name": "foo",
+            "version": "0.1.0",
+            "main": "lib/target.js",
+            "exports": {
+              "./lib/target": "./lib/target.js",
+              "./lib/imported": "./lib/imported.js",
+            }
+          }
+          `,
+          lib: {
+            "target.js": /* js */ `module.exports.foo = require('./imported').foo;`,
+            "imported.js": /* js */ `module.exports.foo = 1;`,
+          },
+          src: {
+            "target.ts": /* ts */ `export {foo} from './imported';`,
+            // no imported
+          },
+        },
+        bar: {
+          "package.json": /* json */ `
+          {
+            "name": "bar",
+            "version": "0.1.0",
+            "dependencies": {
+              "foo": "*"
+            }
+          }
+          `,
+          src: {
+            "index.js": /* ts */ `const {foo} = require('foo/lib/target'); console.log(foo)`,
+          },
+        },
+      },
+    });
+
+    Bun.spawnSync([bunExe(), "install"], { cwd: dir, env, stdout: "inherit", stderr: "inherit" });
+  });
+
+  afterAll(() => {
+    rmdirSync(dir, { recursive: true });
+  });
+
+  it("when target is imported from package 'bar', imports from the actual lib directory", () => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync(
+      [bunExe(), "--config=./bunfig.toml", "packages/bar/src/index.js"],
+      {
+        cwd: dir,
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    if (exitCode !== 0) {
+      console.error(stderr.toString("utf8"));
+    }
+    expect(stdout.toString("utf8").trim()).toBe("1");
+    expect(exitCode).toBe(0);
+  });
+
+  it("when tsconfig-paths is not disabled in bunfig.toml, fails to find 'imported'", () => {
+    const { stderr, exitCode } = Bun.spawnSync([bunExe(), "src/index.js"], {
+      cwd: join(dir, "packages", "bar"),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(exitCode).not.toBe(0);
+    expect(stderr.toString("utf8")).toContain("Cannot find module './imported'");
   });
 });

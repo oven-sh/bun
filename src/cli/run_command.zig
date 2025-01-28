@@ -819,8 +819,9 @@ pub const RunCommand = struct {
         this_transpiler.resolver.care_about_scripts = true;
         this_transpiler.resolver.store_fd = store_root_fd;
 
-        this_transpiler.resolver.opts.load_tsconfig_json = true;
-        this_transpiler.options.load_tsconfig_json = true;
+        const should_load_tsconfig = ctx.bundler_options.tsconfig.isEnabled();
+        this_transpiler.resolver.opts.load_tsconfig_json = should_load_tsconfig;
+        this_transpiler.options.load_tsconfig_json = should_load_tsconfig;
 
         this_transpiler.configureLinker();
 

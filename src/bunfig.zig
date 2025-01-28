@@ -28,6 +28,7 @@ pub const BundlePackageOverride = bun.StringArrayHashMapUnmanaged(options.Bundle
 const LoaderMap = bun.StringArrayHashMapUnmanaged(options.Loader);
 const JSONParser = bun.JSON;
 const Command = @import("cli.zig").Command;
+const TSConfigOptions = Command.ContextData.BundlerOptions.TSConfigOptions;
 const TOML = @import("./toml/toml_parser.zig").TOML;
 
 // TODO: replace Api.TransformOptions with Bunfig
@@ -216,6 +217,15 @@ pub const Bunfig = struct {
             if (json.get("origin")) |expr| {
                 try this.expectString(expr);
                 this.bunfig.origin = try expr.data.e_string.string(allocator);
+            }
+
+            if (json.get("tsconfig")) |tsconfig| {
+                // TODO: support object for fine-grained control
+                try this.expect(tsconfig, .e_boolean);
+                this.ctx.bundler_options.tsconfig = if (tsconfig.asBool().?)
+                    TSConfigOptions.on()
+                else
+                    TSConfigOptions.off();
             }
 
             if (comptime cmd == .RunCommand or cmd == .AutoCommand) {

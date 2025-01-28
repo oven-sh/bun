@@ -1562,6 +1562,28 @@ pub const Command = struct {
             compile_target: Cli.CompileTarget = .{},
             windows_hide_console: bool = false,
             windows_icon: ?[]const u8 = null,
+
+            /// tsconfig options.
+            tsconfig: TSConfigOptions = TSConfigOptions.on(),
+            pub const TSConfigOptions = packed struct(u8) {
+                /// Use [TSConfig/ paths](https://www.typescriptlang.org/tsconfig/#paths)
+                /// when resolving imports.
+                tsconfig_paths: bool = true,
+                _: u7 = 0,
+
+                pub fn off() TSConfigOptions {
+                    return .{ .tsconfig_paths = false };
+                }
+
+                pub fn on() TSConfigOptions {
+                    return .{ .tsconfig_paths = true };
+                }
+
+                /// Returns `true` if any options are enabled
+                pub fn isEnabled(self: TSConfigOptions) bool {
+                    return @as(u8, @bitCast(self)) > 0;
+                }
+            };
         };
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {

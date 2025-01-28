@@ -1617,6 +1617,13 @@ pub const Api = struct {
         }
     };
 
+    /// Configures how the resolver behaves.
+    pub const ResolveOptions = struct {
+        /// Do not consider tsconfig paths. Used primarily for node
+        /// compatibility.
+        ignore_tsconfig: bool = false,
+    };
+
     pub const TransformOptions = struct {
         /// jsx
         jsx: ?Jsx = null,
@@ -1707,6 +1714,7 @@ pub const Api = struct {
         serve_minify_identifiers: ?bool = null,
         bunfig_path: []const u8,
 
+        /// FIXME: unused
         pub fn decode(reader: anytype) anyerror!TransformOptions {
             var this = std.mem.zeroes(TransformOptions);
 

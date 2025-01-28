@@ -1338,7 +1338,16 @@ pub const Resolver = struct {
                 }
             }
 
-            var source_dir_info = (r.dirInfoCached(source_dir) catch null) orelse return .{ .not_found = {} };
+            // If the source directory doesn't exist, walk up to find the first one that does, if any.
+            var source_dir_info = first_dir_info: {
+                var source_dir_to_use = source_dir;
+                while (true) {
+                    if (r.dirInfoCached(source_dir_to_use) catch return .{ .not_found = {} }) |dir|
+                        break :first_dir_info dir;
+                    source_dir_to_use = std.fs.path.dirname(source_dir) orelse
+                        return .{ .not_found = {} };
+                }
+            };
 
             if (r.care_about_browser_field) {
                 // Support remapping one package path to another via the "browser" field

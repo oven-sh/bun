@@ -1563,7 +1563,7 @@ pub const ArrayBufferSink = struct {
     pub const JSSink = NewJSSink(@This(), "ArrayBufferSink");
 };
 
-const AutoFlusher = struct {
+pub const AutoFlusher = struct {
     registered: bool = false,
 
     pub fn registerDeferredMicrotaskWithType(comptime Type: type, this: *Type, vm: *JSC.VirtualMachine) void {

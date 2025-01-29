@@ -4,7 +4,7 @@ const Async = bun.Async;
 const JSC = bun.JSC;
 const uv = bun.windows.libuv;
 const Source = @import("./source.zig").Source;
-
+const AutoFlusher = JSC.WebCore.AutoFlusher;
 const log = bun.Output.scoped(.PipeWriter, true);
 const FileType = @import("./pipes.zig").FileType;
 
@@ -394,6 +394,8 @@ pub fn PosixStreamingWriter(
         is_done: bool = false,
         closed_without_reporting: bool = false,
 
+        auto_flusher: AutoFlusher = .{},
+
         // TODO: configurable?
         const chunk_size: usize = 1024 * 4;
 
@@ -486,6 +488,7 @@ pub fn PosixStreamingWriter(
         }
 
         fn registerPoll(this: *PosixWriter) void {
+            AutoFlusher.registerDeferredMicrotaskWithType(@This(), this, JSC.VirtualMachine.get());
             const poll = this.getPoll() orelse return;
             switch (poll.registerWithFd(@as(*Parent, @ptrCast(this.parent)).loop(), .writable, .dispatch, poll.fd)) {
                 .err => |err| {
@@ -630,6 +633,13 @@ pub fn PosixStreamingWriter(
         }
 
         pub usingnamespace PosixPipeWriter(@This(), getFd, getBuffer, _onWrite, registerPoll, _onError, _onWritable, getFileType);
+
+        pub fn onAutoFlush(this: *@This()) bool {
+            return switch (this.flush()) {
+                .pending => true,
+                else => false,
+            };
+        }
 
         pub fn flush(this: *PosixWriter) WriteResult {
             if (this.closed_without_reporting or this.is_done) {

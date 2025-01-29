@@ -547,6 +547,7 @@ describe("async context passes through", () => {
     await s.run("value", async () => {
       Bun.build({
         entrypoints: [import.meta.path],
+        target: "bun",
         plugins: [
           {
             name: "test",

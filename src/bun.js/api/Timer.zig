@@ -292,30 +292,57 @@ pub const All = struct {
             return JSValue.jsUndefined();
     }
 
-    pub fn clearTimer(timer_id_value: JSValue, globalThis: *JSGlobalObject, repeats: bool) void {
+    fn removeTimerById(this: *All, id: i32) ?*TimeoutObject {
+        if (this.maps.setTimeout.fetchSwapRemove(id)) |entry| {
+            bun.assert(entry.value.tag == .TimeoutObject);
+            return @fieldParentPtr("event_loop_timer", entry.value);
+        } else if (this.maps.setInterval.fetchSwapRemove(id)) |entry| {
+            bun.assert(entry.value.tag == .TimeoutObject);
+            return @fieldParentPtr("event_loop_timer", entry.value);
+        } else return null;
+    }
+
+    pub fn clearTimer(timer_id_value: JSValue, globalThis: *JSGlobalObject) void {
         JSC.markBinding(@src());
 
-        const kind: Kind = if (repeats) .setInterval else .setTimeout;
-        var vm = globalThis.bunVM();
-        var map = vm.timer.maps.get(kind);
+        const vm = globalThis.bunVM();
 
         const timer: *TimerObjectInternals = brk: {
-            if (timer_id_value.isAnyInt()) {
-                if (map.fetchSwapRemove(timer_id_value.coerce(i32, globalThis))) |entry| {
-                    // Don't forget to check the type tag.
-                    // When we start using this list of timers for more things
-                    // It would be a weird situation, security-wise, if we were to let
-                    // the user cancel a timer that was of a different type.
-                    if (entry.value.tag == .TimeoutObject) {
-                        const timeout: *TimeoutObject = @fieldParentPtr("event_loop_timer", entry.value);
-                        break :brk &timeout.internals;
-                    } else if (entry.value.tag == .ImmediateObject) {
-                        const immediate: *ImmediateObject = @fieldParentPtr("event_loop_timer", entry.value);
-                        break :brk &immediate.internals;
+            if (timer_id_value.isInt32()) {
+                // Immediates don't have numeric IDs in Node.js so we only have to look up timeouts and intervals
+                break :brk &(vm.timer.removeTimerById(timer_id_value.asInt32()) orelse return).internals;
+            } else if (timer_id_value.isStringLiteral()) {
+                const string = timer_id_value.toBunString2(globalThis) catch return;
+                defer string.deref();
+                // Custom parseInt logic. I've done this because Node.js is very strict about string
+                // parameters to this function: they can't have leading whitespace, trailing
+                // characters, signs, or even leading zeroes.
+                //
+                // The reason is that in Node.js this function's parameter is used for an array
+                // lookup, and array[0] is the same as array['0'] in JS but not the same as array['00'].
+                const parsed = parsed: {
+                    var accumulator: i32 = 0;
+                    switch (string.encoding()) {
+                        // We can handle all encodings the same way since the only permitted characters
+                        // are ASCII.
+                        inline else => |encoding| {
+                            const slice = @field(bun.String, @tagName(encoding))(string);
+                            for (slice, 0..) |c, i| {
+                                if (c < '0' or c > '9') {
+                                    // Non-digit characters are not allowed
+                                    return;
+                                } else if (i == 0 and c == '0') {
+                                    // Leading zeroes are not allowed
+                                    return;
+                                }
+                                accumulator *= 10;
+                                accumulator += c - '0';
+                            }
+                        },
                     }
-                }
-
-                break :brk null;
+                    break :parsed accumulator;
+                };
+                break :brk &(vm.timer.removeTimerById(parsed) orelse return).internals;
             }
 
             break :brk if (TimeoutObject.fromJS(timer_id_value)) |timeout|
@@ -334,7 +361,7 @@ pub const All = struct {
         id: JSValue,
     ) callconv(.C) JSValue {
         JSC.markBinding(@src());
-        clearTimer(id, globalThis, false);
+        clearTimer(id, globalThis);
         return JSValue.jsUndefined();
     }
     pub fn clearInterval(
@@ -342,7 +369,7 @@ pub const All = struct {
         id: JSValue,
     ) callconv(.C) JSValue {
         JSC.markBinding(@src());
-        clearTimer(id, globalThis, true);
+        clearTimer(id, globalThis);
         return JSValue.jsUndefined();
     }
 

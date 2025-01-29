@@ -39,7 +39,7 @@ pub fn slice(comptime T: type, val: *const T) []const bun.meta.looksLikeListCont
 pub fn isCompatible(comptime T: type, val: *const T, browsers: bun.css.targets.Browsers) bool {
     if (@hasDecl(T, "isCompatible")) return T.isCompatible(val, browsers);
     const tyinfo = @typeInfo(T);
-    if (tyinfo == .Pointer) {
+    if (tyinfo == .pointer) {
         const TT = std.meta.Child(T);
         return isCompatible(TT, val.*, browsers);
     }
@@ -77,14 +77,14 @@ pub inline fn parseWithOptions(comptime T: type, input: *Parser, options: *const
 }
 
 pub inline fn parse(comptime T: type, input: *Parser) Result(T) {
-    if (comptime @typeInfo(T) == .Pointer) {
+    if (comptime @typeInfo(T) == .pointer) {
         const TT = std.meta.Child(T);
         return switch (parse(TT, input)) {
             .result => |v| .{ .result = bun.create(input.allocator(), TT, v) },
             .err => |e| .{ .err = e },
         };
     }
-    if (comptime @typeInfo(T) == .Optional) {
+    if (comptime @typeInfo(T) == .optional) {
         const TT = std.meta.Child(T);
         return .{ .result = parse(TT, input).asValue() };
     }
@@ -120,11 +120,11 @@ pub inline fn parseFor(comptime T: type) @TypeOf(struct {
 pub fn hasToCss(comptime T: type) bool {
     const tyinfo = @typeInfo(T);
     if (comptime T == []const u8) return false;
-    if (tyinfo == .Pointer) {
+    if (tyinfo == .pointer) {
         const TT = std.meta.Child(T);
         return hasToCss(TT);
     }
-    if (tyinfo == .Optional) {
+    if (tyinfo == .optional) {
         const TT = std.meta.Child(T);
         return hasToCss(TT);
     }
@@ -142,11 +142,11 @@ pub fn hasToCss(comptime T: type) bool {
 }
 
 pub inline fn toCss(comptime T: type, this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
-    if (@typeInfo(T) == .Pointer) {
+    if (@typeInfo(T) == .pointer) {
         const TT = std.meta.Child(T);
         return toCss(TT, this.*, W, dest);
     }
-    if (@typeInfo(T) == .Optional) {
+    if (@typeInfo(T) == .optional) {
         const TT = std.meta.Child(T);
 
         if (this.*) |*val| {
@@ -183,29 +183,30 @@ pub fn eqlList(comptime T: type, lhs: *const ArrayList(T), rhs: *const ArrayList
 
 pub fn canTransitivelyImplementEql(comptime T: type) bool {
     return switch (@typeInfo(T)) {
-        .Struct, .Union => true,
+        .@"struct", .@"union" => true,
         else => false,
     };
 }
 
 pub inline fn eql(comptime T: type, lhs: *const T, rhs: *const T) bool {
     const tyinfo = comptime @typeInfo(T);
-    if (comptime tyinfo == .Pointer) {
+    @setEvalBranchQuota(10_000);
+    if (comptime tyinfo == .pointer) {
         if (comptime T == []const u8) return bun.strings.eql(lhs.*, rhs.*);
-        if (comptime tyinfo.Pointer.size == .One) {
+        if (comptime tyinfo.pointer.size == .one) {
             const TT = std.meta.Child(T);
             return eql(TT, lhs.*, rhs.*);
-        } else if (comptime tyinfo.Pointer.size == .Slice) {
+        } else if (comptime tyinfo.pointer.size == .slice) {
             if (lhs.*.len != rhs.*.len) return false;
             for (lhs.*[0..], rhs.*[0..]) |*a, *b| {
-                if (!eql(tyinfo.Pointer.child, a, b)) return false;
+                if (!eql(tyinfo.pointer.child, a, b)) return false;
             }
             return true;
         } else {
-            @compileError("Unsupported pointer size: " ++ @tagName(tyinfo.Pointer.size) ++ " (" ++ @typeName(T) ++ ")");
+            @compileError("Unsupported pointer size: " ++ @tagName(tyinfo.pointer.size) ++ " (" ++ @typeName(T) ++ ")");
         }
     }
-    if (comptime tyinfo == .Optional) {
+    if (comptime tyinfo == .optional) {
         const TT = std.meta.Child(T);
         if (lhs.* == null and rhs.* == null) return true;
         if (lhs.* != null and rhs.* != null) return eql(TT, &lhs.*.?, &rhs.*.?);
@@ -233,32 +234,32 @@ pub inline fn eql(comptime T: type, lhs: *const T, rhs: *const T) bool {
 
 pub fn canTransitivelyImplementDeepClone(comptime T: type) bool {
     return switch (@typeInfo(T)) {
-        .Struct, .Union => true,
+        .@"struct", .@"union" => true,
         else => false,
     };
 }
 
 pub inline fn deepClone(comptime T: type, this: *const T, allocator: Allocator) T {
     const tyinfo = comptime @typeInfo(T);
-    if (comptime tyinfo == .Pointer) {
-        if (comptime tyinfo.Pointer.size == .One) {
+    if (comptime tyinfo == .pointer) {
+        if (comptime tyinfo.pointer.size == .one) {
             const TT = std.meta.Child(T);
             return bun.create(allocator, TT, deepClone(TT, this.*, allocator));
         }
-        if (comptime tyinfo.Pointer.size == .Slice) {
-            var slc = allocator.alloc(tyinfo.Pointer.child, this.len) catch bun.outOfMemory();
-            if (comptime bun.meta.isSimpleCopyType(tyinfo.Pointer.child) or tyinfo.Pointer.child == []const u8) {
+        if (comptime tyinfo.pointer.size == .slice) {
+            var slc = allocator.alloc(tyinfo.pointer.child, this.len) catch bun.outOfMemory();
+            if (comptime bun.meta.isSimpleCopyType(tyinfo.pointer.child) or tyinfo.pointer.child == []const u8) {
                 @memcpy(slc, this.*);
             } else {
                 for (this.*, 0..) |*e, i| {
-                    slc[i] = deepClone(tyinfo.Pointer.child, e, allocator);
+                    slc[i] = deepClone(tyinfo.pointer.child, e, allocator);
                 }
             }
             return slc;
         }
-        @compileError("Deep clone not supported for this kind of pointer: " ++ @tagName(tyinfo.Pointer.size) ++ " (" ++ @typeName(T) ++ ")");
+        @compileError("Deep clone not supported for this kind of pointer: " ++ @tagName(tyinfo.pointer.size) ++ " (" ++ @typeName(T) ++ ")");
     }
-    if (comptime tyinfo == .Optional) {
+    if (comptime tyinfo == .optional) {
         const TT = std.meta.Child(T);
         if (this.* != null) return deepClone(TT, &this.*.?, allocator);
         return null;
@@ -390,11 +391,11 @@ pub fn hasHash(comptime T: type) bool {
     const tyinfo = @typeInfo(T);
     if (comptime T == []const u8) return true;
     if (comptime bun.meta.isSimpleEqlType(T)) return true;
-    if (tyinfo == .Pointer) {
+    if (tyinfo == .pointer) {
         const TT = std.meta.Child(T);
         return hasHash(TT);
     }
-    if (tyinfo == .Optional) {
+    if (tyinfo == .optional) {
         const TT = std.meta.Child(T);
         return hasHash(TT);
     }
@@ -413,11 +414,11 @@ pub fn hasHash(comptime T: type) bool {
 pub fn hash(comptime T: type, this: *const T, hasher: *std.hash.Wyhash) void {
     if (comptime T == void) return;
     const tyinfo = @typeInfo(T);
-    if (comptime tyinfo == .Pointer and T != []const u8) {
+    if (comptime tyinfo == .pointer and T != []const u8) {
         const TT = std.meta.Child(T);
-        if (tyinfo.Pointer.size == .One) {
+        if (tyinfo.pointer.size == .one) {
             return hash(TT, this.*, hasher);
-        } else if (tyinfo.Pointer.size == .Slice) {
+        } else if (tyinfo.pointer.size == .slice) {
             for (this.*) |*item| {
                 hash(TT, item, hasher);
             }
@@ -426,7 +427,7 @@ pub fn hash(comptime T: type, this: *const T, hasher: *std.hash.Wyhash) void {
             @compileError("Can't hash this pointer type: " ++ @typeName(T));
         }
     }
-    if (comptime @typeInfo(T) == .Optional) {
+    if (comptime @typeInfo(T) == .optional) {
         const TT = std.meta.Child(T);
         if (this.* != null) return hash(TT, &this.*.?, hasher);
         return;

@@ -1,29 +1,25 @@
 const std = @import("std");
 const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const VirtualMachine = JSC.VirtualMachine;
+const VirtualMachine = bun.JSC.VirtualMachine;
 const Allocator = std.mem.Allocator;
 const Lock = bun.Mutex;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 const Fetch = JSC.WebCore.Fetch;
-const WebCore = JSC.WebCore;
 const Bun = JSC.API.Bun;
 const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
 const typeBaseName = @import("../meta.zig").typeBaseName;
 const AsyncGlobWalkTask = JSC.API.Glob.WalkTask.AsyncGlobWalkTask;
-const CopyFilePromiseTask = WebCore.Blob.Store.CopyFile.CopyFilePromiseTask;
+const CopyFilePromiseTask = bun.JSC.WebCore.Blob.Store.CopyFile.CopyFilePromiseTask;
 const AsyncTransformTask = JSC.API.JSTranspiler.TransformTask.AsyncTransformTask;
-const ReadFileTask = WebCore.Blob.ReadFile.ReadFileTask;
-const WriteFileTask = WebCore.Blob.WriteFile.WriteFileTask;
+const ReadFileTask = bun.JSC.WebCore.Blob.ReadFile.ReadFileTask;
+const WriteFileTask = bun.JSC.WebCore.Blob.WriteFile.WriteFileTask;
 const napi_async_work = JSC.napi.napi_async_work;
 const FetchTasklet = Fetch.FetchTasklet;
 const S3 = bun.S3;
 const S3HttpSimpleTask = S3.S3HttpSimpleTask;
 const S3HttpDownloadStreamingTask = S3.S3HttpDownloadStreamingTask;
 
-const JSValue = JSC.JSValue;
-const js = JSC.C;
 const Waker = bun.Async.Waker;
 
 pub const WorkPool = @import("../work_pool.zig").WorkPool;
@@ -40,7 +36,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         event_loop: *JSC.EventLoop,
         allocator: std.mem.Allocator,
         promise: JSC.JSPromise.Strong = .{},
-        globalThis: *JSGlobalObject,
+        globalThis: *JSC.JSGlobalObject,
         concurrent_task: JSC.ConcurrentTask = .{},
 
         // This is a poll because we want it to enter the uSockets loop
@@ -48,7 +44,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
 
         pub usingnamespace bun.New(@This());
 
-        pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSGlobalObject, value: *Context) !*This {
+        pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, value: *Context) !*This {
             var this = This.new(.{
                 .event_loop = VirtualMachine.get().event_loop,
                 .ctx = value,
@@ -101,7 +97,7 @@ pub fn WorkTask(comptime Context: type) type {
         task: TaskType = .{ .callback = &runFromThreadPool },
         event_loop: *JSC.EventLoop,
         allocator: std.mem.Allocator,
-        globalThis: *JSGlobalObject,
+        globalThis: *JSC.JSGlobalObject,
         concurrent_task: ConcurrentTask = .{},
         async_task_tracker: JSC.AsyncTaskTracker,
 
@@ -110,7 +106,7 @@ pub fn WorkTask(comptime Context: type) type {
 
         pub usingnamespace bun.New(@This());
 
-        pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSGlobalObject, value: *Context) !*This {
+        pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, value: *Context) !*This {
             var vm = globalThis.bunVM();
             var this = This.new(.{
                 .event_loop = vm.eventLoop(),
@@ -298,8 +294,8 @@ pub const AnyTaskWithExtraContext = struct {
 };
 
 pub const CppTask = opaque {
-    extern fn Bun__performTask(globalObject: *JSGlobalObject, task: *CppTask) void;
-    pub fn run(this: *CppTask, global: *JSGlobalObject) void {
+    extern fn Bun__performTask(globalObject: *JSC.JSGlobalObject, task: *CppTask) void;
+    pub fn run(this: *CppTask, global: *JSC.JSGlobalObject) void {
         JSC.markBinding(@src());
         Bun__performTask(global, this);
     }
@@ -311,7 +307,7 @@ pub const ConcurrentCppTask = struct {
 
     const EventLoopTaskNoContext = opaque {
         extern fn Bun__EventLoopTaskNoContext__performTask(task: *EventLoopTaskNoContext) void;
-        extern fn Bun__EventLoopTaskNoContext__createdInBunVm(task: *const EventLoopTaskNoContext) ?*JSC.VirtualMachine;
+        extern fn Bun__EventLoopTaskNoContext__createdInBunVm(task: *const EventLoopTaskNoContext) ?*VirtualMachine;
 
         /// Deallocates `this`
         pub fn run(this: *EventLoopTaskNoContext) void {
@@ -319,7 +315,7 @@ pub const ConcurrentCppTask = struct {
         }
 
         /// Get the VM that created this task
-        pub fn getVM(this: *const EventLoopTaskNoContext) ?*JSC.VirtualMachine {
+        pub fn getVM(this: *const EventLoopTaskNoContext) ?*VirtualMachine {
             return Bun__EventLoopTaskNoContext__createdInBunVm(this);
         }
     };
@@ -656,7 +652,7 @@ pub const GarbageCollectionController = struct {
     //
     // When the heap size is increasing, we always switch to fast mode
     // When the heap size has been the same or less for 30 seconds, we switch to slow mode
-    pub fn updateGCRepeatTimer(this: *GarbageCollectionController, comptime setting: @Type(.EnumLiteral)) void {
+    pub fn updateGCRepeatTimer(this: *GarbageCollectionController, comptime setting: @Type(.enum_literal)) void {
         if (setting == .fast and !this.gc_repeating_timer_fast) {
             this.gc_repeating_timer_fast = true;
             this.gc_repeating_timer.set(this, onGCRepeatingTimer, this.gc_timer_interval, this.gc_timer_interval);
@@ -742,7 +738,7 @@ pub const GarbageCollectionController = struct {
 
 export fn Bun__tickWhilePaused(paused: *bool) void {
     JSC.markBinding(@src());
-    JSC.VirtualMachine.get().eventLoop().tickWhilePaused(paused);
+    VirtualMachine.get().eventLoop().tickWhilePaused(paused);
 }
 
 comptime {
@@ -831,8 +827,8 @@ pub const EventLoop = struct {
     next_immediate_tasks: Queue = undefined,
 
     concurrent_tasks: ConcurrentTask.Queue = ConcurrentTask.Queue{},
-    global: *JSGlobalObject = undefined,
-    virtual_machine: *JSC.VirtualMachine = undefined,
+    global: *JSC.JSGlobalObject = undefined,
+    virtual_machine: *VirtualMachine = undefined,
     waker: ?Waker = null,
     forever_timer: ?*uws.Timer = null,
     deferred_tasks: DeferredTaskQueue = .{},
@@ -847,7 +843,7 @@ pub const EventLoop = struct {
 
     pub export fn Bun__ensureSignalHandler() void {
         if (Environment.isPosix) {
-            if (JSC.VirtualMachine.getMainThreadVM()) |vm| {
+            if (VirtualMachine.getMainThreadVM()) |vm| {
                 const this = vm.eventLoop();
                 if (this.signal_handler == null) {
                     this.signal_handler = PosixSignalHandle.new(.{});
@@ -904,7 +900,7 @@ pub const EventLoop = struct {
         this.entered_event_loop_count -= 1;
     }
 
-    pub inline fn getVmImpl(this: *EventLoop) *JSC.VirtualMachine {
+    pub inline fn getVmImpl(this: *EventLoop) *VirtualMachine {
         return this.virtual_machine;
     }
 
@@ -1678,7 +1674,7 @@ pub const EventLoop = struct {
         const task = Task.from(timer.as(*anyopaque));
         defer timer.deinit(true);
 
-        JSC.VirtualMachine.get().enqueueTask(task);
+        VirtualMachine.get().enqueueTask(task);
     }
 
     pub fn ensureWaker(this: *EventLoop) void {
@@ -1758,9 +1754,9 @@ pub const EventLoop = struct {
 };
 
 pub const JsVM = struct {
-    vm: *JSC.VirtualMachine,
+    vm: *VirtualMachine,
 
-    pub inline fn init(inner: *JSC.VirtualMachine) JsVM {
+    pub inline fn init(inner: *VirtualMachine) JsVM {
         return .{
             .vm = inner,
         };
@@ -1834,25 +1830,25 @@ pub const EventLoopKind = enum {
 
     pub fn refType(comptime this: EventLoopKind) type {
         return switch (this) {
-            .js => *JSC.VirtualMachine,
+            .js => *VirtualMachine,
             .mini => *JSC.MiniEventLoop,
         };
     }
 
     pub fn getVm(comptime this: EventLoopKind) EventLoopKind.refType(this) {
         return switch (this) {
-            .js => JSC.VirtualMachine.get(),
+            .js => VirtualMachine.get(),
             .mini => JSC.MiniEventLoop.global,
         };
     }
 };
 
 pub fn AbstractVM(inner: anytype) switch (@TypeOf(inner)) {
-    *JSC.VirtualMachine => JsVM,
+    *VirtualMachine => JsVM,
     *JSC.MiniEventLoop => MiniVM,
     else => @compileError("Invalid event loop ctx: " ++ @typeName(@TypeOf(inner))),
 } {
-    if (comptime @TypeOf(inner) == *JSC.VirtualMachine) return JsVM.init(inner);
+    if (comptime @TypeOf(inner) == *VirtualMachine) return JsVM.init(inner);
     if (comptime @TypeOf(inner) == *JSC.MiniEventLoop) return MiniVM.init(inner);
     @compileError("Invalid event loop ctx: " ++ @typeName(@TypeOf(inner)));
 }
@@ -1874,8 +1870,8 @@ pub const MiniEventLoop = struct {
     after_event_loop_callback_ctx: ?*anyopaque = null,
     after_event_loop_callback: ?JSC.OpaqueCallback = null,
     pipe_read_buffer: ?*PipeReadBuffer = null,
-    stdout_store: ?*JSC.WebCore.Blob.Store = null,
-    stderr_store: ?*JSC.WebCore.Blob.Store = null,
+    stdout_store: ?*bun.JSC.WebCore.Blob.Store = null,
+    stderr_store: ?*bun.JSC.WebCore.Blob.Store = null,
     const PipeReadBuffer = [256 * 1024]u8;
 
     pub threadlocal var globalInitialized: bool = false;
@@ -2261,7 +2257,7 @@ pub const EventLoopHandle = union(enum) {
         };
     }
 
-    pub fn cast(this: EventLoopHandle, comptime as: @Type(.EnumLiteral)) if (as == .js) *JSC.EventLoop else *MiniEventLoop {
+    pub fn cast(this: EventLoopHandle, comptime as: @Type(.enum_literal)) if (as == .js) *JSC.EventLoop else *MiniEventLoop {
         if (as == .js) {
             if (this != .js) @panic("Expected *JSC.EventLoop but got *MiniEventLoop");
             return this.js;
@@ -2292,7 +2288,7 @@ pub const EventLoopHandle = union(enum) {
     pub fn init(context: anytype) EventLoopHandle {
         const Context = @TypeOf(context);
         return switch (Context) {
-            *JSC.VirtualMachine => .{ .js = context.eventLoop() },
+            *VirtualMachine => .{ .js = context.eventLoop() },
             *JSC.EventLoop => .{ .js = context },
             *JSC.MiniEventLoop => .{ .mini = context },
             *AnyEventLoop => switch (context.*) {
@@ -2353,7 +2349,7 @@ pub const EventLoopHandle = union(enum) {
         this.loop().unref();
     }
 
-    pub inline fn createNullDelimitedEnvMap(this: @This(), alloc: Allocator) ![:null]?[*:0]u8 {
+    pub inline fn createNullDelimitedEnvMap(this: @This(), alloc: Allocator) ![:null]?[*:0]const u8 {
         return switch (this) {
             .js => this.js.virtual_machine.transpiler.env.map.createNullDelimitedEnvMap(alloc),
             .mini => this.mini.env.?.map.createNullDelimitedEnvMap(alloc),
@@ -2386,7 +2382,7 @@ pub const EventLoopTask = union {
     js: ConcurrentTask,
     mini: JSC.AnyTaskWithExtraContext,
 
-    pub fn init(comptime kind: @TypeOf(.EnumLiteral)) EventLoopTask {
+    pub fn init(comptime kind: @TypeOf(.enum_literal)) EventLoopTask {
         switch (kind) {
             .js => return .{ .js = ConcurrentTask{} },
             .mini => return .{ .mini = JSC.AnyTaskWithExtraContext{} },
@@ -2446,7 +2442,7 @@ pub const PosixSignalHandle = struct {
         // Publish the new tail (Release so that the consumer sees the updated tail).
         this.tail.store(old_tail +% 1, .release);
 
-        JSC.VirtualMachine.getMainThreadVM().?.eventLoop().wakeup();
+        VirtualMachine.getMainThreadVM().?.eventLoop().wakeup();
 
         return true;
     }
@@ -2454,7 +2450,7 @@ pub const PosixSignalHandle = struct {
     /// This is the signal handler entry point. Calls enqueue on the ring buffer.
     /// Note: Must be minimal logic here. Only do atomics & signal‐safe calls.
     export fn Bun__onPosixSignal(number: i32) void {
-        const vm = JSC.VirtualMachine.getMainThreadVM().?;
+        const vm = VirtualMachine.getMainThreadVM().?;
         _ = vm.eventLoop().signal_handler.?.enqueue(@intCast(number));
     }
 

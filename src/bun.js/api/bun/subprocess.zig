@@ -48,8 +48,8 @@ pub const ResourceUsage = struct {
         var cpu = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
         const rusage = this.rusage;
 
-        const usrTime = JSValue.fromTimevalNoTruncate(globalObject, rusage.utime.tv_usec, rusage.utime.tv_sec);
-        const sysTime = JSValue.fromTimevalNoTruncate(globalObject, rusage.stime.tv_usec, rusage.stime.tv_sec);
+        const usrTime = JSValue.fromTimevalNoTruncate(globalObject, rusage.utime.usec, rusage.utime.sec);
+        const sysTime = JSValue.fromTimevalNoTruncate(globalObject, rusage.stime.usec, rusage.stime.sec);
 
         cpu.put(globalObject, JSC.ZigString.static("user"), usrTime);
         cpu.put(globalObject, JSC.ZigString.static("system"), sysTime);
@@ -199,7 +199,7 @@ pub const Subprocess = struct {
     ref_count: u32 = 1,
     abort_signal: ?*JSC.AbortSignal = null,
 
-    usingnamespace bun.NewRefCounted(@This(), Subprocess.deinit);
+    usingnamespace bun.NewRefCounted(@This(), deinit);
 
     pub const Flags = packed struct {
         is_sync: bool = false,
@@ -279,7 +279,7 @@ pub const Subprocess = struct {
     }
 
     pub fn updateHasPendingActivity(this: *Subprocess) void {
-        @fence(.seq_cst);
+        // @fence(.seq_cst);
         if (comptime Environment.isDebug) {
             log("updateHasPendingActivity() {any} -> {any}", .{
                 this.has_pending_activity.raw,
@@ -342,7 +342,7 @@ pub const Subprocess = struct {
     }
 
     pub fn hasPendingActivity(this: *Subprocess) callconv(.C) bool {
-        @fence(.acquire);
+        // @fence(.acquire);
         return this.has_pending_activity.load(.acquire);
     }
 
@@ -684,7 +684,7 @@ pub const Subprocess = struct {
         return this.process.kill(@intCast(sig));
     }
 
-    fn hasCalledGetter(this: *Subprocess, comptime getter: @Type(.EnumLiteral)) bool {
+    fn hasCalledGetter(this: *Subprocess, comptime getter: @Type(.enum_literal)) bool {
         return this.observable_getters.contains(getter);
     }
 
@@ -853,7 +853,7 @@ pub const Subprocess = struct {
             ref_count: u32 = 1,
             buffer: []const u8 = "",
 
-            pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
+            pub usingnamespace bun.NewRefCounted(@This(), _deinit);
             const This = @This();
             const print = bun.Output.scoped(.StaticPipeWriter, false);
 
@@ -940,7 +940,7 @@ pub const Subprocess = struct {
                 this.process.onCloseIO(.stdin);
             }
 
-            pub fn deinit(this: *This) void {
+            fn _deinit(this: *This) void {
                 this.writer.end();
                 this.source.detach();
                 this.destroy();
@@ -981,7 +981,7 @@ pub const Subprocess = struct {
         pub const IOReader = bun.io.BufferedReader;
         pub const Poll = IOReader;
 
-        pub usingnamespace bun.NewRefCounted(PipeReader, PipeReader.deinit);
+        pub usingnamespace bun.NewRefCounted(PipeReader, _deinit);
 
         pub fn memoryCost(this: *const PipeReader) usize {
             return this.reader.memoryCost();
@@ -1148,7 +1148,7 @@ pub const Subprocess = struct {
             return this.event_loop.virtual_machine.uwsLoop();
         }
 
-        fn deinit(this: *PipeReader) void {
+        fn _deinit(this: *PipeReader) void {
             if (comptime Environment.isPosix) {
                 bun.assert(this.reader.isDone());
             }
@@ -1570,7 +1570,7 @@ pub const Subprocess = struct {
         }
     }
 
-    fn closeIO(this: *Subprocess, comptime io: @Type(.EnumLiteral)) void {
+    fn closeIO(this: *Subprocess, comptime io: @Type(.enum_literal)) void {
         if (this.closed.contains(io)) return;
         this.closed.insert(io);
 

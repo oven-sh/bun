@@ -2153,10 +2153,6 @@ pub fn NthOfSelectorData(comptime Impl: type) type {
         pub fn nthData(this: *const @This()) NthSelectorData {
             return this.data;
         }
-
-        pub fn selectors(this: *const @This()) []GenericSelector(Impl) {
-            return this.selectors;
-        }
     };
 }
 

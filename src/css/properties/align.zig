@@ -742,7 +742,7 @@ pub const Gap = struct {
     /// The column gap.
     column: GapValue,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.gap);
+    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.gap, PropertyFieldMap);
 
     pub const PropertyFieldMap = .{
         .row = "row-gap",
@@ -785,7 +785,7 @@ pub const PlaceItems = struct {
     /// The item justification.
     justify: JustifyItems,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"place-items");
+    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"place-items", PropertyFieldMap);
 
     pub const PropertyFieldMap = .{
         .@"align" = "align-items",
@@ -857,7 +857,7 @@ pub const PlaceSelf = struct {
     /// The item justification.
     justify: JustifySelf,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"place-self");
+    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"place-self", PropertyFieldMap);
 
     pub const PropertyFieldMap = .{
         .@"align" = "align-self",
@@ -951,7 +951,7 @@ pub const PlaceContent = struct {
     /// The content justification.
     justify: JustifyContent,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"place-content");
+    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"place-content", PropertyFieldMap);
 
     pub const PropertyFieldMap = .{
         .@"align" = css.PropertyIdTag.@"align-content",

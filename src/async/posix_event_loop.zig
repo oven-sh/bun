@@ -503,19 +503,19 @@ pub const FilePoll = struct {
 
         pub fn fromKQueueEvent(kqueue_event: std.posix.system.kevent64_s) Flags.Set {
             var flags = Flags.Set{};
-            if (kqueue_event.filter == std.posix.system.EVFILT_READ) {
+            if (kqueue_event.filter == std.posix.system.EVFILT.READ) {
                 flags.insert(Flags.readable);
-                if (kqueue_event.flags & std.posix.system.EV_EOF != 0) {
+                if (kqueue_event.flags & std.posix.system.EV.EOF != 0) {
                     flags.insert(Flags.hup);
                 }
-            } else if (kqueue_event.filter == std.posix.system.EVFILT_WRITE) {
+            } else if (kqueue_event.filter == std.posix.system.EVFILT.WRITE) {
                 flags.insert(Flags.writable);
-                if (kqueue_event.flags & std.posix.system.EV_EOF != 0) {
+                if (kqueue_event.flags & std.posix.system.EV.EOF != 0) {
                     flags.insert(Flags.hup);
                 }
-            } else if (kqueue_event.filter == std.posix.system.EVFILT_PROC) {
+            } else if (kqueue_event.filter == std.posix.system.EVFILT.PROC) {
                 flags.insert(Flags.process);
-            } else if (kqueue_event.filter == std.posix.system.EVFILT_MACHPORT) {
+            } else if (kqueue_event.filter == std.posix.system.EVFILT.MACHPORT) {
                 flags.insert(Flags.machport);
             }
             return flags;
@@ -782,7 +782,7 @@ pub const FilePoll = struct {
     });
 
     comptime {
-        @export(onTick, .{ .name = "Bun__internal_dispatch_ready_poll" });
+        @export(&onTick, .{ .name = "Bun__internal_dispatch_ready_poll" });
     }
 
     const timeout = std.mem.zeroes(std.posix.timespec);
@@ -837,45 +837,45 @@ pub const FilePoll = struct {
             const one_shot_flag: u16 = if (!this.flags.contains(.one_shot))
                 0
             else if (one_shot == .dispatch)
-                std.c.EV_DISPATCH | std.c.EV_ENABLE
+                std.c.EV.DISPATCH | std.c.EV.ENABLE
             else
-                std.c.EV_ONESHOT;
+                std.c.EV.ONESHOT;
 
             changelist[0] = switch (flag) {
                 .readable => .{
                     .ident = @intCast(fd.cast()),
-                    .filter = std.posix.system.EVFILT_READ,
+                    .filter = std.posix.system.EVFILT.READ,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(this).ptr()),
-                    .flags = std.c.EV_ADD | one_shot_flag,
+                    .flags = std.c.EV.ADD | one_shot_flag,
                     .ext = .{ this.generation_number, 0 },
                 },
                 .writable => .{
                     .ident = @intCast(fd.cast()),
-                    .filter = std.posix.system.EVFILT_WRITE,
+                    .filter = std.posix.system.EVFILT.WRITE,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(this).ptr()),
-                    .flags = std.c.EV_ADD | one_shot_flag,
+                    .flags = std.c.EV.ADD | one_shot_flag,
                     .ext = .{ this.generation_number, 0 },
                 },
                 .process => .{
                     .ident = @intCast(fd.cast()),
-                    .filter = std.posix.system.EVFILT_PROC,
+                    .filter = std.posix.system.EVFILT.PROC,
                     .data = 0,
-                    .fflags = std.c.NOTE_EXIT,
+                    .fflags = std.c.NOTE.EXIT,
                     .udata = @intFromPtr(Pollable.init(this).ptr()),
-                    .flags = std.c.EV_ADD | one_shot_flag,
+                    .flags = std.c.EV.ADD | one_shot_flag,
                     .ext = .{ this.generation_number, 0 },
                 },
                 .machport => .{
                     .ident = @intCast(fd.cast()),
-                    .filter = std.posix.system.EVFILT_MACHPORT,
+                    .filter = std.posix.system.EVFILT.MACHPORT,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(this).ptr()),
-                    .flags = std.c.EV_ADD | one_shot_flag,
+                    .flags = std.c.EV.ADD | one_shot_flag,
                     .ext = .{ this.generation_number, 0 },
                 },
                 else => unreachable,
@@ -913,7 +913,7 @@ pub const FilePoll = struct {
             // processing an element of the changelist and there is enough room
             // in the eventlist, then the event will be placed in the eventlist
             // with EV_ERROR set in flags and the system error in data.
-            if (changelist[0].flags == std.c.EV_ERROR and changelist[0].data != 0) {
+            if (changelist[0].flags == std.c.EV.ERROR and changelist[0].data != 0) {
                 return JSC.Maybe(void).errnoSys(changelist[0].data, .kevent).?;
                 // Otherwise, -1 will be returned, and errno will be set to
                 // indicate the error condition.
@@ -1008,38 +1008,38 @@ pub const FilePoll = struct {
             changelist[0] = switch (flag) {
                 .readable => .{
                     .ident = @intCast(fd.cast()),
-                    .filter = std.posix.system.EVFILT_READ,
+                    .filter = std.posix.system.EVFILT.READ,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(this).ptr()),
-                    .flags = std.c.EV_DELETE,
+                    .flags = std.c.EV.DELETE,
                     .ext = .{ 0, 0 },
                 },
                 .machport => .{
                     .ident = @intCast(fd.cast()),
-                    .filter = std.posix.system.EVFILT_MACHPORT,
+                    .filter = std.posix.system.EVFILT.MACHPORT,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(this).ptr()),
-                    .flags = std.c.EV_DELETE,
+                    .flags = std.c.EV.DELETE,
                     .ext = .{ 0, 0 },
                 },
                 .writable => .{
                     .ident = @intCast(fd.cast()),
-                    .filter = std.posix.system.EVFILT_WRITE,
+                    .filter = std.posix.system.EVFILT.WRITE,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(this).ptr()),
-                    .flags = std.c.EV_DELETE,
+                    .flags = std.c.EV.DELETE,
                     .ext = .{ 0, 0 },
                 },
                 .process => .{
                     .ident = @intCast(fd.cast()),
-                    .filter = std.posix.system.EVFILT_PROC,
+                    .filter = std.posix.system.EVFILT.PROC,
                     .data = 0,
-                    .fflags = std.c.NOTE_EXIT,
+                    .fflags = std.c.NOTE.EXIT,
                     .udata = @intFromPtr(Pollable.init(this).ptr()),
-                    .flags = std.c.EV_DELETE,
+                    .flags = std.c.EV.DELETE,
                     .ext = .{ 0, 0 },
                 },
                 else => unreachable,
@@ -1065,7 +1065,7 @@ pub const FilePoll = struct {
             // processing an element of the changelist and there is enough room
             // in the eventlist, then the event will be placed in the eventlist
             // with EV_ERROR set in flags and the system error in data.
-            if (changelist[0].flags == std.c.EV_ERROR) {
+            if (changelist[0].flags == std.c.EV.ERROR) {
                 return JSC.Maybe(void).errnoSys(changelist[0].data, .kevent).?;
                 // Otherwise, -1 will be returned, and errno will be set to
                 // indicate the error condition.

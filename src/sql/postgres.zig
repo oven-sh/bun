@@ -200,7 +200,7 @@ pub const PostgresSQLContext = struct {
     comptime {
         if (!JSC.is_bindgen) {
             const js_init = JSC.toJSHostFunction(init);
-            @export(js_init, .{ .name = "PostgresSQLContext__init" });
+            @export(&js_init, .{ .name = "PostgresSQLContext__init" });
         }
     }
 };
@@ -694,7 +694,7 @@ pub const PostgresSQLQuery = struct {
     comptime {
         if (!JSC.is_bindgen) {
             const jscall = JSC.toJSHostFunction(call);
-            @export(jscall, .{ .name = "PostgresSQLQuery__createInstance" });
+            @export(&jscall, .{ .name = "PostgresSQLQuery__createInstance" });
         }
     }
 };
@@ -774,7 +774,7 @@ pub const PostgresRequest = struct {
                 continue;
             }
             if (comptime bun.Environment.enable_logs) {
-                debug("  -> {s}", .{tag.name() orelse "(unknown)"});
+                debug("  -> {s}", .{tag.tagName() orelse "(unknown)"});
             }
 
             switch (
@@ -1314,12 +1314,12 @@ pub const PostgresSQLConnection = struct {
     }
 
     pub fn hasPendingActivity(this: *PostgresSQLConnection) bool {
-        @fence(.acquire);
+        // @fence(.acquire);
         return this.pending_activity_count.load(.acquire) > 0;
     }
 
     fn updateHasPendingActivity(this: *PostgresSQLConnection) void {
-        @fence(.release);
+        // @fence(.release);
         const a: u32 = if (this.requests.readableLength() > 0) 1 else 0;
         const b: u32 = if (this.status != .disconnected) 1 else 0;
         this.pending_activity_count.store(a + b, .release);
@@ -1663,7 +1663,7 @@ pub const PostgresSQLConnection = struct {
     comptime {
         if (!JSC.is_bindgen) {
             const jscall = JSC.toJSHostFunction(call);
-            @export(jscall, .{ .name = "PostgresSQLConnection__createInstance" });
+            @export(&jscall, .{ .name = "PostgresSQLConnection__createInstance" });
         }
     }
 
@@ -2311,7 +2311,7 @@ pub const PostgresSQLConnection = struct {
         fn pg_ntoT(comptime IntSize: usize, i: anytype) std.meta.Int(.unsigned, IntSize) {
             @setRuntimeSafety(false);
             const T = @TypeOf(i);
-            if (@typeInfo(T) == .Array) {
+            if (@typeInfo(T) == .array) {
                 return pg_ntoT(IntSize, @as(std.meta.Int(.unsigned, IntSize), @bitCast(i)));
             }
 
@@ -2509,7 +2509,7 @@ pub const PostgresSQLConnection = struct {
         return PostgresSQLConnection.queriesGetCached(this.js_value) orelse .zero;
     }
 
-    pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.EnumLiteral), comptime Context: type, reader: protocol.NewReader(Context)) AnyPostgresError!void {
+    pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_literal), comptime Context: type, reader: protocol.NewReader(Context)) AnyPostgresError!void {
         debug("on({s})", .{@tagName(MessageType)});
         if (comptime MessageType != .ReadyForQuery) {
             this.is_ready_for_query = false;

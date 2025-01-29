@@ -50,13 +50,13 @@ const DeadSocket = opaque {};
 var dead_socket = @as(*DeadSocket, @ptrFromInt(1));
 //TODO: this needs to be freed when Worker Threads are implemented
 var socket_async_http_abort_tracker = std.AutoArrayHashMap(u32, uws.InternalSocket).init(bun.default_allocator);
-var async_http_id: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
+var async_http_id_monotonic: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
 const MAX_REDIRECT_URL_LENGTH = 128 * 1024;
 var custom_ssl_context_map = std.AutoArrayHashMap(*SSLConfig, *NewHTTPContext(true)).init(bun.default_allocator);
 
 pub var max_http_header_size: usize = 16 * 1024;
 comptime {
-    @export(max_http_header_size, .{ .name = "BUN_DEFAULT_MAX_HTTP_HEADER_SIZE" });
+    @export(&max_http_header_size, .{ .name = "BUN_DEFAULT_MAX_HTTP_HEADER_SIZE" });
 }
 
 const print_every = 0;
@@ -235,7 +235,7 @@ const ProxyTunnel = struct {
 
     const ProxyTunnelWrapper = SSLWrapper(*HTTPClient);
 
-    usingnamespace bun.NewRefCounted(ProxyTunnel, ProxyTunnel.deinit);
+    usingnamespace bun.NewRefCounted(ProxyTunnel, _deinit);
 
     fn onOpen(this: *HTTPClient) void {
         this.state.response_stage = .proxy_handshake;
@@ -520,7 +520,7 @@ const ProxyTunnel = struct {
         this.deref();
     }
 
-    pub fn deinit(this: *ProxyTunnel) void {
+    fn _deinit(this: *ProxyTunnel) void {
         this.socket = .{ .none = {} };
         if (this.wrapper) |*wrapper| {
             wrapper.deinit();
@@ -2462,13 +2462,13 @@ pub const AsyncHTTP = struct {
     }
 
     pub fn signalHeaderProgress(this: *AsyncHTTP) void {
-        @fence(.release);
+        // @fence(.release);
         var progress = this.signals.header_progress orelse return;
         progress.store(true, .release);
     }
 
     pub fn enableBodyStreaming(this: *AsyncHTTP) void {
-        @fence(.release);
+        // @fence(.release);
         var stream = this.signals.body_streaming orelse return;
         stream.store(true, .release);
     }
@@ -2572,7 +2572,7 @@ pub const AsyncHTTP = struct {
             .result_callback = callback,
             .http_proxy = options.http_proxy,
             .signals = options.signals orelse .{},
-            .async_http_id = if (options.signals != null and options.signals.?.aborted != null) async_http_id.fetchAdd(1, .monotonic) else 0,
+            .async_http_id = if (options.signals != null and options.signals.?.aborted != null) async_http_id_monotonic.fetchAdd(1, .monotonic) else 0,
         };
 
         this.client = .{
@@ -3116,7 +3116,7 @@ pub const HTTPResponseMetadata = struct {
 };
 
 fn printRequest(request: picohttp.Request, url: string, ignore_insecure: bool, body: []const u8, curl: bool) void {
-    @setCold(true);
+    @branchHint(.cold);
     var request_ = request;
     request_.path = url;
 
@@ -3130,7 +3130,7 @@ fn printRequest(request: picohttp.Request, url: string, ignore_insecure: bool, b
 }
 
 fn printResponse(response: picohttp.Response) void {
-    @setCold(true);
+    @branchHint(.cold);
     Output.prettyErrorln("{}", .{response});
     Output.flush();
 }

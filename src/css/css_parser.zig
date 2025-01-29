@@ -243,6 +243,7 @@ pub const Location = css_rules.Location;
 pub const Error = Err(ParserError);
 
 pub fn Result(comptime T: type) type {
+    @setEvalBranchQuota(1_000_000);
     return Maybe(T, ParseError(ParserError));
 }
 
@@ -271,11 +272,11 @@ pub fn DefineListShorthand(comptime T: type) type {
     return struct {};
 }
 
-pub fn DefineShorthand(comptime T: type, comptime property_name: PropertyIdTag) type {
+pub fn DefineShorthand(comptime T: type, comptime property_name: PropertyIdTag, comptime PropertyFieldMap: anytype) type {
     _ = property_name; // autofix
     // TODO: validate map, make sure each field is set
     // make sure each field is same index as in T
-    _ = T.PropertyFieldMap;
+    _ = PropertyFieldMap;
 
     return struct {
         /// Returns a shorthand from the longhand properties defined in the given declaration block.
@@ -527,9 +528,9 @@ pub fn DefineSizeShorthand(comptime T: type, comptime V: type) type {
 
 pub fn DeriveParse(comptime T: type) type {
     const tyinfo = @typeInfo(T);
-    const is_union_enum = tyinfo == .Union;
-    const enum_type = if (comptime is_union_enum) @typeInfo(tyinfo.Union.tag_type.?) else tyinfo;
-    const enum_actual_type = if (comptime is_union_enum) tyinfo.Union.tag_type.? else T;
+    const is_union_enum = tyinfo == .@"union";
+    const enum_type = if (comptime is_union_enum) @typeInfo(tyinfo.@"union".tag_type.?) else tyinfo;
+    const enum_actual_type = if (comptime is_union_enum) tyinfo.@"union".tag_type.? else T;
 
     const Map = bun.ComptimeEnumMap(enum_actual_type);
 
@@ -541,7 +542,7 @@ pub fn DeriveParse(comptime T: type) type {
                     var first_payload_index: ?usize = null;
                     var payload_count: usize = 0;
                     var void_count: usize = 0;
-                    for (tyinfo.Union.fields, 0..) |field, i| {
+                    for (tyinfo.@"union".fields, 0..) |field, i| {
                         if (field.type == void) {
                             void_count += 1;
                             if (first_void_index == null) first_void_index = i;
@@ -619,7 +620,7 @@ pub fn DeriveParse(comptime T: type) type {
         ) Result(T) {
             const last_payload_index = first_payload_index + payload_count - 1;
             if (comptime maybe_first_void_index == null) {
-                inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
+                inline for (tyinfo.@"union".fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
                     if (comptime (i == last_payload_index)) {
                         return .{ .result = switch (generic.parseFor(field.type)(input)) {
                             .result => |v| @unionInit(T, field.name, v),
@@ -637,7 +638,7 @@ pub fn DeriveParse(comptime T: type) type {
             const void_fields = bun.meta.EnumFields(T)[first_void_index .. first_void_index + void_count];
 
             if (comptime void_count == 1) {
-                const void_field = enum_type.Enum.fields[first_void_index];
+                const void_field = enum_type.@"enum".fields[first_void_index];
                 // The field is declared before the payload fields.
                 // So try to parse an ident matching the name of the field, then fallthrough
                 // to parsing the payload fields.
@@ -647,7 +648,7 @@ pub fn DeriveParse(comptime T: type) type {
                         return .{ .result = @enumFromInt(void_field.value) };
                     }
 
-                    inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
+                    inline for (tyinfo.@"union".fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
                         if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
                             return .{ .result = switch (generic.parseFor(field.type)(input)) {
                                 .result => |v| @unionInit(T, field.name, v),
@@ -659,7 +660,7 @@ pub fn DeriveParse(comptime T: type) type {
                         }
                     }
                 } else {
-                    inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
+                    inline for (tyinfo.@"union".fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
                         if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
                             return .{ .result = switch (generic.parseFor(field.type)(input)) {
                                 .result => |v| @unionInit(T, field.name, v),
@@ -692,7 +693,7 @@ pub fn DeriveParse(comptime T: type) type {
                     input.reset(&state);
                 }
 
-                inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
+                inline for (tyinfo.@"union".fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
                     if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
                         return .{ .result = switch (generic.parseFor(field.type)(input)) {
                             .result => |v| @unionInit(T, field.name, v),
@@ -704,7 +705,7 @@ pub fn DeriveParse(comptime T: type) type {
                     }
                 }
             } else if (comptime first_void_index > first_payload_index) {
-                inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
+                inline for (tyinfo.@"union".fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
                     if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
                         return .{ .result = switch (generic.parseFor(field.type)(input)) {
                             .result => |v| @unionInit(T, field.name, v),
@@ -742,7 +743,7 @@ pub fn DeriveParse(comptime T: type) type {
         //     comptime payload_count: usize,
         // ) Result(T) {
         //     const last_payload_index = first_payload_index + payload_count - 1;
-        //     inline for (tyinfo.Union.fields[first_payload_index..], first_payload_index..) |field, i| {
+        //     inline for (tyinfo.@"union".fields[first_payload_index..], first_payload_index..) |field, i| {
         //         if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
         //             return generic.parseFor(field.type)(input);
         //         }
@@ -773,7 +774,7 @@ pub fn DeriveParse(comptime T: type) type {
 pub fn DeriveToCss(comptime T: type) type {
     const tyinfo = @typeInfo(T);
     const enum_fields = bun.meta.EnumFields(T);
-    const is_enum_or_union_enum = tyinfo == .Union or tyinfo == .Enum;
+    const is_enum_or_union_enum = tyinfo == .@"union" or tyinfo == .@"enum";
 
     return struct {
         pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -784,13 +785,13 @@ pub fn DeriveToCss(comptime T: type) type {
                             return dest.writeStr(enum_fields[i].name);
                         } else if (comptime generic.hasToCss(field.type)) {
                             return generic.toCss(field.type, &@field(this, field.name), W, dest);
-                        } else if (@hasDecl(field.type, "__generateToCss") and @typeInfo(field.type) == .Struct) {
+                        } else if (@hasDecl(field.type, "__generateToCss") and @typeInfo(field.type) == .@"struct") {
                             const variant_fields = std.meta.fields(field.type);
                             if (variant_fields.len > 1) {
                                 const last = variant_fields.len - 1;
                                 inline for (variant_fields, 0..) |variant_field, j| {
                                     // Unwrap it from the optional
-                                    if (@typeInfo(variant_field.type) == .Optional) {
+                                    if (@typeInfo(variant_field.type) == .optional) {
                                         if (@field(@field(this, field.name), variant_field.name)) |*value| {
                                             try value.toCss(W, dest);
                                         }
@@ -899,10 +900,7 @@ pub fn DefineEnumProperty(comptime T: type) type {
     };
 }
 
-pub fn DeriveValueType(comptime T: type) type {
-    _ = @typeInfo(T).Enum;
-
-    const ValueTypeMap = T.ValueTypeMap;
+pub fn DeriveValueType(comptime T: type, comptime ValueTypeMap: anytype) type {
     const field_values: []const MediaFeatureType = field_values: {
         const fields = std.meta.fields(T);
         var mapping: [fields.len]MediaFeatureType = undefined;
@@ -927,7 +925,7 @@ pub fn DeriveValueType(comptime T: type) type {
 }
 
 fn consume_until_end_of_block(block_type: BlockType, tokenizer: *Tokenizer) void {
-    @setCold(true);
+    @branchHint(.cold);
     var stack = SmallList(BlockType, 16){};
     stack.appendAssumeCapacity(block_type);
 
@@ -4074,7 +4072,7 @@ pub const Delimiters = packed struct(u8) {
 
     const NONE: Delimiters = .{};
 
-    pub fn getDelimiter(comptime tag: @TypeOf(.EnumLiteral)) Delimiters {
+    pub fn getDelimiter(comptime tag: @TypeOf(.enum_literal)) Delimiters {
         var empty = Delimiters{};
         @field(empty, @tagName(tag)) = true;
         return empty;
@@ -4428,7 +4426,7 @@ const Tokenizer = struct {
                     // Any other valid case here already resulted in IDHash.
                     '0'...'9', '-' => true,
                     else => false,
-                }) break :brk .{ .hash = this.consumeName() };
+                }) break :brk .{ .unrestrictedhash = this.consumeName() };
                 break :brk .{ .delim = '#' };
             },
             '$' => brk: {
@@ -5000,7 +4998,7 @@ const Tokenizer = struct {
             // todo_stuff.match_byte
             switch (this.nextByteUnchecked()) {
                 ' ', '\t', '\n', '\r', FORM_FEED_BYTE => {
-                    var value = .{ .borrowed = this.sliceFrom(start_pos) };
+                    var value: CopyOnWriteStr = .{ .borrowed = this.sliceFrom(start_pos) };
                     return this.consumeUrlEnd(start_pos, &value);
                 },
                 ')' => {
@@ -5463,7 +5461,7 @@ const TokenKind = enum {
     /// A [`<hash-token>`](https://drafts.csswg.org/css-syntax/#hash-token-diagram) with the type flag set to "unrestricted"
     ///
     /// The value does not include the `#` marker.
-    hash,
+    unrestrictedhash,
 
     /// A [`<hash-token>`](https://drafts.csswg.org/css-syntax/#hash-token-diagram) with the type flag set to "id"
     ///
@@ -5587,7 +5585,7 @@ pub const Token = union(TokenKind) {
     /// A [`<hash-token>`](https://drafts.csswg.org/css-syntax/#hash-token-diagram) with the type flag set to "unrestricted"
     ///
     /// The value does not include the `#` marker.
-    hash: []const u8,
+    unrestrictedhash: []const u8,
 
     /// A [`<hash-token>`](https://drafts.csswg.org/css-syntax/#hash-token-diagram) with the type flag set to "id"
     ///
@@ -5706,7 +5704,7 @@ pub const Token = union(TokenKind) {
             inline .ident,
             .function,
             .at_keyword,
-            .hash,
+            .unrestrictedhash,
             .idhash,
             .quoted_string,
             .bad_string,
@@ -5753,13 +5751,9 @@ pub const Token = union(TokenKind) {
                 try writer.writeAll("@");
                 try serializer.serializeIdentifier(this.at_keyword, writer);
             },
-            .hash => {
+            .unrestrictedhash, .idhash => |v| {
                 try writer.writeAll("#");
-                try serializer.serializeName(this.hash, writer);
-            },
-            .idhash => {
-                try writer.writeAll("#");
-                try serializer.serializeName(this.idhash, writer);
+                try serializer.serializeName(v, writer);
             },
             .quoted_string => |x| {
                 try serializer.serializeName(x, writer);
@@ -5852,7 +5846,7 @@ pub const Token = union(TokenKind) {
                 try dest.writeStr("@");
                 return serializer.serializeIdentifier(value, dest) catch return dest.addFmtError();
             },
-            .hash => |value| {
+            .unrestrictedhash => |value| {
                 try dest.writeStr("#");
                 return serializer.serializeName(value, dest) catch return dest.addFmtError();
             },
@@ -6499,15 +6493,15 @@ pub inline fn implementDeepClone(comptime T: type, this: *const T, allocator: Al
         return this.*;
     }
 
-    if (comptime @typeInfo(T) == .Pointer) {
+    if (comptime @typeInfo(T) == .pointer) {
         const TT = std.meta.Child(T);
         return implementEql(TT, this.*);
     }
 
     return switch (tyinfo) {
-        .Struct => {
+        .@"struct" => {
             var strct: T = undefined;
-            inline for (tyinfo.Struct.fields) |field| {
+            inline for (tyinfo.@"struct".fields) |field| {
                 if (comptime generic.canTransitivelyImplementDeepClone(field.type) and @hasDecl(field.type, "__generateDeepClone")) {
                     @field(strct, field.name) = implementDeepClone(field.type, &field(this, field.name, allocator));
                 } else {
@@ -6516,8 +6510,8 @@ pub inline fn implementDeepClone(comptime T: type, this: *const T, allocator: Al
             }
             return strct;
         },
-        .Union => {
-            inline for (bun.meta.EnumFields(T), tyinfo.Union.fields) |enum_field, union_field| {
+        .@"union" => {
+            inline for (bun.meta.EnumFields(T), tyinfo.@"union".fields) |enum_field, union_field| {
                 if (@intFromEnum(this.*) == enum_field.value) {
                     if (comptime generic.canTransitivelyImplementDeepClone(union_field.type) and @hasDecl(union_field.type, "__generateDeepClone")) {
                         return @unionInit(T, enum_field.name, implementDeepClone(union_field.type, &@field(this, enum_field.name), allocator));
@@ -6541,7 +6535,7 @@ pub inline fn implementDeepClone(comptime T: type, this: *const T, allocator: Al
 ///
 /// Or compound types composed of simple types such as:
 /// - Pointers to simple types
-/// - Optional simple types
+/// - optional simple types
 /// - Structs, Arrays, and Unions
 pub fn implementEql(comptime T: type, this: *const T, other: *const T) bool {
     const tyinfo = @typeInfo(T);
@@ -6551,19 +6545,19 @@ pub fn implementEql(comptime T: type, this: *const T, other: *const T) bool {
     if (comptime T == []const u8) {
         return bun.strings.eql(this.*, other.*);
     }
-    if (comptime @typeInfo(T) == .Pointer) {
+    if (comptime @typeInfo(T) == .pointer) {
         const TT = std.meta.Child(T);
         return implementEql(TT, this.*, other.*);
     }
-    if (comptime @typeInfo(T) == .Optional) {
+    if (comptime @typeInfo(T) == .optional) {
         const TT = std.meta.Child(T);
         if (this.* != null and other.* != null) return implementEql(TT, &this.*.?, &other.*.?);
         return false;
     }
     return switch (tyinfo) {
-        .Optional => @compileError("Handled above, this means Zack wrote a bug."),
-        .Pointer => @compileError("Handled above, this means Zack wrote a bug."),
-        .Array => {
+        .optional => @compileError("Handled above, this means Zack wrote a bug."),
+        .pointer => @compileError("Handled above, this means Zack wrote a bug."),
+        .array => {
             const Child = std.meta.Child(T);
             if (comptime bun.meta.isSimpleEqlType(Child)) {
                 return std.mem.eql(Child, &this.*, &other.*);
@@ -6580,14 +6574,14 @@ pub fn implementEql(comptime T: type, this: *const T, other: *const T) bool {
             }
             return true;
         },
-        .Struct => {
-            inline for (tyinfo.Struct.fields) |field| {
+        .@"struct" => {
+            inline for (tyinfo.@"struct".fields) |field| {
                 if (!generic.eql(field.type, &@field(this, field.name), &@field(other, field.name))) return false;
             }
             return true;
         },
-        .Union => {
-            if (tyinfo.Union.tag_type == null) @compileError("Unions must have a tag type");
+        .@"union" => {
+            if (tyinfo.@"union".tag_type == null) @compileError("Unions must have a tag type");
             if (@intFromEnum(this.*) != @intFromEnum(other.*)) return false;
             const enum_fields = bun.meta.EnumFields(T);
             inline for (enum_fields, std.meta.fields(T)) |enum_field, union_field| {
@@ -6622,42 +6616,42 @@ pub fn implementHash(comptime T: type, this: *const T, hasher: *std.hash.Wyhash)
         };
         bun.writeAnyToHasher(hasher, list.len);
         for (list) |*item| {
-            generic.hash(tyinfo.Array.child, item, hasher);
+            generic.hash(tyinfo.array.child, item, hasher);
         }
         return;
     }
     if (comptime T == []const u8) {
         return hasher.update(this.*);
     }
-    if (comptime @typeInfo(T) == .Pointer) {
+    if (comptime @typeInfo(T) == .pointer) {
         @compileError("Invalid type for implementHash(): " ++ @typeName(T));
     }
-    if (comptime @typeInfo(T) == .Optional) {
+    if (comptime @typeInfo(T) == .optional) {
         @compileError("Invalid type for implementHash(): " ++ @typeName(T));
     }
     return switch (tyinfo) {
-        .Optional => {
+        .optional => {
             if (this.* == null) {
                 bun.writeAnyToHasher(hasher, "null");
             } else {
                 bun.writeAnyToHasher(hasher, "some");
-                generic.hash(tyinfo.Optional.child, &this.*.?, hasher);
+                generic.hash(tyinfo.optional.child, &this.*.?, hasher);
             }
         },
-        .Pointer => {
-            generic.hash(tyinfo.Pointer.child, &this.*, hasher);
+        .pointer => {
+            generic.hash(tyinfo.pointer.child, &this.*, hasher);
         },
-        .Array => {
+        .array => {
             bun.writeAnyToHasher(hasher, this.len);
             for (this.*[0..]) |*item| {
-                generic.hash(tyinfo.Array.child, item, hasher);
+                generic.hash(tyinfo.array.child, item, hasher);
             }
         },
-        .Struct => {
-            inline for (tyinfo.Struct.fields) |field| {
+        .@"struct" => {
+            inline for (tyinfo.@"struct".fields) |field| {
                 if (comptime generic.hasHash(field.type)) {
                     generic.hash(field.type, &@field(this, field.name), hasher);
-                } else if (@hasDecl(field.type, "__generateHash") and @typeInfo(field.type) == .Struct) {
+                } else if (@hasDecl(field.type, "__generateHash") and @typeInfo(field.type) == .@"struct") {
                     implementHash(field.type, &@field(this, field.name), hasher);
                 } else {
                     @compileError("Can't hash these fields: " ++ @typeName(field.type) ++ ". On " ++ @typeName(T));
@@ -6665,11 +6659,11 @@ pub fn implementHash(comptime T: type, this: *const T, hasher: *std.hash.Wyhash)
             }
             return;
         },
-        .Enum => {
+        .@"enum" => {
             bun.writeAnyToHasher(hasher, @intFromEnum(this.*));
         },
-        .Union => {
-            if (tyinfo.Union.tag_type == null) @compileError("Unions must have a tag type");
+        .@"union" => {
+            if (tyinfo.@"union".tag_type == null) @compileError("Unions must have a tag type");
             bun.writeAnyToHasher(hasher, @intFromEnum(this.*));
             const enum_fields = bun.meta.EnumFields(T);
             inline for (enum_fields, std.meta.fields(T)) |enum_field, union_field| {
@@ -6677,7 +6671,7 @@ pub fn implementHash(comptime T: type, this: *const T, hasher: *std.hash.Wyhash)
                     const field = union_field;
                     if (comptime generic.hasHash(field.type)) {
                         generic.hash(field.type, &@field(this, field.name), hasher);
-                    } else if (@hasDecl(field.type, "__generateHash") and @typeInfo(field.type) == .Struct) {
+                    } else if (@hasDecl(field.type, "__generateHash") and @typeInfo(field.type) == .@"struct") {
                         implementHash(field.type, &@field(this, field.name), hasher);
                     } else {
                         @compileError("Can't hash these fields: " ++ @typeName(field.type) ++ ". On " ++ @typeName(T));

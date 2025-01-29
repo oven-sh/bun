@@ -56,7 +56,7 @@ pub const MultiPartUpload = struct {
     callback: *const fn (S3SimpleRequest.S3UploadResult, *anyopaque) void,
     callback_context: *anyopaque,
 
-    pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
+    pub usingnamespace bun.NewRefCounted(@This(), deinit);
 
     const log = bun.Output.scoped(.S3MultiPartUpload, true);
 

@@ -59,7 +59,7 @@ pub const PackageManagerCommand = struct {
     }
 
     pub fn printHash(ctx: Command.Context, file: File) !void {
-        @setCold(true);
+        @branchHint(.cold);
 
         const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .pm);
         var pm, const cwd = try PackageManager.init(ctx, cli, PackageManager.Subcommand.pm);

@@ -561,8 +561,8 @@ pub const Jest = struct {
 
     comptime {
         if (!JSC.is_bindgen) {
-            @export(Bun__Jest__createTestModuleObject, .{ .name = "Bun__Jest__createTestModuleObject" });
-            @export(Bun__Jest__createTestPreloadObject, .{ .name = "Bun__Jest__createTestPreloadObject" });
+            @export(&Bun__Jest__createTestModuleObject, .{ .name = "Bun__Jest__createTestModuleObject" });
+            @export(&Bun__Jest__createTestPreloadObject, .{ .name = "Bun__Jest__createTestPreloadObject" });
         }
     }
 };
@@ -813,10 +813,10 @@ pub const TestScope = struct {
     pub const name = "TestScope";
     pub const shim = JSC.Shimmer("Bun", name, @This());
     comptime {
-        @export(jsOnResolve, .{
+        @export(&jsOnResolve, .{
             .name = shim.symbolName("onResolve"),
         });
-        @export(jsOnReject, .{
+        @export(&jsOnReject, .{
             .name = shim.symbolName("onReject"),
         });
     }
@@ -825,10 +825,10 @@ pub const TestScope = struct {
 pub const DescribeScope = struct {
     label: string = "",
     parent: ?*DescribeScope = null,
-    beforeAll: std.ArrayListUnmanaged(JSValue) = .{},
-    beforeEach: std.ArrayListUnmanaged(JSValue) = .{},
-    afterEach: std.ArrayListUnmanaged(JSValue) = .{},
-    afterAll: std.ArrayListUnmanaged(JSValue) = .{},
+    beforeAlls: std.ArrayListUnmanaged(JSValue) = .{},
+    beforeEachs: std.ArrayListUnmanaged(JSValue) = .{},
+    afterEachs: std.ArrayListUnmanaged(JSValue) = .{},
+    afterAlls: std.ArrayListUnmanaged(JSValue) = .{},
     test_id_start: TestRunner.Test.ID = 0,
     test_id_len: TestRunner.Test.ID = 0,
     tests: std.ArrayListUnmanaged(TestScope) = .{},
@@ -911,7 +911,7 @@ pub const DescribeScope = struct {
                 }
 
                 cb.protect();
-                @field(DescribeScope.active.?, @tagName(hook)).append(getAllocator(globalThis), cb) catch unreachable;
+                @field(DescribeScope.active.?, @tagName(hook) ++ "s").append(getAllocator(globalThis), cb) catch unreachable;
                 return JSValue.jsBoolean(true);
             }
         }.run;
@@ -946,7 +946,7 @@ pub const DescribeScope = struct {
     pub const beforeEach = createCallback(.beforeEach);
 
     pub fn execCallback(this: *DescribeScope, globalObject: *JSGlobalObject, comptime hook: LifecycleHook) ?JSValue {
-        var hooks = &@field(this, @tagName(hook));
+        var hooks = &@field(this, @tagName(hook) ++ "s");
         defer {
             if (comptime hook == .beforeAll or hook == .afterAll) {
                 hooks.clearAndFree(getAllocator(globalObject));

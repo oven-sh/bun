@@ -1,7 +1,6 @@
 const JSC = bun.JSC;
 const Fs = @import("../../fs.zig");
 const CAPI = JSC.C;
-const JS = @import("../javascript.zig");
 const JSBase = @import("../base.zig");
 const ZigURL = @import("../../url.zig").URL;
 const Api = @import("../../api/schema.zig").Api;
@@ -49,7 +48,7 @@ pub const ZigGlobalObject = extern struct {
     pub const name = "Zig::GlobalObject";
     pub const include = "\"ZigGlobalObject.h\"";
     pub const namespace = shim.namespace;
-    pub const Interface: type = NewGlobalObject(JS.VirtualMachine);
+    pub const Interface: type = NewGlobalObject(JSC.VirtualMachine);
 
     pub fn create(
         vm: *JSC.VirtualMachine,
@@ -114,11 +113,11 @@ pub const ZigGlobalObject = extern struct {
     pub const Extern = [_][]const u8{ "create", "getModuleRegistryMap", "resetModuleRegistryMap" };
 
     comptime {
-        @export(import, .{ .name = Export[0].symbol_name });
-        @export(resolve, .{ .name = Export[1].symbol_name });
-        @export(promiseRejectionTracker, .{ .name = Export[2].symbol_name });
-        @export(reportUncaughtException, .{ .name = Export[3].symbol_name });
-        @export(onCrash, .{ .name = Export[4].symbol_name });
+        @export(&import, .{ .name = Export[0].symbol_name });
+        @export(&resolve, .{ .name = Export[1].symbol_name });
+        @export(&promiseRejectionTracker, .{ .name = Export[2].symbol_name });
+        @export(&reportUncaughtException, .{ .name = Export[3].symbol_name });
+        @export(&onCrash, .{ .name = Export[4].symbol_name });
     }
 };
 
@@ -226,7 +225,7 @@ pub const ResolvedSource = extern struct {
 
     allocator: ?*anyopaque = null,
 
-    jsvalue_for_export: JSC.JSValue = .zero,
+    jsvalue_for_export: JSValue = .zero,
 
     tag: Tag = Tag.javascript,
 
@@ -415,32 +414,32 @@ pub const Process = extern struct {
 
     comptime {
         if (!is_bindgen) {
-            @export(getTitle, .{
+            @export(&getTitle, .{
                 .name = Export[0].symbol_name,
             });
-            @export(setTitle, .{
+            @export(&setTitle, .{
                 .name = Export[1].symbol_name,
             });
-            @export(getArgv, .{
+            @export(&getArgv, .{
                 .name = Export[2].symbol_name,
             });
-            @export(getCwd, .{
+            @export(&getCwd, .{
                 .name = Export[3].symbol_name,
             });
-            @export(setCwd, .{
+            @export(&setCwd, .{
                 .name = Export[4].symbol_name,
             });
-            @export(exit, .{
+            @export(&exit, .{
                 .name = Export[5].symbol_name,
             });
-            @export(getArgv0, .{
+            @export(&getArgv0, .{
                 .name = Export[6].symbol_name,
             });
-            @export(getExecPath, .{
+            @export(&getExecPath, .{
                 .name = Export[7].symbol_name,
             });
 
-            @export(getExecArgv, .{
+            @export(&getExecArgv, .{
                 .name = Export[8].symbol_name,
             });
         }
@@ -841,7 +840,6 @@ pub const ZigException = extern struct {
     }
 
     pub const shim = Shimmer("Zig", "Exception", @This());
-    pub const name = "ZigException";
     pub const namespace = shim.namespace;
 
     pub const Holder = extern struct {
@@ -970,8 +968,8 @@ pub inline fn toGlobalContextRef(ptr: *JSGlobalObject) CAPI.JSGlobalContextRef {
 }
 
 comptime {
-    @export(ErrorCode.ParserError, .{ .name = "Zig_ErrorCodeParserError" });
-    @export(ErrorCode.JSErrorObject, .{ .name = "Zig_ErrorCodeJSErrorObject" });
+    @export(&ErrorCode.ParserError, .{ .name = "Zig_ErrorCodeParserError" });
+    @export(&ErrorCode.JSErrorObject, .{ .name = "Zig_ErrorCodeJSErrorObject" });
 }
 
 const Bun = JSC.API.Bun;

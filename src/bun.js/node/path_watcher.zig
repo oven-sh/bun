@@ -51,7 +51,7 @@ pub const PathWatcherManager = struct {
     };
 
     fn refPendingTask(this: *PathWatcherManager) bool {
-        @fence(.release);
+        // @fence(.release);
         this.mutex.lock();
         defer this.mutex.unlock();
         if (this.deinit_on_last_task) return false;
@@ -61,12 +61,12 @@ pub const PathWatcherManager = struct {
     }
 
     fn hasPendingTasks(this: *PathWatcherManager) callconv(.C) bool {
-        @fence(.acquire);
+        // @fence(.acquire);
         return this.has_pending_tasks.load(.acquire);
     }
 
     fn unrefPendingTask(this: *PathWatcherManager) void {
-        @fence(.release);
+        // @fence(.release);
         this.mutex.lock();
         defer this.mutex.unlock();
         this.pending_tasks -= 1;
@@ -830,7 +830,7 @@ pub const PathWatcher = struct {
     }
 
     pub fn refPendingDirectory(this: *PathWatcher) bool {
-        @fence(.release);
+        // @fence(.release);
         this.mutex.lock();
         defer this.mutex.unlock();
         if (this.isClosed()) return false;
@@ -840,24 +840,24 @@ pub const PathWatcher = struct {
     }
 
     pub fn hasPendingDirectories(this: *PathWatcher) callconv(.C) bool {
-        @fence(.acquire);
+        // @fence(.acquire);
         return this.has_pending_directories.load(.acquire);
     }
 
     pub fn isClosed(this: *PathWatcher) bool {
-        @fence(.acquire);
+        // @fence(.acquire);
         return this.closed.load(.acquire);
     }
 
     pub fn setClosed(this: *PathWatcher) void {
         this.mutex.lock();
         defer this.mutex.unlock();
-        @fence(.release);
+        // @fence(.release);
         this.closed.store(true, .release);
     }
 
     pub fn unrefPendingDirectory(this: *PathWatcher) void {
-        @fence(.release);
+        // @fence(.release);
         this.mutex.lock();
         defer this.mutex.unlock();
         this.pending_directories -= 1;

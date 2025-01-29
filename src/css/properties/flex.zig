@@ -94,7 +94,7 @@ pub const FlexFlow = struct {
     /// How the flex items wrap.
     wrap: FlexWrap,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"flex-flow");
+    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"flex-flow", PropertyFieldMap);
 
     pub const PropertyFieldMap = .{
         .direction = css.PropertyIdTag.@"flex-direction",
@@ -170,7 +170,7 @@ pub const Flex = struct {
     /// The flex basis.
     basis: LengthPercentageOrAuto,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.flex);
+    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.flex, PropertyFieldMap);
 
     pub const PropertyFieldMap = .{
         .grow = css.PropertyIdTag.@"flex-grow",

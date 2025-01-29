@@ -260,7 +260,7 @@ var failure_reason_data: [512]u8 = undefined;
 var failure_reason_argument: ?[]const u8 = null;
 
 noinline fn failAndExitWithReason(reason: FailReason) noreturn {
-    @setCold(true);
+    @branchHint(.cold);
 
     const console_handle = w.teb().ProcessEnvironmentBlock.ProcessParameters.hStdError;
     var mode: w.DWORD = 0;
@@ -310,7 +310,7 @@ pub const LauncherMode = enum {
     }
 
     noinline fn fail(comptime mode: LauncherMode, comptime reason: FailReason) mode.FailRetType() {
-        @setCold(true);
+        @branchHint(.cold);
         return switch (mode) {
             .launch => failAndExitWithReason(reason),
             .read_without_launch => ReadWithoutLaunchResult{ .err = reason },

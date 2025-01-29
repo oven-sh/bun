@@ -200,9 +200,9 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
                     []u8 => JSC.ArrayBuffer.fromBytes(r, .ArrayBuffer).toJS(globalObject, null),
 
                     else => switch (@typeInfo(ReturnType)) {
-                        .Int, .Float, .ComptimeInt, .ComptimeFloat => JSC.JSValue.jsNumber(r),
-                        .Struct, .Enum, .Opaque, .Union => r.toJS(globalObject),
-                        .Pointer => {
+                        .int, .float, .comptime_int, .comptime_float => JSC.JSValue.jsNumber(r),
+                        .@"struct", .@"enum", .@"opaque", .@"union" => r.toJS(globalObject),
+                        .pointer => {
                             if (bun.trait.isZigString(ReturnType))
                                 JSC.ZigString.init(bun.asByteSlice(r)).withEncoding().toJS(globalObject);
 
@@ -1286,8 +1286,8 @@ fn timeLikeFromSeconds(seconds: f64) TimeLike {
         return seconds;
     }
     return .{
-        .tv_sec = @intFromFloat(seconds),
-        .tv_nsec = @intFromFloat(@mod(seconds, 1) * std.time.ns_per_s),
+        .sec = @intFromFloat(seconds),
+        .nsec = @intFromFloat(@mod(seconds, 1) * std.time.ns_per_s),
     };
 }
 
@@ -1305,8 +1305,8 @@ fn timeLikeFromMilliseconds(milliseconds: f64) TimeLike {
     }
 
     return .{
-        .tv_sec = @intFromFloat(sec),
-        .tv_nsec = @intFromFloat(nsec),
+        .sec = @intFromFloat(sec),
+        .nsec = @intFromFloat(nsec),
     };
 }
 
@@ -1336,15 +1336,15 @@ fn timeLikeFromNow() TimeLike {
     //        ownership or permission checks are performed, and the file
     //        timestamps are not modified, but other error conditions may still
     return .{
-        .tv_sec = 0,
-        .tv_nsec = if (Environment.isLinux) std.os.linux.UTIME.NOW else bun.C.translated.UTIME_NOW,
+        .sec = 0,
+        .nsec = if (Environment.isLinux) std.os.linux.UTIME.NOW else bun.C.translated.UTIME_NOW,
     };
 }
 
 pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue) bun.JSError!?Mode {
     const mode_int = if (value.isNumber()) brk: {
         const m = try validators.validateUint32(ctx, value, "mode", .{}, false);
-        break :brk @as(Mode, @as(u24, @truncate(m)));
+        break :brk @as(Mode, @truncate(m));
     } else brk: {
         if (value.isUndefinedOrNull()) return null;
 
@@ -1439,8 +1439,8 @@ pub const PathOrFileDescriptor = union(Tag) {
     }
 };
 
-pub const FileSystemFlags = enum(if (Environment.isWindows) c_int else c_uint) {
-    pub const tag_type = @typeInfo(FileSystemFlags).Enum.tag_type;
+pub const FileSystemFlags = enum(c_int) {
+    pub const tag_type = @typeInfo(FileSystemFlags).@"enum".tag_type;
     const O = bun.O;
 
     /// Open file for appending. The file is created if it does not exist.
@@ -1623,16 +1623,16 @@ pub fn StatType(comptime big: bool) type {
         const Float = if (big) i64 else f64;
 
         inline fn toNanoseconds(ts: StatTimespec) u64 {
-            if (ts.tv_sec < 0) {
+            if (ts.sec < 0) {
                 return @intCast(@max(bun.timespec.nsSigned(&bun.timespec{
-                    .sec = @intCast(ts.tv_sec),
-                    .nsec = @intCast(ts.tv_nsec),
+                    .sec = @intCast(ts.sec),
+                    .nsec = @intCast(ts.nsec),
                 }), 0));
             }
 
             return bun.timespec.ns(&bun.timespec{
-                .sec = @intCast(ts.tv_sec),
-                .nsec = @intCast(ts.tv_nsec),
+                .sec = @intCast(ts.sec),
+                .nsec = @intCast(ts.nsec),
             });
         }
 
@@ -1642,8 +1642,8 @@ pub fn StatType(comptime big: bool) type {
             // > libuv calculates tv_sec and tv_nsec from it and converts to signed long,
             // > which causes Y2038 overflow. On the other platforms it is safe to treat
             // > negative values as pre-epoch time.
-            const tv_sec = if (Environment.isWindows) @as(u32, @bitCast(ts.tv_sec)) else ts.tv_sec;
-            const tv_nsec = if (Environment.isWindows) @as(u32, @bitCast(ts.tv_nsec)) else ts.tv_nsec;
+            const tv_sec = if (Environment.isWindows) @as(u32, @bitCast(ts.sec)) else ts.sec;
+            const tv_nsec = if (Environment.isWindows) @as(u32, @bitCast(ts.nsec)) else ts.nsec;
             if (big) {
                 const sec: i64 = tv_sec;
                 const nsec: i64 = tv_nsec;
@@ -2203,7 +2203,7 @@ pub const Process = struct {
 
     comptime {
         if (Environment.export_cpp_apis and Environment.isWindows) {
-            @export(Bun__Process__editWindowsEnvVar, .{ .name = "Bun__Process__editWindowsEnvVar" });
+            @export(&Bun__Process__editWindowsEnvVar, .{ .name = "Bun__Process__editWindowsEnvVar" });
         }
     }
 
@@ -2265,13 +2265,13 @@ pub fn StatFSType(comptime big: bool) type {
         pub usingnamespace bun.New(@This());
 
         // Common fields between Linux and macOS
-        fstype: Int,
-        bsize: Int,
-        blocks: Int,
-        bfree: Int,
-        bavail: Int,
-        files: Int,
-        ffree: Int,
+        _fstype: Int,
+        _bsize: Int,
+        _blocks: Int,
+        _bfree: Int,
+        _bavail: Int,
+        _files: Int,
+        _ffree: Int,
 
         const This = @This();
 
@@ -2282,7 +2282,7 @@ pub fn StatFSType(comptime big: bool) type {
                 pub fn callback(this: *This, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
                     const value = @field(this, @tagName(field));
                     const Type = @TypeOf(value);
-                    if (comptime big and @typeInfo(Type) == .Int) {
+                    if (comptime big and @typeInfo(Type) == .int) {
                         return JSC.JSValue.fromInt64NoTruncate(globalObject, value);
                     }
 
@@ -2295,13 +2295,13 @@ pub fn StatFSType(comptime big: bool) type {
             }.callback;
         }
 
-        pub const fstype = getter(.fstype);
-        pub const bsize = getter(.bsize);
-        pub const blocks = getter(.blocks);
-        pub const bfree = getter(.bfree);
-        pub const bavail = getter(.bavail);
-        pub const files = getter(.files);
-        pub const ffree = getter(.ffree);
+        pub const fstype = getter(._fstype);
+        pub const bsize = getter(._bsize);
+        pub const blocks = getter(._blocks);
+        pub const bfree = getter(._bfree);
+        pub const bavail = getter(._bavail);
+        pub const files = getter(._files);
+        pub const ffree = getter(._ffree);
 
         pub fn finalize(this: *This) void {
             this.destroy();
@@ -2330,13 +2330,13 @@ pub fn StatFSType(comptime big: bool) type {
                 else => @compileError("Unsupported OS"),
             };
             return .{
-                .fstype = @truncate(@as(i64, @intCast(fstype_))),
-                .bsize = @truncate(@as(i64, @intCast(bsize_))),
-                .blocks = @truncate(@as(i64, @intCast(blocks_))),
-                .bfree = @truncate(@as(i64, @intCast(bfree_))),
-                .bavail = @truncate(@as(i64, @intCast(bavail_))),
-                .files = @truncate(@as(i64, @intCast(files_))),
-                .ffree = @truncate(@as(i64, @intCast(ffree_))),
+                ._fstype = @truncate(@as(i64, @intCast(fstype_))),
+                ._bsize = @truncate(@as(i64, @intCast(bsize_))),
+                ._blocks = @truncate(@as(i64, @intCast(blocks_))),
+                ._bfree = @truncate(@as(i64, @intCast(bfree_))),
+                ._bavail = @truncate(@as(i64, @intCast(bavail_))),
+                ._files = @truncate(@as(i64, @intCast(files_))),
+                ._ffree = @truncate(@as(i64, @intCast(ffree_))),
             };
         }
 
@@ -2348,13 +2348,13 @@ pub fn StatFSType(comptime big: bool) type {
             var args = callFrame.arguments();
 
             const this = This.new(.{
-                .fstype = if (args.len > 0 and args[0].isNumber()) args[0].toInt32() else 0,
-                .bsize = if (args.len > 1 and args[1].isNumber()) args[1].toInt32() else 0,
-                .blocks = if (args.len > 2 and args[2].isNumber()) args[2].toInt32() else 0,
-                .bfree = if (args.len > 3 and args[3].isNumber()) args[3].toInt32() else 0,
-                .bavail = if (args.len > 4 and args[4].isNumber()) args[4].toInt32() else 0,
-                .files = if (args.len > 5 and args[5].isNumber()) args[5].toInt32() else 0,
-                .ffree = if (args.len > 6 and args[6].isNumber()) args[6].toInt32() else 0,
+                ._fstype = if (args.len > 0 and args[0].isNumber()) args[0].toInt32() else 0,
+                ._bsize = if (args.len > 1 and args[1].isNumber()) args[1].toInt32() else 0,
+                ._blocks = if (args.len > 2 and args[2].isNumber()) args[2].toInt32() else 0,
+                ._bfree = if (args.len > 3 and args[3].isNumber()) args[3].toInt32() else 0,
+                ._bavail = if (args.len > 4 and args[4].isNumber()) args[4].toInt32() else 0,
+                ._files = if (args.len > 5 and args[5].isNumber()) args[5].toInt32() else 0,
+                ._ffree = if (args.len > 6 and args[6].isNumber()) args[6].toInt32() else 0,
             });
 
             return this;

@@ -1719,7 +1719,7 @@ pub const BundleV2 = struct {
         ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
         started_at_ns: u64 = 0,
 
-        pub usingnamespace bun.NewThreadSafeRefCounted(JSBundleCompletionTask, @This().deinit);
+        pub usingnamespace bun.NewThreadSafeRefCounted(JSBundleCompletionTask, _deinit);
 
         pub fn configureBundler(
             completion: *JSBundleCompletionTask,
@@ -1797,7 +1797,7 @@ pub const BundleV2 = struct {
 
         pub const TaskCompletion = bun.JSC.AnyTask.New(JSBundleCompletionTask, onComplete);
 
-        pub fn deinit(this: *JSBundleCompletionTask) void {
+        fn _deinit(this: *JSBundleCompletionTask) void {
             this.result.deinit();
             this.log.deinit();
             this.poll_ref.disable();
@@ -14790,7 +14790,7 @@ pub const LinkerContext = struct {
                             Part.SymbolUseMap,
                             c.allocator,
                             .{
-                                .{ wrapper_ref, .{ .count_estimate = 1 } },
+                                .{ wrapper_ref, Symbol.Use{ .count_estimate = 1 } },
                             },
                         ) catch unreachable,
                         .declared_symbols = js_ast.DeclaredSymbol.List.fromSlice(
@@ -14847,10 +14847,10 @@ pub const LinkerContext = struct {
                 const part_index = c.graph.addPartToFile(
                     source_index,
                     .{
-                        .symbol_uses = bun.from(
+                        .symbol_uses = bun.fromMapLike(
                             Part.SymbolUseMap,
                             c.allocator,
-                            .{
+                            &.{
                                 .{ wrapper_ref, .{ .count_estimate = 1 } },
                             },
                         ) catch unreachable,

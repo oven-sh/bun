@@ -14,7 +14,6 @@ const is_bindgen: bool = false;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const JSC = bun.JSC;
 const Shimmer = JSC.Shimmer;
-const ConsoleObject = JSC.ConsoleObject;
 const FFI = @import("./FFI.zig");
 const NullableAllocator = bun.NullableAllocator;
 const MutableString = bun.MutableString;
@@ -67,7 +66,7 @@ pub const JSObject = extern struct {
     /// prototype (`null_prototype = false`) unless you have a good reason not
     /// to.
     fn createFromStructWithPrototype(comptime T: type, pojo: T, global: *JSGlobalObject, comptime null_prototype: bool) *JSObject {
-        const info: std.builtin.Type.Struct = @typeInfo(T).Struct;
+        const info: std.builtin.Type.Struct = @typeInfo(T).@"struct";
 
         const obj = obj: {
             const val = if (comptime null_prototype)
@@ -4085,7 +4084,6 @@ pub const JSValue = enum(i64) {
                 if (this.isDouble()) {
                     return this.asDouble();
                 }
-
                 return this.coerceToDouble(globalThis);
             },
             i64 => {
@@ -4095,12 +4093,20 @@ pub const JSValue = enum(i64) {
                 if (this.isInt32()) {
                     return this.asInt32();
                 }
-
                 if (this.getNumber()) |num| {
                     return coerceJSValueDoubleTruncatingT(i32, num);
                 }
-
                 return this.coerceToInt32(globalThis);
+            },
+            std.c.AI,
+            => {
+                if (this.isInt32()) {
+                    return @bitCast(this.asInt32());
+                }
+                if (this.getNumber()) |num| {
+                    return @bitCast(coerceJSValueDoubleTruncatingT(i32, num));
+                }
+                return @bitCast(this.coerceToInt32(globalThis));
             },
             else => @compileError("Unsupported coercion type"),
         };
@@ -4109,8 +4115,8 @@ pub const JSValue = enum(i64) {
     /// This does not call [Symbol.toPrimitive] or [Symbol.toStringTag].
     /// This is only safe when you don't want to do conversions across non-primitive types.
     pub fn to(this: JSValue, comptime T: type) T {
-        if (@typeInfo(T) == .Enum) {
-            const Int = @typeInfo(T).Enum.tag_type;
+        if (@typeInfo(T) == .@"enum") {
+            const Int = @typeInfo(T).@"enum".tag_type;
             return @enumFromInt(this.to(Int));
         }
         return switch (comptime T) {
@@ -4249,8 +4255,8 @@ pub const JSValue = enum(i64) {
 
     pub fn put(value: JSValue, global: *JSGlobalObject, key: anytype, result: JSC.JSValue) void {
         const Key = @TypeOf(key);
-        if (comptime @typeInfo(Key) == .Pointer) {
-            const Elem = @typeInfo(Key).Pointer.child;
+        if (comptime @typeInfo(Key) == .pointer) {
+            const Elem = @typeInfo(Key).pointer.child;
             if (Elem == ZigString) {
                 putZigString(value, global, key, result);
             } else if (Elem == bun.String) {
@@ -4477,8 +4483,8 @@ pub const JSValue = enum(i64) {
     extern fn JSBuffer__bufferFromPointerAndLengthAndDeinit(*JSGlobalObject, [*]u8, usize, ?*anyopaque, JSC.C.JSTypedArrayBytesDeallocator) JSValue;
 
     pub fn jsNumberWithType(comptime Number: type, number: Number) JSValue {
-        if (@typeInfo(Number) == .Enum) {
-            return jsNumberWithType(@typeInfo(Number).Enum.tag_type, @intFromEnum(number));
+        if (@typeInfo(Number) == .@"enum") {
+            return jsNumberWithType(@typeInfo(Number).@"enum".tag_type, @intFromEnum(number));
         }
         return switch (comptime Number) {
             JSValue => number,
@@ -4571,8 +4577,8 @@ pub const JSValue = enum(i64) {
     pub fn print(
         this: JSValue,
         globalObject: *JSGlobalObject,
-        message_type: ConsoleObject.MessageType,
-        message_level: ConsoleObject.MessageLevel,
+        message_type: JSC.ConsoleObject.MessageType,
+        message_level: JSC.ConsoleObject.MessageLevel,
     ) void {
         JSC.ConsoleObject.messageWithTypeAndLevel(
             undefined,

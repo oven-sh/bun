@@ -2827,7 +2827,7 @@ pub const Blob = struct {
 
             fn truncate(this: *CopyFileWindows) void {
                 // TODO: optimize this
-                @setCold(true);
+                @branchHint(.cold);
 
                 var node_fs: JSC.Node.NodeFS = .{};
                 _ = node_fs.truncate(
@@ -3234,7 +3234,7 @@ pub const Blob = struct {
             }
 
             pub fn doFCopyFileWithReadWriteLoopFallback(this: *CopyFile) anyerror!void {
-                switch (bun.sys.fcopyfile(this.source_fd, this.destination_fd, posix.system.COPYFILE_DATA)) {
+                switch (bun.sys.fcopyfile(this.source_fd, this.destination_fd, posix.system.COPYFILE{ .DATA = true })) {
                     .err => |errno| {
                         switch (errno.getErrno()) {
                             // If the file type doesn't support seeking, it may return EBADF
@@ -4083,9 +4083,9 @@ pub const Blob = struct {
     });
     comptime {
         const jsonResolveRequestStream = JSC.toJSHostFunction(onFileStreamResolveRequestStream);
-        @export(jsonResolveRequestStream, .{ .name = Export[0].symbol_name });
+        @export(&jsonResolveRequestStream, .{ .name = Export[0].symbol_name });
         const jsonRejectRequestStream = JSC.toJSHostFunction(onFileStreamRejectRequestStream);
-        @export(jsonRejectRequestStream, .{ .name = Export[1].symbol_name });
+        @export(&jsonRejectRequestStream, .{ .name = Export[1].symbol_name });
     }
     pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *JSC.JSGlobalObject, readable_stream: JSC.WebCore.ReadableStream, extra_options: ?JSValue) JSC.JSValue {
         var store = this.store orelse {
@@ -4826,7 +4826,7 @@ pub const Blob = struct {
                         Blob.max_size;
                     store.data.file.mode = @intCast(stat.mode);
                     store.data.file.seekable = bun.isRegularFile(stat.mode);
-                    store.data.file.last_modified = JSC.toJSTime(stat.mtime().tv_sec, stat.mtime().tv_nsec);
+                    store.data.file.last_modified = JSC.toJSTime(stat.mtime().sec, stat.mtime().nsec);
                 },
                 // the file may not exist yet. Thats's okay.
                 else => {},
@@ -4840,7 +4840,7 @@ pub const Blob = struct {
                         Blob.max_size;
                     store.data.file.mode = @intCast(stat.mode);
                     store.data.file.seekable = bun.isRegularFile(stat.mode);
-                    store.data.file.last_modified = JSC.toJSTime(stat.mtime().tv_sec, stat.mtime().tv_nsec);
+                    store.data.file.last_modified = JSC.toJSTime(stat.mtime().sec, stat.mtime().nsec);
                 },
                 // the file may not exist yet. Thats's okay.
                 else => {},

@@ -354,7 +354,7 @@ pub const LengthValue = union(enum) {
     }
 
     pub fn sign(this: *const @This()) f32 {
-        const enum_fields = @typeInfo(@typeInfo(@This()).Union.tag_type.?).Enum.fields;
+        const enum_fields = @typeInfo(@typeInfo(@This()).@"union".tag_type.?).@"enum".fields;
         inline for (std.meta.fields(@This()), 0..) |field, i| {
             if (enum_fields[i].value == @intFromEnum(this.*)) {
                 return css.signfns.signF32(@field(this, field.name));
@@ -378,7 +378,7 @@ pub const LengthValue = union(enum) {
     }
 
     pub fn toUnitValue(this: *const @This()) struct { CSSNumber, []const u8 } {
-        const enum_fields = @typeInfo(@typeInfo(@This()).Union.tag_type.?).Enum.fields;
+        const enum_fields = @typeInfo(@typeInfo(@This()).@"union".tag_type.?).@"enum".fields;
         inline for (std.meta.fields(@This()), 0..) |field, i| {
             if (enum_fields[i].value == @intFromEnum(this.*)) {
                 return .{ @field(this, field.name), field.name };

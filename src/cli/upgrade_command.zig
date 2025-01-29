@@ -400,7 +400,7 @@ pub const UpgradeCommand = struct {
     };
 
     pub fn exec(ctx: Command.Context) !void {
-        @setCold(true);
+        @branchHint(.cold);
 
         const args = bun.argv;
         if (args.len > 2) {

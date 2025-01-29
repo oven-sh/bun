@@ -37,14 +37,14 @@ const JSPrinter = bun.js_printer;
 const picohttp = bun.picohttp;
 const StringJoiner = bun.StringJoiner;
 const uws = bun.uws;
-const Blob = JSC.WebCore.Blob;
+const Blob = bun.JSC.WebCore.Blob;
 const Response = JSC.WebCore.Response;
 const Request = JSC.WebCore.Request;
 const assert = bun.assert;
 const Syscall = bun.sys;
 const uv = bun.windows.libuv;
 
-const AnyBlob = JSC.WebCore.AnyBlob;
+const AnyBlob = bun.JSC.WebCore.AnyBlob;
 pub const ReadableStream = struct {
     value: JSValue,
     ptr: Source,
@@ -124,7 +124,7 @@ pub const ReadableStream = struct {
     pub fn toAnyBlob(
         stream: *ReadableStream,
         globalThis: *JSC.JSGlobalObject,
-    ) ?JSC.WebCore.AnyBlob {
+    ) ?AnyBlob {
         if (stream.isDisturbed(globalThis)) {
             return null;
         }
@@ -140,7 +140,7 @@ pub const ReadableStream = struct {
             },
             .File => |blobby| {
                 if (blobby.lazy == .blob) {
-                    var blob = JSC.WebCore.Blob.initWithStore(blobby.lazy.blob, globalThis);
+                    var blob = Blob.initWithStore(blobby.lazy.blob, globalThis);
                     blob.store.?.ref();
                     // it should be lazy, file shouldn't have opened yet.
                     bun.assert(!blobby.started);
@@ -493,7 +493,7 @@ pub const StreamStart = union(Tag) {
         close: bool = false,
         mode: bun.Mode = 0o664,
 
-        pub fn flags(this: *const FileSinkOptions) bun.Mode {
+        pub fn flags(this: *const FileSinkOptions) c_int {
             _ = this;
 
             return bun.O.NONBLOCK | bun.O.CLOEXEC | bun.O.CREAT | bun.O.WRONLY;
@@ -563,7 +563,7 @@ pub const StreamStart = union(Tag) {
             .ArrayBufferSink => {
                 var as_uint8array = false;
                 var stream = false;
-                var chunk_size: JSC.WebCore.Blob.SizeType = 0;
+                var chunk_size: Blob.SizeType = 0;
                 var empty = true;
 
                 if (value.getOwn(globalThis, "asUint8Array")) |val| {
@@ -583,7 +583,7 @@ pub const StreamStart = union(Tag) {
                 if (value.fastGet(globalThis, .highWaterMark)) |chunkSize| {
                     if (chunkSize.isNumber()) {
                         empty = false;
-                        chunk_size = @as(JSC.WebCore.Blob.SizeType, @intCast(@max(0, @as(i51, @truncate(chunkSize.toInt64())))));
+                        chunk_size = @as(Blob.SizeType, @intCast(@max(0, @as(i51, @truncate(chunkSize.toInt64())))));
                     }
                 }
 
@@ -598,11 +598,11 @@ pub const StreamStart = union(Tag) {
                 }
             },
             .FileSink => {
-                var chunk_size: JSC.WebCore.Blob.SizeType = 0;
+                var chunk_size: Blob.SizeType = 0;
 
                 if (value.fastGet(globalThis, .highWaterMark)) |chunkSize| {
                     if (chunkSize.isNumber())
-                        chunk_size = @as(JSC.WebCore.Blob.SizeType, @intCast(@max(0, @as(i51, @truncate(chunkSize.toInt64())))));
+                        chunk_size = @as(Blob.SizeType, @intCast(@max(0, @as(i51, @truncate(chunkSize.toInt64())))));
                 }
 
                 if (value.fastGet(globalThis, .path)) |path| {
@@ -661,12 +661,12 @@ pub const StreamStart = union(Tag) {
             },
             .NetworkSink, .HTTPSResponseSink, .HTTPResponseSink => {
                 var empty = true;
-                var chunk_size: JSC.WebCore.Blob.SizeType = 2048;
+                var chunk_size: Blob.SizeType = 2048;
 
                 if (value.fastGet(globalThis, .highWaterMark)) |chunkSize| {
                     if (chunkSize.isNumber()) {
                         empty = false;
-                        chunk_size = @as(JSC.WebCore.Blob.SizeType, @intCast(@max(256, @as(i51, @truncate(chunkSize.toInt64())))));
+                        chunk_size = @as(Blob.SizeType, @intCast(@max(256, @as(i51, @truncate(chunkSize.toInt64())))));
                     }
                 }
 
@@ -1983,17 +1983,17 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
         }
 
         comptime {
-            @export(finalize, .{ .name = shim.symbolName("finalize") });
-            @export(jsWrite, .{ .name = shim.symbolName("write") });
-            @export(jsGetInternalFd, .{ .name = shim.symbolName("getInternalFd") });
-            @export(close, .{ .name = shim.symbolName("close") });
-            @export(jsFlush, .{ .name = shim.symbolName("flush") });
-            @export(jsStart, .{ .name = shim.symbolName("start") });
-            @export(jsEnd, .{ .name = shim.symbolName("end") });
-            @export(jsConstruct, .{ .name = shim.symbolName("construct") });
-            @export(endWithSink, .{ .name = shim.symbolName("endWithSink") });
-            @export(updateRef, .{ .name = shim.symbolName("updateRef") });
-            @export(memoryCost, .{ .name = shim.symbolName("memoryCost") });
+            @export(&finalize, .{ .name = shim.symbolName("finalize") });
+            @export(&jsWrite, .{ .name = shim.symbolName("write") });
+            @export(&jsGetInternalFd, .{ .name = shim.symbolName("getInternalFd") });
+            @export(&close, .{ .name = shim.symbolName("close") });
+            @export(&jsFlush, .{ .name = shim.symbolName("flush") });
+            @export(&jsStart, .{ .name = shim.symbolName("start") });
+            @export(&jsEnd, .{ .name = shim.symbolName("end") });
+            @export(&jsConstruct, .{ .name = shim.symbolName("construct") });
+            @export(&endWithSink, .{ .name = shim.symbolName("endWithSink") });
+            @export(&updateRef, .{ .name = shim.symbolName("updateRef") });
+            @export(&memoryCost, .{ .name = shim.symbolName("memoryCost") });
 
             shim.assertJSFunction(.{
                 write,
@@ -3447,7 +3447,7 @@ pub const FileSink = struct {
 
     comptime {
         if (Environment.isWindows) {
-            @export(Bun__ForceFileSinkToBeSynchronousOnWindows, .{ .name = "Bun__ForceFileSinkToBeSynchronousOnWindows" });
+            @export(&Bun__ForceFileSinkToBeSynchronousOnWindows, .{ .name = "Bun__ForceFileSinkToBeSynchronousOnWindows" });
         }
     }
 
@@ -4677,7 +4677,7 @@ pub const ByteBlobLoader = struct {
                 }
             }
 
-            var blob = JSC.WebCore.Blob.initWithStore(store, globalThis);
+            var blob = Blob.initWithStore(store, globalThis);
             blob.offset = this.offset;
             blob.size = this.remain;
             this.parent().is_closed = true;

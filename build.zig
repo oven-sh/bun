@@ -19,7 +19,7 @@ const OperatingSystem = @import("src/env.zig").OperatingSystem;
 const pathRel = fs.path.relative;
 
 /// Do not rename this constant. It is scanned by some scripts to determine which zig version to install.
-const recommended_zig_version = "0.13.0";
+const recommended_zig_version = "0.14.0-dev.2851+b074fb7dd";
 
 comptime {
     if (!std.mem.eql(u8, builtin.zig_version_string, recommended_zig_version)) {
@@ -154,7 +154,6 @@ pub fn build(b: *Build) !void {
     std.log.info("zig compiler v{s}", .{builtin.zig_version_string});
     checked_file_exists = std.AutoHashMap(u64, void).init(b.allocator);
 
-    b.zig_lib_dir = b.zig_lib_dir orelse b.path("vendor/zig/lib");
 
     // TODO: Upgrade path for 0.14.0
     // b.graph.zig_lib_directory = brk: {
@@ -335,7 +334,7 @@ pub fn build(b: *Build) !void {
     // zig build translate-c-headers
     {
         const step = b.step("translate-c", "Copy generated translated-c-headers.zig to zig-out");
-        step.dependOn(&b.addInstallFile(getTranslateC(b, b.host, .Debug).getOutput(), "translated-c-headers.zig").step);
+        step.dependOn(&b.addInstallFile(getTranslateC(b, target, .Debug).getOutput(), "translated-c-headers.zig").step);
     }
 
     // zig build enum-extractor
@@ -363,7 +362,7 @@ pub fn addMultiCheck(
             const check_target = b.resolveTargetQuery(.{
                 .os_tag = OperatingSystem.stdOSTag(check.os),
                 .cpu_arch = check.arch,
-                .cpu_model = getCpuModel(check.os, check.arch) orelse .determined_by_cpu_arch,
+                .cpu_model = getCpuModel(check.os, check.arch) orelse .determined_by_arch_os,
                 .os_version_min = getOSVersionMin(check.os),
                 .glibc_version = if (check.musl) null else getOSGlibCVersion(check.os),
             });
@@ -429,7 +428,6 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
         .strip = false, // stripped at the end
     });
     obj.bundle_compiler_rt = false;
-    obj.formatted_panics = true;
     obj.root_module.omit_frame_pointer = false;
 
     // Link libc
@@ -614,7 +612,7 @@ const WindowsShim = struct {
             .optimize = .ReleaseFast,
             .use_llvm = true,
             .use_lld = true,
-            .unwind_tables = false,
+            .unwind_tables = null,
             .omit_frame_pointer = true,
             .strip = true,
             .linkage = .static,

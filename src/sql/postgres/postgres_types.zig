@@ -177,7 +177,7 @@ pub const Tag = enum(short) {
     jsonpath_array = 4073,
     _,
 
-    pub fn name(this: Tag) ?[]const u8 {
+    pub fn tagName(this: Tag) ?[]const u8 {
         return std.enums.tagName(Tag, this);
     }
 

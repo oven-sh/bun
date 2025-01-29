@@ -714,16 +714,16 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
         comptime {
             if (!JSC.is_bindgen) {
-                @export(connect, .{
+                @export(&connect, .{
                     .name = Export[0].symbol_name,
                 });
-                @export(cancel, .{
+                @export(&cancel, .{
                     .name = Export[1].symbol_name,
                 });
-                @export(register, .{
+                @export(&register, .{
                     .name = Export[2].symbol_name,
                 });
-                @export(memoryCost, .{
+                @export(&memoryCost, .{
                     .name = Export[3].symbol_name,
                 });
             }
@@ -2010,14 +2010,14 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
         comptime {
             if (!JSC.is_bindgen) {
-                @export(writeBinaryData, .{ .name = Export[0].symbol_name });
-                @export(writeString, .{ .name = Export[1].symbol_name });
-                @export(close, .{ .name = Export[2].symbol_name });
-                @export(cancel, .{ .name = Export[3].symbol_name });
-                @export(register, .{ .name = Export[4].symbol_name });
-                @export(init, .{ .name = Export[5].symbol_name });
-                @export(finalize, .{ .name = Export[6].symbol_name });
-                @export(memoryCost, .{ .name = Export[7].symbol_name });
+                @export(&writeBinaryData, .{ .name = Export[0].symbol_name });
+                @export(&writeString, .{ .name = Export[1].symbol_name });
+                @export(&close, .{ .name = Export[2].symbol_name });
+                @export(&cancel, .{ .name = Export[3].symbol_name });
+                @export(&register, .{ .name = Export[4].symbol_name });
+                @export(&init, .{ .name = Export[5].symbol_name });
+                @export(&finalize, .{ .name = Export[6].symbol_name });
+                @export(&memoryCost, .{ .name = Export[7].symbol_name });
             }
         }
     };

@@ -275,7 +275,9 @@ pub const FFI = struct {
                         "macosx",
                         "-show-sdk-path",
                     },
-                    .envp = std.c.environ,
+                    // ?[*:null]?[*:0]const u8
+                    //  [*:null]?[*:0]u8
+                    .envp = @ptrCast(std.c.environ),
                 }) catch return;
                 if (process == .result) {
                     defer process.result.deinit();

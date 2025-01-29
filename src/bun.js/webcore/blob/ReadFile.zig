@@ -1,14 +1,14 @@
 const bun = @import("root").bun;
 const JSC = bun.JSC;
 const std = @import("std");
-const Blob = JSC.WebCore.Blob;
+const Blob = bun.JSC.WebCore.Blob;
 const invalid_fd = bun.invalid_fd;
 
 const SystemError = JSC.SystemError;
 const SizeType = Blob.SizeType;
 const io = bun.io;
-const FileOpenerMixin = Blob.Store.FileOpenerMixin;
-const FileCloserMixin = Blob.Store.FileCloserMixin;
+const FileOpenerMixin = Store.FileOpenerMixin;
+const FileCloserMixin = Store.FileCloserMixin;
 const Environment = bun.Environment;
 const bloblog = bun.Output.scoped(.WriteFile, true);
 const JSPromise = JSC.JSPromise;
@@ -34,7 +34,7 @@ pub fn NewReadFileHandler(comptime Function: anytype) type {
                 .result => |result| {
                     const bytes = result.buf;
                     if (blob.size > 0)
-                        blob.size = @min(@as(Blob.SizeType, @truncate(bytes.len)), blob.size);
+                        blob.size = @min(@as(SizeType, @truncate(bytes.len)), blob.size);
                     const WrappedFn = struct {
                         pub fn wrapped(b: *Blob, g: *JSGlobalObject, by: []u8) JSC.JSValue {
                             return JSC.toJSHostValue(g, Function(b, g, by, .temporary));
@@ -347,7 +347,7 @@ pub const ReadFile = struct {
 
         if (this.store) |store| {
             if (store.data == .file) {
-                store.data.file.last_modified = JSC.toJSTime(stat.mtime().tv_sec, stat.mtime().tv_nsec);
+                store.data.file.last_modified = JSC.toJSTime(stat.mtime().sec, stat.mtime().nsec);
             }
         }
 
@@ -661,7 +661,7 @@ pub const ReadFileUV = struct {
 
         // keep in sync with resolveSizeAndLastModified
         if (this.store.data == .file) {
-            this.store.data.file.last_modified = JSC.toJSTime(stat.mtime().tv_sec, stat.mtime().tv_nsec);
+            this.store.data.file.last_modified = JSC.toJSTime(stat.mtime().sec, stat.mtime().nsec);
         }
 
         if (bun.S.ISDIR(@intCast(stat.mode))) {

@@ -1,6 +1,5 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
-const JavaScript = @import("../javascript.zig");
 const QueryStringMap = @import("../../url.zig").QueryStringMap;
 const CombinedScanner = @import("../../url.zig").CombinedScanner;
 const bun = @import("root").bun;
@@ -10,7 +9,6 @@ const js = JSC.C;
 const WebCore = @import("../webcore/response.zig");
 const Transpiler = bun.transpiler;
 const options = @import("../../options.zig");
-const VirtualMachine = JavaScript.VirtualMachine;
 const ScriptSrcStream = std.io.FixedBufferStream([]u8);
 const ZigString = JSC.ZigString;
 const Fs = @import("../../fs.zig");
@@ -454,7 +452,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                 allocator,
                 &transpiler.log,
                 logger.Source.initPathString("tsconfig.json", transpiler.tsconfig_buf),
-                &VirtualMachine.get().transpiler.resolver.caches.json,
+                &JSC.VirtualMachine.get().transpiler.resolver.caches.json,
             ) catch null) |parsed_tsconfig| {
                 transpiler.tsconfig = parsed_tsconfig;
             }
@@ -488,7 +486,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
             if (out.isEmpty()) break :macros;
             transpiler.macros_buf = out.toOwnedSlice(allocator) catch bun.outOfMemory();
             const source = logger.Source.initPathString("macros.json", transpiler.macros_buf);
-            const json = (VirtualMachine.get().transpiler.resolver.caches.json.parseJSON(
+            const json = (JSC.VirtualMachine.get().transpiler.resolver.caches.json.parseJSON(
                 &transpiler.log,
                 source,
                 allocator,
@@ -731,7 +729,7 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
         allocator,
         log,
         transpiler_options.transform,
-        JavaScript.VirtualMachine.get().transpiler.env,
+        JSC.VirtualMachine.get().transpiler.env,
     ) catch |err| {
         if ((log.warnings + log.errors) > 0) {
             return globalThis.throwValue(log.toJS(globalThis, allocator, "Failed to create transpiler"));

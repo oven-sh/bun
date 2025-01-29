@@ -68,7 +68,7 @@ pub const InitCommand = struct {
         /// Create a new asset file, overriding anything that already exists. Known
         /// assets will have their contents pre-populated; otherwise the file will be empty.
         fn create(comptime asset_name: []const u8, args: anytype) !void {
-            const is_template = comptime (@TypeOf(args) != @TypeOf(null)) and @typeInfo(@TypeOf(args)).Struct.fields.len > 0;
+            const is_template = comptime (@TypeOf(args) != @TypeOf(null)) and @typeInfo(@TypeOf(args)).@"struct".fields.len > 0;
             return createFull(asset_name, asset_name, "", is_template, args);
         }
 

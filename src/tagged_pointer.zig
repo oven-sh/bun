@@ -24,7 +24,7 @@ pub const TaggedPointer = packed struct {
             return .{ ._ptr = 0, .data = data };
         }
 
-        if (comptime @typeInfo(Ptr) != .Pointer and Ptr != ?*anyopaque) {
+        if (comptime @typeInfo(Ptr) != .pointer and Ptr != ?*anyopaque) {
             @compileError(@typeName(Ptr) ++ " must be a ptr, received: " ++ @tagName(@typeInfo(Ptr)));
         }
 
@@ -84,7 +84,7 @@ pub fn TagTypeEnumWithTypeMap(comptime Types: anytype) struct {
 
     return .{
         .tag_type = @Type(.{
-            .Enum = .{
+            .@"enum" = .{
                 .tag_type = TagSize,
                 .fields = &enumFields,
                 .decls = &.{},
@@ -106,7 +106,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
         pub const type_map: TypeMap(Types) = result.ty_map;
         repr: TaggedPointer,
 
-        pub const Null = .{ .repr = .{ ._ptr = 0, .data = 0 } };
+        pub const Null: @This() = .{ .repr = .{ ._ptr = 0, .data = 0 } };
 
         pub fn clear(this: *@This()) void {
             this.* = Null;
@@ -200,7 +200,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
 
         pub inline fn init(_ptr: anytype) @This() {
             const tyinfo = @typeInfo(@TypeOf(_ptr));
-            if (tyinfo != .Pointer) @compileError("Only pass pointers to TaggedPointerUnion.init(), you gave us a: " ++ @typeName(@TypeOf(_ptr)));
+            if (tyinfo != .pointer) @compileError("Only pass pointers to TaggedPointerUnion.init(), you gave us a: " ++ @typeName(@TypeOf(_ptr)));
 
             const Type = std.meta.Child(@TypeOf(_ptr));
             return initWithType(Type, _ptr);
@@ -208,7 +208,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
 
         pub inline fn initWithType(comptime Type: type, _ptr: anytype) @This() {
             const tyinfo = @typeInfo(@TypeOf(_ptr));
-            if (tyinfo != .Pointer) @compileError("Only pass pointers to TaggedPointerUnion.init(), you gave us a: " ++ @typeName(@TypeOf(_ptr)));
+            if (tyinfo != .pointer) @compileError("Only pass pointers to TaggedPointerUnion.init(), you gave us a: " ++ @typeName(@TypeOf(_ptr)));
             const name = comptime typeBaseName(@typeName(Type));
 
             // there will be a compiler error if the passed in type doesn't exist in the enum

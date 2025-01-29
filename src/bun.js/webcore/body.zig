@@ -1427,7 +1427,7 @@ pub const BodyValueBufferer = struct {
         global: *JSGlobalObject,
         allocator: std.mem.Allocator,
     ) @This() {
-        const this = .{
+        const this: BodyValueBufferer = .{
             .ctx = ctx,
             .onFinishedBuffering = onFinish,
             .allocator = allocator,
@@ -1486,7 +1486,7 @@ pub const BodyValueBufferer = struct {
         }
     }
 
-    fn onFinishedLoadingFile(sink: *@This(), bytes: JSC.WebCore.Blob.ReadFile.ResultType) void {
+    fn onFinishedLoadingFile(sink: *@This(), bytes: Blob.ReadFile.ResultType) void {
         switch (bytes) {
             .err => |err| {
                 log("onFinishedLoadingFile Error", .{});
@@ -1723,9 +1723,9 @@ pub const BodyValueBufferer = struct {
     comptime {
         if (!JSC.is_bindgen) {
             const jsonResolveStream = JSC.toJSHostFunction(onResolveStream);
-            @export(jsonResolveStream, .{ .name = Export[0].symbol_name });
+            @export(&jsonResolveStream, .{ .name = Export[0].symbol_name });
             const jsonRejectStream = JSC.toJSHostFunction(onRejectStream);
-            @export(jsonRejectStream, .{ .name = Export[1].symbol_name });
+            @export(&jsonRejectStream, .{ .name = Export[1].symbol_name });
         }
     }
 };

@@ -313,7 +313,7 @@ pub const PatchTask = struct {
         var resolution_buf: [512]u8 = undefined;
         const resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{this.callback.apply.resolution.fmt(strbuf, .posix)}) catch unreachable;
 
-        const dummy_node_modules = .{
+        const dummy_node_modules: PackageManager.NodeModulesFolder = .{
             .path = std.ArrayList(u8).init(this.manager.allocator),
             .tree_id = 0,
         };

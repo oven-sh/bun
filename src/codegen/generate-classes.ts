@@ -2064,7 +2064,7 @@ const JavaScriptCoreBindings = struct {
       `
   };
   comptime {
-${[...exports.values()].map(name => `      @export(JavaScriptCoreBindings.${name}, .{ .name = "${name}" });`).join("\n")}
+${[...exports.values()].map(name => `      @export(&JavaScriptCoreBindings.${name}, .{ .name = "${name}" });`).join("\n")}
     }`
     );
   }

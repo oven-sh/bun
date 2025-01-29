@@ -1091,7 +1091,7 @@ fn eqlComptimeCheckLenWithKnownType(comptime Type: type, a: []const Type, compti
 ///   strings.eqlComptime(input, "hello world");
 ///   strings.eqlComptime(input, "hai");
 pub fn eqlComptimeCheckLenWithType(comptime Type: type, a: []const Type, comptime b: anytype, comptime check_len: bool) bool {
-    return eqlComptimeCheckLenWithKnownType(comptime Type, a, if (@typeInfo(@TypeOf(b)) != .Pointer) &b else b, comptime check_len);
+    return eqlComptimeCheckLenWithKnownType(comptime Type, a, if (@typeInfo(@TypeOf(b)) != .pointer) &b else b, comptime check_len);
 }
 
 pub fn eqlCaseInsensitiveASCIIIgnoreLength(
@@ -4769,6 +4769,7 @@ pub fn indexOfLineRanges(text: []const u8, target_line: u32, comptime line_range
                     else => continue,
                 }
             }
+            @panic("unreachable");
         };
 
         if (ranges.len == line_range_count and current_line <= target_line) {
@@ -5560,7 +5561,7 @@ pub fn cloneNormalizingSeparators(
 ) ![]u8 {
     // remove duplicate slashes in the file path
     const base = withoutTrailingSlash(input);
-    var tokenized = std.mem.tokenize(u8, base, std.fs.path.sep_str);
+    var tokenized = std.mem.tokenizeScalar(u8, base, std.fs.path.sep);
     var buf = try allocator.alloc(u8, base.len + 2);
     if (comptime Environment.allow_assert) assert(base.len > 0);
     if (base[0] == std.fs.path.sep) {

@@ -1608,7 +1608,7 @@ pub const AnyRequestContext = struct {
 
     tagged_pointer: Pointer,
 
-    pub const Null = .{ .tagged_pointer = Pointer.Null };
+    pub const Null: @This() = .{ .tagged_pointer = Pointer.Null };
 
     pub fn init(request_ctx: anytype) AnyRequestContext {
         return .{ .tagged_pointer = Pointer.init(request_ctx) };
@@ -4127,7 +4127,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         var body = this.request_body.?;
                         var old = body.value;
                         old.Locked.onReceiveValue = null;
-                        var new_body = .{ .Null = {} };
+                        var new_body: WebCore.Body.Value = .{ .Null = {} };
                         old.resolve(&new_body, server.globalThis, null);
                         body.value = new_body;
                     }
@@ -4183,13 +4183,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         comptime {
             const jsonResolve = JSC.toJSHostFunction(onResolve);
-            @export(jsonResolve, .{ .name = Export[0].symbol_name });
+            @export(&jsonResolve, .{ .name = Export[0].symbol_name });
             const jsonReject = JSC.toJSHostFunction(onReject);
-            @export(jsonReject, .{ .name = Export[1].symbol_name });
+            @export(&jsonReject, .{ .name = Export[1].symbol_name });
             const jsonResolveStream = JSC.toJSHostFunction(onResolveStream);
-            @export(jsonResolveStream, .{ .name = Export[2].symbol_name });
+            @export(&jsonResolveStream, .{ .name = Export[2].symbol_name });
             const jsonRejectStream = JSC.toJSHostFunction(onRejectStream);
-            @export(jsonRejectStream, .{ .name = Export[3].symbol_name });
+            @export(&jsonRejectStream, .{ .name = Export[3].symbol_name });
         }
     };
 }
@@ -5950,8 +5950,8 @@ const ServePlugins = struct {
     }
 
     comptime {
-        @export(onResolve, .{ .name = "BunServe__onResolvePlugins" });
-        @export(onReject, .{ .name = "BunServe__onRejectPlugins" });
+        @export(&onResolve, .{ .name = "BunServe__onResolvePlugins" });
+        @export(&onReject, .{ .name = "BunServe__onRejectPlugins" });
     }
 };
 

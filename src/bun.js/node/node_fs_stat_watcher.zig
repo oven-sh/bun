@@ -307,7 +307,7 @@ pub const StatWatcher = struct {
     }
 
     pub fn hasPendingActivity(this: *StatWatcher) bool {
-        @fence(.acquire);
+        // @fence(.acquire);
 
         return this.used_by_scheduler_thread.load(.acquire);
     }

@@ -77,7 +77,7 @@ pub const HTMLBundleRoute = struct {
         });
     }
 
-    pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
+    pub usingnamespace bun.NewRefCounted(@This(), _deinit);
 
     pub const Value = union(enum) {
         pending_plugins,
@@ -114,7 +114,7 @@ pub const HTMLBundleRoute = struct {
         }
     };
 
-    pub fn deinit(this: *HTMLBundleRoute) void {
+    fn _deinit(this: *HTMLBundleRoute) void {
         for (this.pending_responses.items) |pending_response| {
             pending_response.deref();
         }
@@ -512,9 +512,9 @@ pub const HTMLBundleRoute = struct {
         server: ?AnyServer = null,
         route: *HTMLBundleRoute,
 
-        pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
+        pub usingnamespace bun.NewRefCounted(@This(), __deinit);
 
-        pub fn deinit(this: *PendingResponse) void {
+        fn __deinit(this: *PendingResponse) void {
             if (this.is_response_pending) {
                 this.resp.clearAborted();
                 this.resp.clearOnWritable();

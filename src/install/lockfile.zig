@@ -1704,7 +1704,7 @@ pub const Printer = struct {
         input_lockfile_path: string,
         format: Format,
     ) !void {
-        @setCold(true);
+        @branchHint(.cold);
 
         // We truncate longer than allowed paths. We should probably throw an error instead.
         const path = input_lockfile_path[0..@min(input_lockfile_path.len, bun.MAX_PATH_BYTES)];
@@ -3775,11 +3775,11 @@ pub const Package = extern struct {
         field: string,
         behavior: Behavior,
 
-        pub const dependencies = DependencyGroup{ .prop = "dependencies", .field = "dependencies", .behavior = Behavior.prod };
-        pub const dev = DependencyGroup{ .prop = "devDependencies", .field = "dev_dependencies", .behavior = Behavior.dev };
-        pub const optional = DependencyGroup{ .prop = "optionalDependencies", .field = "optional_dependencies", .behavior = Behavior.optional };
-        pub const peer = DependencyGroup{ .prop = "peerDependencies", .field = "peer_dependencies", .behavior = Behavior.peer };
-        pub const workspaces = DependencyGroup{ .prop = "workspaces", .field = "workspaces", .behavior = Behavior.workspace };
+        pub const dependencies = DependencyGroup{ .prop = "dependencies", .field = "dependencies", .behavior = .{ .prod = true } };
+        pub const dev = DependencyGroup{ .prop = "devDependencies", .field = "dev_dependencies", .behavior = .{ .dev = true } };
+        pub const optional = DependencyGroup{ .prop = "optionalDependencies", .field = "optional_dependencies", .behavior = .{ .optional = true } };
+        pub const peer = DependencyGroup{ .prop = "peerDependencies", .field = "peer_dependencies", .behavior = .{ .peer = true } };
+        pub const workspaces = DependencyGroup{ .prop = "workspaces", .field = "workspaces", .behavior = .{ .workspace = true } };
     };
 
     pub inline fn isDisabled(this: *const Lockfile.Package) bool {
@@ -6086,7 +6086,7 @@ pub const Package = extern struct {
             };
         };
 
-        const FieldsEnum = @typeInfo(Lockfile.Package.List.Field).Enum;
+        const FieldsEnum = @typeInfo(Lockfile.Package.List.Field).@"enum";
 
         pub fn byteSize(list: Lockfile.Package.List) usize {
             const sizes_vector: std.meta.Vector(sizes.bytes.len, usize) = sizes.bytes;
@@ -7513,7 +7513,7 @@ pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep_id: Depend
         try w.beginObject();
         defer w.endObject() catch {};
 
-        const fields = @typeInfo(Behavior).Struct.fields;
+        const fields = @typeInfo(Behavior).@"struct".fields;
         inline for (fields[1 .. fields.len - 1]) |field| {
             if (@field(dep.behavior, field.name)) {
                 try w.objectField(field.name);

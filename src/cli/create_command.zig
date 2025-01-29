@@ -99,7 +99,7 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
     const task = std.mem.trim(u8, task_, " \n\r\t");
     if (task.len == 0) return;
 
-    var splitter = std.mem.split(u8, task, " ");
+    var splitter = std.mem.splitScalar(u8, task, ' ');
     var count: usize = 0;
     while (splitter.next() != null) {
         count += 1;
@@ -117,7 +117,7 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
     {
         var i: usize = npm_args;
 
-        splitter = std.mem.split(u8, task, " ");
+        splitter = std.mem.splitScalar(u8, task, ' ');
         while (splitter.next()) |split| {
             argv[i] = split;
             i += 1;
@@ -237,7 +237,7 @@ const BUN_CREATE_DIR = ".bun-create";
 var home_dir_buf: bun.PathBuffer = undefined;
 pub const CreateCommand = struct {
     pub fn exec(ctx: Command.Context, example_tag: Example.Tag, template: []const u8) !void {
-        @setCold(true);
+        @branchHint(.cold);
 
         Global.configureAllocator(.{ .long_running = false });
         HTTP.HTTPThread.init(&.{});
@@ -1367,7 +1367,7 @@ pub const CreateCommand = struct {
                                     for (items) |task| {
                                         if (task.asString(ctx.allocator)) |task_entry| {
                                             // if (needs.bun_bun_for_nextjs or bun_bun_for_react_scripts) {
-                                            //     var iter = std.mem.split(u8, task_entry, " ");
+                                            //     var iter = std.mem.splitScalar(u8, task_entry, ' ');
                                             //     var last_was_bun = false;
                                             //     while (iter.next()) |current| {
                                             //         if (strings.eqlComptime(current, "bun")) {
@@ -2306,7 +2306,7 @@ const GitHandler = struct {
         else
             run(destination, PATH, false) catch false;
 
-        @fence(.acquire);
+        // @fence(.acquire);
         success.store(
             if (outcome)
                 1
@@ -2318,7 +2318,7 @@ const GitHandler = struct {
     }
 
     pub fn wait() bool {
-        @fence(.release);
+        // @fence(.release);
 
         while (success.load(.acquire) == 0) {
             Futex.wait(&success, 0, 1000) catch continue;

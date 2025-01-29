@@ -2018,7 +2018,9 @@ pub const sync = struct {
     pub fn spawn(
         options: *const Options,
     ) !Maybe(Result) {
-        const envp = options.envp orelse std.c.environ;
+        // [*:null]?[*:0]const u8
+        // [*:null]?[*:0]u8
+        const envp = options.envp orelse @as([*:null]?[*:0]const u8, @ptrCast(std.c.environ));
         const argv = options.argv;
         var string_builder = bun.StringBuilder{};
         defer string_builder.deinit(bun.default_allocator);

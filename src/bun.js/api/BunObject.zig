@@ -104,70 +104,70 @@ pub const BunObject = struct {
         }
 
         // --- Getters ---
-        @export(BunObject.CryptoHasher, .{ .name = getterName("CryptoHasher") });
-        @export(BunObject.FFI, .{ .name = getterName("FFI") });
-        @export(BunObject.FileSystemRouter, .{ .name = getterName("FileSystemRouter") });
-        @export(BunObject.MD4, .{ .name = getterName("MD4") });
-        @export(BunObject.MD5, .{ .name = getterName("MD5") });
-        @export(BunObject.SHA1, .{ .name = getterName("SHA1") });
-        @export(BunObject.SHA224, .{ .name = getterName("SHA224") });
-        @export(BunObject.SHA256, .{ .name = getterName("SHA256") });
-        @export(BunObject.SHA384, .{ .name = getterName("SHA384") });
-        @export(BunObject.SHA512, .{ .name = getterName("SHA512") });
-        @export(BunObject.SHA512_256, .{ .name = getterName("SHA512_256") });
+        @export(&BunObject.CryptoHasher, .{ .name = getterName("CryptoHasher") });
+        @export(&BunObject.FFI, .{ .name = getterName("FFI") });
+        @export(&BunObject.FileSystemRouter, .{ .name = getterName("FileSystemRouter") });
+        @export(&BunObject.MD4, .{ .name = getterName("MD4") });
+        @export(&BunObject.MD5, .{ .name = getterName("MD5") });
+        @export(&BunObject.SHA1, .{ .name = getterName("SHA1") });
+        @export(&BunObject.SHA224, .{ .name = getterName("SHA224") });
+        @export(&BunObject.SHA256, .{ .name = getterName("SHA256") });
+        @export(&BunObject.SHA384, .{ .name = getterName("SHA384") });
+        @export(&BunObject.SHA512, .{ .name = getterName("SHA512") });
+        @export(&BunObject.SHA512_256, .{ .name = getterName("SHA512_256") });
 
-        @export(BunObject.TOML, .{ .name = getterName("TOML") });
-        @export(BunObject.Glob, .{ .name = getterName("Glob") });
-        @export(BunObject.Transpiler, .{ .name = getterName("Transpiler") });
-        @export(BunObject.argv, .{ .name = getterName("argv") });
-        @export(BunObject.cwd, .{ .name = getterName("cwd") });
-        @export(BunObject.enableANSIColors, .{ .name = getterName("enableANSIColors") });
-        @export(BunObject.hash, .{ .name = getterName("hash") });
-        @export(BunObject.inspect, .{ .name = getterName("inspect") });
-        @export(BunObject.main, .{ .name = getterName("main") });
-        @export(BunObject.origin, .{ .name = getterName("origin") });
-        @export(BunObject.stderr, .{ .name = getterName("stderr") });
-        @export(BunObject.stdin, .{ .name = getterName("stdin") });
-        @export(BunObject.stdout, .{ .name = getterName("stdout") });
-        @export(BunObject.unsafe, .{ .name = getterName("unsafe") });
-        @export(BunObject.semver, .{ .name = getterName("semver") });
-        @export(BunObject.embeddedFiles, .{ .name = getterName("embeddedFiles") });
-        @export(BunObject.S3Client, .{ .name = getterName("S3Client") });
-        @export(BunObject.s3, .{ .name = getterName("s3") });
+        @export(&BunObject.TOML, .{ .name = getterName("TOML") });
+        @export(&BunObject.Glob, .{ .name = getterName("Glob") });
+        @export(&BunObject.Transpiler, .{ .name = getterName("Transpiler") });
+        @export(&BunObject.argv, .{ .name = getterName("argv") });
+        @export(&BunObject.cwd, .{ .name = getterName("cwd") });
+        @export(&BunObject.enableANSIColors, .{ .name = getterName("enableANSIColors") });
+        @export(&BunObject.hash, .{ .name = getterName("hash") });
+        @export(&BunObject.inspect, .{ .name = getterName("inspect") });
+        @export(&BunObject.main, .{ .name = getterName("main") });
+        @export(&BunObject.origin, .{ .name = getterName("origin") });
+        @export(&BunObject.stderr, .{ .name = getterName("stderr") });
+        @export(&BunObject.stdin, .{ .name = getterName("stdin") });
+        @export(&BunObject.stdout, .{ .name = getterName("stdout") });
+        @export(&BunObject.unsafe, .{ .name = getterName("unsafe") });
+        @export(&BunObject.semver, .{ .name = getterName("semver") });
+        @export(&BunObject.embeddedFiles, .{ .name = getterName("embeddedFiles") });
+        @export(&BunObject.S3Client, .{ .name = getterName("S3Client") });
+        @export(&BunObject.s3, .{ .name = getterName("s3") });
 
         // --- Getters --
 
         // -- Callbacks --
-        @export(BunObject.allocUnsafe, .{ .name = callbackName("allocUnsafe") });
-        @export(BunObject.build, .{ .name = callbackName("build") });
-        @export(BunObject.color, .{ .name = callbackName("color") });
-        @export(BunObject.connect, .{ .name = callbackName("connect") });
-        @export(BunObject.createParsedShellScript, .{ .name = callbackName("createParsedShellScript") });
-        @export(BunObject.createShellInterpreter, .{ .name = callbackName("createShellInterpreter") });
-        @export(BunObject.deflateSync, .{ .name = callbackName("deflateSync") });
-        @export(BunObject.file, .{ .name = callbackName("file") });
-        @export(BunObject.gunzipSync, .{ .name = callbackName("gunzipSync") });
-        @export(BunObject.gzipSync, .{ .name = callbackName("gzipSync") });
-        @export(BunObject.indexOfLine, .{ .name = callbackName("indexOfLine") });
-        @export(BunObject.inflateSync, .{ .name = callbackName("inflateSync") });
-        @export(BunObject.jest, .{ .name = callbackName("jest") });
-        @export(BunObject.listen, .{ .name = callbackName("listen") });
-        @export(BunObject.mmap, .{ .name = callbackName("mmap") });
-        @export(BunObject.nanoseconds, .{ .name = callbackName("nanoseconds") });
-        @export(BunObject.openInEditor, .{ .name = callbackName("openInEditor") });
-        @export(BunObject.registerMacro, .{ .name = callbackName("registerMacro") });
-        @export(BunObject.resolve, .{ .name = callbackName("resolve") });
-        @export(BunObject.resolveSync, .{ .name = callbackName("resolveSync") });
-        @export(BunObject.serve, .{ .name = callbackName("serve") });
-        @export(BunObject.sha, .{ .name = callbackName("sha") });
-        @export(BunObject.shellEscape, .{ .name = callbackName("shellEscape") });
-        @export(BunObject.shrink, .{ .name = callbackName("shrink") });
-        @export(BunObject.sleepSync, .{ .name = callbackName("sleepSync") });
-        @export(BunObject.spawn, .{ .name = callbackName("spawn") });
-        @export(BunObject.spawnSync, .{ .name = callbackName("spawnSync") });
-        @export(BunObject.udpSocket, .{ .name = callbackName("udpSocket") });
-        @export(BunObject.which, .{ .name = callbackName("which") });
-        @export(BunObject.write, .{ .name = callbackName("write") });
+        @export(&BunObject.allocUnsafe, .{ .name = callbackName("allocUnsafe") });
+        @export(&BunObject.build, .{ .name = callbackName("build") });
+        @export(&BunObject.color, .{ .name = callbackName("color") });
+        @export(&BunObject.connect, .{ .name = callbackName("connect") });
+        @export(&BunObject.createParsedShellScript, .{ .name = callbackName("createParsedShellScript") });
+        @export(&BunObject.createShellInterpreter, .{ .name = callbackName("createShellInterpreter") });
+        @export(&BunObject.deflateSync, .{ .name = callbackName("deflateSync") });
+        @export(&BunObject.file, .{ .name = callbackName("file") });
+        @export(&BunObject.gunzipSync, .{ .name = callbackName("gunzipSync") });
+        @export(&BunObject.gzipSync, .{ .name = callbackName("gzipSync") });
+        @export(&BunObject.indexOfLine, .{ .name = callbackName("indexOfLine") });
+        @export(&BunObject.inflateSync, .{ .name = callbackName("inflateSync") });
+        @export(&BunObject.jest, .{ .name = callbackName("jest") });
+        @export(&BunObject.listen, .{ .name = callbackName("listen") });
+        @export(&BunObject.mmap, .{ .name = callbackName("mmap") });
+        @export(&BunObject.nanoseconds, .{ .name = callbackName("nanoseconds") });
+        @export(&BunObject.openInEditor, .{ .name = callbackName("openInEditor") });
+        @export(&BunObject.registerMacro, .{ .name = callbackName("registerMacro") });
+        @export(&BunObject.resolve, .{ .name = callbackName("resolve") });
+        @export(&BunObject.resolveSync, .{ .name = callbackName("resolveSync") });
+        @export(&BunObject.serve, .{ .name = callbackName("serve") });
+        @export(&BunObject.sha, .{ .name = callbackName("sha") });
+        @export(&BunObject.shellEscape, .{ .name = callbackName("shellEscape") });
+        @export(&BunObject.shrink, .{ .name = callbackName("shrink") });
+        @export(&BunObject.sleepSync, .{ .name = callbackName("sleepSync") });
+        @export(&BunObject.spawn, .{ .name = callbackName("spawn") });
+        @export(&BunObject.spawnSync, .{ .name = callbackName("spawnSync") });
+        @export(&BunObject.udpSocket, .{ .name = callbackName("udpSocket") });
+        @export(&BunObject.which, .{ .name = callbackName("which") });
+        @export(&BunObject.write, .{ .name = callbackName("write") });
         // -- Callbacks --
     }
 };
@@ -2862,7 +2862,7 @@ pub const Crypto = struct {
                     return globalThis.throw("Bun.file() is not supported here yet (it needs an async version)", .{});
                 }
 
-                if (comptime @typeInfo(@TypeOf(Hasher.hash)).Fn.params.len == 3) {
+                if (comptime @typeInfo(@TypeOf(Hasher.hash)).@"fn".params.len == 3) {
                     Hasher.hash(input.slice(), &output_digest_buf, JSC.VirtualMachine.get().rareData().boringEngine());
                 } else {
                     Hasher.hash(input.slice(), &output_digest_buf);
@@ -2882,7 +2882,7 @@ pub const Crypto = struct {
                     output_digest_slice = bytes[0..Hasher.digest];
                 }
 
-                if (comptime @typeInfo(@TypeOf(Hasher.hash)).Fn.params.len == 3) {
+                if (comptime @typeInfo(@TypeOf(Hasher.hash)).@"fn".params.len == 3) {
                     Hasher.hash(input.slice(), output_digest_slice, JSC.VirtualMachine.get().rareData().boringEngine());
                 } else {
                     Hasher.hash(input.slice(), output_digest_slice);
@@ -3273,7 +3273,7 @@ pub fn mmapFile(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
 
         if (try opts.get(globalThis, "offset")) |value| {
             offset = @as(usize, @intCast(value.toInt64()));
-            offset = std.mem.alignBackwardAnyAlign(offset, std.mem.page_size);
+            offset = std.mem.alignBackwardAnyAlign(usize, offset, std.mem.page_size);
         }
     }
 

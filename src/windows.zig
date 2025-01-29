@@ -3259,8 +3259,8 @@ fn Bun__UVSignalHandle__close(signal: *libuv.uv_signal_t) callconv(.C) void {
 
 comptime {
     if (Environment.isWindows) {
-        @export(Bun__UVSignalHandle__init, .{ .name = "Bun__UVSignalHandle__init" });
-        @export(Bun__UVSignalHandle__close, .{ .name = "Bun__UVSignalHandle__close" });
+        @export(&Bun__UVSignalHandle__init, .{ .name = "Bun__UVSignalHandle__init" });
+        @export(&Bun__UVSignalHandle__close, .{ .name = "Bun__UVSignalHandle__close" });
     }
 }
 

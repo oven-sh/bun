@@ -341,17 +341,17 @@ pub const DebugLogs = struct {
     }
 
     pub fn increaseIndent(d: *DebugLogs) void {
-        @setCold(true);
+        @branchHint(.cold);
         d.indent.append(" ") catch unreachable;
     }
 
     pub fn decreaseIndent(d: *DebugLogs) void {
-        @setCold(true);
+        @branchHint(.cold);
         d.indent.list.shrinkRetainingCapacity(d.indent.list.items.len - 1);
     }
 
     pub fn addNote(d: *DebugLogs, _text: string) void {
-        @setCold(true);
+        @branchHint(.cold);
         var text = _text;
         const len = d.indent.len();
         if (len > 0) {
@@ -366,7 +366,7 @@ pub const DebugLogs = struct {
     }
 
     pub fn addNoteFmt(d: *DebugLogs, comptime fmt: string, args: anytype) void {
-        @setCold(true);
+        @branchHint(.cold);
         return d.addNote(std.fmt.allocPrint(d.notes.allocator, fmt, args) catch unreachable);
     }
 };
@@ -1808,7 +1808,7 @@ pub const Resolver = struct {
         // https://nodejs.org/api/modules.html#loading-from-the-global-folders
         const node_path: []const u8 = if (r.env_loader) |env_loader| env_loader.get("NODE_PATH") orelse "" else "";
         if (node_path.len > 0) {
-            var it = std.mem.tokenize(u8, node_path, if (Environment.isWindows) ";" else ":");
+            var it = std.mem.tokenizeScalar(u8, node_path, if (Environment.isWindows) ';' else ':');
             while (it.next()) |path| {
                 const abs_path = r.fs.absBuf(&[_]string{ path, import_path }, bufs(.node_modules_check));
                 if (r.debug_logs) |*debug| {
@@ -1831,7 +1831,7 @@ pub const Resolver = struct {
                 // check the global cache directory for a package.json file.
                 const manager = r.getPackageManager();
                 var dependency_version = Dependency.Version{};
-                var dependency_behavior = Dependency.Behavior.prod;
+                var dependency_behavior: Dependency.Behavior = .{ .prod = true };
                 var string_buf = esm.version;
 
                 // const initial_pending_tasks = manager.pending_tasks;
@@ -3327,7 +3327,7 @@ pub const Resolver = struct {
 
     comptime {
         const Resolver__nodeModulePathsForJS = JSC.toJSHostFunction(Resolver__nodeModulePathsForJS_);
-        @export(Resolver__nodeModulePathsForJS, .{ .name = "Resolver__nodeModulePathsForJS" });
+        @export(&Resolver__nodeModulePathsForJS, .{ .name = "Resolver__nodeModulePathsForJS" });
     }
     pub fn Resolver__nodeModulePathsForJS_(globalThis: *bun.JSC.JSGlobalObject, callframe: *bun.JSC.CallFrame) bun.JSError!JSC.JSValue {
         bun.JSC.markBinding(@src());

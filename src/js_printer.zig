@@ -1909,7 +1909,7 @@ fn NewPrinter(
             return printClauseItemAs(p, item, .@"export");
         }
 
-        fn printClauseItemAs(p: *Printer, item: js_ast.ClauseItem, comptime as: @Type(.EnumLiteral)) void {
+        fn printClauseItemAs(p: *Printer, item: js_ast.ClauseItem, comptime as: @Type(.enum_literal)) void {
             const name = p.renamer.nameForSymbol(item.name.ref.?);
 
             if (comptime as == .import) {

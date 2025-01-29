@@ -53,16 +53,8 @@ const JSC = bun.JSC;
 const PackageManager = @import("./install/install.zig").PackageManager;
 const DataURL = @import("./resolver/data_url.zig").DataURL;
 
-pub fn MacroJSValueType_() type {
-    if (comptime JSC.is_bindgen) {
-        return struct {
-            pub const zero = @This(){};
-        };
-    }
-    return JSC.JSValue;
-}
-pub const MacroJSValueType = MacroJSValueType_();
-const default_macro_js_value = if (JSC.is_bindgen) MacroJSValueType{} else JSC.JSValue.zero;
+pub const MacroJSValueType = JSC.JSValue;
+const default_macro_js_value = JSC.JSValue.zero;
 
 const EntryPoints = @import("./bundler/entry_points.zig");
 const SystemTimer = @import("./system_timer.zig").Timer;
@@ -1332,10 +1324,8 @@ pub const Transpiler = struct {
                 opts.features.top_level_await = true;
 
                 opts.macro_context = &transpiler.macro_context.?;
-                if (comptime !JSC.is_bindgen) {
-                    if (target != .bun_macro) {
-                        opts.macro_context.javascript_object = this_parse.macro_js_ctx;
-                    }
+                if (target != .bun_macro) {
+                    opts.macro_context.javascript_object = this_parse.macro_js_ctx;
                 }
 
                 opts.features.is_macro_runtime = target == .bun_macro;

@@ -548,7 +548,7 @@ pub const Task = TaggedPointerUnion(.{
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
-    task: if (JSC.is_bindgen) void else Task = undefined,
+    task: Task = undefined,
     next: ?*ConcurrentTask = null,
     auto_delete: bool = false,
 
@@ -746,9 +746,7 @@ export fn Bun__tickWhilePaused(paused: *bool) void {
 }
 
 comptime {
-    if (!JSC.is_bindgen) {
-        _ = Bun__tickWhilePaused;
-    }
+    _ = Bun__tickWhilePaused;
 }
 
 /// Sometimes, you have work that will be scheduled, cancelled, and rescheduled multiple times

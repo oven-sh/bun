@@ -2522,7 +2522,8 @@ bool JSC__JSValue__jestDeepMatch(JSC__JSValue JSValue0, JSC__JSValue JSValue1, J
     return Bun__deepMatch<true>(obj, &objVisited, subset, &subsetVisited, globalObject, &scope, &gcBuffer, replacePropsWithAsymmetricMatchers, false);
 }
 
-extern "C" bool Bun__JSValue__isAsyncContextFrame(JSC__JSValue value) {
+extern "C" bool Bun__JSValue__isAsyncContextFrame(JSC__JSValue value)
+{
     return jsDynamicCast<AsyncContextFrame*>(JSValue::decode(value)) != nullptr;
 }
 

@@ -666,12 +666,12 @@ if (isDockerEnabled()) {
     ).toBe("testing");
   });
 
-  test("Uncaught transaction request errosó rs bubbles to transaction", async () => {
+  test("Uncaught transaction request errors are bubbled to transaction", async () => {
     const sql = postgres({ ...options, debug: true, idle_timeout: 1, fetch_types: false });
     expect(
       await sql
         .begin(sql => [sql`select wat`, sql`select current_setting('bun_sql.test') as x, ${1} as a`])
-        .catch(e => e.errno),
+        .catch(e => e.errno || e),
     ).toBe("42703");
   });
 

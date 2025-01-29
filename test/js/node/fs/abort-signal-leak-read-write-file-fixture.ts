@@ -1,6 +1,7 @@
 import fs from "fs";
 import { join } from "path";
 import { tmpdirSync } from "harness";
+import { heapStats } from "bun:jsc";
 
 const tmpdir = tmpdirSync();
 
@@ -25,6 +26,11 @@ for (let i = 0; i < 100_000; i++) {
 }
 
 Bun.gc(true);
+
+const numAbortSignalObjects = heapStats().objectTypeCounts.AbortSignal;
+if (numAbortSignalObjects > 10) {
+  throw new Error(`AbortSignal objects > 10, received ${numAbortSignalObjects}`);
+}
 
 const rss = (process.memoryUsage().rss / 1024 / 1024) | 0;
 if (rss > 170) {

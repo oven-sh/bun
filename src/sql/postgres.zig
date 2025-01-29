@@ -2462,7 +2462,7 @@ pub const PostgresSQLConnection = struct {
         };
     };
 
-    fn advance(this: *PostgresSQLConnection) !bool {
+    fn advance(this: *PostgresSQLConnection) !void {
         defer this.updateRef();
         var any = false;
         defer if (any) this.resetConnectionTimeout();
@@ -2493,7 +2493,7 @@ pub const PostgresSQLConnection = struct {
                             };
                             req.status = .binding;
                             any = true;
-                            return any;
+                            return;
                         },
                         .pending => {
                             // statement is pending, lets write/parse it
@@ -2503,8 +2503,6 @@ pub const PostgresSQLConnection = struct {
                             // If it does not have params, we can write and execute immediately in one go
                             if (!has_params) {
                                 // prepareAndQueryWithSignature will write + bind + execute, it will change to running after binding is complete
-                                req.status = .binding;
-
                                 const binding_value = PostgresSQLQuery.bindingGetCached(req.thisValue) orelse .zero;
 
                                 PostgresRequest.prepareAndQueryWithSignature(this.globalObject, query_str.slice(), binding_value, PostgresSQLConnection.Writer, this.writer(), &stmt.signature) catch |err| {
@@ -2516,10 +2514,11 @@ pub const PostgresSQLConnection = struct {
 
                                     continue;
                                 };
+                                req.status = .binding;
                                 stmt.status = .parsing;
 
                                 any = true;
-                                return any;
+                                return;
                             }
                             const connection_writer = this.writer();
                             // write query and wait for it to be prepared
@@ -2541,11 +2540,11 @@ pub const PostgresSQLConnection = struct {
                             };
                             stmt.status = .parsing;
                             any = true;
-                            return any;
+                            return;
                         },
                         .parsing => {
                             // we are still parsing, lets wait for it to be prepared or failed
-                            return any;
+                            return;
                         },
                     }
                 },
@@ -2553,7 +2552,7 @@ pub const PostgresSQLConnection = struct {
                 .running, .binding => {
                     // if we are binding it will switch to running immediately
                     // if we are running, we need to wait for it to be success or fail
-                    return any;
+                    return;
                 },
                 .success, .fail => {
                     req.deref();
@@ -2563,7 +2562,6 @@ pub const PostgresSQLConnection = struct {
                 },
             }
         }
-        return any;
     }
 
     pub fn getQueriesArray(this: *const PostgresSQLConnection) JSValue {
@@ -2669,9 +2667,9 @@ pub const PostgresSQLConnection = struct {
                 this.is_ready_for_query = true;
                 this.socket.setTimeout(300);
 
-                if (try this.advance() or this.is_ready_for_query) {
-                    this.flushData();
-                }
+                try this.advance();
+
+                this.flushData();
             },
             .CommandComplete => {
                 var request = this.current() orelse return error.ExpectedRequest;

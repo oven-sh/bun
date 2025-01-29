@@ -472,7 +472,7 @@ pub fn Bun__Process__send_(globalObject: *JSGlobalObject, callFrame: *JSC.CallFr
 
     if (good) {
         if (callback.isFunction()) {
-            Bun__Process__queueNextTick1(zigGlobal, callback, .zero);
+            Bun__Process__queueNextTick1(zigGlobal, callback, .null);
         }
     } else {
         const ex = globalObject.createTypeErrorInstance("process.send() failed", .{});

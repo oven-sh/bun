@@ -1975,7 +1975,7 @@ pub const PostgresSQLConnection = struct {
     fn isCurrentRunning(this: *PostgresSQLConnection) bool {
         if (this.current()) |query| {
             if (query.statement) |stmt| {
-                return query.status.isRunning() or @intFromEnum(stmt.status) > @intFromEnum(PostgresSQLStatement.Status.pending);
+                return query.status.isRunning() or stmt.status.isRunning();
             }
         }
         return false;
@@ -3060,6 +3060,10 @@ pub const PostgresSQLStatement = struct {
         parsing,
         prepared,
         failed,
+
+        pub fn isRunning(this: *const @This()) bool {
+            return this.status == Status.parsing;
+        }
     };
     pub fn ref(this: *@This()) void {
         bun.assert(this.ref_count > 0);

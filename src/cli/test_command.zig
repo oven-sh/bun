@@ -271,9 +271,7 @@ pub const JunitReporter = struct {
                 \\
             );
 
-            try this.contents.appendSlice(bun.default_allocator,
-                \\<testsuites name="bun test"
-            );
+            try this.contents.appendSlice(bun.default_allocator, "<testsuites name=\"bun test\" ");
             this.offset_of_testsuites_value = this.contents.items.len;
             try this.contents.appendSlice(bun.default_allocator, ">\n");
         }

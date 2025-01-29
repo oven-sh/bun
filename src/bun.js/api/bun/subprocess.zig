@@ -199,7 +199,7 @@ pub const Subprocess = struct {
     ref_count: u32 = 1,
     abort_signal: ?*JSC.AbortSignal = null,
 
-    usingnamespace bun.NewRefCounted(@This(), deinit);
+    usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
     pub const Flags = packed struct {
         is_sync: bool = false,
@@ -853,7 +853,7 @@ pub const Subprocess = struct {
             ref_count: u32 = 1,
             buffer: []const u8 = "",
 
-            pub usingnamespace bun.NewRefCounted(@This(), _deinit);
+            pub usingnamespace bun.NewRefCounted(@This(), _deinit, null);
             const This = @This();
             const print = bun.Output.scoped(.StaticPipeWriter, false);
 
@@ -981,7 +981,7 @@ pub const Subprocess = struct {
         pub const IOReader = bun.io.BufferedReader;
         pub const Poll = IOReader;
 
-        pub usingnamespace bun.NewRefCounted(PipeReader, _deinit);
+        pub usingnamespace bun.NewRefCounted(PipeReader, _deinit, null);
 
         pub fn memoryCost(this: *const PipeReader) usize {
             return this.reader.memoryCost();

@@ -3428,7 +3428,7 @@ pub const FileSink = struct {
 
     const log = Output.scoped(.FileSink, false);
 
-    pub usingnamespace bun.NewRefCounted(FileSink, deinit);
+    pub usingnamespace bun.NewRefCounted(FileSink, deinit, null);
 
     pub const IOWriter = bun.io.StreamingWriter(@This(), onWrite, onError, onReady, onClose);
     pub const Poll = IOWriter;

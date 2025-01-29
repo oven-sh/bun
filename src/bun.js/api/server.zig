@@ -5792,7 +5792,7 @@ const ServePlugins = struct {
     value: Value,
     ref_count: u32 = 1,
 
-    pub usingnamespace bun.NewRefCounted(ServePlugins, deinit);
+    pub usingnamespace bun.NewRefCounted(ServePlugins, deinit, null);
 
     pub const Value = union(enum) {
         pending: struct {

@@ -235,7 +235,7 @@ const ProxyTunnel = struct {
 
     const ProxyTunnelWrapper = SSLWrapper(*HTTPClient);
 
-    usingnamespace bun.NewRefCounted(ProxyTunnel, _deinit);
+    usingnamespace bun.NewRefCounted(ProxyTunnel, _deinit, null);
 
     fn onOpen(this: *HTTPClient) void {
         this.state.response_stage = .proxy_handshake;

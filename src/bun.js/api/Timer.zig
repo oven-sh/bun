@@ -448,7 +448,7 @@ pub const TimerObject = struct {
     },
 
     pub usingnamespace JSC.Codegen.JSTimeout;
-    pub usingnamespace bun.NewRefCounted(@This(), deinit);
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
     extern "C" fn Bun__JSTimeout__call(encodedTimeoutValue: JSValue, globalObject: *JSC.JSGlobalObject) void;
 

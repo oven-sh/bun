@@ -77,7 +77,7 @@ pub const HTMLBundleRoute = struct {
         });
     }
 
-    pub usingnamespace bun.NewRefCounted(@This(), _deinit);
+    pub usingnamespace bun.NewRefCounted(@This(), _deinit, null);
 
     pub const Value = union(enum) {
         pending_plugins,
@@ -512,7 +512,7 @@ pub const HTMLBundleRoute = struct {
         server: ?AnyServer = null,
         route: *HTMLBundleRoute,
 
-        pub usingnamespace bun.NewRefCounted(@This(), __deinit);
+        pub usingnamespace bun.NewRefCounted(@This(), __deinit, null);
 
         fn __deinit(this: *PendingResponse) void {
             if (this.is_response_pending) {
@@ -544,7 +544,7 @@ pub const HTMLBundleRoute = struct {
 };
 
 pub usingnamespace JSC.Codegen.JSHTMLBundle;
-pub usingnamespace bun.NewRefCounted(HTMLBundle, deinit);
+pub usingnamespace bun.NewRefCounted(HTMLBundle, deinit, null);
 const bun = @import("root").bun;
 const std = @import("std");
 const JSC = bun.JSC;

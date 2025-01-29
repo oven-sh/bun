@@ -643,8 +643,7 @@ const Handlers = struct {
 pub const H2FrameParser = struct {
     pub const log = Output.scoped(.H2FrameParser, false);
     pub usingnamespace JSC.Codegen.JSH2FrameParser;
-    pub usingnamespace bun.NewRefCounted(@This(), deinit);
-    pub const DEBUG_REFCOUNT_NAME = "H2";
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, "H2");
     const ENABLE_AUTO_CORK = true; // ENABLE CORK OPTIMIZATION
     const ENABLE_ALLOCATOR_POOL = true; // ENABLE HIVE ALLOCATOR OPTIMIZATION
 

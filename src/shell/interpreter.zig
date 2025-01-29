@@ -5338,7 +5338,7 @@ pub const Interpreter = struct {
             const Blob = struct {
                 ref_count: usize = 1,
                 blob: bun.JSC.WebCore.Blob,
-                pub usingnamespace bun.NewRefCounted(Blob, _deinit);
+                pub usingnamespace bun.NewRefCounted(Blob, _deinit, null);
 
                 fn _deinit(this: *Blob) void {
                     this.blob.deinit();
@@ -11136,8 +11136,7 @@ pub const Interpreter = struct {
         pub const ChildPtr = IOReaderChildPtr;
         pub const ReaderImpl = bun.io.BufferedReader;
 
-        pub const DEBUG_REFCOUNT_NAME: []const u8 = "IOReaderRefCount";
-        pub usingnamespace bun.NewRefCounted(@This(), asyncDeinit);
+        pub usingnamespace bun.NewRefCounted(@This(), asyncDeinit, "IOReaderRefCount");
 
         const InitFlags = packed struct(u8) {
             pollable: bool = false,
@@ -11403,8 +11402,6 @@ pub const Interpreter = struct {
         started: bool = false,
         flags: InitFlags = .{},
 
-        pub const DEBUG_REFCOUNT_NAME: []const u8 = "IOWriterRefCount";
-
         const debug = bun.Output.scoped(.IOWriter, true);
 
         const ChildPtr = IOWriterChildPtr;
@@ -11416,7 +11413,7 @@ pub const Interpreter = struct {
 
         pub const auto_poll = false;
 
-        pub usingnamespace bun.NewRefCounted(@This(), asyncDeinit);
+        pub usingnamespace bun.NewRefCounted(@This(), asyncDeinit, "IOWriterRefCount");
         const This = @This();
         pub const WriterImpl = bun.io.BufferedWriter(
             This,

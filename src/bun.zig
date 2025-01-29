@@ -3133,7 +3133,7 @@ pub fn New(comptime T: type) type {
 /// Reference-counted heap-allocated instance value.
 ///
 /// `ref_count` is expected to be defined on `T` with a default value set to `1`
-pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) type {
+pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void, debug_name: ?[:0]const u8) type {
     if (!@hasField(T, "ref_count")) {
         @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
     }
@@ -3146,9 +3146,8 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
         }
     }
 
-    // const output_name: []const u8 = if (@hasDecl(T, "DEBUG_REFCOUNT_NAME")) T.DEBUG_REFCOUNT_NAME else meta.typeBaseName(@typeName(T));
-    // const log = Output.scoped(output_name, true);
-    const log = Output.scoped("TODO:", true);
+    const output_name = debug_name orelse meta.typeBaseName(@typeName(T));
+    const log = Output.scoped(output_name, true);
 
     return struct {
         pub fn destroy(self: *T) void {
@@ -3193,7 +3192,7 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
     };
 }
 
-pub fn NewThreadSafeRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) type {
+pub fn NewThreadSafeRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void, debug_name: ?[:0]const u8) type {
     if (!@hasField(T, "ref_count")) {
         @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
     }
@@ -3206,9 +3205,8 @@ pub fn NewThreadSafeRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: 
         }
     }
 
-    // const output_name: []const u8 = if (@hasDecl(T, "DEBUG_REFCOUNT_NAME")) T.DEBUG_REFCOUNT_NAME else meta.typeBaseName(@typeName(T));
-    // const log = Output.scoped(output_name, true);
-    const log = Output.scoped("TODO:", true);
+    const output_name = debug_name orelse meta.typeBaseName(@typeName(T));
+    const log = Output.scoped(output_name, true);
 
     return struct {
         pub fn destroy(self: *T) void {

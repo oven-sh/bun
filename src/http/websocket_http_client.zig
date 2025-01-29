@@ -226,7 +226,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         pub const name = if (ssl) "WebSocketHTTPSClient" else "WebSocketHTTPClient";
 
         pub const shim = JSC.Shimmer("Bun", name, @This());
-        pub usingnamespace bun.NewRefCounted(@This(), deinit);
+        pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
         const HTTPClient = @This();
         pub fn register(_: *JSC.JSGlobalObject, _: *anyopaque, ctx: *uws.SocketContext) callconv(.C) void {
@@ -1034,7 +1034,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
         const WebSocket = @This();
 
-        pub usingnamespace bun.NewRefCounted(@This(), deinit);
+        pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
         pub fn register(global: *JSC.JSGlobalObject, loop_: *anyopaque, ctx_: *anyopaque) callconv(.C) void {
             const vm = global.bunVM();
             const loop = @as(*uws.Loop, @ptrCast(@alignCast(loop_)));

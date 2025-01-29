@@ -1719,7 +1719,7 @@ pub const BundleV2 = struct {
         ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
         started_at_ns: u64 = 0,
 
-        pub usingnamespace bun.NewThreadSafeRefCounted(JSBundleCompletionTask, _deinit);
+        pub usingnamespace bun.NewThreadSafeRefCounted(JSBundleCompletionTask, _deinit, null);
 
         pub fn configureBundler(
             completion: *JSBundleCompletionTask,

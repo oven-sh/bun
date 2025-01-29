@@ -157,7 +157,7 @@ pub const Process = struct {
         return @sizeOf(@This());
     }
 
-    pub usingnamespace bun.NewRefCounted(Process, deinit);
+    pub usingnamespace bun.NewRefCounted(Process, deinit, null);
 
     pub fn setExitHandler(this: *Process, handler: anytype) void {
         this.exit_handler.init(handler);

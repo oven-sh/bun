@@ -612,8 +612,8 @@ const server = Bun.serve({
     // Set 60 second timeout for this request
     server.timeout(req, 60);
 
-    // Long operation
-    await someSlowOperation();
+    // If they take longer than 60 seconds to send the body, the request will be aborted
+    await req.text();
 
     return new Response("Done!");
   },

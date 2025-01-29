@@ -20,9 +20,9 @@ pub const Resolution = extern struct {
     value: Value = .{ .uninitialized = {} },
 
     /// Use like Resolution.init(.{ .npm = VersionedURL{ ... } })
-    pub inline fn init(value: anytype) Resolution {
+    pub inline fn init(value: bun.meta.Tagged(Value, Tag)) Resolution {
         return Resolution{
-            .tag = @field(Tag, @typeInfo(@TypeOf(value)).Struct.fields[0].name),
+            .tag = std.meta.activeTag(value),
             .value = Value.init(value),
         };
     }
@@ -330,27 +330,30 @@ pub const Resolution = extern struct {
 
         npm: VersionedURL,
 
+        folder: String,
+
         /// File path to a tarball relative to the package root
         local_tarball: String,
 
-        folder: String,
-
-        /// URL to a tarball.
-        remote_tarball: String,
-
-        git: Repository,
         github: Repository,
 
-        workspace: String,
+        git: Repository,
 
         /// global link
         symlink: String,
 
+        workspace: String,
+
+        /// URL to a tarball.
+        remote_tarball: String,
+
         single_file_module: String,
 
         /// To avoid undefined memory between union values, we must zero initialize the union first.
-        pub fn init(field: anytype) Value {
-            return bun.serializableInto(Value, field);
+        pub fn init(field: bun.meta.Tagged(Value, Tag)) Value {
+            return switch (field) {
+                inline else => |v, t| @unionInit(Value, @tagName(t), v),
+            };
         }
     };
 

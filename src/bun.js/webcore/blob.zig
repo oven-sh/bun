@@ -4932,9 +4932,7 @@ pub const Blob = struct {
     }
 
     comptime {
-        if (!JSC.is_bindgen) {
-            _ = Bun__Blob__getSizeForBindings;
-        }
+        _ = Bun__Blob__getSizeForBindings;
     }
     pub fn getStat(this: *Blob, globalThis: *JSC.JSGlobalObject, callback: *JSC.CallFrame) JSC.JSValue {
         const store = this.store orelse return JSC.JSValue.jsUndefined();

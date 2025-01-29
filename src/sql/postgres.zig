@@ -238,15 +238,23 @@ pub const PostgresSQLQuery = struct {
     }
 
     pub const Status = enum(u8) {
+        /// The query was just enqueued, statement status can be checked for more details
         pending,
-        written,
-        running,
+        /// The query is being bound to the statement
         binding,
+        /// The query is running
+        running,
+        /// The query was successful
         success,
+        /// The query failed
         fail,
 
         pub fn isRunning(this: Status) bool {
-            return this == .running or this == .binding;
+            return @intFromEnum(this) > @intFromEnum(Status.pending) and @intFromEnum(this) < @intFromEnum(Status.success);
+        }
+
+        pub fn isDone(this: Status) bool {
+            return this == .success or this == .fail;
         }
     };
 
@@ -604,57 +612,60 @@ pub const PostgresSQLQuery = struct {
         };
 
         const has_params = signature.fields.len > 0;
-        var did_write = false;
-
+        var reset_timeout = false;
         enqueue: {
             if (entry.found_existing) {
                 this.statement = entry.value_ptr.*;
                 this.statement.?.ref();
                 signature.deinit();
 
-                if (has_params and this.statement.?.status == .parsing) {
-
-                    // if it has params, we need to wait for ParamDescription to be received before we can write the data
-                } else {
+                if (@intFromEnum(this.statement.?.status) == @intFromEnum(PostgresSQLStatement.Status.prepared) and !connection.hasCurrentRunning()) {
                     this.flags.binary = this.statement.?.fields.len > 0;
                     log("bindAndExecute", .{});
+                    // bindAndExecute will bind + execute, it will change to running after binding is complete
+                    this.status = .binding;
                     PostgresRequest.bindAndExecute(globalObject, this.statement.?, binding_value, columns_value, PostgresSQLConnection.Writer, writer) catch |err| {
                         if (!globalObject.hasException())
                             return globalObject.throwError(err, "failed to bind and execute query");
                         return error.JSError;
                     };
-                    did_write = true;
+                    reset_timeout = true;
                 }
 
                 break :enqueue;
             }
 
-            // If it does not have params, we can write and execute immediately in one go
-            if (!has_params) {
-                log("prepareAndQueryWithSignature", .{});
+            const can_execute = !connection.hasCurrentRunning();
 
-                PostgresRequest.prepareAndQueryWithSignature(globalObject, query_str.slice(), binding_value, PostgresSQLConnection.Writer, writer, &signature) catch |err| {
-                    signature.deinit();
-                    if (!globalObject.hasException())
-                        return globalObject.throwError(err, "failed to prepare and query");
-                    return error.JSError;
-                };
-                did_write = true;
-            } else {
-                log("writeQuery", .{});
-
-                PostgresRequest.writeQuery(query_str.slice(), signature.prepared_statement_name, signature.fields, PostgresSQLConnection.Writer, writer) catch |err| {
-                    signature.deinit();
-                    if (!globalObject.hasException())
-                        return globalObject.throwError(err, "failed to write query");
-                    return error.JSError;
-                };
-                writer.write(&protocol.Sync) catch |err| {
-                    signature.deinit();
-                    if (!globalObject.hasException())
-                        return globalObject.throwError(err, "failed to flush");
-                    return error.JSError;
-                };
+            if (can_execute) {
+                // If it does not have params, we can write and execute immediately in one go
+                if (!has_params) {
+                    log("prepareAndQueryWithSignature", .{});
+                    // prepareAndQueryWithSignature will write + bind + execute, it will change to running after binding is complete
+                    this.status = .binding;
+                    PostgresRequest.prepareAndQueryWithSignature(globalObject, query_str.slice(), binding_value, PostgresSQLConnection.Writer, writer, &signature) catch |err| {
+                        signature.deinit();
+                        if (!globalObject.hasException())
+                            return globalObject.throwError(err, "failed to prepare and query");
+                        return error.JSError;
+                    };
+                    reset_timeout = true;
+                } else {
+                    log("writeQuery", .{});
+                    PostgresRequest.writeQuery(query_str.slice(), signature.prepared_statement_name, signature.fields, PostgresSQLConnection.Writer, writer) catch |err| {
+                        signature.deinit();
+                        if (!globalObject.hasException())
+                            return globalObject.throwError(err, "failed to write query");
+                        return error.JSError;
+                    };
+                    writer.write(&protocol.Sync) catch |err| {
+                        signature.deinit();
+                        if (!globalObject.hasException())
+                            return globalObject.throwError(err, "failed to flush");
+                        return error.JSError;
+                    };
+                    reset_timeout = true;
+                }
             }
 
             {
@@ -662,7 +673,7 @@ pub const PostgresSQLQuery = struct {
                     return globalObject.throwError(err, "failed to allocate statement");
                 };
                 connection.prepared_statement_id += 1;
-                stmt.* = .{ .signature = signature, .ref_count = 2, .status = PostgresSQLStatement.Status.parsing };
+                stmt.* = .{ .signature = signature, .ref_count = 2, .status = if (can_execute) .parsing else .pending };
                 this.statement = stmt;
                 entry.value_ptr.* = stmt;
             }
@@ -670,12 +681,11 @@ pub const PostgresSQLQuery = struct {
 
         connection.requests.writeItem(this) catch {};
         this.ref();
-        this.status = if (did_write) .binding else .pending;
         PostgresSQLQuery.targetSetCached(this_value, globalObject, query);
 
         if (connection.is_ready_for_query)
             connection.flushDataAndResetTimeout()
-        else if (did_write)
+        else if (reset_timeout)
             connection.resetConnectionTimeout();
 
         return .undefined;
@@ -1963,6 +1973,13 @@ pub const PostgresSQLConnection = struct {
         return this.requests.peekItem(0);
     }
 
+    fn hasCurrentRunning(this: *PostgresSQLConnection) bool {
+        if (this.current()) |query| {
+            return query.status.isRunning();
+        }
+        return false;
+    }
+
     pub const Writer = struct {
         connection: *PostgresSQLConnection,
 
@@ -2447,55 +2464,92 @@ pub const PostgresSQLConnection = struct {
     fn advance(this: *PostgresSQLConnection) !bool {
         defer this.updateRef();
         var any = false;
-
+        defer if (any) this.resetConnectionTimeout();
         while (this.requests.readableLength() > 0) {
             var req: *PostgresSQLQuery = this.requests.peekItem(0);
             switch (req.status) {
                 .pending => {
                     const stmt = req.statement orelse return error.ExpectedStatement;
-                    if (stmt.status == .failed) {
-                        req.onError(stmt.error_response, this.globalObject);
-                        this.requests.discard(1);
-                        any = true;
-                    } else {
-                        break;
+
+                    switch (stmt.status) {
+                        .failed => {
+                            req.onError(stmt.error_response, this.globalObject);
+                            this.requests.discard(1);
+                            any = true;
+                        },
+                        .prepared => {
+                            const binding_value = PostgresSQLQuery.bindingGetCached(req.thisValue) orelse .zero;
+                            const columns_value = PostgresSQLQuery.columnsGetCached(req.thisValue) orelse .zero;
+                            PostgresRequest.bindAndExecute(this.globalObject, stmt, binding_value, columns_value, PostgresSQLConnection.Writer, this.writer()) catch |err| {
+                                req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                                req.deref();
+                                this.requests.discard(1);
+                                continue;
+                            };
+                            req.status = .binding;
+                            req.flags.binary = stmt.fields.len > 0;
+                            any = true;
+                            break;
+                        },
+                        .pending => {
+                            // statement is pending, lets write/parse it
+
+                            var query_str = req.query.toUTF8(bun.default_allocator);
+                            defer query_str.deinit();
+                            stmt.status = .parsing;
+                            const has_params = stmt.signature.fields.len > 0;
+                            // If it does not have params, we can write and execute immediately in one go
+                            if (!has_params) {
+                                // prepareAndQueryWithSignature will write + bind + execute, it will change to running after binding is complete
+                                req.status = .binding;
+
+                                const binding_value = PostgresSQLQuery.bindingGetCached(req.thisValue) orelse .zero;
+
+                                PostgresRequest.prepareAndQueryWithSignature(this.globalObject, query_str.slice(), binding_value, PostgresSQLConnection.Writer, this.writer(), &stmt.signature) catch |err| {
+                                    req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                                    req.deref();
+                                    this.requests.discard(1);
+                                    continue;
+                                };
+                                any = true;
+                            } else {
+                                const connection_writer = this.writer();
+                                // write query and wait for it to be prepared
+                                PostgresRequest.writeQuery(query_str.slice(), stmt.signature.prepared_statement_name, stmt.signature.fields, PostgresSQLConnection.Writer, connection_writer) catch |err| {
+                                    req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                                    req.deref();
+                                    this.requests.discard(1);
+                                    continue;
+                                };
+                                connection_writer.write(&protocol.Sync) catch |err| {
+                                    req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                                    req.deref();
+                                    this.requests.discard(1);
+                                    continue;
+                                };
+                                any = true;
+                            }
+                            break;
+                        },
+                        .parsing => {
+                            // we are still parsing, lets wait for it to be prepared or failed
+                            break;
+                        },
                     }
+                },
+
+                .running, .binding => {
+                    // if we are binding it will switch to running immediately
+                    // if we are running, we need to wait for it to be success or fail
+                    break;
                 },
                 .success, .fail => {
                     this.requests.discard(1);
                     req.deref();
                     any = true;
                 },
-                else => break,
             }
         }
-
-        while (this.requests.readableLength() > 0) {
-            var req: *PostgresSQLQuery = this.requests.peekItem(0);
-            const stmt = req.statement orelse return error.ExpectedStatement;
-
-            switch (stmt.status) {
-                .prepared => {
-                    if (req.status == .pending and stmt.status == .prepared) {
-                        const binding_value = PostgresSQLQuery.bindingGetCached(req.thisValue) orelse .zero;
-                        const columns_value = PostgresSQLQuery.columnsGetCached(req.thisValue) orelse .zero;
-                        PostgresRequest.bindAndExecute(this.globalObject, stmt, binding_value, columns_value, PostgresSQLConnection.Writer, this.writer()) catch |err| {
-                            req.onWriteFail(err, this.globalObject, this.getQueriesArray());
-                            req.deref();
-                            this.requests.discard(1);
-                            continue;
-                        };
-                        req.status = .binding;
-                        req.flags.binary = stmt.fields.len > 0;
-                        any = true;
-                    } else {
-                        break;
-                    }
-                },
-                else => break,
-            }
-        }
-
         return any;
     }
 
@@ -2967,12 +3021,13 @@ pub const PostgresSQLStatement = struct {
     fields: []protocol.FieldDescription = &[_]protocol.FieldDescription{},
     parameters: []const int4 = &[_]int4{},
     signature: Signature,
-    status: Status = Status.parsing,
+    status: Status = Status.pending,
     error_response: protocol.ErrorResponse = .{},
     needs_duplicate_check: bool = true,
     fields_flags: PostgresSQLConnection.DataCell.Flags = .{},
 
     pub const Status = enum {
+        pending,
         parsing,
         prepared,
         failed,

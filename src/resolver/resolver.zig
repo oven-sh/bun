@@ -1338,15 +1338,41 @@ pub const Resolver = struct {
                 }
             }
 
-            // If the source directory doesn't exist, walk up to find the first one that does, if any.
-            var source_dir_info = first_dir_info: {
-                var source_dir_to_use = source_dir;
-                while (true) {
-                    if (r.dirInfoCached(source_dir_to_use) catch return .{ .not_found = {} }) |dir|
-                        break :first_dir_info dir;
-                    source_dir_to_use = std.fs.path.dirname(source_dir) orelse
-                        return .{ .not_found = {} };
+            var source_dir_info = r.dirInfoCached(source_dir) catch (return .{ .not_found = {} }) orelse dir: {
+                // It is possible to resolve with a source file that does not exist:
+                // A. Bundler plugin refers to a non-existing `resolveDir`.
+                // B. `createRequire()` is called with a path that does not exist. This was
+                //    hit in Nuxt, specifically the `vite-node` dependency [1].
+                //
+                // Normally it would make sense to always bail here, but in the case of
+                // resolving "hello" from "/project/nonexistent_dir/index.ts", resolution
+                // should still query "/project/node_modules" and "/node_modules"
+                //
+                // For case B in Node.js, they use `_resolveLookupPaths` in
+                // combination with `_nodeModulePaths` to collect a listing of
+                // all possible parent `node_modules` [2]. Bun has a much smarter
+                // approach that caches directory entries, but it (correctly) does
+                // not cache non-existing directories. To successfully resolve this,
+                // Bun finds the nearest existing directory, and uses that as the base
+                // for `node_modules` resolution. Since that directory entry knows how
+                // to resolve concrete node_modules, this iteration stops at the first
+                // existing directory, regardless of what it is.
+                //
+                // The resulting `source_dir_info` cannot resolve relative files.
+                //
+                // [1]: https://github.com/oven-sh/bun/issues/16705
+                // [2]: https://github.com/nodejs/node/blob/e346323109b49fa6b9a4705f4e3816fc3a30c151/lib/internal/modules/cjs/loader.js#L1934
+                if (Environment.allow_assert)
+                    bun.assert(isPackagePath(import_path));
+                var closest_dir = source_dir;
+                // Use std.fs.path.dirname to get `null` once the entire
+                // directory tree has been visited. `null` is theoretically
+                // impossible since the drive root should always exist.
+                while (std.fs.path.dirname(closest_dir)) |current| : (closest_dir = current) {
+                    if (r.dirInfoCached(current) catch return .{ .not_found = {} }) |dir|
+                        break :dir dir;
                 }
+                return .{ .not_found = {} };
             };
 
             if (r.care_about_browser_field) {

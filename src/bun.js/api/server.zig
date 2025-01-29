@@ -69,7 +69,6 @@ const Config = @import("../config.zig");
 const URL = @import("../../url.zig").URL;
 const VirtualMachine = JSC.VirtualMachine;
 const IOTask = JSC.IOTask;
-const is_bindgen = JSC.is_bindgen;
 const uws = bun.uws;
 const Fallback = Runtime.Fallback;
 const MimeType = HTTP.MimeType;
@@ -7785,9 +7784,7 @@ pub fn Server__setIdleTimeout_(server: JSC.JSValue, seconds: JSC.JSValue, global
 }
 
 comptime {
-    if (!JSC.is_bindgen) {
-        _ = Server__setIdleTimeout;
-    }
+    _ = Server__setIdleTimeout;
 }
 
 fn throwSSLErrorIfNecessary(globalThis: *JSC.JSGlobalObject) bool {

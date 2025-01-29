@@ -1020,7 +1020,7 @@ pub fn transformSync(
         arena.allocator(),
         code,
         loader,
-        if (comptime JSC.is_bindgen) Transpiler.MacroJSValueType.zero else js_ctx_value,
+        js_ctx_value,
     ) orelse {
         if ((this.transpiler.log.warnings + this.transpiler.log.errors) > 0) {
             return globalThis.throwValue(this.transpiler.log.toJS(globalThis, globalThis.allocator(), "Parse error"));

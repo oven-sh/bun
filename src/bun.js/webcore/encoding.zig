@@ -239,13 +239,11 @@ pub const TextEncoder = struct {
 };
 
 comptime {
-    if (!JSC.is_bindgen) {
-        _ = TextEncoder.TextEncoder__encode8;
-        _ = TextEncoder.TextEncoder__encode16;
-        _ = TextEncoder.TextEncoder__encodeInto8;
-        _ = TextEncoder.TextEncoder__encodeInto16;
-        _ = TextEncoder.TextEncoder__encodeRopeString;
-    }
+    _ = TextEncoder.TextEncoder__encode8;
+    _ = TextEncoder.TextEncoder__encode16;
+    _ = TextEncoder.TextEncoder__encodeInto8;
+    _ = TextEncoder.TextEncoder__encodeInto16;
+    _ = TextEncoder.TextEncoder__encodeRopeString;
 }
 
 /// https://encoding.spec.whatwg.org/encodings.json
@@ -1471,24 +1469,20 @@ pub const Encoder = struct {
     }
 
     comptime {
-        if (!JSC.is_bindgen) {
-            _ = Bun__encoding__writeLatin1;
-            _ = Bun__encoding__writeUTF16;
+        _ = Bun__encoding__writeLatin1;
+        _ = Bun__encoding__writeUTF16;
 
-            _ = Bun__encoding__byteLengthLatin1;
-            _ = Bun__encoding__byteLengthUTF16;
+        _ = Bun__encoding__byteLengthLatin1;
+        _ = Bun__encoding__byteLengthUTF16;
 
-            _ = Bun__encoding__toString;
-            _ = Bun__encoding__toStringUTF8;
+        _ = Bun__encoding__toString;
+        _ = Bun__encoding__toStringUTF8;
 
-            _ = Bun__encoding__constructFromLatin1;
-            _ = Bun__encoding__constructFromUTF16;
-        }
+        _ = Bun__encoding__constructFromLatin1;
+        _ = Bun__encoding__constructFromUTF16;
     }
 };
 
 comptime {
-    if (!JSC.is_bindgen) {
-        std.testing.refAllDecls(Encoder);
-    }
+    std.testing.refAllDecls(Encoder);
 }

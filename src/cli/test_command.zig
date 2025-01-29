@@ -35,7 +35,6 @@ const Run = @import("../bun_js.zig").Run;
 var path_buf: bun.PathBuffer = undefined;
 var path_buf2: bun.PathBuffer = undefined;
 const PathString = bun.PathString;
-const is_bindgen = false;
 const HTTPThread = bun.http.HTTPThread;
 
 const JSC = bun.JSC;
@@ -1177,8 +1176,6 @@ pub const TestCommand = struct {
     };
 
     pub fn exec(ctx: Command.Context) !void {
-        if (comptime is_bindgen) unreachable;
-
         Output.is_github_action = Output.isGithubAction();
 
         // print the version so you know its doing stuff if it takes a sec

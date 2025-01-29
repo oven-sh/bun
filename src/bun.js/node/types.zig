@@ -4,7 +4,6 @@ const bun = @import("root").bun;
 const meta = bun.meta;
 const windows = bun.windows;
 const heap_allocator = bun.default_allocator;
-const is_bindgen: bool = false;
 const kernel32 = windows.kernel32;
 const logger = bun.logger;
 const posix = std.posix;

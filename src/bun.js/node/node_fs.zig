@@ -6550,8 +6550,7 @@ pub export fn Bun__mkdirp(globalThis: *JSC.JSGlobalObject, path: [*:0]const u8) 
 }
 
 comptime {
-    if (!JSC.is_bindgen)
-        _ = Bun__mkdirp;
+    _ = Bun__mkdirp;
 }
 
 /// Copied from std.fs.Dir.deleteTree. This function returns `FileNotFound` instead of ignoring it, which

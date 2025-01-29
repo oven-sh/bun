@@ -150,7 +150,7 @@ size_t JSDOMURL::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
 
 template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMURLDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
-    auto& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = jsCast<JSDOMURLDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);

@@ -159,7 +159,11 @@ class Query extends PublicPromise {
     // this avoids a infinite loop
     await 1;
 
-    return handler(this, handle);
+    try {
+      return handler(this, handle);
+    } catch (err) {
+      this.reject(err);
+    }
   }
 
   get active() {

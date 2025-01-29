@@ -664,7 +664,7 @@ pub const PostgresSQLQuery = struct {
                     this.status = .binding;
                     PostgresRequest.bindAndExecute(globalObject, this.statement.?, binding_value, columns_value, PostgresSQLConnection.Writer, writer) catch |err| {
                         if (!globalObject.hasException())
-                            return globalObject.throwError(err, "failed to bind and execute query");
+                            return globalObject.throwValue(postgresErrorToJS(globalObject, "failed to bind and execute query", err));
                         return error.JSError;
                     };
                     reset_timeout = true;
@@ -684,7 +684,7 @@ pub const PostgresSQLQuery = struct {
                     PostgresRequest.prepareAndQueryWithSignature(globalObject, query_str.slice(), binding_value, PostgresSQLConnection.Writer, writer, &signature) catch |err| {
                         signature.deinit();
                         if (!globalObject.hasException())
-                            return globalObject.throwError(err, "failed to prepare and query");
+                            return globalObject.throwValue(postgresErrorToJS(globalObject, "failed to prepare and query", err));
                         return error.JSError;
                     };
                     reset_timeout = true;
@@ -693,13 +693,13 @@ pub const PostgresSQLQuery = struct {
                     PostgresRequest.writeQuery(query_str.slice(), signature.prepared_statement_name, signature.fields, PostgresSQLConnection.Writer, writer) catch |err| {
                         signature.deinit();
                         if (!globalObject.hasException())
-                            return globalObject.throwError(err, "failed to write query");
+                            return globalObject.throwValue(postgresErrorToJS(globalObject, "failed to write query", err));
                         return error.JSError;
                     };
                     writer.write(&protocol.Sync) catch |err| {
                         signature.deinit();
                         if (!globalObject.hasException())
-                            return globalObject.throwError(err, "failed to flush");
+                            return globalObject.throwValue(postgresErrorToJS(globalObject, "failed to flush", err));
                         return error.JSError;
                     };
                     reset_timeout = true;
@@ -707,8 +707,8 @@ pub const PostgresSQLQuery = struct {
             }
 
             {
-                const stmt = bun.default_allocator.create(PostgresSQLStatement) catch |err| {
-                    return globalObject.throwError(err, "failed to allocate statement");
+                const stmt = bun.default_allocator.create(PostgresSQLStatement) catch {
+                    return globalObject.throwOutOfMemory();
                 };
                 connection.prepared_statement_id += 1;
                 stmt.* = .{ .signature = signature, .ref_count = 2, .status = if (can_execute) .parsing else .pending };

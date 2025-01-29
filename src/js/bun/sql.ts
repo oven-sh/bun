@@ -1911,7 +1911,12 @@ function SQL(o, e = {}) {
           // mssql dont have release savepoint
           await run_internal_transaction_sql(`${RELEASE_SAVEPOINT_COMMAND} ${save_point_name}`);
         }
-        if (Array.isArray(result)) {
+        if ($isArray(result)) {
+          for (const q of result) {
+            if (q instanceof Query) {
+              q.execute();
+            }
+          }
           result = await Promise.all(result);
         }
         return result;
@@ -1957,7 +1962,12 @@ function SQL(o, e = {}) {
       await run_internal_transaction_sql(BEGIN_COMMAND);
       needs_rollback = true;
       let transaction_result = await callback(transaction_sql);
-      if (Array.isArray(transaction_result)) {
+      if ($isArray(transaction_result)) {
+        for (const q of transaction_result) {
+          if (q instanceof Query) {
+            q.execute();
+          }
+        }
         transaction_result = await Promise.all(transaction_result);
       }
       // at this point we dont need to rollback anymore

@@ -655,7 +655,7 @@ if (isDockerEnabled()) {
   });
 
   test("Transaction requests are executed implicitly", async () => {
-    const sql = postgres({ ...options, debug: true, idle_timeout: 1, fetch_types: false });
+    const sql = postgres({ ...options });
     expect(
       (
         await sql.begin(sql => [
@@ -667,7 +667,7 @@ if (isDockerEnabled()) {
   });
 
   test("Uncaught transaction request errors are bubbled to transaction", async () => {
-    const sql = postgres({ ...options, debug: true, idle_timeout: 1, fetch_types: false });
+    const sql = postgres({ ...options });
     expect(
       await sql
         .begin(sql => [sql`select wat`, sql`select current_setting('bun_sql.test') as x, ${1} as a`])
@@ -676,7 +676,7 @@ if (isDockerEnabled()) {
   });
 
   test("Fragments in transactions", async () => {
-    const sql = postgres({ ...options, debug: true, idle_timeout: 1, fetch_types: false });
+    const sql = postgres({ ...options });
     expect((await sql.begin(sql => sql`select true as x where ${sql`1=1`}`))[0].x).toBe(true);
   });
 

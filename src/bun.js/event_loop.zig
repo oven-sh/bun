@@ -1401,6 +1401,12 @@ pub const EventLoop = struct {
         }
     }
 
+    pub fn runImminentGCTimer(this: *EventLoop) void {
+        if (this.imminent_gc_timer.swap(null, .seq_cst)) |timer| {
+            timer.run(this.virtual_machine);
+        }
+    }
+
     pub fn tickConcurrentWithCount(this: *EventLoop) usize {
         this.updateCounts();
 
@@ -1411,9 +1417,7 @@ pub const EventLoop = struct {
         }
 
         if (this.entered_event_loop_count < 2) {
-            if (this.imminent_gc_timer.swap(null, .seq_cst)) |timer| {
-                timer.run(this.virtual_machine);
-            }
+            this.runImminentGCTimer();
         }
 
         var concurrent = this.concurrent_tasks.popBatch();

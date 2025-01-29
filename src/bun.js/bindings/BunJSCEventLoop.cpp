@@ -2,19 +2,22 @@
 
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/Heap.h>
+#include "ZigGlobalObject.h"
+
+extern "C" void WTFTimer__runIfImminent(void* bunVM);
 
 extern "C" int Bun__JSC_onBeforeWait(JSC::VM* vm)
 {
-    (void)vm;
-    // if (vm->heap.hasAccess()) {
-    //     vm->heap.releaseAccess();
-    //     return 1;
-    // }
+    if (vm->heap.hasAccess()) {
+        WTFTimer__runIfImminent(Bun::vm(*vm));
+        vm->heap.releaseAccess();
+        return 1;
+    }
     return 0;
 }
 
 extern "C" void Bun__JSC_onAfterWait(JSC::VM* vm)
 {
-    (void)vm;
-    // vm->heap.acquireAccess();
+    WTFTimer__runIfImminent(Bun::vm(*vm));
+    vm->heap.acquireAccess();
 }

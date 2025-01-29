@@ -45,6 +45,51 @@ pub const AnyPostgresError = error{
     UnsupportedIntegerSize,
 };
 
+pub fn postgresErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8, err: AnyPostgresError) JSValue {
+    const error_code: JSC.Error = switch (err) {
+        error.ConnectionClosed => JSC.Error.ERR_POSTGRES_CONNECTION_CLOSED,
+        error.ExpectedRequest => JSC.Error.ERR_POSTGRES_EXPECTED_REQUEST,
+        error.ExpectedStatement => JSC.Error.ERR_POSTGRES_EXPECTED_STATEMENT,
+        error.InvalidBackendKeyData => JSC.Error.ERR_POSTGRES_INVALID_BACKEND_KEY_DATA,
+        error.InvalidBinaryData => JSC.Error.ERR_POSTGRES_INVALID_BINARY_DATA,
+        error.InvalidByteSequence => JSC.Error.ERR_POSTGRES_INVALID_BYTE_SEQUENCE,
+        error.InvalidByteSequenceForEncoding => JSC.Error.ERR_POSTGRES_INVALID_BYTE_SEQUENCE_FOR_ENCODING,
+        error.InvalidCharacter => JSC.Error.ERR_POSTGRES_INVALID_CHARACTER,
+        error.InvalidMessage => JSC.Error.ERR_POSTGRES_INVALID_MESSAGE,
+        error.InvalidMessageLength => JSC.Error.ERR_POSTGRES_INVALID_MESSAGE_LENGTH,
+        error.InvalidQueryBinding => JSC.Error.ERR_POSTGRES_INVALID_QUERY_BINDING,
+        error.InvalidServerKey => JSC.Error.ERR_POSTGRES_INVALID_SERVER_KEY,
+        error.InvalidServerSignature => JSC.Error.ERR_POSTGRES_INVALID_SERVER_SIGNATURE,
+        error.MultidimensionalArrayNotSupportedYet => JSC.Error.ERR_POSTGRES_MULTIDIMENSIONAL_ARRAY_NOT_SUPPORTED_YET,
+        error.NullsInArrayNotSupportedYet => JSC.Error.ERR_POSTGRES_NULLS_IN_ARRAY_NOT_SUPPORTED_YET,
+        error.Overflow => JSC.Error.ERR_POSTGRES_OVERFLOW,
+        error.PBKDFD2 => JSC.Error.ERR_POSTGRES_AUTHENTICATION_FAILED_PBKDF2,
+        error.SASL_SIGNATURE_MISMATCH => JSC.Error.ERR_POSTGRES_SASL_SIGNATURE_MISMATCH,
+        error.SASL_SIGNATURE_INVALID_BASE64 => JSC.Error.ERR_POSTGRES_SASL_SIGNATURE_INVALID_BASE64,
+        error.TLSNotAvailable => JSC.Error.ERR_POSTGRES_TLS_NOT_AVAILABLE,
+        error.TLSUpgradeFailed => JSC.Error.ERR_POSTGRES_TLS_UPGRADE_FAILED,
+        error.UnexpectedMessage => JSC.Error.ERR_POSTGRES_UNEXPECTED_MESSAGE,
+        error.UNKNOWN_AUTHENTICATION_METHOD => JSC.Error.ERR_POSTGRES_UNKNOWN_AUTHENTICATION_METHOD,
+        error.UNSUPPORTED_AUTHENTICATION_METHOD => JSC.Error.ERR_POSTGRES_UNSUPPORTED_AUTHENTICATION_METHOD,
+        error.UnsupportedByteaFormat => JSC.Error.ERR_POSTGRES_UNSUPPORTED_BYTEA_FORMAT,
+        error.UnsupportedIntegerSize => JSC.Error.ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE,
+        error.JSError => {
+            return globalObject.takeException(error.JSError);
+        },
+        error.OutOfMemory => {
+            // TODO: add binding for creating an out of memory error?
+            return globalObject.takeException(globalObject.throwOutOfMemory());
+        },
+        error.ShortRead => {
+            bun.unreachablePanic("Assertion failed: ShortRead should be handled by the caller in postgres", .{});
+        },
+    };
+    if (message) |msg| {
+        return error_code.fmt(globalObject, "{s}", .{msg});
+    }
+    return error_code.fmt(globalObject, "Failed to bind query: {s}", .{@errorName(err)});
+}
+
 pub const SSLMode = enum(u8) {
     disable = 0,
     prefer = 1,
@@ -252,10 +297,6 @@ pub const PostgresSQLQuery = struct {
         pub fn isRunning(this: Status) bool {
             return @intFromEnum(this) > @intFromEnum(Status.pending) and @intFromEnum(this) < @intFromEnum(Status.success);
         }
-
-        pub fn isDone(this: Status) bool {
-            return this == .success or this == .fail;
-        }
     };
 
     pub fn hasPendingActivity(this: *@This()) bool {
@@ -336,7 +377,7 @@ pub const PostgresSQLQuery = struct {
         });
     }
 
-    pub fn onError(this: *@This(), err: protocol.ErrorResponse, globalObject: *JSC.JSGlobalObject) void {
+    pub fn onError(this: *@This(), err: PostgresSQLStatement.Error, globalObject: *JSC.JSGlobalObject) void {
         this.status = .fail;
         defer this.deref();
 
@@ -1407,47 +1448,8 @@ pub const PostgresSQLConnection = struct {
         debug("failed: {s}: {s}", .{ message, @errorName(err) });
 
         const globalObject = this.globalObject;
-        const error_code: JSC.Error = switch (err) {
-            error.ConnectionClosed => JSC.Error.ERR_POSTGRES_CONNECTION_CLOSED,
-            error.ExpectedRequest => JSC.Error.ERR_POSTGRES_EXPECTED_REQUEST,
-            error.ExpectedStatement => JSC.Error.ERR_POSTGRES_EXPECTED_STATEMENT,
-            error.InvalidBackendKeyData => JSC.Error.ERR_POSTGRES_INVALID_BACKEND_KEY_DATA,
-            error.InvalidBinaryData => JSC.Error.ERR_POSTGRES_INVALID_BINARY_DATA,
-            error.InvalidByteSequence => JSC.Error.ERR_POSTGRES_INVALID_BYTE_SEQUENCE,
-            error.InvalidByteSequenceForEncoding => JSC.Error.ERR_POSTGRES_INVALID_BYTE_SEQUENCE_FOR_ENCODING,
-            error.InvalidCharacter => JSC.Error.ERR_POSTGRES_INVALID_CHARACTER,
-            error.InvalidMessage => JSC.Error.ERR_POSTGRES_INVALID_MESSAGE,
-            error.InvalidMessageLength => JSC.Error.ERR_POSTGRES_INVALID_MESSAGE_LENGTH,
-            error.InvalidQueryBinding => JSC.Error.ERR_POSTGRES_INVALID_QUERY_BINDING,
-            error.InvalidServerKey => JSC.Error.ERR_POSTGRES_INVALID_SERVER_KEY,
-            error.InvalidServerSignature => JSC.Error.ERR_POSTGRES_INVALID_SERVER_SIGNATURE,
-            error.MultidimensionalArrayNotSupportedYet => JSC.Error.ERR_POSTGRES_MULTIDIMENSIONAL_ARRAY_NOT_SUPPORTED_YET,
-            error.NullsInArrayNotSupportedYet => JSC.Error.ERR_POSTGRES_NULLS_IN_ARRAY_NOT_SUPPORTED_YET,
-            error.Overflow => JSC.Error.ERR_POSTGRES_OVERFLOW,
-            error.PBKDFD2 => JSC.Error.ERR_POSTGRES_AUTHENTICATION_FAILED_PBKDF2,
-            error.SASL_SIGNATURE_MISMATCH => JSC.Error.ERR_POSTGRES_SASL_SIGNATURE_MISMATCH,
-            error.SASL_SIGNATURE_INVALID_BASE64 => JSC.Error.ERR_POSTGRES_SASL_SIGNATURE_INVALID_BASE64,
-            error.TLSNotAvailable => JSC.Error.ERR_POSTGRES_TLS_NOT_AVAILABLE,
-            error.TLSUpgradeFailed => JSC.Error.ERR_POSTGRES_TLS_UPGRADE_FAILED,
-            error.UnexpectedMessage => JSC.Error.ERR_POSTGRES_UNEXPECTED_MESSAGE,
-            error.UNKNOWN_AUTHENTICATION_METHOD => JSC.Error.ERR_POSTGRES_UNKNOWN_AUTHENTICATION_METHOD,
-            error.UNSUPPORTED_AUTHENTICATION_METHOD => JSC.Error.ERR_POSTGRES_UNSUPPORTED_AUTHENTICATION_METHOD,
-            error.UnsupportedByteaFormat => JSC.Error.ERR_POSTGRES_UNSUPPORTED_BYTEA_FORMAT,
-            error.UnsupportedIntegerSize => JSC.Error.ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE,
-            error.JSError => {
-                this.failWithJSValue(globalObject.takeException(error.JSError));
-                return;
-            },
-            error.OutOfMemory => {
-                // TODO: add binding for creating an out of memory error?
-                this.failWithJSValue(globalObject.takeException(globalObject.throwOutOfMemory()));
-                return;
-            },
-            error.ShortRead => {
-                bun.unreachablePanic("Assertion failed: ShortRead should be handled by the caller in postgres", .{});
-            },
-        };
-        this.failWithJSValue(error_code.fmt(globalObject, "{s}", .{message}));
+
+        this.failWithJSValue(postgresErrorToJS(globalObject, message, err));
     }
 
     pub fn onClose(this: *PostgresSQLConnection) void {
@@ -2475,7 +2477,8 @@ pub const PostgresSQLConnection = struct {
 
                     switch (stmt.status) {
                         .failed => {
-                            req.onError(stmt.error_response, this.globalObject);
+                            bun.assert(stmt.error_response != null);
+                            req.onError(stmt.error_response.?, this.globalObject);
                             this.requests.discard(1);
                             any = true;
                             continue;
@@ -2486,6 +2489,8 @@ pub const PostgresSQLConnection = struct {
                             req.flags.binary = stmt.fields.len > 0;
 
                             PostgresRequest.bindAndExecute(this.globalObject, stmt, binding_value, columns_value, PostgresSQLConnection.Writer, this.writer()) catch |err| {
+                                stmt.status = .failed;
+                                stmt.error_response = .{ .postgres_error = err };
                                 req.onWriteFail(err, this.globalObject, this.getQueriesArray());
                                 req.deref();
                                 this.requests.discard(1);
@@ -2508,9 +2513,12 @@ pub const PostgresSQLConnection = struct {
                                 const binding_value = PostgresSQLQuery.bindingGetCached(req.thisValue) orelse .zero;
 
                                 PostgresRequest.prepareAndQueryWithSignature(this.globalObject, query_str.slice(), binding_value, PostgresSQLConnection.Writer, this.writer(), &stmt.signature) catch |err| {
+                                    stmt.status = .failed;
+                                    stmt.error_response = .{ .postgres_error = err };
                                     req.onWriteFail(err, this.globalObject, this.getQueriesArray());
                                     req.deref();
                                     this.requests.discard(1);
+
                                     continue;
                                 };
                                 stmt.status = .parsing;
@@ -2521,12 +2529,16 @@ pub const PostgresSQLConnection = struct {
                             const connection_writer = this.writer();
                             // write query and wait for it to be prepared
                             PostgresRequest.writeQuery(query_str.slice(), stmt.signature.prepared_statement_name, stmt.signature.fields, PostgresSQLConnection.Writer, connection_writer) catch |err| {
+                                stmt.error_response = .{ .postgres_error = err };
+                                stmt.status = .failed;
                                 req.onWriteFail(err, this.globalObject, this.getQueriesArray());
                                 req.deref();
                                 this.requests.discard(1);
                                 continue;
                             };
                             connection_writer.write(&protocol.Sync) catch |err| {
+                                stmt.error_response = .{ .postgres_error = err };
+                                stmt.status = .failed;
                                 req.onWriteFail(err, this.globalObject, this.getQueriesArray());
                                 req.deref();
                                 this.requests.discard(1);
@@ -2935,7 +2947,7 @@ pub const PostgresSQLConnection = struct {
                 if (request.statement) |stmt| {
                     if (stmt.status == PostgresSQLStatement.Status.parsing) {
                         stmt.status = PostgresSQLStatement.Status.failed;
-                        stmt.error_response = err;
+                        stmt.error_response = .{ .protocol = err };
                         is_error_owned = false;
                         if (this.statements.remove(bun.hash(stmt.signature.name))) {
                             stmt.deref();
@@ -2945,7 +2957,7 @@ pub const PostgresSQLConnection = struct {
                 _ = this.requests.discard(1);
                 this.updateRef();
 
-                request.onError(err, this.globalObject);
+                request.onError(.{ .protocol = err }, this.globalObject);
             },
             .PortalSuspended => {
                 // try reader.eatMessage(&protocol.PortalSuspended);
@@ -3028,10 +3040,28 @@ pub const PostgresSQLStatement = struct {
     parameters: []const int4 = &[_]int4{},
     signature: Signature,
     status: Status = Status.pending,
-    error_response: protocol.ErrorResponse = .{},
+    error_response: ?Error = null,
     needs_duplicate_check: bool = true,
     fields_flags: PostgresSQLConnection.DataCell.Flags = .{},
 
+    pub const Error = union(enum) {
+        protocol: protocol.ErrorResponse,
+        postgres_error: AnyPostgresError,
+
+        pub fn deinit(this: *@This()) void {
+            switch (this.*) {
+                .protocol => |*err| err.deinit(),
+                .postgres_error => {},
+            }
+        }
+
+        pub fn toJS(this: *const @This(), globalObject: *JSC.JSGlobalObject) JSValue {
+            return switch (this.*) {
+                .protocol => |err| err.toJS(globalObject),
+                .postgres_error => |err| postgresErrorToJS(globalObject, null, err),
+            };
+        }
+    };
     pub const Status = enum {
         pending,
         parsing,
@@ -3108,7 +3138,11 @@ pub const PostgresSQLStatement = struct {
         bun.default_allocator.free(this.fields);
         bun.default_allocator.free(this.parameters);
         this.cached_structure.deinit();
-        this.error_response.deinit();
+        if (this.error_response) |err| {
+            this.error_response = null;
+            var _error = err;
+            _error.deinit();
+        }
         this.signature.deinit();
         bun.default_allocator.destroy(this);
     }

@@ -163,7 +163,7 @@ if (TLS_POSTGRES_DATABASE_URL) {
     ).toBe("testing");
   });
 
-  test(`Uncaught transaction request errors bubbles to transaction ${i}`, async () => {
+  test("Uncaught transaction request errors bubbles to transaction", async () => {
     await using sql = new SQL({ ...options, debug: true, idle_timeout: 1, fetch_types: false, max: 10 });
     expect(
       await sql

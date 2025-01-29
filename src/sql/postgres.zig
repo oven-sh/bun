@@ -2499,7 +2499,6 @@ pub const PostgresSQLConnection = struct {
                             // statement is pending, lets write/parse it
                             var query_str = req.query.toUTF8(bun.default_allocator);
                             defer query_str.deinit();
-                            stmt.status = .parsing;
                             const has_params = stmt.signature.fields.len > 0;
                             // If it does not have params, we can write and execute immediately in one go
                             if (!has_params) {
@@ -2514,6 +2513,8 @@ pub const PostgresSQLConnection = struct {
                                     this.requests.discard(1);
                                     continue;
                                 };
+                                stmt.status = .parsing;
+
                                 any = true;
                                 return any;
                             }
@@ -2531,6 +2532,7 @@ pub const PostgresSQLConnection = struct {
                                 this.requests.discard(1);
                                 continue;
                             };
+                            stmt.status = .parsing;
                             any = true;
                             return any;
                         },

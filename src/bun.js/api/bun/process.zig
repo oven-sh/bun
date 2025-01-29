@@ -924,7 +924,7 @@ const WaiterThreadPosix = struct {
                 .mask = current_mask,
                 .flags = std.posix.SA.NOCLDSTOP,
             };
-            std.posix.sigaction(std.posix.SIG.CHLD, &act, null) catch {};
+            std.posix.sigaction(std.posix.SIG.CHLD, &act, null);
         }
     }
 

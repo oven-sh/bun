@@ -1146,19 +1146,19 @@ const StackLine = struct {
                     fn callback(info: *std.posix.dl_phdr_info, _: usize, context: *CtxTy) !void {
                         defer context.i += 1;
 
-                        if (context.address < info.dlpi_addr) return;
-                        const phdrs = info.dlpi_phdr[0..info.dlpi_phnum];
+                        if (context.address < info.addr) return;
+                        const phdrs = info.phdr[0..info.phnum];
                         for (phdrs) |*phdr| {
                             if (phdr.p_type != std.elf.PT_LOAD) continue;
 
                             // Overflowing addition is used to handle the case of VSDOs
                             // having a p_vaddr = 0xffffffffff700000
-                            const seg_start = info.dlpi_addr +% phdr.p_vaddr;
+                            const seg_start = info.addr +% phdr.p_vaddr;
                             const seg_end = seg_start + phdr.p_memsz;
                             if (context.address >= seg_start and context.address < seg_end) {
-                                // const name = bun.sliceTo(info.dlpi_name, 0) orelse "";
+                                // const name = bun.sliceTo(info.name, 0) orelse "";
                                 context.result = .{
-                                    .address = @intCast(context.address - info.dlpi_addr),
+                                    .address = @intCast(context.address - info.addr),
                                     .object = null,
                                 };
                                 return error.Found;

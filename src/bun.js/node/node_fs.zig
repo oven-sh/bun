@@ -3634,7 +3634,7 @@ pub const NodeFS = struct {
                 return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOTSUP), .syscall = .copyfile } };
             }
 
-            var flags: Mode = bun.O.CREAT | bun.O.WRONLY;
+            var flags: i32 = bun.O.CREAT | bun.O.WRONLY;
             var wrote: usize = 0;
             if (args.mode.shouldntOverwrite()) {
                 flags |= bun.O.EXCL;
@@ -6352,7 +6352,7 @@ pub const NodeFS = struct {
                 } };
             }
 
-            var flags: Mode = bun.O.CREAT | bun.O.WRONLY;
+            var flags: i32 = bun.O.CREAT | bun.O.WRONLY;
             var wrote: usize = 0;
             if (mode.shouldntOverwrite()) {
                 flags |= bun.O.EXCL;

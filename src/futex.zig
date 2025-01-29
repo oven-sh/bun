@@ -217,8 +217,8 @@ const LinuxImpl = struct {
     fn wait(ptr: *const atomic.Value(u32), expect: u32, timeout: ?u64) error{Timeout}!void {
         const ts: linux.timespec = if (timeout) |timeout_ns|
             .{
-                .tv_sec = @intCast(timeout_ns / std.time.ns_per_s),
-                .tv_nsec = @intCast(timeout_ns % std.time.ns_per_s),
+                .sec = @intCast(timeout_ns / std.time.ns_per_s),
+                .nsec = @intCast(timeout_ns % std.time.ns_per_s),
             }
         else
             undefined;

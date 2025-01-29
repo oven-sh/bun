@@ -808,7 +808,7 @@ pub const zlib = @import("./zlib.zig");
 pub var start_time: i128 = 0;
 
 pub fn openFileZ(pathZ: [:0]const u8, open_flags: std.fs.File.OpenFlags) !std.fs.File {
-    var flags: Mode = 0;
+    var flags: i32 = 0;
     switch (open_flags.mode) {
         .read_only => flags |= O.RDONLY,
         .write_only => flags |= O.WRONLY,
@@ -821,7 +821,7 @@ pub fn openFileZ(pathZ: [:0]const u8, open_flags: std.fs.File.OpenFlags) !std.fs
 
 pub fn openFile(path_: []const u8, open_flags: std.fs.File.OpenFlags) !std.fs.File {
     if (comptime Environment.isWindows) {
-        var flags: Mode = 0;
+        var flags: i32 = 0;
         switch (open_flags.mode) {
             .read_only => flags |= O.RDONLY,
             .write_only => flags |= O.WRONLY,
@@ -3643,14 +3643,14 @@ pub fn getRoughTickCount() timespec {
             .sec = 0,
         };
         const clocky = struct {
-            pub var clock_id: i32 = 0;
+            pub var clock_id: std.os.linux.CLOCK = .REALTIME;
             pub fn get() void {
                 var res = timespec{};
-                _ = std.os.linux.clock_getres(std.os.linux.CLOCK.MONOTONIC_COARSE, @ptrCast(&res));
+                _ = std.os.linux.clock_getres(.MONOTONIC_COARSE, @ptrCast(&res));
                 if (res.ms() <= 1) {
-                    clock_id = std.os.linux.CLOCK.MONOTONIC_COARSE;
+                    clock_id = .MONOTONIC_COARSE;
                 } else {
-                    clock_id = std.os.linux.CLOCK.MONOTONIC_RAW;
+                    clock_id = .MONOTONIC_RAW;
                 }
             }
 

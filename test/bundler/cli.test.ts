@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
-import fs, { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import fs, { copyFileSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "node:path";
 import { isWindows } from "harness";
 
@@ -62,7 +62,12 @@ describe("bun build", () => {
 
     expect(["build", src, "--compile", "--outfile", outfile]).toRun();
 
-    const { exitCode, stderr, stdout } = Bun.spawnSync({
+    // this is the important one, as it should be able to have a runnable bun
+    const {
+      exitCode: exitCode1,
+      stderr: stderr1,
+      stdout: stdout1,
+    } = Bun.spawnSync({
       cmd: [outfile],
       env: {
         ...bunEnv,
@@ -71,9 +76,34 @@ describe("bun build", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    expect(stdout.toString("utf8")).toBe(`${Bun.version}\n\n`);
-    expect(stderr.toString("utf8")).toBeEmpty();
-    expect(exitCode).toBe(0);
+    expect(stdout1.toString("utf8")).toBe(`${Bun.version}\n\n`);
+    expect(stderr1.toString("utf8")).toBeEmpty();
+    expect(exitCode1).toBe(0);
+
+    // ensure it prefers standalone binary bun instead of a "fake" bun in path
+    const srcE = path.join(tmp, "bun.js");
+    fs.writeFileSync(srcE, "console.log('hi');", { encoding: "utf8" });
+    const outfileE = path.join(tmp, "bunn");
+    expect(["build", srcE, "--compile", "--outfile", outfileE]).toRun();
+    copyFileSync(outfileE, path.join(tmp, "bun"));
+    copyFileSync(outfileE, path.join(tmp, "bun.exe"));
+
+    const {
+      exitCode: exitCode2,
+      stderr: stderr2,
+      stdout: stdout2,
+    } = Bun.spawnSync({
+      cmd: [outfile],
+      env: {
+        ...bunEnv,
+        PATH: tmp,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stdout2.toString("utf8")).toBe(`${Bun.version}\n\n`);
+    expect(stderr2.toString("utf8")).toBeEmpty();
+    expect(exitCode2).toBe(0);
 
     fs.rmSync(tmp, { recursive: true, force: true });
   });

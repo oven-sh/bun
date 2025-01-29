@@ -4828,13 +4828,16 @@ pub const Interpreter = struct {
 
                 const path_buf = bun.PathBufferPool.get();
                 defer bun.PathBufferPool.put(path_buf);
-                const resolved = which(path_buf, spawn_args.PATH, spawn_args.cwd, first_arg_real) orelse blk: {
+                const resolved = blk: {
                     if (bun.strings.eqlComptime(first_arg_real, "bun") or bun.strings.eqlComptime(first_arg_real, "bun-debug")) blk2: {
                         spawn_args.env_array.append(arena_allocator, "BUN_SKIP_STANDALONE_MODULE_GRAPH=1") catch break :blk2;
                         break :blk bun.selfExePath() catch break :blk2;
                     }
-                    this.writeFailingError("bun: command not found: {s}\n", .{first_arg});
-                    return;
+
+                    break :blk which(path_buf, spawn_args.PATH, spawn_args.cwd, first_arg_real) orelse {
+                        this.writeFailingError("bun: command not found: {s}\n", .{first_arg});
+                        return;
+                    };
                 };
 
                 const duped = arena_allocator.dupeZ(u8, bun.span(resolved)) catch bun.outOfMemory();

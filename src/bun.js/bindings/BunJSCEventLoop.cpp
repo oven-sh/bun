@@ -2,14 +2,11 @@
 
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/Heap.h>
-#include "ZigGlobalObject.h"
-
-extern "C" void WTFTimer__runIfImminent(void* bunVM);
-
+#include <JavaScriptCore/IncrementalSweeper.h>
 extern "C" int Bun__JSC_onBeforeWait(JSC::VM* vm)
 {
     if (vm->heap.hasAccess()) {
-        WTFTimer__runIfImminent(Bun::vm(*vm));
+        vm->heap.stopIfNecessary();
         vm->heap.releaseAccess();
         return 1;
     }
@@ -18,6 +15,6 @@ extern "C" int Bun__JSC_onBeforeWait(JSC::VM* vm)
 
 extern "C" void Bun__JSC_onAfterWait(JSC::VM* vm)
 {
+    (void)vm;
     vm->heap.acquireAccess();
-    WTFTimer__runIfImminent(Bun::vm(*vm));
 }

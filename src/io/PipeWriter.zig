@@ -394,6 +394,9 @@ pub fn PosixStreamingWriter(
         is_done: bool = false,
         closed_without_reporting: bool = false,
 
+        // TODO: configurable?
+        const chunk_size: usize = 1024 * 4;
+
         pub fn memoryCost(this: *const @This()) usize {
             return @sizeOf(@This()) + this.buffer.capacity;
         }
@@ -583,24 +586,51 @@ pub fn PosixStreamingWriter(
                 return .{ .done = 0 };
             }
 
+            if (this.buffer.items.len > 0 or buf.len < chunk_size) {
+                this.buffer.appendSlice(buf) catch {
+                    return .{ .err = bun.sys.Error.oom };
+                };
+                return .{ .pending = buf.len };
+            }
+
+            this.head = 0;
+
             if (this.buffer.items.len > 0) {
                 this.buffer.appendSlice(buf) catch {
                     return .{ .err = bun.sys.Error.oom };
                 };
-
-                return .{ .pending = 0 };
+                const rc = @This()._tryWrite(this, this.buffer.items);
+                switch (rc) {
+                    .pending => |amt| {
+                        onWrite(this.parent, amt, .pending);
+                        registerPoll(this);
+                    },
+                    .wrote => |amt| {
+                        if (amt < this.buffer.items.len) {
+                            onWrite(this.parent, amt, .pending);
+                        } else {
+                            this.buffer.clearRetainingCapacity();
+                            onWrite(this.parent, amt, .drained);
+                        }
+                    },
+                    .done => |amt| {
+                        this.buffer.clearRetainingCapacity();
+                        onWrite(this.parent, amt, .end_of_file);
+                        return .{ .done = amt };
+                    },
+                    else => {},
+                }
+                return rc;
             }
 
             const rc = @This()._tryWrite(this, buf);
-            this.head = 0;
+
             switch (rc) {
                 .pending => |amt| {
                     this.buffer.appendSlice(buf[amt..]) catch {
                         return .{ .err = bun.sys.Error.oom };
                     };
-
                     onWrite(this.parent, amt, .pending);
-
                     registerPoll(this);
                 },
                 .wrote => |amt| {

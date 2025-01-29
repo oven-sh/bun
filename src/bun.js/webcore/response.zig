@@ -3006,6 +3006,17 @@ pub const Fetch = struct {
             return JSPromise.rejectedPromiseValue(globalThis, err);
         }
 
+        // If you do AbortSignal.timeout
+        // and you don't set `timeout: false`
+        // you probably meant to use the AbortSignal's timeout instead.
+        if (!disable_timeout) {
+            if (signal) |signal_| {
+                if (signal_.isTimeout()) {
+                    disable_timeout = true;
+                }
+            }
+        }
+
         if (globalThis.hasException()) {
             is_error = true;
             return .zero;

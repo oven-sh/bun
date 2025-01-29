@@ -5839,6 +5839,12 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0
         WTFMove(microtaskArgs[3]));
 }
 
+extern "C" bool WebCore__AbortSignal__isTimeout(const WebCore__AbortSignal* arg0)
+{
+    const WebCore::AbortSignal* abortSignal = reinterpret_cast<const WebCore::AbortSignal*>(arg0);
+    return abortSignal->hasActiveTimeoutTimer();
+}
+
 extern "C" WebCore::AbortSignal* WebCore__AbortSignal__new(JSC__JSGlobalObject* globalObject)
 {
     Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(globalObject);

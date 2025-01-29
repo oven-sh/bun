@@ -2224,6 +2224,11 @@ pub const AbortSignal = extern opaque {
     pub const name = "WebCore::AbortSignal";
     pub const namespace = "WebCore";
 
+    extern fn WebCore__AbortSignal__isTimeout(*const AbortSignal) bool;
+    pub fn isTimeout(this: *const AbortSignal) bool {
+        return WebCore__AbortSignal__isTimeout(this);
+    }
+
     pub fn listen(
         this: *AbortSignal,
         comptime Context: type,

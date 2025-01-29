@@ -1,5 +1,5 @@
 {
-  "name": "bench",
+  "name": "bench-ffi",
   "napi": {
     "name": "napi"
   },

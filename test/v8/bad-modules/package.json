@@ -1,4 +1,6 @@
 {
+  "private": true,
+  "name": "bad-modules",
   "devDependencies": {
     "node-gyp": "~10.1.0"
   }

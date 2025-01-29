@@ -1,4 +1,6 @@
 {
+  "private": true,
+  "name": "bun-scripts",
   "dependencies": {
     "puppeteer": "^10.4.0"
   }

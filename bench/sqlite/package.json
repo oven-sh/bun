@@ -1,5 +1,5 @@
 {
-  "name": "bench",
+  "name": "bench-sqlite",
   "dependencies": {
     "better-sqlite3": "8.5.0"
   },

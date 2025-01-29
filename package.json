@@ -3,7 +3,43 @@
   "name": "bun",
   "version": "1.2.1",
   "workspaces": [
-    "./packages/bun-types"
+    "./bench",
+    "./bench/expect-to-equal",
+    "./bench/ffi/src",
+    "./bench/gzip",
+    "./bench/hot-module-reloading/css-stress-test",
+    "./bench/react-hello-world",
+    "./bench/scanner",
+    "./bench/sqlite",
+    "./bench/websocket-server",
+    "./examples/macros",
+    "./examples/react-fast-refresh-test",
+    "./packages/bun-debug-adapter-protocol",
+    "./packages/bun-inspector-frontend",
+    "./packages/bun-inspector-protocol",
+    "./packages/bun-internal-test",
+    "./packages/bun-lambda",
+    "./packages/bun-plugin-yaml",
+    "./packages/bun-polyfills",
+    "./packages/bun-release",
+    "./packages/bun-types",
+    "./packages/bun-vscode",
+    "./packages/bun-vscode/example",
+    "./packages/bun-wasm",
+    "./src/api",
+    "./src/node-fallbacks",
+    "./test",
+    "./test/integration/expo-app",
+    "./test/integration/next-pages",
+    "./test/js/third_party/body-parser",
+    "./test/js/third_party/esbuild",
+    "./test/js/third_party/prisma",
+    "./test/js/third_party/yargs",
+    "./test/napi/napi-app",
+    "./test/scripts",
+    "./test/snippets",
+    "./test/v8/bad-modules",
+    "./test/v8/v8-module"
   ],
   "devDependencies": {
     "@types/bun": "*",
@@ -27,7 +63,8 @@
     "@mdn/browser-compat-data": "~5.5.28"
   },
   "resolutions": {
-    "bun-types": "workspace:packages/bun-types"
+    "bun-types": "workspace:packages/bun-types",
+    "bun-wasm": "workspace:packages/bun-wasm"
   },
   "scripts": {
     "build": "bun run build:debug",

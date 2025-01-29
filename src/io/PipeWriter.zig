@@ -394,9 +394,6 @@ pub fn PosixStreamingWriter(
         is_done: bool = false,
         closed_without_reporting: bool = false,
 
-        // TODO:
-        chunk_size: usize = 0,
-
         pub fn memoryCost(this: *const @This()) usize {
             return @sizeOf(@This()) + this.buffer.capacity;
         }

@@ -619,7 +619,7 @@ pub const PostgresSQLQuery = struct {
                 this.statement.?.ref();
                 signature.deinit();
 
-                if (@intFromEnum(this.statement.?.status) == @intFromEnum(PostgresSQLStatement.Status.prepared) and !connection.hasCurrentRunning()) {
+                if (@intFromEnum(this.statement.?.status) == @intFromEnum(PostgresSQLStatement.Status.prepared) and !connection.isCurrentRunning()) {
                     this.flags.binary = this.statement.?.fields.len > 0;
                     log("bindAndExecute", .{});
                     // bindAndExecute will bind + execute, it will change to running after binding is complete
@@ -635,7 +635,7 @@ pub const PostgresSQLQuery = struct {
                 break :enqueue;
             }
 
-            const can_execute = !connection.hasCurrentRunning();
+            const can_execute = !connection.isCurrentRunning();
 
             if (can_execute) {
                 // If it does not have params, we can write and execute immediately in one go
@@ -1973,9 +1973,11 @@ pub const PostgresSQLConnection = struct {
         return this.requests.peekItem(0);
     }
 
-    fn hasCurrentRunning(this: *PostgresSQLConnection) bool {
+    fn isCurrentRunning(this: *PostgresSQLConnection) bool {
         if (this.current()) |query| {
-            return query.status.isRunning();
+            if (query.statement) |stmt| {
+                return query.status.isRunning() or @intFromEnum(stmt.status) > @intFromEnum(PostgresSQLStatement.Status.pending);
+            }
         }
         return false;
     }
@@ -2480,6 +2482,8 @@ pub const PostgresSQLConnection = struct {
                         .prepared => {
                             const binding_value = PostgresSQLQuery.bindingGetCached(req.thisValue) orelse .zero;
                             const columns_value = PostgresSQLQuery.columnsGetCached(req.thisValue) orelse .zero;
+                            req.flags.binary = stmt.fields.len > 0;
+
                             PostgresRequest.bindAndExecute(this.globalObject, stmt, binding_value, columns_value, PostgresSQLConnection.Writer, this.writer()) catch |err| {
                                 req.onWriteFail(err, this.globalObject, this.getQueriesArray());
                                 req.deref();
@@ -2487,13 +2491,11 @@ pub const PostgresSQLConnection = struct {
                                 continue;
                             };
                             req.status = .binding;
-                            req.flags.binary = stmt.fields.len > 0;
                             any = true;
                             break;
                         },
                         .pending => {
                             // statement is pending, lets write/parse it
-
                             var query_str = req.query.toUTF8(bun.default_allocator);
                             defer query_str.deinit();
                             stmt.status = .parsing;
@@ -2512,23 +2514,23 @@ pub const PostgresSQLConnection = struct {
                                     continue;
                                 };
                                 any = true;
-                            } else {
-                                const connection_writer = this.writer();
-                                // write query and wait for it to be prepared
-                                PostgresRequest.writeQuery(query_str.slice(), stmt.signature.prepared_statement_name, stmt.signature.fields, PostgresSQLConnection.Writer, connection_writer) catch |err| {
-                                    req.onWriteFail(err, this.globalObject, this.getQueriesArray());
-                                    req.deref();
-                                    this.requests.discard(1);
-                                    continue;
-                                };
-                                connection_writer.write(&protocol.Sync) catch |err| {
-                                    req.onWriteFail(err, this.globalObject, this.getQueriesArray());
-                                    req.deref();
-                                    this.requests.discard(1);
-                                    continue;
-                                };
-                                any = true;
+                                break;
                             }
+                            const connection_writer = this.writer();
+                            // write query and wait for it to be prepared
+                            PostgresRequest.writeQuery(query_str.slice(), stmt.signature.prepared_statement_name, stmt.signature.fields, PostgresSQLConnection.Writer, connection_writer) catch |err| {
+                                req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                                req.deref();
+                                this.requests.discard(1);
+                                continue;
+                            };
+                            connection_writer.write(&protocol.Sync) catch |err| {
+                                req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                                req.deref();
+                                this.requests.discard(1);
+                                continue;
+                            };
+                            any = true;
                             break;
                         },
                         .parsing => {
@@ -2544,8 +2546,8 @@ pub const PostgresSQLConnection = struct {
                     break;
                 },
                 .success, .fail => {
-                    this.requests.discard(1);
                     req.deref();
+                    this.requests.discard(1);
                     any = true;
                 },
             }

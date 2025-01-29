@@ -41,19 +41,19 @@ pub fn PosixPipeWriter(
             };
         }
 
-        fn _tryWriteWithWriteFn(this: *This, buf_: []const u8, comptime write_fn: *const fn (bun.FileDescriptor, []const u8) JSC.Maybe(usize)) WriteResult {
+        fn _tryWriteWithWriteFn(this: *This, buf: []const u8, comptime write_fn: *const fn (bun.FileDescriptor, []const u8) JSC.Maybe(usize)) WriteResult {
             const fd = getFd(this);
-            var buf = buf_;
+            var rest = buf;
 
-            while (buf.len > 0) {
-                switch (write_fn(fd, buf)) {
+            while (rest.len > 0) {
+                switch (write_fn(fd, rest)) {
                     .err => |err| {
                         if (err.isRetry()) {
-                            return .{ .pending = buf_.len - buf.len };
+                            return .{ .pending = buf.len - rest.len };
                         }
 
                         if (err.getErrno() == .PIPE) {
-                            return .{ .done = buf_.len - buf.len };
+                            return .{ .done = buf.len - rest.len };
                         }
 
                         return .{ .err = err };
@@ -61,15 +61,15 @@ pub fn PosixPipeWriter(
 
                     .result => |wrote| {
                         if (wrote == 0) {
-                            return .{ .done = buf_.len - buf.len };
+                            return .{ .done = buf.len - rest.len };
                         }
 
-                        buf = buf[wrote..];
+                        rest = rest[wrote..];
                     },
                 }
             }
 
-            return .{ .wrote = buf_.len - buf.len };
+            return .{ .wrote = buf.len - rest.len };
         }
 
         fn writeToFileType(comptime file_type: FileType) *const (fn (bun.FileDescriptor, []const u8) JSC.Maybe(usize)) {
@@ -586,7 +586,7 @@ pub fn PosixStreamingWriter(
                 return .{ .done = 0 };
             }
 
-            if (this.buffer.items.len + buf.len < this.chunk_size) {
+            if (this.buffer.items.len > 0) {
                 this.buffer.appendSlice(buf) catch {
                     return .{ .err = bun.sys.Error.oom };
                 };

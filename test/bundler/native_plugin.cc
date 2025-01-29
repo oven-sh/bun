@@ -559,8 +559,9 @@ napi_value Init(napi_env env, napi_value exports) {
                      "Failed to add create_external function to exports");
     return nullptr;
   }
-
-  return exports;
+  // this should be the same as returning `exports`, but it would crash in
+  // previous versions of Bun
+  return nullptr;
 }
 
 struct NewOnBeforeParseArguments {

@@ -1563,11 +1563,13 @@ export class VerdaccioRegistry {
     let bunfig = `
     [install]
     cache = "${join(dir, ".bun-cache")}"
-    registry = "${this.registryUrl()}"
     `;
     if ("saveTextLockfile" in opts) {
       bunfig += `saveTextLockfile = ${opts.saveTextLockfile}
       `;
+    }
+    if (!opts.npm) {
+      bunfig += `registry = "${this.registryUrl()}"`;
     }
     await write(join(dir, "bunfig.toml"), bunfig);
   }
@@ -1575,6 +1577,7 @@ export class VerdaccioRegistry {
 
 type BunfigOpts = {
   saveTextLockfile?: boolean;
+  npm?: boolean;
 };
 
 export async function readdirSorted(path: string): Promise<string[]> {

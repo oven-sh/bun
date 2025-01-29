@@ -579,6 +579,7 @@ pub const PostgresSQLQuery = struct {
         const connection: *PostgresSQLConnection = arguments[0].as(PostgresSQLConnection) orelse {
             return globalObject.throw("connection must be a PostgresSQLConnection", .{});
         };
+
         connection.poll_ref.ref(globalObject.bunVM());
         var query = arguments[1];
 
@@ -1779,7 +1780,7 @@ pub const PostgresSQLConnection = struct {
             .password = password,
             .options = options,
             .options_buf = options_buf,
-            .socket = undefined,
+            .socket = .{ .SocketTCP = .{ .socket = .{ .detached = {} } } },
             .requests = PostgresRequest.Queue.init(bun.default_allocator),
             .statements = PreparedStatementsMap{},
             .tls_config = tls_config,
@@ -1799,6 +1800,7 @@ pub const PostgresSQLConnection = struct {
 
         PostgresSQLConnection.onconnectSetCached(js_value, globalObject, on_connect);
         PostgresSQLConnection.oncloseSetCached(js_value, globalObject, on_close);
+        bun.analytics.Features.postgres_connections += 1;
 
         {
             const hostname = hostname_str.toUTF8(bun.default_allocator);

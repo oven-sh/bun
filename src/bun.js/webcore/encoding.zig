@@ -1153,7 +1153,14 @@ pub const Encoder = struct {
                 return str;
             },
             .buffer, .utf8 => {
-                return bun.String.createUTF8(input);
+                const converted = strings.toUTF16Alloc(bun.default_allocator, input, false, false) catch return bun.String.dead;
+                if (converted) |utf16| {
+                    return bun.String.createExternalGloballyAllocated(.utf16, utf16);
+                }
+
+                // If we get here, it means we can safely assume the string is 100% ASCII characters
+                // For this, we rely on WebKit to manage the memory.
+                return bun.String.createLatin1(input);
             },
             .ucs2, .utf16le => {
                 // Avoid incomplete characters
@@ -1176,16 +1183,17 @@ pub const Encoder = struct {
             },
 
             .base64url => {
-                const str, const chars = bun.String.createUninitialized(.latin1, bun.base64.urlSafeEncodeLen(input));
-                _ = bun.base64.encodeURLSafe(chars, input);
-                return str;
+                const to_len = bun.base64.urlSafeEncodeLen(input);
+                const to = bun.default_allocator.alloc(u8, to_len) catch return bun.String.dead;
+                const wrote = bun.base64.encodeURLSafe(to, input);
+                return bun.String.createExternalGloballyAllocated(.latin1, to[0..wrote]);
             },
 
             .base64 => {
                 const to_len = bun.base64.encodeLen(input);
-                const str, const chars = bun.String.createUninitialized(.latin1, to_len);
-                _ = bun.base64.encode(chars, input);
-                return str;
+                const to = bun.default_allocator.alloc(u8, to_len) catch return bun.String.dead;
+                const wrote = bun.base64.encode(to, input);
+                return bun.String.createExternalGloballyAllocated(.latin1, to[0..wrote]);
             },
         }
     }

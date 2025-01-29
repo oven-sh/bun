@@ -3056,6 +3056,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
         fn endRequestStreaming(this: *RequestContext) bool {
             assert(this.server != null);
+
+            this.request_body_buf.clearAndFree(bun.default_allocator);
+
             // if we cannot, we have to reject pending promises
             // first, we reject the request body promise
             if (this.request_body) |body| {
@@ -3069,6 +3072,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             return false;
         }
         fn detachResponse(this: *RequestContext) void {
+            this.request_body_buf.clearAndFree(bun.default_allocator);
+
             if (this.resp) |resp| {
                 this.resp = null;
 

@@ -373,8 +373,7 @@ pub const PostgresSQLQuery = struct {
             queries_array,
         });
     }
-
-    pub fn onError(this: *@This(), err: PostgresSQLStatement.Error, globalObject: *JSC.JSGlobalObject) void {
+    pub fn onJSError(this: *@This(), err: JSC.JSValue, globalObject: *JSC.JSGlobalObject) void {
         this.status = .fail;
         defer this.deref();
 
@@ -389,8 +388,11 @@ pub const PostgresSQLQuery = struct {
         const event_loop = vm.eventLoop();
         event_loop.runCallback(function, globalObject, thisValue, &.{
             targetValue,
-            err.toJS(globalObject),
+            err,
         });
+    }
+    pub fn onError(this: *@This(), err: PostgresSQLStatement.Error, globalObject: *JSC.JSGlobalObject) void {
+        this.onJSError(err.toJS(globalObject), globalObject);
     }
 
     const CommandTag = union(enum) {
@@ -1431,7 +1433,8 @@ pub const PostgresSQLConnection = struct {
 
         this.ref();
         defer this.deref();
-        this.refAndClose();
+        // we defer the refAndClose so the on_close will be called first before we reject the pending requests
+        defer this.refAndClose(value);
         const on_close = this.consumeOnCloseCallback(this.globalObject) orelse return;
 
         const loop = this.globalObject.bunVM().eventLoop();
@@ -1479,7 +1482,6 @@ pub const PostgresSQLConnection = struct {
             .options = Data{ .temporary = this.options },
         };
         msg.writeInternal(Writer, this.writer()) catch |err| {
-            this.refAndClose();
             this.fail("Failed to write startup message", err);
         };
     }
@@ -1956,12 +1958,46 @@ pub const PostgresSQLConnection = struct {
         bun.default_allocator.destroy(this);
     }
 
-    fn refAndClose(this: *@This()) void {
+    fn refAndClose(this: *@This(), js_reason: ?JSC.JSValue) void {
+        // refAndClose is always called when we wanna to disconnect or when we are closed
+
         if (!this.socket.isClosed()) {
             // event loop need to be alive to close the socket
             this.poll_ref.ref(this.globalObject.bunVM());
             // will unref on socket close
             this.socket.close();
+        }
+
+        // cleanup requests
+        while (this.current()) |request| {
+            switch (request.status) {
+                // pending we will fail the request and the stmt will be marked as error ConnectionClosed too
+                .pending => {
+                    const stmt = request.statement orelse continue;
+                    stmt.error_response = .{ .postgres_error = AnyPostgresError.ConnectionClosed };
+                    stmt.status = .failed;
+                    if (js_reason) |reason| {
+                        request.onJSError(reason, this.globalObject);
+                    } else {
+                        request.onError(.{ .postgres_error = AnyPostgresError.ConnectionClosed }, this.globalObject);
+                    }
+                },
+                // in the middle of running
+                .binding,
+                .running,
+                => {
+                    if (js_reason) |reason| {
+                        request.onJSError(reason, this.globalObject);
+                    } else {
+                        request.onError(.{ .postgres_error = AnyPostgresError.ConnectionClosed }, this.globalObject);
+                    }
+                },
+                // just ignore success and fail cases
+                .success, .fail => {},
+            }
+
+            request.deref();
+            this.requests.discard(1);
         }
     }
 
@@ -1970,7 +2006,7 @@ pub const PostgresSQLConnection = struct {
 
         if (this.status == .connected) {
             this.status = .disconnected;
-            this.refAndClose();
+            this.refAndClose(null);
         }
     }
 
@@ -2486,6 +2522,7 @@ pub const PostgresSQLConnection = struct {
                         .failed => {
                             bun.assert(stmt.error_response != null);
                             req.onError(stmt.error_response.?, this.globalObject);
+                            req.deref();
                             this.requests.discard(1);
                             any = true;
                             continue;

@@ -81,11 +81,11 @@ describe("bun build", () => {
 
     // ensure it prefers standalone binary bun instead of a "fake" bun in path
     const srcE = path.join(tmp, "bun.js");
-    fs.writeFileSync(srcE, "console.log('hi');", { encoding: "utf8" });
     const outfileE = path.join(tmp, "bunn");
+    fs.writeFileSync(srcE, "console.log('hi');", { encoding: "utf8" });
     expect(["build", srcE, "--compile", "--outfile", outfileE]).toRun();
-    copyFileSync(outfileE, path.join(tmp, "bun"));
-    copyFileSync(outfileE, path.join(tmp, "bun.exe"));
+    if (isWindows) copyFileSync(outfileE + ".exe", path.join(tmp, "bun.exe"));
+    else copyFileSync(outfileE, path.join(tmp, "bun"));
 
     const {
       exitCode: exitCode2,

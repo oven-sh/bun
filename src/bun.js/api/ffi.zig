@@ -17,12 +17,12 @@ const Fs = @import("../../fs.zig");
 const Resolver = @import("../../resolver/resolver.zig");
 const ast = @import("../../import_record.zig");
 
-const MacroEntryPoint = bun.bundler.MacroEntryPoint;
+const MacroEntryPoint = bun.transpiler.MacroEntryPoint;
 const logger = bun.logger;
 const Api = @import("../../api/schema.zig").Api;
 const options = @import("../../options.zig");
-const Bundler = bun.Bundler;
-const ServerEntryPoint = bun.bundler.ServerEntryPoint;
+const Transpiler = bun.Transpiler;
+const ServerEntryPoint = bun.transpiler.ServerEntryPoint;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
@@ -33,7 +33,7 @@ const ZigString = bun.JSC.ZigString;
 const Runtime = @import("../../runtime.zig");
 const ImportRecord = ast.ImportRecord;
 const DotEnv = @import("../../env_loader.zig");
-const ParseResult = bun.bundler.ParseResult;
+const ParseResult = bun.transpiler.ParseResult;
 const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../../resolver/package_json.zig").MacroMap;
 const WebCore = bun.JSC.WebCore;
@@ -63,7 +63,6 @@ const JSPromise = bun.JSC.JSPromise;
 const JSInternalPromise = bun.JSC.JSInternalPromise;
 const JSModuleLoader = bun.JSC.JSModuleLoader;
 const JSPromiseRejectionOperation = bun.JSC.JSPromiseRejectionOperation;
-const Exception = bun.JSC.Exception;
 const ErrorableZigString = bun.JSC.ErrorableZigString;
 const ZigGlobalObject = bun.JSC.ZigGlobalObject;
 const VM = bun.JSC.VM;
@@ -678,7 +677,7 @@ pub const FFI = struct {
                     if (!value.isString()) {
                         return globalThis.throwInvalidArgumentTypeValue("flags", "array of strings", value);
                     }
-                    const slice = value.toSlice(globalThis, bun.default_allocator);
+                    const slice = try value.toSlice(globalThis, bun.default_allocator);
                     if (slice.len == 0) continue;
                     defer slice.deinit();
                     flags.append(' ') catch bun.outOfMemory();
@@ -706,9 +705,9 @@ pub const FFI = struct {
         if (try object.getTruthy(globalThis, "define")) |define_value| {
             if (define_value.isObject()) {
                 const Iter = JSC.JSPropertyIterator(.{ .include_value = true, .skip_empty_name = true });
-                var iter = Iter.init(globalThis, define_value);
+                var iter = try Iter.init(globalThis, define_value);
                 defer iter.deinit();
-                while (iter.next()) |entry| {
+                while (try iter.next()) |entry| {
                     const key = entry.toOwnedSliceZ(bun.default_allocator) catch bun.outOfMemory();
                     var owned_value: [:0]const u8 = "";
                     if (iter.value != .zero and iter.value != .undefined) {
@@ -983,17 +982,20 @@ pub const FFI = struct {
             return val;
         }
         JSC.markBinding(@src());
-        var zig_strings = allocator.alloc(ZigString, symbols.count()) catch unreachable;
-        for (symbols.values(), 0..) |*function, i| {
+        var strs = std.ArrayList(bun.String).initCapacity(allocator, symbols.count()) catch bun.outOfMemory();
+        defer {
+            for (strs.items) |str| {
+                str.deref();
+            }
+            strs.deinit();
+        }
+        for (symbols.values()) |*function| {
             var arraylist = std.ArrayList(u8).init(allocator);
             var writer = arraylist.writer();
             function.printSourceCode(&writer) catch {
                 // an error while generating source code
                 for (symbols.keys()) |key| {
                     allocator.free(@constCast(key));
-                }
-                for (zig_strings) |zig_string| {
-                    allocator.free(@constCast(zig_string.slice()));
                 }
                 for (symbols.values()) |*function_| {
                     function_.arg_types.deinit(allocator);
@@ -1002,16 +1004,13 @@ pub const FFI = struct {
                 symbols.clearAndFree(allocator);
                 return ZigString.init("Error while printing code").toErrorInstance(global);
             };
-            zig_strings[i] = ZigString.init(arraylist.items);
+            strs.appendAssumeCapacity(bun.String.createUTF8(arraylist.items));
         }
 
-        const ret = JSC.JSValue.createStringArray(global, zig_strings.ptr, zig_strings.len, true);
+        const ret = bun.String.toJSArray(global, strs.items);
 
         for (symbols.keys()) |key| {
             allocator.free(@constCast(key));
-        }
-        for (zig_strings) |zig_string| {
-            allocator.free(@constCast(zig_string.slice()));
         }
         for (symbols.values()) |*function_| {
             function_.arg_types.deinit(allocator);
@@ -1339,7 +1338,7 @@ pub const FFI = struct {
                     return ZigString.static("param must be a string (type name) or number").toErrorInstance(global);
                 }
 
-                var type_name = val.toSlice(global, allocator);
+                var type_name = try val.toSlice(global, allocator);
                 defer type_name.deinit();
                 abi_types.appendAssumeCapacity(ABIType.label.get(type_name.slice()) orelse {
                     abi_types.clearAndFree(allocator);
@@ -1371,7 +1370,7 @@ pub const FFI = struct {
                 }
             }
 
-            var ret_slice = ret_value.toSlice(global, allocator);
+            var ret_slice = try ret_value.toSlice(global, allocator);
             defer ret_slice.deinit();
             return_type = ABIType.label.get(ret_slice.slice()) orelse {
                 abi_types.clearAndFree(allocator);
@@ -1421,7 +1420,7 @@ pub const FFI = struct {
         JSC.markBinding(@src());
         const allocator = VirtualMachine.get().allocator;
 
-        var symbols_iter = JSC.JSPropertyIterator(.{
+        var symbols_iter = try JSC.JSPropertyIterator(.{
             .skip_empty_name = true,
 
             .include_value = true,
@@ -1430,7 +1429,7 @@ pub const FFI = struct {
 
         try symbols.ensureTotalCapacity(allocator, symbols_iter.len);
 
-        while (symbols_iter.next()) |prop| {
+        while (try symbols_iter.next()) |prop| {
             const value = symbols_iter.value;
 
             if (value.isEmptyOrUndefinedOrNull()) {

@@ -189,6 +189,16 @@ Vector<RefPtr<PerformanceEntry>> Performance::getEntriesByType(const String& ent
     return entries;
 }
 
+size_t Performance::memoryCost() const
+{
+    size_t size = sizeof(Performance);
+    size += m_resourceTimingBuffer.size() * sizeof(PerformanceResourceTiming);
+    if (m_userTiming) {
+        size += m_userTiming->memoryCost();
+    }
+    return size;
+}
+
 Vector<RefPtr<PerformanceEntry>> Performance::getEntriesByName(const String& name, const String& entryType) const
 {
     Vector<RefPtr<PerformanceEntry>> entries;

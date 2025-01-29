@@ -32,7 +32,6 @@ describe("doesnt_crash", async () => {
         console.time(timeLog);
         const { logs, outputs } = await Bun.build({
           entrypoints: [absolute],
-          experimentalCss: true,
           minify: minify,
           target,
         });
@@ -53,7 +52,6 @@ describe("doesnt_crash", async () => {
           console.log("  Transpiled file path:", outfile1);
           const { logs, outputs } = await Bun.build({
             entrypoints: [outfile1],
-            experimentalCss: true,
             target,
             minify: minify,
           });

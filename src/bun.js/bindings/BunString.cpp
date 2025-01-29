@@ -1,4 +1,5 @@
 
+
 #include "helpers.h"
 #include "root.h"
 #include "headers-handwritten.h"
@@ -13,6 +14,7 @@
 #include "ZigGlobalObject.h"
 #include "IDLTypes.h"
 
+#include <limits>
 #include <wtf/Seconds.h>
 #include <wtf/text/ExternalStringImpl.h>
 #include <JavaScriptCore/JSONObject.h>
@@ -33,7 +35,9 @@
 #include "JSDOMOperation.h"
 
 #include "GCDefferalContext.h"
+#include "wtf/StdLibExtras.h"
 #include "wtf/text/StringImpl.h"
+#include "wtf/text/StringToIntegerConversion.h"
 
 extern "C" void mi_free(void* ptr);
 
@@ -90,6 +94,70 @@ extern "C" BunString BunString__tryCreateAtom(const char* bytes, size_t length)
     return { BunStringTag::Dead, {} };
 }
 
+extern "C" JSC::EncodedJSValue BunString__createUTF8ForJS(JSC::JSGlobalObject* globalObject, const char* ptr, size_t length)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (length == 0) {
+        return JSValue::encode(jsEmptyString(vm));
+    }
+    if (simdutf::validate_ascii(ptr, length)) {
+        return JSValue::encode(jsString(vm, WTF::String(std::span<const LChar>(reinterpret_cast<const LChar*>(ptr), length))));
+    }
+
+    auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const LChar*>(ptr), length });
+    if (UNLIKELY(str.isNull())) {
+        throwOutOfMemoryError(globalObject, scope);
+        return JSC::EncodedJSValue();
+    }
+    return JSValue::encode(jsString(vm, WTFMove(str)));
+}
+
+extern "C" JSC::EncodedJSValue BunString__transferToJS(BunString* bunString, JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (UNLIKELY(bunString->tag == BunStringTag::Empty || bunString->tag == BunStringTag::Dead)) {
+        return JSValue::encode(JSC::jsEmptyString(vm));
+    }
+
+    if (LIKELY(bunString->tag == BunStringTag::WTFStringImpl)) {
+#if ASSERT_ENABLED
+        unsigned refCount = bunString->impl.wtf->refCount();
+        ASSERT(refCount > 0 && !bunString->impl.wtf->isEmpty());
+#endif
+        auto str = bunString->toWTFString();
+#if ASSERT_ENABLED
+        unsigned newRefCount = bunString->impl.wtf->refCount();
+        ASSERT(newRefCount == refCount + 1);
+#endif
+        bunString->impl.wtf->deref();
+        *bunString = { .tag = BunStringTag::Dead };
+        return JSValue::encode(jsString(vm, WTFMove(str)));
+    }
+
+    WTF::String str = bunString->toWTFString();
+    *bunString = { .tag = BunStringTag::Dead };
+    return JSValue::encode(jsString(vm, WTFMove(str)));
+}
+
+// int64_t max to say "not a number"
+extern "C" int64_t BunString__toInt32(BunString* bunString)
+{
+    if (bunString->tag == BunStringTag::Empty || bunString->tag == BunStringTag::Dead) {
+        return std::numeric_limits<int64_t>::max();
+    }
+
+    String str = bunString->toWTFString();
+    auto val = WTF::parseIntegerAllowingTrailingJunk<int32_t>(str);
+    if (val) {
+        return val.value();
+    }
+
+    return std::numeric_limits<int64_t>::max();
+}
+
 namespace Bun {
 JSC::JSValue toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
 {
@@ -97,7 +165,11 @@ JSC::JSValue toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
         return JSValue(JSC::jsEmptyString(globalObject->vm()));
     }
     if (bunString.tag == BunStringTag::WTFStringImpl) {
-        ASSERT(bunString.impl.wtf->refCount() > 0 && !bunString.impl.wtf->isEmpty());
+#if ASSERT_ENABLED
+        unsigned refCount = bunString.impl.wtf->refCount();
+        ASSERT(refCount > 0 && !bunString.impl.wtf->isEmpty());
+#endif
+
         return JSValue(jsString(globalObject->vm(), String(bunString.impl.wtf)));
     }
 
@@ -256,7 +328,6 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
             return { .tag = BunStringTag::Dead };
         }
         RELEASE_ASSERT(simdutf::convert_utf8_to_utf16(bytes, length, ptr.data()) == u16Length);
-        impl->ref();
         return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
     }
 
@@ -264,8 +335,8 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
     if (UNLIKELY(str.isNull())) {
         return { .tag = BunStringTag::Dead };
     }
-    str.impl()->ref();
-    return Bun::toString(str);
+    auto impl = str.releaseImpl();
+    return Bun::toString(impl.leakRef());
 }
 
 extern "C" BunString BunString__fromLatin1(const char* bytes, size_t length)
@@ -409,6 +480,8 @@ extern "C" JSC__JSValue BunString__toJSDOMURL(JSC::JSGlobalObject* lexicalGlobal
 
     auto object = WebCore::DOMURL::create(str, String());
     auto jsValue = WebCore::toJSNewlyCreated<WebCore::IDLInterface<WebCore::DOMURL>>(*lexicalGlobalObject, globalObject, throwScope, WTFMove(object));
+    auto* jsDOMURL = jsCast<WebCore::JSDOMURL*>(jsValue.asCell());
+    vm.heap.reportExtraMemoryAllocated(jsDOMURL, jsDOMURL->wrapped().memoryCostForGC());
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(jsValue));
 }
 
@@ -586,6 +659,34 @@ WTF::String BunString::toWTFString(ZeroCopyTag) const
     } else if (this->tag == BunStringTag::WTFStringImpl) {
         ASSERT(this->impl.wtf->refCount() > 0 && !this->impl.wtf->isEmpty());
         return WTF::String(this->impl.wtf);
+    }
+
+    return WTF::String();
+}
+
+WTF::String BunString::transferToWTFString()
+{
+    if (this->tag == BunStringTag::ZigString) {
+        if (Zig::isTaggedUTF8Ptr(this->impl.zig.ptr)) {
+            auto str = Zig::toStringCopy(this->impl.zig);
+            *this = Zig::BunStringEmpty;
+            return str;
+        } else {
+            auto str = Zig::toString(this->impl.zig);
+            *this = Zig::BunStringEmpty;
+            return str;
+        }
+    } else if (this->tag == BunStringTag::StaticZigString) {
+        auto str = Zig::toStringStatic(this->impl.zig);
+        *this = Zig::BunStringEmpty;
+        return str;
+    } else if (this->tag == BunStringTag::WTFStringImpl) {
+        ASSERT(this->impl.wtf->refCount() > 0 && !this->impl.wtf->isEmpty());
+
+        auto str = WTF::String(this->impl.wtf);
+        this->impl.wtf->deref();
+        *this = Zig::BunStringEmpty;
+        return str;
     }
 
     return WTF::String();

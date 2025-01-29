@@ -1,8 +1,6 @@
 // Hardcoded module "node:http2"
 
 const { isTypedArray } = require("node:util/types");
-
-// This is a stub! None of this is actually implemented yet.
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
 
 const tls = require("node:tls");
@@ -24,22 +22,20 @@ const Socket = net.Socket;
 const EventEmitter = require("node:events");
 const { Duplex } = require("node:stream");
 
-const {
-  FunctionPrototypeBind,
-  StringPrototypeTrim,
-  ArrayPrototypePush,
-  ObjectAssign,
-  ArrayIsArray,
-  SafeArrayIterator,
-  StringPrototypeToLowerCase,
-  StringPrototypeIncludes,
-  ObjectKeys,
-  ObjectPrototypeHasOwnProperty,
-  SafeSet,
-  DatePrototypeToUTCString,
-  DatePrototypeGetMilliseconds,
-} = require("internal/primordials");
+const { SafeArrayIterator, SafeSet } = require("internal/primordials");
+
 const RegExpPrototypeExec = RegExp.prototype.exec;
+const ObjectAssign = Object.assign;
+const ArrayIsArray = Array.isArray;
+const ObjectKeys = Object.keys;
+const FunctionPrototypeBind = Function.prototype.bind;
+const StringPrototypeTrim = String.prototype.trim;
+const ArrayPrototypePush = Array.prototype.push;
+const StringPrototypeToLowerCase = String.prototype.toLocaleLowerCase;
+const StringPrototypeIncludes = String.prototype.includes;
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
+const DatePrototypeToUTCString = Date.prototype.toUTCString;
+const DatePrototypeGetMilliseconds = Date.prototype.getMilliseconds;
 
 const [H2FrameParser, assertSettings, getPackedSettings, getUnpackedSettings] = $zig(
   "h2_frame_parser.zig",
@@ -48,7 +44,6 @@ const [H2FrameParser, assertSettings, getPackedSettings, getUnpackedSettings] = 
 
 const sensitiveHeaders = Symbol.for("nodejs.http2.sensitiveHeaders");
 const bunHTTP2Native = Symbol.for("::bunhttp2native::");
-const bunHTTP2StreamReadQueue = Symbol.for("::bunhttp2ReadQueue::");
 
 const bunHTTP2Socket = Symbol.for("::bunhttp2socket::");
 const bunHTTP2StreamFinal = Symbol.for("::bunHTTP2StreamFinal::");
@@ -91,8 +86,8 @@ function utcDate() {
 
 function cache() {
   const d = new Date();
-  utcCache = DatePrototypeToUTCString(d);
-  setTimeout(resetCache, 1000 - DatePrototypeGetMilliseconds(d)).unref();
+  utcCache = d.toUTCString();
+  setTimeout(resetCache, 1000 - d.getMilliseconds()).unref();
 }
 
 function resetCache() {
@@ -116,7 +111,7 @@ function onStreamTrailers(trailers, flags, rawTrailers) {
   const request = this[kRequest];
   if (request !== undefined) {
     ObjectAssign(request[kTrailers], trailers);
-    ArrayPrototypePush(request[kRawTrailers], ...new SafeArrayIterator(rawTrailers));
+    ArrayPrototypePush.$call(request[kRawTrailers], ...new SafeArrayIterator(rawTrailers));
   }
 }
 
@@ -145,6 +140,10 @@ function onRequestResume() {
 function onStreamDrain() {
   const response = this[kResponse];
   if (response !== undefined) response.emit("drain");
+}
+
+function onStreamAbortedResponse() {
+  // no-op for now
 }
 
 function onStreamAbortedRequest() {
@@ -240,7 +239,7 @@ function connectionHeaderMessageWarn() {
 }
 
 function assertValidHeader(name, value) {
-  if (name === "" || typeof name !== "string" || StringPrototypeIncludes(name, " ")) {
+  if (name === "" || typeof name !== "string" || StringPrototypeIncludes.$call(name, " ")) {
     throw $ERR_INVALID_HTTP_TOKEN(`The arguments Header name is invalid. Received ${name}`);
   }
   if (isPseudoHeader(name)) {
@@ -349,9 +348,7 @@ class Http2ServerRequest extends Readable {
 
   set method(method) {
     validateString(method, "method");
-    if (StringPrototypeTrim(method) === "")
-      throw $ERR_INVALID_ARG_VALUE(`The arguments method is invalid. Received ${method}`);
-
+    if (StringPrototypeTrim.$call(method) === "") throw $ERR_INVALID_ARG_VALUE("method", method);
     this[kHeaders][HTTP2_HEADER_METHOD] = method;
   }
 
@@ -394,6 +391,7 @@ class Http2ServerResponse extends Stream {
     this.writable = true;
     this.req = stream[kRequest];
     stream.on("drain", onStreamDrain);
+    stream.on("aborted", onStreamAbortedResponse);
     stream.on("close", onStreamCloseResponse);
     stream.on("wantTrailers", onStreamTrailersReady);
     stream.on("timeout", onStreamTimeout);
@@ -474,7 +472,7 @@ class Http2ServerResponse extends Stream {
 
   setTrailer(name, value) {
     validateString(name, "name");
-    name = StringPrototypeToLowerCase(StringPrototypeTrim(name));
+    name = StringPrototypeToLowerCase.$call(StringPrototypeTrim.$call(name));
     assertValidHeader(name, value);
     this[kTrailers][name] = value;
   }
@@ -490,7 +488,7 @@ class Http2ServerResponse extends Stream {
 
   getHeader(name) {
     validateString(name, "name");
-    name = StringPrototypeToLowerCase(StringPrototypeTrim(name));
+    name = StringPrototypeToLowerCase.$call(StringPrototypeTrim.$call(name));
     return this[kHeaders][name];
   }
 
@@ -505,15 +503,15 @@ class Http2ServerResponse extends Stream {
 
   hasHeader(name) {
     validateString(name, "name");
-    name = StringPrototypeToLowerCase(StringPrototypeTrim(name));
-    return ObjectPrototypeHasOwnProperty(this[kHeaders], name);
+    name = StringPrototypeToLowerCase.$call(StringPrototypeTrim.$call(name));
+    return ObjectPrototypeHasOwnProperty.$call(this[kHeaders], name);
   }
 
   removeHeader(name) {
     validateString(name, "name");
     if (this[kStream].headersSent) throw $ERR_HTTP2_HEADERS_SENT("Response has already been initiated");
 
-    name = StringPrototypeToLowerCase(StringPrototypeTrim(name));
+    name = StringPrototypeToLowerCase.$call(StringPrototypeTrim.$call(name));
 
     if (name === "date") {
       this[kState].sendDate = false;
@@ -532,7 +530,7 @@ class Http2ServerResponse extends Stream {
   }
 
   [kSetHeader](name, value) {
-    name = StringPrototypeToLowerCase(StringPrototypeTrim(name));
+    name = StringPrototypeToLowerCase.$call(StringPrototypeTrim.$call(name));
     assertValidHeader(name, value);
 
     if (!isConnectionHeaderAllowed(name, value)) {
@@ -554,7 +552,7 @@ class Http2ServerResponse extends Stream {
   }
 
   [kAppendHeader](name, value) {
-    name = StringPrototypeToLowerCase(StringPrototypeTrim(name));
+    name = StringPrototypeToLowerCase.$call(StringPrototypeTrim.$call(name));
     assertValidHeader(name, value);
 
     if (!isConnectionHeaderAllowed(name, value)) {
@@ -642,7 +640,7 @@ class Http2ServerResponse extends Stream {
         }
       } else {
         if (headers.length % 2 !== 0) {
-          throw $ERR_INVALID_ARG_VALUE(`The arguments headers is invalid.`);
+          throw $ERR_INVALID_ARG_VALUE("headers", headers);
         }
 
         for (i = 0; i < headers.length; i += 2) {
@@ -852,7 +850,7 @@ const proxySocketHandler = {
       case "setTimeout":
       case "ref":
       case "unref":
-        return FunctionPrototypeBind(session[prop], session);
+        return FunctionPrototypeBind.$call(session[prop], session);
       case "destroy":
       case "emit":
       case "end":
@@ -872,7 +870,7 @@ const proxySocketHandler = {
           throw $ERR_HTTP2_SOCKET_UNBOUND("The socket has been disconnected from the Http2Session");
         }
         const value = socket[prop];
-        return typeof value === "function" ? FunctionPrototypeBind(value, socket) : value;
+        return typeof value === "function" ? FunctionPrototypeBind.$call(value, socket) : value;
       }
     }
   },
@@ -1508,13 +1506,8 @@ function assertSession(session) {
 }
 hideFromStack(assertSession);
 
-function pushToStream(stream, data) {
-  // if (stream.writableEnded) return;
-  const queue = stream[bunHTTP2StreamReadQueue];
-  if (queue.isEmpty()) {
-    if (stream.push(data)) return;
-  }
-  queue.push(data);
+function pushToStream(stream, data) {;
+  stream.push(data);
 }
 
 enum StreamState {
@@ -1552,7 +1545,6 @@ class Http2Stream extends Duplex {
   [bunHTTP2StreamStatus]: number = 0;
 
   rstCode: number | undefined = undefined;
-  [bunHTTP2StreamReadQueue]: Array<Buffer> = $createFIFO();
   [bunHTTP2Headers]: any;
   [kInfoHeaders]: any;
   #sentTrailers: any;
@@ -1635,9 +1627,10 @@ class Http2Stream extends Duplex {
     }
     const sensitives = headers[sensitiveHeaders];
     const sensitiveNames = {};
+    delete headers[sensitiveHeaders];
     if (sensitives) {
       if (!$isJSArray(sensitives)) {
-        throw $ERR_INVALID_ARG_VALUE("The arguments headers[http2.neverIndex] is invalid");
+        throw $ERR_INVALID_ARG_VALUE("headers[http2.neverIndex]", sensitives);
       }
       for (let i = 0; i < sensitives.length; i++) {
         sensitiveNames[sensitives[i]] = true;
@@ -1772,17 +1765,10 @@ class Http2Stream extends Duplex {
     }
   }
 
-  _read(size) {
-    const queue = this[bunHTTP2StreamReadQueue];
-    let chunk;
-    while ((chunk = queue.peek())) {
-      if (!this.push(chunk)) {
-        queue.shift();
-        return;
-      }
-      queue.shift();
-    }
+  _read(_size) {
+    // we always use the internal stream queue now
   }
+
 
   end(chunk, encoding, callback) {
     const status = this[bunHTTP2StreamStatus];
@@ -2045,10 +2031,11 @@ class ServerHttp2Stream extends Http2Stream {
     }
 
     const sensitives = headers[sensitiveHeaders];
+    delete headers[sensitiveHeaders];
     const sensitiveNames = {};
     if (sensitives) {
       if (!$isArray(sensitives)) {
-        throw $ERR_INVALID_ARG_VALUE("The arguments headers[http2.neverIndex] is invalid.");
+        throw $ERR_INVALID_ARG_VALUE("headers[http2.neverIndex]", sensitives);
       }
       for (let i = 0; i < sensitives.length; i++) {
         sensitiveNames[sensitives[i]] = true;
@@ -2073,7 +2060,7 @@ class ServerHttp2Stream extends Http2Stream {
     if (!this[kInfoHeaders]) {
       this[kInfoHeaders] = [headers];
     } else {
-      ArrayPrototypePush(this[kInfoHeaders], headers);
+      ArrayPrototypePush.$call(this[kInfoHeaders], headers);
     }
 
     session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
@@ -2096,10 +2083,11 @@ class ServerHttp2Stream extends Http2Stream {
     }
 
     const sensitives = headers[sensitiveHeaders];
+    delete headers[sensitiveHeaders];
     const sensitiveNames = {};
     if (sensitives) {
       if (!$isArray(sensitives)) {
-        throw $ERR_INVALID_ARG_VALUE("The arguments headers[http2.neverIndex] is invalid.");
+        throw $ERR_INVALID_ARG_VALUE("headers[http2.neverIndex]", sensitives);
       }
       for (let i = 0; i < sensitives.length; i++) {
         sensitiveNames[sensitives[i]] = true;
@@ -2191,7 +2179,7 @@ function toHeaderObject(headers, sensitiveHeadersValue) {
           // fields with the same name.  Since it cannot be combined into a
           // single field-value, recipients ought to handle "Set-Cookie" as a
           // special case while processing header fields."
-          ArrayPrototypePush(existing, value);
+          ArrayPrototypePush.$call(existing, value);
           break;
         default:
           // https://tools.ietf.org/html/rfc7230#section-3.2.2
@@ -2420,7 +2408,7 @@ class ServerHttp2Session extends Http2Session {
     // throwNotImplemented("ServerHttp2Stream.prototype.origin()");
   }
 
-  constructor(socket: TLSSocket | Socket, options?: Http2ConnectOptions, server: Http2Server) {
+  constructor(socket: TLSSocket | Socket, options?: Http2ConnectOptions, server?: Http2Server) {
     super();
     this[kServer] = server;
     this.#connected = true;
@@ -3088,10 +3076,11 @@ class ClientHttp2Session extends Http2Session {
     }
 
     const sensitives = headers[sensitiveHeaders];
+    delete headers[sensitiveHeaders];
     const sensitiveNames = {};
     if (sensitives) {
       if (!$isArray(sensitives)) {
-        throw $ERR_INVALID_ARG_VALUE("The arguments headers[http2.neverIndex] is invalid.");
+        throw $ERR_INVALID_ARG_VALUE("headers[http2.neverIndex]", sensitives);
       }
       for (let i = 0; i < sensitives.length; i++) {
         sensitiveNames[sensitives[i]] = true;
@@ -3171,7 +3160,7 @@ function setupCompat(ev) {
     const options = this[bunSocketServerOptions];
     const ServerRequest = options?.Http2ServerRequest || Http2ServerRequest;
     const ServerResponse = options?.Http2ServerResponse || Http2ServerResponse;
-    this.on("stream", FunctionPrototypeBind(onServerStream, this, ServerRequest, ServerResponse));
+    this.on("stream", FunctionPrototypeBind.$call(onServerStream, this, ServerRequest, ServerResponse));
   }
 }
 

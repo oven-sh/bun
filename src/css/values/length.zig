@@ -22,6 +22,13 @@ pub const LengthOrNumber = union(enum) {
     pub usingnamespace css.DeriveParse(@This());
     pub usingnamespace css.DeriveToCss(@This());
 
+    pub fn deinit(this: *const LengthOrNumber, allocator: std.mem.Allocator) void {
+        switch (this.*) {
+            .number => {},
+            .length => |*l| l.deinit(allocator),
+        }
+    }
+
     pub fn default() LengthOrNumber {
         return .{ .number = 0.0 };
     }
@@ -35,6 +42,13 @@ pub const LengthOrNumber = union(enum) {
 
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
         return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn isCompatible(this: *const @This(), browsers: css.targets.Browsers) bool {
+        return switch (this.*) {
+            .length => |*l| l.isCompatible(browsers),
+            .number => true,
+        };
     }
 };
 

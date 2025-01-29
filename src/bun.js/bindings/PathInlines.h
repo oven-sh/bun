@@ -14,6 +14,11 @@
 #define PLATFORM_SEP POSIX_PATH_SEP
 #endif
 
+#define IS_LETTER(byte) \
+    ((byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z'))
+#define IS_SLASH(byte) \
+    (byte == '/' || byte == '\\')
+
 ALWAYS_INLINE bool isAbsolutePath(WTF::String input)
 {
 #if OS(WINDOWS)
@@ -22,11 +27,11 @@ ALWAYS_INLINE bool isAbsolutePath(WTF::String input)
         if (len < 1)
             return false;
         const auto bytes = input.span8().data();
-        if (bytes[0] == '/' || bytes[0] == '\\')
+        if (IS_SLASH(bytes[0]))
             return true;
         if (len < 2)
             return false;
-        if (bytes[1] == ':' && (bytes[2] == '/' || bytes[2] == '\\'))
+        if (IS_LETTER(bytes[0]) && bytes[1] == ':' && IS_SLASH(bytes[2]))
             return true;
         return false;
     } else {
@@ -34,11 +39,11 @@ ALWAYS_INLINE bool isAbsolutePath(WTF::String input)
         if (len < 1)
             return false;
         const auto bytes = input.span16().data();
-        if (bytes[0] == '/' || bytes[0] == '\\')
+        if (IS_SLASH(bytes[0]))
             return true;
         if (len < 2)
             return false;
-        if (bytes[1] == ':' && (bytes[2] == '/' || bytes[2] == '\\'))
+        if (IS_LETTER(bytes[0]) && bytes[1] == ':' && IS_SLASH(bytes[2]))
             return true;
         return false;
     }
@@ -47,14 +52,17 @@ ALWAYS_INLINE bool isAbsolutePath(WTF::String input)
 #endif
 }
 
+#undef IS_LETTER
+#undef IS_SLASH
+
 extern "C" BunString ResolvePath__joinAbsStringBufCurrentPlatformBunString(JSC::JSGlobalObject*, BunString);
 
 /// CWD is determined by the global object's current cwd.
-ALWAYS_INLINE WTF::String pathResolveWTFString(JSC::JSGlobalObject* globalToGetCwdFrom, WTF::String input)
+ALWAYS_INLINE WTF::String pathResolveWTFString(JSC::JSGlobalObject* globalToGetCwdFrom, const WTF::String& input)
 {
     if (isAbsolutePath(input))
         return input;
     BunString in = Bun::toString(input);
     BunString out = ResolvePath__joinAbsStringBufCurrentPlatformBunString(globalToGetCwdFrom, in);
-    return out.toWTFString();
+    return out.transferToWTFString();
 }

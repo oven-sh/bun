@@ -10,6 +10,7 @@ const Async = @import("async");
 const uv = bun.windows.libuv;
 const StatWatcherScheduler = @import("../node/node_fs_stat_watcher.zig").StatWatcherScheduler;
 const Timer = @This();
+const DNSResolver = @import("./bun/dns_resolver.zig").DNSResolver;
 
 /// TimeoutMap is map of i32 to nullable Timeout structs
 /// i32 is exposed to JavaScript and can be used with clearTimeout, clearInterval, etc.
@@ -31,8 +32,7 @@ pub const All = struct {
         .context = {},
     },
     active_timer_count: i32 = 0,
-    uv_timer: if (Environment.isWindows) uv.Timer else void =
-        if (Environment.isWindows) std.mem.zeroes(uv.Timer) else {},
+    uv_timer: if (Environment.isWindows) uv.Timer else void = if (Environment.isWindows) std.mem.zeroes(uv.Timer),
 
     // We split up the map here to avoid storing an extra "repeat" boolean
     maps: struct {
@@ -80,7 +80,7 @@ pub const All = struct {
             else
                 timespec{ .nsec = 0, .sec = 0 };
 
-            this.uv_timer.start(wait.ms(), 0, &onUVTimer);
+            this.uv_timer.start(wait.msUnsigned(), 0, &onUVTimer);
 
             if (this.active_timer_count > 0) {
                 this.uv_timer.ref();
@@ -925,7 +925,10 @@ pub const EventLoopTimer = struct {
         TestRunner,
         StatWatcherScheduler,
         UpgradedDuplex,
+        DNSResolver,
         WindowsNamedPipe,
+        PostgresSQLConnectionTimeout,
+        PostgresSQLConnectionMaxLifetime,
 
         pub fn Type(comptime T: Tag) type {
             return switch (T) {
@@ -935,7 +938,10 @@ pub const EventLoopTimer = struct {
                 .TestRunner => JSC.Jest.TestRunner,
                 .StatWatcherScheduler => StatWatcherScheduler,
                 .UpgradedDuplex => uws.UpgradedDuplex,
+                .DNSResolver => DNSResolver,
                 .WindowsNamedPipe => uws.WindowsNamedPipe,
+                .PostgresSQLConnectionTimeout => JSC.Postgres.PostgresSQLConnection,
+                .PostgresSQLConnectionMaxLifetime => JSC.Postgres.PostgresSQLConnection,
             };
         }
     } else enum {
@@ -945,6 +951,9 @@ pub const EventLoopTimer = struct {
         TestRunner,
         StatWatcherScheduler,
         UpgradedDuplex,
+        DNSResolver,
+        PostgresSQLConnectionTimeout,
+        PostgresSQLConnectionMaxLifetime,
 
         pub fn Type(comptime T: Tag) type {
             return switch (T) {
@@ -954,6 +963,9 @@ pub const EventLoopTimer = struct {
                 .TestRunner => JSC.Jest.TestRunner,
                 .StatWatcherScheduler => StatWatcherScheduler,
                 .UpgradedDuplex => uws.UpgradedDuplex,
+                .DNSResolver => DNSResolver,
+                .PostgresSQLConnectionTimeout => JSC.Postgres.PostgresSQLConnection,
+                .PostgresSQLConnectionMaxLifetime => JSC.Postgres.PostgresSQLConnection,
             };
         }
     };
@@ -1018,11 +1030,14 @@ pub const EventLoopTimer = struct {
 
     pub fn fire(this: *EventLoopTimer, now: *const timespec, vm: *VirtualMachine) Arm {
         switch (this.tag) {
+            .PostgresSQLConnectionTimeout => return @as(*JSC.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("timer", this))).onConnectionTimeout(),
+            .PostgresSQLConnectionMaxLifetime => return @as(*JSC.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("max_lifetime_timer", this))).onMaxLifetimeTimeout(),
             inline else => |t| {
                 var container: *t.Type() = @alignCast(@fieldParentPtr("event_loop_timer", this));
                 if (comptime t.Type() == TimeoutObject or t.Type() == ImmediateObject) {
                     return container.internals.fire(now, vm);
                 }
+
                 if (comptime t.Type() == StatWatcherScheduler) {
                     return container.timerCallback();
                 }
@@ -1038,6 +1053,10 @@ pub const EventLoopTimer = struct {
                 if (comptime t.Type() == JSC.Jest.TestRunner) {
                     container.onTestTimeout(now, vm);
                     return .disarm;
+                }
+
+                if (comptime t.Type() == DNSResolver) {
+                    return container.checkTimeouts(now, vm);
                 }
 
                 return container.callback(container);

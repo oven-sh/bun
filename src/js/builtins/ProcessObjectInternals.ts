@@ -24,19 +24,31 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+const enum BunProcessStdinFdType {
+  file = 0,
+  pipe = 1,
+  socket = 2,
+}
+
 export function getStdioWriteStream(fd) {
+  $assert(typeof fd === "number", `Expected fd to be a number, got ${typeof fd}`);
   const tty = require("node:tty");
 
   let stream;
   if (tty.isatty(fd)) {
     stream = new tty.WriteStream(fd);
+    // TODO: this is the wrong place for this property.
+    // but the TTY is technically duplex
+    // see test-fs-syncwritestream.js
+    stream.readable = true;
     process.on("SIGWINCH", () => {
       stream._refreshSize();
     });
     stream._type = "tty";
   } else {
     const fs = require("node:fs");
-    stream = new fs.WriteStream(fd, { autoClose: false, fd });
+    stream = new fs.WriteStream(null, { autoClose: false, fd, $fastPath: true });
+    stream.readable = false;
     stream._type = "fs";
   }
 
@@ -57,36 +69,30 @@ export function getStdioWriteStream(fd) {
   stream._isStdio = true;
   stream.fd = fd;
 
-  return [stream, stream[require("internal/shared").fileSinkSymbol]];
+  const underlyingSink = stream[require("internal/fs/streams").kWriteStreamFastPath];
+  $assert(underlyingSink);
+  return [stream, underlyingSink];
 }
 
-export function getStdinStream(fd) {
-  // Ideally we could use this:
-  // return require("node:stream")[Symbol.for("::bunternal::")]._ReadableFromWeb(Bun.stdin.stream());
-  // but we need to extend TTY/FS ReadStream
+export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType) {
   const native = Bun.stdin.stream();
+  // @ts-expect-error
+  const source = native.$bunNativePtr;
 
   var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-  var readerRef;
 
   var shouldUnref = false;
 
   function ref() {
     $debug("ref();", reader ? "already has reader" : "getting reader");
     reader ??= native.getReader();
-    // TODO: remove this. likely we are dereferencing the stream
-    // when there is still more data to be read.
-    readerRef ??= setInterval(() => {}, 1 << 30);
+    source.updateRef(true);
     shouldUnref = false;
   }
 
   function unref() {
     $debug("unref();");
-    if (readerRef) {
-      clearInterval(readerRef);
-      readerRef = undefined;
-      $debug("cleared timeout");
-    }
+
     if (reader) {
       try {
         reader.releaseLock();
@@ -115,12 +121,13 @@ export function getStdinStream(fd) {
           }
         }
       }
+    } else if (source) {
+      source.updateRef(false);
     }
   }
 
-  const tty = require("node:tty");
-  const ReadStream = tty.isatty(fd) ? tty.ReadStream : require("node:fs").ReadStream;
-  const stream = new ReadStream(fd);
+  const ReadStream = isTTY ? require("node:tty").ReadStream : require("node:fs").ReadStream;
+  const stream = new ReadStream(null, { fd, autoClose: false });
 
   const originalOn = stream.on;
 
@@ -143,6 +150,20 @@ export function getStdinStream(fd) {
   };
 
   stream.fd = fd;
+
+  // tty.ReadStream is supposed to extend from net.Socket.
+  // but we haven't made that work yet. Until then, we need to manually add some of net.Socket's methods
+  if (isTTY || fdType !== BunProcessStdinFdType.file) {
+    stream.ref = function () {
+      ref();
+      return this;
+    };
+
+    stream.unref = function () {
+      unref();
+      return this;
+    };
+  }
 
   const originalPause = stream.pause;
   stream.pause = function () {
@@ -241,7 +262,6 @@ export function getStdinStream(fd) {
 
   return stream;
 }
-
 export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksFn, reportUncaughtExceptionFn) {
   var queue;
   var process;
@@ -341,8 +361,13 @@ export function setMainModule(value) {
 }
 
 type InternalEnvMap = Record<string, string>;
+type EditWindowsEnvVarCb = (key: string, value: null | string) => void;
 
-export function windowsEnv(internalEnv: InternalEnvMap, envMapList: Array<string>) {
+export function windowsEnv(
+  internalEnv: InternalEnvMap,
+  envMapList: Array<string>,
+  editWindowsEnvVar: EditWindowsEnvVarCb,
+) {
   // The use of String(key) here is intentional because Node.js as of v21.5.0 will throw
   // on symbol keys as it seems they assume the user uses string keys:
   //
@@ -371,7 +396,10 @@ export function windowsEnv(internalEnv: InternalEnvMap, envMapList: Array<string
       if (!(k in internalEnv) && !envMapList.includes(p)) {
         envMapList.push(p);
       }
-      internalEnv[k] = value;
+      if (internalEnv[k] !== value) {
+        editWindowsEnvVar(k, value);
+        internalEnv[k] = value;
+      }
       return true;
     },
     has(_, p) {
@@ -383,6 +411,7 @@ export function windowsEnv(internalEnv: InternalEnvMap, envMapList: Array<string
       if (i !== -1) {
         envMapList.splice(i, 1);
       }
+      editWindowsEnvVar(k, null);
       return typeof p !== "symbol" ? delete internalEnv[k] : false;
     },
     defineProperty(_, p, attributes) {
@@ -391,6 +420,7 @@ export function windowsEnv(internalEnv: InternalEnvMap, envMapList: Array<string
       if (!(k in internalEnv) && !envMapList.includes(p)) {
         envMapList.push(p);
       }
+      editWindowsEnvVar(k, internalEnv[k]);
       return $Object.$defineProperty(internalEnv, k, attributes);
     },
     getOwnPropertyDescriptor(target, p) {

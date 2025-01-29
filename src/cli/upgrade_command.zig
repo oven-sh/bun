@@ -25,7 +25,6 @@ const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
-const bundler = bun.bundler;
 
 const fs = @import("../fs.zig");
 const URL = @import("../url.zig").URL;
@@ -37,7 +36,7 @@ const JSPrinter = bun.js_printer;
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
 const clap = bun.clap;
-const Lock = @import("../lock.zig").Lock;
+const Lock = bun.Mutex;
 const Headers = bun.http.Headers;
 const CopyFile = @import("../copy_file.zig");
 
@@ -232,7 +231,7 @@ pub const UpgradeCommand = struct {
             }
         }
 
-        const http_proxy: ?URL = env_loader.getHttpProxy(api_url);
+        const http_proxy: ?URL = env_loader.getHttpProxyFor(api_url);
 
         var metadata_body = try MutableString.init(allocator, 2048);
 
@@ -457,7 +456,7 @@ pub const UpgradeCommand = struct {
 
         const use_profile = strings.containsAny(bun.argv, "--profile");
 
-        const version: Version = if (!use_canary) v: {
+        var version: Version = if (!use_canary) v: {
             var refresher = Progress{};
             var progress = refresher.start("Fetching version tags", 0);
 
@@ -502,7 +501,7 @@ pub const UpgradeCommand = struct {
         };
 
         const zip_url = URL.parse(version.zip_url);
-        const http_proxy: ?URL = env_loader.getHttpProxy(zip_url);
+        const http_proxy: ?URL = env_loader.getHttpProxyFor(zip_url);
 
         {
             var refresher = Progress{};
@@ -582,7 +581,7 @@ pub const UpgradeCommand = struct {
 
             tmpdir_path_buf[tmpdir_path.len] = 0;
             const tmpdir_z = tmpdir_path_buf[0..tmpdir_path.len :0];
-            _ = bun.sys.chdir(tmpdir_z);
+            _ = bun.sys.chdir("", tmpdir_z);
 
             const tmpname = "bun.zip";
             const exe =
@@ -687,7 +686,7 @@ pub const UpgradeCommand = struct {
 
                         .windows = if (Environment.isWindows) .{
                             .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
-                        } else {},
+                        },
                     }) catch |err| {
                         Output.prettyErrorln("<r><red>error:<r> Failed to spawn Expand-Archive on {s} due to error {s}", .{ tmpname, @errorName(err) });
                         Global.exit(1);
@@ -700,7 +699,7 @@ pub const UpgradeCommand = struct {
             {
                 var verify_argv = [_]string{
                     exe,
-                    "--version",
+                    if (use_canary) "--revision" else "--version",
                 };
 
                 const result = std.process.Child.run(.{
@@ -746,7 +745,12 @@ pub const UpgradeCommand = struct {
 
                 // It should run successfully
                 // but we don't care about the version number if we're doing a canary build
-                if (!use_canary) {
+                if (use_canary) {
+                    var version_string = result.stdout;
+                    if (strings.indexOfChar(version_string, '+')) |i| {
+                        version.tag = version_string[i + 1 .. version_string.len];
+                    }
+                } else {
                     var version_string = result.stdout;
                     if (strings.indexOfChar(version_string, ' ')) |i| {
                         version_string = version_string[0..i];
@@ -926,10 +930,10 @@ pub const UpgradeCommand = struct {
                     \\
                     \\Changelog:
                     \\
-                    \\    https://github.com/oven-sh/bun/compare/{s}...main
+                    \\    https://github.com/oven-sh/bun/compare/{s}...{s}
                     \\
                 ,
-                    .{Environment.git_sha},
+                    .{ Environment.git_sha_short, version.tag },
                 );
             } else {
                 const bun_v = "bun-v" ++ Global.package_json_version;
@@ -996,7 +1000,7 @@ pub const upgrade_js_bindings = struct {
 
         var buf: bun.WPathBuffer = undefined;
         const tmpdir_path = fs.FileSystem.RealFS.getDefaultTempDir();
-        const path = switch (bun.sys.normalizePathWindows(u8, bun.invalid_fd, tmpdir_path, &buf)) {
+        const path = switch (bun.sys.normalizePathWindows(u8, bun.invalid_fd, tmpdir_path, &buf, .{})) {
             .err => return .undefined,
             .result => |norm| norm,
         };

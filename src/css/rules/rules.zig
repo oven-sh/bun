@@ -205,10 +205,9 @@ pub fn CssRuleList(comptime AtRule: type) type {
                                 _ = try last_rule.minify(context, parent_is_unused);
                                 continue;
                             }
-
-                            if (try med.minify(context, parent_is_unused)) {
-                                continue;
-                            }
+                        }
+                        if (try med.minify(context, parent_is_unused)) {
+                            continue;
                         }
                     },
                     .supports => |*supp| {

@@ -68,7 +68,7 @@ HTTPHeaderMap HTTPHeaderMap::isolatedCopy() &&
     return map;
 }
 
-String HTTPHeaderMap::get(const String& name) const
+String HTTPHeaderMap::get(const StringView name) const
 {
     HTTPHeaderName headerName;
     if (findHTTPHeaderName(name, headerName))
@@ -96,7 +96,7 @@ size_t HTTPHeaderMap::memoryCost() const
     return cost;
 }
 
-String HTTPHeaderMap::getUncommonHeader(const String& name) const
+String HTTPHeaderMap::getUncommonHeader(const StringView name) const
 {
     auto index = m_uncommonHeaders.findIf([&](auto& header) {
         return equalIgnoringASCIICase(header.key, name);
@@ -201,7 +201,7 @@ bool HTTPHeaderMap::addIfNotPresent(HTTPHeaderName headerName, const String& val
     return true;
 }
 
-bool HTTPHeaderMap::contains(const String& name) const
+bool HTTPHeaderMap::contains(const StringView name) const
 {
     HTTPHeaderName headerName;
     if (findHTTPHeaderName(name, headerName))
@@ -212,7 +212,7 @@ bool HTTPHeaderMap::contains(const String& name) const
     }) != notFound;
 }
 
-bool HTTPHeaderMap::remove(const String& name)
+bool HTTPHeaderMap::remove(const StringView name)
 {
 
     HTTPHeaderName headerName;

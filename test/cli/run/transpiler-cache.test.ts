@@ -154,19 +154,24 @@ describe("transpiler cache", () => {
     expect(newCacheCount()).toBe(0);
 
     chmodSync(join(cache_dir), "0");
-    const c = bunRun(join(temp_dir, "a.js"), env);
-    expect(c.stdout == "b");
+    try {
+      const c = bunRun(join(temp_dir, "a.js"), env);
+      expect(c.stdout == "b");
+    } finally {
+      chmodSync(join(cache_dir), "777");
+    }
   });
   test("works if the cache is not user-writable", () => {
     mkdirSync(cache_dir, { recursive: true });
     writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "b"));
 
-    chmodSync(join(cache_dir), "0");
-
-    const a = bunRun(join(temp_dir, "a.js"), env);
-    expect(a.stdout == "b");
-
-    chmodSync(join(cache_dir), "777");
+    try {
+      chmodSync(join(cache_dir), "0");
+      const a = bunRun(join(temp_dir, "a.js"), env);
+      expect(a.stdout == "b");
+    } finally {
+      chmodSync(join(cache_dir), "777");
+    }
   });
   test("does not inline process.env", () => {
     writeFileSync(

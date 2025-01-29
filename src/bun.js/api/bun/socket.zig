@@ -614,7 +614,13 @@ pub const Listener = struct {
 
         const ssl_enabled = ssl != null;
 
-        var socket_flags: i32 = if (exclusive) uws.LIBUS_LISTEN_EXCLUSIVE_PORT else (if (socket_config.reusePort) uws.LIBUS_SOCKET_REUSE_PORT else uws.LIBUS_LISTEN_DEFAULT);
+        var socket_flags: i32 = if (exclusive)
+            uws.LIBUS_LISTEN_EXCLUSIVE_PORT
+        else if (socket_config.reusePort)
+            uws.LIBUS_LISTEN_REUSE_PORT | uws.LIBUS_LISTEN_REUSE_ADDR
+        else
+            uws.LIBUS_LISTEN_DEFAULT;
+
         if (socket_config.allowHalfOpen) {
             socket_flags |= uws.LIBUS_SOCKET_ALLOW_HALF_OPEN;
         }
@@ -906,7 +912,7 @@ pub const Listener = struct {
         if (!hostname.isString()) {
             return global.throwInvalidArguments("hostname pattern expects a string", .{});
         }
-        const host_str = hostname.toSlice(
+        const host_str = try hostname.toSlice(
             global,
             bun.default_allocator,
         );
@@ -1626,6 +1632,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             if (callback == .zero) {
                 if (handlers.promise.trySwap()) |promise| {
+                    handlers.promise.deinit();
                     if (this.this_value != .zero) {
                         this.this_value = .zero;
                     }
@@ -1633,7 +1640,7 @@ fn NewSocket(comptime ssl: bool) type {
 
                     // reject the promise on connect() error
                     const err_value = err.toErrorInstance(globalObject);
-                    promise.asPromise().?.rejectOnNextTick(globalObject, err_value);
+                    promise.asPromise().?.reject(globalObject, err_value);
                 }
 
                 return;
@@ -1657,7 +1664,7 @@ fn NewSocket(comptime ssl: bool) type {
                 // The error is effectively handled, but we should still reject the promise.
                 var promise = val.asPromise().?;
                 const err_ = err.toErrorInstance(globalObject);
-                promise.rejectOnNextTickAsHandled(globalObject, err_);
+                promise.rejectAsHandled(globalObject, err_);
             }
         }
         pub fn onConnectError(this: *This, _: Socket, errno: c_int) void {
@@ -2214,10 +2221,11 @@ fn NewSocket(comptime ssl: bool) type {
             }
 
             var stack_fallback = std.heap.stackFallback(16 * 1024, bun.default_allocator);
+            const allow_string_object = true;
             const buffer: JSC.Node.StringOrBuffer = if (data_value.isUndefined())
                 JSC.Node.StringOrBuffer.empty
             else
-                JSC.Node.StringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalObject, stack_fallback.get(), data_value, encoding_value, false) catch {
+                JSC.Node.StringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalObject, stack_fallback.get(), data_value, encoding_value, false, allow_string_object) catch {
                     return .fail;
                 } orelse {
                     if (!globalObject.hasException()) {
@@ -3217,6 +3225,39 @@ fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsUndefined();
         }
 
+        pub fn getPeerX509Certificate(
+            this: *This,
+            globalObject: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
+        ) bun.JSError!JSValue {
+            if (comptime ssl == false) {
+                return JSValue.jsUndefined();
+            }
+            const ssl_ptr = this.socket.ssl() orelse return JSValue.jsUndefined();
+            const cert = BoringSSL.SSL_get_peer_certificate(ssl_ptr);
+            if (cert) |x509| {
+                return X509.toJSObject(x509, globalObject);
+            }
+            return JSValue.jsUndefined();
+        }
+
+        pub fn getX509Certificate(
+            this: *This,
+            globalObject: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
+        ) bun.JSError!JSValue {
+            if (comptime ssl == false) {
+                return JSValue.jsUndefined();
+            }
+
+            const ssl_ptr = this.socket.ssl() orelse return JSValue.jsUndefined();
+            const cert = BoringSSL.SSL_get_certificate(ssl_ptr);
+            if (cert) |x509| {
+                return X509.toJSObject(x509.ref(), globalObject);
+            }
+            return JSValue.jsUndefined();
+        }
+
         pub fn getServername(
             this: *This,
             globalObject: *JSC.JSGlobalObject,
@@ -3842,9 +3883,9 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
             BoringSSL.load();
 
             const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl_options);
+            var err: uws.create_bun_socket_error_t = .none;
             // Create SSL context using uSockets to match behavior of node.js
-            const ctx = uws.create_ssl_context_from_bun_options(ctx_opts) orelse return error.InvalidOptions; // invalid options
-            errdefer BoringSSL.SSL_CTX_free(ctx);
+            const ctx = uws.create_ssl_context_from_bun_options(ctx_opts, &err) orelse return error.InvalidOptions; // invalid options
             this.ctx = ctx;
         }
 

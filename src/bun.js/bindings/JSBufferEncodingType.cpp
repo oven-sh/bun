@@ -57,10 +57,16 @@ template<> std::optional<BufferEncodingType> parseEnumeration<BufferEncodingType
     if (UNLIKELY(!arg.isString())) {
         return std::nullopt;
     }
-    return parseEnumeration2(lexicalGlobalObject, arg.toWTFString(&lexicalGlobalObject));
+
+    auto* str = arg.toStringOrNull(&lexicalGlobalObject);
+    if (!str) {
+        return std::nullopt;
+    }
+    const auto& view = str->view(&lexicalGlobalObject);
+    return parseEnumeration2(lexicalGlobalObject, view);
 }
 
-std::optional<BufferEncodingType> parseEnumeration2(JSGlobalObject& lexicalGlobalObject, WTF::String encoding)
+std::optional<BufferEncodingType> parseEnumeration2(JSGlobalObject& lexicalGlobalObject, const WTF::StringView encoding)
 {
     // caller must check if value is a string
     switch (encoding.length()) {
@@ -121,10 +127,9 @@ std::optional<BufferEncodingType> parseEnumeration2(JSGlobalObject& lexicalGloba
     case 'h':
     case 'H':
         // hex
-        if (encoding[1] == 'e')
-            if (encoding[2] == 'x' && encoding[3] == '\0')
-                return BufferEncodingType::hex;
         if (WTF::equalIgnoringASCIICase(encoding, "hex"_s))
+            return BufferEncodingType::hex;
+        if (WTF::equalIgnoringASCIICase(encoding, "hex\0"_s))
             return BufferEncodingType::hex;
         break;
     }

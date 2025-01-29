@@ -72,7 +72,7 @@ pub const Body = struct {
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>bodyUsed<d>:<r> ", enable_ansi_colors));
-        formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.value == .Used), .BooleanObject, enable_ansi_colors);
+        try formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.value == .Used), .BooleanObject, enable_ansi_colors);
 
         if (this.value == .Blob) {
             try formatter.printComma(Writer, writer, enable_ansi_colors);
@@ -89,7 +89,7 @@ pub const Body = struct {
                 try formatter.printComma(Writer, writer, enable_ansi_colors);
                 try writer.writeAll("\n");
                 try formatter.writeIndent(Writer, writer);
-                formatter.printAs(.Object, Writer, writer, stream.value, stream.value.jsType(), enable_ansi_colors);
+                try formatter.printAs(.Object, Writer, writer, stream.value, stream.value.jsType(), enable_ansi_colors);
             }
         }
     }
@@ -1111,9 +1111,9 @@ pub const Body = struct {
         var body = Body{ .value = Value{ .Null = {} } };
 
         body.value = try Value.fromJS(globalThis, value);
-        if (body.value == .Blob)
+        if (body.value == .Blob) {
             assert(body.value.Blob.allocator == null); // owned by Body
-
+        }
         return body;
     }
 };

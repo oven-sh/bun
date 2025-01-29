@@ -151,5 +151,9 @@ pub fn Rect(comptime T: type) type {
         pub fn valParse(i: *css.Parser) Result(T) {
             return css.generic.parse(T, i);
         }
+
+        pub fn isCompatible(this: *const @This(), browsers: css.targets.Browsers) bool {
+            return this.top.isCompatible(browsers) and this.right.isCompatible(browsers) and this.bottom.isCompatible(browsers) and this.left.isCompatible(browsers);
+        }
     };
 }

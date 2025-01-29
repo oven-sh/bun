@@ -1,6 +1,7 @@
 #include "_NativeModule.h"
 
 #include "ExceptionOr.h"
+#include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/ExceptionScope.h"
 #include "JavaScriptCore/JSCJSValue.h"
@@ -693,7 +694,7 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
 
     samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();
     samplingProfiler.start();
-    JSValue returnValue = JSC::call(globalObject, function, callData, JSC::jsUndefined(), args);
+    JSValue returnValue = JSC::profiledCall(globalObject, ProfilingReason::API, function, callData, JSC::jsUndefined(), args);
 
     if (returnValue.isEmpty() || throwScope.exception()) {
         return JSValue::encode(reportFailure(vm));
@@ -902,6 +903,24 @@ JSC_DEFINE_HOST_FUNCTION(functionEstimateDirectMemoryUsageOf, (JSGlobalObject * 
     return JSValue::encode(jsNumber(0));
 }
 
+#if USE(BMALLOC_MEMORY_FOOTPRINT_API)
+
+#include <bmalloc/bmalloc.h>
+
+JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return JSValue::encode(jsDoubleNumber(bmalloc::api::percentAvailableMemoryInUse()));
+}
+
+#else
+
+JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return JSValue::encode(jsNull());
+}
+
+#endif
+
 // clang-format off
 /* Source for BunJSCModuleTable.lut.h
 @begin BunJSCModuleTable
@@ -936,13 +955,14 @@ JSC_DEFINE_HOST_FUNCTION(functionEstimateDirectMemoryUsageOf, (JSGlobalObject * 
     serialize                           functionSerialize                           Function    0                             
     deserialize                         functionDeserialize                         Function    0   
     estimateShallowMemoryUsageOf         functionEstimateDirectMemoryUsageOf         Function    1
+    percentAvailableMemoryInUse         functionPercentAvailableMemoryInUse         Function    0
 @end
 */
 
 namespace Zig {
 DEFINE_NATIVE_MODULE(BunJSC)
 {
-    INIT_NATIVE_MODULE(35);
+    INIT_NATIVE_MODULE(36);
 
     putNativeFn(Identifier::fromString(vm, "callerSourceOrigin"_s), functionCallerSourceOrigin);
     putNativeFn(Identifier::fromString(vm, "jscDescribe"_s), functionDescribe);
@@ -976,7 +996,8 @@ DEFINE_NATIVE_MODULE(BunJSC)
     putNativeFn(Identifier::fromString(vm, "serialize"_s), functionSerialize);
     putNativeFn(Identifier::fromString(vm, "deserialize"_s), functionDeserialize);
     putNativeFn(Identifier::fromString(vm, "estimateShallowMemoryUsageOf"_s), functionEstimateDirectMemoryUsageOf);
-    
+    putNativeFn(Identifier::fromString(vm, "percentAvailableMemoryInUse"_s), functionPercentAvailableMemoryInUse);
+
     // Deprecated
     putNativeFn(Identifier::fromString(vm, "describe"_s), functionDescribe);
     putNativeFn(Identifier::fromString(vm, "describeArray"_s), functionDescribeArray);

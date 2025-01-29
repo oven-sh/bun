@@ -3,7 +3,7 @@ const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const VirtualMachine = JSC.VirtualMachine;
 const Allocator = std.mem.Allocator;
-const Lock = @import("../lock.zig").Lock;
+const Lock = bun.Mutex;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 const Fetch = JSC.WebCore.Fetch;
@@ -18,6 +18,10 @@ const ReadFileTask = WebCore.Blob.ReadFile.ReadFileTask;
 const WriteFileTask = WebCore.Blob.WriteFile.WriteFileTask;
 const napi_async_work = JSC.napi.napi_async_work;
 const FetchTasklet = Fetch.FetchTasklet;
+const S3 = bun.S3;
+const S3HttpSimpleTask = S3.S3HttpSimpleTask;
+const S3HttpDownloadStreamingTask = S3.S3HttpDownloadStreamingTask;
+
 const JSValue = JSC.JSValue;
 const js = JSC.C;
 const Waker = bun.Async.Waker;
@@ -368,6 +372,7 @@ const Link = JSC.Node.Async.link;
 const Symlink = JSC.Node.Async.symlink;
 const Readlink = JSC.Node.Async.readlink;
 const Realpath = JSC.Node.Async.realpath;
+const RealpathNonNative = JSC.Node.Async.realpathNonNative;
 const Mkdir = JSC.Node.Async.mkdir;
 const Fsync = JSC.Node.Async.fsync;
 const Rename = JSC.Node.Async.rename;
@@ -379,6 +384,7 @@ const Exists = JSC.Node.Async.exists;
 const Futimes = JSC.Node.Async.futimes;
 const Lchmod = JSC.Node.Async.lchmod;
 const Lchown = JSC.Node.Async.lchown;
+const StatFS = JSC.Node.Async.statfs;
 const Unlink = JSC.Node.Async.unlink;
 const NativeZlib = JSC.API.NativeZlib;
 const NativeBrotli = JSC.API.NativeBrotli;
@@ -407,87 +413,91 @@ const ServerAllConnectionsClosedTask = @import("./api/server.zig").ServerAllConn
 
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
-    FetchTasklet,
-    PosixSignalTask,
+    Access,
+    AnyTask,
+    AppendFile,
     AsyncGlobWalkTask,
     AsyncTransformTask,
-    ReadFileTask,
-    CopyFilePromiseTask,
-    WriteFileTask,
-    AnyTask,
-    ManagedTask,
-    ShellIOReaderAsyncDeinit,
-    ShellIOWriterAsyncDeinit,
-    napi_async_work,
-    ThreadSafeFunction,
-    CppTask,
-    HotReloadTask,
-    PollPendingModulesTask,
-    GetAddrInfoRequestTask,
-    FSWatchTask,
-    JSCDeferredWorkTask,
-    Stat,
-    Lstat,
-    Fstat,
-    Open,
-    ReadFile,
-    WriteFile,
-    CopyFile,
-    Read,
-    Write,
-    Truncate,
-    FTruncate,
-    Readdir,
-    ReaddirRecursive,
-    Close,
-    Rm,
-    Rmdir,
-    Chown,
-    FChown,
-    Utimes,
-    Lutimes,
-    Chmod,
-    Fchmod,
-    Link,
-    Symlink,
-    Readlink,
-    Realpath,
-    Mkdir,
-    Fsync,
-    Fdatasync,
-    Writev,
-    Readv,
-    Rename,
-    Access,
-    AppendFile,
-    Mkdtemp,
-    Exists,
-    Futimes,
-    Lchmod,
-    Lchown,
-    Unlink,
-    NativeZlib,
-    NativeBrotli,
-    ShellGlobTask,
-    ShellRmTask,
-    ShellRmDirTask,
-    ShellMvCheckTargetTask,
-    ShellMvBatchedTask,
-    ShellLsTask,
-    ShellMkdirTask,
-    ShellTouchTask,
-    ShellCpTask,
-    ShellCondExprStatTask,
-    ShellAsync,
-    ShellAsyncSubprocessDone,
-    TimeoutObject,
-    ImmediateObject,
-    bun.shell.Interpreter.Builtin.Yes.YesTask,
-    ProcessWaiterThreadTask,
-    RuntimeTranspilerStore,
-    ServerAllConnectionsClosedTask,
     bun.bake.DevServer.HotReloadEvent,
     bun.bundle_v2.DeferredBatchTask,
+    bun.shell.Interpreter.Builtin.Yes.YesTask,
+    Chmod,
+    Chown,
+    Close,
+    CopyFile,
+    CopyFilePromiseTask,
+    CppTask,
+    Exists,
+    Fchmod,
+    FChown,
+    Fdatasync,
+    FetchTasklet,
+    Fstat,
+    FSWatchTask,
+    Fsync,
+    FTruncate,
+    Futimes,
+    GetAddrInfoRequestTask,
+    HotReloadTask,
+    ImmediateObject,
+    JSCDeferredWorkTask,
+    Lchmod,
+    Lchown,
+    Link,
+    Lstat,
+    Lutimes,
+    ManagedTask,
+    Mkdir,
+    Mkdtemp,
+    napi_async_work,
+    NativeBrotli,
+    NativeZlib,
+    Open,
+    PollPendingModulesTask,
+    PosixSignalTask,
+    ProcessWaiterThreadTask,
+    Read,
+    Readdir,
+    ReaddirRecursive,
+    ReadFile,
+    ReadFileTask,
+    Readlink,
+    Readv,
+    Realpath,
+    RealpathNonNative,
+    Rename,
+    Rm,
+    Rmdir,
+    RuntimeTranspilerStore,
+    S3HttpDownloadStreamingTask,
+    S3HttpSimpleTask,
+    ServerAllConnectionsClosedTask,
+    ShellAsync,
+    ShellAsyncSubprocessDone,
+    ShellCondExprStatTask,
+    ShellCpTask,
+    ShellGlobTask,
+    ShellIOReaderAsyncDeinit,
+    ShellIOWriterAsyncDeinit,
+    ShellLsTask,
+    ShellMkdirTask,
+    ShellMvBatchedTask,
+    ShellMvCheckTargetTask,
+    ShellRmDirTask,
+    ShellRmTask,
+    ShellTouchTask,
+    Stat,
+    StatFS,
+    Symlink,
+    ThreadSafeFunction,
+    TimeoutObject,
+    Truncate,
+    Unlink,
+    Utimes,
+    Write,
+    WriteFile,
+    WriteFileTask,
+    Writev,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
@@ -558,7 +568,7 @@ pub const GarbageCollectionController = struct {
         }
 
         var gc_timer_interval: i32 = 1000;
-        if (vm.bundler.env.get("BUN_GC_TIMER_INTERVAL")) |timer| {
+        if (vm.transpiler.env.get("BUN_GC_TIMER_INTERVAL")) |timer| {
             if (std.fmt.parseInt(i32, timer, 10)) |parsed| {
                 if (parsed > 0) {
                     gc_timer_interval = parsed;
@@ -567,7 +577,7 @@ pub const GarbageCollectionController = struct {
         }
         this.gc_timer_interval = gc_timer_interval;
 
-        this.disabled = vm.bundler.env.has("BUN_GC_TIMER_DISABLE");
+        this.disabled = vm.transpiler.env.has("BUN_GC_TIMER_DISABLE");
 
         if (!this.disabled)
             this.gc_repeating_timer.set(this, onGCRepeatingTimer, gc_timer_interval, gc_timer_interval);
@@ -779,21 +789,22 @@ pub const EventLoop = struct {
     waker: ?Waker = null,
     forever_timer: ?*uws.Timer = null,
     deferred_tasks: DeferredTaskQueue = .{},
-    uws_loop: if (Environment.isWindows) ?*uws.Loop else void = if (Environment.isWindows) null else {},
+    uws_loop: if (Environment.isWindows) ?*uws.Loop else void = if (Environment.isWindows) null,
 
     debug: Debug = .{},
     entered_event_loop_count: isize = 0,
     concurrent_ref: std.atomic.Value(i32) = std.atomic.Value(i32).init(0),
 
-    signal_handler: if (Environment.isPosix) ?*PosixSignalHandle else void = if (Environment.isPosix) null else {},
+    signal_handler: if (Environment.isPosix) ?*PosixSignalHandle else void = if (Environment.isPosix) null,
 
     pub export fn Bun__ensureSignalHandler() void {
         if (Environment.isPosix) {
-            const vm = JSC.VirtualMachine.getMainThreadVM();
-            const this = vm.eventLoop();
-            if (this.signal_handler == null) {
-                this.signal_handler = PosixSignalHandle.new(.{});
-                @memset(&this.signal_handler.?.signals, 0);
+            if (JSC.VirtualMachine.getMainThreadVM()) |vm| {
+                const this = vm.eventLoop();
+                if (this.signal_handler == null) {
+                    this.signal_handler = PosixSignalHandle.new(.{});
+                    @memset(&this.signal_handler.?.signals, 0);
+                }
             }
         }
     }
@@ -891,7 +902,6 @@ pub const EventLoop = struct {
     pub fn runCallback(this: *EventLoop, callback: JSC.JSValue, globalObject: *JSC.JSGlobalObject, thisValue: JSC.JSValue, arguments: []const JSC.JSValue) void {
         this.enter();
         defer this.exit();
-
         _ = callback.call(globalObject, thisValue, arguments) catch |err|
             globalObject.reportActiveExceptionAsUnhandled(err);
     }
@@ -1007,6 +1017,15 @@ pub const EventLoop = struct {
                     var fetch_task: *Fetch.FetchTasklet = task.get(Fetch.FetchTasklet).?;
                     fetch_task.onProgressUpdate();
                 },
+                .S3HttpSimpleTask => {
+                    var s3_task: *S3HttpSimpleTask = task.get(S3HttpSimpleTask).?;
+                    s3_task.onResponse();
+                },
+                .S3HttpDownloadStreamingTask => {
+                    var s3_task: *S3HttpDownloadStreamingTask = task.get(S3HttpDownloadStreamingTask).?;
+                    s3_task.onResponse();
+                },
+
                 @field(Task.Tag, @typeName(AsyncGlobWalkTask)) => {
                     var globWalkTask: *AsyncGlobWalkTask = task.get(AsyncGlobWalkTask).?;
                     globWalkTask.*.runFromJS();
@@ -1199,6 +1218,10 @@ pub const EventLoop = struct {
                     var any: *Realpath = task.get(Realpath).?;
                     any.runFromJSThread();
                 },
+                @field(Task.Tag, typeBaseName(@typeName(RealpathNonNative))) => {
+                    var any: *RealpathNonNative = task.get(RealpathNonNative).?;
+                    any.runFromJSThread();
+                },
                 @field(Task.Tag, typeBaseName(@typeName(Mkdir))) => {
                     var any: *Mkdir = task.get(Mkdir).?;
                     any.runFromJSThread();
@@ -1278,6 +1301,10 @@ pub const EventLoop = struct {
                 },
                 @field(Task.Tag, typeBaseName(@typeName(PosixSignalTask))) => {
                     PosixSignalTask.runFromJSThread(@intCast(task.asUintptr()), global);
+                },
+                @field(Task.Tag, typeBaseName(@typeName(StatFS))) => {
+                    var any: *StatFS = task.get(StatFS).?;
+                    any.runFromJSThread();
                 },
 
                 else => {
@@ -1410,7 +1437,7 @@ pub const EventLoop = struct {
 
         if (loop.isActive()) {
             this.processGCTimer();
-            var event_loop_sleep_timer = if (comptime Environment.isDebug) std.time.Timer.start() catch unreachable else {};
+            var event_loop_sleep_timer = if (comptime Environment.isDebug) std.time.Timer.start() catch unreachable;
             // for the printer, this is defined:
             var timespec: bun.timespec = if (Environment.isDebug) .{ .sec = 0, .nsec = 0 } else undefined;
             loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec)) &timespec else null);
@@ -2056,6 +2083,13 @@ pub const AnyEventLoop = union(enum) {
 
     pub const Task = AnyTaskWithExtraContext;
 
+    pub fn iterationNumber(this: *const AnyEventLoop) u64 {
+        return switch (this.*) {
+            .js => this.js.usocketsLoop().iterationNumber(),
+            .mini => this.mini.loop.iterationNumber(),
+        };
+    }
+
     pub fn wakeup(this: *AnyEventLoop) void {
         this.loop().wakeup();
     }
@@ -2271,7 +2305,7 @@ pub const EventLoopHandle = union(enum) {
 
     pub inline fn createNullDelimitedEnvMap(this: @This(), alloc: Allocator) ![:null]?[*:0]u8 {
         return switch (this) {
-            .js => this.js.virtual_machine.bundler.env.map.createNullDelimitedEnvMap(alloc),
+            .js => this.js.virtual_machine.transpiler.env.map.createNullDelimitedEnvMap(alloc),
             .mini => this.mini.env.?.map.createNullDelimitedEnvMap(alloc),
         };
     }
@@ -2285,14 +2319,14 @@ pub const EventLoopHandle = union(enum) {
 
     pub inline fn topLevelDir(this: EventLoopHandle) []const u8 {
         return switch (this) {
-            .js => this.js.virtual_machine.bundler.fs.top_level_dir,
+            .js => this.js.virtual_machine.transpiler.fs.top_level_dir,
             .mini => this.mini.top_level_dir,
         };
     }
 
     pub inline fn env(this: EventLoopHandle) *bun.DotEnv.Loader {
         return switch (this) {
-            .js => this.js.virtual_machine.bundler.env,
+            .js => this.js.virtual_machine.transpiler.env,
             .mini => this.mini.env.?,
         };
     }
@@ -2362,7 +2396,7 @@ pub const PosixSignalHandle = struct {
         // Publish the new tail (Release so that the consumer sees the updated tail).
         this.tail.store(old_tail +% 1, .release);
 
-        JSC.VirtualMachine.getMainThreadVM().eventLoop().wakeup();
+        JSC.VirtualMachine.getMainThreadVM().?.eventLoop().wakeup();
 
         return true;
     }
@@ -2370,7 +2404,7 @@ pub const PosixSignalHandle = struct {
     /// This is the signal handler entry point. Calls enqueue on the ring buffer.
     /// Note: Must be minimal logic here. Only do atomics & signal‐safe calls.
     export fn Bun__onPosixSignal(number: i32) void {
-        const vm = JSC.VirtualMachine.getMainThreadVM();
+        const vm = JSC.VirtualMachine.getMainThreadVM().?;
         _ = vm.eventLoop().signal_handler.?.enqueue(@intCast(number));
     }
 

@@ -1348,7 +1348,7 @@ class ChildProcess extends EventEmitter {
     // Bun does not handle handles yet
     try {
       this.#handle.send(message);
-      if (callback) process.nextTick(callback);
+      if (callback) process.nextTick(callback, null);
       return true;
     } catch (error) {
       if (callback) {

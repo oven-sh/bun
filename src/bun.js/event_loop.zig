@@ -743,9 +743,10 @@ pub const DeferredTaskQueue = struct {
         return this.map.swapRemove(ctx);
     }
 
-    pub fn run(this: *DeferredTaskQueue) void {
+    pub fn run(this: *DeferredTaskQueue) bool {
         var i: usize = 0;
         var last = this.map.count();
+        const has_any = last > 0;
         while (i < last) {
             const key = this.map.keys()[i] orelse {
                 this.map.swapRemoveAt(i);
@@ -760,6 +761,8 @@ pub const DeferredTaskQueue = struct {
                 i += 1;
             }
         }
+
+        return has_any;
     }
 
     pub fn deinit(this: *DeferredTaskQueue) void {
@@ -877,7 +880,10 @@ pub const EventLoop = struct {
 
         jsc_vm.releaseWeakRefs();
         JSC__JSGlobalObject__drainMicrotasks(globalObject);
-        this.deferred_tasks.run();
+        this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc);
+        if (this.deferred_tasks.run()) {
+            this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc);
+        }
 
         if (comptime bun.Environment.isDebug) {
             this.debug.drain_microtasks_count_outside_tick_queue += @as(usize, @intFromBool(!this.debug.is_inside_tick_queue));

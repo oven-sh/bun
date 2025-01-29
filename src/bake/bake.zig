@@ -12,12 +12,15 @@ pub const api_name = "app";
 
 /// Zig version of the TS definition 'Bake.Options' in 'bake.d.ts'
 pub const UserOptions = struct {
+    /// This arena contains some miscellaneous allocations at startup
     arena: std.heap.ArenaAllocator,
     allocations: StringRefList,
 
     root: [:0]const u8,
     framework: Framework,
     bundler_options: SplitBundlerOptions,
+
+    frontend_only: bool = false,
 
     pub fn deinit(options: *UserOptions) void {
         options.arena.deinit();
@@ -75,8 +78,10 @@ pub const UserOptions = struct {
 };
 
 /// Each string stores its allocator since some may hold reference counts to JSC
-const StringRefList = struct {
+pub const StringRefList = struct {
     strings: std.ArrayListUnmanaged(ZigString.Slice),
+
+    pub const empty: StringRefList = .{ .strings = .{} };
 
     pub fn track(al: *StringRefList, str: ZigString.Slice) [:0]const u8 {
         al.strings.append(bun.default_allocator, str) catch bun.outOfMemory();
@@ -87,8 +92,6 @@ const StringRefList = struct {
         for (al.strings.items) |item| item.deinit();
         al.strings.clearAndFree(bun.default_allocator);
     }
-
-    pub const empty: StringRefList = .{ .strings = .{} };
 };
 
 pub const SplitBundlerOptions = struct {
@@ -219,6 +222,14 @@ pub const Framework = struct {
             }) catch bun.outOfMemory(),
         };
     }
+
+    pub const none: Framework = .{
+        .is_built_in_react = false,
+        .file_system_router_types = &.{},
+        .server_components = null,
+        .react_fast_refresh = null,
+        .built_in_modules = .{},
+    };
 
     pub const FileSystemRouterType = struct {
         root: []const u8,
@@ -648,7 +659,7 @@ pub inline fn getHmrRuntime(side: Side) [:0]const u8 {
         }
     else switch (side) {
         .client => bun.runtimeEmbedFile(.codegen_eager, "bake.client.js"),
-        // may not be live-reloaded
+        // server runtime is loaded once
         .server => bun.runtimeEmbedFile(.codegen, "bake.server.js"),
     };
 }
@@ -799,6 +810,5 @@ const Environment = bun.Environment;
 
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
-const validators = bun.JSC.Node.validators;
 const ZigString = JSC.ZigString;
 const Plugin = JSC.API.JSBundler.Plugin;

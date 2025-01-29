@@ -17,6 +17,9 @@ pub const Options = struct {
     vm: *VirtualMachine,
     framework: bake.Framework,
     bundler_options: bake.SplitBundlerOptions,
+    /// When set, nothing is ever bundled for the server-side,
+    /// and DevSever acts purely as a frontend bundler.
+    frontend_only: bool = false,
 
     // Debugging features
     dump_sources: ?[]const u8 = if (Environment.isDebug) ".bake-debug" else null,
@@ -76,6 +79,7 @@ bundling_failures: std.ArrayHashMapUnmanaged(
     SerializedFailure.ArrayHashContextViaOwner,
     false,
 ) = .{},
+frontend_only: bool,
 
 // These values are handles to the functions in `hmr-runtime-server.ts`.
 // For type definitions, see `./bake.private.d.ts`
@@ -142,7 +146,7 @@ dump_dir: if (bun.FeatureFlags.bake_debugging_features) ?std.fs.Dir else void,
 emit_visualizer_events: u32,
 has_pre_crash_handler: bool,
 
-pub const internal_prefix = "/_bun";
+pub const internal_prefix = "/:bun:";
 pub const client_prefix = internal_prefix ++ "/client";
 pub const asset_prefix = internal_prefix ++ "/asset";
 pub const css_prefix = internal_prefix ++ "/css";
@@ -150,39 +154,52 @@ pub const css_prefix = internal_prefix ++ "/css";
 pub const RouteBundle = struct {
     pub const Index = bun.GenericIndex(u30, RouteBundle);
 
-    route: Route.Index,
-
+    /// There are two distinct types of route bundles.
     server_state: State,
-
+    data: union(enum) {
+        /// FrameworkRouter provided route
+        framework: Framework,
+        /// HTMLBundle provided route
+        html: HTML,
+    },
     /// Used to communicate over WebSocket the pattern. The HMR client contains code
     /// to match this against the URL bar to determine if a reloaded route applies.
-    full_pattern: []const u8,
+    full_pattern: bun.CowString,
     /// Generated lazily when the client JS is requested (HTTP GET /_bun/client/*.js),
     /// which is only needed when a hard-reload is performed.
     ///
     /// Freed when a client module updates.
     client_bundle: ?[]const u8,
-    /// Contain the list of serialized failures. Hashmap allows for
-    /// efficient lookup and removal of failing files.
-    /// When state == .evaluation_failure, this is popualted with that error.
-    evaluate_failure: ?SerializedFailure,
-
-    // TODO: micro-opt: use a singular strong
-
-    /// Cached to avoid re-creating the array every request.
-    /// Invalidated when a layout is added or removed from this route.
-    cached_module_list: JSC.Strong,
-    /// Cached to avoid re-creating the string every request.
-    /// Invalidated when any client file associated with the route is updated.
-    cached_client_bundle_url: JSC.Strong,
-    /// Cached to avoid re-creating the array every request.
-    /// Invalidated when the list of CSS files changes.
-    cached_css_file_array: JSC.Strong,
 
     /// Reference count of how many HmrSockets say they are on this route. This
     /// allows hot-reloading events to reduce the amount of times it traces the
     /// graph.
-    active_viewers: usize,
+    active_viewers: u32,
+
+    const Framework = struct {
+        route_index: Route.Index,
+
+        // TODO: micro-opt: use a singular strong
+        /// Cached to avoid re-creating the array every request.
+        /// Invalidated when a layout is added or removed from this route.
+        cached_module_list: JSC.Strong,
+        /// Cached to avoid re-creating the string every request.
+        /// Invalidated when any client file associated with the route is updated.
+        cached_client_bundle_url: JSC.Strong,
+        /// Cached to avoid re-creating the array every request.
+        /// Invalidated when the list of CSS files changes.
+        cached_css_file_array: JSC.Strong,
+
+        /// Contain the list of serialized failures. Hashmap allows for
+        /// efficient lookup and removal of failing files.
+        /// When state == .evaluation_failure, this is popualted with that error.
+        evaluate_failure: ?SerializedFailure,
+    };
+
+    const HTML = struct {
+        /// DevServer increments the ref count of this bundle
+        html_bundle: *HTMLBundle,
+    };
 
     /// A union is not used so that `bundler_failure_logs` can re-use memory, as
     /// this state frequently changes between `loaded` and the failure variants.
@@ -207,6 +224,35 @@ pub const RouteBundle = struct {
         /// at fault of bundling, nor would re-bundling change anything.
         loaded,
     };
+};
+
+pub const RouteIdentifier = union(enum) {
+    /// FrameworkRouter provides a fullstack server-side route
+    framework: FrameworkRouter.Route.Index,
+    /// HTMLBundle provides a frontend-only route, SPA-style
+    html: *HTMLBundle,
+
+    /// May allocate memory
+    pub fn pattern(id: RouteIdentifier, dev: *DevServer) !bun.CowString {
+        return switch (id) {
+            .framework => |index| full_pattern: {
+                var buf = bake.PatternBuffer.empty;
+                var current: *Route = dev.router.routePtr(index);
+                // This loop is done to avoid prepending `/` at the root
+                // if there is more than one component.
+                buf.prependPart(current.part);
+                if (current.parent.unwrap()) |first| {
+                    current = dev.router.routePtr(first);
+                    while (current.parent.unwrap()) |next| {
+                        buf.prependPart(current.part);
+                        current = dev.router.routePtr(next);
+                    }
+                }
+                break :full_pattern try bun.CowString.initDupe(buf.slice(), dev.allocator);
+            },
+            .html => |html_bundle| bun.CowString.initNeverFree(html_bundle.pattern),
+        };
+    }
 };
 
 /// DevServer is stored on the heap, storing its allocator.
@@ -247,8 +293,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
             bun.getRuntimeFeatureFlag("BUN_DUMP_STATE_ON_CRASH"),
         .css_files = .{},
         .route_js_payloads = .{},
-        // .assets = .{},
-
+        .frontend_only = options.frontend_only,
         .client_graph = IncrementalGraph(.client).empty,
         .server_graph = IncrementalGraph(.server).empty,
         .incremental_result = IncrementalResult.empty,
@@ -261,7 +306,6 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
             .reload_event = null,
             .requests = .{},
         },
-
         .log = bun.logger.Log.init(allocator),
 
         .server_bundler = undefined,
@@ -391,6 +435,8 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         }
         hash.update(&.{0});
 
+        bun.writeAnyToHasher(&hash, options.frontend_only);
+
         break :hash_key std.fmt.bytesToHex(std.mem.asBytes(&hash.final()), .lower);
     };
 
@@ -400,7 +446,9 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         assert(try dev.client_graph.insertStale(rfr.import_source, false) == IncrementalGraph(.client).react_refresh_index);
     }
 
-    dev.initServerRuntime();
+    if (!options.frontend_only) {
+        dev.initServerRuntime();
+    }
 
     // Initialize FrameworkRouter
     dev.router = router: {
@@ -439,10 +487,12 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         break :router try FrameworkRouter.initEmpty(dev.root, types.items, allocator);
     };
 
-    // TODO: move scanning to be one tick after server startup. this way the
-    // line saying the server is ready shows quicker, and route errors show up
-    // after that line.
-    try dev.scanInitialRoutes();
+    if (options.frontend_only) {
+        // TODO: move scanning to be one tick after server startup. this way the
+        // line saying the server is ready shows quicker, and route errors show up
+        // after that line.
+        try dev.scanInitialRoutes();
+    }
 
     if (bun.FeatureFlags.bake_debugging_features and dev.has_pre_crash_handler)
         try bun.crash_handler.appendPreCrashHandler(DevServer, dev, dumpStateDueToCrash);
@@ -526,7 +576,7 @@ pub fn deinit(dev: *DevServer) void {
     //     bun.todoPanic(@src(), "bake.DevServer.deinit()", .{});
 }
 
-fn onJsRequest(dev: *DevServer, req: *Request, resp: *Response) void {
+fn onJsRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
     const maybe_route = route: {
         const route_id = req.parameter(0);
         if (!bun.strings.hasSuffixComptime(route_id, ".js"))
@@ -546,7 +596,7 @@ fn onJsRequest(dev: *DevServer, req: *Request, resp: *Response) void {
     }
 }
 
-fn onAssetRequest(dev: *DevServer, req: *Request, resp: *Response) void {
+fn onAssetRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
     _ = dev;
     _ = req;
     _ = resp;
@@ -558,7 +608,7 @@ fn onAssetRequest(dev: *DevServer, req: *Request, resp: *Response) void {
 
 }
 
-fn onCssRequest(dev: *DevServer, req: *Request, resp: *Response) void {
+fn onCssRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
     const param = req.parameter(0);
     if (!bun.strings.hasSuffixComptime(param, ".css"))
         return req.setYield(true);
@@ -583,11 +633,11 @@ fn parseHexToInt(comptime T: type, slice: []const u8) ?T {
     return @bitCast(out);
 }
 
-fn onIncrementalVisualizer(_: *DevServer, _: *Request, resp: *Response) void {
+fn onIncrementalVisualizer(_: *DevServer, _: *Request, resp: AnyResponse) void {
     resp.corked(onIncrementalVisualizerCorked, .{resp});
 }
 
-fn onIncrementalVisualizerCorked(resp: *Response) void {
+fn onIncrementalVisualizerCorked(resp: AnyResponse) void {
     const code = if (Environment.codegen_embed)
         @embedFile("incremental_visualizer.html")
     else
@@ -598,12 +648,12 @@ fn onIncrementalVisualizerCorked(resp: *Response) void {
 
 fn ensureRouteIsBundled(
     dev: *DevServer,
-    route_index: Route.Index,
+    id: RouteIdentifier,
     kind: DeferredRequest.Data.Tag,
     req: *Request,
-    resp: *Response,
+    resp: AnyResponse,
 ) bun.OOM!void {
-    const route_bundle_index = try dev.getOrPutRouteBundle(route_index);
+    const route_bundle_index = try dev.getOrPutRouteBundle(id);
 
     // TODO: Zig 0.14 gets labelled continue:
     // - Remove the `while`
@@ -640,7 +690,7 @@ fn ensureRouteIsBundled(
                     var entry_points: EntryPointList = EntryPointList.empty;
                     defer entry_points.deinit(temp_alloc);
 
-                    dev.appendRouteEntryPointsIfNotStale(&entry_points, temp_alloc, route_index) catch bun.outOfMemory();
+                    dev.appendRouteEntryPointsIfNotStale(&entry_points, temp_alloc, id) catch bun.outOfMemory();
 
                     if (entry_points.set.count() == 0) {
                         if (dev.bundling_failures.count() > 0) {
@@ -722,20 +772,28 @@ fn ensureRouteIsBundled(
     }
 }
 
-fn appendRouteEntryPointsIfNotStale(dev: *DevServer, entry_points: *EntryPointList, alloc: Allocator, route_index: Route.Index) bun.OOM!void {
+fn appendRouteEntryPointsIfNotStale(dev: *DevServer, entry_points: *EntryPointList, alloc: Allocator, id: RouteIdentifier) bun.OOM!void {
     const server_file_names = dev.server_graph.bundled_files.keys();
     const client_file_names = dev.client_graph.bundled_files.keys();
 
     // Build a list of all files that have not yet been bundled.
-    var route = dev.router.routePtr(route_index);
-    const router_type = dev.router.typePtr(route.type);
-    try dev.appendOpaqueEntryPoint(server_file_names, entry_points, alloc, .server, router_type.server_file);
-    try dev.appendOpaqueEntryPoint(client_file_names, entry_points, alloc, .client, router_type.client_file);
-    try dev.appendOpaqueEntryPoint(server_file_names, entry_points, alloc, .server, route.file_page);
-    try dev.appendOpaqueEntryPoint(server_file_names, entry_points, alloc, .server, route.file_layout);
-    while (route.parent.unwrap()) |parent_index| {
-        route = dev.router.routePtr(parent_index);
-        try dev.appendOpaqueEntryPoint(server_file_names, entry_points, alloc, .server, route.file_layout);
+    switch (id) {
+        .framework => |route_index| {
+            var route = dev.router.routePtr(route_index);
+            const router_type = dev.router.typePtr(route.type);
+            try dev.appendOpaqueEntryPoint(server_file_names, entry_points, alloc, .server, router_type.server_file);
+            try dev.appendOpaqueEntryPoint(client_file_names, entry_points, alloc, .client, router_type.client_file);
+            try dev.appendOpaqueEntryPoint(server_file_names, entry_points, alloc, .server, route.file_page);
+            try dev.appendOpaqueEntryPoint(server_file_names, entry_points, alloc, .server, route.file_layout);
+            while (route.parent.unwrap()) |parent_index| {
+                route = dev.router.routePtr(parent_index);
+                try dev.appendOpaqueEntryPoint(server_file_names, entry_points, alloc, .server, route.file_layout);
+            }
+        },
+        .html => |html| {
+            _ = html;
+            @panic("TODO");
+        },
     }
 }
 
@@ -743,14 +801,25 @@ fn onRequestWithBundle(
     dev: *DevServer,
     route_bundle_index: RouteBundle.Index,
     req: bun.JSC.API.SavedRequest.Union,
-    resp: *Response,
+    resp: AnyResponse,
+) void {
+    const route_bundle = dev.routeBundlePtr(route_bundle_index);
+    switch (route_bundle.data) {
+        .framework => |*fw| dev.onFrameworkRequestWithBundle(fw, req, resp),
+        .html => @panic("walaa"),
+    }
+}
+
+fn onFrameworkRequestWithBundle(
+    dev: *DevServer,
+    bundle: *RouteBundle.Framework,
+    req: bun.JSC.API.SavedRequest.Union,
+    resp: AnyResponse,
 ) void {
     const server_request_callback = dev.server_fetch_function_callback.get() orelse
-        unreachable; // did not bundle
+        unreachable; // did not initialize server code
 
-    const route_bundle = dev.routeBundlePtr(route_bundle_index);
-
-    const router_type = dev.router.typePtr(dev.router.routePtr(route_bundle.route).type);
+    const router_type = dev.router.typePtr(dev.router.routePtr(bundle.route_index).type);
 
     dev.server.?.onRequestFromSaved(
         req,
@@ -766,17 +835,17 @@ fn onRequestWithBundle(
                 break :str str;
             },
             // routeModules
-            route_bundle.cached_module_list.get() orelse arr: {
+            bundle.cached_module_list.get() orelse arr: {
                 const global = dev.vm.global;
                 const keys = dev.server_graph.bundled_files.keys();
                 var n: usize = 1;
-                var route = dev.router.routePtr(route_bundle.route);
+                var route = dev.router.routePtr(bundle.route_index);
                 while (true) {
                     if (route.file_layout != .none) n += 1;
                     route = dev.router.routePtr(route.parent.unwrap() orelse break);
                 }
                 const arr = JSValue.createEmptyArray(global, n);
-                route = dev.router.routePtr(route_bundle.route);
+                route = dev.router.routePtr(bundle.route_index);
                 var route_name = bun.String.createUTF8(dev.relativePath(keys[fromOpaqueFileId(.server, route.file_page.unwrap().?).get()]));
                 arr.putIndex(global, 0, route_name.transferToJS(global));
                 n = 1;
@@ -788,13 +857,13 @@ fn onRequestWithBundle(
                     }
                     route = dev.router.routePtr(route.parent.unwrap() orelse break);
                 }
-                route_bundle.cached_module_list = JSC.Strong.create(arr, global);
+                bundle.cached_module_list = JSC.Strong.create(arr, global);
                 break :arr arr;
             },
             // clientId
-            route_bundle.cached_client_bundle_url.get() orelse str: {
+            bundle.cached_client_bundle_url.get() orelse str: {
                 const id, const route_index: Route.Index.Optional = if (router_type.client_file != .none)
-                    .{ std.crypto.random.int(u64), route_bundle.route.toOptional() }
+                    .{ std.crypto.random.int(u64), bundle.route_index.toOptional() }
                 else
                     // When there is no framework-provided client code, generate
                     // a JS file so that the hot-reloading code can reload the
@@ -804,20 +873,20 @@ fn onRequestWithBundle(
                 const str = bun.String.createFormat(client_prefix ++ "/route.{}.js", .{std.fmt.fmtSliceHexLower(std.mem.asBytes(&id))}) catch bun.outOfMemory();
                 defer str.deref();
                 const js = str.toJS(dev.vm.global);
-                route_bundle.cached_client_bundle_url = JSC.Strong.create(js, dev.vm.global);
+                bundle.cached_client_bundle_url = JSC.Strong.create(js, dev.vm.global);
                 break :str js;
             },
             // styles
-            route_bundle.cached_css_file_array.get() orelse arr: {
-                const js = dev.generateCssJSArray(route_bundle) catch bun.outOfMemory();
-                route_bundle.cached_css_file_array = JSC.Strong.create(js, dev.vm.global);
+            bundle.cached_css_file_array.get() orelse arr: {
+                const js = dev.generateCssJSArray(bundle) catch bun.outOfMemory();
+                bundle.cached_css_file_array = JSC.Strong.create(js, dev.vm.global);
                 break :arr js;
             },
         },
     );
 }
 
-pub fn onJsRequestWithBundle(dev: *DevServer, bundle_index: RouteBundle.Index, resp: *Response) void {
+pub fn onJsRequestWithBundle(dev: *DevServer, bundle_index: RouteBundle.Index, resp: AnyResponse) void {
     const route_bundle = dev.routeBundlePtr(bundle_index);
     const code = route_bundle.client_bundle orelse code: {
         const code = dev.generateClientBundle(route_bundle) catch bun.outOfMemory();
@@ -827,7 +896,7 @@ pub fn onJsRequestWithBundle(dev: *DevServer, bundle_index: RouteBundle.Index, r
     sendTextFile(code, MimeType.javascript.value, resp);
 }
 
-pub fn onSrcRequest(dev: *DevServer, req: *uws.Request, resp: *App.Response) void {
+pub fn onSrcRequest(dev: *DevServer, req: *uws.Request, resp: *AnyResponse) void {
     if (req.header("open-in-editor") == null) {
         resp.writeStatus("501 Not Implemented");
         resp.end("Viewing source without opening in editor is not implemented yet!", false);
@@ -863,7 +932,7 @@ const DeferredRequest = struct {
 
     const Data = union(enum) {
         server_handler: bun.JSC.API.SavedRequest,
-        js_payload: *Response,
+        js_payload: AnyResponse,
 
         const Tag = @typeInfo(Data).Union.tag_type.?;
     };
@@ -1404,8 +1473,8 @@ pub fn finalizeBundle(
             }
             if (bundle.active_viewers == 0 or !will_hear_hot_update) continue;
             try w.writeInt(i32, @intCast(i), .little);
-            try w.writeInt(u32, @intCast(bundle.full_pattern.len), .little);
-            try w.writeAll(bundle.full_pattern);
+            try w.writeInt(u32, @intCast(bundle.full_pattern.flags.len), .little);
+            try w.writeAll(bundle.full_pattern.slice());
 
             // If no edges were changed, then it is impossible to
             // change the list of CSS files.
@@ -1460,7 +1529,7 @@ pub fn finalizeBundle(
             const rb = dev.routeBundlePtr(req.route_bundle_index);
             rb.server_state = .possible_bundling_failures;
 
-            const resp: *Response = switch (req.data) {
+            const resp: AnyResponse = switch (req.data) {
                 .server_handler => |*saved| brk: {
                     const resp = saved.response.TCP;
                     saved.deinit();
@@ -1548,7 +1617,7 @@ fn startNextBundleIfPresent(dev: *DevServer) void {
     dev.current_bundle = null;
     dev.log.clearAndFree();
     dev.current_bundle_requests.clearRetainingCapacity();
-    dev.emitVisualizerMessageIfNeeded() catch {};
+    dev.emitVisualizerMessageIfNeeded();
 
     // If there were pending requests, begin another bundle.
     if (dev.next_bundle.reload_event != null or dev.next_bundle.requests.items.len > 0) {
@@ -1685,7 +1754,7 @@ pub fn routeBundlePtr(dev: *DevServer, idx: RouteBundle.Index) *RouteBundle {
     return &dev.route_bundles.items[idx.get()];
 }
 
-fn onRequest(dev: *DevServer, req: *Request, resp: *Response) void {
+fn onRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
     var params: FrameworkRouter.MatchedParams = undefined;
     if (dev.router.matchSlow(req.url(), &params)) |route_index| {
         dev.ensureRouteIsBundled(route_index, .server_handler, req, resp) catch bun.outOfMemory();
@@ -1703,26 +1772,16 @@ fn onRequest(dev: *DevServer, req: *Request, resp: *Response) void {
     sendBuiltInNotFound(resp);
 }
 
-fn getOrPutRouteBundle(dev: *DevServer, route: Route.Index) !RouteBundle.Index {
+pub fn respondForHTMLBundle(dev: *DevServer, hbr: *HTMLBundle.HTMLBundleRoute, req: *uws.Request, resp: AnyResponse) void {
+    dev.ensureRouteIsBundled(hbr.dev_server_id.?, .server_handler, req, resp);
+}
+
+fn getOrPutRouteBundle(dev: *DevServer, route: RouteIdentifier) !RouteBundle.Index {
     if (dev.router.routePtr(route).bundle.unwrap()) |bundle_index|
         return bundle_index;
 
-    const full_pattern = full_pattern: {
-        var buf = bake.PatternBuffer.empty;
-        var current: *Route = dev.router.routePtr(route);
-        // This loop is done to avoid prepending `/` at the root
-        // if there is more than one component.
-        buf.prependPart(current.part);
-        if (current.parent.unwrap()) |first| {
-            current = dev.router.routePtr(first);
-            while (current.parent.unwrap()) |next| {
-                buf.prependPart(current.part);
-                current = dev.router.routePtr(next);
-            }
-        }
-        break :full_pattern try dev.allocator.dupe(u8, buf.slice());
-    };
-    errdefer dev.allocator.free(full_pattern);
+    const full_pattern = route.pattern(dev);
+    errdefer full_pattern.deinit(dev.allocator);
 
     try dev.route_bundles.append(dev.allocator, .{
         .route = route,
@@ -1740,7 +1799,7 @@ fn getOrPutRouteBundle(dev: *DevServer, route: Route.Index) !RouteBundle.Index {
     return bundle_index;
 }
 
-fn sendTextFile(code: []const u8, content_type: []const u8, resp: *Response) void {
+fn sendTextFile(code: []const u8, content_type: []const u8, resp: AnyResponse) void {
     if (code.len == 0) {
         resp.writeStatus("202 No Content");
         resp.writeHeaderInt("Content-Length", 0);
@@ -1764,7 +1823,7 @@ const ErrorPageKind = enum {
 
 fn sendSerializedFailures(
     dev: *DevServer,
-    resp: *Response,
+    resp: AnyResponse,
     failures: []const SerializedFailure,
     kind: ErrorPageKind,
 ) void {
@@ -1819,7 +1878,7 @@ fn sendSerializedFailures(
     }
 }
 
-fn sendBuiltInNotFound(resp: *Response) void {
+fn sendBuiltInNotFound(resp: AnyResponse) void {
     const message = "404 Not Found";
     resp.writeStatus("404 Not Found");
     resp.end(message, true);
@@ -3497,7 +3556,7 @@ fn dumpBundle(dump_dir: std.fs.Dir, side: bake.Graph, rel_path: []const u8, chun
     try bufw.flush();
 }
 
-fn emitVisualizerMessageIfNeeded(dev: *DevServer) !void {
+fn emitVisualizerMessageIfNeeded(dev: *DevServer) void {
     if (!bun.FeatureFlags.bake_debugging_features) return;
     if (dev.emit_visualizer_events == 0) return;
 
@@ -3505,7 +3564,7 @@ fn emitVisualizerMessageIfNeeded(dev: *DevServer) !void {
     var payload = try std.ArrayList(u8).initCapacity(sfb.get(), 65536);
     defer payload.deinit();
 
-    try dev.writeVisualizerMessage(&payload);
+    dev.writeVisualizerMessage(&payload) catch return; // visualizer does not get an update if it OOMs
 
     dev.publish(.visualizer, payload.items, .binary);
 }
@@ -3558,7 +3617,7 @@ fn writeVisualizerMessage(dev: *DevServer, payload: *std.ArrayList(u8)) !void {
 
 pub fn onWebSocketUpgrade(
     dev: *DevServer,
-    res: *Response,
+    res: AnyResponse,
     req: *Request,
     upgrade_ctx: *uws.uws_socket_context_t,
     id: usize,
@@ -3783,7 +3842,7 @@ const HmrSocket = struct {
                         switch (field) {
                             .visualizer => {
                                 s.dev.emit_visualizer_events += 1;
-                                s.dev.emitVisualizerMessageIfNeeded() catch bun.outOfMemory();
+                                s.dev.emitVisualizerMessageIfNeeded();
                             },
                             else => {},
                         }
@@ -4255,11 +4314,13 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
 }
 
 pub fn onWatchError(_: *DevServer, err: bun.sys.Error) void {
-    // TODO: how to recover? the watcher can't just ... crash????????
-    Output.err(@as(bun.C.E, @enumFromInt(err.errno)), "Watcher crashed", .{});
-    if (bun.Environment.isDebug) {
-        bun.todoPanic(@src(), "Watcher crash", .{});
+    if (err.path.len > 0) {
+        Output.err(err, "failed to watch {} for hot-reloading", .{bun.fmt.quote(err.path)});
+    } else {
+        Output.err(err, "failed to watch files for hot-reloading", .{});
     }
+    Output.warn("The development server is still running, but hot-reloading is disabled until a restart.", .{});
+    // TODO: attempt to automatically restart the watcher thread, perhaps wait for next request.
 }
 
 pub fn publish(dev: *DevServer, topic: HmrTopic, message: []const u8, opcode: uws.Opcode) void {
@@ -4327,8 +4388,8 @@ fn fromOpaqueFileId(comptime side: bake.Side, id: OpaqueFileId) IncrementalGraph
     return IncrementalGraph(side).FileIndex.init(@intCast(id.get()));
 }
 
+/// Returns posix style path, suitible for URLs and reproducible hashes.
 fn relativePath(dev: *const DevServer, path: []const u8) []const u8 {
-    // TODO: windows slash normalization
     bun.assert(dev.root[dev.root.len - 1] != '/');
     if (path.len >= dev.root.len + 1 and
         path[dev.root.len] == '/' and
@@ -4337,7 +4398,7 @@ fn relativePath(dev: *const DevServer, path: []const u8) []const u8 {
         return path[dev.root.len + 1 ..];
     }
     const rel = bun.path.relative(dev.root, path);
-    // `rel` is owned by a mutable threadlocal buffer in the path code.
+    // @constCast: `rel` is owned by a mutable threadlocal buffer in the path code.
     bun.path.platformToPosixInPlace(u8, @constCast(rel));
     return rel;
 }
@@ -4465,13 +4526,11 @@ const Transpiler = bun.transpiler.Transpiler;
 const BundleV2 = bun.bundle_v2.BundleV2;
 
 const Define = bun.options.Define;
-const OutputFile = bun.options.OutputFile;
 
 const uws = bun.uws;
-const App = uws.NewApp(false);
 const AnyWebSocket = uws.AnyWebSocket;
 const Request = uws.Request;
-const Response = App.Response;
+const AnyResponse = bun.uws.AnyResponse;
 
 const MimeType = bun.http.MimeType;
 
@@ -4481,7 +4540,7 @@ const JSValue = JSC.JSValue;
 const VirtualMachine = JSC.VirtualMachine;
 const JSModuleLoader = JSC.JSModuleLoader;
 const EventLoopHandle = JSC.EventLoopHandle;
-const JSInternalPromise = JSC.JSInternalPromise;
+const HTMLBundle = JSC.API.HTMLBundle;
 
 const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
 const Chunk = bun.bundle_v2.Chunk;

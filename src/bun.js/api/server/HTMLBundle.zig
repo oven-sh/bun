@@ -1,5 +1,9 @@
-// This is a description of what the build will be.
-// It doesn't do the build.
+//! This is a description of what the build will be.
+//! It doesn't perform the build itself
+pub const HTMLBundle = @This();
+pub usingnamespace JSC.Codegen.JSHTMLBundle;
+// HTMLBundle can be owned by JavaScript as well as any number of Server instances.
+pub usingnamespace bun.NewRefCounted(HTMLBundle, deinit);
 
 ref_count: u32 = 1,
 globalObject: *JSGlobalObject,
@@ -11,7 +15,7 @@ plugins: union(enum) {
 },
 bunfig_dir: []const u8,
 
-/// Initialize an HTMLBundle.a
+/// Initialize an HTMLBundle.
 ///
 /// `plugins` is array of serve plugins defined in the bunfig.toml file. They will be resolved and loaded.
 /// `bunfig_path` is the path to the bunfig.toml configuration file. It used to resolve the plugins relative
@@ -58,6 +62,8 @@ pub const HTMLBundleRoute = struct {
     ref_count: u32 = 1,
     server: ?AnyServer = null,
     value: Value = .pending_plugins,
+    /// Written and read by DevServer to identify if this route has been registered with the bundler.
+    dev_server_id: *bun.bake.DevServer.RouteBundle.Index = 0,
 
     pub fn memoryCost(this: *const HTMLBundleRoute) usize {
         var cost: usize = 0;
@@ -141,6 +147,10 @@ pub const HTMLBundleRoute = struct {
         };
 
         if (server.config().development) {
+            if (server.getDevServer()) |dev| {
+                dev.respondForHTMLBundle();
+            }
+
             // TODO: actually implement proper watch mode instead of "rebuild on every request"
             if (this.value == .html) {
                 this.value.html.deref();
@@ -543,8 +553,6 @@ pub const HTMLBundleRoute = struct {
     };
 };
 
-pub usingnamespace JSC.Codegen.JSHTMLBundle;
-pub usingnamespace bun.NewRefCounted(HTMLBundle, deinit);
 const bun = @import("root").bun;
 const std = @import("std");
 const JSC = bun.JSC;
@@ -552,7 +560,6 @@ const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSString = JSC.JSString;
 const JSValueRef = JSC.JSValueRef;
-const HTMLBundle = @This();
 const JSBundler = JSC.API.JSBundler;
 const HTTPResponse = bun.uws.AnyResponse;
 const uws = bun.uws;

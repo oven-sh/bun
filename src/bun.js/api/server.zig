@@ -175,7 +175,9 @@ pub fn writeStatus(comptime ssl: bool, resp_ptr: ?*uws.NewApp(ssl).Response, sta
     }
 }
 
+// TODO: rename to StaticBlobRoute, rename AnyStaticRoute to StaticRoute
 const StaticRoute = @import("./server/StaticRoute.zig");
+
 const HTMLBundle = JSC.API.HTMLBundle;
 const HTMLBundleRoute = HTMLBundle.HTMLBundleRoute;
 pub const AnyStaticRoute = union(enum) {
@@ -286,6 +288,8 @@ pub const ServerConfig = struct {
         cost += this.base_url.href.len;
         return cost;
     }
+
+    // TODO: rename to StaticRoute.Entry
     pub const StaticRouteEntry = struct {
         path: []const u8,
         route: AnyStaticRoute,
@@ -1151,16 +1155,15 @@ pub const ServerConfig = struct {
 
                 while (try iter.next()) |key| {
                     const path, const is_ascii = key.toOwnedSliceReturningAllASCII(bun.default_allocator) catch bun.outOfMemory();
+                    errdefer bun.default_allocator.free(path);
 
                     const value = iter.value;
 
                     if (path.len == 0 or path[0] != '/') {
-                        bun.default_allocator.free(path);
                         return global.throwInvalidArguments("Invalid static route \"{s}\". path must start with '/'", .{path});
                     }
 
                     if (!is_ascii) {
-                        bun.default_allocator.free(path);
                         return global.throwInvalidArguments("Invalid static route \"{s}\". Please encode all non-ASCII characters in the path.", .{path});
                     }
 
@@ -1169,6 +1172,27 @@ pub const ServerConfig = struct {
                         .path = path,
                         .route = route,
                     }) catch bun.outOfMemory();
+                }
+
+                // When HTML bundles are provided, ensure DevServer options are ready
+                // The precense of these options
+                if (dedupe_html_bundle_map.count() > 0) {
+                    args.bake = .{
+                        .arena = std.heap.ArenaAllocator.init(bun.default_allocator),
+                        .allocations = bun.bake.StringRefList.empty,
+
+                        // TODO: this should be the dir with bunfig??
+                        .root = bun.fs.FileSystem.instance.top_level_dir,
+                        // TODO: framework / react fast refresh
+                        // probably specify framework details through bunfig,
+                        // but also it would be very nice to have built-in
+                        // support to just load node_modules/react-refresh if
+                        // react is installed. maybe even ship a fallback copy
+                        // of rfr with bun so it always "just works"
+                        .framework = bun.bake.Framework.none,
+                        .frontend_only = true,
+                        .bundler_options = bun.bake.SplitBundlerOptions.empty,
+                    };
                 }
             }
 
@@ -1276,6 +1300,10 @@ pub const ServerConfig = struct {
             if (global.hasException()) return error.JSError;
 
             if (try arg.getTruthy(global, "app")) |bake_args_js| {
+                if (args.bake != null) {
+                    // "app" is likely to be removed in favor of the HTML loader.
+                    return global.throwInvalidArguments("'app' + HTML loader not supported.", .{});
+                }
                 if (!bun.FeatureFlags.bake()) {
                     return global.throwInvalidArguments("To use the experimental \"app\" option, upgrade to the canary build of bun via \"bun upgrade --canary\"", .{});
                 }
@@ -6024,6 +6052,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             return .pending;
         }
 
+        // rename to loadAndResolvePlugins
         pub fn getPluginsAsync(
             this: *ThisServer,
             bundle: *HTMLBundleRoute,
@@ -6863,7 +6892,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             errdefer bun.default_allocator.free(base_url);
 
             const dev_server = if (config.bake) |*bake_options| dev_server: {
-                bun.bake.printWarning();
+                if (!bake_options.frontend_only) {
+                    bun.bake.printWarning();
+                }
 
                 break :dev_server try bun.bake.DevServer.init(.{
                     .arena = bake_options.arena.allocator(),

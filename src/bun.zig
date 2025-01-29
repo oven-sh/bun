@@ -4415,6 +4415,10 @@ pub fn CowSlice(T: type) type {
             };
         }
 
+        pub fn initDupe(data: []const T, allocator: Allocator) !@This() {
+            return initOwned(try allocator.dupe(T, data), allocator);
+        }
+
         /// `.deinit` will not free memory from this slice.
         pub fn initNeverFree(data: []const T) @This() {
             return .{

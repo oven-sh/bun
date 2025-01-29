@@ -1,4 +1,5 @@
-const std = @import("std");
+//! A static route serving a response object's blob.
+const StaticRoute = @This();
 
 server: ?AnyServer = null,
 status_code: u16,
@@ -286,8 +287,7 @@ fn renderMetadata(this: *StaticRoute, resp: HTTPResponse) void {
     this.doWriteHeaders(resp);
 }
 
-const StaticRoute = @This();
-
+const std = @import("std");
 const bun = @import("root").bun;
 
 const Api = @import("../../../api/schema.zig").Api;

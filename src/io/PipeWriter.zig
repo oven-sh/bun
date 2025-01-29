@@ -612,6 +612,7 @@ pub fn PosixStreamingWriter(
                             return .{ .err = bun.sys.Error.oom };
                         };
                         onWrite(this.parent, amt, .pending);
+                        registerPoll(this);
                     } else {
                         this.buffer.clearRetainingCapacity();
                         onWrite(this.parent, amt, .drained);

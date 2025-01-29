@@ -364,15 +364,12 @@ pub const PostgresSQLQuery = struct {
             return;
         }
 
-        const instance = globalObject.createErrorInstance("Failed to bind query: {s}", .{@errorName(err)});
-
-        // TODO: error handling
         const vm = JSC.VirtualMachine.get();
         const function = vm.rareData().postgresql_context.onQueryRejectFn.get().?;
         const event_loop = vm.eventLoop();
         event_loop.runCallback(function, globalObject, thisValue, &.{
             targetValue,
-            instance,
+            postgresErrorToJS(globalObject, null, err),
             queries_array,
         });
     }

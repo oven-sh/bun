@@ -3061,8 +3061,8 @@ pub const PostgresSQLStatement = struct {
         prepared,
         failed,
 
-        pub fn isRunning(this: *const @This()) bool {
-            return this.status == Status.parsing;
+        pub fn isRunning(this: @This()) bool {
+            return this == .parsing;
         }
     };
     pub fn ref(this: *@This()) void {

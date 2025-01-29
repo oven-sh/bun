@@ -18,6 +18,6 @@ extern "C" int Bun__JSC_onBeforeWait(JSC::VM* vm)
 
 extern "C" void Bun__JSC_onAfterWait(JSC::VM* vm)
 {
-    WTFTimer__runIfImminent(Bun::vm(*vm));
     vm->heap.acquireAccess();
+    WTFTimer__runIfImminent(Bun::vm(*vm));
 }

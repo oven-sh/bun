@@ -304,6 +304,55 @@ pub const CppTask = opaque {
         Bun__performTask(global, this);
     }
 };
+
+pub const ConcurrentCppTask = struct {
+    cpp_task: *EventLoopTaskNoContext,
+    workpool_task: JSC.WorkPoolTask = .{ .callback = &runFromWorkpool },
+
+    const EventLoopTaskNoContext = opaque {
+        extern fn Bun__EventLoopTaskNoContext__performTask(task: *EventLoopTaskNoContext) void;
+        extern fn Bun__EventLoopTaskNoContext__createdInBunVm(task: *const EventLoopTaskNoContext) ?*JSC.VirtualMachine;
+
+        /// Deallocates `this`
+        pub fn run(this: *EventLoopTaskNoContext) void {
+            Bun__EventLoopTaskNoContext__performTask(this);
+        }
+
+        /// Get the VM that created this task
+        pub fn getVM(this: *const EventLoopTaskNoContext) ?*JSC.VirtualMachine {
+            return Bun__EventLoopTaskNoContext__createdInBunVm(this);
+        }
+    };
+
+    pub fn runFromWorkpool(task: *JSC.WorkPoolTask) void {
+        var this: *ConcurrentCppTask = @fieldParentPtr("workpool_task", task);
+        // Extract all the info we need from `this` and `cpp_task` before we call functions that
+        // free them
+        const cpp_task = this.cpp_task;
+        const maybe_vm = cpp_task.getVM();
+        this.destroy();
+        cpp_task.run();
+        if (maybe_vm) |vm| {
+            vm.event_loop.unrefConcurrently();
+        }
+    }
+
+    pub usingnamespace bun.New(@This());
+
+    pub export fn ConcurrentCppTask__createAndRun(cpp_task: *EventLoopTaskNoContext) void {
+        JSC.markBinding(@src());
+        if (cpp_task.getVM()) |vm| {
+            vm.event_loop.refConcurrently();
+        }
+        const cpp = ConcurrentCppTask.new(.{ .cpp_task = cpp_task });
+        JSC.WorkPool.schedule(&cpp.workpool_task);
+    }
+};
+
+comptime {
+    _ = ConcurrentCppTask.ConcurrentCppTask__createAndRun;
+}
+
 pub const JSCScheduler = struct {
     pub const JSCDeferredWorkTask = opaque {
         extern fn Bun__runDeferredWork(task: *JSCScheduler.JSCDeferredWorkTask) void;
@@ -792,6 +841,7 @@ pub const EventLoop = struct {
     debug: Debug = .{},
     entered_event_loop_count: isize = 0,
     concurrent_ref: std.atomic.Value(i32) = std.atomic.Value(i32).init(0),
+    imminent_gc_timer: std.atomic.Value(?*JSC.BunTimer.WTFTimer) = .{ .raw = null },
 
     signal_handler: if (Environment.isPosix) ?*PosixSignalHandle else void = if (Environment.isPosix) null,
 
@@ -1360,6 +1410,12 @@ pub const EventLoop = struct {
             }
         }
 
+        if (this.entered_event_loop_count < 2) {
+            if (this.imminent_gc_timer.swap(null, .seq_cst)) |timer| {
+                timer.run(this.virtual_machine);
+            }
+        }
+
         var concurrent = this.concurrent_tasks.popBatch();
         const count = concurrent.count;
         if (count == 0)
@@ -1434,7 +1490,7 @@ pub const EventLoop = struct {
             var event_loop_sleep_timer = if (comptime Environment.isDebug) std.time.Timer.start() catch unreachable;
             // for the printer, this is defined:
             var timespec: bun.timespec = if (Environment.isDebug) .{ .sec = 0, .nsec = 0 } else undefined;
-            loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec)) &timespec else null);
+            loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec, ctx)) &timespec else null);
 
             if (comptime Environment.isDebug) {
                 log("tick {}, timeout: {}", .{ bun.fmt.fmtDuration(event_loop_sleep_timer.read()), bun.fmt.fmtDuration(timespec.ns()) });
@@ -1519,7 +1575,7 @@ pub const EventLoop = struct {
             this.processGCTimer();
             var timespec: bun.timespec = undefined;
 
-            loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec)) &timespec else null);
+            loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec, ctx)) &timespec else null);
         } else {
             loop.tickWithoutIdle();
         }

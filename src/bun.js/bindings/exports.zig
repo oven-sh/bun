@@ -52,12 +52,14 @@ pub const ZigGlobalObject = extern struct {
     pub const Interface: type = NewGlobalObject(JS.VirtualMachine);
 
     pub fn create(
+        vm: *JSC.VirtualMachine,
         console: *anyopaque,
         context_id: i32,
         mini_mode: bool,
         eval_mode: bool,
         worker_ptr: ?*anyopaque,
     ) *JSGlobalObject {
+        vm.eventLoop().ensureWaker();
         const global = shim.cppFn("create", .{ console, context_id, mini_mode, eval_mode, worker_ptr });
 
         // JSC might mess with the stack size.

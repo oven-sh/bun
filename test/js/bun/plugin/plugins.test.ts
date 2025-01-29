@@ -288,6 +288,41 @@ describe("module", () => {
       expect(there).toBeUndefined();
     }
   });
+
+  it("returns default exports from require() with __esModule: true", async () => {
+    Bun.plugin({
+      setup(builder) {
+        builder.module("my-virtual-module-sync", () => ({
+          exports: {
+            __esModule: true,
+            default: true,
+          },
+          loader: "object",
+        }));
+      },
+    });
+
+    {
+      const mod = require("my-virtual-module-sync");
+      expect(mod).toBe(true);
+    }
+
+    Bun.plugin({
+      setup(builder) {
+        builder.module("my-virtual-module-sync", () => ({
+          exports: {
+            default: true,
+          },
+          loader: "object",
+        }));
+      },
+    });
+
+    {
+      const mod = require("my-virtual-module-sync");
+      expect(mod.default).toBe(true);
+    }
+  });
 });
 
 describe("dynamic import", () => {

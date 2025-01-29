@@ -162,6 +162,7 @@ class Query extends PublicPromise {
     try {
       return handler(this, handle);
     } catch (err) {
+      this[_queryStatus] |= QueryStatus.error;
       this.reject(err);
     }
   }

@@ -61,9 +61,7 @@ async function startContainer(): Promise<{ port: number; containerName: string }
     }
 
     // Start the container
-    await execAsync(
-      `${dockerCLI} run -d --name ${containerName} -p ${port}:5432 custom-postgres`,
-    );
+    await execAsync(`${dockerCLI} run -d --name ${containerName} -p ${port}:5432 custom-postgres`);
 
     // Wait for PostgreSQL to be ready
     await waitForPostgres(port);
@@ -489,6 +487,38 @@ if (isDockerEnabled()) {
     const sql = postgres({ ...options, max: 2, fetch_types: false });
     const error = await sql`begin`.catch(e => e);
     return expect(error.code).toBe("ERR_POSTGRES_UNSAFE_TRANSACTION");
+  });
+
+  test("should be able to execute different queries in the same connection #16774", async () => {
+    const sql = postgres({ ...options, max: 1, fetch_types: false });
+    const random_table_name = `test_user_${Math.random().toString(36).substring(2, 15)}`;
+    await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${sql(random_table_name)}  (id int, name text)`;
+
+    const promises: Array<Promise<any>> = [];
+    // POPULATE TABLE
+    for (let i = 0; i < 1_000; i++) {
+      promises.push(sql`insert into ${sql(random_table_name)} values (${i}, ${`test${i}`})`.execute());
+    }
+    await Promise.all(promises);
+
+    // QUERY TABLE using execute() to force executing the query immediately
+    {
+      for (let i = 0; i < 1_000; i++) {
+        // mix different parameters
+        switch (i % 3) {
+          case 0:
+            promises.push(sql`select "id", "name" from ${sql(random_table_name)} where "id" = ${i}`.execute());
+            break;
+          case 1:
+            promises.push(sql`select "id" from ${sql(random_table_name)} where "id" = ${i}`.execute());
+            break;
+          case 2:
+            promises.push(sql`select 1, "id", "name" from ${sql(random_table_name)} where "id" = ${i}`.execute());
+            break;
+        }
+      }
+      await Promise.all(promises);
+    }
   });
 
   test("Transaction throws", async () => {

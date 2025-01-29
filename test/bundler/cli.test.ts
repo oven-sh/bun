@@ -53,8 +53,7 @@ describe("bun build", () => {
     }
   });
 
-  // on windows you can't overwrite PATH
-  test.skipIf(isWindows)("running a standalone binary and run its own bun", () => {
+  test("running a standalone binary and run its own bun", () => {
     const tmp = tmpdirSync();
     const src = path.join(tmp, "index.js");
     fs.writeFileSync(src, "console.log(await Bun.$`bun --version`.text());", { encoding: "utf8" });

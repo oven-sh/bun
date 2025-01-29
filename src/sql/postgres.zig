@@ -657,17 +657,27 @@ pub const PostgresSQLQuery = struct {
                 this.statement.?.ref();
                 signature.deinit();
 
-                if (@intFromEnum(this.statement.?.status) == @intFromEnum(PostgresSQLStatement.Status.prepared) and !connection.isCurrentRunning()) {
-                    this.flags.binary = this.statement.?.fields.len > 0;
-                    log("bindAndExecute", .{});
-                    // bindAndExecute will bind + execute, it will change to running after binding is complete
-                    this.status = .binding;
-                    PostgresRequest.bindAndExecute(globalObject, this.statement.?, binding_value, columns_value, PostgresSQLConnection.Writer, writer) catch |err| {
-                        if (!globalObject.hasException())
-                            return globalObject.throwValue(postgresErrorToJS(globalObject, "failed to bind and execute query", err));
-                        return error.JSError;
-                    };
-                    reset_timeout = true;
+                switch (this.statement.?.status) {
+                    .failed => {
+                        // If the statement failed, we need to throw the error
+                        return globalObject.throwValue(this.statement.?.error_response.?.toJS(globalObject));
+                    },
+                    .prepared => {
+                        if (!connection.isCurrentRunning()) {
+                            this.flags.binary = this.statement.?.fields.len > 0;
+                            log("bindAndExecute", .{});
+                            // bindAndExecute will bind + execute, it will change to running after binding is complete
+                            PostgresRequest.bindAndExecute(globalObject, this.statement.?, binding_value, columns_value, PostgresSQLConnection.Writer, writer) catch |err| {
+                                if (!globalObject.hasException())
+                                    return globalObject.throwValue(postgresErrorToJS(globalObject, "failed to bind and execute query", err));
+                                return error.JSError;
+                            };
+                            this.status = .binding;
+
+                            reset_timeout = true;
+                        }
+                    },
+                    .parsing, .pending => {},
                 }
 
                 break :enqueue;
@@ -680,13 +690,13 @@ pub const PostgresSQLQuery = struct {
                 if (!has_params) {
                     log("prepareAndQueryWithSignature", .{});
                     // prepareAndQueryWithSignature will write + bind + execute, it will change to running after binding is complete
-                    this.status = .binding;
                     PostgresRequest.prepareAndQueryWithSignature(globalObject, query_str.slice(), binding_value, PostgresSQLConnection.Writer, writer, &signature) catch |err| {
                         signature.deinit();
                         if (!globalObject.hasException())
                             return globalObject.throwValue(postgresErrorToJS(globalObject, "failed to prepare and query", err));
                         return error.JSError;
                     };
+                    this.status = .binding;
                     reset_timeout = true;
                 } else {
                     log("writeQuery", .{});

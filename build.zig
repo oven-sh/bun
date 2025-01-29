@@ -154,7 +154,6 @@ pub fn build(b: *Build) !void {
     std.log.info("zig compiler v{s}", .{builtin.zig_version_string});
     checked_file_exists = std.AutoHashMap(u64, void).init(b.allocator);
 
-
     // TODO: Upgrade path for 0.14.0
     // b.graph.zig_lib_directory = brk: {
     //     const sub_path = "vendor/zig/lib";

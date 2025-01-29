@@ -43,7 +43,6 @@ const StringOrBuffer = JSC.Node.StringOrBuffer;
 const NodeFSFunctionEnum = std.meta.DeclEnum(JSC.Node.NodeFS);
 const UvFsCallback = fn (*uv.fs_t) callconv(.C) void;
 
-
 pub const default_permission = if (Environment.isPosix)
     Syscall.S.IRUSR |
         Syscall.S.IWUSR |

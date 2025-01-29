@@ -1690,7 +1690,7 @@ extern "C" const BUN_DEFAULT_PATH_FOR_SPAWN: [*:0]const u8;
 
 // This is split into a separate function to conserve stack space.
 // On Windows, a single path buffer can take 64 KB.
-fn getArgv0(globalThis: *JSC.JSGlobalObject, PATH: []const u8, cwd: []const u8, argv0: ?[*:0]const u8, first_cmd: JSValue, allocator: std.mem.Allocator) bun.JSError!struct {
+fn getArgv0(globalThis: *JSC.JSGlobalObject, PATH: []const u8, cwd: []const u8, pretend_argv0: ?[*:0]const u8, first_cmd: JSValue, allocator: std.mem.Allocator) bun.JSError!struct {
     argv0: [:0]const u8,
     arg0: [:0]u8,
 } {
@@ -1702,10 +1702,7 @@ fn getArgv0(globalThis: *JSC.JSGlobalObject, PATH: []const u8, cwd: []const u8, 
 
     var actual_argv0: [:0]const u8 = "";
 
-    const argv0_to_use: []const u8 = if (argv0) |_argv0|
-        bun.sliceTo(_argv0, 0)
-    else
-        arg0.slice();
+    const argv0_to_use: []const u8 = arg0.slice();
 
     // This mimicks libuv's behavior, which mimicks execvpe
     // Only resolve from $PATH when the command is not an absolute path
@@ -1732,7 +1729,7 @@ fn getArgv0(globalThis: *JSC.JSGlobalObject, PATH: []const u8, cwd: []const u8, 
 
     return .{
         .argv0 = actual_argv0,
-        .arg0 = try allocator.dupeZ(u8, arg0.slice()),
+        .arg0 = if (pretend_argv0) |p| try allocator.dupeZ(u8, bun.sliceTo(p, 0)) else try allocator.dupeZ(u8, arg0.slice()),
     };
 }
 

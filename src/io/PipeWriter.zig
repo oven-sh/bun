@@ -586,45 +586,18 @@ pub fn PosixStreamingWriter(
                 return .{ .done = 0 };
             }
 
-            if (this.buffer.items.len > 0 or buf.len < chunk_size) {
+            if (this.buffer.items.len + buf.len < chunk_size) {
+                if (this.buffer.items.len == 0) {
+                    registerPoll(this);
+                }
                 this.buffer.appendSlice(buf) catch {
                     return .{ .err = bun.sys.Error.oom };
                 };
-                return .{ .pending = buf.len };
+                return .{ .pending = 0 };
             }
 
             this.head = 0;
-
-            if (this.buffer.items.len > 0) {
-                this.buffer.appendSlice(buf) catch {
-                    return .{ .err = bun.sys.Error.oom };
-                };
-                const rc = @This()._tryWrite(this, this.buffer.items);
-                switch (rc) {
-                    .pending => |amt| {
-                        onWrite(this.parent, amt, .pending);
-                        registerPoll(this);
-                    },
-                    .wrote => |amt| {
-                        if (amt < this.buffer.items.len) {
-                            onWrite(this.parent, amt, .pending);
-                        } else {
-                            this.buffer.clearRetainingCapacity();
-                            onWrite(this.parent, amt, .drained);
-                        }
-                    },
-                    .done => |amt| {
-                        this.buffer.clearRetainingCapacity();
-                        onWrite(this.parent, amt, .end_of_file);
-                        return .{ .done = amt };
-                    },
-                    else => {},
-                }
-                return rc;
-            }
-
             const rc = @This()._tryWrite(this, buf);
-
             switch (rc) {
                 .pending => |amt| {
                     this.buffer.appendSlice(buf[amt..]) catch {

@@ -2484,6 +2484,7 @@ pub const PostgresSQLConnection = struct {
                             req.onError(stmt.error_response, this.globalObject);
                             this.requests.discard(1);
                             any = true;
+                            continue;
                         },
                         .prepared => {
                             const binding_value = PostgresSQLQuery.bindingGetCached(req.thisValue) orelse .zero;
@@ -2498,7 +2499,7 @@ pub const PostgresSQLConnection = struct {
                             };
                             req.status = .binding;
                             any = true;
-                            break;
+                            return any;
                         },
                         .pending => {
                             // statement is pending, lets write/parse it
@@ -2520,7 +2521,7 @@ pub const PostgresSQLConnection = struct {
                                     continue;
                                 };
                                 any = true;
-                                break;
+                                return any;
                             }
                             const connection_writer = this.writer();
                             // write query and wait for it to be prepared
@@ -2537,11 +2538,11 @@ pub const PostgresSQLConnection = struct {
                                 continue;
                             };
                             any = true;
-                            break;
+                            return any;
                         },
                         .parsing => {
                             // we are still parsing, lets wait for it to be prepared or failed
-                            break;
+                            return any;
                         },
                     }
                 },
@@ -2549,12 +2550,13 @@ pub const PostgresSQLConnection = struct {
                 .running, .binding => {
                     // if we are binding it will switch to running immediately
                     // if we are running, we need to wait for it to be success or fail
-                    break;
+                    return any;
                 },
                 .success, .fail => {
                     req.deref();
                     this.requests.discard(1);
                     any = true;
+                    continue;
                 },
             }
         }

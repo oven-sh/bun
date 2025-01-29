@@ -572,6 +572,7 @@ function spawnSync(file, args, options) {
       stdio: bunStdio,
       windowsVerbatimArguments: options.windowsVerbatimArguments,
       windowsHide: options.windowsHide,
+      argv0: options.argv0,
     });
   } catch (err) {
     error = err;
@@ -959,11 +960,7 @@ function normalizeSpawnArguments(file, args, options) {
   }
 
   // Handle argv0
-  if (typeof options.argv0 === "string") {
-    ArrayPrototypeUnshift.$call(args, options.argv0);
-  } else {
-    ArrayPrototypeUnshift.$call(args, file);
-  }
+  ArrayPrototypeUnshift.$call(args, file);
 
   const env = options.env || process.env;
   const envPairs = {};
@@ -1010,6 +1007,7 @@ function normalizeSpawnArguments(file, args, options) {
     file,
     windowsHide: !!options.windowsHide,
     windowsVerbatimArguments: !!windowsVerbatimArguments,
+    argv0: options.argv0,
   };
 }
 
@@ -1244,8 +1242,6 @@ class ChildProcess extends EventEmitter {
     validateString(options.file, "options.file");
     // NOTE: This is confusing... So node allows you to pass a file name
     // But also allows you to pass a command in the args and it should execute
-    // To add another layer of confusion, they also give the option to pass an explicit "argv0"
-    // which overrides the actual command of the spawned process...
     var file;
     file = this.spawnfile = options.file;
 
@@ -1259,7 +1255,7 @@ class ChildProcess extends EventEmitter {
 
     const stdio = options.stdio || ["pipe", "pipe", "pipe"];
     const bunStdio = getBunStdioFromOptions(stdio);
-    const argv0 = file || options.argv0;
+    const argv0 = options.argv0 || file;
 
     const has_ipc = $isJSArray(stdio) && stdio[3] === "ipc";
     var env = options.envPairs || process.env;

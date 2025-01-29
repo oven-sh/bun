@@ -1408,10 +1408,8 @@ pub const EventLoop = struct {
             }
         }
 
-        if (this.entered_event_loop_count < 2) {
-            if (this.imminent_gc_timer.swap(null, .seq_cst)) |timer| {
-                timer.run(this.virtual_machine);
-            }
+        if (this.imminent_gc_timer.swap(null, .seq_cst)) |timer| {
+            timer.run(this.virtual_machine);
         }
 
         var concurrent = this.concurrent_tasks.popBatch();
@@ -1481,6 +1479,10 @@ pub const EventLoop = struct {
                 ctx.pending_unref_counter = 0;
                 loop.unrefCount(pending_unref);
             }
+        }
+
+        if (this.imminent_gc_timer.swap(null, .seq_cst)) |timer| {
+            timer.run(ctx);
         }
 
         if (loop.isActive()) {

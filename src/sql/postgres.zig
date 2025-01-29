@@ -2489,8 +2489,6 @@ pub const PostgresSQLConnection = struct {
                             req.flags.binary = stmt.fields.len > 0;
 
                             PostgresRequest.bindAndExecute(this.globalObject, stmt, binding_value, columns_value, PostgresSQLConnection.Writer, this.writer()) catch |err| {
-                                stmt.status = .failed;
-                                stmt.error_response = .{ .postgres_error = err };
                                 req.onWriteFail(err, this.globalObject, this.getQueriesArray());
                                 req.deref();
                                 this.requests.discard(1);

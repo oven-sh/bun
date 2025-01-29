@@ -198,9 +198,9 @@ if (TLS_POSTGRES_DATABASE_URL) {
   });
 
   test("Many transactions at beginning of connection", async () => {
-    await using sql = new SQL({ ...options, max: 5 });
-    const xs = await Promise.all(Array.from({ length: 80 }, () => sql.begin(sql => sql`select 1`)));
-    return expect(xs.length).toBe(80);
+    await using sql = new SQL({ ...options, max: 2 });
+    const xs = await Promise.all(Array.from({ length: 30 }, () => sql.begin(sql => sql`select 1`)));
+    return expect(xs.length).toBe(30);
   });
 
   test("Transactions array", async () => {

@@ -3421,10 +3421,12 @@ pub const FileSink = struct {
     // we should not duplicate these fields...
     pollable: bool = false,
     nonblocking: bool = false,
-    force_sync_on_windows: bool = false,
+    force_sync: bool = false,
+
     is_socket: bool = false,
     fd: bun.FileDescriptor = bun.invalid_fd,
-    has_js_called_unref: bool = false,
+
+    auto_flusher: AutoFlusher = .{},
 
     const log = Output.scoped(.FileSink, false);
 
@@ -3438,17 +3440,16 @@ pub const FileSink = struct {
         return this.writer.memoryCost();
     }
 
-    fn Bun__ForceFileSinkToBeSynchronousOnWindows(globalObject: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) callconv(.C) void {
-        comptime bun.assert(Environment.isWindows);
-
+    fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(globalObject: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) callconv(.C) void {
         var this: *FileSink = @alignCast(@ptrCast(JSSink.fromJS(globalObject, jsvalue) orelse return));
-        this.force_sync_on_windows = true;
+        this.force_sync = true;
+        if (comptime !Environment.isWindows) {
+            this.writer.force_sync = true;
+        }
     }
 
     comptime {
-        if (Environment.isWindows) {
-            @export(Bun__ForceFileSinkToBeSynchronousOnWindows, .{ .name = "Bun__ForceFileSinkToBeSynchronousOnWindows" });
-        }
+        @export(Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio, .{ .name = "Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio" });
     }
 
     pub fn onAttachedProcessExit(this: *FileSink) void {
@@ -3487,6 +3488,10 @@ pub const FileSink = struct {
         // Only keep the event loop ref'd while there's a pending write in progress.
         // If there's no pending write, no need to keep the event loop ref'd.
         this.writer.updateRef(this.eventLoop(), has_pending_data);
+
+        if (has_pending_data) {
+            AutoFlusher.registerDeferredMicrotaskWithType(@This(), this, JSC.VirtualMachine.get());
+        }
 
         // if we are not done yet and has pending data we just wait so we do not runPending twice
         if (status == .pending and has_pending_data) {
@@ -3604,7 +3609,7 @@ pub const FileSink = struct {
                     }
                 }
 
-                break :brk bun.sys.dupWithFlags(fd_, if (bun.FDTag.get(fd_) == .none and !this.force_sync_on_windows) bun.O.NONBLOCK else 0);
+                break :brk bun.sys.dupWithFlags(fd_, if (bun.FDTag.get(fd_) == .none and !this.force_sync) bun.O.NONBLOCK else 0);
             },
         }) {
             .err => |err| return .{ .err = err },
@@ -3637,14 +3642,14 @@ pub const FileSink = struct {
                 },
             }
         } else if (comptime Environment.isWindows) {
-            this.pollable = (bun.windows.GetFileType(fd.cast()) & bun.windows.FILE_TYPE_PIPE) != 0 and !this.force_sync_on_windows;
+            this.pollable = (bun.windows.GetFileType(fd.cast()) & bun.windows.FILE_TYPE_PIPE) != 0 and !this.force_sync;
             this.fd = fd;
         } else {
             @compileError("TODO: implement for this platform");
         }
 
         if (comptime Environment.isWindows) {
-            if (this.force_sync_on_windows) {
+            if (this.force_sync) {
                 switch (this.writer.startSync(
                     fd,
                     this.pollable,
@@ -3719,6 +3724,13 @@ pub const FileSink = struct {
         this.started = true;
         this.signal.start();
         return .{ .result = {} };
+    }
+
+    // TODO: this is probably wrong, need to make sure promises are resolved
+    // when auto flushing buffered writes
+    pub fn onAutoFlush(this: *FileSink) bool {
+        this.runPending();
+        return true;
     }
 
     pub fn flush(_: *FileSink) JSC.Maybe(void) {
@@ -3841,6 +3853,7 @@ pub const FileSink = struct {
     pub fn deinit(this: *FileSink) void {
         this.pending.deinit();
         this.writer.deinit();
+        AutoFlusher.unregisterDeferredMicrotaskWithType(@This(), this, JSC.VirtualMachine.get());
     }
 
     pub fn toJS(this: *FileSink, globalThis: *JSGlobalObject) JSValue {
@@ -3892,7 +3905,6 @@ pub const FileSink = struct {
     }
 
     pub fn updateRef(this: *FileSink, value: bool) void {
-        this.has_js_called_unref = !value;
         if (value) {
             this.writer.enableKeepingProcessAlive(this.event_loop_handle);
         } else {
@@ -3961,7 +3973,6 @@ pub const FileReader = struct {
     buffered: std.ArrayListUnmanaged(u8) = .{},
     read_inside_on_pull: ReadDuringJSOnPullResult = .{ .none = {} },
     highwater_mark: usize = 16384,
-    has_js_called_unref: bool = false,
 
     pub const IOReader = bun.io.BufferedReader;
     pub const Poll = IOReader;
@@ -4507,7 +4518,6 @@ pub const FileReader = struct {
 
     pub fn setRefOrUnref(this: *FileReader, enable: bool) void {
         if (this.done) return;
-        this.has_js_called_unref = !enable;
         this.reader.updateRef(enable);
     }
 

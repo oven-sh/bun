@@ -4,7 +4,6 @@ const Async = bun.Async;
 const JSC = bun.JSC;
 const uv = bun.windows.libuv;
 const Source = @import("./source.zig").Source;
-const AutoFlusher = JSC.WebCore.AutoFlusher;
 const log = bun.Output.scoped(.PipeWriter, true);
 const FileType = @import("./pipes.zig").FileType;
 
@@ -37,11 +36,17 @@ pub fn PosixPipeWriter(
     return struct {
         pub fn _tryWrite(this: *This, buf_: []const u8) WriteResult {
             return switch (getFileType(this)) {
-                inline else => |ft| return _tryWriteWithWriteFn(this, buf_, comptime writeToFileType(ft)),
+                inline else => |ft| return _tryWriteWithWriteFn(this, buf_, false, comptime writeToFileType(ft)),
             };
         }
 
-        fn _tryWriteWithWriteFn(this: *This, buf: []const u8, comptime write_fn: *const fn (bun.FileDescriptor, []const u8) JSC.Maybe(usize)) WriteResult {
+        pub fn _tryWriteSync(this: *This, buf_: []const u8) WriteResult {
+            return switch (getFileType(this)) {
+                inline else => |ft| return _tryWriteWithWriteFn(this, buf_, true, comptime writeToFileType(ft)),
+            };
+        }
+
+        fn _tryWriteWithWriteFn(this: *This, buf: []const u8, comptime sync: bool, comptime write_fn: *const fn (bun.FileDescriptor, []const u8) JSC.Maybe(usize)) WriteResult {
             const fd = getFd(this);
             var rest = buf;
 
@@ -49,6 +54,9 @@ pub fn PosixPipeWriter(
                 switch (write_fn(fd, rest)) {
                     .err => |err| {
                         if (err.isRetry()) {
+                            if (comptime sync) {
+                                continue;
+                            }
                             return .{ .pending = buf.len - rest.len };
                         }
 
@@ -394,7 +402,7 @@ pub fn PosixStreamingWriter(
         is_done: bool = false,
         closed_without_reporting: bool = false,
 
-        auto_flusher: AutoFlusher = .{},
+        force_sync: bool = false,
 
         // TODO: configurable?
         const chunk_size: usize = 1024 * 4;
@@ -488,7 +496,6 @@ pub fn PosixStreamingWriter(
         }
 
         fn registerPoll(this: *PosixWriter) void {
-            AutoFlusher.registerDeferredMicrotaskWithType(@This(), this, JSC.VirtualMachine.get());
             const poll = this.getPoll() orelse return;
             switch (poll.registerWithFd(@as(*Parent, @ptrCast(this.parent)).loop(), .writable, .dispatch, poll.fd)) {
                 .err => |err| {
@@ -589,18 +596,26 @@ pub fn PosixStreamingWriter(
                 return .{ .done = 0 };
             }
 
-            if (this.buffer.items.len + buf.len < chunk_size) {
-                if (this.buffer.items.len == 0) {
-                    registerPoll(this);
-                }
+            if (!this.force_sync and this.buffer.items.len + buf.len < chunk_size) {
+                const original_len = this.buffer.items.len;
                 this.buffer.appendSlice(buf) catch {
                     return .{ .err = bun.sys.Error.oom };
                 };
-                return .{ .pending = 0 };
+                if (original_len == 0) {
+                    // noop, but need this to have a chance
+                    // to register deferred tasks (onAutoFlush)
+                    onWrite(this.parent, 0, .pending);
+                    registerPoll(this);
+                }
+                return .{ .pending = buf.len };
             }
 
             this.head = 0;
-            const rc = @This()._tryWrite(this, buf);
+            const rc = if (this.force_sync)
+                @This()._tryWriteSync(this, buf)
+            else
+                @This()._tryWrite(this, buf);
+
             switch (rc) {
                 .pending => |amt| {
                     this.buffer.appendSlice(buf[amt..]) catch {
@@ -633,13 +648,6 @@ pub fn PosixStreamingWriter(
         }
 
         pub usingnamespace PosixPipeWriter(@This(), getFd, getBuffer, _onWrite, registerPoll, _onError, _onWritable, getFileType);
-
-        pub fn onAutoFlush(this: *@This()) bool {
-            return switch (this.flush()) {
-                .pending => true,
-                else => false,
-            };
-        }
 
         pub fn flush(this: *PosixWriter) WriteResult {
             if (this.closed_without_reporting or this.is_done) {

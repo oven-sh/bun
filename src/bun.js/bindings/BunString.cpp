@@ -96,7 +96,7 @@ extern "C" BunString BunString__tryCreateAtom(const char* bytes, size_t length)
 
 extern "C" JSC::EncodedJSValue BunString__createUTF8ForJS(JSC::JSGlobalObject* globalObject, const char* ptr, size_t length)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (length == 0) {
         return JSValue::encode(jsEmptyString(vm));
@@ -115,7 +115,7 @@ extern "C" JSC::EncodedJSValue BunString__createUTF8ForJS(JSC::JSGlobalObject* g
 
 extern "C" JSC::EncodedJSValue BunString__transferToJS(BunString* bunString, JSC::JSGlobalObject* globalObject)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (UNLIKELY(bunString->tag == BunStringTag::Empty || bunString->tag == BunStringTag::Dead)) {
@@ -431,7 +431,7 @@ extern "C" JSC::EncodedJSValue BunString__createArray(
     if (length == 0)
         return JSValue::encode(JSC::constructEmptyArray(globalObject, nullptr));
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     // Using tryCreateUninitialized here breaks stuff..

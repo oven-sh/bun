@@ -4286,9 +4286,7 @@ pub const GlobalCache = enum {
 };
 
 comptime {
-    if (!bun.JSC.is_bindgen) {
-        _ = Resolver.Resolver__propForRequireMainPaths;
-    }
+    _ = Resolver.Resolver__propForRequireMainPaths;
 }
 
 const assert = bun.assert;

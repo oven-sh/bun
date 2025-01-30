@@ -98,7 +98,7 @@ using JSAbortControllerDOMConstructor = JSDOMConstructor<JSAbortController>;
 
 template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSAbortControllerDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
-    auto& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = jsCast<JSAbortControllerDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);

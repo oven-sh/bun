@@ -148,7 +148,7 @@ static_assert(Event::BUBBLING_PHASE == 3, "BUBBLING_PHASE in Event does not matc
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = jsCast<JSEventDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
@@ -278,7 +278,7 @@ void JSEvent::destroy(JSC::JSCell* cell)
 
 JSC_DEFINE_CUSTOM_GETTER(jsEventConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSEventPrototype*>(JSValue::decode(thisValue));
     if (UNLIKELY(!prototype))

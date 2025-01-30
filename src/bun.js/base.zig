@@ -980,10 +980,8 @@ pub fn DOMCall(
         pub const Extern = [_][]const u8{"put"};
 
         comptime {
-            if (!JSC.is_bindgen) {
-                @export(slowpath, .{ .name = shim.symbolName("slowpath") });
-                @export(fastpath, .{ .name = shim.symbolName("fastpath") });
-            }
+            @export(slowpath, .{ .name = shim.symbolName("slowpath") });
+            @export(fastpath, .{ .name = shim.symbolName("fastpath") });
         }
     };
 }

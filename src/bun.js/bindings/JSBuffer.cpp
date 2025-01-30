@@ -214,7 +214,7 @@ std::optional<double> byteLength(JSC::JSString* str, JSC::JSGlobalObject* lexica
 static JSUint8Array* allocBuffer(JSC::JSGlobalObject* lexicalGlobalObject, size_t byteLength)
 {
 #if ASSERT_ENABLED
-    JSC::VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 #endif
 
@@ -235,7 +235,7 @@ static JSUint8Array* allocBufferUnsafe(JSC::JSGlobalObject* lexicalGlobalObject,
 {
 
 #if ASSERT_ENABLED
-    JSC::VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 #endif
 
@@ -450,7 +450,7 @@ extern "C" JSC::EncodedJSValue JSBuffer__bufferFromLength(JSC::JSGlobalObject* l
 // https://github.com/nodejs/node/blob/v22.9.0/lib/buffer.js#L404
 static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocUnsafeBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     JSValue lengthValue = callFrame->argument(0);
     Bun::V::validateNumber(throwScope, lexicalGlobalObject, lengthValue, "size"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength));
@@ -575,7 +575,7 @@ static inline JSC::EncodedJSValue constructBufferFromStringAndEncoding(JSC::JSGl
 // https://github.com/nodejs/node/blob/v22.9.0/lib/buffer.js#L391
 static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue lengthValue = callFrame->argument(0);
@@ -941,7 +941,7 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_copyBytesFromBody(
 
 static inline JSC::EncodedJSValue jsBufferConstructorFunction_isEncodingBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-    auto& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto encodingValue = callFrame->argument(0);
     if (!encodingValue.isString()) {
@@ -1756,7 +1756,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_SliceWithEncoding(JS
 
 // JSC_DEFINE_JIT_OPERATION(jsBufferPrototypeToStringWithoutTypeChecks, JSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSUint8Array* thisValue, JSString* encodingValue))
 // {
-//     VM& vm = JSC::getVM(lexicalGlobalObject);
+//     auto& vm = JSC::getVM(lexicalGlobalObject);
 //     IGNORE_WARNINGS_BEGIN("frame-address")
 //     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
 //     IGNORE_WARNINGS_END
@@ -2027,7 +2027,7 @@ extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsBufferConstructorAll
 
 JSC_DEFINE_JIT_OPERATION(jsBufferConstructorAllocWithoutTypeChecks, JSUint8Array*, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int byteLength))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     IGNORE_WARNINGS_BEGIN("frame-address")
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     IGNORE_WARNINGS_END
@@ -2037,7 +2037,7 @@ JSC_DEFINE_JIT_OPERATION(jsBufferConstructorAllocWithoutTypeChecks, JSUint8Array
 
 JSC_DEFINE_JIT_OPERATION(jsBufferConstructorAllocUnsafeWithoutTypeChecks, JSUint8Array*, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int byteLength))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     IGNORE_WARNINGS_BEGIN("frame-address")
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     IGNORE_WARNINGS_END
@@ -2047,7 +2047,7 @@ JSC_DEFINE_JIT_OPERATION(jsBufferConstructorAllocUnsafeWithoutTypeChecks, JSUint
 
 JSC_DEFINE_JIT_OPERATION(jsBufferConstructorAllocUnsafeSlowWithoutTypeChecks, JSUint8Array*, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int byteLength))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     IGNORE_WARNINGS_BEGIN("frame-address")
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     IGNORE_WARNINGS_END
@@ -2379,7 +2379,7 @@ JSC::JSObject* createBufferConstructor(JSC::VM& vm, JSC::JSGlobalObject* globalO
 
 static inline JSC::EncodedJSValue createJSBufferFromJS(JSC::JSGlobalObject* lexicalGlobalObject, JSValue newTarget, ArgList args)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     size_t argsCount = args.size();
     if (argsCount == 0) {
@@ -2562,7 +2562,7 @@ JSC_DEFINE_HOST_FUNCTION(constructJSBuffer, (JSC::JSGlobalObject * lexicalGlobal
 
 bool JSBuffer__isBuffer(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue value)
 {
-    JSC::VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
 
     JSC::JSValue jsValue = JSC::JSValue::decode(value);
     if (!jsValue || !jsValue.isCell())

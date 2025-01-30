@@ -970,25 +970,44 @@ pub fn format(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]J
     const allocator = stack_fallback.get();
 
     var root: []const u8 = "";
+    var root_slice: ?JSC.ZigString.Slice = null;
+    defer if (root_slice) |slice| slice.deinit();
+
     if (try pathObject_ptr.getTruthy(globalObject, "root")) |jsValue| {
-        root = jsValue.toSlice(globalObject, allocator).slice();
+        root_slice = try jsValue.toSlice(globalObject, allocator);
+        root = root_slice.?.slice();
     }
     var dir: []const u8 = "";
+    var dir_slice: ?JSC.ZigString.Slice = null;
+    defer if (dir_slice) |slice| slice.deinit();
+
     if (try pathObject_ptr.getTruthy(globalObject, "dir")) |jsValue| {
-        dir = jsValue.toSlice(globalObject, allocator).slice();
+        dir_slice = try jsValue.toSlice(globalObject, allocator);
+        dir = dir_slice.?.slice();
     }
     var base: []const u8 = "";
+    var base_slice: ?JSC.ZigString.Slice = null;
+    defer if (base_slice) |slice| slice.deinit();
+
     if (try pathObject_ptr.getTruthy(globalObject, "base")) |jsValue| {
-        base = jsValue.toSlice(globalObject, allocator).slice();
+        base_slice = try jsValue.toSlice(globalObject, allocator);
+        base = base_slice.?.slice();
     }
-    // Prefix with _ to avoid shadowing the identifier in the outer scope.
     var _name: []const u8 = "";
+    var _name_slice: ?JSC.ZigString.Slice = null;
+    defer if (_name_slice) |slice| slice.deinit();
+
     if (try pathObject_ptr.getTruthy(globalObject, "name")) |jsValue| {
-        _name = jsValue.toSlice(globalObject, allocator).slice();
+        _name_slice = try jsValue.toSlice(globalObject, allocator);
+        _name = _name_slice.?.slice();
     }
     var ext: []const u8 = "";
+    var ext_slice: ?JSC.ZigString.Slice = null;
+    defer if (ext_slice) |slice| slice.deinit();
+
     if (try pathObject_ptr.getTruthy(globalObject, "ext")) |jsValue| {
-        ext = jsValue.toSlice(globalObject, allocator).slice();
+        ext_slice = try jsValue.toSlice(globalObject, allocator);
+        ext = ext_slice.?.slice();
     }
     return formatJS_T(u8, globalObject, allocator, isWindows, .{ .root = root, .dir = dir, .base = base, .ext = ext, .name = _name });
 }

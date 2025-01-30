@@ -1804,6 +1804,22 @@ pub const Resolver = struct {
             dir_info = dir_info.getParent() orelse break;
         }
 
+        // try resolve from `NODE_PATH`
+        // https://nodejs.org/api/modules.html#loading-from-the-global-folders
+        const node_path: []const u8 = if (r.env_loader) |env_loader| env_loader.get("NODE_PATH") orelse "" else "";
+        if (node_path.len > 0) {
+            var it = std.mem.tokenize(u8, node_path, if (Environment.isWindows) ";" else ":");
+            while (it.next()) |path| {
+                const abs_path = r.fs.absBuf(&[_]string{ path, import_path }, bufs(.node_modules_check));
+                if (r.debug_logs) |*debug| {
+                    debug.addNoteFmt("Checking for a package in the NODE_PATH directory \"{s}\"", .{abs_path});
+                }
+                if (r.loadAsFileOrDirectory(abs_path, kind)) |res| {
+                    return .{ .success = res };
+                }
+            }
+        }
+
         dir_info = source_dir_info;
 
         // this is the magic!
@@ -2077,8 +2093,6 @@ pub const Resolver = struct {
             }
         }
 
-        // Mostly to cut scope, we don't resolve `NODE_PATH` environment variable.
-        // But also: https://github.com/nodejs/node/issues/38128#issuecomment-814969356
         return .{ .not_found = {} };
     }
     fn dirInfoForResolution(
@@ -3332,7 +3346,7 @@ pub const Resolver = struct {
     pub export fn Resolver__propForRequireMainPaths(globalThis: *bun.JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         bun.JSC.markBinding(@src());
 
-        const in_str = bun.String.createUTF8(".");
+        const in_str = bun.String.init(".");
         const r = &globalThis.bunVM().transpiler.resolver;
         return nodeModulePathsJSValue(r, in_str, globalThis);
     }
@@ -4237,9 +4251,7 @@ pub const GlobalCache = enum {
 };
 
 comptime {
-    if (!bun.JSC.is_bindgen) {
-        _ = Resolver.Resolver__propForRequireMainPaths;
-    }
+    _ = Resolver.Resolver__propForRequireMainPaths;
 }
 
 const assert = bun.assert;

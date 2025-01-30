@@ -660,7 +660,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                         const replacementValue = JSC.JSObject.getIndex(value, globalThis, 1);
                         if (exportReplacementValue(replacementValue, globalThis)) |to_replace| {
                             const replacementKey = JSC.JSObject.getIndex(value, globalThis, 0);
-                            var slice = (try replacementKey.toSlice(globalThis, bun.default_allocator).cloneIfNeeded(bun.default_allocator));
+                            var slice = (try (try replacementKey.toSlice(globalThis, bun.default_allocator)).cloneIfNeeded(bun.default_allocator));
                             const replacement_name = slice.slice();
 
                             if (!JSLexer.isIdentifier(replacement_name)) {
@@ -1022,7 +1022,7 @@ pub fn transformSync(
         arena.allocator(),
         code,
         loader,
-        if (comptime JSC.is_bindgen) Transpiler.MacroJSValueType.zero else js_ctx_value,
+        js_ctx_value,
     ) orelse {
         if ((this.transpiler.log.warnings + this.transpiler.log.errors) > 0) {
             return globalThis.throwValue(this.transpiler.log.toJS(globalThis, globalThis.allocator(), "Parse error"));

@@ -1,5 +1,5 @@
 {
-  "lockfileVersion": 0,
+  "lockfileVersion": 1,
   "workspaces": {
     "": {
       "name": "web-inspector-bun",
@@ -12,6 +12,9 @@
       "peerDependencies": {
         "typescript": "^5.0.0",
       },
+      "optionalPeers": [
+        "typescript",
+      ],
     },
   },
   "packages": {

@@ -86,7 +86,7 @@ static JSValue constructEnvObject(VM& vm, JSObject* object)
 
 static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Array(JSGlobalObject* lexicalGlobalObject, JSValue arrayValue, size_t maxLength, bool asUint8Array)
 {
-    auto& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
 
     if (arrayValue.isUndefinedOrNull() || !arrayValue) {
         return JSC::JSValue::encode(JSC::JSArrayBuffer::create(vm, lexicalGlobalObject->arrayBufferStructure(), JSC::ArrayBuffer::create(static_cast<size_t>(0), 1)));
@@ -228,7 +228,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
 
 JSC_DEFINE_HOST_FUNCTION(functionConcatTypedArrays, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     if (UNLIKELY(callFrame->argumentCount() < 1)) {
@@ -422,7 +422,7 @@ static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(functionBunEscapeHTMLWitho
 JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
 
     JSC::JSValue millisecondsValue = callFrame->argument(0);
 
@@ -448,7 +448,7 @@ extern "C" JSC::EncodedJSValue Bun__escapeHTML16(JSGlobalObject* globalObject, J
 
 JSC_DEFINE_HOST_FUNCTION(functionBunEscapeHTML, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     JSC::JSValue argument = callFrame->argument(0);
     if (argument.isEmpty())
         return JSValue::encode(jsEmptyString(vm));
@@ -477,7 +477,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunEscapeHTML, (JSC::JSGlobalObject * lexicalGl
 JSC_DEFINE_HOST_FUNCTION(functionBunDeepEquals, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto* global = reinterpret_cast<GlobalObject*>(globalObject);
-    JSC::VM& vm = global->vm();
+    auto& vm = JSC::getVM(global);
 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -509,7 +509,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepEquals, (JSGlobalObject * globalObject, 
 JSC_DEFINE_HOST_FUNCTION(functionBunDeepMatch, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto* global = reinterpret_cast<GlobalObject*>(globalObject);
-    JSC::VM& vm = global->vm();
+    auto& vm = JSC::getVM(global);
 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -550,20 +550,26 @@ JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGl
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto pathValue = callFrame->argument(0);
 
-    WTF::String pathString = pathValue.toWTFString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode({}));
+    JSValue jsValue;
 
-    pathString = pathResolveWTFString(lexicalGlobalObject, pathString);
+    {
+        WTF::String pathString = pathValue.toWTFString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode({}));
+        pathString = pathResolveWTFString(lexicalGlobalObject, pathString);
 
-    auto fileURL = WTF::URL::fileURLWithFileSystemPath(pathString);
-    auto object = WebCore::DOMURL::create(fileURL.string(), String());
-    auto jsValue = WebCore::toJSNewlyCreated<IDLInterface<DOMURL>>(*lexicalGlobalObject, globalObject, throwScope, WTFMove(object));
+        auto fileURL = WTF::URL::fileURLWithFileSystemPath(pathString);
+        auto object = WebCore::DOMURL::create(fileURL.string(), String());
+        jsValue = WebCore::toJSNewlyCreated<IDLInterface<DOMURL>>(*lexicalGlobalObject, globalObject, throwScope, WTFMove(object));
+    }
+
+    auto* jsDOMURL = jsCast<JSDOMURL*>(jsValue.asCell());
+    vm.heap.reportExtraMemoryAllocated(jsDOMURL, jsDOMURL->wrapped().memoryCostForGC());
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(jsValue));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     vm.ensureHeapProfiler();
     auto& heapProfiler = *vm.heapProfiler();
     heapProfiler.clearSnapshots();
@@ -602,7 +608,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
 
 JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue arg0 = callFrame->argument(0);
     WTF::URL url;
@@ -646,28 +652,19 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
 #endif
 
     // ban url-encoded slashes. '/' on posix, '/' and '\' on windows.
-    StringView p = url.path();
-    if (p.length() > 3) {
-        for (int i = 0; i < p.length() - 2; i++) {
-            if (p[i] == '%') {
-                const char second = p[i + 1];
-                const uint8_t third = p[i + 2] | 0x20;
+    const StringView p = url.path();
+    if (p.contains('%')) {
 #if OS(WINDOWS)
-                if (
-                    (second == '2' && third == 102) || // 2f 2F    '/'
-                    (second == '5' && third == 99) // 5c 5C    '\'
-                ) {
-                    Bun::ERR::INVALID_FILE_URL_PATH(scope, globalObject, "must not include encoded \\ or / characters"_s);
-                    return {};
-                }
-#else
-                if (second == '2' && third == 102) {
-                    Bun::ERR::INVALID_FILE_URL_PATH(scope, globalObject, "must not include encoded / characters"_s);
-                    return {};
-                }
-#endif
-            }
+        if (p.contains("%2f"_s) || p.contains("%5c"_s) || p.contains("%2F"_s) || p.contains("%5C"_s)) {
+            Bun::ERR::INVALID_FILE_URL_PATH(scope, globalObject, "must not include encoded \\ or / characters"_s);
+            return {};
         }
+#else
+        if (p.contains("%2f"_s) || p.contains("%2F"_s)) {
+            Bun::ERR::INVALID_FILE_URL_PATH(scope, globalObject, "must not include encoded / characters"_s);
+            return {};
+        }
+#endif
     }
 
     auto fileSystemPath = url.fileSystemPath();

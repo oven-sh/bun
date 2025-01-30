@@ -24,6 +24,12 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+const enum BunProcessStdinFdType {
+  file = 0,
+  pipe = 1,
+  socket = 2,
+}
+
 export function getStdioWriteStream(fd) {
   $assert(typeof fd === "number", `Expected fd to be a number, got ${typeof fd}`);
   const tty = require("node:tty");
@@ -68,30 +74,25 @@ export function getStdioWriteStream(fd) {
   return [stream, underlyingSink];
 }
 
-export function getStdinStream(fd) {
+export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType) {
   const native = Bun.stdin.stream();
+  // @ts-expect-error
+  const source = native.$bunNativePtr;
 
   var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-  var readerRef;
 
   var shouldUnref = false;
 
   function ref() {
     $debug("ref();", reader ? "already has reader" : "getting reader");
     reader ??= native.getReader();
-    // TODO: remove this. likely we are dereferencing the stream
-    // when there is still more data to be read.
-    readerRef ??= setInterval(() => {}, 1 << 30);
+    source.updateRef(true);
     shouldUnref = false;
   }
 
   function unref() {
     $debug("unref();");
-    if (readerRef) {
-      clearInterval(readerRef);
-      readerRef = undefined;
-      $debug("cleared timeout");
-    }
+
     if (reader) {
       try {
         reader.releaseLock();
@@ -120,12 +121,13 @@ export function getStdinStream(fd) {
           }
         }
       }
+    } else if (source) {
+      source.updateRef(false);
     }
   }
 
-  const tty = require("node:tty");
-  const ReadStream = tty.isatty(fd) ? tty.ReadStream : require("node:fs").ReadStream;
-  const stream = new ReadStream(null, { fd });
+  const ReadStream = isTTY ? require("node:tty").ReadStream : require("node:fs").ReadStream;
+  const stream = new ReadStream(null, { fd, autoClose: false });
 
   const originalOn = stream.on;
 
@@ -148,6 +150,20 @@ export function getStdinStream(fd) {
   };
 
   stream.fd = fd;
+
+  // tty.ReadStream is supposed to extend from net.Socket.
+  // but we haven't made that work yet. Until then, we need to manually add some of net.Socket's methods
+  if (isTTY || fdType !== BunProcessStdinFdType.file) {
+    stream.ref = function () {
+      ref();
+      return this;
+    };
+
+    stream.unref = function () {
+      unref();
+      return this;
+    };
+  }
 
   const originalPause = stream.pause;
   stream.pause = function () {
@@ -246,7 +262,6 @@ export function getStdinStream(fd) {
 
   return stream;
 }
-
 export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksFn, reportUncaughtExceptionFn) {
   var queue;
   var process;

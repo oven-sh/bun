@@ -107,11 +107,9 @@ pub const Request = struct {
     }
 
     comptime {
-        if (!JSC.is_bindgen) {
-            _ = Request__getUWSRequest;
-            _ = Request__setInternalEventCallback;
-            _ = Request__setTimeout;
-        }
+        _ = Request__getUWSRequest;
+        _ = Request__setInternalEventCallback;
+        _ = Request__setTimeout;
     }
 
     pub const InternalJSEventCallback = struct {
@@ -490,6 +488,7 @@ pub const Request = struct {
                     const href = bun.JSC.URL.hrefFromString(this.url);
                     // TODO: what is the right thing to do for invalid URLS?
                     if (!href.isEmpty()) {
+                        this.url.deref();
                         this.url = href;
                     }
 

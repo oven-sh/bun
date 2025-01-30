@@ -1104,7 +1104,10 @@ pub const H2FrameParser = struct {
                 this.signal = null;
                 signal.deinit();
             }
-            JSC.VirtualMachine.get().eventLoop().processGCTimer();
+            // unsafe to ask GC to run if we are already inside GC
+            if (!finalizing) {
+                JSC.VirtualMachine.get().eventLoop().processGCTimer();
+            }
         }
     };
 

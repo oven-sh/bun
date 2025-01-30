@@ -3,6 +3,7 @@ const bun = @import("root").bun;
 const strings = bun.strings;
 const S3Credentials = @import("./credentials.zig").S3Credentials;
 const ACL = @import("./acl.zig").ACL;
+const Storageclass = @import("./storage_class.zig").StorageClass;
 const JSC = bun.JSC;
 const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploadOptions;
 const S3SimpleRequest = @import("./simple_request.zig");
@@ -25,6 +26,7 @@ pub const MultiPartUpload = struct {
 
     options: MultiPartUploadOptions = .{},
     acl: ?ACL = null,
+    storage_class: ?Storageclass = null,
     credentials: *S3Credentials,
     poll_ref: bun.Async.KeepAlive = bun.Async.KeepAlive.init(),
     vm: *JSC.VirtualMachine,
@@ -216,6 +218,7 @@ pub const MultiPartUpload = struct {
                         .body = this.buffered.items,
                         .content_type = this.content_type,
                         .acl = this.acl,
+                        .storage_class = this.storage_class,
                     }, .{ .upload = @ptrCast(&singleSendUploadResponse) }, this);
 
                     return;
@@ -457,6 +460,7 @@ pub const MultiPartUpload = struct {
                 .search_params = "?uploads=",
                 .content_type = this.content_type,
                 .acl = this.acl,
+                .storage_class = this.storage_class,
             }, .{ .download = @ptrCast(&startMultiPartRequestResult) }, this);
         } else if (this.state == .multipart_completed) {
             part.start();
@@ -532,6 +536,7 @@ pub const MultiPartUpload = struct {
                 .body = this.buffered.items,
                 .content_type = this.content_type,
                 .acl = this.acl,
+                .storage_class = this.storage_class,
             }, .{ .upload = @ptrCast(&singleSendUploadResponse) }, this);
         } else {
             // we need to split

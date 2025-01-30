@@ -8,7 +8,6 @@ const String = bun.String;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
 const strings = bun.strings;
-const is_bindgen = JSC.is_bindgen;
 const ZigException = JSC.ZigException;
 const ZigString = JSC.ZigString;
 const VirtualMachine = JSC.VirtualMachine;
@@ -104,10 +103,6 @@ fn messageWithTypeAndLevel_(
     vals: [*]const JSValue,
     len: usize,
 ) bun.JSError!void {
-    if (comptime is_bindgen) {
-        return;
-    }
-
     var console = global.bunVM().console;
     defer console.default_indent +|= @as(u16, @intFromBool(message_type == .StartGroup));
 
@@ -2098,7 +2093,7 @@ pub const Formatter = struct {
 
         switch (comptime Format) {
             .StringPossiblyFormatted => {
-                var str = value.toSlice(this.globalThis, bun.default_allocator);
+                var str = try value.toSlice(this.globalThis, bun.default_allocator);
                 defer str.deinit();
                 this.addForNewLine(str.len);
                 const slice = str.slice();
@@ -2262,7 +2257,7 @@ pub const Formatter = struct {
                     this.addForNewLine(description.len + "()".len);
                     writer.print(comptime Output.prettyFmt("<r><blue>Symbol({any})<r>", enable_ansi_colors), .{description});
                 } else {
-                    writer.print(comptime Output.prettyFmt("<r><blue>Symbol<r>", enable_ansi_colors), .{});
+                    writer.print(comptime Output.prettyFmt("<r><blue>Symbol()<r>", enable_ansi_colors), .{});
                 }
             },
             .Error => {

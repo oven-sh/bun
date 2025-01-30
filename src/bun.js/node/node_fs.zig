@@ -36,8 +36,8 @@ const TimeLike = JSC.Node.TimeLike;
 const Mode = bun.Mode;
 const uv = bun.windows.libuv;
 const E = C.E;
-const uid_t = if (Environment.isPosix) std.posix.uid_t else bun.windows.libuv.uv_uid_t;
-const gid_t = if (Environment.isPosix) std.posix.gid_t else bun.windows.libuv.uv_gid_t;
+const uid_t = JSC.Node.uid_t;
+const gid_t = JSC.Node.gid_t;
 const ReadPosition = i64;
 const StringOrBuffer = JSC.Node.StringOrBuffer;
 const NodeFSFunctionEnum = std.meta.DeclEnum(JSC.Node.NodeFS);
@@ -1915,7 +1915,7 @@ pub const Arguments = struct {
             // will automatically be normalized to absolute path.
             const link_type: LinkType = link_type: {
                 if (arguments.next()) |next_val| {
-                    if (next_val.isUndefined()) {
+                    if (next_val.isUndefinedOrNull()) {
                         break :link_type .unspecified;
                     }
                     if (next_val.isString()) {
@@ -3572,7 +3572,7 @@ pub const NodeFS = struct {
                     }
 
                     if (ret.errnoSysP(C.clonefile(src, dest, 0), .copyfile, src) == null) {
-                        _ = C.chmod(dest, stat_.mode);
+                        _ = Syscall.chmod(dest, stat_.mode);
                         return ret.success;
                     }
                 } else {
@@ -3595,8 +3595,8 @@ pub const NodeFS = struct {
                         .err => |err| return Maybe(Return.CopyFile){ .err = err.withPath(args.dest.slice()) },
                     };
                     defer {
-                        _ = std.c.ftruncate(dest_fd.int(), @as(std.c.off_t, @intCast(@as(u63, @truncate(wrote)))));
-                        _ = C.fchmod(dest_fd.int(), stat_.mode);
+                        _ = Syscall.ftruncate(dest_fd, @as(std.c.off_t, @intCast(@as(u63, @truncate(wrote)))));
+                        _ = Syscall.fchmod(dest_fd, stat_.mode);
                         _ = Syscall.close(dest_fd);
                     }
 
@@ -3659,7 +3659,7 @@ pub const NodeFS = struct {
                     _ = bun.sys.unlink(dest);
                     return err;
                 }
-                _ = C.fchmod(dest_fd.cast(), stat_.mode);
+                _ = Syscall.fchmod(dest_fd, stat_.mode);
                 _ = Syscall.close(dest_fd);
                 return ret.success;
             }
@@ -3668,7 +3668,7 @@ pub const NodeFS = struct {
             if (posix.S.ISREG(stat_.mode) and bun.can_use_ioctl_ficlone()) {
                 const rc = bun.C.linux.ioctl_ficlone(dest_fd, src_fd);
                 if (rc == 0) {
-                    _ = C.fchmod(dest_fd.cast(), stat_.mode);
+                    _ = Syscall.fchmod(dest_fd, stat_.mode);
                     _ = Syscall.close(dest_fd);
                     return ret.success;
                 }
@@ -3791,8 +3791,10 @@ pub const NodeFS = struct {
             };
         }
 
-        return Maybe(Return.Chmod).errnoSysP(C.chmod(path, args.mode), .chmod, path) orelse
-            Maybe(Return.Chmod).success;
+        return switch (Syscall.chmod(path, args.mode)) {
+            .err => |err| .{ .err = err.withPath(args.path.slice()) },
+            .result => Maybe(Return.Chmod).success,
+        };
     }
 
     pub fn fchmod(_: *NodeFS, args: Arguments.FChmod, _: Flavor) Maybe(Return.Fchmod) {
@@ -3800,12 +3802,7 @@ pub const NodeFS = struct {
     }
 
     pub fn fchown(_: *NodeFS, args: Arguments.Fchown, _: Flavor) Maybe(Return.Fchown) {
-        if (comptime Environment.isWindows) {
-            return Syscall.fchown(args.fd, args.uid, args.gid);
-        }
-
-        return Maybe(Return.Fchown).errnoSys(C.fchown(args.fd.int(), args.uid, args.gid), .fchown) orelse
-            Maybe(Return.Fchown).success;
+        return Syscall.fchown(args.fd, args.uid, args.gid);
     }
 
     pub fn fdatasync(_: *NodeFS, args: Arguments.FdataSync, _: Flavor) Maybe(Return.Fdatasync) {
@@ -3817,7 +3814,7 @@ pub const NodeFS = struct {
 
     pub fn fstat(_: *NodeFS, args: Arguments.Fstat, _: Flavor) Maybe(Return.Fstat) {
         return switch (Syscall.fstat(args.fd)) {
-            .result => |result| .{ .result = Stats.init(result, false) },
+            .result => |result| .{ .result = Stats.init(result, args.big_int) },
             .err => |err| .{ .err = err },
         };
     }
@@ -3849,15 +3846,10 @@ pub const NodeFS = struct {
                 Maybe(Return.Futimes).success;
         }
 
-        var times = [2]std.posix.timespec{
-            args.atime,
-            args.mtime,
+        return switch (Syscall.futimens(args.fd, args.atime, args.mtime)) {
+            .err => |err| .{ .err = err },
+            .result => Maybe(Return.Futimes).success,
         };
-
-        return if (Maybe(Return.Futimes).errnoSysFd(system.futimens(args.fd.int(), &times), .futime, args.fd)) |err|
-            err
-        else
-            Maybe(Return.Futimes).success;
     }
 
     pub fn lchmod(this: *NodeFS, args: Arguments.LCHmod, _: Flavor) Maybe(Return.Lchmod) {
@@ -5919,21 +5911,15 @@ pub const NodeFS = struct {
 
         bun.assert(args.mtime.tv_nsec <= 1e9);
         bun.assert(args.atime.tv_nsec <= 1e9);
-        var times = [2]std.c.timeval{
-            .{
-                .tv_sec = args.atime.tv_sec,
-                .tv_usec = @intCast(@divTrunc(args.atime.tv_nsec, std.time.ns_per_us)),
-            },
-            .{
-                .tv_sec = args.mtime.tv_sec,
-                .tv_usec = @intCast(@divTrunc(args.mtime.tv_nsec, std.time.ns_per_us)),
-            },
-        };
 
-        return if (Maybe(Return.Utimes).errnoSysP(std.c.utimes(args.path.sliceZ(&this.sync_error_buf), &times), .utime, args.path.slice())) |err|
-            .{ .err = err.err.withPath(args.path.slice()) }
-        else
-            Maybe(Return.Utimes).success;
+        return switch (Syscall.utimens(
+            args.path.sliceZ(&this.sync_error_buf),
+            args.atime,
+            args.mtime,
+        )) {
+            .err => |err| .{ .err = err.withPath(args.path.slice()) },
+            .result => Maybe(Return.Utimes).success,
+        };
     }
 
     pub fn lutimes(this: *NodeFS, args: Arguments.Lutimes, _: Flavor) Maybe(Return.Lutimes) {
@@ -5960,21 +5946,11 @@ pub const NodeFS = struct {
 
         bun.assert(args.mtime.tv_nsec <= 1e9);
         bun.assert(args.atime.tv_nsec <= 1e9);
-        var times = [2]std.c.timeval{
-            .{
-                .tv_sec = args.atime.tv_sec,
-                .tv_usec = @intCast(@divTrunc(args.atime.tv_nsec, std.time.ns_per_us)),
-            },
-            .{
-                .tv_sec = args.mtime.tv_sec,
-                .tv_usec = @intCast(@divTrunc(args.mtime.tv_nsec, std.time.ns_per_us)),
-            },
-        };
 
-        return if (Maybe(Return.Lutimes).errnoSysP(C.lutimes(args.path.sliceZ(&this.sync_error_buf), &times), .lutime, args.path.slice())) |err|
-            .{ .err = err.err.withPath(args.path.slice()) }
-        else
-            Maybe(Return.Lutimes).success;
+        return switch (Syscall.lutimes(args.path.sliceZ(&this.sync_error_buf), args.atime, args.mtime)) {
+            .err => |err| .{ .err = err.withPath(args.path.slice()) },
+            .result => Maybe(Return.Lutimes).success,
+        };
     }
 
     pub fn watch(_: *NodeFS, args: Arguments.Watch, _: Flavor) Maybe(Return.Watch) {
@@ -6270,7 +6246,7 @@ pub const NodeFS = struct {
                     }
 
                     if (ret.errnoSysP(C.clonefile(src, dest, 0), .clonefile, src) == null) {
-                        _ = C.chmod(dest, stat_.mode);
+                        _ = Syscall.chmod(dest, stat_.mode);
                         return ret.success;
                     }
                 } else {
@@ -6321,8 +6297,8 @@ pub const NodeFS = struct {
                         }
                     };
                     defer {
-                        _ = std.c.ftruncate(dest_fd.int(), @as(std.c.off_t, @intCast(@as(u63, @truncate(wrote)))));
-                        _ = C.fchmod(dest_fd.int(), stat_.mode);
+                        _ = Syscall.ftruncate(dest_fd, @intCast(@as(u63, @truncate(wrote))));
+                        _ = Syscall.fchmod(dest_fd, stat_.mode);
                         _ = Syscall.close(dest_fd);
                     }
 
@@ -6421,7 +6397,7 @@ pub const NodeFS = struct {
             if (posix.S.ISREG(stat_.mode) and bun.can_use_ioctl_ficlone()) {
                 const rc = bun.C.linux.ioctl_ficlone(dest_fd, src_fd);
                 if (rc == 0) {
-                    _ = C.fchmod(dest_fd.cast(), stat_.mode);
+                    _ = Syscall.fchmod(dest_fd, stat_.mode);
                     _ = Syscall.close(dest_fd);
                     return ret.success;
                 }
@@ -6430,8 +6406,8 @@ pub const NodeFS = struct {
             }
 
             defer {
-                _ = linux.ftruncate(dest_fd.cast(), @as(i64, @intCast(@as(u63, @truncate(wrote)))));
-                _ = linux.fchmod(dest_fd.cast(), stat_.mode);
+                _ = Syscall.ftruncate(dest_fd, @as(i64, @intCast(@as(u63, @truncate(wrote)))));
+                _ = Syscall.fchmod(dest_fd, stat_.mode);
                 _ = Syscall.close(dest_fd);
             }
 
@@ -6578,8 +6554,7 @@ pub export fn Bun__mkdirp(globalThis: *JSC.JSGlobalObject, path: [*:0]const u8) 
 }
 
 comptime {
-    if (!JSC.is_bindgen)
-        _ = Bun__mkdirp;
+    _ = Bun__mkdirp;
 }
 
 /// Copied from std.fs.Dir.deleteTree. This function returns `FileNotFound` instead of ignoring it, which

@@ -1,4 +1,3 @@
-pub const is_bindgen = false;
 const bun = @import("root").bun;
 const Api = bun.ApiSchema;
 const std = @import("std");
@@ -10,8 +9,10 @@ pub const u_int64_t = c_ulonglong;
 pub const LIBUS_LISTEN_DEFAULT: i32 = 0;
 pub const LIBUS_LISTEN_EXCLUSIVE_PORT: i32 = 1;
 pub const LIBUS_SOCKET_ALLOW_HALF_OPEN: i32 = 2;
-pub const LIBUS_SOCKET_REUSE_PORT: i32 = 4;
+pub const LIBUS_LISTEN_REUSE_PORT: i32 = 4;
 pub const LIBUS_SOCKET_IPV6_ONLY: i32 = 8;
+pub const LIBUS_LISTEN_REUSE_ADDR: i32 = 16;
+pub const LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE: i32 = 32;
 
 pub const Socket = opaque {
     pub fn write2(this: *Socket, first: []const u8, second: []const u8) i32 {
@@ -2641,9 +2642,8 @@ pub const us_bun_socket_context_options_t = extern struct {
     client_renegotiation_limit: u32 = 3,
     client_renegotiation_window: u32 = 600,
 };
-pub extern fn create_ssl_context_from_bun_options(options: us_bun_socket_context_options_t) ?*BoringSSL.SSL_CTX;
 
-pub const create_bun_socket_error_t = enum(i32) {
+pub const create_bun_socket_error_t = enum(c_int) {
     none = 0,
     load_ca_file,
     invalid_ca_file,
@@ -2661,6 +2661,8 @@ pub const create_bun_socket_error_t = enum(i32) {
         };
     }
 };
+
+pub extern fn create_ssl_context_from_bun_options(options: us_bun_socket_context_options_t, err: *create_bun_socket_error_t) ?*BoringSSL.SSL_CTX;
 
 pub const us_bun_verify_error_t = extern struct {
     error_no: i32 = 0,
@@ -3370,10 +3372,6 @@ pub fn NewApp(comptime ssl: bool) type {
         }
 
         pub fn clearRoutes(app: *ThisApp) void {
-            if (comptime is_bindgen) {
-                unreachable;
-            }
-
             return uws_app_clear_routes(ssl_flag, @as(*uws_app_t, @ptrCast(app)));
         }
 

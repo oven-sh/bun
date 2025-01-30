@@ -136,9 +136,8 @@ void Worker::setKeepAlive(bool keepAlive)
 bool Worker::updatePtr()
 {
     if (!WebWorker__updatePtr(impl_, this)) {
-        m_wasTerminated = true;
-        m_isClosing = true;
-        m_isOnline = false;
+        m_onlineClosingFlags = ClosingFlag;
+        m_terminationFlags.fetch_or(TerminatedFlag);
         return false;
     }
 
@@ -198,6 +197,8 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
         execArgv ? static_cast<uint32_t>(execArgv->size()) : 0,
         preloadModules.size() ? preloadModules.data() : nullptr,
         static_cast<uint32_t>(preloadModules.size()));
+    // now referenced by Zig
+    worker->ref();
 
     preloadModuleStrings->clear();
 
@@ -222,7 +223,7 @@ Worker::~Worker()
 
 ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue messageValue, StructuredSerializeOptions&& options)
 {
-    if (m_wasTerminated)
+    if (m_terminationFlags & TerminatedFlag)
         return Exception { InvalidStateError, "Worker has been terminated"_s };
 
     Vector<RefPtr<MessagePort>> ports;
@@ -251,7 +252,7 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
 void Worker::terminate()
 {
     // m_contextProxy.terminateWorkerGlobalScope();
-    m_wasTerminated = true;
+    m_terminationFlags.fetch_or(TerminateRequestedFlag);
     WebWorker__requestTerminate(impl_);
 }
 
@@ -283,16 +284,17 @@ void Worker::terminate()
 
 bool Worker::hasPendingActivity() const
 {
-    if (this->m_isOnline) {
-        return !this->m_isClosing;
+    auto onlineClosingFlags = m_onlineClosingFlags.load();
+    if (onlineClosingFlags & OnlineFlag) {
+        return !(onlineClosingFlags & ClosingFlag);
     }
 
-    return !this->m_wasTerminated;
+    return !(m_terminationFlags & TerminatedFlag);
 }
 
 void Worker::dispatchEvent(Event& event)
 {
-    if (!m_wasTerminated)
+    if (!m_terminationFlags)
         EventTargetWithInlineData::dispatchEvent(event);
 }
 
@@ -338,7 +340,7 @@ void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
 
     Locker lock(this->m_pendingTasksMutex);
 
-    this->m_isOnline = true;
+    m_onlineClosingFlags.fetch_or(OnlineFlag);
     auto* thisContext = workerGlobalObject->scriptExecutionContext();
     if (!thisContext) {
         return;
@@ -386,20 +388,19 @@ void Worker::dispatchExit(int32_t exitCode)
         return;
 
     ScriptExecutionContext::postTaskTo(ctx->identifier(), [exitCode, protectedThis = Ref { *this }](ScriptExecutionContext& context) -> void {
-        protectedThis->m_isOnline = false;
-        protectedThis->m_isClosing = true;
+        protectedThis->m_onlineClosingFlags = ClosingFlag;
 
         if (protectedThis->hasEventListeners(eventNames().closeEvent)) {
             auto event = CloseEvent::create(exitCode == 0, static_cast<unsigned short>(exitCode), exitCode == 0 ? "Worker terminated normally"_s : "Worker exited abnormally"_s);
             protectedThis->dispatchCloseEvent(event);
         }
-        protectedThis->m_wasTerminated = true;
+        protectedThis->m_terminationFlags.fetch_or(TerminatedFlag);
     });
 }
 
 void Worker::postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&& task)
 {
-    if (!this->m_isOnline) {
+    if (!(m_onlineClosingFlags & OnlineFlag)) {
         Locker lock(this->m_pendingTasksMutex);
         this->m_pendingTasks.append(WTFMove(task));
         return;
@@ -417,13 +418,12 @@ void Worker::forEachWorker(const Function<Function<void(ScriptExecutionContext&)
 
 extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker* worker, int32_t exitCode)
 {
-
-    worker->ref();
     worker->dispatchExit(exitCode);
+    // no longer referenced by Zig
     worker->deref();
 
     if (globalObject) {
-        JSC::VM& vm = globalObject->vm();
+        auto& vm = JSC::getVM(globalObject);
         vm.setHasTerminationRequest();
 
         {
@@ -462,7 +462,7 @@ extern "C" WebCore::Worker* WebWorker__getParentWorker(void*);
 
 JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    auto& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (callFrame->argumentCount() < 1) {

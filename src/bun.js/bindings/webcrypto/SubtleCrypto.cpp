@@ -260,6 +260,9 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::Ed25519:
             result = makeUnique<CryptoAlgorithmParameters>(params);
             break;
+        case CryptoAlgorithmIdentifier::X25519:
+            result = makeUnique<CryptoAlgorithmParameters>(params);
+            break;
         default:
             return Exception { NotSupportedError };
         }
@@ -328,6 +331,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::AES_CFB:
         case CryptoAlgorithmIdentifier::AES_KW:
         case CryptoAlgorithmIdentifier::Ed25519:
+        case CryptoAlgorithmIdentifier::X25519:
             result = makeUnique<CryptoAlgorithmParameters>(params);
             break;
         case CryptoAlgorithmIdentifier::HMAC: {
@@ -540,6 +544,7 @@ static bool isSupportedExportKey(JSGlobalObject& state, CryptoAlgorithmIdentifie
     case CryptoAlgorithmIdentifier::ECDSA:
     case CryptoAlgorithmIdentifier::ECDH:
     case CryptoAlgorithmIdentifier::Ed25519:
+    case CryptoAlgorithmIdentifier::X25519:
         return true;
     default:
         return false;

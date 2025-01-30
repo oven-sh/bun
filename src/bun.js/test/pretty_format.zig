@@ -4,7 +4,6 @@ const Output = bun.Output;
 const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
-const is_bindgen: bool = false;
 const default_allocator = bun.default_allocator;
 const CAPI = JSC.C;
 const ZigString = JSC.ZigString;
@@ -933,7 +932,7 @@ pub const JestPrettyFormat = struct {
 
             switch (comptime Format) {
                 .StringPossiblyFormatted => {
-                    var str = value.toSlice(this.globalThis, bun.default_allocator);
+                    var str = try value.toSlice(this.globalThis, bun.default_allocator);
                     defer str.deinit();
                     this.addForNewLine(str.len);
                     const slice = str.slice();
@@ -1979,9 +1978,6 @@ pub const JestPrettyFormat = struct {
         }
 
         pub fn format(this: *JestPrettyFormat.Formatter, result: Tag.Result, comptime Writer: type, writer: Writer, value: JSValue, globalThis: *JSGlobalObject, comptime enable_ansi_colors: bool) bun.JSError!void {
-            if (comptime is_bindgen) {
-                return;
-            }
             const prevGlobalThis = this.globalThis;
             defer this.globalThis = prevGlobalThis;
             this.globalThis = globalThis;

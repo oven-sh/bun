@@ -1527,7 +1527,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
     }
 #endif
 
-    return Bun__Timer__setTimeout(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(num), JSValue::encode(arguments));
+    return Bun__Timer__setTimeout(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(num), JSValue::encode(arguments), false);
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionSetInterval,

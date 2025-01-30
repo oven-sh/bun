@@ -244,6 +244,7 @@ pub const All = struct {
         callback: JSValue,
         countdown: JSValue,
         arguments: JSValue,
+        saturateTimeoutOnOverflowInsteadOfZeroing: bool,
     ) callconv(.C) JSValue {
         JSC.markBinding(@src());
         const id = globalThis.bunVM().timer.last_id;
@@ -252,12 +253,15 @@ pub const All = struct {
         // TODO: this is wrong as it clears exceptions
         const countdown_double = countdown.coerceToDouble(globalThis);
 
-        const countdown_int: i32 = if (!std.math.isFinite(countdown_double))
-            1
-        else if (countdown_double < std.math.minInt(i32) or countdown_double > std.math.maxInt(i32))
-            1
+        const countdown_int: i32 = if (saturateTimeoutOnOverflowInsteadOfZeroing)
+            std.math.lossyCast(i32, countdown_double)
         else
-            @max(1, @as(i32, @intFromFloat(countdown_double)));
+            (if (!std.math.isFinite(countdown_double))
+                1
+            else if (countdown_double < std.math.minInt(i32) or countdown_double > std.math.maxInt(i32))
+                1
+            else
+                @max(1, @as(i32, @intFromFloat(countdown_double))));
 
         const wrappedCallback = callback.withAsyncContextIfNeeded(globalThis);
 

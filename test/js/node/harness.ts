@@ -372,6 +372,7 @@ if (normalized.includes("node/test/parallel")) {
 
     return {
       test,
+      it: test,
       describe,
     };
   }

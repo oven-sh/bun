@@ -3647,7 +3647,7 @@ pub const FileSink = struct {
                     } else if (!is_nonblocking) {
                         if (!is_nonblocking and !this.force_sync) {
                             is_nonblocking = switch (bun.sys.getFcntlFlags(fd)) {
-                                .result => |flags| (flags & bun.O.NONBLOCK) != 0,
+                                .result => |flags| (flags & @as(@TypeOf(flags), bun.O.NONBLOCK)) != 0,
                                 .err => false,
                             };
                         }

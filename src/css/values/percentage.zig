@@ -492,16 +492,7 @@ pub const NumberOrPercentage = union(enum) {
     }
 
     pub fn eql(this: *const NumberOrPercentage, other: *const NumberOrPercentage) bool {
-        return switch (this.*) {
-            .number => |*a| switch (other.*) {
-                .number => a.* == other.number,
-                .percentage => false,
-            },
-            .percentage => |*a| switch (other.*) {
-                .number => false,
-                .percentage => a.eql(&other.percentage),
-            },
-        };
+        return css.implementEql(@This(), this, other);
     }
 
     pub fn intoF32(this: *const @This()) f32 {

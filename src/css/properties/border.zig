@@ -158,7 +158,7 @@ pub fn GenericBorder(comptime S: type, comptime P: u8) type {
         }
 
         pub fn eql(this: *const This, other: *const This) bool {
-            return this.width.eql(&other.width) and this.style.eql(&other.style) and this.color.eql(&other.color);
+            return css.implementEql(@This(), this, other);
         }
 
         pub inline fn default() This {
@@ -237,24 +237,7 @@ pub const BorderSideWidth = union(enum) {
     pub fn deinit(_: *@This(), _: std.mem.Allocator) void {}
 
     pub fn eql(this: *const @This(), other: *const @This()) bool {
-        return switch (this.*) {
-            .thin => switch (other.*) {
-                .thin => true,
-                else => false,
-            },
-            .medium => switch (other.*) {
-                .medium => true,
-                else => false,
-            },
-            .thick => switch (other.*) {
-                .thick => true,
-                else => false,
-            },
-            .length => switch (other.*) {
-                .length => this.length.eql(&other.length),
-                else => false,
-            },
-        };
+        return css.implementEql(@This(), this, other);
     }
 };
 

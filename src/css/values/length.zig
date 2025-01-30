@@ -34,10 +34,7 @@ pub const LengthOrNumber = union(enum) {
     }
 
     pub fn eql(this: *const @This(), other: *const @This()) bool {
-        return switch (this.*) {
-            .number => |*n| n.* == other.number,
-            .length => |*l| l.eql(&other.length),
-        };
+        return css.implementEql(@This(), this, other);
     }
 
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
@@ -573,10 +570,7 @@ pub const Length = union(enum) {
     }
 
     pub fn eql(this: *const @This(), other: *const @This()) bool {
-        return switch (this.*) {
-            .value => |a| other.* == .value and a.eql(&other.value),
-            .calc => |a| other.* == .calc and a.eql(other.calc),
-        };
+        return css.implementEql(@This(), this, other);
     }
 
     pub fn px(p: CSSNumber) Length {

@@ -3325,7 +3325,7 @@ pub fn updateBlocking(fd: bun.FileDescriptor, nonblocking: bool) Maybe(void) {
     const new_flags: i32 = if (nonblocking) current_flags | @as(i32, bun.O.NONBLOCK) else current_flags & ~@as(i32, bun.O.NONBLOCK);
 
     if (new_flags != current_flags) {
-        switch (bun.sys.fcntl(fd, std.posix.F.SETFL, new_flags)) {
+        switch (bun.sys.fcntl(fd, std.posix.F.SETFL, @as(fnctl_int, new_flags))) {
             .err => |err| return .{ .err = err },
             .result => {},
         }

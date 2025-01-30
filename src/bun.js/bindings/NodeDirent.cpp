@@ -128,7 +128,7 @@ private:
 
     void finishCreation(JSC::VM& vm, JSC::JSObject* prototype)
     {
-        Base::finishCreation(vm, 0, "Dirent"_s);
+        Base::finishCreation(vm, 3, "Dirent"_s);
         putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
     }
 };

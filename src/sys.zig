@@ -954,7 +954,7 @@ const fnctl_int = if (Environment.isLinux) usize else c_int;
 pub fn fcntl(fd: bun.FileDescriptor, cmd: i32, arg: anytype) Maybe(fnctl_int) {
     while (true) {
         const result = switch (@TypeOf(arg)) {
-            comptime_int, c_int => fcntl_symbol(fd.cast(), cmd, @as(c_int, arg)),
+            i32, comptime_int, c_int => fcntl_symbol(fd.cast(), cmd, @as(c_int, arg)),
             i64 => fcntl_symbol(fd.cast(), cmd, @as(c_long, @bitCast(arg))),
             *const anyopaque, *anyopaque, usize => fcntl_symbol(fd.cast(), cmd, arg),
             else => @compileError("Unsupported argument type for fcntl"),

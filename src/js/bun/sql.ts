@@ -409,11 +409,7 @@ class PooledConnection {
     this.storedError = null;
     this.state = PooledConnectionState.pending;
     // retry connection
-    this.connection = createConnection(
-      this.connectionInfo,
-      this.#onConnected.bind(this, this.connectionInfo),
-      this.#onClose.bind(this, this.connectionInfo),
-    );
+    this.connection = createConnection(this.connectionInfo, this.#onConnected.bind(this), this.#onClose.bind(this));
   }
   close() {
     try {
@@ -451,9 +447,9 @@ class PooledConnection {
         default:
           // we can retry
           this.#doRetry();
-          return true;
       }
     }
+    return true;
   }
 }
 class ConnectionPool {
@@ -790,9 +786,9 @@ class ConnectionPool {
           } else {
             this.waitingQueue.push(onConnected);
           }
-        } else {
+        } else if (!retry_in_progress) {
           // impossible to connect or retry
-          onConnected(storedError, null);
+          onConnected(storedError ?? connectionClosedError(), null);
         }
         return;
       }
@@ -1305,6 +1301,7 @@ function SQL(o, e = {}) {
       pool.release(pooledConnection); // release the connection back to the pool
       return query.reject($ERR_POSTGRES_QUERY_CANCELLED("Query cancelled"));
     }
+
     // bind close event to the query (will unbind and auto release the connection when the query is finished)
     pooledConnection.bindQuery(query, onQueryDisconnected.bind(query));
     handle.run(pooledConnection.connection, query);

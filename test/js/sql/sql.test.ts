@@ -637,6 +637,14 @@ if (isDockerEnabled()) {
     ).toBe("testing");
   });
 
+  test("Idle timeout retry works", async () => {
+    await using sql = postgres({ ...options, idleTimeout: 1 });
+    await sql`select 1`;
+    await Bun.sleep(1100); // 1.1 seconds so it should retry
+    await sql`select 1`;
+    expect().pass();
+  });
+
   test("Uncaught transaction request errors bubbles to transaction", async () => {
     const sql = postgres(options);
     process.nextTick(() => sql.close({ timeout: 1 }));

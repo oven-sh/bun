@@ -3287,16 +3287,22 @@ pub fn utimens(path: bun.OSPathSliceZ, atime: JSC.Node.TimeLike, mtime: JSC.Node
     return utimensWithFlags(path, atime, mtime, 0);
 }
 
-pub fn setNonblocking(fd: bun.FileDescriptor) Maybe(void) {
-    const flags = switch (bun.sys.fcntl(
+pub fn getFcntlFlags(fd: bun.FileDescriptor) Maybe(fnctl_int) {
+    return switch (bun.sys.fcntl(
         fd,
         std.posix.F.GETFL,
         0,
     )) {
+        .result => |f| .{ .result = f },
+        .err => |err| .{ .err = err },
+    };
+}
+
+pub fn setNonblocking(fd: bun.FileDescriptor) Maybe(void) {
+    const flags = switch (getFcntlFlags(fd)) {
         .result => |f| f,
         .err => |err| return .{ .err = err },
     };
-
     const new_flags = flags | bun.O.NONBLOCK;
 
     switch (bun.sys.fcntl(fd, std.posix.F.SETFL, new_flags)) {

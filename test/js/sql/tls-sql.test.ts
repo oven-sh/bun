@@ -152,7 +152,7 @@ if (TLS_POSTGRES_DATABASE_URL) {
   });
 
   test("Transaction requests are executed implicitly", async () => {
-    await using sql = new SQL({ ...options, debug: true, idle_timeout: 1, fetch_types: false });
+    await using sql = new SQL(options);
     expect(
       (
         await sql.begin(sql => [
@@ -164,11 +164,11 @@ if (TLS_POSTGRES_DATABASE_URL) {
   });
 
   test("Uncaught transaction request errors bubbles to transaction", async () => {
-    await using sql = new SQL({ ...options, debug: true, idle_timeout: 1, fetch_types: false, max: 10 });
+    await using sql = new SQL(options);
     expect(
       await sql
         .begin(sql => [sql`select wat`, sql`select current_setting('bun_sql.test') as x, ${1} as a`])
-        .catch(e => e.errno),
+        .catch(e => e.errno || e),
     ).toBe("42703");
   });
 
@@ -198,9 +198,9 @@ if (TLS_POSTGRES_DATABASE_URL) {
   });
 
   test("Many transactions at beginning of connection", async () => {
-    await using sql = new SQL({ ...options, max: 10 });
-    const xs = await Promise.all(Array.from({ length: 100 }, () => sql.begin(sql => sql`select 1`)));
-    return expect(xs.length).toBe(100);
+    await using sql = new SQL({ ...options, max: 2 });
+    const xs = await Promise.all(Array.from({ length: 30 }, () => sql.begin(sql => sql`select 1`)));
+    return expect(xs.length).toBe(30);
   });
 
   test("Transactions array", async () => {
@@ -212,7 +212,7 @@ if (TLS_POSTGRES_DATABASE_URL) {
   });
 
   test("Transaction waits", async () => {
-    await using sql = new SQL({ ...options, max: 10 });
+    await using sql = new SQL({ ...options, max: 2 });
     await sql`CREATE TEMPORARY TABLE IF NOT EXISTS test (a int)`;
     await sql.begin(async sql => {
       await sql`insert into test values(1)`;

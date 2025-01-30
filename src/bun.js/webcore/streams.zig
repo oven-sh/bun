@@ -4042,7 +4042,7 @@ pub const FileReader = struct {
 
             const fd = if (file.pathlike == .fd)
                 if (file.pathlike.fd.isStdio()) brk: {
-                    if (comptime Environment.isPosix and FeatureFlags.nonblocking_stdout_and_stderr_on_posix) {
+                    if (comptime Environment.isPosix) {
                         const rc = bun.C.open_as_nonblocking_tty(file.pathlike.fd.int(), bun.O.RDONLY);
                         if (rc > -1) {
                             is_nonblocking = true;

@@ -81,7 +81,7 @@ extern "C" JSC::EncodedJSValue TextEncoder__encodeRopeString(JSC::JSGlobalObject
 
 template<> TextEncoder::EncodeIntoResult convertDictionary<TextEncoder::EncodeIntoResult>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
-    VM& vm = JSC::getVM(&lexicalGlobalObject);
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     bool isNullOrUndefined = value.isUndefinedOrNull();
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
@@ -181,7 +181,7 @@ using JSTextEncoderDOMConstructor = JSDOMConstructor<JSTextEncoder>;
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTextEncoderDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = jsCast<JSTextEncoderDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
@@ -247,7 +247,7 @@ static const HashTableValue JSTextEncoderPrototypeTableValues[] = {
 
 // JSC_DEFINE_JIT_OPERATION(jsTextEncoderEncodeWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSTextEncoder* castedThis, DOMJIT::IDLJSArgumentType<IDLDOMString> input))
 // {
-//     VM& vm = JSC::getVM(lexicalGlobalObject);
+//     auto& vm = JSC::getVM(lexicalGlobalObject);
 //     IGNORE_WARNINGS_BEGIN("frame-address")
 //     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
 //     IGNORE_WARNINGS_END
@@ -281,7 +281,7 @@ static const HashTableValue JSTextEncoderPrototypeTableValues[] = {
 
 // JSC_DEFINE_JIT_OPERATION(jsTextEncoderPrototypeFunction_encodeIntoWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSTextEncoder* castedThis, DOMJIT::IDLJSArgumentType<IDLDOMString> sourceStr, DOMJIT::IDLJSArgumentType<IDLUint8Array> destination))
 // {
-//     VM& vm = JSC::getVM(lexicalGlobalObject);
+//     auto& vm = JSC::getVM(lexicalGlobalObject);
 //     IGNORE_WARNINGS_BEGIN("frame-address")
 //     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
 //     IGNORE_WARNINGS_END
@@ -351,7 +351,7 @@ void JSTextEncoder::destroy(JSC::JSCell* cell)
 
 JSC_DEFINE_CUSTOM_GETTER(jsTextEncoderConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSTextEncoderPrototype*>(JSValue::decode(thisValue));
     if (UNLIKELY(!prototype))

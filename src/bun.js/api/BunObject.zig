@@ -99,10 +99,6 @@ pub const BunObject = struct {
             @compileError("Must be comptime");
         }
 
-        if (JSC.is_bindgen) {
-            return;
-        }
-
         // --- Getters ---
         @export(BunObject.CryptoHasher, .{ .name = getterName("CryptoHasher") });
         @export(BunObject.FFI, .{ .name = getterName("FFI") });
@@ -248,7 +244,6 @@ const IOTask = JSC.IOTask;
 const zlib = @import("../../zlib.zig");
 const Which = @import("../../which.zig");
 const ErrorableString = JSC.ErrorableString;
-const is_bindgen = JSC.is_bindgen;
 const max_addressable_memory = std.math.maxInt(u56);
 const glob = @import("../../glob.zig");
 const Async = bun.Async;
@@ -368,7 +363,7 @@ pub fn which(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
         return JSC.JSValue.jsNull();
     }
 
-    bin_str = path_arg.toSlice(globalThis, globalThis.bunVM().allocator);
+    bin_str = try path_arg.toSlice(globalThis, globalThis.bunVM().allocator);
     if (globalThis.hasException()) {
         return .zero;
     }
@@ -391,11 +386,11 @@ pub fn which(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     if (arguments.nextEat()) |arg| {
         if (!arg.isEmptyOrUndefinedOrNull() and arg.isObject()) {
             if (try arg.get(globalThis, "PATH")) |str_| {
-                path_str = str_.toSlice(globalThis, globalThis.bunVM().allocator);
+                path_str = try str_.toSlice(globalThis, globalThis.bunVM().allocator);
             }
 
             if (try arg.get(globalThis, "cwd")) |str_| {
-                cwd_str = str_.toSlice(globalThis, globalThis.bunVM().allocator);
+                cwd_str = try str_.toSlice(globalThis, globalThis.bunVM().allocator);
             }
         }
     }
@@ -477,8 +472,7 @@ pub fn inspectTable(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) 
 
     try buffered_writer.flush();
 
-    var out = bun.String.createUTF8(array.slice());
-    return out.transferToJS(globalThis);
+    return bun.String.createUTF8ForJS(globalThis, array.slice());
 }
 
 pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -700,13 +694,13 @@ pub fn openInEditor(globalThis: js.JSContextRef, callframe: *JSC.CallFrame) bun.
     var column: ?string = null;
 
     if (arguments.nextEat()) |file_path_| {
-        path = file_path_.toSlice(globalThis, arguments.arena.allocator()).slice();
+        path = (try file_path_.toSlice(globalThis, arguments.arena.allocator())).slice();
     }
 
     if (arguments.nextEat()) |opts| {
         if (!opts.isUndefinedOrNull()) {
             if (try opts.getTruthy(globalThis, "editor")) |editor_val| {
-                var sliced = editor_val.toSlice(globalThis, arguments.arena.allocator());
+                var sliced = try editor_val.toSlice(globalThis, arguments.arena.allocator());
                 const prev_name = edit.name;
 
                 if (!strings.eqlLong(prev_name, sliced.slice(), true)) {
@@ -725,11 +719,11 @@ pub fn openInEditor(globalThis: js.JSContextRef, callframe: *JSC.CallFrame) bun.
             }
 
             if (try opts.getTruthy(globalThis, "line")) |line_| {
-                line = line_.toSlice(globalThis, arguments.arena.allocator()).slice();
+                line = (try line_.toSlice(globalThis, arguments.arena.allocator())).slice();
             }
 
             if (try opts.getTruthy(globalThis, "column")) |column_| {
-                column = column_.toSlice(globalThis, arguments.arena.allocator()).slice();
+                column = (try column_.toSlice(globalThis, arguments.arena.allocator())).slice();
             }
         }
     }
@@ -1412,7 +1406,7 @@ pub const Crypto = struct {
                     }
 
                     if (!globalThis.hasException()) {
-                        const slice = arguments[4].toSlice(globalThis, bun.default_allocator);
+                        const slice = try arguments[4].toSlice(globalThis, bun.default_allocator);
                         defer slice.deinit();
                         const name = slice.slice();
                         return globalThis.ERR_CRYPTO_INVALID_DIGEST("Invalid digest: {s}", .{name}).throw();
@@ -3205,10 +3199,8 @@ pub export fn Bun__escapeHTML8(globalObject: *JSC.JSGlobalObject, input_value: J
 }
 
 comptime {
-    if (!JSC.is_bindgen) {
-        _ = Bun__escapeHTML8;
-        _ = Bun__escapeHTML16;
-    }
+    _ = Bun__escapeHTML8;
+    _ = Bun__escapeHTML16;
 }
 
 pub fn allocUnsafe(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -3234,7 +3226,7 @@ pub fn mmapFile(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
     const path = brk: {
         if (args.nextEat()) |path| {
             if (path.isString()) {
-                const path_str = path.toSlice(globalThis, args.arena.allocator());
+                const path_str = try path.toSlice(globalThis, args.arena.allocator());
                 if (path_str.len > bun.MAX_PATH_BYTES) {
                     return globalThis.throwInvalidArguments("Path too long", .{});
                 }
@@ -3402,7 +3394,7 @@ const HashObject = struct {
                                 input = array_buffer.byteSlice();
                             },
                             else => {
-                                input_slice = arg.toSlice(globalThis, bun.default_allocator);
+                                input_slice = try arg.toSlice(globalThis, bun.default_allocator);
                                 input = input_slice.slice();
                             },
                         }
@@ -3589,7 +3581,7 @@ const TOMLObject = struct {
             return globalThis.throwInvalidArguments("Expected a string to parse", .{});
         }
 
-        var input_slice = arguments[0].toSlice(globalThis, bun.default_allocator);
+        var input_slice = try arguments[0].toSlice(globalThis, bun.default_allocator);
         defer input_slice.deinit();
         var source = logger.Source.initPathString("input.toml", input_slice.slice());
         const parse_result = TOMLParser.parse(&source, &log, allocator, false) catch {
@@ -4303,12 +4295,10 @@ export fn Bun__reportError(globalObject: *JSGlobalObject, err: JSC.JSValue) void
 }
 
 comptime {
-    if (!is_bindgen) {
-        _ = Bun__reportError;
-        _ = EnvironmentVariables.Bun__getEnvCount;
-        _ = EnvironmentVariables.Bun__getEnvKey;
-        _ = EnvironmentVariables.Bun__getEnvValue;
-    }
+    _ = Bun__reportError;
+    _ = EnvironmentVariables.Bun__getEnvCount;
+    _ = EnvironmentVariables.Bun__getEnvKey;
+    _ = EnvironmentVariables.Bun__getEnvValue;
 }
 
 pub const JSZlib = struct {

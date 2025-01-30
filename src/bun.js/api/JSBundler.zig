@@ -230,7 +230,7 @@ pub const JSBundler = struct {
                     } else if (env == .true or (env.isNumber() and env.asNumber() == 1)) {
                         this.env_behavior = .load_all;
                     } else if (env.isString()) {
-                        const slice = try env.toSlice2(globalThis, bun.default_allocator);
+                        const slice = try env.toSlice(globalThis, bun.default_allocator);
                         defer slice.deinit();
                         if (strings.eqlComptime(slice.slice(), "inline")) {
                             this.env_behavior = .load_all;

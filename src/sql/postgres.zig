@@ -198,10 +198,8 @@ pub const PostgresSQLContext = struct {
     }
 
     comptime {
-        if (!JSC.is_bindgen) {
-            const js_init = JSC.toJSHostFunction(init);
-            @export(js_init, .{ .name = "PostgresSQLContext__init" });
-        }
+        const js_init = JSC.toJSHostFunction(init);
+        @export(js_init, .{ .name = "PostgresSQLContext__init" });
     }
 };
 pub const PostgresSQLQueryResultMode = enum(u8) {
@@ -579,6 +577,7 @@ pub const PostgresSQLQuery = struct {
         const connection: *PostgresSQLConnection = arguments[0].as(PostgresSQLConnection) orelse {
             return globalObject.throw("connection must be a PostgresSQLConnection", .{});
         };
+
         connection.poll_ref.ref(globalObject.bunVM());
         var query = arguments[1];
 
@@ -691,10 +690,8 @@ pub const PostgresSQLQuery = struct {
     }
 
     comptime {
-        if (!JSC.is_bindgen) {
-            const jscall = JSC.toJSHostFunction(call);
-            @export(jscall, .{ .name = "PostgresSQLQuery__createInstance" });
-        }
+        const jscall = JSC.toJSHostFunction(call);
+        @export(jscall, .{ .name = "PostgresSQLQuery__createInstance" });
     }
 };
 
@@ -1660,10 +1657,8 @@ pub const PostgresSQLConnection = struct {
     }
 
     comptime {
-        if (!JSC.is_bindgen) {
-            const jscall = JSC.toJSHostFunction(call);
-            @export(jscall, .{ .name = "PostgresSQLConnection__createInstance" });
-        }
+        const jscall = JSC.toJSHostFunction(call);
+        @export(jscall, .{ .name = "PostgresSQLConnection__createInstance" });
     }
 
     pub fn call(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -1779,7 +1774,7 @@ pub const PostgresSQLConnection = struct {
             .password = password,
             .options = options,
             .options_buf = options_buf,
-            .socket = undefined,
+            .socket = .{ .SocketTCP = .{ .socket = .{ .detached = {} } } },
             .requests = PostgresRequest.Queue.init(bun.default_allocator),
             .statements = PreparedStatementsMap{},
             .tls_config = tls_config,
@@ -1799,6 +1794,7 @@ pub const PostgresSQLConnection = struct {
 
         PostgresSQLConnection.onconnectSetCached(js_value, globalObject, on_connect);
         PostgresSQLConnection.oncloseSetCached(js_value, globalObject, on_close);
+        bun.analytics.Features.postgres_connections += 1;
 
         {
             const hostname = hostname_str.toUTF8(bun.default_allocator);

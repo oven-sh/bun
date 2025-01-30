@@ -45,6 +45,7 @@ pub const S3Credentials = struct {
         return hasher.final();
     }
     pub fn getCredentialsWithOptions(this: S3Credentials, default_options: MultiPartUploadOptions, options: ?JSC.JSValue, default_acl: ?ACL, default_storage_class: ?StorageClass, globalObject: *JSC.JSGlobalObject) bun.JSError!S3CredentialsWithOptions {
+        bun.analytics.Features.s3 += 1;
         // get ENV config
         var new_credentials = S3CredentialsWithOptions{
             .credentials = this,

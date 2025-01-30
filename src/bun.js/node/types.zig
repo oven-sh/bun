@@ -4,7 +4,6 @@ const bun = @import("root").bun;
 const meta = bun.meta;
 const windows = bun.windows;
 const heap_allocator = bun.default_allocator;
-const is_bindgen: bool = false;
 const kernel32 = windows.kernel32;
 const logger = bun.logger;
 const posix = std.posix;
@@ -932,15 +931,15 @@ pub const PathLike = union(enum) {
         return buf[0..sliced.len :0];
     }
 
-    pub inline fn sliceZ(this: PathLike, buf: *bun.PathBuffer) [:0]const u8 {
+    pub fn sliceZ(this: PathLike, buf: *bun.PathBuffer) callconv(bun.callconv_inline) [:0]const u8 {
         return sliceZWithForceCopy(this, buf, false);
     }
 
-    pub inline fn sliceW(this: PathLike, buf: *bun.WPathBuffer) [:0]const u16 {
+    pub fn sliceW(this: PathLike, buf: *bun.WPathBuffer) callconv(bun.callconv_inline) [:0]const u16 {
         return strings.toWPath(buf, this.slice());
     }
 
-    pub inline fn osPath(this: PathLike, buf: *bun.OSPathBuffer) bun.OSPathSliceZ {
+    pub fn osPath(this: PathLike, buf: *bun.OSPathBuffer) callconv(bun.callconv_inline) bun.OSPathSliceZ {
         if (comptime Environment.isWindows) {
             return sliceW(this, buf);
         }
@@ -948,7 +947,7 @@ pub const PathLike = union(enum) {
         return sliceZWithForceCopy(this, buf, false);
     }
 
-    pub inline fn osPathKernel32(this: PathLike, buf: *bun.PathBuffer) bun.OSPathSliceZ {
+    pub fn osPathKernel32(this: PathLike, buf: *bun.PathBuffer) callconv(bun.callconv_inline) bun.OSPathSliceZ {
         if (comptime Environment.isWindows) {
             const s = this.slice();
             const b = bun.PathBufferPool.get();
@@ -958,7 +957,7 @@ pub const PathLike = union(enum) {
                 const normal = path_handler.normalizeBuf(resolve, b, .windows);
                 return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), normal);
             }
-            const normal = path_handler.normalizeBuf(s, b, .windows);
+            const normal = path_handler.normalizeStringBuf(s, b, true, .windows, false);
             return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), normal);
         }
 

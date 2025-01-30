@@ -66,7 +66,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.1.44"
+          bun-version: "1.2.0"
       - name: Install Dependencies
         run: bun install
       - name: Sign Release
@@ -94,7 +94,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.1.44"
+          bun-version: "1.2.0"
       - name: Install Dependencies
         run: bun install
       - name: Release
@@ -123,7 +123,7 @@ jobs:
         if: ${{ env.BUN_VERSION != 'canary' }}
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.1.44"
+          bun-version: "1.2.0"
       - name: Setup Bun
         if: ${{ env.BUN_VERSION == 'canary' }}
         uses: ./.github/actions/setup-bun
@@ -265,7 +265,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.1.44"
+          bun-version: "1.2.0"
       - name: Install Dependencies
         run: bun install
       - name: Release
@@ -309,7 +309,7 @@ jobs:
         uses: ./.github/actions/setup-bun
         if: ${{ env.BUN_LATEST == 'true' }}
         with:
-          bun-version: "1.1.44"
+          bun-version: "1.2.0"
       - name: Bump version
         uses: ./.github/actions/bump
         if: ${{ env.BUN_LATEST == 'true' }}

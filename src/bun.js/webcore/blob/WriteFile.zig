@@ -311,6 +311,7 @@ pub const WriteFile2 = struct {
     }
 
     fn doWriteLoop(this: *WriteFile) void {
+        if (Environment.isWindows) return; //why
         while (this.state.load(.monotonic) == .running) {
             var remain = this.bytes_blob.sharedView();
 

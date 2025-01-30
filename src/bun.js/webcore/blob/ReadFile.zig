@@ -91,6 +91,7 @@ pub const ReadFile2 = struct {
     pub usingnamespace FileCloserMixin(ReadFile);
 
     pub fn update(this: *ReadFile) void {
+        if (Environment.isWindows) return; //why
         switch (this.state.load(.monotonic)) {
             .closing => {
                 this.onFinish();
@@ -298,6 +299,7 @@ pub const ReadFile2 = struct {
     }
 
     fn runAsync(this: *ReadFile, task: *ReadFileTask) void {
+        if (Environment.isWindows) return; //why
         this.io_task = task;
 
         if (this.file_store.pathlike == .fd) {
@@ -441,6 +443,7 @@ pub const ReadFile2 = struct {
     }
 
     fn doReadLoop(this: *ReadFile) void {
+        if (Environment.isWindows) return; //why
         while (this.state.load(.monotonic) == .running) {
             // we hold a 64 KB stack buffer incase the amount of data to
             // be read is greater than the reported amount

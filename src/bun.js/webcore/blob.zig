@@ -210,7 +210,7 @@ pub const Blob = struct {
 
     pub fn NewInternalReadFileHandler(comptime Context: type, comptime Function: anytype) type {
         return struct {
-            pub fn run(handler: *anyopaque, bytes_: ReadFile.ResultType) void {
+            pub fn run(handler: *anyopaque, bytes_: ReadFileResultType) void {
                 Function(bun.cast(Context, handler), bytes_);
             }
         };
@@ -3299,6 +3299,7 @@ pub const Blob = struct {
             }
 
             pub fn runAsync(this: *CopyFile) void {
+                if (Environment.isWindows) return; //why
                 // defer task.onFinish();
 
                 var stat_: ?bun.Stat = null;

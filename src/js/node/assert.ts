@@ -672,7 +672,7 @@ function getActual(fn) {
   return NO_EXCEPTION_SENTINEL;
 }
 
-function checkIsPromise(obj) {
+function checkIsPromise(obj): obj is Promise<unknown> {
   // Accept native ES6 promises and promises that are implemented in a similar
   // way. Do not accept thenables that use a function as `obj` and that have no
   // `catch` handler.

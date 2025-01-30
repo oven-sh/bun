@@ -3639,7 +3639,7 @@ pub const FileSink = struct {
                     this.fd = fd;
                     this.is_socket = std.posix.S.ISSOCK(stat.mode);
 
-                    if (isatty != null and isatty.?) {
+                    if (this.force_sync or (isatty != null and isatty.?)) {
                         // Prevents interleaved or dropped stdout/stderr output for terminals.
                         // As noted in the following reference, local TTYs tend to be quite fast and
                         // this behavior has become expected due historical functionality on OS X,

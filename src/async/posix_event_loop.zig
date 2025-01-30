@@ -763,7 +763,7 @@ pub const FilePoll = struct {
     pub fn onTick(loop: *Loop, tagged_pointer: ?*anyopaque) callconv(.C) void {
         var tag = Pollable.from(tagged_pointer);
 
-        if (tag.tag() != @field(Pollable.Tag, "FilePoll"))
+        if (tag.tag() != @field(Pollable.Tag, @typeName(FilePoll)))
             return;
 
         var file_poll: *FilePoll = tag.as(FilePoll);

@@ -110,23 +110,23 @@ pub const ProcessExitHandler = struct {
         }
 
         switch (this.ptr.tag()) {
-            .Subprocess => {
+            @field(TaggedPointer.Tag, @typeName(Subprocess)) => {
                 const subprocess = this.ptr.as(Subprocess);
                 subprocess.onProcessExit(process, status, rusage);
             },
-            .LifecycleScriptSubprocess => {
+            @field(TaggedPointer.Tag, @typeName(LifecycleScriptSubprocess)) => {
                 const subprocess = this.ptr.as(LifecycleScriptSubprocess);
                 subprocess.onProcessExit(process, status, rusage);
             },
-            .ProcessHandle => {
+            @field(TaggedPointer.Tag, @typeName(ProcessHandle)) => {
                 const subprocess = this.ptr.as(ProcessHandle);
                 subprocess.onProcessExit(process, status, rusage);
             },
-            @field(TaggedPointer.Tag, bun.meta.typeBaseName(@typeName(ShellSubprocess))) => {
+            @field(TaggedPointer.Tag, @typeName(ShellSubprocess)) => {
                 const subprocess = this.ptr.as(ShellSubprocess);
                 subprocess.onProcessExit(process, status, rusage);
             },
-            @field(TaggedPointer.Tag, bun.meta.typeBaseName(@typeName(SyncProcess))) => {
+            @field(TaggedPointer.Tag, @typeName(SyncProcess)) => {
                 const subprocess = this.ptr.as(SyncProcess);
                 if (comptime Environment.isPosix) {
                     @panic("This code should not reached");

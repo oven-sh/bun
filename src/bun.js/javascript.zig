@@ -310,13 +310,13 @@ pub const SavedSourceMap = struct {
         };
 
         switch (Value.from(mapping.value_ptr.*).tag()) {
-            Value.Tag.ParsedSourceMap => {
+            @field(Value.Tag, @typeName(ParsedSourceMap)) => {
                 defer this.unlock();
                 const map = Value.from(mapping.value_ptr.*).as(ParsedSourceMap);
                 map.ref();
                 return .{ .map = map };
             },
-            Value.Tag.SavedMappings => {
+            @field(Value.Tag, @typeName(SavedMappings)) => {
                 defer this.unlock();
                 var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(Value.from(mapping.value_ptr.*).as(ParsedSourceMap))) };
                 defer saved.deinit();
@@ -329,7 +329,7 @@ pub const SavedSourceMap = struct {
 
                 return .{ .map = result };
             },
-            Value.Tag.SourceProviderMap => {
+            @field(Value.Tag, @typeName(SourceProviderMap)) => {
                 const ptr: *SourceProviderMap = Value.from(mapping.value_ptr.*).as(SourceProviderMap);
                 this.unlock();
 

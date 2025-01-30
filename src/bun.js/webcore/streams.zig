@@ -3617,11 +3617,14 @@ pub const FileSink = struct {
                 }
 
                 const duped = bun.sys.dupWithFlags(fd_, 0);
-                if (bun.FDTag.get(fd_) == .none and !this.force_sync and duped == .result) {
-                    is_nonblocking = switch (bun.sys.getFcntlFlags(duped.result)) {
-                        .result => |flags| (flags & bun.O.NONBLOCK) != 0,
-                        .err => false,
-                    };
+
+                if (comptime Environment.isPosix) {
+                    if (bun.FDTag.get(fd_) == .none and !this.force_sync and duped == .result) {
+                        is_nonblocking = switch (bun.sys.getFcntlFlags(duped.result)) {
+                            .result => |flags| (flags & bun.O.NONBLOCK) != 0,
+                            .err => false,
+                        };
+                    }
                 }
 
                 break :brk duped;
@@ -4057,11 +4060,13 @@ pub const FileReader = struct {
 
                     const fd = duped.result;
 
-                    if (bun.FDTag.get(fd) == .none) {
-                        is_nonblocking = switch (bun.sys.getFcntlFlags(fd)) {
-                            .result => |flags| (flags & bun.O.NONBLOCK) != 0,
-                            .err => false,
-                        };
+                    if (comptime Environment.isPosix) {
+                        if (bun.FDTag.get(fd) == .none) {
+                            is_nonblocking = switch (bun.sys.getFcntlFlags(fd)) {
+                                .result => |flags| (flags & bun.O.NONBLOCK) != 0,
+                                .err => false,
+                            };
+                        }
                     }
 
                     break :brk switch (bun.sys.toLibUVOwnedFD(fd, .dup, .close_on_fail)) {

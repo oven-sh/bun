@@ -12,7 +12,6 @@ const strings = bun.strings;
 const default_allocator = bun.default_allocator;
 const NewGlobalObject = JSC.NewGlobalObject;
 const JSGlobalObject = JSC.JSGlobalObject;
-const is_bindgen: bool = false;
 const ZigString = JSC.ZigString;
 const string = bun.string;
 const JSValue = JSC.JSValue;
@@ -52,12 +51,14 @@ pub const ZigGlobalObject = extern struct {
     pub const Interface: type = NewGlobalObject(JS.VirtualMachine);
 
     pub fn create(
+        vm: *JSC.VirtualMachine,
         console: *anyopaque,
         context_id: i32,
         mini_mode: bool,
         eval_mode: bool,
         worker_ptr: ?*anyopaque,
     ) *JSGlobalObject {
+        vm.eventLoop().ensureWaker();
         const global = shim.cppFn("create", .{ console, context_id, mini_mode, eval_mode, worker_ptr });
 
         // JSC might mess with the stack size.
@@ -412,36 +413,33 @@ pub const Process = extern struct {
     });
 
     comptime {
-        if (!is_bindgen) {
-            @export(getTitle, .{
-                .name = Export[0].symbol_name,
-            });
-            @export(setTitle, .{
-                .name = Export[1].symbol_name,
-            });
-            @export(getArgv, .{
-                .name = Export[2].symbol_name,
-            });
-            @export(getCwd, .{
-                .name = Export[3].symbol_name,
-            });
-            @export(setCwd, .{
-                .name = Export[4].symbol_name,
-            });
-            @export(exit, .{
-                .name = Export[5].symbol_name,
-            });
-            @export(getArgv0, .{
-                .name = Export[6].symbol_name,
-            });
-            @export(getExecPath, .{
-                .name = Export[7].symbol_name,
-            });
-
-            @export(getExecArgv, .{
-                .name = Export[8].symbol_name,
-            });
-        }
+        @export(getTitle, .{
+            .name = Export[0].symbol_name,
+        });
+        @export(setTitle, .{
+            .name = Export[1].symbol_name,
+        });
+        @export(getArgv, .{
+            .name = Export[2].symbol_name,
+        });
+        @export(getCwd, .{
+            .name = Export[3].symbol_name,
+        });
+        @export(setCwd, .{
+            .name = Export[4].symbol_name,
+        });
+        @export(exit, .{
+            .name = Export[5].symbol_name,
+        });
+        @export(getArgv0, .{
+            .name = Export[6].symbol_name,
+        });
+        @export(getExecPath, .{
+            .name = Export[7].symbol_name,
+        });
+        @export(getExecArgv, .{
+            .name = Export[8].symbol_name,
+        });
     }
 };
 
@@ -982,34 +980,32 @@ pub const HTTPDebugSSLServerRequestContext = JSC.API.DebugHTTPSServer.RequestCon
 pub const BodyValueBuffererContext = JSC.WebCore.BodyValueBufferer;
 pub const TestScope = @import("../test/jest.zig").TestScope;
 comptime {
-    if (!is_bindgen) {
-        WebSocketHTTPClient.shim.ref();
-        WebSocketHTTPSClient.shim.ref();
-        WebSocketClient.shim.ref();
-        WebSocketClientTLS.shim.ref();
+    WebSocketHTTPClient.shim.ref();
+    WebSocketHTTPSClient.shim.ref();
+    WebSocketClient.shim.ref();
+    WebSocketClientTLS.shim.ref();
 
-        HTTPServerRequestContext.shim.ref();
-        HTTPSSLServerRequestContext.shim.ref();
-        HTTPDebugServerRequestContext.shim.ref();
-        HTTPDebugSSLServerRequestContext.shim.ref();
+    HTTPServerRequestContext.shim.ref();
+    HTTPSSLServerRequestContext.shim.ref();
+    HTTPDebugServerRequestContext.shim.ref();
+    HTTPDebugSSLServerRequestContext.shim.ref();
 
-        _ = Process.getTitle;
-        _ = Process.setTitle;
-        NodePath.shim.ref();
-        JSArrayBufferSink.shim.ref();
-        JSHTTPResponseSink.shim.ref();
-        JSHTTPSResponseSink.shim.ref();
-        JSNetworkSink.shim.ref();
-        JSFileSink.shim.ref();
-        JSFileSink.shim.ref();
-        _ = ZigString__free;
-        _ = ZigString__free_global;
+    _ = Process.getTitle;
+    _ = Process.setTitle;
+    NodePath.shim.ref();
+    JSArrayBufferSink.shim.ref();
+    JSHTTPResponseSink.shim.ref();
+    JSHTTPSResponseSink.shim.ref();
+    JSNetworkSink.shim.ref();
+    JSFileSink.shim.ref();
+    JSFileSink.shim.ref();
+    _ = ZigString__free;
+    _ = ZigString__free_global;
 
-        TestScope.shim.ref();
-        BodyValueBuffererContext.shim.ref();
+    TestScope.shim.ref();
+    BodyValueBuffererContext.shim.ref();
 
-        _ = Bun__LoadLibraryBunString;
-    }
+    _ = Bun__LoadLibraryBunString;
 }
 
 /// Returns null on error. Use windows API to lookup the actual error.

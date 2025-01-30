@@ -1721,12 +1721,10 @@ pub const BodyValueBufferer = struct {
     });
 
     comptime {
-        if (!JSC.is_bindgen) {
-            const jsonResolveStream = JSC.toJSHostFunction(onResolveStream);
-            @export(jsonResolveStream, .{ .name = Export[0].symbol_name });
-            const jsonRejectStream = JSC.toJSHostFunction(onRejectStream);
-            @export(jsonRejectStream, .{ .name = Export[1].symbol_name });
-        }
+        const jsonResolveStream = JSC.toJSHostFunction(onResolveStream);
+        @export(jsonResolveStream, .{ .name = Export[0].symbol_name });
+        const jsonRejectStream = JSC.toJSHostFunction(onRejectStream);
+        @export(jsonRejectStream, .{ .name = Export[1].symbol_name });
     }
 };
 

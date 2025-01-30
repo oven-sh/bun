@@ -322,3 +322,10 @@ pub fn looksLikeListContainerType(comptime T: type) ?struct { list: ListContaine
 
     return null;
 }
+
+pub fn Tagged(comptime U: type, comptime T: type) type {
+    var info: std.builtin.Type.Union = @typeInfo(U).Union;
+    info.tag_type = T;
+    info.decls = &.{};
+    return @Type(.{ .Union = info });
+}

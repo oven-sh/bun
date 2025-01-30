@@ -241,7 +241,10 @@ describe("napi", () => {
 
   describe("napi_threadsafe_function", () => {
     it("keeps the event loop alive without async_work", () => {
-      checkSameOutput("test_promise_with_threadsafe_function", []);
+      const result = checkSameOutput("test_promise_with_threadsafe_function", []);
+      expect(result).toContain("tsfn_callback");
+      expect(result).toContain("resolved to 1234");
+      expect(result).toContain("tsfn_finalize_callback");
     });
 
     it("does not hang on finalize", () => {

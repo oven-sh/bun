@@ -198,10 +198,8 @@ pub const PostgresSQLContext = struct {
     }
 
     comptime {
-        if (!JSC.is_bindgen) {
-            const js_init = JSC.toJSHostFunction(init);
-            @export(js_init, .{ .name = "PostgresSQLContext__init" });
-        }
+        const js_init = JSC.toJSHostFunction(init);
+        @export(js_init, .{ .name = "PostgresSQLContext__init" });
     }
 };
 pub const PostgresSQLQueryResultMode = enum(u8) {
@@ -692,10 +690,8 @@ pub const PostgresSQLQuery = struct {
     }
 
     comptime {
-        if (!JSC.is_bindgen) {
-            const jscall = JSC.toJSHostFunction(call);
-            @export(jscall, .{ .name = "PostgresSQLQuery__createInstance" });
-        }
+        const jscall = JSC.toJSHostFunction(call);
+        @export(jscall, .{ .name = "PostgresSQLQuery__createInstance" });
     }
 };
 
@@ -1661,10 +1657,8 @@ pub const PostgresSQLConnection = struct {
     }
 
     comptime {
-        if (!JSC.is_bindgen) {
-            const jscall = JSC.toJSHostFunction(call);
-            @export(jscall, .{ .name = "PostgresSQLConnection__createInstance" });
-        }
+        const jscall = JSC.toJSHostFunction(call);
+        @export(jscall, .{ .name = "PostgresSQLConnection__createInstance" });
     }
 
     pub fn call(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {

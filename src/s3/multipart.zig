@@ -17,7 +17,7 @@ pub const MultiPartUpload = struct {
     const DefaultPartSize = MultiPartUploadOptions.DefaultPartSize;
     const MAX_QUEUE_SIZE = MultiPartUploadOptions.MAX_QUEUE_SIZE;
     const AWS = S3Credentials;
-    queue: std.ArrayListUnmanaged(UploadPart) = .{},
+    queue: ?[]UploadPart = null,
     available: bun.bit_set.IntegerBitSet(MAX_QUEUE_SIZE) = bun.bit_set.IntegerBitSet(MAX_QUEUE_SIZE).initFull(),
 
     currentPartNumber: u16 = 1,
@@ -177,8 +177,10 @@ pub const MultiPartUpload = struct {
 
     fn deinit(this: *@This()) void {
         log("deinit", .{});
-        if (this.queue.capacity > 0)
-            this.queue.deinit(bun.default_allocator);
+        if (this.queue) |queue| {
+            this.queue = null;
+            bun.default_allocator.free(queue);
+        }
         this.poll_ref.unref(this.vm);
         bun.default_allocator.free(this.path);
         if (this.proxy.len > 0) {
@@ -239,32 +241,22 @@ pub const MultiPartUpload = struct {
             // this means that the queue is full and we cannot flush it
             return null;
         };
-
-        if (index >= this.options.queueSize) {
+        const queueSize = this.options.queueSize;
+        if (index >= queueSize) {
             // ops too much concurrency wait more
             return null;
         }
         this.available.unset(index);
         defer this.currentPartNumber += 1;
+        if (this.queue == null) {
+            // lets make sure that the pointer will not change after the append, queueSize will never change and is small (max 255)
+            this.queue = bun.default_allocator.alloc(UploadPart, queueSize) catch bun.outOfMemory();
+        }
         const data = if (needs_clone) bun.default_allocator.dupe(u8, chunk) catch bun.outOfMemory() else chunk;
         const allocated_len = if (needs_clone) data.len else allocated_size;
-        if (this.queue.items.len <= index) {
-            if (this.queue.capacity == 0) {
-                // lets make sure that the pointer will not change after the append, queueSize will never change and is small (max 255)
-                this.queue.ensureTotalCapacityPrecise(bun.default_allocator, this.options.queueSize) catch bun.outOfMemory();
-            }
-            this.queue.appendAssumeCapacity(.{
-                .data = data,
-                .allocated_size = allocated_len,
-                .partNumber = this.currentPartNumber,
-                .ctx = this,
-                .index = @truncate(index),
-                .retry = this.options.retry,
-                .state = .pending,
-            });
-            return &this.queue.items[index];
-        }
-        this.queue.items[index] = .{
+
+        const queue_item = &this.queue.?[index];
+        queue_item.* = .{
             .data = data,
             .allocated_size = allocated_len,
             .partNumber = this.currentPartNumber,
@@ -273,7 +265,7 @@ pub const MultiPartUpload = struct {
             .retry = this.options.retry,
             .state = .pending,
         };
-        return &this.queue.items[index];
+        return queue_item;
     }
 
     fn drainEnqueuedParts(this: *@This()) void {
@@ -282,10 +274,12 @@ pub const MultiPartUpload = struct {
         }
         // check pending to start or transformed buffered ones into tasks
         if (this.state == .multipart_completed) {
-            for (this.queue.items) |*part| {
-                if (part.state == .pending) {
-                    // lets start the part request
-                    part.start();
+            if (this.queue) |queue| {
+                for (queue) |*part| {
+                    if (part.state == .pending) {
+                        // lets start the part request
+                        part.start();
+                    }
                 }
             }
         }
@@ -302,8 +296,10 @@ pub const MultiPartUpload = struct {
     pub fn fail(this: *@This(), _err: S3Error) void {
         log("fail {s}:{s}", .{ _err.code, _err.message });
         this.ended = true;
-        for (this.queue.items) |*task| {
-            task.cancel();
+        if (this.queue) |queue| {
+            for (queue) |*task| {
+                task.cancel();
+            }
         }
         if (this.state != .finished) {
             const old_state = this.state;

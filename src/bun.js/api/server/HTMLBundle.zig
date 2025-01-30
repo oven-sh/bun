@@ -63,7 +63,8 @@ pub const HTMLBundleRoute = struct {
     server: ?AnyServer = null,
     value: Value = .pending_plugins,
     /// Written and read by DevServer to identify if this route has been registered with the bundler.
-    dev_server_id: *bun.bake.DevServer.RouteBundle.Index = 0,
+    dev_server_id: bun.bake.DevServer.RouteBundle.Index.Optional = .none,
+    pattern: []const u8,
 
     pub fn memoryCost(this: *const HTMLBundleRoute) usize {
         var cost: usize = 0;
@@ -80,6 +81,7 @@ pub const HTMLBundleRoute = struct {
             .ref_count = 1,
             .server = null,
             .value = .pending_plugins,
+            .pattern = "/", // TODO: design flaw: HTMLBundleRoute can be present at multiple paths
         });
     }
 
@@ -147,11 +149,12 @@ pub const HTMLBundleRoute = struct {
         };
 
         if (server.config().development) {
-            if (server.getDevServer()) |dev| {
-                dev.respondForHTMLBundle();
+            if (server.devServer()) |dev| {
+                dev.respondForHTMLBundle(this, req, resp);
+                return;
             }
 
-            // TODO: actually implement proper watch mode instead of "rebuild on every request"
+            // Simple development workflow which rebundles on every request.
             if (this.value == .html) {
                 this.value.html.deref();
                 this.value = .pending_plugins;

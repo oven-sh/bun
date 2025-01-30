@@ -3221,12 +3221,7 @@ pub const AnyResponse = union(enum) {
         };
     }
 
-    pub fn write(this: AnyResponse, data: []const u8) void {
-        return switch (this) {
-            .SSL => |resp| resp.write(data),
-            .TCP => |resp| resp.write(data),
-        };
-    }
+    pub const write = @compileError("this function is not provided to discourage repeatedly checking the response type. use `switch(...) { inline else => ... }` so that multiple calls");
 
     pub fn end(this: AnyResponse, data: []const u8, close_connection: bool) void {
         return switch (this) {

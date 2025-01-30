@@ -4360,7 +4360,7 @@ pub const OSPathBufferPool = if (Environment.isWindows) WPathBufferPool else Pat
 
 pub const S3 = @import("./s3/client.zig");
 
-const CowString = CowSlice(u8);
+pub const CowString = CowSlice(u8);
 
 /// "Copy on write" slice. There are many instances when it is desired to re-use
 /// a slice, but doing so would make it unknown if that slice should be freed.
@@ -4407,11 +4407,11 @@ pub fn CowSlice(T: type) type {
                     .len = @intCast(data.len),
                 },
                 .debug = if (cow_str_assertions)
-                    bun.new(DebugData(.{
+                    bun.new(DebugData, .{
                         .mutex = .{},
                         .allocator = allocator,
                         .borrows = 0,
-                    })),
+                    }),
             };
         }
 
@@ -4457,7 +4457,10 @@ pub fn CowSlice(T: type) type {
             if (cow_str_assertions) if (str.debug) |debug| {
                 debug.mutex.lock();
                 defer debug.mutex.unlock();
-                bun.assert(debug.allocator == allocator);
+                bun.assert(
+                    debug.allocator.ptr == allocator.ptr and
+                        debug.allocator.vtable == allocator.vtable,
+                );
                 if (str.flags.is_owned) {
                     bun.assert(debug.borrows == 0); // active borrows become invalid data
                 } else {

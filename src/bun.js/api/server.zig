@@ -7762,25 +7762,29 @@ pub const AnyServer = union(enum) {
         };
     }
 
-    // TODO: support TLS
     pub fn onRequestFromSaved(
         this: AnyServer,
         req: SavedRequest.Union,
-        resp: *uws.NewApp(false).Response,
+        resp: uws.AnyResponse,
         callback: JSC.JSValue,
         comptime extra_arg_count: usize,
         extra_args: [extra_arg_count]JSValue,
     ) void {
         return switch (this) {
-            inline else => |server| server.onRequestFromSaved(req, resp, callback, extra_arg_count, extra_args),
-            .HTTPSServer => @panic("TODO: https"),
-            .DebugHTTPSServer => @panic("TODO: https"),
+            inline .HTTPServer, .DebugHTTPServer => |server| server.onRequestFromSaved(req, resp.TCP, callback, extra_arg_count, extra_args),
+            inline .HTTPSServer, .DebugHTTPSServer => |server| server.onRequestFromSaved(req, resp.SSL, callback, extra_arg_count, extra_args),
         };
     }
 
     pub fn numSubscribers(this: AnyServer, topic: []const u8) u32 {
         return switch (this) {
             inline else => |server| server.app.?.numSubscribers(topic),
+        };
+    }
+
+    pub fn devServer(this: AnyServer) ?*bun.bake.DevServer {
+        return switch (this) {
+            inline else => |server| server.dev_server,
         };
     }
 };

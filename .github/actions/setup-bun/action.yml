@@ -4,7 +4,7 @@ description: An internal version of the 'oven-sh/setup-bun' action.
 inputs:
   bun-version:
     type: string
-    description: "The version of bun to install: 'latest', 'canary', 'bun-v1.0.0', etc."
+    description: "The version of bun to install: 'latest', 'canary', 'bun-v1.2.0', etc."
     default: latest
     required: false
   baseline:

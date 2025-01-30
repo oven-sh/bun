@@ -41,7 +41,7 @@ enum class CloneMode {
 
 static JSC::EncodedJSValue cloneArrayBufferImpl(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, CloneMode mode)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
 
     ASSERT(lexicalGlobalObject);
     ASSERT(callFrame->argumentCount());

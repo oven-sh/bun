@@ -3,10 +3,9 @@
 #pragma once
 
 #include "root.h"
+#include "ScriptExecutionContext.h"
 
 namespace WebCore {
-
-class ScriptExecutionContext;
 
 class ContextDestructionObserver {
 

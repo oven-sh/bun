@@ -91,9 +91,9 @@ ZIG ?= $(shell which zig 2>/dev/null || echo -e "error: Missing zig. Please make
 # This is easier to happen than you'd expect.
 # Using realpath here causes issues because clang uses clang++ as a symlink
 # so if that's resolved, it won't build for C++
-REAL_CC = $(shell which clang-16 2>/dev/null || which clang 2>/dev/null)
-REAL_CXX = $(shell which clang++-16 2>/dev/null || which clang++ 2>/dev/null)
-CLANG_FORMAT = $(shell which clang-format-16 2>/dev/null || which clang-format 2>/dev/null)
+REAL_CC = $(shell which clang-18 2>/dev/null || which clang 2>/dev/null)
+REAL_CXX = $(shell which clang++-18 2>/dev/null || which clang++ 2>/dev/null)
+CLANG_FORMAT = $(shell which clang-format-18 2>/dev/null || which clang-format 2>/dev/null)
 
 CC = $(REAL_CC)
 CXX = $(REAL_CXX)
@@ -117,14 +117,14 @@ CC_WITH_CCACHE = $(CCACHE_PATH) $(CC)
 ifeq ($(OS_NAME),darwin)
 # Find LLVM
 	ifeq ($(wildcard $(LLVM_PREFIX)),)
-		LLVM_PREFIX = $(shell brew --prefix llvm@16)
+		LLVM_PREFIX = $(shell brew --prefix llvm@18)
 	endif
 	ifeq ($(wildcard $(LLVM_PREFIX)),)
 		LLVM_PREFIX = $(shell brew --prefix llvm)
 	endif
 	ifeq ($(wildcard $(LLVM_PREFIX)),)
 #   This is kinda ugly, but I can't find a better way to error :(
-		LLVM_PREFIX = $(shell echo -e "error: Unable to find llvm. Please run 'brew install llvm@16' or set LLVM_PREFIX=/path/to/llvm")
+		LLVM_PREFIX = $(shell echo -e "error: Unable to find llvm. Please run 'brew install llvm@18' or set LLVM_PREFIX=/path/to/llvm")
 	endif
 
 	LDFLAGS += -L$(LLVM_PREFIX)/lib
@@ -164,7 +164,7 @@ CMAKE_FLAGS_WITHOUT_RELEASE = -DCMAKE_C_COMPILER=$(CC) \
 	-DCMAKE_OSX_DEPLOYMENT_TARGET=$(MIN_MACOS_VERSION) \
 	$(CMAKE_CXX_COMPILER_LAUNCHER_FLAG) \
 	-DCMAKE_AR=$(AR) \
-	-DCMAKE_RANLIB=$(which llvm-16-ranlib 2>/dev/null || which llvm-ranlib 2>/dev/null) \
+	-DCMAKE_RANLIB=$(which llvm-18-ranlib 2>/dev/null || which llvm-ranlib 2>/dev/null) \
 	-DCMAKE_CXX_STANDARD=20 \
 	-DCMAKE_C_STANDARD=17 \
 	-DCMAKE_CXX_STANDARD_REQUIRED=ON \
@@ -191,7 +191,7 @@ endif
 
 ifeq ($(OS_NAME),linux)
 LIBICONV_PATH =
-AR = $(shell which llvm-ar-16 2>/dev/null || which llvm-ar 2>/dev/null || which ar 2>/dev/null)
+AR = $(shell which llvm-ar-18 2>/dev/null || which llvm-ar 2>/dev/null || which ar 2>/dev/null)
 endif
 
 OPTIMIZATION_LEVEL=-O3 $(MARCH_NATIVE)
@@ -286,7 +286,7 @@ STRIP=/usr/bin/strip
 endif
 
 ifeq ($(OS_NAME),linux)
-STRIP=$(shell which llvm-strip 2>/dev/null || which llvm-strip-16 2>/dev/null || which strip 2>/dev/null || echo "Missing strip")
+STRIP=$(shell which llvm-strip 2>/dev/null || which llvm-strip-18 2>/dev/null || which strip 2>/dev/null || echo "Missing strip")
 endif
 
 
@@ -674,7 +674,7 @@ endif
 .PHONY: assert-deps
 assert-deps:
 	@echo "Checking if the required utilities are available..."
-	@if [ $(CLANG_VERSION) -lt "15" ]; then echo -e "ERROR: clang version >=15 required, found: $(CLANG_VERSION). Install with:\n\n    $(POSIX_PKG_MANAGER) install llvm@16"; exit 1; fi
+	@if [ $(CLANG_VERSION) -lt "18" ]; then echo -e "ERROR: clang version >=18 required, found: $(CLANG_VERSION). Install with:\n\n    $(POSIX_PKG_MANAGER) install llvm@18"; exit 1; fi
 	@cmake --version >/dev/null 2>&1 || (echo -e "ERROR: cmake is required."; exit 1)
 	@$(PYTHON) --version >/dev/null 2>&1 || (echo -e "ERROR: python is required."; exit 1)
 	@$(ESBUILD) --version >/dev/null 2>&1 || (echo -e "ERROR: esbuild is required."; exit 1)
@@ -1261,6 +1261,7 @@ jsc-build-mac-compile:
 			-DBUN_FAST_TLS=ON \
 			-DENABLE_FTL_JIT=ON \
 			-DUSE_BUN_JSC_ADDITIONS=ON \
+			-DUSE_BUN_EVENT_LOOP=ON \
 			-G Ninja \
 			$(CMAKE_FLAGS_WITHOUT_RELEASE) \
 			-DPTHREAD_JIT_PERMISSIONS_API=1 \
@@ -1284,6 +1285,7 @@ jsc-build-mac-compile-lto:
 			-DUSE_THIN_ARCHIVES=OFF \
 			-DBUN_FAST_TLS=ON \
 			-DUSE_BUN_JSC_ADDITIONS=ON \
+			-DUSE_BUN_EVENT_LOOP=ON \
 			-DCMAKE_C_FLAGS="-flto=full" \
 			-DCMAKE_CXX_FLAGS="-flto=full" \
 			-DENABLE_FTL_JIT=ON \
@@ -1310,6 +1312,7 @@ jsc-build-mac-compile-debug:
 			-DENABLE_MALLOC_HEAP_BREAKDOWN=ON \
 			-DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
 			-DUSE_BUN_JSC_ADDITIONS=ON \
+			-DUSE_BUN_EVENT_LOOP=ON \
 			-DENABLE_BUN_SKIP_FAILING_ASSERTIONS=ON \
 			-DALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS=ON \
 			-G Ninja \
@@ -1334,6 +1337,7 @@ jsc-build-linux-compile-config:
 			-DENABLE_BUN_SKIP_FAILING_ASSERTIONS=ON \
 			-DUSE_THIN_ARCHIVES=OFF \
 			-DUSE_BUN_JSC_ADDITIONS=ON \
+			-DUSE_BUN_EVENT_LOOP=ON \
 			-DENABLE_FTL_JIT=ON \
 			-DENABLE_REMOTE_INSPECTOR=ON \
 			-DJSEXPORT_PRIVATE=WTF_EXPORT_DECLARATION \
@@ -1357,6 +1361,7 @@ jsc-build-linux-compile-config-debug:
 			-DENABLE_BUN_SKIP_FAILING_ASSERTIONS=ON \
 			-DUSE_THIN_ARCHIVES=OFF \
 			-DUSE_BUN_JSC_ADDITIONS=ON \
+			-DUSE_BUN_EVENT_LOOP=ON \
 			-DENABLE_FTL_JIT=ON \
 			-DENABLE_REMOTE_INSPECTOR=ON \
 			-DJSEXPORT_PRIVATE=WTF_EXPORT_DECLARATION \
@@ -1375,14 +1380,14 @@ jsc-build-linux-compile-config-debug:
 jsc-build-linux-compile-build:
 		mkdir -p $(WEBKIT_RELEASE_DIR)  && \
 		cd $(WEBKIT_RELEASE_DIR)  && \
-	CFLAGS="$(CFLAGS) -Wl,--whole-archive -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -Wl,--whole-archive -ffat-lto-objects -DUSE_BUN_JSC_ADDITIONS=ON" \
+	CFLAGS="$(CFLAGS) -Wl,--whole-archive -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -Wl,--whole-archive -ffat-lto-objects -DUSE_BUN_JSC_ADDITIONS=ON -DUSE_BUN_EVENT_LOOP=ON" \
 		cmake --build $(WEBKIT_RELEASE_DIR) --config relwithdebuginfo --target jsc
 
 .PHONY: jsc-build-linux-compile-build-debug
 jsc-build-linux-compile-build-debug:
 		mkdir -p $(WEBKIT_DEBUG_DIR)  && \
 		cd $(WEBKIT_DEBUG_DIR)  && \
-	CFLAGS="$(CFLAGS) -Wl,--whole-archive -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -Wl,--whole-archive -ffat-lto-objects -DUSE_BUN_JSC_ADDITIONS=ON" \
+	CFLAGS="$(CFLAGS) -Wl,--whole-archive -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -Wl,--whole-archive -ffat-lto-objects -DUSE_BUN_JSC_ADDITIONS=ON -DUSE_BUN_EVENT_LOOP=ON" \
 		cmake --build $(WEBKIT_DEBUG_DIR) --config Debug --target jsc
 
 

@@ -183,7 +183,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsAsyncFunction,
         return JSValue::encode(jsBoolean(true));
     }
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto proto = function->getPrototype(vm, globalObject);
     if (!proto.isCell()) {
         return JSValue::encode(jsBoolean(false));
@@ -443,7 +443,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsKeyObject,
 
     auto* object = cell->getObject();
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     const auto& names = WebCore::builtinNames(vm);
 
     auto scope = DECLARE_CATCH_SCOPE(vm);

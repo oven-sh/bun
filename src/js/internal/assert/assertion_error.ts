@@ -377,6 +377,9 @@ class AssertionError extends Error {
       this.operator = operator;
     }
     ErrorCaptureStackTrace(this, stackStartFn || stackStartFunction);
+    if ($isUndefinedOrNull(this.stack)) {
+      ErrorCaptureStackTrace(this, AssertionError);
+    }
     // Create error message including the error code in the name.
     this.stack; // eslint-disable-line no-unused-expressions
     // Reset the name.

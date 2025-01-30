@@ -129,6 +129,14 @@ export default {
       }
     },
   ),
+  SafeWeakMap: makeSafe(
+    WeakMap,
+    class SafeWeakMap extends WeakMap {
+      constructor(i) {
+        super(i);
+      }
+    },
+  ),
   SetPrototypeGetSize: getGetter(Set, "size"),
   String,
   TypedArrayPrototypeGetLength: getGetter(Uint8Array, "length"),

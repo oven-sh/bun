@@ -3751,18 +3751,10 @@ pub const FileSink = struct {
             return false;
         }
 
-        const amt = switch (this.writer.flush()) {
-            .done, .wrote, .pending => |amt| amt,
-            else => 0,
-        };
-
-        if (amt == 0) {
-            this.updateRef(false);
-        } else {
-            this.runPending();
-        }
+        _ = this.writer.flush();
 
         if (!this.writer.hasPendingData()) {
+            this.runPending();
             this.updateRef(false);
             this.auto_flusher.registered = false;
             return false;

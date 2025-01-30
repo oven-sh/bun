@@ -376,6 +376,7 @@ pub const PostgresSQLQuery = struct {
         debug("PostgresSQLQuery finalize", .{});
         if (this.thisValue == .weak) {
             // clean up if is a weak reference, if is a strong reference we need to wait until the query is done
+            // if we are a strong reference, here is probably a bug because GC'd should not happen
             this.thisValue.weak = .zero;
         }
         this.deref();

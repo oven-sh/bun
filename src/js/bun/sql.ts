@@ -92,9 +92,7 @@ enum SQLQueryFlags {
   unsafe = 1 << 1,
   bigint = 1 << 2,
 }
-function runQueryNT(self: Query) {
-  self[_run]();
-}
+
 function getQueryHandle(query) {
   let handle = query[_handle];
   if (!handle) {
@@ -148,7 +146,7 @@ class Query extends PublicPromise {
     this[_flags] = allowUnsafeTransaction;
   }
 
-  [_run]() {
+  async [_run](async: boolean) {
     const { [_handler]: handler, [_queryStatus]: status } = this;
 
     if (status & (QueryStatus.executed | QueryStatus.error | QueryStatus.cancelled | QueryStatus.invalidHandle)) {
@@ -158,6 +156,10 @@ class Query extends PublicPromise {
 
     const handle = getQueryHandle(this);
     if (!handle) return this;
+
+    if (async) {
+      await 1;
+    }
 
     try {
       return handler(this, handle);
@@ -224,7 +226,7 @@ class Query extends PublicPromise {
   }
 
   execute() {
-    this[_run]();
+    this[_run](false);
     return this;
   }
 
@@ -243,21 +245,21 @@ class Query extends PublicPromise {
   }
 
   then() {
-    process.nextTick(runQueryNT, this);
+    this[_run](true);
     const result = super.$then.$apply(this, arguments);
     $markPromiseAsHandled(result);
     return result;
   }
 
   catch() {
-    process.nextTick(runQueryNT, this);
+    this[_run](true);
     const result = super.catch.$apply(this, arguments);
     $markPromiseAsHandled(result);
     return result;
   }
 
   finally() {
-    process.nextTick(runQueryNT, this);
+    this[_run](true);
     return super.finally.$apply(this, arguments);
   }
 }

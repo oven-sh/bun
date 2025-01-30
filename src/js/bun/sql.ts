@@ -148,17 +148,16 @@ class Query extends PublicPromise {
     this[_flags] = allowUnsafeTransaction;
   }
 
-  async [_run]() {
+  [_run]() {
     const { [_handler]: handler, [_queryStatus]: status } = this;
 
     if (status & (QueryStatus.executed | QueryStatus.error | QueryStatus.cancelled | QueryStatus.invalidHandle)) {
       return;
     }
+    this[_queryStatus] |= QueryStatus.executed;
 
     const handle = getQueryHandle(this);
     if (!handle) return this;
-
-    this[_queryStatus] |= QueryStatus.executed;
 
     try {
       return handler(this, handle);

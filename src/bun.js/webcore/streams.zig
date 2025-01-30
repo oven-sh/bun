@@ -3662,10 +3662,6 @@ pub const FileSink = struct {
                         }
                     }
 
-                    if (is_nonblocking) {
-                        this.runPending();
-                    }
-
                     this.nonblocking = is_nonblocking and this.pollable and switch (options.input_path) {
                         .path => true,
                         .fd => |fd_| bun.FDTag.get(fd_) == .none,

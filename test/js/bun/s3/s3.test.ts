@@ -322,6 +322,21 @@ for (let credentials of allCredentials) {
                 expect(await s3File.text()).toBe(bigPayload);
               }
             }, 10_000);
+
+            it("should be able to upload large files using writer() in multiple parts", async () => {
+              {
+                const s3File = bucket.file(tmp_filename, options);
+                const writer = s3File.writer({
+                  queueSize: 10,
+                });
+                for (let i = 0; i < 10; i++) {
+                  writer.write(mediumPayload);
+                }
+                await writer.end();
+                const stat = await s3File.stat();
+                expect(stat.size).toBe(Buffer.byteLength(mediumPayload) * 10);
+              }
+            }, 30_000);
           });
         });
 

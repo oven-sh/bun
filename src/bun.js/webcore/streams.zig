@@ -2894,7 +2894,8 @@ pub const NetworkSink = struct {
                 return .{ .owned = len };
             }
 
-            this.buffer.writeLatin1(bytes) catch {
+            const check_ascii = false;
+            this.buffer.writeLatin1(bytes, check_ascii) catch {
                 return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
             };
 
@@ -2905,7 +2906,9 @@ pub const NetworkSink = struct {
         } else if (this.buffer.size() + len >= this.getHighWaterMark()) {
             // kinda fast path:
             // - combined chunk is large enough to flush automatically
-            this.buffer.writeLatin1(bytes) catch {
+
+            const check_ascii = true;
+            this.buffer.writeLatin1(bytes, check_ascii) catch {
                 return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
             };
             _ = this.internalFlush() catch {
@@ -2913,7 +2916,8 @@ pub const NetworkSink = struct {
             };
             return .{ .owned = len };
         } else {
-            this.buffer.writeLatin1(bytes) catch {
+            const check_ascii = true;
+            this.buffer.writeLatin1(bytes, check_ascii) catch {
                 return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
             };
         }
@@ -3726,10 +3730,19 @@ pub const FileSink = struct {
         return .{ .result = {} };
     }
 
-    // TODO: this is probably wrong, need to make sure promises are resolved
-    // when auto flushing buffered writes
     pub fn onAutoFlush(this: *FileSink) bool {
-        this.runPending();
+        if (this.done) {
+            this.auto_flusher.registered = false;
+            return false;
+        }
+        defer this.runPending();
+
+        _ = this.writer.flush();
+        if (!this.writer.hasPendingData()) {
+            this.auto_flusher.registered = false;
+            return false;
+        }
+
         return true;
     }
 

@@ -6,6 +6,8 @@ const uv = bun.windows.libuv;
 const Source = @import("./source.zig").Source;
 const log = bun.Output.scoped(.PipeWriter, true);
 const FileType = @import("./pipes.zig").FileType;
+const OOM = bun.OOM;
+const Environment = bun.Environment;
 
 pub const WriteResult = union(enum) {
     done: usize,
@@ -152,8 +154,16 @@ pub fn PosixPipeWriter(
             buf = if (max_write_size < buf.len and max_write_size > 0) buf[0..max_write_size] else buf;
             const original_buf = buf;
 
+            const force_sync = if (@hasField(This, "force_sync"))
+                parent.force_sync
+            else
+                false;
+
             while (buf.len > 0) {
-                const attempt = _tryWrite(parent, buf);
+                const attempt = if (force_sync)
+                    _tryWriteSync(parent, buf)
+                else
+                    _tryWrite(parent, buf);
                 switch (attempt) {
                     .pending => |pending| {
                         return .{ .pending = pending + (original_buf.len - buf.len) };
@@ -163,9 +173,6 @@ pub fn PosixPipeWriter(
                     },
                     .err => |err| {
                         const wrote = original_buf.len - buf.len;
-                        if (err.isRetry()) {
-                            return .{ .pending = wrote };
-                        }
 
                         if (wrote > 0) {
                             onError(parent, err);
@@ -282,8 +289,6 @@ pub fn PosixBufferedWriter(
             }
         }
 
-        pub const tryWrite = @This()._tryWrite;
-
         pub fn hasRef(this: *PosixWriter) bool {
             if (this.is_done) {
                 return false;
@@ -394,21 +399,19 @@ pub fn PosixStreamingWriter(
     comptime onClose: fn (*Parent) void,
 ) type {
     return struct {
-        // TODO: replace buffer + head for StreamBuffer
-        buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+        outgoing: StreamBuffer = .{},
         handle: PollOrFd = .{ .closed = {} },
         parent: *Parent = undefined,
-        head: usize = 0,
         is_done: bool = false,
         closed_without_reporting: bool = false,
 
         force_sync: bool = false,
 
         // TODO: configurable?
-        const chunk_size: usize = 1024 * 4;
+        const chunk_size: usize = std.mem.page_size;
 
         pub fn memoryCost(this: *const @This()) usize {
-            return @sizeOf(@This()) + this.buffer.capacity;
+            return @sizeOf(@This()) + this.outgoing.memoryCost();
         }
 
         pub fn getPoll(this: *@This()) ?*Async.FilePoll {
@@ -425,10 +428,14 @@ pub fn PosixStreamingWriter(
             return poll.fileType();
         }
 
+        pub fn hasPendingData(this: *const PosixWriter) bool {
+            return this.outgoing.isNotEmpty();
+        }
+
         const PosixWriter = @This();
 
-        pub fn getBuffer(this: *PosixWriter) []const u8 {
-            return this.buffer.items[this.head..];
+        pub fn getBuffer(this: *const PosixWriter) []const u8 {
+            return this.outgoing.slice();
         }
 
         fn _onError(
@@ -449,19 +456,17 @@ pub fn PosixStreamingWriter(
             written: usize,
             status: WriteStatus,
         ) void {
-            this.head += written;
+            this.outgoing.wrote(written);
 
             if (status == .end_of_file and !this.is_done) {
                 this.closeWithoutReporting();
             }
 
-            if (this.buffer.items.len == this.head) {
-                if (this.buffer.capacity > 1024 * 1024 and status != .end_of_file) {
-                    this.buffer.clearAndFree();
-                } else {
-                    this.buffer.clearRetainingCapacity();
+            if (this.outgoing.isEmpty()) {
+                this.outgoing.cursor = 0;
+                if (status != .end_of_file) {
+                    this.outgoing.maybeShrink();
                 }
-                this.head = 0;
             }
 
             onWrite(@ptrCast(this.parent), written, status);
@@ -477,14 +482,11 @@ pub fn PosixStreamingWriter(
                 return;
             }
 
-            this.head = 0;
+            this.outgoing.reset();
+
             if (onReady) |cb| {
                 cb(@ptrCast(this.parent));
             }
-        }
-
-        pub fn hasPendingData(this: *const PosixWriter) bool {
-            return this.buffer.items.len > 0;
         }
 
         fn closeWithoutReporting(this: *PosixWriter) void {
@@ -506,42 +508,20 @@ pub fn PosixStreamingWriter(
             }
         }
 
-        pub fn tryWrite(this: *PosixWriter, buf: []const u8) WriteResult {
-            if (this.is_done or this.closed_without_reporting) {
-                return .{ .done = 0 };
-            }
-
-            if (this.buffer.items.len > 0) {
-                this.buffer.appendSlice(buf) catch {
-                    return .{ .err = bun.sys.Error.oom };
-                };
-
-                return .{ .pending = 0 };
-            }
-
-            return @This()._tryWrite(this, buf);
-        }
-
         pub fn writeUTF16(this: *PosixWriter, buf: []const u16) WriteResult {
             if (this.is_done or this.closed_without_reporting) {
                 return .{ .done = 0 };
             }
 
-            const had_buffered_data = this.buffer.items.len > 0;
-            {
-                var byte_list = bun.ByteList.fromList(this.buffer);
-                defer this.buffer = byte_list.listManaged(bun.default_allocator);
+            const before_len = this.outgoing.size();
 
-                _ = byte_list.writeUTF16(bun.default_allocator, buf) catch {
-                    return .{ .err = bun.sys.Error.oom };
-                };
-            }
+            this.outgoing.writeUTF16(buf) catch {
+                return .{ .err = bun.sys.Error.oom };
+            };
 
-            if (had_buffered_data) {
-                return .{ .pending = 0 };
-            }
+            const buf_len = this.outgoing.size() - before_len;
 
-            return this._tryWriteNewlyBufferedData();
+            return this._maybeWriteNewlyBufferedData(buf_len);
         }
 
         pub fn writeLatin1(this: *PosixWriter, buf: []const u8) WriteResult {
@@ -553,40 +533,54 @@ pub fn PosixStreamingWriter(
                 return this.write(buf);
             }
 
-            const had_buffered_data = this.buffer.items.len > 0;
-            {
-                var byte_list = bun.ByteList.fromList(this.buffer);
-                defer this.buffer = byte_list.listManaged(bun.default_allocator);
+            const before_len = this.outgoing.size();
 
-                _ = byte_list.writeLatin1(bun.default_allocator, buf) catch {
-                    return .{ .err = bun.sys.Error.oom };
-                };
-            }
+            const check_ascii = false;
+            this.outgoing.writeLatin1(buf, check_ascii) catch {
+                return .{ .err = bun.sys.Error.oom };
+            };
 
-            if (had_buffered_data) {
-                return .{ .pending = 0 };
-            }
+            const buf_len = this.outgoing.size() - before_len;
 
-            return this._tryWriteNewlyBufferedData();
+            return this._maybeWriteNewlyBufferedData(buf_len);
         }
 
-        fn _tryWriteNewlyBufferedData(this: *PosixWriter) WriteResult {
+        fn _maybeWriteNewlyBufferedData(this: *PosixWriter, buf_len: usize) WriteResult {
             bun.assert(!this.is_done);
 
-            switch (@This()._tryWrite(this, this.buffer.items)) {
+            if (!this.force_sync and this.outgoing.size() < chunk_size) {
+                onWrite(this.parent, buf_len, .drained);
+                registerPoll(this);
+
+                return .{ .wrote = buf_len };
+            }
+
+            return @This()._tryWriteNewlyBufferedData(this, this.outgoing.slice());
+        }
+
+        fn _tryWriteNewlyBufferedData(this: *PosixWriter, buf: []const u8) WriteResult {
+            bun.assert(!this.is_done);
+
+            const rc = if (this.force_sync)
+                @This()._tryWriteSync(this, buf)
+            else
+                @This()._tryWrite(this, buf);
+
+            switch (rc) {
                 .wrote => |amt| {
-                    if (amt == this.buffer.items.len) {
-                        this.buffer.clearRetainingCapacity();
+                    if (amt == this.outgoing.size()) {
+                        this.outgoing.reset();
                     } else {
-                        this.head = amt;
+                        this.outgoing.wrote(amt);
                     }
                     return .{ .wrote = amt };
                 },
                 .done => |amt| {
-                    this.buffer.clearRetainingCapacity();
-
+                    this.outgoing.reset();
                     return .{ .done = amt };
                 },
+
+                // TODO: is correct?
                 else => |r| return r,
             }
         }
@@ -596,21 +590,32 @@ pub fn PosixStreamingWriter(
                 return .{ .done = 0 };
             }
 
-            if (!this.force_sync and this.buffer.items.len + buf.len < chunk_size) {
-                const original_len = this.buffer.items.len;
-                this.buffer.appendSlice(buf) catch {
+            if (!this.force_sync and this.outgoing.size() + buf.len < chunk_size) {
+                // this is streaming, but we buffer the data below `chunk_size` to
+                // reduce the number of writes
+                this.outgoing.write(buf) catch {
                     return .{ .err = bun.sys.Error.oom };
                 };
-                if (original_len == 0) {
-                    // noop, but need this to have a chance
-                    // to register deferred tasks (onAutoFlush)
-                    onWrite(this.parent, 0, .pending);
-                    registerPoll(this);
-                }
-                return .{ .pending = buf.len };
+
+                // noop, but need this to have a chance
+                // to register deferred tasks (onAutoFlush)
+                onWrite(this.parent, buf.len, .drained);
+                registerPoll(this);
+
+                // it's buffered, but should be reported as written to
+                // callers
+                return .{ .wrote = buf.len };
             }
 
-            this.head = 0;
+            if (this.outgoing.size() > 0) {
+                // make sure write is in-order
+                this.outgoing.write(buf) catch {
+                    return .{ .err = bun.sys.Error.oom };
+                };
+
+                return this._tryWriteNewlyBufferedData(this.outgoing.slice());
+            }
+
             const rc = if (this.force_sync)
                 @This()._tryWriteSync(this, buf)
             else
@@ -618,7 +623,7 @@ pub fn PosixStreamingWriter(
 
             switch (rc) {
                 .pending => |amt| {
-                    this.buffer.appendSlice(buf[amt..]) catch {
+                    this.outgoing.write(buf[amt..]) catch {
                         return .{ .err = bun.sys.Error.oom };
                     };
                     onWrite(this.parent, amt, .pending);
@@ -626,18 +631,18 @@ pub fn PosixStreamingWriter(
                 },
                 .wrote => |amt| {
                     if (amt < buf.len) {
-                        this.buffer.appendSlice(buf[amt..]) catch {
+                        this.outgoing.write(buf[amt..]) catch {
                             return .{ .err = bun.sys.Error.oom };
                         };
                         onWrite(this.parent, amt, .pending);
                         registerPoll(this);
                     } else {
-                        this.buffer.clearRetainingCapacity();
+                        this.outgoing.reset();
                         onWrite(this.parent, amt, .drained);
                     }
                 },
                 .done => |amt| {
-                    this.buffer.clearRetainingCapacity();
+                    this.outgoing.reset();
                     onWrite(this.parent, amt, .end_of_file);
                     return .{ .done = amt };
                 },
@@ -654,7 +659,7 @@ pub fn PosixStreamingWriter(
                 return .{ .done = 0 };
             }
 
-            const buffer = this.buffer.items;
+            const buffer = this.getBuffer();
             if (buffer.len == 0) {
                 return .{ .wrote = 0 };
             }
@@ -669,13 +674,13 @@ pub fn PosixStreamingWriter(
             // update head
             switch (rc) {
                 .pending => |written| {
-                    this.head += written;
+                    this.outgoing.cursor += @truncate(written);
                 },
                 .wrote => |written| {
-                    this.head += written;
+                    this.outgoing.cursor += @truncate(written);
                 },
                 .done => |written| {
-                    this.head += written;
+                    this.outgoing.cursor += @truncate(written);
                 },
                 else => {},
             }
@@ -683,7 +688,7 @@ pub fn PosixStreamingWriter(
         }
 
         pub fn deinit(this: *PosixWriter) void {
-            this.buffer.clearAndFree();
+            this.outgoing.deinit();
             this.closeWithoutReporting();
         }
 
@@ -1042,18 +1047,21 @@ pub fn WindowsBufferedWriter(
     };
 }
 
-/// Basic std.ArrayList(u8) + u32 cursor wrapper
+/// Basic std.ArrayList(u8) + usize cursor wrapper
 pub const StreamBuffer = struct {
     list: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
-    // should cursor be usize?
-    cursor: u32 = 0,
+    cursor: usize = 0,
 
     pub fn reset(this: *StreamBuffer) void {
         this.cursor = 0;
-        if (this.list.capacity > 32 * 1024) {
+        this.maybeShrink();
+        this.list.clearRetainingCapacity();
+    }
+
+    pub fn maybeShrink(this: *StreamBuffer) void {
+        if (this.list.capacity > std.mem.page_size) {
             this.list.shrinkAndFree(std.mem.page_size);
         }
-        this.list.clearRetainingCapacity();
     }
 
     pub fn memoryCost(this: *const StreamBuffer) usize {
@@ -1072,8 +1080,12 @@ pub const StreamBuffer = struct {
         return this.size() > 0;
     }
 
-    pub fn write(this: *StreamBuffer, buffer: []const u8) !void {
+    pub fn write(this: *StreamBuffer, buffer: []const u8) OOM!void {
         _ = try this.list.appendSlice(buffer);
+    }
+
+    pub fn wrote(this: *StreamBuffer, amount: usize) void {
+        this.cursor += amount;
     }
 
     pub fn writeAssumeCapacity(this: *StreamBuffer, buffer: []const u8) void {
@@ -1082,14 +1094,14 @@ pub const StreamBuffer = struct {
         byte_list.appendSliceAssumeCapacity(buffer);
     }
 
-    pub fn ensureUnusedCapacity(this: *StreamBuffer, capacity: usize) !void {
+    pub fn ensureUnusedCapacity(this: *StreamBuffer, capacity: usize) OOM!void {
         var byte_list = bun.ByteList.fromList(this.list);
         defer this.list = byte_list.listManaged(this.list.allocator);
 
         _ = try byte_list.ensureUnusedCapacity(this.list.allocator, capacity);
     }
 
-    pub fn writeTypeAsBytes(this: *StreamBuffer, comptime T: type, data: *const T) !void {
+    pub fn writeTypeAsBytes(this: *StreamBuffer, comptime T: type, data: *const T) OOM!void {
         _ = try this.write(std.mem.asBytes(data));
     }
 
@@ -1099,7 +1111,7 @@ pub const StreamBuffer = struct {
         byte_list.writeTypeAsBytesAssumeCapacity(T, data);
     }
 
-    pub fn writeOrFallback(this: *StreamBuffer, buffer: anytype, comptime writeFn: anytype) ![]const u8 {
+    pub fn writeOrFallback(this: *StreamBuffer, buffer: anytype, comptime writeFn: anytype) OOM![]const u8 {
         if (comptime @TypeOf(writeFn) == @TypeOf(&writeLatin1) and writeFn == &writeLatin1) {
             if (bun.strings.isAllASCII(buffer)) {
                 return buffer;
@@ -1128,9 +1140,11 @@ pub const StreamBuffer = struct {
         }
     }
 
-    pub fn writeLatin1(this: *StreamBuffer, buffer: []const u8) !void {
-        if (bun.strings.isAllASCII(buffer)) {
-            return this.write(buffer);
+    pub fn writeLatin1(this: *StreamBuffer, buffer: []const u8, comptime check_ascii: bool) OOM!void {
+        if (comptime check_ascii) {
+            if (bun.strings.isAllASCII(buffer)) {
+                return this.write(buffer);
+            }
         }
 
         var byte_list = bun.ByteList.fromList(this.list);
@@ -1139,14 +1153,14 @@ pub const StreamBuffer = struct {
         _ = try byte_list.writeLatin1(this.list.allocator, buffer);
     }
 
-    pub fn writeUTF16(this: *StreamBuffer, buffer: []const u16) !void {
+    pub fn writeUTF16(this: *StreamBuffer, buffer: []const u16) OOM!void {
         var byte_list = bun.ByteList.fromList(this.list);
         defer this.list = byte_list.listManaged(this.list.allocator);
 
         _ = try byte_list.writeUTF16(this.list.allocator, buffer);
     }
 
-    pub fn slice(this: *StreamBuffer) []const u8 {
+    pub fn slice(this: *const StreamBuffer) []const u8 {
         return this.list.items[this.cursor..];
     }
 

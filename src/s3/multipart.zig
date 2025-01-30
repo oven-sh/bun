@@ -249,7 +249,11 @@ pub const MultiPartUpload = struct {
         const data = if (needs_clone) bun.default_allocator.dupe(u8, chunk) catch bun.outOfMemory() else chunk;
         const allocated_len = if (needs_clone) data.len else allocated_size;
         if (this.queue.items.len <= index) {
-            this.queue.append(bun.default_allocator, .{
+            if (this.queue.capacity == 0) {
+                // lets make sure that the pointer will not change after the append, queueSize will never change and is small (max 255)
+                this.queue.ensureTotalCapacityPrecise(bun.default_allocator, this.options.queueSize) catch bun.outOfMemory();
+            }
+            this.queue.appendAssumeCapacity(.{
                 .data = data,
                 .allocated_size = allocated_len,
                 .partNumber = this.currentPartNumber,
@@ -257,7 +261,7 @@ pub const MultiPartUpload = struct {
                 .index = @truncate(index),
                 .retry = this.options.retry,
                 .state = .pending,
-            }) catch bun.outOfMemory();
+            });
             return &this.queue.items[index];
         }
         this.queue.items[index] = .{

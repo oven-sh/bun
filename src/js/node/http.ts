@@ -1944,6 +1944,10 @@ const ServerResponsePrototype = {
     return this;
   },
 
+  get writable() {
+    return !hasServerResponseFinished(this);
+  },
+
   write(chunk, encoding, callback) {
     const handle = this[kHandle];
 
@@ -2316,7 +2320,6 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
   #socketPath;
   #stream;
   #controller;
-  #startStream;
 
   #bodyChunks: Buffer[] | null = null;
   #fetchRequest;
@@ -2364,13 +2367,15 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
     } else if (!$isCallable(callback)) {
       callback = undefined;
     }
+
+    return this.#createStream(chunk, encoding, callback);
   }
 
   set agent(value) {
     this.#agent = value;
   }
 
-  #createStream() {
+  #createStream(chunk, encoding, callback) {
     if (!this.#stream) {
       var self = this;
 
@@ -2393,6 +2398,8 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
 
     return this.#write(chunk, encoding, callback);
   }
+
+  #startStream() {}
 
   #write(chunk, encoding, callback) {
     const MAX_FAKE_BACKPRESSURE_SIZE = 1024 * 1024;

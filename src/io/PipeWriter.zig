@@ -432,6 +432,10 @@ pub fn PosixStreamingWriter(
             return this.outgoing.isNotEmpty();
         }
 
+        pub fn shouldBuffer(this: *const PosixWriter, addition: usize) bool {
+            return !this.force_sync and this.outgoing.size() + addition < chunk_size;
+        }
+
         const PosixWriter = @This();
 
         pub fn getBuffer(this: *const PosixWriter) []const u8 {
@@ -548,7 +552,7 @@ pub fn PosixStreamingWriter(
         fn _maybeWriteNewlyBufferedData(this: *PosixWriter, buf_len: usize) WriteResult {
             bun.assert(!this.is_done);
 
-            if (!this.force_sync and this.outgoing.size() < chunk_size) {
+            if (this.shouldBuffer(0)) {
                 onWrite(this.parent, buf_len, .drained);
                 registerPoll(this);
 
@@ -570,19 +574,28 @@ pub fn PosixStreamingWriter(
                 .wrote => |amt| {
                     if (amt == this.outgoing.size()) {
                         this.outgoing.reset();
+                        onWrite(this.parent, amt, .drained);
                     } else {
                         this.outgoing.wrote(amt);
+                        onWrite(this.parent, amt, .pending);
+                        registerPoll(this);
+                        return .{ .pending = amt };
                     }
-                    return .{ .wrote = amt };
                 },
                 .done => |amt| {
                     this.outgoing.reset();
-                    return .{ .done = amt };
+                    onWrite(this.parent, amt, .end_of_file);
+                },
+                .pending => |amt| {
+                    this.outgoing.wrote(amt);
+                    onWrite(this.parent, amt, .pending);
+                    registerPoll(this);
                 },
 
-                // TODO: is correct?
                 else => |r| return r,
             }
+
+            return rc;
         }
 
         pub fn write(this: *PosixWriter, buf: []const u8) WriteResult {
@@ -590,7 +603,8 @@ pub fn PosixStreamingWriter(
                 return .{ .done = 0 };
             }
 
-            if (!this.force_sync and this.outgoing.size() + buf.len < chunk_size) {
+            if (this.shouldBuffer(buf.len)) {
+
                 // this is streaming, but we buffer the data below `chunk_size` to
                 // reduce the number of writes
                 this.outgoing.write(buf) catch {
@@ -661,6 +675,7 @@ pub fn PosixStreamingWriter(
 
             const buffer = this.getBuffer();
             if (buffer.len == 0) {
+                this.outgoing.reset();
                 return .{ .wrote = 0 };
             }
 
@@ -674,13 +689,16 @@ pub fn PosixStreamingWriter(
             // update head
             switch (rc) {
                 .pending => |written| {
-                    this.outgoing.cursor += @truncate(written);
+                    this.outgoing.wrote(written);
                 },
                 .wrote => |written| {
-                    this.outgoing.cursor += @truncate(written);
+                    this.outgoing.wrote(written);
+                    if (this.outgoing.isEmpty()) {
+                        this.outgoing.reset();
+                    }
                 },
-                .done => |written| {
-                    this.outgoing.cursor += @truncate(written);
+                .done => {
+                    this.outgoing.reset();
                 },
                 else => {},
             }

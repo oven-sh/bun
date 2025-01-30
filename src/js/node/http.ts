@@ -921,6 +921,7 @@ const ServerPrototype = {
             [kHandle]: handle,
           });
           isNextIncomingMessageHTTPS = prevIsNextIncomingMessageHTTPS;
+          drainMicrotasks();
 
           let capturedError;
           let rejectFunction;
@@ -956,7 +957,7 @@ const ServerPrototype = {
             server.emit("request", http_req, http_res);
           }
 
-          socket.cork(drainMicrotasks);
+          socket.cork();
 
           if (capturedError) {
             handle = undefined;

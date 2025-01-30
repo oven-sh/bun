@@ -6241,8 +6241,8 @@ pub const NodeHTTPResponse = struct {
         }
 
         this.ref();
-        defer if (event == .abort) this.markRequestAsDoneIfNecessary();
         defer this.deref();
+        defer if (event == .abort) this.markRequestAsDoneIfNecessary();
 
         const js_this: JSValue = this.getThisValue();
         if (this.onAbortedCallback.get()) |on_aborted| {

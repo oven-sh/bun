@@ -149,7 +149,7 @@ pub const InitCommand = struct {
     pub fn exec(alloc: std.mem.Allocator, argv: [][:0]const u8) !void {
         const print_help = brk: {
             for (argv) |arg| {
-                if (strings.eqlComptime(arg, "--help")) {
+                if (strings.eqlComptime(arg, "--help") or strings.eqlComptime(arg, "-h")) {
                     break :brk true;
                 }
             }

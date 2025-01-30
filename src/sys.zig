@@ -3309,7 +3309,11 @@ pub fn utimens(path: bun.OSPathSliceZ, atime: JSC.Node.TimeLike, mtime: JSC.Node
 }
 
 pub fn setNonblocking(fd: bun.FileDescriptor) Maybe(void) {
-    const flags = switch (bun.sys.fcntl(
+    return updateBlocking(fd, true);
+}
+
+pub fn updateBlocking(fd: bun.FileDescriptor, nonblocking: bool) Maybe(void) {
+    const current_flags = switch (bun.sys.fcntl(
         fd,
         std.posix.F.GETFL,
         0,
@@ -3318,11 +3322,13 @@ pub fn setNonblocking(fd: bun.FileDescriptor) Maybe(void) {
         .err => |err| return .{ .err = err },
     };
 
-    const new_flags = flags | bun.O.NONBLOCK;
+    const new_flags: i32 = if (nonblocking) current_flags | @as(i32, bun.O.NONBLOCK) else current_flags & ~@as(i32, bun.O.NONBLOCK);
 
-    switch (bun.sys.fcntl(fd, std.posix.F.SETFL, new_flags)) {
-        .err => |err| return .{ .err = err },
-        .result => {},
+    if (new_flags != current_flags) {
+        switch (bun.sys.fcntl(fd, std.posix.F.SETFL, new_flags)) {
+            .err => |err| return .{ .err = err },
+            .result => {},
+        }
     }
 
     return Maybe(void).success;

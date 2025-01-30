@@ -3607,27 +3607,7 @@ pub const FileSink = struct {
                 break :brk bun.sys.openA(path.slice(), options.flags(), options.mode);
             },
             .fd => |fd_| brk: {
-                if (comptime Environment.isPosix and FeatureFlags.nonblocking_stdout_and_stderr_on_posix) {
-                    if (bun.FDTag.get(fd_) != .none) {
-                        const rc = bun.C.open_as_nonblocking_tty(@intCast(fd_.cast()), bun.O.WRONLY);
-                        if (rc > -1) {
-                            isatty = true;
-                            is_nonblocking = true;
-                            break :brk JSC.Maybe(bun.FileDescriptor){ .result = bun.toFD(rc) };
-                        }
-                    }
-                }
-
                 const duped = bun.sys.dupWithFlags(fd_, 0);
-
-                if (comptime Environment.isPosix) {
-                    if (bun.FDTag.get(fd_) == .none and !this.force_sync and duped == .result) {
-                        is_nonblocking = switch (bun.sys.getFcntlFlags(duped.result)) {
-                            .result => |flags| (flags & bun.O.NONBLOCK) != 0,
-                            .err => false,
-                        };
-                    }
-                }
 
                 break :brk duped;
             },
@@ -3655,6 +3635,24 @@ pub const FileSink = struct {
 
                     this.fd = fd;
                     this.is_socket = std.posix.S.ISSOCK(stat.mode);
+
+                    if (bun.FDTag.get(fd) != .none and (isatty != null and isatty.?)) {
+                        // Prevents interleaved or dropped stdout/stderr output for terminals.
+                        // As noted in the following reference, local TTYs tend to be quite fast and
+                        // this behavior has become expected due historical functionality on OS X,
+                        // even though it was originally intended to change in v1.0.2 (Libuv 1.2.1).
+                        // Ref: https://github.com/nodejs/node/pull/1771#issuecomment-119351671
+                        _ = bun.sys.updateBlocking(fd, true);
+                        is_nonblocking = false;
+                    } else if (!is_nonblocking) {
+                        if (!is_nonblocking and !this.force_sync) {
+                            is_nonblocking = switch (bun.sys.getFcntlFlags(fd)) {
+                                .result => |flags| (flags & bun.O.NONBLOCK) != 0,
+                                .err => false,
+                            };
+                        }
+                    }
+
                     this.nonblocking = is_nonblocking and this.pollable and switch (options.input_path) {
                         .path => true,
                         .fd => |fd_| bun.FDTag.get(fd_) == .none,

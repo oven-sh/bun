@@ -38,17 +38,11 @@ pub fn PosixPipeWriter(
     return struct {
         pub fn _tryWrite(this: *This, buf_: []const u8) WriteResult {
             return switch (getFileType(this)) {
-                inline else => |ft| return _tryWriteWithWriteFn(this, buf_, false, comptime writeToFileType(ft)),
+                inline else => |ft| return _tryWriteWithWriteFn(this, buf_, comptime writeToFileType(ft)),
             };
         }
 
-        pub fn _tryWriteSync(this: *This, buf_: []const u8) WriteResult {
-            return switch (getFileType(this)) {
-                inline else => |ft| return _tryWriteWithWriteFn(this, buf_, true, comptime writeToFileType(ft)),
-            };
-        }
-
-        fn _tryWriteWithWriteFn(this: *This, buf: []const u8, comptime sync: bool, comptime write_fn: *const fn (bun.FileDescriptor, []const u8) JSC.Maybe(usize)) WriteResult {
+        fn _tryWriteWithWriteFn(this: *This, buf: []const u8, comptime write_fn: *const fn (bun.FileDescriptor, []const u8) JSC.Maybe(usize)) WriteResult {
             const fd = getFd(this);
 
             var offset: usize = 0;
@@ -57,10 +51,6 @@ pub fn PosixPipeWriter(
                 switch (write_fn(fd, buf[offset..])) {
                     .err => |err| {
                         if (err.isRetry()) {
-                            if (comptime sync) {
-                                continue;
-                            }
-
                             return .{ .pending = offset };
                         }
 
@@ -154,18 +144,10 @@ pub fn PosixPipeWriter(
 
             const trimmed = if (max_write_size < buf.len and max_write_size > 0) buf[0..max_write_size] else buf;
 
-            const force_sync = if (@hasField(This, "force_sync"))
-                parent.force_sync
-            else
-                false;
-
             var drained: usize = 0;
 
             while (drained < trimmed.len) {
-                const attempt = if (force_sync)
-                    _tryWriteSync(parent, trimmed[drained..])
-                else
-                    _tryWrite(parent, trimmed[drained..]);
+                const attempt = _tryWrite(parent, trimmed[drained..]);
                 switch (attempt) {
                     .pending => |pending| {
                         drained += pending;
@@ -565,10 +547,7 @@ pub fn PosixStreamingWriter(
         fn _tryWriteNewlyBufferedData(this: *PosixWriter, buf: []const u8) WriteResult {
             bun.assert(!this.is_done);
 
-            const rc = if (this.force_sync)
-                @This()._tryWriteSync(this, buf)
-            else
-                @This()._tryWrite(this, buf);
+            const rc = @This()._tryWrite(this, buf);
 
             switch (rc) {
                 .wrote => |amt| {
@@ -630,10 +609,7 @@ pub fn PosixStreamingWriter(
                 return this._tryWriteNewlyBufferedData(this.outgoing.slice());
             }
 
-            const rc = if (this.force_sync)
-                @This()._tryWriteSync(this, buf)
-            else
-                @This()._tryWrite(this, buf);
+            const rc = @This()._tryWrite(this, buf);
 
             switch (rc) {
                 .pending => |amt| {

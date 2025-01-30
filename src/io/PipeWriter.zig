@@ -1066,7 +1066,6 @@ pub const StreamBuffer = struct {
         if (this.list.capacity > std.mem.page_size) {
             // workaround insane zig decision to make it undefined behavior to resize .len < .capacity
             this.list.expandToCapacity();
-
             this.list.shrinkAndFree(std.mem.page_size);
         }
     }

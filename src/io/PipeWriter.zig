@@ -50,36 +50,37 @@ pub fn PosixPipeWriter(
 
         fn _tryWriteWithWriteFn(this: *This, buf: []const u8, comptime sync: bool, comptime write_fn: *const fn (bun.FileDescriptor, []const u8) JSC.Maybe(usize)) WriteResult {
             const fd = getFd(this);
-            var rest = buf;
 
-            while (rest.len > 0) {
-                switch (write_fn(fd, rest)) {
+            var offset: usize = 0;
+
+            while (offset < buf.len) {
+                switch (write_fn(fd, buf[offset..])) {
                     .err => |err| {
                         if (err.isRetry()) {
                             if (comptime sync) {
                                 continue;
                             }
-                            return .{ .pending = buf.len - rest.len };
+
+                            return .{ .pending = offset };
                         }
 
                         if (err.getErrno() == .PIPE) {
-                            return .{ .done = buf.len - rest.len };
+                            return .{ .done = offset };
                         }
 
                         return .{ .err = err };
                     },
 
                     .result => |wrote| {
+                        offset += wrote;
                         if (wrote == 0) {
-                            return .{ .done = buf.len - rest.len };
+                            return .{ .done = offset };
                         }
-
-                        rest = rest[wrote..];
                     },
                 }
             }
 
-            return .{ .wrote = buf.len - rest.len };
+            return .{ .wrote = offset };
         }
 
         fn writeToFileType(comptime file_type: FileType) *const (fn (bun.FileDescriptor, []const u8) JSC.Maybe(usize)) {
@@ -148,50 +149,47 @@ pub fn PosixPipeWriter(
             }
         }
 
-        pub fn drainBufferedData(parent: *This, input_buffer: []const u8, max_write_size: usize, received_hup: bool) WriteResult {
+        pub fn drainBufferedData(parent: *This, buf: []const u8, max_write_size: usize, received_hup: bool) WriteResult {
             _ = received_hup; // autofix
-            var buf = input_buffer;
-            buf = if (max_write_size < buf.len and max_write_size > 0) buf[0..max_write_size] else buf;
-            const original_buf = buf;
+
+            const trimmed = if (max_write_size < buf.len and max_write_size > 0) buf[0..max_write_size] else buf;
 
             const force_sync = if (@hasField(This, "force_sync"))
                 parent.force_sync
             else
                 false;
 
-            while (buf.len > 0) {
+            var drained: usize = 0;
+
+            while (drained < trimmed.len) {
                 const attempt = if (force_sync)
-                    _tryWriteSync(parent, buf)
+                    _tryWriteSync(parent, trimmed[drained..])
                 else
-                    _tryWrite(parent, buf);
+                    _tryWrite(parent, trimmed[drained..]);
                 switch (attempt) {
                     .pending => |pending| {
-                        return .{ .pending = pending + (original_buf.len - buf.len) };
+                        drained += pending;
+                        return .{ .pending = drained };
                     },
                     .wrote => |amt| {
-                        buf = buf[amt..];
+                        drained += amt;
                     },
                     .err => |err| {
-                        const wrote = original_buf.len - buf.len;
-
-                        if (wrote > 0) {
+                        if (drained > 0) {
                             onError(parent, err);
-                            return .{ .wrote = wrote };
+                            return .{ .wrote = drained };
                         } else {
                             return .{ .err = err };
                         }
                     },
                     .done => |amt| {
-                        buf = buf[amt..];
-                        const wrote = original_buf.len - buf.len;
-
-                        return .{ .done = wrote };
+                        drained += amt;
+                        return .{ .done = drained };
                     },
                 }
             }
 
-            const wrote = original_buf.len - buf.len;
-            return .{ .wrote = wrote };
+            return .{ .wrote = drained };
         }
     };
 }
@@ -450,6 +448,7 @@ pub fn PosixStreamingWriter(
 
             this.closeWithoutReporting();
             this.is_done = true;
+            this.outgoing.reset();
 
             onError(@alignCast(@ptrCast(this.parent)), err);
             this.close();
@@ -471,6 +470,7 @@ pub fn PosixStreamingWriter(
                 if (status != .end_of_file) {
                     this.outgoing.maybeShrink();
                 }
+                this.outgoing.list.clearRetainingCapacity();
             }
 
             onWrite(@ptrCast(this.parent), written, status);
@@ -690,6 +690,9 @@ pub fn PosixStreamingWriter(
             switch (rc) {
                 .pending => |written| {
                     this.outgoing.wrote(written);
+                    if (this.outgoing.isEmpty()) {
+                        this.outgoing.reset();
+                    }
                 },
                 .wrote => |written| {
                     this.outgoing.wrote(written);
@@ -697,10 +700,9 @@ pub fn PosixStreamingWriter(
                         this.outgoing.reset();
                     }
                 },
-                .done => {
+                else => {
                     this.outgoing.reset();
                 },
-                else => {},
             }
             return rc;
         }

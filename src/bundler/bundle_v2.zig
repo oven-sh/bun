@@ -977,10 +977,11 @@ pub const BundleV2 = struct {
             this.framework = bo.framework;
             this.linker.framework = &this.framework.?;
             this.plugins = bo.plugins;
-            bun.assert(transpiler.options.server_components);
-            bun.assert(this.client_bundler.options.server_components);
-            if (bo.framework.server_components.?.separate_ssr_graph)
-                bun.assert(this.ssr_bundler.options.server_components);
+            if (transpiler.options.server_components) {
+                bun.assert(this.client_bundler.options.server_components);
+                if (bo.framework.server_components.?.separate_ssr_graph)
+                    bun.assert(this.ssr_bundler.options.server_components);
+            }
         }
         this.linker.graph.allocator = this.graph.heap.allocator();
         this.graph.allocator = this.linker.graph.allocator;

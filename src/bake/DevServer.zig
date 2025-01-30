@@ -561,29 +561,37 @@ fn scanInitialRoutes(dev: *DevServer) !void {
 pub fn attachRoutes(dev: *DevServer, server: anytype) !void {
     dev.server = bun.JSC.API.AnyServer.from(server);
     const app = server.app.?;
+    const Server = @typeInfo(@TypeOf(server)).Pointer.child;
+    const is_ssl = @typeInfo(@TypeOf(app)).Pointer.child.is_ssl;
 
-    // For this to work, the route handlers need to be augmented to use the comptime
-    // SSL parameter. It's worth considering removing the SSL boolean.
-    if (@TypeOf(app) == *uws.NewApp(true)) {
-        bun.todoPanic(@src(), "DevServer does not support SSL yet", .{});
+    app.get(client_prefix ++ "/:route", *DevServer, dev, wrapGenericRequestHandler(onJsRequest, is_ssl));
+    app.get(asset_prefix ++ "/:asset", *DevServer, dev, wrapGenericRequestHandler(onAssetRequest, is_ssl));
+    app.get(css_prefix ++ "/:asset", *DevServer, dev, wrapGenericRequestHandler(onCssRequest, is_ssl));
+    app.get(internal_prefix ++ "/src/*", *DevServer, dev, wrapGenericRequestHandler(onSrcRequest, is_ssl));
+
+    app.ws(
+        internal_prefix ++ "/hmr",
+        dev,
+        0,
+        uws.WebSocketBehavior.Wrap(DevServer, HmrSocket, is_ssl).apply(.{}),
+    );
+
+    if (bun.FeatureFlags.bake_debugging_features) {
+        app.get(
+            internal_prefix ++ "/incremental_visualizer",
+            *DevServer,
+            dev,
+            wrapGenericRequestHandler(onIncrementalVisualizer, is_ssl),
+        );
     }
 
-    // app.get(client_prefix ++ "/:route", *DevServer, dev, onJsRequest);
-    // app.get(asset_prefix ++ "/:asset", *DevServer, dev, onAssetRequest);
-    // app.get(css_prefix ++ "/:asset", *DevServer, dev, onCssRequest);
-    // app.get(internal_prefix ++ "/src/*", *DevServer, dev, onSrcRequest);
-
-    // app.ws(
-    //     internal_prefix ++ "/hmr",
-    //     dev,
-    //     0,
-    //     uws.WebSocketBehavior.Wrap(DevServer, HmrSocket, false).apply(.{}),
-    // );
-
-    // if (bun.FeatureFlags.bake_debugging_features)
-    //     app.get(internal_prefix ++ "/incremental_visualizer", *DevServer, dev, onIncrementalVisualizer);
-
-    // app.any("/*", *DevServer, dev, onRequest);
+    // Only attach a catch-all handler if the framework has filesystem router
+    // types. Otherwise, this can just be Bun.serve's default handler.
+    if (dev.framework.file_system_router_types.len > 0) {
+        app.any("/*", *DevServer, dev, wrapGenericRequestHandler(onRequest, is_ssl));
+    } else {
+        app.any("/*", *Server, server, Server.onRequest);
+    }
 }
 
 pub fn deinit(dev: *DevServer) void {
@@ -611,13 +619,16 @@ fn onJsRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
     };
 
     if (maybe_route.unwrap()) |route| {
+        {
+            @panic("TODO");
+        }
         dev.ensureRouteIsBundled(route, .js_payload, req, resp) catch bun.outOfMemory();
     } else {
         @panic("TODO: generate client bundle with no source files");
     }
 }
 
-fn onAssetRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
+fn onAssetRequest(dev: *DevServer, req: *Request, resp: anytype) void {
     _ = dev;
     _ = req;
     _ = resp;
@@ -654,11 +665,29 @@ fn parseHexToInt(comptime T: type, slice: []const u8) ?T {
     return @bitCast(out);
 }
 
-fn onIncrementalVisualizer(_: *DevServer, _: *Request, resp: AnyResponse) void {
+inline fn wrapGenericRequestHandler(
+    comptime handler: anytype,
+    comptime is_ssl: bool,
+) fn (
+    dev: *DevServer,
+    req: *Request,
+    resp: *uws.NewApp(is_ssl).Response,
+) void {
+    const fn_info = @typeInfo(@TypeOf(handler)).Fn;
+    assert(fn_info.params.len == 3);
+    const uses_any_response = if (fn_info.params[2].type) |t| t == AnyResponse else false;
+    return struct {
+        fn handle(dev: *DevServer, req: *Request, resp: *uws.NewApp(is_ssl).Response) void {
+            handler(dev, req, if (uses_any_response) AnyResponse.init(resp) else resp);
+        }
+    }.handle;
+}
+
+fn onIncrementalVisualizer(_: *DevServer, _: *Request, resp: anytype) void {
     resp.corked(onIncrementalVisualizerCorked, .{resp});
 }
 
-fn onIncrementalVisualizerCorked(resp: AnyResponse) void {
+fn onIncrementalVisualizerCorked(resp: anytype) void {
     const code = if (Environment.codegen_embed)
         @embedFile("incremental_visualizer.html")
     else
@@ -812,8 +841,7 @@ fn appendRouteEntryPointsIfNotStale(dev: *DevServer, entry_points: *EntryPointLi
             }
         },
         .html => |*html| {
-            _ = html;
-            @panic("TODO");
+            try entry_points.append(alloc, html.html_bundle.html_bundle.path, .{ .client = true });
         },
     }
 }
@@ -918,7 +946,7 @@ pub fn onJsRequestWithBundle(dev: *DevServer, bundle_index: RouteBundle.Index, r
     sendTextFile(code, MimeType.javascript.value, resp);
 }
 
-pub fn onSrcRequest(dev: *DevServer, req: *uws.Request, resp: *AnyResponse) void {
+pub fn onSrcRequest(dev: *DevServer, req: *uws.Request, resp: anytype) void {
     if (req.header("open-in-editor") == null) {
         resp.writeStatus("501 Not Implemented");
         resp.end("Viewing source without opening in editor is not implemented yet!", false);
@@ -980,24 +1008,23 @@ fn startAsyncBundle(
     ast_memory_allocator.reset();
     ast_memory_allocator.push();
 
-    if (dev.framework.server_components == null) {
-        // The handling of the dependency graphs are SLIGHTLY different when
-        // server components are disabled. It's subtle, but enough that it
-        // would be incorrect to even try to run a build.
-        bun.todoPanic(@src(), "support non-server components build", .{});
-    }
-
     const bv2 = try BundleV2.init(
-        &dev.server_bundler,
-        if (dev.framework.server_components != null) .{
-            .framework = dev.framework,
-            .client_bundler = &dev.client_bundler,
-            .ssr_bundler = &dev.ssr_bundler,
-            .plugins = dev.bundler_options.plugin,
-        } else @panic("TODO: support non-server components"),
+        if (dev.frontend_only)
+            &dev.client_bundler
+        else
+            &dev.server_bundler,
+        if (dev.frontend_only)
+            null
+        else
+            .{
+                .framework = dev.framework,
+                .client_bundler = &dev.client_bundler,
+                .ssr_bundler = &dev.ssr_bundler,
+                .plugins = dev.bundler_options.plugin,
+            },
         allocator,
         .{ .js = dev.vm.eventLoop() },
-        false, // reloading is handled separately
+        false, // watching is handled separately
         JSC.WorkPool.get(),
         heap,
     );
@@ -1796,19 +1823,28 @@ pub fn routeBundlePtr(dev: *DevServer, idx: RouteBundle.Index) *RouteBundle {
     return &dev.route_bundles.items[idx.get()];
 }
 
-fn onRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
+fn onRequest(dev: *DevServer, req: *Request, resp: anytype) void {
     var params: FrameworkRouter.MatchedParams = undefined;
     if (dev.router.matchSlow(req.url(), &params)) |route_index| {
-        dev.ensureRouteIsBundled(route_index, .server_handler, req, resp) catch bun.outOfMemory();
+        dev.ensureRouteIsBundled(
+            .{ .framework = route_index },
+            .server_handler,
+            req,
+            AnyResponse.init(resp),
+        ) catch bun.outOfMemory();
         return;
     }
 
     switch (dev.server.?) {
-        inline .DebugHTTPServer, .HTTPServer => |s| if (s.config.onRequest != .zero) {
-            s.onRequest(req, resp);
-            return;
+        inline else => |s| {
+            if (@typeInfo(@TypeOf(s.app.?)).Pointer.child.Response != @typeInfo(@TypeOf(resp)).Pointer.child) {
+                unreachable; // mismatch between `is_ssl` with server and response types. optimize these checks out.
+            }
+            if (s.config.onRequest != .zero) {
+                s.onRequest(req, resp);
+                return;
+            }
         },
-        else => @panic("TODO: HTTPS"),
     }
 
     sendBuiltInNotFound(resp);
@@ -1853,17 +1889,21 @@ fn getOrPutRouteBundle(dev: *DevServer, route: RouteBundle.Identifier) !RouteBun
     return bundle_index;
 }
 
-fn sendTextFile(code: []const u8, content_type: []const u8, resp: AnyResponse) void {
-    if (code.len == 0) {
-        resp.writeStatus("202 No Content");
-        resp.writeHeaderInt("Content-Length", 0);
-        resp.end("", true);
-        return;
-    }
+fn sendTextFile(code: []const u8, content_type: []const u8, any_resp: AnyResponse) void {
+    switch (any_resp) {
+        inline else => |resp| {
+            if (code.len == 0) {
+                resp.writeStatus("202 No Content");
+                resp.writeHeaderInt("Content-Length", 0);
+                resp.end("", true);
+                return;
+            }
 
-    resp.writeStatus("200 OK");
-    resp.writeHeader("Content-Type", content_type);
-    resp.end(code, true); // TODO: You should never call res.end(huge buffer)
+            resp.writeStatus("200 OK");
+            resp.writeHeader("Content-Type", content_type);
+            resp.end(code, true); // TODO: You should never call res.end(huge buffer)
+        },
+    }
 }
 
 const ErrorPageKind = enum {
@@ -1943,7 +1983,7 @@ fn sendSerializedFailuresInner(
     }
 }
 
-fn sendBuiltInNotFound(resp: AnyResponse) void {
+fn sendBuiltInNotFound(resp: anytype) void {
     const message = "404 Not Found";
     resp.writeStatus("404 Not Found");
     resp.end(message, true);
@@ -3683,7 +3723,7 @@ fn writeVisualizerMessage(dev: *DevServer, payload: *std.ArrayList(u8)) !void {
 
 pub fn onWebSocketUpgrade(
     dev: *DevServer,
-    res: AnyResponse,
+    res: anytype,
     req: *Request,
     upgrade_ctx: *uws.uws_socket_context_t,
     id: usize,

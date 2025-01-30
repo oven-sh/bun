@@ -3192,7 +3192,7 @@ pub const AnyResponse = union(enum) {
     SSL: *NewApp(true).Response,
     TCP: *NewApp(false).Response,
 
-    pub fn init(response: anytype) AnyResponse {
+    pub inline fn init(response: anytype) AnyResponse {
         return switch (@TypeOf(response)) {
             *NewApp(true).Response => .{ .SSL = response },
             *NewApp(false).Response => .{ .TCP = response },
@@ -3353,7 +3353,8 @@ pub const AnyResponse = union(enum) {
 };
 pub fn NewApp(comptime ssl: bool) type {
     return opaque {
-        const ssl_flag = @as(i32, @intFromBool(ssl));
+        pub const is_ssl = ssl;
+        const ssl_flag: i32 = @intFromBool(ssl);
         const ThisApp = @This();
 
         pub fn close(this: *ThisApp) void {

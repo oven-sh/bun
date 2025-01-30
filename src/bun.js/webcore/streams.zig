@@ -3449,6 +3449,9 @@ pub const FileSink = struct {
         this.force_sync = true;
         if (comptime !Environment.isWindows) {
             this.writer.force_sync = true;
+            if (this.fd != bun.invalid_fd and this.nonblocking) {
+                _ = bun.sys.updateBlocking(this.fd, true);
+            }
         }
     }
 
@@ -3636,7 +3639,7 @@ pub const FileSink = struct {
                     this.fd = fd;
                     this.is_socket = std.posix.S.ISSOCK(stat.mode);
 
-                    if (this.force_sync or isatty != null and isatty.?) {
+                    if (isatty != null and isatty.?) {
                         // Prevents interleaved or dropped stdout/stderr output for terminals.
                         // As noted in the following reference, local TTYs tend to be quite fast and
                         // this behavior has become expected due historical functionality on OS X,
@@ -3644,6 +3647,8 @@ pub const FileSink = struct {
                         // Ref: https://github.com/nodejs/node/pull/1771#issuecomment-119351671
                         _ = bun.sys.updateBlocking(fd, true);
                         is_nonblocking = false;
+                        this.force_sync = true;
+                        this.writer.force_sync = true;
                     } else if (!is_nonblocking) {
                         const flags = switch (bun.sys.getFcntlFlags(fd)) {
                             .result => |flags| flags,
@@ -3654,18 +3659,14 @@ pub const FileSink = struct {
                         };
                         is_nonblocking = (flags & @as(@TypeOf(flags), bun.O.NONBLOCK)) != 0;
 
-                        if (!is_nonblocking and !this.force_sync) {
+                        if (!is_nonblocking) {
                             if (bun.sys.setNonblocking(fd) == .result) {
                                 is_nonblocking = true;
                             }
-                            _ = bun.sys.setNoSigpipe(fd);
                         }
                     }
 
-                    this.nonblocking = is_nonblocking and this.pollable and switch (options.input_path) {
-                        .path => true,
-                        .fd => |fd_| bun.FDTag.get(fd_) == .none,
-                    };
+                    this.nonblocking = is_nonblocking and this.pollable;
                 },
             }
         } else if (comptime Environment.isWindows) {

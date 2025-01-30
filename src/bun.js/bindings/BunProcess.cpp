@@ -2018,6 +2018,12 @@ static JSValue constructProcessHrtimeObject(VM& vm, JSObject* processObject)
 
     return hrtime;
 }
+enum class BunProcessStdinFdType : int32_t {
+    file = 0,
+    pipe = 1,
+    socket = 2,
+};
+extern "C" BunProcessStdinFdType Bun__Process__getStdinFdType(void*, int fd);
 
 extern "C" void Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int fd)
@@ -2028,6 +2034,9 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int 
     JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdioWriteStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
     args.append(JSC::jsNumber(fd));
+    args.append(jsBoolean(bun_stdio_tty[fd]));
+    BunProcessStdinFdType fdType = Bun__Process__getStdinFdType(Bun::vm(vm), fd);
+    args.append(jsNumber(static_cast<int32_t>(fdType)));
 
     JSC::CallData callData = JSC::getCallData(getStdioWriteStream);
 
@@ -2047,8 +2056,21 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int 
     ASSERT_WITH_MESSAGE(JSC::isJSArray(result), "Expected an array from getStdioWriteStream");
     JSC::JSArray* resultObject = JSC::jsCast<JSC::JSArray*>(result);
 
-    Zig::GlobalObject* globalThis = jsCast<Zig::GlobalObject*>(globalObject);
-    Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(globalThis, JSValue::encode(resultObject->getIndex(globalObject, 1)));
+    // process.stdout and process.stderr differ from other Node.js streams in important ways:
+    // 1. They are used internally by console.log() and console.error(), respectively.
+    // 2. Writes may be synchronous depending on what the stream is connected to and whether the system is Windows or POSIX:
+    // Files: synchronous on Windows and POSIX
+    // TTYs (Terminals): asynchronous on Windows, synchronous on POSIX
+    // Pipes (and sockets): synchronous on Windows, asynchronous on POSIX
+    bool forceSync = false;
+#if OS(WINDOWS)
+    forceSync = fdType == BunProcessStdinFdType::file || fdType == BunProcessStdinFdType::pipe;
+#else
+    forceSync = fdType == BunProcessStdinFdType::file || bun_stdio_tty[fd];
+#endif
+    if (forceSync) {
+        Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(globalObject, JSValue::encode(resultObject->getIndex(globalObject, 1)));
+    }
 
     return resultObject->getIndex(globalObject, 0);
 }
@@ -2067,8 +2089,6 @@ static JSValue constructStderr(VM& vm, JSObject* processObject)
 #define STDIN_FILENO 0
 #endif
 
-extern "C" int32_t Bun__Process__getStdinFdType(void*);
-
 static JSValue constructStdin(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
@@ -2077,7 +2097,8 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     JSC::MarkedArgumentBuffer args;
     args.append(JSC::jsNumber(STDIN_FILENO));
     args.append(jsBoolean(bun_stdio_tty[STDIN_FILENO]));
-    args.append(jsNumber(Bun__Process__getStdinFdType(Bun::vm(vm))));
+    BunProcessStdinFdType fdType = Bun__Process__getStdinFdType(Bun::vm(vm), STDIN_FILENO);
+    args.append(jsNumber(static_cast<int32_t>(fdType)));
     JSC::CallData callData = JSC::getCallData(getStdioWriteStream);
 
     NakedPtr<JSC::Exception> returnedException = nullptr;

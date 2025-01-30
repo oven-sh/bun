@@ -36,8 +36,8 @@ pub fn PosixPipeWriter(
 ) type {
     _ = onWritable; // autofix
     return struct {
-        pub fn _tryWrite(this: *This, buf_: []const u8) WriteResult {
-            return switch (getFileType(this)) {
+        pub fn _tryWrite(this: *This, force_sync: bool, buf_: []const u8) WriteResult {
+            return switch (if (!force_sync) getFileType(this) else .file) {
                 inline else => |ft| return _tryWriteWithWriteFn(this, buf_, comptime writeToFileType(ft)),
             };
         }
@@ -147,7 +147,7 @@ pub fn PosixPipeWriter(
             var drained: usize = 0;
 
             while (drained < trimmed.len) {
-                const attempt = _tryWrite(parent, trimmed[drained..]);
+                const attempt = _tryWrite(parent, parent.getForceSync(), trimmed[drained..]);
                 switch (attempt) {
                     .pending => |pending| {
                         drained += pending;
@@ -229,6 +229,10 @@ pub fn PosixBufferedWriter(
             onError(this.parent, err);
 
             this.close();
+        }
+
+        pub fn getForceSync(_: *const @This()) bool {
+            return false;
         }
 
         fn _onWrite(
@@ -386,6 +390,10 @@ pub fn PosixStreamingWriter(
         closed_without_reporting: bool = false,
 
         force_sync: bool = false,
+
+        pub fn getForceSync(this: *const @This()) bool {
+            return this.force_sync;
+        }
 
         // TODO: configurable?
         const chunk_size: usize = std.mem.page_size;
@@ -547,7 +555,7 @@ pub fn PosixStreamingWriter(
         fn _tryWriteNewlyBufferedData(this: *PosixWriter, buf: []const u8) WriteResult {
             bun.assert(!this.is_done);
 
-            const rc = @This()._tryWrite(this, buf);
+            const rc = @This()._tryWrite(this, this.force_sync, buf);
 
             switch (rc) {
                 .wrote => |amt| {
@@ -609,7 +617,7 @@ pub fn PosixStreamingWriter(
                 return this._tryWriteNewlyBufferedData(this.outgoing.slice());
             }
 
-            const rc = @This()._tryWrite(this, buf);
+            const rc = @This()._tryWrite(this, this.force_sync, buf);
 
             switch (rc) {
                 .pending => |amt| {

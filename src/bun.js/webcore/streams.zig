@@ -3636,7 +3636,7 @@ pub const FileSink = struct {
                     this.fd = fd;
                     this.is_socket = std.posix.S.ISSOCK(stat.mode);
 
-                    if (isatty != null and isatty.?) {
+                    if (this.force_sync or isatty != null and isatty.?) {
                         // Prevents interleaved or dropped stdout/stderr output for terminals.
                         // As noted in the following reference, local TTYs tend to be quite fast and
                         // this behavior has become expected due historical functionality on OS X,
@@ -3645,12 +3645,25 @@ pub const FileSink = struct {
                         _ = bun.sys.updateBlocking(fd, true);
                         is_nonblocking = false;
                     } else if (!is_nonblocking) {
+                        const flags = switch (bun.sys.getFcntlFlags(fd)) {
+                            .result => |flags| flags,
+                            .err => |err| {
+                                _ = bun.sys.close(fd);
+                                return .{ .err = err };
+                            },
+                        };
+                        is_nonblocking = (flags & @as(@TypeOf(flags), bun.O.NONBLOCK)) != 0;
+
                         if (!is_nonblocking and !this.force_sync) {
-                            is_nonblocking = switch (bun.sys.getFcntlFlags(fd)) {
-                                .result => |flags| (flags & @as(@TypeOf(flags), bun.O.NONBLOCK)) != 0,
-                                .err => false,
-                            };
+                            if (bun.sys.setNonblocking(fd) == .result) {
+                                is_nonblocking = true;
+                            }
+                            _ = bun.sys.setNoSigpipe(fd);
                         }
+                    }
+
+                    if (is_nonblocking) {
+                        this.runPending();
                     }
 
                     this.nonblocking = is_nonblocking and this.pollable and switch (options.input_path) {

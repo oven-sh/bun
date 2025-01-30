@@ -3731,14 +3731,25 @@ pub const FileSink = struct {
     }
 
     pub fn onAutoFlush(this: *FileSink) bool {
-        if (this.done) {
+        if (this.done or !this.writer.hasPendingData()) {
+            this.updateRef(false);
             this.auto_flusher.registered = false;
             return false;
         }
-        defer this.runPending();
 
-        _ = this.writer.flush();
+        const amt = switch (this.writer.flush()) {
+            .done, .wrote, .pending => |amt| amt,
+            else => 0,
+        };
+
+        if (amt == 0) {
+            this.updateRef(false);
+        } else {
+            this.runPending();
+        }
+
         if (!this.writer.hasPendingData()) {
+            this.updateRef(false);
             this.auto_flusher.registered = false;
             return false;
         }

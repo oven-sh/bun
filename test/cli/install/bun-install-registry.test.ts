@@ -11,7 +11,6 @@ import {
   mergeWindowEnvs,
   runBunInstall,
   runBunUpdate,
-  pack,
   tempDirWithFiles,
   tmpdirSync,
   toBeValidBin,
@@ -20,8 +19,6 @@ import {
   writeShebangScript,
   stderrForInstall,
   tls,
-  isFlaky,
-  isMacOS,
   readdirSorted,
   VerdaccioRegistry,
 } from "harness";
@@ -42,8 +39,6 @@ var packageDir: string;
 /** packageJson = join(packageDir, "package.json"); */
 var packageJson: string;
 
-let users: Record<string, string> = {};
-
 beforeAll(async () => {
   setDefaultTimeout(1000 * 60 * 5);
   verdaccio = new VerdaccioRegistry();
@@ -52,52 +47,17 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await Bun.$`rm -f ${import.meta.dir}/htpasswd`.throws(false);
   verdaccio.stop();
 });
 
 beforeEach(async () => {
   ({ packageDir, packageJson } = await verdaccio.createTestDir({ saveTextLockfile: false }));
-  await Bun.$`rm -f ${import.meta.dir}/htpasswd`.throws(false);
-  await Bun.$`rm -rf ${import.meta.dir}/packages/private-pkg-dont-touch`.throws(false);
-  users = {};
   env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
   env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
 });
 
 function registryUrl() {
   return verdaccio.registryUrl();
-}
-
-/**
- * Returns auth token
- */
-async function generateRegistryUser(username: string, password: string): Promise<string> {
-  if (users[username]) {
-    throw new Error("that user already exists");
-  } else users[username] = password;
-
-  const url = `http://localhost:${port}/-/user/org.couchdb.user:${username}`;
-  const user = {
-    name: username,
-    password: password,
-    email: `${username}@example.com`,
-  };
-
-  const response = await fetch(url, {
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(user),
-  });
-
-  if (response.ok) {
-    const data = await response.json();
-    return data.token;
-  } else {
-    throw new Error("Failed to create user:", response.statusText);
-  }
 }
 
 describe("npmrc", async () => {
@@ -330,7 +290,7 @@ ${iniInner.join("\n")}
     const ini = /* ini */ `
 registry = http://localhost:${port}/
 @needs-auth:registry=http://localhost:${port}/
-//localhost:${port}/:_authToken=${await generateRegistryUser("bilbo_swaggins", "verysecure")}
+//localhost:${port}/:_authToken=${await verdaccio.generateUser("bilbo_swaggins", "verysecure")}
 `;
 
     await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
@@ -415,21 +375,21 @@ ${Object.keys(opts)
   }
 
   registryConfigOptionTest("_authToken", async () => ({
-    "_authToken": await generateRegistryUser("bilbo_baggins", "verysecure"),
+    "_authToken": await verdaccio.generateUser("bilbo_baggins", "verysecure"),
   }));
   registryConfigOptionTest(
     "_authToken with env variable value",
     async () => ({ _authToken: "${SUPER_SECRET_TOKEN}" }),
-    async () => ({ SUPER_SECRET_TOKEN: await generateRegistryUser("bilbo_baggins420", "verysecure") }),
+    async () => ({ SUPER_SECRET_TOKEN: await verdaccio.generateUser("bilbo_baggins420", "verysecure") }),
   );
   registryConfigOptionTest("username and password", async () => {
-    await generateRegistryUser("gandalf429", "verysecure");
+    await verdaccio.generateUser("gandalf429", "verysecure");
     return { username: "gandalf429", _password: "verysecure" };
   });
   registryConfigOptionTest(
     "username and password with env variable password",
     async () => {
-      await generateRegistryUser("gandalf422", "verysecure");
+      await verdaccio.generateUser("gandalf422", "verysecure");
       return { username: "gandalf422", _password: "${SUPER_SECRET_PASSWORD}" };
     },
     {
@@ -439,7 +399,7 @@ ${Object.keys(opts)
   registryConfigOptionTest(
     "username and password with .env variable password",
     async () => {
-      await generateRegistryUser("gandalf421", "verysecure");
+      await verdaccio.generateUser("gandalf421", "verysecure");
       return { username: "gandalf421", _password: "${SUPER_SECRET_PASSWORD}" };
     },
     {
@@ -448,7 +408,7 @@ ${Object.keys(opts)
   );
 
   registryConfigOptionTest("_auth", async () => {
-    await generateRegistryUser("linus", "verysecure");
+    await verdaccio.generateUser("linus", "verysecure");
     const _auth = "linus:verysecure";
     return { _auth };
   });
@@ -456,7 +416,7 @@ ${Object.keys(opts)
   registryConfigOptionTest(
     "_auth from .env variable",
     async () => {
-      await generateRegistryUser("zack", "verysecure");
+      await verdaccio.generateUser("zack", "verysecure");
       return { _auth: "${SECRET_AUTH}" };
     },
     {
@@ -467,7 +427,7 @@ ${Object.keys(opts)
   registryConfigOptionTest(
     "_auth from .env variable with no value",
     async () => {
-      await generateRegistryUser("zack420", "verysecure");
+      await verdaccio.generateUser("zack420", "verysecure");
       return { _auth: "${SECRET_AUTH}" };
     },
     {
@@ -738,155 +698,6 @@ ljelkjwelkgjw;lekj;lkejflkj
     expect(out).not.toContain("no-deps");
     const err = await Bun.readableStreamToText(stderr);
     expect(err).toContain("HTTPThread: the CA is invalid");
-    expect(await exited).toBe(1);
-  });
-});
-
-describe("whoami", async () => {
-  test("can get username", async () => {
-    const bunfig = await verdaccio.authBunfig("whoami");
-    await Promise.all([
-      write(
-        packageJson,
-        JSON.stringify({
-          name: "whoami-pkg",
-          version: "1.1.1",
-        }),
-      ),
-      write(join(packageDir, "bunfig.toml"), bunfig),
-    ]);
-
-    const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "pm", "whoami"],
-      cwd: packageDir,
-      stdout: "pipe",
-      stderr: "pipe",
-      env,
-    });
-
-    const out = await Bun.readableStreamToText(stdout);
-    expect(out).toBe("whoami\n");
-    const err = await Bun.readableStreamToText(stderr);
-    expect(err).not.toContain("error:");
-    expect(await exited).toBe(0);
-  });
-  test("username from .npmrc", async () => {
-    // It should report the username from npmrc, even without an account
-    const bunfig = `
-    [install]
-    cache = false
-    registry = "http://localhost:${port}/"`;
-    const npmrc = `
-    //localhost:${port}/:username=whoami-npmrc
-    //localhost:${port}/:_password=123456
-    `;
-    await Promise.all([
-      write(packageJson, JSON.stringify({ name: "whoami-pkg", version: "1.1.1" })),
-      write(join(packageDir, "bunfig.toml"), bunfig),
-      write(join(packageDir, ".npmrc"), npmrc),
-    ]);
-
-    const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "pm", "whoami"],
-      cwd: packageDir,
-      stdout: "pipe",
-      stderr: "pipe",
-      env,
-    });
-
-    const out = await Bun.readableStreamToText(stdout);
-    expect(out).toBe("whoami-npmrc\n");
-    const err = await Bun.readableStreamToText(stderr);
-    expect(err).not.toContain("error:");
-    expect(await exited).toBe(0);
-  });
-  test("only .npmrc", async () => {
-    const token = await generateRegistryUser("whoami-npmrc", "whoami-npmrc");
-    const npmrc = `
-    //localhost:${port}/:_authToken=${token}
-    registry=http://localhost:${port}/`;
-    await Promise.all([
-      write(packageJson, JSON.stringify({ name: "whoami-pkg", version: "1.1.1" })),
-      write(join(packageDir, ".npmrc"), npmrc),
-    ]);
-    const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "pm", "whoami"],
-      cwd: packageDir,
-      stdout: "pipe",
-      stderr: "pipe",
-      env,
-    });
-    const out = await Bun.readableStreamToText(stdout);
-    expect(out).toBe("whoami-npmrc\n");
-    const err = await Bun.readableStreamToText(stderr);
-    expect(err).not.toContain("error:");
-    expect(await exited).toBe(0);
-  });
-  test("two .npmrc", async () => {
-    const token = await generateRegistryUser("whoami-two-npmrc", "whoami-two-npmrc");
-    const packageNpmrc = `registry=http://localhost:${port}/`;
-    const homeNpmrc = `//localhost:${port}/:_authToken=${token}`;
-    const homeDir = `${packageDir}/home_dir`;
-    await Bun.$`mkdir -p ${homeDir}`;
-    await Promise.all([
-      write(packageJson, JSON.stringify({ name: "whoami-pkg", version: "1.1.1" })),
-      write(join(packageDir, ".npmrc"), packageNpmrc),
-      write(join(homeDir, ".npmrc"), homeNpmrc),
-    ]);
-    const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "pm", "whoami"],
-      cwd: packageDir,
-      stdout: "pipe",
-      stderr: "pipe",
-      env: {
-        ...env,
-        XDG_CONFIG_HOME: `${homeDir}`,
-      },
-    });
-    const out = await Bun.readableStreamToText(stdout);
-    expect(out).toBe("whoami-two-npmrc\n");
-    const err = await Bun.readableStreamToText(stderr);
-    expect(err).not.toContain("error:");
-    expect(await exited).toBe(0);
-  });
-  test("not logged in", async () => {
-    await write(packageJson, JSON.stringify({ name: "whoami-pkg", version: "1.1.1" }));
-    const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "pm", "whoami"],
-      cwd: packageDir,
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const out = await Bun.readableStreamToText(stdout);
-    expect(out).toBeEmpty();
-    const err = await Bun.readableStreamToText(stderr);
-    expect(err).toBe("error: missing authentication (run `bunx npm login`)\n");
-    expect(await exited).toBe(1);
-  });
-  test("invalid token", async () => {
-    // create the user and provide an invalid token
-    const token = await generateRegistryUser("invalid-token", "invalid-token");
-    const bunfig = `
-    [install]
-    cache = false
-    registry = { url = "http://localhost:${port}/", token = "1234567" }`;
-    await rm(join(packageDir, "bunfig.toml"));
-    await Promise.all([
-      write(packageJson, JSON.stringify({ name: "whoami-pkg", version: "1.1.1" })),
-      write(join(packageDir, "bunfig.toml"), bunfig),
-    ]);
-    const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "pm", "whoami"],
-      cwd: packageDir,
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const out = await Bun.readableStreamToText(stdout);
-    expect(out).toBeEmpty();
-    const err = await Bun.readableStreamToText(stderr);
-    expect(err).toBe(`error: failed to authenticate with registry 'http://localhost:${port}/'\n`);
     expect(await exited).toBe(1);
   });
 });
@@ -2573,19 +2384,15 @@ test("package added after install", async () => {
     "",
     expect.stringContaining("+ no-deps@1.0.0"),
     "",
-    "2 packages installed",
+    "1 package installed",
   ]);
-  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
-    name: "no-deps",
-    version: "1.0.0",
-  } as any);
-  expect(
-    await file(join(packageDir, "node_modules", "one-range-dep", "node_modules", "no-deps", "package.json")).json(),
-  ).toEqual({
-    name: "no-deps",
-    version: "1.1.0",
-  } as any);
   expect(await exited).toBe(0);
+  expect(
+    await Promise.all([
+      file(join(packageDir, "node_modules", "no-deps", "package.json")).json(),
+      exists(join(packageDir, "node_modules", "one-range-dep", "node_modules")),
+    ]),
+  ).toEqual([{ name: "no-deps", version: "1.0.0" }, false]);
   assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
@@ -2610,7 +2417,7 @@ test("package added after install", async () => {
     expect.stringContaining("+ no-deps@1.0.0"),
     "+ one-range-dep@1.0.0",
     "",
-    "3 packages installed",
+    "2 packages installed",
   ]);
   expect(await exited).toBe(0);
   assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
@@ -4006,87 +3813,84 @@ describe("hoisting", async () => {
       },
     ];
     for (const { dependencies, expected, situation } of peerTests) {
-      test.todoIf(isFlaky && isMacOS && situation === "peer ^1.0.2")(
-        `it should hoist ${expected} when ${situation}`,
-        async () => {
-          await writeFile(
-            packageJson,
-            JSON.stringify({
-              name: "foo",
-              dependencies,
-            }),
-          );
+      test(`it should hoist ${expected} when ${situation}`, async () => {
+        await writeFile(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            dependencies,
+          }),
+        );
 
-          var { stdout, stderr, exited } = spawn({
-            cmd: [bunExe(), "install"],
-            cwd: packageDir,
-            stdout: "pipe",
-            stdin: "pipe",
-            stderr: "pipe",
-            env,
-          });
+        var { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        });
 
-          var err = await new Response(stderr).text();
-          var out = await new Response(stdout).text();
-          expect(err).toContain("Saved lockfile");
-          expect(err).not.toContain("not found");
-          expect(err).not.toContain("error:");
-          for (const dep of Object.keys(dependencies)) {
-            expect(out).toContain(`+ ${dep}@${dependencies[dep]}`);
-          }
-          expect(await exited).toBe(0);
-          assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+        var err = await new Response(stderr).text();
+        var out = await new Response(stdout).text();
+        expect(err).toContain("Saved lockfile");
+        expect(err).not.toContain("not found");
+        expect(err).not.toContain("error:");
+        for (const dep of Object.keys(dependencies)) {
+          expect(out).toContain(`+ ${dep}@${dependencies[dep]}`);
+        }
+        expect(await exited).toBe(0);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-          expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).text()).toContain(expected);
+        expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).text()).toContain(expected);
 
-          await rm(join(packageDir, "bun.lockb"));
+        await rm(join(packageDir, "bun.lockb"));
 
-          ({ stdout, stderr, exited } = spawn({
-            cmd: [bunExe(), "install"],
-            cwd: packageDir,
-            stdout: "pipe",
-            stdin: "pipe",
-            stderr: "pipe",
-            env,
-          }));
+        ({ stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        }));
 
-          err = await new Response(stderr).text();
-          out = await new Response(stdout).text();
-          expect(err).toContain("Saved lockfile");
-          expect(err).not.toContain("not found");
-          expect(err).not.toContain("error:");
-          if (out.includes("installed")) {
-            console.log("stdout:", out);
-          }
-          expect(out).not.toContain("package installed");
-          expect(await exited).toBe(0);
-          assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+        err = await new Response(stderr).text();
+        out = await new Response(stdout).text();
+        expect(err).toContain("Saved lockfile");
+        expect(err).not.toContain("not found");
+        expect(err).not.toContain("error:");
+        if (out.includes("installed")) {
+          console.log("stdout:", out);
+        }
+        expect(out).not.toContain("package installed");
+        expect(await exited).toBe(0);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-          expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).text()).toContain(expected);
+        expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).text()).toContain(expected);
 
-          await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+        await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
 
-          ({ stdout, stderr, exited } = spawn({
-            cmd: [bunExe(), "install"],
-            cwd: packageDir,
-            stdout: "pipe",
-            stdin: "pipe",
-            stderr: "pipe",
-            env,
-          }));
+        ({ stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        }));
 
-          err = await new Response(stderr).text();
-          out = await new Response(stdout).text();
-          expect(err).not.toContain("Saved lockfile");
-          expect(err).not.toContain("not found");
-          expect(err).not.toContain("error:");
-          expect(out).not.toContain("package installed");
-          expect(await exited).toBe(0);
-          assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+        err = await new Response(stderr).text();
+        out = await new Response(stdout).text();
+        expect(err).not.toContain("Saved lockfile");
+        expect(err).not.toContain("not found");
+        expect(err).not.toContain("error:");
+        expect(out).not.toContain("package installed");
+        expect(await exited).toBe(0);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-          expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).text()).toContain(expected);
-        },
-      );
+        expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).text()).toContain(expected);
+      });
     }
   });
 
@@ -5017,7 +4821,11 @@ describe("transitive file dependencies", () => {
       "",
       "+ @another-scope/file-dep@1.0.0",
       "+ @scoped/file-dep@1.0.0",
-      "+ aliased-file-dep@1.0.1",
+      // 'aliased-file-dep' is hoisted to the root, because
+      // it coming from the registry, and since this
+      // install is from the workspace, it won't be included
+      // in the terminal output
+      // "+ aliased-file-dep@1.0.1",
       "+ dep-file-dep@1.0.0",
       expect.stringContaining("+ file-dep@1.0.0"),
       "+ missing-file-dep@1.0.0",
@@ -5048,7 +4856,7 @@ describe("transitive file dependencies", () => {
       "",
       "+ @another-scope/file-dep@1.0.0",
       "+ @scoped/file-dep@1.0.0",
-      "+ aliased-file-dep@1.0.1",
+      // "+ aliased-file-dep@1.0.1",
       "+ dep-file-dep@1.0.0",
       expect.stringContaining("+ file-dep@1.0.0"),
       "+ missing-file-dep@1.0.0",
@@ -6192,6 +6000,40 @@ describe("update", () => {
     ]);
 
     expect(files).toMatchObject([{ version: "2.0.0" }, { dependencies: { "no-deps": "2.0.0" } }]);
+  });
+
+  test("updating a dependency will deduplicate it if possible", async () => {
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "zzz-1": "1.0.89",
+          "zzz-2": "1.0.89",
+        },
+      }),
+    );
+
+    const { exited } = spawn({
+      cmd: [bunExe(), "install", "--save-text-lockfile"],
+      cwd: packageDir,
+      env,
+    });
+    expect(await exited).toBe(0);
+
+    expect(await file(join(packageDir, "node_modules", "zzz-1", "package.json")).json()).toEqual({
+      name: "zzz-1",
+      version: "1.0.89",
+    });
+
+    await runBunUpdate(env, packageDir, ["--latest"]);
+
+    expect(
+      await Promise.all([
+        file(join(packageDir, "node_modules", "zzz-1", "package.json")).json(),
+        exists(join(packageDir, "node_modules", "zzz-2", "node_modules")),
+      ]),
+    ).toEqual([{ name: "zzz-1", version: "1.0.90" }, false]);
   });
 });
 

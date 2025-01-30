@@ -1,0 +1,41 @@
+{
+	"name": "zzz-2",
+	"versions": {
+		"1.0.89": {
+			"name": "zzz-2",
+			"version": "1.0.89",
+			"dependencies": {
+				"zzz-1": "^1.0.89"
+			},
+			"_id": "zzz-2@1.0.89",
+			"_nodeVersion": "23.5.0",
+			"_npmVersion": "10.9.2",
+			"dist": {
+				"integrity": "sha512-AiBHP+QdotgUq83hsFKLYIu33c9rUP2tXaCZs66QqrkoSO/X09I6RRRV0IUzMlemBCp+WedWvLSOVs8E7DgIag==",
+				"shasum": "69dbe7e7dd5c3b465977ded8864f34e6539b7468",
+				"tarball": "http://localhost:4873/zzz-2/-/zzz-2-1.0.89.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2025-01-09T00:51:28.532Z",
+		"created": "2025-01-09T00:51:28.532Z",
+		"1.0.89": "2025-01-09T00:51:28.532Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.89"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"zzz-2-1.0.89.tgz": {
+			"shasum": "69dbe7e7dd5c3b465977ded8864f34e6539b7468",
+			"version": "1.0.89"
+		}
+	},
+	"_rev": "",
+	"_id": "zzz-2",
+	"readme": "ERROR: No README data found!"
+}

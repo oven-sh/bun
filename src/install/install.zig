@@ -2684,7 +2684,6 @@ pub const PackageManager = struct {
     task_queue: TaskDependencyQueue = .{},
 
     manifests: PackageManifestMap = .{},
-    folders: FolderResolution.Map = .{},
     git_repositories: RepositoryMap = .{},
 
     network_dedupe_map: NetworkTask.DedupeMap = NetworkTask.DedupeMap.init(bun.default_allocator),
@@ -2731,9 +2730,6 @@ pub const PackageManager = struct {
     ci_mode: bun.LazyBool(computeIsContinuousIntegration, @This(), "ci_mode") = .{},
 
     peer_dependencies: std.fifo.LinearFifo(DependencyID, .Dynamic) = std.fifo.LinearFifo(DependencyID, .Dynamic).init(default_allocator),
-
-    // name hash from alias package name -> aliased package dependency version info
-    known_npm_aliases: NpmAliasMap = .{},
 
     event_loop: JSC.AnyEventLoop,
 
@@ -3273,7 +3269,7 @@ pub const PackageManager = struct {
 
             builder.allocate() catch |err| return .{ .failure = err };
 
-            const dep = dummy.cloneWithDifferentBuffers(this, name, version_buf, @TypeOf(&builder), &builder) catch unreachable;
+            const dep = dummy.cloneWithDifferentBuffers(name, version_buf, @TypeOf(&builder), &builder) catch unreachable;
             builder.clamp();
             const index = this.lockfile.buffers.dependencies.items.len;
             this.lockfile.buffers.dependencies.append(this.allocator, dep) catch unreachable;
@@ -4276,7 +4272,7 @@ pub const PackageManager = struct {
                         },
                     },
                 };
-                switch (FolderResolution.getOrPut(.{ .cache_folder = npm_package_path }, dependency, ".", this)) {
+                switch (FolderResolution.getOrPut(.{ .cache_folder = npm_package_path }, dependency, ".", this, this.lockfile)) {
                     .new_package_id => |id| {
                         this.enqueueDependencyList(this.lockfile.packages.items(.dependencies)[id]);
                         return id;
@@ -4316,7 +4312,6 @@ pub const PackageManager = struct {
         name_hash: PackageNameHash,
         name: String,
         dependency: *const Dependency,
-        version: Dependency.Version,
         dependency_id: DependencyID,
         behavior: Behavior,
         manifest: *const Npm.PackageManifest,
@@ -4324,17 +4319,9 @@ pub const PackageManager = struct {
         install_peer: bool,
         comptime successFn: SuccessFn,
     ) !?ResolvedPackageResult {
-        const should_update = this.to_update and
-            // If updating, only update packages in the current workspace
-            this.lockfile.isRootDependency(this, dependency_id) and
-            // no need to do a look up if update requests are empty (`bun update` with no args)
-            (this.update_requests.len == 0 or
-            this.updating_packages.contains(dependency.name.slice(this.lockfile.buffers.string_bytes.items)));
-
         // Was this package already allocated? Let's reuse the existing one.
         if (this.lockfile.getPackageID(
             name_hash,
-            if (should_update) null else version,
             &.{
                 .tag = .npm,
                 .value = .{
@@ -4356,7 +4343,6 @@ pub const PackageManager = struct {
 
         // appendPackage sets the PackageID on the package
         const package = try this.lockfile.appendPackage(try Lockfile.Package.fromNPM(
-            this,
             this.allocator,
             this.lockfile,
             this.log,
@@ -4767,7 +4753,6 @@ pub const PackageManager = struct {
                     name_hash,
                     name,
                     dependency,
-                    version,
                     dependency_id,
                     behavior,
                     manifest,
@@ -4797,7 +4782,7 @@ pub const PackageManager = struct {
                             //     .auto,
                             // );
                         };
-                        break :res FolderResolution.getOrPut(.{ .relative = .folder }, version, folder_path_abs, this);
+                        break :res FolderResolution.getOrPut(.{ .relative = .folder }, version, folder_path_abs, this, this.lockfile);
                     }
 
                     // transitive folder dependencies do not have their dependencies resolved
@@ -4860,7 +4845,7 @@ pub const PackageManager = struct {
                     break :blk Path.joinAbsStringBuf(FileSystem.instance.top_level_dir, &buf2, &[_]string{workspace_path}, .auto);
                 };
 
-                const res = FolderResolution.getOrPut(.{ .relative = .workspace }, version, workspace_path_u8, this);
+                const res = FolderResolution.getOrPut(.{ .relative = .workspace }, version, workspace_path_u8, this, this.lockfile);
 
                 switch (res) {
                     .err => |err| return err,
@@ -4876,7 +4861,7 @@ pub const PackageManager = struct {
                 }
             },
             .symlink => {
-                const res = FolderResolution.getOrPut(.{ .global = try this.globalLinkDirPath() }, version, this.lockfile.str(&version.value.symlink), this);
+                const res = FolderResolution.getOrPut(.{ .global = try this.globalLinkDirPath() }, version, this.lockfile.str(&version.value.symlink), this, this.lockfile);
 
                 switch (res) {
                     .err => |err| return err,
@@ -5188,29 +5173,6 @@ pub const PackageManager = struct {
         };
 
         const version = version: {
-            if (dependency.version.tag == .npm) {
-                if (this.known_npm_aliases.get(name_hash)) |aliased| {
-                    const group = dependency.version.value.npm.version;
-                    const buf = this.lockfile.buffers.string_bytes.items;
-                    var curr_list: ?*const Semver.Query.List = &aliased.value.npm.version.head;
-                    while (curr_list) |queries| {
-                        var curr: ?*const Semver.Query = &queries.head;
-                        while (curr) |query| {
-                            if (group.satisfies(query.range.left.version, buf, buf) or group.satisfies(query.range.right.version, buf, buf)) {
-                                name = aliased.value.npm.name;
-                                name_hash = String.Builder.stringHash(this.lockfile.str(&name));
-                                break :version aliased;
-                            }
-                            curr = query.next;
-                        }
-                        curr_list = queries.next;
-                    }
-
-                    // fallthrough. a package that matches the name of an alias but does not match
-                    // the version should be enqueued as a normal npm dependency, overrides allowed
-                }
-            }
-
             // allow overriding all dependencies unless the dependency is coming directly from an alias, "npm:<this dep>"
             if (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias and this.lockfile.hasOverrides()) {
                 if (this.lockfile.overrides.get(name_hash)) |new| {
@@ -5412,7 +5374,6 @@ pub const PackageManager = struct {
                                                         name_hash,
                                                         name,
                                                         dependency,
-                                                        version,
                                                         id,
                                                         dependency.behavior,
                                                         &loaded_manifest.?,
@@ -5483,7 +5444,7 @@ pub const PackageManager = struct {
                 };
 
                 // First: see if we already loaded the git package in-memory
-                if (this.lockfile.getPackageID(name_hash, null, &res)) |pkg_id| {
+                if (this.lockfile.getPackageID(name_hash, &res)) |pkg_id| {
                     successFn(this, id, pkg_id);
                     return;
                 }
@@ -5572,7 +5533,7 @@ pub const PackageManager = struct {
                 };
 
                 // First: see if we already loaded the github package in-memory
-                if (this.lockfile.getPackageID(name_hash, null, &res)) |pkg_id| {
+                if (this.lockfile.getPackageID(name_hash, &res)) |pkg_id| {
                     successFn(this, id, pkg_id);
                     return;
                 }
@@ -5757,7 +5718,7 @@ pub const PackageManager = struct {
                 };
 
                 // First: see if we already loaded the tarball package in-memory
-                if (this.lockfile.getPackageID(name_hash, null, &res)) |pkg_id| {
+                if (this.lockfile.getPackageID(name_hash, &res)) |pkg_id| {
                     successFn(this, id, pkg_id);
                     return;
                 }
@@ -10348,7 +10309,7 @@ pub const PackageManager = struct {
 
             var array = Array{};
 
-            const update_requests = parseWithError(allocator, null, &log, all_positionals.items, &array, .add, false) catch {
+            const update_requests = parseWithError(allocator, &log, all_positionals.items, &array, .add, false) catch {
                 return globalThis.throwValue(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependencies"));
             };
             if (update_requests.len == 0) return .undefined;
@@ -10370,18 +10331,16 @@ pub const PackageManager = struct {
 
         pub fn parse(
             allocator: std.mem.Allocator,
-            pm: ?*PackageManager,
             log: *logger.Log,
             positionals: []const string,
             update_requests: *Array,
             subcommand: Subcommand,
         ) []UpdateRequest {
-            return parseWithError(allocator, pm, log, positionals, update_requests, subcommand, true) catch Global.crash();
+            return parseWithError(allocator, log, positionals, update_requests, subcommand, true) catch Global.crash();
         }
 
         fn parseWithError(
             allocator: std.mem.Allocator,
-            pm: ?*PackageManager,
             log: *logger.Log,
             positionals: []const string,
             update_requests: *Array,
@@ -10432,7 +10391,6 @@ pub const PackageManager = struct {
                     null,
                     &SlicedString.init(input, value),
                     log,
-                    pm,
                 ) orelse {
                     if (fatal) {
                         Output.errGeneric("unrecognised dependency format: {s}", .{
@@ -10455,7 +10413,6 @@ pub const PackageManager = struct {
                         null,
                         &SlicedString.init(input, input),
                         log,
-                        pm,
                     )) |ver| {
                         alias = null;
                         version = ver;
@@ -10710,7 +10667,7 @@ pub const PackageManager = struct {
         const updates: []UpdateRequest = if (manager.subcommand == .@"patch-commit" or manager.subcommand == .patch)
             &[_]UpdateRequest{}
         else
-            UpdateRequest.parse(ctx.allocator, manager, ctx.log, manager.options.positionals[1..], &update_requests, manager.subcommand);
+            UpdateRequest.parse(ctx.allocator, ctx.log, manager.options.positionals[1..], &update_requests, manager.subcommand);
         try manager.updatePackageJSONAndInstallWithManagerWithUpdates(
             ctx,
             updates,
@@ -14514,8 +14471,17 @@ pub const PackageManager = struct {
                         &resolver,
                         Features.main,
                     );
-                    const mapping = try manager.lockfile.allocator.alloc(PackageID, maybe_root.dependencies.len);
-                    @memset(mapping, invalid_package_id);
+
+                    try lockfile.packages.append(lockfile.allocator, maybe_root);
+
+                    var dep_map = try std.ArrayList(DependencyID).initCapacity(manager.lockfile.allocator, maybe_root.dependencies.len);
+                    dep_map.appendNTimesAssumeCapacity(invalid_dependency_id, maybe_root.dependencies.len);
+
+                    // only used for workspaces
+                    var pkg_map = try std.ArrayList(PackageID).initCapacity(manager.lockfile.allocator, manager.lockfile.workspace_paths.count() + 1);
+
+                    // root is always 0
+                    pkg_map.appendAssumeCapacity(0);
 
                     manager.summary = try Package.Diff.generate(
                         manager,
@@ -14523,13 +14489,14 @@ pub const PackageManager = struct {
                         manager.log,
                         manager.lockfile,
                         &lockfile,
-                        &root,
-                        &maybe_root,
+                        0,
+                        0,
                         if (manager.to_update) manager.update_requests else null,
-                        mapping,
+                        &dep_map,
+                        &pkg_map,
                     );
 
-                    had_any_diffs = manager.summary.hasDiffs();
+                    had_any_diffs = manager.summary.hasDiffs() or manager.summary.satisfied_versions > 0;
 
                     if (!had_any_diffs) {
                         // always grab latest scripts for root package
@@ -14549,30 +14516,45 @@ pub const PackageManager = struct {
                         // ensure we use one pointer to reference it instead of creating new ones and potentially aliasing
                         var builder = &builder_;
                         // If you changed packages, we will copy over the new package from the new lockfile
-                        const new_dependencies = maybe_root.dependencies.get(lockfile.buffers.dependencies.items);
 
-                        for (new_dependencies) |new_dep| {
-                            new_dep.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
+                        const new_pkgs = lockfile.packages.slice();
+                        const new_pkg_dependencies = new_pkgs.items(.dependencies);
+                        const new_pkg_scripts = new_pkgs.items(.scripts);
+                        const new_pkg_names: []String = new_pkgs.items(.name);
+                        const new_pkg_name_hashes = new_pkgs.items(.name_hash);
+
+                        var deps_off: DependencyID = @truncate(manager.lockfile.buffers.dependencies.items.len);
+                        for (new_pkg_dependencies, 0..) |new_pkg_deps, _new_pkg_id| {
+                            const new_pkg_id: PackageID = @truncate(_new_pkg_id);
+
+                            for (new_pkg_deps.get(lockfile.buffers.dependencies.items)) |new_pkg_dep| {
+                                new_pkg_dep.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
+                            }
+
+                            new_pkg_scripts[new_pkg_id].count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
+                            builder.count(new_pkg_names[new_pkg_id].slice(lockfile.buffers.string_bytes.items));
+
+                            const existing_pkg_id = pkg_map.items[new_pkg_id];
+
+                            manager.lockfile.packages.items(.dependencies)[existing_pkg_id] = .{ .off = deps_off, .len = new_pkg_deps.len };
+                            manager.lockfile.packages.items(.resolutions)[existing_pkg_id] = .{ .off = deps_off, .len = new_pkg_deps.len };
+
+                            deps_off += new_pkg_deps.len;
                         }
+
+                        const new_deps_len = deps_off - manager.lockfile.buffers.dependencies.items.len;
+                        deps_off = @truncate(manager.lockfile.buffers.dependencies.items.len);
 
                         for (lockfile.workspace_paths.values()) |path| builder.count(path.slice(lockfile.buffers.string_bytes.items));
                         for (lockfile.workspace_versions.values()) |version| version.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
                         for (lockfile.patched_dependencies.values()) |patch_dep| builder.count(patch_dep.path.slice(lockfile.buffers.string_bytes.items));
 
                         lockfile.overrides.count(&lockfile, builder);
-                        maybe_root.scripts.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
 
-                        const off = @as(u32, @truncate(manager.lockfile.buffers.dependencies.items.len));
-                        const len = @as(u32, @truncate(new_dependencies.len));
                         var packages = manager.lockfile.packages.slice();
-                        var dep_lists = packages.items(.dependencies);
-                        var resolution_lists = packages.items(.resolutions);
-                        const old_resolutions_list = resolution_lists[0];
-                        dep_lists[0] = .{ .off = off, .len = len };
-                        resolution_lists[0] = .{ .off = off, .len = len };
                         try builder.allocate();
 
-                        const all_name_hashes: []PackageNameHash = brk: {
+                        const all_override_name_hashes: []PackageNameHash = brk: {
                             if (!manager.summary.overrides_changed) break :brk &.{};
                             const hashes_len = manager.lockfile.overrides.map.entries.len + lockfile.overrides.map.entries.len;
                             if (hashes_len == 0) break :brk &.{};
@@ -14591,40 +14573,63 @@ pub const PackageManager = struct {
                             break :brk all_name_hashes;
                         };
 
-                        manager.lockfile.overrides = try lockfile.overrides.clone(manager, &lockfile, manager.lockfile, builder);
+                        manager.lockfile.overrides = try lockfile.overrides.clone(&lockfile, manager.lockfile, builder);
 
                         manager.lockfile.trusted_dependencies = if (lockfile.trusted_dependencies) |trusted_dependencies|
                             try trusted_dependencies.clone(manager.lockfile.allocator)
                         else
                             null;
 
-                        try manager.lockfile.buffers.dependencies.ensureUnusedCapacity(manager.lockfile.allocator, len);
-                        try manager.lockfile.buffers.resolutions.ensureUnusedCapacity(manager.lockfile.allocator, len);
+                        {
+                            // clone deps
+                            try manager.lockfile.buffers.dependencies.ensureUnusedCapacity(manager.lockfile.allocator, new_deps_len);
+                            try manager.lockfile.buffers.resolutions.ensureUnusedCapacity(manager.lockfile.allocator, new_deps_len);
 
-                        const old_resolutions = old_resolutions_list.get(manager.lockfile.buffers.resolutions.items);
+                            var dependencies = manager.lockfile.buffers.dependencies.items.ptr[deps_off .. deps_off + new_deps_len];
+                            var resolutions = manager.lockfile.buffers.resolutions.items.ptr[deps_off .. deps_off + new_deps_len];
 
-                        var dependencies = manager.lockfile.buffers.dependencies.items.ptr[off .. off + len];
-                        var resolutions = manager.lockfile.buffers.resolutions.items.ptr[off .. off + len];
+                            // It is too easy to accidentally undefined memory
+                            @memset(resolutions, invalid_package_id);
+                            @memset(dependencies, Dependency{});
 
-                        // It is too easy to accidentally undefined memory
-                        @memset(resolutions, invalid_package_id);
-                        @memset(dependencies, Dependency{});
+                            manager.lockfile.buffers.dependencies.items = manager.lockfile.buffers.dependencies.items.ptr[0 .. deps_off + new_deps_len];
+                            manager.lockfile.buffers.resolutions.items = manager.lockfile.buffers.resolutions.items.ptr[0 .. deps_off + new_deps_len];
 
-                        manager.lockfile.buffers.dependencies.items = manager.lockfile.buffers.dependencies.items.ptr[0 .. off + len];
-                        manager.lockfile.buffers.resolutions.items = manager.lockfile.buffers.resolutions.items.ptr[0 .. off + len];
+                            for (new_pkg_dependencies, 0..) |new_pkg_deps, _new_pkg_id| {
+                                const new_pkg_id: PackageID = @truncate(_new_pkg_id);
+                                const existing_pkg_id = pkg_map.items[new_pkg_id];
 
-                        for (new_dependencies, 0..) |new_dep, i| {
-                            dependencies[i] = try new_dep.clone(manager, lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
-                            if (mapping[i] != invalid_package_id) {
-                                resolutions[i] = old_resolutions[mapping[i]];
+                                for (new_pkg_deps.begin()..new_pkg_deps.end()) |_new_pkg_dep_id| {
+                                    const new_pkg_dep_id: DependencyID = @truncate(_new_pkg_dep_id);
+                                    dependencies[new_pkg_dep_id] = try lockfile.buffers.dependencies.items[new_pkg_dep_id].clone(
+                                        lockfile.buffers.string_bytes.items,
+                                        *Lockfile.StringBuilder,
+                                        builder,
+                                    );
+
+                                    if (new_pkg_dep_id < dep_map.items.len) {
+                                        const mapped_dep_id = dep_map.items[new_pkg_dep_id];
+                                        if (mapped_dep_id != invalid_dependency_id) {
+                                            resolutions[new_pkg_dep_id] = manager.lockfile.buffers.resolutions.items[mapped_dep_id];
+                                        }
+                                    }
+                                }
+
+                                packages.items(.scripts)[existing_pkg_id] = new_pkg_scripts[new_pkg_id].clone(
+                                    lockfile.buffers.string_bytes.items,
+                                    *Lockfile.StringBuilder,
+                                    builder,
+                                );
+
+                                packages.items(.name)[existing_pkg_id] = builder.appendWithHash(
+                                    String,
+                                    new_pkg_names[new_pkg_id].slice(lockfile.buffers.string_bytes.items),
+                                    new_pkg_name_hashes[new_pkg_id],
+                                );
+
+                                packages.items(.name_hash)[existing_pkg_id] = new_pkg_name_hashes[new_pkg_id];
                             }
                         }
-
-                        manager.lockfile.packages.items(.scripts)[0] = maybe_root.scripts.clone(
-                            lockfile.buffers.string_bytes.items,
-                            *Lockfile.StringBuilder,
-                            builder,
-                        );
 
                         // Update workspace paths
                         try manager.lockfile.workspace_paths.ensureTotalCapacity(manager.lockfile.allocator, lockfile.workspace_paths.entries.len);
@@ -14696,9 +14701,9 @@ pub const PackageManager = struct {
 
                         builder.clamp();
 
-                        if (manager.summary.overrides_changed and all_name_hashes.len > 0) {
+                        if (manager.summary.overrides_changed and all_override_name_hashes.len > 0) {
                             for (manager.lockfile.buffers.dependencies.items, 0..) |*dependency, dependency_i| {
-                                if (std.mem.indexOfScalar(PackageNameHash, all_name_hashes, dependency.name_hash)) |_| {
+                                if (std.mem.indexOfScalar(PackageNameHash, all_override_name_hashes, dependency.name_hash)) |_| {
                                     manager.lockfile.buffers.resolutions.items[dependency_i] = invalid_package_id;
                                     try manager.enqueueDependencyWithMain(
                                         @truncate(dependency_i),
@@ -14712,15 +14717,15 @@ pub const PackageManager = struct {
 
                         // Split this into two passes because the below may allocate memory or invalidate pointers
                         if (manager.summary.add > 0 or manager.summary.update > 0) {
-                            const changes = @as(PackageID, @truncate(mapping.len));
-                            var counter_i: PackageID = 0;
+                            const changes: DependencyID = @truncate(dep_map.items.len);
+                            var counter_i: DependencyID = 0;
 
                             _ = manager.getCacheDirectory();
                             _ = manager.getTemporaryDirectory();
 
                             while (counter_i < changes) : (counter_i += 1) {
-                                if (mapping[counter_i] == invalid_package_id) {
-                                    const dependency_i = counter_i + off;
+                                if (counter_i < dep_map.items.len and dep_map.items[counter_i] == invalid_dependency_id) {
+                                    const dependency_i = counter_i + deps_off;
                                     const dependency = manager.lockfile.buffers.dependencies.items[dependency_i];
                                     try manager.enqueueDependencyWithMain(
                                         dependency_i,

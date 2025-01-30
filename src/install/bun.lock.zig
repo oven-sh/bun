@@ -1293,7 +1293,6 @@ pub fn parseIntoBinaryLockfile(
     root: JSON.Expr,
     source: *const logger.Source,
     log: *logger.Log,
-    manager: ?*PackageManager,
 ) ParseError!void {
     lockfile.initEmpty(allocator);
 
@@ -1416,7 +1415,6 @@ pub fn parseIntoBinaryLockfile(
                     version_sliced.slice,
                     &version_sliced,
                     log,
-                    manager,
                 ) orelse {
                     try log.addError(source, value.loc, "Invalid override version");
                     return error.InvalidOverridesObject;
@@ -2084,7 +2082,6 @@ fn parseAppendDependencies(
                         version_sliced.slice,
                         &version_sliced,
                         log,
-                        null,
                     ) orelse {
                         try log.addError(source, value.loc, "Invalid dependency version");
                         return error.InvalidDependencyVersion;

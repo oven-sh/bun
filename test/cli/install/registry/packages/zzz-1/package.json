@@ -1,0 +1,56 @@
+{
+	"name": "zzz-1",
+	"versions": {
+		"1.0.89": {
+			"name": "zzz-1",
+			"version": "1.0.89",
+			"_id": "zzz-1@1.0.89",
+			"_nodeVersion": "23.5.0",
+			"_npmVersion": "10.9.2",
+			"dist": {
+				"integrity": "sha512-EPmDE1AhS+Dfwa/KYhcIqkBF66nrEA8qQI924xddQOaRvqZGkBqk4AXHG0gIe8KNqllVYFhs5exY5tKi/MaCDQ==",
+				"shasum": "ea3eba357864416df74721d989750ce112c4b112",
+				"tarball": "http://localhost:4873/zzz-1/-/zzz-1-1.0.89.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.90": {
+			"name": "zzz-1",
+			"version": "1.0.90",
+			"_id": "zzz-1@1.0.90",
+			"_nodeVersion": "23.5.0",
+			"_npmVersion": "10.9.2",
+			"dist": {
+				"integrity": "sha512-UaWGWc1xwYMtgxAdZbS2jj5s2UWwdcgEzYT0kAlTQR2pHPi48bmrI6ZKRySEEROcHh1sD1HWqqopg1HRIcWXKw==",
+				"shasum": "65bfff389d760c43a339f34499fb3bc52fcf345e",
+				"tarball": "http://localhost:4873/zzz-1/-/zzz-1-1.0.90.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2025-01-09T00:53:52.021Z",
+		"created": "2025-01-09T00:50:38.582Z",
+		"1.0.89": "2025-01-09T00:50:38.582Z",
+		"1.0.90": "2025-01-09T00:53:52.021Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.90"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"zzz-1-1.0.89.tgz": {
+			"shasum": "ea3eba357864416df74721d989750ce112c4b112",
+			"version": "1.0.89"
+		},
+		"zzz-1-1.0.90.tgz": {
+			"shasum": "65bfff389d760c43a339f34499fb3bc52fcf345e",
+			"version": "1.0.90"
+		}
+	},
+	"_rev": "",
+	"_id": "zzz-1",
+	"readme": "ERROR: No README data found!"
+}

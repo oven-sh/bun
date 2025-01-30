@@ -212,7 +212,7 @@ pub const MultiPartUpload = struct {
                     log("singleSendUploadResponse {} retry", .{this.options.retry});
                     this.options.retry -= 1;
                     this.ref();
-                    // retry failed
+                    // retry failed lets try again
                     executeSimpleS3Request(this.credentials, .{
                         .path = this.path,
                         .method = .PUT,
@@ -249,7 +249,7 @@ pub const MultiPartUpload = struct {
         this.available.unset(index);
         defer this.currentPartNumber += 1;
         if (this.queue == null) {
-            // lets make sure that the pointer will not change after the append, queueSize will never change and is small (max 255)
+            // queueSize will never change and is small (max 255)
             this.queue = bun.default_allocator.alloc(UploadPart, queueSize) catch bun.outOfMemory();
         }
         const data = if (needs_clone) bun.default_allocator.dupe(u8, chunk) catch bun.outOfMemory() else chunk;
@@ -527,6 +527,8 @@ pub const MultiPartUpload = struct {
         if (this.ended and this.buffered.items.len < this.partSizeInBytes() and this.state == .not_started) {
             log("processBuffered {s} singlefile_started", .{this.path});
             this.state = .singlefile_started;
+            // when executing a simple request we need to keep the ref alive, it will be derefed after the request
+            // singleSendUploadResponse in this case
             this.ref();
             // we can do only 1 request
             executeSimpleS3Request(this.credentials, .{

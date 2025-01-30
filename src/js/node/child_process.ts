@@ -1257,7 +1257,7 @@ class ChildProcess extends EventEmitter {
     const bunStdio = getBunStdioFromOptions(stdio);
     const argv0 = options.argv0 || file;
 
-    const has_ipc = $isJSArray(stdio) && stdio[3] === "ipc";
+    const has_ipc = $isJSArray(stdio) && stdio.includes("ipc");
     var env = options.envPairs || process.env;
 
     const detachedOption = options.detached;

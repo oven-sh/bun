@@ -1324,7 +1324,7 @@ pub const LineOffsetTable = struct {
     byte_offset_to_first_non_ascii: u32 = 0,
     byte_offset_to_start_of_line: u32 = 0,
 
-    pub const List = std.MultiArrayList(LineOffsetTable);
+    pub const List = bun.MultiArrayList(LineOffsetTable);
 
     pub fn findLine(byte_offsets_to_start_of_line: []const u32, loc: Logger.Loc) i32 {
         assert(loc.start > -1); // checked by caller

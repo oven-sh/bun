@@ -35,7 +35,7 @@ pub const Param = struct {
     name: string,
     value: string,
 
-    pub const List = std.MultiArrayList(Param);
+    pub const List = bun.MultiArrayList(Param);
 };
 
 dir: StoredFileDescriptorType = .zero,
@@ -102,7 +102,7 @@ const RouteIndex = struct {
     public_path: string,
     hash: u32,
 
-    pub const List = std.MultiArrayList(RouteIndex);
+    pub const List = bun.MultiArrayList(RouteIndex);
 };
 
 pub const Routes = struct {
@@ -1553,7 +1553,7 @@ test "Pattern Match" {
 
     const TestList = struct {
         pub fn run(comptime list: anytype) usize {
-            const ParamListType = std.MultiArrayList(Entry);
+            const ParamListType = bun.MultiArrayList(Entry);
             var parameters = ParamListType{};
             var failures: usize = 0;
             inline for (comptime std.meta.fieldNames(@TypeOf(list))) |pattern| {

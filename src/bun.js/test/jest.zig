@@ -250,7 +250,7 @@ pub const TestRunner = struct {
         log: logger.Log = logger.Log.initComptime(default_allocator),
         module_scope: *DescribeScope = undefined,
 
-        pub const List = std.MultiArrayList(File);
+        pub const List = bun.MultiArrayList(File);
         pub const ID = u32;
         pub const Map = std.ArrayHashMapUnmanaged(u32, u32, ArrayIdentityContext, false);
     };
@@ -259,7 +259,7 @@ pub const TestRunner = struct {
         status: Status = Status.pending,
 
         pub const ID = u32;
-        pub const List = std.MultiArrayList(Test);
+        pub const List = bun.MultiArrayList(Test);
 
         pub const Status = enum(u3) {
             pending,

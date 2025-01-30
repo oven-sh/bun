@@ -264,7 +264,7 @@ pub const MutableString = struct {
     }
 
     pub fn toOwnedSliceLength(self: *MutableString, length: usize) string {
-        self.list.shrinkAndFree(self.allocator, length);
+        self.list.items.len = @min(length, self.list.items.len);
         return self.list.toOwnedSlice(self.allocator) catch bun.outOfMemory(); // TODO
     }
 

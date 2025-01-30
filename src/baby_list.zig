@@ -52,7 +52,13 @@ pub fn BabyList(comptime Type: type) type {
 
         pub fn shrinkAndFree(this: *@This(), allocator: std.mem.Allocator, size: usize) void {
             var list_ = this.listManaged(allocator);
+            const new_len = @min(size, @as(usize, list_.items.len));
+
+            // Workaround terrible zig std.ArrayList shrinkAndFree() behavior
+            list_.items.len = list_.capacity;
             list_.shrinkAndFree(size);
+            list_.items.len = new_len;
+
             this.update(list_);
         }
 

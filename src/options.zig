@@ -1931,7 +1931,7 @@ pub const Env = struct {
         key: string,
         value: string,
     };
-    const List = std.MultiArrayList(Entry);
+    const List = bun.MultiArrayList(Entry);
 
     behavior: Api.DotEnvBehavior = Api.DotEnvBehavior.disable,
     prefix: string = "",

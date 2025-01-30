@@ -1204,7 +1204,7 @@ pub const ExportsMap = struct {
 
             pub const Map = struct {
                 // This is not a std.ArrayHashMap because we also store the key_range which is a little weird
-                pub const List = std.MultiArrayList(MapEntry);
+                pub const List = bun.MultiArrayList(MapEntry);
                 expansion_keys: []MapEntry,
                 list: List,
 

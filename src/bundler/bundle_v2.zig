@@ -10269,7 +10269,7 @@ pub const LinkerContext = struct {
         // Concatenate the generated CSS chunks together
         const compile_results = chunk.compile_results_for_chunk;
 
-        var compile_results_for_source_map: std.MultiArrayList(CompileResultForSourceMap) = .{};
+        var compile_results_for_source_map: bun.MultiArrayList(CompileResultForSourceMap) = .{};
         compile_results_for_source_map.setCapacity(worker.allocator, compile_results.len) catch bun.outOfMemory();
 
         const sources: []const Logger.Source = c.parse_graph.input_files.items(.source);
@@ -10558,7 +10558,7 @@ pub const LinkerContext = struct {
         // Concatenate the generated JavaScript chunks together
         var prev_filename_comment: Index.Int = 0;
 
-        var compile_results_for_source_map: std.MultiArrayList(CompileResultForSourceMap) = .{};
+        var compile_results_for_source_map: bun.MultiArrayList(CompileResultForSourceMap) = .{};
         compile_results_for_source_map.setCapacity(worker.allocator, compile_results.len) catch bun.outOfMemory();
 
         const show_comments = c.options.mode == .bundle and
@@ -10773,7 +10773,7 @@ pub const LinkerContext = struct {
         c: *LinkerContext,
         isolated_hash: u64,
         worker: *ThreadPool.Worker,
-        results: std.MultiArrayList(CompileResultForSourceMap),
+        results: bun.MultiArrayList(CompileResultForSourceMap),
         chunk_abs_dir: string,
         can_have_shifts: bool,
     ) !sourcemap.SourceMapPieces {

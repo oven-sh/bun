@@ -5,7 +5,7 @@ pub const max_count = 128;
 pub const Event = WatchEvent;
 pub const Item = WatchItem;
 pub const ItemList = WatchList;
-pub const WatchList = std.MultiArrayList(WatchItem);
+pub const WatchList = bun.MultiArrayList(WatchItem);
 pub const HashType = u32;
 const no_watch_item: WatchItemIndex = std.math.maxInt(WatchItemIndex);
 

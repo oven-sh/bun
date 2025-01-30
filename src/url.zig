@@ -598,7 +598,7 @@ pub const QueryStringMap = struct {
         name_hash: u64,
         value: Api.StringPointer,
 
-        pub const List = std.MultiArrayList(Param);
+        pub const List = bun.MultiArrayList(Param);
     };
 
     pub fn initWithScanner(

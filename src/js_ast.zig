@@ -8654,7 +8654,7 @@ pub const ServerComponentBoundary = struct {
     /// speed, but also being able to pull a `[]const Index.Int` of all
     /// boundaries for iteration.
     pub const List = struct {
-        list: std.MultiArrayList(ServerComponentBoundary) = .{},
+        list: bun.MultiArrayList(ServerComponentBoundary) = .{},
         /// Used to facilitate fast lookups into `items` by `.source_index`
         map: Map = .{},
 
@@ -8698,7 +8698,7 @@ pub const ServerComponentBoundary = struct {
         }
 
         pub const Slice = struct {
-            list: std.MultiArrayList(ServerComponentBoundary).Slice,
+            list: bun.MultiArrayList(ServerComponentBoundary).Slice,
             map: Map,
 
             pub fn getIndex(l: *const Slice, real_source_index: Index.Int) ?usize {
@@ -8727,7 +8727,7 @@ pub const ServerComponentBoundary = struct {
         };
 
         pub const Adapter = struct {
-            list: std.MultiArrayList(ServerComponentBoundary).Slice,
+            list: bun.MultiArrayList(ServerComponentBoundary).Slice,
 
             pub fn hash(_: Adapter, key: Index.Int) u32 {
                 return std.hash.uint32(key);

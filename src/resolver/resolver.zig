@@ -399,7 +399,7 @@ pub const PendingResolution = struct {
     string_buf: []u8 = "",
     tag: Tag,
 
-    pub const List = std.MultiArrayList(PendingResolution);
+    pub const List = bun.MultiArrayList(PendingResolution);
 
     pub fn deinitListItems(list_: List, allocator: std.mem.Allocator) void {
         var list = list_;

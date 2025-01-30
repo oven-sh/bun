@@ -363,8 +363,6 @@ declare function $isAbortSignal(signal: unknown): signal is AbortSignal;
 declare function $isAbsolute(): TODO;
 declare function $isDisturbed(): TODO;
 declare function $isPaused(): TODO;
-/** FIXME: does not exist. */
-declare function $isWindows(): TODO;
 declare function $join(): TODO;
 declare function $kind(): TODO;
 declare function $lazyStreamPrototypeMap(): TODO;

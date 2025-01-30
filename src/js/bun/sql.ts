@@ -92,6 +92,9 @@ enum SQLQueryFlags {
   unsafe = 1 << 1,
   bigint = 1 << 2,
 }
+function runQueryNT(self: Query) {
+  self[_run]();
+}
 function getQueryHandle(query) {
   let handle = query[_handle];
   if (!handle) {
@@ -156,8 +159,6 @@ class Query extends PublicPromise {
     if (!handle) return this;
 
     this[_queryStatus] |= QueryStatus.executed;
-    // this avoids a infinite loop
-    await 1;
 
     try {
       return handler(this, handle);
@@ -243,21 +244,21 @@ class Query extends PublicPromise {
   }
 
   then() {
-    this[_run]();
+    process.nextTick(runQueryNT, this);
     const result = super.$then.$apply(this, arguments);
     $markPromiseAsHandled(result);
     return result;
   }
 
   catch() {
-    this[_run]();
+    process.nextTick(runQueryNT, this);
     const result = super.catch.$apply(this, arguments);
     $markPromiseAsHandled(result);
     return result;
   }
 
   finally() {
-    this[_run]();
+    process.nextTick(runQueryNT, this);
     return super.finally.$apply(this, arguments);
   }
 }

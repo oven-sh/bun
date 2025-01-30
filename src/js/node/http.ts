@@ -152,7 +152,7 @@ function ERR_HTTP_SOCKET_ASSIGNED() {
 
 // TODO: add primordial for URL
 // Importing from node:url is unnecessary
-const { URL } = globalThis;
+const { URL, WebSocket, CloseEvent, MessageEvent } = globalThis;
 
 const globalReportError = globalThis.reportError;
 const setTimeout = globalThis.setTimeout;
@@ -3347,6 +3347,9 @@ const http_exports = {
   globalAgent,
   ClientRequest,
   OutgoingMessage,
+  WebSocket,
+  CloseEvent,
+  MessageEvent,
 };
 
 export default http_exports;

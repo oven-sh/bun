@@ -152,7 +152,7 @@ if (TLS_POSTGRES_DATABASE_URL) {
   });
 
   test("Transaction requests are executed implicitly", async () => {
-    await using sql = new SQL({ ...options, debug: true, idle_timeout: 1, fetch_types: false });
+    await using sql = new SQL(options);
     expect(
       (
         await sql.begin(sql => [

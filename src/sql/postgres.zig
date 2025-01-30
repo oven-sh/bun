@@ -394,28 +394,6 @@ pub const PostgresSQLQuery = struct {
         bun.assert(this.ref_count.fetchAdd(1, .monotonic) > 0);
     }
 
-    pub fn onNoData(this: *@This(), globalObject: *JSC.JSGlobalObject, queries_array: JSValue) void {
-        this.status = .success;
-        defer this.deref();
-
-        const thisValue = this.thisValue.get();
-        defer this.thisValue.deinit();
-        const targetValue = this.getTarget(globalObject);
-        if (thisValue == .zero or targetValue == .zero) {
-            return;
-        }
-
-        const vm = JSC.VirtualMachine.get();
-        const function = vm.rareData().postgresql_context.onQueryResolveFn.get().?;
-        const event_loop = vm.eventLoop();
-        event_loop.runCallback(function, globalObject, thisValue, &.{
-            targetValue,
-            this.pending_value.trySwap() orelse .undefined,
-            JSValue.jsNumber(0),
-            JSValue.jsNumber(0),
-            queries_array,
-        });
-    }
     pub fn onWriteFail(
         this: *@This(),
         err: AnyPostgresError,
@@ -441,6 +419,7 @@ pub const PostgresSQLQuery = struct {
     }
     pub fn onJSError(this: *@This(), err: JSC.JSValue, globalObject: *JSC.JSGlobalObject) void {
         this.status = .fail;
+        this.ref();
         defer this.deref();
 
         const thisValue = this.thisValue.get();
@@ -579,6 +558,7 @@ pub const PostgresSQLQuery = struct {
 
     pub fn onSuccess(this: *@This(), command_tag_str: []const u8, globalObject: *JSC.JSGlobalObject, connection: JSC.JSValue) void {
         this.status = .success;
+        this.ref();
         defer this.deref();
 
         const thisValue = this.thisValue.get();
@@ -733,7 +713,7 @@ pub const PostgresSQLQuery = struct {
                         return globalObject.throwValue(this.statement.?.error_response.?.toJS(globalObject));
                     },
                     .prepared => {
-                        if (!connection.isCurrentRunning()) {
+                        if (!connection.hasQueryRunning()) {
                             this.flags.binary = this.statement.?.fields.len > 0;
                             log("bindAndExecute", .{});
                             // bindAndExecute will bind + execute, it will change to running after binding is complete
@@ -753,7 +733,7 @@ pub const PostgresSQLQuery = struct {
                 break :enqueue;
             }
 
-            const can_execute = !connection.isCurrentRunning();
+            const can_execute = !connection.hasQueryRunning();
 
             if (can_execute) {
                 // If it does not have params, we can write and execute immediately in one go
@@ -2064,7 +2044,6 @@ pub const PostgresSQLConnection = struct {
                 // just ignore success and fail cases
                 .success, .fail => {},
             }
-
             request.deref();
             this.requests.discard(1);
         }
@@ -2087,13 +2066,8 @@ pub const PostgresSQLConnection = struct {
         return this.requests.peekItem(0);
     }
 
-    fn isCurrentRunning(this: *PostgresSQLConnection) bool {
-        if (this.current()) |query| {
-            if (query.statement) |stmt| {
-                return query.status.isRunning() or stmt.status.isRunning();
-            }
-        }
-        return false;
+    fn hasQueryRunning(this: *PostgresSQLConnection) bool {
+        return !this.is_ready_for_query or this.current() != null;
     }
 
     pub const Writer = struct {
@@ -2593,6 +2567,7 @@ pub const PostgresSQLConnection = struct {
                             req.onError(stmt.error_response.?, this.globalObject);
                             req.deref();
                             this.requests.discard(1);
+
                             any = true;
                             continue;
                         },
@@ -2607,6 +2582,7 @@ pub const PostgresSQLConnection = struct {
                                 req.onWriteFail(err, this.globalObject, this.getQueriesArray());
                                 req.deref();
                                 this.requests.discard(1);
+
                                 continue;
                             };
                             req.status = .binding;
@@ -2645,17 +2621,21 @@ pub const PostgresSQLConnection = struct {
                             PostgresRequest.writeQuery(query_str.slice(), stmt.signature.prepared_statement_name, stmt.signature.fields, PostgresSQLConnection.Writer, connection_writer) catch |err| {
                                 stmt.error_response = .{ .postgres_error = err };
                                 stmt.status = .failed;
+
                                 req.onWriteFail(err, this.globalObject, this.getQueriesArray());
                                 req.deref();
                                 this.requests.discard(1);
+
                                 continue;
                             };
                             connection_writer.write(&protocol.Sync) catch |err| {
                                 stmt.error_response = .{ .postgres_error = err };
                                 stmt.status = .failed;
+
                                 req.onWriteFail(err, this.globalObject, this.getQueriesArray());
                                 req.deref();
                                 this.requests.discard(1);
+
                                 continue;
                             };
                             stmt.status = .parsing;
@@ -2801,7 +2781,6 @@ pub const PostgresSQLConnection = struct {
                     cmd.deinit();
                 }
                 debug("-> {s}", .{cmd.command_tag.slice()});
-                _ = this.requests.discard(1);
                 defer this.updateRef();
                 request.onSuccess(cmd.command_tag.slice(), this.globalObject, this.js_value);
             },
@@ -3068,7 +3047,6 @@ pub const PostgresSQLConnection = struct {
                         }
                     }
                 }
-                _ = this.requests.discard(1);
                 this.updateRef();
 
                 request.onError(.{ .protocol = err }, this.globalObject);
@@ -3077,13 +3055,11 @@ pub const PostgresSQLConnection = struct {
                 // try reader.eatMessage(&protocol.PortalSuspended);
                 // var request = this.current() orelse return error.ExpectedRequest;
                 // _ = request;
-                // _ = this.requests.discard(1);
                 debug("TODO PortalSuspended", .{});
             },
             .CloseComplete => {
                 try reader.eatMessage(protocol.CloseComplete);
                 var request = this.current() orelse return error.ExpectedRequest;
-                _ = this.requests.discard(1);
                 request.onSuccess("CLOSECOMPLETE", this.globalObject, this.getQueriesArray());
             },
             .CopyInResponse => {
@@ -3099,7 +3075,6 @@ pub const PostgresSQLConnection = struct {
             .EmptyQueryResponse => {
                 try reader.eatMessage(protocol.EmptyQueryResponse);
                 var request = this.current() orelse return error.ExpectedRequest;
-                _ = this.requests.discard(1);
                 this.updateRef();
                 request.onSuccess("", this.globalObject, this.getQueriesArray());
             },

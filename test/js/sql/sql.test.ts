@@ -97,6 +97,9 @@ if (isDockerEnabled()) {
   afterAll(async () => {
     try {
       await execAsync(`${dockerCLI} stop -t 0 ${container.containerName}`);
+    } catch (error) {}
+
+    try {
       await execAsync(`${dockerCLI} rm -f ${container.containerName}`);
     } catch (error) {}
   });
@@ -623,7 +626,7 @@ if (isDockerEnabled()) {
   });
 
   test("Transaction requests are executed implicitly", async () => {
-    const sql = postgres({ ...options, debug: true, idle_timeout: 1, fetch_types: false });
+    await using sql = postgres(options);
     expect(
       (
         await sql.begin(sql => [
@@ -635,7 +638,8 @@ if (isDockerEnabled()) {
   });
 
   test("Uncaught transaction request errors bubbles to transaction", async () => {
-    await using sql = postgres(options);
+    const sql = postgres(options);
+    process.nextTick(() => sql.close({ timeout: 1 }));
     expect(
       await sql
         .begin(sql => [sql`select wat`, sql`select current_setting('bun_sql.test') as x, ${1} as a`])

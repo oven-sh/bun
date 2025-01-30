@@ -366,42 +366,42 @@ pub const FilePoll = struct {
             //     var loader = ptr.as(ShellSubprocessCapturedBufferedWriterMini);
             //     loader.onPoll(size_or_offset, 0);
             // },
-            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellBufferedWriter))) => {
+            @field(Owner.Tag, @typeName(ShellBufferedWriter)) => {
                 var handler: *ShellBufferedWriter = ptr.as(ShellBufferedWriter);
                 handler.onPoll(size_or_offset, poll.flags.contains(.hup));
             },
-            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellStaticPipeWriter))) => {
+            @field(Owner.Tag, @typeName(ShellStaticPipeWriter)) => {
                 var handler: *ShellStaticPipeWriter = ptr.as(ShellStaticPipeWriter);
                 handler.onPoll(size_or_offset, poll.flags.contains(.hup));
             },
-            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(StaticPipeWriter))) => {
+            @field(Owner.Tag, @typeName(StaticPipeWriter)) => {
                 var handler: *StaticPipeWriter = ptr.as(StaticPipeWriter);
                 handler.onPoll(size_or_offset, poll.flags.contains(.hup));
             },
-            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(FileSink))) => {
+            @field(Owner.Tag, @typeName(FileSink)) => {
                 var handler: *FileSink = ptr.as(FileSink);
                 handler.onPoll(size_or_offset, poll.flags.contains(.hup));
             },
-            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(BufferedReader))) => {
+            @field(Owner.Tag, @typeName(BufferedReader)) => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) Reader", .{poll.fd});
                 var handler: *BufferedReader = ptr.as(BufferedReader);
                 handler.onPoll(size_or_offset, poll.flags.contains(.hup));
             },
 
-            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(Process))) => {
+            @field(Owner.Tag, @typeName(Process)) => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) Process", .{poll.fd});
                 var loader = ptr.as(Process);
 
                 loader.onWaitPidFromEventLoopTask();
             },
 
-            @field(Owner.Tag, "DNSResolver") => {
+            @field(Owner.Tag, @typeName(DNSResolver)) => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) DNSResolver", .{poll.fd});
                 var loader: *DNSResolver = ptr.as(DNSResolver);
                 loader.onDNSPoll(poll);
             },
 
-            @field(Owner.Tag, "GetAddrInfoRequest") => {
+            @field(Owner.Tag, @typeName(GetAddrInfoRequest)) => {
                 if (comptime !Environment.isMac) {
                     unreachable;
                 }
@@ -411,7 +411,7 @@ pub const FilePoll = struct {
                 loader.onMachportChange();
             },
 
-            @field(Owner.Tag, "Request") => {
+            @field(Owner.Tag, @typeName(Request)) => {
                 if (comptime !Environment.isMac) {
                     unreachable;
                 }

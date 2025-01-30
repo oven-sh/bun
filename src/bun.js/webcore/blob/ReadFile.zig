@@ -59,11 +59,9 @@ const ClosingState = Blob.ClosingState;
 pub const ReadFileOnReadFileCallback = *const fn (ctx: *anyopaque, bytes: ReadFileResultType) void;
 pub const ReadFileRead = struct { buf: []u8, is_temporary: bool = false, total_size: SizeType = 0 };
 pub const ReadFileResultType = SystemError.Maybe(ReadFileRead);
-pub const ReadFileTask = JSC.WorkTask(ReadFile2);
+pub const ReadFileTask = JSC.WorkTask(ReadFile);
 
-pub const ReadFile2 = struct {
-    const ReadFile = @This();
-
+pub const ReadFile = struct {
     file_store: FileStore,
     byte_store: ByteStore = ByteStore{ .allocator = bun.default_allocator },
     store: ?*Store = null,

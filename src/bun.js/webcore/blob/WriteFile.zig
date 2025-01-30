@@ -19,11 +19,9 @@ const ClosingState = Blob.ClosingState;
 
 pub const WriteFileResultType = SystemError.Maybe(SizeType);
 pub const WriteFileOnWriteFileCallback = *const fn (ctx: *anyopaque, count: WriteFileResultType) void;
-pub const WriteFileTask = JSC.WorkTask(WriteFile2);
+pub const WriteFileTask = JSC.WorkTask(WriteFile);
 
-pub const WriteFile2 = struct {
-    const WriteFile = @This();
-
+pub const WriteFile = struct {
     file_blob: Blob,
     bytes_blob: Blob,
 

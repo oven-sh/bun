@@ -61,14 +61,14 @@ pub const Blob = struct {
 
     // pub usingnamespace @import("./blob/ReadFile.zig");
     const rf = @import("./blob/ReadFile.zig");
-    pub const ReadFile = rf.ReadFile2;
+    pub const ReadFile = rf.ReadFile;
     pub const ReadFileUV = rf.ReadFileUV;
     pub const ReadFileTask = rf.ReadFileTask;
     pub const ReadFileResultType = rf.ReadFileResultType;
 
     // pub usingnamespace @import("./blob/WriteFile.zig");
     const wf = @import("./blob/WriteFile.zig");
-    pub const WriteFile = wf.WriteFile2;
+    pub const WriteFile = wf.WriteFile;
     pub const WriteFileTask = wf.WriteFileTask;
 
     pub const ClosingState = enum(u8) {
@@ -191,7 +191,7 @@ pub const Blob = struct {
             handler,
             Handler.run,
         ) catch bun.outOfMemory();
-        var read_file_task = ReadFile.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read) catch bun.outOfMemory();
+        var read_file_task = ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read) catch bun.outOfMemory();
 
         // Create the Promise only after the store has been ref()'d.
         // The garbage collector runs on memory allocations
@@ -229,7 +229,7 @@ pub const Blob = struct {
             this.offset,
             this.size,
         ) catch bun.outOfMemory();
-        var read_file_task = ReadFile.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read) catch bun.outOfMemory();
+        var read_file_task = ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read) catch bun.outOfMemory();
         read_file_task.schedule();
     }
 
@@ -981,7 +981,7 @@ pub const Blob = struct {
                 WriteFilePromise.run,
                 options.mkdirp_if_not_exists orelse true,
             ) catch unreachable;
-            var task = WriteFile.WriteFileTask.createOnJSThread(bun.default_allocator, ctx, file_copier) catch bun.outOfMemory();
+            var task = WriteFileTask.createOnJSThread(bun.default_allocator, ctx, file_copier) catch bun.outOfMemory();
             // Defer promise creation until we're just about to schedule the task
             var promise = JSC.JSPromise.create(ctx);
             const promise_value = promise.asValue(ctx);

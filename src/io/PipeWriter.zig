@@ -1417,7 +1417,10 @@ pub fn WindowsStreamingWriter(
             }
 
             const had_buffered_data = this.outgoing.isNotEmpty();
-            writeFn(&this.outgoing, buffer) catch {
+            (if (comptime @TypeOf(writeFn) == @TypeOf(&StreamBuffer.writeLatin1) and writeFn == &StreamBuffer.writeLatin1)
+                writeFn(&this.outgoing, buffer, true)
+            else
+                writeFn(&this.outgoing, buffer)) catch {
                 return .{ .err = bun.sys.Error.oom };
             };
             if (had_buffered_data) {

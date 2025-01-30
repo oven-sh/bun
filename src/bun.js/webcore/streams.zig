@@ -3494,7 +3494,9 @@ pub const FileSink = struct {
         this.writer.updateRef(this.eventLoop(), has_pending_data);
 
         if (has_pending_data) {
-            AutoFlusher.registerDeferredMicrotaskWithType(@This(), this, JSC.VirtualMachine.get());
+            if (this.event_loop_handle.globalObject()) |global| {
+                AutoFlusher.registerDeferredMicrotaskWithType(@This(), this, global.bunVM());
+            }
         }
 
         // if we are not done yet and has pending data we just wait so we do not runPending twice
@@ -3883,7 +3885,9 @@ pub const FileSink = struct {
     pub fn deinit(this: *FileSink) void {
         this.pending.deinit();
         this.writer.deinit();
-        AutoFlusher.unregisterDeferredMicrotaskWithType(@This(), this, JSC.VirtualMachine.get());
+        if (this.event_loop_handle.globalObject()) |global| {
+            AutoFlusher.unregisterDeferredMicrotaskWithType(@This(), this, global.bunVM());
+        }
     }
 
     pub fn toJS(this: *FileSink, globalThis: *JSGlobalObject) JSValue {

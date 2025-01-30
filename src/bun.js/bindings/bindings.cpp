@@ -664,6 +664,9 @@ JSValue getIndexWithoutAccessors(JSGlobalObject* globalObject, JSObject* obj, ui
 }
 
 template<bool isStrict, bool enableAsymmetricMatchers>
+std::optional<bool> specialObjectsDequal(JSC__JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope* scope, JSCell * _Nonnull c1, JSCell * _Nonnull c2);
+
+template<bool isStrict, bool enableAsymmetricMatchers>
 bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope* scope, bool addToStack)
 {
     VM& vm = globalObject->vm();
@@ -732,352 +735,16 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
     JSCell* c1 = v1.asCell();
     JSCell* c2 = v2.asCell();
+    ASSERT(c1);
+    ASSERT(c2);
+    std::optional<bool> isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers>(globalObject, gcBuffer, stack, scope, c1, c2);
+    if (isSpecialEqual.has_value()) return std::move(*isSpecialEqual);
+    isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers>(globalObject, gcBuffer, stack, scope, c2, c1);
+    if (isSpecialEqual.has_value()) return std::move(*isSpecialEqual);
     JSObject* o1 = v1.getObject();
     JSObject* o2 = v2.getObject();
 
-    // We use additional values outside the enum
-    // so the warning here is unnecessary
-    uint8_t c1Type = c1->type();
-    uint8_t c2Type = c2->type();
 
-    switch (c1Type) {
-    case JSSetType: {
-        if (c2Type != JSSetType) {
-            return false;
-        }
-
-        JSSet* set1 = jsCast<JSSet*>(c1);
-        JSSet* set2 = jsCast<JSSet*>(c2);
-
-        if (set1->size() != set2->size()) {
-            return false;
-        }
-
-        auto iter1 = JSSetIterator::create(globalObject, globalObject->setIteratorStructure(), set1, IterationKind::Keys);
-        JSValue key1;
-        while (iter1->next(globalObject, key1)) {
-            if (set2->has(globalObject, key1)) {
-                continue;
-            }
-
-            // We couldn't find the key in the second set. This may be a false positive due to how
-            // JSValues are represented in JSC, so we need to fall back to a linear search to be sure.
-            auto iter2 = JSSetIterator::create(globalObject, globalObject->setIteratorStructure(), set2, IterationKind::Keys);
-            JSValue key2;
-            bool foundMatchingKey = false;
-            while (iter2->next(globalObject, key2)) {
-                if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, false)) {
-                    foundMatchingKey = true;
-                    break;
-                }
-            }
-
-            if (!foundMatchingKey) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-    case JSMapType: {
-        if (c2Type != JSMapType) {
-            return false;
-        }
-
-        JSMap* map1 = jsCast<JSMap*>(c1);
-        JSMap* map2 = jsCast<JSMap*>(c2);
-        size_t leftSize = map1->size();
-
-        if (leftSize != map2->size()) {
-            return false;
-        }
-
-        auto iter1 = JSMapIterator::create(globalObject, globalObject->mapIteratorStructure(), map1, IterationKind::Entries);
-        JSValue key1, value1;
-        while (iter1->nextKeyValue(globalObject, key1, value1)) {
-            JSValue value2 = map2->get(globalObject, key1);
-            if (value2.isUndefined()) {
-                // We couldn't find the key in the second map. This may be a false positive due to
-                // how JSValues are represented in JSC, so we need to fall back to a linear search
-                // to be sure.
-                auto iter2 = JSMapIterator::create(globalObject, globalObject->mapIteratorStructure(), map2, IterationKind::Entries);
-                JSValue key2;
-                bool foundMatchingKey = false;
-                while (iter2->nextKeyValue(globalObject, key2, value2)) {
-                    if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, false)) {
-                        foundMatchingKey = true;
-                        break;
-                    }
-                }
-
-                if (!foundMatchingKey) {
-                    return false;
-                }
-
-                // Compare both values below.
-            }
-
-            if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, value1, value2, gcBuffer, stack, scope, false)) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-    case ArrayBufferType: {
-        if (c2Type != ArrayBufferType) {
-            return false;
-        }
-
-        JSC::ArrayBuffer* left = jsCast<JSArrayBuffer*>(v1)->impl();
-        JSC::ArrayBuffer* right = jsCast<JSArrayBuffer*>(v2)->impl();
-        size_t byteLength = left->byteLength();
-
-        if (right->byteLength() != byteLength) {
-            return false;
-        }
-
-        if (byteLength == 0)
-            return true;
-
-        if (UNLIKELY(right->isDetached() || left->isDetached())) {
-            return false;
-        }
-
-        const void* vector = left->data();
-        const void* rightVector = right->data();
-        if (UNLIKELY(!vector || !rightVector)) {
-            return false;
-        }
-
-        if (UNLIKELY(vector == rightVector))
-            return true;
-
-        return (memcmp(vector, rightVector, byteLength) == 0);
-    }
-    case JSDateType: {
-        if (c2Type != JSDateType) {
-            return false;
-        }
-
-        JSC::DateInstance* left = jsCast<DateInstance*>(v1);
-        JSC::DateInstance* right = jsCast<DateInstance*>(v2);
-
-        return left->internalNumber() == right->internalNumber();
-    }
-    case RegExpObjectType: {
-        if (c2Type != RegExpObjectType) {
-            return false;
-        }
-
-        if (JSC::RegExpObject* left = jsDynamicCast<JSC::RegExpObject*>(v1)) {
-            JSC::RegExpObject* right = jsDynamicCast<JSC::RegExpObject*>(v2);
-
-            if (UNLIKELY(!right)) {
-                return false;
-            }
-
-            return left->regExp()->key() == right->regExp()->key();
-        }
-
-        return false;
-    }
-    case ErrorInstanceType: {
-        if (c2Type != ErrorInstanceType) {
-            return false;
-        }
-
-        if (JSC::ErrorInstance* left = jsDynamicCast<JSC::ErrorInstance*>(v1)) {
-            JSC::ErrorInstance* right = jsDynamicCast<JSC::ErrorInstance*>(v2);
-
-            if (UNLIKELY(!right)) {
-                return false;
-            }
-
-            return (
-                left->sanitizedNameString(globalObject) == right->sanitizedNameString(globalObject) && left->sanitizedMessageString(globalObject) == right->sanitizedMessageString(globalObject));
-        }
-    }
-    case Int8ArrayType:
-    case Uint8ArrayType:
-    case Uint8ClampedArrayType:
-    case Int16ArrayType:
-    case Uint16ArrayType:
-    case Int32ArrayType:
-    case Uint32ArrayType:
-    case Float16ArrayType:
-    case Float32ArrayType:
-    case Float64ArrayType:
-    case BigInt64ArrayType:
-    case BigUint64ArrayType: {
-        if (!isTypedArrayType(static_cast<JSC::JSType>(c2Type)) || c1Type != c2Type) {
-            return false;
-        }
-
-        JSC::JSArrayBufferView* left = jsCast<JSArrayBufferView*>(v1);
-        JSC::JSArrayBufferView* right = jsCast<JSArrayBufferView*>(v2);
-        size_t byteLength = left->byteLength();
-
-        if (right->byteLength() != byteLength) {
-            return false;
-        }
-
-        if (byteLength == 0)
-            return true;
-
-        if (UNLIKELY(right->isDetached() || left->isDetached())) {
-            return false;
-        }
-
-        const void* vector = left->vector();
-        const void* rightVector = right->vector();
-        if (UNLIKELY(!vector || !rightVector)) {
-            return false;
-        }
-
-        if (UNLIKELY(vector == rightVector))
-            return true;
-
-        return (memcmp(vector, rightVector, byteLength) == 0);
-    }
-    case StringObjectType: {
-        if (c2Type != StringObjectType) {
-            return false;
-        }
-
-        if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
-            return false;
-        }
-
-        JSString* s1 = c1->toStringInline(globalObject);
-        JSString* s2 = c2->toStringInline(globalObject);
-
-        return s1->equal(globalObject, s2);
-    }
-    case JSFunctionType: {
-        return false;
-    }
-
-    case JSAsJSONType:
-    case JSDOMWrapperType: {
-        if (c2Type == c1Type) {
-
-            // https://github.com/oven-sh/bun/issues/4089
-            // https://github.com/oven-sh/bun/issues/6492
-            auto* url2 = jsDynamicCast<JSDOMURL*>(v2);
-            auto* url1 = jsDynamicCast<JSDOMURL*>(v1);
-
-            if constexpr (isStrict) {
-                // if one is a URL and the other is not a URL, toStrictEqual returns false.
-                if ((url2 == nullptr) != (url1 == nullptr)) {
-                    return false;
-                }
-            } else {
-                if ((url1 == nullptr) != (url2 == nullptr)) {
-                    goto compareAsNormalValue;
-                }
-            }
-
-            if (url2 && url1) {
-                // toEqual or toStrictEqual should return false when the URLs' href is not equal
-                // But you could have added additional properties onto the
-                // url object itself, so we must check those as well
-                // But it's definitely not equal if the href() is not the same
-                if (url1->wrapped().href() != url2->wrapped().href()) {
-                    return false;
-                }
-
-                goto compareAsNormalValue;
-            }
-
-            // TODO: FormData.
-            // It's complicated because it involves Blob.
-
-            {
-                auto urlSearchParams1 = jsDynamicCast<JSURLSearchParams*>(v1);
-                auto urlSearchParams2 = jsDynamicCast<JSURLSearchParams*>(v2);
-                if (urlSearchParams1 && urlSearchParams2) {
-                    auto& wrapped1 = urlSearchParams1->wrapped();
-                    const auto& wrapped2 = urlSearchParams2->wrapped();
-                    if (wrapped1.size() != wrapped2.size()) {
-                        return false;
-                    }
-
-                    auto iter1 = wrapped1.createIterator();
-                    while (const auto& maybePair = iter1.next()) {
-                        const auto& key = maybePair->key;
-                        const auto& value = maybePair->value;
-                        const auto& maybeValue = wrapped2.get(key);
-                        if (!maybeValue || maybeValue != value) {
-                            return false;
-                        }
-                    }
-
-                    goto compareAsNormalValue;
-                } else {
-                    if constexpr (isStrict) {
-                        // if one is a URLSearchParams and the other is not a URLSearchParams, toStrictEqual should return false.
-                        if ((urlSearchParams2 == nullptr) != (urlSearchParams1 == nullptr)) {
-                            return false;
-                        }
-                    } else {
-                        if ((urlSearchParams1 == nullptr) != (urlSearchParams2 == nullptr)) {
-                            goto compareAsNormalValue;
-                        }
-                    }
-                }
-            }
-
-            {
-                auto headers1 = jsDynamicCast<JSFetchHeaders*>(v1);
-                auto headers2 = jsDynamicCast<JSFetchHeaders*>(v2);
-                if (headers1 && headers2) {
-                    auto& wrapped1 = headers1->wrapped();
-                    const auto& wrapped2 = headers2->wrapped();
-                    if (wrapped1.size() != wrapped2.size()) {
-                        return false;
-                    }
-
-                    auto iter1 = wrapped1.createIterator();
-                    while (const auto& maybePair = iter1.next()) {
-                        const auto& key = maybePair->key;
-                        const auto& value = maybePair->value;
-                        const auto& maybeValue = wrapped2.get(key);
-                        if (maybeValue.hasException()) {
-                            return false;
-                        }
-
-                        if (maybeValue.returnValue() != value) {
-                            return false;
-                        }
-                    }
-
-                    goto compareAsNormalValue;
-                } else {
-                    if constexpr (isStrict) {
-                        // if one is a FetchHeaders and the other is not a FetchHeaders, toStrictEqual should return false.
-                        if ((headers2 == nullptr) != (headers1 == nullptr)) {
-                            return false;
-                        }
-                    } else {
-                        if ((headers1 == nullptr) != (headers2 == nullptr)) {
-                            goto compareAsNormalValue;
-                        }
-                    }
-                }
-            }
-        }
-
-        goto compareAsNormalValue;
-
-    compareAsNormalValue:
-        break;
-    }
-
-    default: {
-        break;
-    }
-    }
 
     bool v1Array = isArray(globalObject, v1);
     RETURN_IF_EXCEPTION(*scope, false);
@@ -1365,6 +1032,353 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     }
 
     return true;
+}
+
+template<bool isStrict, bool enableAsymmetricMatchers>
+std::optional<bool> specialObjectsDequal(JSC__JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope* scope, JSCell * _Nonnull c1, JSCell * _Nonnull c2)
+{
+    uint8_t c1Type = c1->type();
+    uint8_t c2Type = c2->type();
+
+    switch (c1Type) {
+    case JSSetType: {
+        if (c2Type != JSSetType) {
+            return false;
+        }
+
+        JSSet* set1 = jsCast<JSSet*>(c1);
+        JSSet* set2 = jsCast<JSSet*>(c2);
+
+        if (set1->size() != set2->size()) {
+            return false;
+        }
+
+        auto iter1 = JSSetIterator::create(globalObject, globalObject->setIteratorStructure(), set1, IterationKind::Keys);
+        JSValue key1;
+        while (iter1->next(globalObject, key1)) {
+            if (set2->has(globalObject, key1)) {
+                continue;
+            }
+
+            // We couldn't find the key in the second set. This may be a false positive due to how
+            // JSValues are represented in JSC, so we need to fall back to a linear search to be sure.
+            auto iter2 = JSSetIterator::create(globalObject, globalObject->setIteratorStructure(), set2, IterationKind::Keys);
+            JSValue key2;
+            bool foundMatchingKey = false;
+            while (iter2->next(globalObject, key2)) {
+                if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, false)) {
+                    foundMatchingKey = true;
+                    break;
+                }
+            }
+
+            if (!foundMatchingKey) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+    case JSMapType: {
+        if (c2Type != JSMapType) {
+            return false;
+        }
+
+        JSMap* map1 = jsCast<JSMap*>(c1);
+        JSMap* map2 = jsCast<JSMap*>(c2);
+        size_t leftSize = map1->size();
+
+        if (leftSize != map2->size()) {
+            return false;
+        }
+
+        auto iter1 = JSMapIterator::create(globalObject, globalObject->mapIteratorStructure(), map1, IterationKind::Entries);
+        JSValue key1, value1;
+        while (iter1->nextKeyValue(globalObject, key1, value1)) {
+            JSValue value2 = map2->get(globalObject, key1);
+            if (value2.isUndefined()) {
+                // We couldn't find the key in the second map. This may be a false positive due to
+                // how JSValues are represented in JSC, so we need to fall back to a linear search
+                // to be sure.
+                auto iter2 = JSMapIterator::create(globalObject, globalObject->mapIteratorStructure(), map2, IterationKind::Entries);
+                JSValue key2;
+                bool foundMatchingKey = false;
+                while (iter2->nextKeyValue(globalObject, key2, value2)) {
+                    if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, false)) {
+                        foundMatchingKey = true;
+                        break;
+                    }
+                }
+
+                if (!foundMatchingKey) {
+                    return false;
+                }
+
+                // Compare both values below.
+            }
+
+            if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, value1, value2, gcBuffer, stack, scope, false)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+    case ArrayBufferType: {
+        if (c2Type != ArrayBufferType) {
+            return false;
+        }
+
+        JSC::ArrayBuffer* left = jsCast<JSArrayBuffer*, JSCell>(c1)->impl();
+        JSC::ArrayBuffer* right = jsCast<JSArrayBuffer*, JSCell>(c2)->impl();
+        size_t byteLength = left->byteLength();
+
+        if (right->byteLength() != byteLength) {
+            return false;
+        }
+
+        if (byteLength == 0)
+            return true;
+
+        if (UNLIKELY(right->isDetached() || left->isDetached())) {
+            return false;
+        }
+
+        const void* vector = left->data();
+        const void* rightVector = right->data();
+        if (UNLIKELY(!vector || !rightVector)) {
+            return false;
+        }
+
+        if (UNLIKELY(vector == rightVector))
+            return true;
+
+        return (memcmp(vector, rightVector, byteLength) == 0);
+    }
+    case JSDateType: {
+        if (c2Type != JSDateType) {
+            return false;
+        }
+
+        JSC::DateInstance* left = jsCast<DateInstance*, JSCell>(c1);
+        JSC::DateInstance* right = jsCast<DateInstance*, JSCell>(c2);
+
+        return left->internalNumber() == right->internalNumber();
+    }
+    case RegExpObjectType: {
+        if (c2Type != RegExpObjectType) {
+            return false;
+        }
+
+        if (JSC::RegExpObject* left = jsDynamicCast<JSC::RegExpObject*, JSCell>(c1)) {
+            JSC::RegExpObject* right = jsDynamicCast<JSC::RegExpObject*, JSCell>(c2);
+
+            if (UNLIKELY(!right)) {
+                return false;
+            }
+
+            return left->regExp()->key() == right->regExp()->key();
+        }
+
+        return false;
+    }
+    case ErrorInstanceType: {
+        if (c2Type != ErrorInstanceType) {
+            return false;
+        }
+
+        if (JSC::ErrorInstance* left = jsDynamicCast<JSC::ErrorInstance*, JSCell>(c1)) {
+            JSC::ErrorInstance* right = jsDynamicCast<JSC::ErrorInstance*, JSCell>(c2);
+
+            if (UNLIKELY(!right)) {
+                return false;
+            }
+
+            return (
+                left->sanitizedNameString(globalObject) == right->sanitizedNameString(globalObject) && left->sanitizedMessageString(globalObject) == right->sanitizedMessageString(globalObject));
+        }
+    }
+    case Int8ArrayType:
+    case Uint8ArrayType:
+    case Uint8ClampedArrayType:
+    case Int16ArrayType:
+    case Uint16ArrayType:
+    case Int32ArrayType:
+    case Uint32ArrayType:
+    case Float16ArrayType:
+    case Float32ArrayType:
+    case Float64ArrayType:
+    case BigInt64ArrayType:
+    case BigUint64ArrayType: {
+        if (!isTypedArrayType(static_cast<JSC::JSType>(c2Type)) || c1Type != c2Type) {
+            return false;
+        }
+
+        JSC::JSArrayBufferView* left = jsCast<JSArrayBufferView* , JSCell>(c1);
+        JSC::JSArrayBufferView* right = jsCast<JSArrayBufferView*, JSCell>(c2);
+        size_t byteLength = left->byteLength();
+
+        if (right->byteLength() != byteLength) {
+            return false;
+        }
+
+        if (byteLength == 0)
+            return true;
+
+        if (UNLIKELY(right->isDetached() || left->isDetached())) {
+            return false;
+        }
+
+        const void* vector = left->vector();
+        const void* rightVector = right->vector();
+        if (UNLIKELY(!vector || !rightVector)) {
+            return false;
+        }
+
+        if (UNLIKELY(vector == rightVector))
+            return true;
+
+        return (memcmp(vector, rightVector, byteLength) == 0);
+    }
+    case StringObjectType: {
+        if (c2Type != StringObjectType) {
+            return false;
+        }
+
+        if (!equal(JSObject::calculatedClassName(c1->getObject()), JSObject::calculatedClassName(c2->getObject()))) {
+            return false;
+        }
+
+        JSString* s1 = c1->toStringInline(globalObject);
+        JSString* s2 = c2->toStringInline(globalObject);
+
+        return s1->equal(globalObject, s2);
+    }
+    case JSFunctionType: {
+        return false;
+    }
+
+    case JSAsJSONType:
+    case JSDOMWrapperType: {
+        if (c2Type == c1Type) {
+
+            // https://github.com/oven-sh/bun/issues/4089
+            // https://github.com/oven-sh/bun/issues/6492
+            auto* url2 = jsDynamicCast<JSDOMURL*, JSCell>(c2);
+            auto* url1 = jsDynamicCast<JSDOMURL*, JSCell>(c1);
+
+            if constexpr (isStrict) {
+                // if one is a URL and the other is not a URL, toStrictEqual returns false.
+                if ((url2 == nullptr) != (url1 == nullptr)) {
+                    return false;
+                }
+            } else {
+                if ((url1 == nullptr) != (url2 == nullptr)) {
+                    goto compareAsNormalValue;
+                }
+            }
+
+            if (url2 && url1) {
+                // toEqual or toStrictEqual should return false when the URLs' href is not equal
+                // But you could have added additional properties onto the
+                // url object itself, so we must check those as well
+                // But it's definitely not equal if the href() is not the same
+                if (url1->wrapped().href() != url2->wrapped().href()) {
+                    return false;
+                }
+
+                goto compareAsNormalValue;
+            }
+
+            // TODO: FormData.
+            // It's complicated because it involves Blob.
+
+            {
+                auto urlSearchParams1 = jsDynamicCast<JSURLSearchParams*, JSCell>(c1);
+                auto urlSearchParams2 = jsDynamicCast<JSURLSearchParams*, JSCell>(c2);
+                if (urlSearchParams1 && urlSearchParams2) {
+                    auto& wrapped1 = urlSearchParams1->wrapped();
+                    const auto& wrapped2 = urlSearchParams2->wrapped();
+                    if (wrapped1.size() != wrapped2.size()) {
+                        return false;
+                    }
+
+                    auto iter1 = wrapped1.createIterator();
+                    while (const auto& maybePair = iter1.next()) {
+                        const auto& key = maybePair->key;
+                        const auto& value = maybePair->value;
+                        const auto& maybeValue = wrapped2.get(key);
+                        if (!maybeValue || maybeValue != value) {
+                            return false;
+                        }
+                    }
+
+                    goto compareAsNormalValue;
+                } else {
+                    if constexpr (isStrict) {
+                        // if one is a URLSearchParams and the other is not a URLSearchParams, toStrictEqual should return false.
+                        if ((urlSearchParams2 == nullptr) != (urlSearchParams1 == nullptr)) {
+                            return false;
+                        }
+                    } else {
+                        if ((urlSearchParams1 == nullptr) != (urlSearchParams2 == nullptr)) {
+                            goto compareAsNormalValue;
+                        }
+                    }
+                }
+            }
+
+            {
+                auto headers1 = jsDynamicCast<JSFetchHeaders*, JSCell>(c1);
+                auto headers2 = jsDynamicCast<JSFetchHeaders*, JSCell>(c2);
+                if (headers1 && headers2) {
+                    auto& wrapped1 = headers1->wrapped();
+                    const auto& wrapped2 = headers2->wrapped();
+                    if (wrapped1.size() != wrapped2.size()) {
+                        return false;
+                    }
+
+                    auto iter1 = wrapped1.createIterator();
+                    while (const auto& maybePair = iter1.next()) {
+                        const auto& key = maybePair->key;
+                        const auto& value = maybePair->value;
+                        const auto& maybeValue = wrapped2.get(key);
+                        if (maybeValue.hasException()) {
+                            return false;
+                        }
+
+                        if (maybeValue.returnValue() != value) {
+                            return false;
+                        }
+                    }
+
+                    goto compareAsNormalValue;
+                } else {
+                    if constexpr (isStrict) {
+                        // if one is a FetchHeaders and the other is not a FetchHeaders, toStrictEqual should return false.
+                        if ((headers2 == nullptr) != (headers1 == nullptr)) {
+                            return false;
+                        }
+                    } else {
+                        if ((headers1 == nullptr) != (headers2 == nullptr)) {
+                            goto compareAsNormalValue;
+                        }
+                    }
+                }
+            }
+        }
+
+        goto compareAsNormalValue;
+
+    compareAsNormalValue:
+        break;
+    }
+
+    default: {
+        break;
+    }
+    }
+    return std::nullopt;
 }
 
 /**

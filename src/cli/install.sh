@@ -53,8 +53,9 @@ success() {
     echo -e "${Green}$@ ${Color_Off}"
 }
 
-command -v unzip >/dev/null ||
-    error 'unzip is required to install bun'
+if ! { command -v unzip || command -v busybox || command -v 7z || command -v 7zz || command -v 7za || command -v bsdtar; } >/dev/null; then
+    error 'unzip is required to install bun (7z, busybox, and bsdtar supported)'
+fi
 
 if [[ $# -gt 2 ]]; then
     error 'Too many arguments, only 2 are allowed. The first can be a specific tag of bun to install. (e.g. "bun-v0.1.4") The second can be a build variant of bun to install. (e.g. "debug-info")'
@@ -143,8 +144,21 @@ fi
 curl --fail --location --progress-bar --output "$exe.zip" "$bun_uri" ||
     error "Failed to download bun from \"$bun_uri\""
 
-unzip -oqd "$bin_dir" "$exe.zip" ||
+if command -v unzip >/dev/null; then
+    unzip -oqd "$bin_dir" "$exe.zip" ||
+        error 'Failed to extract bun'
+elif command -v busybox >/dev/null; then
+    busybox unzip -oqd "$bin_dir" "$exe.zip" ||
+        error 'Failed to extract bun'
+elif cmd=$(command -v 7z || command -v 7zz || command -v 7za); then
+    "$cmd" x -o"$bin_dir" -y "$exe.zip" ||
+        error 'Failed to extract bun'
+elif command -v bsdtar >/dev/null; then
+    bsdtar -xf "$exe.zip" --xattrs -C "$bin_dir" ||
+        error 'Failed to extract bun'
+else
     error 'Failed to extract bun'
+fi
 
 mv "$bin_dir/bun-$target/$exe_name" "$exe" ||
     error 'Failed to move extracted bun to destination'

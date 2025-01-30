@@ -16,6 +16,10 @@ import {
   ParserOptions,
 } from "./util";
 
+function Some(n: number): number {
+  return n;
+}
+
 function error_test(css: string, error: unknown) {
   // going to ignore this test for now
   test.skip(`ERROR: ${css}`, () => {});
@@ -1296,19 +1300,19 @@ describe("css tests", () => {
       `
       .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
         border-left-color: #b32323;
-        border-left-color: color(display-p3 .6433075 .19245467 .1677117);
+        border-left-color: color(display-p3 .643308 .192455 .167712);
         border-left-color: lab(40% 56.6 39);
         border-right-color: #ee00be;
-        border-right-color: color(display-p3 .9729615 -.36207756 .80420625);
+        border-right-color: color(display-p3 .972961 -.362078 .804206);
         border-right-color: lch(50.998% 135.363 338);
       }
 
       .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
         border-left-color: #ee00be;
-        border-left-color: color(display-p3 .9729615 -.36207756 .80420625);
+        border-left-color: color(display-p3 .972961 -.362078 .804206);
         border-left-color: lch(50.998% 135.363 338);
         border-right-color: #b32323;
-        border-right-color: color(display-p3 .6433075 .19245467 .1677117);
+        border-right-color: color(display-p3 .643308 .192455 .167712);
         border-right-color: lab(40% 56.6 39);
       }
     `,
@@ -6082,5 +6086,816 @@ describe("css tests", () => {
     error_test("@media (1px <= scan <= 2px) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");
     error_test("@media (grid: 10) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");
     error_test("@media (prefers-color-scheme = dark) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");
+  });
+
+  describe("transition", () => {
+    minify_test(".foo { transition-duration: 500ms }", ".foo{transition-duration:.5s}");
+    minify_test(".foo { transition-duration: .5s }", ".foo{transition-duration:.5s}");
+    minify_test(".foo { transition-duration: 99ms }", ".foo{transition-duration:99ms}");
+    minify_test(".foo { transition-duration: .099s }", ".foo{transition-duration:99ms}");
+    minify_test(".foo { transition-duration: 2000ms }", ".foo{transition-duration:2s}");
+    minify_test(".foo { transition-duration: 2s }", ".foo{transition-duration:2s}");
+    minify_test(".foo { transition-duration: calc(1s - 50ms) }", ".foo{transition-duration:.95s}");
+    minify_test(".foo { transition-duration: calc(1s - 50ms + 2s) }", ".foo{transition-duration:2.95s}");
+    minify_test(".foo { transition-duration: calc((1s - 50ms) * 2) }", ".foo{transition-duration:1.9s}");
+    minify_test(".foo { transition-duration: calc(2 * (1s - 50ms)) }", ".foo{transition-duration:1.9s}");
+    minify_test(".foo { transition-duration: calc((2s + 50ms) - (1s - 50ms)) }", ".foo{transition-duration:1.1s}");
+    minify_test(".foo { transition-duration: 500ms, 50ms }", ".foo{transition-duration:.5s,50ms}");
+    minify_test(".foo { transition-delay: 500ms }", ".foo{transition-delay:.5s}");
+    minify_test(".foo { transition-property: background }", ".foo{transition-property:background}");
+    minify_test(".foo { transition-property: background, opacity }", ".foo{transition-property:background,opacity}");
+    minify_test(".foo { transition-timing-function: linear }", ".foo{transition-timing-function:linear}");
+    minify_test(".foo { transition-timing-function: ease }", ".foo{transition-timing-function:ease}");
+    minify_test(".foo { transition-timing-function: ease-in }", ".foo{transition-timing-function:ease-in}");
+    minify_test(".foo { transition-timing-function: ease-out }", ".foo{transition-timing-function:ease-out}");
+    minify_test(".foo { transition-timing-function: ease-in-out }", ".foo{transition-timing-function:ease-in-out}");
+    minify_test(
+      ".foo { transition-timing-function: cubic-bezier(0.25, 0.1, 0.25, 1) }",
+      ".foo{transition-timing-function:ease}",
+    );
+    minify_test(
+      ".foo { transition-timing-function: cubic-bezier(0.42, 0, 1, 1) }",
+      ".foo{transition-timing-function:ease-in}",
+    );
+    minify_test(
+      ".foo { transition-timing-function: cubic-bezier(0, 0, 0.58, 1) }",
+      ".foo{transition-timing-function:ease-out}",
+    );
+    minify_test(
+      ".foo { transition-timing-function: cubic-bezier(0.42, 0, 0.58, 1) }",
+      ".foo{transition-timing-function:ease-in-out}",
+    );
+    minify_test(
+      ".foo { transition-timing-function: cubic-bezier(0.58, 0.2, 0.11, 1.2) }",
+      ".foo{transition-timing-function:cubic-bezier(.58,.2,.11,1.2)}",
+    );
+    minify_test(".foo { transition-timing-function: step-start }", ".foo{transition-timing-function:step-start}");
+    minify_test(".foo { transition-timing-function: step-end }", ".foo{transition-timing-function:step-end}");
+    minify_test(".foo { transition-timing-function: steps(1, start) }", ".foo{transition-timing-function:step-start}");
+    minify_test(
+      ".foo { transition-timing-function: steps(1, jump-start) }",
+      ".foo{transition-timing-function:step-start}",
+    );
+    minify_test(".foo { transition-timing-function: steps(1, end) }", ".foo{transition-timing-function:step-end}");
+    minify_test(".foo { transition-timing-function: steps(1, jump-end) }", ".foo{transition-timing-function:step-end}");
+    minify_test(
+      ".foo { transition-timing-function: steps(5, jump-start) }",
+      ".foo{transition-timing-function:steps(5,start)}",
+    );
+    minify_test(
+      ".foo { transition-timing-function: steps(5, jump-end) }",
+      ".foo{transition-timing-function:steps(5,end)}",
+    );
+    minify_test(
+      ".foo { transition-timing-function: steps(5, jump-both) }",
+      ".foo{transition-timing-function:steps(5,jump-both)}",
+    );
+    minify_test(
+      ".foo { transition-timing-function: ease-in-out, cubic-bezier(0.42, 0, 1, 1) }",
+      ".foo{transition-timing-function:ease-in-out,ease-in}",
+    );
+    minify_test(
+      ".foo { transition-timing-function: cubic-bezier(0.42, 0, 1, 1), cubic-bezier(0.58, 0.2, 0.11, 1.2) }",
+      ".foo{transition-timing-function:ease-in,cubic-bezier(.58,.2,.11,1.2)}",
+    );
+    minify_test(
+      ".foo { transition-timing-function: step-start, steps(5, jump-start) }",
+      ".foo{transition-timing-function:step-start,steps(5,start)}",
+    );
+    minify_test(".foo { transition: width 2s ease }", ".foo{transition:width 2s}");
+    minify_test(
+      ".foo { transition: width 2s ease, height 1000ms cubic-bezier(0.25, 0.1, 0.25, 1) }",
+      ".foo{transition:width 2s,height 1s}",
+    );
+    minify_test(".foo { transition: width 2s 1s }", ".foo{transition:width 2s 1s}");
+    minify_test(".foo { transition: width 2s ease 1s }", ".foo{transition:width 2s 1s}");
+    minify_test(".foo { transition: ease-in 1s width 4s }", ".foo{transition:width 1s ease-in 4s}");
+    minify_test(".foo { transition: opacity 0s .6s }", ".foo{transition:opacity 0s .6s}");
+    cssTest(
+      `
+      .foo {
+        transition-property: opacity;
+        transition-duration: 0.09s;
+        transition-timing-function: ease-in-out;
+        transition-delay: 500ms;
+      }
+    `,
+      `
+      .foo {
+        transition: opacity 90ms ease-in-out .5s;
+      }
+    `,
+    );
+    cssTest(
+      `
+      .foo {
+        transition: opacity 2s;
+        transition-timing-function: ease;
+        transition-delay: 500ms;
+      }
+    `,
+      `
+      .foo {
+        transition: opacity 2s .5s;
+      }
+    `,
+    );
+    cssTest(
+      `
+      .foo {
+        transition: opacity 500ms;
+        transition-timing-function: var(--ease);
+      }
+    `,
+      `
+      .foo {
+        transition: opacity .5s;
+        transition-timing-function: var(--ease);
+      }
+    `,
+    );
+    cssTest(
+      `
+      .foo {
+        transition-property: opacity;
+        transition-duration: 0.09s;
+        transition-timing-function: ease-in-out;
+        transition-delay: 500ms;
+        transition: color 2s;
+      }
+    `,
+      `
+      .foo {
+        transition: color 2s;
+      }
+    `,
+    );
+    cssTest(
+      `
+      .foo {
+        transition-property: opacity, color;
+        transition-duration: 2s, 4s;
+        transition-timing-function: ease-in-out, ease-in;
+        transition-delay: 500ms, 0s;
+      }
+    `,
+      `
+      .foo {
+        transition: opacity 2s ease-in-out .5s, color 4s ease-in;
+      }
+    `,
+    );
+    cssTest(
+      `
+      .foo {
+        transition-property: opacity, color;
+        transition-duration: 2s;
+        transition-timing-function: ease-in-out;
+        transition-delay: 500ms;
+      }
+    `,
+      `
+      .foo {
+        transition: opacity 2s ease-in-out .5s, color 2s ease-in-out .5s;
+      }
+    `,
+    );
+    cssTest(
+      `
+      .foo {
+        transition-property: opacity, color, width, height;
+        transition-duration: 2s, 4s;
+        transition-timing-function: ease;
+        transition-delay: 0s;
+      }
+    `,
+      `
+      .foo {
+        transition: opacity 2s, color 4s, width 2s, height 4s;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        -webkit-transition-property: opacity, color;
+        -webkit-transition-duration: 2s, 4s;
+        -webkit-transition-timing-function: ease-in-out, ease-in;
+        -webkit-transition-delay: 500ms, 0s;
+      }
+    `,
+      `
+      .foo {
+        -webkit-transition: opacity 2s ease-in-out .5s, color 4s ease-in;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        -webkit-transition-property: opacity, color;
+        -webkit-transition-duration: 2s, 4s;
+        -webkit-transition-timing-function: ease-in-out, ease-in;
+        -webkit-transition-delay: 500ms, 0s;
+        -moz-transition-property: opacity, color;
+        -moz-transition-duration: 2s, 4s;
+        -moz-transition-timing-function: ease-in-out, ease-in;
+        -moz-transition-delay: 500ms, 0s;
+        transition-property: opacity, color;
+        transition-duration: 2s, 4s;
+        transition-timing-function: ease-in-out, ease-in;
+        transition-delay: 500ms, 0s;
+      }
+    `,
+      `
+      .foo {
+        -webkit-transition: opacity 2s ease-in-out .5s, color 4s ease-in;
+        -moz-transition: opacity 2s ease-in-out .5s, color 4s ease-in;
+        transition: opacity 2s ease-in-out .5s, color 4s ease-in;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        -webkit-transition-property: opacity, color;
+        -moz-transition-property: opacity, color;
+        transition-property: opacity, color;
+        -webkit-transition-duration: 2s, 4s;
+        -moz-transition-duration: 2s, 4s;
+        transition-duration: 2s, 4s;
+        -webkit-transition-timing-function: ease-in-out, ease-in;
+        transition-timing-function: ease-in-out, ease-in;
+        -moz-transition-timing-function: ease-in-out, ease-in;
+        -webkit-transition-delay: 500ms, 0s;
+        -moz-transition-delay: 500ms, 0s;
+        transition-delay: 500ms, 0s;
+      }
+    `,
+      `
+      .foo {
+        -webkit-transition: opacity 2s ease-in-out .5s, color 4s ease-in;
+        -moz-transition: opacity 2s ease-in-out .5s, color 4s ease-in;
+        transition: opacity 2s ease-in-out .5s, color 4s ease-in;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        -webkit-transition-property: opacity;
+        -moz-transition-property: color;
+        transition-property: opacity, color;
+        -webkit-transition-duration: 2s;
+        -moz-transition-duration: 4s;
+        transition-duration: 2s, 4s;
+        -webkit-transition-timing-function: ease-in-out;
+        -moz-transition-timing-function: ease-in-out;
+        transition-timing-function: ease-in-out, ease-in;
+        -webkit-transition-delay: 500ms;
+        -moz-transition-delay: 0s;
+        transition-delay: 500ms, 0s;
+      }
+    `,
+      `
+      .foo {
+        -webkit-transition-property: opacity;
+        -moz-transition-property: color;
+        transition-property: opacity, color;
+        -webkit-transition-duration: 2s;
+        -moz-transition-duration: 4s;
+        transition-duration: 2s, 4s;
+        -webkit-transition-timing-function: ease-in-out;
+        -moz-transition-timing-function: ease-in-out;
+        -webkit-transition-delay: .5s;
+        transition-timing-function: ease-in-out, ease-in;
+        -moz-transition-delay: 0s;
+        transition-delay: .5s, 0s;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        -webkit-transition-property: opacity;
+        transition-property: opacity, color;
+        -moz-transition-property: color;
+        -webkit-transition-duration: 2s;
+        transition-duration: 2s, 4s;
+        -moz-transition-duration: 4s;
+        -webkit-transition-timing-function: ease-in-out;
+        transition-timing-function: ease-in-out, ease-in;
+        -moz-transition-timing-function: ease-in-out;
+        -webkit-transition-delay: 500ms;
+        transition-delay: 500ms, 0s;
+        -moz-transition-delay: 0s;
+      }
+    `,
+      `
+      .foo {
+        -webkit-transition-property: opacity;
+        transition-property: opacity, color;
+        -moz-transition-property: color;
+        -webkit-transition-duration: 2s;
+        transition-duration: 2s, 4s;
+        -moz-transition-duration: 4s;
+        -webkit-transition-timing-function: ease-in-out;
+        transition-timing-function: ease-in-out, ease-in;
+        -webkit-transition-delay: .5s;
+        -moz-transition-timing-function: ease-in-out;
+        transition-delay: .5s, 0s;
+        -moz-transition-delay: 0s;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        transition: opacity 2s;
+        -webkit-transition-duration: 2s;
+      }
+    `,
+      `
+      .foo {
+        transition: opacity 2s;
+        -webkit-transition-duration: 2s;
+      }
+    `,
+    );
+
+    prefix_test(
+      `
+      .foo {
+        transition-property: margin-inline-start;
+      }
+    `,
+      `
+      .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        transition-property: margin-left;
+      }
+
+      .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        transition-property: margin-left;
+      }
+
+      .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        transition-property: margin-right;
+      }
+
+      .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        transition-property: margin-right;
+      }
+    `,
+      {
+        safari: Some(8 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        transition-property: margin-inline-start, padding-inline-start;
+      }
+    `,
+      `
+      .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        transition-property: margin-left, padding-left;
+      }
+
+      .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        transition-property: margin-left, padding-left;
+      }
+
+      .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        transition-property: margin-right, padding-right;
+      }
+
+      .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        transition-property: margin-right, padding-right;
+      }
+    `,
+      {
+        safari: Some(8 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        transition-property: margin-inline-start, opacity, padding-inline-start, color;
+      }
+    `,
+      `
+      .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        transition-property: margin-left, opacity, padding-left, color;
+      }
+
+      .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        transition-property: margin-left, opacity, padding-left, color;
+      }
+
+      .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        transition-property: margin-right, opacity, padding-right, color;
+      }
+
+      .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        transition-property: margin-right, opacity, padding-right, color;
+      }
+    `,
+      {
+        safari: Some(8 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        transition-property: margin-block;
+      }
+    `,
+      `
+      .foo {
+        transition-property: margin-top, margin-bottom;
+      }
+    `,
+      {
+        safari: Some(8 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        transition: margin-inline-start 2s;
+      }
+    `,
+      `
+      .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        transition: margin-left 2s;
+      }
+
+      .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        transition: margin-left 2s;
+      }
+
+      .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        transition: margin-right 2s;
+      }
+
+      .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        transition: margin-right 2s;
+      }
+    `,
+      {
+        safari: Some(8 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        transition: margin-inline-start 2s, padding-inline-start 2s;
+      }
+    `,
+      `
+      .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        transition: margin-left 2s, padding-left 2s;
+      }
+
+      .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        transition: margin-left 2s, padding-left 2s;
+      }
+
+      .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        transition: margin-right 2s, padding-right 2s;
+      }
+
+      .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        transition: margin-right 2s, padding-right 2s;
+      }
+    `,
+      {
+        safari: Some(8 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        transition: margin-block-start 2s;
+      }
+    `,
+      `
+      .foo {
+        transition: margin-top 2s;
+      }
+    `,
+      {
+        safari: Some(8 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        transition: transform;
+      }
+    `,
+      `
+      .foo {
+        -webkit-transition: -webkit-transform, transform;
+        transition: -webkit-transform, transform;
+      }
+    `,
+      {
+        safari: Some(6 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        transition: border-start-start-radius;
+      }
+    `,
+      `
+      .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        -webkit-transition: -webkit-border-top-left-radius, border-top-left-radius;
+        transition: -webkit-border-top-left-radius, border-top-left-radius;
+      }
+
+      .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        -webkit-transition: -webkit-border-top-right-radius, border-top-right-radius;
+        transition: -webkit-border-top-right-radius, border-top-right-radius;
+      }
+    `,
+      {
+        safari: Some(4 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        transition: border-start-start-radius;
+      }
+    `,
+      `
+      .foo:not(:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi)) {
+        transition: border-top-left-radius;
+      }
+
+      .foo:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi) {
+        transition: border-top-right-radius;
+      }
+    `,
+      {
+        safari: Some(12 << 16),
+      },
+    );
+
+    cssTest(
+      `
+      .foo {
+        -webkit-transition: background 200ms;
+        -moz-transition: background 200ms;
+        transition: background 230ms;
+      }
+    `,
+      `
+      .foo {
+        -webkit-transition: background .2s;
+        -moz-transition: background .2s;
+        transition: background .23s;
+      }
+    `,
+    );
+
+    prefix_test(
+      `
+      .foo {
+        -webkit-transition: background 200ms;
+        -moz-transition: background 200ms;
+        transition: background 230ms;
+      }
+    `,
+      `
+      .foo {
+        -webkit-transition: background .2s;
+        -moz-transition: background .2s;
+        transition: background .23s;
+      }
+    `,
+      {
+        chrome: Some(95 << 16),
+      },
+    );
+  });
+
+  describe("transform", () => {
+    minify_test(".foo { transform: translate(2px, 3px)", ".foo{transform:translate(2px,3px)}");
+    minify_test(".foo { transform: translate(2px, 0px)", ".foo{transform:translate(2px)}");
+    minify_test(".foo { transform: translate(0px, 2px)", ".foo{transform:translateY(2px)}");
+    minify_test(".foo { transform: translateX(2px)", ".foo{transform:translate(2px)}");
+    minify_test(".foo { transform: translateY(2px)", ".foo{transform:translateY(2px)}");
+    minify_test(".foo { transform: translateZ(2px)", ".foo{transform:translateZ(2px)}");
+    minify_test(".foo { transform: translate3d(2px, 3px, 4px)", ".foo{transform:translate3d(2px,3px,4px)}");
+    minify_test(".foo { transform: translate3d(10%, 20%, 4px)", ".foo{transform:translate3d(10%,20%,4px)}");
+    minify_test(".foo { transform: translate3d(2px, 0px, 0px)", ".foo{transform:translate(2px)}");
+    minify_test(".foo { transform: translate3d(0px, 2px, 0px)", ".foo{transform:translateY(2px)}");
+    minify_test(".foo { transform: translate3d(0px, 0px, 2px)", ".foo{transform:translateZ(2px)}");
+    minify_test(".foo { transform: translate3d(2px, 3px, 0px)", ".foo{transform:translate(2px,3px)}");
+    minify_test(".foo { transform: scale(2, 3)", ".foo{transform:scale(2,3)}");
+    minify_test(".foo { transform: scale(10%, 20%)", ".foo{transform:scale(.1,.2)}");
+    minify_test(".foo { transform: scale(2, 2)", ".foo{transform:scale(2)}");
+    minify_test(".foo { transform: scale(2, 1)", ".foo{transform:scaleX(2)}");
+    minify_test(".foo { transform: scale(1, 2)", ".foo{transform:scaleY(2)}");
+    minify_test(".foo { transform: scaleX(2)", ".foo{transform:scaleX(2)}");
+    minify_test(".foo { transform: scaleY(2)", ".foo{transform:scaleY(2)}");
+    minify_test(".foo { transform: scaleZ(2)", ".foo{transform:scaleZ(2)}");
+    minify_test(".foo { transform: scale3d(2, 3, 4)", ".foo{transform:scale3d(2,3,4)}");
+    minify_test(".foo { transform: scale3d(2, 1, 1)", ".foo{transform:scaleX(2)}");
+    minify_test(".foo { transform: scale3d(1, 2, 1)", ".foo{transform:scaleY(2)}");
+    minify_test(".foo { transform: scale3d(1, 1, 2)", ".foo{transform:scaleZ(2)}");
+    minify_test(".foo { transform: scale3d(2, 2, 1)", ".foo{transform:scale(2)}");
+    minify_test(".foo { transform: rotate(20deg)", ".foo{transform:rotate(20deg)}");
+    minify_test(".foo { transform: rotateX(20deg)", ".foo{transform:rotateX(20deg)}");
+    minify_test(".foo { transform: rotateY(20deg)", ".foo{transform:rotateY(20deg)}");
+    minify_test(".foo { transform: rotateZ(20deg)", ".foo{transform:rotate(20deg)}");
+    minify_test(".foo { transform: rotate(360deg)", ".foo{transform:rotate(360deg)}");
+    minify_test(".foo { transform: rotate3d(2, 3, 4, 20deg)", ".foo{transform:rotate3d(2,3,4,20deg)}");
+    minify_test(".foo { transform: rotate3d(1, 0, 0, 20deg)", ".foo{transform:rotateX(20deg)}");
+    minify_test(".foo { transform: rotate3d(0, 1, 0, 20deg)", ".foo{transform:rotateY(20deg)}");
+    minify_test(".foo { transform: rotate3d(0, 0, 1, 20deg)", ".foo{transform:rotate(20deg)}");
+    minify_test(".foo { transform: rotate(405deg)}", ".foo{transform:rotate(405deg)}");
+    minify_test(".foo { transform: rotateX(405deg)}", ".foo{transform:rotateX(405deg)}");
+    minify_test(".foo { transform: rotateY(405deg)}", ".foo{transform:rotateY(405deg)}");
+    minify_test(".foo { transform: rotate(-200deg)}", ".foo{transform:rotate(-200deg)}");
+    minify_test(".foo { transform: rotate(0)", ".foo{transform:rotate(0)}");
+    minify_test(".foo { transform: rotate(0deg)", ".foo{transform:rotate(0)}");
+    minify_test(".foo { transform: rotateX(-200deg)}", ".foo{transform:rotateX(-200deg)}");
+    minify_test(".foo { transform: rotateY(-200deg)}", ".foo{transform:rotateY(-200deg)}");
+    minify_test(".foo { transform: rotate3d(1, 1, 0, -200deg)", ".foo{transform:rotate3d(1,1,0,-200deg)}");
+    minify_test(".foo { transform: skew(20deg)", ".foo{transform:skew(20deg)}");
+    minify_test(".foo { transform: skew(20deg, 0deg)", ".foo{transform:skew(20deg)}");
+    minify_test(".foo { transform: skew(0deg, 20deg)", ".foo{transform:skewY(20deg)}");
+    minify_test(".foo { transform: skewX(20deg)", ".foo{transform:skew(20deg)}");
+    minify_test(".foo { transform: skewY(20deg)", ".foo{transform:skewY(20deg)}");
+    minify_test(".foo { transform: perspective(10px)", ".foo{transform:perspective(10px)}");
+    minify_test(".foo { transform: matrix(1, 2, -1, 1, 80, 80)", ".foo{transform:matrix(1,2,-1,1,80,80)}");
+    minify_test(
+      ".foo { transform: matrix3d(1, 0, 0, 0, 0, 1, 6, 0, 0, 0, 1, 0, 50, 100, 0, 1.1)",
+      ".foo{transform:matrix3d(1,0,0,0,0,1,6,0,0,0,1,0,50,100,0,1.1)}",
+    );
+    // TODO: Re-enable with a better solution
+    //       See: https://github.com/parcel-bundler/lightningcss/issues/288
+    // minify_test(
+    //   ".foo{transform:translate(100px,200px) rotate(45deg) skew(10deg) scale(2)}",
+    //   ".foo{transform:matrix(1.41421,1.41421,-1.16485,1.66358,100,200)}",
+    // );
+    // minify_test(
+    //   ".foo{transform:translate(200px,300px) translate(100px,200px) scale(2)}",
+    //   ".foo{transform:matrix(2,0,0,2,300,500)}",
+    // );
+    minify_test(
+      ".foo{transform:translate(100px,200px) rotate(45deg)}",
+      ".foo{transform:translate(100px,200px)rotate(45deg)}",
+    );
+    minify_test(
+      ".foo{transform:rotate3d(1, 1, 1, 45deg) translate3d(100px, 100px, 10px)}",
+      ".foo{transform:rotate3d(1,1,1,45deg)translate3d(100px,100px,10px)}",
+    );
+    // TODO: Re-enable with a better solution
+    //       See: https://github.com/parcel-bundler/lightningcss/issues/288
+    // minify_test(
+    //   ".foo{transform:translate3d(100px, 100px, 10px) skew(10deg) scale3d(2, 3, 4)}",
+    //   ".foo{transform:matrix3d(2,0,0,0,.528981,3,0,0,0,0,4,0,100,100,10,1)}",
+    // );
+    // minify_test(
+    //   ".foo{transform:matrix3d(0.804737854124365, 0.5058793634016805, -0.31061721752604554, 0, -0.31061721752604554, 0.804737854124365, 0.5058793634016805, 0, 0.5058793634016805, -0.31061721752604554, 0.804737854124365, 0, 100, 100, 10, 1)}",
+    //   ".foo{transform:translate3d(100px,100px,10px)rotate3d(1,1,1,45deg)}"
+    // );
+    // minify_test(
+    //   ".foo{transform:matrix3d(1, 0, 0, 0, 0, 0.7071067811865476, 0.7071067811865475, 0, 0, -0.7071067811865475, 0.7071067811865476, 0, 100, 100, 10, 1)}",
+    //   ".foo{transform:translate3d(100px,100px,10px)rotateX(45deg)}"
+    // );
+    // minify_test(
+    //   ".foo{transform:translate3d(100px, 200px, 10px) translate(100px, 100px)}",
+    //   ".foo{transform:translate3d(200px,300px,10px)}",
+    // );
+    // minify_test(
+    //   ".foo{transform:rotate(45deg) rotate(45deg)}",
+    //   ".foo{transform:rotate(90deg)}",
+    // );
+    // minify_test(
+    //   ".foo{transform:matrix(0.7071067811865476, 0.7071067811865475, -0.7071067811865475, 0.7071067811865476, 100, 100)}",
+    //   ".foo{transform:translate(100px,100px)rotate(45deg)}"
+    // );
+    // minify_test(
+    //   ".foo{transform:translateX(2in) translateX(50px)}",
+    //   ".foo{transform:translate(242px)}",
+    // );
+    minify_test(".foo{transform:translateX(calc(2in + 50px))}", ".foo{transform:translate(242px)}");
+    minify_test(".foo{transform:translateX(50%)}", ".foo{transform:translate(50%)}");
+    minify_test(".foo{transform:translateX(calc(50% - 100px + 20px))}", ".foo{transform:translate(calc(50% - 80px))}");
+    minify_test(".foo{transform:rotate(calc(10deg + 20deg))}", ".foo{transform:rotate(30deg)}");
+    minify_test(".foo{transform:rotate(calc(10deg + 0.349066rad))}", ".foo{transform:rotate(30deg)}");
+    minify_test(".foo{transform:rotate(calc(10deg + 1.5turn))}", ".foo{transform:rotate(550deg)}");
+    minify_test(".foo{transform:rotate(calc(10deg * 2))}", ".foo{transform:rotate(20deg)}");
+    minify_test(".foo{transform:rotate(calc(-10deg * 2))}", ".foo{transform:rotate(-20deg)}");
+    minify_test(
+      ".foo{transform:rotate(calc(10deg + var(--test)))}",
+      ".foo{transform:rotate(calc(10deg + var(--test)))}",
+    );
+    minify_test(".foo { transform: scale(calc(10% + 20%))", ".foo{transform:scale(.3)}");
+    minify_test(".foo { transform: scale(calc(.1 + .2))", ".foo{transform:scale(.3)}");
+
+    minify_test(".foo { -webkit-transform: scale(calc(10% + 20%))", ".foo{-webkit-transform:scale(.3)}");
+
+    minify_test(".foo { translate: 1px 2px 3px }", ".foo{translate:1px 2px 3px}");
+    minify_test(".foo { translate: 1px 0px 0px }", ".foo{translate:1px}");
+    minify_test(".foo { translate: 1px 2px 0px }", ".foo{translate:1px 2px}");
+    minify_test(".foo { translate: 1px 0px 2px }", ".foo{translate:1px 0 2px}");
+    minify_test(".foo { translate: none }", ".foo{translate:none}");
+    minify_test(".foo { rotate: 10deg }", ".foo{rotate:10deg}");
+    minify_test(".foo { rotate: z 10deg }", ".foo{rotate:10deg}");
+    minify_test(".foo { rotate: 0 0 1 10deg }", ".foo{rotate:10deg}");
+    minify_test(".foo { rotate: x 10deg }", ".foo{rotate:x 10deg}");
+    minify_test(".foo { rotate: 1 0 0 10deg }", ".foo{rotate:x 10deg}");
+    minify_test(".foo { rotate: y 10deg }", ".foo{rotate:y 10deg}");
+    minify_test(".foo { rotate: 0 1 0 10deg }", ".foo{rotate:y 10deg}");
+    minify_test(".foo { rotate: 1 1 1 10deg }", ".foo{rotate:1 1 1 10deg}");
+    minify_test(".foo { rotate: 0 0 1 0deg }", ".foo{rotate:none}");
+    minify_test(".foo { rotate: none }", ".foo{rotate:none}");
+    minify_test(".foo { scale: 1 }", ".foo{scale:1}");
+    minify_test(".foo { scale: 1 1 }", ".foo{scale:1}");
+    minify_test(".foo { scale: 1 1 1 }", ".foo{scale:1}");
+    minify_test(".foo { scale: none }", ".foo{scale:none}");
+    minify_test(".foo { scale: 1 0 }", ".foo{scale:1 0}");
+    minify_test(".foo { scale: 1 0 1 }", ".foo{scale:1 0}");
+    minify_test(".foo { scale: 1 0 0 }", ".foo{scale:1 0 0}");
+
+    // TODO: Re-enable with a better solution
+    //       See: https://github.com/parcel-bundler/lightningcss/issues/288
+    // minify_test(".foo { transform: scale(3); scale: 0.5 }", ".foo{transform:scale(1.5)}");
+    minify_test(".foo { scale: 0.5; transform: scale(3); }", ".foo{transform:scale(3)}");
+
+    prefix_test(
+      `
+      .foo {
+        transform: scale(0.5);
+      }
+    `,
+      `
+      .foo {
+        -webkit-transform: scale(.5);
+        -moz-transform: scale(.5);
+        transform: scale(.5);
+      }
+    `,
+      {
+        firefox: Some(6 << 16),
+        safari: Some(6 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        transform: var(--transform);
+      }
+    `,
+      `
+      .foo {
+        -webkit-transform: var(--transform);
+        -moz-transform: var(--transform);
+        transform: var(--transform);
+      }
+    `,
+      {
+        firefox: Some(6 << 16),
+        safari: Some(6 << 16),
+      },
+    );
+
+    cssTest(
+      `
+      .foo {
+        transform: translateX(-50%);
+        transform: translateX(20px);
+      }
+      `,
+      `
+      .foo {
+        transform: translateX(20px);
+      }
+      `,
+    );
   });
 });

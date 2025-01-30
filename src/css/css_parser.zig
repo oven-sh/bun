@@ -780,7 +780,7 @@ pub fn DeriveToCss(comptime T: type) type {
             if (comptime is_enum_or_union_enum) {
                 inline for (std.meta.fields(T), 0..) |field, i| {
                     if (@intFromEnum(this.*) == enum_fields[i].value) {
-                        if (comptime field.type == void) {
+                        if (comptime tyinfo == .Enum or field.type == void) {
                             return dest.writeStr(enum_fields[i].name);
                         } else if (comptime generic.hasToCss(field.type)) {
                             return generic.toCss(field.type, &@field(this, field.name), W, dest);
@@ -6405,23 +6405,10 @@ pub const serializer = struct {
             };
         } else notation: {
             var buf: [129]u8 = undefined;
-            // We must pass finite numbers to dtoa_short
-            if (std.math.isPositiveInf(value)) {
-                const output = "1e999";
-                try writer.writeAll(output);
-                return;
-            } else if (std.math.isNegativeInf(value)) {
-                const output = "-1e999";
-                try writer.writeAll(output);
-                return;
-            }
-            // We shouldn't receive NaN here.
-            // NaN is not a valid CSS token and any inlined calculations from `calc()` we ensure
-            // are not NaN.
-            bun.debugAssert(!std.math.isNan(value));
-            const str, const notation = dtoa_short(&buf, value, 6);
+            const str, const maybe_notaton = try dtoa_short(&buf, value, 6);
             try writer.writeAll(str);
-            break :notation notation;
+            if (maybe_notaton) |notation| break :notation notation;
+            return;
         };
 
         if (int_value == null and fract(value) == 0) {
@@ -6784,12 +6771,9 @@ pub const to_css = struct {
     }
 
     pub fn float32(this: f32, writer: anytype) !void {
-        var scratch: [64]u8 = undefined;
-        // PERF/TODO: Compare this to Rust dtoa-short crate
-        const floats = std.fmt.formatFloat(scratch[0..], this, .{
-            .mode = .decimal,
-        }) catch unreachable;
-        return writer.writeAll(floats);
+        var scratch: [129]u8 = undefined;
+        const str, _ = try dtoa_short(&scratch, this, 6);
+        return writer.writeAll(str);
     }
 
     fn maxDigits(comptime T: type) usize {
@@ -6881,7 +6865,29 @@ const Notation = struct {
     }
 };
 
-pub fn dtoa_short(buf: *[129]u8, value: f32, comptime precision: u8) struct { []u8, Notation } {
+/// Writes float with precision.
+///
+/// Returns null if value was an infinite number
+pub fn dtoa_short(buf: *[129]u8, value: f32, comptime precision: u8) !struct { []u8, ?Notation } {
+    // We must pass finite numbers to dtoa_short_impl
+    if (std.math.isPositiveInf(value)) {
+        const output = "1e999";
+        @memcpy(buf[0..output.len], output);
+        return .{ buf[0..output.len], null };
+    } else if (std.math.isNegativeInf(value)) {
+        const output = "-1e999";
+        @memcpy(buf[0..output.len], output);
+        return .{ buf[0..output.len], null };
+    }
+    // We shouldn't receive NaN here.
+    // NaN is not a valid CSS token and any inlined calculations from `calc()` we ensure
+    // are not NaN.
+    bun.debugAssert(!std.math.isNan(value));
+    const str, const notation = dtoa_short_impl(buf, value, precision);
+    return .{ str, notation };
+}
+
+pub fn dtoa_short_impl(buf: *[129]u8, value: f32, comptime precision: u8) struct { []u8, Notation } {
     buf[0] = '0';
     bun.debugAssert(std.math.isFinite(value));
     const buf_len = bun.fmt.FormatDouble.dtoa(@ptrCast(buf[1..].ptr), @floatCast(value)).len;

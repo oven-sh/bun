@@ -311,6 +311,10 @@ pub const LengthValue = union(enum) {
         unreachable;
     }
 
+    pub fn deepClone(this: *const @This(), _: std.mem.Allocator) @This() {
+        return this.*;
+    }
+
     pub fn zero() LengthValue {
         return .{ .px = 0.0 };
     }
@@ -615,12 +619,12 @@ pub const Length = union(enum) {
         return res;
     }
 
-    fn addInternal(this: Length, allocator: Allocator, other: Length) Length {
+    pub fn addInternal(this: Length, allocator: Allocator, other: Length) Length {
         if (this.tryAdd(allocator, &other)) |r| return r;
         return this.add__(allocator, other);
     }
 
-    fn intoCalc(this: Length, allocator: Allocator) Calc(Length) {
+    pub fn intoCalc(this: Length, allocator: Allocator) Calc(Length) {
         return switch (this) {
             .calc => |c| c.*,
             else => |v| Calc(Length){ .value = bun.create(allocator, Length, v) },

@@ -25,6 +25,8 @@ const InsetHandler = css.css_properties.margin_padding.InsetHandler;
 const SizeHandler = css.css_properties.size.SizeHandler;
 const FlexHandler = css.css_properties.flex.FlexHandler;
 const AlignHandler = css.css_properties.@"align".AlignHandler;
+const TransitionHandler = css.css_properties.transition.TransitionHandler;
+const TransformHandler = css.css_properties.transform.TransformHandler;
 // const GridHandler = css.css_properties.g
 
 /// A CSS declaration block.
@@ -341,8 +343,10 @@ pub const DeclarationHandler = struct {
     margin: MarginHandler = .{},
     padding: PaddingHandler = .{},
     scroll_margin: ScrollMarginHandler = .{},
+    transition: TransitionHandler = .{},
     font: FontHandler = .{},
     inset: InsetHandler = .{},
+    transform: TransformHandler = .{},
     fallback: FallbackHandler = .{},
     direction: ?css.css_properties.text.Direction,
     decls: DeclarationList,
@@ -367,8 +371,10 @@ pub const DeclarationHandler = struct {
         this.margin.finalize(&this.decls, context);
         this.padding.finalize(&this.decls, context);
         this.scroll_margin.finalize(&this.decls, context);
+        this.transition.finalize(&this.decls, context);
         this.font.finalize(&this.decls, context);
         this.inset.finalize(&this.decls, context);
+        this.transform.finalize(&this.decls, context);
         this.fallback.finalize(&this.decls, context);
     }
 
@@ -382,8 +388,10 @@ pub const DeclarationHandler = struct {
             this.margin.handleProperty(property, &this.decls, context) or
             this.padding.handleProperty(property, &this.decls, context) or
             this.scroll_margin.handleProperty(property, &this.decls, context) or
+            this.transition.handleProperty(property, &this.decls, context) or
             this.font.handleProperty(property, &this.decls, context) or
             this.inset.handleProperty(property, &this.decls, context) or
+            this.transform.handleProperty(property, &this.decls, context) or
             this.fallback.handleProperty(property, &this.decls, context);
     }
 

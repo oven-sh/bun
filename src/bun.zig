@@ -2305,7 +2305,7 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
         // Updates in Zig v0.12 related to Windows cmd line parsing may fix this,
         // see (here: https://ziglang.org/download/0.12.0/release-notes.html#Windows-Command-Line-Argument-Parsing),
         // so this may only need to be a temporary workaround.
-        const cmdline_ptr = std.os.windows.kernel32.GetCommandLineW();
+        const cmdline_ptr = bun.windows.GetCommandLineW();
         var length: c_int = 0;
 
         // As per the documentation:
@@ -2323,7 +2323,7 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
         };
 
         const argvu16 = argvu16_ptr[0..@intCast(length)];
-        const out_argv = try allocator.alloc([:0]u8, @intCast(length));
+        const out_argv = try allocator.alloc([:0]const u8, @intCast(length));
         var string_builder = StringBuilder{};
 
         for (argvu16) |argraw| {
@@ -2559,7 +2559,7 @@ pub const win32 = struct {
         @memset(std.mem.asBytes(procinfo), 0);
         const rc = w.kernel32.CreateProcessW(
             image_pathZ.ptr,
-            w.kernel32.GetCommandLineW(),
+            bun.windows.GetCommandLineW(),
             null,
             null,
             1,
@@ -2601,7 +2601,7 @@ pub const FDTag = enum {
         const fd = toFD(fd_);
         const T = @TypeOf(fd_);
         if (comptime Environment.isWindows) {
-            if (@typeInfo(T) == .int or @typeInfo(T) == .ComptimeInt) {
+            if (@typeInfo(T) == .int or @typeInfo(T) == .comptime_int) {
                 switch (fd_) {
                     0 => return .stdin,
                     1 => return .stdout,

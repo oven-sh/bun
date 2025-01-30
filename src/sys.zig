@@ -456,6 +456,7 @@ pub const Error = struct {
 
     /// Simpler formatting which does not allocate a message
     pub fn toShellSystemError(this: Error) SystemError {
+        @setEvalBranchQuota(1_000_000);
         var err = SystemError{
             .errno = @as(c_int, this.errno) * -1,
             .syscall = bun.String.static(@tagName(this.syscall)),
@@ -888,7 +889,7 @@ pub fn mkdir(file_path: [:0]const u8, flags: mode_t) Maybe(void) {
             const wbuf = bun.WPathBufferPool.get();
             defer bun.WPathBufferPool.put(wbuf);
             return Maybe(void).errnoSysP(
-                kernel32.CreateDirectoryW(bun.strings.toKernel32Path(wbuf, file_path).ptr, null),
+                bun.windows.CreateDirectoryW(bun.strings.toKernel32Path(wbuf, file_path).ptr, null),
                 .mkdir,
                 file_path,
             ) orelse Maybe(void).success;
@@ -2130,7 +2131,7 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
             var amount_read: u32 = 0;
             const rc = kernel32.ReadFile(fd.cast(), buf.ptr, @as(u32, @intCast(adjusted_len)), &amount_read, null);
             if (rc == windows.FALSE) {
-                const ret = .{
+                const ret: Maybe(usize) = .{
                     .err = Syscall.Error{
                         .errno = @intFromEnum(bun.windows.getLastErrno()),
                         .syscall = .read,
@@ -2529,7 +2530,7 @@ pub fn symlinkW(dest: [:0]const u16, target: [:0]const u16, options: WindowsSyml
     while (true) {
         const flags = options.flags();
 
-        if (windows.kernel32.CreateSymbolicLinkW(dest, target, flags) == 0) {
+        if (windows.CreateSymbolicLinkW(dest, target, flags) == 0) {
             const errno = bun.windows.Win32Error.get();
             log("CreateSymbolicLinkW({}, {}, {any}) = {s}", .{
                 bun.fmt.fmtPath(u16, dest, .{}),
@@ -3087,7 +3088,7 @@ pub fn existsOSPath(path: bun.OSPathSliceZ, file_only: bool) bool {
                 null,
             );
             if (rc == w.INVALID_HANDLE_VALUE) return false;
-            defer _ = std.os.windows.kernel32.CloseHandle(rc);
+            defer _ = bun.windows.CloseHandle(rc);
             return true;
         }
         return true;

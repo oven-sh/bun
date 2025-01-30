@@ -49,8 +49,6 @@ const PathOrBlob = JSC.Node.PathOrBlob;
 const WriteFilePromise = @import("./blob/WriteFile.zig").WriteFilePromise;
 const WriteFileWaitFromLockedValueTask = @import("./blob/WriteFile.zig").WriteFileWaitFromLockedValueTask;
 const NewReadFileHandler = @import("./blob/ReadFile.zig").NewReadFileHandler;
-const WriteFile = @import("./blob/WriteFile.zig").WriteFile;
-const ReadFile = @import("./blob/ReadFile.zig").ReadFile;
 const WriteFileWindows = @import("./blob/WriteFile.zig").WriteFileWindows;
 
 const S3File = @import("./S3File.zig");
@@ -60,8 +58,19 @@ pub const Blob = struct {
 
     pub usingnamespace bun.New(@This());
     pub usingnamespace JSC.Codegen.JSBlob;
-    pub usingnamespace @import("./blob/WriteFile.zig");
-    pub usingnamespace @import("./blob/ReadFile.zig");
+
+    // pub usingnamespace @import("./blob/ReadFile.zig");
+    const rf = @import("./blob/ReadFile.zig");
+    pub const ReadFile = rf.ReadFile2;
+    pub const ReadFileUV = rf.ReadFileUV;
+    pub const ReadFileTask = rf.ReadFileTask;
+    pub const ReadFileResultType = rf.ReadFileResultType;
+
+    // pub usingnamespace @import("./blob/WriteFile.zig");
+    const wf = @import("./blob/WriteFile.zig");
+    pub const WriteFile = wf.WriteFile2;
+    pub const WriteFileTask = wf.WriteFileTask;
+
     pub const ClosingState = enum(u8) {
         running,
         closing,
@@ -142,7 +151,6 @@ pub const Blob = struct {
         return store.data == .file;
     }
 
-    const ReadFileUV = @import("./blob/ReadFile.zig").ReadFileUV;
     pub fn doReadFromS3(this: *Blob, comptime Function: anytype, global: *JSGlobalObject) JSValue {
         bloblog("doReadFromS3", .{});
 
@@ -163,7 +171,7 @@ pub const Blob = struct {
             .globalThis = global,
         });
 
-        if (Environment.isWindows) {
+        if (comptime Environment.isWindows) {
             var promise = JSPromise.create(global);
             const promise_value = promise.asValue(global);
             promise_value.ensureStillAlive();
@@ -209,7 +217,7 @@ pub const Blob = struct {
     }
 
     pub fn doReadFileInternal(this: *Blob, comptime Handler: type, ctx: Handler, comptime Function: anytype, global: *JSGlobalObject) void {
-        if (Environment.isWindows) {
+        if (comptime Environment.isWindows) {
             const ReadFileHandler = NewInternalReadFileHandler(Handler, Function);
             return ReadFileUV.start(libuv.Loop.get(), this.store.?, this.offset, this.size, ReadFileHandler, ctx);
         }
@@ -1558,7 +1566,7 @@ pub const Blob = struct {
             var file_path: bun.PathBuffer = undefined;
             switch (bun.sys.open(
                 pathlike.path.sliceZ(&file_path),
-                if (!Environment.isWindows)
+                if (comptime !Environment.isWindows)
                     // we deliberately don't use O_TRUNC here
                     // it's a perf optimization
                     bun.O.WRONLY | bun.O.CREAT | bun.O.NONBLOCK
@@ -1570,7 +1578,7 @@ pub const Blob = struct {
                     break :brk result;
                 },
                 .err => |err| {
-                    if (!Environment.isWindows) {
+                    if (comptime !Environment.isWindows) {
                         if (err.getErrno() == .NOENT) {
                             needs_async.* = true;
                             return .zero;
@@ -1607,7 +1615,7 @@ pub const Blob = struct {
                     if (res == 0) break;
                 },
                 .err => |err| {
-                    if (!Environment.isWindows) {
+                    if (comptime !Environment.isWindows) {
                         if (err.getErrno() == .AGAIN) {
                             needs_async.* = true;
                             return .zero;
@@ -1628,7 +1636,7 @@ pub const Blob = struct {
         }
 
         if (truncate) {
-            if (Environment.isWindows) {
+            if (comptime Environment.isWindows) {
                 _ = std.os.windows.kernel32.SetEndOfFile(fd.cast());
             } else {
                 _ = bun.sys.ftruncate(fd, @as(i64, @intCast(written)));
@@ -1845,7 +1853,7 @@ pub const Blob = struct {
                 .path => {
                     var slice = path_or_fd.path.slice();
 
-                    if (Environment.isWindows and bun.strings.eqlComptime(slice, "/dev/null")) {
+                    if (bun.strings.eqlComptime(slice, "/dev/null") and comptime Environment.isWindows) {
                         path_or_fd.deinit();
                         path_or_fd.* = .{
                             .path = .{
@@ -2164,7 +2172,7 @@ pub const Blob = struct {
 
                     const path = path_string.sliceZ(&buf);
 
-                    if (Environment.isWindows) {
+                    if (comptime Environment.isWindows) {
                         const WrappedCallback = struct {
                             pub fn callback(req: *libuv.fs_t) callconv(.C) void {
                                 var self: *This = @alignCast(@ptrCast(req.data.?));
@@ -2294,10 +2302,7 @@ pub const Blob = struct {
                     this.update();
                 }
 
-                pub fn doClose(
-                    this: *This,
-                    is_allowed_to_close_fd: bool,
-                ) bool {
+                pub fn doClose(this: *This, is_allowed_to_close_fd: bool) bool {
                     if (@hasField(This, "io_request")) {
                         if (this.close_after_io) {
                             this.state.store(ClosingState.closing, .seq_cst);
@@ -2903,6 +2908,9 @@ pub const Blob = struct {
             .syscall = bun.String.static("fstat"),
         };
 
+        pub const CopyFilePromiseTask = JSC.ConcurrentPromiseTask(CopyFile);
+        pub const CopyFilePromiseTaskEventLoopTask = CopyFilePromiseTask.EventLoopTask;
+
         // blocking, but off the main thread
         pub const CopyFile = struct {
             destination_file_store: FileStore,
@@ -2927,8 +2935,6 @@ pub const Blob = struct {
             pub const ResultType = anyerror!SizeType;
 
             pub const Callback = *const fn (ctx: *anyopaque, len: ResultType) void;
-            pub const CopyFilePromiseTask = JSC.ConcurrentPromiseTask(CopyFile);
-            pub const CopyFilePromiseTaskEventLoopTask = CopyFilePromiseTask.EventLoopTask;
 
             pub fn create(
                 allocator: std.mem.Allocator,
@@ -4123,7 +4129,7 @@ pub const Blob = struct {
         }
 
         const file_sink = brk_sink: {
-            if (Environment.isWindows) {
+            if (comptime Environment.isWindows) {
                 const pathlike = store.data.file.pathlike;
                 const fd: bun.FileDescriptor = if (pathlike == .fd) pathlike.fd else brk: {
                     var file_path: bun.PathBuffer = undefined;
@@ -4366,7 +4372,7 @@ pub const Blob = struct {
             return globalThis.throwInvalidArguments("Blob is read-only", .{});
         }
 
-        if (Environment.isWindows) {
+        if (comptime Environment.isWindows) {
             const pathlike = store.data.file.pathlike;
             const vm = globalThis.bunVM();
             const fd: bun.FileDescriptor = if (pathlike == .fd) pathlike.fd else brk: {

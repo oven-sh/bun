@@ -1484,5 +1484,5 @@ pub const Encoder = struct {
 };
 
 comptime {
-    std.testing.refAllDecls(Encoder);
+    // std.testing.refAllDecls(Encoder);
 }

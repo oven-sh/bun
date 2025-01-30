@@ -11,12 +11,12 @@ const Maybe = JSC.Maybe;
 
 const win_rusage = struct {
     utime: struct {
-        tv_sec: i64 = 0,
-        tv_usec: i64 = 0,
+        sec: i64 = 0,
+        usec: i64 = 0,
     },
     stime: struct {
-        tv_sec: i64 = 0,
-        tv_usec: i64 = 0,
+        sec: i64 = 0,
+        usec: i64 = 0,
     },
     maxrss: u64 = 0,
     ixrss: u0 = 0,
@@ -54,16 +54,16 @@ pub fn uv_getrusage(process: *uv.uv_process_t) win_rusage {
     var kerneltime: WinTime = undefined;
     var usertime: WinTime = undefined;
     // We at least get process times
-    if (std.os.windows.kernel32.GetProcessTimes(process_pid, &starttime, &exittime, &kerneltime, &usertime) == 1) {
+    if (bun.windows.GetProcessTimes(process_pid, &starttime, &exittime, &kerneltime, &usertime) == 1) {
         var temp: u64 = (@as(u64, kerneltime.dwHighDateTime) << 32) | kerneltime.dwLowDateTime;
         if (temp > 0) {
-            usage_info.stime.tv_sec = @intCast(temp / 10000000);
-            usage_info.stime.tv_usec = @intCast(temp % 1000000);
+            usage_info.stime.sec = @intCast(temp / 10000000);
+            usage_info.stime.usec = @intCast(temp % 1000000);
         }
         temp = (@as(u64, usertime.dwHighDateTime) << 32) | usertime.dwLowDateTime;
         if (temp > 0) {
-            usage_info.utime.tv_sec = @intCast(temp / 10000000);
-            usage_info.utime.tv_usec = @intCast(temp % 1000000);
+            usage_info.utime.sec = @intCast(temp / 10000000);
+            usage_info.utime.usec = @intCast(temp % 1000000);
         }
     }
     var counters: IO_COUNTERS = .{};

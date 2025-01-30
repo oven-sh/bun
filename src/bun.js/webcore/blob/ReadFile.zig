@@ -24,7 +24,7 @@ pub fn NewReadFileHandler(comptime Function: anytype) type {
         promise: JSPromise.Strong = .{},
         globalThis: *JSGlobalObject,
 
-        pub fn run(handler: *@This(), maybe_bytes: Blob.ReadFile.ResultType) void {
+        pub fn run(handler: *@This(), maybe_bytes: ReadFileResultType) void {
             var promise = handler.promise.swap();
             var blob = handler.context;
             blob.allocator = null;
@@ -56,7 +56,14 @@ const ByteStore = Blob.ByteStore;
 const Store = Blob.Store;
 const ClosingState = Blob.ClosingState;
 
-pub const ReadFile = struct {
+pub const ReadFileOnReadFileCallback = *const fn (ctx: *anyopaque, bytes: ReadFileResultType) void;
+pub const ReadFileRead = struct { buf: []u8, is_temporary: bool = false, total_size: SizeType = 0 };
+pub const ReadFileResultType = SystemError.Maybe(ReadFileRead);
+pub const ReadFileTask = JSC.WorkTask(ReadFile2);
+
+pub const ReadFile2 = struct {
+    const ReadFile = @This();
+
     file_store: FileStore,
     byte_store: ByteStore = ByteStore{ .allocator = bun.default_allocator },
     store: ?*Store = null,
@@ -72,22 +79,13 @@ pub const ReadFile = struct {
     system_error: ?JSC.SystemError = null,
     errno: ?anyerror = null,
     onCompleteCtx: *anyopaque = undefined,
-    onCompleteCallback: OnReadFileCallback = undefined,
+    onCompleteCallback: ReadFileOnReadFileCallback = undefined,
     io_task: ?*ReadFileTask = null,
     io_poll: bun.io.Poll = .{},
     io_request: bun.io.Request = .{ .callback = &onRequestReadable },
     could_block: bool = false,
     close_after_io: bool = false,
     state: std.atomic.Value(ClosingState) = std.atomic.Value(ClosingState).init(.running),
-
-    pub const Read = struct {
-        buf: []u8,
-        is_temporary: bool = false,
-        total_size: SizeType = 0,
-    };
-    pub const ResultType = SystemError.Maybe(Read);
-
-    pub const OnReadFileCallback = *const fn (ctx: *anyopaque, bytes: ResultType) void;
 
     pub usingnamespace FileOpenerMixin(ReadFile);
     pub usingnamespace FileCloserMixin(ReadFile);
@@ -105,7 +103,7 @@ pub const ReadFile = struct {
         _: std.mem.Allocator,
         store: *Store,
         onReadFileContext: *anyopaque,
-        onCompleteCallback: OnReadFileCallback,
+        onCompleteCallback: ReadFileOnReadFileCallback,
         off: SizeType,
         max_len: SizeType,
     ) !*ReadFile {
@@ -131,13 +129,13 @@ pub const ReadFile = struct {
         max_len: SizeType,
         comptime Context: type,
         context: Context,
-        comptime callback: fn (ctx: Context, bytes: ResultType) void,
+        comptime callback: fn (ctx: Context, bytes: ReadFileResultType) void,
     ) !*ReadFile {
         if (Environment.isWindows)
             @compileError("dont call this function on windows");
 
         const Handler = struct {
-            pub fn run(ptr: *anyopaque, bytes: ResultType) void {
+            pub fn run(ptr: *anyopaque, bytes: ReadFileResultType) void {
                 callback(bun.cast(Context, ptr), bytes);
             }
         };
@@ -257,8 +255,6 @@ pub const ReadFile = struct {
         return true;
     }
 
-    pub const ReadFileTask = JSC.WorkTask(@This());
-
     pub fn then(this: *ReadFile, _: *JSC.JSGlobalObject) void {
         const cb = this.onCompleteCallback;
         const cb_ctx = this.onCompleteCtx;
@@ -266,12 +262,12 @@ pub const ReadFile = struct {
         if (this.store == null and this.system_error != null) {
             const system_error = this.system_error.?;
             bun.destroy(this);
-            cb(cb_ctx, ResultType{ .err = system_error });
+            cb(cb_ctx, ReadFileResultType{ .err = system_error });
             return;
         } else if (this.store == null) {
             bun.destroy(this);
             if (Environment.allow_assert) @panic("assertion failure - store should not be null");
-            cb(cb_ctx, ResultType{
+            cb(cb_ctx, ReadFileResultType{
                 .err = SystemError{
                     .code = bun.String.static("INTERNAL_ERROR"),
                     .message = bun.String.static("assertion failure - store should not be null"),
@@ -290,7 +286,7 @@ pub const ReadFile = struct {
         bun.destroy(this);
 
         if (system_error) |err| {
-            cb(cb_ctx, ResultType{ .err = err });
+            cb(cb_ctx, ReadFileResultType{ .err = err });
             return;
         }
 
@@ -563,7 +559,7 @@ pub const ReadFileUV = struct {
     system_error: ?JSC.SystemError = null,
     errno: ?anyerror = null,
     on_complete_data: *anyopaque = undefined,
-    on_complete_fn: ReadFile.OnReadFileCallback,
+    on_complete_fn: ReadFileOnReadFileCallback,
     is_regular_file: bool = false,
 
     req: libuv.fs_t = std.mem.zeroes(libuv.fs_t),
@@ -596,7 +592,7 @@ pub const ReadFileUV = struct {
         const cb_ctx = this.on_complete_data;
 
         if (this.system_error) |err| {
-            cb(cb_ctx, ReadFile.ResultType{ .err = err });
+            cb(cb_ctx, ReadFileResultType{ .err = err });
             return;
         }
 

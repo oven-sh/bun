@@ -1486,7 +1486,7 @@ pub const BodyValueBufferer = struct {
         }
     }
 
-    fn onFinishedLoadingFile(sink: *@This(), bytes: Blob.ReadFile.ResultType) void {
+    fn onFinishedLoadingFile(sink: *@This(), bytes: Blob.ReadFileResultType) void {
         switch (bytes) {
             .err => |err| {
                 log("onFinishedLoadingFile Error", .{});

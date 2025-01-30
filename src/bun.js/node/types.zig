@@ -1473,7 +1473,7 @@ pub const FileSystemFlags = enum(c_int) {
 
     _,
 
-    const map = bun.ComptimeStringMap(Mode, .{
+    const map = bun.ComptimeStringMap(u24, .{
         .{ "r", O.RDONLY },
         .{ "rs", O.RDONLY | O.SYNC },
         .{ "sr", O.RDONLY | O.SYNC },
@@ -1549,7 +1549,7 @@ pub const FileSystemFlags = enum(c_int) {
                 return ctx.throwInvalidArguments("Invalid flag '{any}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags", .{str});
             }
 
-            const flags = brk: {
+            const flags: u24 = brk: {
                 switch (str.is16Bit()) {
                     inline else => |is_16bit| {
                         const chars = if (is_16bit) str.utf16SliceAligned() else str.slice();
@@ -1560,9 +1560,9 @@ pub const FileSystemFlags = enum(c_int) {
                                 const slice = str.toSlice(bun.default_allocator);
                                 defer slice.deinit();
 
-                                break :brk std.fmt.parseInt(Mode, slice.slice(), 10) catch null;
+                                break :brk std.fmt.parseInt(Mode, slice.slice(), 10) catch break :brk null;
                             } else {
-                                break :brk std.fmt.parseInt(Mode, chars, 10) catch null;
+                                break :brk std.fmt.parseInt(Mode, chars, 10) catch break :brk null;
                             }
                         }
                     },
@@ -1573,7 +1573,7 @@ pub const FileSystemFlags = enum(c_int) {
                 return ctx.throwInvalidArguments("Invalid flag '{any}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags", .{str});
             };
 
-            return @as(FileSystemFlags, @enumFromInt(@as(Mode, @intCast(flags))));
+            return @enumFromInt(@as(Mode, @intCast(flags)));
         }
 
         return null;
@@ -2252,7 +2252,7 @@ pub const PathOrBlob = union(enum) {
 };
 
 comptime {
-    std.testing.refAllDecls(Process);
+    // std.testing.refAllDecls(Process);
 }
 
 /// StatFS and BigIntStatFS classes from node:fs

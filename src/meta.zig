@@ -62,15 +62,16 @@ pub fn typeName(comptime Type: type) []const u8 {
 
 /// partially emulates behaviour of @typeName in previous Zig versions,
 /// converting "some.namespace.MyType" to "MyType"
-pub fn typeBaseName(comptime fullname: [:0]const u8) [:0]const u8 {
+pub inline fn typeBaseName(comptime fullname: [:0]const u8) [:0]const u8 {
+    @setEvalBranchQuota(1_000_000);
     // leave type name like "namespace.WrapperType(namespace.MyType)" as it is
     const baseidx = comptime std.mem.indexOf(u8, fullname, "(");
-    if (baseidx != null) return fullname;
+    if (baseidx != null) return comptime fullname;
 
     const idx = comptime std.mem.lastIndexOf(u8, fullname, ".");
 
     const name = if (idx == null) fullname else fullname[(idx.? + 1)..];
-    return comptime std.fmt.comptimePrint("{s}", .{name});
+    return comptime name;
 }
 
 pub fn enumFieldNames(comptime Type: type) []const []const u8 {

@@ -3958,7 +3958,7 @@ pub const NodeFS = struct {
         };
 
         const Char = bun.OSPathChar;
-        const len = @as(u16, @truncate(path.len));
+        const len: u16 = @truncate(path.len);
 
         // First, attempt to create the desired directory
         // If that fails, then walk back up the path until we have a match
@@ -5347,7 +5347,7 @@ pub const NodeFS = struct {
             // If this errors, we silently ignore it.
             // Not all files are seekable (and thus, not all files can be truncated).
             if (Environment.isWindows) {
-                _ = std.os.windows.kernel32.SetEndOfFile(fd.cast());
+                _ = bun.windows.SetEndOfFile(fd.cast());
             } else {
                 _ = Syscall.ftruncate(fd, @intCast(@as(u63, @truncate(written))));
             }

@@ -21,7 +21,7 @@ else()
 endif()
 
 optionx(ZIG_VERSION STRING "The zig version of the compiler to download" DEFAULT "0.14.0-dev.2987+183bb8b08")
-optionx(ZIG_COMMIT STRING "The zig commit to use in oven-sh/zig" DEFAULT "a95342f9c7eee1dc44a2e3b003398df8f5dcb7ec")
+optionx(ZIG_COMMIT STRING "The zig commit to use in oven-sh/zig" DEFAULT "d58c3c63c5ddaac493fd59bb5acc7519d5af1fde")
 optionx(ZIG_TARGET STRING "The zig target to use" DEFAULT ${DEFAULT_ZIG_TARGET})
 
 if(CMAKE_BUILD_TYPE STREQUAL "Release")

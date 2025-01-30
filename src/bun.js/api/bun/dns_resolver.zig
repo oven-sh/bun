@@ -1524,7 +1524,7 @@ pub const InternalDNS = struct {
         if (Environment.isWindows) {
             const wsa = std.os.windows.ws2_32;
             const wsa_hints = wsa.addrinfo{
-                .flags = 0,
+                .flags = .{},
                 .family = wsa.AF.UNSPEC,
                 .socktype = wsa.SOCK.STREAM,
                 .protocol = 0,

@@ -531,10 +531,7 @@ fn dlsym(comptime Type: type, comptime symbol: [:0]const u8) ?Type {
                 "tracy.dll",
             } else .{};
 
-            const RLTD: std.c.RTLD = if (bun.Environment.isMac)
-                @bitCast(@as(i32, -2))
-            else
-                .{};
+            const RLTD: std.c.RTLD = if (bun.Environment.isMac) @bitCast(@as(i32, -2));
 
             if (bun.getenvZ("BUN_TRACY_PATH")) |path| {
                 const handle = bun.C.dlopen(&(std.posix.toPosixPath(path) catch unreachable), RLTD);

@@ -670,6 +670,10 @@ template<bool isStrict, bool enableAsymmetricMatchers>
 bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope* scope, bool addToStack)
 {
     VM& vm = globalObject->vm();
+    if (UNLIKELY(!vm.isSafeToRecurse())) {
+        throwStackOverflowError(globalObject, *scope);
+        return false;
+    }
 
     // need to check this before primitives, asymmetric matchers
     // can match against any type of value.

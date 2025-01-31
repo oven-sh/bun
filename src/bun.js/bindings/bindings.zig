@@ -5637,31 +5637,33 @@ pub const JSValue = enum(i64) {
         return @intFromEnum(this) == @intFromEnum(other) or cppFn("isSameValue", .{ this, other, global });
     }
 
-    /// NOTE: can throw. Check for exceptions.
-    pub fn deepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool {
+    pub fn deepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) JSError!bool {
         // JSC__JSValue__deepEquals
-        return cppFn("deepEquals", .{ this, other, global });
+        const result = cppFn("deepEquals", .{ this, other, global });
+        if (global.hasException()) return error.JSError;
+        return result;
     }
 
     /// same as `JSValue.deepEquals`, but with jest asymmetric matchers enabled
-    /// NOTE: can throw. Check for exceptions.
-    pub fn jestDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bun.JSError!bool {
+    pub fn jestDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) JSError!bool {
         const result = cppFn("jestDeepEquals", .{ this, other, global });
         if (global.hasException()) return error.JSError;
         return result;
     }
 
-    /// NOTE: can throw. Check for exceptions.
-    pub fn strictDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool {
+    pub fn strictDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) JSError!bool {
         // JSC__JSValue__strictDeepEquals
-        return cppFn("strictDeepEquals", .{ this, other, global });
+        const result = cppFn("strictDeepEquals", .{ this, other, global });
+        if (global.hasException()) return error.JSError;
+        return result;
     }
 
     /// same as `JSValue.strictDeepEquals`, but with jest asymmetric matchers enabled
-    /// NOTE: can throw. Check for exceptions.
-    pub fn jestStrictDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool {
+    pub fn jestStrictDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) JSError!bool {
         // JSC__JSValue__jestStrictDeepEquals
-        return cppFn("jestStrictDeepEquals", .{ this, other, global });
+        const result =  cppFn("jestStrictDeepEquals", .{ this, other, global });
+        if (global.hasException()) return error.JSError;
+        return result;
     }
 
     /// NOTE: can throw. Check for exceptions.

@@ -426,6 +426,7 @@ for (let credentials of allCredentials) {
 
               await writer.end();
               expect(await s3file.text()).toBe(mediumPayload.repeat(2));
+              s3file.delete();
             });
             it("should be able to upload large files in one go using Bun.write", async () => {
               {
@@ -441,6 +442,7 @@ for (let credentials of allCredentials) {
                 await s3File.write(bigPayload);
                 expect(s3File.size).toBeNaN();
                 expect(await s3File.text()).toBe(bigPayload);
+                s3File.delete();
               }
             }, 10_000);
           });
@@ -531,6 +533,7 @@ for (let credentials of allCredentials) {
 
                 expect(stat.lastModified).toBeDefined();
                 expect(await s3file.text()).toBe(bigPayload);
+                s3file.delete();
               }
             }, 10_000);
 
@@ -545,6 +548,7 @@ for (let credentials of allCredentials) {
                 expect(stat.lastModified).toBeDefined();
 
                 expect(await s3File.text()).toBe(bigPayload);
+                s3File.delete();
               }
             }, 10_000);
 
@@ -572,6 +576,7 @@ for (let credentials of allCredentials) {
                 }
                 expect(bytes).toBe(10);
                 expect(Buffer.concat(chunks)).toEqual(Buffer.from("Hello Bun!"));
+                s3file.delete();
               });
               it("should work with large files ", async () => {
                 const s3file = s3(tmp_filename + "-readable-stream-big", options);
@@ -597,6 +602,7 @@ for (let credentials of allCredentials) {
                   const SHA1_2 = Bun.SHA1.hash(bigishPayload, "hex");
                   expect(SHA1).toBe(SHA1_2);
                 }
+                s3file.delete();
               }, 30_000);
             });
           });

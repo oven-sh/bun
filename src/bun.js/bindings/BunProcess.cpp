@@ -1069,7 +1069,8 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 
         if (auto signalNumber = signalNameToNumberMap->get(eventName.string())) {
 #if OS(LINUX)
-            // SIGKILL and SIGSTOP cannot be handled, and JSC needs its own SIGUSR1 handler for GC
+            // SIGKILL and SIGSTOP cannot be handled, and JSC needs its own signal handler to
+            // suspend and resume the JS thread which we must not override.
             if (signalNumber != SIGKILL && signalNumber != SIGSTOP && signalNumber != g_wtfConfig.sigThreadSuspendResume) {
 #elif OS(DARWIN)
             // these signals cannot be handled

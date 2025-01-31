@@ -1496,9 +1496,7 @@ pub const EventLoop = struct {
             }
         }
 
-        if (this.imminent_gc_timer.swap(null, .seq_cst)) |timer| {
-            timer.run(ctx);
-        }
+        this.runImminentGCTimer();
 
         if (loop.isActive()) {
             this.processGCTimer();

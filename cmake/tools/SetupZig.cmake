@@ -55,34 +55,50 @@ optionx(ZIG_GLOBAL_CACHE_DIR FILEPATH "The path to the global zig cache director
 setenv(ZIG_LOCAL_CACHE_DIR ${ZIG_LOCAL_CACHE_DIR})
 setenv(ZIG_GLOBAL_CACHE_DIR ${ZIG_GLOBAL_CACHE_DIR})
 
-setx(ZIG_PATH ${VENDOR_PATH}/zig)
+if(ZIG_PATH AND NOT ZIG_EXECUTABLE)
+  if(WIN32)
+    setx(ZIG_EXECUTABLE ${ZIG_PATH}/zig.exe)
+  else()
+    setx(ZIG_EXECUTABLE ${ZIG_PATH}/zig)
+  endif()
+elseif(NOT ZIG_EXECUTABLE)
+  setx(ZIG_PATH ${VENDOR_PATH}/zig)
 
-if(WIN32)
-  setx(ZIG_EXECUTABLE ${ZIG_PATH}/zig.exe)
-else()
-  setx(ZIG_EXECUTABLE ${ZIG_PATH}/zig)
+  if(WIN32)
+    setx(ZIG_EXECUTABLE ${ZIG_PATH}/zig.exe)
+  else()
+    setx(ZIG_EXECUTABLE ${ZIG_PATH}/zig)
+  endif()
+
+  set(BUN_ZIG_TARGETS clone-zig)
+  register_command(
+    TARGET
+      clone-zig
+    COMMENT
+      "Downloading zig"
+    COMMAND
+      ${CMAKE_COMMAND}
+        -DZIG_PATH=${ZIG_PATH}
+        -DZIG_VERSION=${ZIG_VERSION}
+        -DZIG_COMMIT=${ZIG_COMMIT}
+        -DENABLE_ASAN=${ENABLE_ASAN}
+        -P ${CWD}/cmake/scripts/DownloadZig.cmake
+    SOURCES
+      ${CWD}/cmake/scripts/DownloadZig.cmake
+    OUTPUTS
+      ${ZIG_EXECUTABLE}
+  )
+endif()
+
+if(NOT ZIG_LIB_DIR)
+  execute_process(COMMAND "${ZIG_EXECUTABLE}" env
+    OUTPUT_VARIABLE ZIG_ENV)
+
+  string(JSON ZIG_LIB_DIR GET "${ZIG_ENV}" "lib_dir")
 endif()
 
 set(CMAKE_ZIG_FLAGS
   --cache-dir ${ZIG_LOCAL_CACHE_DIR}
   --global-cache-dir ${ZIG_GLOBAL_CACHE_DIR}
-  --zig-lib-dir ${ZIG_PATH}/lib
-)
-
-register_command(
-  TARGET
-    clone-zig
-  COMMENT
-    "Downloading zig"
-  COMMAND
-    ${CMAKE_COMMAND}
-      -DZIG_PATH=${ZIG_PATH}
-      -DZIG_VERSION=${ZIG_VERSION}
-      -DZIG_COMMIT=${ZIG_COMMIT}
-      -DENABLE_ASAN=${ENABLE_ASAN}
-      -P ${CWD}/cmake/scripts/DownloadZig.cmake
-  SOURCES
-    ${CWD}/cmake/scripts/DownloadZig.cmake
-  OUTPUTS
-    ${ZIG_EXECUTABLE}
+  --zig-lib-dir ${ZIG_LIB_DIR}
 )

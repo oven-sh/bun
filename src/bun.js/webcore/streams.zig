@@ -3645,7 +3645,7 @@ pub const FileSink = struct {
                         // this behavior has become expected due historical functionality on OS X,
                         // even though it was originally intended to change in v1.0.2 (Libuv 1.2.1).
                         // Ref: https://github.com/nodejs/node/pull/1771#issuecomment-119351671
-                        _ = bun.sys.updateBlocking(fd, true);
+                        _ = bun.sys.updateBlocking(fd, false);
                         is_nonblocking = false;
                         this.force_sync = true;
                         this.writer.force_sync = true;

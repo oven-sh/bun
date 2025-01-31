@@ -2066,7 +2066,12 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int 
 #if OS(WINDOWS)
     forceSync = fdType == BunProcessStdinFdType::file || fdType == BunProcessStdinFdType::pipe;
 #else
-    forceSync = fdType == BunProcessStdinFdType::file || bun_stdio_tty[fd];
+    // TODO: Uncomment this. We need to force sync on Posix because console.log and console.error
+    // currently don't use the same buffer as process.stdout and process.stderr, causing out of order writes.
+    // Repro: (16702.test.ts)
+
+    // forceSync = fdType == BunProcessStdinFdType::file || bun_stdio_tty[fd];
+    forceSync = true;
 #endif
     if (forceSync) {
         Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(globalObject, JSValue::encode(resultObject->getIndex(globalObject, 1)));

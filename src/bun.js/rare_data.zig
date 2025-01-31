@@ -422,7 +422,7 @@ pub export fn Bun__Process__getStdinFdType(vm: *JSC.VirtualMachine, fd: i32) Std
     };
     if (bun.S.ISFIFO(mode)) {
         return .pipe;
-    } else if (bun.S.ISSOCK(mode) or bun.S.ISCHR(mode)) {
+    } else if (bun.S.ISSOCK(mode)) {
         return .socket;
     } else {
         return .file;

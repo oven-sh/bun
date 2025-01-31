@@ -5,7 +5,6 @@ const MimeType = HTTPClient.MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = bun.http;
 const JSC = bun.JSC;
-const js = JSC.C;
 
 const Method = @import("../../http/method.zig").Method;
 const FetchHeaders = JSC.FetchHeaders;
@@ -3602,7 +3601,7 @@ pub const FileSink = struct {
 
     pub fn setup(this: *FileSink, options: *const StreamStart.FileSinkOptions) JSC.Maybe(void) {
         // TODO: this should be concurrent.
-        var isatty: ?bool = null;
+        var isatty = false;
         var is_nonblocking = false;
         const fd = switch (switch (options.input_path) {
             .path => |path| brk: {
@@ -3627,25 +3626,25 @@ pub const FileSink = struct {
                 },
                 .result => |stat| {
                     this.pollable = bun.sys.isPollable(stat.mode);
-                    if (!this.pollable and isatty == null) {
+                    if (!this.pollable) {
                         isatty = std.posix.isatty(fd.int());
                     }
 
-                    if (isatty) |is| {
-                        if (is)
-                            this.pollable = true;
+                    if (isatty) {
+                        this.pollable = true;
                     }
 
                     this.fd = fd;
                     this.is_socket = std.posix.S.ISSOCK(stat.mode);
 
-                    if (this.force_sync or (isatty != null and isatty.?)) {
+                    if (this.force_sync or isatty) {
                         // Prevents interleaved or dropped stdout/stderr output for terminals.
                         // As noted in the following reference, local TTYs tend to be quite fast and
                         // this behavior has become expected due historical functionality on OS X,
                         // even though it was originally intended to change in v1.0.2 (Libuv 1.2.1).
                         // Ref: https://github.com/nodejs/node/pull/1771#issuecomment-119351671
                         _ = bun.sys.updateNonblocking(fd, false);
+                        is_nonblocking = false;
                         this.force_sync = true;
                         this.writer.force_sync = true;
                     } else if (!is_nonblocking) {

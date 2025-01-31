@@ -451,18 +451,23 @@ extern "C" JSC::EncodedJSValue BunString__createArray(
 
 extern "C" void BunString__toWTFString(BunString* bunString)
 {
+    WTF::String str;
     if (bunString->tag == BunStringTag::ZigString) {
         if (Zig::isTaggedExternalPtr(bunString->impl.zig.ptr)) {
-            bunString->impl.wtf = Zig::toString(bunString->impl.zig).impl();
+            str = Zig::toString(bunString->impl.zig);
         } else {
-            bunString->impl.wtf = Zig::toStringCopy(bunString->impl.zig).impl();
+            str = Zig::toStringCopy(bunString->impl.zig);
         }
 
-        bunString->tag = BunStringTag::WTFStringImpl;
     } else if (bunString->tag == BunStringTag::StaticZigString) {
-        bunString->impl.wtf = Zig::toStringStatic(bunString->impl.zig).impl();
-        bunString->tag = BunStringTag::WTFStringImpl;
+        str = Zig::toStringStatic(bunString->impl.zig);
+    } else {
+        return;
     }
+
+    auto impl = str.releaseImpl();
+    bunString->impl.wtf = impl.leakRef();
+    bunString->tag = BunStringTag::WTFStringImpl;
 }
 
 extern "C" BunString URL__getFileURLString(BunString* filePath)

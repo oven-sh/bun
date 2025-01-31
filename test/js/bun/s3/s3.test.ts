@@ -325,7 +325,8 @@ for (let credentials of allCredentials) {
             for (let queueSize of [1, 5, 7, 10, 20]) {
               for (let payloadQuantity of [1, 5, 7, 10, 20]) {
                 for (let partSize of [5, 7, 10]) {
-                  for (let payload of [bigishPayload, mediumPayload]) {
+                  // the larger payload causes OOM in CI.
+                  for (let payload of [bigishPayload]) {
                     // lets skip tests with more than 10 parts on cloud providers
                     it.skipIf(credentials.service !== "MinIO")(
                       `should be able to upload large files using writer() in multiple parts with partSize=${partSize} queueSize=${queueSize} payloadQuantity=${payloadQuantity} payloadSize=${payload.length * payloadQuantity}`,
@@ -342,6 +343,7 @@ for (let credentials of allCredentials) {
                           await writer.end();
                           const stat = await s3File.stat();
                           expect(stat.size).toBe(Buffer.byteLength(payload) * payloadQuantity);
+                          s3File.delete();
                         }
                       },
                       30_000,

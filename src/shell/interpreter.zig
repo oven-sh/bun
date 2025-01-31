@@ -1792,18 +1792,15 @@ pub const Interpreter = struct {
     }
 
     pub fn hasPendingActivity(this: *ThisInterpreter) bool {
-        // @fence(.seq_cst);
         return this.has_pending_activity.load(.seq_cst) > 0;
     }
 
     fn incrPendingActivityFlag(has_pending_activity: *std.atomic.Value(u32)) void {
-        // @fence(.seq_cst);
         _ = has_pending_activity.fetchAdd(1, .seq_cst);
         log("Interpreter incr pending activity {d}", .{has_pending_activity.load(.seq_cst)});
     }
 
     fn decrPendingActivityFlag(has_pending_activity: *std.atomic.Value(u32)) void {
-        // @fence(.seq_cst);
         _ = has_pending_activity.fetchSub(1, .seq_cst);
         log("Interpreter decr pending activity {d}", .{has_pending_activity.load(.seq_cst)});
     }
@@ -8734,7 +8731,6 @@ pub const Interpreter = struct {
                     },
 
                     fn incrementOutputCount(this: *@This(), comptime thevar: @Type(.enum_literal)) void {
-                        // @fence(.seq_cst);
                         var atomicvar = &@field(this, @tagName(thevar));
                         const result = atomicvar.fetchAdd(1, .seq_cst);
                         log("[rm] {s}: {d} + 1", .{ @tagName(thevar), result });
@@ -8742,7 +8738,6 @@ pub const Interpreter = struct {
                     }
 
                     fn getOutputCount(this: *@This(), comptime thevar: @Type(.enum_literal)) usize {
-                        // @fence(.seq_cst);
                         var atomicvar = &@field(this, @tagName(thevar));
                         return atomicvar.load(.seq_cst);
                     }

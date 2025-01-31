@@ -1310,12 +1310,10 @@ pub const PostgresSQLConnection = struct {
     }
 
     pub fn hasPendingActivity(this: *PostgresSQLConnection) bool {
-        // @fence(.acquire);
         return this.pending_activity_count.load(.acquire) > 0;
     }
 
     fn updateHasPendingActivity(this: *PostgresSQLConnection) void {
-        // @fence(.release);
         const a: u32 = if (this.requests.readableLength() > 0) 1 else 0;
         const b: u32 = if (this.status != .disconnected) 1 else 0;
         this.pending_activity_count.store(a + b, .release);

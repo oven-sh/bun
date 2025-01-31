@@ -324,17 +324,14 @@ pub fn finalize(
 }
 
 pub fn hasPendingActivity(this: *Glob) callconv(.C) bool {
-    // @fence(.seq_cst);
     return this.has_pending_activity.load(.seq_cst) > 0;
 }
 
 fn incrPendingActivityFlag(has_pending_activity: *std.atomic.Value(usize)) void {
-    // @fence(.seq_cst);
     _ = has_pending_activity.fetchAdd(1, .seq_cst);
 }
 
 fn decrPendingActivityFlag(has_pending_activity: *std.atomic.Value(usize)) void {
-    // @fence(.seq_cst);
     _ = has_pending_activity.fetchSub(1, .seq_cst);
 }
 

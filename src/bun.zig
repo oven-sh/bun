@@ -1693,7 +1693,6 @@ pub const failing_allocator = std.mem.Allocator{ .ptr = undefined, .vtable = &.{
 var __reload_in_progress__ = std.atomic.Value(bool).init(false);
 threadlocal var __reload_in_progress__on_current_thread = false;
 pub fn isProcessReloadInProgressOnAnotherThread() bool {
-    // @fence(.acquire);
     return __reload_in_progress__.load(.monotonic) and !__reload_in_progress__on_current_thread;
 }
 

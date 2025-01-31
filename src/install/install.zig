@@ -1722,7 +1722,6 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 wake_value: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
                 pub fn completeOne(this: *@This()) void {
-                    // @fence(.release);
                     if (this.remaining.fetchSub(1, .monotonic) == 1) {
                         _ = this.wake_value.fetchAdd(1, .monotonic);
                         bun.Futex.wake(&this.wake_value, std.math.maxInt(u32));
@@ -1735,7 +1734,6 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 }
 
                 pub fn wait(this: *@This()) void {
-                    // @fence(.acquire);
                     this.wake_value.store(0, .monotonic);
                     while (this.remaining.load(.monotonic) > 0) {
                         bun.Futex.wait(&this.wake_value, 0, std.time.ns_per_ms * 5) catch {};

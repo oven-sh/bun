@@ -2462,13 +2462,11 @@ pub const AsyncHTTP = struct {
     }
 
     pub fn signalHeaderProgress(this: *AsyncHTTP) void {
-        // @fence(.release);
         var progress = this.signals.header_progress orelse return;
         progress.store(true, .release);
     }
 
     pub fn enableBodyStreaming(this: *AsyncHTTP) void {
-        // @fence(.release);
         var stream = this.signals.body_streaming orelse return;
         stream.store(true, .release);
     }

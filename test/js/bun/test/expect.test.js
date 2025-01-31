@@ -43,6 +43,41 @@ describe("expect()", () => {
       }
     });
   };
+  describe("toBe()", () => {
+    let obj = {};
+    it.each([
+      [1, 1],
+      [1, 1.0],
+      [NaN, NaN],
+      [Infinity, Infinity],
+      [obj, obj],
+      [Symbol.for("a"), Symbol.for("a")],
+    ])("expect(%p).toBe(%p) == true", (a, b) => {
+      expect(a).toBe(b);
+      expect(b).toBe(a);
+    });
+    it.each([
+      [1, 2],
+      [1, true],
+      [1, "1"],
+      [0, false],
+      [0, ""],
+      [Infinity, -Infinity],
+      ["foo", "Foo"],
+      ["foo", "bar"],
+      ["", " "],
+      ["", " "],
+      ["", true],
+      [{}, {}], //
+      [new Set(), new Set()], //
+      [function a() {}, function a() {}], //
+      [Symbol.for("a"), Symbol.for("b")],
+      [Symbol("a"), Symbol("a")],
+    ])("expect(%p).toBe(%p) == false", (a, b) => {
+      expect(a).not.toBe(b);
+      expect(b).not.toBe(a);
+    });
+  });
 
   test("rejects", async () => {
     await expect(Promise.reject(4)).rejects.toBe(4);

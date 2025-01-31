@@ -5630,38 +5630,49 @@ pub const JSValue = enum(i64) {
     }
 
     /// Object.is()
+    ///
     /// This algorithm differs from the IsStrictlyEqual Algorithm by treating all NaN values as equivalent and by differentiating +0𝔽 from -0𝔽.
     /// https://tc39.es/ecma262/#sec-samevalue
     pub fn isSameValue(this: JSValue, other: JSValue, global: *JSGlobalObject) bool {
         return @intFromEnum(this) == @intFromEnum(other) or cppFn("isSameValue", .{ this, other, global });
     }
 
+    /// NOTE: can throw. Check for exceptions.
     pub fn deepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool {
+        // JSC__JSValue__deepEquals
         return cppFn("deepEquals", .{ this, other, global });
     }
 
     /// same as `JSValue.deepEquals`, but with jest asymmetric matchers enabled
+    /// NOTE: can throw. Check for exceptions.
     pub fn jestDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bun.JSError!bool {
         const result = cppFn("jestDeepEquals", .{ this, other, global });
         if (global.hasException()) return error.JSError;
         return result;
     }
 
+    /// NOTE: can throw. Check for exceptions.
     pub fn strictDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool {
+        // JSC__JSValue__strictDeepEquals
         return cppFn("strictDeepEquals", .{ this, other, global });
     }
 
     /// same as `JSValue.strictDeepEquals`, but with jest asymmetric matchers enabled
+    /// NOTE: can throw. Check for exceptions.
     pub fn jestStrictDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool {
+        // JSC__JSValue__jestStrictDeepEquals
         return cppFn("jestStrictDeepEquals", .{ this, other, global });
     }
 
+    /// NOTE: can throw. Check for exceptions.
     pub fn deepMatch(this: JSValue, subset: JSValue, global: *JSGlobalObject, replace_props_with_asymmetric_matchers: bool) bool {
+        // JSC__JSValue__deepMatch
         return cppFn("deepMatch", .{ this, subset, global, replace_props_with_asymmetric_matchers });
     }
 
     /// same as `JSValue.deepMatch`, but with jest asymmetric matchers enabled
     pub fn jestDeepMatch(this: JSValue, subset: JSValue, global: *JSGlobalObject, replace_props_with_asymmetric_matchers: bool) bool {
+        // JSC__JSValue__jestDeepMatch
         return cppFn("jestDeepMatch", .{ this, subset, global, replace_props_with_asymmetric_matchers });
     }
 

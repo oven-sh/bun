@@ -3313,11 +3313,7 @@ pub fn setNonblocking(fd: bun.FileDescriptor) Maybe(void) {
 }
 
 pub fn updateNonblocking(fd: bun.FileDescriptor, nonblocking: bool) Maybe(void) {
-    const current_flags: i32 = switch (bun.sys.fcntl(
-        fd,
-        std.posix.F.GETFL,
-        0,
-    )) {
+    const current_flags: i32 = switch (getFcntlFlags(fd)) {
         .result => |f| @intCast(f),
         .err => |err| return .{ .err = err },
     };

@@ -168,6 +168,7 @@ pub const MultiPartUpload = struct {
             number: u16,
             etag: []const u8,
         };
+
         fn sortEtags(_: *MultiPartUpload, a: UploadPart.UploadPartResult, b: UploadPart.UploadPartResult) bool {
             return a.number < b.number;
         }
@@ -207,6 +208,7 @@ pub const MultiPartUpload = struct {
                         this.perform();
                         return;
                     } else {
+                        this.state = .not_assigned;
                         log("onPartResponse {} failed", .{this.partNumber});
                         this.freeAllocatedSlice();
                         defer this.ctx.deref();
@@ -221,7 +223,7 @@ pub const MultiPartUpload = struct {
                         .number = this.partNumber,
                         .etag = bun.default_allocator.dupe(u8, etag) catch bun.outOfMemory(),
                     }) catch bun.outOfMemory();
-
+                    this.state = .not_assigned;
                     defer this.ctx.deref();
                     // mark as available
                     this.ctx.available.set(this.index);
@@ -258,6 +260,7 @@ pub const MultiPartUpload = struct {
             switch (state) {
                 .pending => {
                     this.freeAllocatedSlice();
+                    this.ctx.deref();
                 },
                 // if is not pending we will free later or is already freed
                 else => {},
@@ -340,7 +343,7 @@ pub const MultiPartUpload = struct {
             // queueSize will never change and is small (max 255)
             const queue = bun.default_allocator.alloc(UploadPart, queueSize) catch bun.outOfMemory();
             // zero set just in case
-            @memset(std.mem.asBytes(queue), 0);
+            @memset(queue, UploadPart{ .state = .not_assigned, .ctx = this });
             this.queue = queue;
         }
         const data = if (needs_clone) bun.default_allocator.dupe(u8, chunk) catch bun.outOfMemory() else chunk;
@@ -392,7 +395,9 @@ pub const MultiPartUpload = struct {
         this.ended = true;
         if (this.queue) |queue| {
             for (queue) |*task| {
-                task.cancel();
+                if (task.state != .not_assigned) {
+                    task.cancel();
+                }
             }
         }
         if (this.state != .finished) {

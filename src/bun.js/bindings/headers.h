@@ -9,7 +9,7 @@
 #ifdef __cplusplus
   #define AUTO_EXTERN_C extern "C"
   #ifdef WIN32
-    #define AUTO_EXTERN_C_ZIG extern "C" 
+    #define AUTO_EXTERN_C_ZIG extern "C"
   #else
     #define AUTO_EXTERN_C_ZIG extern "C" __attribute__((weak))
   #endif
@@ -226,7 +226,7 @@ CPP_DECL void WebCore__AbortSignal__cleanNativeBindings(WebCore__AbortSignal* ar
 CPP_DECL JSC__JSValue WebCore__AbortSignal__create(JSC__JSGlobalObject* arg0);
 CPP_DECL WebCore__AbortSignal* WebCore__AbortSignal__fromJS(JSC__JSValue JSValue0);
 CPP_DECL WebCore__AbortSignal* WebCore__AbortSignal__ref(WebCore__AbortSignal* arg0);
-CPP_DECL WebCore__AbortSignal* WebCore__AbortSignal__signal(WebCore__AbortSignal* arg0, JSC__JSGlobalObject*,  uint8_t abortReason); 
+CPP_DECL WebCore__AbortSignal* WebCore__AbortSignal__signal(WebCore__AbortSignal* arg0, JSC__JSGlobalObject*,  uint8_t abortReason);
 CPP_DECL JSC__JSValue WebCore__AbortSignal__toJS(WebCore__AbortSignal* arg0, JSC__JSGlobalObject* arg1);
 CPP_DECL void WebCore__AbortSignal__unref(WebCore__AbortSignal* arg0);
 

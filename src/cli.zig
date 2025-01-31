@@ -813,7 +813,7 @@ pub const Arguments = struct {
                 Bun__Node__ProcessThrowDeprecation = true;
             }
             if (args.option("--title")) |title| {
-                Bun__Node__ProcessTitle = title;
+                @import("./process.zig").setTitle(allocator, title);
             }
             if (args.flag("--zero-fill-buffers")) {
                 Bun__Node__ZeroFillBuffers = true;

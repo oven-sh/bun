@@ -1371,7 +1371,11 @@ std::optional<bool> specialObjectsDequal(JSC__JSGlobalObject* globalObject, Mark
     compareAsNormalValue:
         break;
     }
-
+    // globalThis is only equal to globalThis
+    // NOTE: Zig::GlobalObject is tagged as GlobalProxyType
+    case GlobalObjectType:
+    case GlobalProxyType:
+        return c1Type == c2Type;
     default: {
         break;
     }

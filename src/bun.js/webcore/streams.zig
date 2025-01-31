@@ -3430,6 +3430,7 @@ pub const FileSink = struct {
     fd: bun.FileDescriptor = bun.invalid_fd,
 
     auto_flusher: AutoFlusher = .{},
+    run_pending_later: FlushPendingFileSinkTask = .{},
 
     const log = Output.scoped(.FileSink, false);
 
@@ -3477,6 +3478,7 @@ pub const FileSink = struct {
         this.ref();
         defer this.deref();
 
+        this.run_pending_later.has = false;
         const l = this.eventLoop();
         l.enter();
         defer l.exit();
@@ -3496,8 +3498,10 @@ pub const FileSink = struct {
         this.writer.updateRef(this.eventLoop(), has_pending_data);
 
         if (has_pending_data) {
-            if (this.event_loop_handle.globalObject()) |global| {
-                AutoFlusher.registerDeferredMicrotaskWithType(@This(), this, global.bunVM());
+            if (this.event_loop_handle.bunVM()) |vm| {
+                if (!vm.is_inside_deferred_task_queue) {
+                    AutoFlusher.registerDeferredMicrotaskWithType(@This(), this, vm);
+                }
             }
         }
 
@@ -3545,6 +3549,12 @@ pub const FileSink = struct {
         log("onError({any})", .{err});
         if (this.pending.state == .pending) {
             this.pending.result = .{ .err = err };
+            if (this.eventLoop().bunVM()) |vm| {
+                if (vm.is_inside_deferred_task_queue) {
+                    this.runPendingLater();
+                    return;
+                }
+            }
 
             this.runPending();
         }
@@ -3752,6 +3762,18 @@ pub const FileSink = struct {
         return .{ .result = {} };
     }
 
+    pub fn runPendingLater(this: *FileSink) void {
+        if (this.run_pending_later.has) {
+            return;
+        }
+        this.run_pending_later.has = true;
+        const event_loop = this.eventLoop();
+        if (event_loop == .js) {
+            this.ref();
+            event_loop.js.enqueueTask(JSC.Task.init(&this.run_pending_later));
+        }
+    }
+
     pub fn onAutoFlush(this: *FileSink) bool {
         if (this.done or !this.writer.hasPendingData()) {
             this.updateRef(false);
@@ -3759,16 +3781,30 @@ pub const FileSink = struct {
             return false;
         }
 
-        _ = this.writer.flush();
+        this.ref();
+        defer this.deref();
 
-        if (!this.writer.hasPendingData()) {
-            this.runPending();
-            this.updateRef(false);
-            this.auto_flusher.registered = false;
-            return false;
+        const amount_buffered = this.writer.outgoing.size();
+
+        switch (this.writer.flush()) {
+            .err, .done => {
+                this.updateRef(false);
+                this.runPendingLater();
+            },
+            .wrote => |amount_drained| {
+                if (amount_drained == amount_buffered) {
+                    this.updateRef(false);
+                    this.runPendingLater();
+                }
+            },
+            else => {
+                return true;
+            },
         }
 
-        return true;
+        const is_registered = !this.writer.hasPendingData();
+        this.auto_flusher.registered = is_registered;
+        return is_registered;
     }
 
     pub fn flush(_: *FileSink) JSC.Maybe(void) {
@@ -3992,6 +4028,18 @@ pub const FileSink = struct {
                 return .{ .pending = &this.pending };
             },
         }
+    }
+};
+
+pub const FlushPendingFileSinkTask = struct {
+    has: bool = false,
+    pub fn runFromJSThread(flush_pending: *FlushPendingFileSinkTask) void {
+        const had = flush_pending.has;
+        flush_pending.has = false;
+        const this: *FileSink = @alignCast(@fieldParentPtr("run_pending_later", flush_pending));
+        defer this.deref();
+        if (had)
+            this.runPending();
     }
 };
 

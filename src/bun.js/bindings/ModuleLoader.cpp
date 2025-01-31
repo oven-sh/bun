@@ -498,6 +498,8 @@ JSValue fetchCommonJSModule(
         if (JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier, wasModuleMock)) {
             JSValue promiseOrCommonJSModule = handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, specifier, referrer, wasModuleMock, target);
             RETURN_IF_EXCEPTION(scope, {});
+
+            // If we assigned module.exports to the virtual module, we're done here.
             if (promiseOrCommonJSModule == target) {
                 RELEASE_AND_RETURN(scope, target);
             }
@@ -585,6 +587,8 @@ JSValue fetchCommonJSModule(
         if (JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier, wasModuleMock)) {
             JSValue promiseOrCommonJSModule = handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, specifier, referrer, wasModuleMock, target);
             RETURN_IF_EXCEPTION(scope, {});
+
+            // If we assigned module.exports to the virtual module, we're done here.
             if (promiseOrCommonJSModule == target) {
                 RELEASE_AND_RETURN(scope, target);
             }

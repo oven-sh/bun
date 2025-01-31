@@ -9,8 +9,8 @@ const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploa
 const S3SimpleRequest = @import("./simple_request.zig");
 const executeSimpleS3Request = S3SimpleRequest.executeSimpleS3Request;
 const S3Error = @import("./error.zig").S3Error;
-// Buffer data until partSize is reached or the last chunk is received.
-//  If the buffer is smaller than partSize, it will be sent as a single request. Otherwise, a multipart upload will be initiated.
+// When we start the request we will buffer data until partSize is reached or the last chunk is received.
+// If the buffer is smaller than partSize, it will be sent as a single request. Otherwise, a multipart upload will be initiated.
 // If we send a single request it will retry until the maximum retry count is reached. The single request do not increase the reference count of MultiPartUpload, as they are the final step.
 // When sending a multipart upload, if there is space in the queue, the part is enqueued, and the request starts immediately.
 // If the queue is full, it waits to be drained before starting a new part request.

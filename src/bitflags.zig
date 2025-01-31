@@ -7,6 +7,8 @@ pub fn Bitflags(comptime T: type) type {
     const IntRepresentingNumOfBits = std.math.IntFittingRange(0, IntTypeInfo.Int.bits);
 
     return struct {
+        pub const IMPL_BITFLAGS: u0 = 0;
+
         pub inline fn empty() T {
             return @bitCast(@as(IntType, 0));
         }

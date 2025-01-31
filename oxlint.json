@@ -20,6 +20,7 @@
     "build",
     "test/snapshots/**",
     "bench/react-hello-world/*.js",
+    "bun.lock",
 
     "test/js/node/**/parallel/**",
     "test/js/node/test/fixtures", // full of JS with intentional syntax errors

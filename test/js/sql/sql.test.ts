@@ -61,9 +61,7 @@ async function startContainer(): Promise<{ port: number; containerName: string }
     }
 
     // Start the container
-    await execAsync(
-      `${dockerCLI} run -d --name ${containerName} -p ${port}:5432 custom-postgres`,
-    );
+    await execAsync(`${dockerCLI} run -d --name ${containerName} -p ${port}:5432 custom-postgres`);
 
     // Wait for PostgreSQL to be ready
     await waitForPostgres(port);
@@ -99,6 +97,9 @@ if (isDockerEnabled()) {
   afterAll(async () => {
     try {
       await execAsync(`${dockerCLI} stop -t 0 ${container.containerName}`);
+    } catch (error) {}
+
+    try {
       await execAsync(`${dockerCLI} rm -f ${container.containerName}`);
     } catch (error) {}
   });
@@ -625,7 +626,7 @@ if (isDockerEnabled()) {
   });
 
   test("Transaction requests are executed implicitly", async () => {
-    const sql = postgres({ ...options, debug: true, idle_timeout: 1, fetch_types: false });
+    await using sql = postgres(options);
     expect(
       (
         await sql.begin(sql => [
@@ -636,12 +637,21 @@ if (isDockerEnabled()) {
     ).toBe("testing");
   });
 
-  test("Uncaught transaction request errosó rs bubbles to transaction", async () => {
-    const sql = postgres({ ...options, debug: true, idle_timeout: 1, fetch_types: false });
+  test("Idle timeout retry works", async () => {
+    await using sql = postgres({ ...options, idleTimeout: 1 });
+    await sql`select 1`;
+    await Bun.sleep(1100); // 1.1 seconds so it should retry
+    await sql`select 1`;
+    expect().pass();
+  });
+
+  test("Uncaught transaction request errors bubbles to transaction", async () => {
+    const sql = postgres(options);
+    process.nextTick(() => sql.close({ timeout: 1 }));
     expect(
       await sql
         .begin(sql => [sql`select wat`, sql`select current_setting('bun_sql.test') as x, ${1} as a`])
-        .catch(e => e.errno),
+        .catch(e => e.errno || e),
     ).toBe("42703");
   });
 
@@ -993,8 +1003,6 @@ if (isDockerEnabled()) {
     const sql = postgres(options);
 
     const promise = sql`select pg_sleep(0.2) as x`.execute();
-    // we await 1 to start the query
-    await 1;
     await sql.end();
     return expect(await promise).toEqual([{ x: "" }]);
   });

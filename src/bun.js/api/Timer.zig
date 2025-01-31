@@ -302,9 +302,7 @@ pub const All = struct {
     }
 
     comptime {
-        if (!JSC.is_bindgen) {
-            @export(setImmediate, .{ .name = "Bun__Timer__setImmediate" });
-        }
+        @export(setImmediate, .{ .name = "Bun__Timer__setImmediate" });
     }
 
     pub fn setTimeout(
@@ -414,13 +412,11 @@ pub const All = struct {
     });
 
     comptime {
-        if (!JSC.is_bindgen) {
-            @export(setTimeout, .{ .name = Export[0].symbol_name });
-            @export(setInterval, .{ .name = Export[1].symbol_name });
-            @export(clearTimeout, .{ .name = Export[2].symbol_name });
-            @export(clearInterval, .{ .name = Export[3].symbol_name });
-            @export(getNextID, .{ .name = Export[4].symbol_name });
-        }
+        @export(setTimeout, .{ .name = Export[0].symbol_name });
+        @export(setInterval, .{ .name = Export[1].symbol_name });
+        @export(clearTimeout, .{ .name = Export[2].symbol_name });
+        @export(clearInterval, .{ .name = Export[3].symbol_name });
+        @export(getNextID, .{ .name = Export[4].symbol_name });
     }
 };
 

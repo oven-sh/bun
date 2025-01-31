@@ -15,6 +15,7 @@
 #include <JavaScriptCore/GeneratorFunctionPrototype.h>
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/ObjectConstructor.h>
+#include "ZigGeneratedClasses.h"
 
 #include "NodeUtilTypesModule.h"
 
@@ -151,7 +152,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsNativeError,
 {
     GET_FIRST_VALUE
     if (value.isCell()) {
-        if (value.asCell()->type() == ErrorInstanceType)
+        JSCell* cell = value.asCell();
+        if (cell->type() == ErrorInstanceType)
+            return JSValue::encode(jsBoolean(true));
+
+        // Workaround for https://github.com/oven-sh/bun/issues/11780
+        // They have code that does
+        //      assert(util.types.isNativeError(resolveMessage))
+        // FIXME: delete this once ResolveMessage and BuildMessage extend Error
+        if (cell->inherits<WebCore::JSResolveMessage>() || cell->inherits<WebCore::JSBuildMessage>())
             return JSValue::encode(jsBoolean(true));
     }
 
@@ -183,7 +192,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsAsyncFunction,
         return JSValue::encode(jsBoolean(true));
     }
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto proto = function->getPrototype(vm, globalObject);
     if (!proto.isCell()) {
         return JSValue::encode(jsBoolean(false));
@@ -443,7 +452,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsKeyObject,
 
     auto* object = cell->getObject();
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     const auto& names = WebCore::builtinNames(vm);
 
     auto scope = DECLARE_CATCH_SCOPE(vm);

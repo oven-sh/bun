@@ -49,15 +49,20 @@ fn Bindings(comptime function_name: NodeFSFunctionEnum) type {
         pub fn runAsync(this: *JSC.Node.NodeJSFS, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             var slice = ArgumentsSlice.init(globalObject.bunVM(), callframe.arguments());
             slice.will_be_async = true;
+            var deinit = false;
 
-            const args = if (Arguments != void)
+            defer if (deinit) slice.deinit();
+
+            var args = if (Arguments != void)
                 Arguments.fromJS(globalObject, &slice) catch |err| {
-                    slice.deinit();
+                    deinit = true;
                     return err;
                 };
 
+            defer if (deinit) args.deinit();
+
             if (globalObject.hasException()) {
-                slice.deinit();
+                deinit = true;
                 return .zero;
             }
 
@@ -65,7 +70,7 @@ fn Bindings(comptime function_name: NodeFSFunctionEnum) type {
             if (have_abort_signal) check_early_abort: {
                 const signal = args.signal orelse break :check_early_abort;
                 if (signal.reasonIfAborted(globalObject)) |reason| {
-                    slice.deinit();
+                    deinit = true;
                     return JSC.JSPromise.rejectedPromiseValue(globalObject, reason.toJS(globalObject));
                 }
             }

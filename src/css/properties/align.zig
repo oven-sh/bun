@@ -10,6 +10,10 @@ const PrintErr = css.PrintErr;
 
 const LengthPercentage = css.css_values.length.LengthPercentage;
 
+const VendorPrefix = css.VendorPrefix;
+const Property = css.Property;
+const Feature = css.prefixes.Feature;
+
 /// A value for the [align-content](https://www.w3.org/TR/css-align-3/#propdef-align-content) property.
 pub const AlignContent = union(enum) {
     /// Default alignment.
@@ -35,7 +39,8 @@ pub const AlignContent = union(enum) {
         pub fn __generateToCss() void {}
 
         pub fn parse(input: *css.Parser) css.Result(@This()) {
-            const overflow = OverflowPosition.parse(input).asValue();
+            const overflow = input.tryParse(OverflowPosition.parse, .{}).asValue();
+
             const value = switch (ContentPosition.parse(input)) {
                 .result => |v| v,
                 .err => |e| return .{ .err = e },
@@ -174,16 +179,16 @@ pub const JustifyContent = union(enum) {
     },
 
     pub fn parse(input: *css.Parser) css.Result(@This()) {
-        if (input.expectIdentMatching("normal").isOk()) {
+        if (input.tryParse(css.Parser.expectIdentMatching, .{"normal"}).isOk()) {
             return .{ .result = .normal };
         }
 
-        if (ContentDistribution.parse(input).asValue()) |val| {
+        if (input.tryParse(ContentDistribution.parse, .{}).asValue()) |val| {
             return .{ .result = .{ .content_distribution = val } };
         }
 
-        const overflow = OverflowPosition.parse(input).asValue();
-        if (ContentPosition.parse(input).asValue()) |content_position| {
+        const overflow = input.tryParse(OverflowPosition.parse, .{}).asValue();
+        if (input.tryParse(ContentPosition.parse, .{}).asValue()) |content_position| {
             return .{ .result = .{
                 .content_position = .{
                     .overflow = overflow,
@@ -281,7 +286,7 @@ pub const AlignSelf = union(enum) {
         }
 
         pub fn parse(input: *css.Parser) css.Result(@This()) {
-            const overflow = OverflowPosition.parse(input).asValue();
+            const overflow = input.tryParse(OverflowPosition.parse, .{}).asValue();
             const self_position = switch (SelfPosition.parse(input)) {
                 .result => |v| v,
                 .err => |e| return .{ .err = e },
@@ -465,7 +470,7 @@ pub const AlignItems = union(enum) {
         }
 
         pub fn parse(input: *css.Parser) css.Result(@This()) {
-            const overflow = OverflowPosition.parse(input).asValue();
+            const overflow = input.tryParse(OverflowPosition.parse, .{}).asValue();
             const self_position = switch (SelfPosition.parse(input)) {
                 .result => |v| v,
                 .err => |e| return .{ .err = e },
@@ -1083,3 +1088,420 @@ pub const ContentPositionInner = struct {
         return css.implementEql(@This(), lhs, rhs);
     }
 };
+
+const FlexLinePack = css.css_properties.flex.FlexLinePack;
+const BoxPack = css.css_properties.flex.BoxPack;
+const FlexPack = css.css_properties.flex.FlexPack;
+const BoxAlign = css.css_properties.flex.BoxAlign;
+const FlexAlign = css.css_properties.flex.FlexAlign;
+const FlexItemAlign = css.css_properties.flex.FlexItemAlign;
+
+pub const AlignHandler = struct {
+    align_content: ?struct { AlignContent, VendorPrefix } = null,
+    flex_line_pack: ?struct { FlexLinePack, VendorPrefix } = null,
+    justify_content: ?struct { JustifyContent, VendorPrefix } = null,
+    box_pack: ?struct { BoxPack, VendorPrefix } = null,
+    flex_pack: ?struct { FlexPack, VendorPrefix } = null,
+    align_self: ?struct { AlignSelf, VendorPrefix } = null,
+    flex_item_align: ?struct { FlexItemAlign, VendorPrefix } = null,
+    justify_self: ?JustifySelf = null,
+    align_items: ?struct { AlignItems, VendorPrefix } = null,
+    box_align: ?struct { BoxAlign, VendorPrefix } = null,
+    flex_align: ?struct { FlexAlign, VendorPrefix } = null,
+    justify_items: ?JustifyItems = null,
+    row_gap: ?GapValue = null,
+    column_gap: ?GapValue = null,
+    has_any: bool = false,
+
+    pub fn handleProperty(this: *AlignHandler, property: *const Property, dest: *css.DeclarationList, context: *css.PropertyHandlerContext) bool {
+        switch (property.*) {
+            .@"align-content" => |*val| {
+                this.flex_line_pack = null;
+                this.handlePropertyHelper(dest, context, "align_content", &val.*[0], val.*[1]);
+            },
+            .@"flex-line-pack" => |*val| this.handlePropertyHelper(dest, context, "flex_line_pack", &val.*[0], val.*[1]),
+            .@"justify-content" => |*val| {
+                this.box_pack = null;
+                this.flex_pack = null;
+                this.handlePropertyHelper(dest, context, "justify_content", &val.*[0], val.*[1]);
+            },
+            .@"box-pack" => |*val| this.handlePropertyHelper(dest, context, "box_pack", &val.*[0], val.*[1]),
+            .@"flex-pack" => |*val| this.handlePropertyHelper(dest, context, "flex_pack", &val.*[0], val.*[1]),
+            .@"place-content" => |*val| {
+                this.flex_line_pack = null;
+                this.box_pack = null;
+                this.flex_pack = null;
+                this.handlePropertyMaybeFlush(dest, context, "align_content", &val.@"align", VendorPrefix.NONE);
+                this.handlePropertyMaybeFlush(dest, context, "justify_content", &val.justify, VendorPrefix.NONE);
+                this.handlePropertyHelper(dest, context, "align_content", &val.@"align", VendorPrefix.NONE);
+                this.handlePropertyHelper(dest, context, "justify_content", &val.justify, VendorPrefix.NONE);
+            },
+            .@"align-self" => |*val| {
+                this.flex_item_align = null;
+                this.handlePropertyHelper(dest, context, "align_self", &val.*[0], val.*[1]);
+            },
+            .@"flex-item-align" => |*val| this.handlePropertyHelper(dest, context, "flex_item_align", &val.*[0], val.*[1]),
+            .@"justify-self" => |*val| {
+                this.justify_self = css.generic.deepClone(@TypeOf(val.*), val, context.allocator);
+                this.has_any = true;
+            },
+            .@"place-self" => |*val| {
+                this.flex_item_align = null;
+                this.handlePropertyHelper(dest, context, "align_self", &val.@"align", VendorPrefix.NONE);
+                this.justify_self = css.generic.deepClone(@TypeOf(val.justify), &val.justify, context.allocator);
+            },
+            .@"align-items" => |*val| {
+                this.box_align = null;
+                this.flex_align = null;
+                this.handlePropertyHelper(dest, context, "align_items", &val.*[0], val.*[1]);
+            },
+            .@"box-align" => |*val| this.handlePropertyHelper(dest, context, "box_align", &val.*[0], val.*[1]),
+            .@"flex-align" => |*val| this.handlePropertyHelper(dest, context, "flex_align", &val.*[0], val.*[1]),
+            .@"justify-items" => |*val| {
+                this.justify_items = css.generic.deepClone(@TypeOf(val.*), val, context.allocator);
+                this.has_any = true;
+            },
+            .@"place-items" => |*val| {
+                this.box_align = null;
+                this.flex_align = null;
+                this.handlePropertyHelper(dest, context, "align_items", &val.@"align", VendorPrefix.NONE);
+                this.justify_items = css.generic.deepClone(@TypeOf(val.justify), &val.justify, context.allocator);
+            },
+            .@"row-gap" => |*val| {
+                this.row_gap = css.generic.deepClone(@TypeOf(val.*), val, context.allocator);
+                this.has_any = true;
+            },
+            .@"column-gap" => |*val| {
+                this.column_gap = css.generic.deepClone(@TypeOf(val.*), val, context.allocator);
+                this.has_any = true;
+            },
+            .gap => |*val| {
+                this.row_gap = css.generic.deepClone(@TypeOf(val.row), &val.row, context.allocator);
+                this.column_gap = css.generic.deepClone(@TypeOf(val.column), &val.column, context.allocator);
+                this.has_any = true;
+            },
+            .unparsed => |*val| {
+                if (isAlignProperty(val.property_id)) {
+                    this.flush(dest, context);
+                    dest.append(context.allocator, property.*) catch bun.outOfMemory();
+                } else {
+                    return false;
+                }
+            },
+            else => return false,
+        }
+
+        return true;
+    }
+
+    pub fn finalize(this: *AlignHandler, dest: *css.DeclarationList, context: *css.PropertyHandlerContext) void {
+        this.flush(dest, context);
+    }
+
+    fn flush(this: *AlignHandler, dest: *css.DeclarationList, context: *css.PropertyHandlerContext) void {
+        if (!this.has_any) {
+            return;
+        }
+
+        this.has_any = false;
+
+        var align_content = bun.take(&this.align_content);
+        var justify_content = bun.take(&this.justify_content);
+        var align_self = bun.take(&this.align_self);
+        var justify_self = bun.take(&this.justify_self);
+        var align_items = bun.take(&this.align_items);
+        var justify_items = bun.take(&this.justify_items);
+        const row_gap = bun.take(&this.row_gap);
+        const column_gap = bun.take(&this.column_gap);
+        var box_align = bun.take(&this.box_align);
+        var box_pack = bun.take(&this.box_pack);
+        var flex_line_pack = bun.take(&this.flex_line_pack);
+        var flex_pack = bun.take(&this.flex_pack);
+        var flex_align = bun.take(&this.flex_align);
+        var flex_item_align = bun.take(&this.flex_item_align);
+
+        // 2009 properties
+        this.flushPrefixedProperty(dest, context, "box-align", bun.take(&box_align));
+        this.flushPrefixedProperty(dest, context, "box-pack", bun.take(&box_pack));
+
+        // 2012 properties
+        this.flushPrefixedProperty(dest, context, "flex-pack", bun.take(&flex_pack));
+        this.flushPrefixedProperty(dest, context, "flex-align", bun.take(&flex_align));
+        this.flushPrefixedProperty(dest, context, "flex-item-align", bun.take(&flex_item_align));
+        this.flushPrefixedProperty(dest, context, "flex-line-pack", bun.take(&flex_line_pack));
+
+        this.flushLegacyProperty(dest, context, Feature.align_content, &align_content, null, .{ FlexLinePack, "flex-line-pack" });
+        this.flushLegacyProperty(dest, context, Feature.justify_content, &justify_content, .{ BoxPack, "box-pack" }, .{ FlexPack, "flex-pack" });
+        if (context.targets.isCompatible(.place_content)) {
+            this.flushShorthandHelper(
+                dest,
+                context,
+                .{ .prop = "place-content", .ty = PlaceContent },
+                .{ .feature = Feature.align_content, .prop = "align-content" },
+                &align_content,
+                &justify_content,
+                .{ .feature = Feature.justify_content, .prop = "justify-content" },
+            );
+        }
+        this.flushStandardPropertyHelper(dest, context, "align-content", bun.take(&align_content), Feature.align_content);
+        this.flushStandardPropertyHelper(dest, context, "justify-content", bun.take(&justify_content), Feature.justify_content);
+
+        this.flushLegacyProperty(dest, context, Feature.align_self, &align_self, null, .{ FlexItemAlign, "flex-item-align" });
+        if (context.targets.isCompatible(.place_self)) {
+            this.flushShorthandHelper(dest, context, .{ .prop = "place-self", .ty = PlaceSelf }, .{ .feature = Feature.align_self, .prop = "align-self" }, &align_self, &justify_self, null);
+        }
+        this.flushStandardPropertyHelper(dest, context, "align-self", bun.take(&align_self), Feature.align_self);
+        this.flushUnprefixProperty(dest, context, "justify-self", bun.take(&justify_self));
+
+        this.flushLegacyProperty(dest, context, Feature.align_items, &align_items, .{ BoxAlign, "box-align" }, .{ FlexAlign, "flex-align" });
+        if (context.targets.isCompatible(css.compat.Feature.place_items)) {
+            this.flushShorthandHelper(dest, context, .{ .prop = "place-items", .ty = PlaceItems }, .{ .feature = Feature.align_items, .prop = "align-items" }, &align_items, &justify_items, null);
+        }
+        this.flushStandardPropertyHelper(dest, context, "align-items", bun.take(&align_items), Feature.align_items);
+        this.flushUnprefixProperty(dest, context, "justify-items", bun.take(&justify_items));
+
+        if (row_gap != null and column_gap != null) {
+            dest.append(context.allocator, Property{ .gap = Gap{
+                .row = row_gap.?,
+                .column = column_gap.?,
+            } }) catch bun.outOfMemory();
+        } else {
+            if (row_gap != null) {
+                dest.append(context.allocator, Property{ .@"row-gap" = row_gap.? }) catch bun.outOfMemory();
+            }
+
+            if (column_gap != null) {
+                dest.append(context.allocator, Property{ .@"column-gap" = column_gap.? }) catch bun.outOfMemory();
+            }
+        }
+    }
+
+    fn handlePropertyMaybeFlush(this: *AlignHandler, dest: *css.DeclarationList, context: *css.PropertyHandlerContext, comptime prop: []const u8, val: anytype, vp: VendorPrefix) void {
+        // If two vendor prefixes for the same property have different
+        // values, we need to flush what we have immediately to preserve order.
+        if (@field(this, prop)) |*v| {
+            if (!val.eql(&v[0]) and !v[1].contains(vp)) {
+                this.flush(dest, context);
+            }
+        }
+    }
+
+    fn handlePropertyHelper(this: *AlignHandler, dest: *css.DeclarationList, context: *css.PropertyHandlerContext, comptime prop: []const u8, val: anytype, vp: VendorPrefix) void {
+        this.handlePropertyMaybeFlush(dest, context, prop, val, vp);
+        // Otherwise, update the value and add the prefix.
+        if (@field(this, prop)) |*tuple| {
+            tuple.*[0] = css.generic.deepClone(@TypeOf(val.*), val, context.allocator);
+            tuple.*[1].insert(vp);
+        } else {
+            @field(this, prop) = .{ css.generic.deepClone(@TypeOf(val.*), val, context.allocator), vp };
+            this.has_any = true;
+        }
+    }
+
+    // Gets prefixes for standard properties.
+    fn flushPrefixesHelper(_: *AlignHandler, context: *css.PropertyHandlerContext, comptime feature: Feature) VendorPrefix {
+        var prefix = context.targets.prefixes(VendorPrefix.NONE, feature);
+        // Firefox only implemented the 2009 spec prefixed.
+        // Microsoft only implemented the 2012 spec prefixed.
+        prefix.remove(VendorPrefix{
+            .moz = true,
+            .ms = true,
+        });
+        return prefix;
+    }
+
+    fn flushStandardPropertyHelper(this: *AlignHandler, dest: *css.DeclarationList, context: *css.PropertyHandlerContext, comptime prop: []const u8, key: anytype, comptime feature: Feature) void {
+        if (key) |v| {
+            const val = v[0];
+            var prefix = v[1];
+            // If we have an unprefixed property, override necessary prefixes.
+            prefix = if (prefix.contains(VendorPrefix.NONE)) flushPrefixesHelper(this, context, feature) else prefix;
+            dest.append(context.allocator, @unionInit(Property, prop, .{ val, prefix })) catch bun.outOfMemory();
+        }
+    }
+
+    fn flushLegacyProperty(
+        this: *AlignHandler,
+        dest: *css.DeclarationList,
+        context: *css.PropertyHandlerContext,
+        comptime feature: Feature,
+        key: anytype,
+        comptime prop_2009: ?struct { type, []const u8 },
+        comptime prop_2012: ?struct { type, []const u8 },
+    ) void {
+        _ = this; // autofix
+        if (key.*) |v| {
+            const val = v[0];
+            var prefix = v[1];
+            // If we have an unprefixed standard property, generate legacy prefixed versions.
+            prefix = context.targets.prefixes(prefix, feature);
+
+            if (prefix.contains(VendorPrefix.NONE)) {
+                if (comptime prop_2009) |p2009| {
+                    // 2009 spec, implemented by webkit and firefox.
+                    if (context.targets.browsers) |targets| {
+                        var prefixes_2009 = VendorPrefix.empty();
+                        if (Feature.isFlex2009(targets)) {
+                            prefixes_2009.insert(VendorPrefix.WEBKIT);
+                        }
+                        if (prefix.contains(VendorPrefix.MOZ)) {
+                            prefixes_2009.insert(VendorPrefix.MOZ);
+                        }
+                        if (!prefixes_2009.isEmpty()) {
+                            const s = brk: {
+                                const T = comptime p2009[0];
+                                if (comptime T == css.css_properties.flex.BoxOrdinalGroup) break :brk @as(?i32, val);
+                                break :brk p2009[0].fromStandard(&val);
+                            };
+                            if (s) |a| {
+                                dest.append(context.allocator, @unionInit(Property, p2009[1], .{
+                                    a,
+                                    prefixes_2009,
+                                })) catch bun.outOfMemory();
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 2012 spec, implemented by microsoft.
+            if (prefix.contains(VendorPrefix.MS)) {
+                if (comptime prop_2012) |p2012| {
+                    const s = brk: {
+                        const T = comptime p2012[0];
+                        if (comptime T == css.css_properties.flex.BoxOrdinalGroup) break :brk @as(?i32, val);
+                        break :brk p2012[0].fromStandard(&val);
+                    };
+                    if (s) |q| {
+                        dest.append(context.allocator, @unionInit(Property, p2012[1], .{
+                            q,
+                            VendorPrefix.MS,
+                        })) catch bun.outOfMemory();
+                    }
+                }
+            }
+
+            // Remove Firefox and IE from standard prefixes.
+            prefix.remove(VendorPrefix.MOZ);
+            prefix.remove(VendorPrefix.MS);
+        }
+    }
+
+    fn flushPrefixedProperty(this: *AlignHandler, dest: *css.DeclarationList, context: *css.PropertyHandlerContext, comptime prop: []const u8, key: anytype) void {
+        _ = this; // autofix
+        if (key) |v| {
+            const val = v[0];
+            const prefix = v[1];
+            dest.append(context.allocator, @unionInit(Property, prop, .{ val, prefix })) catch bun.outOfMemory();
+        }
+    }
+
+    fn flushUnprefixProperty(this: *AlignHandler, dest: *css.DeclarationList, context: *css.PropertyHandlerContext, comptime prop: []const u8, key: anytype) void {
+        _ = this; // autofix
+        if (key) |v| {
+            const val = v;
+            dest.append(context.allocator, @unionInit(Property, prop, val)) catch bun.outOfMemory();
+        }
+    }
+
+    fn flushShorthandHelper(
+        this: *AlignHandler,
+        dest: *css.DeclarationList,
+        context: *css.PropertyHandlerContext,
+        comptime prop: struct { prop: []const u8, ty: type },
+        comptime align_prop: struct {
+            feature: Feature,
+            prop: []const u8,
+        },
+        align_val: anytype,
+        justify_val: anytype,
+        comptime justify_prop: ?struct {
+            feature: Feature,
+            prop: []const u8,
+        },
+    ) void {
+        // Only use shorthand if both align and justify are present
+        if (align_val.*) |*__v1| {
+            const @"align" = &__v1.*[0];
+            const align_prefix: *css.VendorPrefix = &__v1.*[1];
+            if (justify_val.*) |*__v2| {
+                const justify = __v2;
+
+                const intersection = align_prefix.bitwiseAnd(if (comptime justify_prop != null) __v2.*[1] else align_prefix.*);
+                // Only use shorthand if unprefixed.
+                if (intersection.contains(VendorPrefix.NONE)) {
+                    // Add prefixed longhands if needed.
+                    align_prefix.* = flushPrefixesHelper(this, context, align_prop.feature);
+                    align_prefix.remove(VendorPrefix.NONE);
+                    if (!align_prefix.isEmpty()) {
+                        dest.append(
+                            context.allocator,
+                            @unionInit(Property, align_prop.prop, .{ css.generic.deepClone(@TypeOf(@"align".*), @"align", context.allocator), align_prefix.* }),
+                        ) catch bun.outOfMemory();
+                    }
+
+                    if (comptime justify_prop != null) {
+                        const justify_actual = &__v2.*[0];
+                        const justify_prefix = &__v2.*[1];
+                        justify_prefix.* = this.flushPrefixesHelper(context, justify_prop.?.feature);
+                        justify_prefix.remove(css.VendorPrefix.NONE);
+
+                        if (!justify_prefix.isEmpty()) {
+                            dest.append(
+                                context.allocator,
+                                @unionInit(Property, justify_prop.?.prop, .{ css.generic.deepClone(@TypeOf(justify_actual.*), justify_actual, context.allocator), justify_prefix.* }),
+                            ) catch bun.outOfMemory();
+                        }
+
+                        // Add shorthand.
+                        dest.append(
+                            context.allocator,
+                            @unionInit(Property, prop.prop, prop.ty{
+                                .@"align" = css.generic.deepClone(@TypeOf(@"align".*), @"align", context.allocator),
+                                .justify = css.generic.deepClone(@TypeOf(justify_actual.*), justify_actual, context.allocator),
+                            }),
+                        ) catch bun.outOfMemory();
+                    } else {
+
+                        // Add shorthand.
+                        dest.append(
+                            context.allocator,
+                            @unionInit(Property, prop.prop, prop.ty{
+                                .@"align" = css.generic.deepClone(@TypeOf(@"align".*), @"align", context.allocator),
+                                .justify = css.generic.deepClone(@TypeOf(justify.*), justify, context.allocator),
+                            }),
+                        ) catch bun.outOfMemory();
+                    }
+
+                    align_val.* = null;
+                    justify_val.* = null;
+                }
+            }
+        }
+    }
+};
+
+fn isAlignProperty(property_id: css.PropertyId) bool {
+    return switch (property_id) {
+        .@"align-content",
+        .@"flex-line-pack",
+        .@"justify-content",
+        .@"box-pack",
+        .@"flex-pack",
+        .@"place-content",
+        .@"align-self",
+        .@"flex-item-align",
+        .@"justify-self",
+        .@"place-self",
+        .@"align-items",
+        .@"box-align",
+        .@"flex-align",
+        .@"justify-items",
+        .@"place-items",
+        .@"row-gap",
+        .@"column-gap",
+        .gap,
+        => true,
+        else => false,
+    };
+}

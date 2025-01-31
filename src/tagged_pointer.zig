@@ -73,7 +73,7 @@ pub fn TagTypeEnumWithTypeMap(comptime Types: anytype) struct {
     @memset(&typeMap, TypeMapT{ .value = 0, .ty = void, .name = "" });
 
     inline for (Types, 0..) |field, i| {
-        const name = comptime (@typeName(field));
+        const name = comptime @typeName(field);
         enumFields[i] = .{
             .name = name,
             .value = 1024 - i,

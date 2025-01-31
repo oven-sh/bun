@@ -1568,7 +1568,7 @@ fn SliceTo(comptime T: type, comptime end: meta.Elem(T)) type {
 /// If `end` is not found, the full length of the array/slice/sentinel terminated pointer is returned.
 /// If the pointer type is sentinel terminated and `end` matches that terminator, the
 /// resulting slice is also sentinel terminated.
-/// pointer properties such as mutability and alignment are preserved.
+/// Pointer properties such as mutability and alignment are preserved.
 /// C pointers are assumed to be non-null.
 pub fn sliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) SliceTo(@TypeOf(ptr), end) {
     if (@typeInfo(@TypeOf(ptr)) == .optional) {

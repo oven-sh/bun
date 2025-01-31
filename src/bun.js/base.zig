@@ -745,7 +745,7 @@ pub const RefString = struct {
 };
 
 comptime {
-    // std.testing.refAllDecls(RefString);
+    std.testing.refAllDecls(RefString);
 }
 
 pub export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, _: *anyopaque) void {

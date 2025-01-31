@@ -2252,7 +2252,7 @@ pub const PathOrBlob = union(enum) {
 };
 
 comptime {
-    // std.testing.refAllDecls(Process);
+    std.testing.refAllDecls(Process);
 }
 
 /// StatFS and BigIntStatFS classes from node:fs

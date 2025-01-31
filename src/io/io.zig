@@ -397,7 +397,7 @@ pub const Poll = struct {
 
     const GenerationNumberInt = if (Environment.isMac and Environment.allow_assert) u64 else u0;
 
-    var generation_number_number: GenerationNumberInt = 0;
+    var generation_number_monotonic: GenerationNumberInt = 0;
 
     pub const Tag = Pollable.Tag;
 
@@ -516,8 +516,8 @@ pub const Poll = struct {
                 }
 
                 if (comptime Environment.allow_assert and action != .cancel) {
-                    generation_number_number += 1;
-                    poll.generation_number = generation_number_number;
+                    generation_number_monotonic += 1;
+                    poll.generation_number = generation_number_monotonic;
                 }
             }
 
@@ -531,7 +531,7 @@ pub const Poll = struct {
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(tag, poll).ptr()),
                     .flags = std.c.EV.ADD | one_shot_flag,
-                    .ext = .{ generation_number_number, 0 },
+                    .ext = .{ generation_number_monotonic, 0 },
                 },
                 .writable => .{
                     .ident = @as(u64, @intCast(fd.int())),
@@ -540,7 +540,7 @@ pub const Poll = struct {
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(tag, poll).ptr()),
                     .flags = std.c.EV.ADD | one_shot_flag,
-                    .ext = .{ generation_number_number, 0 },
+                    .ext = .{ generation_number_monotonic, 0 },
                 },
                 .cancel => if (poll.flags.contains(.poll_readable)) .{
                     .ident = @as(u64, @intCast(fd.int())),

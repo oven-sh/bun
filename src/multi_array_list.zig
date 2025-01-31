@@ -290,6 +290,11 @@ pub fn MultiArrayList(comptime T: type) type {
             self.insertAssumeCapacity(index, elem);
         }
 
+        /// Invalidates all element pointers.
+        pub fn clearRetainingCapacity(this: *Self) void {
+            this.len = 0;
+        }
+
         /// Inserts an item into an ordered list which has room for it.
         /// Shifts all elements after and including the specified index
         /// back by one and sets the given index to the specified element.
@@ -418,11 +423,6 @@ pub fn MultiArrayList(comptime T: type) type {
         /// Keeps capacity the same.
         pub fn shrinkRetainingCapacity(self: *Self, new_len: usize) void {
             self.len = new_len;
-        }
-
-        /// Invalidates all element pointers.
-        pub fn clearRetainingCapacity(self: *Self) void {
-            self.len = 0;
         }
 
         /// Modify the array so that it can hold at least `new_capacity` items.

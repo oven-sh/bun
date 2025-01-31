@@ -493,7 +493,7 @@ pub const StreamStart = union(Tag) {
         close: bool = false,
         mode: bun.Mode = 0o664,
 
-        pub fn flags(this: *const FileSinkOptions) c_int {
+        pub fn flags(this: *const FileSinkOptions) i32 {
             _ = this;
 
             return bun.O.NONBLOCK | bun.O.CLOEXEC | bun.O.CREAT | bun.O.WRONLY;

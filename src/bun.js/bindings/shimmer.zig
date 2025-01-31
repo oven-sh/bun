@@ -5,8 +5,7 @@ const Sizes = @import("./sizes.zig");
 const headers = @import("./headers.zig");
 
 fn isNullableType(comptime Type: type) bool {
-    return @typeInfo(Type) == .optional or
-        (@typeInfo(Type) == .pointer and @typeInfo(Type).pointer.is_allowzero);
+    return @typeInfo(Type) == .optional or (@typeInfo(Type) == .pointer and @typeInfo(Type).pointer.is_allowzero);
 }
 
 const log = @import("../../output.zig").scoped(.CPP, true);

@@ -5661,7 +5661,7 @@ pub const JSValue = enum(i64) {
     /// same as `JSValue.strictDeepEquals`, but with jest asymmetric matchers enabled
     pub fn jestStrictDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) JSError!bool {
         // JSC__JSValue__jestStrictDeepEquals
-        const result =  cppFn("jestStrictDeepEquals", .{ this, other, global });
+        const result = cppFn("jestStrictDeepEquals", .{ this, other, global });
         if (global.hasException()) return error.JSError;
         return result;
     }

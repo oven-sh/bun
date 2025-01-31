@@ -951,9 +951,14 @@ pub fn mkdirOSPath(file_path: bun.OSPathSliceZ, flags: bun.Mode) Maybe(void) {
 }
 
 const fnctl_int = if (Environment.isLinux) usize else c_int;
-pub fn fcntl(fd: bun.FileDescriptor, cmd: i32, arg: fnctl_int) Maybe(fnctl_int) {
+pub fn fcntl(fd: bun.FileDescriptor, cmd: i32, arg: anytype) Maybe(fnctl_int) {
     while (true) {
-        const result = fcntl_symbol(fd.cast(), cmd, arg);
+        const result = switch (@TypeOf(arg)) {
+            i32, comptime_int, c_int => fcntl_symbol(fd.cast(), cmd, @as(c_int, arg)),
+            i64 => fcntl_symbol(fd.cast(), cmd, @as(c_long, @bitCast(arg))),
+            *const anyopaque, *anyopaque, usize => fcntl_symbol(fd.cast(), cmd, arg),
+            else => @compileError("Unsupported argument type for fcntl"),
+        };
         if (Maybe(fnctl_int).errnoSysFd(result, .fcntl, fd)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
@@ -2696,8 +2701,9 @@ pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *[MAX_PATH_BYTES]u8) Maybe(
             // On macOS, we can use F.GETPATH fcntl command to query the OS for
             // the path to the file descriptor.
             @memset(out_buffer[0..MAX_PATH_BYTES], 0);
-            if (Maybe([]u8).errnoSys(syscall.fcntl(fd.cast(), posix.F.GETPATH, out_buffer), .fcntl)) |err| {
-                return err;
+            switch (fcntl(fd, posix.F.GETPATH, @intFromPtr(out_buffer))) {
+                .err => |err| return .{ .err = err },
+                .result => {},
             }
             const len = mem.indexOfScalar(u8, out_buffer[0..], @as(u8, 0)) orelse MAX_PATH_BYTES;
             return .{ .result = out_buffer[0..len] };
@@ -2934,13 +2940,17 @@ pub fn setPipeCapacityOnLinux(fd: bun.FileDescriptor, capacity: usize) Maybe(usi
 
     // We don't use glibc here
     // It didn't work. Always returned 0.
-    const pipe_len = std.os.linux.fcntl(fd.cast(), F_GETPIPE_SZ, 0);
-    if (Maybe(usize).errnoSysFd(pipe_len, .fcntl, fd)) |err| return err;
+    const pipe_len = switch (fcntl(fd, F_GETPIPE_SZ, 0)) {
+        .result => |result| result,
+        .err => |err| return err,
+    };
     if (pipe_len == 0) return Maybe(usize){ .result = 0 };
     if (pipe_len >= capacity) return Maybe(usize){ .result = pipe_len };
 
-    const new_pipe_len = std.os.linux.fcntl(fd.cast(), F_SETPIPE_SZ, capacity);
-    if (Maybe(usize).errnoSysFd(new_pipe_len, .fcntl, fd)) |err| return err;
+    const new_pipe_len = switch (fcntl(fd, F_SETPIPE_SZ, capacity)) {
+        .result => |result| result,
+        .err => |err| return err,
+    };
     return Maybe(usize){ .result = new_pipe_len };
 }
 
@@ -3283,25 +3293,38 @@ fn utimensWithFlags(path: bun.OSPathSliceZ, atime: JSC.Node.TimeLike, mtime: JSC
     unreachable;
 }
 
+pub fn getFcntlFlags(fd: bun.FileDescriptor) Maybe(fnctl_int) {
+    return switch (bun.sys.fcntl(
+        fd,
+        std.posix.F.GETFL,
+        0,
+    )) {
+        .result => |f| .{ .result = f },
+        .err => |err| .{ .err = err },
+    };
+}
+
 pub fn utimens(path: bun.OSPathSliceZ, atime: JSC.Node.TimeLike, mtime: JSC.Node.TimeLike) Maybe(void) {
     return utimensWithFlags(path, atime, mtime, 0);
 }
 
 pub fn setNonblocking(fd: bun.FileDescriptor) Maybe(void) {
-    const flags = switch (bun.sys.fcntl(
-        fd,
-        std.posix.F.GETFL,
-        0,
-    )) {
-        .result => |f| f,
+    return updateNonblocking(fd, true);
+}
+
+pub fn updateNonblocking(fd: bun.FileDescriptor, nonblocking: bool) Maybe(void) {
+    const current_flags: i32 = switch (getFcntlFlags(fd)) {
+        .result => |f| @intCast(f),
         .err => |err| return .{ .err = err },
     };
 
-    const new_flags = flags | bun.O.NONBLOCK;
+    const new_flags: i32 = if (nonblocking) current_flags | @as(i32, bun.O.NONBLOCK) else current_flags & ~@as(i32, bun.O.NONBLOCK);
 
-    switch (bun.sys.fcntl(fd, std.posix.F.SETFL, new_flags)) {
-        .err => |err| return .{ .err = err },
-        .result => {},
+    if (new_flags != current_flags) {
+        switch (bun.sys.fcntl(fd, std.posix.F.SETFL, @as(fnctl_int, @intCast(new_flags)))) {
+            .err => |err| return .{ .err = err },
+            .result => {},
+        }
     }
 
     return Maybe(void).success;
@@ -3486,7 +3509,7 @@ pub fn openNullDevice() Maybe(bun.FileDescriptor) {
     return open("/dev/null", bun.O.RDWR, 0);
 }
 
-pub fn dupWithFlags(fd: bun.FileDescriptor, flags: i32) Maybe(bun.FileDescriptor) {
+pub fn dupWithFlags(fd: bun.FileDescriptor, _: i32) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isWindows) {
         var target: windows.HANDLE = undefined;
         const process = kernel32.GetCurrentProcess();
@@ -3510,16 +3533,10 @@ pub fn dupWithFlags(fd: bun.FileDescriptor, flags: i32) Maybe(bun.FileDescriptor
     }
 
     const ArgType = if (comptime Environment.isLinux) usize else c_int;
-    const out = syscall.fcntl(fd.cast(), @as(i32, bun.C.F.DUPFD_CLOEXEC), @as(ArgType, 0));
-    log("dup({d}) = {d}", .{ fd.cast(), out });
-    if (Maybe(bun.FileDescriptor).errnoSysFd(out, .dup, fd)) |err| {
-        return err;
-    }
-
-    if (flags != 0) {
-        const fd_flags: ArgType = @intCast(syscall.fcntl(@intCast(out), @as(i32, std.posix.F.GETFD), @as(ArgType, 0)));
-        _ = syscall.fcntl(@intCast(out), @as(i32, std.posix.F.SETFD), @as(ArgType, @intCast(fd_flags | @as(ArgType, @intCast(flags)))));
-    }
+    const out = switch (fcntl(fd, @as(i32, bun.C.F.DUPFD_CLOEXEC), @as(ArgType, 0))) {
+        .result => |result| result,
+        .err => |err| return .{ .err = err },
+    };
 
     return Maybe(bun.FileDescriptor){
         .result = bun.toFD(@as(u32, @intCast(out))),

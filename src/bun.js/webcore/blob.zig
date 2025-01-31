@@ -3584,6 +3584,58 @@ pub const Blob = struct {
 
             return value;
         }
+
+        pub fn listObjects(this: *@This(), store: *Store, globalThis: *JSC.JSGlobalObject, listOptions: JSValue, extra_options: ?JSValue) bun.JSError!JSValue {
+            if (!listOptions.isEmptyOrUndefinedOrNull() and !listOptions.isObject()) {
+                return globalThis.throwInvalidArguments("S3Client.listObjects() needs a S3ListObjectsOption as it's first argument", .{});
+            }
+
+            const Wrapper = struct {
+                promise: JSC.JSPromise.Strong,
+                store: *Store,
+
+                pub usingnamespace bun.New(@This());
+
+                pub fn resolve(result: S3.S3ListObjectsResult, self: *@This()) void {
+                    defer self.deinit();
+                    const globalObject = self.promise.globalObject().?;
+                    switch (result) {
+                        .success => |list_result| {
+                            defer list_result.deinit();
+                            self.promise.resolve(globalObject, list_result.toJS(globalObject));
+                        },
+
+                        inline .not_found, .failure => |err| {
+                            self.promise.reject(globalObject, err.toJS(globalObject, self.store.getPath()));
+                        },
+                    }
+                }
+
+                fn deinit(self: *@This()) void {
+                    self.store.deref();
+                    self.promise.deinit();
+                    self.destroy();
+                }
+            };
+
+            const promise = JSC.JSPromise.Strong.init(globalThis);
+            const value = promise.value();
+            const proxy_url = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
+            const proxy = if (proxy_url) |url| url.href else null;
+            var aws_options = try this.getCredentialsWithOptions(extra_options, globalThis);
+            defer aws_options.deinit();
+
+            const options = S3.getListObjectsOptionsFromJS(globalThis, listOptions) catch bun.outOfMemory();
+
+            S3.listObjects(&aws_options.credentials, options, @ptrCast(&Wrapper.resolve), Wrapper.new(.{
+                .promise = promise,
+                .store = store, // store is needed in case of not found error
+            }), proxy);
+            store.ref();
+
+            return value;
+        }
+
         pub fn initWithReferencedCredentials(pathlike: JSC.Node.PathLike, mime_type: ?http.MimeType, credentials: *S3Credentials) S3Store {
             credentials.ref();
             return .{

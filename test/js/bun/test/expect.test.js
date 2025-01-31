@@ -46,6 +46,10 @@ describe("expect()", () => {
   describe("toBe()", () => {
     let obj = {};
     it.each([
+      [0, 0.0],
+      [+0, +0],
+      [0, +0],
+      [-0, -0],
       [1, 1],
       [1, 1.0],
       [NaN, NaN],
@@ -57,11 +61,13 @@ describe("expect()", () => {
       expect(b).toBe(a);
     });
     it.each([
+      [0, false],
+      [0, ""],
+      [0, -0],
+      [+0, -0],
       [1, 2],
       [1, true],
       [1, "1"],
-      [0, false],
-      [0, ""],
       [Infinity, -Infinity],
       ["foo", "Foo"],
       ["foo", "bar"],

@@ -76,17 +76,17 @@ pub extern "c" fn fclonefileat(c_int, c_int, [*:0]const u8, uint32_t: c_int) c_i
 pub extern "c" fn clonefile(src: [*:0]const u8, dest: [*:0]const u8, flags: c_int) c_int;
 
 pub const lstat = blk: {
-    const T = *const fn ([*c]const u8, [*c]std.c.Stat) callconv(.C) c_int;
-    break :blk @extern(T, .{ .name = "lstat64" });
+    const T = *const fn (?[*:0]const u8, ?*bun.Stat) callconv(.C) c_int;
+    break :blk @extern(T, .{ .name = if (bun.Environment.isAarch64) "lstat" else "lstat64" });
 };
 
 pub const fstat = blk: {
-    const T = *const fn ([*c]const u8, [*c]std.c.Stat) callconv(.C) c_int;
-    break :blk @extern(T, .{ .name = "fstat64" });
+    const T = *const fn (i32, ?*bun.Stat) callconv(.C) c_int;
+    break :blk @extern(T, .{ .name = if (bun.Environment.isAarch64) "fstat" else "fstat64" });
 };
 pub const stat = blk: {
-    const T = *const fn ([*c]const u8, [*c]std.c.Stat) callconv(.C) c_int;
-    break :blk @extern(T, .{ .name = "stat64" });
+    const T = *const fn (?[*:0]const u8, ?*bun.Stat) callconv(.C) c_int;
+    break :blk @extern(T, .{ .name = if (bun.Environment.isAarch64) "stat" else "stat64" });
 };
 
 // pub fn stat_absolute(path: [:0]const u8) StatError!Stat {
@@ -473,16 +473,13 @@ pub fn getTotalMemory() u64 {
     return memory_[0];
 }
 
-pub const struct_BootTime = struct {
-    sec: u32,
-};
 pub fn getSystemUptime() u64 {
-    var uptime_: [16]struct_BootTime = undefined;
-    var size: usize = uptime_.len;
+    var boot_time: std.posix.timeval = undefined;
+    var size: usize = @sizeOf(@TypeOf(boot_time));
 
     std.posix.sysctlbynameZ(
         "kern.boottime",
-        &uptime_,
+        &boot_time,
         &size,
         null,
         0,
@@ -490,20 +487,16 @@ pub fn getSystemUptime() u64 {
         else => return 0,
     };
 
-    return @as(u64, @bitCast(std.time.timestamp() - uptime_[0].sec));
+    return @intCast(std.time.timestamp() - boot_time.tv_sec);
 }
 
-pub const struct_LoadAvg = struct {
-    ldavg: [3]u32,
-    fscale: c_long,
-};
 pub fn getSystemLoadavg() [3]f64 {
-    var loadavg_: [24]struct_LoadAvg = undefined;
-    var size: usize = loadavg_.len;
+    var loadavg: bun.C.translated.struct_loadavg = undefined;
+    var size: usize = @sizeOf(@TypeOf(loadavg));
 
     std.posix.sysctlbynameZ(
         "vm.loadavg",
-        &loadavg_,
+        &loadavg,
         &size,
         null,
         0,
@@ -511,8 +504,7 @@ pub fn getSystemLoadavg() [3]f64 {
         else => return [3]f64{ 0, 0, 0 },
     };
 
-    const loadavg = loadavg_[0];
-    const scale = @as(f64, @floatFromInt(loadavg.fscale));
+    const scale: f64 = @floatFromInt(loadavg.fscale);
     return .{
         if (scale == 0.0) 0 else @as(f64, @floatFromInt(loadavg.ldavg[0])) / scale,
         if (scale == 0.0) 0 else @as(f64, @floatFromInt(loadavg.ldavg[1])) / scale,
@@ -708,6 +700,8 @@ pub extern fn getifaddrs(*?*ifaddrs) c_int;
 pub extern fn freeifaddrs(?*ifaddrs) void;
 
 const net_if_h = @cImport({
+    // TODO: remove this c import! instead of adding to it, add to
+    // c-headers-for-zig.h and use bun.C.translated.
     @cInclude("net/if.h");
 });
 pub const IFF_RUNNING = net_if_h.IFF_RUNNING;
@@ -730,6 +724,8 @@ pub const sockaddr_dl = extern struct {
 };
 
 pub usingnamespace @cImport({
+    // TODO: remove this c import! instead of adding to it, add to
+    // c-headers-for-zig.h and use bun.C.translated.
     @cInclude("sys/spawn.h");
     @cInclude("sys/fcntl.h");
     @cInclude("sys/socket.h");
@@ -781,10 +777,6 @@ pub const CLOCK_UPTIME_RAW = 8;
 pub const CLOCK_UPTIME_RAW_APPROX = 9;
 pub const CLOCK_PROCESS_CPUTIME_ID = 12;
 pub const CLOCK_THREAD_CPUTIME_ID = 1;
-
-pub const netdb = @cImport({
-    @cInclude("netdb.h");
-});
 
 pub extern fn memset_pattern4(buf: [*]u8, pattern: [*]const u8, len: usize) void;
 pub extern fn memset_pattern8(buf: [*]u8, pattern: [*]const u8, len: usize) void;

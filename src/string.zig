@@ -384,6 +384,7 @@ pub const String = extern struct {
     fn createUninitializedLatin1(len: usize) struct { String, []u8 } {
         bun.assert(len > 0);
         const string = BunString__fromLatin1Unitialized(len);
+        _ = validateRefCount(string);
         const wtf = string.value.WTFStringImpl;
         return .{
             string,
@@ -394,6 +395,7 @@ pub const String = extern struct {
     fn createUninitializedUTF16(len: usize) struct { String, []u16 } {
         bun.assert(len > 0);
         const string = BunString__fromUTF16Unitialized(len);
+        _ = validateRefCount(string);
         const wtf = string.value.WTFStringImpl;
         return .{
             string,
@@ -434,21 +436,31 @@ pub const String = extern struct {
     pub fn createLatin1(bytes: []const u8) String {
         JSC.markBinding(@src());
         if (bytes.len == 0) return String.empty;
-        return BunString__fromLatin1(bytes.ptr, bytes.len);
+        return validateRefCount(BunString__fromLatin1(bytes.ptr, bytes.len));
+    }
+
+    pub inline fn validateRefCount(this: String) String {
+        if (comptime bun.Environment.isDebug) {
+            // Newly created strings should have a ref count of 1
+            if (!this.isEmpty()) {
+                const ref_count = this.value.WTFStringImpl.refCount();
+                bun.assert(ref_count == 1);
+            }
+        }
+
+        return this;
     }
 
     pub fn createUTF8(bytes: []const u8) String {
-        JSC.markBinding(@src());
-        if (bytes.len == 0) return String.empty;
-        return BunString__fromBytes(bytes.ptr, bytes.len);
+        return JSC.WebCore.Encoder.toBunStringComptime(bytes, .utf8);
     }
 
     pub fn createUTF16(bytes: []const u16) String {
         if (bytes.len == 0) return String.empty;
         if (bun.strings.firstNonASCII16([]const u16, bytes) == null) {
-            return BunString__fromUTF16ToLatin1(bytes.ptr, bytes.len);
+            return validateRefCount(BunString__fromUTF16ToLatin1(bytes.ptr, bytes.len));
         }
-        return BunString__fromUTF16(bytes.ptr, bytes.len);
+        return validateRefCount(BunString__fromUTF16(bytes.ptr, bytes.len));
     }
 
     pub fn createFormat(comptime fmt: [:0]const u8, args: anytype) OOM!String {
@@ -456,7 +468,7 @@ pub const String = extern struct {
             return String.static(fmt);
         }
 
-        var sba = std.heap.stackFallback(16384, bun.default_allocator);
+        var sba = std.heap.stackFallback(512, bun.default_allocator);
         const alloc = sba.get();
         const buf = try std.fmt.allocPrint(alloc, fmt, args);
         defer alloc.free(buf);
@@ -642,7 +654,7 @@ pub const String = extern struct {
             }
             return dead;
         }
-        return BunString__createExternal(bytes.ptr, bytes.len, isLatin1, ctx, callback);
+        return validateRefCount(BunString__createExternal(bytes.ptr, bytes.len, isLatin1, ctx, callback));
     }
 
     /// This should rarely be used. The WTF::StringImpl* will never be freed.
@@ -682,8 +694,8 @@ pub const String = extern struct {
         }
 
         return switch (comptime kind) {
-            .latin1 => BunString__createExternalGloballyAllocatedLatin1(bytes.ptr, bytes.len),
-            .utf16 => BunString__createExternalGloballyAllocatedUTF16(bytes.ptr, bytes.len),
+            .latin1 => validateRefCount(BunString__createExternalGloballyAllocatedLatin1(bytes.ptr, bytes.len)),
+            .utf16 => validateRefCount(BunString__createExternalGloballyAllocatedUTF16(bytes.ptr, bytes.len)),
         };
     }
 

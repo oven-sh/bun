@@ -1698,6 +1698,15 @@ pub const Api = struct {
         /// ignore_dce_annotations
         ignore_dce_annotations: bool,
 
+        /// e.g.:
+        /// [serve.static]
+        /// plugins = ["tailwindcss"]
+        serve_plugins: ?[]const []const u8 = null,
+        serve_minify_syntax: ?bool = null,
+        serve_minify_whitespace: ?bool = null,
+        serve_minify_identifiers: ?bool = null,
+        bunfig_path: []const u8,
+
         pub fn decode(reader: anytype) anyerror!TransformOptions {
             var this = std.mem.zeroes(TransformOptions);
 
@@ -2985,6 +2994,8 @@ pub const Api = struct {
             str: []const u8,
             list: []const []const u8,
         } = null,
+
+        ignore_scripts: ?bool = null,
 
         pub fn decode(reader: anytype) anyerror!BunInstall {
             var this = std.mem.zeroes(BunInstall);

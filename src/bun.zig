@@ -70,6 +70,8 @@ pub inline fn clampFloat(_self: anytype, min: @TypeOf(_self), max: @TypeOf(_self
     return self;
 }
 
+pub const ArrayList = std.ArrayListUnmanaged;
+
 /// We cannot use a threadlocal memory allocator for FileSystem-related things
 /// FileSystem is a singleton.
 pub const fs_allocator = default_allocator;
@@ -1600,6 +1602,8 @@ pub const Semver = @import("./install/semver.zig");
 pub const ImportRecord = @import("./import_record.zig").ImportRecord;
 pub const ImportKind = @import("./import_record.zig").ImportKind;
 
+pub const Watcher = @import("./Watcher.zig");
+
 pub usingnamespace @import("./util.zig");
 pub const fast_debug_build_cmd = .None;
 pub const fast_debug_build_mode = fast_debug_build_cmd != .None and
@@ -2274,6 +2278,11 @@ const WindowsStat = extern struct {
 };
 
 pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.posix.Stat;
+pub const StatFS = switch (Environment.os) {
+    .mac => C.translated.struct_statfs,
+    .linux => C.translated.struct_statfs,
+    else => windows.libuv.uv_statfs_t,
+};
 
 pub var argv: [][:0]const u8 = &[_][:0]const u8{};
 
@@ -3736,19 +3745,29 @@ pub const timespec = extern struct {
 
         assert(this.sec >= 0);
         assert(this.nsec >= 0);
-
-        const max = std.math.maxInt(u64);
         const s_ns = std.math.mul(
             u64,
             @as(u64, @intCast(this.sec)),
             std.time.ns_per_s,
-        ) catch return max;
+        ) catch return std.math.maxInt(u64);
 
         return std.math.add(u64, s_ns, @as(u64, @intCast(this.nsec))) catch
-            return max;
+            return std.math.maxInt(i64);
     }
 
-    pub fn ms(this: *const timespec) u64 {
+    pub fn nsSigned(this: *const timespec) i64 {
+        const ns_per_sec = this.sec *% std.time.ns_per_s;
+        const ns_from_nsec = @divFloor(this.nsec, 1_000_000);
+        return ns_per_sec +% ns_from_nsec;
+    }
+
+    pub fn ms(this: *const timespec) i64 {
+        const ms_from_sec = this.sec *% 1000;
+        const ms_from_nsec = @divFloor(this.nsec, 1_000_000);
+        return ms_from_sec +% ms_from_nsec;
+    }
+
+    pub fn msUnsigned(this: *const timespec) u64 {
         return this.ns() / std.time.ns_per_ms;
     }
 
@@ -4147,6 +4166,16 @@ pub inline fn take(val: anytype) ?bun.meta.OptionalChild(@TypeOf(val)) {
     return null;
 }
 
+/// `val` must be a pointer to an optional type (e.g. `*?T`)
+///
+/// This function deinitializes the value and sets the optional to null.
+pub inline fn clear(val: anytype, allocator: std.mem.Allocator) void {
+    if (val.*) |*v| {
+        v.deinit(allocator);
+        val.* = null;
+    }
+}
+
 pub inline fn wrappingNegation(val: anytype) @TypeOf(val) {
     return 0 -% val;
 }
@@ -4173,6 +4202,82 @@ pub inline fn isComptimeKnown(x: anytype) bool {
 
 pub inline fn itemOrNull(comptime T: type, slice: []const T, index: usize) ?T {
     return if (index < slice.len) slice[index] else null;
+}
+
+pub const Maybe = bun.JSC.Node.Maybe;
+
+/// Type which could be borrowed or owned
+/// The name is from the Rust std's `Cow` type
+/// Can't think of a better name
+pub fn Cow(comptime T: type, comptime VTable: type) type {
+    const Handler = struct {
+        fn copy(this: *const T, allocator: std.mem.Allocator) T {
+            if (!@hasDecl(VTable, "copy")) @compileError(@typeName(VTable) ++ " needs `copy()` function");
+            return VTable.copy(this, allocator);
+        }
+
+        fn deinit(this: *T, allocator: std.mem.Allocator) void {
+            if (!@hasDecl(VTable, "deinit")) @compileError(@typeName(VTable) ++ " needs `deinit()` function");
+            return VTable.deinit(this, allocator);
+        }
+    };
+
+    return union(enum) {
+        borrowed: *const T,
+        owned: T,
+
+        pub fn borrow(val: *const T) @This() {
+            return .{
+                .borrowed = val,
+            };
+        }
+
+        pub fn own(val: T) @This() {
+            return .{
+                .owned = val,
+            };
+        }
+
+        pub fn replace(this: *@This(), allocator: std.mem.Allocator, newval: T) void {
+            if (this.* == .owned) {
+                this.deinit(allocator);
+            }
+            this.* = .{ .owned = newval };
+        }
+
+        /// Get the underlying value.
+        pub inline fn inner(this: *const @This()) *const T {
+            return switch (this.*) {
+                .borrowed => this.borrowed,
+                .owned => &this.owned,
+            };
+        }
+
+        pub inline fn innerMut(this: *@This()) ?*T {
+            return switch (this.*) {
+                .borrowed => null,
+                .owned => &this.owned,
+            };
+        }
+
+        pub fn toOwned(this: *@This(), allocator: std.mem.Allocator) *T {
+            switch (this.*) {
+                .borrowed => {
+                    this.* = .{
+                        .owned = Handler.copy(this.borrowed, allocator),
+                    };
+                },
+                .owned => {},
+            }
+            return &this.owned;
+        }
+
+        pub fn deinit(this: *@This(), allocator: std.mem.Allocator) void {
+            if (this.* == .owned) {
+                Handler.deinit(&this.owned, allocator);
+            }
+        }
+    };
 }
 
 /// To handle stack overflows:

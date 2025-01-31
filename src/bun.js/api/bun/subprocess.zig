@@ -475,9 +475,12 @@ pub const Subprocess = struct {
 
         pub fn close(this: *Readable) void {
             switch (this.*) {
-                inline .memfd, .fd => |fd| {
+                .memfd => |fd| {
                     this.* = .{ .closed = {} };
                     _ = bun.sys.close(fd);
+                },
+                .fd => |_| {
+                    this.* = .{ .closed = {} };
                 },
                 .pipe => {
                     this.pipe.close();
@@ -488,9 +491,12 @@ pub const Subprocess = struct {
 
         pub fn finalize(this: *Readable) void {
             switch (this.*) {
-                inline .memfd, .fd => |fd| {
+                .memfd => |fd| {
                     this.* = .{ .closed = {} };
                     _ = bun.sys.close(fd);
+                },
+                .fd => {
+                    this.* = .{ .closed = {} };
                 },
                 .pipe => |pipe| {
                     defer pipe.detach();
@@ -1438,8 +1444,11 @@ pub const Subprocess = struct {
                 .pipe => |pipe| {
                     _ = pipe.end(null);
                 },
-                inline .memfd, .fd => |fd| {
+                .memfd => |fd| {
                     _ = bun.sys.close(fd);
+                    this.* = .{ .ignore = {} };
+                },
+                .fd => {
                     this.* = .{ .ignore = {} };
                 },
                 .buffer => {
@@ -2379,21 +2388,29 @@ pub const Subprocess = struct {
             jsc_vm.onSubprocessSpawn(subprocess.process);
         }
 
-        while (subprocess.hasPendingActivityNonThreadsafe()) {
-            if (subprocess.stdin == .buffer) {
-                subprocess.stdin.buffer.watch();
+        // We cannot release heap access while JS is running
+        {
+            const old_vm = jsc_vm.uwsLoop().internal_loop_data.jsc_vm;
+            jsc_vm.uwsLoop().internal_loop_data.jsc_vm = null;
+            defer {
+                jsc_vm.uwsLoop().internal_loop_data.jsc_vm = old_vm;
             }
+            while (subprocess.hasPendingActivityNonThreadsafe()) {
+                if (subprocess.stdin == .buffer) {
+                    subprocess.stdin.buffer.watch();
+                }
 
-            if (subprocess.stderr == .pipe) {
-                subprocess.stderr.pipe.watch();
+                if (subprocess.stderr == .pipe) {
+                    subprocess.stderr.pipe.watch();
+                }
+
+                if (subprocess.stdout == .pipe) {
+                    subprocess.stdout.pipe.watch();
+                }
+
+                jsc_vm.tick();
+                jsc_vm.eventLoop().autoTick();
             }
-
-            if (subprocess.stdout == .pipe) {
-                subprocess.stdout.pipe.watch();
-            }
-
-            jsc_vm.tick();
-            jsc_vm.eventLoop().autoTick();
         }
 
         subprocess.updateHasPendingActivity();

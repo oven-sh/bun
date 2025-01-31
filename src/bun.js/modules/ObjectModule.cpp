@@ -10,7 +10,7 @@ generateObjectModuleSourceCode(JSC::JSGlobalObject* globalObject,
                JSC::Identifier moduleKey,
                Vector<JSC::Identifier, 4>& exportNames,
                JSC::MarkedArgumentBuffer& exportValues) -> void {
-        JSC::VM& vm = lexicalGlobalObject->vm();
+        auto& vm = JSC::getVM(lexicalGlobalObject);
         GlobalObject* globalObject = reinterpret_cast<GlobalObject*>(lexicalGlobalObject);
         JSC::EnsureStillAliveScope stillAlive(object);
 
@@ -43,7 +43,7 @@ generateObjectModuleSourceCodeForJSON(JSC::JSGlobalObject* globalObject,
                JSC::Identifier moduleKey,
                Vector<JSC::Identifier, 4>& exportNames,
                JSC::MarkedArgumentBuffer& exportValues) -> void {
-        JSC::VM& vm = lexicalGlobalObject->vm();
+        auto& vm = JSC::getVM(lexicalGlobalObject);
         GlobalObject* globalObject = reinterpret_cast<GlobalObject*>(lexicalGlobalObject);
         JSC::EnsureStillAliveScope stillAlive(object);
 
@@ -97,9 +97,12 @@ generateJSValueExportDefaultObjectSourceCode(JSC::JSGlobalObject* globalObject,
                JSC::Identifier moduleKey,
                Vector<JSC::Identifier, 4>& exportNames,
                JSC::MarkedArgumentBuffer& exportValues) -> void {
-        JSC::VM& vm = lexicalGlobalObject->vm();
+        auto& vm = JSC::getVM(lexicalGlobalObject);
         exportNames.append(vm.propertyNames->defaultKeyword);
         exportValues.append(value);
+        const Identifier& esModuleMarker = vm.propertyNames->__esModule;
+        exportNames.append(esModuleMarker);
+        exportValues.append(jsBoolean(true));
 
         if (value.isCell())
             gcUnprotectNullTolerant(value.asCell());

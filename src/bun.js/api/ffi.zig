@@ -677,7 +677,7 @@ pub const FFI = struct {
                     if (!value.isString()) {
                         return globalThis.throwInvalidArgumentTypeValue("flags", "array of strings", value);
                     }
-                    const slice = value.toSlice(globalThis, bun.default_allocator);
+                    const slice = try value.toSlice(globalThis, bun.default_allocator);
                     if (slice.len == 0) continue;
                     defer slice.deinit();
                     flags.append(' ') catch bun.outOfMemory();
@@ -1338,7 +1338,7 @@ pub const FFI = struct {
                     return ZigString.static("param must be a string (type name) or number").toErrorInstance(global);
                 }
 
-                var type_name = val.toSlice(global, allocator);
+                var type_name = try val.toSlice(global, allocator);
                 defer type_name.deinit();
                 abi_types.appendAssumeCapacity(ABIType.label.get(type_name.slice()) orelse {
                     abi_types.clearAndFree(allocator);
@@ -1370,7 +1370,7 @@ pub const FFI = struct {
                 }
             }
 
-            var ret_slice = ret_value.toSlice(global, allocator);
+            var ret_slice = try ret_value.toSlice(global, allocator);
             defer ret_slice.deinit();
             return_type = ABIType.label.get(ret_slice.slice()) orelse {
                 abi_types.clearAndFree(allocator);
@@ -2438,13 +2438,13 @@ const CompilerRT = struct {
         bun_call: *const @TypeOf(JSC.C.JSObjectCallAsFunction),
     };
     const headers = @import("../bindings/headers.zig");
-    var workaround: MyFunctionSStructWorkAround = if (!JSC.is_bindgen) .{
+    var workaround: MyFunctionSStructWorkAround = .{
         .JSVALUE_TO_INT64 = headers.JSC__JSValue__toInt64,
         .JSVALUE_TO_UINT64 = headers.JSC__JSValue__toUInt64NoTruncate,
         .INT64_TO_JSVALUE = headers.JSC__JSValue__fromInt64NoTruncate,
         .UINT64_TO_JSVALUE = headers.JSC__JSValue__fromUInt64NoTruncate,
         .bun_call = &JSC.C.JSObjectCallAsFunction,
-    } else undefined;
+    };
 
     noinline fn memset(
         dest: [*]u8,
@@ -2520,12 +2520,10 @@ const CompilerRT = struct {
             "JSVALUE_TO_UINT64_SLOW",
             workaround.JSVALUE_TO_UINT64,
         );
-        if (!comptime JSC.is_bindgen) {
-            std.mem.doNotOptimizeAway(headers.JSC__JSValue__toUInt64NoTruncate);
-            std.mem.doNotOptimizeAway(headers.JSC__JSValue__toInt64);
-            std.mem.doNotOptimizeAway(headers.JSC__JSValue__fromInt64NoTruncate);
-            std.mem.doNotOptimizeAway(headers.JSC__JSValue__fromUInt64NoTruncate);
-        }
+        std.mem.doNotOptimizeAway(headers.JSC__JSValue__toUInt64NoTruncate);
+        std.mem.doNotOptimizeAway(headers.JSC__JSValue__toInt64);
+        std.mem.doNotOptimizeAway(headers.JSC__JSValue__fromInt64NoTruncate);
+        std.mem.doNotOptimizeAway(headers.JSC__JSValue__fromUInt64NoTruncate);
         _ = TCC.tcc_add_symbol(
             state,
             "INT64_TO_JSVALUE_SLOW",

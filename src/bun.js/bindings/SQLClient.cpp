@@ -32,6 +32,11 @@ typedef struct DataCellArray {
     unsigned length;
 } DataCellArray;
 
+typedef struct DataCellRaw {
+    void* ptr;
+    uint64_t length;
+} DataCellRaw;
+
 typedef struct TypedArrayDataCell {
     void* headPtr;
     void* data;
@@ -53,6 +58,7 @@ typedef union DataCellValue {
     WTF::StringImpl* json;
     DataCellArray array;
     TypedArrayDataCell typed_array;
+    DataCellRaw raw;
 } DataCellValue;
 
 enum class DataCellTag : uint8_t {
@@ -68,6 +74,13 @@ enum class DataCellTag : uint8_t {
     Json = 9,
     Array = 10,
     TypedArray = 11,
+    Raw = 12,
+};
+
+enum class BunResultMode : uint8_t {
+    Objects = 0,
+    Values = 1,
+    Raw = 2,
 };
 
 typedef struct DataCell {
@@ -102,9 +115,24 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
     case DataCellTag::Null:
         return jsNull();
         break;
+    case DataCellTag::Raw: {
+        Zig::GlobalObject* zigGlobal = jsCast<Zig::GlobalObject*>(globalObject);
+        auto* subclassStructure = zigGlobal->JSBufferSubclassStructure();
+        auto* uint8Array = JSC::JSUint8Array::createUninitialized(globalObject, subclassStructure, cell.value.raw.length);
+        if (UNLIKELY(uint8Array == nullptr)) {
+            return {};
+        }
+
+        if (cell.value.raw.length > 0) {
+            memcpy(uint8Array->vector(), reinterpret_cast<void*>(cell.value.raw.ptr), cell.value.raw.length);
+        }
+        return uint8Array;
+    }
     case DataCellTag::String: {
-        return jsString(vm, WTF::String(cell.value.string));
-        break;
+        if (cell.value.string) {
+            return jsString(vm, WTF::String(cell.value.string));
+        }
+        return jsEmptyString(vm);
     }
     case DataCellTag::Double:
         return jsDoubleNumber(cell.value.number);
@@ -137,10 +165,12 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         return uint8Array;
     }
     case DataCellTag::Json: {
-        auto str = WTF::String(cell.value.string);
-        JSC::JSValue json = JSC::JSONParse(globalObject, str);
-        return json;
-        break;
+        if (cell.value.json) {
+            auto str = WTF::String(cell.value.json);
+            JSC::JSValue json = JSC::JSONParse(globalObject, str);
+            return json;
+        }
+        return jsNull();
     }
     case DataCellTag::Array: {
         MarkedArgumentBuffer args;
@@ -250,79 +280,104 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
     }
 }
 
-static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, unsigned count, JSC::JSGlobalObject* globalObject, Bun::BunStructureFlags flags)
+static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, unsigned count, JSC::JSGlobalObject* globalObject, Bun::BunStructureFlags flags, BunResultMode result_mode)
 {
-    auto& vm = globalObject->vm();
-    auto* object = JSC::constructEmptyObject(vm, structure);
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // TODO: once we have more tests for this, let's add another branch for
-    // "only mixed names and mixed indexed columns, no duplicates"
-    // then we cna remove this sort and instead do two passes.
-    if (flags.hasIndexedColumns() && flags.hasNamedColumns()) {
-        // sort the cells by if they're named or indexed, put named first.
-        // this is to conform to the Structure offsets from earlier.
-        std::sort(cells, cells + count, [](DataCell& a, DataCell& b) {
-            return a.isNamedColumn() && !b.isNamedColumn();
-        });
-    }
+    switch (result_mode) {
+    case BunResultMode::Objects: // objects
 
-    // Fast path: named columns only, no duplicate columns
-    if (flags.hasNamedColumns() && !flags.hasDuplicateColumns() && !flags.hasIndexedColumns()) {
-        for (unsigned i = 0; i < count; i++) {
-            auto& cell = cells[i];
-            JSValue value = toJS(vm, globalObject, cell);
-            RETURN_IF_EXCEPTION(scope, {});
-            ASSERT(!cell.isDuplicateColumn());
-            ASSERT(!cell.isIndexedColumn());
-            ASSERT(cell.isNamedColumn());
-            object->putDirectOffset(vm, i, value);
+    {
+        auto* object = JSC::constructEmptyObject(vm, structure);
+
+        // TODO: once we have more tests for this, let's add another branch for
+        // "only mixed names and mixed indexed columns, no duplicates"
+        // then we cna remove this sort and instead do two passes.
+        if (flags.hasIndexedColumns() && flags.hasNamedColumns()) {
+            // sort the cells by if they're named or indexed, put named first.
+            // this is to conform to the Structure offsets from earlier.
+            std::sort(cells, cells + count, [](DataCell& a, DataCell& b) {
+                return a.isNamedColumn() && !b.isNamedColumn();
+            });
         }
-    } else if (flags.hasIndexedColumns() && !flags.hasNamedColumns() && !flags.hasDuplicateColumns()) {
-        for (unsigned i = 0; i < count; i++) {
-            auto& cell = cells[i];
-            JSValue value = toJS(vm, globalObject, cell);
-            RETURN_IF_EXCEPTION(scope, {});
-            ASSERT(!cell.isDuplicateColumn());
-            ASSERT(cell.isIndexedColumn());
-            ASSERT(!cell.isNamedColumn());
-            // cell.index can be > count
-            // for example:
-            //   select 1 as "8", 2 as "2", 3 as "3"
-            //   -> { "8": 1, "2": 2, "3": 3 }
-            //  8 > count
-            object->putDirectIndex(globalObject, cell.index, value);
-        }
-    } else {
-        unsigned structureOffsetIndex = 0;
-        // slow path: named columns with duplicate columns or indexed columns
-        for (unsigned i = 0; i < count; i++) {
-            auto& cell = cells[i];
-            if (cell.isIndexedColumn()) {
+
+        // Fast path: named columns only, no duplicate columns
+        if (flags.hasNamedColumns() && !flags.hasDuplicateColumns() && !flags.hasIndexedColumns()) {
+            for (unsigned i = 0; i < count; i++) {
+                auto& cell = cells[i];
                 JSValue value = toJS(vm, globalObject, cell);
                 RETURN_IF_EXCEPTION(scope, {});
-                ASSERT(cell.index < count);
-                ASSERT(!cell.isNamedColumn());
                 ASSERT(!cell.isDuplicateColumn());
-                object->putDirectIndex(globalObject, cell.index, value);
-            } else if (cell.isNamedColumn()) {
-                JSValue value = toJS(vm, globalObject, cell);
-                RETURN_IF_EXCEPTION(scope, {});
                 ASSERT(!cell.isIndexedColumn());
+                ASSERT(cell.isNamedColumn());
+                object->putDirectOffset(vm, i, value);
+            }
+        } else if (flags.hasIndexedColumns() && !flags.hasNamedColumns() && !flags.hasDuplicateColumns()) {
+            for (unsigned i = 0; i < count; i++) {
+                auto& cell = cells[i];
+                JSValue value = toJS(vm, globalObject, cell);
+                RETURN_IF_EXCEPTION(scope, {});
                 ASSERT(!cell.isDuplicateColumn());
-                ASSERT(cell.index < count);
-                object->putDirectOffset(vm, structureOffsetIndex++, value);
-            } else if (cell.isDuplicateColumn()) {
-                // skip it!
+                ASSERT(cell.isIndexedColumn());
+                ASSERT(!cell.isNamedColumn());
+                // cell.index can be > count
+                // for example:
+                //   select 1 as "8", 2 as "2", 3 as "3"
+                //   -> { "8": 1, "2": 2, "3": 3 }
+                //  8 > count
+                object->putDirectIndex(globalObject, cell.index, value);
+            }
+        } else {
+            unsigned structureOffsetIndex = 0;
+            // slow path: named columns with duplicate columns or indexed columns
+            for (unsigned i = 0; i < count; i++) {
+                auto& cell = cells[i];
+                if (cell.isIndexedColumn()) {
+                    JSValue value = toJS(vm, globalObject, cell);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    ASSERT(cell.index < count);
+                    ASSERT(!cell.isNamedColumn());
+                    ASSERT(!cell.isDuplicateColumn());
+                    object->putDirectIndex(globalObject, cell.index, value);
+                } else if (cell.isNamedColumn()) {
+                    JSValue value = toJS(vm, globalObject, cell);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    ASSERT(!cell.isIndexedColumn());
+                    ASSERT(!cell.isDuplicateColumn());
+                    ASSERT(cell.index < count);
+                    object->putDirectOffset(vm, structureOffsetIndex++, value);
+                } else if (cell.isDuplicateColumn()) {
+                    // skip it!
+                }
             }
         }
+        return object;
     }
-    return object;
-}
+    case BunResultMode::Raw: // raw is just array mode with raw values
+    case BunResultMode::Values: // values
+    {
+        auto* array = JSC::constructEmptyArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), count);
+        RETURN_IF_EXCEPTION(scope, {});
 
-static JSC::JSValue toJS(JSC::JSArray* array, JSC::Structure* structure, DataCell* cells, unsigned count, JSC::JSGlobalObject* globalObject, Bun::BunStructureFlags flags)
+        for (unsigned i = 0; i < count; i++) {
+            auto& cell = cells[i];
+            JSValue value = toJS(vm, globalObject, cell);
+            RETURN_IF_EXCEPTION(scope, {});
+            array->putDirectIndex(globalObject, i, value);
+        }
+        return array;
+    }
+
+    default:
+        // not a valid result mode
+        ASSERT_NOT_REACHED();
+        return jsUndefined();
+    }
+}
+static JSC::JSValue toJS(JSC::JSArray* array, JSC::Structure* structure, DataCell* cells, unsigned count, JSC::JSGlobalObject* globalObject, Bun::BunStructureFlags flags, BunResultMode result_mode)
 {
-    JSValue value = toJS(structure, cells, count, globalObject, flags);
+    JSValue value = toJS(structure, cells, count, globalObject, flags, result_mode);
     if (value.isEmpty())
         return {};
 
@@ -342,14 +397,13 @@ static JSC::JSValue toJS(JSC::JSArray* array, JSC::Structure* structure, DataCel
 extern "C" EncodedJSValue JSC__constructObjectFromDataCell(
     JSC::JSGlobalObject* globalObject,
     EncodedJSValue encodedArrayValue,
-    EncodedJSValue encodedStructureValue, DataCell* cells, unsigned count, unsigned flags)
+    EncodedJSValue encodedStructureValue, DataCell* cells, unsigned count, unsigned flags, uint8_t result_mode)
 {
     JSValue arrayValue = JSValue::decode(encodedArrayValue);
     JSValue structureValue = JSValue::decode(encodedStructureValue);
     auto* array = arrayValue ? jsDynamicCast<JSC::JSArray*>(arrayValue) : nullptr;
     auto* structure = jsDynamicCast<JSC::Structure*>(structureValue);
-
-    return JSValue::encode(toJS(array, structure, cells, count, globalObject, Bun::BunStructureFlags(flags)));
+    return JSValue::encode(toJS(array, structure, cells, count, globalObject, Bun::BunStructureFlags(flags), BunResultMode(result_mode)));
 }
 
 typedef struct ExternColumnIdentifier {
@@ -366,7 +420,7 @@ typedef struct ExternColumnIdentifier {
 
 extern "C" EncodedJSValue JSC__createStructure(JSC::JSGlobalObject* globalObject, JSC::JSCell* owner, unsigned int inlineCapacity, ExternColumnIdentifier* namesPtr)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
 
     PropertyNameArray propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
     std::span<ExternColumnIdentifier> names(namesPtr, inlineCapacity);
@@ -403,7 +457,7 @@ extern "C" EncodedJSValue JSC__createStructure(JSC::JSGlobalObject* globalObject
 
 extern "C" EncodedJSValue JSC__createEmptyObjectWithStructure(JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto* object = JSC::constructEmptyObject(vm, structure);
 
     ensureStillAliveHere(object);

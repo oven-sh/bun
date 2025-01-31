@@ -1,5 +1,4 @@
 const std = @import("std");
-const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 const StaticExport = @import("./bindings/static_export.zig");
 const bun = @import("root").bun;
 const string = bun.string;
@@ -434,7 +433,7 @@ pub const RuntimeTranspilerStore = struct {
 
             var fd: ?StoredFileDescriptorType = null;
             var package_json: ?*PackageJSON = null;
-            const hash = JSC.GenericWatcher.getHash(path.text);
+            const hash = bun.Watcher.getHash(path.text);
 
             switch (vm.bun_watcher) {
                 .hot, .watch => {
@@ -1523,7 +1522,7 @@ pub const ModuleLoader = struct {
             .js, .jsx, .ts, .tsx, .json, .toml, .text => {
                 jsc_vm.transpiled_count += 1;
                 jsc_vm.transpiler.resetStore();
-                const hash = JSC.GenericWatcher.getHash(path.text);
+                const hash = bun.Watcher.getHash(path.text);
                 const is_main = jsc_vm.main.len == path.text.len and
                     jsc_vm.main_hash == hash and
                     strings.eqlLong(jsc_vm.main, path.text, false);
@@ -1664,7 +1663,7 @@ pub const ModuleLoader = struct {
                         const heap_access = if (!disable_transpilying)
                             jsc_vm.jsc.releaseHeapAccess()
                         else
-                            JSC.VM.ReleaseHeapAccess{ .vm = jsc_vm.jsc, .needs_to_release = false };
+                            JSC.VM.ReleaseHeapAccess{ .vm = jsc_vm.jsc, .needs_to_acquire = false };
                         defer heap_access.acquire();
 
                         break :brk jsc_vm.transpiler.parseMaybeReturnFileOnly(
@@ -2107,7 +2106,7 @@ pub const ModuleLoader = struct {
                     return error.NotSupported;
                 }
 
-                const html_bundle = try JSC.API.HTMLBundle.init(globalObject.?, path.text);
+                const html_bundle = try JSC.API.HTMLBundle.init(globalObject.?, path.text, jsc_vm.transpiler.options.bunfig_path, jsc_vm.transpiler.options.serve_plugins);
                 return ResolvedSource{
                     .allocator = &jsc_vm.allocator,
                     .jsvalue_for_export = html_bundle.toJS(globalObject.?),
@@ -2119,83 +2118,86 @@ pub const ModuleLoader = struct {
             },
 
             else => {
-                if (virtual_source == null) {
-                    if (comptime !disable_transpilying) {
-                        if (jsc_vm.isWatcherEnabled()) auto_watch: {
-                            if (std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
-                                const input_fd: bun.StoredFileDescriptorType = brk: {
-                                    // on macOS, we need a file descriptor to receive event notifications on it.
-                                    // so we use O_EVTONLY to open the file descriptor without asking any additional permissions.
-                                    if (comptime Environment.isMac) {
-                                        switch (bun.sys.open(
-                                            &(std.posix.toPosixPath(path.text) catch break :auto_watch),
-                                            bun.C.O_EVTONLY,
-                                            0,
-                                        )) {
-                                            .err => break :auto_watch,
-                                            .result => |fd| break :brk @enumFromInt(fd.cast()),
-                                        }
-                                    } else {
-                                        // Otherwise, don't even bother opening it.
-                                        break :brk .zero;
-                                    }
-                                };
-                                const hash = JSC.GenericWatcher.getHash(path.text);
-                                switch (jsc_vm.bun_watcher.addFile(
-                                    input_fd,
-                                    path.text,
-                                    hash,
-                                    loader,
-                                    .zero,
-                                    null,
-                                    true,
-                                )) {
-                                    .err => {
-                                        if (comptime Environment.isMac) {
-                                            // If any error occurs and we just
-                                            // opened the file descriptor to
-                                            // receive event notifications on
-                                            // it, we should close it.
-                                            if (input_fd != .zero) {
-                                                _ = bun.sys.close(bun.toFD(input_fd));
-                                            }
-                                        }
+                if (flags.disableTranspiling()) {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = bun.String.empty,
+                        .specifier = input_specifier,
+                        .source_url = input_specifier.createIfDifferent(path.text),
+                        .hash = 0,
+                        .tag = .esm,
+                    };
+                }
 
-                                        // we don't consider it a failure if we cannot watch the file
-                                        // they didn't open the file
-                                    },
-                                    .result => {},
+                if (virtual_source == null) {
+                    if (jsc_vm.isWatcherEnabled()) auto_watch: {
+                        if (std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
+                            const input_fd: bun.StoredFileDescriptorType = brk: {
+                                // on macOS, we need a file descriptor to receive event notifications on it.
+                                // so we use O_EVTONLY to open the file descriptor without asking any additional permissions.
+                                if (comptime Environment.isMac) {
+                                    switch (bun.sys.open(
+                                        &(std.posix.toPosixPath(path.text) catch break :auto_watch),
+                                        bun.C.O_EVTONLY,
+                                        0,
+                                    )) {
+                                        .err => break :auto_watch,
+                                        .result => |fd| break :brk @enumFromInt(fd.cast()),
+                                    }
+                                } else {
+                                    // Otherwise, don't even bother opening it.
+                                    break :brk .zero;
                                 }
+                            };
+                            const hash = bun.Watcher.getHash(path.text);
+                            switch (jsc_vm.bun_watcher.addFile(
+                                input_fd,
+                                path.text,
+                                hash,
+                                loader,
+                                .zero,
+                                null,
+                                true,
+                            )) {
+                                .err => {
+                                    if (comptime Environment.isMac) {
+                                        // If any error occurs and we just
+                                        // opened the file descriptor to
+                                        // receive event notifications on
+                                        // it, we should close it.
+                                        if (input_fd != .zero) {
+                                            _ = bun.sys.close(bun.toFD(input_fd));
+                                        }
+                                    }
+
+                                    // we don't consider it a failure if we cannot watch the file
+                                    // they didn't open the file
+                                },
+                                .result => {},
                             }
                         }
                     }
                 }
 
-                var stack_buf = std.heap.stackFallback(4096, jsc_vm.allocator);
-                const allocator = stack_buf.get();
-                var buf = MutableString.init2048(allocator) catch bun.outOfMemory();
-                defer buf.deinit();
-                var writer = buf.writer();
-                if (!jsc_vm.origin.isEmpty()) {
-                    writer.writeAll("export default `") catch bun.outOfMemory();
-                    // TODO: escape backtick char, though we might already do that
-                    JSC.API.Bun.getPublicPath(specifier, jsc_vm.origin, @TypeOf(&writer), &writer);
-                    writer.writeAll("`;\n") catch bun.outOfMemory();
-                } else {
-                    // search keywords: "export default \"{}\";"
-                    writer.writeAll("export default ") catch bun.outOfMemory();
-                    buf = js_printer.quoteForJSON(specifier, buf, true) catch bun.outOfMemory();
-                    writer = buf.writer();
-                    writer.writeAll(";\n") catch bun.outOfMemory();
-                }
+                const value = brk: {
+                    if (!jsc_vm.origin.isEmpty()) {
+                        var buf = MutableString.init2048(jsc_vm.allocator) catch bun.outOfMemory();
+                        defer buf.deinit();
+                        var writer = buf.writer();
+                        JSC.API.Bun.getPublicPath(specifier, jsc_vm.origin, @TypeOf(&writer), &writer);
+                        break :brk bun.String.createUTF8ForJS(globalObject.?, buf.slice());
+                    }
 
-                const public_url = bun.String.createUTF8(buf.slice());
+                    break :brk bun.String.createUTF8ForJS(globalObject.?, path.text);
+                };
+
                 return ResolvedSource{
-                    .allocator = &jsc_vm.allocator,
-                    .source_code = public_url,
+                    .allocator = null,
+                    .jsvalue_for_export = value,
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
                     .hash = 0,
+                    .tag = .export_default_object,
                 };
             },
         }
@@ -2354,7 +2356,7 @@ pub const ModuleLoader = struct {
                 loader = .ts;
             } else if (attribute.eqlComptime("tsx")) {
                 loader = .tsx;
-            } else if (jsc_vm.transpiler.options.experimental.html and attribute.eqlComptime("html")) {
+            } else if (attribute.eqlComptime("html")) {
                 loader = .html;
             }
         }
@@ -2514,14 +2516,7 @@ pub const ModuleLoader = struct {
 
                 // These are defined in src/js/*
                 .@"bun:ffi" => return jsSyntheticModule(.@"bun:ffi", specifier),
-                .@"bun:sql" => {
-                    if (!Environment.isDebug) {
-                        if (!is_allowed_to_use_internal_testing_apis and !bun.FeatureFlags.postgresql)
-                            return null;
-                    }
 
-                    return jsSyntheticModule(.@"bun:sql", specifier);
-                },
                 .@"bun:sqlite" => return jsSyntheticModule(.@"bun:sqlite", specifier),
                 .@"detect-libc" => return jsSyntheticModule(if (!Environment.isLinux) .@"detect-libc" else if (!Environment.isMusl) .@"detect-libc/linux" else .@"detect-libc/musl", specifier),
                 .@"node:assert" => return jsSyntheticModule(.@"node:assert", specifier),
@@ -2729,7 +2724,6 @@ pub const HardcodedModule = enum {
     @"bun:jsc",
     @"bun:main",
     @"bun:test", // usually replaced by the transpiler but `await import("bun:" + "test")` has to work
-    @"bun:sql",
     @"bun:sqlite",
     @"detect-libc",
     @"node:assert",
@@ -2816,7 +2810,6 @@ pub const HardcodedModule = enum {
             .{ "bun:test", HardcodedModule.@"bun:test" },
             .{ "bun:sqlite", HardcodedModule.@"bun:sqlite" },
             .{ "bun:internal-for-testing", HardcodedModule.@"bun:internal-for-testing" },
-            .{ "bun:sql", HardcodedModule.@"bun:sql" },
             .{ "detect-libc", HardcodedModule.@"detect-libc" },
             .{ "node-fetch", HardcodedModule.@"node-fetch" },
             .{ "isomorphic-fetch", HardcodedModule.@"isomorphic-fetch" },
@@ -3056,7 +3049,6 @@ pub const HardcodedModule = enum {
             .{ "bun:ffi", .{ .path = "bun:ffi" } },
             .{ "bun:jsc", .{ .path = "bun:jsc" } },
             .{ "bun:sqlite", .{ .path = "bun:sqlite" } },
-            .{ "bun:sql", .{ .path = "bun:sql" } },
             .{ "bun:wrap", .{ .path = "bun:wrap" } },
             .{ "bun:internal-for-testing", .{ .path = "bun:internal-for-testing" } },
             .{ "ffi", .{ .path = "bun:ffi" } },

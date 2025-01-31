@@ -34,6 +34,7 @@ pub const getFdPath = bun.sys.getFdPath;
 pub const setFileOffset = bun.sys.setFileOffset;
 pub const openatOSPath = bun.sys.openatOSPath;
 pub const mkdirOSPath = bun.sys.mkdirOSPath;
+pub const access = bun.sys.access;
 
 // Note: `req = undefined; req.deinit()` has a saftey-check in a debug build
 
@@ -99,6 +100,19 @@ pub fn fchmod(fd: FileDescriptor, flags: bun.Mode) Maybe(void) {
         .{ .result = {} };
 }
 
+pub fn statfs(file_path: [:0]const u8) Maybe(bun.StatFS) {
+    assertIsValidWindowsPath(u8, file_path);
+    var req: uv.fs_t = uv.fs_t.uninitialized;
+    defer req.deinit();
+    const rc = uv.uv_fs_statfs(uv.Loop.get(), &req, file_path.ptr, null);
+
+    log("uv statfs({s}) = {d}", .{ file_path, rc.int() });
+    return if (rc.errno()) |errno|
+        .{ .err = .{ .errno = errno, .syscall = .statfs, .path = file_path } }
+    else
+        .{ .result = bun.StatFS.init(req.ptrAs(*align(1) bun.StatFS)) };
+}
+
 pub fn chown(file_path: [:0]const u8, uid: uv.uv_uid_t, gid: uv.uv_uid_t) Maybe(void) {
     assertIsValidWindowsPath(u8, file_path);
     var req: uv.fs_t = uv.fs_t.uninitialized;
@@ -122,19 +136,6 @@ pub fn fchown(fd: FileDescriptor, uid: uv.uv_uid_t, gid: uv.uv_uid_t) Maybe(void
     log("uv chown({}, {d}, {d}) = {d}", .{ uv_fd, uid, gid, rc.int() });
     return if (rc.errno()) |errno|
         .{ .err = .{ .errno = errno, .syscall = .fchown, .fd = fd } }
-    else
-        .{ .result = {} };
-}
-
-pub fn access(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
-    assertIsValidWindowsPath(u8, file_path);
-    var req: uv.fs_t = uv.fs_t.uninitialized;
-    defer req.deinit();
-    const rc = uv.uv_fs_access(uv.Loop.get(), &req, file_path.ptr, flags, null);
-
-    log("uv access({s}, {d}) = {d}", .{ file_path, flags, rc.int() });
-    return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .access, .path = file_path } }
     else
         .{ .result = {} };
 }
@@ -219,16 +220,15 @@ pub fn link(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
         .{ .result = {} };
 }
 
-pub fn symlinkUV(from: [:0]const u8, to: [:0]const u8, flags: c_int) Maybe(void) {
-    assertIsValidWindowsPath(u8, from);
-    assertIsValidWindowsPath(u8, to);
+pub fn symlinkUV(target: [:0]const u8, new_path: [:0]const u8, flags: c_int) Maybe(void) {
+    assertIsValidWindowsPath(u8, target);
+    assertIsValidWindowsPath(u8, new_path);
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
-    const rc = uv.uv_fs_symlink(uv.Loop.get(), &req, from.ptr, to.ptr, flags, null);
+    const rc = uv.uv_fs_symlink(uv.Loop.get(), &req, target.ptr, new_path.ptr, flags, null);
 
-    log("uv symlink({s}, {s}) = {d}", .{ from, to, rc.int() });
+    log("uv symlink({s}, {s}) = {d}", .{ target, new_path, rc.int() });
     return if (rc.errno()) |errno|
-        // which one goes in the .path field?
         .{ .err = .{ .errno = errno, .syscall = .symlink } }
     else
         .{ .result = {} };

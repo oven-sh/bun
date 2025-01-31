@@ -422,8 +422,7 @@ pub const PackageManagerCommand = struct {
             handleLoadLockfileErrors(load_lockfile, pm);
             const lockfile = load_lockfile.ok.lockfile;
 
-            const save_format: Lockfile.LoadResult.LockfileFormat = if (pm.options.save_text_lockfile) .text else .binary;
-            lockfile.saveToDisk(save_format, pm.options.log_level.isVerbose());
+            lockfile.saveToDisk(&load_lockfile, &pm.options);
             Global.exit(0);
         }
 

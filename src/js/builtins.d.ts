@@ -363,7 +363,6 @@ declare function $isAbortSignal(signal: unknown): signal is AbortSignal;
 declare function $isAbsolute(): TODO;
 declare function $isDisturbed(): TODO;
 declare function $isPaused(): TODO;
-declare function $isWindows(): TODO;
 declare function $join(): TODO;
 declare function $kind(): TODO;
 declare function $lazyStreamPrototypeMap(): TODO;
@@ -582,7 +581,11 @@ interface String {
 }
 
 declare var $Buffer: {
-  new (a: any, b?: any, c?: any): Buffer;
+  new (array: Array): Buffer;
+  new (arrayBuffer: ArrayBuffer, byteOffset?: number, length?: number): Buffer;
+  new (buffer: Buffer): Buffer;
+  new (size: number): Buffer;
+  new (string: string, encoding?: BufferEncoding): Buffer;
 };
 
 declare interface Error {
@@ -640,3 +643,5 @@ declare function $ERR_ILLEGAL_CONSTRUCTOR(): TypeError;
  * @param base - The base class to inherit from
  */
 declare function $toClass(fn: Function, name: string, base?: Function | undefined | null);
+
+declare function $min(a: number, b: number): number;

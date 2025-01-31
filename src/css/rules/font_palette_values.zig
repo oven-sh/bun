@@ -114,7 +114,7 @@ pub const FontPaletteValuesProperty = union(enum) {
             .override_colors => |*o| {
                 try dest.writeStr("override-colors");
                 try dest.delim(':', false);
-                try css.to_css.fromList(OverrideColors, o, W, dest);
+                try css.to_css.fromList(OverrideColors, o.items, W, dest);
             },
             .custom => |*custom| {
                 try dest.writeStr(custom.name.asStr());

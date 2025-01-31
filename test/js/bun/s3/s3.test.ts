@@ -1,10 +1,11 @@
 import { describe, expect, it, beforeAll, afterAll } from "bun:test";
 import { bunExe, bunEnv, getSecret, tempDirWithFiles, isLinux } from "harness";
 import { randomUUID } from "crypto";
-import { S3Client, s3, file, which } from "bun";
+import { S3Client, s3 as defaultS3, file, which } from "bun";
+const s3 = (...args) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
 import child_process from "child_process";
-import type { S3Options } from "bun";
+import type { S3File, S3Options } from "bun";
 import path from "path";
 
 const dockerCLI = which("docker") as string;
@@ -92,16 +93,15 @@ for (let credentials of allCredentials) {
     const S3Bucket = credentials.bucket;
 
     function makePayLoadFrom(text: string, size: number): string {
-      while (Buffer.byteLength(text) < size) {
-        text += text;
-      }
-      return text.slice(0, size);
+      return Buffer.alloc(size, text).toString();
     }
 
     // 10 MiB big enough to Multipart upload in more than one part
     const bigPayload = makePayLoadFrom("Bun is the best runtime ever", 10 * 1024 * 1024);
+    // more than 5 MiB but less than 2 parts size
+    const mediumPayload = makePayLoadFrom("Bun is the best runtime ever", 6 * 1024 * 1024);
+    // less than 5 MiB
     const bigishPayload = makePayLoadFrom("Bun is the best runtime ever", 1 * 1024 * 1024);
-
     describe.skipIf(!s3Options.accessKeyId)("s3", () => {
       for (let bucketInName of [true, false]) {
         describe("fetch", () => {
@@ -388,7 +388,15 @@ for (let credentials of allCredentials) {
                 expect(response.headers.get("content-type")).toStartWith("application/json");
               }
             });
+            it("should be able to upload large files using writer() #16452", async () => {
+              const s3file = file(tmp_filename, options);
+              const writer = s3file.writer();
+              writer.write(mediumPayload);
+              writer.write(mediumPayload);
 
+              await writer.end();
+              expect(await s3file.text()).toBe(mediumPayload.repeat(2));
+            });
             it("should be able to upload large files in one go using Bun.write", async () => {
               {
                 await Bun.write(file(tmp_filename, options), bigPayload);
@@ -548,8 +556,17 @@ for (let credentials of allCredentials) {
                   bytes += value?.length ?? 0;
                   if (value) chunks.push(value as Buffer);
                 }
-                expect(bytes).toBe(Buffer.byteLength(bigishPayload));
-                expect(Buffer.concat(chunks).toString()).toBe(bigishPayload);
+
+                const bigishPayloadString = Buffer.concat(chunks).toString();
+                expect(bigishPayload.length).toBe(bigishPayloadString.length);
+
+                // if this test fails, then we want to avoid printing megabytes to stderr.
+
+                if (bigishPayloadString !== bigishPayload) {
+                  const SHA1 = Bun.SHA1.hash(bigishPayloadString, "hex");
+                  const SHA1_2 = Bun.SHA1.hash(bigishPayload, "hex");
+                  expect(SHA1).toBe(SHA1_2);
+                }
               }, 30_000);
             });
           });
@@ -580,33 +597,39 @@ for (let credentials of allCredentials) {
           await s3file.unlink();
           expect().pass();
         });
-        it("should allow starting with slashs and backslashes", async () => {
+        it("should allow starting with forward slash", async () => {
           const options = { ...s3Options, bucket: S3Bucket };
-          {
-            const s3file = s3(`/${randomUUID()}test.txt`, options);
-            await s3file.write("Hello Bun!");
-            await s3file.unlink();
-          }
-          {
-            const s3file = s3(`\\${randomUUID()}test.txt`, options);
-            await s3file.write("Hello Bun!");
-            await s3file.unlink();
-          }
+          const s3file = s3(`/${randomUUID()}test.txt`, options);
+          await s3file.write("Hello Bun!");
+          await s3file.exists();
+          await s3file.unlink();
           expect().pass();
         });
 
-        it("should allow ending with slashs and backslashes", async () => {
+        it("should allow starting with backslash", async () => {
           const options = { ...s3Options, bucket: S3Bucket };
-          {
-            const s3file = s3(`${randomUUID()}/`, options);
-            await s3file.write("Hello Bun!");
-            await s3file.unlink();
-          }
-          {
-            const s3file = s3(`${randomUUID()}\\`, options);
-            await s3file.write("Hello Bun!");
-            await s3file.unlink();
-          }
+          const s3file = s3(`\\${randomUUID()}test.txt`, options);
+          await s3file.write("Hello Bun!");
+          await s3file.exists();
+          await s3file.unlink();
+          expect().pass();
+        });
+
+        it("should allow ending with forward slash", async () => {
+          const options = { ...s3Options, bucket: S3Bucket };
+          const s3file = s3(`${randomUUID()}/`, options);
+          await s3file.write("Hello Bun!");
+          await s3file.exists();
+          await s3file.unlink();
+          expect().pass();
+        });
+
+        it("should allow ending with backslash", async () => {
+          const options = { ...s3Options, bucket: S3Bucket };
+          const s3file = s3(`${randomUUID()}\\`, options);
+          await s3file.write("Hello Bun!");
+          await s3file.exists();
+          await s3file.unlink();
           expect().pass();
         });
       });
@@ -978,6 +1001,22 @@ for (let credentials of allCredentials) {
             expect(url).toBeDefined();
             expect(url.includes("X-Amz-Expires=10")).toBe(true);
             expect(url.includes("X-Amz-Acl=public-read")).toBe(true);
+            expect(url.includes("X-Amz-Date")).toBe(true);
+            expect(url.includes("X-Amz-Signature")).toBe(true);
+            expect(url.includes("X-Amz-Credential")).toBe(true);
+            expect(url.includes("X-Amz-Algorithm")).toBe(true);
+            expect(url.includes("X-Amz-SignedHeaders")).toBe(true);
+          });
+
+          it("should work with storage class", async () => {
+            const s3file = s3("s3://bucket/credentials-test", s3Options);
+            const url = s3file.presign({
+              expiresIn: 10,
+              storageClass: "GLACIER_IR",
+            });
+            expect(url).toBeDefined();
+            expect(url.includes("X-Amz-Expires=10")).toBe(true);
+            expect(url.includes("x-amz-storage-class=GLACIER_IR")).toBe(true);
             expect(url.includes("X-Amz-Date")).toBe(true);
             expect(url.includes("X-Amz-Signature")).toBe(true);
             expect(url.includes("X-Amz-Credential")).toBe(true);

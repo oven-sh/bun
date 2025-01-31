@@ -220,10 +220,10 @@ pub const PkgPath = struct {
 pub const Version = enum(u32) {
     v0 = 0,
 
-    // probably bump when we support nested resolutions
-    // v1,
+    // fixed unnecessary listing of workspace dependencies
+    v1,
 
-    pub const current: Version = .v0;
+    pub const current: Version = .v1;
 };
 
 // For sorting dependencies belonging to a node_modules folder. No duplicate names, so
@@ -246,8 +246,9 @@ pub const Stringifier = struct {
     //     _ = this;
     // }
 
-    pub fn saveFromBinary(allocator: std.mem.Allocator, lockfile: *const BinaryLockfile, writer: anytype) @TypeOf(writer).Error!void {
+    pub fn saveFromBinary(allocator: std.mem.Allocator, lockfile: *const BinaryLockfile, load_result: *const LoadResult, writer: anytype) @TypeOf(writer).Error!void {
         const buf = lockfile.buffers.string_bytes.items;
+        const extern_strings = lockfile.buffers.extern_strings.items;
         const deps_buf = lockfile.buffers.dependencies.items;
         const resolution_buf = lockfile.buffers.resolutions.items;
         const pkgs = lockfile.packages.slice();
@@ -279,6 +280,32 @@ pub const Stringifier = struct {
         var optional_peers_buf = std.ArrayList(String).init(allocator);
         defer optional_peers_buf.deinit();
 
+        var pkg_map = PkgMap(void).init(allocator);
+        defer pkg_map.deinit();
+
+        var pkgs_iter = BinaryLockfile.Tree.Iterator(.pkg_path).init(lockfile);
+
+        var path_buf: bun.PathBuffer = undefined;
+
+        // if we loaded from a binary lockfile and we're migrating it to a text lockfile, ensure
+        // peer dependencies have resolutions, and mark them optional if they don't
+        if (load_result.loadedFromBinaryLockfile()) {
+            while (pkgs_iter.next({})) |node| {
+                for (node.dependencies) |dep_id| {
+                    const dep = deps_buf[dep_id];
+
+                    // clobber, there isn't data
+                    try pkg_map.put(try bun.fmt.allocPrint(allocator, "{s}{s}{s}", .{
+                        node.relative_path,
+                        if (node.depth == 0) "" else "/",
+                        dep.name.slice(buf),
+                    }), {});
+                }
+            }
+
+            pkgs_iter.reset();
+        }
+
         var _indent: u32 = 0;
         const indent = &_indent;
         try writer.writeAll("{\n");
@@ -297,11 +324,16 @@ pub const Stringifier = struct {
                     .{},
                     pkg_names,
                     pkg_name_hashes,
+                    pkg_bins,
                     pkg_dep_lists,
                     buf,
+                    extern_strings,
                     deps_buf,
                     lockfile.workspace_versions,
                     &optional_peers_buf,
+                    &pkg_map,
+                    "",
+                    &path_buf,
                 );
 
                 var workspace_sort_buf: std.ArrayListUnmanaged(PackageID) = .{};
@@ -343,11 +375,16 @@ pub const Stringifier = struct {
                         res.value.workspace,
                         pkg_names,
                         pkg_name_hashes,
+                        pkg_bins,
                         pkg_dep_lists,
                         buf,
+                        extern_strings,
                         deps_buf,
                         lockfile.workspace_versions,
                         &optional_peers_buf,
+                        &pkg_map,
+                        pkg_names[workspace_pkg_id].slice(buf),
+                        &path_buf,
                     );
                 }
             }
@@ -371,8 +408,6 @@ pub const Stringifier = struct {
 
             var tree_sort_buf: std.ArrayListUnmanaged(TreeSortCtx.Item) = .{};
             defer tree_sort_buf.deinit(allocator);
-
-            var pkgs_iter = BinaryLockfile.Tree.Iterator(.pkg_path).init(lockfile);
 
             // find trusted and patched dependencies. also overrides
             while (pkgs_iter.next({})) |node| {
@@ -598,7 +633,7 @@ pub const Stringifier = struct {
                     // npm         -> [ "name@version", registry (TODO: remove if default), INFO, integrity]
                     // symlink     -> [ "name@link:path", INFO ]
                     // folder      -> [ "name@file:path", INFO ]
-                    // workspace   -> [ "name@workspace:path", INFO ]
+                    // workspace   -> [ "name@workspace:path" ] // workspace is only path
                     // tarball     -> [ "name@tarball", INFO ]
                     // root        -> [ "name@root:", { bin, binDir } ]
                     // git         -> [ "name@git+repo", INFO, .bun-tag string (TODO: remove this) ]
@@ -614,7 +649,10 @@ pub const Stringifier = struct {
                             try writer.writeByte('{');
                             if (pkg_bin.tag != .none) {
                                 try writer.writeAll(if (pkg_bin.tag == .dir) " \"binDir\": " else " \"bin\": ");
-                                try pkg_bin.toSingleLineJson(buf, lockfile.buffers.extern_strings.items, writer);
+
+                                // TODO(dylan-conway) move this to "workspaces" object
+                                try pkg_bin.toJson(.single_line, {}, buf, extern_strings, writer, &writeIndent);
+
                                 try writer.writeAll(" }]");
                             } else {
                                 try writer.writeAll("}]");
@@ -626,7 +664,20 @@ pub const Stringifier = struct {
                                 res.value.folder.fmtJson(buf, .{ .quote = false }),
                             });
 
-                            try writePackageInfoObject(writer, dep.behavior, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, &pkg_bin, buf, &optional_peers_buf, lockfile.buffers.extern_strings.items);
+                            try writePackageInfoObject(
+                                writer,
+                                dep.behavior,
+                                deps_buf,
+                                pkg_deps_sort_buf.items,
+                                &pkg_meta,
+                                &pkg_bin,
+                                buf,
+                                &optional_peers_buf,
+                                extern_strings,
+                                &pkg_map,
+                                relative_path,
+                                &path_buf,
+                            );
 
                             try writer.writeByte(']');
                         },
@@ -636,7 +687,20 @@ pub const Stringifier = struct {
                                 res.value.local_tarball.fmtJson(buf, .{ .quote = false }),
                             });
 
-                            try writePackageInfoObject(writer, dep.behavior, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, &pkg_bin, buf, &optional_peers_buf, lockfile.buffers.extern_strings.items);
+                            try writePackageInfoObject(
+                                writer,
+                                dep.behavior,
+                                deps_buf,
+                                pkg_deps_sort_buf.items,
+                                &pkg_meta,
+                                &pkg_bin,
+                                buf,
+                                &optional_peers_buf,
+                                extern_strings,
+                                &pkg_map,
+                                relative_path,
+                                &path_buf,
+                            );
 
                             try writer.writeByte(']');
                         },
@@ -646,7 +710,20 @@ pub const Stringifier = struct {
                                 res.value.remote_tarball.fmtJson(buf, .{ .quote = false }),
                             });
 
-                            try writePackageInfoObject(writer, dep.behavior, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, &pkg_bin, buf, &optional_peers_buf, lockfile.buffers.extern_strings.items);
+                            try writePackageInfoObject(
+                                writer,
+                                dep.behavior,
+                                deps_buf,
+                                pkg_deps_sort_buf.items,
+                                &pkg_meta,
+                                &pkg_bin,
+                                buf,
+                                &optional_peers_buf,
+                                extern_strings,
+                                &pkg_map,
+                                relative_path,
+                                &path_buf,
+                            );
 
                             try writer.writeByte(']');
                         },
@@ -656,7 +733,20 @@ pub const Stringifier = struct {
                                 res.value.symlink.fmtJson(buf, .{ .quote = false }),
                             });
 
-                            try writePackageInfoObject(writer, dep.behavior, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, &pkg_bin, buf, &optional_peers_buf, lockfile.buffers.extern_strings.items);
+                            try writePackageInfoObject(
+                                writer,
+                                dep.behavior,
+                                deps_buf,
+                                pkg_deps_sort_buf.items,
+                                &pkg_meta,
+                                &pkg_bin,
+                                buf,
+                                &optional_peers_buf,
+                                extern_strings,
+                                &pkg_map,
+                                relative_path,
+                                &path_buf,
+                            );
 
                             try writer.writeByte(']');
                         },
@@ -674,21 +764,30 @@ pub const Stringifier = struct {
                                     res.value.npm.url.slice(buf),
                             });
 
-                            try writePackageInfoObject(writer, dep.behavior, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, &pkg_bin, buf, &optional_peers_buf, lockfile.buffers.extern_strings.items);
+                            try writePackageInfoObject(
+                                writer,
+                                dep.behavior,
+                                deps_buf,
+                                pkg_deps_sort_buf.items,
+                                &pkg_meta,
+                                &pkg_bin,
+                                buf,
+                                &optional_peers_buf,
+                                extern_strings,
+                                &pkg_map,
+                                relative_path,
+                                &path_buf,
+                            );
 
                             try writer.print(", \"{}\"]", .{
                                 pkg_meta.integrity,
                             });
                         },
                         .workspace => {
-                            try writer.print("[\"{}@workspace:{}\", ", .{
+                            try writer.print("[\"{}@workspace:{}\"]", .{
                                 pkg_name.fmtJson(buf, .{ .quote = false }),
                                 res.value.workspace.fmtJson(buf, .{ .quote = false }),
                             });
-
-                            try writePackageInfoObject(writer, dep.behavior, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, &pkg_bin, buf, &optional_peers_buf, lockfile.buffers.extern_strings.items);
-
-                            try writer.writeByte(']');
                         },
                         inline .git, .github => |tag| {
                             const repo: Repository = @field(res.value, @tagName(tag));
@@ -697,7 +796,20 @@ pub const Stringifier = struct {
                                 repo.fmt(if (comptime tag == .git) "git+" else "github:", buf),
                             });
 
-                            try writePackageInfoObject(writer, dep.behavior, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, &pkg_bin, buf, &optional_peers_buf, lockfile.buffers.extern_strings.items);
+                            try writePackageInfoObject(
+                                writer,
+                                dep.behavior,
+                                deps_buf,
+                                pkg_deps_sort_buf.items,
+                                &pkg_meta,
+                                &pkg_bin,
+                                buf,
+                                &optional_peers_buf,
+                                extern_strings,
+                                &pkg_map,
+                                relative_path,
+                                &path_buf,
+                            );
 
                             try writer.print(", {}]", .{
                                 repo.resolved.fmtJson(buf, .{}),
@@ -730,6 +842,9 @@ pub const Stringifier = struct {
         buf: string,
         optional_peers_buf: *std.ArrayList(String),
         extern_strings: []const ExternalString,
+        pkg_map: *const PkgMap(void),
+        relative_path: string,
+        path_buf: []u8,
     ) OOM!void {
         defer optional_peers_buf.clearRetainingCapacity();
 
@@ -741,7 +856,7 @@ pub const Stringifier = struct {
 
             var first = true;
             for (pkg_dep_ids) |dep_id| {
-                const dep = deps_buf[dep_id];
+                const dep = &deps_buf[dep_id];
                 if (!dep.behavior.includes(group_behavior)) continue;
 
                 if (dep.behavior.isOptionalPeer()) {
@@ -766,6 +881,12 @@ pub const Stringifier = struct {
                     bun.fmt.formatJSONStringUTF8(dep.name.slice(buf), .{}),
                     bun.fmt.formatJSONStringUTF8(dep.version.literal.slice(buf), .{}),
                 });
+
+                if (dep.behavior.peer and !dep.behavior.optional and pkg_map.map.count() > 0) {
+                    pkg_map.findResolution(relative_path, dep, buf, path_buf) catch {
+                        try optional_peers_buf.append(dep.name);
+                    };
+                }
             }
 
             if (!first) {
@@ -844,7 +965,7 @@ pub const Stringifier = struct {
                 any = true;
             }
             try writer.writeAll(if (bin.tag == .dir) " \"binDir\": " else " \"bin\": ");
-            try bin.toSingleLineJson(buf, extern_strings, writer);
+            try bin.toJson(.single_line, {}, buf, extern_strings, writer, &writeIndent);
         }
 
         if (any) {
@@ -861,11 +982,16 @@ pub const Stringifier = struct {
         res: String,
         pkg_names: []const String,
         pkg_name_hashes: []const PackageNameHash,
+        pkg_bins: []const Bin,
         pkg_deps: []const DependencySlice,
         buf: string,
+        extern_strings: []const ExternalString,
         deps_buf: []const Dependency,
         workspace_versions: BinaryLockfile.VersionHashMap,
         optional_peers_buf: *std.ArrayList(String),
+        pkg_map: *const PkgMap(void),
+        relative_path: string,
+        path_buf: []u8,
     ) OOM!void {
         defer optional_peers_buf.clearRetainingCapacity();
         // any - have any properties been written
@@ -904,6 +1030,18 @@ pub const Stringifier = struct {
                 });
             }
 
+            if (pkg_bins[pkg_id].tag != .none) {
+                const bin = pkg_bins[pkg_id];
+                try writer.writeAll(",\n");
+                try writeIndent(writer, indent);
+                if (bin.tag == .dir) {
+                    try writer.writeAll("\"binDir\": ");
+                } else {
+                    try writer.writeAll("\"bin\": ");
+                }
+                try bin.toJson(.multi_line, indent, buf, extern_strings, writer, &writeIndent);
+            }
+
             any = true;
         }
 
@@ -911,7 +1049,7 @@ pub const Stringifier = struct {
             const group_name, const group_behavior = group;
 
             var first = true;
-            for (pkg_deps[pkg_id].get(deps_buf)) |dep| {
+            for (pkg_deps[pkg_id].get(deps_buf)) |*dep| {
                 if (!dep.behavior.includes(group_behavior)) continue;
 
                 if (dep.behavior.isOptionalPeer()) {
@@ -946,6 +1084,14 @@ pub const Stringifier = struct {
                     bun.fmt.formatJSONStringUTF8(name, .{}),
                     bun.fmt.formatJSONStringUTF8(version, .{}),
                 });
+
+                if (dep.behavior.peer and !dep.behavior.optional and pkg_map.map.count() > 0) {
+                    pkg_map.findResolution(relative_path, dep, buf, path_buf) catch |err| {
+                        if (err == error.Unresolvable) {
+                            try optional_peers_buf.append(dep.name);
+                        }
+                    };
+                }
             }
 
             if (!first) {
@@ -1038,6 +1184,109 @@ const ParseError = OOM || error{
     UnexpectedResolution,
 };
 
+const PkgMapEntry = struct {
+    pkg_id: PackageID,
+    bundled: bool,
+};
+
+fn PkgMap(comptime T: type) type {
+    return struct {
+        map: bun.StringArrayHashMap(T),
+
+        pub const Entry = T;
+
+        pub fn init(allocator: std.mem.Allocator) @This() {
+            return .{
+                .map = bun.StringArrayHashMap(T).init(allocator),
+            };
+        }
+
+        pub fn deinit(this: *@This()) void {
+            this.map.deinit();
+        }
+
+        const ResolveError = error{
+            InvalidPackageKey,
+            Unresolvable,
+        };
+
+        pub fn getOrPut(this: *@This(), name: string) OOM!@TypeOf(this.map).GetOrPutResult {
+            return this.map.getOrPut(name);
+        }
+
+        pub fn put(this: *@This(), name: string, value: T) OOM!void {
+            return this.map.put(name, value);
+        }
+
+        pub fn get(this: *const @This(), name: string) ?T {
+            return this.map.get(name);
+        }
+
+        pub fn findResolution(this: *const @This(), pkg_path: string, dep: *const Dependency, string_buf: string, path_buf: []u8) ResolveError!T {
+            const dep_name = dep.name.slice(string_buf);
+
+            @memcpy(path_buf[0..pkg_path.len], pkg_path);
+            path_buf[pkg_path.len] = '/';
+            var offset = pkg_path.len + 1;
+
+            var valid = true;
+            while (valid) {
+                @memcpy(path_buf[offset..][0..dep_name.len], dep_name);
+                const res_path = path_buf[0 .. offset + dep_name.len];
+
+                if (this.map.get(res_path)) |entry| {
+                    return entry;
+                }
+
+                if (offset == 0) {
+                    return error.Unresolvable;
+                }
+
+                const slash = strings.lastIndexOfChar(path_buf[0 .. offset - 1], '/') orelse {
+                    offset = 0;
+                    continue;
+                };
+
+                // might be a scoped package
+                const at = strings.lastIndexOfChar(path_buf[0 .. offset - 1], '@') orelse {
+                    offset = slash + 1;
+                    continue;
+                };
+
+                if (at > slash) {
+                    valid = false;
+                    continue;
+                }
+
+                const next_slash = strings.lastIndexOfChar(path_buf[0..slash], '/') orelse {
+                    if (at != 0) {
+                        return error.InvalidPackageKey;
+                    }
+                    offset = 0;
+                    continue;
+                };
+
+                if (next_slash > at) {
+                    // there's a scoped package but it exists farther up
+                    offset = slash + 1;
+                    continue;
+                }
+
+                if (next_slash + 1 != at) {
+                    valid = false;
+                    continue;
+                }
+
+                offset = at;
+            }
+
+            return error.InvalidPackageKey;
+        }
+    };
+}
+
+// const PkgMap = struct {};
+
 pub fn parseIntoBinaryLockfile(
     lockfile: *BinaryLockfile,
     allocator: std.mem.Allocator,
@@ -1053,7 +1302,7 @@ pub fn parseIntoBinaryLockfile(
         return error.InvalidLockfileVersion;
     };
 
-    const lockfile_version: u32 = lockfile_version: {
+    const lockfile_version_num: u32 = lockfile_version: {
         err: {
             switch (lockfile_version_expr.data) {
                 .e_number => |num| {
@@ -1071,10 +1320,12 @@ pub fn parseIntoBinaryLockfile(
         return error.InvalidLockfileVersion;
     };
 
-    lockfile.text_lockfile_version = std.meta.intToEnum(Version, lockfile_version) catch {
+    const lockfile_version = std.meta.intToEnum(Version, lockfile_version_num) catch {
         try log.addError(source, lockfile_version_expr.loc, "Unknown lockfile version");
-        return error.InvalidLockfileVersion;
+        return error.UnknownLockfileVersion;
     };
+
+    lockfile.text_lockfile_version = lockfile_version;
 
     var string_buf = lockfile.stringBuf();
 
@@ -1176,14 +1427,14 @@ pub fn parseIntoBinaryLockfile(
         }
     }
 
-    const workspaces = root.getObject("workspaces") orelse {
+    const workspaces_obj = root.getObject("workspaces") orelse {
         try log.addError(source, root.loc, "Missing a workspaces object property");
         return error.InvalidWorkspaceObject;
     };
 
     var maybe_root_pkg: ?Expr = null;
 
-    for (workspaces.data.e_object.properties.slice()) |prop| {
+    for (workspaces_obj.data.e_object.properties.slice()) |prop| {
         const key = prop.key.?;
         const value: Expr = prop.value.?;
         if (!key.isString()) {
@@ -1242,7 +1493,7 @@ pub fn parseIntoBinaryLockfile(
     defer optional_peers_buf.deinit(allocator);
 
     const root_pkg_exr = maybe_root_pkg orelse {
-        try log.addError(source, workspaces.loc, "Expected root package");
+        try log.addError(source, workspaces_obj.loc, "Expected root package");
         return error.InvalidWorkspaceObject;
     };
 
@@ -1255,7 +1506,6 @@ pub fn parseIntoBinaryLockfile(
         const off, var len = try parseAppendDependencies(lockfile, allocator, &root_pkg_exr, &string_buf, log, source, &optional_peers_buf);
 
         var root_pkg: BinaryLockfile.Package = .{};
-        root_pkg.meta.id = 0;
 
         if (maybe_name) |name| {
             const name_hash = String.Builder.stringHash(name);
@@ -1264,7 +1514,7 @@ pub fn parseIntoBinaryLockfile(
         }
 
         workspaces: for (lockfile.workspace_paths.values()) |workspace_path| {
-            for (workspaces.data.e_object.properties.slice()) |prop| {
+            for (workspaces_obj.data.e_object.properties.slice()) |prop| {
                 const key = prop.key.?;
                 const value = prop.value.?;
                 const path = key.asString(allocator).?;
@@ -1299,14 +1549,76 @@ pub fn parseIntoBinaryLockfile(
         try lockfile.getOrPutID(0, root_pkg.name_hash);
     }
 
-    const PkgMapEntry = struct {
-        pkg_id: PackageID,
-        bundled: bool,
-    };
-    var pkg_map = bun.StringArrayHashMap(PkgMapEntry).init(allocator);
+    var pkg_map = PkgMap(PkgMapEntry).init(allocator);
     defer pkg_map.deinit();
 
-    if (root.get("packages")) |pkgs_expr| {
+    const workspace_pkgs_off: u32 = 1;
+    var workspace_pkgs_len: u32 = 0;
+
+    if (lockfile_version != .v0) {
+        // these are the `workspaceOnly` packages
+        workspaces: for (lockfile.workspace_paths.values()) |workspace_path| {
+            for (workspaces_obj.data.e_object.properties.slice()) |prop| {
+                const key = prop.key.?;
+                const value = prop.value.?;
+                const path = key.asString(allocator).?;
+                if (!strings.eqlLong(path, workspace_path.slice(string_buf.bytes.items), true)) continue;
+
+                var pkg: BinaryLockfile.Package = .{};
+
+                pkg.resolution = .{
+                    .tag = .workspace,
+                    .value = .{ .workspace = try string_buf.append(path) },
+                };
+
+                const name = value.get("name").?.asString(allocator).?;
+                const name_hash = String.Builder.stringHash(name);
+
+                pkg.name = try string_buf.appendWithHash(name, name_hash);
+                pkg.name_hash = name_hash;
+
+                const off, const len = try parseAppendDependencies(lockfile, allocator, &value, &string_buf, log, source, &optional_peers_buf);
+
+                pkg.dependencies = .{ .off = off, .len = len };
+                pkg.resolutions = .{ .off = off, .len = len };
+
+                if (value.get("bin")) |bin_expr| {
+                    pkg.bin = try Bin.parseAppend(allocator, bin_expr, &string_buf, &lockfile.buffers.extern_strings);
+                } else if (value.get("binDir")) |bin_dir_expr| {
+                    pkg.bin = try Bin.parseAppendFromDirectories(allocator, bin_dir_expr, &string_buf);
+                }
+
+                // there should be no duplicates
+                const pkg_id = try lockfile.appendPackageDedupe(&pkg, string_buf.bytes.items);
+
+                const entry = try pkg_map.getOrPut(name);
+                if (entry.found_existing) {
+                    try log.addErrorFmt(source, key.loc, allocator, "Duplicate workspace name: '{s}'", .{name});
+                    return error.InvalidWorkspaceObject;
+                }
+
+                entry.value_ptr.* = .{
+                    .pkg_id = pkg_id,
+
+                    // direct dependencies of workspaces are never bundled
+                    .bundled = false,
+                };
+
+                workspace_pkgs_len += 1;
+                continue :workspaces;
+            }
+        }
+    }
+
+    const pkgs_expr = root.get("packages") orelse {
+        // packages is empty, but there might be empty workspace packages
+        if (workspace_pkgs_len == 0) {
+            lockfile.initEmpty(allocator);
+        }
+        return;
+    };
+
+    {
         if (!pkgs_expr.isObject()) {
             try log.addError(source, pkgs_expr.loc, "Expected an object");
             return error.InvalidPackagesObject;
@@ -1389,13 +1701,48 @@ pub fn parseIntoBinaryLockfile(
                 }
             }
 
-            var pkg: BinaryLockfile.Package = .{};
+            if (lockfile_version != .v0) {
+                if (res.tag == .workspace) {
+                    const entry = try pkg_map.getOrPut(pkg_path);
+                    if (entry.found_existing) {
+                        // this workspace package is already in the package map, because
+                        // it was added as a workspaceOnly package earlier
+                        continue;
+                    }
 
+                    const pkgs = lockfile.packages.slice();
+                    const pkg_names = pkgs.items(.name);
+                    const pkg_resolutions = pkgs.items(.resolution);
+
+                    // new entry, a matching workspace MUST exist
+                    for (workspace_pkgs_off..workspace_pkgs_off + workspace_pkgs_len) |_workspace_pkg_id| {
+                        const workspace_pkg_id: PackageID = @intCast(_workspace_pkg_id);
+                        if (res.eql(&pkg_resolutions[workspace_pkg_id], string_buf.bytes.items, string_buf.bytes.items)) {
+                            if (comptime Environment.isDebug) {
+                                bun.assertWithLocation(!strings.eqlLong(pkg_path, pkg_names[workspace_pkg_id].slice(string_buf.bytes.items), true), @src());
+                            }
+                            entry.value_ptr.* = .{
+                                .pkg_id = workspace_pkg_id,
+                                .bundled = false,
+                            };
+                        }
+                    }
+
+                    try log.addErrorFmt(source, res_info.loc, allocator, "Unknown workspace: '{s}'", .{res.value.workspace.slice(string_buf.bytes.items)});
+                    return error.InvalidPackageInfo;
+                }
+            }
+
+            var pkg: BinaryLockfile.Package = .{};
             var bundled = false;
 
             // dependencies, os, cpu, libc
             switch (res.tag) {
-                .npm, .folder, .git, .github, .local_tarball, .remote_tarball, .symlink, .workspace => {
+                .npm, .folder, .git, .github, .local_tarball, .remote_tarball, .symlink, .workspace => workspace_and_not_v0: {
+                    if (res.tag == .workspace and lockfile_version != .v0) {
+                        break :workspace_and_not_v0;
+                    }
+
                     if (i >= pkg_info.len) {
                         try log.addError(source, value.loc, "Missing dependencies object");
                         return error.InvalidPackageInfo;
@@ -1501,7 +1848,6 @@ pub fn parseIntoBinaryLockfile(
             pkg.name = name;
             pkg.name_hash = name_hash;
             pkg.resolution = res;
-            pkg.scripts = .{};
 
             const pkg_id = try lockfile.appendPackageDedupe(&pkg, string_buf.bytes.items);
 
@@ -1523,6 +1869,7 @@ pub fn parseIntoBinaryLockfile(
 
         const pkgs = lockfile.packages.slice();
         const pkg_deps = pkgs.items(.dependencies);
+        const pkg_names = pkgs.items(.name);
         var pkg_metas = pkgs.items(.meta);
         var pkg_resolutions = pkgs.items(.resolution);
 
@@ -1533,25 +1880,51 @@ pub fn parseIntoBinaryLockfile(
 
             for (pkg_deps[0].begin()..pkg_deps[0].end()) |_dep_id| {
                 const dep_id: DependencyID = @intCast(_dep_id);
-                const dep = lockfile.buffers.dependencies.items[dep_id];
+                const dep = &lockfile.buffers.dependencies.items[dep_id];
 
                 const entry = pkg_map.get(dep.name.slice(lockfile.buffers.string_bytes.items)) orelse {
                     if (dep.behavior.optional) {
                         continue;
                     }
-                    try dependencyResolutionFailure(&dep, null, allocator, lockfile.buffers.string_bytes.items, source, log, root_pkg_exr.loc);
+                    try dependencyResolutionFailure(dep, null, allocator, lockfile.buffers.string_bytes.items, source, log, root_pkg_exr.loc);
                     return error.InvalidPackageInfo;
                 };
 
-                lockfile.buffers.resolutions.items[dep_id] = entry.pkg_id;
-                lockfile.buffers.dependencies.items[dep_id].behavior.bundled = entry.bundled;
+                mapDepToPkg(dep, dep_id, &entry, lockfile, pkg_resolutions);
             }
-
-            // TODO(dylan-conway) should we handle workspaces separately here for custom hoisting
-
         }
 
         var path_buf: bun.PathBuffer = undefined;
+
+        if (lockfile_version != .v0) {
+            // then workspace dependencies are resolved
+            for (workspace_pkgs_off..workspace_pkgs_off + workspace_pkgs_len) |_pkg_id| {
+                const pkg_id: PackageID = @intCast(_pkg_id);
+                const workspace_name = pkg_names[pkg_id].slice(lockfile.buffers.string_bytes.items);
+
+                const deps = pkg_deps[pkg_id];
+                for (deps.begin()..deps.end()) |_dep_id| {
+                    const dep_id: DependencyID = @intCast(_dep_id);
+                    const dep = &lockfile.buffers.dependencies.items[dep_id];
+                    const dep_name = dep.name.slice(lockfile.buffers.string_bytes.items);
+
+                    const workspace_node_modules = bun.fmt.bufPrint(&path_buf, "{s}/{s}", .{ workspace_name, dep_name }) catch {
+                        try log.addErrorFmt(source, root_pkg_exr.loc, allocator, "Workspace and dependency name too long: '{s}/{s}'", .{ workspace_name, dep_name });
+                        return error.InvalidPackageInfo;
+                    };
+
+                    const entry = pkg_map.get(workspace_node_modules) orelse pkg_map.get(dep_name) orelse {
+                        if (dep.behavior.optional) {
+                            continue;
+                        }
+                        try dependencyResolutionFailure(dep, workspace_name, allocator, lockfile.buffers.string_bytes.items, source, log, root_pkg_exr.loc);
+                        return error.InvalidPackageInfo;
+                    };
+
+                    mapDepToPkg(dep, dep_id, &entry, lockfile, pkg_resolutions);
+                }
+            }
+        }
 
         // then each package dependency
         for (pkgs_expr.data.e_object.properties.slice()) |prop| {
@@ -1564,75 +1937,26 @@ pub fn parseIntoBinaryLockfile(
             }).pkg_id;
 
             // find resolutions. iterate up to root through the pkg path.
-            deps: for (pkg_deps[pkg_id].begin()..pkg_deps[pkg_id].end()) |_dep_id| {
+            const deps = pkg_deps[pkg_id];
+            deps: for (deps.begin()..deps.end()) |_dep_id| {
                 const dep_id: DependencyID = @intCast(_dep_id);
-                var dep = &lockfile.buffers.dependencies.items[dep_id];
-                const dep_name = dep.name.slice(lockfile.buffers.string_bytes.items);
+                const dep = &lockfile.buffers.dependencies.items[dep_id];
 
-                @memcpy(path_buf[0..pkg_path.len], pkg_path);
-                path_buf[pkg_path.len] = '/';
-                var offset = pkg_path.len + 1;
-
-                var valid = true;
-                while (valid) {
-                    @memcpy(path_buf[offset..][0..dep_name.len], dep_name);
-                    const res_path = path_buf[0 .. offset + dep_name.len];
-
-                    if (pkg_map.get(res_path)) |entry| {
-                        lockfile.buffers.resolutions.items[dep_id] = entry.pkg_id;
-                        dep.behavior.bundled = entry.bundled;
-                        continue :deps;
-                    }
-
-                    if (offset == 0) {
+                const entry = pkg_map.findResolution(pkg_path, dep, lockfile.buffers.string_bytes.items, &path_buf) catch |err| switch (err) {
+                    error.InvalidPackageKey => {
+                        try log.addError(source, key.loc, "Invalid package path");
+                        return error.InvalidPackageKey;
+                    },
+                    error.Unresolvable => {
                         if (dep.behavior.optional) {
                             continue :deps;
                         }
                         try dependencyResolutionFailure(dep, pkg_path, allocator, lockfile.buffers.string_bytes.items, source, log, key.loc);
                         return error.InvalidPackageInfo;
-                    }
+                    },
+                };
 
-                    const slash = strings.lastIndexOfChar(path_buf[0 .. offset - 1], '/') orelse {
-                        offset = 0;
-                        continue;
-                    };
-
-                    // might be a scoped package
-                    const at = strings.lastIndexOfChar(path_buf[0 .. offset - 1], '@') orelse {
-                        offset = slash + 1;
-                        continue;
-                    };
-
-                    if (at > slash) {
-                        valid = false;
-                        continue;
-                    }
-
-                    const next_slash = strings.lastIndexOfChar(path_buf[0..slash], '/') orelse {
-                        if (at != 0) {
-                            try log.addError(source, key.loc, "Invalid package path");
-                            return error.InvalidPackageKey;
-                        }
-                        offset = 0;
-                        continue;
-                    };
-
-                    if (next_slash > at) {
-                        // there's a scoped package but it exists farther up
-                        offset = slash + 1;
-                        continue;
-                    }
-
-                    if (next_slash + 1 != at) {
-                        valid = false;
-                        continue;
-                    }
-
-                    offset = at;
-                }
-
-                try log.addError(source, key.loc, "Invalid package path");
-                return error.InvalidPackageKey;
+                mapDepToPkg(dep, dep_id, &entry, lockfile, pkg_resolutions);
             }
         }
 
@@ -1644,11 +1968,24 @@ pub fn parseIntoBinaryLockfile(
                 },
             }
         };
-
-        return;
     }
+}
 
-    lockfile.initEmpty(allocator);
+fn mapDepToPkg(dep: *Dependency, dep_id: DependencyID, pkg_map_entry: *const PkgMapEntry, lockfile: *BinaryLockfile, pkg_resolutions: []const Resolution) void {
+    const pkg_id = pkg_map_entry.pkg_id;
+    lockfile.buffers.resolutions.items[dep_id] = pkg_id;
+    dep.behavior.bundled = pkg_map_entry.bundled;
+
+    if (lockfile.text_lockfile_version != .v0) {
+        const res = &pkg_resolutions[pkg_id];
+        if (res.tag == .workspace) {
+            dep.version.tag = .workspace;
+            dep.version.value = .{ .workspace = res.value.workspace };
+
+            // not sure what depends on this, but this is existing behavior
+            dep.behavior.workspace = true;
+        }
+    }
 }
 
 fn dependencyResolutionFailure(dep: *const Dependency, pkg_path: ?string, allocator: std.mem.Allocator, buf: string, source: *const logger.Source, log: *logger.Log, loc: logger.Loc) OOM!void {

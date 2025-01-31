@@ -494,6 +494,8 @@ pub fn posix_spawn_file_actions_addchdir_np(actions: *posix_spawn_file_actions_t
 pub extern fn vmsplice(fd: c_int, iovec: [*]const std.posix.iovec, iovec_count: usize, flags: u32) isize;
 
 const net_c = @cImport({
+    // TODO: remove this c import! instead of adding to it, add to
+    // c-headers-for-zig.h and use bun.C.translated.
     @cInclude("ifaddrs.h"); // getifaddrs, freeifaddrs
     @cInclude("net/if.h"); // IFF_RUNNING, IFF_UP
     @cInclude("fcntl.h"); // F_DUPFD_CLOEXEC
@@ -549,6 +551,8 @@ pub fn getErrno(rc: anytype) E {
 pub const getuid = std.os.linux.getuid;
 pub const getgid = std.os.linux.getgid;
 pub const linux_fs = if (bun.Environment.isLinux) @cImport({
+    // TODO: remove this c import! instead of adding to it, add to
+    // c-headers-for-zig.h and use bun.C.translated.
     @cInclude("linux/fs.h");
 }) else struct {};
 
@@ -582,7 +586,7 @@ pub const RWFFlagSupport = enum(u8) {
         if (comptime !bun.Environment.isLinux) return false;
         switch (rwf_bool.load(.monotonic)) {
             .unknown => {
-                if (isLinuxKernelVersionWithBuggyRWF_NONBLOCK()) {
+                if (isLinuxKernelVersionWithBuggyRWF_NONBLOCK() or bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK")) {
                     rwf_bool.store(.unsupported, .monotonic);
                     return false;
                 }
@@ -628,10 +632,6 @@ pub const RENAME_WHITEOUT = 1 << 2;
 
 pub extern "C" fn quick_exit(code: c_int) noreturn;
 pub extern "C" fn memrchr(ptr: [*]const u8, val: c_int, len: usize) ?[*]const u8;
-
-pub const netdb = @cImport({
-    @cInclude("netdb.h");
-});
 
 export fn sys_epoll_pwait2(epfd: i32, events: ?[*]std.os.linux.epoll_event, maxevents: i32, timeout: ?*const std.os.linux.timespec, sigmask: ?*const std.os.linux.sigset_t) isize {
     return @bitCast(

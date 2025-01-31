@@ -63,16 +63,16 @@ const errors: ErrorCodeMapping = [
   ["ERR_SOCKET_DGRAM_IS_CONNECTED", Error],
   ["ERR_SOCKET_DGRAM_NOT_CONNECTED", Error],
   ["ERR_SOCKET_DGRAM_NOT_RUNNING", Error],
-  ["ERR_STREAM_PREMATURE_CLOSE", Error],
   ["ERR_STREAM_ALREADY_FINISHED", Error],
   ["ERR_STREAM_CANNOT_PIPE", Error],
   ["ERR_STREAM_DESTROYED", Error],
   ["ERR_STREAM_NULL_VALUES", TypeError],
-  ["ERR_STREAM_WRITE_AFTER_END", Error],
+  ["ERR_STREAM_PREMATURE_CLOSE", Error],
   ["ERR_STREAM_PUSH_AFTER_EOF", Error],
   ["ERR_STREAM_RELEASE_LOCK", Error, "AbortError"],
   ["ERR_STREAM_UNABLE_TO_PIPE", Error],
   ["ERR_STREAM_UNSHIFT_AFTER_END_EVENT", Error],
+  ["ERR_STREAM_WRITE_AFTER_END", Error],
   ["ERR_STRING_TOO_LONG", Error],
   ["ERR_UNAVAILABLE_DURING_EXIT", Error],
   ["ERR_UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET", Error],
@@ -91,6 +91,9 @@ const errors: ErrorCodeMapping = [
 
   // Console
   ["ERR_CONSOLE_WRITABLE_STREAM", TypeError, "TypeError"],
+
+  // FS
+  ["ERR_DIR_CLOSED", Error],
 
   // DNS
   ["ERR_DNS_SET_SERVERS_FAILED", Error],
@@ -167,6 +170,9 @@ const errors: ErrorCodeMapping = [
   ["ERR_POSTGRES_IDLE_TIMEOUT", Error, "PostgresError"],
   ["ERR_POSTGRES_CONNECTION_TIMEOUT", Error, "PostgresError"],
   ["ERR_POSTGRES_LIFETIME_TIMEOUT", Error, "PostgresError"],
+  ["ERR_POSTGRES_INVALID_TRANSACTION_STATE", Error, "PostgresError"],
+  ["ERR_POSTGRES_QUERY_CANCELLED", Error, "PostgresError"],
+  ["ERR_POSTGRES_UNSAFE_TRANSACTION", Error, "PostgresError"],
 
   // S3
   ["ERR_S3_MISSING_CREDENTIALS", Error],

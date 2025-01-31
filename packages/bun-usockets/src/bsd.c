@@ -82,7 +82,7 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
         while (1) {
             int ret = sendmsg_x(fd, sendbuf->msgvec, sendbuf->num, flags);
             if (ret >= 0) return ret;
-            // If we receive EMMSGSIZE, we should use the fallback code.
+            // If we receive EMSGSIZE, we should use the fallback code.
             if (errno == EMSGSIZE) break;
             if (errno != EINTR) return ret;
         }
@@ -199,8 +199,8 @@ int bsd_udp_setup_sendbuf(struct udp_sendbuf *buf, size_t bufsize, void** payloa
         struct sockaddr *addr = (struct sockaddr *)addresses[i];
         socklen_t addr_len = 0;
         if (addr) {
-            addr_len = addr->sa_family == AF_INET ? sizeof(struct sockaddr_in) 
-                     : addr->sa_family == AF_INET6 ? sizeof(struct sockaddr_in6) 
+            addr_len = addr->sa_family == AF_INET ? sizeof(struct sockaddr_in)
+                     : addr->sa_family == AF_INET6 ? sizeof(struct sockaddr_in6)
                      : 0;
             if (addr_len > 0) {
                 buf->has_addresses = 1;
@@ -283,7 +283,7 @@ LIBUS_SOCKET_DESCRIPTOR apple_no_sigpipe(LIBUS_SOCKET_DESCRIPTOR fd) {
 #ifdef __APPLE__
     if (fd != LIBUS_SOCKET_ERROR) {
         int no_sigpipe = 1;
-        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, (void *) &no_sigpipe, sizeof(int));
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &no_sigpipe, sizeof(int));
     }
 #endif
     return fd;
@@ -309,7 +309,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd) {
     if (LIKELY(fd != LIBUS_SOCKET_ERROR)) {
         int flags = fcntl(fd, F_GETFL, 0);
 
-        // F_GETFL supports O_NONBLCOK
+        // F_GETFL supports O_NONBLOCK
         fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 
         flags = fcntl(fd, F_GETFD, 0);
@@ -322,8 +322,167 @@ LIBUS_SOCKET_DESCRIPTOR bsd_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd) {
     return fd;
 }
 
+static int setsockopt_6_or_4(LIBUS_SOCKET_DESCRIPTOR fd, int option4, int option6, const void *option_value, socklen_t option_len) {
+    int res = setsockopt(fd, IPPROTO_IPV6, option6, option_value, option_len);
+
+    if (res == 0) {
+        return 0;
+    }
+
+#ifdef _WIN32
+    const int err = WSAGetLastError();
+    if (err == WSAENOPROTOOPT || err == WSAEINVAL) {
+#else
+    if (errno == ENOPROTOOPT || errno == EINVAL) {
+#endif
+        return setsockopt(fd, IPPROTO_IP, option4, option_value, option_len);
+    }
+
+    return res;
+}
+
 void bsd_socket_nodelay(LIBUS_SOCKET_DESCRIPTOR fd, int enabled) {
-    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (void *) &enabled, sizeof(enabled));
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &enabled, sizeof(enabled));
+}
+
+int bsd_socket_broadcast(LIBUS_SOCKET_DESCRIPTOR fd, int enabled) {
+    return setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &enabled, sizeof(enabled));
+}
+
+int bsd_socket_multicast_loopback(LIBUS_SOCKET_DESCRIPTOR fd, int enabled) {
+    return setsockopt_6_or_4(fd, IP_MULTICAST_LOOP, IPV6_MULTICAST_LOOP, &enabled, sizeof(enabled));
+}
+
+int bsd_socket_multicast_interface(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_storage *addr) {
+#ifdef _WIN32
+    if (fd == SOCKET_ERROR){
+        WSASetLastError(WSAEBADF);
+        errno = EBADF;
+        return -1;
+    }
+#endif
+
+    if (addr->ss_family == AF_INET) {
+        const struct sockaddr_in *addr4 = (const struct sockaddr_in*) addr;
+        int first_octet = ntohl(addr4->sin_addr.s_addr) >> 24;
+        // 224.0.0.0 through 239.255.255.255 (224.0.0.0/4) are multicast addresses
+        // and thus not valid interface addresses.
+        if (!(224 <= first_octet && first_octet <= 239)) {
+            return setsockopt(fd, IPPROTO_IP, IP_MULTICAST_IF, &addr4->sin_addr, sizeof(addr4->sin_addr));
+        }
+    }
+
+    if (addr->ss_family == AF_INET6) {
+        const struct sockaddr_in6 *addr6 = (const struct sockaddr_in6*) addr;
+        return setsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_IF, &addr6->sin6_scope_id, sizeof(addr6->sin6_scope_id));
+    }
+
+#ifdef _WIN32
+    WSASetLastError(WSAEINVAL);
+#endif
+    errno = EINVAL;
+    return -1;
+}
+
+static int bsd_socket_set_membership4(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_in *addr, const struct sockaddr_in *iface, int drop) {
+    struct ip_mreq mreq;
+    memset(&mreq, 0, sizeof(mreq));
+    mreq.imr_multiaddr.s_addr = addr->sin_addr.s_addr;
+    mreq.imr_interface.s_addr = iface->sin_addr.s_addr;
+    int option = drop ? IP_DROP_MEMBERSHIP : IP_ADD_MEMBERSHIP;
+    return setsockopt(fd, IPPROTO_IP, option, &mreq, sizeof(mreq));
+}
+
+static int bsd_socket_set_membership6(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_in6 *addr, const struct sockaddr_in6 *iface, int drop) {
+    struct ipv6_mreq mreq;
+    memset(&mreq, 0, sizeof(mreq));
+    mreq.ipv6mr_multiaddr = addr->sin6_addr;
+    mreq.ipv6mr_interface = iface->sin6_scope_id;
+    int option = drop ? IPV6_LEAVE_GROUP : IPV6_JOIN_GROUP;
+    return setsockopt(fd, IPPROTO_IP, option, &mreq, sizeof(mreq));
+}
+
+int bsd_socket_set_membership(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_storage *addr, const struct sockaddr_storage *iface, int drop) {
+    if (addr->ss_family != iface->ss_family) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (addr->ss_family == AF_INET6) {
+        return bsd_socket_set_membership6(fd, (const struct sockaddr_in6*) addr, (const struct sockaddr_in6*) iface, drop);
+    } else {
+        return bsd_socket_set_membership4(fd, (const struct sockaddr_in*) addr, (const struct sockaddr_in*) iface, drop);
+    }
+}
+
+static int bsd_socket_set_source_specific_membership4(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_in *source, const struct sockaddr_in *group, const struct sockaddr_in *iface, int drop) {
+    struct ip_mreq_source mreq;
+    memset(&mreq, 0, sizeof(mreq));
+
+    if (iface != NULL) {
+        mreq.imr_interface.s_addr = iface->sin_addr.s_addr;
+    } else {
+        mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+    }
+
+    mreq.imr_sourceaddr.s_addr = source->sin_addr.s_addr;
+    mreq.imr_multiaddr.s_addr = group->sin_addr.s_addr;
+
+    int option = drop? IP_ADD_SOURCE_MEMBERSHIP : IP_DROP_SOURCE_MEMBERSHIP;
+
+    return setsockopt(fd, IPPROTO_IP, option, &mreq, sizeof(mreq));
+}
+
+static int bsd_socket_set_source_specific_membership6(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_in6 *source, const struct sockaddr_in6 *group, const struct sockaddr_in6 *iface, int drop) {
+    struct group_source_req mreq;
+    memset(&mreq, 0, sizeof(mreq));
+
+    if (iface != NULL) {
+        mreq.gsr_interface = iface->sin6_scope_id;
+    }
+
+    memcpy(&mreq.gsr_source, source, sizeof(mreq.gsr_source));
+    memcpy(&mreq.gsr_group, group, sizeof(mreq.gsr_group));
+
+    int option = drop? MCAST_JOIN_SOURCE_GROUP : MCAST_LEAVE_SOURCE_GROUP;
+
+    return setsockopt(fd, IPPROTO_IPV6, option, &mreq, sizeof(mreq));
+}
+
+int bsd_socket_set_source_specific_membership(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_storage *source, const struct sockaddr_storage *group, const struct sockaddr_storage *iface, int drop) {
+    if (source->ss_family == group->ss_family && group->ss_family == iface->ss_family) {
+        if (source->ss_family == AF_INET) {
+            return bsd_socket_set_source_specific_membership4(fd, (const struct sockaddr_in*) source, (const struct sockaddr_in*) group, (const struct sockaddr_in*) iface, drop);
+        } else if (source->ss_family == AF_INET6) {
+            return bsd_socket_set_source_specific_membership6(fd, (const struct sockaddr_in6*) source, (const struct sockaddr_in6*) group, (const struct sockaddr_in6*) iface, drop);
+        }
+    }
+
+#ifdef _WIN32
+    WSASetLastError(WSAEINVAL);
+#endif
+    errno = EINVAL;
+    return -1;
+}
+
+static int bsd_socket_ttl_any(LIBUS_SOCKET_DESCRIPTOR fd, int ttl, int ipv4, int ipv6) {
+    if (ttl < 1 || ttl > 255) {
+#ifdef _WIN32
+        WSASetLastError(WSAEINVAL);
+#endif
+        errno = EINVAL;
+        return -1;
+    }
+
+    return setsockopt_6_or_4(fd, ipv4, ipv6, &ttl, sizeof(ttl));
+}
+
+int bsd_socket_ttl_unicast(LIBUS_SOCKET_DESCRIPTOR fd, int ttl) {
+    return bsd_socket_ttl_any(fd, ttl, IP_TTL, IPV6_UNICAST_HOPS);
+}
+
+int bsd_socket_ttl_multicast(LIBUS_SOCKET_DESCRIPTOR fd, int ttl) {
+    return bsd_socket_ttl_any(fd, ttl, IP_MULTICAST_TTL, IPV6_MULTICAST_HOPS);
 }
 
 int bsd_socket_keepalive(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay) {
@@ -398,11 +557,15 @@ void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd) {
     // Linux TCP_CORK has the same underlying corking mechanism as with MSG_MORE
 #ifdef TCP_CORK
     int enabled = 0;
-    setsockopt(fd, IPPROTO_TCP, TCP_CORK, (void *) &enabled, sizeof(int));
+    setsockopt(fd, IPPROTO_TCP, TCP_CORK, &enabled, sizeof(int));
 #endif
 }
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol) {
+LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, int *err) {
+    if (err != NULL) {
+        *err = 0;
+    }
+
     LIBUS_SOCKET_DESCRIPTOR created_fd;
 #if defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)
     const int flags = SOCK_CLOEXEC | SOCK_NONBLOCK;
@@ -411,6 +574,9 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol) {
     } while (IS_EINTR(created_fd));
 
     if (UNLIKELY(created_fd == -1)) {
+        if (err != NULL) {
+            *err = errno;
+        }
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -421,6 +587,9 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol) {
     } while (IS_EINTR(created_fd));
 
     if (UNLIKELY(created_fd == -1)) {
+        if (err != NULL) {
+            *err = errno;
+        }
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -615,7 +784,7 @@ int bsd_would_block() {
 
 static int us_internal_bind_and_listen(LIBUS_SOCKET_DESCRIPTOR listenFd, struct sockaddr *listenAddr, socklen_t listenAddrLength, int backlog, int* error) {
     int result;
-    do 
+    do
         result = bind(listenFd, listenAddr, listenAddrLength);
     while (IS_EINTR(result));
 
@@ -624,12 +793,72 @@ static int us_internal_bind_and_listen(LIBUS_SOCKET_DESCRIPTOR listenFd, struct 
         return -1;
     }
 
-    do 
+    do
         result = listen(listenFd, backlog);
     while (IS_EINTR(result));
     *error = LIBUS_ERR;
 
     return result;
+}
+
+static int bsd_set_reuseaddr(LIBUS_SOCKET_DESCRIPTOR listenFd) {
+    const int one = 1;
+#if defined(SO_REUSEPORT) && !defined(__linux__) && !defined(__GNU__)
+    return setsockopt(listenFd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one));
+#else
+    return setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+#endif
+}
+
+static int bsd_set_reuseport(LIBUS_SOCKET_DESCRIPTOR listenFd) {
+#if defined(__linux__)
+    // Among Bun's supported platforms, only Linux does load balancing with SO_REUSEPORT.
+    const int one = 1;
+    return setsockopt(listenFd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one));
+#else
+#if _WIN32
+    WSASetLastError(WSAEOPNOTSUPP);
+#endif
+    errno = ENOTSUP;
+    return -1;
+#endif
+}
+
+static int bsd_set_reuse(LIBUS_SOCKET_DESCRIPTOR listenFd, int options) {
+    int result = 0;
+
+    if ((options & LIBUS_LISTEN_EXCLUSIVE_PORT)) {
+#if _WIN32
+        const int one = 1;
+        result = setsockopt(listenFd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, &one, sizeof(one));
+        if (result != 0) {
+            return result;
+        }
+#endif
+    }
+
+    if ((options & LIBUS_LISTEN_REUSE_ADDR)) {
+        result = bsd_set_reuseaddr(listenFd);
+        if (result != 0) {
+            return result;
+        }
+    }
+
+    if ((options & LIBUS_LISTEN_REUSE_PORT)) {
+        result = bsd_set_reuseport(listenFd);
+        if (result != 0) {
+            if (errno == ENOTSUP) {
+                if ((options & LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE) == 0) {
+                    errno = 0;
+                    return 0;
+                }
+            }
+
+            return result;
+        }
+    }
+
+    return 0;
 }
 
 inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd(
@@ -640,42 +869,26 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
     int* error
 ) {
 
-     if ((options & LIBUS_LISTEN_EXCLUSIVE_PORT)) {
-#if _WIN32
-        int optval2 = 1;
-        setsockopt(listenFd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (void *) &optval2, sizeof(optval2));
-#endif
-    } else {
-#if defined(SO_REUSEPORT)
-        if((options & LIBUS_LISTEN_REUSE_PORT)) {
-            int optval2 = 1;
-            setsockopt(listenFd, SOL_SOCKET, SO_REUSEPORT, (void *) &optval2, sizeof(optval2));  
-        }
-#endif
+    if (bsd_set_reuse(listenFd, options) != 0) {
+        return LIBUS_SOCKET_ERROR;
     }
 
-#if defined(SO_REUSEADDR)
-    #ifndef _WIN32
-
+#if defined(SO_REUSEADDR) && !_WIN32
     //  Unlike on Unix, here we don't set SO_REUSEADDR, because it doesn't just
     //  allow binding to addresses that are in use by sockets in TIME_WAIT, it
     //  effectively allows 'stealing' a port which is in use by another application.
     //  See libuv issue #1360.
-    
-    
-    int optval3 = 1;
-    setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, (void *) &optval3, sizeof(optval3));
-    #endif
+    int one = 1;
+    setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
 #endif
 
 #ifdef IPV6_V6ONLY
-    // TODO: revise support to match node.js
-    // if (listenAddr->ai_family == AF_INET6) {
-    //     int disabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
-    //     setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, (void *) &disabled, sizeof(disabled));
-    // }
-    int disabled = 0;
-    setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, (void *) &disabled, sizeof(disabled));
+    if (listenAddr->ai_family == AF_INET6) {
+        int enabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
+        if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, &enabled, sizeof(enabled)) != 0) {
+            return LIBUS_SOCKET_ERROR;
+        }
+    }
 #endif
 
     if (us_internal_bind_and_listen(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen, 512, error)) {
@@ -706,7 +919,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
     struct addrinfo *listenAddr;
     for (struct addrinfo *a = result; a != NULL; a = a->ai_next) {
         if (a->ai_family == AF_INET6) {
-            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol);
+            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, NULL);
             if (listenFd == LIBUS_SOCKET_ERROR) {
                 continue;
             }
@@ -723,7 +936,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
 
     for (struct addrinfo *a = result; a != NULL; a = a->ai_next) {
         if (a->ai_family == AF_INET) {
-            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol);
+            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, NULL);
             if (listenFd == LIBUS_SOCKET_ERROR) {
                 continue;
             }
@@ -822,11 +1035,11 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, 
     if (path_len >= sizeof(server_address->sun_path)) {
         #if defined(_WIN32)
             // simulate ENAMETOOLONG
-            SetLastError(ERROR_FILENAME_EXCED_RANGE);    
+            SetLastError(ERROR_FILENAME_EXCED_RANGE);
         #else
             errno = ENAMETOOLONG;
         #endif
-        
+
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -837,7 +1050,7 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, 
 static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_listen_socket_unix(const char* path, int options, struct sockaddr_un* server_address, size_t addrlen, int* error) {
     LIBUS_SOCKET_DESCRIPTOR listenFd = LIBUS_SOCKET_ERROR;
 
-    listenFd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0);
+    listenFd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0, NULL);
 
     if (listenFd == LIBUS_SOCKET_ERROR) {
         return LIBUS_SOCKET_ERROR;
@@ -884,7 +1097,11 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t l
     return listenFd;
 }
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port) {
+LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int options, int *err) {
+    if (err != NULL) {
+        *err = 0;
+    }
+
     struct addrinfo hints, *result;
     memset(&hints, 0, sizeof(struct addrinfo));
 
@@ -895,7 +1112,11 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port) {
     char port_string[16];
     snprintf(port_string, 16, "%d", port);
 
-    if (getaddrinfo(host, port_string, &hints, &result)) {
+    int gai_result = getaddrinfo(host, port_string, &hints, &result);
+    if (gai_result != 0) {
+        if (err != NULL) {
+            *err = -gai_result;
+        }
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -903,14 +1124,14 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port) {
     struct addrinfo *listenAddr = NULL;
     for (struct addrinfo *a = result; a && listenFd == LIBUS_SOCKET_ERROR; a = a->ai_next) {
         if (a->ai_family == AF_INET6) {
-            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol);
+            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, err);
             listenAddr = a;
         }
     }
 
     for (struct addrinfo *a = result; a && listenFd == LIBUS_SOCKET_ERROR; a = a->ai_next) {
         if (a->ai_family == AF_INET) {
-            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol);
+            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, err);
             listenAddr = a;
         }
     }
@@ -923,12 +1144,21 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port) {
     if (port != 0) {
         /* Should this also go for UDP? */
         int enabled = 1;
-        setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, (void *) &enabled, sizeof(enabled));
+        setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, &enabled, sizeof(enabled));
     }
-    
+
+    if (bsd_set_reuse(listenFd, options) != 0) {
+        freeaddrinfo(result);
+        return LIBUS_SOCKET_ERROR;
+    }
+
 #ifdef IPV6_V6ONLY
-    int disabled = 0;
-    setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, (void *) &disabled, sizeof(disabled));
+    if (listenAddr->ai_family == AF_INET6) {
+        int enabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
+        if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, &enabled, sizeof(enabled)) != 0) {
+            return LIBUS_SOCKET_ERROR;
+        }
+    }
 #endif
 
     /* We need destination address for udp packets in both ipv6 and ipv4 */
@@ -939,9 +1169,9 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port) {
 #endif
 
     int enabled = 1;
-    if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_RECVPKTINFO, (void *) &enabled, sizeof(enabled)) == -1) {
+    if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_RECVPKTINFO, &enabled, sizeof(enabled)) == -1) {
         if (errno == 92) {
-            if (setsockopt(listenFd, IPPROTO_IP, IP_PKTINFO, (void *) &enabled, sizeof(enabled)) != 0) {
+            if (setsockopt(listenFd, IPPROTO_IP, IP_PKTINFO, &enabled, sizeof(enabled)) != 0) {
                 //printf("Error setting IPv4 pktinfo!\n");
             }
         } else {
@@ -950,9 +1180,9 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port) {
     }
 
     /* These are used for getting the ECN */
-    if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_RECVTCLASS, (void *) &enabled, sizeof(enabled)) == -1) {
+    if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_RECVTCLASS, &enabled, sizeof(enabled)) == -1) {
         if (errno == 92) {
-            if (setsockopt(listenFd, IPPROTO_IP, IP_RECVTOS, (void *) &enabled, sizeof(enabled)) != 0) {
+            if (setsockopt(listenFd, IPPROTO_IP, IP_RECVTOS, &enabled, sizeof(enabled)) != 0) {
                 //printf("Error setting IPv4 ECN!\n");
             }
         } else {
@@ -962,12 +1192,22 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port) {
 
     /* We bind here as well */
     if (bind(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen)) {
+        if (err != NULL) {
+#ifdef _WIN32
+            *err = WSAGetLastError();
+#else
+            *err = errno;
+#endif
+        }
         bsd_close_socket(listenFd);
         freeaddrinfo(result);
         return LIBUS_SOCKET_ERROR;
     }
 
     freeaddrinfo(result);
+    if (err != NULL) {
+        *err = 0;
+    }
     return listenFd;
 }
 
@@ -1012,7 +1252,7 @@ int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
 
     int res = connect(fd, &addr, sizeof(addr));
     // EAFNOSUPPORT is harmless in this case - we just want to disconnect
-    if (res == 0 || 
+    if (res == 0 ||
 #ifdef _WIN32
     WSAGetLastError() == WSAEAFNOSUPPORT
 #else
@@ -1080,14 +1320,14 @@ static int bsd_do_connect_raw(LIBUS_SOCKET_DESCRIPTOR fd, struct sockaddr *addr,
         }
     }
 
-    
+
 #else
     int r;
      do {
         errno = 0;
         r = connect(fd, (struct sockaddr *)addr, namelen);
     } while (IS_EINTR(r));
-    
+
     // connect() can return -1 with an errno of 0.
     // the errno is the correct one in that case.
     if (r == -1 && errno != 0) {
@@ -1097,7 +1337,7 @@ static int bsd_do_connect_raw(LIBUS_SOCKET_DESCRIPTOR fd, struct sockaddr *addr,
 
         return errno;
     }
-    
+
     return 0;
 #endif
 }
@@ -1122,7 +1362,7 @@ static int convert_null_addr(const struct sockaddr_storage *addr, struct sockadd
         }
     }
     return 0;
-} 
+}
 
 static int is_loopback(struct sockaddr_storage *sockaddr) {
     if (sockaddr->ss_family == AF_INET) {
@@ -1138,7 +1378,7 @@ static int is_loopback(struct sockaddr_storage *sockaddr) {
 #endif
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, int options) {
-    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(addr->ss_family, SOCK_STREAM, 0);
+    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(addr->ss_family, SOCK_STREAM, 0, NULL);
     if (fd == LIBUS_SOCKET_ERROR) {
         return LIBUS_SOCKET_ERROR;
     }
@@ -1146,7 +1386,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr,
 #ifdef _WIN32
     win32_set_nonblocking(fd);
 
-    // On windows we can't connect to the null address directly. 
+    // On windows we can't connect to the null address directly.
     // To match POSIX behavior, we need to connect to localhost instead.
     struct sockaddr_storage converted;
     if (convert_null_addr(addr, &converted)) {
@@ -1185,7 +1425,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr,
 }
 
 static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_connect_socket_unix(const char *server_path, size_t len, int options, struct sockaddr_un* server_address, const size_t addrlen) {
-    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0);
+    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0, NULL);
 
     if (fd == LIBUS_SOCKET_ERROR) {
         return LIBUS_SOCKET_ERROR;

@@ -75,13 +75,11 @@ pub const JSBundler = struct {
         bytecode: bool = false,
         banner: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         footer: OwnedString = OwnedString.initEmpty(bun.default_allocator),
-        experimental: Loader.Experimental = .{},
         css_chunking: bool = false,
         drop: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         has_any_on_before_parse: bool = false,
-        throw_on_error: bool = if (bun.FeatureFlags.breaking_changes_1_2) true else false,
-
-        env_behavior: Api.DotEnvBehavior = if (!bun.FeatureFlags.breaking_changes_1_2) .load_all else .disable,
+        throw_on_error: bool = true,
+        env_behavior: Api.DotEnvBehavior = .disable,
         env_prefix: OwnedString = OwnedString.initEmpty(bun.default_allocator),
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
@@ -107,26 +105,6 @@ pub const JSBundler = struct {
             if (try config.getOptionalEnum(globalThis, "target", options.Target)) |target| {
                 this.target = target;
                 did_set_target = true;
-            }
-
-            if (try config.getBooleanStrict(globalThis, "html")) |enable_html| {
-                this.experimental.html = enable_html;
-
-                if (enable_html and this.target != .browser) {
-                    return globalThis.throwInvalidArguments("'html' is currently only supported when target is 'browser'. You can still import HTML files via the 'file' loader, just not using the 'html' loader.", .{});
-                }
-            }
-
-            if (try config.getTruthy(globalThis, "experimentalCss")) |enable_css| {
-                this.experimental.css = if (enable_css.isBoolean())
-                    enable_css.toBoolean()
-                else if (enable_css.isObject()) true: {
-                    if (try enable_css.getTruthy(globalThis, "chunking")) |enable_chunking| {
-                        this.css_chunking = if (enable_chunking.isBoolean()) enable_css.toBoolean() else false;
-                    }
-
-                    break :true true;
-                } else false;
             }
 
             // Plugins must be resolved first as they are allowed to mutate the config JSValue
@@ -229,7 +207,7 @@ pub const JSBundler = struct {
             }
 
             if (try config.getTruthy(globalThis, "sourcemap")) |source_map_js| {
-                if (bun.FeatureFlags.breaking_changes_1_2 and config.isBoolean()) {
+                if (config.isBoolean()) {
                     if (source_map_js == .true) {
                         this.source_map = if (has_out_dir)
                             .linked
@@ -252,7 +230,7 @@ pub const JSBundler = struct {
                     } else if (env == .true or (env.isNumber() and env.asNumber() == 1)) {
                         this.env_behavior = .load_all;
                     } else if (env.isString()) {
-                        const slice = try env.toSlice2(globalThis, bun.default_allocator);
+                        const slice = try env.toSlice(globalThis, bun.default_allocator);
                         defer slice.deinit();
                         if (strings.eqlComptime(slice.slice(), "inline")) {
                             this.env_behavior = .load_all;
@@ -516,7 +494,7 @@ pub const JSBundler = struct {
                 };
             }
 
-            if (try config.getBooleanLoose(globalThis, "throw")) |flag| {
+            if (try config.getBooleanStrict(globalThis, "throw")) |flag| {
                 this.throw_on_error = flag;
             }
 

@@ -570,7 +570,7 @@ register_command(
   ARTIFACTS
     ${BUN_ZIG_OUTPUT}
   TARGETS
-    clone-zig
+    ${BUN_ZIG_TARGETS}
   SOURCES
     ${BUN_ZIG_SOURCES}
     ${BUN_ZIG_GENERATED_SOURCES}

@@ -79,13 +79,6 @@ pub const kFSEventStreamEventFlagRootChanged: c_int = 32;
 pub const kFSEventStreamEventFlagUnmount: c_int = 128;
 pub const kFSEventStreamEventFlagUserDropped: c_int = 2;
 
-// Lazy function call binding.
-const RTLD_LAZY = 0x1;
-// Symbols exported from this image (dynamic library or bundle)
-// are generally hidden and only availble to dlsym() when
-// directly using the handle returned by this call to dlopen().
-const RTLD_LOCAL = 0x4;
-
 pub const kFSEventsModified: c_int =
     kFSEventStreamEventFlagItemChangeOwner |
     kFSEventStreamEventFlagItemFinderInfoMod |

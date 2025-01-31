@@ -558,7 +558,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
         pub fn markSocketAsDead(socket: HTTPSocket) void {
             if (socket.ext(**anyopaque)) |ctx| {
-                ctx.* = bun.cast(**anyopaque, ActiveSocket.init(dead_socket).ptr());
+                ctx.* = bun.cast(**anyopaque, ActiveSocket.init(&dead_socket).ptr());
             }
         }
 
@@ -580,7 +580,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
             if (socket.ext(anyopaque)) |ctx| {
                 return getTagged(ctx);
             }
-            return ActiveSocket.init(dead_socket);
+            return ActiveSocket.init(&dead_socket);
         }
 
         pending_sockets: HiveArray(PooledSocket, pool_size) = HiveArray(PooledSocket, pool_size).init(),
@@ -598,7 +598,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
         }
 
         const ActiveSocket = TaggedPointerUnion(.{
-            DeadSocket,
+            *DeadSocket,
             HTTPClient,
             PooledSocket,
         });

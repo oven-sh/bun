@@ -137,7 +137,7 @@ pub const windows_bunx_fast_path = true;
 // This causes strange bugs where writing via console.log (sync) has a different
 // order than via Bun.file.writer() so we turn it off until there's a unified,
 // buffered writer abstraction shared throughout Bun
-pub const nonblocking_stdout_and_stderr_on_posix = false;
+pub const nonblocking_stdout_and_stderr_on_posix = true;
 
 pub const postgresql = env.is_canary or env.isDebug;
 

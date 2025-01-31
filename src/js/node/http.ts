@@ -857,7 +857,7 @@ IncomingMessage.prototype = {
       this.complete = true;
       this.push(null);
     } else if (this[bodyStreamSymbol] == null) {
-      const reader = this[reqSymbol].body?.getReader() as ReadableStreamDefaultReader;
+      const reader = this[reqSymbol]?.body?.getReader() as ReadableStreamDefaultReader;
       if (!reader) {
         this.complete = true;
         this.push(null);
@@ -968,27 +968,19 @@ $setPrototypeDirect.$call(IncomingMessage.prototype, Readable.prototype);
 $setPrototypeDirect.$call(IncomingMessage, Readable);
 
 async function consumeStream(self, reader: ReadableStreamDefaultReader) {
-  var done = false,
-    value,
-    aborted = false;
+  var aborted = false;
   try {
     while (true) {
-      const result = reader.readMany();
-      if ($isPromise(result)) {
-        ({ done, value } = await result);
-      } else {
-        ({ done, value } = result);
+      var { done, value } = await reader.read();
+      if (done) {
+        break;
       }
+
       if (self.destroyed || (aborted = self[abortedSymbol])) {
         break;
       }
-      for (var v of value) {
-        self.push(v);
-      }
 
-      if (self.destroyed || (aborted = self[abortedSymbol]) || done) {
-        break;
-      }
+      self.push(value);
     }
   } catch (err) {
     if (aborted || self.destroyed) return;
@@ -1246,15 +1238,24 @@ ServerResponse.prototype._implicitHeader = function () {
 
 ServerResponse.prototype._write = function (chunk, encoding, callback) {
   if (this[firstWriteSymbol] === undefined && !this.headersSent) {
-    this[firstWriteSymbol] = chunk;
+    this[firstWriteSymbol] =
+      encoding && encoding !== "utf-8" && encoding !== "utf8" && typeof chunk === "string"
+        ? Buffer.from(chunk, encoding)
+        : chunk;
     callback();
     return;
   }
 
-  ensureReadableStreamController.$call(this, controller => {
-    controller.write(chunk);
-    callback();
-  });
+  ensureReadableStreamController.$call(
+    this,
+    (controller, chunk, encoding, callback) => {
+      controller.write(chunk);
+      callback();
+    },
+    chunk,
+    encoding,
+    callback,
+  );
 };
 
 ServerResponse.prototype._writev = function (chunks, callback) {
@@ -1264,18 +1265,30 @@ ServerResponse.prototype._writev = function (chunks, callback) {
     return;
   }
 
-  ensureReadableStreamController.$call(this, controller => {
-    for (const chunk of chunks) {
-      controller.write(chunk.chunk);
-    }
-
-    callback();
-  });
+  ensureReadableStreamController.$call(
+    this,
+    (controller, chunks, _, callback) => {
+      let promise;
+      for (const chunk of chunks) {
+        promise = controller.write(chunk.chunk);
+      }
+      if (promise && $isPromise(promise)) {
+        promise.then(() => {
+          callback();
+        });
+      } else {
+        callback();
+      }
+    },
+    chunks,
+    undefined,
+    callback,
+  );
 };
 
-function ensureReadableStreamController(run) {
+function ensureReadableStreamController(run, chunk, encoding, callback) {
   const thisController = this[controllerSymbol];
-  if (thisController) return run(thisController);
+  if (thisController) return run(thisController, chunk, encoding, callback);
   this.headersSent = true;
   let firstWrite = this[firstWriteSymbol];
   this[controllerSymbol] = undefined;
@@ -1285,9 +1298,18 @@ function ensureReadableStreamController(run) {
         type: "direct",
         pull: controller => {
           this[controllerSymbol] = controller;
-          if (firstWrite) controller.write(firstWrite);
-          firstWrite = undefined;
-          run(controller);
+          let promise = undefined;
+          if (firstWrite) {
+            promise = controller.write(firstWrite);
+            firstWrite = undefined;
+          }
+          if (promise && $isPromise(promise)) {
+            promise.then(() => {
+              run(controller, chunk, encoding, callback);
+            });
+          } else {
+            run(controller, chunk, encoding, callback);
+          }
           if (!this[finishedSymbol]) {
             const { promise, resolve } = $newPromiseCapability(GlobalPromise);
             this[deferredSymbol] = resolve;
@@ -1338,19 +1360,25 @@ ServerResponse.prototype._final = function (callback) {
   }
 
   this[finishedSymbol] = true;
-  ensureReadableStreamController.$call(this, controller => {
-    controller.end();
-    if (shouldEmitClose) {
-      req.complete = true;
-      process.nextTick(emitRequestCloseNT, req);
-    }
-    callback();
-    const deferred = this[deferredSymbol];
-    if (deferred) {
-      this[deferredSymbol] = undefined;
-      deferred();
-    }
-  });
+  ensureReadableStreamController.$call(
+    this,
+    (controller, chunk, encoding, callback) => {
+      controller.end();
+      if (shouldEmitClose) {
+        req.complete = true;
+        process.nextTick(emitRequestCloseNT, req);
+      }
+      callback();
+      const deferred = this[deferredSymbol];
+      if (deferred) {
+        this[deferredSymbol] = undefined;
+        deferred();
+      }
+    },
+    undefined,
+    undefined,
+    callback,
+  );
 };
 
 ServerResponse.prototype.writeProcessing = function () {
@@ -1545,13 +1573,25 @@ class ClientRequest extends OutgoingMessage {
   }
 
   _write(chunk, encoding, callback) {
-    if (this.#controller) {
+    const controller = this.#controller;
+    if (controller) {
+      let promise;
       if (typeof chunk === "string") {
-        this.#controller.write(Buffer.from(chunk, encoding));
+        if (encoding === "utf-8" || encoding === "utf8" || !encoding) {
+          promise = controller.write(chunk);
+        } else {
+          promise = controller.write(Buffer.from(chunk, encoding));
+        }
       } else {
-        this.#controller.write(chunk);
+        promise = controller.write(chunk);
       }
-      process.nextTick(callback);
+      if ($isPromise(promise)) {
+        promise.then(() => {
+          callback(null);
+        });
+      } else {
+        callback(null);
+      }
       return;
     }
     if (!this.#bodyChunks) {

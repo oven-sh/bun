@@ -101,19 +101,11 @@ class ReadableFromWeb extends Readable {
     var deferredError;
     try {
       do {
-        var done = false,
-          value;
-        const firstResult = reader.readMany();
+        var { done, value } = await reader.read();
 
-        if ($isPromise(firstResult)) {
-          ({ done, value } = await firstResult);
-
-          if (this.#closed) {
-            this.#pendingChunks.push(...value);
-            return;
-          }
-        } else {
-          ({ done, value } = firstResult);
+        if (this.#closed) {
+          this.#pendingChunks.push(value);
+          return;
         }
 
         if (done) {
@@ -121,16 +113,8 @@ class ReadableFromWeb extends Readable {
           return;
         }
 
-        if (!this.push(value[0])) {
-          this.#pendingChunks = value.slice(1);
+        if (!this.push(value)) {
           return;
-        }
-
-        for (let i = 1, count = value.length; i < count; i++) {
-          if (!this.push(value[i])) {
-            this.#pendingChunks = value.slice(i + 1);
-            return;
-          }
         }
       } while (!this.#closed);
     } catch (e) {

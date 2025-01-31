@@ -1877,6 +1877,16 @@ pub const Dirent = struct {
 };
 
 pub const Process = struct {
+    // TODO: https://github.com/nodejs/node/blob/main/deps/uv/src/unix/darwin-proctitle.c
+    pub fn setTitle(globalObject: *JSC.JSGlobalObject, newvalue: *JSC.ZigString) callconv(.C) JSC.JSValue {
+        @import("../../process.zig").setTitle(globalObject.allocator(), newvalue.byteSlice());
+        return newvalue.toJS(globalObject);
+    }
+
+    pub fn getTitle(globalObject: *JSC.JSGlobalObject, out: *JSC.ZigString) callconv(.C) void {
+        out.* = JSC.ZigString.init(@import("../../process.zig").getTitle(globalObject.allocator()));
+    }
+
     pub fn getArgv0(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         return JSC.ZigString.fromUTF8(bun.argv[0]).toJS(globalObject);
     }

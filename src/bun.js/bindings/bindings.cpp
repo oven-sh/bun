@@ -2438,12 +2438,12 @@ bool JSC__JSValue__isSameValue(JSC__JSValue JSValue0, JSC__JSValue JSValue1,
 }
 
 #define IMPL_DEEP_EQUALS_WRAPPER(strict, enableAsymmetricMatchers, globalObject, a, b) \
-    ASSERT_NO_PENDING_EXCEPTION(globalObject); \
-    JSValue v1 = JSValue::decode(a); \
-    JSValue v2 = JSValue::decode(b); \
-    ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm()); \
-    Vector<std::pair<JSValue, JSValue>, 16> stack; \
-    MarkedArgumentBuffer args; \
+    ASSERT_NO_PENDING_EXCEPTION(globalObject);                                         \
+    JSValue v1 = JSValue::decode(a);                                                   \
+    JSValue v2 = JSValue::decode(b);                                                   \
+    ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());                        \
+    Vector<std::pair<JSValue, JSValue>, 16> stack;                                     \
+    MarkedArgumentBuffer args;                                                         \
     return Bun__deepEquals<strict, enableAsymmetricMatchers>(globalObject, v1, v2, args, stack, &scope, true)
 
 bool JSC__JSValue__deepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject)

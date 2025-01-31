@@ -153,11 +153,12 @@ pub const MultiPartUpload = struct {
         data: []const u8,
         ctx: *MultiPartUpload,
         allocated_size: usize,
-        state: enum {
-            pending,
-            started,
-            completed,
-            canceled,
+        state: enum(u8) {
+            not_assigned = 0,
+            pending = 1,
+            started = 2,
+            completed = 3,
+            canceled = 4,
         },
         partNumber: u16, // max is 10,000
         retry: u8, // auto retry, decrement until 0 and fail after this
@@ -245,6 +246,7 @@ pub const MultiPartUpload = struct {
             }, .{ .part = @ptrCast(&onPartResponse) }, this);
         }
         pub fn start(this: *@This()) void {
+            bun.assert(this.state != .not_assigned);
             if (this.state != .pending or this.ctx.state != .multipart_completed or this.ctx.state == .finished) return;
             this.ctx.ref();
             this.state = .started;

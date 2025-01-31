@@ -3,7 +3,9 @@ import type { Stats as StatsType, Dirent as DirentType, PathLike } from "fs";
 const EventEmitter = require("node:events");
 const promises = require("node:fs/promises");
 const types = require("node:util/types");
-const { validateString, validateFunction, validateInteger } = require("internal/validators");
+const { validateFunction, validateInteger } = require("internal/validators");
+
+const kEmptyObject = Object.freeze(Object.create(null));
 
 const isDate = types.isDate;
 
@@ -12,6 +14,10 @@ const isDate = types.isDate;
 const { fs } = promises.$data;
 
 const constants = $processBindingConstants.fs;
+var _lazyGlob;
+function lazyGlob() {
+  return (_lazyGlob ??= require("internal/fs/glob"));
+}
 
 function ensureCallback(callback) {
   if (!$isCallable(callback)) {
@@ -1101,6 +1107,22 @@ class Dir {
   }
 }
 
+function glob(pattern: string | string[], options, callback) {
+  if (typeof options === "function") {
+    callback = options;
+    options = undefined;
+  }
+  validateFunction(callback, "callback");
+
+  Array.fromAsync(lazyGlob().glob(pattern, options ?? kEmptyObject))
+    .then(result => callback(null, result))
+    .catch(callback);
+}
+
+function globSync(pattern: string | string[], options): string[] {
+  return Array.from(lazyGlob().globSync(pattern, options ?? kEmptyObject));
+}
+
 var exports = {
   appendFile,
   appendFileSync,
@@ -1134,6 +1156,8 @@ var exports = {
   ftruncateSync,
   futimes,
   futimesSync,
+  glob,
+  globSync,
   lchown,
   lchownSync,
   lchmod,

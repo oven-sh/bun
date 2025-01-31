@@ -277,3 +277,29 @@ test("isKeyObject", () => {
   expect(types.isKeyObject(null)).toBeFalse();
   expect(types.isKeyObject(undefined)).toBeFalse();
 });
+
+test("#11780", () => {
+  let resolveError;
+  try {
+    resolveError = require("OOGA_BOOGA");
+  } catch (e) {
+    resolveError = e;
+  }
+  expect(resolveError.constructor.name).toBe("ResolveMessage");
+  expect(types.isNativeError(resolveError)).toBeTrue();
+
+  const badCode = `
+export default /BADD~!!!!;
+
+  `;
+  const blob = new Blob([badCode], { type: "application/javascript" });
+  const url = URL.createObjectURL(blob);
+  let buildError;
+  try {
+    require(url);
+  } catch (e) {
+    buildError = e;
+  }
+  expect(types.isNativeError(buildError)).toBeTrue();
+  expect(buildError.constructor.name).toBe("BuildMessage");
+});

@@ -158,7 +158,7 @@ pub fn GenericBorder(comptime S: type, comptime P: u8) type {
         }
 
         pub fn eql(this: *const This, other: *const This) bool {
-            return this.width.eql(&other.width) and this.style.eql(&other.style) and this.color.eql(&other.color);
+            return css.implementEql(@This(), this, other);
         }
 
         pub inline fn default() This {
@@ -237,24 +237,7 @@ pub const BorderSideWidth = union(enum) {
     pub fn deinit(_: *@This(), _: std.mem.Allocator) void {}
 
     pub fn eql(this: *const @This(), other: *const @This()) bool {
-        return switch (this.*) {
-            .thin => switch (other.*) {
-                .thin => true,
-                else => false,
-            },
-            .medium => switch (other.*) {
-                .medium => true,
-                else => false,
-            },
-            .thick => switch (other.*) {
-                .thick => true,
-                else => false,
-            },
-            .length => switch (other.*) {
-                .length => this.length.eql(&other.length),
-                else => false,
-            },
-        };
+        return css.implementEql(@This(), this, other);
     }
 };
 
@@ -1016,30 +999,30 @@ pub const BorderHandler = struct {
             comptime block_start_width: []const u8,
             comptime block_start_style: []const u8,
             comptime block_start_color: []const u8,
-            block_start: anytype,
+            block_start: *BorderShorthand,
             comptime block_end_prop: []const u8,
             comptime block_end_width: []const u8,
             comptime block_end_style: []const u8,
             comptime block_end_color: []const u8,
-            block_end: anytype,
+            block_end: *BorderShorthand,
             comptime inline_start_prop: []const u8,
             comptime inline_start_width: []const u8,
             comptime inline_start_style: []const u8,
             comptime inline_start_color: []const u8,
-            inline_start: anytype,
+            inline_start: *BorderShorthand,
             comptime inline_end_prop: []const u8,
             comptime inline_end_width: []const u8,
             comptime inline_end_style: []const u8,
             comptime inline_end_color: []const u8,
-            inline_end: anytype,
+            inline_end: *BorderShorthand,
             comptime is_logical: bool,
         ) void {
             const State = struct {
                 f: *FlushContext,
-                block_start: @TypeOf(block_start),
-                block_end: @TypeOf(block_end),
-                inline_start: @TypeOf(inline_start),
-                inline_end: @TypeOf(inline_end),
+                block_start: *BorderShorthand,
+                block_end: *BorderShorthand,
+                inline_start: *BorderShorthand,
+                inline_end: *BorderShorthand,
 
                 inline fn shorthand(s: *@This(), comptime p: type, comptime prop_name: []const u8, comptime key: []const u8) void {
                     const has_prop = @field(s.block_start, key) != null and @field(s.block_end, key) != null and @field(s.inline_start, key) != null and @field(s.inline_end, key) != null;

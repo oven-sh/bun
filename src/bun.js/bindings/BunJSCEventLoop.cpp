@@ -28,6 +28,6 @@ extern "C" void Bun__JSC_onAfterWait(JSC::VM* vm)
 {
     if (vm) {
         vm->heap.acquireAccess();
+        drop_all_locks.reset();
     }
-    drop_all_locks.reset();
 }

@@ -33,7 +33,6 @@ const allCredentials = [
 ];
 
 if (isDockerEnabled()) {
-  const minio_dir = tempDirWithFiles("minio", {});
   const result = child_process.spawnSync(
     "docker",
     [
@@ -49,8 +48,8 @@ if (isDockerEnabled()) {
       "MINIO_ROOT_USER=minioadmin",
       "-e",
       "MINIO_ROOT_PASSWORD=minioadmin",
-      "-v",
-      `${minio_dir}:/data`,
+      "--mount",
+      "type=tmpfs,destination=/data",
       "minio/minio",
       "server",
       "--console-address",
@@ -328,7 +327,7 @@ for (let credentials of allCredentials) {
                 for (let partSize of [5, 7, 10]) {
                   for (let payload of [bigishPayload, mediumPayload]) {
                     // lets skip tests with more than 10 parts on cloud providers
-                    it.skipIf(credentials.service !== "MinIO" && payloadQuantity > 10)(
+                    it.skipIf(credentials.service !== "MinIO")(
                       `should be able to upload large files using writer() in multiple parts with partSize=${partSize} queueSize=${queueSize} payloadQuantity=${payloadQuantity} payloadSize=${payload.length * payloadQuantity}`,
                       async () => {
                         {

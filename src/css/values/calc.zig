@@ -169,20 +169,15 @@ pub fn Calc(comptime V: type) type {
         }
 
         // TODO: addValueOwned
-        fn addValue(allocator: Allocator, lhs: V, rhs: V) V {
+        pub fn addValue(allocator: Allocator, lhs: V, rhs: V) V {
             return switch (V) {
                 f32 => return lhs + rhs,
-                Angle => return lhs.add(rhs),
-                // CSSNumber => return lhs.add(rhs),
-                Length => return lhs.add(allocator, rhs),
-                Percentage => return lhs.add(allocator, rhs),
-                Time => return lhs.add(allocator, rhs),
-                else => lhs.add(allocator, rhs),
+                else => lhs.addInternal(allocator, rhs),
             };
         }
 
         // TODO: intoValueOwned
-        fn intoValue(this: @This(), allocator: std.mem.Allocator) V {
+        pub fn intoValue(this: @This(), allocator: std.mem.Allocator) V {
             switch (V) {
                 Angle => return switch (this) {
                     .value => |v| v.*,
@@ -222,19 +217,26 @@ pub fn Calc(comptime V: type) type {
             }
         }
 
+        pub fn intoCalc(val: V, allocator: std.mem.Allocator) Calc(V) {
+            return switch (V) {
+                f32 => .{ .value = bun.create(allocator, f32, val) },
+                else => val.intoCalc(allocator),
+            };
+        }
+
         // TODO: change to addOwned()
         pub fn add(this: @This(), allocator: std.mem.Allocator, rhs: @This()) @This() {
             if (this == .value and rhs == .value) {
                 // PERF: we can reuse the allocation here
-                return .{ .value = bun.create(allocator, V, addValue(allocator, this.value.*, rhs.value.*)) };
+                return intoCalc(addValue(allocator, this.value.*, rhs.value.*), allocator);
             } else if (this == .number and rhs == .number) {
                 return .{ .number = this.number + rhs.number };
             } else if (this == .value) {
                 // PERF: we can reuse the allocation here
-                return .{ .value = bun.create(allocator, V, addValue(allocator, this.value.*, intoValue(rhs, allocator))) };
+                return intoCalc(addValue(allocator, this.value.*, intoValue(rhs, allocator)), allocator);
             } else if (rhs == .value) {
                 // PERF: we can reuse the allocation here
-                return .{ .value = bun.create(allocator, V, addValue(allocator, intoValue(this, allocator), rhs.value.*)) };
+                return intoCalc(addValue(allocator, intoValue(this, allocator), rhs.value.*), allocator);
             } else if (this == .function) {
                 return This{
                     .sum = .{
@@ -250,11 +252,7 @@ pub fn Calc(comptime V: type) type {
                     },
                 };
             } else {
-                return .{ .value = bun.create(
-                    allocator,
-                    V,
-                    addValue(allocator, intoValue(this, allocator), intoValue(rhs, allocator)),
-                ) };
+                return intoCalc(addValue(allocator, intoValue(this, allocator), intoValue(rhs, allocator)), allocator);
             }
         }
 

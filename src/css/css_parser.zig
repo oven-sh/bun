@@ -780,7 +780,7 @@ pub fn DeriveToCss(comptime T: type) type {
             if (comptime is_enum_or_union_enum) {
                 inline for (std.meta.fields(T), 0..) |field, i| {
                     if (@intFromEnum(this.*) == enum_fields[i].value) {
-                        if (comptime field.type == void) {
+                        if (comptime tyinfo == .Enum or field.type == void) {
                             return dest.writeStr(enum_fields[i].name);
                         } else if (comptime generic.hasToCss(field.type)) {
                             return generic.toCss(field.type, &@field(this, field.name), W, dest);
@@ -3812,6 +3812,18 @@ pub const Parser = struct {
         }
     }
 
+    pub fn expectSquareBracketBlock(this: *Parser) Result(void) {
+        const start_location = this.currentSourceLocation();
+        const tok = switch (this.next()) {
+            .err => |e| return .{ .err = e },
+            .result => |v| v,
+        };
+        switch (tok.*) {
+            .open_square => return .{ .result = {} },
+            else => return .{ .err = start_location.newUnexpectedTokenError(tok.*) },
+        }
+    }
+
     /// Parse a <url-token> and return the unescaped value.
     pub fn expectUrl(this: *Parser) Result([]const u8) {
         const start_location = this.currentSourceLocation();
@@ -6393,23 +6405,10 @@ pub const serializer = struct {
             };
         } else notation: {
             var buf: [129]u8 = undefined;
-            // We must pass finite numbers to dtoa_short
-            if (std.math.isPositiveInf(value)) {
-                const output = "1e999";
-                try writer.writeAll(output);
-                return;
-            } else if (std.math.isNegativeInf(value)) {
-                const output = "-1e999";
-                try writer.writeAll(output);
-                return;
-            }
-            // We shouldn't receive NaN here.
-            // NaN is not a valid CSS token and any inlined calculations from `calc()` we ensure
-            // are not NaN.
-            bun.debugAssert(!std.math.isNan(value));
-            const str, const notation = dtoa_short(&buf, value, 6);
+            const str, const maybe_notaton = try dtoa_short(&buf, value, 6);
             try writer.writeAll(str);
-            break :notation notation;
+            if (maybe_notaton) |notation| break :notation notation;
+            return;
         };
 
         if (int_value == null and fract(value) == 0) {
@@ -6480,215 +6479,9 @@ pub const serializer = struct {
     }
 };
 
-pub inline fn implementDeepClone(comptime T: type, this: *const T, allocator: Allocator) T {
-    const tyinfo = @typeInfo(T);
-
-    if (comptime bun.meta.isSimpleCopyType(T)) {
-        return this.*;
-    }
-
-    if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
-        return switch (result) {
-            .array_list => deepClone(result.child, allocator, this),
-            .baby_list => @panic("Not implemented."),
-            .small_list => this.deepClone(allocator),
-        };
-    }
-
-    if (comptime T == []const u8) {
-        return this.*;
-    }
-
-    if (comptime @typeInfo(T) == .Pointer) {
-        const TT = std.meta.Child(T);
-        return implementEql(TT, this.*);
-    }
-
-    return switch (tyinfo) {
-        .Struct => {
-            var strct: T = undefined;
-            inline for (tyinfo.Struct.fields) |field| {
-                if (comptime generic.canTransitivelyImplementDeepClone(field.type) and @hasDecl(field.type, "__generateDeepClone")) {
-                    @field(strct, field.name) = implementDeepClone(field.type, &field(this, field.name, allocator));
-                } else {
-                    @field(strct, field.name) = generic.deepClone(field.type, &@field(this, field.name), allocator);
-                }
-            }
-            return strct;
-        },
-        .Union => {
-            inline for (bun.meta.EnumFields(T), tyinfo.Union.fields) |enum_field, union_field| {
-                if (@intFromEnum(this.*) == enum_field.value) {
-                    if (comptime generic.canTransitivelyImplementDeepClone(union_field.type) and @hasDecl(union_field.type, "__generateDeepClone")) {
-                        return @unionInit(T, enum_field.name, implementDeepClone(union_field.type, &@field(this, enum_field.name), allocator));
-                    }
-                    return @unionInit(T, enum_field.name, generic.deepClone(union_field.type, &@field(this, enum_field.name), allocator));
-                }
-            }
-            unreachable;
-        },
-        else => @compileError("Unhandled type " ++ @typeName(T)),
-    };
-}
-
-/// A function to implement `lhs.eql(&rhs)` for the many types in the CSS parser that needs this.
-///
-/// This is the equivalent of doing `#[derive(PartialEq])` in Rust.
-///
-/// This function only works on simple types like:
-/// - Simple equality types (e.g. integers, floats, strings, enums, etc.)
-/// - Types which implement a `.eql(lhs: *const @This(), rhs: *const @This()) bool` function
-///
-/// Or compound types composed of simple types such as:
-/// - Pointers to simple types
-/// - Optional simple types
-/// - Structs, Arrays, and Unions
-pub fn implementEql(comptime T: type, this: *const T, other: *const T) bool {
-    const tyinfo = @typeInfo(T);
-    if (comptime bun.meta.isSimpleEqlType(T)) {
-        return this.* == other.*;
-    }
-    if (comptime T == []const u8) {
-        return bun.strings.eql(this.*, other.*);
-    }
-    if (comptime @typeInfo(T) == .Pointer) {
-        const TT = std.meta.Child(T);
-        return implementEql(TT, this.*, other.*);
-    }
-    if (comptime @typeInfo(T) == .Optional) {
-        const TT = std.meta.Child(T);
-        if (this.* != null and other.* != null) return implementEql(TT, &this.*.?, &other.*.?);
-        return false;
-    }
-    return switch (tyinfo) {
-        .Optional => @compileError("Handled above, this means Zack wrote a bug."),
-        .Pointer => @compileError("Handled above, this means Zack wrote a bug."),
-        .Array => {
-            const Child = std.meta.Child(T);
-            if (comptime bun.meta.isSimpleEqlType(Child)) {
-                return std.mem.eql(Child, &this.*, &other.*);
-            }
-            if (this.len != other.len) return false;
-            if (comptime generic.canTransitivelyImplementEql(Child) and @hasDecl(Child, "__generateEql")) {
-                for (this.*, other.*) |*a, *b| {
-                    if (!implementEql(Child, &a, &b)) return false;
-                }
-            } else {
-                for (this.*, other.*) |*a, *b| {
-                    if (!generic.eql(Child, a, b)) return false;
-                }
-            }
-            return true;
-        },
-        .Struct => {
-            inline for (tyinfo.Struct.fields) |field| {
-                if (!generic.eql(field.type, &@field(this, field.name), &@field(other, field.name))) return false;
-            }
-            return true;
-        },
-        .Union => {
-            if (tyinfo.Union.tag_type == null) @compileError("Unions must have a tag type");
-            if (@intFromEnum(this.*) != @intFromEnum(other.*)) return false;
-            const enum_fields = bun.meta.EnumFields(T);
-            inline for (enum_fields, std.meta.fields(T)) |enum_field, union_field| {
-                if (enum_field.value == @intFromEnum(this.*)) {
-                    if (union_field.type != void) {
-                        if (comptime generic.canTransitivelyImplementEql(union_field.type) and @hasDecl(union_field.type, "__generateEql")) {
-                            return implementEql(union_field.type, &@field(this, enum_field.name), &@field(other, enum_field.name));
-                        }
-                        return generic.eql(union_field.type, &@field(this, enum_field.name), &@field(other, enum_field.name));
-                    } else {
-                        return true;
-                    }
-                }
-            }
-            unreachable;
-        },
-        else => @compileError("Unsupported type: " ++ @typeName(T)),
-    };
-}
-
-pub fn implementHash(comptime T: type, this: *const T, hasher: *std.hash.Wyhash) void {
-    const tyinfo = @typeInfo(T);
-    if (comptime T == void) return;
-    if (comptime bun.meta.isSimpleEqlType(T)) {
-        return hasher.update(std.mem.asBytes(&this));
-    }
-    if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
-        const list = switch (result) {
-            .array_list => this.items[0..],
-            .baby_list => this.sliceConst(),
-            .small_list => this.slice(),
-        };
-        bun.writeAnyToHasher(hasher, list.len);
-        for (list) |*item| {
-            generic.hash(tyinfo.Array.child, item, hasher);
-        }
-        return;
-    }
-    if (comptime T == []const u8) {
-        return hasher.update(this.*);
-    }
-    if (comptime @typeInfo(T) == .Pointer) {
-        @compileError("Invalid type for implementHash(): " ++ @typeName(T));
-    }
-    if (comptime @typeInfo(T) == .Optional) {
-        @compileError("Invalid type for implementHash(): " ++ @typeName(T));
-    }
-    return switch (tyinfo) {
-        .Optional => {
-            if (this.* == null) {
-                bun.writeAnyToHasher(hasher, "null");
-            } else {
-                bun.writeAnyToHasher(hasher, "some");
-                generic.hash(tyinfo.Optional.child, &this.*.?, hasher);
-            }
-        },
-        .Pointer => {
-            generic.hash(tyinfo.Pointer.child, &this.*, hasher);
-        },
-        .Array => {
-            bun.writeAnyToHasher(hasher, this.len);
-            for (this.*[0..]) |*item| {
-                generic.hash(tyinfo.Array.child, item, hasher);
-            }
-        },
-        .Struct => {
-            inline for (tyinfo.Struct.fields) |field| {
-                if (comptime generic.hasHash(field.type)) {
-                    generic.hash(field.type, &@field(this, field.name), hasher);
-                } else if (@hasDecl(field.type, "__generateHash") and @typeInfo(field.type) == .Struct) {
-                    implementHash(field.type, &@field(this, field.name), hasher);
-                } else {
-                    @compileError("Can't hash these fields: " ++ @typeName(field.type) ++ ". On " ++ @typeName(T));
-                }
-            }
-            return;
-        },
-        .Enum => {
-            bun.writeAnyToHasher(hasher, @intFromEnum(this.*));
-        },
-        .Union => {
-            if (tyinfo.Union.tag_type == null) @compileError("Unions must have a tag type");
-            bun.writeAnyToHasher(hasher, @intFromEnum(this.*));
-            const enum_fields = bun.meta.EnumFields(T);
-            inline for (enum_fields, std.meta.fields(T)) |enum_field, union_field| {
-                if (enum_field.value == @intFromEnum(this.*)) {
-                    const field = union_field;
-                    if (comptime generic.hasHash(field.type)) {
-                        generic.hash(field.type, &@field(this, field.name), hasher);
-                    } else if (@hasDecl(field.type, "__generateHash") and @typeInfo(field.type) == .Struct) {
-                        implementHash(field.type, &@field(this, field.name), hasher);
-                    } else {
-                        @compileError("Can't hash these fields: " ++ @typeName(field.type) ++ ". On " ++ @typeName(T));
-                    }
-                }
-            }
-            return;
-        },
-        else => @compileError("Unsupported type: " ++ @typeName(T)),
-    };
-}
+pub const implementEql = generic.implementEql;
+pub const implementHash = generic.implementHash;
+pub const implementDeepClone = generic.implementDeepClone;
 
 pub const parse_utility = struct {
     /// Parse a value from a string.
@@ -6772,12 +6565,9 @@ pub const to_css = struct {
     }
 
     pub fn float32(this: f32, writer: anytype) !void {
-        var scratch: [64]u8 = undefined;
-        // PERF/TODO: Compare this to Rust dtoa-short crate
-        const floats = std.fmt.formatFloat(scratch[0..], this, .{
-            .mode = .decimal,
-        }) catch unreachable;
-        return writer.writeAll(floats);
+        var scratch: [129]u8 = undefined;
+        const str, _ = try dtoa_short(&scratch, this, 6);
+        return writer.writeAll(str);
     }
 
     fn maxDigits(comptime T: type) usize {
@@ -6869,7 +6659,27 @@ const Notation = struct {
     }
 };
 
-pub fn dtoa_short(buf: *[129]u8, value: f32, comptime precision: u8) struct { []u8, Notation } {
+/// Writes float with precision.
+///
+/// Returns null if value was an infinite number
+pub fn dtoa_short(buf: *[129]u8, value: f32, comptime precision: u8) !struct { []u8, ?Notation } {
+    // We must pass finite numbers to dtoa_short_impl
+    if (std.math.isPositiveInf(value)) {
+        buf[0.."1e999".len].* = "1e999".*;
+        return .{ buf[0.."1e999".len], null };
+    } else if (std.math.isNegativeInf(value)) {
+        buf[0.."-1e999".len].* = "-1e999".*;
+        return .{ buf[0.."-1e999".len], null };
+    }
+    // We shouldn't receive NaN here.
+    // NaN is not a valid CSS token and any inlined calculations from `calc()` we ensure
+    // are not NaN.
+    bun.debugAssert(!std.math.isNan(value));
+    const str, const notation = dtoa_short_impl(buf, value, precision);
+    return .{ str, notation };
+}
+
+pub fn dtoa_short_impl(buf: *[129]u8, value: f32, comptime precision: u8) struct { []u8, Notation } {
     buf[0] = '0';
     bun.debugAssert(std.math.isFinite(value));
     const buf_len = bun.fmt.FormatDouble.dtoa(@ptrCast(buf[1..].ptr), @floatCast(value)).len;

@@ -1627,8 +1627,8 @@ pub const Resolver = struct {
         }
 
         // First, check path overrides from the nearest enclosing TypeScript "tsconfig.json" file
-
-        if (dir_info.enclosing_tsconfig_json) |tsconfig| {
+        if (r.opts.load_tsconfig_json and dir_info.enclosing_tsconfig_json != null) {
+            const tsconfig = dir_info.enclosing_tsconfig_json.?;
             // Try path substitutions first
             if (tsconfig.paths.count() > 0) {
                 if (r.matchTSConfigPaths(tsconfig, import_path, kind)) |res| {
@@ -2095,6 +2095,7 @@ pub const Resolver = struct {
 
         return .{ .not_found = {} };
     }
+
     fn dirInfoForResolution(
         r: *ThisResolver,
         dir_path_maybe_trail_slash: string,

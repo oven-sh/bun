@@ -6902,6 +6902,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     .framework = bake_options.framework,
                     .bundler_options = bake_options.bundler_options,
                     .vm = global.bunVM(),
+                    .frontend_only = bake_options.frontend_only,
                 });
             } else null;
             errdefer if (dev_server) |d| d.deinit();

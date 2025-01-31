@@ -3288,7 +3288,7 @@ pub const AnyResponse = union(enum) {
         };
     }
 
-    pub fn onAborted(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, AnyResponse) void, opcional_data: UserDataType) void {
+    pub fn onAborted(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, AnyResponse) void, optional_data: UserDataType) void {
         const wrapper = struct {
             pub fn ssl_handler(user_data: UserDataType, resp: *NewApp(true).Response) void {
                 handler(user_data, .{ .SSL = resp });
@@ -3298,8 +3298,8 @@ pub const AnyResponse = union(enum) {
             }
         };
         return switch (this) {
-            .SSL => |resp| resp.onAborted(UserDataType, wrapper.ssl_handler, opcional_data),
-            .TCP => |resp| resp.onAborted(UserDataType, wrapper.tcp_handler, opcional_data),
+            .SSL => |resp| resp.onAborted(UserDataType, wrapper.ssl_handler, optional_data),
+            .TCP => |resp| resp.onAborted(UserDataType, wrapper.tcp_handler, optional_data),
         };
     }
 

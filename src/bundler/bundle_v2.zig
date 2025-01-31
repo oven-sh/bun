@@ -2281,12 +2281,12 @@ pub const BundleV2 = struct {
     }
 
     /// Dev Server uses this instead to run a subset of the transpiler, and to run it asynchronously.
-    pub fn startFromBakeDevServer(this: *BundleV2, bake_entry_points: bake.DevServer.EntryPointList) !BakeBundleStart {
+    pub fn startFromBakeDevServer(this: *BundleV2, bake_entry_points: bake.DevServer.EntryPointList) !DevServerInput {
         this.unique_key = generateUniqueKey();
 
         this.graph.heap.helpCatchMemoryIssues();
 
-        var ctx: BakeBundleStart = .{ .css_entry_points = .{} };
+        var ctx: DevServerInput = .{ .css_entry_points = .{} };
         this.graph.pool.pool.schedule(try this.enqueueEntryPoints(.dev_server, .{
             .files = bake_entry_points,
             .css_data = &ctx.css_entry_points,
@@ -2307,6 +2307,7 @@ pub const BundleV2 = struct {
         this.graph.heap.helpCatchMemoryIssues();
 
         this.dynamic_import_entry_points = std.AutoArrayHashMap(Index.Int, void).init(this.graph.allocator);
+        var html_files: std.AutoArrayHashMapUnmanaged(Index, void) = .{};
 
         // Separate non-failing files into two lists: JS and CSS
         const js_reachable_files = reachable_files: {
@@ -2328,7 +2329,13 @@ pub const BundleV2 = struct {
                 //
                 // Actual empty files will contain a part exporting an empty object.
                 if (part_list.len != 0) {
-                    if (maybe_css == null) {
+                    if (maybe_css != null) {
+                        // @branchHint(.unlikely);
+                        css_total_files.appendAssumeCapacity(Index.init(index));
+                    } else if (loaders[index] == .html) {
+                        // @branchHint(.unlikely);
+                        try html_files.put(this.graph.allocator, Index.init(index), {});
+                    } else {
                         js_files.appendAssumeCapacity(Index.init(index));
 
                         // Mark every part live.
@@ -2351,8 +2358,6 @@ pub const BundleV2 = struct {
                             else if (!gop.found_existing)
                                 gop.value_ptr.* = .{ .imported_on_server = false };
                         }
-                    } else {
-                        css_total_files.appendAssumeCapacity(Index.init(index));
                     }
                 } else {
                     _ = start.css_entry_points.swapRemove(Index.init(index));
@@ -2396,8 +2401,12 @@ pub const BundleV2 = struct {
             };
         }
 
-        const chunks = try this.graph.allocator.alloc(Chunk, start.css_entry_points.count() + 1);
+        const chunks = try this.graph.allocator.alloc(
+            Chunk,
+            1 + start.css_entry_points.count() + html_files.count(),
+        );
 
+        // First is a chunk to contain all JavaScript modules.
         chunks[0] = .{
             .entry_point = .{
                 .entry_point_id = 0,
@@ -2414,7 +2423,8 @@ pub const BundleV2 = struct {
             .output_source_map = sourcemap.SourceMapPieces.init(this.graph.allocator),
         };
 
-        for (chunks[1..], start.css_entry_points.keys()) |*chunk, entry_point| {
+        // Then all the distinct CSS bundles (these are JS->CSS, not CSS->CSS)
+        for (chunks[1..][0..start.css_entry_points.count()], start.css_entry_points.keys()) |*chunk, entry_point| {
             const order = this.linker.findImportedFilesInCSSOrder(this.graph.allocator, &.{entry_point});
             chunk.* = .{
                 .entry_point = .{
@@ -2432,6 +2442,19 @@ pub const BundleV2 = struct {
             };
         }
 
+        // Then all HTML files (TODO: what happens when JS imports HTML. probably ban that?)
+        for (html_files.keys(), chunks[1 + start.css_entry_points.count() ..]) |source_index, *chunk| {
+            chunk.* = .{
+                .entry_point = .{
+                    .entry_point_id = @intCast(source_index.get()),
+                    .source_index = source_index.get(),
+                    .is_entry_point = false,
+                },
+                .content = .html,
+                .output_source_map = sourcemap.SourceMapPieces.init(this.graph.allocator),
+            };
+        }
+
         this.graph.heap.helpCatchMemoryIssues();
 
         try this.linker.generateChunksInParallel(chunks, true);
@@ -2441,6 +2464,7 @@ pub const BundleV2 = struct {
         try dev_server.finalizeBundle(this, .{
             .chunks = chunks,
             .css_file_list = start.css_entry_points,
+            .html_files = html_files,
         });
     }
 
@@ -4482,7 +4506,7 @@ pub const ParseTask = struct {
             task.known_target != .bake_server_components_ssr and
             this.ctx.framework.?.server_components.?.separate_ssr_graph) or
             // set the target to the client when bundling client-side files
-            (transpiler.options.server_components and task.known_target == .browser))
+            (task.known_target == .browser))
         {
             transpiler = this.ctx.client_bundler;
             resolver = &transpiler.resolver;
@@ -6017,7 +6041,7 @@ pub const LinkerContext = struct {
         const trace = tracer(@src(), "computeChunks");
         defer trace.end();
 
-        bun.assert(this.dev_server == null); // use computeChunksForDevServer
+        bun.assert(this.dev_server == null); // use
 
         var stack_fallback = std.heap.stackFallback(4096, this.allocator);
         const stack_all = stack_fallback.get();
@@ -6062,9 +6086,7 @@ pub const LinkerContext = struct {
 
             // Put this early on in this loop so that CSS-only entry points work.
             if (has_html_chunk) {
-                const html_chunk_entry = try html_chunks.getOrPut(
-                    js_chunk_key,
-                );
+                const html_chunk_entry = try html_chunks.getOrPut(js_chunk_key);
                 if (!html_chunk_entry.found_existing) {
                     html_chunk_entry.value_ptr.* = .{
                         .entry_point = .{
@@ -6073,9 +6095,7 @@ pub const LinkerContext = struct {
                             .is_entry_point = true,
                         },
                         .entry_bits = entry_bits.*,
-                        .content = .{
-                            .html = .{},
-                        },
+                        .content = .html,
                         .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
                     };
                 }
@@ -9742,7 +9762,6 @@ pub const LinkerContext = struct {
                 return CompileResult{
                     .css = .{
                         .result = .{ .result = buffer_writer.getWritten() },
-
                         .source_index = idx.get(),
                     },
                 };
@@ -10083,32 +10102,30 @@ pub const LinkerContext = struct {
         }
     }
 
+    /// Rrewrite the HTML with the following transforms:
+    /// 1. Remove all <script> and <link> tags which were not marked as
+    ///    external. This is defined by the source_index on the ImportRecord,
+    ///    when it's not Index.invalid then we update it accordingly. This will
+    ///    need to be a reference to the chunk or asset.
+    /// 2. For all other non-external URLs, update the "src" or "href"
+    ///    attribute to point to the asset's unique key. Later, when joining
+    ///    chunks, we will rewrite these to their final URL or pathname,
+    ///    including the public_path.
+    /// 3. If a JavaScript chunk exists, add a <script type="module" crossorigin> tag that contains
+    ///    the JavaScript for the entry point which uses the "src" attribute
+    ///    to point to the JavaScript chunk's unique key.
+    /// 4. If a CSS chunk exists, add a <link rel="stylesheet" href="..." crossorigin> tag that contains
+    ///    the CSS for the entry point which uses the "href" attribute to point to the
+    ///    CSS chunk's unique key.
+    /// 5. For each imported module or chunk within the JavaScript code, add
+    ///    a <link rel="modulepreload" href="..." crossorigin> tag that
+    ///    points to the module or chunk's unique key so that we tell the
+    ///    browser to preload the user's code.
     fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerContext, chunk: *Chunk, chunks: []Chunk) CompileResult {
         const parse_graph = c.parse_graph;
         const input_files = parse_graph.input_files.slice();
         const sources = input_files.items(.source);
         const import_records = c.graph.ast.items(.import_records);
-
-        // We want to rewrite the HTML with the following transforms:
-        // 1. Remove all <script> and <link> tags which were not marked as
-        //    external. This is defined by the source_index on the ImportRecord,
-        //    when it's not Index.invalid then we update it accordingly. This will
-        //    need to be a reference to the chunk or asset.
-        // 2. For all other non-external URLs, update the "src" or "href"
-        //    attribute to point to the asset's unique key. Later, when joining
-        //    chunks, we will rewrite these to their final URL or pathname,
-        //    including the public_path.
-        // 3. If a JavaScript chunk exists, add a <script type="module" crossorigin> tag that contains
-        //    the JavaScript for the entry point which uses the "src" attribute
-        //    to point to the JavaScript chunk's unique key.
-        // 4. If a CSS chunk exists, add a <link rel="stylesheet" href="..." crossorigin> tag that contains
-        //    the CSS for the entry point which uses the "href" attribute to point to the
-        //    CSS chunk's unique key.
-        // 5. For each imported module or chunk within the JavaScript code, add
-        //    a <link rel="modulepreload" href="..." crossorigin> tag that
-        //    points to the module or chunk's unique key so that we tell the
-        //    browser to preload the user's code.
-        // We might also want to force <!DOCTYPE html> at the top of the file, but I'm not sure about that yet.
 
         const HTMLLoader = struct {
             linker: *LinkerContext,
@@ -10121,22 +10138,26 @@ pub const LinkerContext = struct {
             chunks: []Chunk,
             minify_whitespace: bool,
             output: std.ArrayList(u8),
+            head_end_tag_index: u32 = 0,
+            body_end_tag_index: u32 = 0,
 
             pub fn onWriteHTML(this: *@This(), bytes: []const u8) void {
                 this.output.appendSlice(bytes) catch bun.outOfMemory();
             }
 
-            pub fn onHTMLParseError(this: *@This(), message: []const u8) void {
-                this.log.addError(
-                    &this.linker.parse_graph.input_files.items(.source)[this.source_index],
-                    Logger.Loc.Empty,
-                    message,
-                ) catch bun.outOfMemory();
+            pub fn onHTMLParseError(_: *@This(), err: []const u8) void {
+                Output.panic("Parsing HTML during replacement phase errored, which should never happen since the first pass succeeded: {s}", .{err});
             }
 
             pub fn onTag(this: *@This(), element: *lol.Element, _: []const u8, url_attribute: []const u8, _: ImportKind) void {
                 if (this.current_import_record_index >= this.import_records.len) {
                     Output.panic("Assertion failure in HTMLLoader.onTag: current_import_record_index ({d}) >= import_records.len ({d})", .{ this.current_import_record_index, this.import_records.len });
+                }
+
+                if (this.linker.dev_server != null) {
+                    // TODO: Dev server does not support setting "external" since it bundles everything.
+                    element.remove();
+                    return;
                 }
 
                 const import_record: *const ImportRecord = &this.import_records[this.current_import_record_index];
@@ -10157,36 +10178,52 @@ pub const LinkerContext = struct {
                 }
             }
 
-            pub fn onHEADTag(this: *@This(), element: *lol.Element) void {
+            pub fn onHeadTag(this: *@This(), element: *lol.Element) bool {
                 var html_appender = std.heap.stackFallback(256, bun.default_allocator);
                 const allocator = html_appender.get();
 
-                if (this.minify_whitespace)
-                    // Clear whitespace and anything else in the head
-                    element.setInnerContent("", false) catch bun.outOfMemory();
+                if (this.linker.dev_server == null) {
+                    // Put CSS before JS to reduce changes of flash of unstyled content
+                    if (this.chunk.getCSSChunkForHTML(this.chunks)) |css_chunk| {
+                        const link_tag = std.fmt.allocPrintZ(allocator, "<link rel=\"stylesheet\" crossorigin href=\"{s}\">", .{css_chunk.unique_key}) catch bun.outOfMemory();
+                        defer allocator.free(link_tag);
+                        element.append(link_tag, true) catch bun.outOfMemory();
+                    }
 
-                // Put CSS before JS to reduce changes of flash of unstyled content
-                if (this.chunk.getCSSChunkForHTML(this.chunks)) |css_chunk| {
-                    const link_tag = std.fmt.allocPrintZ(allocator, "<link rel=\"stylesheet\" crossorigin href=\"{s}\">", .{css_chunk.unique_key}) catch bun.outOfMemory();
-                    defer allocator.free(link_tag);
-                    element.append(link_tag, true) catch bun.outOfMemory();
+                    if (this.chunk.getJSChunkForHTML(this.chunks)) |js_chunk| {
+                        // type="module" scripts do not block rendering, so it is okay to put them in head
+                        const script = std.fmt.allocPrintZ(allocator, "<script type=\"module\" crossorigin src=\"{s}\"></script>", .{js_chunk.unique_key}) catch bun.outOfMemory();
+                        defer allocator.free(script);
+                        element.append(script, true) catch bun.outOfMemory();
+                    }
+                } else {
+                    element.onEndTag(endHeadTagHandler, this) catch return true;
                 }
 
-                if (this.chunk.getJSChunkForHTML(this.chunks)) |js_chunk| {
-                    const script = std.fmt.allocPrintZ(allocator, "<script type=\"module\" crossorigin src=\"{s}\"></script>", .{js_chunk.unique_key}) catch bun.outOfMemory();
-                    defer allocator.free(script);
-                    element.append(script, true) catch bun.outOfMemory();
-                }
+                return false;
             }
 
-            const processor = HTMLScanner.HTMLProcessor(@This(), true);
+            pub fn onBodyTag(this: *@This(), element: *lol.Element) bool {
+                if (this.linker.dev_server != null) {
+                    element.onEndTag(endBodyTagHandler, this) catch return true;
+                }
+                return false;
+            }
 
-            pub fn run(this: *@This(), input: []const u8) !void {
-                processor.run(this, input) catch bun.outOfMemory();
+            fn endHeadTagHandler(_: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.C) lol.Directive {
+                const this: *@This() = @alignCast(@ptrCast(opaque_this.?));
+                this.head_end_tag_index = @intCast(this.output.items.len);
+                return .@"continue";
+            }
+
+            fn endBodyTagHandler(_: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.C) lol.Directive {
+                const this: *@This() = @alignCast(@ptrCast(opaque_this.?));
+                this.body_end_tag_index = @intCast(this.output.items.len);
+                return .@"continue";
             }
         };
 
-        var html_loader = HTMLLoader{
+        var html_loader: HTMLLoader = .{
             .linker = c,
             .source_index = chunk.entry_point.source_index,
             .import_records = import_records[chunk.entry_point.source_index].slice(),
@@ -10199,20 +10236,25 @@ pub const LinkerContext = struct {
             .current_import_record_index = 0,
         };
 
-        html_loader.run(sources[chunk.entry_point.source_index].contents) catch bun.outOfMemory();
+        HTMLScanner.HTMLProcessor(HTMLLoader, true).run(
+            &html_loader,
+            sources[chunk.entry_point.source_index].contents,
+        ) catch bun.outOfMemory();
 
         return .{
             .html = .{
                 .code = html_loader.output.items,
                 .source_index = chunk.entry_point.source_index,
+                .offsets = .{
+                    .head_end_tag = html_loader.head_end_tag_index,
+                    .body_end_tag = html_loader.body_end_tag_index,
+                },
             },
         };
     }
 
     fn postProcessHTMLChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chunk: *Chunk) !void {
-
         // This is where we split output into pieces
-
         const c = ctx.c;
         var j = StringJoiner{
             .allocator = worker.allocator,
@@ -13351,6 +13393,7 @@ pub const LinkerContext = struct {
         //
         // - Reuse unchanged parts to assemble the full bundle if Cmd+R is used in the browser
         // - Send only the newly changed code through a socket.
+        // - Use IncrementalGraph to have full knowledge of referenced CSS files.
         //
         // When this isn't the initial bundle, concatenation as usual would produce a
         // broken module. It is DevServer's job to create and send HMR patches.
@@ -15918,7 +15961,6 @@ pub const Chunk = struct {
 
     pub const CssImportOrder = struct {
         conditions: BabyList(bun.css.ImportConditions) = .{},
-        // TODO: unfuck this
         condition_import_records: BabyList(ImportRecord) = .{},
 
         kind: union(enum) {
@@ -16006,27 +16048,16 @@ pub const Chunk = struct {
 
     pub const ImportsFromOtherChunks = std.AutoArrayHashMapUnmanaged(Index.Int, CrossChunkImport.Item.List);
 
-    pub const ContentKind = enum {
-        javascript,
-        css,
-        html,
-    };
-
-    pub const HtmlChunk = struct {};
-
-    pub const Content = union(ContentKind) {
+    pub const Content = union(enum) {
         javascript: JavaScriptChunk,
         css: CssChunk,
-        html: HtmlChunk,
+        html,
 
         pub fn sourcemap(this: *const Content, default: options.SourceMapOption) options.SourceMapOption {
             return switch (this.*) {
                 .javascript => default,
-                // TODO:
-                .css => options.SourceMapOption.none,
-
-                // probably never
-                .html => options.SourceMapOption.none,
+                .css => .none, // TODO: css source maps
+                .html => .none,
             };
         }
 
@@ -16124,6 +16155,13 @@ pub const CompileResult = union(enum) {
     html: struct {
         source_index: Index.Int,
         code: []const u8,
+        /// Offsets are used for DevServer to inject resources without re-bundling
+        offsets: struct {
+            /// The index of the "<" byte of "</head>"
+            head_end_tag: u32,
+            /// The index of the "<" byte of "</body>"
+            body_end_tag: u32,
+        },
     },
 
     pub const empty = CompileResult{
@@ -16245,11 +16283,9 @@ fn getRedirectId(id: u32) ?u32 {
     if (id == std.math.maxInt(u32)) {
         return null;
     }
-
     return id;
 }
 
-// TODO: this needs to also update `define` and `external`. This whole setup needs to be more resilient.
 fn targetFromHashbang(buffer: []const u8) ?options.Target {
     if (buffer.len > "#!/usr/bin/env bun".len) {
         if (strings.hasPrefixComptime(buffer, "#!/usr/bin/env bun")) {
@@ -16259,7 +16295,6 @@ fn targetFromHashbang(buffer: []const u8) ?options.Target {
             }
         }
     }
-
     return null;
 }
 
@@ -16607,21 +16642,26 @@ pub const CssEntryPointMeta = struct {
 };
 
 /// The lifetime of this structure is tied to the transpiler's arena
-pub const BakeBundleStart = struct {
+pub const DevServerInput = struct {
     css_entry_points: std.AutoArrayHashMapUnmanaged(Index, CssEntryPointMeta),
 };
 
 /// The lifetime of this structure is tied to the transpiler's arena
-pub const BakeBundleOutput = struct {
+pub const DevServerOutput = struct {
     chunks: []Chunk,
     css_file_list: std.AutoArrayHashMapUnmanaged(Index, CssEntryPointMeta),
+    html_files: std.AutoArrayHashMapUnmanaged(Index, void),
 
-    pub fn jsPseudoChunk(out: BakeBundleOutput) *Chunk {
+    pub fn jsPseudoChunk(out: DevServerOutput) *Chunk {
         return &out.chunks[0];
     }
 
-    pub fn cssChunks(out: BakeBundleOutput) []Chunk {
-        return out.chunks[1..];
+    pub fn cssChunks(out: DevServerOutput) []Chunk {
+        return out.chunks[1..][0..out.css_file_list.count()];
+    }
+
+    pub fn htmlChunks(out: DevServerOutput) []Chunk {
+        return out.chunks[1 + out.css_file_list.count() ..][0..out.html_files.count()];
     }
 };
 

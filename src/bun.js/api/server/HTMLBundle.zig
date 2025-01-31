@@ -1,5 +1,6 @@
-//! This is a description of what the build will be.
-//! It doesn't perform the build itself
+//! This object is a description of an HTML bundle. It is created by importing an
+//! HTML file, and can be passed to the `static` option in `Bun.serve`. The build
+//! is done lazily (state held in HTMLBundle.Route or DevServer.RouteBundle.HTML).
 pub const HTMLBundle = @This();
 pub usingnamespace JSC.Codegen.JSHTMLBundle;
 // HTMLBundle can be owned by JavaScript as well as any number of Server instances.
@@ -8,6 +9,9 @@ pub usingnamespace bun.NewRefCounted(HTMLBundle, deinit);
 ref_count: u32 = 1,
 globalObject: *JSGlobalObject,
 path: []const u8,
+// TODO: move these three options from the HTML bundle to the server.
+// Downside would be that the process bunfig would be used, but upside is it
+// allows DevServer to merge shared assets between HTML routes.
 config: bun.JSC.API.JSBundler.Config,
 plugins: union(enum) {
     pending: ?[]const []const u8,
@@ -56,6 +60,7 @@ pub fn getIndex(this: *HTMLBundle, globalObject: *JSGlobalObject) JSValue {
     return str.transferToJS(globalObject);
 }
 
+/// Rename to `Route`
 pub const HTMLBundleRoute = struct {
     html_bundle: *HTMLBundle,
     pending_responses: std.ArrayListUnmanaged(*PendingResponse) = .{},
@@ -64,6 +69,8 @@ pub const HTMLBundleRoute = struct {
     value: Value = .pending_plugins,
     /// Written and read by DevServer to identify if this route has been registered with the bundler.
     dev_server_id: bun.bake.DevServer.RouteBundle.Index.Optional = .none,
+    /// Used by DevServer
+    // TODO: design flaw: HTMLBundleRoute can be present at multiple paths
     pattern: []const u8,
 
     pub fn memoryCost(this: *const HTMLBundleRoute) usize {

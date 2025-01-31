@@ -86,7 +86,6 @@ server_exports = {
           }
           ssrManifest[uid] = client;
         } catch (err) {
-          console.log("caught error");
           console.log(err);
         }
       }

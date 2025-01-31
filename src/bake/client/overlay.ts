@@ -140,7 +140,7 @@ export function onRuntimeError(err: any, type: RuntimeErrorType) {
   if (type === RuntimeErrorType.fatal) {
     hasFatalError = true;
   }
- 
+
   console.error(err);
 }
 

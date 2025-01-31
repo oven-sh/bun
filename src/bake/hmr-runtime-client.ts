@@ -72,7 +72,6 @@ const ws = initWebSocket({
     ws.send("n" + location.pathname); // IncomingMessageId.set_url
   },
   [MessageId.hot_update](view) {
-    console.log(view);
     const reader = new DataViewReader(view, 1);
 
     // The code genearting each list is annotated with equivalent "List n"
@@ -100,7 +99,6 @@ const ws = initWebSocket({
             cssArray[i] = reader.stringWithLength(16);
           }
           editCssArray(cssArray);
-          console.log("oh shit", { routePattern, cssArray });
         }
 
         // Skip to the last route
@@ -148,12 +146,17 @@ const ws = initWebSocket({
   History.prototype.pushState = function pushState(this: History, state: any, title: string, url?: string | null) {
     truePushState.call(this, state, title, url);
     ws.send("n" + location.pathname);
-  }
+  };
   const trueReplaceState = History.prototype.replaceState;
-  History.prototype.replaceState = function replaceState(this: History, state: any, title: string, url?: string | null) {
+  History.prototype.replaceState = function replaceState(
+    this: History,
+    state: any,
+    title: string,
+    url?: string | null,
+  ) {
     trueReplaceState.call(this, state, title, url);
     ws.send("n" + location.pathname);
-  }
+  };
 }
 
 try {

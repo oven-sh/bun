@@ -343,7 +343,15 @@ pub const MultiPartUpload = struct {
             // queueSize will never change and is small (max 255)
             const queue = bun.default_allocator.alloc(UploadPart, queueSize) catch bun.outOfMemory();
             // zero set just in case
-            @memset(queue, UploadPart{ .state = .not_assigned, .ctx = this });
+            @memset(queue, UploadPart{
+                .data = "",
+                .allocated_size = 0,
+                .partNumber = 0,
+                .ctx = this,
+                .index = 0,
+                .retry = 0,
+                .state = .not_assigned,
+            });
             this.queue = queue;
         }
         const data = if (needs_clone) bun.default_allocator.dupe(u8, chunk) catch bun.outOfMemory() else chunk;

@@ -323,20 +323,34 @@ for (let credentials of allCredentials) {
               }
             }, 10_000);
 
-            it("should be able to upload large files using writer() in multiple parts", async () => {
-              {
-                const s3File = bucket.file(tmp_filename, options);
-                const writer = s3File.writer({
-                  queueSize: 10,
-                });
-                for (let i = 0; i < 10; i++) {
-                  writer.write(mediumPayload);
+            for (let queueSize of [1, 5, 7, 10, 20]) {
+              for (let payloadQuantity of [1, 5, 7, 10, 20]) {
+                for (let partSize of [5, 7, 10]) {
+                  for (let payload of [bigishPayload, mediumPayload]) {
+                    // lets skip tests with more than 10 parts on cloud providers
+                    it.skipIf(credentials.service !== "MinIO" && payloadQuantity > 10)(
+                      `should be able to upload large files using writer() in multiple parts with partSize=${partSize} queueSize=${queueSize} payloadQuantity=${payloadQuantity} payloadSize=${payload.length * payloadQuantity}`,
+                      async () => {
+                        {
+                          const s3File = bucket.file(tmp_filename, options);
+                          const writer = s3File.writer({
+                            queueSize,
+                            partSize: partSize * 1024 * 1024,
+                          });
+                          for (let i = 0; i < payloadQuantity; i++) {
+                            writer.write(payload);
+                          }
+                          await writer.end();
+                          const stat = await s3File.stat();
+                          expect(stat.size).toBe(Buffer.byteLength(payload) * payloadQuantity);
+                        }
+                      },
+                      30_000,
+                    );
+                  }
                 }
-                await writer.end();
-                const stat = await s3File.stat();
-                expect(stat.size).toBe(Buffer.byteLength(mediumPayload) * 10);
               }
-            }, 30_000);
+            }
           });
         });
 

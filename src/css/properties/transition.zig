@@ -215,7 +215,8 @@ pub const TransitionHandler = struct {
             prefixes.* = context.targets.prefixes(prefixes.*, feature);
         } else {
             const prefixes = context.targets.prefixes(vp, feature);
-            @field(this, prop) = .{ val.deepClone(context.allocator), prefixes };
+            const cloned_val = val.deepClone(context.allocator);
+            @field(this, prop) = .{ cloned_val, prefixes };
             this.has_any = true;
         }
     }

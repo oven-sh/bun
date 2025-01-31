@@ -166,6 +166,7 @@
 #endif
 
 #include "NodeFSBinding.h"
+#include "NodeDirent.h"
 
 #if !OS(WINDOWS)
 #include <dlfcn.h>
@@ -2785,6 +2786,12 @@ void GlobalObject::finishCreation(VM& vm)
     m_http2_commongStrings.initialize();
 
     Bun::addNodeModuleConstructorProperties(vm, this);
+
+    m_JSDirentClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::initJSDirentClassStructure(init);
+        });
+
     m_JSX509CertificateClassStructure.initLater([](LazyClassStructure::Initializer& init) {
         setupX509CertificateClassStructure(init);
     });
@@ -3840,6 +3847,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_memoryFootprintStructure.visit(visitor);
     thisObject->m_JSStatsClassStructure.visit(visitor);
     thisObject->m_JSStatsBigIntClassStructure.visit(visitor);
+    thisObject->m_JSDirentClassStructure.visit(visitor);
     thisObject->m_NapiClassStructure.visit(visitor);
     thisObject->m_NapiExternalStructure.visit(visitor);
     thisObject->m_NAPIFunctionStructure.visit(visitor);

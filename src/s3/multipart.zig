@@ -260,7 +260,6 @@ pub const MultiPartUpload = struct {
             switch (state) {
                 .pending => {
                     this.freeAllocatedSlice();
-                    this.ctx.deref();
                 },
                 // if is not pending we will free later or is already freed
                 else => {},

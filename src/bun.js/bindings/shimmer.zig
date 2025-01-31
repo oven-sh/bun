@@ -2,7 +2,6 @@ const std = @import("std");
 const bun = @import("root").bun;
 const StaticExport = @import("./static_export.zig");
 const Sizes = @import("./sizes.zig");
-pub const is_bindgen: bool = false;
 const headers = @import("./headers.zig");
 
 fn isNullableType(comptime Type: type) bool {
@@ -193,9 +192,7 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
         }) {
             log(comptime name ++ "__" ++ typeName, .{});
             @setEvalBranchQuota(99999);
-            if (comptime is_bindgen) {
-                unreachable;
-            } else {
+            {
                 const Fn = comptime @field(headers, symbolName(typeName));
                 if (@typeInfo(@TypeOf(Fn)).Fn.params.len > 0)
                     return matchNullable(

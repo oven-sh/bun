@@ -60,7 +60,7 @@ JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalOb
     auto* callee = JSC::jsDynamicCast<Function*>(callFrame->jsCallee());
     auto* functionTemplate = callee->functionTemplate();
     auto* isolate = JSC::jsCast<Zig::GlobalObject*>(globalObject)->V8GlobalInternals()->isolate();
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
 
     WTF::Vector<TaggedPointer, 8> args(callFrame->argumentCount() + 1);
 

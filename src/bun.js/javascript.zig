@@ -1,5 +1,4 @@
 const std = @import("std");
-const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 const StaticExport = @import("./bindings/static_export.zig");
 const bun = @import("root").bun;
 const string = bun.string;
@@ -905,6 +904,8 @@ pub const VirtualMachine = struct {
     debug_thread_id: if (Environment.allow_assert) std.Thread.Id else void,
 
     body_value_hive_allocator: BodyValueHiveAllocator = undefined,
+
+    is_inside_deferred_task_queue: bool = false,
 
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
 
@@ -3329,10 +3330,6 @@ pub const VirtualMachine = struct {
         comptime allow_ansi_color: bool,
         comptime allow_side_effects: bool,
     ) void {
-        if (comptime JSC.is_bindgen) {
-            return;
-        }
-
         var was_internal = false;
 
         defer {

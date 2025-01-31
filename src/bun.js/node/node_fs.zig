@@ -2207,7 +2207,7 @@ pub const Arguments = struct {
         }
 
         pub fn deinitAndUnprotect(this: *MkdirTemp) void {
-            this.prefix.deinit();
+            this.prefix.deinitAndUnprotect();
         }
 
         pub fn toThreadSafe(this: *MkdirTemp) void {
@@ -2707,12 +2707,17 @@ pub const Arguments = struct {
         pub fn deinit(self: ReadFile) void {
             self.path.deinit();
             if (self.signal) |signal| {
+                signal.pendingActivityUnref();
                 signal.unref();
             }
         }
 
         pub fn deinitAndUnprotect(self: ReadFile) void {
             self.path.deinitAndUnprotect();
+            if (self.signal) |signal| {
+                signal.pendingActivityUnref();
+                signal.unref();
+            }
         }
 
         pub fn toThreadSafe(self: *ReadFile) void {
@@ -2729,7 +2734,10 @@ pub const Arguments = struct {
             var flag = FileSystemFlags.r;
 
             var abort_signal: ?*AbortSignal = null;
-            errdefer if (abort_signal) |signal| signal.unref();
+            errdefer if (abort_signal) |signal| {
+                signal.pendingActivityUnref();
+                signal.unref();
+            };
 
             if (arguments.next()) |arg| {
                 arguments.eat();
@@ -2747,6 +2755,7 @@ pub const Arguments = struct {
                     if (try arg.getTruthy(ctx, "signal")) |value| {
                         if (AbortSignal.fromJS(value)) |signal| {
                             abort_signal = signal.ref();
+                            signal.pendingActivityRef();
                         } else {
                             return ctx.throwInvalidArgumentTypeValue("signal", "AbortSignal", value);
                         }
@@ -2790,6 +2799,7 @@ pub const Arguments = struct {
             self.file.deinit();
             self.data.deinit();
             if (self.signal) |signal| {
+                signal.pendingActivityUnref();
                 signal.unref();
             }
         }
@@ -2802,6 +2812,10 @@ pub const Arguments = struct {
         pub fn deinitAndUnprotect(self: *WriteFile) void {
             self.file.deinitAndUnprotect();
             self.data.deinitAndUnprotect();
+            if (self.signal) |signal| {
+                signal.pendingActivityUnref();
+                signal.unref();
+            }
         }
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!WriteFile {
             const path = try PathOrFileDescriptor.fromJS(ctx, arguments, bun.default_allocator) orelse {
@@ -2817,6 +2831,12 @@ pub const Arguments = struct {
             var flag = FileSystemFlags.w;
             var mode: Mode = default_permission;
             var abort_signal: ?*AbortSignal = null;
+
+            errdefer if (abort_signal) |signal| {
+                signal.pendingActivityUnref();
+                signal.unref();
+            };
+
             var flush: bool = false;
             if (data_value.isString()) {
                 encoding = Encoding.utf8;
@@ -2842,6 +2862,7 @@ pub const Arguments = struct {
                     if (try arg.getTruthy(ctx, "signal")) |value| {
                         if (AbortSignal.fromJS(value)) |signal| {
                             abort_signal = signal.ref();
+                            signal.pendingActivityRef();
                         } else {
                             return ctx.throwInvalidArgumentTypeValue("signal", "AbortSignal", value);
                         }
@@ -3019,7 +3040,7 @@ pub const Arguments = struct {
         dest: PathLike,
         mode: Constants.Copyfile,
 
-        pub fn deinit(this: CopyFile) void {
+        pub fn deinit(this: *const CopyFile) void {
             this.src.deinit();
             this.dest.deinit();
         }
@@ -3029,7 +3050,7 @@ pub const Arguments = struct {
             this.dest.toThreadSafe();
         }
 
-        pub fn deinitAndUnprotect(this: *CopyFile) void {
+        pub fn deinitAndUnprotect(this: *const CopyFile) void {
             this.src.deinitAndUnprotect();
             this.dest.deinitAndUnprotect();
         }
@@ -3072,7 +3093,7 @@ pub const Arguments = struct {
             deinit_paths: bool = true,
         };
 
-        fn deinit(this: *Cp) void {
+        pub fn deinit(this: *const Cp) void {
             if (this.flags.deinit_paths) {
                 this.src.deinit();
                 this.dest.deinit();

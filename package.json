@@ -23,6 +23,7 @@
     "prettier-plugin-organize-imports": "^4.0.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-refresh": "^0.16.0",
     "source-map-js": "^1.2.0",
     "typescript": "^5.7.2"
   },
@@ -75,8 +76,5 @@
     "prettier:extra": "bun run analysis:no-llvm --target prettier-extra",
     "prettier:diff": "bun run analysis:no-llvm --target prettier-diff",
     "node:test": "node ./scripts/runner.node.mjs --quiet --exec-path=$npm_execpath --node-tests "
-  },
-  "dependencies": {
-    "react-refresh": "^0.16.0"
   }
 }

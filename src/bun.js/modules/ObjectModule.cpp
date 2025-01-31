@@ -10,7 +10,6 @@ generateObjectModuleSourceCode(JSC::JSGlobalObject* globalObject,
                JSC::Identifier moduleKey,
                Vector<JSC::Identifier, 4>& exportNames,
                JSC::MarkedArgumentBuffer& exportValues) -> void {
-        
         auto& vm = JSC::getVM(lexicalGlobalObject);
         auto throwScope = DECLARE_THROW_SCOPE(vm);
         GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);

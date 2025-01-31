@@ -246,8 +246,7 @@ pub const MultiPartUpload = struct {
             }, .{ .part = @ptrCast(&onPartResponse) }, this);
         }
         pub fn start(this: *@This()) void {
-            bun.assert(this.state != .not_assigned);
-            if (this.state != .pending or this.ctx.state != .multipart_completed or this.ctx.state == .finished) return;
+            if (this.state != .pending or this.ctx.state != .multipart_completed) return;
             this.ctx.ref();
             this.state = .started;
             this.perform();

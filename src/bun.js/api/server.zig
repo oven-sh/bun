@@ -6746,7 +6746,11 @@ pub const NodeHTTPResponse = struct {
 
     pub fn cork(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(1).slice();
-        if (arguments.len == 0 or !arguments[0].isCallable(globalObject.vm())) {
+        if (arguments.len == 0) {
+            return globalObject.throwNotEnoughArguments("cork", 1, 0);
+        }
+
+        if (!arguments[0].isCallable(globalObject.vm())) {
             return globalObject.throwInvalidArgumentTypeValue("cork", "function", arguments[0]);
         }
 

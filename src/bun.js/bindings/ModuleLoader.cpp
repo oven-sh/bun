@@ -539,11 +539,19 @@ JSValue fetchCommonJSModule(
 
         auto tag = res->result.value.tag;
         switch (tag) {
+        // require("bun")
+        case SyntheticModuleType::BunObject: {
+            target->setExportsObject(globalObject->bunObject());
+            target->hasEvaluated = true;
+            RELEASE_AND_RETURN(scope, target);
+        }
+        // require("module"), require("node:module")
         case SyntheticModuleType::NodeModule: {
             target->setExportsObject(globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject));
             target->hasEvaluated = true;
             RELEASE_AND_RETURN(scope, target);
         }
+        // require("process"), require("node:process")
         case SyntheticModuleType::NodeProcess: {
             target->setExportsObject(globalObject->processObject());
             target->hasEvaluated = true;

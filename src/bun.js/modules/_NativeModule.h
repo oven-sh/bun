@@ -25,7 +25,6 @@
 // given is the default export
 
 #define BUN_FOREACH_ESM_AND_CJS_NATIVE_MODULE(macro) \
-    macro("bun"_s, BunObject) \
     macro("bun:test"_s, BunTest) \
     macro("bun:jsc"_s, BunJSC) \
     macro("node:buffer"_s, NodeBuffer) \
@@ -38,7 +37,8 @@
 #define BUN_FOREACH_ESM_NATIVE_MODULE(macro) \
     BUN_FOREACH_ESM_AND_CJS_NATIVE_MODULE(macro) \
     macro("node:module"_s, NodeModule)  \
-    macro("node:process"_s, NodeProcess)
+    macro("node:process"_s, NodeProcess) \
+    macro("bun"_s, BunObject)
 
 #define BUN_FOREACH_CJS_NATIVE_MODULE(macro) \
     BUN_FOREACH_ESM_AND_CJS_NATIVE_MODULE(macro)

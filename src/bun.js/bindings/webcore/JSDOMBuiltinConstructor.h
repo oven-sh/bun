@@ -94,7 +94,7 @@ template<typename JSClass> inline JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES J
 {
     ASSERT(callFrame);
     auto* castedThis = JSC::jsCast<JSDOMBuiltinConstructor*>(callFrame->jsCallee());
-    auto& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (callFrame->thisValue() != castedThis) {
         throwTypeError(lexicalGlobalObject, scope, "Constructor called as a function"_s);

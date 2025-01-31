@@ -87,7 +87,7 @@ static inline JSStringDecoder* jsStringDecoderCast(JSGlobalObject* globalObject,
     if (auto cast = jsDynamicCast<JSStringDecoder*>(stringDecoderValue); LIKELY(cast))
         return cast;
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     if (JSC::JSObject* thisObject = stringDecoderValue.getObject()) {
@@ -562,7 +562,7 @@ JSStringDecoderConstructor* JSStringDecoderConstructor::create(JSC::VM& vm, JSC:
 
 JSC::EncodedJSValue JSStringDecoderConstructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-    JSC::VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto encoding = BufferEncodingType::utf8;
     auto jsEncoding = callFrame->argument(0);

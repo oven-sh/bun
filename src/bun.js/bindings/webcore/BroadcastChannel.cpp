@@ -264,7 +264,7 @@ void BroadcastChannel::dispatchMessage(Ref<SerializedScriptValue>&& message)
         if (!globalObject)
             return;
 
-        auto& vm = globalObject->vm();
+        auto& vm = JSC::getVM(globalObject);
         auto scope = DECLARE_CATCH_SCOPE(vm);
         Vector<RefPtr<MessagePort>> dummyPorts;
         auto event = MessageEvent::create(*globalObject, WTFMove(message), {}, {}, std::nullopt, WTFMove(dummyPorts));

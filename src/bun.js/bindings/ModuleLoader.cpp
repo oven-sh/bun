@@ -65,7 +65,7 @@ extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, BunString* 
 
 static JSC::JSInternalPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     JSInternalPromise* promise = JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
     auto scope = DECLARE_THROW_SCOPE(vm);
     scope.throwException(globalObject, value);
@@ -74,7 +74,7 @@ static JSC::JSInternalPromise* rejectedInternalPromise(JSC::JSGlobalObject* glob
 
 static JSC::JSInternalPromise* resolvedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     JSInternalPromise* promise = JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
     promise->internalField(JSC::JSPromise::Field::ReactionsOrResult).set(vm, promise, value);
     promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32AsAnyInt() | JSC::JSPromise::isFirstResolvingFunctionCalledFlag | static_cast<unsigned>(JSC::JSPromise::Status::Fulfilled)));
@@ -88,7 +88,7 @@ static JSC::SyntheticSourceProvider::SyntheticSourceGenerator generateInternalMo
                JSC::Identifier moduleKey,
                Vector<JSC::Identifier, 4>& exportNames,
                JSC::MarkedArgumentBuffer& exportValues) -> void {
-        JSC::VM& vm = lexicalGlobalObject->vm();
+        auto& vm = JSC::getVM(lexicalGlobalObject);
         GlobalObject* globalObject = jsCast<GlobalObject*>(lexicalGlobalObject);
         auto throwScope = DECLARE_THROW_SCOPE(vm);
 
@@ -129,7 +129,7 @@ static OnLoadResult handleOnLoadObjectResult(Zig::GlobalObject* globalObject, JS
 {
     OnLoadResult result {};
     result.type = OnLoadResultTypeObject;
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto& builtinNames = WebCore::builtinNames(vm);
     if (JSC::JSValue exportsValue = object->getIfPropertyExists(globalObject, builtinNames.exportsPublicName())) {
         if (exportsValue.isObject()) {
@@ -199,7 +199,7 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
 {
     OnLoadResult result = {};
     result.type = OnLoadResultTypeError;
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     result.value.error = JSC::jsUndefined();
     auto scope = DECLARE_THROW_SCOPE(vm);
     BunLoaderType loader = Bun__getDefaultLoader(globalObject, specifier);
@@ -307,7 +307,7 @@ static JSValue handleVirtualModuleResult(
     JSCommonJSModule* commonJSModule = nullptr)
 {
     auto onLoadResult = handleOnLoadResult(globalObject, virtualModuleResult, specifier, wasModuleMock);
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ResolvedSourceCodeHolder sourceCodeHolder(res);
 
@@ -425,7 +425,7 @@ extern "C" void Bun__onFulfillAsyncModule(
     BunString* referrer)
 {
     ResolvedSourceCodeHolder sourceCodeHolder(res);
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSInternalPromise* promise = jsCast<JSC::JSInternalPromise*>(JSC::JSValue::decode(encodedPromiseValue));
 
@@ -481,7 +481,7 @@ JSValue fetchCommonJSModule(
     BunString* typeAttribute)
 {
     void* bunVM = globalObject->bunVM();
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorableResolvedSource resValue;
     memset(&resValue, 0, sizeof(ErrorableResolvedSource));
@@ -699,7 +699,7 @@ static JSValue fetchESMSourceCode(
     BunString* typeAttribute)
 {
     void* bunVM = globalObject->bunVM();
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ResolvedSourceCodeHolder sourceCodeHolder(res);
 
@@ -928,7 +928,7 @@ using namespace Bun;
 
 BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     ErrorableResolvedSource res = {};
     res.success = false;
     JSC::JSValue objectResult = callFrame->argument(0);
@@ -966,7 +966,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
 
 BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultReject, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     JSC::JSValue reason = callFrame->argument(0);
     PendingVirtualModuleResult* pendingModule = JSC::jsCast<PendingVirtualModuleResult*>(callFrame->argument(1));
     pendingModule->internalField(0).set(vm, pendingModule, JSC::jsUndefined());

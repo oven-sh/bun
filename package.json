@@ -22,8 +22,8 @@
     "react-dom": "^18.3.1",
     "source-map-js": "^1.2.0",
     "typescript": "^5.7.2",
-    "caniuse-lite": "^1.0.30001620",
-    "autoprefixer": "^10.4.19",
+    "caniuse-lite": "^1.0.30001660",
+    "autoprefixer": "^10.4.20",
     "@mdn/browser-compat-data": "~5.5.28"
   },
   "resolutions": {

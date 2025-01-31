@@ -131,7 +131,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
 
         const This = @This();
         pub fn assert_type(comptime Type: type) void {
-            const name = comptime (@typeName(Type));
+            const name = comptime @typeName(Type);
             if (!comptime @hasField(Tag, name)) {
                 @compileError("TaggedPointerUnion does not have " ++ name ++ ".");
             }
@@ -162,7 +162,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
 
         pub inline fn is(this: This, comptime Type: type) bool {
             comptime assert_type(Type);
-            return this.repr.data == comptime @intFromEnum(@field(Tag, (@typeName(Type))));
+            return this.repr.data == comptime @intFromEnum(@field(Tag, @typeName(Type)));
         }
 
         pub fn set(this: *@This(), _ptr: anytype) void {
@@ -176,9 +176,9 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
         pub inline fn isValid(this: This) bool {
             return switch (this.repr.data) {
                 @intFromEnum(
-                    @field(Tag, (@typeName(Types[Types.len - 1]))),
+                    @field(Tag, @typeName(Types[Types.len - 1])),
                 )...@intFromEnum(
-                    @field(Tag, (@typeName(Types[0]))),
+                    @field(Tag, @typeName(Types[0])),
                 ) => true,
                 else => false,
             };
@@ -208,7 +208,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
         pub inline fn initWithType(comptime Type: type, _ptr: anytype) @This() {
             const tyinfo = @typeInfo(@TypeOf(_ptr));
             if (tyinfo != .pointer) @compileError("Only pass pointers to TaggedPointerUnion.init(), you gave us a: " ++ @typeName(@TypeOf(_ptr)));
-            const name = comptime (@typeName(Type));
+            const name = comptime @typeName(Type);
 
             // there will be a compiler error if the passed in type doesn't exist in the enum
             return This{ .repr = TaggedPointer.init(_ptr, @intFromEnum(@field(Tag, name))) };

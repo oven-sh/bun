@@ -1609,10 +1609,10 @@ pub const SinkDestructor = struct {
         }
 
         switch (ptr.tag()) {
-            @field(Ptr.Tag, (@typeName(Detached))) => {
+            @field(Ptr.Tag, @typeName(Detached)) => {
                 return;
             },
-            @field(Ptr.Tag, (@typeName(Subprocess))) => {
+            @field(Ptr.Tag, @typeName(Subprocess)) => {
                 const subprocess = ptr.as(Subprocess);
                 subprocess.onStdinDestroyed();
             },

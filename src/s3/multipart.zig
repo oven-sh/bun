@@ -9,10 +9,15 @@ const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploa
 const S3SimpleRequest = @import("./simple_request.zig");
 const executeSimpleS3Request = S3SimpleRequest.executeSimpleS3Request;
 const S3Error = @import("./error.zig").S3Error;
-// Buffer data until partSize is reached or the last chunk is received. If the buffer is smaller than partSize, it will be sent as a single request. Otherwise, a multipart upload will be initiated.
-// If there is space in the queue, the part is enqueued, and the request starts immediately. If the queue is full, it waits to be drained before starting a new part request.
-// Each part maintains a reference to MultiPartUpload until completion. If a part is canceled or fails early, the allocated slice is freed, and the reference is removed. If a part completes successfully, an etag is received, the allocated slice is deallocated, and the etag is appended to multipart_etags. If a part request fails, it retries until the maximum retry count is reached. If it still fails, MultiPartUpload is marked as failed and its reference is removed.
-// If all parts succeed, a complete request is sent. If any part fails, a rollback request deletes the uploaded parts. Rollback and commit requests do not increase the reference count of MultiPartUpload, as they are the final step. Once commit or rollback finishes, the reference count is decremented, and MultiPartUpload is freed. These requests retry up to the maximum retry count on a best-effort basis.
+// Buffer data until partSize is reached or the last chunk is received.
+//  If the buffer is smaller than partSize, it will be sent as a single request. Otherwise, a multipart upload will be initiated.
+// If we send a single request it will retry until the maximum retry count is reached. The single request do not increase the reference count of MultiPartUpload, as they are the final step.
+// When sending a multipart upload, if there is space in the queue, the part is enqueued, and the request starts immediately.
+// If the queue is full, it waits to be drained before starting a new part request.
+// Each part maintains a reference to MultiPartUpload until completion.
+// If a part is canceled or fails early, the allocated slice is freed, and the reference is removed. If a part completes successfully, an etag is received, the allocated slice is deallocated, and the etag is appended to multipart_etags. If a part request fails, it retries until the maximum retry count is reached. If it still fails, MultiPartUpload is marked as failed and its reference is removed.
+// If all parts succeed, a complete request is sent.
+// If any part fails, a rollback request deletes the uploaded parts. Rollback and commit requests do not increase the reference count of MultiPartUpload, as they are the final step. Once commit or rollback finishes, the reference count is decremented, and MultiPartUpload is freed. These requests retry up to the maximum retry count on a best-effort basis.
 
 //                Start Upload
 //                       │
@@ -288,15 +293,12 @@ pub const MultiPartUpload = struct {
     }
 
     pub fn singleSendUploadResponse(result: S3SimpleRequest.S3UploadResult, this: *@This()) void {
-        defer this.deref();
         if (this.state == .finished) return;
         switch (result) {
             .failure => |err| {
                 if (this.options.retry > 0) {
                     log("singleSendUploadResponse {} retry", .{this.options.retry});
                     this.options.retry -= 1;
-                    this.ref();
-                    // retry failed lets try again
                     executeSimpleS3Request(this.credentials, .{
                         .path = this.path,
                         .method = .PUT,
@@ -359,7 +361,7 @@ pub const MultiPartUpload = struct {
 
     /// Drain the parts, this is responsible for starting the parts and processing the buffered data
     fn drainEnqueuedParts(this: *@This()) void {
-        if (this.state == .finished) {
+        if (this.state == .finished or this.state == .singlefile_started) {
             return;
         }
         // check pending to start or transformed buffered ones into tasks
@@ -627,9 +629,6 @@ pub const MultiPartUpload = struct {
         if (this.ended and this.buffered.items.len < this.partSizeInBytes() and this.state == .not_started) {
             log("processBuffered {s} singlefile_started", .{this.path});
             this.state = .singlefile_started;
-            // when executing a simple request we need to keep the ref alive, it will be derefed after the request
-            // singleSendUploadResponse in this case
-            this.ref();
             // we can do only 1 request
             executeSimpleS3Request(this.credentials, .{
                 .path = this.path,

@@ -4645,7 +4645,6 @@ pub fn trimLeadingPattern2(slice_: []const u8, comptime byte1: u8, comptime byte
     // const pattern: u16 = comptime @as(u16, byte2) << 8 | @as(u16, byte1);
     var slice = slice_;
     while (slice.len >= 2) {
-        // const sliceu16: [*]const u16 = @ptrCast(@alignCast(slice.ptr));
         if (slice[0] == byte1 and slice[1] == byte2) {
             slice = slice[2..];
         } else {

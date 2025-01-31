@@ -1,3 +1,4 @@
+
 #include "root.h"
 
 #include "JavaScriptCore/HeapProfiler.h"
@@ -37,6 +38,7 @@
 #include "ErrorCode.h"
 #include "GeneratedBunObject.h"
 #include "JavaScriptCore/BunV8HeapSnapshotBuilder.h"
+#include "BunObjectModule.h"
 
 #ifdef WIN32
 #include <ws2def.h>
@@ -67,10 +69,11 @@ BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__cancel);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetch);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetchPreconnect);
 BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv7);
-namespace Bun {
 
 using namespace JSC;
 using namespace WebCore;
+
+namespace Bun {
 
 extern "C" bool has_bun_garbage_collector_flag_enabled;
 
@@ -728,13 +731,13 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     isMainThread                                   constructIsMainThread                                               ReadOnly|DontDelete|PropertyCallback
     jest                                           BunObject_callback_jest                                             DontEnum|DontDelete|Function 1
     listen                                         BunObject_callback_listen                                           DontDelete|Function 1
-    udpSocket                                        BunObject_callback_udpSocket                                          DontDelete|Function 1
+    udpSocket                                        BunObject_callback_udpSocket                                      DontDelete|Function 1
     main                                           BunObject_getter_wrap_main                                          DontDelete|PropertyCallback
     mmap                                           BunObject_callback_mmap                                             DontDelete|Function 1
     nanoseconds                                    functionBunNanoseconds                                              DontDelete|Function 0
     openInEditor                                   BunObject_callback_openInEditor                                     DontDelete|Function 1
-    origin                                         BunObject_getter_wrap_origin                                        DontDelete|PropertyCallback
-    version_with_sha                               constructBunVersionWithSha                                          ReadOnly|DontDelete|PropertyCallback
+    origin                                         BunObject_getter_wrap_origin                                        DontEnum|ReadOnly|DontDelete|PropertyCallback
+    version_with_sha                               constructBunVersionWithSha                                          DontEnum|ReadOnly|DontDelete|PropertyCallback
     password                                       constructPasswordObject                                             DontDelete|PropertyCallback
     pathToFileURL                                  functionPathToFileURL                                               DontDelete|Function 1
     peek                                           constructBunPeekObject                                              DontDelete|PropertyCallback
@@ -836,6 +839,56 @@ const JSC::ClassInfo JSBunObject::s_info = { "Bun"_s, &Base::s_info, &bunObjectT
 JSC::JSObject* createBunObject(VM& vm, JSObject* globalObject)
 {
     return JSBunObject::create(vm, jsCast<Zig::GlobalObject*>(globalObject));
+}
+
+static void exportBunObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* object, Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues)
+{
+    exportNames.reserveCapacity(std::size(bunObjectTableValues) + 1);
+    exportValues.ensureCapacity(std::size(bunObjectTableValues) + 1);
+
+    PropertyNameArray propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    object->getOwnNonIndexPropertyNames(globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, void());
+
+    for (const auto& propertyName : propertyNames) {
+        exportNames.append(propertyName);
+        auto catchScope = DECLARE_CATCH_SCOPE(vm);
+
+        // Yes, we have to call getters :(
+        JSValue value = object->get(globalObject, propertyName);
+
+        if (catchScope.exception()) {
+            catchScope.clearException();
+            value = jsUndefined();
+        }
+        exportValues.append(value);
+    }
+
+    exportNames.append(vm.propertyNames->defaultKeyword);
+    exportValues.append(object);
+}
+
+}
+
+namespace Zig {
+void generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobalObject,
+    JSC::Identifier moduleKey,
+    Vector<JSC::Identifier, 4>& exportNames,
+    JSC::MarkedArgumentBuffer& exportValues)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* object = globalObject->bunObject();
+
+    // :'(
+    object->reifyAllStaticProperties(lexicalGlobalObject);
+
+    RETURN_IF_EXCEPTION(scope, void());
+
+    Bun::exportBunObject(vm, globalObject, object, exportNames, exportValues);
 }
 
 }

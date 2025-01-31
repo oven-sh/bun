@@ -9,7 +9,91 @@ const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploa
 const S3SimpleRequest = @import("./simple_request.zig");
 const executeSimpleS3Request = S3SimpleRequest.executeSimpleS3Request;
 const S3Error = @import("./error.zig").S3Error;
+// Buffer data until partSize is reached or the last chunk is received. If the buffer is smaller than partSize, it will be sent as a single request. Otherwise, a multipart upload will be initiated.
+// If there is space in the queue, the part is enqueued, and the request starts immediately. If the queue is full, it waits to be drained before starting a new part request.
+// Each part maintains a reference to MultiPartUpload until completion. If a part is canceled or fails early, the allocated slice is freed, and the reference is removed. If a part completes successfully, an etag is received, the allocated slice is deallocated, and the etag is appended to multipart_etags. If a part request fails, it retries until the maximum retry count is reached. If it still fails, MultiPartUpload is marked as failed and its reference is removed.
+// If all parts succeed, a complete request is sent. If any part fails, a rollback request deletes the uploaded parts. Rollback and commit requests do not increase the reference count of MultiPartUpload, as they are the final step. Once commit or rollback finishes, the reference count is decremented, and MultiPartUpload is freed. These requests retry up to the maximum retry count on a best-effort basis.
 
+//                Start Upload
+//                       │
+//                       ▼
+//               Buffer Incoming Data
+//                       │
+//                       │
+//          ┌────────────┴────────────────┐
+//          │                             │
+//          ▼                             ▼
+// Buffer < PartSize             Buffer >= PartSize
+//  and is Last Chunk                     │
+//          │                             │
+//          │                             │
+//          │                             │
+//          │                             │
+//          │                             ▼
+//          │                  Start Multipart Upload
+//          │                             │
+//          │                  Initialize Parts Queue
+//          │                             │
+//          │                   Process Upload Parts
+//          │                             │
+//          │                  ┌──────────┴──────────┐
+//          │                  │                     │
+//          │                  ▼                     ▼
+//          │             Queue Has Space       Queue Full
+//          │                  │                     │
+//          │                  │                     ▼
+//          │                  │              Wait for Queue
+//          │                  │                     │
+//          │                  └──────────┬──────────┘
+//          │                             │
+//          │                             ▼
+//          │                     Start Part Upload
+//          │               (Reference MultiPartUpload)
+//          │                             │
+//          │                  ┌─────────┼─────────┐
+//          │                  │         │         │
+//          │                  ▼         ▼         ▼
+//          │               Part      Success   Failure
+//          │             Canceled       │         │
+//          │                  │         │     Retry Part
+//          │                  │         │         │
+//          │               Free       Free    Max Retries?
+//          │               Slice      Slice    │        │
+//          │                  │         │      No       Yes
+//          │               Deref    Add eTag   │        │
+//          │                MPU    to Array    │    Fail MPU
+//          │                  │         │      │        │
+//          │                  │         │      │    Deref MPU
+//          │                  └─────────┼──────┘        │
+//          │                            │               │
+//          │                            ▼               │
+//          │                   All Parts Complete?      │
+//          │                            │               │
+//          │                    ┌───────┴───────┐       │
+//          │                    │               │       │
+//          │                    ▼               ▼       │
+//          │               All Success     Some Failed  │
+//          │                    │               │       │
+//          │                    ▼               ▼       │
+//          │              Send Commit     Send Rollback │
+//          │             (No Ref Inc)    (No Ref Inc)   │
+//          │                    │               │       │
+//          │                    └───────┬───────┘       │
+//          │                            │               │
+//          │                            ▼               │
+//          │                     Retry if Failed        │
+//          │                    (Best Effort Only)      │
+//          │                            │               │
+//          │                            ▼               │
+//          │                     Deref Final MPU        │
+//          │                            │               │
+//          ▼                            │               │
+//  Single Upload Request                │               │
+//          │                            │               │
+//          └────────────────────────────┴───────────────┘
+//                         │
+//                         ▼
+//                        End
 pub const MultiPartUpload = struct {
     const OneMiB: usize = MultiPartUploadOptions.OneMiB;
     const MAX_SINGLE_UPLOAD_SIZE: usize = MultiPartUploadOptions.MAX_SINGLE_UPLOAD_SIZE; // we limit to 5 GiB
@@ -236,6 +320,7 @@ pub const MultiPartUpload = struct {
         }
     }
 
+    /// This is the only place we allocate the queue or the parts, this is responsible for the flow of parts and the max allowed concurrency
     fn getCreatePart(this: *@This(), chunk: []const u8, allocated_size: usize, needs_clone: bool) ?*UploadPart {
         const index = this.available.findFirstSet() orelse {
             // this means that the queue is full and we cannot flush it
@@ -250,12 +335,16 @@ pub const MultiPartUpload = struct {
         defer this.currentPartNumber += 1;
         if (this.queue == null) {
             // queueSize will never change and is small (max 255)
-            this.queue = bun.default_allocator.alloc(UploadPart, queueSize) catch bun.outOfMemory();
+            const queue = bun.default_allocator.alloc(UploadPart, queueSize) catch bun.outOfMemory();
+            // zero set just in case
+            @memset(std.mem.asBytes(queue), 0);
+            this.queue = queue;
         }
         const data = if (needs_clone) bun.default_allocator.dupe(u8, chunk) catch bun.outOfMemory() else chunk;
         const allocated_len = if (needs_clone) data.len else allocated_size;
 
         const queue_item = &this.queue.?[index];
+        // always set all struct fields to avoid undefined behavior
         queue_item.* = .{
             .data = data,
             .allocated_size = allocated_len,
@@ -268,6 +357,7 @@ pub const MultiPartUpload = struct {
         return queue_item;
     }
 
+    /// Drain the parts, this is responsible for starting the parts and processing the buffered data
     fn drainEnqueuedParts(this: *@This()) void {
         if (this.state == .finished) {
             return;
@@ -289,10 +379,11 @@ pub const MultiPartUpload = struct {
         }
 
         if (this.ended and this.available.mask == std.bit_set.IntegerBitSet(MAX_QUEUE_SIZE).initFull().mask) {
-            // we are done
+            // we are done and no more parts are running
             this.done();
         }
     }
+    /// Finalize the upload with a failure
     pub fn fail(this: *@This(), _err: S3Error) void {
         log("fail {s}:{s}", .{ _err.code, _err.message });
         this.ended = true;
@@ -307,19 +398,23 @@ pub const MultiPartUpload = struct {
             this.callback(.{ .failure = _err }, this.callback_context);
 
             if (old_state == .multipart_completed) {
+                // we are a multipart upload so we need to rollback
                 // will deref after rollback
                 this.rollbackMultiPartRequest();
             } else {
+                // single file upload no need to rollback
                 this.deref();
             }
         }
     }
-
+    /// Finalize successful the upload
     fn done(this: *@This()) void {
         if (this.state == .multipart_completed) {
+            // we are a multipart upload so we need to send the etags and commit
             this.state = .finished;
-
+            // sort the etags
             std.sort.block(UploadPart.UploadPartResult, this.multipart_etags.items, this, UploadPart.sortEtags);
+            // start the multipart upload list
             this.multipart_upload_list.append(bun.default_allocator, "<?xml version=\"1.0\" encoding=\"UTF-8\"?><CompleteMultipartUpload xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">") catch bun.outOfMemory();
             for (this.multipart_etags.items) |tag| {
                 this.multipart_upload_list.appendFmt(bun.default_allocator, "<Part><PartNumber>{}</PartNumber><ETag>{s}</ETag></Part>", .{ tag.number, tag.etag }) catch bun.outOfMemory();
@@ -332,11 +427,14 @@ pub const MultiPartUpload = struct {
             // will deref and ends after commit
             this.commitMultiPartRequest();
         } else {
+            // single file upload no need to commit
             this.callback(.{ .success = {} }, this.callback_context);
             this.state = .finished;
             this.deref();
         }
     }
+
+    /// Result of the Multipart request, after this we can start draining the parts
     pub fn startMultiPartRequestResult(result: S3SimpleRequest.S3DownloadResult, this: *@This()) void {
         defer this.deref();
         if (this.state == .finished) return;
@@ -365,6 +463,7 @@ pub const MultiPartUpload = struct {
                 }
                 log("startMultiPartRequestResult {s} success id: {s}", .{ this.path, this.upload_id });
                 this.state = .multipart_completed;
+                // start draining the parts
                 this.drainEnqueuedParts();
             },
             // this is "unreachable" but we cover in case AWS returns 404
@@ -375,6 +474,7 @@ pub const MultiPartUpload = struct {
         }
     }
 
+    /// We do a best effort to commit the multipart upload, if it fails we will retry, if it still fails we will fail the upload
     pub fn onCommitMultiPartRequest(result: S3SimpleRequest.S3CommitResult, this: *@This()) void {
         log("onCommitMultiPartRequest {s}", .{this.upload_id});
 
@@ -396,7 +496,7 @@ pub const MultiPartUpload = struct {
             },
         }
     }
-
+    /// We do a best effort to rollback the multipart upload, if it fails we will retry, if it still we just deinit the upload
     pub fn onRollbackMultiPartRequest(result: S3SimpleRequest.S3UploadResult, this: *@This()) void {
         log("onRollbackMultiPartRequest {s}", .{this.upload_id});
         switch (result) {

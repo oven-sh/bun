@@ -4551,6 +4551,7 @@ pub const ParseTask = struct {
             transpiler.options.react_fast_refresh and
             loader.isJSX() and
             !source.path.isNodeModule();
+        std.debug.print("{s} - {}\n", .{ source.path.text, opts.features.react_fast_refresh });
 
         opts.features.server_components = if (transpiler.options.server_components) switch (target) {
             .browser => .client_side,
@@ -12342,20 +12343,6 @@ pub const LinkerContext = struct {
         });
         const module_id = Expr.initIdentifier(ast.module_ref, Logger.Loc.Empty);
 
-        // add a marker for the client runtime to tell that this is an ES module
-        if (ast.exports_kind == .esm) {
-            try stmts.inside_wrapper_prefix.append(Stmt.alloc(S.SExpr, .{
-                .value = Expr.assign(
-                    Expr.init(E.Dot, .{
-                        .target = Expr.initIdentifier(ast.module_ref, Loc.Empty),
-                        .name = "__esModule",
-                        .name_loc = Loc.Empty,
-                    }, Loc.Empty),
-                    Expr.init(E.Boolean, .{ .value = true }, Loc.Empty),
-                ),
-            }, Loc.Empty));
-        }
-
         for (part_stmts) |stmt| {
             switch (stmt.data) {
                 else => {
@@ -12492,6 +12479,20 @@ pub const LinkerContext = struct {
         // - one part range per file (ensured by another special cased code path in findAllImportedPartsInJSOrder)
         if (c.options.output_format == .internal_bake_dev) {
             bun.assert(!part_range.source_index.isRuntime()); // embedded in HMR runtime
+
+            // add a marker for the client runtime to tell that this is an ES module
+            if (ast.exports_kind == .esm) {
+                stmts.inside_wrapper_prefix.append(Stmt.alloc(S.SExpr, .{
+                    .value = Expr.assign(
+                        Expr.init(E.Dot, .{
+                            .target = Expr.initIdentifier(ast.module_ref, Loc.Empty),
+                            .name = "__esModule",
+                            .name_loc = Loc.Empty,
+                        }, Loc.Empty),
+                        Expr.init(E.Boolean, .{ .value = true }, Loc.Empty),
+                    ),
+                }, Loc.Empty)) catch bun.outOfMemory();
+            }
 
             for (parts) |part| {
                 c.convertStmtsForChunkForBake(part_range.source_index.get(), stmts, part.stmts, allocator, &ast) catch |err|

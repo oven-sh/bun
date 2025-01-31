@@ -1177,19 +1177,15 @@ pub const ServerConfig = struct {
                 // When HTML bundles are provided, ensure DevServer options are ready
                 // The precense of these options
                 if (dedupe_html_bundle_map.count() > 0) {
+                    // TODO: this should be the dir with bunfig??
+                    const root = bun.fs.FileSystem.instance.top_level_dir;
+                    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+                    const framework = try bun.bake.Framework.auto(arena.allocator(), &global.bunVM().transpiler.resolver);
                     args.bake = .{
-                        .arena = std.heap.ArenaAllocator.init(bun.default_allocator),
+                        .arena = arena,
                         .allocations = bun.bake.StringRefList.empty,
-
-                        // TODO: this should be the dir with bunfig??
-                        .root = bun.fs.FileSystem.instance.top_level_dir,
-                        // TODO: framework / react fast refresh
-                        // probably specify framework details through bunfig,
-                        // but also it would be very nice to have built-in
-                        // support to just load node_modules/react-refresh if
-                        // react is installed. maybe even ship a fallback copy
-                        // of rfr with bun so it always "just works"
-                        .framework = bun.bake.Framework.none,
+                        .root = root,
+                        .framework = framework,
                         .frontend_only = true,
                         .bundler_options = bun.bake.SplitBundlerOptions.empty,
                     };

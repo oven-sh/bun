@@ -31,7 +31,22 @@ async function run() {
   writeIfNotChanged(join(base_dir, "generated.ts"), convertZigEnum(devServerZig));
 
   const results = await Promise.allSettled(
-    ["client", "server", "error"].map(async file => {
+    ["client", "server", "error", "react-refresh"].map(async file => {
+      if (file === "react-refresh") {
+        let result = await Bun.build({
+          entrypoints: [require.resolve("react-refresh")],
+          minify: true,
+          target: "browser",
+          external: ["*"],
+        });
+        if (!result.success) throw new AggregateError(result.logs);
+        assert(result.outputs.length === 1, "must bundle to a single file");
+        // @ts-ignore
+        let code = await result.outputs[0].text();
+        writeIfNotChanged(join(codegenRoot, `bake.react-refresh-prebuilt.js`), code);
+        return;
+      }
+
       const side = file === "error" ? "client" : file;
       let result = await Bun.build({
         entrypoints: [join(base_dir, `hmr-runtime-${file}.ts`)],
@@ -166,7 +181,7 @@ async function run() {
       console.error(err);
     }
   } else {
-    console.log("-> bake.client.js, bake.server.js, bake.error.js");
+    console.log("-> bake.client.js, bake.server.js, bake.error.js, bake.react-refresh-prebuilt.js");
 
     const empty_file = join(codegenRoot, "bake_empty_file");
     if (!existsSync(empty_file)) writeIfNotChanged(empty_file, "this is used to fulfill a cmake dependency");

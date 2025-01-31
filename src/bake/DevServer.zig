@@ -1013,7 +1013,7 @@ fn getJavaScriptCodeForHTMLFile(
     try bun.js_printer.writeJSONString(input_file_sources[index.get()].path.pretty, @TypeOf(w), w, .utf8);
     try w.writeAll("(m) {\n  ");
     for (import_records[index.get()].slice()) |import| {
-        try w.writeAll("m.dynamicImport(");
+        try w.writeAll("  m.dynamicImport(");
         try bun.js_printer.writeJSONString(import.path.pretty, @TypeOf(w), w, .utf8);
         try w.writeAll(");\n  ");
     }
@@ -1231,6 +1231,18 @@ fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]c
     // Run tracing
     dev.client_graph.reset();
     try dev.traceAllRouteImports(route_bundle, &gts, .{ .find_client_modules = true });
+
+    if (dev.framework.react_fast_refresh) |rfr| brk: {
+        const rfr_index = dev.client_graph.getFileIndex(rfr.import_source) orelse
+            break :brk;
+        if (!dev.client_graph.stale_files.isSet(rfr_index.get())) {
+            try dev.client_graph.traceImports(
+                rfr_index,
+                &gts,
+                .{ .find_client_modules = true },
+            );
+        }
+    }
 
     const client_file: ?IncrementalGraph(.client).FileIndex = switch (route_bundle.data) {
         .framework => |fw| if (dev.router.typePtr(dev.router.routePtr(fw.route_index).type).client_file.unwrap()) |ofi|
@@ -4548,6 +4560,8 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
     // TODO: alot of code is missing
     // TODO: story for busting resolution cache smartly?
     for (events) |event| {
+        // TODO: why does this out of bounds when you delete every file in the directory?
+        if (event.index >= file_paths.len) continue;
         const file_path = file_paths[event.index];
         const update_count = counts[event.index] + 1;
         counts[event.index] = update_count;
@@ -4686,6 +4700,11 @@ fn fromOpaqueFileId(comptime side: bake.Side, id: OpaqueFileId) IncrementalGraph
 /// Returns posix style path, suitible for URLs and reproducible hashes.
 fn relativePath(dev: *const DevServer, path: []const u8) []const u8 {
     bun.assert(dev.root[dev.root.len - 1] != '/');
+
+    if (!std.fs.path.isAbsolute(path)) {
+        return path;
+    }
+
     if (path.len >= dev.root.len + 1 and
         path[dev.root.len] == '/' and
         bun.strings.startsWith(path, dev.root))

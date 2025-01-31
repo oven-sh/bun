@@ -223,6 +223,36 @@ pub const Framework = struct {
         };
     }
 
+    /// Default that requires no packages or configuration.
+    /// - If `react-refresh` is installed, enable react fast refresh with it.
+    ///     - Otherwise, if `react` is installed, use a bundled copy of
+    ///     react-refresh so that it still works.
+    /// The provided allocator is not stored.
+    pub fn auto(arena: std.mem.Allocator, resolver: *bun.resolver.Resolver) !Framework {
+        var fw: Framework = Framework.none;
+
+        if (resolveOrNull(resolver, "react-refresh/runtime")) |rfr| {
+            fw.react_fast_refresh = .{
+                .import_source = rfr,
+            };
+        } else if (resolveOrNull(resolver, "react")) |_| {
+            fw.react_fast_refresh = .{
+                .import_source = "react-refresh/runtime",
+            };
+            try fw.built_in_modules.put(
+                arena,
+                "react-refresh/runtime",
+                if (Environment.codegen_embed)
+                    .{ .code = @embedFile("bake.react-refresh-prebuilt.js") }
+                else
+                    .{ .code = bun.runtimeEmbedFile(.codegen, "bake.react-refresh-prebuilt.js") },
+            );
+        }
+
+        return fw;
+    }
+
+    /// Unopiniated default.
     pub const none: Framework = .{
         .is_built_in_react = false,
         .file_system_router_types = &.{},
@@ -315,6 +345,13 @@ pub const Framework = struct {
             return;
         };
         path.* = result.path().?.text;
+    }
+
+    inline fn resolveOrNull(r: *bun.resolver.Resolver, path: []const u8) ?[]const u8 {
+        return (r.resolve(r.fs.top_level_dir, path, .stmt) catch {
+            r.log.reset();
+            return null;
+        }).pathConst().?.text;
     }
 
     fn fromJS(

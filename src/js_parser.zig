@@ -5104,136 +5104,6 @@ fn NewParser_(
             };
         };
 
-        /// "Fast Refresh" is React's solution for hot-module-reloading in the context of the UI framework
-        /// user guide: https://reactnative.dev/docs/fast-refresh (applies to react-dom and native)
-        ///
-        /// This depends on performing a couple extra transformations at bundle time, as well as
-        /// including the `react-refresh` NPM package, which is able to do the heavy lifting,
-        /// integrating with `react` and `react-dom`.
-        ///
-        /// Prior implementations:
-        ///  [1]: https://github.com/facebook/react/blob/main/packages/react-refresh/src/ReactFreshBabelPlugin.js
-        ///  [2]: https://github.com/swc-project/swc/blob/main/crates/swc_ecma_transforms_react/src/refresh/mod.rs
-        ///
-        /// Additional reading:
-        ///  [3] https://github.com/facebook/react/issues/16604#issuecomment-528663101
-        ///  [4] https://github.com/facebook/react/blob/master/packages/react-refresh/src/__tests__/ReactFreshIntegration-test.js
-        ///
-        /// Instead of a plugin which visits the tree separately, Bun's implementation of fast refresh
-        /// happens in tandem with the visit pass. The responsibilities of the transform are as follows:
-        ///
-        /// 1. For all Components (which is defined as any top-level function/function variable, that is
-        ///    named with a capital letter; see `isComponentishName`), register them to the runtime using
-        ///    `$RefreshReg$(ComponentFunction, "Component");`. Implemented in `p.handleReactRefreshRegister`
-        ///    HOC components are also registered, but only through a special case for `export default`
-        ///
-        /// 2. For all functions which call a Hook (a hook is an identifier matching /^use[A-Z]/):
-        ///     a. Outside of the function, create a signature function `const _s = $RefreshSig$();`
-        ///     b. At the start of the function, call `_s()`
-        ///     c. Record all of the hooks called, the variables they are assigned to, and
-        ///        arguments depending on which hook has been used. `useState` and `useReducer`,
-        ///        for example, are special-cased.
-        ///     d. Directly after the function, call `_s(hook, "<hash>", forceReset)`
-        ///         - If a user-defined hook is called, the alterate form is used:
-        ///           `_s(hook, "<hash>", forceReset, () => [useCustom1, useCustom2])`
-        ///
-        /// The upstream transforms do not declare `$RefreshReg$` or `$RefreshSig$`. A typical
-        /// implementation might look like this, prepending this data to the module start:
-        ///
-        ///     import * as Refresh from 'react-refresh/runtime';
-        ///     const $RefreshReg$ = (type, id) => Refresh.register(type, "<file id here>" + id);
-        ///     const $RefreshSig$ = Refresh.createSignatureFunctionForTransform;
-        ///
-        /// Since Bun is a transpiler *and* bundler, we take a slightly different approach. Aside
-        /// from including the link to the refresh runtime, our notation of $RefreshReg$ is just
-        /// pointing at `Refresh.register`, which means when we call it, the second argument has
-        /// to be a string containing the filepath, not just the component name.
-        const ReactRefresh = struct {
-            // Set if this JSX/TSX file uses the refresh runtime. If so,
-            // we must insert an import statement to it.
-            register_used: bool = false,
-            signature_used: bool = false,
-
-            /// $RefreshReg$ is called on all top-level variables that are
-            /// components, as well as HOCs found in the `export default` clause.
-            register_ref: Ref = Ref.None,
-
-            /// $RefreshSig$ is called to create a signature function, which is
-            /// used by the refresh runtime to perform smart hook tracking.
-            create_signature_ref: Ref = Ref.None,
-
-            /// If a comment with '@refresh reset' is seen, we will forward a
-            /// force refresh to the refresh runtime. This lets you reset the
-            /// state of hooks on an update on a per-component basis.
-            // TODO: this is never set
-            force_reset: bool = false,
-
-            /// The last hook that was scanned. This is used when visiting
-            /// `.s_local`, as we must hash the variable destructure if the
-            /// hook's result is assigned directly to a local.
-            last_hook_seen: ?*E.Call = null,
-
-            /// Every function sets up stack memory to hold data related to it's
-            /// hook tracking. This is a pointer to that ?HookContext, where an
-            /// inner null means there are no hook calls.
-            ///
-            /// The inner value is initialized when the first hook .e_call is
-            /// visited, where the '_s' symbol is reserved. Additional hook calls
-            /// append to the `hasher` and `user_hooks` as needed.
-            ///
-            /// When a function is done visiting, the stack location is checked,
-            /// and then it will insert `var _s = ...`, add the `_s()` call at
-            /// the start of the function, and then add the call to `_s(func, ...)`.
-            hook_ctx_storage: ?*?HookContext = null,
-
-            pub const HookContext = struct {
-                hasher: std.hash.Wyhash,
-                signature_cb: Ref,
-                user_hooks: std.AutoArrayHashMapUnmanaged(Ref, Expr),
-            };
-
-            // https://github.com/facebook/react/blob/d1afcb43fd506297109c32ff462f6f659f9110ae/packages/react-refresh/src/ReactFreshBabelPlugin.js#L42
-            pub fn isComponentishName(id: []const u8) bool {
-                if (id.len == 0) return false;
-                return switch (id[0]) {
-                    'A'...'Z' => true,
-                    else => false,
-                };
-            }
-
-            // https://github.com/facebook/react/blob/d1afcb43fd506297109c32ff462f6f659f9110ae/packages/react-refresh/src/ReactFreshBabelPlugin.js#L408
-            pub fn isHookName(id: []const u8) bool {
-                return id.len >= 4 and
-                    strings.hasPrefixComptime(id, "use") and
-                    switch (id[3]) {
-                    'A'...'Z' => true,
-                    else => false,
-                };
-            }
-
-            pub const built_in_hooks = bun.ComptimeEnumMap(enum {
-                useState,
-                useReducer,
-                useEffect,
-                useLayoutEffect,
-                useMemo,
-                useCallback,
-                useRef,
-                useContext,
-                useImperativeHandle,
-                useDebugValue,
-                useId,
-                useDeferredValue,
-                useTransition,
-                useInsertionEffect,
-                useSyncExternalStore,
-                useFormStatus,
-                useFormState,
-                useActionState,
-                useOptimistic,
-            });
-        };
-
         /// use this instead of checking p.source.index
         /// because when not bundling, p.source.index is `0`
         inline fn isSourceRuntime(p: *const P) bool {
@@ -19390,6 +19260,10 @@ fn NewParser_(
                                     data.default_name = createDefaultName(p, stmt.loc) catch unreachable;
                                 }
 
+                                if (p.options.features.react_fast_refresh) {
+                                    try p.handleReactRefreshRegister(stmts, name, data.default_name.ref.?, .default);
+                                }
+
                                 if (p.options.features.server_components.wrapsExports()) {
                                     data.value = .{ .expr = p.wrapValueForServerComponentReference(p.newExpr(E.Function{ .func = func.func }, stmt.loc), "default") };
                                 }
@@ -19539,7 +19413,7 @@ fn NewParser_(
                     }
 
                     if (p.current_scope == p.module_scope) {
-                        try p.handleReactRefreshRegister(stmts, original_name, name_ref);
+                        try p.handleReactRefreshRegister(stmts, original_name, name_ref, .named);
                     }
                 }
 
@@ -19763,7 +19637,7 @@ fn NewParser_(
                             else => break :try_register,
                         };
                         const original_name = p.symbols.items[id.innerIndex()].original_name;
-                        try p.handleReactRefreshRegister(stmts, original_name, id);
+                        try p.handleReactRefreshRegister(stmts, original_name, id, .named);
                     }
                 }
 
@@ -23292,7 +23166,7 @@ fn NewParser_(
             }
         };
 
-        pub fn handleReactRefreshRegister(p: *P, stmts: *ListManaged(Stmt), original_name: []const u8, ref: Ref) !void {
+        pub fn handleReactRefreshRegister(p: *P, stmts: *ListManaged(Stmt), original_name: []const u8, ref: Ref, export_kind: enum { named, default }) !void {
             bun.assert(p.options.features.react_fast_refresh);
             bun.assert(p.current_scope == p.module_scope);
 
@@ -23307,12 +23181,16 @@ fn NewParser_(
                             .data = try bun.strings.concat(p.allocator, &.{
                                 p.source.path.pretty,
                                 ":",
-                                original_name,
+                                switch (export_kind) {
+                                    .named => original_name,
+                                    .default => "default",
+                                },
                             }),
                         }, loc),
                     }),
                 }, loc) }, loc));
 
+                p.recordUsage(ref);
                 p.react_refresh.register_used = true;
             }
         }
@@ -24050,6 +23928,136 @@ const WrapMode = enum {
     bun_commonjs,
 };
 
+/// "Fast Refresh" is React's solution for hot-module-reloading in the context of the UI framework
+/// user guide: https://reactnative.dev/docs/fast-refresh (applies to react-dom and native)
+///
+/// This depends on performing a couple extra transformations at bundle time, as well as
+/// including the `react-refresh` NPM package, which is able to do the heavy lifting,
+/// integrating with `react` and `react-dom`.
+///
+/// Prior implementations:
+///  [1]: https://github.com/facebook/react/blob/main/packages/react-refresh/src/ReactFreshBabelPlugin.js
+///  [2]: https://github.com/swc-project/swc/blob/main/crates/swc_ecma_transforms_react/src/refresh/mod.rs
+///
+/// Additional reading:
+///  [3] https://github.com/facebook/react/issues/16604#issuecomment-528663101
+///  [4] https://github.com/facebook/react/blob/master/packages/react-refresh/src/__tests__/ReactFreshIntegration-test.js
+///
+/// Instead of a plugin which visits the tree separately, Bun's implementation of fast refresh
+/// happens in tandem with the visit pass. The responsibilities of the transform are as follows:
+///
+/// 1. For all Components (which is defined as any top-level function/function variable, that is
+///    named with a capital letter; see `isComponentishName`), register them to the runtime using
+///    `$RefreshReg$(ComponentFunction, "Component");`. Implemented in `p.handleReactRefreshRegister`
+///    HOC components are also registered, but only through a special case for `export default`
+///
+/// 2. For all functions which call a Hook (a hook is an identifier matching /^use[A-Z]/):
+///     a. Outside of the function, create a signature function `const _s = $RefreshSig$();`
+///     b. At the start of the function, call `_s()`
+///     c. Record all of the hooks called, the variables they are assigned to, and
+///        arguments depending on which hook has been used. `useState` and `useReducer`,
+///        for example, are special-cased.
+///     d. Directly after the function, call `_s(hook, "<hash>", forceReset)`
+///         - If a user-defined hook is called, the alterate form is used:
+///           `_s(hook, "<hash>", forceReset, () => [useCustom1, useCustom2])`
+///
+/// The upstream transforms do not declare `$RefreshReg$` or `$RefreshSig$`. A typical
+/// implementation might look like this, prepending this data to the module start:
+///
+///     import * as Refresh from 'react-refresh/runtime';
+///     const $RefreshReg$ = (type, id) => Refresh.register(type, "<file id here>" + id);
+///     const $RefreshSig$ = Refresh.createSignatureFunctionForTransform;
+///
+/// Since Bun is a transpiler *and* bundler, we take a slightly different approach. Aside
+/// from including the link to the refresh runtime, our notation of $RefreshReg$ is just
+/// pointing at `Refresh.register`, which means when we call it, the second argument has
+/// to be a string containing the filepath, not just the component name.
+const ReactRefresh = struct {
+    // Set if this JSX/TSX file uses the refresh runtime. If so,
+    // we must insert an import statement to it.
+    register_used: bool = false,
+    signature_used: bool = false,
+
+    /// $RefreshReg$ is called on all top-level variables that are
+    /// components, as well as HOCs found in the `export default` clause.
+    register_ref: Ref = Ref.None,
+
+    /// $RefreshSig$ is called to create a signature function, which is
+    /// used by the refresh runtime to perform smart hook tracking.
+    create_signature_ref: Ref = Ref.None,
+
+    /// If a comment with '@refresh reset' is seen, we will forward a
+    /// force refresh to the refresh runtime. This lets you reset the
+    /// state of hooks on an update on a per-component basis.
+    // TODO: this is never set
+    force_reset: bool = false,
+
+    /// The last hook that was scanned. This is used when visiting
+    /// `.s_local`, as we must hash the variable destructure if the
+    /// hook's result is assigned directly to a local.
+    last_hook_seen: ?*E.Call = null,
+
+    /// Every function sets up stack memory to hold data related to it's
+    /// hook tracking. This is a pointer to that ?HookContext, where an
+    /// inner null means there are no hook calls.
+    ///
+    /// The inner value is initialized when the first hook .e_call is
+    /// visited, where the '_s' symbol is reserved. Additional hook calls
+    /// append to the `hasher` and `user_hooks` as needed.
+    ///
+    /// When a function is done visiting, the stack location is checked,
+    /// and then it will insert `var _s = ...`, add the `_s()` call at
+    /// the start of the function, and then add the call to `_s(func, ...)`.
+    hook_ctx_storage: ?*?HookContext = null,
+
+    pub const HookContext = struct {
+        hasher: std.hash.Wyhash,
+        signature_cb: Ref,
+        user_hooks: std.AutoArrayHashMapUnmanaged(Ref, Expr),
+    };
+
+    // https://github.com/facebook/react/blob/d1afcb43fd506297109c32ff462f6f659f9110ae/packages/react-refresh/src/ReactFreshBabelPlugin.js#L42
+    pub fn isComponentishName(id: []const u8) bool {
+        if (id.len == 0) return false;
+        return switch (id[0]) {
+            'A'...'Z' => true,
+            else => false,
+        };
+    }
+
+    // https://github.com/facebook/react/blob/d1afcb43fd506297109c32ff462f6f659f9110ae/packages/react-refresh/src/ReactFreshBabelPlugin.js#L408
+    pub fn isHookName(id: []const u8) bool {
+        return id.len >= 4 and
+            strings.hasPrefixComptime(id, "use") and
+            switch (id[3]) {
+            'A'...'Z' => true,
+            else => false,
+        };
+    }
+
+    pub const built_in_hooks = bun.ComptimeEnumMap(enum {
+        useState,
+        useReducer,
+        useEffect,
+        useLayoutEffect,
+        useMemo,
+        useCallback,
+        useRef,
+        useContext,
+        useImperativeHandle,
+        useDebugValue,
+        useId,
+        useDeferredValue,
+        useTransition,
+        useInsertionEffect,
+        useSyncExternalStore,
+        useFormStatus,
+        useFormState,
+        useActionState,
+        useOptimistic,
+    });
+};
+
 pub const ConvertESMExportsForHmr = struct {
     last_part: *js_ast.Part,
     imports_seen: std.AutoArrayHashMapUnmanaged(u32, void) = .{},
@@ -24111,7 +24119,26 @@ pub const ConvertESMExportsForHmr = struct {
                 break :stmt stmt;
             },
             .s_export_default => |st| stmt: {
-                // Simple case: we can move this to the default property of the exports object
+                // When React Fast Refresh needs to tag the default export, the statement
+                // cannot be moved, since a local reference is required.
+                if (p.options.features.react_fast_refresh and
+                    st.value == .stmt and st.value.stmt.data == .s_function)
+                fast_refresh_edge_case: {
+                    const symbol = st.value.stmt.data.s_function.func.name orelse
+                        break :fast_refresh_edge_case;
+                    const name = p.symbols.items[symbol.ref.?.inner_index].original_name;
+                    if (ReactRefresh.isComponentishName(name)) {
+                        // Lower to a function statement, and reference the function in the export list.
+                        try ctx.export_props.append(p.allocator, .{
+                            .key = Expr.init(E.String, .{ .data = "default" }, stmt.loc),
+                            .value = Expr.initIdentifier(symbol.ref.?, stmt.loc),
+                        });
+                        break :stmt st.value.stmt;
+                    }
+                    // All other functions can be properly moved.
+                }
+
+                // Try to move the export default expression to the end.
                 if (st.canBeMoved()) {
                     try ctx.export_props.append(p.allocator, .{
                         .key = Expr.init(E.String, .{ .data = "default" }, stmt.loc),
@@ -24121,7 +24148,7 @@ pub const ConvertESMExportsForHmr = struct {
                     return;
                 }
 
-                // Otherwise, we need a temporary
+                // Otherwise, a new symbol is needed
                 const temp_id = p.generateTempRef("default_export");
                 try ctx.last_part.declared_symbols.append(p.allocator, .{ .ref = temp_id, .is_top_level = true });
                 try ctx.last_part.symbol_uses.putNoClobber(p.allocator, temp_id, .{ .count_estimate = 1 });

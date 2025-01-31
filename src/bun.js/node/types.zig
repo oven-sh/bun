@@ -1473,7 +1473,7 @@ pub const FileSystemFlags = enum(c_int) {
 
     _,
 
-    const map = bun.ComptimeStringMap(u24, .{
+    const map = bun.ComptimeStringMap(i32, .{
         .{ "r", O.RDONLY },
         .{ "rs", O.RDONLY | O.SYNC },
         .{ "sr", O.RDONLY | O.SYNC },
@@ -1549,7 +1549,7 @@ pub const FileSystemFlags = enum(c_int) {
                 return ctx.throwInvalidArguments("Invalid flag '{any}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags", .{str});
             }
 
-            const flags: u24 = brk: {
+            const flags: i32 = brk: {
                 switch (str.is16Bit()) {
                     inline else => |is_16bit| {
                         const chars = if (is_16bit) str.utf16SliceAligned() else str.slice();
@@ -1560,20 +1560,20 @@ pub const FileSystemFlags = enum(c_int) {
                                 const slice = str.toSlice(bun.default_allocator);
                                 defer slice.deinit();
 
-                                break :brk std.fmt.parseInt(Mode, slice.slice(), 10) catch break :brk null;
+                                break :brk @as(i32, @intCast(std.fmt.parseInt(Mode, slice.slice(), 10) catch break :brk null));
                             } else {
-                                break :brk std.fmt.parseInt(Mode, chars, 10) catch break :brk null;
+                                break :brk @as(i32, @intCast(std.fmt.parseInt(Mode, chars, 10) catch break :brk null));
                             }
                         }
                     },
                 }
 
-                break :brk map.getWithEql(str, JSC.ZigString.eqlComptime);
+                break :brk map.getWithEql(str, JSC.ZigString.eqlComptime) orelse break :brk null;
             } orelse {
                 return ctx.throwInvalidArguments("Invalid flag '{any}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags", .{str});
             };
 
-            return @enumFromInt(@as(Mode, @intCast(flags)));
+            return @enumFromInt(flags);
         }
 
         return null;

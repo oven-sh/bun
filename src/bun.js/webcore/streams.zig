@@ -3450,7 +3450,7 @@ pub const FileSink = struct {
         if (comptime !Environment.isWindows) {
             this.writer.force_sync = true;
             if (this.fd != bun.invalid_fd and this.nonblocking) {
-                _ = bun.sys.updateBlocking(this.fd, true);
+                _ = bun.sys.updateNonblocking(this.fd, true);
             }
         }
     }

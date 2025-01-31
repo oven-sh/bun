@@ -3309,10 +3309,10 @@ pub fn utimens(path: bun.OSPathSliceZ, atime: JSC.Node.TimeLike, mtime: JSC.Node
 }
 
 pub fn setNonblocking(fd: bun.FileDescriptor) Maybe(void) {
-    return updateBlocking(fd, true);
+    return updateNonblocking(fd, true);
 }
 
-pub fn updateBlocking(fd: bun.FileDescriptor, nonblocking: bool) Maybe(void) {
+pub fn updateNonblocking(fd: bun.FileDescriptor, nonblocking: bool) Maybe(void) {
     const current_flags: i32 = switch (bun.sys.fcntl(
         fd,
         std.posix.F.GETFL,

@@ -481,6 +481,7 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     this[kWriteStreamFastPath] = fd ? Bun.file(fd).writer() : true;
     this._write = underscoreWriteFast;
     this._writev = undefined;
+    this.write = writeFast as any;
   }
 
   Writable.$call(this, options);
@@ -616,6 +617,46 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
   } catch (e) {
     if (cb) process.nextTick(cb, e);
     return false;
+  }
+}
+
+// This function implementation is not correct.
+const writablePrototypeWrite = Writable.prototype.write;
+const kWriteMonkeyPatchDefense = Symbol("!");
+function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
+  if (this[kWriteMonkeyPatchDefense]) return writablePrototypeWrite.$call(this, data, encoding, cb);
+
+  if (typeof encoding === "function") {
+    cb = encoding;
+    encoding = undefined;
+  }
+  if (typeof cb !== "function") {
+    cb = streamNoop;
+  }
+
+  const fileSink = this[kWriteStreamFastPath];
+  if (fileSink && fileSink !== true) {
+    const maybePromise = fileSink.write(data);
+    if ($isPromise(maybePromise)) {
+      maybePromise
+        .then(() => {
+          this.emit("drain"); // Emit drain event
+          cb(null);
+        })
+        .catch(cb);
+      return false; // Indicate backpressure
+    } else {
+      cb(null);
+      return true; // No backpressure
+    }
+  } else {
+    const result: any = this._write(data, encoding, cb);
+    if (this.write === writeFast) {
+      this.write = writablePrototypeWrite;
+    } else {
+      this[kWriteMonkeyPatchDefense] = true;
+    }
+    return result;
   }
 }
 

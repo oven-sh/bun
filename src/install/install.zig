@@ -1316,7 +1316,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
         pub const Result = union(Tag) {
             success: void,
-            fail: struct {
+            failure: struct {
                 err: anyerror,
                 step: Step,
                 debug_trace: if (Environment.isDebug) bun.crash_handler.StoredTrace else void,
@@ -1326,9 +1326,10 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 }
             },
 
-            pub inline fn initFail(err: anyerror, step: Step, trace: ?*std.builtin.StackTrace) Result {
+            /// Init a Result with the 'fail' tag. use `.success` for the 'success' tag.
+            pub inline fn fail(err: anyerror, step: Step, trace: ?*std.builtin.StackTrace) Result {
                 return .{
-                    .fail = .{
+                    .failure = .{
                         .err = err,
                         .step = step,
                         .debug_trace = if (Environment.isDebug)
@@ -1343,13 +1344,13 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             pub fn isFail(this: @This()) bool {
                 return switch (this) {
                     .success => false,
-                    .fail => true,
+                    .failure => true,
                 };
             }
 
             pub const Tag = enum {
                 success,
-                fail,
+                failure,
             };
         };
 
@@ -1381,14 +1382,14 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             Method.hardlink;
 
         fn installWithClonefileEachDir(this: *@This(), destination_dir: std.fs.Dir) !Result {
-            var cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result.initFail(err, .opening_cache_dir, @errorReturnTrace());
+            var cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return .fail(err, .opening_cache_dir, @errorReturnTrace());
             defer cached_package_dir.close();
             var walker_ = Walker.walk(
                 cached_package_dir,
                 this.allocator,
                 &[_]bun.OSPathSlice{},
                 &[_]bun.OSPathSlice{},
-            ) catch |err| return Result.initFail(err, .opening_cache_dir, @errorReturnTrace());
+            ) catch |err| return .fail(err, .opening_cache_dir, @errorReturnTrace());
             defer walker_.deinit();
 
             const FileCopier = struct {
@@ -1437,13 +1438,13 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 }
             };
 
-            var subdir = destination_dir.makeOpenPath(bun.span(this.destination_dir_subpath), .{}) catch |err| return Result.initFail(err, .opening_dest_dir, @errorReturnTrace());
+            var subdir = destination_dir.makeOpenPath(bun.span(this.destination_dir_subpath), .{}) catch |err| return .fail(err, .opening_dest_dir, @errorReturnTrace());
             defer subdir.close();
 
             this.file_count = FileCopier.copy(
                 subdir,
                 &walker_,
-            ) catch |err| return Result.initFail(err, .copying_files, @errorReturnTrace());
+            ) catch |err| return .fail(err, .copying_files, @errorReturnTrace());
 
             return .{ .success = {} };
         }
@@ -1515,7 +1516,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                     bun.openDir(this.cache_dir, this.cache_dir_subpath)
             else
                 bun.openDir(this.cache_dir, this.cache_dir_subpath)) catch |err|
-                return Result.initFail(err, .opening_cache_dir, @errorReturnTrace());
+                return .fail(err, .opening_cache_dir, @errorReturnTrace());
 
             state.walker = Walker.walk(
                 state.cached_package_dir,
@@ -1534,9 +1535,9 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 }) catch |err| {
                     state.cached_package_dir.close();
                     state.walker.deinit();
-                    return Result.initFail(err, .opening_dest_dir, @errorReturnTrace());
+                    return .fail(err, .opening_dest_dir, @errorReturnTrace());
                 };
-                return Result.success;
+                return .success;
             }
 
             const dest_path_length = bun.windows.GetFinalPathNameByHandleW(destbase.fd, &state.buf, state.buf.len, 0);
@@ -1545,7 +1546,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
                 state.cached_package_dir.close();
                 state.walker.deinit();
-                return Result.initFail(err, .opening_dest_dir, null);
+                return .fail(err, .opening_dest_dir, null);
             }
 
             var i: usize = dest_path_length;
@@ -1569,7 +1570,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
                 state.cached_package_dir.close();
                 state.walker.deinit();
-                return Result.initFail(err, .copying_files, null);
+                return .fail(err, .copying_files, null);
             }
             const cache_path = state.buf2[0..cache_path_length];
             var to_copy_buf2: []u16 = undefined;
@@ -1581,7 +1582,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             }
 
             state.to_copy_buf2 = to_copy_buf2;
-            return Result.success;
+            return .success;
         }
 
         fn installWithCopyfile(this: *@This(), destination_dir: std.fs.Dir) Result {
@@ -1709,9 +1710,9 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 if (Environment.isWindows) &state.buf else void{},
                 if (Environment.isWindows) state.to_copy_buf2 else void{},
                 if (Environment.isWindows) &state.buf2 else void{},
-            ) catch |err| return Result.initFail(err, .copying_files, @errorReturnTrace());
+            ) catch |err| return .fail(err, .copying_files, @errorReturnTrace());
 
-            return Result.success;
+            return .success;
         }
 
         fn NewTaskQueue(comptime TaskType: type) type {
@@ -1948,16 +1949,16 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
                 if (comptime Environment.isWindows) {
                     if (err == error.FailedToCopyFile) {
-                        return Result.initFail(err, .copying_files, @errorReturnTrace());
+                        return .fail(err, .copying_files, @errorReturnTrace());
                     }
                 } else if (err == error.NotSameFileSystem or err == error.ENXIO) {
                     return err;
                 }
 
-                return Result.initFail(err, .copying_files, @errorReturnTrace());
+                return .fail(err, .copying_files, @errorReturnTrace());
             };
 
-            return Result.success;
+            return .success;
         }
 
         fn installWithSymlink(this: *@This(), dest_dir: std.fs.Dir) !Result {
@@ -2089,15 +2090,15 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             ) catch |err| {
                 if (comptime Environment.isWindows) {
                     if (err == error.FailedToCopyFile) {
-                        return Result.initFail(err, .copying_files, @errorReturnTrace());
+                        return .fail(err, .copying_files, @errorReturnTrace());
                     }
                 } else if (err == error.NotSameFileSystem or err == error.ENXIO) {
                     return err;
                 }
-                return Result.initFail(err, .copying_files, @errorReturnTrace());
+                return .fail(err, .copying_files, @errorReturnTrace());
             };
 
-            return Result.success;
+            return .success;
         }
 
         pub fn uninstall(this: *@This(), destination_dir: std.fs.Dir) void {
@@ -2251,7 +2252,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             const symlinked_path = this.cache_dir_subpath;
             var to_buf: bun.PathBuffer = undefined;
             const to_path = this.cache_dir.realpath(symlinked_path, &to_buf) catch |err|
-                return Result.initFail(err, .linking_dependency, @errorReturnTrace());
+                return .fail(err, .linking_dependency, @errorReturnTrace());
 
             const dest = std.fs.path.basename(dest_path);
             // When we're linking on Windows, we want to avoid keeping the source directory handle open
@@ -2261,7 +2262,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 if (dest_path_length == 0) {
                     const e = bun.windows.Win32Error.get();
                     const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
-                    return Result.initFail(err, .linking_dependency, null);
+                    return .fail(err, .linking_dependency, null);
                 }
 
                 var i: usize = dest_path_length;
@@ -2308,27 +2309,27 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                             }
                         }
 
-                        return Result.initFail(bun.errnoToZigErr(err.errno), .linking_dependency, null);
+                        return .fail(bun.errnoToZigErr(err.errno), .linking_dependency, null);
                     },
                     .result => {},
                 }
             } else {
                 var dest_dir = if (subdir) |dir| brk: {
-                    break :brk bun.MakePath.makeOpenPath(destination_dir, dir, .{}) catch |err| return Result.initFail(err, .linking_dependency, @errorReturnTrace());
+                    break :brk bun.MakePath.makeOpenPath(destination_dir, dir, .{}) catch |err| return .fail(err, .linking_dependency, @errorReturnTrace());
                 } else destination_dir;
                 defer {
                     if (subdir != null) dest_dir.close();
                 }
 
-                const dest_dir_path = bun.getFdPath(dest_dir.fd, &dest_buf) catch |err| return Result.initFail(err, .linking_dependency, @errorReturnTrace());
+                const dest_dir_path = bun.getFdPath(dest_dir.fd, &dest_buf) catch |err| return .fail(err, .linking_dependency, @errorReturnTrace());
 
                 const target = Path.relative(dest_dir_path, to_path);
-                std.posix.symlinkat(target, dest_dir.fd, dest) catch |err| return Result.initFail(err, .linking_dependency, null);
+                std.posix.symlinkat(target, dest_dir.fd, dest) catch |err| return .fail(err, .linking_dependency, null);
             }
 
-            if (isDanglingSymlink(symlinked_path)) return Result.initFail(error.DanglingSymlink, .linking_dependency, @errorReturnTrace());
+            if (isDanglingSymlink(symlinked_path)) return .fail(error.DanglingSymlink, .linking_dependency, @errorReturnTrace());
 
-            return Result.success;
+            return .success;
         }
 
         pub fn getInstallMethod(this: *const @This()) Method {
@@ -2396,12 +2397,12 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             const fd = bun.toFD(destination_dir.fd);
             const subpath = bun.path.joinZ(&[_][]const u8{ this.destination_dir_subpath, ".bun-patch-tag" });
             const tag_fd = switch (bun.sys.openat(fd, subpath, bun.O.CREAT | bun.O.WRONLY, 0o666)) {
-                .err => |e| return .{ .fail = .{ .err = bun.errnoToZigErr(e.getErrno()), .step = Step.patching } },
+                .err => |e| return .fail(bun.errnoToZigErr(e.getErrno()), .patching, @errorReturnTrace()),
                 .result => |f| f,
             };
             defer _ = bun.sys.close(tag_fd);
 
-            if (bun.sys.File.writeAll(.{ .handle = tag_fd }, this.package_version).asErr()) |e| return .{ .fail = .{ .err = bun.errnoToZigErr(e.getErrno()), .step = Step.patching } };
+            if (bun.sys.File.writeAll(.{ .handle = tag_fd }, this.package_version).asErr()) |e| return .fail(bun.errnoToZigErr(e.getErrno()), .patching, @errorReturnTrace());
         }
 
         pub fn installImpl(this: *@This(), skip_delete: bool, destination_dir: std.fs.Dir, method_: Method, resolution_tag: Resolution.Tag) Result {
@@ -2429,8 +2430,8 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                                     supported_method = .copyfile;
                                     supported_method_to_use = .copyfile;
                                 },
-                                error.FileNotFound => return Result.initFail(error.FileNotFound, .opening_cache_dir, @errorReturnTrace()),
-                                else => return Result.initFail(err, .copying_files, @errorReturnTrace()),
+                                error.FileNotFound => return .fail(error.FileNotFound, .opening_cache_dir, @errorReturnTrace()),
+                                else => return .fail(err, .copying_files, @errorReturnTrace()),
                             }
                         }
                     }
@@ -2445,8 +2446,8 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                                     supported_method = .copyfile;
                                     supported_method_to_use = .copyfile;
                                 },
-                                error.FileNotFound => return Result.initFail(error.FileNotFound, .opening_cache_dir, @errorReturnTrace()),
-                                else => return Result.initFail(err, .copying_files, @errorReturnTrace()),
+                                error.FileNotFound => return .fail(error.FileNotFound, .opening_cache_dir, @errorReturnTrace()),
+                                else => return .fail(err, .copying_files, @errorReturnTrace()),
                             }
                         }
                     }
@@ -2464,23 +2465,23 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                         }
 
                         return switch (err) {
-                            error.FileNotFound => Result.initFail(error.FileNotFound, .opening_cache_dir, @errorReturnTrace()),
-                            else => Result.initFail(err, .copying_files, @errorReturnTrace()),
+                            error.FileNotFound => .fail(error.FileNotFound, .opening_cache_dir, @errorReturnTrace()),
+                            else => .fail(err, .copying_files, @errorReturnTrace()),
                         };
                     }
                 },
                 .symlink => {
                     return this.installWithSymlink(destination_dir) catch |err| {
                         return switch (err) {
-                            error.FileNotFound => Result.initFail(err, .opening_cache_dir, @errorReturnTrace()),
-                            else => Result.initFail(err, .copying_files, @errorReturnTrace()),
+                            error.FileNotFound => .fail(err, .opening_cache_dir, @errorReturnTrace()),
+                            else => .fail(err, .copying_files, @errorReturnTrace()),
                         };
                     };
                 },
                 else => {},
             }
 
-            if (supported_method_to_use != .copyfile) return Result.success;
+            if (supported_method_to_use != .copyfile) return .success;
 
             // TODO: linux io_uring
             return this.installWithCopyfile(destination_dir);
@@ -13366,7 +13367,7 @@ pub const PackageManager = struct {
 
                 var lazy_package_dir: LazyPackageDestinationDir = .{ .dir = destination_dir };
 
-                const install_result = switch (resolution.tag) {
+                const install_result: PackageInstall.Result = switch (resolution.tag) {
                     .symlink, .workspace => installer.installFromLink(this.skip_delete, destination_dir),
                     else => result: {
                         if (resolution.tag == .root or (resolution.tag == .folder and !this.lockfile.isWorkspaceTreeId(this.current_tree_id))) {
@@ -13375,15 +13376,15 @@ pub const PackageManager = struct {
                             const dirname = std.fs.path.dirname(this.node_modules.path.items) orelse this.node_modules.path.items;
 
                             installer.cache_dir = this.root_node_modules_folder.openDir(dirname, .{ .iterate = true, .access_sub_paths = true }) catch |err|
-                                break :result PackageInstall.Result.initFail(err, .opening_cache_dir, @errorReturnTrace());
+                                break :result .fail(err, .opening_cache_dir, @errorReturnTrace());
 
                             const result = if (resolution.tag == .root)
                                 installer.installFromLink(this.skip_delete, destination_dir)
                             else
                                 installer.install(this.skip_delete, destination_dir, resolution.tag);
 
-                            if (result.isFail() and (result.fail.err == error.ENOENT or result.fail.err == error.FileNotFound))
-                                break :result PackageInstall.Result.success;
+                            if (result.isFail() and (result.failure.err == error.ENOENT or result.failure.err == error.FileNotFound))
+                                break :result .success;
 
                             break :result result;
                         }
@@ -13466,7 +13467,7 @@ pub const PackageManager = struct {
 
                         if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, &lazy_package_dir, !is_pending_package_install, log_level);
                     },
-                    .fail => |cause| {
+                    .failure => |cause| {
                         if (comptime Environment.allow_assert) {
                             bun.assert(!cause.isPackageMissingFromCache() or (resolution.tag != .symlink and resolution.tag != .workspace));
                         }
@@ -13535,7 +13536,7 @@ pub const PackageManager = struct {
                                 cause.err,
                                 "failed {s} for package <b>{s}<r>",
                                 .{
-                                    install_result.fail.step.name(),
+                                    install_result.failure.step.name(),
                                     this.names[package_id].slice(this.lockfile.buffers.string_bytes.items),
                                 },
                             );

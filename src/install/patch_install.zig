@@ -335,7 +335,7 @@ pub const PatchTask = struct {
 
         switch (pkg_install.installImpl(true, system_tmpdir, .copyfile, this.callback.apply.resolution.tag)) {
             .success => {},
-            .fail => |reason| {
+            .failure => |reason| {
                 return try log.addErrorFmtOpts(
                     this.manager.allocator,
                     "{s} while executing step: {s}",

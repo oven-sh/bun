@@ -4063,7 +4063,7 @@ const WatcherAtomics = struct {
                     ev.timer = std.time.Timer.start() catch unreachable;
             },
             1 => {
-                // @branchHint(.unlikely);
+                @branchHint(.unlikely);
                 // DevServer stole this event. Unlikely but possible when
                 // the user is saving very heavily (10-30 times per second)
                 state.current +%= 1;
@@ -4087,12 +4087,12 @@ const WatcherAtomics = struct {
         ev.owner.bun_watcher.thread_lock.assertLocked();
 
         if (ev.files.count() > 0) {
-            // @branchHint(.likely);
+            @branchHint(.likely);
             // There are files to be processed, increment this count first.
             const prev_count = state.watcher_events_emitted.fetchAdd(1, .seq_cst);
 
             if (prev_count == 0) {
-                // @branchHint(.likely);
+                @branchHint(.likely);
                 // Submit a task to the DevServer, notifying it that there is
                 // work to do. The watcher will move to the other event.
                 ev.concurrent_task = .{

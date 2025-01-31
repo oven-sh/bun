@@ -729,23 +729,23 @@ pub const Log = struct {
     }
 
     pub fn addDebugFmt(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
-        if (!Kind.shouldPrint(.debug, log.level)) return;
-
-        // @branchHint(.cold);
-        try log.addMsg(.{
-            .kind = .debug,
-            .data = try rangeData(source, Range{ .loc = l }, try allocPrint(allocator, text, args)).cloneLineText(log.clone_line_text, log.msgs.allocator),
-        });
+        if (Kind.shouldPrint(.debug, log.level)) {
+            @branchHint(.cold);
+            try log.addMsg(.{
+                .kind = .debug,
+                .data = try rangeData(source, Range{ .loc = l }, try allocPrint(allocator, text, args)).cloneLineText(log.clone_line_text, log.msgs.allocator),
+            });
+        }
     }
 
     pub fn addVerbose(log: *Log, source: ?*const Source, loc: Loc, text: string) OOM!void {
-        if (!Kind.shouldPrint(.verbose, log.level)) return;
-
-        // @branchHint(.cold);
-        try log.addMsg(.{
-            .kind = .verbose,
-            .data = rangeData(source, Range{ .loc = loc }, text),
-        });
+        if (Kind.shouldPrint(.verbose, log.level)) {
+            @branchHint(.cold);
+            try log.addMsg(.{
+                .kind = .verbose,
+                .data = rangeData(source, Range{ .loc = loc }, text),
+            });
+        }
     }
 
     pub fn toJS(this: Log, global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, message: string) JSC.JSValue {

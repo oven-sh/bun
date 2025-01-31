@@ -5978,7 +5978,7 @@ pub fn printWithWriterAndPlatform(
             printer.printFunc(func);
         } else {
             // Special-case lazy-export AST
-            // @branchHint(.unlikely)
+            @branchHint(.unlikely);
             printer.printFnArgs(func.open_parens_loc, func.args, func.flags.contains(.has_rest_arg), false);
             printer.printSpace();
             printer.print("{\n");

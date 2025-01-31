@@ -3530,23 +3530,23 @@ pub const handleErrorReturnTrace = crash_handler.handleErrorReturnTrace;
 noinline fn assertionFailure() noreturn {
     if (@inComptime()) {
         @compileError("assertion failure");
+    } else {
+        @branchHint(.cold);
+        Output.panic("Internal assertion failure", .{});
     }
-
-    // @branchHint(.cold);
-    Output.panic("Internal assertion failure", .{});
 }
 
 noinline fn assertionFailureWithLocation(src: std.builtin.SourceLocation) noreturn {
     if (@inComptime()) {
         @compileError("assertion failure");
+    } else {
+        @branchHint(.cold);
+        Output.panic("Internal assertion failure {s}:{d}:{d}", .{
+            src.file,
+            src.line,
+            src.column,
+        });
     }
-
-    // @branchHint(.cold);
-    Output.panic("Internal assertion failure {s}:{d}:{d}", .{
-        src.file,
-        src.line,
-        src.column,
-    });
 }
 
 pub fn debugAssert(cheap_value_only_plz: bool) callconv(callconv_inline) void {

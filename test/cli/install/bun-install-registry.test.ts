@@ -871,6 +871,7 @@ describe("whoami", async () => {
     [install]
     cache = false
     registry = { url = "http://localhost:${port}/", token = "1234567" }`;
+    await rm(join(packageDir, "bunfig.toml"));
     await Promise.all([
       write(packageJson, JSON.stringify({ name: "whoami-pkg", version: "1.1.1" })),
       write(join(packageDir, "bunfig.toml"), bunfig),

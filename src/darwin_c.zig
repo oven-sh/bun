@@ -473,16 +473,13 @@ pub fn getTotalMemory() u64 {
     return memory_[0];
 }
 
-pub const struct_BootTime = struct {
-    sec: u32,
-};
 pub fn getSystemUptime() u64 {
-    var uptime_: [16]struct_BootTime = undefined;
-    var size: usize = uptime_.len;
+    var boot_time: std.posix.timeval = undefined;
+    var size: usize = @sizeOf(@TypeOf(boot_time));
 
     std.posix.sysctlbynameZ(
         "kern.boottime",
-        &uptime_,
+        &boot_time,
         &size,
         null,
         0,
@@ -490,20 +487,16 @@ pub fn getSystemUptime() u64 {
         else => return 0,
     };
 
-    return @as(u64, @bitCast(std.time.timestamp() - uptime_[0].sec));
+    return @intCast(std.time.timestamp() - boot_time.tv_sec);
 }
 
-pub const struct_LoadAvg = struct {
-    ldavg: [3]u32,
-    fscale: c_long,
-};
 pub fn getSystemLoadavg() [3]f64 {
-    var loadavg_: [24]struct_LoadAvg = undefined;
-    var size: usize = loadavg_.len;
+    var loadavg: bun.C.translated.struct_loadavg = undefined;
+    var size: usize = @sizeOf(@TypeOf(loadavg));
 
     std.posix.sysctlbynameZ(
         "vm.loadavg",
-        &loadavg_,
+        &loadavg,
         &size,
         null,
         0,
@@ -511,8 +504,7 @@ pub fn getSystemLoadavg() [3]f64 {
         else => return [3]f64{ 0, 0, 0 },
     };
 
-    const loadavg = loadavg_[0];
-    const scale = @as(f64, @floatFromInt(loadavg.fscale));
+    const scale: f64 = @floatFromInt(loadavg.fscale);
     return .{
         if (scale == 0.0) 0 else @as(f64, @floatFromInt(loadavg.ldavg[0])) / scale,
         if (scale == 0.0) 0 else @as(f64, @floatFromInt(loadavg.ldavg[1])) / scale,

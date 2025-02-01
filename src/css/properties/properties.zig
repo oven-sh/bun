@@ -25,6 +25,7 @@ pub const display = @import("./display.zig");
 pub const effects = @import("./effects.zig");
 pub const flex = @import("./flex.zig");
 pub const font = @import("./font.zig");
+pub const grid = @import("./grid.zig");
 pub const list = @import("./list.zig");
 pub const margin_padding = @import("./margin_padding.zig");
 pub const masking = @import("./masking.zig");

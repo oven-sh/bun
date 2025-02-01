@@ -241,7 +241,10 @@ describe("napi", () => {
 
   describe("napi_threadsafe_function", () => {
     it("keeps the event loop alive without async_work", () => {
-      checkSameOutput("test_promise_with_threadsafe_function", []);
+      const result = checkSameOutput("test_promise_with_threadsafe_function", []);
+      expect(result).toContain("tsfn_callback");
+      expect(result).toContain("resolved to 1234");
+      expect(result).toContain("tsfn_finalize_callback");
     });
 
     it("does not hang on finalize", () => {
@@ -382,6 +385,17 @@ describe("napi", () => {
     it("returns information from the most recent call", () => {
       checkSameOutput("test_extended_error_messages", []);
     });
+  });
+
+  it.each([
+    ["nullptr", { number: 123 }],
+    ["null", null],
+    ["undefined", undefined],
+  ])("works when the module register function returns %s", (returnKind, expected) => {
+    expect(require(`./napi-app/build/Release/${returnKind}_addon.node`)).toEqual(expected);
+  });
+  it("works when the module register function throws", () => {
+    expect(() => require("./napi-app/build/Release/throw_addon.node")).toThrow(new Error("oops!"));
   });
 });
 

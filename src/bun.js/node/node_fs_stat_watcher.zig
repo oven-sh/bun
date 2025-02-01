@@ -86,19 +86,17 @@ pub const StatWatcherScheduler = struct {
     /// Set the timer (this function is not thread safe, should be called only from the main thread)
     fn setTimer(this: *StatWatcherScheduler, interval: i32) void {
 
-        // if the timer is active we need to remove it
-        if (this.event_loop_timer.state == .ACTIVE) {
-            this.vm.timer.remove(&this.event_loop_timer);
-        }
-
         // if the interval is 0 means that we stop the timer
         if (interval == 0) {
+            // if the timer is active we need to remove it
+            if (this.event_loop_timer.state == .ACTIVE) {
+                this.vm.timer.remove(&this.event_loop_timer);
+            }
             return;
         }
 
         // reschedule the timer
-        this.event_loop_timer.next = bun.timespec.msFromNow(interval);
-        this.vm.timer.insert(&this.event_loop_timer);
+        this.vm.timer.update(&this.event_loop_timer, &bun.timespec.msFromNow(interval));
     }
 
     /// Schedule a task to set the timer in the main thread

@@ -24,12 +24,18 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-export function getStdioWriteStream(fd) {
+const enum BunProcessStdinFdType {
+  file = 0,
+  pipe = 1,
+  socket = 2,
+}
+
+export function getStdioWriteStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType) {
   $assert(typeof fd === "number", `Expected fd to be a number, got ${typeof fd}`);
-  const tty = require("node:tty");
 
   let stream;
-  if (tty.isatty(fd)) {
+  if (isTTY) {
+    const tty = require("node:tty");
     stream = new tty.WriteStream(fd);
     // TODO: this is the wrong place for this property.
     // but the TTY is technically duplex
@@ -68,7 +74,7 @@ export function getStdioWriteStream(fd) {
   return [stream, underlyingSink];
 }
 
-export function getStdinStream(fd) {
+export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType) {
   const native = Bun.stdin.stream();
   // @ts-expect-error
   const source = native.$bunNativePtr;
@@ -100,12 +106,13 @@ export function getStdinStream(fd) {
         // we will instead pretend we are unref'd, and release the lock once the reads are finished.
         source?.updateRef?.(false);
       }
+    } else if (source) {
+      source.updateRef(false);
     }
   }
 
-  const tty = require("node:tty");
-  const ReadStream = tty.isatty(fd) ? tty.ReadStream : require("node:fs").ReadStream;
-  const stream = new ReadStream(null, { fd });
+  const ReadStream = isTTY ? require("node:tty").ReadStream : require("node:fs").ReadStream;
+  const stream = new ReadStream(null, { fd, autoClose: false });
 
   const originalOn = stream.on;
 
@@ -128,6 +135,20 @@ export function getStdinStream(fd) {
   };
 
   stream.fd = fd;
+
+  // tty.ReadStream is supposed to extend from net.Socket.
+  // but we haven't made that work yet. Until then, we need to manually add some of net.Socket's methods
+  if (isTTY || fdType !== BunProcessStdinFdType.file) {
+    stream.ref = function () {
+      ref();
+      return this;
+    };
+
+    stream.unref = function () {
+      unref();
+      return this;
+    };
+  }
 
   const originalPause = stream.pause;
   stream.pause = function () {

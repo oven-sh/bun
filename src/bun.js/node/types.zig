@@ -4,7 +4,6 @@ const bun = @import("root").bun;
 const meta = bun.meta;
 const windows = bun.windows;
 const heap_allocator = bun.default_allocator;
-const is_bindgen: bool = false;
 const kernel32 = windows.kernel32;
 const logger = bun.logger;
 const posix = std.posix;
@@ -932,15 +931,15 @@ pub const PathLike = union(enum) {
         return buf[0..sliced.len :0];
     }
 
-    pub inline fn sliceZ(this: PathLike, buf: *bun.PathBuffer) [:0]const u8 {
+    pub fn sliceZ(this: PathLike, buf: *bun.PathBuffer) callconv(bun.callconv_inline) [:0]const u8 {
         return sliceZWithForceCopy(this, buf, false);
     }
 
-    pub inline fn sliceW(this: PathLike, buf: *bun.WPathBuffer) [:0]const u16 {
+    pub fn sliceW(this: PathLike, buf: *bun.WPathBuffer) callconv(bun.callconv_inline) [:0]const u16 {
         return strings.toWPath(buf, this.slice());
     }
 
-    pub inline fn osPath(this: PathLike, buf: *bun.OSPathBuffer) bun.OSPathSliceZ {
+    pub fn osPath(this: PathLike, buf: *bun.OSPathBuffer) callconv(bun.callconv_inline) bun.OSPathSliceZ {
         if (comptime Environment.isWindows) {
             return sliceW(this, buf);
         }
@@ -948,7 +947,7 @@ pub const PathLike = union(enum) {
         return sliceZWithForceCopy(this, buf, false);
     }
 
-    pub inline fn osPathKernel32(this: PathLike, buf: *bun.PathBuffer) bun.OSPathSliceZ {
+    pub fn osPathKernel32(this: PathLike, buf: *bun.PathBuffer) callconv(bun.callconv_inline) bun.OSPathSliceZ {
         if (comptime Environment.isWindows) {
             const s = this.slice();
             const b = bun.PathBufferPool.get();
@@ -958,7 +957,7 @@ pub const PathLike = union(enum) {
                 const normal = path_handler.normalizeBuf(resolve, b, .windows);
                 return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), normal);
             }
-            const normal = path_handler.normalizeBuf(s, b, .windows);
+            const normal = path_handler.normalizeStringBuf(s, b, true, .windows, false);
             return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), normal);
         }
 
@@ -1838,112 +1837,42 @@ pub const Dirent = struct {
     kind: Kind,
 
     pub const Kind = std.fs.File.Kind;
-    pub usingnamespace JSC.Codegen.JSDirent;
-    pub usingnamespace bun.New(@This());
 
-    pub fn constructor(global: *JSC.JSGlobalObject, call_frame: *JSC.CallFrame) bun.JSError!*Dirent {
-        const name_js, const type_js, const path_js = call_frame.argumentsAsArray(3);
+    extern fn Bun__JSDirentObjectConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+    pub const getConstructor = Bun__JSDirentObjectConstructor;
 
-        const name = try name_js.toBunString2(global);
-        errdefer name.deref();
+    extern fn Bun__Dirent__toJS(*JSC.JSGlobalObject, i32, *bun.String, *bun.String, cached_previous_path_jsvalue: ?*?*JSC.JSString) JSC.JSValue;
+    pub fn toJS(this: *Dirent, globalObject: *JSC.JSGlobalObject, cached_previous_path_jsvalue: ?*?*JSC.JSString) JSC.JSValue {
+        return Bun__Dirent__toJS(
+            globalObject,
+            switch (this.kind) {
+                .file => bun.windows.libuv.UV_DIRENT_FILE,
+                .block_device => bun.windows.libuv.UV_DIRENT_BLOCK,
+                .character_device => bun.windows.libuv.UV_DIRENT_CHAR,
+                .directory => bun.windows.libuv.UV_DIRENT_DIR,
+                // event_port is deliberate there.
+                .event_port, .named_pipe => bun.windows.libuv.UV_DIRENT_FIFO,
 
-        const path = try path_js.toBunString2(global);
-        errdefer path.deref();
+                .unix_domain_socket => bun.windows.libuv.UV_DIRENT_SOCKET,
+                .sym_link => bun.windows.libuv.UV_DIRENT_LINK,
 
-        const kind = type_js.toInt32();
-        const kind_enum: Kind = switch (kind) {
-            // these correspond to the libuv constants
-            else => .unknown,
-            1 => .file,
-            2 => .directory,
-            3 => .sym_link,
-            4 => .named_pipe,
-            5 => .unix_domain_socket,
-            6 => .character_device,
-            7 => .block_device,
-        };
-
-        return Dirent.new(.{
-            .name = name,
-            .path = path,
-            .kind = kind_enum,
-        });
+                .whiteout, .door, .unknown => bun.windows.libuv.UV_DIRENT_UNKNOWN,
+            },
+            &this.name,
+            &this.path,
+            cached_previous_path_jsvalue,
+        );
     }
 
-    pub fn toJS(this: *Dirent, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        return Dirent.toJSUnchecked(globalObject, this);
-    }
-
-    pub fn toJSNewlyCreated(this: *const Dirent, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        return toJS(Dirent.new(this.*), globalObject);
-    }
-
-    pub fn getName(this: *Dirent, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        return this.name.toJS(globalObject);
-    }
-
-    pub fn getPath(this: *Dirent, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        return this.path.toJS(globalThis);
-    }
-
-    pub fn isBlockDevice(
-        this: *Dirent,
-        _: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
-        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.block_device);
-    }
-    pub fn isCharacterDevice(
-        this: *Dirent,
-        _: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
-        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.character_device);
-    }
-    pub fn isDirectory(
-        this: *Dirent,
-        _: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
-        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.directory);
-    }
-    pub fn isFIFO(
-        this: *Dirent,
-        _: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
-        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.named_pipe or this.kind == std.fs.File.Kind.event_port);
-    }
-    pub fn isFile(
-        this: *Dirent,
-        _: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
-        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.file);
-    }
-    pub fn isSocket(
-        this: *Dirent,
-        _: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
-        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.unix_domain_socket);
-    }
-    pub fn isSymbolicLink(
-        this: *Dirent,
-        _: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
-        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.sym_link);
+    pub fn toJSNewlyCreated(this: *Dirent, globalObject: *JSC.JSGlobalObject, previous_jsstring: ?*?*JSC.JSString) JSC.JSValue {
+        // Shouldn't techcnically be necessary.
+        defer this.deref();
+        return this.toJS(globalObject, previous_jsstring);
     }
 
     pub fn deref(this: *const Dirent) void {
         this.name.deref();
         this.path.deref();
-    }
-
-    pub fn finalize(this: *Dirent) void {
-        this.deref();
-        this.destroy();
     }
 };
 

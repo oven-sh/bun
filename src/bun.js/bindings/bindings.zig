@@ -10,7 +10,6 @@ const ErrorableZigString = Exports.ErrorableZigString;
 const ErrorableResolvedSource = Exports.ErrorableResolvedSource;
 const ZigException = Exports.ZigException;
 const ZigStackTrace = Exports.ZigStackTrace;
-const is_bindgen: bool = false;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const JSC = bun.JSC;
 const Shimmer = JSC.Shimmer;
@@ -4179,7 +4178,9 @@ pub const JSValue = enum(i64) {
                 loop.debug.last_fn_name.deref();
                 loop.debug.last_fn_name = function.getName(global);
             }
-            bun.assert(function.isCallable(global.vm()));
+            // Do not assert that the function is callable here.
+            // The Bun__JSValue__call function will already assert that, and
+            // this can be an async context so it's fine if it's not callable.
         }
 
         return Bun__JSValue__call(
@@ -5330,7 +5331,7 @@ pub const JSValue = enum(i64) {
         return getOwnTruthy(this, global, property);
     }
 
-    pub fn truthyPropertyValue(prop: JSValue) ?JSValue {
+    fn truthyPropertyValue(prop: JSValue) ?JSValue {
         return switch (prop) {
             .zero => unreachable,
 
@@ -6127,6 +6128,10 @@ pub const JSValue = enum(i64) {
         return AsyncContextFrame__withAsyncContextIfNeeded(global, this);
     }
 
+    pub fn isAsyncContextFrame(this: JSValue) bool {
+        return Bun__JSValue__isAsyncContextFrame(this);
+    }
+
     extern "c" fn Bun__JSValue__deserialize(global: *JSGlobalObject, data: [*]const u8, len: usize) JSValue;
 
     /// Deserializes a JSValue from a serialized buffer. Zig version of `import('bun:jsc').deserialize`
@@ -6187,6 +6192,7 @@ pub const JSValue = enum(i64) {
 };
 
 extern "c" fn AsyncContextFrame__withAsyncContextIfNeeded(global: *JSGlobalObject, callback: JSValue) JSValue;
+extern "c" fn Bun__JSValue__isAsyncContextFrame(value: JSValue) bool;
 
 pub const VM = extern struct {
     pub const shim = Shimmer("JSC", "VM", @This());
@@ -6207,16 +6213,19 @@ pub const VM = extern struct {
     extern fn Bun__JSC_onAfterWait(vm: *VM) void;
     pub const ReleaseHeapAccess = struct {
         vm: *VM,
-        needs_to_release: bool,
+        needs_to_acquire: bool,
         pub fn acquire(this: *const ReleaseHeapAccess) void {
-            if (this.needs_to_release) {
+            if (this.needs_to_acquire) {
                 Bun__JSC_onAfterWait(this.vm);
             }
         }
     };
 
+    /// Temporarily give up access to the heap, allowing other work to proceed. Call acquire() on
+    /// the return value at scope exit. If you did not already have heap access, release and acquire
+    /// are both safe no-ops.
     pub fn releaseHeapAccess(vm: *VM) ReleaseHeapAccess {
-        return .{ .vm = vm, .needs_to_release = Bun__JSC_onBeforeWait(vm) != 0 };
+        return .{ .vm = vm, .needs_to_acquire = Bun__JSC_onBeforeWait(vm) != 0 };
     }
 
     pub fn create(heap_type: HeapType) *VM {
@@ -6377,6 +6386,10 @@ pub const VM = extern struct {
     /// This is faster than checking the heap size
     pub fn blockBytesAllocated(vm: *VM) usize {
         return cppFn("blockBytesAllocated", .{vm});
+    }
+
+    pub fn performOpportunisticallyScheduledTasks(vm: *VM, until: f64) void {
+        cppFn("performOpportunisticallyScheduledTasks", .{ vm, until });
     }
 
     pub const Extern = [_][]const u8{

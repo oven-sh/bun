@@ -730,19 +730,15 @@ pub const Crypto = struct {
     pub usingnamespace JSC.Codegen.JSCrypto;
 
     comptime {
-        if (!JSC.is_bindgen) {
-            _ = CryptoObject__create;
-        }
+        _ = CryptoObject__create;
     }
 };
 
 comptime {
-    if (!JSC.is_bindgen) {
-        const js_alert = JSC.toJSHostFunction(alert);
-        @export(js_alert, .{ .name = "WebCore__alert" });
-        const js_prompt = JSC.toJSHostFunction(Prompt.call);
-        @export(js_prompt, .{ .name = "WebCore__prompt" });
-        const js_confirm = JSC.toJSHostFunction(confirm);
-        @export(js_confirm, .{ .name = "WebCore__confirm" });
-    }
+    const js_alert = JSC.toJSHostFunction(alert);
+    @export(js_alert, .{ .name = "WebCore__alert" });
+    const js_prompt = JSC.toJSHostFunction(Prompt.call);
+    @export(js_prompt, .{ .name = "WebCore__prompt" });
+    const js_confirm = JSC.toJSHostFunction(confirm);
+    @export(js_confirm, .{ .name = "WebCore__confirm" });
 }

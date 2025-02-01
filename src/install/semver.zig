@@ -1640,7 +1640,7 @@ pub const Version = extern struct {
                                 result.wildcard = Query.Token.Wildcard.patch;
                                 part_i = 3;
                             },
-                            else => unreachable,
+                            else => {},
                         }
                     }
                 },

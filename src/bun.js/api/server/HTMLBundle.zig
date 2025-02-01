@@ -16,7 +16,12 @@ bunfig_dir: []const u8,
 /// `plugins` is array of serve plugins defined in the bunfig.toml file. They will be resolved and loaded.
 /// `bunfig_path` is the path to the bunfig.toml configuration file. It used to resolve the plugins relative
 /// to the bunfig.toml file.
-pub fn init(globalObject: *JSGlobalObject, path: []const u8, bunfig_path: []const u8, plugins: ?[]const []const u8) !*HTMLBundle {
+pub fn init(
+    globalObject: *JSGlobalObject,
+    path: []const u8,
+    bunfig_path: []const u8,
+    plugins: ?[]const []const u8,
+) !*HTMLBundle {
     var config = bun.JSC.API.JSBundler.Config{};
     try config.entry_points.insert(path);
     config.target = .browser;
@@ -261,12 +266,29 @@ pub const HTMLBundleRoute = struct {
         config.entry_points = config.entry_points.clone() catch bun.outOfMemory();
         config.public_path = config.public_path.clone() catch bun.outOfMemory();
         config.define = config.define.clone() catch bun.outOfMemory();
-        if (!server.config().development) {
-            config.minify.syntax = true;
-            config.minify.whitespace = true;
+
+        if (bun.CLI.Command.get().args.serve_minify_identifiers) |minify_identifiers| {
+            config.minify.identifiers = minify_identifiers;
+        } else if (!server.config().development) {
             config.minify.identifiers = true;
+        }
+
+        if (bun.CLI.Command.get().args.serve_minify_whitespace) |minify_whitespace| {
+            config.minify.whitespace = minify_whitespace;
+        } else if (!server.config().development) {
+            config.minify.whitespace = true;
+        }
+
+        if (bun.CLI.Command.get().args.serve_minify_syntax) |minify_syntax| {
+            config.minify.syntax = minify_syntax;
+        } else if (!server.config().development) {
+            config.minify.syntax = true;
+        }
+
+        if (!server.config().development) {
             config.define.put("process.env.NODE_ENV", "\"production\"") catch bun.outOfMemory();
         }
+
         config.source_map = .linked;
 
         const completion_task = bun.BundleV2.createAndScheduleCompletionTask(

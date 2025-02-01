@@ -1,8 +1,8 @@
-import { it, expect } from "bun:test";
+import { describe, it, expect } from "bun:test";
+import { pathToFileURL } from "bun";
 import { mkdirSync, writeFileSync } from "fs";
 import { join, sep } from "path";
-import { bunExe, bunEnv, tempDirWithFiles, isWindows } from "harness";
-import { pathToFileURL } from "bun";
+import { bunExe, bunEnv, tempDirWithFiles, joinP, isWindows } from "harness";
 
 it("spawn test file", () => {
   writePackageJSONImportsFixture();
@@ -330,4 +330,105 @@ it.if(isWindows)("directory cache key computation", () => {
   expect(import(`\\\\Test\\\\\\\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
   expect(import(`\\\\Test\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
   expect(import(`\\\\\\Test\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
+});
+
+describe("NODE_PATH test", () => {
+  const prepareTest = () => {
+    const tempDir = tempDirWithFiles("node_path", {
+      "modules/node_modules/node-path-test/index.js": "exports.testValue = 'NODE_PATH works';",
+      "modules/node_modules/node-path-test/package.json": JSON.stringify({
+        name: "node-path-test",
+        version: "1.0.0",
+        description: "A node_path test module",
+        main: "index.js",
+      }),
+      "lib/node_modules/node-path-test/index.js": "exports.testValue = 'NODE_PATH from lib works';",
+      "lib/node_modules/node-path-test/package.json": JSON.stringify({
+        name: "node-path-test",
+        version: "1.0.0",
+        description: "A node_path test module from lib",
+        main: "index.js",
+      }),
+      "test/index.js": "const { testValue } = require('node-path-test');\nconsole.log(testValue);",
+    });
+
+    const nodePath = joinP(tempDir, "modules/node_modules");
+    const nodePathLib = joinP(tempDir, "lib/node_modules");
+    const testDir = joinP(tempDir, "test");
+
+    const delimiter = isWindows ? ";" : ":";
+
+    return {
+      tempDir,
+      nodePath,
+      nodePathLib,
+      testDir,
+      delimiter,
+    };
+  };
+
+  it("should resolve modules from NODE_PATH", () => {
+    const { nodePath, testDir } = prepareTest();
+
+    const { exitCode, stdout } = Bun.spawnSync({
+      cmd: [bunExe(), "--no-install", "index.js"],
+      env: { ...bunEnv, NODE_PATH: nodePath },
+      cwd: testDir,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stdout.toString().trim()).toBe("NODE_PATH works");
+  });
+
+  it("should resolve modules from NODE_PATH entries", () => {
+    const { nodePath, testDir, delimiter } = prepareTest();
+
+    const { exitCode, stdout } = Bun.spawnSync({
+      cmd: [bunExe(), "--no-install", "index.js"],
+      env: { ...bunEnv, NODE_PATH: [nodePath].join(delimiter) },
+      cwd: testDir,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stdout.toString().trim()).toBe("NODE_PATH works");
+  });
+
+  it("should resolve first matched module from NODE_PATH entries", () => {
+    const { nodePath, nodePathLib, testDir, delimiter } = prepareTest();
+
+    const { exitCode, stdout } = Bun.spawnSync({
+      cmd: [bunExe(), "--no-install", "index.js"],
+      env: { ...bunEnv, NODE_PATH: ["/a/path/not/exist", nodePathLib, nodePath].join(delimiter) },
+      cwd: testDir,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stdout.toString().trim()).toBe("NODE_PATH from lib works");
+  });
+});
+
+it("can resolve with source directories that do not exist", () => {
+  // In Nuxt/Vite, the following call happens:
+  // `require("module").createRequire("file:///Users/clo/my-nuxt-app/@vue/server-renderer")("vue")`
+  // This seems to be a bug in their code, not using a concrete file path for
+  // this virtual module, such as 'node_modules/@vue/server-renderer/index.js',
+  // but the same exact resolution happens and succeeds in Node.js
+  const dir = tempDirWithFiles("resolve", {
+    "node_modules/vue/index.js": "export default 123;",
+    "test.js": `
+      const { createRequire } = require('module');
+      const assert = require('assert');
+      const req = createRequire(import.meta.url + '/@vue/server-renderer');
+      assert.strictEqual(req('vue').default, 123);
+    `,
+  });
+
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), "test.js"],
+    env: bunEnv,
+    cwd: dir,
+    stdio: ["ignore", "inherit", "inherit"],
+  });
+
+  expect(exitCode).toBe(0);
 });

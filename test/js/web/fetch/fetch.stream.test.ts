@@ -663,14 +663,28 @@ describe("fetch() with streaming", () => {
     switch (compression) {
       case "gzip-libdeflate":
       case "gzip":
-        return Bun.gzipSync(data, { library: compression === "gzip-libdeflate" ? "libdeflate" : "zlib" });
+        return Bun.gzipSync(data, {
+          library: compression === "gzip-libdeflate" ? "libdeflate" : "zlib",
+          level: 1, // fastest compression
+        });
       case "deflate-libdeflate":
       case "deflate":
-        return Bun.deflateSync(data, { library: compression === "deflate-libdeflate" ? "libdeflate" : "zlib" });
+        return Bun.deflateSync(data, {
+          library: compression === "deflate-libdeflate" ? "libdeflate" : "zlib",
+          level: 1, // fastest compression
+        });
       case "deflate_with_headers":
-        return zlib.deflateSync(data);
+        return zlib.deflateSync(data, {
+          level: 1, // fastest compression
+        });
       case "br":
-        return zlib.brotliCompressSync(data);
+        return zlib.brotliCompressSync(data, {
+          params: {
+            [zlib.constants.BROTLI_PARAM_QUALITY]: 0,
+            [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_GENERIC,
+            [zlib.constants.BROTLI_PARAM_SIZE_HINT]: 0,
+          },
+        });
       default:
         return data;
     }
@@ -903,25 +917,33 @@ describe("fetch() with streaming", () => {
     });
 
     test(`Content-Length response works (multiple parts) with ${compression} compression`, async () => {
-      const rawBytes = Buffer.allocUnsafe(128 * 1024);
+      const rawBytes = Buffer.allocUnsafe(1024 * 1024);
       // Random data doesn't compress well. We need enough random data that
       // the compressed data is larger than 64 bytes.
       require("crypto").randomFillSync(rawBytes);
       const content = rawBytes.toString("hex");
+      const contentBuffer = Buffer.from(content);
+
+      const data = compress(compression, contentBuffer);
       var onReceivedHeaders = Promise.withResolvers();
       using server = Bun.serve({
         port: 0,
         async fetch(req) {
-          const data = compress(compression, Buffer.from(content));
           return new Response(
             new ReadableStream({
               async pull(controller) {
-                const firstChunk = data.subarray(0, 64);
-                const secondChunk = data.subarray(firstChunk.length);
-                controller.enqueue(firstChunk);
-                await onReceivedHeaders.promise;
-                await Bun.sleep(128);
-                controller.enqueue(secondChunk);
+                // Ensure we actually send it over the network in multiple chunks.
+                let tenth = (data.length / 10) | 0;
+                let remaining = data;
+                while (remaining.length > 0) {
+                  const chunk = remaining.subarray(0, Math.min(tenth, remaining.length));
+                  controller.enqueue(chunk);
+                  if (remaining === data) {
+                    await onReceivedHeaders.promise;
+                  }
+                  remaining = remaining.subarray(chunk.length);
+                  await Bun.sleep(1);
+                }
                 controller.close();
               },
             }),
@@ -952,19 +974,39 @@ describe("fetch() with streaming", () => {
       gcTick(false);
       const reader = res.body?.getReader();
 
-      let buffer = Buffer.alloc(0);
-      let parts = 0;
+      let chunks: Uint8Array[] = [];
+      let currentRange = 0;
       while (true) {
         gcTick(false);
 
         const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
         if (value) {
-          buffer = Buffer.concat([buffer, value]);
-          parts++;
+          chunks.push(value);
+
+          // Check the content is what is expected at this time.
+          // We're avoiding calling .buffer since that changes the internal representation in JSC and we want to test the raw data.
+          expect(contentBuffer.compare(value, undefined, undefined, currentRange, currentRange + value.length)).toEqual(
+            0,
+          );
+          currentRange += value.length;
         }
         if (done) {
           break;
         }
+      }
+
+      gcTick(false);
+      expect(Buffer.concat(chunks).toString("utf8")).toBe(content);
+      expect(chunks.length).toBeGreaterThan(1);
+
+      currentRange = 0;
+      for (const chunk of chunks) {
+        // Check that each chunk hasn't been modified.
+        // We want to be 100% sure that there is no accidental memory re-use here.
+        expect(contentBuffer.compare(chunk, undefined, undefined, currentRange, currentRange + chunk.length)).toEqual(
+          0,
+        );
+        currentRange += chunk.length;
       }
 
       gcTick(false);

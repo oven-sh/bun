@@ -1,5 +1,5 @@
 {
-  "lockfileVersion": 0,
+  "lockfileVersion": 1,
   "workspaces": {
     "": {
       "name": "simple-react",
@@ -1049,7 +1049,7 @@
 
     "ncp": ["ncp@2.0.0", "", { "bin": { "ncp": "./bin/ncp" } }, "sha512-zIdGUrPRFTUELUvr3Gmc7KZ2Sw/h1PiVM0Af/oHB6zgnV1ikqSfRk+TOufi79aHYCW3NiOXmr1BP5nWbzojLaA=="],
 
-    "next": ["next@11.1.4", "", { "dependencies": { "@babel/runtime": "7.15.3", "@hapi/accept": "5.0.2", "@next/env": "11.1.4", "@next/polyfill-module": "11.1.4", "@next/react-dev-overlay": "11.1.4", "@next/react-refresh-utils": "11.1.4", "@next/swc-darwin-arm64": "11.1.4", "@next/swc-darwin-x64": "11.1.4", "@next/swc-linux-x64-gnu": "11.1.4", "@next/swc-win32-x64-msvc": "11.1.4", "@node-rs/helper": "1.2.1", "assert": "2.0.0", "ast-types": "0.13.2", "browserify-zlib": "0.2.0", "browserslist": "4.16.6", "buffer": "5.6.0", "caniuse-lite": "^1.0.30001228", "chalk": "2.4.2", "chokidar": "3.5.1", "constants-browserify": "1.0.0", "crypto-browserify": "3.12.0", "cssnano-simple": "3.0.0", "domain-browser": "4.19.0", "encoding": "0.1.13", "etag": "1.8.1", "find-cache-dir": "3.3.1", "get-orientation": "1.1.2", "https-browserify": "1.0.0", "image-size": "1.0.0", "jest-worker": "27.0.0-next.5", "native-url": "0.3.4", "node-fetch": "2.6.7", "node-html-parser": "1.4.9", "node-libs-browser": "^2.2.1", "os-browserify": "0.3.0", "p-limit": "3.1.0", "path-browserify": "1.0.1", "pnp-webpack-plugin": "1.6.4", "postcss": "8.2.15", "process": "0.11.10", "querystring-es3": "0.2.1", "raw-body": "2.4.1", "react-is": "17.0.2", "react-refresh": "0.8.3", "stream-browserify": "3.0.0", "stream-http": "3.1.1", "string_decoder": "1.3.0", "styled-jsx": "4.0.1", "timers-browserify": "2.0.12", "tty-browserify": "0.0.1", "use-subscription": "1.5.1", "util": "0.12.4", "vm-browserify": "1.1.2", "watchpack": "2.1.1" }, "peerDependencies": { "fibers": ">= 3.1.0", "node-sass": "^4.0.0 || ^5.0.0", "react": "^17.0.2", "react-dom": "^17.0.2", "sass": "^1.3.0" }, "optionalPeers": ["node-sass", "sass"], "bin": { "next": "dist/bin/next" } }, "sha512-GWQJrWYkfAKP8vmrzJcCfRSKv955Khyjqd5jipTcVKDGg+SH+NfjDMWFtCwArcQlHPvzisGu1ERLY0+Eoj7G+g=="],
+    "next": ["next@11.1.4", "", { "dependencies": { "@babel/runtime": "7.15.3", "@hapi/accept": "5.0.2", "@next/env": "11.1.4", "@next/polyfill-module": "11.1.4", "@next/react-dev-overlay": "11.1.4", "@next/react-refresh-utils": "11.1.4", "@next/swc-darwin-arm64": "11.1.4", "@next/swc-darwin-x64": "11.1.4", "@next/swc-linux-x64-gnu": "11.1.4", "@next/swc-win32-x64-msvc": "11.1.4", "@node-rs/helper": "1.2.1", "assert": "2.0.0", "ast-types": "0.13.2", "browserify-zlib": "0.2.0", "browserslist": "4.16.6", "buffer": "5.6.0", "caniuse-lite": "^1.0.30001228", "chalk": "2.4.2", "chokidar": "3.5.1", "constants-browserify": "1.0.0", "crypto-browserify": "3.12.0", "cssnano-simple": "3.0.0", "domain-browser": "4.19.0", "encoding": "0.1.13", "etag": "1.8.1", "find-cache-dir": "3.3.1", "get-orientation": "1.1.2", "https-browserify": "1.0.0", "image-size": "1.0.0", "jest-worker": "27.0.0-next.5", "native-url": "0.3.4", "node-fetch": "2.6.7", "node-html-parser": "1.4.9", "node-libs-browser": "^2.2.1", "os-browserify": "0.3.0", "p-limit": "3.1.0", "path-browserify": "1.0.1", "pnp-webpack-plugin": "1.6.4", "postcss": "8.2.15", "process": "0.11.10", "querystring-es3": "0.2.1", "raw-body": "2.4.1", "react-is": "17.0.2", "react-refresh": "0.8.3", "stream-browserify": "3.0.0", "stream-http": "3.1.1", "string_decoder": "1.3.0", "styled-jsx": "4.0.1", "timers-browserify": "2.0.12", "tty-browserify": "0.0.1", "use-subscription": "1.5.1", "util": "0.12.4", "vm-browserify": "1.1.2", "watchpack": "2.1.1" }, "peerDependencies": { "fibers": ">= 3.1.0", "node-sass": "^4.0.0 || ^5.0.0", "react": "^17.0.2", "react-dom": "^17.0.2", "sass": "^1.3.0" }, "optionalPeers": ["fibers", "node-sass", "sass"], "bin": { "next": "dist/bin/next" } }, "sha512-GWQJrWYkfAKP8vmrzJcCfRSKv955Khyjqd5jipTcVKDGg+SH+NfjDMWFtCwArcQlHPvzisGu1ERLY0+Eoj7G+g=="],
 
     "nice-try": ["nice-try@1.0.5", "", {}, "sha512-1nh45deeb5olNY7eX82BkPO7SSxR5SSYJiPTrTdFUVYwAl8CKMA5N9PjTYkHiRjisVcxcQ1HXdLhx2qxxJzLNQ=="],
 
@@ -1659,7 +1659,7 @@
 
     "wrappy": ["wrappy@1.0.2", "", {}, "sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ=="],
 
-    "ws": ["ws@7.5.9", "", { "peerDependencies": { "bufferutil": "^4.0.1", "utf-8-validate": "^5.0.2" }, "optionalPeers": ["utf-8-validate"] }, "sha512-F+P9Jil7UiSKSkppIiD94dN07AwvFixvLIj1Og1Rl9GGMuNipJnV9JzjD6XuqmAeiswGvUmNLjr5cFuXwNS77Q=="],
+    "ws": ["ws@7.5.9", "", { "peerDependencies": { "bufferutil": "^4.0.1", "utf-8-validate": "^5.0.2" }, "optionalPeers": ["bufferutil", "utf-8-validate"] }, "sha512-F+P9Jil7UiSKSkppIiD94dN07AwvFixvLIj1Og1Rl9GGMuNipJnV9JzjD6XuqmAeiswGvUmNLjr5cFuXwNS77Q=="],
 
     "xml-name-validator": ["xml-name-validator@3.0.0", "", {}, "sha512-A5CUptxDsvxKJEU3yO6DuWBSJz/qizqzJKOMIfUJHETbBw/sFaDxgd6fxm1ewUaM0jZ444Fc5vC5ROYurg/4Pw=="],
 

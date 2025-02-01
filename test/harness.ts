@@ -186,6 +186,23 @@ export async function makeTree(base: string, tree: DirectoryTree) {
   }
 }
 
+/**
+ * Recursively create files within a new temporary directory.
+ *
+ * @param basename prefix of the new temporary directory
+ * @param files directory tree. Each key is a folder or file, and each value is the contents of the file. Use objects for directories.
+ * @returns an absolute path to the new temporary directory
+ *
+ * @example
+ * ```ts
+ * const dir = tempDirWithFiles("my-test", {
+ *   "index.js": `import foo from "./src/foo";`,
+ *   "src": {
+ *     "foo.js": `export default "foo";`,
+ *   },
+ * });
+ * ```
+ */
 export function tempDirWithFiles(basename: string, files: DirectoryTree): string {
   const base = fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), basename + "_"));
   makeTree(base, files);
@@ -1563,11 +1580,13 @@ export class VerdaccioRegistry {
     let bunfig = `
     [install]
     cache = "${join(dir, ".bun-cache")}"
-    registry = "${this.registryUrl()}"
     `;
     if ("saveTextLockfile" in opts) {
       bunfig += `saveTextLockfile = ${opts.saveTextLockfile}
       `;
+    }
+    if (!opts.npm) {
+      bunfig += `registry = "${this.registryUrl()}"`;
     }
     await write(join(dir, "bunfig.toml"), bunfig);
   }
@@ -1575,6 +1594,7 @@ export class VerdaccioRegistry {
 
 type BunfigOpts = {
   saveTextLockfile?: boolean;
+  npm?: boolean;
 };
 
 export async function readdirSorted(path: string): Promise<string[]> {

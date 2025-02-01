@@ -2469,7 +2469,7 @@ function ClientRequest(input, options, cb) {
     return this;
   };
 
-  this._ensureTls = function () {
+  this._ensureTls = () => {
     if (this[kTls] === null) this[kTls] = {};
     return this[kTls];
   };
@@ -2695,6 +2695,9 @@ function ClientRequest(input, options, cb) {
   } else {
     options = ObjectAssign(input || {}, options);
   }
+
+  this[kTls] = null;
+  this[kAbortController] = null;
 
   let agent = options.agent;
   const defaultAgent = options._defaultAgent || Agent.globalAgent;

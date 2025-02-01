@@ -1,4 +1,5 @@
 #include "root.h"
+
 #include "headers-handwritten.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "ModuleLoader.h"
@@ -35,7 +36,7 @@
 #include "NativeModuleImpl.h"
 
 #include "../modules/ObjectModule.h"
-#include "wtf/Assertions.h"
+#include "CommonJSModuleRecord.h"
 
 namespace Bun {
 using namespace JSC;
@@ -302,7 +303,8 @@ static JSValue handleVirtualModuleResult(
     ErrorableResolvedSource* res,
     BunString* specifier,
     BunString* referrer,
-    bool wasModuleMock = false)
+    bool wasModuleMock = false,
+    JSCommonJSModule* commonJSModule = nullptr)
 {
     auto onLoadResult = handleOnLoadResult(globalObject, virtualModuleResult, specifier, wasModuleMock);
     auto& vm = JSC::getVM(globalObject);
@@ -364,6 +366,21 @@ static JSValue handleVirtualModuleResult(
 
     case OnLoadResultTypeObject: {
         JSC::JSObject* object = onLoadResult.value.object.getObject();
+        if (commonJSModule) {
+            const auto& __esModuleIdentifier = vm.propertyNames->__esModule;
+            JSValue esModuleValue = object->getIfPropertyExists(globalObject, __esModuleIdentifier);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (esModuleValue && esModuleValue.toBoolean(globalObject)) {
+                JSValue defaultValue = object->getIfPropertyExists(globalObject, vm.propertyNames->defaultKeyword);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (defaultValue && !defaultValue.isUndefined()) {
+                    commonJSModule->setExportsObject(defaultValue);
+                    commonJSModule->hasEvaluated = true;
+                    return commonJSModule;
+                }
+            }
+        }
+
         JSC::ensureStillAliveHere(object);
         auto function = generateObjectModuleSourceCode(
             globalObject,
@@ -479,7 +496,14 @@ JSValue fetchCommonJSModule(
     // This is important for being able to trivially mock things like the filesystem.
     if (isBunTest) {
         if (JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier, wasModuleMock)) {
-            JSPromise* promise = jsCast<JSPromise*>(handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, specifier, referrer, wasModuleMock));
+            JSValue promiseOrCommonJSModule = handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, specifier, referrer, wasModuleMock, target);
+            RETURN_IF_EXCEPTION(scope, {});
+
+            // If we assigned module.exports to the virtual module, we're done here.
+            if (promiseOrCommonJSModule == target) {
+                RELEASE_AND_RETURN(scope, target);
+            }
+            JSPromise* promise = jsCast<JSPromise*>(promiseOrCommonJSModule);
             switch (promise->status(vm)) {
             case JSPromise::Status::Rejected: {
                 uint32_t promiseFlags = promise->internalField(JSPromise::Field::Flags).get().asUInt32AsAnyInt();
@@ -515,11 +539,19 @@ JSValue fetchCommonJSModule(
 
         auto tag = res->result.value.tag;
         switch (tag) {
+        // require("bun")
+        case SyntheticModuleType::BunObject: {
+            target->setExportsObject(globalObject->bunObject());
+            target->hasEvaluated = true;
+            RELEASE_AND_RETURN(scope, target);
+        }
+        // require("module"), require("node:module")
         case SyntheticModuleType::NodeModule: {
             target->setExportsObject(globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject));
             target->hasEvaluated = true;
             RELEASE_AND_RETURN(scope, target);
         }
+        // require("process"), require("node:process")
         case SyntheticModuleType::NodeProcess: {
             target->setExportsObject(globalObject->processObject());
             target->hasEvaluated = true;
@@ -561,7 +593,14 @@ JSValue fetchCommonJSModule(
     // When "bun test" is NOT enabled, disable users from overriding builtin modules
     if (!isBunTest) {
         if (JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier, wasModuleMock)) {
-            JSPromise* promise = jsCast<JSPromise*>(handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, specifier, referrer, wasModuleMock));
+            JSValue promiseOrCommonJSModule = handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, specifier, referrer, wasModuleMock, target);
+            RETURN_IF_EXCEPTION(scope, {});
+
+            // If we assigned module.exports to the virtual module, we're done here.
+            if (promiseOrCommonJSModule == target) {
+                RELEASE_AND_RETURN(scope, target);
+            }
+            JSPromise* promise = jsCast<JSPromise*>(promiseOrCommonJSModule);
             switch (promise->status(vm)) {
             case JSPromise::Status::Rejected: {
                 uint32_t promiseFlags = promise->internalField(JSPromise::Field::Flags).get().asUInt32AsAnyInt();

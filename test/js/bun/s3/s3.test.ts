@@ -33,7 +33,6 @@ const allCredentials = [
 ];
 
 if (isDockerEnabled()) {
-  const minio_dir = tempDirWithFiles("minio", {});
   const result = child_process.spawnSync(
     "docker",
     [
@@ -49,8 +48,8 @@ if (isDockerEnabled()) {
       "MINIO_ROOT_USER=minioadmin",
       "-e",
       "MINIO_ROOT_PASSWORD=minioadmin",
-      "-v",
-      `${minio_dir}:/data`,
+      "--mount",
+      "type=tmpfs,destination=/data",
       "minio/minio",
       "server",
       "--console-address",
@@ -322,6 +321,37 @@ for (let credentials of allCredentials) {
                 expect(await s3File.text()).toBe(bigPayload);
               }
             }, 10_000);
+
+            for (let queueSize of [1, 5, 7, 10, 20]) {
+              for (let payloadQuantity of [1, 5, 7, 10, 20]) {
+                for (let partSize of [5, 7, 10]) {
+                  // the larger payload causes OOM in CI.
+                  for (let payload of [bigishPayload]) {
+                    // lets skip tests with more than 10 parts on cloud providers
+                    it.skipIf(credentials.service !== "MinIO")(
+                      `should be able to upload large files using writer() in multiple parts with partSize=${partSize} queueSize=${queueSize} payloadQuantity=${payloadQuantity} payloadSize=${payload.length * payloadQuantity}`,
+                      async () => {
+                        {
+                          const s3File = bucket.file(tmp_filename, options);
+                          const writer = s3File.writer({
+                            queueSize,
+                            partSize: partSize * 1024 * 1024,
+                          });
+                          for (let i = 0; i < payloadQuantity; i++) {
+                            writer.write(payload);
+                          }
+                          await writer.end();
+                          const stat = await s3File.stat();
+                          expect(stat.size).toBe(Buffer.byteLength(payload) * payloadQuantity);
+                          s3File.delete();
+                        }
+                      },
+                      30_000,
+                    );
+                  }
+                }
+              }
+            }
           });
         });
 
@@ -396,6 +426,7 @@ for (let credentials of allCredentials) {
 
               await writer.end();
               expect(await s3file.text()).toBe(mediumPayload.repeat(2));
+              s3file.delete();
             });
             it("should be able to upload large files in one go using Bun.write", async () => {
               {
@@ -411,6 +442,7 @@ for (let credentials of allCredentials) {
                 await s3File.write(bigPayload);
                 expect(s3File.size).toBeNaN();
                 expect(await s3File.text()).toBe(bigPayload);
+                s3File.delete();
               }
             }, 10_000);
           });
@@ -501,6 +533,7 @@ for (let credentials of allCredentials) {
 
                 expect(stat.lastModified).toBeDefined();
                 expect(await s3file.text()).toBe(bigPayload);
+                s3file.delete();
               }
             }, 10_000);
 
@@ -515,6 +548,7 @@ for (let credentials of allCredentials) {
                 expect(stat.lastModified).toBeDefined();
 
                 expect(await s3File.text()).toBe(bigPayload);
+                s3File.delete();
               }
             }, 10_000);
 
@@ -542,6 +576,7 @@ for (let credentials of allCredentials) {
                 }
                 expect(bytes).toBe(10);
                 expect(Buffer.concat(chunks)).toEqual(Buffer.from("Hello Bun!"));
+                s3file.delete();
               });
               it("should work with large files ", async () => {
                 const s3file = s3(tmp_filename + "-readable-stream-big", options);
@@ -567,6 +602,7 @@ for (let credentials of allCredentials) {
                   const SHA1_2 = Bun.SHA1.hash(bigishPayload, "hex");
                   expect(SHA1).toBe(SHA1_2);
                 }
+                s3file.delete();
               }, 30_000);
             });
           });

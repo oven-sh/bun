@@ -11,13 +11,14 @@ generateObjectModuleSourceCode(JSC::JSGlobalObject* globalObject,
                Vector<JSC::Identifier, 4>& exportNames,
                JSC::MarkedArgumentBuffer& exportValues) -> void {
         auto& vm = JSC::getVM(lexicalGlobalObject);
-        GlobalObject* globalObject = reinterpret_cast<GlobalObject*>(lexicalGlobalObject);
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
         JSC::EnsureStillAliveScope stillAlive(object);
 
         PropertyNameArray properties(vm, PropertyNameMode::Strings,
             PrivateSymbolMode::Exclude);
-        object->getPropertyNames(globalObject, properties,
-            DontEnumPropertiesMode::Exclude);
+        object->methodTable()->getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(throwScope, void());
         gcUnprotectNullTolerant(object);
 
         for (auto& entry : properties) {

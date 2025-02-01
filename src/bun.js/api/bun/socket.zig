@@ -4378,6 +4378,9 @@ pub fn jsCreateSocketPair(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JS
         return global.throwValue(err.toJSC(global));
     }
 
+    _ = bun.sys.setNonblocking(bun.toFD(fds_[0]));
+    _ = bun.sys.setNonblocking(bun.toFD(fds_[1]));
+
     const array = JSC.JSValue.createEmptyArray(global, 2);
     array.putIndex(global, 0, JSC.jsNumber(fds_[0]));
     array.putIndex(global, 1, JSC.jsNumber(fds_[1]));

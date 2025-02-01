@@ -958,6 +958,10 @@ pub const WTFTimer = struct {
         return this;
     }
 
+    pub export fn WTFTimer__runIfImminent(vm: *VirtualMachine) void {
+        vm.eventLoop().runImminentGCTimer();
+    }
+
     pub fn run(this: *WTFTimer, vm: *VirtualMachine) void {
         if (this.event_loop_timer.state == .ACTIVE) {
             vm.timer.remove(&this.event_loop_timer);

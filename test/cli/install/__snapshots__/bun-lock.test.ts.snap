@@ -273,3 +273,13 @@ exports[`should convert a binary lockfile with invalid optional peers 1`] = `
 }
 "
 `;
+
+exports[`should not deduplicate bundled packages with un-bundled packages 1`] = `
+[
+  "",
+  "+ debug-1@4.4.0",
+  "+ npm-1@10.9.2",
+  "",
+  "3 packages installed",
+]
+`;

@@ -3202,9 +3202,9 @@ pub const Stmt = struct {
     };
 
     pub fn StoredData(tag: Tag) type {
-        const T = std.meta.FieldType(Data, tag);
+        const T = @FieldType(Data, tag);
         return switch (@typeInfo(T)) {
-            .Pointer => |ptr| ptr.child,
+            .pointer => |ptr| ptr.child,
             else => T,
         };
     }
@@ -5306,7 +5306,7 @@ pub const Expr = struct {
             bun.assert_eql(@sizeOf(Data), 24); // Do not increase the size of Expr
         }
 
-        pub fn as(data: Data, comptime tag: Tag) ?std.meta.FieldType(Data, tag) {
+        pub fn as(data: Data, comptime tag: Tag) ?@FieldType(Data, @tagName(tag)) {
             return if (data == tag) @field(data, @tagName(tag)) else null;
         }
 
@@ -6043,7 +6043,7 @@ pub const Expr = struct {
             p: anytype,
             comptime kind: enum { loose, strict },
         ) Equality {
-            comptime bun.assert(@typeInfo(@TypeOf(p)).Pointer.size == .One); // pass *Parser
+            comptime bun.assert(@typeInfo(@TypeOf(p)).pointer.size == .one); // pass *Parser
 
             // https://dorey.github.io/JavaScript-Equality-Table/
             switch (left) {
@@ -6329,9 +6329,9 @@ pub const Expr = struct {
     };
 
     pub fn StoredData(tag: Tag) type {
-        const T = std.meta.FieldType(Data, tag);
+        const T = @FieldType(Data, tag);
         return switch (@typeInfo(T)) {
-            .Pointer => |ptr| ptr.child,
+            .pointer => |ptr| ptr.child,
             else => T,
         };
     }
@@ -8175,7 +8175,7 @@ pub const Macro = struct {
                 this: *Run,
                 value: JSC.JSValue,
             ) MacroError!Expr {
-                return try switch (JSC.ConsoleObject.Formatter.Tag.get(value, this.global).tag) {
+                return switch (JSC.ConsoleObject.Formatter.Tag.get(value, this.global).tag) {
                     .Error => this.coerce(value, .Error),
                     .Undefined => this.coerce(value, .Undefined),
                     .Null => this.coerce(value, .Null),

@@ -333,11 +333,11 @@ fn appendFileAssumeCapacity(
         // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
         var event = std.mem.zeroes(KEvent);
 
-        event.flags = std.c.EV_ADD | std.c.EV_CLEAR | std.c.EV_ENABLE;
+        event.flags = std.c.EV.ADD | std.c.EV.CLEAR | std.c.EV.ENABLE;
         // we want to know about the vnode
-        event.filter = std.c.EVFILT_VNODE;
+        event.filter = std.c.EVFILT.VNODE;
 
-        event.fflags = std.c.NOTE_WRITE | std.c.NOTE_RENAME | std.c.NOTE_DELETE;
+        event.fflags = std.c.NOTE.WRITE | std.c.NOTE.RENAME | std.c.NOTE.DELETE;
 
         // id
         event.ident = @intCast(fd.int());
@@ -425,15 +425,15 @@ fn appendDirectoryAssumeCapacity(
         // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
         var event = std.mem.zeroes(KEvent);
 
-        event.flags = std.c.EV_ADD | std.c.EV_CLEAR | std.c.EV_ENABLE;
+        event.flags = std.c.EV.ADD | std.c.EV.CLEAR | std.c.EV.ENABLE;
         // we want to know about the vnode
-        event.filter = std.c.EVFILT_VNODE;
+        event.filter = std.c.EVFILT.VNODE;
 
         // monitor:
         // - Write
         // - Rename
         // - Delete
-        event.fflags = std.c.NOTE_WRITE | std.c.NOTE_RENAME | std.c.NOTE_DELETE;
+        event.fflags = std.c.NOTE.WRITE | std.c.NOTE.RENAME | std.c.NOTE.DELETE;
 
         // id
         event.ident = @intCast(fd.int());

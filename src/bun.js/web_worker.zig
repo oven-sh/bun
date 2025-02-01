@@ -535,9 +535,9 @@ pub const WebWorker = struct {
     }
 
     comptime {
-        @export(create, .{ .name = "WebWorker__create" });
-        @export(requestTerminate, .{ .name = "WebWorker__requestTerminate" });
-        @export(setRef, .{ .name = "WebWorker__setRef" });
+        @export(&create, .{ .name = "WebWorker__create" });
+        @export(&requestTerminate, .{ .name = "WebWorker__requestTerminate" });
+        @export(&setRef, .{ .name = "WebWorker__setRef" });
         _ = WebWorker__updatePtr;
     }
 };

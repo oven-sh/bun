@@ -757,7 +757,7 @@ pub const RunCommand = struct {
             const dir_slice = target_path_buffer[0 .. prefix.len + len + dir_name.len];
 
             if (Environment.isDebug) {
-                const dir_slice_u8 = std.unicode.utf16leToUtf8Alloc(bun.default_allocator, dir_slice) catch @panic("oom");
+                const dir_slice_u8 = std.unicode.utf16LeToUtf8Alloc(bun.default_allocator, dir_slice) catch @panic("oom");
                 defer bun.default_allocator.free(dir_slice_u8);
                 std.fs.deleteTreeAbsolute(dir_slice_u8) catch {};
                 std.fs.makeDirAbsolute(dir_slice_u8) catch @panic("huh?");
@@ -1569,7 +1569,7 @@ pub const RunCommand = struct {
 
         const PATH = this_transpiler.env.get("PATH") orelse "";
         var path_for_which = PATH;
-        if (comptime bin_dirs_only) {
+        if (bin_dirs_only) {
             if (ORIGINAL_PATH.len < PATH.len) {
                 path_for_which = PATH[0 .. PATH.len - (ORIGINAL_PATH.len + 1)];
             } else {
@@ -1598,7 +1598,7 @@ pub const RunCommand = struct {
             return true;
         }
 
-        if (comptime log_errors) {
+        if (log_errors) {
             const ext = std.fs.path.extension(target_name);
             const default_loader = options.defaultLoaders.get(ext);
             if (default_loader != null and default_loader.?.isJavaScriptLikeOrJSON() or target_name.len > 0 and (target_name[0] == '.' or target_name[0] == '/' or std.fs.path.isAbsolute(target_name))) {

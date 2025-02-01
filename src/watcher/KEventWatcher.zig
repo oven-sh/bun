@@ -28,10 +28,10 @@ pub fn stop(this: *KEventWatcher) void {
 pub fn watchEventFromKEvent(kevent: KEvent) Watcher.Event {
     return .{
         .op = .{
-            .delete = (kevent.fflags & std.c.NOTE_DELETE) > 0,
-            .metadata = (kevent.fflags & std.c.NOTE_ATTRIB) > 0,
-            .rename = (kevent.fflags & (std.c.NOTE_RENAME | std.c.NOTE_LINK)) > 0,
-            .write = (kevent.fflags & std.c.NOTE_WRITE) > 0,
+            .delete = (kevent.fflags & std.c.NOTE.DELETE) > 0,
+            .metadata = (kevent.fflags & std.c.NOTE.ATTRIB) > 0,
+            .rename = (kevent.fflags & (std.c.NOTE.RENAME | std.c.NOTE.LINK)) > 0,
+            .write = (kevent.fflags & std.c.NOTE.WRITE) > 0,
         },
         .index = @truncate(kevent.udata),
     };
@@ -59,7 +59,7 @@ pub fn watchLoopCycle(this: *Watcher) bun.JSC.Maybe(void) {
     // Give the events more time to coalesce
     if (count < 128 / 2) {
         const remain = 128 - count;
-        var timespec = std.posix.timespec{ .tv_sec = 0, .tv_nsec = 100_000 };
+        var timespec = std.posix.timespec{ .sec = 0, .nsec = 100_000 };
         const extra = std.posix.system.kevent(
             this.platform.fd.cast(),
             @as([*]KEvent, changelist[@as(usize, @intCast(count))..].ptr),

@@ -488,7 +488,7 @@ pub fn disableBuffering() void {
 }
 
 pub fn panic(comptime fmt: string, args: anytype) noreturn {
-    @setCold(true);
+    @branchHint(.cold);
 
     if (isEmojiEnabled()) {
         std.debug.panic(comptime prettyFmt(fmt, true), args);
@@ -714,7 +714,7 @@ pub const LogFunction = fn (comptime fmt: string, args: anytype) callconv(bun.ca
 pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
     const tagname = comptime brk: {
         const input = switch (@TypeOf(tag)) {
-            @Type(.EnumLiteral) => @tagName(tag),
+            @Type(.enum_literal) => @tagName(tag),
             else => tag,
         };
         var ascii_slice: [input.len]u8 = undefined;
@@ -1064,7 +1064,7 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
     const T = @TypeOf(error_name);
     const info = @typeInfo(T);
 
-    if (comptime T == bun.sys.Error or info == .Pointer and info.Pointer.child == bun.sys.Error) {
+    if (comptime T == bun.sys.Error or info == .pointer and info.pointer.child == bun.sys.Error) {
         const e: bun.sys.Error = error_name;
         const tag_name, const sys_errno = e.getErrorCodeTagName() orelse {
             err("unknown error", fmt, args);
@@ -1081,10 +1081,10 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
     const display_name, const is_comptime_name = display_name: {
         // Zig string literals are of type *const [n:0]u8
         // we assume that no one will pass this type from not using a string literal.
-        if (info == .Pointer and info.Pointer.size == .One and info.Pointer.is_const) {
-            const child_info = @typeInfo(info.Pointer.child);
-            if (child_info == .Array and child_info.Array.child == u8) {
-                if (child_info.Array.len == 0) @compileError("Output.err should not be passed an empty string (use errGeneric)");
+        if (info == .pointer and info.pointer.size == .one and info.pointer.is_const) {
+            const child_info = @typeInfo(info.pointer.child);
+            if (child_info == .array and child_info.array.child == u8) {
+                if (child_info.array.len == 0) @compileError("Output.err should not be passed an empty string (use errGeneric)");
                 break :display_name .{ error_name, true };
             }
         }
@@ -1095,8 +1095,8 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
         }
 
         // error unions
-        if (info == .ErrorSet) {
-            if (info.ErrorSet) |errors| {
+        if (info == .error_set) {
+            if (info.error_set) |errors| {
                 if (errors.len == 0) {
                     @compileError("Output.err was given an empty error set");
                 }
@@ -1109,7 +1109,7 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
         }
 
         // enum literals
-        if (info == .EnumLiteral) {
+        if (info == .enum_literal) {
             const tag = @tagName(info);
             comptime bun.assert(tag.len > 0); // how?
             if (tag[0] != 'E') break :display_name .{ "E" ++ tag, true };
@@ -1117,7 +1117,7 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
         }
 
         // enums
-        if (info == .Enum) {
+        if (info == .@"enum") {
             const errno: bun.C.SystemErrno = @enumFromInt(@intFromEnum(info));
             break :display_name .{ @tagName(errno), false };
         }

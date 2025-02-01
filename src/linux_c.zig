@@ -702,10 +702,10 @@ comptime {
     _ = fstat64;
     _ = fstatat;
     _ = statx;
-    @export(stat, .{ .name = "stat64" });
-    @export(lstat, .{ .name = "lstat64" });
-    @export(fstat, .{ .name = "fstat64" });
-    @export(fstatat, .{ .name = "fstatat64" });
+    @export(&stat, .{ .name = "stat64" });
+    @export(&lstat, .{ .name = "lstat64" });
+    @export(&fstat, .{ .name = "fstat64" });
+    @export(&fstatat, .{ .name = "fstatat64" });
 }
 
 // *********************************************************************************

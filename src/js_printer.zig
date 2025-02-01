@@ -1909,7 +1909,7 @@ fn NewPrinter(
             return printClauseItemAs(p, item, .@"export");
         }
 
-        fn printClauseItemAs(p: *Printer, item: js_ast.ClauseItem, comptime as: @Type(.EnumLiteral)) void {
+        fn printClauseItemAs(p: *Printer, item: js_ast.ClauseItem, comptime as: @Type(.enum_literal)) void {
             const name = p.renamer.nameForSymbol(item.name.ref.?);
 
             if (comptime as == .import) {
@@ -5978,7 +5978,7 @@ pub fn printWithWriterAndPlatform(
             printer.printFunc(func);
         } else {
             // Special-case lazy-export AST
-            // @branchHint(.unlikely)
+            @branchHint(.unlikely);
             printer.printFnArgs(func.open_parens_loc, func.args, func.flags.contains(.has_rest_arg), false);
             printer.printSpace();
             printer.print("{\n");

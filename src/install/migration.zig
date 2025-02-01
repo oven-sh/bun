@@ -675,7 +675,7 @@ pub fn migrateNPMLockfile(
                                 .workspace = wksp_path,
                             },
                         },
-                        .behavior = Dependency.Behavior.workspace,
+                        .behavior = .{ .workspace = true },
                     };
                     resolutions_buf[0] = entry1.new_package_id;
 

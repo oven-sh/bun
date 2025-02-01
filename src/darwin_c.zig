@@ -150,9 +150,9 @@ pub const stat = blk: {
 //                 else => Kind.Unknown,
 //             },
 //         },
-//         .atime = @as(i128, atime.tv_sec) * std.time.ns_per_s + atime.tv_nsec,
-//         .mtime = @as(i128, mtime.tv_sec) * std.time.ns_per_s + mtime.tv_nsec,
-//         .ctime = @as(i128, ctime.tv_sec) * std.time.ns_per_s + ctime.tv_nsec,
+//         .atime = @as(i128, atime.sec) * std.time.ns_per_s + atime.nsec,
+//         .mtime = @as(i128, mtime.sec) * std.time.ns_per_s + mtime.nsec,
+//         .ctime = @as(i128, ctime.sec) * std.time.ns_per_s + ctime.nsec,
 //     };
 // }
 
@@ -487,7 +487,7 @@ pub fn getSystemUptime() u64 {
         else => return 0,
     };
 
-    return @intCast(std.time.timestamp() - boot_time.tv_sec);
+    return @intCast(std.time.timestamp() - boot_time.sec);
 }
 
 pub fn getSystemLoadavg() [3]f64 {

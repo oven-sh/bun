@@ -155,7 +155,7 @@ pub const Run = struct {
     }
 
     fn bootBunShell(ctx: Command.Context, entry_path: []const u8) !bun.shell.ExitCode {
-        @setCold(true);
+        @branchHint(.cold);
 
         // this is a hack: make dummy bundler so we can use its `.runEnvLoader()` function to populate environment variables probably should split out the functionality
         var bundle = try bun.Transpiler.init(
@@ -482,7 +482,7 @@ pub export fn Bun__onRejectEntryPointResult(global: *JSC.JSGlobalObject, callfra
 }
 
 noinline fn dumpBuildError(vm: *JSC.VirtualMachine) void {
-    @setCold(true);
+    @branchHint(.cold);
 
     Output.flush();
 
@@ -498,7 +498,7 @@ noinline fn dumpBuildError(vm: *JSC.VirtualMachine) void {
 }
 
 pub noinline fn failWithBuildError(vm: *JSC.VirtualMachine) noreturn {
-    @setCold(true);
+    @branchHint(.cold);
     dumpBuildError(vm);
     Global.exit(1);
 }

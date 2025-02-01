@@ -24284,9 +24284,14 @@ pub const ConvertESMExportsForHmr = struct {
         star_name_loc: ?logger.Loc,
         loc: logger.Loc,
     ) !Ref {
-        const ir = p.import_records.items[import_record_index];
+        const ir = &p.import_records.items[import_record_index];
         const gop = try ctx.imports_seen.getOrPut(p.allocator, ir.path.text);
         if (gop.found_existing) {
+            // Disable this one since an older record is getting used.  It isn't
+            // practical to delete this import record entry since an import or
+            // require expression can exist.
+            ir.is_unused = true;
+
             const stmt = ctx.stmts.items[gop.value_ptr.stmt_index].data.s_import;
             if (items.len > 0) {
                 if (stmt.items.len == 0) {

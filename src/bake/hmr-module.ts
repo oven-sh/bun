@@ -247,12 +247,20 @@ export function loadModule<T = any>(key: Id, type: LoadModuleType): HotModule<T>
 
 export const getModule = registry.get.bind(registry);
 
-export function replaceModule(key: Id, load: ModuleLoadFunction) {
+export function replaceModule(key: Id, load: ModuleLoadFunction): Promise<void> | void {
   const module = registry.get(key);
   if (module) {
     module._onDispose?.forEach(cb => cb(null));
     module.exports = {};
-    load(module);
+    const promise = load(module) as Promise<void> | undefined;
+    if (promise) {
+      return promise.then(() => {
+        const { exports } = module;
+        for (const updater of module._deps.values()) {
+          updater?._callback?.(exports);
+        }
+      });
+    }
     const { exports } = module;
     for (const updater of module._deps.values()) {
       updater?._callback?.(exports);
@@ -260,17 +268,24 @@ export function replaceModule(key: Id, load: ModuleLoadFunction) {
   }
 }
 
-export function replaceModules(modules: any) {
+export async function replaceModules(modules: any) {
   for (const k in modules) {
     input_graph[k] = modules[k];
   }
+  const promises: Promise<void>[] = [];
   for (const k in modules) {
     try {
-      replaceModule(k, modules[k]);
+      const p = replaceModule(k, modules[k]);
+      if (p) {
+        promises.push(p);
+      }
     } catch (err) {
       // TODO: overlay for client
       console.error(err);
     }
+  }
+  if (promises.length) {
+    await Promise.all(promises);
   }
   if (side === "client" && refreshRuntime) {
     refreshRuntime.performReactRefresh(window);

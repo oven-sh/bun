@@ -2175,10 +2175,13 @@ const FileKind = enum(u2) {
     /// Files that failed to bundle or do not exist on disk will appear in the
     /// graph as "unknown".
     unknown,
-    /// Stores JavaScript code. This field is also used for HTML files, where
-    /// the associated JS just calls `require` to emulate having script tags.
+    /// `code` is JavaScript code. This field is also used for HTML files, where
+    /// the associated JS just calls `require` to emulate the script tags.
     js,
+    /// `code` is the URL where the CSS file is to be fetched from, ex.
+    /// '/_bun/css/0000000000000000.css'
     css,
+    /// TODO:
     asset,
 };
 
@@ -2456,6 +2459,13 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             switch (side) {
                 .client => {
+                    var flags: File.Flags = .{
+                        .failed = false,
+                        .is_hmr_root = ctx.server_to_client_bitset.isSet(index.get()),
+                        .is_special_framework_file = false,
+                        .is_html_route = false,
+                        .kind = kind,
+                    };
                     if (gop.found_existing) {
                         if (kind == .js)
                             bun.default_allocator.free(gop.value_ptr.code());
@@ -2471,14 +2481,9 @@ pub fn IncrementalGraph(side: bake.Side) type {
                                 kv.key,
                             );
                         }
+                        flags.is_special_framework_file = gop.value_ptr.flags.is_special_framework_file;
+                        flags.is_html_route = gop.value_ptr.flags.is_html_route;
                     }
-                    const flags: File.Flags = .{
-                        .failed = false,
-                        .is_hmr_root = ctx.server_to_client_bitset.isSet(index.get()),
-                        .is_special_framework_file = false,
-                        .is_html_route = false,
-                        .kind = kind,
-                    };
                     if (kind == .css) {
                         if (!gop.found_existing or gop.value_ptr.code_len == 0) {
                             gop.value_ptr.* = File.init(try std.fmt.allocPrint(
@@ -2590,6 +2595,12 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 }
             }
 
+            // `processChunkImportRecords` appends items into `quick_lookup`,
+            // but those entries always have .seen = true. Snapshot the length
+            // of original entries so that the new ones can be ignored when
+            // removing edges.
+            const quick_lookup_values_to_care_len = quick_lookup.count();
+
             var new_imports: EdgeIndex.Optional = .none;
             defer g.first_import.items[file_index.get()] = new_imports;
 
@@ -2603,6 +2614,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 // the edges the first added.
                 if (file.is_rsc and file.is_ssr) {
                     // The non-ssr file is always first.
+                    // TODO:
                     // const ssr_index = ctx.scbs.getSSRIndex(bundle_graph_index.get()) orelse {
                     //     @panic("Unexpected missing server-component-boundary entry");
                     // };
@@ -2610,10 +2622,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 }
             }
 
-            try g.processChunkImportRecords(ctx, &quick_lookup, &new_imports, file_index, bundle_graph_index);
+            try g.processChunkImportRecords(ctx, temp_alloc, &quick_lookup, &new_imports, file_index, bundle_graph_index);
 
             // '.seen = false' means an import was removed and should be freed
-            for (quick_lookup.values()) |val| {
+            for (quick_lookup.values()[0..quick_lookup_values_to_care_len]) |val| {
                 if (!val.seen) {
                     g.owner().incremental_result.had_adjusted_edges = true;
 
@@ -2660,6 +2672,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
         fn processChunkImportRecords(
             g: *@This(),
             ctx: *HotUpdateContext,
+            temp_alloc: Allocator,
             quick_lookup: *TempLookup.HashTable,
             new_imports: *EdgeIndex.Optional,
             file_index: FileIndex,
@@ -2667,6 +2680,11 @@ pub fn IncrementalGraph(side: bake.Side) type {
         ) !void {
             const log = bun.Output.scoped(.processChunkDependencies, false);
             for (ctx.import_records[index.get()].slice()) |import_record| {
+                // When an import record is duplicated, it gets marked unused.
+                // This happens in `ConvertESMExportsForHmr.deduplicatedImport`
+                // There is still a case where deduplication must happen.
+                if (import_record.is_unused) continue;
+
                 if (!import_record.source_index.isRuntime()) try_index_record: {
                     const key = import_record.path.keyForIncrementalGraph();
                     const imported_file_index = if (import_record.source_index.isInvalid())
@@ -2687,12 +2705,13 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         }
                     }
 
-                    if (quick_lookup.getPtr(imported_file_index)) |lookup| {
+                    const gop = try quick_lookup.getOrPut(temp_alloc, imported_file_index);
+                    if (gop.found_existing) {
                         // If the edge has already been seen, it will be skipped
                         // to ensure duplicate edges never exist.
-                        if (lookup.seen) continue;
+                        if (gop.value_ptr.seen) continue;
+                        const lookup = gop.value_ptr;
                         lookup.seen = true;
-
                         const dep = &g.edges.items[lookup.edge_index.get()];
                         dep.next_import = new_imports.*;
                         new_imports.* = lookup.edge_index.toOptional();
@@ -2713,6 +2732,13 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         first_dep.* = edge.toOptional();
 
                         g.owner().incremental_result.had_adjusted_edges = true;
+
+                        // To prevent duplicates, add into the quick lookup map
+                        // the file index so that it does exist.
+                        gop.value_ptr.* = .{
+                            .edge_index = edge,
+                            .seen = true,
+                        };
 
                         log("attach edge={d} | id={d} {} -> id={d} {}", .{
                             edge.get(),
@@ -2872,8 +2898,6 @@ pub fn IncrementalGraph(side: bake.Side) type {
             } else {
                 if (side == .server) {
                     if (is_route) gop.value_ptr.*.is_route = true;
-                } else {
-                    if (is_route) gop.value_ptr.*.flags.is_html_route = true;
                 }
             }
 
@@ -2883,13 +2907,20 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             switch (side) {
                 .client => {
-                    gop.value_ptr.* = File.init("", .{
+                    var flags: File.Flags = .{
                         .failed = false,
                         .is_hmr_root = false,
                         .is_special_framework_file = false,
                         .is_html_route = is_route,
                         .kind = .unknown,
-                    });
+                    };
+                    if (gop.found_existing) {
+                        if (gop.value_ptr.code().len > 0) {
+                            g.owner().allocator.free(gop.value_ptr.code());
+                        }
+                        flags.is_html_route = flags.is_html_route or gop.value_ptr.flags.is_html_route;
+                    }
+                    gop.value_ptr.* = File.init("", flags);
                 },
                 .server => {
                     if (!gop.found_existing) {

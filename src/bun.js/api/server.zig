@@ -1174,8 +1174,17 @@ pub const ServerConfig = struct {
                 }
 
                 // When HTML bundles are provided, ensure DevServer options are ready
-                // The precense of these options
-                if (dedupe_html_bundle_map.count() > 0) {
+                // The precense of these options causes Bun.serve to initialize things.
+                //
+                // TODO: remove canary gate once the following things are fixed:
+                // - more extensive hmr reliability testing
+                // - asset support
+                // - plugin support
+                //   - tailwind plugin verified functional
+                // - source maps
+                if ((Environment.is_canary or Environment.isDebug) and
+                    dedupe_html_bundle_map.count() > 0)
+                {
                     // TODO: this should be the dir with bunfig??
                     const root = bun.fs.FileSystem.instance.top_level_dir;
                     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);

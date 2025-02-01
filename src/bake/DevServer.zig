@@ -1377,8 +1377,10 @@ pub fn finalizeBundle(
     bv2: *bun.bundle_v2.BundleV2,
     result: bun.bundle_v2.DevServerOutput,
 ) bun.OOM!void {
-    // TODO: this leaks BundleV2
     defer dev.startNextBundleIfPresent();
+    defer {
+        bv2.deinit();
+    }
     const current_bundle = &dev.current_bundle.?;
 
     dev.graph_safety_lock.lock();

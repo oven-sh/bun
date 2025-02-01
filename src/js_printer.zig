@@ -1856,12 +1856,17 @@ fn NewPrinter(
             p.printSpaceBeforeIdentifier();
 
             // Allow it to fail at runtime, if it should
-            p.print("import(");
-            p.printImportRecordPath(record);
+            if (module_type != .internal_bake_dev) {
+                p.print("import(");
+                p.printImportRecordPath(record);
+            } else {
+                p.printSymbol(p.options.commonjs_module_ref);
+                p.print(".dynamicImport(");
+                const path = record.path;
+                p.printStringLiteralUTF8(path.pretty, false);
+            }
 
             if (!import_options.isMissing()) {
-                // since we previously stripped type, it is a breaking change to
-                // enable this for non-bun platforms
                 p.printWhitespacer(ws(", "));
                 p.printExpr(import_options, .comma, .{});
             }
@@ -2356,8 +2361,6 @@ fn NewPrinter(
                         p.printExpr(e.expr, .comma, ExprFlag.None());
 
                         if (!e.options.isMissing()) {
-                            // since we previously stripped type, it is a breaking change to
-                            // enable this for non-bun platforms
                             p.printWhitespacer(ws(", "));
                             p.printExpr(e.options, .comma, .{});
                         }

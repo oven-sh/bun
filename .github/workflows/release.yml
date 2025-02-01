@@ -163,7 +163,7 @@ jobs:
     name: Make pr to DefinitelyTyped to update `bun-types` version
     runs-on: ubuntu-latest
     needs: npm-types
-    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-definitelytyped == 'true' }}
+    if: ${{ github.event_name == 'release' || github.event.inputs.use-definitelytyped == 'true' }}
     permissions:
       contents: read
     steps:

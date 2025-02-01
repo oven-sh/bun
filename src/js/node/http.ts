@@ -2300,62 +2300,37 @@ ServerResponse.prototype.writeHeader = ServerResponse.prototype.writeHead;
 OriginalWriteHeadFn = ServerResponse.prototype.writeHead;
 OriginalImplicitHeadFn = ServerResponse.prototype._implicitHeader;
 
-class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:http").OutgoingMessage) {
-  #timeout;
-  #res: IncomingMessage | null = null;
-  #upgradeOrConnect = false;
-  #parser = null;
-  #maxHeadersCount = null;
-  #reusedSocket = false;
-  #host;
-  #protocol;
-  #method;
-  #port;
-  #tls = null;
-  #useDefaultPort;
-  #joinDuplicateHeaders;
-  #maxHeaderSize;
-  #agent = globalAgent;
-  #path;
-  #socketPath;
-  #stream;
-  #controller;
+const kPath = Symbol("path");
+const kPort = Symbol("port");
+const kMethod = Symbol("method");
+const kHost = Symbol("host");
+const kProtocol = Symbol("protocol");
+const kAgent = Symbol("agent");
+const kStream = Symbol("stream");
+const kFetchRequest = Symbol("fetchRequest");
+const kTls = Symbol("tls");
+const kUseDefaultPort = Symbol("useDefaultPort");
+const kBodyChunks = Symbol("bodyChunks");
+const kRes = Symbol("res");
+const kUpgradeOrConnect = Symbol("upgradeOrConnect");
+const kParser = Symbol("parser");
+const kMaxHeadersCount = Symbol("maxHeadersCount");
+const kReusedSocket = Symbol("reusedSocket");
+const kTimeoutTimer = Symbol("timeoutTimer");
+const kOptions = Symbol("options");
+const kController = Symbol("controller");
+const kSocketPath = Symbol("socketPath");
+const kSignal = Symbol("signal");
+const kMaxHeaderSize = Symbol("maxHeaderSize");
+const kJoinDuplicateHeaders = Symbol("joinDuplicateHeaders");
+const kSocket = Symbol("socket");
 
-  #bodyChunks: Buffer[] | null = null;
-  #fetchRequest;
-  #signal: AbortSignal | null = null;
-  [kAbortController]: AbortController | null = null;
-  #timeoutTimer?: Timer = undefined;
-  #options;
-  [finishedSymbol] = false;
-
-  _httpMessage;
-
-  get path() {
-    return this.#path;
+function ClientRequest(input, options, cb) {
+  if (!(this instanceof ClientRequest)) {
+    return new (ClientRequest as any)(input, options, cb);
   }
 
-  get port() {
-    return this.#port;
-  }
-
-  get method() {
-    return this.#method;
-  }
-
-  get host() {
-    return this.#host;
-  }
-
-  get protocol() {
-    return this.#protocol;
-  }
-
-  get agent() {
-    return this.#agent;
-  }
-
-  write(chunk, encoding, callback) {
+  this.write = (chunk, encoding, callback) => {
     if (this.destroyed) return false;
     if ($isCallable(chunk)) {
       callback = chunk;
@@ -2368,40 +2343,33 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
       callback = undefined;
     }
 
-    return this.#createStream(chunk, encoding, callback);
-  }
+    return createStream(chunk, encoding, callback);
+  };
 
-  set agent(value) {
-    this.#agent = value;
-  }
+  const createStream = (chunk, encoding, callback) => {
+    if (!this[kStream]) {
+      const self = this;
 
-  #createStream(chunk, encoding, callback) {
-    if (!this.#stream) {
-      var self = this;
-
-      this.#stream = new ReadableStream({
+      this[kStream] = new ReadableStream({
         type: "direct",
         pull(controller) {
-          self.#controller = controller;
-          for (let chunk of self.#bodyChunks) {
+          self[kController] = controller;
+          for (let chunk of self[kBodyChunks]) {
             if (chunk === null) {
               controller.close();
             } else {
               controller.write(chunk);
             }
           }
-          self.#bodyChunks = null;
+          self[kBodyChunks] = null;
         },
       });
-      this.#startStream();
     }
 
-    return this.#write(chunk, encoding, callback);
-  }
+    return write_(chunk, encoding, callback);
+  };
 
-  #startStream() {}
-
-  #write(chunk, encoding, callback) {
+  const write_ = (chunk, encoding, callback) => {
     const MAX_FAKE_BACKPRESSURE_SIZE = 1024 * 1024;
     const canSkipReEncodingData =
       // UTF-8 string:
@@ -2416,8 +2384,8 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
       bodySize = chunk.length;
     }
 
-    if (!this.#bodyChunks) {
-      this.#bodyChunks = [chunk];
+    if (!this[kBodyChunks]) {
+      this[kBodyChunks] = [chunk];
 
       if (callback) callback();
       return true;
@@ -2427,19 +2395,19 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
     // So that code which loops forever until backpressure is signaled
     // will eventually exit.
 
-    for (let chunk of this.#bodyChunks) {
+    for (let chunk of this[kBodyChunks]) {
       bodySize += chunk.length;
       if (bodySize > MAX_FAKE_BACKPRESSURE_SIZE) {
         break;
       }
     }
-    this.#bodyChunks.push(chunk);
+    this[kBodyChunks].push(chunk);
 
     if (callback) callback();
     return bodySize < MAX_FAKE_BACKPRESSURE_SIZE;
-  }
+  };
 
-  end(chunk, encoding, callback) {
+  this.end = function (chunk, encoding, callback) {
     if ($isCallable(chunk)) {
       callback = chunk;
       chunk = undefined;
@@ -2457,18 +2425,31 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
         return this;
       }
 
-      this.#write(chunk, encoding, callback);
+      // this[kSocket]?.cork();
+
+      write_(chunk, encoding, callback);
+    } else if (this[finishedSymbol]) {
+      if (callback) {
+        if (!this.writableFinished) {
+          this.on("finish", callback);
+        } else {
+          callback($ERR_STREAM_ALREADY_FINISHED("end"));
+        }
+      }
     }
 
     if (callback) {
       this.once("finish", callback);
     }
 
-    this.#send();
-    return this;
-  }
+    if (!this[finishedSymbol]) {
+      send();
+    }
 
-  destroy(err?: Error) {
+    return this;
+  };
+
+  this.destroy = function (err?: Error) {
     if (this.destroyed) return this;
     this.destroyed = true;
 
@@ -2486,14 +2467,14 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
     this.socket.destroy(err);
 
     return this;
-  }
+  };
 
-  _ensureTls() {
-    if (this.#tls === null) this.#tls = {};
-    return this.#tls;
-  }
+  this._ensureTls = function () {
+    if (this[kTls] === null) this[kTls] = {};
+    return this[kTls];
+  };
 
-  #socketCloseListener() {
+  const socketCloseListener = () => {
     this.destroyed = true;
 
     const res = this.res;
@@ -2513,49 +2494,49 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
       this._closed = true;
       this.emit("close");
     }
-  }
+  };
 
-  #onAbort(err?: Error) {
+  const onAbort = (err?: Error) => {
     this[kClearTimeout]?.();
-    this.#socketCloseListener();
-  }
+    socketCloseListener();
+  };
 
-  #send() {
+  const send = () => {
     this[finishedSymbol] = true;
     const controller = new AbortController();
     this[kAbortController] = controller;
-    controller.signal.addEventListener("abort", this.#onAbort.bind(this), { once: true });
+    controller.signal.addEventListener("abort", onAbort, { once: true });
 
-    var method = this.#method,
-      body = this.#bodyChunks && this.#bodyChunks.length > 1 ? new Blob(this.#bodyChunks) : this.#bodyChunks?.[0];
+    var method = this[kMethod],
+      body = this[kBodyChunks] && this[kBodyChunks].length > 1 ? new Blob(this[kBodyChunks]) : this[kBodyChunks]?.[0];
     if (body) {
-      this.#bodyChunks = [];
+      this[kBodyChunks] = [];
     }
 
     let url: string;
     let proxy: string | undefined;
-    const protocol = this.#protocol;
-    const path = this.#path;
+    const protocol = this[kProtocol];
+    const path = this[kPath];
     if (path.startsWith("http://") || path.startsWith("https://")) {
       url = path;
-      proxy = `${protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}`;
+      proxy = `${protocol}//${this[kHost]}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}`;
     } else {
-      url = `${protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}${path}`;
+      url = `${protocol}//${this[kHost]}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}${path}`;
       // support agent proxy url/string for http/https
       try {
         // getters can throw
-        const agentProxy = this.#agent?.proxy;
+        const agentProxy = this[kAgent]?.proxy;
         // this should work for URL like objects and strings
         proxy = agentProxy?.href || agentProxy;
       } catch {}
     }
 
     let keepalive = true;
-    const agentKeepalive = this.#agent?.keepalive;
+    const agentKeepalive = this[kAgent]?.keepalive;
     if (agentKeepalive !== undefined) {
       keepalive = agentKeepalive;
     }
-    const tls = protocol === "https:" && this.#tls ? { ...this.#tls, serverName: this.#tls.servername } : undefined;
+    const tls = protocol === "https:" && this[kTls] ? { ...this[kTls], serverName: this[kTls].servername } : undefined;
     try {
       const fetchOptions: any = {
         method,
@@ -2585,17 +2566,17 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
         fetchOptions.proxy = proxy;
       }
 
-      const socketPath = this.#socketPath;
+      const socketPath = this[kSocketPath];
 
       if (socketPath) {
         fetchOptions.unix = socketPath;
       }
 
       //@ts-ignore
-      this.#fetchRequest = fetch(url, fetchOptions)
+      this[kFetchRequest] = fetch(url, fetchOptions)
         .then(response => {
           if (this.aborted) {
-            this.#maybeEmitClose();
+            maybeEmitClose();
             return;
           }
 
@@ -2619,10 +2600,10 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
             this,
             res,
           );
-          this.#maybeEmitClose();
+          maybeEmitClose();
           if (res.statusCode === 304) {
             res.complete = true;
-            this.#maybeEmitClose();
+            maybeEmitClose();
             return;
           }
         })
@@ -2638,366 +2619,355 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
           this.emit("error", err);
         })
         .finally(() => {
-          this.#fetchRequest = null;
+          this[kFetchRequest] = null;
           this[kClearTimeout]();
         });
     } catch (err) {
       if (!!$debug) globalReportError(err);
       this.emit("error", err);
     } finally {
-      process.nextTick(this.#maybeEmitFinish.bind(this));
+      process.nextTick(maybeEmitFinish.bind(this));
     }
-  }
+  };
 
   // --- For faking the events in the right order ---
-  #maybeEmitSocket() {
+  const maybeEmitSocket = () => {
     if (!(this[kEmitState] & (1 << ClientRequestEmitState.socket))) {
       this[kEmitState] |= 1 << ClientRequestEmitState.socket;
       this.emit("socket", this.socket);
     }
-  }
+  };
 
-  #maybeEmitPrefinish() {
-    this.#maybeEmitSocket();
+  const maybeEmitPrefinish = () => {
+    maybeEmitSocket();
 
     if (!(this[kEmitState] & (1 << ClientRequestEmitState.prefinish))) {
       this[kEmitState] |= 1 << ClientRequestEmitState.prefinish;
       this.emit("prefinish");
     }
-  }
+  };
 
-  #maybeEmitFinish() {
-    this.#maybeEmitPrefinish();
+  const maybeEmitFinish = () => {
+    maybeEmitPrefinish();
 
     if (!(this[kEmitState] & (1 << ClientRequestEmitState.finish))) {
       this[kEmitState] |= 1 << ClientRequestEmitState.finish;
       this.emit("finish");
     }
-  }
+  };
 
-  #maybeEmitClose() {
-    this.#maybeEmitPrefinish();
+  const maybeEmitClose = () => {
+    maybeEmitPrefinish();
 
     if (!this._closed) {
       process.nextTick(emitCloseNTAndComplete, this);
     }
-  }
+  };
 
-  get aborted() {
-    return this[abortedSymbol] || this.#signal?.aborted || !!this[kAbortController]?.signal?.aborted;
-  }
-
-  set aborted(value) {
-    this[abortedSymbol] = value;
-  }
-
-  abort() {
+  this.abort = () => {
     if (this.aborted) return;
     this[abortedSymbol] = true;
     process.nextTick(emitAbortNextTick, this);
     this[kAbortController]?.abort?.();
     this.destroy();
+  };
+
+  if (typeof input === "string") {
+    const urlStr = input;
+    try {
+      var urlObject = new URL(urlStr);
+    } catch (e) {
+      throw new TypeError(`Invalid URL: ${urlStr}`);
+    }
+    input = urlToHttpOptions(urlObject);
+  } else if (input && typeof input === "object" && input instanceof URL) {
+    // url.URL instance
+    input = urlToHttpOptions(input);
+  } else {
+    cb = options;
+    options = input;
+    input = null;
   }
 
-  constructor(input, options, cb) {
-    super();
-    if (typeof input === "string") {
-      const urlStr = input;
-      try {
-        var urlObject = new URL(urlStr);
-      } catch (e) {
-        throw new TypeError(`Invalid URL: ${urlStr}`);
-      }
-      input = urlToHttpOptions(urlObject);
-    } else if (input && typeof input === "object" && input instanceof URL) {
-      // url.URL instance
-      input = urlToHttpOptions(input);
-    } else {
-      cb = options;
-      options = input;
-      input = null;
+  if (typeof options === "function") {
+    cb = options;
+    options = input || kEmptyObject;
+  } else {
+    options = ObjectAssign(input || {}, options);
+  }
+
+  let agent = options.agent;
+  const defaultAgent = options._defaultAgent || Agent.globalAgent;
+  if (agent === false) {
+    agent = new defaultAgent.constructor();
+  } else if (agent == null) {
+    agent = defaultAgent;
+  } else if (typeof agent.addRequest !== "function") {
+    throw $ERR_INVALID_ARG_TYPE("options.agent", "Agent-like Object, undefined, or false", agent);
+  }
+  this[kAgent] = agent;
+  this.destroyed = false;
+
+  const protocol = options.protocol || defaultAgent.protocol;
+  let expectedProtocol = defaultAgent.protocol;
+  if (this.agent.protocol) {
+    expectedProtocol = this.agent.protocol;
+  }
+  if (protocol !== expectedProtocol) {
+    throw $ERR_INVALID_PROTOCOL(protocol, expectedProtocol);
+  }
+  this[kProtocol] = protocol;
+
+  if (options.path) {
+    const path = String(options.path);
+    if (RegExpPrototypeExec.$call(INVALID_PATH_REGEX, path) !== null) {
+      $debug('Path contains unescaped characters: "%s"', path);
+      throw new Error("Path contains unescaped characters");
+      // throw new ERR_UNESCAPED_CHARACTERS("Request path");
     }
+  }
 
-    if (typeof options === "function") {
-      cb = options;
-      options = input || kEmptyObject;
-    } else {
-      options = ObjectAssign(input || {}, options);
+  const defaultPort = options.defaultPort || this[kAgent].defaultPort;
+  this[kPort] = options.port || defaultPort || 80;
+  this[kUseDefaultPort] = this[kPort] === defaultPort;
+  const host =
+    (this[kHost] =
+    options.host =
+      validateHost(options.hostname, "hostname") || validateHost(options.host, "host") || "localhost");
+
+  // const setHost = options.setHost === undefined || Boolean(options.setHost);
+
+  this[kSocketPath] = options.socketPath;
+
+  const signal = options.signal;
+  if (signal) {
+    //We still want to control abort function and timeout so signal call our AbortController
+    signal.addEventListener(
+      "abort",
+      () => {
+        this[kAbortController]?.abort?.();
+      },
+      { once: true },
+    );
+    this[kSignal] = signal;
+  }
+  let method = options.method;
+  const methodIsString = typeof method === "string";
+  if (method !== null && method !== undefined && !methodIsString) {
+    throw $ERR_INVALID_ARG_TYPE("options.method", "string", method);
+  }
+
+  if (methodIsString && method) {
+    if (!checkIsHttpToken(method)) {
+      throw $ERR_INVALID_HTTP_TOKEN("Method");
     }
+    method = this[kMethod] = StringPrototypeToUpperCase.$call(method);
+  } else {
+    method = this[kMethod] = "GET";
+  }
 
-    let agent = options.agent;
-    const defaultAgent = options._defaultAgent || Agent.globalAgent;
-    if (agent === false) {
-      agent = new defaultAgent.constructor();
-    } else if (agent == null) {
-      agent = defaultAgent;
-    } else if (typeof agent.addRequest !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("options.agent", "Agent-like Object, undefined, or false", agent);
-    }
-    this.#agent = agent;
-    this.destroyed = false;
+  const _maxHeaderSize = options.maxHeaderSize;
+  // TODO: Validators
+  // if (maxHeaderSize !== undefined)
+  //   validateInteger(maxHeaderSize, "maxHeaderSize", 0);
+  this[kMaxHeaderSize] = _maxHeaderSize;
 
-    const protocol = options.protocol || defaultAgent.protocol;
-    let expectedProtocol = defaultAgent.protocol;
-    if (this.agent.protocol) {
-      expectedProtocol = this.agent.protocol;
-    }
-    if (protocol !== expectedProtocol) {
-      throw $ERR_INVALID_PROTOCOL(protocol, expectedProtocol);
-    }
-    this.#protocol = protocol;
+  // const insecureHTTPParser = options.insecureHTTPParser;
+  // if (insecureHTTPParser !== undefined) {
+  //   validateBoolean(insecureHTTPParser, 'options.insecureHTTPParser');
+  // }
 
-    if (options.path) {
-      const path = String(options.path);
-      if (RegExpPrototypeExec.$call(INVALID_PATH_REGEX, path) !== null) {
-        $debug('Path contains unescaped characters: "%s"', path);
-        throw new Error("Path contains unescaped characters");
-        // throw new ERR_UNESCAPED_CHARACTERS("Request path");
-      }
-    }
-
-    const defaultPort = options.defaultPort || this.#agent.defaultPort;
-    this.#port = options.port || defaultPort || 80;
-    this.#useDefaultPort = this.#port === defaultPort;
-    const host =
-      (this.#host =
-      options.host =
-        validateHost(options.hostname, "hostname") || validateHost(options.host, "host") || "localhost");
-
-    // const setHost = options.setHost === undefined || Boolean(options.setHost);
-
-    this.#socketPath = options.socketPath;
-
-    const signal = options.signal;
-    if (signal) {
-      //We still want to control abort function and timeout so signal call our AbortController
-      signal.addEventListener(
-        "abort",
-        () => {
-          this[kAbortController]?.abort?.();
-        },
-        { once: true },
-      );
-      this.#signal = signal;
-    }
-    let method = options.method;
-    const methodIsString = typeof method === "string";
-    if (method !== null && method !== undefined && !methodIsString) {
-      throw $ERR_INVALID_ARG_TYPE("options.method", "string", method);
-    }
-
-    if (methodIsString && method) {
-      if (!checkIsHttpToken(method)) {
-        throw $ERR_INVALID_HTTP_TOKEN("Method");
-      }
-      method = this.#method = StringPrototypeToUpperCase.$call(method);
-    } else {
-      method = this.#method = "GET";
-    }
-
-    const _maxHeaderSize = options.maxHeaderSize;
+  // this.insecureHTTPParser = insecureHTTPParser;
+  var _joinDuplicateHeaders = options.joinDuplicateHeaders;
+  if (_joinDuplicateHeaders !== undefined) {
     // TODO: Validators
-    // if (maxHeaderSize !== undefined)
-    //   validateInteger(maxHeaderSize, "maxHeaderSize", 0);
-    this.#maxHeaderSize = _maxHeaderSize;
+    // validateBoolean(
+    //   options.joinDuplicateHeaders,
+    //   "options.joinDuplicateHeaders",
+    // );
+  }
 
-    // const insecureHTTPParser = options.insecureHTTPParser;
-    // if (insecureHTTPParser !== undefined) {
-    //   validateBoolean(insecureHTTPParser, 'options.insecureHTTPParser');
-    // }
+  this[kJoinDuplicateHeaders] = _joinDuplicateHeaders;
+  if (options.pfx) {
+    throw new Error("pfx is not supported");
+  }
 
-    // this.insecureHTTPParser = insecureHTTPParser;
-    var _joinDuplicateHeaders = options.joinDuplicateHeaders;
-    if (_joinDuplicateHeaders !== undefined) {
-      // TODO: Validators
-      // validateBoolean(
-      //   options.joinDuplicateHeaders,
-      //   "options.joinDuplicateHeaders",
-      // );
-    }
-
-    this.#joinDuplicateHeaders = _joinDuplicateHeaders;
-    if (options.pfx) {
-      throw new Error("pfx is not supported");
-    }
-
-    if (options.rejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = options.rejectUnauthorized;
+  if (options.rejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = options.rejectUnauthorized;
+  else {
+    let agentRejectUnauthorized = agent?.options?.rejectUnauthorized;
+    if (agentRejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = agentRejectUnauthorized;
     else {
-      let agentRejectUnauthorized = agent?.options?.rejectUnauthorized;
+      // popular https-proxy-agent uses connectOpts
+      agentRejectUnauthorized = agent?.connectOpts?.rejectUnauthorized;
       if (agentRejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = agentRejectUnauthorized;
-      else {
-        // popular https-proxy-agent uses connectOpts
-        agentRejectUnauthorized = agent?.connectOpts?.rejectUnauthorized;
-        if (agentRejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = agentRejectUnauthorized;
+    }
+  }
+  if (options.ca) {
+    if (!isValidTLSArray(options.ca))
+      throw new TypeError(
+        "ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+      );
+    this._ensureTls().ca = options.ca;
+  }
+  if (options.cert) {
+    if (!isValidTLSArray(options.cert))
+      throw new TypeError(
+        "cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+      );
+    this._ensureTls().cert = options.cert;
+  }
+  if (options.key) {
+    if (!isValidTLSArray(options.key))
+      throw new TypeError(
+        "key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+      );
+    this._ensureTls().key = options.key;
+  }
+  if (options.passphrase) {
+    if (typeof options.passphrase !== "string") throw new TypeError("passphrase argument must be a string");
+    this._ensureTls().passphrase = options.passphrase;
+  }
+  if (options.ciphers) {
+    if (typeof options.ciphers !== "string") throw new TypeError("ciphers argument must be a string");
+    this._ensureTls().ciphers = options.ciphers;
+  }
+  if (options.servername) {
+    if (typeof options.servername !== "string") throw new TypeError("servername argument must be a string");
+    this._ensureTls().servername = options.servername;
+  }
+
+  if (options.secureOptions) {
+    if (typeof options.secureOptions !== "number") throw new TypeError("secureOptions argument must be a string");
+    this._ensureTls().secureOptions = options.secureOptions;
+  }
+  this[kPath] = options.path || "/";
+  if (cb) {
+    this.once("response", cb);
+  }
+
+  $debug(`new ClientRequest: ${this[kMethod]} ${this[kProtocol]}//${this[kHost]}:${this[kPort]}${this[kPath]}`);
+
+  // if (
+  //   method === "GET" ||
+  //   method === "HEAD" ||
+  //   method === "DELETE" ||
+  //   method === "OPTIONS" ||
+  //   method === "TRACE" ||
+  //   method === "CONNECT"
+  // ) {
+  //   this.useChunkedEncodingByDefault = false;
+  // } else {
+  //   this.useChunkedEncodingByDefault = true;
+  // }
+
+  this[finishedSymbol] = false;
+  this[kRes] = null;
+  this[kUpgradeOrConnect] = false;
+  this[kParser] = null;
+  this[kMaxHeadersCount] = null;
+  this[kReusedSocket] = false;
+  this[kHost] = host;
+  this[kProtocol] = protocol;
+
+  const timeout = options.timeout;
+  if (timeout !== undefined && timeout !== 0) {
+    this.setTimeout(timeout, undefined);
+  }
+
+  const { headers } = options;
+  const headersArray = $isJSArray(headers);
+  if (!headersArray) {
+    if (headers) {
+      for (let key in headers) {
+        this.setHeader(key, headers[key]);
       }
     }
-    if (options.ca) {
-      if (!isValidTLSArray(options.ca))
-        throw new TypeError(
-          "ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-        );
-      this._ensureTls().ca = options.ca;
-    }
-    if (options.cert) {
-      if (!isValidTLSArray(options.cert))
-        throw new TypeError(
-          "cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-        );
-      this._ensureTls().cert = options.cert;
-    }
-    if (options.key) {
-      if (!isValidTLSArray(options.key))
-        throw new TypeError(
-          "key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-        );
-      this._ensureTls().key = options.key;
-    }
-    if (options.passphrase) {
-      if (typeof options.passphrase !== "string") throw new TypeError("passphrase argument must be a string");
-      this._ensureTls().passphrase = options.passphrase;
-    }
-    if (options.ciphers) {
-      if (typeof options.ciphers !== "string") throw new TypeError("ciphers argument must be a string");
-      this._ensureTls().ciphers = options.ciphers;
-    }
-    if (options.servername) {
-      if (typeof options.servername !== "string") throw new TypeError("servername argument must be a string");
-      this._ensureTls().servername = options.servername;
-    }
 
-    if (options.secureOptions) {
-      if (typeof options.secureOptions !== "number") throw new TypeError("secureOptions argument must be a string");
-      this._ensureTls().secureOptions = options.secureOptions;
-    }
-    this.#path = options.path || "/";
-    if (cb) {
-      this.once("response", cb);
-    }
+    // if (host && !this.getHeader("host") && setHost) {
+    //   let hostHeader = host;
 
-    $debug(`new ClientRequest: ${this.#method} ${this.#protocol}//${this.#host}:${this.#port}${this.#path}`);
+    //   // For the Host header, ensure that IPv6 addresses are enclosed
+    //   // in square brackets, as defined by URI formatting
+    //   // https://tools.ietf.org/html/rfc3986#section-3.2.2
+    //   const posColon = StringPrototypeIndexOf.$call(hostHeader, ":");
+    //   if (
+    //     posColon !== -1 &&
+    //     StringPrototypeIncludes(hostHeader, ":", posColon + 1) &&
+    //     StringPrototypeCharCodeAt(hostHeader, 0) !== 91 /* '[' */
+    //   ) {
+    //     hostHeader = `[${hostHeader}]`;
+    //   }
 
-    // if (
-    //   method === "GET" ||
-    //   method === "HEAD" ||
-    //   method === "DELETE" ||
-    //   method === "OPTIONS" ||
-    //   method === "TRACE" ||
-    //   method === "CONNECT"
-    // ) {
-    //   this.useChunkedEncodingByDefault = false;
-    // } else {
-    //   this.useChunkedEncodingByDefault = true;
+    //   if (port && +port !== defaultPort) {
+    //     hostHeader += ":" + port;
+    //   }
+    //   this.setHeader("Host", hostHeader);
     // }
 
-    this[finishedSymbol] = false;
-    this.#res = null;
-    this.#upgradeOrConnect = false;
-    this.#parser = null;
-    this.#maxHeadersCount = null;
-    this.#reusedSocket = false;
-    this.#host = host;
-    this.#protocol = protocol;
-
-    const timeout = options.timeout;
-    if (timeout !== undefined && timeout !== 0) {
-      this.setTimeout(timeout, undefined);
+    var auth = options.auth;
+    if (auth && !this.getHeader("Authorization")) {
+      this.setHeader("Authorization", "Basic " + Buffer.from(auth).toString("base64"));
     }
 
-    const { headers } = options;
-    const headersArray = $isJSArray(headers);
-    if (!headersArray) {
-      if (headers) {
-        for (let key in headers) {
-          this.setHeader(key, headers[key]);
-        }
-      }
+    //   if (this.getHeader("expect")) {
+    //     if (this._header) {
+    //       throw new ERR_HTTP_HEADERS_SENT("render");
+    //     }
 
-      // if (host && !this.getHeader("host") && setHost) {
-      //   let hostHeader = host;
-
-      //   // For the Host header, ensure that IPv6 addresses are enclosed
-      //   // in square brackets, as defined by URI formatting
-      //   // https://tools.ietf.org/html/rfc3986#section-3.2.2
-      //   const posColon = StringPrototypeIndexOf.$call(hostHeader, ":");
-      //   if (
-      //     posColon !== -1 &&
-      //     StringPrototypeIncludes(hostHeader, ":", posColon + 1) &&
-      //     StringPrototypeCharCodeAt(hostHeader, 0) !== 91 /* '[' */
-      //   ) {
-      //     hostHeader = `[${hostHeader}]`;
-      //   }
-
-      //   if (port && +port !== defaultPort) {
-      //     hostHeader += ":" + port;
-      //   }
-      //   this.setHeader("Host", hostHeader);
-      // }
-
-      var auth = options.auth;
-      if (auth && !this.getHeader("Authorization")) {
-        this.setHeader("Authorization", "Basic " + Buffer.from(auth).toString("base64"));
-      }
-
-      //   if (this.getHeader("expect")) {
-      //     if (this._header) {
-      //       throw new ERR_HTTP_HEADERS_SENT("render");
-      //     }
-
-      //     this._storeHeader(
-      //       this.method + " " + this.path + " HTTP/1.1\r\n",
-      //       this[kOutHeaders],
-      //     );
-      //   }
-      // } else {
-      //   this._storeHeader(
-      //     this.method + " " + this.path + " HTTP/1.1\r\n",
-      //     options.headers,
-      //   );
-    }
-
-    // this[kUniqueHeaders] = parseUniqueHeadersOption(options.uniqueHeaders);
-
-    const { signal: _signal, ...optsWithoutSignal } = options;
-    this.#options = optsWithoutSignal;
-
-    this._httpMessage = this;
-
-    process.nextTick(emitContinueAndSocketNT, this);
+    //     this._storeHeader(
+    //       this.method + " " + this.path + " HTTP/1.1\r\n",
+    //       this[kOutHeaders],
+    //     );
+    //   }
+    // } else {
+    //   this._storeHeader(
+    //     this.method + " " + this.path + " HTTP/1.1\r\n",
+    //     options.headers,
+    //   );
   }
 
-  [kEmitState]: number = 0;
+  // this[kUniqueHeaders] = parseUniqueHeadersOption(options.uniqueHeaders);
 
-  setSocketKeepAlive(enable = true, initialDelay = 0) {
+  const { signal: _signal, ...optsWithoutSignal } = options;
+  this[kOptions] = optsWithoutSignal;
+
+  this._httpMessage = this;
+
+  process.nextTick(emitContinueAndSocketNT, this);
+
+  this[kEmitState] = 0;
+
+  this.setSocketKeepAlive = (enable = true, initialDelay = 0) => {
     $debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setSocketKeepAlive is a no-op");
-  }
+  };
 
-  setNoDelay(noDelay = true) {
+  this.setNoDelay = (noDelay = true) => {
     $debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setNoDelay is a no-op");
-  }
+  };
 
-  [kClearTimeout]() {
-    const timeoutTimer = this.#timeoutTimer;
+  this[kClearTimeout] = () => {
+    const timeoutTimer = this[kTimeoutTimer];
     if (timeoutTimer) {
       clearTimeout(timeoutTimer);
-      this.#timeoutTimer = undefined;
+      this[kTimeoutTimer] = undefined;
       this.removeAllListeners("timeout");
     }
-  }
+  };
 
-  #onTimeout() {
-    this.#timeoutTimer = undefined;
+  const onTimeout = () => {
+    this[kTimeoutTimer] = undefined;
     this[kAbortController]?.abort?.();
     this.emit("timeout");
-  }
+  };
 
-  setTimeout(msecs, callback) {
+  this.setTimeout = (msecs, callback) => {
     if (this.destroyed) return this;
 
     this.timeout = msecs = validateMsecs(msecs, "msecs");
 
     // Attempt to clear an existing timer in both cases -
     //  even if it will be rescheduled we don't want to leak an existing timer.
-    clearTimeout(this.#timeoutTimer!);
+    clearTimeout(this[kTimeoutTimer]!);
 
     if (msecs === 0) {
       if (callback !== undefined) {
@@ -3005,9 +2975,9 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
         this.removeListener("timeout", callback);
       }
 
-      this.#timeoutTimer = undefined;
+      this[kTimeoutTimer] = undefined;
     } else {
-      this.#timeoutTimer = setTimeout(this.#onTimeout.bind(this), msecs).unref();
+      this[kTimeoutTimer] = setTimeout(onTimeout, msecs).unref();
 
       if (callback !== undefined) {
         validateFunction(callback, "callback");
@@ -3016,8 +2986,52 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
     }
 
     return this;
-  }
+  };
 }
+
+const ClientRequestPrototype = {
+  constructor: ClientRequest,
+  __proto__: OutgoingMessage.prototype,
+
+  get path() {
+    return this[kPath];
+  },
+
+  get port() {
+    return this[kPort];
+  },
+
+  get method() {
+    return this[kMethod];
+  },
+
+  get host() {
+    return this[kHost];
+  },
+
+  get protocol() {
+    return this[kProtocol];
+  },
+
+  get agent() {
+    return this[kAgent];
+  },
+
+  set agent(value) {
+    this[kAgent] = value;
+  },
+
+  get aborted() {
+    return this[abortedSymbol] || this[kSignal]?.aborted || !!this[kAbortController]?.signal?.aborted;
+  },
+
+  set aborted(value) {
+    this[abortedSymbol] = value;
+  },
+};
+
+ClientRequest.prototype = ClientRequestPrototype;
+$setPrototypeDirect.$call(ClientRequest, OutgoingMessage);
 
 function validateHost(host, name) {
   if (host !== null && host !== undefined && typeof host !== "string") {

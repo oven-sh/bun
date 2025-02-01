@@ -175,12 +175,14 @@ jobs:
         uses: ./.github/actions/setup-bun
         with:
           bun-version: "1.2.0"
+      - id: bun-version
+        run: echo "BUN_VERSION=${BUN_VERSION#bun-v}" >> "$GITHUB_OUTPUT"
       - name: Update bun-types version in package.json
         run: |
           bun -e '
           const file = Bun.file("./types/bun/package.json");
           const json = await file.json();
-          const version = process.env.BUN_VERSION.replace('bun-v', '');
+          const version = "${{ steps.bun-version.outputs.BUN_VERSION }}"; 
           json.dependencies["bun-types"] = version;
           json.version = version.slice(0, version.lastIndexOf(".")) + ".9999";
           await file.write(JSON.stringify(json, null, 4) + "\n");
@@ -191,14 +193,14 @@ jobs:
         with:
           token: ${{ secrets.ROBOBUN_TOKEN }}
           add-paths: ./types/bun/package.json
-          title: "[bun] update to ${{env.BUN_VERSION}}"
-          commit-message: "[bun] update to ${{env.BUN_VERSION}}"
+          title: "[bun] update to ${{ steps.bun-version.outputs.BUN_VERSION }}"
+          commit-message: "[bun] update to ${{ steps.bun-version.outputs.BUN_VERSION }}"
           body: |
-            Update `bun-types` version to ${{env.BUN_VERSION}}
+            Update `bun-types` version to ${{ steps.bun-version.outputs.BUN_VERSION }}
 
-            https://bun.sh/blog/bun-${{env.BUN_VERSION}}
+            https://bun.sh/blog/${{ env.BUN_VERSION }}
           push-to-fork: oven-sh/DefinitelyTyped
-          branch: "bun-${{env.BUN_VERSION}}"
+          branch: ${{env.BUN_VERSION}}
   docker:
     name: Release to Dockerhub
     runs-on: ubuntu-latest

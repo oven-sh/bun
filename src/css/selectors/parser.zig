@@ -1049,8 +1049,58 @@ pub const SelectorParser = struct {
     }
 
     pub fn parseFunctionalPseudoElement(this: *SelectorParser, name: []const u8, input: *css.Parser) Result(Impl.SelectorImpl.PseudoElement) {
-        _ = this; // autofix
-        return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{ .unsupported_pseudo_class_or_element = name })) };
+        const Enum = enum {
+            cue,
+            @"cue-region",
+            @"view-transition-group",
+            @"view-transition-image-pair",
+            @"view-transition-old",
+            @"view-transition-new",
+        };
+
+        const Map = bun.ComptimeEnumMap(Enum);
+        if (Map.get(name)) |v| {
+            return switch (v) {
+                .cue => .{ .result = .{ .cue_function = .{ .selector = switch (Selector.parse(this, input)) {
+                    .result => |a| bun.create(input.allocator(), Selector, a),
+                    .err => |e| return .{ .err = e },
+                } } } },
+                .@"cue-region" => .{ .result = .{ .cue_region_function = .{ .selector = switch (Selector.parse(this, input)) {
+                    .result => |a| bun.create(input.allocator(), Selector, a),
+                    .err => |e| return .{ .err = e },
+                } } } },
+                .@"view-transition-group" => .{ .result = .{ .view_transition_group = .{ .part_name = switch (ViewTransitionPartName.parse(input)) {
+                    .result => |a| a,
+                    .err => |e| return .{ .err = e },
+                } } } },
+                .@"view-transition-image-pair" => .{ .result = .{ .view_transition_image_pair = .{ .part_name = switch (ViewTransitionPartName.parse(input)) {
+                    .result => |a| a,
+                    .err => |e| return .{ .err = e },
+                } } } },
+                .@"view-transition-old" => .{ .result = .{ .view_transition_old = .{ .part_name = switch (ViewTransitionPartName.parse(input)) {
+                    .result => |a| a,
+                    .err => |e| return .{ .err = e },
+                } } } },
+                .@"view-transition-new" => .{ .result = .{ .view_transition_new = .{ .part_name = switch (ViewTransitionPartName.parse(input)) {
+                    .result => |a| a,
+                    .err => |e| return .{ .err = e },
+                } } } },
+            };
+        } else {
+            if (!bun.strings.startsWith(name, "-")) {
+                this.options.warn(input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{
+                    .unsupported_pseudo_class_or_element = name,
+                })));
+            }
+
+            var args = std.ArrayListUnmanaged(css.css_properties.custom.TokenOrValue){};
+            if (css.TokenList.parseRaw(input, &args, this.options, 0).asErr()) |e| return .{ .err = e };
+
+            return .{ .result = .{ .custom_function = .{
+                .name = name,
+                .arguments = css.TokenList{ .v = args },
+            } } };
+        }
     }
 
     fn parseIsAndWhere(this: *const SelectorParser) bool {
@@ -1940,8 +1990,9 @@ pub fn GenericComponent(comptime Impl: type) type {
         pub fn format(this: *const This, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             switch (this.*) {
                 .local_name => return try writer.print("local_name={s}", .{this.local_name.name.v}),
-                .combinator => return try writer.print("combinator={}", .{this.combinator}),
+                .combinator => return try writer.print("combinator='{}'", .{this.combinator}),
                 .pseudo_element => return try writer.print("pseudo_element={}", .{this.pseudo_element}),
+                .class => return try writer.print("class={s}", .{this.class.v}),
                 else => {},
             }
             return writer.print("{s}", .{@tagName(this.*)});
@@ -2031,7 +2082,7 @@ pub const NthSelectorData = struct {
             .last_child => if (is_function) ":nth-last-child(" else ":last-child",
             .of_type => if (is_function) ":nth-of-type(" else ":first-of-type",
             .last_of_type => if (is_function) ":nth-last-of-type(" else ":last-of-type",
-            .only_child => if (is_function) ":nth-only-child(" else ":only-of-type",
+            .only_child => ":only-child",
             .only_of_type => ":only-of-type",
             .col => ":nth-col(",
             .last_col => ":nth-last-col(",
@@ -2044,7 +2095,7 @@ pub const NthSelectorData = struct {
 
     fn numberSign(num: i32) []const u8 {
         if (num >= 0) return "+";
-        return "-";
+        return "";
     }
 
     pub fn writeAffine(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -2199,7 +2250,7 @@ pub const SpecifityAndFlags = struct {
     flags: SelectorFlags,
 
     pub fn eql(this: *const SpecifityAndFlags, other: *const SpecifityAndFlags) bool {
-        return this.specificity == other.specificity and this.flags.eql(other.flags);
+        return css.implementEql(@This(), this, other);
     }
 
     pub fn hasPseudoElement(this: *const SpecifityAndFlags) bool {
@@ -3629,6 +3680,17 @@ pub const ViewTransitionPartName = union(enum) {
             .all => try dest.writeStr("*"),
             .name => |name| try css.CustomIdentFns.toCss(&name, W, dest),
         };
+    }
+
+    pub fn parse(input: *css.Parser) Result(ViewTransitionPartName) {
+        if (input.tryParse(css.Parser.expectDelim, .{'*'}).isOk()) {
+            return .{ .result = .all };
+        }
+
+        return .{ .result = .{ .name = switch (css.css_values.ident.CustomIdent.parse(input)) {
+            .result => |v| v,
+            .err => |e| return .{ .err = e },
+        } } };
     }
 
     pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {

@@ -304,6 +304,55 @@ pub const CppTask = opaque {
         Bun__performTask(global, this);
     }
 };
+
+pub const ConcurrentCppTask = struct {
+    cpp_task: *EventLoopTaskNoContext,
+    workpool_task: JSC.WorkPoolTask = .{ .callback = &runFromWorkpool },
+
+    const EventLoopTaskNoContext = opaque {
+        extern fn Bun__EventLoopTaskNoContext__performTask(task: *EventLoopTaskNoContext) void;
+        extern fn Bun__EventLoopTaskNoContext__createdInBunVm(task: *const EventLoopTaskNoContext) ?*JSC.VirtualMachine;
+
+        /// Deallocates `this`
+        pub fn run(this: *EventLoopTaskNoContext) void {
+            Bun__EventLoopTaskNoContext__performTask(this);
+        }
+
+        /// Get the VM that created this task
+        pub fn getVM(this: *const EventLoopTaskNoContext) ?*JSC.VirtualMachine {
+            return Bun__EventLoopTaskNoContext__createdInBunVm(this);
+        }
+    };
+
+    pub fn runFromWorkpool(task: *JSC.WorkPoolTask) void {
+        var this: *ConcurrentCppTask = @fieldParentPtr("workpool_task", task);
+        // Extract all the info we need from `this` and `cpp_task` before we call functions that
+        // free them
+        const cpp_task = this.cpp_task;
+        const maybe_vm = cpp_task.getVM();
+        this.destroy();
+        cpp_task.run();
+        if (maybe_vm) |vm| {
+            vm.event_loop.unrefConcurrently();
+        }
+    }
+
+    pub usingnamespace bun.New(@This());
+
+    pub export fn ConcurrentCppTask__createAndRun(cpp_task: *EventLoopTaskNoContext) void {
+        JSC.markBinding(@src());
+        if (cpp_task.getVM()) |vm| {
+            vm.event_loop.refConcurrently();
+        }
+        const cpp = ConcurrentCppTask.new(.{ .cpp_task = cpp_task });
+        JSC.WorkPool.schedule(&cpp.workpool_task);
+    }
+};
+
+comptime {
+    _ = ConcurrentCppTask.ConcurrentCppTask__createAndRun;
+}
+
 pub const JSCScheduler = struct {
     pub const JSCDeferredWorkTask = opaque {
         extern fn Bun__runDeferredWork(task: *JSCScheduler.JSCDeferredWorkTask) void;
@@ -384,6 +433,7 @@ const Exists = JSC.Node.Async.exists;
 const Futimes = JSC.Node.Async.futimes;
 const Lchmod = JSC.Node.Async.lchmod;
 const Lchown = JSC.Node.Async.lchown;
+const StatFS = JSC.Node.Async.statfs;
 const Unlink = JSC.Node.Async.unlink;
 const NativeZlib = JSC.API.NativeZlib;
 const NativeBrotli = JSC.API.NativeBrotli;
@@ -408,96 +458,99 @@ const ProcessMiniEventLoopWaiterThreadTask = if (Environment.isPosix) bun.spawn.
 const ShellAsyncSubprocessDone = bun.shell.Interpreter.Cmd.ShellAsyncSubprocessDone;
 const RuntimeTranspilerStore = JSC.RuntimeTranspilerStore;
 const ServerAllConnectionsClosedTask = @import("./api/server.zig").ServerAllConnectionsClosedTask;
+const FlushPendingFileSinkTask = JSC.WebCore.FlushPendingFileSinkTask;
 
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
-    FetchTasklet,
-    S3HttpSimpleTask,
-    S3HttpDownloadStreamingTask,
-    PosixSignalTask,
+    Access,
+    AnyTask,
+    AppendFile,
     AsyncGlobWalkTask,
     AsyncTransformTask,
-    ReadFileTask,
-    CopyFilePromiseTask,
-    WriteFileTask,
-    AnyTask,
-    ManagedTask,
-    ShellIOReaderAsyncDeinit,
-    ShellIOWriterAsyncDeinit,
-    napi_async_work,
-    ThreadSafeFunction,
-    CppTask,
-    HotReloadTask,
-    PollPendingModulesTask,
-    GetAddrInfoRequestTask,
-    FSWatchTask,
-    JSCDeferredWorkTask,
-    Stat,
-    Lstat,
-    Fstat,
-    Open,
-    ReadFile,
-    WriteFile,
-    CopyFile,
-    Read,
-    Write,
-    Truncate,
-    FTruncate,
-    Readdir,
-    ReaddirRecursive,
-    Close,
-    Rm,
-    Rmdir,
-    Chown,
-    FChown,
-    Utimes,
-    Lutimes,
-    Chmod,
-    Fchmod,
-    Link,
-    Symlink,
-    Readlink,
-    Realpath,
-    RealpathNonNative,
-    Mkdir,
-    Fsync,
-    Fdatasync,
-    Writev,
-    Readv,
-    Rename,
-    Access,
-    AppendFile,
-    Mkdtemp,
-    Exists,
-    Futimes,
-    Lchmod,
-    Lchown,
-    Unlink,
-    NativeZlib,
-    NativeBrotli,
-    ShellGlobTask,
-    ShellRmTask,
-    ShellRmDirTask,
-    ShellMvCheckTargetTask,
-    ShellMvBatchedTask,
-    ShellLsTask,
-    ShellMkdirTask,
-    ShellTouchTask,
-    ShellCpTask,
-    ShellCondExprStatTask,
-    ShellAsync,
-    ShellAsyncSubprocessDone,
-    TimerObject,
-    bun.shell.Interpreter.Builtin.Yes.YesTask,
-    ProcessWaiterThreadTask,
-    RuntimeTranspilerStore,
-    ServerAllConnectionsClosedTask,
     bun.bake.DevServer.HotReloadEvent,
     bun.bundle_v2.DeferredBatchTask,
+    bun.shell.Interpreter.Builtin.Yes.YesTask,
+    Chmod,
+    Chown,
+    Close,
+    CopyFile,
+    CopyFilePromiseTask,
+    CppTask,
+    Exists,
+    Fchmod,
+    FChown,
+    Fdatasync,
+    FetchTasklet,
+    Fstat,
+    FSWatchTask,
+    Fsync,
+    FTruncate,
+    Futimes,
+    GetAddrInfoRequestTask,
+    HotReloadTask,
+    JSCDeferredWorkTask,
+    Lchmod,
+    Lchown,
+    Link,
+    Lstat,
+    Lutimes,
+    ManagedTask,
+    Mkdir,
+    Mkdtemp,
+    napi_async_work,
+    NativeBrotli,
+    NativeZlib,
+    Open,
+    PollPendingModulesTask,
+    PosixSignalTask,
+    ProcessWaiterThreadTask,
+    Read,
+    Readdir,
+    ReaddirRecursive,
+    ReadFile,
+    ReadFileTask,
+    Readlink,
+    Readv,
+    FlushPendingFileSinkTask,
+    Realpath,
+    RealpathNonNative,
+    Rename,
+    Rm,
+    Rmdir,
+    RuntimeTranspilerStore,
+    S3HttpDownloadStreamingTask,
+    S3HttpSimpleTask,
+    ServerAllConnectionsClosedTask,
+    ShellAsync,
+    ShellAsyncSubprocessDone,
+    ShellCondExprStatTask,
+    ShellCpTask,
+    ShellGlobTask,
+    ShellIOReaderAsyncDeinit,
+    ShellIOWriterAsyncDeinit,
+    ShellLsTask,
+    ShellMkdirTask,
+    ShellMvBatchedTask,
+    ShellMvCheckTargetTask,
+    ShellRmDirTask,
+    ShellRmTask,
+    ShellTouchTask,
+    Stat,
+    StatFS,
+    Symlink,
+    ThreadSafeFunction,
+    TimerObject,
+    Truncate,
+    Unlink,
+    Utimes,
+    Write,
+    WriteFile,
+    WriteFileTask,
+    Writev,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
-    task: if (JSC.is_bindgen) void else Task = undefined,
+    task: Task = undefined,
     next: ?*ConcurrentTask = null,
     auto_delete: bool = false,
 
@@ -695,9 +748,7 @@ export fn Bun__tickWhilePaused(paused: *bool) void {
 }
 
 comptime {
-    if (!JSC.is_bindgen) {
-        _ = Bun__tickWhilePaused;
-    }
+    _ = Bun__tickWhilePaused;
 }
 
 /// Sometimes, you have work that will be scheduled, cancelled, and rescheduled multiple times
@@ -790,6 +841,7 @@ pub const EventLoop = struct {
     debug: Debug = .{},
     entered_event_loop_count: isize = 0,
     concurrent_ref: std.atomic.Value(i32) = std.atomic.Value(i32).init(0),
+    imminent_gc_timer: std.atomic.Value(?*JSC.BunTimer.WTFTimer) = .{ .raw = null },
 
     signal_handler: if (Environment.isPosix) ?*PosixSignalHandle else void = if (Environment.isPosix) null,
 
@@ -845,7 +897,7 @@ pub const EventLoop = struct {
 
         defer this.debug.exit();
 
-        if (count == 1) {
+        if (count == 1 and !this.virtual_machine.is_inside_deferred_task_queue) {
             this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc);
         }
 
@@ -875,7 +927,10 @@ pub const EventLoop = struct {
 
         jsc_vm.releaseWeakRefs();
         JSC__JSGlobalObject__drainMicrotasks(globalObject);
+
+        this.virtual_machine.is_inside_deferred_task_queue = true;
         this.deferred_tasks.run();
+        this.virtual_machine.is_inside_deferred_task_queue = false;
 
         if (comptime bun.Environment.isDebug) {
             this.debug.drain_microtasks_count_outside_tick_queue += @as(usize, @intFromBool(!this.debug.is_inside_tick_queue));
@@ -898,7 +953,6 @@ pub const EventLoop = struct {
     pub fn runCallback(this: *EventLoop, callback: JSC.JSValue, globalObject: *JSC.JSGlobalObject, thisValue: JSC.JSValue, arguments: []const JSC.JSValue) void {
         this.enter();
         defer this.exit();
-
         _ = callback.call(globalObject, thisValue, arguments) catch |err|
             globalObject.reportActiveExceptionAsUnhandled(err);
     }
@@ -1005,6 +1059,7 @@ pub const EventLoop = struct {
                     var shell_rm_task: *ShellRmDirTask = task.get(ShellRmDirTask).?;
                     shell_rm_task.runFromMainThread();
                 },
+
                 @field(Task.Tag, typeBaseName(@typeName(ShellGlobTask))) => {
                     var shell_glob_task: *ShellGlobTask = task.get(ShellGlobTask).?;
                     shell_glob_task.runFromMainThread();
@@ -1295,6 +1350,15 @@ pub const EventLoop = struct {
                 @field(Task.Tag, typeBaseName(@typeName(PosixSignalTask))) => {
                     PosixSignalTask.runFromJSThread(@intCast(task.asUintptr()), global);
                 },
+                @field(Task.Tag, typeBaseName(@typeName(StatFS))) => {
+                    var any: *StatFS = task.get(StatFS).?;
+                    any.runFromJSThread();
+                },
+
+                @field(Task.Tag, typeBaseName(@typeName(FlushPendingFileSinkTask))) => {
+                    var any: *FlushPendingFileSinkTask = task.get(FlushPendingFileSinkTask).?;
+                    any.runFromJSThread();
+                },
 
                 else => {
                     bun.Output.panic("Unexpected tag: {s}", .{@tagName(task.tag())});
@@ -1346,6 +1410,12 @@ pub const EventLoop = struct {
         }
     }
 
+    pub fn runImminentGCTimer(this: *EventLoop) void {
+        if (this.imminent_gc_timer.swap(null, .seq_cst)) |timer| {
+            timer.run(this.virtual_machine);
+        }
+    }
+
     pub fn tickConcurrentWithCount(this: *EventLoop) usize {
         this.updateCounts();
 
@@ -1354,6 +1424,8 @@ pub const EventLoop = struct {
                 signal_handler.drain(this);
             }
         }
+
+        this.runImminentGCTimer();
 
         var concurrent = this.concurrent_tasks.popBatch();
         const count = concurrent.count;
@@ -1424,12 +1496,14 @@ pub const EventLoop = struct {
             }
         }
 
+        this.runImminentGCTimer();
+
         if (loop.isActive()) {
             this.processGCTimer();
             var event_loop_sleep_timer = if (comptime Environment.isDebug) std.time.Timer.start() catch unreachable;
             // for the printer, this is defined:
             var timespec: bun.timespec = if (Environment.isDebug) .{ .sec = 0, .nsec = 0 } else undefined;
-            loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec)) &timespec else null);
+            loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec, ctx)) &timespec else null);
 
             if (comptime Environment.isDebug) {
                 log("tick {}, timeout: {}", .{ bun.fmt.fmtDuration(event_loop_sleep_timer.read()), bun.fmt.fmtDuration(timespec.ns()) });
@@ -1514,7 +1588,7 @@ pub const EventLoop = struct {
             this.processGCTimer();
             var timespec: bun.timespec = undefined;
 
-            loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec)) &timespec else null);
+            loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec, ctx)) &timespec else null);
         } else {
             loop.tickWithoutIdle();
         }
@@ -2191,6 +2265,14 @@ pub const EventLoopHandle = union(enum) {
             .js => this.js.virtual_machine.rareData().stdout(),
             .mini => this.mini.stdout(),
         };
+    }
+
+    pub fn bunVM(this: EventLoopHandle) ?*JSC.VirtualMachine {
+        if (this == .js) {
+            return this.js.virtual_machine;
+        }
+
+        return null;
     }
 
     pub fn stderr(this: EventLoopHandle) *JSC.WebCore.Blob.Store {

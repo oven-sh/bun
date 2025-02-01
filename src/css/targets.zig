@@ -31,7 +31,58 @@ pub const Targets = struct {
         };
     }
 
+    fn parseDebugTarget(val_: []const u8) ?u32 {
+        const val = bun.strings.trim(val_, " \n\r\t");
+        if (val.len == 0) return null;
+        if (bun.strings.eqlCaseInsensitiveASCII(val, "null", true)) return null;
+
+        var lhs: u32 = 0;
+        var rhs: u32 = 0;
+
+        var i: usize = 0;
+        for (val, 0..) |c, j| {
+            if (!std.ascii.isDigit(c)) {
+                i = j;
+                lhs = std.fmt.parseInt(u32, val[0..j], 10) catch @panic("invalid bytes");
+                break;
+            }
+        }
+        if (i >= val.len) {
+            lhs = std.fmt.parseInt(u32, val, 10) catch @panic("invalid bytes");
+            return lhs;
+        }
+        if (val[i] != ' ') {
+            @panic("bad string");
+        }
+        i += 1;
+        if (val[i] != '<' or i + 1 >= val.len or val[i + 1] != '<') {
+            @panic("bad string");
+        }
+        i += 2;
+        if (val[i] != ' ') {
+            @panic("bad string");
+        }
+        i += 1;
+        rhs = std.fmt.parseInt(u32, val[i..], 10) catch @panic("invalid bytes");
+        return lhs << @intCast(rhs);
+    }
+
     pub fn forBundlerTarget(target: bun.transpiler.options.Target) Targets {
+        if (comptime bun.Environment.isDebug) {
+            var browsers: Browsers = .{};
+            const browser_fields = std.meta.fields(Browsers);
+            var has_any = false;
+            inline for (browser_fields) |field| {
+                const env_var = "BUN_DEBUG_CSS_TARGET_" ++ field.name;
+                if (bun.getenvZAnyCase(env_var)) |val| {
+                    @field(browsers, field.name) = parseDebugTarget(val);
+                    has_any = true;
+                }
+            }
+            if (has_any) {
+                return .{ .browsers = browsers };
+            }
+        }
         return switch (target) {
             .node, .bun => runtimeDefault(),
             .browser, .bun_macro, .bake_server_components_ssr => browserDefault(),
@@ -135,7 +186,6 @@ pub const Features = packed struct(u32) {
     vendor_prefixes: bool = false,
     logical_properties: bool = false,
     __unused: u12 = 0,
-
     pub const selectors = Features.fromNames(&.{ "nesting", "not_selector_list", "dir_selector", "lang_selector_list", "is_selector" });
     pub const media_queries = Features.fromNames(&.{ "media_interval_syntax", "media_range_syntax", "custom_media_queries" });
     pub const colors = Features.fromNames(&.{ "color_function", "oklab_colors", "lab_colors", "p3_colors", "hex_alpha_colors", "space_separated_color_notation" });
@@ -162,6 +212,8 @@ pub fn BrowsersImpl(comptime T: type) type {
         //     .opera = 67 << 16,
         // };
 
+        /// Ported from here:
+        /// https://github.com/vitejs/vite/blob/ac329685bba229e1ff43e3d96324f817d48abe48/packages/vite/src/node/plugins/css.ts#L3335
         pub fn convertFromString(esbuild_target: []const []const u8) anyerror!T {
             var browsers: T = .{};
 

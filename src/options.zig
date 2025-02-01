@@ -660,12 +660,7 @@ pub const Loader = enum(u8) {
         };
     }
 
-    pub const Experimental = struct {
-        css: bool = bun.FeatureFlags.breaking_changes_1_2,
-        html: bool = bun.FeatureFlags.breaking_changes_1_2,
-    };
-
-    pub fn shouldCopyForBundling(this: Loader, experimental: Experimental) bool {
+    pub fn shouldCopyForBundling(this: Loader) bool {
         return switch (this) {
             .file,
             .napi,
@@ -674,8 +669,8 @@ pub const Loader = enum(u8) {
             // TODO: loader for reading bytes and creating module or instance
             .wasm,
             => true,
-            .css => !experimental.css,
-            .html => !experimental.html,
+            .css => false,
+            .html => false,
             else => false,
         };
     }
@@ -702,7 +697,7 @@ pub const Loader = enum(u8) {
 
     pub fn canBeRunByBun(this: Loader) bool {
         return switch (this) {
-            .jsx, .js, .ts, .tsx, .json, .wasm, .bunsh => true,
+            .jsx, .js, .ts, .tsx, .wasm, .bunsh => true,
             else => false,
         };
     }
@@ -924,34 +919,41 @@ pub const ESMConditions = struct {
     default: ConditionsMap,
     import: ConditionsMap,
     require: ConditionsMap,
+    style: ConditionsMap,
 
     pub fn init(allocator: std.mem.Allocator, defaults: []const string) !ESMConditions {
         var default_condition_amp = ConditionsMap.init(allocator);
 
         var import_condition_map = ConditionsMap.init(allocator);
         var require_condition_map = ConditionsMap.init(allocator);
+        var style_condition_map = ConditionsMap.init(allocator);
 
         try default_condition_amp.ensureTotalCapacity(defaults.len + 2);
         try import_condition_map.ensureTotalCapacity(defaults.len + 2);
         try require_condition_map.ensureTotalCapacity(defaults.len + 2);
+        try style_condition_map.ensureTotalCapacity(defaults.len + 2);
 
         import_condition_map.putAssumeCapacity("import", {});
         require_condition_map.putAssumeCapacity("require", {});
+        style_condition_map.putAssumeCapacity("style", {});
 
         for (defaults) |default| {
             default_condition_amp.putAssumeCapacityNoClobber(default, {});
             import_condition_map.putAssumeCapacityNoClobber(default, {});
             require_condition_map.putAssumeCapacityNoClobber(default, {});
+            style_condition_map.putAssumeCapacityNoClobber(default, {});
         }
 
         default_condition_amp.putAssumeCapacity("default", {});
         import_condition_map.putAssumeCapacity("default", {});
         require_condition_map.putAssumeCapacity("default", {});
+        style_condition_map.putAssumeCapacity("default", {});
 
         return .{
             .default = default_condition_amp,
             .import = import_condition_map,
             .require = require_condition_map,
+            .style = style_condition_map,
         };
     }
 
@@ -962,11 +964,14 @@ pub const ESMConditions = struct {
         errdefer import.deinit();
         var require = try self.require.clone();
         errdefer require.deinit();
+        var style = try self.style.clone();
+        errdefer style.deinit();
 
         return .{
             .default = default,
             .import = import,
             .require = require,
+            .style = style,
         };
     }
 
@@ -974,11 +979,13 @@ pub const ESMConditions = struct {
         try self.default.ensureUnusedCapacity(conditions.len);
         try self.import.ensureUnusedCapacity(conditions.len);
         try self.require.ensureUnusedCapacity(conditions.len);
+        try self.style.ensureUnusedCapacity(conditions.len);
 
         for (conditions) |condition| {
             self.default.putAssumeCapacity(condition, {});
             self.import.putAssumeCapacity(condition, {});
             self.require.putAssumeCapacity(condition, {});
+            self.style.putAssumeCapacity(condition, {});
         }
     }
 };
@@ -1287,7 +1294,7 @@ pub fn definesFromTransformOptions(
     );
 }
 
-const default_loader_ext_bun = [_]string{".node"};
+const default_loader_ext_bun = [_]string{ ".node", ".html" };
 const default_loader_ext = [_]string{
     ".jsx",   ".json",
     ".js",    ".mjs",
@@ -1377,10 +1384,6 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.
     if (target.isBun()) {
         inline for (default_loader_ext_bun) |ext| {
             _ = try loaders.getOrPutValue(ext, defaultLoaders.get(ext).?);
-        }
-
-        if (bun.CLI.Command.get().bundler_options.experimental.html) {
-            _ = try loaders.getOrPutValue(".html", .html);
         }
     }
 
@@ -1543,8 +1546,6 @@ pub const BundleOptions = struct {
     minify_syntax: bool = false,
     minify_identifiers: bool = false,
     dead_code_elimination: bool = true,
-
-    experimental: Loader.Experimental = .{},
     css_chunking: bool,
 
     ignore_dce_annotations: bool = false,
@@ -1560,6 +1561,9 @@ pub const BundleOptions = struct {
     dev_server: ?*bun.bake.DevServer = null,
     /// Set when Bake is bundling. Affects module resolution.
     framework: ?*bun.bake.Framework = null,
+
+    serve_plugins: ?[]const []const u8 = null,
+    bunfig_path: string = "",
 
     /// This is a list of packages which even when require() is used, we will
     /// instead convert to ESM import statements.
@@ -1729,13 +1733,15 @@ pub const BundleOptions = struct {
             .out_extensions = undefined,
             .env = Env.init(allocator),
             .transform_options = transform,
-            .experimental = .{},
             .css_chunking = false,
             .drop = transform.drop,
         };
 
         Analytics.Features.define += @as(usize, @intFromBool(transform.define != null));
         Analytics.Features.loaders += @as(usize, @intFromBool(transform.loaders != null));
+
+        opts.serve_plugins = transform.serve_plugins;
+        opts.bunfig_path = transform.bunfig_path;
 
         if (transform.env_files.len > 0) {
             opts.env.files = transform.env_files;

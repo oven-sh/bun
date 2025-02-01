@@ -1,0 +1,46 @@
+{
+	"name": "npm-1",
+	"versions": {
+		"10.9.2": {
+			"name": "npm-1",
+			"version": "10.9.2",
+			"dependencies": {
+				"ms-1": "^2.1.2",
+				"depend-on-debug-1": "1.0.0"
+			},
+			"bundleDependencies": [
+				"ms-1",
+				"depend-on-debug-1"
+			],
+			"_id": "npm-1@10.9.2",
+			"_nodeVersion": "23.5.0",
+			"_npmVersion": "10.9.2",
+			"dist": {
+				"integrity": "sha512-Zos0KA6jxy2duN7kxjgoFoAiVqqmP60ZZjq5YWXlo3vslPwbLyyOmxCrIfJDyJSX/lvkVaXH6jKXsDYfC2jqUA==",
+				"shasum": "8ae88046a9b83a58bc88504c341b0c4d32e80298",
+				"tarball": "http://localhost:4873/npm-1/-/npm-1-10.9.2.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2025-02-01T03:15:31.293Z",
+		"created": "2025-02-01T03:15:31.293Z",
+		"10.9.2": "2025-02-01T03:15:31.293Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "10.9.2"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"npm-1-10.9.2.tgz": {
+			"shasum": "8ae88046a9b83a58bc88504c341b0c4d32e80298",
+			"version": "10.9.2"
+		}
+	},
+	"_rev": "",
+	"_id": "npm-1",
+	"readme": "ERROR: No README data found!"
+}

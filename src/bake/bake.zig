@@ -458,7 +458,7 @@ pub const Framework = struct {
 
                 const extensions: []const []const u8 = if (try fsr_opts.get(global, "extensions")) |exts_js| exts: {
                     if (exts_js.isString()) {
-                        const str = try exts_js.toSlice2(global, arena);
+                        const str = try exts_js.toSlice(global, arena);
                         defer str.deinit();
                         if (bun.strings.eqlComptime(str.slice(), "*")) {
                             break :exts &.{};
@@ -468,7 +468,7 @@ pub const Framework = struct {
                         var i_2: usize = 0;
                         const extensions = try arena.alloc([]const u8, exts_js.getLength(global));
                         while (it_2.next()) |array_item| : (i_2 += 1) {
-                            const slice = refs.track(try array_item.toSlice2(global, arena));
+                            const slice = refs.track(try array_item.toSlice(global, arena));
                             if (bun.strings.eqlComptime(slice, "*"))
                                 return global.throwInvalidArguments("'extensions' cannot include \"*\" as an extension. Pass \"*\" instead of the array.", .{});
 
@@ -493,7 +493,7 @@ pub const Framework = struct {
                         var i_2: usize = 0;
                         const dirs = try arena.alloc([]const u8, len);
                         while (it_2.next()) |array_item| : (i_2 += 1) {
-                            dirs[i_2] = refs.track(try array_item.toSlice2(global, arena));
+                            dirs[i_2] = refs.track(try array_item.toSlice(global, arena));
                         }
                         break :exts dirs;
                     }
@@ -589,15 +589,11 @@ pub const Framework = struct {
         }
 
         out.options.production = mode != .development;
-
         out.options.tree_shaking = mode != .development;
         out.options.minify_syntax = mode != .development;
         out.options.minify_identifiers = mode != .development;
         out.options.minify_whitespace = mode != .development;
-
-        out.options.experimental.css = true;
         out.options.css_chunking = true;
-
         out.options.framework = framework;
 
         out.options.source_map = switch (mode) {

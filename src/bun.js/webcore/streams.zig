@@ -5,7 +5,6 @@ const MimeType = HTTPClient.MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = bun.http;
 const JSC = bun.JSC;
-const js = JSC.C;
 
 const Method = @import("../../http/method.zig").Method;
 const FetchHeaders = JSC.FetchHeaders;
@@ -619,7 +618,7 @@ pub const StreamStart = union(Tag) {
                         .FileSink = .{
                             .chunk_size = chunk_size,
                             .input_path = .{
-                                .path = path.toSlice(globalThis, globalThis.bunVM().allocator),
+                                .path = try path.toSlice(globalThis, globalThis.bunVM().allocator),
                             },
                         },
                     };
@@ -1563,7 +1562,7 @@ pub const ArrayBufferSink = struct {
     pub const JSSink = NewJSSink(@This(), "ArrayBufferSink");
 };
 
-const AutoFlusher = struct {
+pub const AutoFlusher = struct {
     registered: bool = false,
 
     pub fn registerDeferredMicrotaskWithType(comptime Type: type, this: *Type, vm: *JSC.VirtualMachine) void {
@@ -1974,9 +1973,18 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
         const jsEnd = JSC.toJSHostFunction(end);
         const jsConstruct = JSC.toJSHostFunction(construct);
 
+        fn jsGetInternalFd(ptr: *anyopaque) callconv(.C) JSValue {
+            var this = bun.cast(*ThisSink, ptr);
+            if (comptime @hasDecl(SinkType, "getFd")) {
+                return JSValue.jsNumber(this.sink.getFd());
+            }
+            return .null;
+        }
+
         comptime {
             @export(finalize, .{ .name = shim.symbolName("finalize") });
             @export(jsWrite, .{ .name = shim.symbolName("write") });
+            @export(jsGetInternalFd, .{ .name = shim.symbolName("getInternalFd") });
             @export(close, .{ .name = shim.symbolName("close") });
             @export(jsFlush, .{ .name = shim.symbolName("flush") });
             @export(jsStart, .{ .name = shim.symbolName("start") });
@@ -2885,7 +2893,8 @@ pub const NetworkSink = struct {
                 return .{ .owned = len };
             }
 
-            this.buffer.writeLatin1(bytes) catch {
+            const check_ascii = false;
+            this.buffer.writeLatin1(bytes, check_ascii) catch {
                 return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
             };
 
@@ -2896,7 +2905,9 @@ pub const NetworkSink = struct {
         } else if (this.buffer.size() + len >= this.getHighWaterMark()) {
             // kinda fast path:
             // - combined chunk is large enough to flush automatically
-            this.buffer.writeLatin1(bytes) catch {
+
+            const check_ascii = true;
+            this.buffer.writeLatin1(bytes, check_ascii) catch {
                 return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
             };
             _ = this.internalFlush() catch {
@@ -2904,7 +2915,8 @@ pub const NetworkSink = struct {
             };
             return .{ .owned = len };
         } else {
-            this.buffer.writeLatin1(bytes) catch {
+            const check_ascii = true;
+            this.buffer.writeLatin1(bytes, check_ascii) catch {
                 return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
             };
         }
@@ -3412,10 +3424,13 @@ pub const FileSink = struct {
     // we should not duplicate these fields...
     pollable: bool = false,
     nonblocking: bool = false,
-    force_sync_on_windows: bool = false,
+    force_sync: bool = false,
+
     is_socket: bool = false,
     fd: bun.FileDescriptor = bun.invalid_fd,
-    has_js_called_unref: bool = false,
+
+    auto_flusher: AutoFlusher = .{},
+    run_pending_later: FlushPendingFileSinkTask = .{},
 
     const log = Output.scoped(.FileSink, false);
 
@@ -3429,17 +3444,19 @@ pub const FileSink = struct {
         return this.writer.memoryCost();
     }
 
-    fn Bun__ForceFileSinkToBeSynchronousOnWindows(globalObject: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) callconv(.C) void {
-        comptime bun.assert(Environment.isWindows);
-
+    fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(globalObject: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) callconv(.C) void {
         var this: *FileSink = @alignCast(@ptrCast(JSSink.fromJS(globalObject, jsvalue) orelse return));
-        this.force_sync_on_windows = true;
+        this.force_sync = true;
+        if (comptime !Environment.isWindows) {
+            this.writer.force_sync = true;
+            if (this.fd != bun.invalid_fd) {
+                _ = bun.sys.updateNonblocking(this.fd, false);
+            }
+        }
     }
 
     comptime {
-        if (Environment.isWindows) {
-            @export(Bun__ForceFileSinkToBeSynchronousOnWindows, .{ .name = "Bun__ForceFileSinkToBeSynchronousOnWindows" });
-        }
+        @export(Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio, .{ .name = "Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio" });
     }
 
     pub fn onAttachedProcessExit(this: *FileSink) void {
@@ -3461,6 +3478,7 @@ pub const FileSink = struct {
         this.ref();
         defer this.deref();
 
+        this.run_pending_later.has = false;
         const l = this.eventLoop();
         l.enter();
         defer l.exit();
@@ -3478,6 +3496,14 @@ pub const FileSink = struct {
         // Only keep the event loop ref'd while there's a pending write in progress.
         // If there's no pending write, no need to keep the event loop ref'd.
         this.writer.updateRef(this.eventLoop(), has_pending_data);
+
+        if (has_pending_data) {
+            if (this.event_loop_handle.bunVM()) |vm| {
+                if (!vm.is_inside_deferred_task_queue) {
+                    AutoFlusher.registerDeferredMicrotaskWithType(@This(), this, vm);
+                }
+            }
+        }
 
         // if we are not done yet and has pending data we just wait so we do not runPending twice
         if (status == .pending and has_pending_data) {
@@ -3523,6 +3549,12 @@ pub const FileSink = struct {
         log("onError({any})", .{err});
         if (this.pending.state == .pending) {
             this.pending.result = .{ .err = err };
+            if (this.eventLoop().bunVM()) |vm| {
+                if (vm.is_inside_deferred_task_queue) {
+                    this.runPendingLater();
+                    return;
+                }
+            }
 
             this.runPending();
         }
@@ -3579,23 +3611,17 @@ pub const FileSink = struct {
 
     pub fn setup(this: *FileSink, options: *const StreamStart.FileSinkOptions) JSC.Maybe(void) {
         // TODO: this should be concurrent.
-        var isatty: ?bool = null;
-        var is_nonblocking_tty = false;
+        var isatty = false;
+        var is_nonblocking = false;
         const fd = switch (switch (options.input_path) {
-            .path => |path| bun.sys.openA(path.slice(), options.flags(), options.mode),
+            .path => |path| brk: {
+                is_nonblocking = true;
+                break :brk bun.sys.openA(path.slice(), options.flags(), options.mode);
+            },
             .fd => |fd_| brk: {
-                if (comptime Environment.isPosix and FeatureFlags.nonblocking_stdout_and_stderr_on_posix) {
-                    if (bun.FDTag.get(fd_) != .none) {
-                        const rc = bun.C.open_as_nonblocking_tty(@intCast(fd_.cast()), bun.O.WRONLY);
-                        if (rc > -1) {
-                            isatty = true;
-                            is_nonblocking_tty = true;
-                            break :brk JSC.Maybe(bun.FileDescriptor){ .result = bun.toFD(rc) };
-                        }
-                    }
-                }
+                const duped = bun.sys.dupWithFlags(fd_, 0);
 
-                break :brk bun.sys.dupWithFlags(fd_, if (bun.FDTag.get(fd_) == .none and !this.force_sync_on_windows) bun.O.NONBLOCK else 0);
+                break :brk duped;
             },
         }) {
             .err => |err| return .{ .err = err },
@@ -3610,32 +3636,56 @@ pub const FileSink = struct {
                 },
                 .result => |stat| {
                     this.pollable = bun.sys.isPollable(stat.mode);
-                    if (!this.pollable and isatty == null) {
+                    if (!this.pollable) {
                         isatty = std.posix.isatty(fd.int());
                     }
 
-                    if (isatty) |is| {
-                        if (is)
-                            this.pollable = true;
+                    if (isatty) {
+                        this.pollable = true;
                     }
 
                     this.fd = fd;
                     this.is_socket = std.posix.S.ISSOCK(stat.mode);
-                    this.nonblocking = is_nonblocking_tty or (this.pollable and switch (options.input_path) {
-                        .path => true,
-                        .fd => |fd_| bun.FDTag.get(fd_) == .none,
-                    });
+
+                    if (this.force_sync or isatty) {
+                        // Prevents interleaved or dropped stdout/stderr output for terminals.
+                        // As noted in the following reference, local TTYs tend to be quite fast and
+                        // this behavior has become expected due historical functionality on OS X,
+                        // even though it was originally intended to change in v1.0.2 (Libuv 1.2.1).
+                        // Ref: https://github.com/nodejs/node/pull/1771#issuecomment-119351671
+                        _ = bun.sys.updateNonblocking(fd, false);
+                        is_nonblocking = false;
+                        this.force_sync = true;
+                        this.writer.force_sync = true;
+                    } else if (!is_nonblocking) {
+                        const flags = switch (bun.sys.getFcntlFlags(fd)) {
+                            .result => |flags| flags,
+                            .err => |err| {
+                                _ = bun.sys.close(fd);
+                                return .{ .err = err };
+                            },
+                        };
+                        is_nonblocking = (flags & @as(@TypeOf(flags), bun.O.NONBLOCK)) != 0;
+
+                        if (!is_nonblocking) {
+                            if (bun.sys.setNonblocking(fd) == .result) {
+                                is_nonblocking = true;
+                            }
+                        }
+                    }
+
+                    this.nonblocking = is_nonblocking and this.pollable;
                 },
             }
         } else if (comptime Environment.isWindows) {
-            this.pollable = (bun.windows.GetFileType(fd.cast()) & bun.windows.FILE_TYPE_PIPE) != 0 and !this.force_sync_on_windows;
+            this.pollable = (bun.windows.GetFileType(fd.cast()) & bun.windows.FILE_TYPE_PIPE) != 0 and !this.force_sync;
             this.fd = fd;
         } else {
             @compileError("TODO: implement for this platform");
         }
 
         if (comptime Environment.isWindows) {
-            if (this.force_sync_on_windows) {
+            if (this.force_sync) {
                 switch (this.writer.startSync(
                     fd,
                     this.pollable,
@@ -3710,6 +3760,51 @@ pub const FileSink = struct {
         this.started = true;
         this.signal.start();
         return .{ .result = {} };
+    }
+
+    pub fn runPendingLater(this: *FileSink) void {
+        if (this.run_pending_later.has) {
+            return;
+        }
+        this.run_pending_later.has = true;
+        const event_loop = this.eventLoop();
+        if (event_loop == .js) {
+            this.ref();
+            event_loop.js.enqueueTask(JSC.Task.init(&this.run_pending_later));
+        }
+    }
+
+    pub fn onAutoFlush(this: *FileSink) bool {
+        if (this.done or !this.writer.hasPendingData()) {
+            this.updateRef(false);
+            this.auto_flusher.registered = false;
+            return false;
+        }
+
+        this.ref();
+        defer this.deref();
+
+        const amount_buffered = this.writer.outgoing.size();
+
+        switch (this.writer.flush()) {
+            .err, .done => {
+                this.updateRef(false);
+                this.runPendingLater();
+            },
+            .wrote => |amount_drained| {
+                if (amount_drained == amount_buffered) {
+                    this.updateRef(false);
+                    this.runPendingLater();
+                }
+            },
+            else => {
+                return true;
+            },
+        }
+
+        const is_registered = !this.writer.hasPendingData();
+        this.auto_flusher.registered = is_registered;
+        return is_registered;
     }
 
     pub fn flush(_: *FileSink) JSC.Maybe(void) {
@@ -3832,6 +3927,9 @@ pub const FileSink = struct {
     pub fn deinit(this: *FileSink) void {
         this.pending.deinit();
         this.writer.deinit();
+        if (this.event_loop_handle.globalObject()) |global| {
+            AutoFlusher.unregisterDeferredMicrotaskWithType(@This(), this, global.bunVM());
+        }
     }
 
     pub fn toJS(this: *FileSink, globalThis: *JSGlobalObject) JSValue {
@@ -3883,7 +3981,6 @@ pub const FileSink = struct {
     }
 
     pub fn updateRef(this: *FileSink, value: bool) void {
-        this.has_js_called_unref = !value;
         if (value) {
             this.writer.enableKeepingProcessAlive(this.event_loop_handle);
         } else {
@@ -3892,6 +3989,17 @@ pub const FileSink = struct {
     }
 
     pub const JSSink = NewJSSink(@This(), "FileSink");
+
+    fn getFd(this: *const @This()) i32 {
+        if (Environment.isWindows) {
+            const fd_impl = this.fd.impl();
+            return switch (fd_impl.kind) {
+                .system => -1, // TODO:
+                .uv => fd_impl.value.as_uv,
+            };
+        }
+        return this.fd.cast();
+    }
 
     fn toResult(this: *FileSink, write_result: bun.io.WriteResult) StreamResult.Writable {
         switch (write_result) {
@@ -3923,6 +4031,18 @@ pub const FileSink = struct {
     }
 };
 
+pub const FlushPendingFileSinkTask = struct {
+    has: bool = false,
+    pub fn runFromJSThread(flush_pending: *FlushPendingFileSinkTask) void {
+        const had = flush_pending.has;
+        flush_pending.has = false;
+        const this: *FileSink = @alignCast(@fieldParentPtr("run_pending_later", flush_pending));
+        defer this.deref();
+        if (had)
+            this.runPending();
+    }
+};
+
 pub const FileReader = struct {
     const log = Output.scoped(.FileReader, false);
     reader: IOReader = IOReader.init(FileReader),
@@ -3941,7 +4061,6 @@ pub const FileReader = struct {
     buffered: std.ArrayListUnmanaged(u8) = .{},
     read_inside_on_pull: ReadDuringJSOnPullResult = .{ .none = {} },
     highwater_mark: usize = 16384,
-    has_js_called_unref: bool = false,
 
     pub const IOReader = bun.io.BufferedReader;
     pub const Poll = IOReader;
@@ -3969,37 +4088,43 @@ pub const FileReader = struct {
         pub fn openFileBlob(file: *Blob.FileStore) JSC.Maybe(OpenedFileBlob) {
             var this = OpenedFileBlob{ .fd = bun.invalid_fd };
             var file_buf: bun.PathBuffer = undefined;
-            var is_nonblocking_tty = false;
+            var is_nonblocking = false;
 
             const fd = if (file.pathlike == .fd)
                 if (file.pathlike.fd.isStdio()) brk: {
                     if (comptime Environment.isPosix) {
                         const rc = bun.C.open_as_nonblocking_tty(file.pathlike.fd.int(), bun.O.RDONLY);
                         if (rc > -1) {
-                            is_nonblocking_tty = true;
+                            is_nonblocking = true;
                             file.is_atty = true;
                             break :brk bun.toFD(rc);
                         }
                     }
                     break :brk file.pathlike.fd;
-                } else switch (Syscall.dupWithFlags(file.pathlike.fd, brk: {
+                } else brk: {
+                    const duped = Syscall.dupWithFlags(file.pathlike.fd, 0);
+
+                    if (duped != .result) {
+                        return .{ .err = duped.err.withFd(file.pathlike.fd) };
+                    }
+
+                    const fd = duped.result;
+
                     if (comptime Environment.isPosix) {
-                        if (bun.FDTag.get(file.pathlike.fd) == .none and !(file.is_atty orelse false)) {
-                            break :brk bun.O.NONBLOCK;
+                        if (bun.FDTag.get(fd) == .none) {
+                            is_nonblocking = switch (bun.sys.getFcntlFlags(fd)) {
+                                .result => |flags| (flags & bun.O.NONBLOCK) != 0,
+                                .err => false,
+                            };
                         }
                     }
 
-                    break :brk 0;
-                })) {
-                    .result => |fd| switch (bun.sys.toLibUVOwnedFD(fd, .dup, .close_on_fail)) {
+                    break :brk switch (bun.sys.toLibUVOwnedFD(fd, .dup, .close_on_fail)) {
                         .result => |owned_fd| owned_fd,
                         .err => |err| {
                             return .{ .err = err };
                         },
-                    },
-                    .err => |err| {
-                        return .{ .err = err.withFd(file.pathlike.fd) };
-                    },
+                    };
                 }
             else switch (Syscall.open(file.pathlike.path.sliceZ(&file_buf), bun.O.RDONLY | bun.O.NONBLOCK | bun.O.CLOEXEC, 0)) {
                 .result => |fd| fd,
@@ -4035,7 +4160,7 @@ pub const FileReader = struct {
                     return .{ .err = Syscall.Error.fromCode(.ISDIR, .fstat) };
                 }
 
-                this.pollable = bun.sys.isPollable(stat.mode) or is_nonblocking_tty or (file.is_atty orelse false);
+                this.pollable = bun.sys.isPollable(stat.mode) or is_nonblocking or (file.is_atty orelse false);
                 this.file_type = if (bun.S.ISFIFO(stat.mode))
                     .pipe
                 else if (bun.S.ISSOCK(stat.mode))
@@ -4044,11 +4169,11 @@ pub const FileReader = struct {
                     .file;
 
                 // pretend it's a non-blocking pipe if it's a TTY
-                if (is_nonblocking_tty and this.file_type != .socket) {
+                if (is_nonblocking and this.file_type != .socket) {
                     this.file_type = .nonblocking_pipe;
                 }
 
-                this.nonblocking = is_nonblocking_tty or (this.pollable and !(file.is_atty orelse false));
+                this.nonblocking = is_nonblocking or (this.pollable and !(file.is_atty orelse false));
 
                 if (this.nonblocking and this.file_type == .pipe) {
                     this.file_type = .nonblocking_pipe;
@@ -4213,7 +4338,7 @@ pub const FileReader = struct {
 
     pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState) bool {
         var buf = init_buf;
-        log("onReadChunk() = {d} ({s})", .{ buf.len, @tagName(state) });
+        log("onReadChunk() = {d} ({s}) - read_inside_on_pull: {s}", .{ buf.len, @tagName(state), @tagName(this.read_inside_on_pull) });
 
         if (this.done) {
             this.reader.close();
@@ -4487,7 +4612,6 @@ pub const FileReader = struct {
 
     pub fn setRefOrUnref(this: *FileReader, enable: bool) void {
         if (this.done) return;
-        this.has_js_called_unref = !enable;
         this.reader.updateRef(enable);
     }
 

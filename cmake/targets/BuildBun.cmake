@@ -228,6 +228,7 @@ set(BUN_ZIG_GENERATED_CLASSES_OUTPUTS
   ${CODEGEN_PATH}/ZigGeneratedClasses+DOMIsoSubspaces.h
   ${CODEGEN_PATH}/ZigGeneratedClasses+lazyStructureImpl.h
   ${CODEGEN_PATH}/ZigGeneratedClasses.zig
+  ${CODEGEN_PATH}/ZigGeneratedClasses.lut.txt
 )
 
 register_command(
@@ -406,6 +407,7 @@ set(BUN_OBJECT_LUT_SOURCES
   ${CWD}/src/bun.js/bindings/ProcessBindingConstants.cpp
   ${CWD}/src/bun.js/bindings/ProcessBindingNatives.cpp
   ${CWD}/src/bun.js/modules/NodeModuleModule.cpp
+  ${CODEGEN_PATH}/ZigGeneratedClasses.lut.txt
 )
 
 set(BUN_OBJECT_LUT_OUTPUTS
@@ -416,6 +418,7 @@ set(BUN_OBJECT_LUT_OUTPUTS
   ${CODEGEN_PATH}/ProcessBindingConstants.lut.h
   ${CODEGEN_PATH}/ProcessBindingNatives.lut.h
   ${CODEGEN_PATH}/NodeModuleModule.lut.h
+  ${CODEGEN_PATH}/ZigGeneratedClasses.lut.h
 )
 
 macro(WEBKIT_ADD_SOURCE_DEPENDENCIES _source _deps)
@@ -447,6 +450,8 @@ foreach(i RANGE 0 ${BUN_OBJECT_LUT_SOURCES_MAX_INDEX})
       bun-codegen-lut-${filename}
     COMMENT
       "Generating ${filename}.lut.h"
+    DEPENDS
+      ${BUN_OBJECT_LUT_SOURCE}
     COMMAND
       ${BUN_EXECUTABLE}
         run
@@ -477,6 +482,8 @@ WEBKIT_ADD_SOURCE_DEPENDENCIES(
   ${CWD}/src/bun.js/bindings/ZigGlobalObject.cpp
   ${CODEGEN_PATH}/ZigGlobalObject.lut.h
 )
+
+
 
 WEBKIT_ADD_SOURCE_DEPENDENCIES(
   ${CWD}/src/bun.js/bindings/InternalModuleRegistry.cpp

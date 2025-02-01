@@ -1,7 +1,8 @@
 // Hardcoded module "node:fs/promises"
-import type { Dirent } from "fs";
+const types = require("node:util/types");
 const EventEmitter = require("node:events");
 const fs = $zig("node_fs_binding.zig", "createBinding");
+const { glob } = require("internal/fs/glob");
 const constants = $processBindingConstants.fs;
 
 var PromisePrototypeFinally = Promise.prototype.finally; //TODO
@@ -21,7 +22,7 @@ const kDeserialize = Symbol("kDeserialize");
 const kEmptyObject = ObjectFreeze({ __proto__: null });
 const kFlag = Symbol("kFlag");
 
-const { validateObject } = require("internal/validators");
+const { validateInteger } = require("internal/validators");
 
 function watch(
   filename: string | Buffer | URL,
@@ -110,41 +111,8 @@ function cp(src, dest, options) {
   return fs.cp(src, dest, options.recursive, options.errorOnExist, options.force ?? true, options.mode);
 }
 
-// TODO: implement this in native code using a Dir Iterator 💀
-// This is currently stubbed for Next.js support.
-class Dir {
-  #entries: Dirent[];
-  #path: string;
-  constructor(e: Dirent[], path: string) {
-    this.#entries = e;
-    this.#path = path;
-  }
-  get path() {
-    return this.#path;
-  }
-  readSync() {
-    return this.#entries.shift() ?? null;
-  }
-  read(c) {
-    if (c) process.nextTick(c, null, this.readSync());
-    return Promise.resolve(this.readSync());
-  }
-  closeSync() {}
-  close(c) {
-    if (c) process.nextTick(c);
-    return Promise.resolve();
-  }
-  *[Symbol.asyncIterator]() {
-    var next;
-    while ((next = this.readSync())) {
-      yield next;
-    }
-  }
-}
-
-async function opendir(dir: string) {
-  const entries = await fs.readdir(dir, { withFileTypes: true });
-  return new Dir(entries, dir);
+async function opendir(dir: string, options) {
+  return new (require("node:fs").Dir)(1, dir, options);
 }
 
 const private_symbols = {
@@ -184,23 +152,25 @@ const exports = {
   fdatasync: asyncWrap(fs.fdatasync, "fdatasync"),
   ftruncate: asyncWrap(fs.ftruncate, "ftruncate"),
   futimes: asyncWrap(fs.futimes, "futimes"),
+  glob,
   lchmod: asyncWrap(fs.lchmod, "lchmod"),
   lchown: asyncWrap(fs.lchown, "lchown"),
   link: asyncWrap(fs.link, "link"),
   lstat: asyncWrap(fs.lstat, "lstat"),
   mkdir: asyncWrap(fs.mkdir, "mkdir"),
   mkdtemp: asyncWrap(fs.mkdtemp, "mkdtemp"),
+  statfs: asyncWrap(fs.statfs, "statfs"),
   open: async (path, flags = "r", mode = 0o666) => {
     return new FileHandle(await fs.open(path, flags, mode), flags);
   },
   read: asyncWrap(fs.read, "read"),
   write: asyncWrap(fs.write, "write"),
   readdir: asyncWrap(fs.readdir, "readdir"),
-  readFile: function (fileHandleOrFdOrPath, ...args) {
+  readFile: async function (fileHandleOrFdOrPath, ...args) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
     return _readFile(fileHandleOrFdOrPath, ...args);
   },
-  writeFile: function (fileHandleOrFdOrPath, ...args: any[]) {
+  writeFile: async function (fileHandleOrFdOrPath, ...args: any[]) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
     if (
       !$isTypedArrayView(args[0]) &&
@@ -209,7 +179,7 @@ const exports = {
     ) {
       $debug("fs.promises.writeFile async iterator slow path!");
       // Node accepts an arbitrary async iterator here
-      // @ts-expect-error TODO
+      // @ts-expect-error
       return writeFileAsyncIterator(fileHandleOrFdOrPath, ...args);
     }
     return _writeFile(fileHandleOrFdOrPath, ...args);
@@ -250,6 +220,7 @@ const exports = {
 };
 export default exports;
 
+// TODO: remove this in favor of just returning js functions that don't check `this`
 function asyncWrap(fn: any, name: string) {
   const wrapped = async function (...args) {
     return fn.$apply(fs, args);
@@ -309,7 +280,6 @@ function asyncWrap(fn: any, name: string) {
       throwEBADFIfNecessary("writeFile", fd);
       let encoding = "utf8";
       let flush = false;
-
       if (options == null || typeof options === "function") {
       } else if (typeof options === "string") {
         encoding = options;
@@ -374,27 +344,44 @@ function asyncWrap(fn: any, name: string) {
       }
     }
 
-    async read(buffer, offset, length, position) {
+    async read(bufferOrParams, offset, length, position) {
       const fd = this[kFd];
-      throwEBADFIfNecessary("read", fd);
+      throwEBADFIfNecessary("fsync", fd);
 
-      isArrayBufferView ??= require("node:util/types").isArrayBufferView;
-      if (!isArrayBufferView(buffer)) {
+      let buffer = bufferOrParams;
+      if (!types.isArrayBufferView(buffer)) {
         // This is fh.read(params)
-        if (buffer != undefined) {
-          validateObject(buffer, "options");
+        if (bufferOrParams !== undefined) {
+          // validateObject(bufferOrParams, 'options', kValidateObjectAllowNullable);
+          if (typeof bufferOrParams !== "object" || $isArray(bufferOrParams)) {
+            throw $ERR_INVALID_ARG_TYPE("options", "object", bufferOrParams);
+          }
         }
-        ({ buffer = Buffer.alloc(16384), offset = 0, length, position = null } = buffer ?? {});
+        ({
+          buffer = Buffer.alloc(16384),
+          offset = 0,
+          length = buffer.byteLength - offset,
+          position = null,
+        } = bufferOrParams ?? kEmptyObject);
       }
-      length = length ?? buffer?.byteLength - offset;
 
-      if (length === 0) {
-        return { buffer, bytesRead: 0 };
+      if (offset !== null && typeof offset === "object") {
+        // This is fh.read(buffer, options)
+        ({ offset = 0, length = buffer?.byteLength - offset, position = null } = offset);
       }
+
+      if (offset == null) {
+        offset = 0;
+      } else {
+        validateInteger(offset, "offset", 0);
+      }
+
+      length ??= buffer?.byteLength - offset;
 
       try {
         this[kRef]();
-        return { buffer, bytesRead: await read(fd, buffer, offset, length, position) };
+        const bytesRead = await read(fd, buffer, offset, length, position);
+        return { buffer, bytesRead };
       } finally {
         this[kUnref]();
       }
@@ -506,17 +493,19 @@ function asyncWrap(fn: any, name: string) {
       const fd = this[kFd];
       throwEBADFIfNecessary("writeFile", fd);
       let encoding: string = "utf8";
+      let signal: AbortSignal | undefined = undefined;
 
       if (options == null || typeof options === "function") {
       } else if (typeof options === "string") {
         encoding = options;
       } else {
         encoding = options?.encoding ?? encoding;
+        signal = options?.signal ?? undefined;
       }
 
       try {
         this[kRef]();
-        return await writeFile(fd, data, { encoding, flag: this[kFlag] });
+        return await writeFile(fd, data, { encoding, flag: this[kFlag], signal });
       } finally {
         this[kUnref]();
       }
@@ -561,27 +550,28 @@ function asyncWrap(fn: any, name: string) {
 
     readableWebStream(options = kEmptyObject) {
       const fd = this[kFd];
-      throwEBADFIfNecessary("fs".createReadStream, fd);
+      throwEBADFIfNecessary("readableWebStream", fd);
 
       return Bun.file(fd).stream();
     }
 
     createReadStream(options = kEmptyObject) {
       const fd = this[kFd];
-      throwEBADFIfNecessary("fs".createReadStream, fd);
-      return require("node:fs").createReadStream("", {
-        fd: this,
+      throwEBADFIfNecessary("createReadStream", fd);
+      return new (require("internal/fs/streams").ReadStream)(undefined, {
         highWaterMark: 64 * 1024,
         ...options,
+        fd: this,
       });
     }
 
     createWriteStream(options = kEmptyObject) {
       const fd = this[kFd];
-      throwEBADFIfNecessary("fs".createWriteStream, fd);
-      return require("node:fs").createWriteStream("", {
-        fd: this,
+      throwEBADFIfNecessary("createWriteStream", fd);
+      return new (require("internal/fs/streams").WriteStream)(undefined, {
+        highWaterMark: 64 * 1024,
         ...options,
+        fd: this,
       });
     }
 
@@ -620,7 +610,7 @@ function throwEBADFIfNecessary(fn: string, fd) {
   }
 }
 
-async function writeFileAsyncIteratorInner(fd, iterable, encoding) {
+async function writeFileAsyncIteratorInner(fd, iterable, encoding, signal: AbortSignal | null) {
   const writer = Bun.file(fd).writer();
 
   const mustRencode = !(encoding === "utf8" || encoding === "utf-8" || encoding === "binary" || encoding === "buffer");
@@ -628,9 +618,15 @@ async function writeFileAsyncIteratorInner(fd, iterable, encoding) {
 
   try {
     for await (let chunk of iterable) {
+      if (signal?.aborted) {
+        throw signal.reason;
+      }
+
       if (mustRencode && typeof chunk === "string") {
         $debug("Re-encoding chunk to", encoding);
         chunk = Buffer.from(chunk, encoding);
+      } else if ($isUndefinedOrNull(chunk)) {
+        throw $ERR_INVALID_ARG_TYPE("write() expects a string, ArrayBufferView, or ArrayBuffer");
       }
 
       const prom = writer.write(chunk);
@@ -649,10 +645,15 @@ async function writeFileAsyncIteratorInner(fd, iterable, encoding) {
 
 async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, flag, mode) {
   let encoding;
+  let signal: AbortSignal | null = null;
   if (typeof optionsOrEncoding === "object") {
     encoding = optionsOrEncoding?.encoding ?? (encoding || "utf8");
     flag = optionsOrEncoding?.flag ?? (flag || "w");
     mode = optionsOrEncoding?.mode ?? (mode || 0o666);
+    signal = optionsOrEncoding?.signal ?? null;
+    if (signal?.aborted) {
+      throw signal.reason;
+    }
   } else if (typeof optionsOrEncoding === "string" || optionsOrEncoding == null) {
     encoding = optionsOrEncoding || "utf8";
     flag ??= "w";
@@ -670,10 +671,15 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
     fdOrPath = await fs.open(fdOrPath, flag, mode);
   }
 
+  if (signal?.aborted) {
+    if (mustClose) await fs.close(fdOrPath);
+    throw signal.reason;
+  }
+
   let totalBytesWritten = 0;
 
   try {
-    totalBytesWritten = await writeFileAsyncIteratorInner(fdOrPath, iterable, encoding);
+    totalBytesWritten = await writeFileAsyncIteratorInner(fdOrPath, iterable, encoding, signal);
   } finally {
     if (mustClose) {
       try {
@@ -682,6 +688,15 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
         }
       } finally {
         await fs.close(fdOrPath);
+        // abort signal shadows other errors
+        if (signal?.aborted) {
+          throw signal.reason;
+        }
+      }
+    } else {
+      // abort signal shadows other errors
+      if (signal?.aborted) {
+        throw signal.reason;
       }
     }
   }

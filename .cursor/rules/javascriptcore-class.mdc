@@ -1,0 +1,378 @@
+---
+description: JavaScript class implemented in C++
+globs: *.cpp
+---
+
+# Implementing JavaScript classes in C++
+
+If there is a publicly accessible Constructor and Prototype, then there are 3 classes:
+
+- IF there are C++ class members we need a destructor, so `class Foo : public JSC::DestructibleObject`, if no C++ class fields (only JS properties) then we don't need a class at all usually. We can instead use JSC::constructEmptyObject(vm, structure) and `putDirectOffset` like in [NodeFSBinding.cpp](mdc:src/bun.js/bindings/NodeFSBinding.cpp).
+- class FooPrototype : public JSC::JSNonFinalObject
+- class FooConstructor : public JSC::InternalFunction
+
+If there is no publicly accessible Constructor, just the Prototype and the class is necessary. In some cases, we can avoid the prototype entirely (but that's rare).
+
+If there are C++ fields on the Foo class, the Foo class will need an iso subspace added to [DOMClientIsoSubspaces.h](mdc:src/bun.js/bindings/webcore/DOMClientIsoSubspaces.h) and [DOMIsoSubspaces.h](mdc:src/bun.js/bindings/webcore/DOMIsoSubspaces.h). Prototype and Constructor do not need subspaces.
+
+Usually you'll need to #include "root.h" at the top of C++ files or you'll get lint errors.
+
+Generally, defining the subspace looks like this:
+```c++
+
+class Foo : public JSC::DestructibleObject {
+
+// ...
+
+ template<typename MyClassT, JSC::SubspaceAccess mode>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return WebCore::subspaceForImpl<MyClassT, WebCore::UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceFor${MyClassT}.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceFor${MyClassT} = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceFo${MyClassT}.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceFor${MyClassT} = std::forward<decltype(space)>(space); });
+    }
+
+
+```
+
+It's better to put it in the .cpp file instead of the .h file, when possible.
+
+## Defining properties
+
+Define properties on the prototype. Use a const HashTableValues like this:
+```C++
+static JSC_DECLARE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckEmail);
+static JSC_DECLARE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckHost);
+static JSC_DECLARE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckIP);
+static JSC_DECLARE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckIssued);
+static JSC_DECLARE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckPrivateKey);
+static JSC_DECLARE_HOST_FUNCTION(jsX509CertificateProtoFuncToJSON);
+static JSC_DECLARE_HOST_FUNCTION(jsX509CertificateProtoFuncToLegacyObject);
+static JSC_DECLARE_HOST_FUNCTION(jsX509CertificateProtoFuncToString);
+static JSC_DECLARE_HOST_FUNCTION(jsX509CertificateProtoFuncVerify);
+
+static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_ca);
+static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_fingerprint);
+static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_fingerprint256);
+static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_fingerprint512);
+static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_subject);
+static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_subjectAltName);
+static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_infoAccess);
+static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_keyUsage);
+static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_issuer);
+static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_issuerCertificate);
+static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_publicKey);
+static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_raw);
+static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_serialNumber);
+static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_validFrom);
+static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_validTo);
+static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_validFromDate);
+static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_validToDate);
+
+static const HashTableValue JSX509CertificatePrototypeTableValues[] = {
+    { "ca"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_ca, 0 } },
+    { "checkEmail"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsX509CertificateProtoFuncCheckEmail, 2 } },
+    { "checkHost"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsX509CertificateProtoFuncCheckHost, 2 } },
+    { "checkIP"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsX509CertificateProtoFuncCheckIP, 1 } },
+    { "checkIssued"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsX509CertificateProtoFuncCheckIssued, 1 } },
+    { "checkPrivateKey"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsX509CertificateProtoFuncCheckPrivateKey, 1 } },
+    { "fingerprint"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_fingerprint, 0 } },
+    { "fingerprint256"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_fingerprint256, 0 } },
+    { "fingerprint512"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_fingerprint512, 0 } },
+    { "infoAccess"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_infoAccess, 0 } },
+    { "issuer"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_issuer, 0 } },
+    { "issuerCertificate"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_issuerCertificate, 0 } },
+    { "keyUsage"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_keyUsage, 0 } },
+    { "publicKey"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_publicKey, 0 } },
+    { "raw"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_raw, 0 } },
+    { "serialNumber"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_serialNumber, 0 } },
+    { "subject"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_subject, 0 } },
+    { "subjectAltName"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_subjectAltName, 0 } },
+    { "toJSON"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsX509CertificateProtoFuncToJSON, 0 } },
+    { "toLegacyObject"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsX509CertificateProtoFuncToLegacyObject, 0 } },
+    { "toString"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsX509CertificateProtoFuncToString, 0 } },
+    { "validFrom"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_validFrom, 0 } },
+    { "validFromDate"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessorOrValue), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_validFromDate, 0 } },
+    { "validTo"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_validTo, 0 } },
+    { "validToDate"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessorOrValue), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_validToDate, 0 } },
+    { "verify"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsX509CertificateProtoFuncVerify, 1 } },
+};
+```
+
+### Creating a prototype class
+
+Follow a pattern like this:
+
+```c++
+class JSX509CertificatePrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+
+    static JSX509CertificatePrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSX509CertificatePrototype* prototype = new (NotNull, allocateCell<JSX509CertificatePrototype>(vm)) JSX509CertificatePrototype(vm, structure);
+        prototype->finishCreation(vm);
+        return prototype;
+    }
+
+    template<typename, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+
+    DECLARE_INFO;
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        auto* structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        structure->setMayBePrototype(true);
+        return structure;
+    }
+
+private:
+    JSX509CertificatePrototype(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM& vm);
+};
+
+const ClassInfo JSX509CertificatePrototype::s_info = { "X509Certificate"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSX509CertificatePrototype) };
+
+void JSX509CertificatePrototype::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    reifyStaticProperties(vm, JSX509Certificate::info(), JSX509CertificatePrototypeTableValues, *this);
+    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+}
+
+} // namespace Bun
+```
+
+### Getter definition:
+```C++
+
+JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_ca, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSX509Certificate* thisObject = jsDynamicCast<JSX509Certificate*>(JSValue::decode(thisValue));
+    if (UNLIKELY(!thisObject)) {
+        Bun::throwThisTypeError(*globalObject, scope, "JSX509Certificate"_s, "ca"_s);
+        return {};
+    }
+
+    return JSValue::encode(jsBoolean(thisObject->view().isCA()));
+}
+```
+
+### Setter definition
+
+```C++
+JSC_DEFINE_CUSTOM_SETTER(jsImportMetaObjectSetter_require, (JSGlobalObject * jsGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName propertyName))
+{
+    ImportMetaObject* thisObject = jsDynamicCast<ImportMetaObject*>(JSValue::decode(thisValue));
+    if (UNLIKELY(!thisObject))
+        return false;
+
+    JSValue value = JSValue::decode(encodedValue);
+    if (!value.isCell()) {
+        // TODO:
+        return true;
+    }
+
+    thisObject->requireProperty.set(thisObject->vm(), thisObject, value.asCell());
+    return true;
+}
+```
+
+### Function definition
+
+```C++
+JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncToJSON, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto *thisObject = jsDynamicCast<MyClassT*>(callFrame->thisValue());
+     if (UNLIKELY(!thisObject)) {
+        Bun::throwThisTypeError(*globalObject, scope, "MyClass"_s, "myFunctionName"_s);
+        return {};
+    }
+
+    return JSValue::encode(functionThatReturnsJSValue(vm, globalObject, thisObject));
+}
+```
+
+
+### Constructor definition
+
+```C++
+
+JSC_DECLARE_HOST_FUNCTION(callStats);
+JSC_DECLARE_HOST_FUNCTION(constructStats);
+
+class JSStatsConstructor final : public JSC::InternalFunction {
+public:
+    using Base = JSC::InternalFunction;
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+
+    static JSStatsConstructor* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject* prototype)
+    {
+        JSStatsConstructor* constructor = new (NotNull, JSC::allocateCell<JSStatsConstructor>(vm)) JSStatsConstructor(vm, structure);
+        constructor->finishCreation(vm, prototype);
+        return constructor;
+    }
+
+    DECLARE_INFO;
+
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.internalFunctionSpace();
+    }
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+    }
+
+private:
+    JSStatsConstructor(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure, callStats, constructStats)
+    {
+    }
+
+    void finishCreation(JSC::VM& vm, JSC::JSObject* prototype)
+    {
+        Base::finishCreation(vm, 0, "Stats"_s);
+        putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+    }
+};
+```
+
+
+### Structure caching
+
+If there's a class, prototype, and constructor:
+
+1. Add the `JSC::LazyClassStructure` to [ZigGlobalObject.h](mdc:src/bun.js/bindings/ZigGlobalObject.h)
+2. Initialize the class structure in [ZigGlobalObject.cpp](mdc:src/bun.js/bindings/ZigGlobalObject.cpp) in `void GlobalObject::finishCreation(VM& vm)`
+3. Visit the class structure in visitChildren in [ZigGlobalObject.cpp](mdc:src/bun.js/bindings/ZigGlobalObject.cpp) in `void GlobalObject::visitChildrenImpl`
+
+```c++
+
+    m_JSStatsBigIntClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::initJSBigIntStatsClassStructure(init);
+        });
+```
+
+If there's only a class, use `JSC::LazyProperty<JSGlobalObject, Structure>` instead of `JSC::LazyClassStructure`. 
+
+Then, implement the function that creates the structure:
+```c++
+void setupX509CertificateClassStructure(LazyClassStructure::Initializer& init)
+{
+    auto* prototypeStructure = JSX509CertificatePrototype::createStructure(init.vm, init.global, init.global->objectPrototype());
+    auto* prototype = JSX509CertificatePrototype::create(init.vm, init.global, prototypeStructure);
+
+    auto* constructorStructure = JSX509CertificateConstructor::createStructure(init.vm, init.global, init.global->functionPrototype());
+
+    auto* constructor = JSX509CertificateConstructor::create(init.vm, init.global, constructorStructure, prototype);
+
+    auto* structure = JSX509Certificate::createStructure(init.vm, init.global, prototype);
+    init.setPrototype(prototype);
+    init.setStructure(structure);
+    init.setConstructor(constructor);
+}
+```
+
+Then, use the structure by calling `globalObject.m_myStructureName.get(globalObject)`
+
+```C++
+JSC_DEFINE_HOST_FUNCTION(x509CertificateConstructorConstruct, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!callFrame->argumentCount()) {
+        Bun::throwError(globalObject, scope, ErrorCode::ERR_MISSING_ARGS, "X509Certificate constructor requires at least one argument"_s);
+        return {};
+    }
+
+    JSValue arg = callFrame->uncheckedArgument(0);
+    if (!arg.isCell()) {
+        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "X509Certificate constructor argument must be a Buffer, TypedArray, or string"_s);
+        return {};
+    }
+
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    Structure* structure = zigGlobalObject->m_JSX509CertificateClassStructure.get(zigGlobalObject);
+    JSValue newTarget = callFrame->newTarget();
+    if (UNLIKELY(zigGlobalObject->m_JSX509CertificateClassStructure.constructor(zigGlobalObject) != newTarget)) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        if (!newTarget) {
+            throwTypeError(globalObject, scope, "Class constructor X509Certificate cannot be invoked without 'new'"_s);
+            return {};
+        }
+
+        auto* functionGlobalObject = defaultGlobalObject(getFunctionRealm(globalObject, newTarget.getObject()));
+        RETURN_IF_EXCEPTION(scope, {});
+        structure = InternalFunction::createSubclassStructure(
+            globalObject, newTarget.getObject(), functionGlobalObject->NodeVMScriptStructure());
+        scope.release();
+    }
+
+    return JSValue::encode(createX509Certificate(vm, globalObject, structure, arg));
+}
+```
+
+### Expose to Zig
+
+To expose the constructor to zig:
+
+```c++
+extern "C" JSC::EncodedJSValue Bun__JSBigIntStatsObjectConstructor(Zig::GlobalObject* globalobject)
+{
+    return JSValue::encode(globalobject->m_JSStatsBigIntClassStructure.constructor(globalobject));
+}
+```
+
+Zig:
+```zig
+extern "C" fn Bun__JSBigIntStatsObjectConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+pub const getBigIntStatsConstructor =  Bun__JSBigIntStatsObjectConstructor;
+```
+
+To create an object (instance) of a JS class defined in C++ from Zig, follow the __toJS convention like this:
+```c++
+// X509* is whatever we need to create the object
+extern "C" EncodedJSValue Bun__X509__toJS(Zig::GlobalObject* globalObject, X509* cert)
+{
+    // ... implementation details
+    auto* structure = globalObject->m_JSX509CertificateClassStructure.get(globalObject);
+    return JSValue::encode(JSX509Certificate::create(globalObject->vm(), structure, globalObject, WTFMove(cert)));
+}
+```
+
+And from Zig:
+```zig
+const X509 = opaque {
+    // ... class 
+
+    extern fn Bun__X509__toJS(*JSC.JSGlobalObject, *X509) JSC.JSValue;
+    
+    pub fn toJS(this: *X509, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        return Bun__X509__toJS(globalObject, this);
+    }
+};
+```

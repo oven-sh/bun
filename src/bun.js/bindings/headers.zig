@@ -90,7 +90,6 @@ pub extern fn ZigString__toRangeErrorInstance(arg0: [*c]const ZigString, arg1: *
 pub extern fn ZigString__toSyntaxErrorInstance(arg0: [*c]const ZigString, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn ZigString__toTypeErrorInstance(arg0: [*c]const ZigString, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn WebCore__DOMURL__cast_(JSValue0: JSC__JSValue, arg1: *bindings.VM) ?*bindings.DOMURL;
-pub extern fn WebCore__DOMURL__fileSystemPath(arg0: ?*bindings.DOMURL) BunString;
 pub extern fn WebCore__DOMURL__href_(arg0: ?*bindings.DOMURL, arg1: [*c]ZigString) void;
 pub extern fn WebCore__DOMURL__pathname_(arg0: ?*bindings.DOMURL, arg1: [*c]ZigString) void;
 pub extern fn WebCore__DOMFormData__append(arg0: ?*bindings.DOMFormData, arg1: [*c]ZigString, arg2: [*c]ZigString) void;
@@ -231,7 +230,6 @@ pub extern fn JSC__JSValue__isAnyError(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isAnyInt(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isBigInt(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isBigInt32(JSValue0: JSC__JSValue) bool;
-pub extern fn JSC__JSValue__isBoolean(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isCallable(JSValue0: JSC__JSValue, arg1: *bindings.VM) bool;
 pub extern fn JSC__JSValue__isClass(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) bool;
 pub extern fn JSC__JSValue__isConstructor(JSValue0: JSC__JSValue) bool;
@@ -315,7 +313,7 @@ pub extern fn JSC__VM__setExecutionTimeLimit(arg0: *bindings.VM, arg1: f64) void
 pub extern fn JSC__VM__shrinkFootprint(arg0: *bindings.VM) void;
 pub extern fn JSC__VM__throwError(arg0: *bindings.VM, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) void;
 pub extern fn JSC__VM__whenIdle(arg0: *bindings.VM, ArgFn1: ?*const fn (...) callconv(.C) void) void;
-
+pub extern fn JSC__VM__performOpportunisticallyScheduledTasks(arg0: *bindings.VM, arg1: f64) void;
 pub extern fn FFI__ptr__put(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) void;
 pub extern fn Reader__u8__put(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) void;
 pub extern fn Reader__u16__put(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) void;

@@ -732,7 +732,7 @@ pub const OperatingSystem = enum(u16) {
         var operating_system = negatable(.none);
         var iter = args.ptr[0].arrayIterator(globalObject);
         while (iter.next()) |item| {
-            const slice = item.toSlice(globalObject, bun.default_allocator);
+            const slice = try item.toSlice(globalObject, bun.default_allocator);
             defer slice.deinit();
             operating_system.apply(slice.slice());
             if (globalObject.hasException()) return .zero;
@@ -849,7 +849,7 @@ pub const Architecture = enum(u16) {
         var architecture = negatable(.none);
         var iter = args.ptr[0].arrayIterator(globalObject);
         while (iter.next()) |item| {
-            const slice = item.toSlice(globalObject, bun.default_allocator);
+            const slice = try item.toSlice(globalObject, bun.default_allocator);
             defer slice.deinit();
             architecture.apply(slice.slice());
             if (globalObject.hasException()) return .zero;

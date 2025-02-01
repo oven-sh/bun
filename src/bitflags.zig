@@ -7,6 +7,8 @@ pub fn Bitflags(comptime T: type) type {
     const IntRepresentingNumOfBits = std.math.IntFittingRange(0, IntTypeInfo.Int.bits);
 
     return struct {
+        pub const IMPL_BITFLAGS: u0 = 0;
+
         pub inline fn empty() T {
             return @bitCast(@as(IntType, 0));
         }
@@ -35,6 +37,10 @@ pub fn Bitflags(comptime T: type) type {
 
         pub fn bitwiseAnd(lhs: T, rhs: T) T {
             return @bitCast(@as(IntType, asBits(lhs) & asBits(rhs)));
+        }
+
+        pub inline fn intersect(lhs: T, rhs: T) T {
+            return bitwiseAnd(lhs, rhs);
         }
 
         pub inline fn insert(this: *T, other: T) void {

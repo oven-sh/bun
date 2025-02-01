@@ -1395,7 +1395,7 @@ pub const InternalDNS = struct {
         // https://github.com/nodejs/node/issues/33816
         // https://github.com/aio-libs/aiohttp/issues/5357
         // https://github.com/libuv/libuv/issues/2225
-        .flags = if (Environment.isPosix) bun.C.netdb.AI_ADDRCONFIG else 0,
+        .flags = if (Environment.isPosix) bun.C.translated.AI_ADDRCONFIG else 0,
         .next = null,
         .protocol = 0,
         .socktype = std.c.SOCK.STREAM,
@@ -1691,7 +1691,7 @@ pub const InternalDNS = struct {
         defer hostname_slice.deinit();
 
         if (hostname_or_url.isString()) {
-            hostname_slice = hostname_or_url.toSlice(globalThis, bun.default_allocator);
+            hostname_slice = try hostname_or_url.toSlice(globalThis, bun.default_allocator);
         } else {
             return globalThis.throwInvalidArguments("hostname must be a string", .{});
         }

@@ -1,5 +1,4 @@
 const std = @import("std");
-const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 const StaticExport = @import("./bindings/static_export.zig");
 const bun = @import("root").bun;
 const string = bun.string;
@@ -84,7 +83,7 @@ const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
 const PackageManager = @import("../install/install.zig").PackageManager;
 const IPC = @import("ipc.zig");
 const DNSResolver = @import("api/bun/dns_resolver.zig").DNSResolver;
-pub const GenericWatcher = @import("../watcher.zig");
+const Watcher = bun.Watcher;
 
 const ModuleLoader = JSC.ModuleLoader;
 const FetchFlags = JSC.FetchFlags;
@@ -629,14 +628,14 @@ pub const ImportWatcher = union(enum) {
         }
     }
 
-    pub inline fn watchlist(this: ImportWatcher) GenericWatcher.WatchList {
+    pub inline fn watchlist(this: ImportWatcher) Watcher.WatchList {
         return switch (this) {
             inline .hot, .watch => |w| w.watchlist,
             else => .{},
         };
     }
 
-    pub inline fn indexOf(this: ImportWatcher, hash: GenericWatcher.HashType) ?u32 {
+    pub inline fn indexOf(this: ImportWatcher, hash: Watcher.HashType) ?u32 {
         return switch (this) {
             inline .hot, .watch => |w| w.indexOf(hash),
             else => null,
@@ -647,7 +646,7 @@ pub const ImportWatcher = union(enum) {
         this: ImportWatcher,
         fd: StoredFileDescriptorType,
         file_path: string,
-        hash: GenericWatcher.HashType,
+        hash: Watcher.HashType,
         loader: options.Loader,
         dir_fd: StoredFileDescriptorType,
         package_json: ?*PackageJSON,
@@ -784,7 +783,7 @@ pub const VirtualMachine = struct {
     entry_point: ServerEntryPoint = undefined,
     origin: URL = URL{},
     node_fs: ?*Node.NodeFS = null,
-    timer: Bun.Timer.All = .{},
+    timer: Bun.Timer.All,
     event_loop_handle: ?*PlatformEventLoop = null,
     pending_unref_counter: i32 = 0,
     preload: []const string = &[_][]const u8{},
@@ -906,6 +905,8 @@ pub const VirtualMachine = struct {
 
     body_value_hive_allocator: BodyValueHiveAllocator = undefined,
 
+    is_inside_deferred_task_queue: bool = false,
+
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
 
     pub const OnException = fn (*ZigException) void;
@@ -913,6 +914,8 @@ pub const VirtualMachine = struct {
     pub fn initRequestBodyValue(this: *VirtualMachine, body: JSC.WebCore.Body.Value) !*BodyValueRef {
         return BodyValueRef.init(body, &this.body_value_hive_allocator);
     }
+
+    pub threadlocal var is_bundler_thread_for_bytecode_cache: bool = false;
 
     pub fn uwsLoop(this: *const VirtualMachine) *uws.Loop {
         if (comptime Environment.isPosix) {
@@ -1906,6 +1909,7 @@ pub const VirtualMachine = struct {
             .transpiler = transpiler,
             .console = console,
             .log = log,
+            .timer = JSC.BunTimer.All.init(),
             .origin = transpiler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
@@ -1928,6 +1932,7 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.next_immediate_tasks = EventLoop.Queue.init(
             default_allocator,
         );
+        vm.regular_event_loop.virtual_machine = vm;
         vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
         vm.regular_event_loop.concurrent_tasks = .{};
         vm.event_loop = &vm.regular_event_loop;
@@ -1952,6 +1957,7 @@ pub const VirtualMachine = struct {
             VMHolder.main_thread_vm = vm;
         }
         vm.global = ZigGlobalObject.create(
+            vm,
             vm.console,
             if (opts.is_main_thread) -1 else std.math.maxInt(i32),
             false,
@@ -1959,8 +1965,8 @@ pub const VirtualMachine = struct {
             null,
         );
         vm.regular_event_loop.global = vm.global;
-        vm.regular_event_loop.virtual_machine = vm;
         vm.jsc = vm.global.vm();
+        uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc;
 
         vm.configureDebugger(opts.debugger);
         vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
@@ -2023,7 +2029,11 @@ pub const VirtualMachine = struct {
             .transpiler = transpiler,
             .console = console,
             .log = log,
+
+            .timer = JSC.BunTimer.All.init(),
+
             .origin = transpiler.options.origin,
+
             .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
             .macros = MacroMap.init(allocator),
@@ -2044,6 +2054,7 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.next_immediate_tasks = EventLoop.Queue.init(
             default_allocator,
         );
+        vm.regular_event_loop.virtual_machine = vm;
         vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
         vm.regular_event_loop.concurrent_tasks = .{};
         vm.event_loop = &vm.regular_event_loop;
@@ -2063,6 +2074,7 @@ pub const VirtualMachine = struct {
         vm.transpiler.macro_context = js_ast.Macro.MacroContext.init(&vm.transpiler);
 
         vm.global = ZigGlobalObject.create(
+            vm,
             vm.console,
             if (opts.is_main_thread) -1 else std.math.maxInt(i32),
             opts.smol,
@@ -2070,8 +2082,8 @@ pub const VirtualMachine = struct {
             null,
         );
         vm.regular_event_loop.global = vm.global;
-        vm.regular_event_loop.virtual_machine = vm;
         vm.jsc = vm.global.vm();
+        uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc;
         vm.smol = opts.smol;
         vm.dns_result_order = opts.dns_result_order;
 
@@ -2177,7 +2189,10 @@ pub const VirtualMachine = struct {
             .transpiler = transpiler,
             .console = console,
             .log = log,
+
+            .timer = JSC.BunTimer.All.init(),
             .origin = transpiler.options.origin,
+
             .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
             .macros = MacroMap.init(allocator),
@@ -2200,6 +2215,7 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.next_immediate_tasks = EventLoop.Queue.init(
             default_allocator,
         );
+        vm.regular_event_loop.virtual_machine = vm;
         vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
         vm.regular_event_loop.concurrent_tasks = .{};
         vm.event_loop = &vm.regular_event_loop;
@@ -2224,6 +2240,7 @@ pub const VirtualMachine = struct {
         vm.transpiler.macro_context = js_ast.Macro.MacroContext.init(&vm.transpiler);
 
         vm.global = ZigGlobalObject.create(
+            vm,
             vm.console,
             @as(i32, @intCast(worker.execution_context_id)),
             worker.mini,
@@ -2231,8 +2248,8 @@ pub const VirtualMachine = struct {
             worker.cpp_worker,
         );
         vm.regular_event_loop.global = vm.global;
-        vm.regular_event_loop.virtual_machine = vm;
         vm.jsc = vm.global.vm();
+        uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc;
         vm.transpiler.setAllocator(allocator);
         vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
 
@@ -2269,6 +2286,7 @@ pub const VirtualMachine = struct {
             .transpiler = transpiler,
             .console = console,
             .log = log,
+            .timer = JSC.BunTimer.All.init(),
             .origin = transpiler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
@@ -2290,9 +2308,11 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.next_immediate_tasks = EventLoop.Queue.init(
             default_allocator,
         );
+        vm.regular_event_loop.virtual_machine = vm;
         vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
         vm.regular_event_loop.concurrent_tasks = .{};
         vm.event_loop = &vm.regular_event_loop;
+        vm.eventLoop().ensureWaker();
 
         vm.transpiler.macro_context = null;
         vm.transpiler.resolver.store_fd = opts.store_fd;
@@ -2308,7 +2328,6 @@ pub const VirtualMachine = struct {
 
         vm.transpiler.macro_context = js_ast.Macro.MacroContext.init(&vm.transpiler);
 
-        vm.regular_event_loop.virtual_machine = vm;
         vm.smol = opts.smol;
 
         if (opts.smol)
@@ -3092,7 +3111,7 @@ pub const VirtualMachine = struct {
     pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
         this.has_loaded = false;
         this.main = entry_path;
-        this.main_hash = GenericWatcher.getHash(entry_path);
+        this.main_hash = Watcher.getHash(entry_path);
 
         try this.ensureDebugger(true);
 
@@ -3128,7 +3147,7 @@ pub const VirtualMachine = struct {
     pub fn reloadEntryPointForTestRunner(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
         this.has_loaded = false;
         this.main = entry_path;
-        this.main_hash = GenericWatcher.getHash(entry_path);
+        this.main_hash = Watcher.getHash(entry_path);
 
         this.eventLoop().ensureWaker();
 
@@ -3311,10 +3330,6 @@ pub const VirtualMachine = struct {
         comptime allow_ansi_color: bool,
         comptime allow_side_effects: bool,
     ) void {
-        if (comptime JSC.is_bindgen) {
-            return;
-        }
-
         var was_internal = false;
 
         defer {
@@ -4518,7 +4533,6 @@ pub const VirtualMachine = struct {
     }
 };
 
-pub const Watcher = GenericWatcher.NewWatcher;
 pub const HotReloader = NewHotReloader(VirtualMachine, JSC.EventLoop, false);
 pub const WatchReloader = NewHotReloader(VirtualMachine, JSC.EventLoop, true);
 extern fn BunDebugger__willHotReload() void;
@@ -4746,9 +4760,9 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
         pub noinline fn onFileUpdate(
             this: *@This(),
-            events: []GenericWatcher.WatchEvent,
+            events: []Watcher.WatchEvent,
             changed_files: []?[:0]u8,
-            watchlist: GenericWatcher.WatchList,
+            watchlist: Watcher.WatchList,
         ) void {
             const slice = watchlist.slice();
             const file_paths = slice.items(.file_path);
@@ -4856,7 +4870,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         _ = this.ctx.bustDirCache(strings.withoutTrailingSlashWindowsPath(file_path));
 
                         if (entries_option) |dir_ent| {
-                            var last_file_hash: GenericWatcher.HashType = std.math.maxInt(GenericWatcher.HashType);
+                            var last_file_hash: Watcher.HashType = std.math.maxInt(Watcher.HashType);
 
                             for (affected) |changed_name_| {
                                 const changed_name: []const u8 = if (comptime Environment.isMac)
@@ -4869,14 +4883,14 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                 var prev_entry_id: usize = std.math.maxInt(usize);
                                 if (loader != .file) {
                                     var path_string: bun.PathString = undefined;
-                                    var file_hash: GenericWatcher.HashType = last_file_hash;
+                                    var file_hash: Watcher.HashType = last_file_hash;
                                     const abs_path: string = brk: {
                                         if (dir_ent.entries.get(@as([]const u8, @ptrCast(changed_name)))) |file_ent| {
                                             // reset the file descriptor
                                             file_ent.entry.cache.fd = .zero;
                                             file_ent.entry.need_stat = true;
                                             path_string = file_ent.entry.abs_path;
-                                            file_hash = GenericWatcher.getHash(path_string.slice());
+                                            file_hash = Watcher.getHash(path_string.slice());
                                             for (hashes, 0..) |hash, entry_id| {
                                                 if (hash == file_hash) {
                                                     if (file_descriptors[entry_id] != .zero) {
@@ -4904,7 +4918,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
                                             @memcpy(_on_file_update_path_buf[file_path_without_trailing_slash.len..][0..changed_name.len], changed_name);
                                             const path_slice = _on_file_update_path_buf[0 .. file_path_without_trailing_slash.len + changed_name.len + 1];
-                                            file_hash = GenericWatcher.getHash(path_slice);
+                                            file_hash = Watcher.getHash(path_slice);
                                             break :brk path_slice;
                                         }
                                     };

@@ -8,6 +8,8 @@ const getSignErrorCodeAndMessage = @import("./error.zig").getSignErrorCodeAndMes
 const S3Credentials = @import("./credentials.zig").S3Credentials;
 const picohttp = bun.picohttp;
 const ACL = @import("./acl.zig").ACL;
+const StorageClass = @import("./storage_class.zig").StorageClass;
+
 pub const S3StatResult = union(enum) {
     success: struct {
         size: usize = 0,
@@ -333,6 +335,7 @@ pub const S3SimpleRequestOptions = struct {
     proxy_url: ?[]const u8 = null,
     range: ?[]const u8 = null,
     acl: ?ACL = null,
+    storage_class: ?StorageClass = null,
 };
 
 pub fn executeSimpleS3Request(
@@ -347,6 +350,7 @@ pub fn executeSimpleS3Request(
         .search_params = options.search_params,
         .content_disposition = options.content_disposition,
         .acl = options.acl,
+        .storage_class = options.storage_class,
     }, null) catch |sign_err| {
         if (options.range) |range_| bun.default_allocator.free(range_);
         const error_code_and_message = getSignErrorCodeAndMessage(sign_err);

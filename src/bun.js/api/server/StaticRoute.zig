@@ -106,36 +106,6 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSErro
         });
     }
 
-    if (!bun.CLI.Command.get().bundler_options.experimental.html) {
-        return globalThis.throwInvalidArguments(
-            \\'static' expects a Record<string, Response | HTMLBundle>
-            \\
-            \\To bundle frontend apps on-demand with Bun.serve(), pass the --experimental-html flag and import HTML files.
-            \\
-            \\Example:
-            \\
-            \\```js
-            \\import { serve } from "bun";
-            \\import app from "./app.html";
-            \\
-            \\serve({
-            \\  static: {
-            \\    "/index.json": Response.json({ message: "Hello World" }),
-            \\    "/app": app,
-            \\  },
-            \\  
-            \\  fetch(request) {
-            \\    return new Response("fallback response");
-            \\  },
-            \\});
-            \\```
-            \\
-            \\See https://bun.sh/docs/api/http for more information.
-        ,
-            .{},
-        );
-    }
-
     return globalThis.throwInvalidArguments(
         \\'static' expects a Record<string, Response | HTMLBundle>
         \\
@@ -152,7 +122,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSErro
         \\    "/index.json": Response.json({ message: "Hello World" }),
         \\    "/app": app,
         \\  },
-        \\  
+        \\
         \\  fetch(request) {
         \\    return new Response("fallback response");
         \\  },

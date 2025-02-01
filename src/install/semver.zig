@@ -432,8 +432,7 @@ pub const String = extern struct {
     }
 
     pub fn toJS(this: *const String, buffer: []const u8, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        var str = bun.String.init(this.slice(buffer));
-        return str.transferToJS(globalThis);
+        return bun.String.createUTF8ForJS(globalThis, this.slice(buffer));
     }
 
     // String must be a pointer because we reference it as a slice. It will become a dead pointer if it is copied.
@@ -1641,7 +1640,7 @@ pub const Version = extern struct {
                                 result.wildcard = Query.Token.Wildcard.patch;
                                 part_i = 3;
                             },
-                            else => unreachable,
+                            else => {},
                         }
                     }
                 },

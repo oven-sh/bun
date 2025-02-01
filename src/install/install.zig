@@ -25,6 +25,7 @@ const File = bun.sys.File;
 const JSLexer = bun.js_lexer;
 const logger = bun.logger;
 const OOM = bun.OOM;
+const FD = bun.FD;
 
 const js_parser = bun.js_parser;
 const JSON = bun.JSON;
@@ -65,6 +66,7 @@ threadlocal var initialized_store = false;
 const Futex = @import("../futex.zig");
 
 pub const Lockfile = @import("./lockfile.zig");
+pub const TextLockfile = @import("./bun.lock.zig");
 pub const PatchedDep = Lockfile.PatchedDep;
 const Walker = @import("../walker_skippable.zig");
 
@@ -713,7 +715,7 @@ pub const Task = struct {
                     if (pt.callback.apply.logger.errors > 0) {
                         defer pt.callback.apply.logger.deinit();
                         // this.log.addErrorFmt(null, logger.Loc.Empty, bun.default_allocator, "failed to apply patch: {}", .{e}) catch unreachable;
-                        pt.callback.apply.logger.print(Output.writer()) catch {};
+                        pt.callback.apply.logger.print(Output.errorWriter()) catch {};
                     }
                 }
             }
@@ -1317,6 +1319,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             fail: struct {
                 err: anyerror,
                 step: Step,
+                debug_trace: if (Environment.isDebug) bun.crash_handler.StoredTrace else void,
 
                 pub inline fn isPackageMissingFromCache(this: @This()) bool {
                     return (this.err == error.FileNotFound or this.err == error.ENOENT) and this.step == .opening_cache_dir;
@@ -1327,11 +1330,16 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 return .{ .success = {} };
             }
 
-            pub inline fn fail(err: anyerror, step: Step) Result {
+            pub inline fn fail(err: anyerror, step: Step, trace: ?*std.builtin.StackTrace) Result {
                 return .{
                     .fail = .{
                         .err = err,
                         .step = step,
+                        .debug_trace = if (Environment.isDebug)
+                            if (trace) |t|
+                                bun.crash_handler.StoredTrace.from(t)
+                            else
+                                bun.crash_handler.StoredTrace.capture(@returnAddress()),
                     },
                 };
             }
@@ -1358,6 +1366,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             linking_dependency,
             patching,
 
+            /// "error: failed {s} for package"
             pub fn name(this: Step) []const u8 {
                 return switch (this) {
                     .copyfile, .copying_files => "copying files from cache to destination",
@@ -1376,18 +1385,14 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             Method.hardlink;
 
         fn installWithClonefileEachDir(this: *@This(), destination_dir: std.fs.Dir) !Result {
-            var cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result{
-                .fail = .{ .err = err, .step = .opening_cache_dir },
-            };
+            var cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result.fail(err, .opening_cache_dir, @errorReturnTrace());
             defer cached_package_dir.close();
             var walker_ = Walker.walk(
                 cached_package_dir,
                 this.allocator,
                 &[_]bun.OSPathSlice{},
                 &[_]bun.OSPathSlice{},
-            ) catch |err| return Result{
-                .fail = .{ .err = err, .step = .opening_cache_dir },
-            };
+            ) catch |err| return Result.fail(err, .opening_cache_dir, @errorReturnTrace());
             defer walker_.deinit();
 
             const FileCopier = struct {
@@ -1436,22 +1441,15 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 }
             };
 
-            var subdir = destination_dir.makeOpenPath(bun.span(this.destination_dir_subpath), .{}) catch |err| return Result{
-                .fail = .{ .err = err, .step = .opening_dest_dir },
-            };
-
+            var subdir = destination_dir.makeOpenPath(bun.span(this.destination_dir_subpath), .{}) catch |err| return Result.fail(err, .opening_dest_dir, @errorReturnTrace());
             defer subdir.close();
 
             this.file_count = FileCopier.copy(
                 subdir,
                 &walker_,
-            ) catch |err| return Result{
-                .fail = .{ .err = err, .step = .copying_files },
-            };
+            ) catch |err| return Result.fail(err, .copying_files, @errorReturnTrace());
 
-            return Result{
-                .success = {},
-            };
+            return .{ .success = {} };
         }
 
         // https://www.unix.com/man-page/mojave/2/fclonefileat/
@@ -1520,7 +1518,8 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 else
                     bun.openDir(this.cache_dir, this.cache_dir_subpath)
             else
-                bun.openDir(this.cache_dir, this.cache_dir_subpath)) catch |err| return Result.fail(err, .opening_cache_dir);
+                bun.openDir(this.cache_dir, this.cache_dir_subpath)) catch |err|
+                return Result.fail(err, .opening_cache_dir, @errorReturnTrace());
 
             state.walker = Walker.walk(
                 state.cached_package_dir,
@@ -1539,7 +1538,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 }) catch |err| {
                     state.cached_package_dir.close();
                     state.walker.deinit();
-                    return Result.fail(err, .opening_dest_dir);
+                    return Result.fail(err, .opening_dest_dir, @errorReturnTrace());
                 };
                 return Result.success();
             }
@@ -1550,7 +1549,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
                 state.cached_package_dir.close();
                 state.walker.deinit();
-                return Result.fail(err, .opening_dest_dir);
+                return Result.fail(err, .opening_dest_dir, null);
             }
 
             var i: usize = dest_path_length;
@@ -1565,11 +1564,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             state.buf[i] = 0;
             const fullpath = state.buf[0..i :0];
 
-            _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false).unwrap() catch |err| {
-                state.cached_package_dir.close();
-                state.walker.deinit();
-                return Result.fail(err, .copying_files);
-            };
+            _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false);
             state.to_copy_buf = state.buf[fullpath.len..];
 
             const cache_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(state.cached_package_dir.fd, &state.buf2, state.buf2.len, 0);
@@ -1578,7 +1573,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
                 state.cached_package_dir.close();
                 state.walker.deinit();
-                return Result.fail(err, .copying_files);
+                return Result.fail(err, .copying_files, null);
             }
             const cache_path = state.buf2[0..cache_path_length];
             var to_copy_buf2: []u16 = undefined;
@@ -1718,7 +1713,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 if (Environment.isWindows) &state.buf else void{},
                 if (Environment.isWindows) state.to_copy_buf2 else void{},
                 if (Environment.isWindows) &state.buf2 else void{},
-            ) catch |err| return Result.fail(err, .copying_files);
+            ) catch |err| return Result.fail(err, .copying_files, @errorReturnTrace());
 
             return Result.success();
         }
@@ -1959,12 +1954,13 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
                 if (comptime Environment.isWindows) {
                     if (err == error.FailedToCopyFile) {
-                        return Result.fail(err, .copying_files);
+                        return Result.fail(err, .copying_files, @errorReturnTrace());
                     }
                 } else if (err == error.NotSameFileSystem or err == error.ENXIO) {
                     return err;
                 }
-                return Result.fail(err, .copying_files);
+
+                return Result.fail(err, .copying_files, @errorReturnTrace());
             };
 
             return Result.success();
@@ -2099,12 +2095,12 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             ) catch |err| {
                 if (comptime Environment.isWindows) {
                     if (err == error.FailedToCopyFile) {
-                        return Result.fail(err, .copying_files);
+                        return Result.fail(err, .copying_files, @errorReturnTrace());
                     }
                 } else if (err == error.NotSameFileSystem or err == error.ENXIO) {
                     return err;
                 }
-                return Result.fail(err, .copying_files);
+                return Result.fail(err, .copying_files, @errorReturnTrace());
             };
 
             return Result.success();
@@ -2260,7 +2256,8 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             // cache_dir_subpath in here is actually the full path to the symlink pointing to the linked package
             const symlinked_path = this.cache_dir_subpath;
             var to_buf: bun.PathBuffer = undefined;
-            const to_path = this.cache_dir.realpath(symlinked_path, &to_buf) catch |err| return Result.fail(err, .linking_dependency);
+            const to_path = this.cache_dir.realpath(symlinked_path, &to_buf) catch |err|
+                return Result.fail(err, .linking_dependency, @errorReturnTrace());
 
             const dest = std.fs.path.basename(dest_path);
             // When we're linking on Windows, we want to avoid keeping the source directory handle open
@@ -2270,7 +2267,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 if (dest_path_length == 0) {
                     const e = bun.windows.Win32Error.get();
                     const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
-                    return Result.fail(err, .linking_dependency);
+                    return Result.fail(err, .linking_dependency, null);
                 }
 
                 var i: usize = dest_path_length;
@@ -2286,9 +2283,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                     wbuf[i] = 0;
                     const fullpath = wbuf[0..i :0];
 
-                    _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false).unwrap() catch |err| {
-                        return Result.fail(err, .linking_dependency);
-                    };
+                    _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false);
                 }
 
                 const res = strings.copyUTF16IntoUTF8(dest_buf[0..], []const u16, wbuf[0..i], true);
@@ -2319,25 +2314,25 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                             }
                         }
 
-                        return Result.fail(bun.errnoToZigErr(err.errno), .linking_dependency);
+                        return Result.fail(bun.errnoToZigErr(err.errno), .linking_dependency, null);
                     },
                     .result => {},
                 }
             } else {
                 var dest_dir = if (subdir) |dir| brk: {
-                    break :brk bun.MakePath.makeOpenPath(destination_dir, dir, .{}) catch |err| return Result.fail(err, .linking_dependency);
+                    break :brk bun.MakePath.makeOpenPath(destination_dir, dir, .{}) catch |err| return Result.fail(err, .linking_dependency, @errorReturnTrace());
                 } else destination_dir;
                 defer {
                     if (subdir != null) dest_dir.close();
                 }
 
-                const dest_dir_path = bun.getFdPath(dest_dir.fd, &dest_buf) catch |err| return Result.fail(err, .linking_dependency);
+                const dest_dir_path = bun.getFdPath(dest_dir.fd, &dest_buf) catch |err| return Result.fail(err, .linking_dependency, @errorReturnTrace());
 
                 const target = Path.relative(dest_dir_path, to_path);
-                std.posix.symlinkat(target, dest_dir.fd, dest) catch |err| return Result.fail(err, .linking_dependency);
+                std.posix.symlinkat(target, dest_dir.fd, dest) catch |err| return Result.fail(err, .linking_dependency, null);
             }
 
-            if (isDanglingSymlink(symlinked_path)) return Result.fail(error.DanglingSymlink, .linking_dependency);
+            if (isDanglingSymlink(symlinked_path)) return Result.fail(error.DanglingSymlink, .linking_dependency, @errorReturnTrace());
 
             return Result.success();
         }
@@ -2440,8 +2435,8 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                                     supported_method = .copyfile;
                                     supported_method_to_use = .copyfile;
                                 },
-                                error.FileNotFound => return Result.fail(error.FileNotFound, .opening_cache_dir),
-                                else => return Result.fail(err, .copying_files),
+                                error.FileNotFound => return Result.fail(error.FileNotFound, .opening_cache_dir, @errorReturnTrace()),
+                                else => return Result.fail(err, .copying_files, @errorReturnTrace()),
                             }
                         }
                     }
@@ -2456,8 +2451,8 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                                     supported_method = .copyfile;
                                     supported_method_to_use = .copyfile;
                                 },
-                                error.FileNotFound => return Result.fail(error.FileNotFound, .opening_cache_dir),
-                                else => return Result.fail(err, .copying_files),
+                                error.FileNotFound => return Result.fail(error.FileNotFound, .opening_cache_dir, @errorReturnTrace()),
+                                else => return Result.fail(err, .copying_files, @errorReturnTrace()),
                             }
                         }
                     }
@@ -2475,16 +2470,16 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                         }
 
                         return switch (err) {
-                            error.FileNotFound => Result.fail(error.FileNotFound, .opening_cache_dir),
-                            else => Result.fail(err, .copying_files),
+                            error.FileNotFound => Result.fail(error.FileNotFound, .opening_cache_dir, @errorReturnTrace()),
+                            else => Result.fail(err, .copying_files, @errorReturnTrace()),
                         };
                     }
                 },
                 .symlink => {
                     return this.installWithSymlink(destination_dir) catch |err| {
                         return switch (err) {
-                            error.FileNotFound => Result.fail(err, .opening_cache_dir),
-                            else => Result.fail(err, .copying_files),
+                            error.FileNotFound => Result.fail(err, .opening_cache_dir, @errorReturnTrace()),
+                            else => Result.fail(err, .copying_files, @errorReturnTrace()),
                         };
                     };
                 },
@@ -7184,7 +7179,8 @@ pub const PackageManager = struct {
         ca: []const string = &.{},
         ca_file_name: string = &.{},
 
-        save_text_lockfile: bool = false,
+        // if set to `false` in bunfig, save a binary lockfile
+        save_text_lockfile: ?bool = null,
 
         lockfile_only: bool = false,
 
@@ -7438,6 +7434,12 @@ pub const PackageManager = struct {
 
                 if (config.cache_directory) |cache_dir| {
                     this.cache_directory = cache_dir;
+                }
+
+                if (config.ignore_scripts) |ignore_scripts| {
+                    if (ignore_scripts) {
+                        this.do.run_scripts = false;
+                    }
                 }
 
                 this.explicit_global_directory = config.global_dir orelse this.explicit_global_directory;
@@ -13379,7 +13381,7 @@ pub const PackageManager = struct {
                             const dirname = std.fs.path.dirname(this.node_modules.path.items) orelse this.node_modules.path.items;
 
                             installer.cache_dir = this.root_node_modules_folder.openDir(dirname, .{ .iterate = true, .access_sub_paths = true }) catch |err|
-                                break :result PackageInstall.Result.fail(err, .opening_cache_dir);
+                                break :result PackageInstall.Result.fail(err, .opening_cache_dir, @errorReturnTrace());
 
                             const result = if (resolution.tag == .root)
                                 installer.installFromLink(this.skip_delete, destination_dir)
@@ -13535,10 +13537,18 @@ pub const PackageManager = struct {
 
                             this.summary.fail += 1;
                         } else {
-                            Output.prettyErrorln(
-                                "<r><red>error<r>: <b><red>{s}<r> installing <b>{s}<r> ({s})",
-                                .{ @errorName(cause.err), this.names[package_id].slice(this.lockfile.buffers.string_bytes.items), install_result.fail.step.name() },
+                            Output.err(
+                                cause.err,
+                                "failed {s} for package <b>{s}<r>",
+                                .{
+                                    install_result.fail.step.name(),
+                                    this.names[package_id].slice(this.lockfile.buffers.string_bytes.items),
+                                },
                             );
+                            if (Environment.isDebug) {
+                                var t = cause.debug_trace;
+                                bun.crash_handler.dumpStackTrace(t.trace());
+                            }
                             this.summary.fail += 1;
                         }
                     },
@@ -13946,14 +13956,14 @@ pub const PackageManager = struct {
             new_node_modules = true;
 
             // Attempt to create a new node_modules folder
-            bun.sys.mkdir("node_modules", 0o755).unwrap() catch |err| {
-                if (err != error.EEXIST) {
-                    Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating <b>node_modules<r> folder", .{@errorName(err)});
+            if (bun.sys.mkdir("node_modules", 0o755).asErr()) |err| {
+                if (err.errno != @intFromEnum(bun.C.E.EXIST)) {
+                    Output.err(err, "could not create the <b>\"node_modules\"<r> directory", .{});
                     Global.crash();
                 }
-            };
+            }
             break :brk bun.openDir(cwd, "node_modules") catch |err| {
-                Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> opening <b>node_modules<r> folder", .{@errorName(err)});
+                Output.err(err, "could not open the <b>\"node_modules\"<r> directory", .{});
                 Global.crash();
             };
         };
@@ -14390,7 +14400,13 @@ pub const PackageManager = struct {
             (load_result.ok.lockfile.buffers.dependencies.items.len == 0 and manager.update_requests.len > 0);
 
         manager.options.enable.force_save_lockfile = manager.options.enable.force_save_lockfile or
-            (load_result == .ok and (load_result.ok.was_migrated or (load_result.ok.format == .binary and manager.options.save_text_lockfile)));
+            (load_result == .ok and
+            // if migrated always save a new lockfile
+            (load_result.ok.was_migrated or
+
+            // if loaded from binary and save-text-lockfile is passed
+            (load_result.ok.format == .binary and
+            manager.options.save_text_lockfile orelse false)));
 
         // this defaults to false
         // but we force allowing updates to the lockfile when you do bun add
@@ -14515,7 +14531,20 @@ pub const PackageManager = struct {
 
                     had_any_diffs = manager.summary.hasDiffs();
 
-                    if (had_any_diffs) {
+                    if (!had_any_diffs) {
+                        // always grab latest scripts for root package
+                        var builder_ = manager.lockfile.stringBuilder();
+                        var builder = &builder_;
+
+                        maybe_root.scripts.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
+                        try builder.allocate();
+                        manager.lockfile.packages.items(.scripts)[0] = maybe_root.scripts.clone(
+                            lockfile.buffers.string_bytes.items,
+                            *Lockfile.StringBuilder,
+                            builder,
+                        );
+                        builder.clamp();
+                    } else {
                         var builder_ = manager.lockfile.stringBuilder();
                         // ensure we use one pointer to reference it instead of creating new ones and potentially aliasing
                         var builder = &builder_;
@@ -14975,13 +15004,7 @@ pub const PackageManager = struct {
 
         const lockfile_before_install = manager.lockfile;
 
-        const save_format: Lockfile.LoadResult.LockfileFormat = if (manager.options.save_text_lockfile)
-            .text
-        else switch (load_result) {
-            .not_found => .binary,
-            .err => |err| err.format,
-            .ok => |ok| ok.format,
-        };
+        const save_format = load_result.saveFormat(&manager.options);
 
         if (manager.options.lockfile_only) {
             // save the lockfile and exit. make sure metahash is generated for binary lockfile
@@ -14998,7 +15021,7 @@ pub const PackageManager = struct {
                 // added/removed/updated direct dependencies.
                 Output.pretty(
                     \\
-                    \\Saved <green>{s}<r> ({d} package{s})
+                    \\Saved <green>{s}<r> ({d} package{s}) 
                 , .{
                     switch (save_format) {
                         .text => "bun.lock",
@@ -15088,18 +15111,24 @@ pub const PackageManager = struct {
                 @min(packages_len_before_install, manager.lockfile.packages.len),
             );
 
-        const should_save_lockfile = did_meta_hash_change or
-            had_any_diffs or
-            needs_new_lockfile or
-
-            // this will handle new trusted dependencies added through --trust
-            manager.update_requests.len > 0 or
-            (load_result == .ok and load_result.ok.serializer_result.packages_need_update);
-
         // It's unnecessary work to re-save the lockfile if there are no changes
-        if (manager.options.do.save_lockfile and
-            (should_save_lockfile or manager.lockfile.isEmpty() or manager.options.enable.force_save_lockfile))
-        {
+        const should_save_lockfile =
+            (load_result == .ok and ((load_result.ok.format == .binary and save_format == .text) or
+
+            // make sure old versions are updated
+            load_result.ok.format == .text and save_format == .text and manager.lockfile.text_lockfile_version != TextLockfile.Version.current)) or
+
+            // check `save_lockfile` after checking if loaded from binary and save format is text
+            // because `save_lockfile` is set to false for `--frozen-lockfile`
+            (manager.options.do.save_lockfile and
+            (did_meta_hash_change or
+            had_any_diffs or
+            manager.update_requests.len > 0 or
+            (load_result == .ok and load_result.ok.serializer_result.packages_need_update) or
+            manager.lockfile.isEmpty() or
+            manager.options.enable.force_save_lockfile));
+
+        if (should_save_lockfile) {
             try manager.saveLockfile(&load_result, save_format, had_any_diffs, lockfile_before_install, packages_len_before_install, log_level);
         }
 
@@ -15275,11 +15304,14 @@ pub const PackageManager = struct {
                     .ok => |ok| ok.format,
                 };
 
-                std.fs.cwd().deleteFileZ(if (delete_format == .text) "bun.lock" else "bun.lockb") catch |err| brk: {
+                bun.sys.unlinkat(
+                    FD.cwd(),
+                    if (delete_format == .text) comptime bun.OSPathLiteral("bun.lock") else comptime bun.OSPathLiteral("bun.lockb"),
+                ).unwrap() catch |err| {
                     // we don't care
-                    if (err == error.FileNotFound) {
+                    if (err == error.ENOENT) {
                         if (had_any_diffs) return;
-                        break :brk;
+                        break :delete;
                     }
 
                     if (log_level != .silent) {
@@ -15310,7 +15342,12 @@ pub const PackageManager = struct {
             this.progress.refresh();
         }
 
-        this.lockfile.saveToDisk(save_format, this.options.log_level.isVerbose());
+        this.lockfile.saveToDisk(load_result, &this.options);
+
+        // delete binary lockfile if saving text lockfile
+        if (save_format == .text and load_result.loadedFromBinaryLockfile()) {
+            _ = bun.sys.unlinkat(FD.cwd(), comptime bun.OSPathLiteral("bun.lockb"));
+        }
 
         if (comptime Environment.allow_assert) {
             if (load_result.* != .not_found) {

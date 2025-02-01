@@ -201,7 +201,7 @@ export function applyReplacements(src: string, length: number) {
       }
       return [
         slice.slice(0, match.index) +
-          "(IS_BUN_DEVELOPMENT?$assert(" +
+          "!(IS_BUN_DEVELOPMENT?$assert(" +
           checkSlice.result.slice(1, -1) +
           "," +
           JSON.stringify(

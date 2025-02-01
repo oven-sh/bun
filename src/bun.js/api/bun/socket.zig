@@ -614,7 +614,13 @@ pub const Listener = struct {
 
         const ssl_enabled = ssl != null;
 
-        var socket_flags: i32 = if (exclusive) uws.LIBUS_LISTEN_EXCLUSIVE_PORT else (if (socket_config.reusePort) uws.LIBUS_SOCKET_REUSE_PORT else uws.LIBUS_LISTEN_DEFAULT);
+        var socket_flags: i32 = if (exclusive)
+            uws.LIBUS_LISTEN_EXCLUSIVE_PORT
+        else if (socket_config.reusePort)
+            uws.LIBUS_LISTEN_REUSE_PORT | uws.LIBUS_LISTEN_REUSE_ADDR
+        else
+            uws.LIBUS_LISTEN_DEFAULT;
+
         if (socket_config.allowHalfOpen) {
             socket_flags |= uws.LIBUS_SOCKET_ALLOW_HALF_OPEN;
         }
@@ -906,7 +912,7 @@ pub const Listener = struct {
         if (!hostname.isString()) {
             return global.throwInvalidArguments("hostname pattern expects a string", .{});
         }
-        const host_str = hostname.toSlice(
+        const host_str = try hostname.toSlice(
             global,
             bun.default_allocator,
         );
@@ -2215,10 +2221,11 @@ fn NewSocket(comptime ssl: bool) type {
             }
 
             var stack_fallback = std.heap.stackFallback(16 * 1024, bun.default_allocator);
+            const allow_string_object = true;
             const buffer: JSC.Node.StringOrBuffer = if (data_value.isUndefined())
                 JSC.Node.StringOrBuffer.empty
             else
-                JSC.Node.StringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalObject, stack_fallback.get(), data_value, encoding_value, false) catch {
+                JSC.Node.StringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalObject, stack_fallback.get(), data_value, encoding_value, false, allow_string_object) catch {
                     return .fail;
                 } orelse {
                     if (!globalObject.hasException()) {
@@ -3876,9 +3883,9 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
             BoringSSL.load();
 
             const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl_options);
+            var err: uws.create_bun_socket_error_t = .none;
             // Create SSL context using uSockets to match behavior of node.js
-            const ctx = uws.create_ssl_context_from_bun_options(ctx_opts) orelse return error.InvalidOptions; // invalid options
-            errdefer BoringSSL.SSL_CTX_free(ctx);
+            const ctx = uws.create_ssl_context_from_bun_options(ctx_opts, &err) orelse return error.InvalidOptions; // invalid options
             this.ctx = ctx;
         }
 
@@ -4370,6 +4377,9 @@ pub fn jsCreateSocketPair(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JS
         const err = bun.sys.Error.fromCode(bun.C.getErrno(rc), .socketpair);
         return global.throwValue(err.toJSC(global));
     }
+
+    _ = bun.sys.setNonblocking(bun.toFD(fds_[0]));
+    _ = bun.sys.setNonblocking(bun.toFD(fds_[1]));
 
     const array = JSC.JSValue.createEmptyArray(global, 2);
     array.putIndex(global, 0, JSC.jsNumber(fds_[0]));

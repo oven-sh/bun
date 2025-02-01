@@ -150,7 +150,7 @@ size_t JSDOMURL::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
 
 template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMURLDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
-    auto& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = jsCast<JSDOMURLDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
@@ -171,6 +171,8 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMURLDOMConstructor::const
         RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<DOMURL>(lexicalGlobalObject, callFrame, asObject(jsValue));
     RETURN_IF_EXCEPTION(throwScope, {});
+    auto* jsDOMURL = jsCast<JSDOMURL*>(jsValue.asCell());
+    vm.heap.reportExtraMemoryAllocated(jsDOMURL, jsDOMURL->wrapped().memoryCostForGC());
     return JSValue::encode(jsValue);
 }
 JSC_ANNOTATE_HOST_FUNCTION(JSDOMURLDOMConstructorConstruct, JSDOMURLDOMConstructor::construct);
@@ -787,6 +789,7 @@ void JSDOMURL::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_searchParams);
+    visitor.reportExtraMemoryVisited(thisObject->protectedWrapped()->memoryCostForGC());
 }
 
 DEFINE_VISIT_CHILDREN(JSDOMURL);

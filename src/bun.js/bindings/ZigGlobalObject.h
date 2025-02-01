@@ -311,6 +311,8 @@ public:
     void resetOnEachMicrotaskTick();
 
     enum class PromiseFunctions : uint8_t {
+        BunServe__Plugins__onResolve,
+        BunServe__Plugins__onReject,
         Bun__HTTPRequestContext__onReject,
         Bun__HTTPRequestContext__onRejectStream,
         Bun__HTTPRequestContext__onResolve,
@@ -342,7 +344,7 @@ public:
         Bun__FileStreamWrapper__onRejectRequestStream,
         Bun__FileStreamWrapper__onResolveRequestStream,
     };
-    static constexpr size_t promiseFunctionsSize = 30;
+    static constexpr size_t promiseFunctionsSize = 32;
 
     static PromiseFunctions promiseHandlerID(SYSV_ABI EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1));
 
@@ -481,6 +483,9 @@ public:
 
     LazyProperty<JSGlobalObject, Structure> m_JSS3FileStructure;
     LazyProperty<JSGlobalObject, Structure> m_S3ErrorStructure;
+    JSC::LazyClassStructure m_JSStatsClassStructure;
+    JSC::LazyClassStructure m_JSStatsBigIntClassStructure;
+    JSC::LazyClassStructure m_JSDirentClassStructure;
 
     JSObject* cryptoObject() const { return m_cryptoObject.getInitializedOnMainThread(this); }
     JSObject* JSDOMFileConstructor() const { return m_JSDOMFileConstructor.getInitializedOnMainThread(this); }

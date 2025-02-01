@@ -6,7 +6,7 @@ To get started, import your HTML files and pass them to the `static` option in `
 import dashboard from "./dashboard.html";
 import homepage from "./index.html";
 
-Bun.serve({
+const server = Bun.serve({
   // Add HTML imports to `static`
   static: {
     // Bundle & route index.html to "/"
@@ -32,12 +32,12 @@ Bun.serve({
     return new Response("Not Found", { status: 404 });
   },
 });
+
+console.log(`Listening on ${server.url}`)
 ```
 
-You'll need to run your app with `bun --experimental-html` to enable this feature:
-
 ```bash
-$ bun --experimental-html run app.ts
+$ bun run app.ts
 ```
 
 ## HTML imports are routes
@@ -109,7 +109,7 @@ To use React in your client-side code, import `react-dom/client` and render your
 {% codetabs %}
 
 ```ts#src/backend.ts
-import dashboard from "./public/dashboard.html";
+import dashboard from "../public/dashboard.html";
 import { serve } from "bun";
 
 serve({
@@ -198,6 +198,56 @@ When serving your app in production, set `development: false` in `Bun.serve()`.
 - Enables `Cache-Control` headers and `ETag` headers
 - Minifies JavaScript/TypeScript/TSX/JSX files
 
+## Plugins
+
+Bun's [bundler plugins](https://bun.sh/docs/bundler/plugins) are also supported when bundling static routes.
+
+To configure plugins for `Bun.serve`, add a `plugins` array in the `[serve.static]` section of your `bunfig.toml`.
+
+### Using TailwindCSS in HTML routes
+
+For example, enable TailwindCSS on your routes by installing and adding the `bun-plugin-tailwind` plugin:
+
+```sh
+$ bun add bun-plugin-tailwind
+```
+```toml#bunfig.toml
+[serve.static]
+plugins = ["bun-plugin-tailwind"]
+```
+
+This will allow you to use TailwindCSS utility classes in your HTML and CSS files. All you need to do is import `tailwindcss` somewhere:
+
+```html#index.html
+<!doctype html>
+<html>
+  <head>
+    <title>Home</title>
+    <link rel="stylesheet" href="tailwindcss" />
+  </head>
+  <body>
+    <!-- the rest of your HTML... -->
+  </body>
+</html>
+```
+
+Or in your CSS:
+
+```css#style.css
+@import "tailwindcss";
+```
+
+### Custom plugins
+
+Any JS file or module which exports a [valid bundler plugin object](https://bun.sh/docs/bundler/plugins#usage) (essentially an object with a `name` and `setup` field) can be placed inside the `plugins` array:
+
+```toml#bunfig.toml
+[serve.static]
+plugins = ["./my-plugin-implementation.ts"]
+```
+
+Bun will lazily resolve and load each plugin and use them to bundle your routes.
+
 ## How this works
 
 Bun uses [`HTMLRewriter`](/docs/api/html-rewriter) to scan for `<script>` and `<link>` tags in HTML files, uses them as entrypoints for [Bun's bundler](/docs/bundler), generates an optimized bundle for the JavaScript/TypeScript/TSX/JSX and CSS files, and serves the result.
@@ -244,4 +294,3 @@ This works similarly to how [`Bun.build` processes HTML files](/docs/bundler/htm
 
 - Client-side hot reloading isn't wired up yet. It will be in the future.
 - This doesn't support `bun build` yet. It also will in the future.
-- We haven't figured out plugins yet. This probably will live in `bunfig.toml` with the same API as in `Bun.build` otherwise.

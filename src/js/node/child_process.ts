@@ -53,9 +53,6 @@ if ($debug) {
   };
 }
 
-var NativeWritable;
-var ReadableFromWeb;
-
 // Sections:
 // 1. Exported child_process functions
 // 2. child_process helpers
@@ -556,7 +553,7 @@ function spawnSync(file, args, options) {
     } else if (typeof input === "string") {
       bunStdio[0] = Buffer.from(input, encoding || "utf8");
     } else {
-      throw $ERR_INVALID_ARG_TYPE(`options.stdio[0]`, ["Buffer", "TypedArray", "DataView", "string"], input);
+      throw $ERR_INVALID_ARG_TYPE(`options.stdio[0]`, ["string", "Buffer", "TypedArray", "DataView"], input);
     }
   }
 
@@ -1123,21 +1120,18 @@ class ChildProcess extends EventEmitter {
       }
     }
 
-    NativeWritable ||= StreamModule.NativeWritable;
-    ReadableFromWeb ||= StreamModule.Readable.fromWeb;
-
+    const handle = this.#handle;
     const io = this.#stdioOptions[i];
     switch (i) {
       case 0: {
         switch (io) {
           case "pipe": {
-            const stdin = this.#handle.stdin;
+            const stdin = handle?.stdin;
 
             if (!stdin)
               // This can happen if the process was already killed.
               return new ShimmedStdin();
-
-            return new NativeWritable(stdin);
+            return require("internal/fs/streams").writableFromFileSink(stdin);
           }
           case "inherit":
             return process.stdin || null;
@@ -1151,13 +1145,11 @@ class ChildProcess extends EventEmitter {
       case 1: {
         switch (io) {
           case "pipe": {
-            const value = this.#handle[fdToStdioName(i)];
+            const value = handle?.[fdToStdioName(i as 1 | 2)!];
+            // This can happen if the process was already killed.
+            if (!value) return new ShimmedStdioOutStream();
 
-            if (!value)
-              // This can happen if the process was already killed.
-              return new ShimmedStdioOutStream();
-
-            const pipe = ReadableFromWeb(value, { encoding });
+            const pipe = require("internal/streams/native-readable").constructNativeReadable(value, { encoding });
             this.#closesNeeded++;
             pipe.once("close", () => this.#maybeClose());
             if (autoResume) pipe.resume();
@@ -1173,7 +1165,7 @@ class ChildProcess extends EventEmitter {
         switch (io) {
           case "pipe":
             if (!NetModule) NetModule = require("node:net");
-            const fd = this.#handle.stdio[i];
+            const fd = handle && handle.stdio[i];
             if (!fd) return null;
             return new NetModule.connect({ fd });
         }
@@ -1285,12 +1277,16 @@ class ChildProcess extends EventEmitter {
       env: env,
       detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,
       onExit: (handle, exitCode, signalCode, err) => {
-        if (hasSocketsToEagerlyLoad) {
-          this.stdio;
-        }
-        $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
         this.#handle = handle;
         this.pid = this.#handle.pid;
+        $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
+
+        if (hasSocketsToEagerlyLoad) {
+          process.nextTick(() => {
+            this.stdio;
+            $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
+          });
+        }
 
         process.nextTick(
           (exitCode, signalCode, err) => this.#handleOnExit(exitCode, signalCode, err),
@@ -1486,7 +1482,7 @@ function isNodeStreamWritable(item) {
   return true;
 }
 
-function fdToStdioName(fd) {
+function fdToStdioName(fd: number) {
   switch (fd) {
     case 0:
       return "stdin";

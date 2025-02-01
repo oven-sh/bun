@@ -47,6 +47,7 @@ pub var start_time: i128 = undefined;
 const Bunfig = @import("./bunfig.zig").Bunfig;
 const OOM = bun.OOM;
 
+export var Bun__Node__ZeroFillBuffers = false;
 export var Bun__Node__ProcessNoDeprecation = false;
 export var Bun__Node__ProcessThrowDeprecation = false;
 
@@ -241,7 +242,7 @@ pub const Arguments = struct {
         clap.parseParam("--no-deprecation                  Suppress all reporting of the custom deprecation.") catch unreachable,
         clap.parseParam("--throw-deprecation               Determine whether or not deprecation warnings result in errors.") catch unreachable,
         clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
-        clap.parseParam("--experimental-html               Bundle .html imports as JavaScript & CSS") catch unreachable,
+        clap.parseParam("--zero-fill-buffers               Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -296,14 +297,12 @@ pub const Arguments = struct {
         clap.parseParam("--minify-syntax                  Minify syntax and inline data") catch unreachable,
         clap.parseParam("--minify-whitespace              Minify whitespace") catch unreachable,
         clap.parseParam("--minify-identifiers             Minify identifiers") catch unreachable,
-        clap.parseParam("--experimental-css               Enable experimental CSS bundling") catch unreachable,
-        clap.parseParam("--experimental-css-chunking      Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an affect when multiple entrypoints import CSS") catch unreachable,
-        clap.parseParam("--experimental-html              Use .html files as entry points for JavaScript & CSS") catch unreachable,
+        clap.parseParam("--css-chunking      Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an effect when multiple entrypoints import CSS") catch unreachable,
         clap.parseParam("--dump-environment-variables") catch unreachable,
         clap.parseParam("--conditions <STR>...            Pass custom conditions to resolve") catch unreachable,
         clap.parseParam("--app                            (EXPERIMENTAL) Build a web app for production using Bun Bake.") catch unreachable,
         clap.parseParam("--server-components              (EXPERIMENTAL) Enable server components") catch unreachable,
-        clap.parseParam("--env <inline|prefix*|disable>   Inline environment variables into the bundle as process.env.${name}. Defaults to 'inline'. To inline environment variables matching a prefix, use my prefix like 'FOO_PUBLIC_*'. To disable, use 'disable'. In Bun v1.2+, the default is 'disable'.") catch unreachable,
+        clap.parseParam("--env <inline|prefix*|disable>   Inline environment variables into the bundle as process.env.${name}. Defaults to 'disable'. To inline environment variables matching a prefix, use my prefix like 'FOO_PUBLIC_*'.") catch unreachable,
         clap.parseParam("--windows-hide-console           When using --compile targeting Windows, prevent a Command prompt from opening alongside the executable") catch unreachable,
         clap.parseParam("--windows-icon <STR>             When using --compile targeting Windows, assign an executable icon") catch unreachable,
     } ++ if (FeatureFlags.bake_debugging_features) [_]ParamType{
@@ -816,6 +815,9 @@ pub const Arguments = struct {
             if (args.option("--title")) |title| {
                 Bun__Node__ProcessTitle = title;
             }
+            if (args.flag("--zero-fill-buffers")) {
+                Bun__Node__ZeroFillBuffers = true;
+            }
         }
 
         if (opts.port != null and opts.origin == null) {
@@ -862,16 +864,12 @@ pub const Arguments = struct {
                 ctx.bundler_options.footer = footer;
             }
 
-            const experimental_css = args.flag("--experimental-css");
-            const experimental_html = args.flag("--experimental-html");
-            ctx.bundler_options.experimental.css = experimental_css;
-            ctx.bundler_options.experimental.html = experimental_html;
-            ctx.bundler_options.css_chunking = args.flag("--experimental-css-chunking");
-
             const minify_flag = args.flag("--minify");
             ctx.bundler_options.minify_syntax = minify_flag or args.flag("--minify-syntax");
             ctx.bundler_options.minify_whitespace = minify_flag or args.flag("--minify-whitespace");
             ctx.bundler_options.minify_identifiers = minify_flag or args.flag("--minify-identifiers");
+
+            ctx.bundler_options.css_chunking = args.flag("--css-chunking");
 
             ctx.bundler_options.emit_dce_annotations = args.flag("--emit-dce-annotations") or
                 !ctx.bundler_options.minify_whitespace;
@@ -1067,10 +1065,7 @@ pub const Arguments = struct {
             if (args.option("--sourcemap")) |setting| {
                 if (setting.len == 0) {
                     // In the future, Bun is going to make this default to .linked
-                    opts.source_map = if (bun.FeatureFlags.breaking_changes_1_2)
-                        .linked
-                    else
-                        .@"inline";
+                    opts.source_map = .linked;
                 } else if (strings.eqlComptime(setting, "inline")) {
                     opts.source_map = .@"inline";
                 } else if (strings.eqlComptime(setting, "none")) {
@@ -1164,7 +1159,6 @@ pub const Arguments = struct {
         }
 
         opts.resolve = Api.ResolveMode.lazy;
-        ctx.bundler_options.experimental.html = args.flag("--experimental-html");
 
         if (jsx_factory != null or
             jsx_fragment != null or
@@ -1554,7 +1548,6 @@ pub const Command = struct {
             bytecode: bool = false,
             banner: []const u8 = "",
             footer: []const u8 = "",
-            experimental: options.Loader.Experimental = .{},
             css_chunking: bool = false,
 
             bake: bool = false,

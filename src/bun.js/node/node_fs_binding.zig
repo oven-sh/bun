@@ -49,16 +49,30 @@ fn Bindings(comptime function_name: NodeFSFunctionEnum) type {
         pub fn runAsync(this: *JSC.Node.NodeJSFS, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             var slice = ArgumentsSlice.init(globalObject.bunVM(), callframe.arguments());
             slice.will_be_async = true;
+            var deinit = false;
 
-            const args = if (Arguments != void)
+            defer if (deinit) slice.deinit();
+
+            var args = if (Arguments != void)
                 Arguments.fromJS(globalObject, &slice) catch |err| {
-                    slice.deinit();
+                    deinit = true;
                     return err;
                 };
 
+            defer if (deinit) args.deinit();
+
             if (globalObject.hasException()) {
-                slice.deinit();
+                deinit = true;
                 return .zero;
+            }
+
+            const have_abort_signal = @hasField(Arguments, "signal");
+            if (have_abort_signal) check_early_abort: {
+                const signal = args.signal orelse break :check_early_abort;
+                if (signal.reasonIfAborted(globalObject)) |reason| {
+                    deinit = true;
+                    return JSC.JSPromise.rejectedPromiseValue(globalObject, reason.toJS(globalObject));
+                }
             }
 
             const Task = @field(JSC.Node.Async, @tagName(function_name));
@@ -136,6 +150,7 @@ pub const NodeJSFS = struct {
     pub const realpathNative = callAsync(.realpath);
     pub const rename = callAsync(.rename);
     pub const stat = callAsync(.stat);
+    pub const statfs = callAsync(.statfs);
     pub const symlink = callAsync(.symlink);
     pub const truncate = callAsync(.truncate);
     pub const unlink = callAsync(.unlink);
@@ -172,6 +187,7 @@ pub const NodeJSFS = struct {
     pub const realpathNativeSync = callSync(.realpath);
     pub const renameSync = callSync(.rename);
     pub const statSync = callSync(.stat);
+    pub const statfsSync = callSync(.statfs);
     pub const symlinkSync = callSync(.symlink);
     pub const truncateSync = callSync(.truncate);
     pub const unlinkSync = callSync(.unlink);
@@ -188,6 +204,8 @@ pub const NodeJSFS = struct {
     pub const watch = callSync(.watch);
     pub const watchFile = callSync(.watchFile);
     pub const unwatchFile = callSync(.unwatchFile);
+    // pub const statfs = callAsync(.statfs);
+    // pub const statfsSync = callSync(.statfs);
 };
 
 pub fn createBinding(globalObject: *JSC.JSGlobalObject) JSC.JSValue {

@@ -22,19 +22,30 @@ pub const LengthOrNumber = union(enum) {
     pub usingnamespace css.DeriveParse(@This());
     pub usingnamespace css.DeriveToCss(@This());
 
+    pub fn deinit(this: *const LengthOrNumber, allocator: std.mem.Allocator) void {
+        switch (this.*) {
+            .number => {},
+            .length => |*l| l.deinit(allocator),
+        }
+    }
+
     pub fn default() LengthOrNumber {
         return .{ .number = 0.0 };
     }
 
     pub fn eql(this: *const @This(), other: *const @This()) bool {
-        return switch (this.*) {
-            .number => |*n| n.* == other.number,
-            .length => |*l| l.eql(&other.length),
-        };
+        return css.implementEql(@This(), this, other);
     }
 
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
         return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn isCompatible(this: *const @This(), browsers: css.targets.Browsers) bool {
+        return switch (this.*) {
+            .length => |*l| l.isCompatible(browsers),
+            .number => true,
+        };
     }
 };
 
@@ -297,6 +308,10 @@ pub const LengthValue = union(enum) {
         unreachable;
     }
 
+    pub fn deepClone(this: *const @This(), _: std.mem.Allocator) @This() {
+        return this.*;
+    }
+
     pub fn zero() LengthValue {
         return .{ .px = 0.0 };
     }
@@ -555,10 +570,7 @@ pub const Length = union(enum) {
     }
 
     pub fn eql(this: *const @This(), other: *const @This()) bool {
-        return switch (this.*) {
-            .value => |a| other.* == .value and a.eql(&other.value),
-            .calc => |a| other.* == .calc and a.eql(other.calc),
-        };
+        return css.implementEql(@This(), this, other);
     }
 
     pub fn px(p: CSSNumber) Length {
@@ -601,12 +613,12 @@ pub const Length = union(enum) {
         return res;
     }
 
-    fn addInternal(this: Length, allocator: Allocator, other: Length) Length {
+    pub fn addInternal(this: Length, allocator: Allocator, other: Length) Length {
         if (this.tryAdd(allocator, &other)) |r| return r;
         return this.add__(allocator, other);
     }
 
-    fn intoCalc(this: Length, allocator: Allocator) Calc(Length) {
+    pub fn intoCalc(this: Length, allocator: Allocator) Calc(Length) {
         return switch (this) {
             .calc => |c| c.*,
             else => |v| Calc(Length){ .value = bun.create(allocator, Length, v) },

@@ -34,7 +34,7 @@ fn alert(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSErr
     if (has_message) {
         var state = std.heap.stackFallback(2048, bun.default_allocator);
         const allocator = state.get();
-        const message = arguments[0].toSlice(globalObject, allocator);
+        const message = try arguments[0].toSlice(globalObject, allocator);
         defer message.deinit();
 
         if (message.len > 0) {
@@ -88,7 +88,7 @@ fn confirm(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
 
         // 3. Set message to the result of optionally truncating message.
         // *  Not necessary so we won't do it.
-        const message = arguments[0].toSlice(globalObject, allocator);
+        const message = try arguments[0].toSlice(globalObject, allocator);
         defer message.deinit();
 
         output.writeAll(message.slice()) catch {
@@ -230,7 +230,7 @@ pub const Prompt = struct {
 
             // 3. Set message to the result of optionally truncating message.
             // *  Not necessary so we won't do it.
-            const message = arguments[0].toSlice(globalObject, allocator);
+            const message = try arguments[0].toSlice(globalObject, allocator);
             defer message.deinit();
 
             output.writeAll(message.slice()) catch {
@@ -251,7 +251,7 @@ pub const Prompt = struct {
         };
 
         if (has_default) {
-            const default_string = arguments[1].toSlice(globalObject, allocator);
+            const default_string = try arguments[1].toSlice(globalObject, allocator);
             defer default_string.deinit();
 
             output.print("[{s}] ", .{default_string.slice()}) catch {
@@ -730,19 +730,15 @@ pub const Crypto = struct {
     pub usingnamespace JSC.Codegen.JSCrypto;
 
     comptime {
-        if (!JSC.is_bindgen) {
-            _ = CryptoObject__create;
-        }
+        _ = CryptoObject__create;
     }
 };
 
 comptime {
-    if (!JSC.is_bindgen) {
-        const js_alert = JSC.toJSHostFunction(alert);
-        @export(js_alert, .{ .name = "WebCore__alert" });
-        const js_prompt = JSC.toJSHostFunction(Prompt.call);
-        @export(js_prompt, .{ .name = "WebCore__prompt" });
-        const js_confirm = JSC.toJSHostFunction(confirm);
-        @export(js_confirm, .{ .name = "WebCore__confirm" });
-    }
+    const js_alert = JSC.toJSHostFunction(alert);
+    @export(js_alert, .{ .name = "WebCore__alert" });
+    const js_prompt = JSC.toJSHostFunction(Prompt.call);
+    @export(js_prompt, .{ .name = "WebCore__prompt" });
+    const js_confirm = JSC.toJSHostFunction(confirm);
+    @export(js_confirm, .{ .name = "WebCore__confirm" });
 }

@@ -45,8 +45,6 @@ function warnNotImplementedOnce(feature: string, issue?: number) {
   console.warn(new NotImplementedError(feature, issue));
 }
 
-const fileSinkSymbol = Symbol("fileSink");
-
 //
 
 let util: typeof import("node:util");
@@ -103,7 +101,6 @@ export default {
   throwNotImplemented,
   hideFromStack,
   warnNotImplementedOnce,
-  fileSinkSymbol,
   ExceptionWithHostPort,
   once,
 
@@ -111,7 +108,6 @@ export default {
   kAutoDestroyed: Symbol("kAutoDestroyed"),
   kResistStopPropagation: Symbol("kResistStopPropagation"),
   kWeakHandler: Symbol("kWeak"),
-  kEnsureConstructed: Symbol("kEnsureConstructed"),
   kGetNativeReadableProto: Symbol("kGetNativeReadableProto"),
   kEmptyObject,
 };

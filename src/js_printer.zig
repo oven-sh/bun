@@ -346,7 +346,11 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
             },
 
             '\t' => {
-                try writer.writeAll("\\t");
+                if (quote_char == '`') {
+                    try writer.writeAll("\t");
+                } else {
+                    try writer.writeAll("\\t");
+                }
                 i += 1;
             },
 
@@ -1858,10 +1862,8 @@ fn NewPrinter(
             if (!import_options.isMissing()) {
                 // since we previously stripped type, it is a breaking change to
                 // enable this for non-bun platforms
-                if (is_bun_platform or bun.FeatureFlags.breaking_changes_1_2) {
-                    p.printWhitespacer(ws(", "));
-                    p.printExpr(import_options, .comma, .{});
-                }
+                p.printWhitespacer(ws(", "));
+                p.printExpr(import_options, .comma, .{});
             }
 
             p.print(")");
@@ -2356,10 +2358,8 @@ fn NewPrinter(
                         if (!e.options.isMissing()) {
                             // since we previously stripped type, it is a breaking change to
                             // enable this for non-bun platforms
-                            if (is_bun_platform or bun.FeatureFlags.breaking_changes_1_2) {
-                                p.printWhitespacer(ws(", "));
-                                p.printExpr(e.options, .comma, .{});
-                            }
+                            p.printWhitespacer(ws(", "));
+                            p.printExpr(e.options, .comma, .{});
                         }
 
                         // TODO:

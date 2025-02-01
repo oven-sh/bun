@@ -24,7 +24,7 @@ const MacroRemap = @import("./package_json.zig").MacroMap;
 const ESModule = @import("./package_json.zig").ESModule;
 const BrowserMap = @import("./package_json.zig").BrowserMap;
 const CacheSet = cache.Set;
-const DataURL = @import("./data_url.zig").DataURL;
+pub const DataURL = @import("./data_url.zig").DataURL;
 pub const DirInfo = @import("./dir_info.zig");
 const ResolvePath = @import("./resolve_path.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
@@ -875,6 +875,23 @@ pub const Resolver = struct {
         errdefer (r.flushDebugLogs(.fail) catch {});
 
         var tmp = r.resolveWithoutSymlinks(source_dir_normalized, import_path, kind, global_cache);
+
+        // Fragments in URLs in CSS imports are technically expected to work
+        if (tmp == .not_found and kind.isFromCSS()) try_without_suffix: {
+            // If resolution failed, try again with the URL query and/or hash removed
+            const maybe_suffix = std.mem.indexOfAny(u8, import_path, "?#");
+            if (maybe_suffix == null or maybe_suffix.? < 1)
+                break :try_without_suffix;
+
+            const suffix = maybe_suffix.?;
+            if (r.debug_logs) |*debug| {
+                debug.addNoteFmt("Retrying resolution after removing the suffix {s}", .{import_path[suffix..]});
+            }
+            const result2 = r.resolveWithoutSymlinks(source_dir_normalized, import_path[0..suffix], kind, global_cache);
+            if (result2 == .not_found) break :try_without_suffix;
+            tmp = result2;
+        }
+
         switch (tmp) {
             .success => |*result| {
                 if (!strings.eqlComptime(result.path_pair.primary.namespace, "node") and !result.is_standalone_module)
@@ -1159,7 +1176,7 @@ pub const Resolver = struct {
         // Check both relative and package paths for CSS URL tokens, with relative
         // paths taking precedence over package paths to match Webpack behavior.
         const is_package_path = kind != .entry_point_run and isPackagePathNotAbsolute(import_path);
-        var check_relative = !is_package_path or kind == .url;
+        var check_relative = !is_package_path or kind.isFromCSS();
         var check_package = is_package_path;
 
         if (check_relative) {
@@ -1324,7 +1341,42 @@ pub const Resolver = struct {
                 }
             }
 
-            var source_dir_info = (r.dirInfoCached(source_dir) catch null) orelse return .{ .not_found = {} };
+            var source_dir_info = r.dirInfoCached(source_dir) catch (return .{ .not_found = {} }) orelse dir: {
+                // It is possible to resolve with a source file that does not exist:
+                // A. Bundler plugin refers to a non-existing `resolveDir`.
+                // B. `createRequire()` is called with a path that does not exist. This was
+                //    hit in Nuxt, specifically the `vite-node` dependency [1].
+                //
+                // Normally it would make sense to always bail here, but in the case of
+                // resolving "hello" from "/project/nonexistent_dir/index.ts", resolution
+                // should still query "/project/node_modules" and "/node_modules"
+                //
+                // For case B in Node.js, they use `_resolveLookupPaths` in
+                // combination with `_nodeModulePaths` to collect a listing of
+                // all possible parent `node_modules` [2]. Bun has a much smarter
+                // approach that caches directory entries, but it (correctly) does
+                // not cache non-existing directories. To successfully resolve this,
+                // Bun finds the nearest existing directory, and uses that as the base
+                // for `node_modules` resolution. Since that directory entry knows how
+                // to resolve concrete node_modules, this iteration stops at the first
+                // existing directory, regardless of what it is.
+                //
+                // The resulting `source_dir_info` cannot resolve relative files.
+                //
+                // [1]: https://github.com/oven-sh/bun/issues/16705
+                // [2]: https://github.com/nodejs/node/blob/e346323109b49fa6b9a4705f4e3816fc3a30c151/lib/internal/modules/cjs/loader.js#L1934
+                if (Environment.allow_assert)
+                    bun.assert(isPackagePath(import_path));
+                var closest_dir = source_dir;
+                // Use std.fs.path.dirname to get `null` once the entire
+                // directory tree has been visited. `null` is theoretically
+                // impossible since the drive root should always exist.
+                while (std.fs.path.dirname(closest_dir)) |current| : (closest_dir = current) {
+                    if (r.dirInfoCached(current) catch return .{ .not_found = {} }) |dir|
+                        break :dir dir;
+                }
+                return .{ .not_found = {} };
+            };
 
             if (r.care_about_browser_field) {
                 // Support remapping one package path to another via the "browser" field
@@ -1710,6 +1762,7 @@ pub const Resolver = struct {
                                 var esmodule = ESModule{
                                     .conditions = switch (kind) {
                                         ast.ImportKind.require, ast.ImportKind.require_resolve => r.opts.conditions.require,
+                                        ast.ImportKind.at, ast.ImportKind.at_conditional => r.opts.conditions.style,
                                         else => r.opts.conditions.import,
                                     },
                                     .allocator = r.allocator,
@@ -1787,6 +1840,22 @@ pub const Resolver = struct {
             }
 
             dir_info = dir_info.getParent() orelse break;
+        }
+
+        // try resolve from `NODE_PATH`
+        // https://nodejs.org/api/modules.html#loading-from-the-global-folders
+        const node_path: []const u8 = if (r.env_loader) |env_loader| env_loader.get("NODE_PATH") orelse "" else "";
+        if (node_path.len > 0) {
+            var it = std.mem.tokenize(u8, node_path, if (Environment.isWindows) ";" else ":");
+            while (it.next()) |path| {
+                const abs_path = r.fs.absBuf(&[_]string{ path, import_path }, bufs(.node_modules_check));
+                if (r.debug_logs) |*debug| {
+                    debug.addNoteFmt("Checking for a package in the NODE_PATH directory \"{s}\"", .{abs_path});
+                }
+                if (r.loadAsFileOrDirectory(abs_path, kind)) |res| {
+                    return .{ .success = res };
+                }
+            }
         }
 
         dir_info = source_dir_info;
@@ -2062,8 +2131,6 @@ pub const Resolver = struct {
             }
         }
 
-        // Mostly to cut scope, we don't resolve `NODE_PATH` environment variable.
-        // But also: https://github.com/nodejs/node/issues/38128#issuecomment-814969356
         return .{ .not_found = {} };
     }
     fn dirInfoForResolution(
@@ -3317,7 +3384,7 @@ pub const Resolver = struct {
     pub export fn Resolver__propForRequireMainPaths(globalThis: *bun.JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         bun.JSC.markBinding(@src());
 
-        const in_str = bun.String.createUTF8(".");
+        const in_str = bun.String.init(".");
         const r = &globalThis.bunVM().transpiler.resolver;
         return nodeModulePathsJSValue(r, in_str, globalThis);
     }
@@ -4229,9 +4296,7 @@ pub const GlobalCache = enum {
 };
 
 comptime {
-    if (!bun.JSC.is_bindgen) {
-        _ = Resolver.Resolver__propForRequireMainPaths;
-    }
+    _ = Resolver.Resolver__propForRequireMainPaths;
 }
 
 const assert = bun.assert;

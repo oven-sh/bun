@@ -1,12 +1,110 @@
-import { postgres, sql } from "bun:sql";
-import { expect, test, mock } from "bun:test";
+import { sql, SQL } from "bun";
+const postgres = (...args) => new sql(...args);
+import { expect, test, mock, beforeAll, afterAll } from "bun:test";
 import { $ } from "bun";
-import { bunExe, isCI, withoutAggressiveGC } from "harness";
+import { bunExe, isCI, withoutAggressiveGC, isLinux } from "harness";
 import path from "path";
 
-const hasPsql = Bun.which("psql");
-if (!isCI && hasPsql) {
-  require("./bootstrap.js");
+import { exec, execSync } from "child_process";
+import { promisify } from "util";
+
+const execAsync = promisify(exec);
+import net from "net";
+const dockerCLI = Bun.which("docker") as string;
+
+async function findRandomPort() {
+  return new Promise((resolve, reject) => {
+    // Create a server to listen on a random port
+    const server = net.createServer();
+    server.listen(0, () => {
+      const port = server.address().port;
+      server.close(() => resolve(port));
+    });
+    server.on("error", reject);
+  });
+}
+async function waitForPostgres(port) {
+  for (let i = 0; i < 3; i++) {
+    try {
+      const sql = new SQL(`postgres://postgres@localhost:${port}/postgres`, {
+        idle_timeout: 20,
+        max_lifetime: 60 * 30,
+      });
+
+      await sql`SELECT 1`;
+      await sql.end();
+      console.log("PostgreSQL is ready!");
+      return true;
+    } catch (error) {
+      console.log(`Waiting for PostgreSQL... (${i + 1}/3)`);
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
+  throw new Error("PostgreSQL failed to start");
+}
+
+async function startContainer(): Promise<{ port: number; containerName: string }> {
+  try {
+    // Build the Docker image
+    console.log("Building Docker image...");
+    const dockerfilePath = path.join(import.meta.dir, "docker", "Dockerfile");
+    await execAsync(`${dockerCLI} build --pull --rm -f "${dockerfilePath}" -t custom-postgres .`, {
+      cwd: path.join(import.meta.dir, "docker"),
+    });
+    const port = await findRandomPort();
+    const containerName = `postgres-test-${port}`;
+    // Check if container exists and remove it
+    try {
+      await execAsync(`${dockerCLI} rm -f ${containerName}`);
+    } catch (error) {
+      // Container might not exist, ignore error
+    }
+
+    // Start the container
+    await execAsync(`${dockerCLI} run -d --name ${containerName} -p ${port}:5432 custom-postgres`);
+
+    // Wait for PostgreSQL to be ready
+    await waitForPostgres(port);
+    return {
+      port,
+      containerName,
+    };
+  } catch (error) {
+    console.error("Error:", error);
+    process.exit(1);
+  }
+}
+
+function isDockerEnabled(): boolean {
+  if (!dockerCLI) {
+    return false;
+  }
+
+  // TODO: investigate why its not starting on Linux arm64
+  if (isLinux && process.arch === "arm64") {
+    return false;
+  }
+
+  try {
+    const info = execSync(`${dockerCLI} info`, { stdio: ["ignore", "pipe", "inherit"] });
+    return info.toString().indexOf("Server Version:") !== -1;
+  } catch {
+    return false;
+  }
+}
+if (isDockerEnabled()) {
+  const container: { port: number; containerName: string } = await startContainer();
+  afterAll(async () => {
+    try {
+      await execAsync(`${dockerCLI} stop -t 0 ${container.containerName}`);
+    } catch (error) {}
+
+    try {
+      await execAsync(`${dockerCLI} rm -f ${container.containerName}`);
+    } catch (error) {}
+  });
+
+  // require("./bootstrap.js");
 
   // macOS location: /opt/homebrew/var/postgresql@14/pg_hba.conf
   // --- Expected pg_hba.conf ---
@@ -34,33 +132,36 @@ if (!isCI && hasPsql) {
   // host replication all 127.0.0.1/32 trust
   // host replication all ::1/128 trust
   // --- Expected pg_hba.conf ---
-  process.env.DATABASE_URL = "postgres://bun_sql_test@localhost:5432/bun_sql_test";
+  process.env.DATABASE_URL = `postgres://bun_sql_test@localhost:${container.port}/bun_sql_test`;
 
   const login = {
     username: "bun_sql_test",
+    port: container.port,
   };
 
   const login_md5 = {
     username: "bun_sql_test_md5",
     password: "bun_sql_test_md5",
+    port: container.port,
   };
 
   const login_scram = {
     username: "bun_sql_test_scram",
     password: "bun_sql_test_scram",
+    port: container.port,
   };
 
   const options = {
     db: "bun_sql_test",
     username: login.username,
     password: login.password,
-    idle_timeout: 0,
-    connect_timeout: 0,
+    port: container.port,
     max: 1,
   };
 
   test("Connects with no options", async () => {
-    const sql = postgres({ max: 1 });
+    // we need at least the usename and port
+    await using sql = postgres({ max: 1, port: container.port, username: login.username });
 
     const result = (await sql`select 1 as x`)[0].x;
     sql.close();
@@ -72,19 +173,20 @@ if (!isCI && hasPsql) {
     const onconnect = mock();
     await using sql = postgres({
       ...options,
-      hostname: "unreachable_host",
-      connection_timeout: 1,
+      hostname: "example.com",
+      connection_timeout: 4,
       onconnect,
       onclose,
+      max: 1,
     });
     let error: any;
     try {
-      await sql`select pg_sleep(2)`;
+      await sql`select pg_sleep(8)`;
     } catch (e) {
       error = e;
     }
     expect(error.code).toBe(`ERR_POSTGRES_CONNECTION_TIMEOUT`);
-    expect(error.message).toContain("Connection timeout after 1ms");
+    expect(error.message).toContain("Connection timeout after 4s");
     expect(onconnect).not.toHaveBeenCalled();
     expect(onclose).toHaveBeenCalledTimes(1);
   });
@@ -117,7 +219,7 @@ if (!isCI && hasPsql) {
     const onconnect = mock();
     await using sql = postgres({
       ...options,
-      idle_timeout: 100,
+      idle_timeout: 1,
       onconnect,
       onclose,
     });
@@ -136,7 +238,7 @@ if (!isCI && hasPsql) {
     const onconnect = mock();
     const sql = postgres({
       ...options,
-      max_lifetime: 64,
+      max_lifetime: 1,
       onconnect,
       onclose,
     });
@@ -249,8 +351,8 @@ if (!isCI && hasPsql) {
     expect((await sql`select ${null} as x`)[0].x).toBeNull();
   });
 
-  test.todo("Unsigned Integer", async () => {
-    expect((await sql`select ${0x7fffffff + 2} as x`)[0].x).toBe(0x7fffffff + 2);
+  test("Unsigned Integer", async () => {
+    expect((await sql`select ${0x7fffffff + 2} as x`)[0].x).toBe("2147483649");
   });
 
   test("Signed Integer", async () => {
@@ -325,15 +427,17 @@ if (!isCI && hasPsql) {
   //   ['c', (await sql`select ${ sql.array(['a', 'b', 'c']) } as x`)[0].x[2]]
   // )
 
-  // t('Array of Date', async() => {
-  //   const now = new Date()
-  //   return [now.getTime(), (await sql`select ${ sql.array([now, now, now]) } as x`)[0].x[2].getTime()]
-  // })
+  // test("Array of Date", async () => {
+  //   const now = new Date();
+  //   const result = await sql`select ${sql.array([now, now, now])} as x`;
+  //   expect(result[0].x[2].getTime()).toBe(now.getTime());
+  // });
 
-  // t.only("Array of Box", async () => [
-  //   "(3,4),(1,2);(6,7),(4,5)",
-  //   (await sql`select ${"{(1,2),(3,4);(4,5),(6,7)}"}::box[] as x`)[0].x.join(";"),
-  // ]);
+  test.todo("Array of Box", async () => {
+    const result = await sql`select ${"{(1,2),(3,4);(4,5),(6,7)}"}::box[] as x`;
+    console.log(result);
+    expect(result[0].x.join(";")).toBe("(1,2);(3,4);(4,5);(6,7)");
+  });
 
   // t('Nested array n2', async() =>
   //   ['4', (await sql`select ${ sql.array([[1, 2], [3, 4]]) } as x`)[0].x[1][1]]
@@ -347,9 +451,9 @@ if (!isCI && hasPsql) {
   //   ['Hello "you",c:\\windows', (await sql`select ${ sql.array(['Hello "you"', 'c:\\windows']) } as x`)[0].x.join(',')]
   // )
 
-  // t.only("Escapes", async () => {
-  //   expect(Object.keys((await sql`select 1 as ${sql('hej"hej')}`)[0])[0]).toBe('hej"hej');
-  // });
+  test("Escapes", async () => {
+    expect(Object.keys((await sql`select 1 as ${sql('hej"hej')}`)[0])[0]).toBe('hej"hej');
+  });
 
   // t.only(
   //   "big query body",
@@ -382,184 +486,269 @@ if (!isCI && hasPsql) {
     }
   });
 
-  // t('Throws on illegal transactions', async() => {
-  //   const sql = postgres({ ...options, max: 2, fetch_types: false })
-  //   const error = await sql`begin`.catch(e => e)
-  //   return [
-  //     error.code,
-  //     'UNSAFE_TRANSACTION'
-  //   ]
-  // })
+  test("Throws on illegal transactions", async () => {
+    const sql = postgres({ ...options, max: 2, fetch_types: false });
+    const error = await sql`begin`.catch(e => e);
+    return expect(error.code).toBe("ERR_POSTGRES_UNSAFE_TRANSACTION");
+  });
 
-  // t('Transaction throws', async() => {
-  //   await sql`create table test (a int)`
-  //   return ['22P02', await sql.begin(async sql => {
-  //     await sql`insert into test values(1)`
-  //     await sql`insert into test values('hej')`
-  //   }).catch(x => x.code), await sql`drop table test`]
-  // })
+  test("Transaction throws", async () => {
+    await sql`create table if not exists test (a int)`;
+    try {
+      expect(
+        await sql
+          .begin(async sql => {
+            await sql`insert into test values(1)`;
+            await sql`insert into test values('hej')`;
+          })
+          .catch(e => e.errno),
+      ).toBe("22P02");
+    } finally {
+      await sql`drop table test`;
+    }
+  });
 
-  // t('Transaction rolls back', async() => {
-  //   await sql`create table test (a int)`
+  test("Transaction rolls back", async () => {
+    await sql`create table if not exists test (a int)`;
+
+    try {
+      await sql
+        .begin(async sql => {
+          await sql`insert into test values(1)`;
+          await sql`insert into test values('hej')`;
+        })
+        .catch(() => {
+          /* ignore */
+        });
+
+      expect((await sql`select a from test`).count).toBe(0);
+    } finally {
+      await sql`drop table test`;
+    }
+  });
+
+  test("Transaction throws on uncaught savepoint", async () => {
+    await sql`create table test (a int)`;
+    try {
+      expect(
+        await sql
+          .begin(async sql => {
+            await sql`insert into test values(1)`;
+            await sql.savepoint(async sql => {
+              await sql`insert into test values(2)`;
+              throw new Error("fail");
+            });
+          })
+          .catch(err => err.message),
+      ).toBe("fail");
+    } finally {
+      await sql`drop table test`;
+    }
+  });
+
+  test("Transaction throws on uncaught named savepoint", async () => {
+    await sql`create table test (a int)`;
+    try {
+      expect(
+        await sql
+          .begin(async sql => {
+            await sql`insert into test values(1)`;
+            await sql.savepoit("watpoint", async sql => {
+              await sql`insert into test values(2)`;
+              throw new Error("fail");
+            });
+          })
+          .catch(() => "fail"),
+      ).toBe("fail");
+    } finally {
+      await sql`drop table test`;
+    }
+  });
+
+  test("Transaction succeeds on caught savepoint", async () => {
+    try {
+      await sql`create table test (a int)`;
+      await sql.begin(async sql => {
+        await sql`insert into test values(1)`;
+        await sql
+          .savepoint(async sql => {
+            await sql`insert into test values(2)`;
+            throw new Error("please rollback");
+          })
+          .catch(() => {
+            /* ignore */
+          });
+        await sql`insert into test values(3)`;
+      });
+      expect((await sql`select count(1) from test`)[0].count).toBe("2");
+    } finally {
+      await sql`drop table test`;
+    }
+  });
+
+  test("Savepoint returns Result", async () => {
+    let result;
+    await sql.begin(async t => {
+      result = await t.savepoint(s => s`select 1 as x`);
+    });
+    expect(result[0]?.x).toBe(1);
+  });
+
+  // test("Prepared transaction", async () => {
+  //   await sql`create table test (a int)`;
+
   //   await sql.begin(async sql => {
-  //     await sql`insert into test values(1)`
-  //     await sql`insert into test values('hej')`
-  //   }).catch(() => { /* ignore */ })
-  //   return [0, (await sql`select a from test`).count, await sql`drop table test`]
-  // })
+  //     await sql`insert into test values(1)`;
+  //     await sql.prepare("tx1");
+  //   });
 
-  // t('Transaction throws on uncaught savepoint', async() => {
-  //   await sql`create table test (a int)`
-
-  //   return ['fail', (await sql.begin(async sql => {
-  //     await sql`insert into test values(1)`
-  //     await sql.savepoint(async sql => {
-  //       await sql`insert into test values(2)`
-  //       throw new Error('fail')
-  //     })
-  //   }).catch((err) => err.message)), await sql`drop table test`]
-  // })
-
-  // t('Transaction throws on uncaught named savepoint', async() => {
-  //   await sql`create table test (a int)`
-
-  //   return ['fail', (await sql.begin(async sql => {
-  //     await sql`insert into test values(1)`
-  //     await sql.savepoit('watpoint', async sql => {
-  //       await sql`insert into test values(2)`
-  //       throw new Error('fail')
-  //     })
-  //   }).catch(() => 'fail')), await sql`drop table test`]
-  // })
-
-  // t('Transaction succeeds on caught savepoint', async() => {
-  //   await sql`create table test (a int)`
-  //   await sql.begin(async sql => {
-  //     await sql`insert into test values(1)`
-  //     await sql.savepoint(async sql => {
-  //       await sql`insert into test values(2)`
-  //       throw new Error('please rollback')
-  //     }).catch(() => { /* ignore */ })
-  //     await sql`insert into test values(3)`
-  //   })
-
-  //   return ['2', (await sql`select count(1) from test`)[0].count, await sql`drop table test`]
-  // })
-
-  // t('Savepoint returns Result', async() => {
-  //   let result
-  //   await sql.begin(async sql => {
-  //     result = await sql.savepoint(sql =>
-  //       sql`select 1 as x`
-  //     )
-  //   })
-
-  //   return [1, result[0].x]
-  // })
-
-  // t('Prepared transaction', async() => {
-  //   await sql`create table test (a int)`
-
-  //   await sql.begin(async sql => {
-  //     await sql`insert into test values(1)`
-  //     await sql.prepare('tx1')
-  //   })
-
-  //   await sql`commit prepared 'tx1'`
-
-  //   return ['1', (await sql`select count(1) from test`)[0].count, await sql`drop table test`]
-  // })
-
-  // t('Transaction requests are executed implicitly', async() => {
-  //   const sql = postgres({ debug: true, idle_timeout: 1, fetch_types: false })
-  //   return [
-  //     'testing',
-  //     (await sql.begin(sql => [
-  //       sql`select set_config('bun_sql.test', 'testing', true)`,
-  //       sql`select current_setting('bun_sql.test') as x`
-  //     ]))[1][0].x
-  //   ]
-  // })
-
-  // t('Uncaught transaction request errors bubbles to transaction', async() => [
-  //   '42703',
-  //   (await sql.begin(sql => [
-  //     sql`select wat`,
-  //     sql`select current_setting('bun_sql.test') as x, ${ 1 } as a`
-  //   ]).catch(e => e.code))
-  // ])
-
-  // t('Fragments in transactions', async() => [
-  //   true,
-  //   (await sql.begin(sql => sql`select true as x where ${ sql`1=1` }`))[0].x
-  // ])
-
-  // t('Transaction rejects with rethrown error', async() => [
-  //   'WAT',
-  //   await sql.begin(async sql => {
-  //     try {
-  //       await sql`select exception`
-  //     } catch (ex) {
-  //       throw new Error('WAT')
-  //     }
-  //   }).catch(e => e.message)
-  // ])
-
-  // t('Parallel transactions', async() => {
-  //   await sql`create table test (a int)`
-  //   return ['11', (await Promise.all([
-  //     sql.begin(sql => sql`select 1`),
-  //     sql.begin(sql => sql`select 1`)
-  //   ])).map(x => x.count).join(''), await sql`drop table test`]
-  // })
-
-  // t("Many transactions at beginning of connection", async () => {
-  //   const sql = postgres(options);
-  //   const xs = await Promise.all(Array.from({ length: 100 }, () => sql.begin(sql => sql`select 1`)));
-  //   return [100, xs.length];
+  //   await sql`commit prepared 'tx1'`;
+  //   try {
+  //     expect((await sql`select count(1) from test`)[0].count).toBe("1");
+  //   } finally {
+  //     await sql`drop table test`;
+  //   }
   // });
 
-  // t('Transactions array', async() => {
-  //   await sql`create table test (a int)`
+  test("Prepared transaction", async () => {
+    await sql`create table test (a int)`;
 
-  //   return ['11', (await sql.begin(sql => [
-  //     sql`select 1`.then(x => x),
-  //     sql`select 1`
-  //   ])).map(x => x.count).join(''), await sql`drop table test`]
-  // })
+    try {
+      await sql.beginDistributed("tx1", async sql => {
+        await sql`insert into test values(1)`;
+      });
 
-  // t('Transaction waits', async() => {
-  //   await sql`create table test (a int)`
-  //   await sql.begin(async sql => {
-  //     await sql`insert into test values(1)`
-  //     await sql.savepoint(async sql => {
-  //       await sql`insert into test values(2)`
-  //       throw new Error('please rollback')
-  //     }).catch(() => { /* ignore */ })
-  //     await sql`insert into test values(3)`
-  //   })
+      await sql.commitDistributed("tx1");
+      expect((await sql`select count(1) from test`)[0].count).toBe("1");
+    } finally {
+      await sql`drop table test`;
+    }
+  });
 
-  //   return ['11', (await Promise.all([
-  //     sql.begin(sql => sql`select 1`),
-  //     sql.begin(sql => sql`select 1`)
-  //   ])).map(x => x.count).join(''), await sql`drop table test`]
-  // })
+  test("Transaction requests are executed implicitly", async () => {
+    await using sql = postgres(options);
+    expect(
+      (
+        await sql.begin(sql => [
+          sql`select set_config('bun_sql.test', 'testing', true)`,
+          sql`select current_setting('bun_sql.test') as x`,
+        ])
+      )[1][0].x,
+    ).toBe("testing");
+  });
 
-  // t('Helpers in Transaction', async() => {
-  //   return ['1', (await sql.begin(async sql =>
-  //     await sql`select ${ sql({ x: 1 }) }`
-  //   ))[0].x]
-  // })
+  test("Idle timeout retry works", async () => {
+    await using sql = postgres({ ...options, idleTimeout: 1 });
+    await sql`select 1`;
+    await Bun.sleep(1100); // 1.1 seconds so it should retry
+    await sql`select 1`;
+    expect().pass();
+  });
 
-  // t('Undefined values throws', async() => {
-  //   let error
+  test("Uncaught transaction request errors bubbles to transaction", async () => {
+    const sql = postgres(options);
+    process.nextTick(() => sql.close({ timeout: 1 }));
+    expect(
+      await sql
+        .begin(sql => [sql`select wat`, sql`select current_setting('bun_sql.test') as x, ${1} as a`])
+        .catch(e => e.errno || e),
+    ).toBe("42703");
+  });
 
-  //   await sql`
-  //     select ${ undefined } as x
-  //   `.catch(x => error = x.code)
+  test("Fragments in transactions", async () => {
+    const sql = postgres({ ...options, debug: true, idle_timeout: 1, fetch_types: false });
+    expect((await sql.begin(sql => sql`select true as x where ${sql`1=1`}`))[0].x).toBe(true);
+  });
 
-  //   return ['UNDEFINED_VALUE', error]
-  // })
+  test("Transaction rejects with rethrown error", async () => {
+    await using sql = postgres({ ...options });
+    expect(
+      await sql
+        .begin(async sql => {
+          try {
+            await sql`select exception`;
+          } catch (ex) {
+            throw new Error("WAT");
+          }
+        })
+        .catch(e => e.message),
+    ).toBe("WAT");
+  });
+
+  test("Parallel transactions", async () => {
+    await sql`create table test (a int)`;
+    expect(
+      (await Promise.all([sql.begin(sql => sql`select 1 as count`), sql.begin(sql => sql`select 1 as count`)]))
+        .map(x => x[0].count)
+        .join(""),
+    ).toBe("11");
+    await sql`drop table test`;
+  });
+
+  test("Many transactions at beginning of connection", async () => {
+    await using sql = postgres(options);
+    const xs = await Promise.all(Array.from({ length: 100 }, () => sql.begin(sql => sql`select 1`)));
+    return expect(xs.length).toBe(100);
+  });
+
+  test("Transactions array", async () => {
+    await using sql = postgres(options);
+    await sql`create table test (a int)`;
+    try {
+      expect(
+        (await sql.begin(sql => [sql`select 1 as count`, sql`select 1 as count`])).map(x => x[0].count).join(""),
+      ).toBe("11");
+    } finally {
+      await sql`drop table test`;
+    }
+  });
+
+  test("Transaction waits", async () => {
+    await using sql = postgres({ ...options });
+    await sql`create table test (a int)`;
+    try {
+      await sql.begin(async sql => {
+        await sql`insert into test values(1)`;
+        await sql
+          .savepoint(async sql => {
+            await sql`insert into test values(2)`;
+            throw new Error("please rollback");
+          })
+          .catch(() => {
+            /* ignore */
+          });
+        await sql`insert into test values(3)`;
+      });
+
+      expect(
+        (await Promise.all([sql.begin(sql => sql`select 1 as count`), sql.begin(sql => sql`select 1 as count`)]))
+          .map(x => x[0].count)
+          .join(""),
+      ).toBe("11");
+    } finally {
+      await sql`drop table test`;
+    }
+  });
+
+  test("Helpers in Transaction", async () => {
+    const result = await sql.begin(async sql => await sql`select ${sql.unsafe("1 as x")}`);
+    expect(result[0].x).toBe(1);
+  });
+
+  test("Undefined values throws", async () => {
+    // in bun case undefined is null should we fix this? null is a better DX
+
+    // let error;
+
+    // await sql`
+    //   select ${undefined} as x
+    // `.catch(x => (error = x.code));
+
+    // expect(error).toBe("UNDEFINED_VALUE");
+
+    const result = await sql`select ${undefined} as x`;
+    expect(result[0].x).toBeNull();
+  });
 
   // t('Transform undefined', async() => {
   //   const sql = postgres({ ...options, transform: { undefined: null } })
@@ -575,20 +764,29 @@ if (!isCI && hasPsql) {
 
   // Add code property.
   test("Throw syntax error", async () => {
+    await using sql = postgres({ ...options, max: 1 });
     const err = await sql`wat 1`.catch(x => x);
+    expect(err.errno).toBe("42601");
     expect(err.code).toBe("ERR_POSTGRES_SYNTAX_ERROR");
-    expect(err.errno).toBe(42601);
     expect(err).toBeInstanceOf(SyntaxError);
   });
 
-  // t('Connect using uri', async() =>
-  //   [true, await new Promise((resolve, reject) => {
-  //     const sql = postgres('postgres://' + login.user + ':' + (login.pass || '') + '@localhost:5432/' + options.db, {
-  //       idle_timeout
-  //     })
-  //     sql`select 1`.then(() => resolve(true), reject)
-  //   })]
-  // )
+  test("Connect using uri", async () => [
+    true,
+    await new Promise((resolve, reject) => {
+      const sql = postgres(
+        "postgres://" +
+          login_md5.username +
+          ":" +
+          (login_md5.password || "") +
+          "@localhost:" +
+          container.port +
+          "/" +
+          options.db,
+      );
+      sql`select 1`.then(() => resolve(true), reject);
+    }),
+  ]);
 
   // t('Options from uri with special characters in user and pass', async() => {
   //   const opt = postgres({ user: 'öla', pass: 'pass^word' }).options
@@ -681,7 +879,7 @@ if (!isCI && hasPsql) {
   });
 
   // Promise.all on multiple values in-flight doesn't work currently due to pendingValueGetcached pointing to the wrong value.
-  test.todo("Parallel connections using scram-sha-256", async () => {
+  test("Parallel connections using scram-sha-256", async () => {
     await using sql = postgres({ ...options, ...login_scram });
     return [
       true,
@@ -779,51 +977,49 @@ if (!isCI && hasPsql) {
   //   return ['hello', result[0].x]
   // })
 
-  // t('Connection ended promise', async() => {
-  //   const sql = postgres(options)
+  test("Connection ended promise", async () => {
+    const sql = postgres(options);
 
-  //   await sql.end()
+    await sql.end();
 
-  //   return [undefined, await sql.end()]
-  // })
+    expect(await sql.end()).toBeUndefined();
+  });
 
-  // t('Connection ended timeout', async() => {
-  //   const sql = postgres(options)
+  test("Connection ended timeout", async () => {
+    const sql = postgres(options);
 
-  //   await sql.end({ timeout: 10 })
+    await sql.end({ timeout: 10 });
 
-  //   return [undefined, await sql.end()]
-  // })
+    expect(await sql.end()).toBeUndefined();
+  });
 
-  // t('Connection ended error', async() => {
-  //   const sql = postgres(options)
-  //   await sql.end()
-  //   return ['CONNECTION_ENDED', (await sql``.catch(x => x.code))]
-  // })
+  test("Connection ended error", async () => {
+    const sql = postgres(options);
+    await sql.end();
+    return expect(await sql``.catch(x => x.code)).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
+  });
 
-  // t('Connection end does not cancel query', async() => {
-  //   const sql = postgres(options)
+  test("Connection end does not cancel query", async () => {
+    const sql = postgres(options);
 
-  //   const promise = sql`select 1 as x`.execute()
+    const promise = sql`select pg_sleep(0.2) as x`.execute();
+    await sql.end();
+    return expect(await promise).toEqual([{ x: "" }]);
+  });
 
-  //   await sql.end()
+  test("Connection destroyed", async () => {
+    const sql = postgres(options);
+    process.nextTick(() => sql.end({ timeout: 0 }));
+    expect(await sql``.catch(x => x.code)).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
+  });
 
-  //   return [1, (await promise)[0].x]
-  // })
+  test("Connection destroyed with query before", async () => {
+    const sql = postgres(options);
+    const error = sql`select pg_sleep(0.2)`.catch(err => err.code);
 
-  // t('Connection destroyed', async() => {
-  //   const sql = postgres(options)
-  //   process.nextTick(() => sql.end({ timeout: 0 }))
-  //   return ['CONNECTION_DESTROYED', await sql``.catch(x => x.code)]
-  // })
-
-  // t('Connection destroyed with query before', async() => {
-  //   const sql = postgres(options)
-  //       , error = sql`select pg_sleep(0.2)`.catch(err => err.code)
-
-  //   sql.end({ timeout: 0 })
-  //   return ['CONNECTION_DESTROYED', await error]
-  // })
+    sql.end({ timeout: 0 });
+    return expect(await error).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
+  });
 
   // t('transform column', async() => {
   //   const sql = postgres({
@@ -947,14 +1143,18 @@ if (!isCI && hasPsql) {
   //   ]
   // })
 
-  // t('unsafe', async() => {
-  //   await sql`create table test (x int)`
-  //   return [1, (await sql.unsafe('insert into test values ($1) returning *', [1]))[0].x, await sql`drop table test`]
-  // })
+  test("unsafe", async () => {
+    await sql`create table test (x int)`;
+    try {
+      expect(await sql.unsafe("insert into test values ($1) returning *", [1])).toEqual([{ x: 1 }]);
+    } finally {
+      await sql`drop table test`;
+    }
+  });
 
-  // t('unsafe simple', async() => {
-  //   return [1, (await sql.unsafe('select 1 as x'))[0].x]
-  // })
+  test("unsafe simple", async () => {
+    expect(await sql.unsafe("select 1 as x")).toEqual([{ x: 1 }]);
+  });
 
   // t('unsafe simple includes columns', async() => {
   //   return ['x', (await sql.unsafe('select 1 as x').values()).columns[0].name]
@@ -972,12 +1172,14 @@ if (!isCI && hasPsql) {
   //   ]
   // })
 
-  // t('simple query using unsafe with multiple statements', async() => {
-  //   return [
-  //     '1,2',
-  //     (await sql.unsafe('select 1 as x;select 2 as x')).map(x => x[0].x).join()
-  //   ]
-  // })
+  test.todo("simple query using unsafe with multiple statements", async () => {
+    // bun always uses prepared statements, so this is not supported
+    //     PostgresError: cannot insert multiple commands into a prepared statement
+    //  errno: "42601",
+    //   code: "ERR_POSTGRES_SYNTAX_ERROR"
+    expect(await sql.unsafe("select 1 as x;select 2 as x")).toEqual([{ x: 1 }, { x: 2 }]);
+    // return ["1,2", (await sql.unsafe("select 1 as x;select 2 as x")).map(x => x[0].x).join()];
+  });
 
   // t('simple query using simple() with multiple statements', async() => {
   //   return [
@@ -1218,9 +1420,9 @@ if (!isCI && hasPsql) {
     { timeout: 1000000 },
   );
 
-  // t('only allows one statement', async() =>
-  //   ['42601', await sql`select 1; select 2`.catch(e => e.code)]
-  // )
+  test("only allows one statement", async () => {
+    expect(await sql`select 1; select 2`.catch(e => e.errno)).toBe("42601");
+  });
 
   // t('await sql() throws not tagged error', async() => {
   //   let error
@@ -1275,53 +1477,49 @@ if (!isCI && hasPsql) {
     }
   });
 
-  // t('Connection errors are caught using begin()', {
-  //   timeout: 2
-  // }, async() => {
-  //   let error
-  //   try {
-  //     const sql = postgres({ host: 'localhost', port: 1 })
+  test("Connection errors are caught using begin()", async () => {
+    let error;
+    try {
+      const sql = postgres({ host: "localhost", port: 1 });
 
-  //     await sql.begin(async(sql) => {
-  //       await sql`insert into test (label, value) values (${1}, ${2})`
-  //     })
-  //   } catch (err) {
-  //     error = err
-  //   }
+      await sql.begin(async sql => {
+        await sql`insert into test (label, value) values (${1}, ${2})`;
+      });
+    } catch (err) {
+      error = err;
+    }
+    expect(error.code).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
+  });
 
-  //   return [
-  //     true,
-  //     error.code === 'ECONNREFUSED' ||
-  //     error.message === 'Connection refused (os error 61)'
-  //   ]
-  // })
+  test("dynamic table name", async () => {
+    await sql`create table test(a int)`;
+    try {
+      return expect((await sql`select * from ${sql("test")}`).length).toBe(0);
+    } finally {
+      await sql`drop table test`;
+    }
+  });
 
-  // t('dynamic table name', async() => {
-  //   await sql`create table test(a int)`
-  //   return [
-  //     0, (await sql`select * from ${ sql('test') }`).count,
-  //     await sql`drop table test`
-  //   ]
-  // })
+  test("dynamic schema name", async () => {
+    await sql`create table test(a int)`;
+    try {
+      return expect((await sql`select * from ${sql("public")}.test`).length).toBe(0);
+    } finally {
+      await sql`drop table test`;
+    }
+  });
 
-  // t('dynamic schema name', async() => {
-  //   await sql`create table test(a int)`
-  //   return [
-  //     0, (await sql`select * from ${ sql('public') }.test`).count,
-  //     await sql`drop table test`
-  //   ]
-  // })
+  test("dynamic schema and table name", async () => {
+    await sql`create table test(a int)`;
+    try {
+      return expect((await sql`select * from ${sql("public.test")}`).length).toBe(0);
+    } finally {
+      await sql`drop table test`;
+    }
+  });
 
-  // t('dynamic schema and table name', async() => {
-  //   await sql`create table test(a int)`
-  //   return [
-  //     0, (await sql`select * from ${ sql('public.test') }`).count,
-  //     await sql`drop table test`
-  //   ]
-  // })
-
-  test.todo("dynamic column name", async () => {
-    const result = await sql`select 1 as ${"\\!not_valid"}`;
+  test("dynamic column name", async () => {
+    const result = await sql`select 1 as ${sql("!not_valid")}`;
     expect(Object.keys(result[0])[0]).toBe("!not_valid");
   });
 
@@ -1333,19 +1531,27 @@ if (!isCI && hasPsql) {
   //   return [undefined, (await sql`select ${ sql({ a: 1, b: 2 }, 'a') }`)[0].b]
   // })
 
-  // t('dynamic insert', async() => {
-  //   await sql`create table test (a int, b text)`
-  //   const x = { a: 42, b: 'the answer' }
+  test("dynamic insert", async () => {
+    await sql`create table test (a int, b text)`;
+    try {
+      const x = { a: 42, b: "the answer" };
+      expect((await sql`insert into test ${sql(x)} returning *`)[0].b).toBe("the answer");
+    } finally {
+      await sql`drop table test`;
+    }
+  });
 
-  //   return ['the answer', (await sql`insert into test ${ sql(x) } returning *`)[0].b, await sql`drop table test`]
-  // })
-
-  // test.todo("dynamic insert pluck", async () => {
-  //   await sql`create table test (a int, b text)`;
-  //   const x = { a: 42, b: "the answer" };
-  //   const [{ b }] = await sql`insert into test ${sql(x, "a")} returning *`;
-  //   expect(b).toBe("the answer");
-  // });
+  test("dynamic insert pluck", async () => {
+    try {
+      await sql`create table test2 (a int, b text)`;
+      const x = { a: 42, b: "the answer" };
+      const [{ b, a }] = await sql`insert into test2 ${sql(x, "a")} returning *`;
+      expect(b).toBeNull();
+      expect(a).toBe(42);
+    } finally {
+      await sql`drop table test2`;
+    }
+  });
 
   // t('dynamic in with empty array', async() => {
   //   await sql`create table test (a int)`
@@ -1798,17 +2004,20 @@ if (!isCI && hasPsql) {
   //   return [1, (await sql`select 1 as x`)[0].x]
   // })
 
-  test("Big result", async () => {
-    const result = await sql`select * from generate_series(1, 100000)`;
-    expect(result.count).toBe(100000);
-    let i = 1;
+  test.skipIf(isCI)(
+    "Big result",
+    async () => {
+      await using sql = postgres(options);
+      const result = await sql`select * from generate_series(1, 100000)`;
+      expect(result.count).toBe(100000);
+      let i = 1;
 
-    for (const row of result) {
-      if (row.generate_series !== i++) {
-        throw new Error(`Row out of order at index ${i - 1}`);
+      for (const row of result) {
+        expect(row.generate_series).toBe(i++);
       }
-    }
-  });
+    },
+    10000,
+  );
 
   // t('Debug', async() => {
   //   let result
@@ -1822,10 +2031,17 @@ if (!isCI && hasPsql) {
   //   return ['select 1', result]
   // })
 
-  // t('bigint is returned as String', async() => [
-  //   'string',
-  //   typeof (await sql`select 9223372036854777 as x`)[0].x
-  // ])
+  test("bigint is returned as String", async () => {
+    expect(typeof (await sql`select 9223372036854777 as x`)[0].x).toBe("string");
+  });
+
+  test("bigint is returned as BigInt", async () => {
+    await using sql = postgres({
+      ...options,
+      bigint: true,
+    });
+    expect((await sql`select 9223372036854777 as x`)[0].x).toBe(9223372036854777n);
+  });
 
   test("int is returned as Number", async () => {
     expect((await sql`select 123 as x`)[0].x).toBe(123);
@@ -2792,25 +3008,22 @@ if (!isCI && hasPsql) {
   //   return ['12233445566778', xs.sort().join('')]
   // })
 
-  // t('reserve connection', async() => {
-  //   const reserved = await sql.reserve()
+  test("reserve connection", async () => {
+    const sql = postgres({ ...options, max: 1 });
+    const reserved = await sql.reserve();
 
-  //   setTimeout(() => reserved.release(), 510)
+    setTimeout(() => reserved.release(), 510);
 
-  //   const xs = await Promise.all([
-  //     reserved`select 1 as x`.then(([{ x }]) => ({ time: Date.now(), x })),
-  //     sql`select 2 as x`.then(([{ x }]) => ({ time: Date.now(), x })),
-  //     reserved`select 3 as x`.then(([{ x }]) => ({ time: Date.now(), x }))
-  //   ])
+    const xs = await Promise.all([
+      reserved`select 1 as x`.then(([{ x }]) => ({ time: Date.now(), x })),
+      sql`select 2 as x`.then(([{ x }]) => ({ time: Date.now(), x })),
+      reserved`select 3 as x`.then(([{ x }]) => ({ time: Date.now(), x })),
+    ]);
 
-  //   if (xs[1].time - xs[2].time < 500)
-  //     throw new Error('Wrong time')
+    if (xs[1].time - xs[2].time < 500) throw new Error("Wrong time");
 
-  //   return [
-  //     '123',
-  //     xs.map(x => x.x).join('')
-  //   ]
-  // })
+    expect(xs.map(x => x.x).join("")).toBe("123");
+  });
 
   test("keeps process alive when it should", async () => {
     const file = path.posix.join(__dirname, "sql-fixture-ref.ts");

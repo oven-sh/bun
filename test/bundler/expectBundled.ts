@@ -1,7 +1,7 @@
 /**
  * See `./expectBundled.md` for how this works.
  */
-import { BuildConfig, BuildOutput, BunPlugin, fileURLToPath, PluginBuilder } from "bun";
+import { BuildConfig, BuildOutput, BunPlugin, fileURLToPath, PluginBuilder, Loader } from "bun";
 import { callerSourceOrigin } from "bun:jsc";
 import type { Matchers } from "bun:test";
 import * as esbuild from "esbuild";
@@ -186,15 +186,13 @@ export interface BundlerTestInput {
   publicPath?: string;
   keepNames?: boolean;
   legalComments?: "none" | "inline" | "eof" | "linked" | "external";
-  loader?: Record<string, string>;
+  loader?: Record<`.${string}`, Loader>;
   mangleProps?: RegExp;
   mangleQuoted?: boolean;
   mainFields?: string[];
   metafile?: boolean | string;
   minifyIdentifiers?: boolean;
   minifySyntax?: boolean;
-  experimentalCss?: boolean;
-  experimentalHtml?: boolean;
   targetFromAPI?: "TargetWasConfigured";
   minifyWhitespace?: boolean;
   splitting?: boolean;
@@ -448,8 +446,6 @@ function expectBundled(
     minifyIdentifiers,
     minifySyntax,
     minifyWhitespace,
-    experimentalCss,
-    experimentalHtml,
     onAfterBundle,
     outdir,
     dotenv,
@@ -543,7 +539,7 @@ function expectBundled(
     const loaderValues = [...new Set(Object.values(loader))];
     const supportedLoaderTypes = ["js", "jsx", "ts", "tsx", "css", "json", "text", "file", "wtf", "toml"];
     const unsupportedLoaderTypes = loaderValues.filter(x => !supportedLoaderTypes.includes(x));
-    if (unsupportedLoaderTypes.length) {
+    if (unsupportedLoaderTypes.length > 0) {
       throw new Error(`loader '${unsupportedLoaderTypes.join("', '")}' not implemented in bun build`);
     }
   }
@@ -696,8 +692,6 @@ function expectBundled(
               minifySyntax && `--minify-syntax`,
               minifyWhitespace && `--minify-whitespace`,
               drop?.length && drop.map(x => ["--drop=" + x]),
-              experimentalCss && "--experimental-css",
-              experimentalHtml && "--experimental-html",
               globalName && `--global-name=${globalName}`,
               jsx.runtime && ["--jsx-runtime", jsx.runtime],
               jsx.factory && ["--jsx-factory", jsx.factory],
@@ -736,7 +730,6 @@ function expectBundled(
               minifySyntax && `--minify-syntax`,
               minifyWhitespace && `--minify-whitespace`,
               globalName && `--global-name=${globalName}`,
-              experimentalCss && "--experimental-css",
               external && external.map(x => `--external:${x}`),
               packages && ["--packages", packages],
               conditions && `--conditions=${conditions.join(",")}`,
@@ -1035,10 +1028,9 @@ function expectBundled(
           publicPath,
           emitDCEAnnotations,
           ignoreDCEAnnotations,
-          experimentalCss,
-          html: experimentalHtml ? true : undefined,
           drop,
           define: define ?? {},
+          throw: false,
         } as BuildConfig;
 
         if (dotenv) {
@@ -1055,7 +1047,7 @@ function expectBundled(
             const debugFile = `import path from 'path';
 import assert from 'assert';
 const {plugins} = (${x})({ root: ${JSON.stringify(root)} });
-const options = ${JSON.stringify({ ...buildConfig, throw: true, plugins: undefined }, null, 2)};
+const options = ${JSON.stringify({ ...buildConfig, plugins: undefined }, null, 2)};
 options.plugins = typeof plugins === "function" ? [{ name: "plugin", setup: plugins }] : plugins;
 const build = await Bun.build(options);
 for (const [key, blob] of build.outputs) {
@@ -1070,7 +1062,17 @@ for (const [key, blob] of build.outputs) {
         }
 
         configRef = buildConfig;
-        const build = await Bun.build(buildConfig);
+        let build: BuildOutput;
+        try {
+          build = await Bun.build(buildConfig);
+        } catch (e) {
+          const err = e as AggregateError;
+          build = {
+            outputs: [],
+            success: false,
+            logs: err.errors,
+          };
+        }
         if (onAfterApiBundle) await onAfterApiBundle(build);
         configRef = null!;
         Bun.gc(true);

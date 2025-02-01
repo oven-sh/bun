@@ -1655,7 +1655,7 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
 pub fn dumpCurrentStackTrace(first_address: ?usize) void {
     var addrs: [32]usize = undefined;
     var stack: std.builtin.StackTrace = .{ .index = 0, .instruction_addresses = &addrs };
-    std.debug.captureStackTrace(first_address, &stack);
+    std.debug.captureStackTrace(first_address orelse @returnAddress(), &stack);
     dumpStackTrace(stack);
 }
 

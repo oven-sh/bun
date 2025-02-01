@@ -1000,7 +1000,7 @@ pub const upgrade_js_bindings = struct {
 
         var buf: bun.WPathBuffer = undefined;
         const tmpdir_path = fs.FileSystem.RealFS.getDefaultTempDir();
-        const path = switch (bun.sys.normalizePathWindows(u8, bun.invalid_fd, tmpdir_path, &buf)) {
+        const path = switch (bun.sys.normalizePathWindows(u8, bun.invalid_fd, tmpdir_path, &buf, .{})) {
             .err => return .undefined,
             .result => |norm| norm,
         };

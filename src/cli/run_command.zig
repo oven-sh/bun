@@ -1522,14 +1522,18 @@ pub const RunCommand = struct {
         // TODO: run module resolution here - try the next condition if the module can't be found
 
         log("Try resolve `{s}` in `{s}`", .{ target_name, this_transpiler.fs.top_level_dir });
-        if (this_transpiler.resolver.resolve(this_transpiler.fs.top_level_dir, target_name, .entry_point_run)) |resolved| {
+        if (this_transpiler.resolver.resolve(this_transpiler.fs.top_level_dir, target_name, .entry_point_run) catch
+            this_transpiler.resolver.resolve(this_transpiler.fs.top_level_dir, try std.mem.join(ctx.allocator, "", &.{ "./", target_name }), .entry_point_run)) |resolved|
+        {
             var resolved_mutable = resolved;
-            log("Resolved to: `{s}`", .{resolved_mutable.path().?.text});
-            return _bootAndHandleError(ctx, resolved_mutable.path().?.text);
-        } else |_| if (this_transpiler.resolver.resolve(this_transpiler.fs.top_level_dir, try std.mem.join(ctx.allocator, "", &.{ "./", target_name }), .entry_point_run)) |resolved| {
-            var resolved_mutable = resolved;
-            log("Resolved with `./` to: `{s}`", .{resolved_mutable.path().?.text});
-            return _bootAndHandleError(ctx, resolved_mutable.path().?.text);
+            const path = resolved_mutable.path().?;
+            const loader: bun.options.Loader = this_transpiler.options.loaders.get(path.name.ext) orelse .tsx;
+            if (loader.canBeRunByBun()) {
+                log("Resolved to: `{s}`", .{path.text});
+                return _bootAndHandleError(ctx, path.text);
+            } else {
+                log("Resolved file `{s}` but ignoring because loader is {s}", .{ path.text, @tagName(loader) });
+            }
         } else |_| {}
 
         // execute a node_modules/.bin/<X> command, or (run only) a system command like 'ls'
@@ -1679,9 +1683,11 @@ pub const BunXFastPath = struct {
         const handle = (bun.sys.openFileAtWindows(
             bun.invalid_fd, // absolute path is given
             path_to_use,
-            windows.STANDARD_RIGHTS_READ | windows.FILE_READ_DATA | windows.FILE_READ_ATTRIBUTES | windows.FILE_READ_EA | windows.SYNCHRONIZE,
-            windows.FILE_OPEN,
-            windows.FILE_NON_DIRECTORY_FILE | windows.FILE_SYNCHRONOUS_IO_NONALERT,
+            .{
+                .access_mask = windows.STANDARD_RIGHTS_READ | windows.FILE_READ_DATA | windows.FILE_READ_ATTRIBUTES | windows.FILE_READ_EA | windows.SYNCHRONIZE,
+                .disposition = windows.FILE_OPEN,
+                .options = windows.FILE_NON_DIRECTORY_FILE | windows.FILE_SYNCHRONOUS_IO_NONALERT,
+            },
         ).unwrap() catch |err| {
             debug("Failed to open bunx file: '{}'", .{err});
             return;

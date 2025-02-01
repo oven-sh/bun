@@ -161,7 +161,7 @@ pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDe
         var buf0: bun.WPathBuffer = undefined;
         var buf1: bun.WPathBuffer = undefined;
 
-        const dest = switch (bun.sys.normalizePathWindows(u8, to_dir, destination, &buf0)) {
+        const dest = switch (bun.sys.normalizePathWindows(u8, to_dir, destination, &buf0, .{})) {
             .result => |x| x,
             .err => |e| return .{ .err = e },
         };

@@ -355,6 +355,7 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
     auto actual_value_string = determineSpecificType(globalObject, actual_value);
     RETURN_IF_EXCEPTION(scope, {});
 
+    auto ty_first_char = expected_type[0];
     WTF::StringBuilder result;
     result.append("The "_s);
 
@@ -366,7 +367,8 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
         result.append("\" "_s);
         result.append(arg_name.contains('.') ? "property"_s : "argument"_s);
     }
-    result.append(" must be of type "_s);
+    result.append(" must be "_s);
+    result.append(ty_first_char >= 'A' && ty_first_char <= 'Z' ? "an instance of "_s : "of type "_s);
     result.append(expected_type);
     result.append(". Received "_s, actual_value_string);
     return result.toString();

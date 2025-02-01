@@ -191,14 +191,14 @@ jobs:
         with:
           token: ${{ secrets.ROBOBUN_TOKEN }}
           add-paths: ./types/bun/package.json
-          commit-message: "Update `bun-types` version to ${{env.BUN_VERSION}}"
-          push-to-fork: oven-sh/DefinitelyTyped
+          title: "[bun] update to ${{env.BUN_VERSION}}"
+          commit-message: "[bun] update to ${{env.BUN_VERSION}}"
           body: |
             Update `bun-types` version to ${{env.BUN_VERSION}}
 
             https://bun.sh/blog/bun-${{env.BUN_VERSION}}
+          push-to-fork: oven-sh/DefinitelyTyped
           branch: "bun-${{env.BUN_VERSION}}"
-          title: "[bun] update to ${{env.BUN_VERSION}}"
   docker:
     name: Release to Dockerhub
     runs-on: ubuntu-latest

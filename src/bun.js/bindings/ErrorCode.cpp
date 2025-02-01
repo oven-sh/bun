@@ -355,7 +355,21 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
     auto actual_value_string = determineSpecificType(globalObject, actual_value);
     RETURN_IF_EXCEPTION(scope, {});
 
-    return makeString("The \""_s, arg_name, "\" argument must be of type "_s, expected_type, ". Received "_s, actual_value_string);
+    WTF::StringBuilder result;
+    result.append("The "_s);
+
+    if (arg_name.endsWith(" argument"_s)) {
+        result.append(arg_name);
+    } else {
+        result.append("\""_s);
+        result.append(arg_name);
+        result.append("\" "_s);
+        result.append(arg_name.contains('.') ? "property"_s : "argument"_s);
+    }
+    result.append(" must be of type "_s);
+    result.append(expected_type);
+    result.append(". Received "_s, actual_value_string);
+    return result.toString();
 }
 
 WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const StringView& arg_name, ArgList expected_types, JSValue actual_value)
@@ -372,7 +386,8 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
     } else {
         result.append("\""_s);
         result.append(arg_name);
-        result.append("\" argument"_s);
+        result.append("\" "_s);
+        result.append(arg_name.contains('.') ? "property"_s : "argument"_s);
     }
     result.append(" must be of type "_s);
 
@@ -440,14 +455,8 @@ namespace ERR {
 
 JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& arg_name, const WTF::String& expected_type, JSC::JSValue val_actual_value)
 {
-    auto arg_kind = arg_name.contains('.') ? "property"_s : "argument"_s;
-    auto ty_first_char = expected_type[0];
-    auto ty_kind = ty_first_char >= 'A' && ty_first_char <= 'Z' ? "an instance of"_s : "of type"_s;
-
-    auto actual_value = determineSpecificType(globalObject, val_actual_value);
+    auto message = Message::ERR_INVALID_ARG_TYPE(throwScope, globalObject, arg_name, expected_type, val_actual_value);
     RETURN_IF_EXCEPTION(throwScope, {});
-
-    auto message = makeString("The \""_s, arg_name, "\" "_s, arg_kind, " must be "_s, ty_kind, " "_s, expected_type, ". Received "_s, actual_value);
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, message));
     return {};
 }
@@ -455,15 +464,9 @@ JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
 {
     auto arg_name = val_arg_name.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto arg_kind = arg_name.contains('.') ? "property"_s : "argument"_s;
 
-    auto ty_first_char = expected_type[0];
-    auto ty_kind = ty_first_char >= 'A' && ty_first_char <= 'Z' ? "an instance of"_s : "of type"_s;
-
-    auto actual_value = determineSpecificType(globalObject, val_actual_value);
+    auto message = Message::ERR_INVALID_ARG_TYPE(throwScope, globalObject, arg_name, expected_type, val_actual_value);
     RETURN_IF_EXCEPTION(throwScope, {});
-
-    auto message = makeString("The \""_s, arg_name, "\" "_s, arg_kind, " must be "_s, ty_kind, " "_s, expected_type, ". Received "_s, actual_value);
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, message));
     return {};
 }

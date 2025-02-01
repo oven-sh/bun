@@ -15,11 +15,11 @@ const C = bun.C;
 const JSC = bun.JSC;
 const fs = @import("fs.zig");
 const unicode = std.unicode;
-const Ref = @import("./ast/base.zig").Ref;
+const Ref = bun.ast.Ref;
 const expect = std.testing.expect;
 const assert = bun.assert;
 const StringBuilder = @import("./string_builder.zig");
-const Index = @import("./ast/base.zig").Index;
+const Index = bun.ast.Index;
 const OOM = bun.OOM;
 const JSError = bun.JSError;
 

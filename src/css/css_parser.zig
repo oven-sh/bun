@@ -2786,7 +2786,7 @@ pub const BundlerMediaRule = css_rules.media.MediaRule(BundlerAtRule);
 pub const BundlerPrintResult = bun.css.PrintResult(BundlerAtRule);
 pub const BundlerTailwindState = struct {
     source: []const u8,
-    index: bun.bundle_v2.Index,
+    index: bun.ast.Index,
     output_from_tailwind: ?[]const u8 = null,
 };
 

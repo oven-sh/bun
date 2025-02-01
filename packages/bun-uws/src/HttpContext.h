@@ -66,14 +66,14 @@ private:
 
     /* Init the HttpContext by registering libusockets event handlers */
     HttpContext<SSL> *init() {
-        
+
         if(SSL) {
             // if we are SSL we need to handle the handshake properly
             us_socket_context_on_handshake(SSL, getSocketContext(), [](us_socket_t *s, int success,  struct us_bun_verify_error_t verify_error, void* custom_data) {
                 // if we are closing or already closed, we don't need to do anything
-                if (!us_socket_is_closed(SSL, s) && !us_socket_is_shut_down(SSL, s)) {        
+                if (!us_socket_is_closed(SSL, s) && !us_socket_is_shut_down(SSL, s)) {
                     HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
-                    
+
                     if(httpContextData->rejectUnauthorized) {
                         if(!success || verify_error.error != 0) {
                             // we failed to handshake, close the socket
@@ -92,7 +92,7 @@ private:
                 }
             }, nullptr);
         }
-            
+
         /* Handle socket connections */
         us_socket_context_on_open(SSL, getSocketContext(), [](us_socket_t *s, int /*is_client*/, char */*ip*/, int /*ip_length*/) {
             /* Init socket ext */
@@ -115,9 +115,8 @@ private:
         us_socket_context_on_close(SSL, getSocketContext(), [](us_socket_t *s, int /*code*/, void */*reason*/) {
             ((AsyncSocket<SSL> *)s)->uncorkWithoutSending();
 
-           
             /* Get socket ext */
-            HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(SSL, s);
+            auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(us_socket_ext(SSL, s));
 
             /* Call filter */
             HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
@@ -174,7 +173,7 @@ private:
             proxyParser = &httpResponseData->proxyParser;
 #endif
 
-            /* The return value is entirely up to us to interpret. The HttpParser only care for whether the returned value is DIFFERENT or not from passed user */
+            /* The return value is entirely up to us to interpret. The HttpParser cares only for whether the returned value is DIFFERENT from passed user */
             auto [err, returnedSocket] = httpResponseData->consumePostPadded(data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
                 /* For every request we reset the timeout and hang until user makes action */
                 /* Warning: if we are in shutdown state, resetting the timer is a security issue! */
@@ -185,7 +184,7 @@ private:
                 httpResponseData->offset = 0;
 
                 /* Are we not ready for another request yet? Terminate the connection.
-                 * Important for denying async pipelining until, if ever, we want to suppot it.
+                 * Important for denying async pipelining until, if ever, we want to support it.
                  * Otherwise requests can get mixed up on the same connection. We still support sync pipelining. */
                 if (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) {
                     us_socket_close(SSL, (us_socket_t *) s, 0, nullptr);
@@ -380,7 +379,7 @@ private:
                     return s;
                 }
 
-                /* We need to drain any remaining buffered data if success == true*/    
+                /* We need to drain any remaining buffered data if success == true*/
             }
 
             /* Drain any socket buffer, this might empty our backpressure and thus finish the request */
@@ -419,7 +418,7 @@ private:
 
             /* Force close rather than gracefully shutdown and risk confusing the client with a complete download */
             AsyncSocket<SSL> *asyncSocket = (AsyncSocket<SSL> *) s;
-            // Node.js by default sclose the connection but they emit the timeout event before that
+            // Node.js by default closes the connection but they emit the timeout event before that
             HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) asyncSocket->getAsyncSocketData();
 
             if (httpResponseData->onTimeout) {
@@ -444,7 +443,7 @@ public:
             return nullptr;
         }
         // for servers this is only valid when request cert is enabled
-        
+
         /* Init socket context data */
         auto* httpContextData = new ((HttpContextData<SSL> *) us_socket_context_ext(SSL, (us_socket_context_t *) httpContext)) HttpContextData<SSL>();
         if(options.request_cert && options.reject_unauthorized) {
@@ -532,7 +531,7 @@ public:
         // we dont depend on libuv ref for keeping it alive
         if (socket) {
           us_socket_unref(&socket->s);
-        } 
+        }
         return socket;
     }
 

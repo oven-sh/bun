@@ -182,14 +182,14 @@ private:
         }
 
         for (auto &p : parent->children) {
-            if (p->name.length() && p->name[0] == '*') {
+            if (p->name.starts_with('*')) {
                 /* Wildcard match (can be seen as a shortcut) */
                 for (uint32_t handler : p->handlers) {
                     if (handlers[handler & HANDLER_MASK](this)) {
                         return true;
                     }
                 }
-            } else if (p->name.length() && p->name[0] == ':' && segment.length()) {
+            } else if (p->name.starts_with(':') && !segment.empty()) {
                 /* Parameter match */
                 routeParameters.push(segment);
                 if (executeHandlers(p.get(), urlSegment + 1, userData)) {
@@ -282,7 +282,7 @@ public:
     void add(std::vector<std::string> methods, std::string pattern, MoveOnlyFunction<bool(HttpRouter *)> &&handler, uint32_t priority = MEDIUM_PRIORITY) {
         /* First remove existing handler */
         remove(methods[0], pattern, priority);
-        
+
         for (std::string method : methods) {
             /* Lookup method */
             Node *node = getNode(&root, method, false);

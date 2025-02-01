@@ -24,6 +24,220 @@ const DashedIdent = css.DashedIdent;
 const DashedIdentFns = css.DashedIdentFns;
 const Ident = css.Ident;
 const IdentFns = css.IdentFns;
+const VendorPrefix = css.VendorPrefix;
+
+pub inline fn implementDeepClone(comptime T: type, this: *const T, allocator: Allocator) T {
+    const tyinfo = @typeInfo(T);
+
+    if (comptime bun.meta.isSimpleCopyType(T)) {
+        return this.*;
+    }
+
+    if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
+        return switch (result) {
+            .array_list => deepClone(result.child, allocator, this),
+            .baby_list => @panic("Not implemented."),
+            .small_list => this.deepClone(allocator),
+        };
+    }
+
+    if (comptime T == []const u8) {
+        return this.*;
+    }
+
+    if (comptime @typeInfo(T) == .pointer) {
+        const TT = std.meta.Child(T);
+        return implementEql(TT, this.*);
+    }
+
+    return switch (tyinfo) {
+        .@"struct" => {
+            var strct: T = undefined;
+            inline for (tyinfo.@"struct".fields) |field| {
+                if (comptime canTransitivelyImplementDeepClone(field.type) and @hasDecl(field.type, "__generateDeepClone")) {
+                    @field(strct, field.name) = implementDeepClone(field.type, &field(this, field.name, allocator));
+                } else {
+                    @field(strct, field.name) = deepClone(field.type, &@field(this, field.name), allocator);
+                }
+            }
+            return strct;
+        },
+        .@"union" => {
+            inline for (bun.meta.EnumFields(T), tyinfo.@"union".fields) |enum_field, union_field| {
+                if (@intFromEnum(this.*) == enum_field.value) {
+                    if (comptime canTransitivelyImplementDeepClone(union_field.type) and @hasDecl(union_field.type, "__generateDeepClone")) {
+                        return @unionInit(T, enum_field.name, implementDeepClone(union_field.type, &@field(this, enum_field.name), allocator));
+                    }
+                    return @unionInit(T, enum_field.name, deepClone(union_field.type, &@field(this, enum_field.name), allocator));
+                }
+            }
+            unreachable;
+        },
+        else => @compileError("Unhandled type " ++ @typeName(T)),
+    };
+}
+
+/// A function to implement `lhs.eql(&rhs)` for the many types in the CSS parser that needs this.
+///
+/// This is the equivalent of doing `#[derive(PartialEq])` in Rust.
+///
+/// This function only works on simple types like:
+/// - Simple equality types (e.g. integers, floats, strings, enums, etc.)
+/// - Types which implement a `.eql(lhs: *const @This(), rhs: *const @This()) bool` function
+///
+/// Or compound types composed of simple types such as:
+/// - Pointers to simple types
+/// - Optional simple types
+/// - Structs, Arrays, and Unions
+pub fn implementEql(comptime T: type, this: *const T, other: *const T) bool {
+    const tyinfo = @typeInfo(T);
+    if (comptime bun.meta.isSimpleEqlType(T)) {
+        return this.* == other.*;
+    }
+    if (comptime T == []const u8) {
+        return bun.strings.eql(this.*, other.*);
+    }
+    if (comptime @typeInfo(T) == .pointer) {
+        const TT = std.meta.Child(T);
+        return implementEql(TT, this.*, other.*);
+    }
+    if (comptime @typeInfo(T) == .optional) {
+        const TT = std.meta.Child(T);
+        if (this.* != null and other.* != null) return implementEql(TT, &this.*.?, &other.*.?);
+        return false;
+    }
+    if (comptime T == VendorPrefix) {
+        return VendorPrefix.eql(this.*, other.*);
+    }
+    return switch (tyinfo) {
+        .optional => @compileError("Handled above, this means Zack wrote a bug."),
+        .pointer => @compileError("Handled above, this means Zack wrote a bug."),
+        .array => {
+            const Child = std.meta.Child(T);
+            if (comptime bun.meta.isSimpleEqlType(Child)) {
+                return std.mem.eql(Child, &this.*, &other.*);
+            }
+            if (this.len != other.len) return false;
+            if (comptime canTransitivelyImplementEql(Child) and @hasDecl(Child, "__generateEql")) {
+                for (this.*, other.*) |*a, *b| {
+                    if (!implementEql(Child, &a, &b)) return false;
+                }
+            } else {
+                for (this.*, other.*) |*a, *b| {
+                    if (!eql(Child, a, b)) return false;
+                }
+            }
+            return true;
+        },
+        .@"struct" => {
+            inline for (tyinfo.@"struct".fields) |field| {
+                if (!eql(field.type, &@field(this, field.name), &@field(other, field.name))) return false;
+            }
+            return true;
+        },
+        .@"union" => {
+            if (tyinfo.@"union".tag_type == null) @compileError("Unions must have a tag type");
+            if (@intFromEnum(this.*) != @intFromEnum(other.*)) return false;
+            const enum_fields = bun.meta.EnumFields(T);
+            inline for (enum_fields, std.meta.fields(T)) |enum_field, union_field| {
+                if (enum_field.value == @intFromEnum(this.*)) {
+                    if (union_field.type != void) {
+                        if (comptime canTransitivelyImplementEql(union_field.type) and @hasDecl(union_field.type, "__generateEql")) {
+                            return implementEql(union_field.type, &@field(this, enum_field.name), &@field(other, enum_field.name));
+                        }
+                        return eql(union_field.type, &@field(this, enum_field.name), &@field(other, enum_field.name));
+                    } else {
+                        return true;
+                    }
+                }
+            }
+            unreachable;
+        },
+        else => @compileError("Unsupported type: " ++ @typeName(T)),
+    };
+}
+
+pub fn implementHash(comptime T: type, this: *const T, hasher: *std.hash.Wyhash) void {
+    const tyinfo = @typeInfo(T);
+    if (comptime T == void) return;
+    if (comptime bun.meta.isSimpleEqlType(T)) {
+        return hasher.update(std.mem.asBytes(&this));
+    }
+    if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
+        const list = switch (result) {
+            .array_list => this.items[0..],
+            .baby_list => this.sliceConst(),
+            .small_list => this.slice(),
+        };
+        bun.writeAnyToHasher(hasher, list.len);
+        for (list) |*item| {
+            hash(tyinfo.array.child, item, hasher);
+        }
+        return;
+    }
+    if (comptime T == []const u8) {
+        return hasher.update(this.*);
+    }
+    if (comptime @typeInfo(T) == .pointer) {
+        @compileError("Invalid type for implementHash(): " ++ @typeName(T));
+    }
+    if (comptime @typeInfo(T) == .optional) {
+        @compileError("Invalid type for implementHash(): " ++ @typeName(T));
+    }
+    return switch (tyinfo) {
+        .optional => {
+            if (this.* == null) {
+                bun.writeAnyToHasher(hasher, "null");
+            } else {
+                bun.writeAnyToHasher(hasher, "some");
+                hash(tyinfo.optional.child, &this.*.?, hasher);
+            }
+        },
+        .pointer => {
+            hash(tyinfo.pointer.child, &this.*, hasher);
+        },
+        .array => {
+            bun.writeAnyToHasher(hasher, this.len);
+            for (this.*[0..]) |*item| {
+                hash(tyinfo.array.child, item, hasher);
+            }
+        },
+        .@"struct" => {
+            inline for (tyinfo.@"struct".fields) |field| {
+                if (comptime hasHash(field.type)) {
+                    hash(field.type, &@field(this, field.name), hasher);
+                } else if (@hasDecl(field.type, "__generateHash") and @typeInfo(field.type) == .@"struct") {
+                    implementHash(field.type, &@field(this, field.name), hasher);
+                } else {
+                    @compileError("Can't hash these fields: " ++ @typeName(field.type) ++ ". On " ++ @typeName(T));
+                }
+            }
+            return;
+        },
+        .@"enum" => {
+            bun.writeAnyToHasher(hasher, @intFromEnum(this.*));
+        },
+        .@"union" => {
+            if (tyinfo.@"union".tag_type == null) @compileError("Unions must have a tag type");
+            bun.writeAnyToHasher(hasher, @intFromEnum(this.*));
+            const enum_fields = bun.meta.EnumFields(T);
+            inline for (enum_fields, std.meta.fields(T)) |enum_field, union_field| {
+                if (enum_field.value == @intFromEnum(this.*)) {
+                    const field = union_field;
+                    if (comptime hasHash(field.type)) {
+                        hash(field.type, &@field(this, field.name), hasher);
+                    } else if (@hasDecl(field.type, "__generateHash") and @typeInfo(field.type) == .@"struct") {
+                        implementHash(field.type, &@field(this, field.name), hasher);
+                    } else {
+                        @compileError("Can't hash these fields: " ++ @typeName(field.type) ++ ". On " ++ @typeName(T));
+                    }
+                }
+            }
+            return;
+        },
+        else => @compileError("Unsupported type: " ++ @typeName(T)),
+    };
+}
 
 pub fn slice(comptime T: type, val: *const T) []const bun.meta.looksLikeListContainerType(T).?.child {
     if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
@@ -86,7 +300,7 @@ pub inline fn parse(comptime T: type, input: *Parser) Result(T) {
     }
     if (comptime @typeInfo(T) == .optional) {
         const TT = std.meta.Child(T);
-        return .{ .result = parse(TT, input).asValue() };
+        return .{ .result = input.tryParse(parseFor(TT), .{}).asValue() };
     }
     if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
         switch (result.list) {
@@ -222,12 +436,15 @@ pub inline fn eql(comptime T: type, lhs: *const T, rhs: *const T) bool {
             .small_list => lhs.eql(rhs),
         };
     }
+    if (@hasDecl(T, "IMPL_BITFLAGS")) {
+        return T.eql(lhs.*, rhs.*);
+    }
     return switch (T) {
         f32 => lhs.* == rhs.*,
         CSSInteger => lhs.* == rhs.*,
         CustomIdent, DashedIdent, Ident => bun.strings.eql(lhs.v, rhs.v),
         []const u8 => bun.strings.eql(lhs.*, rhs.*),
-        css.VendorPrefix => css.VendorPrefix.eq(lhs.*, rhs.*),
+        // css.VendorPrefix => css.VendorPrefix.eq(lhs.*, rhs.*),
         else => T.eql(lhs, rhs),
     };
 }

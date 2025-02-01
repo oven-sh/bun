@@ -2246,7 +2246,7 @@ pub const SpecifityAndFlags = struct {
     flags: SelectorFlags,
 
     pub fn eql(this: *const SpecifityAndFlags, other: *const SpecifityAndFlags) bool {
-        return this.specificity == other.specificity and this.flags.eql(other.flags);
+        return css.implementEql(@This(), this, other);
     }
 
     pub fn hasPseudoElement(this: *const SpecifityAndFlags) bool {

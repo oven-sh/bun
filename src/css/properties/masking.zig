@@ -41,6 +41,8 @@ const BorderImageSideWidth = css.css_properties.border_image.BorderImageSideWidt
 const BorderImageRepeat = css.css_properties.border_image.BorderImageRepeat;
 const BorderImage = css.css_properties.border_image.BorderImage;
 
+const VendorPrefix = css.VendorPrefix;
+
 /// A value for the [clip-path](https://www.w3.org/TR/css-masking-1/#the-clip-path) property.
 const ClipPath = union(enum) {
     /// No clip path.
@@ -539,3 +541,17 @@ pub const WebKitMaskSourceType = enum {
 
     pub usingnamespace css.DefineEnumProperty(@This());
 };
+
+pub fn getWebkitMaskProperty(property_id: *const css.PropertyId) ?css.PropertyId {
+    return switch (property_id.*) {
+        .@"mask-border-source" => .{ .@"mask-box-image-source" = VendorPrefix.WEBKIT },
+        .@"mask-border-slice" => .{ .@"mask-box-image-slice" = VendorPrefix.WEBKIT },
+        .@"mask-border-width" => .{ .@"mask-box-image-width" = VendorPrefix.WEBKIT },
+        .@"mask-border-outset" => .{ .@"mask-box-image-outset" = VendorPrefix.WEBKIT },
+        .@"mask-border-repeat" => .{ .@"mask-box-image-repeat" = VendorPrefix.WEBKIT },
+        .@"mask-border" => .{ .@"mask-box-image" = VendorPrefix.WEBKIT },
+        .@"mask-composite" => css.PropertyId.@"-webkit-mask-composite",
+        .@"mask-mode" => .{ .@"mask-source-type" = VendorPrefix.WEBKIT },
+        else => null,
+    };
+}

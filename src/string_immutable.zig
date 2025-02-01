@@ -2398,7 +2398,7 @@ pub fn allocateLatin1IntoUTF8(allocator: std.mem.Allocator, comptime Type: type,
     return try foo.toOwnedSlice();
 }
 
-pub fn allocateLatin1IntoUTF8WithList(list_: std.ArrayList(u8), offset_into_list: usize, comptime Type: type, latin1_: Type) !std.ArrayList(u8) {
+pub fn allocateLatin1IntoUTF8WithList(list_: std.ArrayList(u8), offset_into_list: usize, comptime Type: type, latin1_: Type) OOM!std.ArrayList(u8) {
     var latin1 = latin1_;
     var i: usize = offset_into_list;
     var list = list_;
@@ -4642,11 +4642,10 @@ pub fn trimLeadingChar(slice: []const u8, char: u8) []const u8 {
 /// e.g.
 /// `trimLeadingPattern2("abcdef", 'a', 'b') == "cdef"`
 pub fn trimLeadingPattern2(slice_: []const u8, comptime byte1: u8, comptime byte2: u8) []const u8 {
-    const pattern: u16 = comptime @as(u16, byte2) << 8 | @as(u16, byte1);
+    // const pattern: u16 = comptime @as(u16, byte2) << 8 | @as(u16, byte1);
     var slice = slice_;
     while (slice.len >= 2) {
-        const sliceu16: [*]const u16 = @ptrCast(@alignCast(slice.ptr));
-        if (sliceu16[0] == pattern) {
+        if (slice[0] == byte1 and slice[1] == byte2) {
             slice = slice[2..];
         } else {
             break;

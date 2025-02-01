@@ -188,9 +188,7 @@ pub const BorderImage = struct {
         var res = css.SmallList(BorderImage, 6).initCapacity(allocator, fallbacks.len());
         res.setLen(fallbacks.len());
         for (fallbacks.slice(), res.slice_mut()) |fallback, *out| {
-            out.* = this.*;
-            out.source = Image.default();
-            out.* = out.deepClone(allocator);
+            out.* = this.deepClone(allocator);
             out.source = fallback;
         }
 

@@ -203,7 +203,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addFilter, (JSC::JSGlobalObject
     }
 
     uint32_t isOnLoad = callFrame->argument(2).toUInt32(globalObject);
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
 
     unsigned index = 0;
     if (isOnLoad) {
@@ -325,7 +325,7 @@ int BundlerPlugin::NativePluginList::call(JSC::VM& vm, BundlerPlugin* plugin, in
 }
 JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSBundlerPlugin* thisObject = jsCast<JSBundlerPlugin*>(callFrame->thisValue());
     if (thisObject->plugin.tombstoned) {
@@ -544,7 +544,7 @@ extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, co
     }
     WTF::String pathStr = path ? path->toWTFString(BunString::ZeroCopy) : WTF::String();
     WTF::String importerStr = importer ? importer->toWTFString(BunString::ZeroCopy) : WTF::String();
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
 
     JSFunction* function = plugin->onResolveFunction.get(plugin);
     if (UNLIKELY(!function))

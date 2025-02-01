@@ -454,6 +454,7 @@ const ProcessMiniEventLoopWaiterThreadTask = if (Environment.isPosix) bun.spawn.
 const ShellAsyncSubprocessDone = bun.shell.Interpreter.Cmd.ShellAsyncSubprocessDone;
 const RuntimeTranspilerStore = JSC.RuntimeTranspilerStore;
 const ServerAllConnectionsClosedTask = @import("./api/server.zig").ServerAllConnectionsClosedTask;
+const FlushPendingFileSinkTask = JSC.WebCore.FlushPendingFileSinkTask;
 
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
@@ -506,6 +507,7 @@ pub const Task = TaggedPointerUnion(.{
     ReadFileTask,
     Readlink,
     Readv,
+    FlushPendingFileSinkTask,
     Realpath,
     RealpathNonNative,
     Rename,
@@ -891,7 +893,7 @@ pub const EventLoop = struct {
 
         defer this.debug.exit();
 
-        if (count == 1) {
+        if (count == 1 and !this.virtual_machine.is_inside_deferred_task_queue) {
             this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc);
         }
 
@@ -921,7 +923,10 @@ pub const EventLoop = struct {
 
         jsc_vm.releaseWeakRefs();
         JSC__JSGlobalObject__drainMicrotasks(globalObject);
+
+        this.virtual_machine.is_inside_deferred_task_queue = true;
         this.deferred_tasks.run();
+        this.virtual_machine.is_inside_deferred_task_queue = false;
 
         if (comptime bun.Environment.isDebug) {
             this.debug.drain_microtasks_count_outside_tick_queue += @as(usize, @intFromBool(!this.debug.is_inside_tick_queue));
@@ -1343,6 +1348,11 @@ pub const EventLoop = struct {
                     var any: *StatFS = task.get(StatFS).?;
                     any.runFromJSThread();
                 },
+                @field(Task.Tag, @typeName(FlushPendingFileSinkTask)) => {
+                    var any: *FlushPendingFileSinkTask = task.get(FlushPendingFileSinkTask).?;
+                    any.runFromJSThread();
+                },
+
                 else => {
                     bun.Output.panic("Unexpected tag: {s}", .{@tagName(task.tag())});
                 },
@@ -1393,6 +1403,12 @@ pub const EventLoop = struct {
         }
     }
 
+    pub fn runImminentGCTimer(this: *EventLoop) void {
+        if (this.imminent_gc_timer.swap(null, .seq_cst)) |timer| {
+            timer.run(this.virtual_machine);
+        }
+    }
+
     pub fn tickConcurrentWithCount(this: *EventLoop) usize {
         this.updateCounts();
 
@@ -1402,11 +1418,7 @@ pub const EventLoop = struct {
             }
         }
 
-        if (this.entered_event_loop_count < 2) {
-            if (this.imminent_gc_timer.swap(null, .seq_cst)) |timer| {
-                timer.run(this.virtual_machine);
-            }
-        }
+        this.runImminentGCTimer();
 
         var concurrent = this.concurrent_tasks.popBatch();
         const count = concurrent.count;
@@ -1476,6 +1488,8 @@ pub const EventLoop = struct {
                 loop.unrefCount(pending_unref);
             }
         }
+
+        this.runImminentGCTimer();
 
         if (loop.isActive()) {
             this.processGCTimer();
@@ -2244,6 +2258,14 @@ pub const EventLoopHandle = union(enum) {
             .js => this.js.virtual_machine.rareData().stdout(),
             .mini => this.mini.stdout(),
         };
+    }
+
+    pub fn bunVM(this: EventLoopHandle) ?*VirtualMachine {
+        if (this == .js) {
+            return this.js.virtual_machine;
+        }
+
+        return null;
     }
 
     pub fn stderr(this: EventLoopHandle) *JSC.WebCore.Blob.Store {

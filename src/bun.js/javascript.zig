@@ -894,6 +894,8 @@ pub const VirtualMachine = struct {
 
     body_value_hive_allocator: BodyValueHiveAllocator = undefined,
 
+    is_inside_deferred_task_queue: bool = false,
+
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSGlobalObject, JSValue) void;
 
     pub const OnException = fn (*ZigException) void;

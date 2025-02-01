@@ -715,7 +715,7 @@ pub const Task = struct {
                     if (pt.callback.apply.logger.errors > 0) {
                         defer pt.callback.apply.logger.deinit();
                         // this.log.addErrorFmt(null, logger.Loc.Empty, bun.default_allocator, "failed to apply patch: {}", .{e}) catch unreachable;
-                        pt.callback.apply.logger.print(Output.writer()) catch {};
+                        pt.callback.apply.logger.print(Output.errorWriter()) catch {};
                     }
                 }
             }

@@ -2687,7 +2687,7 @@ pub fn getPackageID(
     return null;
 }
 
-/// Appends `pkg` to `this.packages` if a duplicate isn't found
+/// Appends `pkg` to `this.packages`, and adds to `this.package_index`
 pub fn appendPackageNoDedupe(this: *Lockfile, pkg: *Package, buf: string) OOM!PackageID {
     const entry = try this.package_index.getOrPut(pkg.name_hash);
 

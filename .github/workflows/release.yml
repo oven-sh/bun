@@ -196,7 +196,7 @@ jobs:
           body: |
             Update `bun-types` version to ${{env.BUN_VERSION}}
 
-            https://bun.sh/blog/bun-${{env.BUN_VERSION}}
+            https://bun.sh/blog/bun-v${{env.BUN_VERSION}}
           push-to-fork: oven-sh/DefinitelyTyped
           branch: "bun-${{env.BUN_VERSION}}"
   docker:

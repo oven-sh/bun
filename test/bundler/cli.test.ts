@@ -107,11 +107,10 @@ describe("bun build", () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  // ensure no infinite loop with child_process fork
   test("running a standalone binary and run its own bun (child_process.fork)", () => {
     const tmp = tmpdirSync();
 
-    const src = path.join(tmp, "index2.js");
+    const src = path.join(tmp, "index.js");
     fs.writeFileSync(
       src,
       `
@@ -126,6 +125,7 @@ describe("bun build", () => {
 
     expect(["build", src, "--compile", "--outfile", outfile]).toRun();
 
+    // ensure no infinite loop with child_process fork
     const { exitCode, stderr, stdout } = Bun.spawnSync({
       cmd: [outfile],
       env: bunEnv,

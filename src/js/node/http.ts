@@ -3031,6 +3031,10 @@ const ClientRequestPrototype = {
   set aborted(value) {
     this[abortedSymbol] = value;
   },
+
+  get writable() {
+    return !this[finishedSymbol];
+  },
 };
 
 ClientRequest.prototype = ClientRequestPrototype;

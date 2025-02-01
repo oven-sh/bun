@@ -1,5 +1,4 @@
 const std = @import("std");
-const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 const StaticExport = @import("./bindings/static_export.zig");
 const bun = @import("root").bun;
 const string = bun.string;
@@ -1661,12 +1660,6 @@ pub const ModuleLoader = struct {
                 var parse_result: ParseResult = switch (disable_transpilying or
                     (loader == .json and !path.isJSONCFile())) {
                     inline else => |return_file_only| brk: {
-                        const heap_access = if (!disable_transpilying)
-                            jsc_vm.jsc.releaseHeapAccess()
-                        else
-                            JSC.VM.ReleaseHeapAccess{ .vm = jsc_vm.jsc, .needs_to_release = false };
-                        defer heap_access.acquire();
-
                         break :brk jsc_vm.transpiler.parseMaybeReturnFileOnly(
                             parse_options,
                             null,

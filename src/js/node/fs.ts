@@ -1,8 +1,11 @@
 // Hardcoded module "node:fs"
-import type { Stats as StatsType } from "fs";
+import type { Stats as StatsType, Dirent as DirentType, PathLike } from "fs";
 const EventEmitter = require("node:events");
 const promises = require("node:fs/promises");
 const types = require("node:util/types");
+const { validateFunction, validateInteger } = require("internal/validators");
+
+const kEmptyObject = Object.freeze(Object.create(null));
 
 const isDate = types.isDate;
 
@@ -11,6 +14,10 @@ const isDate = types.isDate;
 const { fs } = promises.$data;
 
 const constants = $processBindingConstants.fs;
+var _lazyGlob;
+function lazyGlob() {
+  return (_lazyGlob ??= require("internal/fs/glob"));
+}
 
 function ensureCallback(callback) {
   if (!$isCallable(callback)) {
@@ -599,12 +606,15 @@ var access = function access(path, mode, callback) {
     return new FSWatcher(path, options, listener);
   },
   opendir = function opendir(path, options, callback) {
+    // TODO: validatePath
+    // validateString(path, "path");
     if (typeof options === "function") {
       callback = options;
       options = undefined;
     }
+    validateFunction(callback, "callback");
     const result = new Dir(1, path, options);
-    if (callback) callback(null, result);
+    callback(null, result);
   };
 
 const { defineCustomPromisifyArgs } = require("internal/promisify");
@@ -700,7 +710,7 @@ function encodeRealpathResult(result, encoding) {
 }
 
 let assertEncodingForWindows: any = undefined;
-const realpathSync: any =
+const realpathSync =
   process.platform !== "win32"
     ? fs.realpathSync.bind(fs)
     : function realpathSync(p, options) {
@@ -1009,6 +1019,8 @@ function _toUnixTimestamp(time: any, name = "time") {
 }
 
 function opendirSync(path, options) {
+  // TODO: validatePath
+  // validateString(path, "path");
   return new Dir(1, path, options);
 }
 
@@ -1018,13 +1030,14 @@ class Dir {
    * {@link close} or {@link closeSync}.
    */
   #handle: number;
-  #path;
+  #path: PathLike;
   #options;
-  #entries: any[] | null = null;
+  #entries: DirentType[] | null = null;
 
-  constructor(handle, path, options) {
+  constructor(handle, path: PathLike, options) {
     if ($isUndefinedOrNull(handle)) throw $ERR_MISSING_ARGS("handle");
-    this.#handle = handle;
+    validateInteger(handle, "handle", 0);
+    this.#handle = $toLength(handle);
     this.#path = path;
     this.#options = options;
   }
@@ -1040,10 +1053,11 @@ class Dir {
     return entries.shift() ?? null;
   }
 
-  read(cb?): any {
+  read(cb?: (err: Error | null, entry: DirentType) => void): any {
     if (this.#handle < 0) throw $ERR_DIR_CLOSED();
 
-    if (cb) {
+    if (!$isUndefinedOrNull(cb)) {
+      validateFunction(cb, "callback");
       return this.read().then(entry => cb(null, entry));
     }
 
@@ -1063,7 +1077,9 @@ class Dir {
 
   close(cb?: () => void) {
     const handle = this.#handle;
-    if (cb) {
+    if (handle < 0) throw $ERR_DIR_CLOSED();
+    if (!$isUndefinedOrNull(cb)) {
+      validateFunction(cb, "callback");
       process.nextTick(cb);
     }
     if (handle > 2) fs.closeSync(handle);
@@ -1072,6 +1088,7 @@ class Dir {
 
   closeSync() {
     const handle = this.#handle;
+    if (handle < 0) throw $ERR_DIR_CLOSED();
     if (handle > 2) fs.closeSync(handle);
     this.#handle = -1;
   }
@@ -1088,6 +1105,22 @@ class Dir {
     }));
     yield* entries;
   }
+}
+
+function glob(pattern: string | string[], options, callback) {
+  if (typeof options === "function") {
+    callback = options;
+    options = undefined;
+  }
+  validateFunction(callback, "callback");
+
+  Array.fromAsync(lazyGlob().glob(pattern, options ?? kEmptyObject))
+    .then(result => callback(null, result))
+    .catch(callback);
+}
+
+function globSync(pattern: string | string[], options): string[] {
+  return Array.from(lazyGlob().globSync(pattern, options ?? kEmptyObject));
 }
 
 var exports = {
@@ -1123,6 +1156,8 @@ var exports = {
   ftruncateSync,
   futimes,
   futimesSync,
+  glob,
+  globSync,
   lchown,
   lchownSync,
   lchmod,

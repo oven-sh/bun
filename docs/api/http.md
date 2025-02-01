@@ -513,6 +513,241 @@ Bun.serve({
 });
 ```
 
+## Server Lifecycle Methods
+
+### server.stop() - Stop the server
+
+To stop the server from accepting new connections:
+
+```ts
+const server = Bun.serve({
+  fetch(req) {
+    return new Response("Hello!");
+  },
+});
+
+// Gracefully stop the server (waits for in-flight requests)
+await server.stop();
+
+// Force stop and close all active connections
+await server.stop(true);
+```
+
+By default, `stop()` allows in-flight requests and WebSocket connections to complete. Pass `true` to immediately terminate all connections.
+
+### server.ref() and server.unref() - Process lifecycle control
+
+Control whether the server keeps the Bun process alive:
+
+```ts
+// Don't keep process alive if server is the only thing running
+server.unref();
+
+// Restore default behavior - keep process alive
+server.ref();
+```
+
+### server.reload() - Hot reload handlers
+
+Update the server's handlers without restarting:
+
+```ts
+const server = Bun.serve({
+  static: {
+    "/api/version": Response.json({ version: "v1" }),
+  },
+  fetch(req) {
+    return new Response("v1");
+  },
+});
+
+// Update to new handler
+server.reload({
+  static: {
+    "/api/version": Response.json({ version: "v2" }),
+  },
+  fetch(req) {
+    return new Response("v2");
+  },
+});
+```
+
+This is useful for development and hot reloading. Only `fetch`, `error`, and `static` handlers can be updated.
+
+## Per-Request Controls
+
+<!-- ### server.abort(Request) - Abort requests
+
+The `server.abort(request: Request)` method:
+
+- Returns `true` if request was aborted, `false` if already aborted/completed
+- Triggers the request's `AbortSignal`
+- Cancels any attached `ReadableStream`
+- Rejects any pending body promises (like `.text()`)
+
+```ts
+const server = Bun.serve({
+  fetch(req, server) {
+    // abort if the url contains "slow"
+    if (req.url.includes("slow")) {
+      server.abort(req);
+
+      // When aborted, the server will not error due to the lack of a `Response` object
+      // If you return a `Response` anyway, it will be ignored.
+      return;
+    }
+
+    return new Response("Processing...");
+  },
+});
+``` -->
+
+### server.timeout(Request, seconds) - Custom request timeouts
+
+Set a custom idle timeout for individual requests:
+
+```ts
+const server = Bun.serve({
+  fetch(req, server) {
+    // Set 60 second timeout for this request
+    server.timeout(req, 60);
+
+    // If they take longer than 60 seconds to send the body, the request will be aborted
+    await req.text();
+
+    return new Response("Done!");
+  },
+});
+```
+
+Pass `0` to disable the timeout for a request.
+
+### server.requestIP(Request) - Get client information
+
+Get client IP and port information:
+
+```ts
+const server = Bun.serve({
+  fetch(req, server) {
+    const address = server.requestIP(req);
+    if (address) {
+      return new Response(
+        `Client IP: ${address.address}, Port: ${address.port}`,
+      );
+    }
+    return new Response("Unknown client");
+  },
+});
+```
+
+Returns `null` for closed requests or Unix domain sockets.
+
+## Server Metrics
+
+### server.pendingRequests and server.pendingWebSockets
+
+Monitor server activity with built-in counters:
+
+```ts
+const server = Bun.serve({
+  fetch(req, server) {
+    return new Response(
+      `Active requests: ${server.pendingRequests}\n` +
+        `Active WebSockets: ${server.pendingWebSockets}`,
+    );
+  },
+});
+```
+
+### server.subscriberCount(topic) - WebSocket subscribers
+
+Get count of subscribers for a WebSocket topic:
+
+```ts
+const server = Bun.serve({
+  fetch(req, server) {
+    const chatUsers = server.subscriberCount("chat");
+    return new Response(`${chatUsers} users in chat`);
+  },
+  websocket: {
+    message(ws) {
+      ws.subscribe("chat");
+    },
+  },
+});
+```
+
+## WebSocket Configuration
+
+### server.publish(topic, data, compress) - WebSocket Message Publishing
+
+The server can publish messages to all WebSocket clients subscribed to a topic:
+
+```ts
+const server = Bun.serve({
+  websocket: {
+    message(ws) {
+      // Publish to all "chat" subscribers
+      server.publish("chat", "Hello everyone!");
+    },
+  },
+
+  fetch(req) {
+    // ...
+  },
+});
+```
+
+The `publish()` method returns:
+
+- Number of bytes sent if successful
+- `0` if the message was dropped
+- `-1` if backpressure was applied
+
+### WebSocket Handler Options
+
+When configuring WebSockets, several advanced options are available through the `websocket` handler:
+
+```ts
+Bun.serve({
+  websocket: {
+    // Maximum message size (in bytes)
+    maxPayloadLength: 64 * 1024,
+
+    // Backpressure limit before messages are dropped
+    backpressureLimit: 1024 * 1024,
+
+    // Close connection if backpressure limit is hit
+    closeOnBackpressureLimit: true,
+
+    // Handler called when backpressure is relieved
+    drain(ws) {
+      console.log("Backpressure relieved");
+    },
+
+    // Enable per-message deflate compression
+    perMessageDeflate: {
+      compress: true,
+      decompress: true,
+    },
+
+    // Send ping frames to keep connection alive
+    sendPings: true,
+
+    // Handlers for ping/pong frames
+    ping(ws, data) {
+      console.log("Received ping");
+    },
+    pong(ws, data) {
+      console.log("Received pong");
+    },
+
+    // Whether server receives its own published messages
+    publishToSelf: false,
+  },
+});
+```
+
 ## Benchmarks
 
 Below are Bun and Node.js implementations of a simple HTTP server that responds `Bun!` to each incoming `Request`.
@@ -561,100 +796,174 @@ The `Bun.serve` server can handle roughly 2.5x more requests per second than Nod
 {% details summary="See TypeScript definitions" %}
 
 ```ts
-interface Bun {
-  serve(options: {
-    development?: boolean;
-    error?: (
-      request: ErrorLike,
-    ) => Response | Promise<Response> | undefined | Promise<undefined>;
-    fetch(request: Request, server: Server): Response | Promise<Response>;
-    hostname?: string;
-    id?: string | null;
-    maxRequestBodySize?: number;
-    port?: string | number;
-    reusePort?: boolean;
-    tls?: TLSOptions | Array<TLSOptions>;
-    unix: string;
-    websocket: WebSocketHandler<WebSocketDataType>;
-  }): Server;
-}
+interface Server extends Disposable {
+  /**
+   * Stop the server from accepting new connections.
+   * @param closeActiveConnections If true, immediately terminates all connections
+   * @returns Promise that resolves when the server has stopped
+   */
+  stop(closeActiveConnections?: boolean): Promise<void>;
 
-interface TLSOptions {
-  ca?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
-  cert?:
-    | string
-    | Buffer
-    | BunFile
-    | Array<string | Buffer | BunFile>
-    | undefined;
-  dhParamsFile?: string;
-  key?:
-    | string
-    | Buffer
-    | BunFile
-    | Array<string | Buffer | BunFile>
-    | undefined;
-  lowMemoryMode?: boolean;
-  passphrase?: string;
-  secureOptions?: number | undefined;
-  serverName?: string;
+  /**
+   * Update handlers without restarting the server.
+   * Only fetch and error handlers can be updated.
+   */
+  reload(options: Serve): void;
+
+  /**
+   * Make a request to the running server.
+   * Useful for testing or internal routing.
+   */
+  fetch(request: Request | string): Response | Promise<Response>;
+
+  /**
+   * Upgrade an HTTP request to a WebSocket connection.
+   * @returns true if upgrade successful, false if failed
+   */
+  upgrade<T = undefined>(
+    request: Request,
+    options?: {
+      headers?: Bun.HeadersInit;
+      data?: T;
+    },
+  ): boolean;
+
+  /**
+   * Publish a message to all WebSocket clients subscribed to a topic.
+   * @returns Bytes sent, 0 if dropped, -1 if backpressure applied
+   */
+  publish(
+    topic: string,
+    data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
+    compress?: boolean,
+  ): ServerWebSocketSendStatus;
+
+  /**
+   * Get count of WebSocket clients subscribed to a topic.
+   */
+  subscriberCount(topic: string): number;
+
+  /**
+   * Get client IP address and port.
+   * @returns null for closed requests or Unix sockets
+   */
+  requestIP(request: Request): SocketAddress | null;
+
+  /**
+   * Set custom idle timeout for a request.
+   * @param seconds Timeout in seconds, 0 to disable
+   */
+  timeout(request: Request, seconds: number): void;
+
+  /**
+   * Keep process alive while server is running.
+   */
+  ref(): void;
+
+  /**
+   * Allow process to exit if server is only thing running.
+   */
+  unref(): void;
+
+  /** Number of in-flight HTTP requests */
+  readonly pendingRequests: number;
+
+  /** Number of active WebSocket connections */
+  readonly pendingWebSockets: number;
+
+  /** Server URL including protocol, hostname and port */
+  readonly url: URL;
+
+  /** Port server is listening on */
+  readonly port: number;
+
+  /** Hostname server is bound to */
+  readonly hostname: string;
+
+  /** Whether server is in development mode */
+  readonly development: boolean;
+
+  /** Server instance identifier */
+  readonly id: string;
 }
 
 interface WebSocketHandler<T = undefined> {
-  backpressureLimit?: number;
-  close?(
-    ws: ServerWebSocket<T>,
-    code: number,
-    reason: string,
-  ): void | Promise<void>;
-  closeOnBackpressureLimit?: boolean;
-  drain?(ws: ServerWebSocket<T>): void | Promise<void>;
-  idleTimeout?: number;
+  /** Maximum WebSocket message size in bytes */
   maxPayloadLength?: number;
-  message(
-    ws: ServerWebSocket<T>,
-    message: string | Buffer,
-  ): void | Promise<void>;
-  open?(ws: ServerWebSocket<T>): void | Promise<void>;
+
+  /** Bytes of queued messages before applying backpressure */
+  backpressureLimit?: number;
+
+  /** Whether to close connection when backpressure limit hit */
+  closeOnBackpressureLimit?: boolean;
+
+  /** Called when backpressure is relieved */
+  drain?(ws: ServerWebSocket<T>): void | Promise<void>;
+
+  /** Seconds before idle timeout */
+  idleTimeout?: number;
+
+  /** Enable per-message deflate compression */
   perMessageDeflate?:
     | boolean
     | {
         compress?: WebSocketCompressor | boolean;
         decompress?: WebSocketCompressor | boolean;
       };
-  ping?(ws: ServerWebSocket<T>, data: Buffer): void | Promise<void>;
-  pong?(ws: ServerWebSocket<T>, data: Buffer): void | Promise<void>;
-  publishToSelf?: boolean;
+
+  /** Send ping frames to keep connection alive */
   sendPings?: boolean;
+
+  /** Whether server receives its own published messages */
+  publishToSelf?: boolean;
+
+  /** Called when connection opened */
+  open?(ws: ServerWebSocket<T>): void | Promise<void>;
+
+  /** Called when message received */
+  message(
+    ws: ServerWebSocket<T>,
+    message: string | Buffer,
+  ): void | Promise<void>;
+
+  /** Called when connection closed */
+  close?(
+    ws: ServerWebSocket<T>,
+    code: number,
+    reason: string,
+  ): void | Promise<void>;
+
+  /** Called when ping frame received */
+  ping?(ws: ServerWebSocket<T>, data: Buffer): void | Promise<void>;
+
+  /** Called when pong frame received */
+  pong?(ws: ServerWebSocket<T>, data: Buffer): void | Promise<void>;
 }
 
-interface Server {
-  fetch(request: Request | string): Response | Promise<Response>;
-  publish(
-    compress?: boolean,
-    data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
-    topic: string,
-  ): ServerWebSocketSendStatus;
-  ref(): void;
-  reload(options: Serve): void;
-  requestIP(request: Request): SocketAddress | null;
-  stop(closeActiveConnections?: boolean): void;
-  unref(): void;
-  upgrade<T = undefined>(
-    options?: {
-      data?: T;
-      headers?: Bun.HeadersInit;
-    },
-    request: Request,
-  ): boolean;
+interface TLSOptions {
+  /** Certificate authority chain */
+  ca?: string | Buffer | BunFile | Array<string | Buffer | BunFile>;
 
-  readonly development: boolean;
-  readonly hostname: string;
-  readonly id: string;
-  readonly pendingRequests: number;
-  readonly pendingWebSockets: number;
-  readonly port: number;
-  readonly url: URL;
+  /** Server certificate */
+  cert?: string | Buffer | BunFile | Array<string | Buffer | BunFile>;
+
+  /** Path to DH parameters file */
+  dhParamsFile?: string;
+
+  /** Private key */
+  key?: string | Buffer | BunFile | Array<string | Buffer | BunFile>;
+
+  /** Reduce TLS memory usage */
+  lowMemoryMode?: boolean;
+
+  /** Private key passphrase */
+  passphrase?: string;
+
+  /** OpenSSL options flags */
+  secureOptions?: number;
+
+  /** Server name for SNI */
+  serverName?: string;
 }
 ```
 

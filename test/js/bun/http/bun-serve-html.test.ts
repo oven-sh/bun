@@ -225,6 +225,7 @@ console.log("How...dashing?");
 
   {
     const css = await (await fetch(cssSrc!)).text();
+    /* the order of the properties may change because we made add more handlers to DeclarationHandler which changes the order in which they are flushed, but semantically it should be the same */
     expect(css).toMatchInlineSnapshot(`
 "/* styles.css */
 .container {
@@ -236,11 +237,11 @@ console.log("How...dashing?");
 
 button {
   cursor: pointer;
-  transition: all .2s;
   background: #fff;
   border: 2px solid #000;
   border-radius: .25rem;
   padding: .5rem 1rem;
+  transition: all .2s;
   font-size: 1.25rem;
 }
 

@@ -484,3 +484,27 @@ describe("errors", () => {
     expect(text).toBe(result);
   });
 });
+
+it("require(...).default without __esModule", () => {
+  {
+    const { default: mod } = require("my-virtual-module-with-default");
+    expect(mod).toBe("world");
+  }
+});
+
+it("require(...) with __esModule", () => {
+  {
+    const mod = require("my-virtual-module-with-__esModule");
+    expect(mod).toBe("world");
+  }
+});
+
+it("import(...) with __esModule", async () => {
+  const { default: mod } = await import("my-virtual-module-with-__esModule");
+  expect(mod).toBe("world");
+});
+
+it("import(...) without __esModule", async () => {
+  const { default: mod } = await import("my-virtual-module-with-default");
+  expect(mod).toBe("world");
+});

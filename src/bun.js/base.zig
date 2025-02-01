@@ -72,6 +72,18 @@ pub fn toJS(globalObject: *JSC.JSGlobalObject, comptime ValueType: type, value: 
         },
         JSC.JSValue => return if (Type != ValueType) value.* else value,
 
+        inline []const u16, []const u32, []const i16, []const i8, []const i32, []const f32 => {
+            var array = JSC.JSValue.createEmptyArray(globalObject, value.len);
+            for (value, 0..) |item, i| {
+                array.putIndex(
+                    globalObject,
+                    @truncate(i),
+                    JSC.jsNumber(item),
+                );
+            }
+            return array;
+        },
+
         else => {
 
             // Recursion can stack overflow here
@@ -80,7 +92,7 @@ pub fn toJS(globalObject: *JSC.JSGlobalObject, comptime ValueType: type, value: 
 
                 var array = JSC.JSValue.createEmptyArray(globalObject, value.len);
                 for (value, 0..) |*item, i| {
-                    const res = toJS(globalObject, *const Child, item, lifetime);
+                    const res = toJS(globalObject, *Child, item, lifetime);
                     if (res == .zero) return .zero;
                     array.putIndex(
                         globalObject,
@@ -980,10 +992,8 @@ pub fn DOMCall(
         pub const Extern = [_][]const u8{"put"};
 
         comptime {
-            if (!JSC.is_bindgen) {
-                @export(slowpath, .{ .name = shim.symbolName("slowpath") });
-                @export(fastpath, .{ .name = shim.symbolName("fastpath") });
-            }
+            @export(slowpath, .{ .name = shim.symbolName("slowpath") });
+            @export(fastpath, .{ .name = shim.symbolName("fastpath") });
         }
     };
 }

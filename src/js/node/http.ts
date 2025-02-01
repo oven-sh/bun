@@ -1935,9 +1935,10 @@ const ServerResponsePrototype = {
           this,
         );
       } else {
-        this.emit("finish");
-
-        process.nextTick(emitCloseNT, this);
+        process.nextTick(function (self) {
+          self.emit("finish");
+          process.nextTick(emitCloseNT, self);
+        }, this);
       }
     }
 
@@ -2424,8 +2425,6 @@ function ClientRequest(input, options, cb) {
         emitErrorNextTickIfErrorListenerNT(this, $ERR_STREAM_WRITE_AFTER_END("Cannot write after end"), callback);
         return this;
       }
-
-      // this[kSocket]?.cork();
 
       write_(chunk, encoding, callback);
     } else if (this[finishedSymbol]) {
@@ -3315,7 +3314,7 @@ function emitErrorNt(msg, err, callback) {
   if ($isCallable(callback)) {
     callback(err);
   }
-  if ($isCallable(msg.emit) && !msg._closed) {
+  if ($isCallable(msg.emit) && !msg.destroyed) {
     msg.emit("error", err);
   }
 }

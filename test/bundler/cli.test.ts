@@ -53,7 +53,7 @@ describe("bun build", () => {
     }
   });
 
-  test("running a standalone binary and run its own bun", () => {
+  test("running a standalone binary and run its own bun (Bun.$)", () => {
     const tmp = tmpdirSync();
     const src = path.join(tmp, "index.js");
     fs.writeFileSync(src, "console.log(await Bun.$`bun --version`.text());", { encoding: "utf8" });
@@ -107,6 +107,38 @@ describe("bun build", () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
+  // ensure no infinite loop with child_process fork
+  test("running a standalone binary and run its own bun (child_process.fork)", () => {
+    const tmp = tmpdirSync();
+
+    const src = path.join(tmp, "index2.js");
+    fs.writeFileSync(
+      src,
+      `
+        import { fork } from "child_process";
+        const f = fork("-p", ["1 + 1"], { env: { BUN_DEBUG_QUIET_LOGS: "1" } });
+        f.on("message", console.log);`,
+      {
+        encoding: "utf8",
+      },
+    );
+    const outfile = path.join(tmp, "index.exe");
+
+    expect(["build", src, "--compile", "--outfile", outfile]).toRun();
+
+    const { exitCode, stderr, stdout } = Bun.spawnSync({
+      cmd: [outfile],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stderr.toString("utf8")).toBeEmpty();
+    expect(stdout.toString("utf8")).toBe("2\n");
+    expect(exitCode).toBe(0);
+
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
   test("BUN_SKIP_STANDALONE_MODULE_GRAPH=1 to bypass running the standalone code and skip to bun cli", () => {
     const tmp = tmpdirSync();
     const src = path.join(tmp, "index.js");
@@ -142,7 +174,7 @@ describe("bun build", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    expect(stdout2.toString("utf8")).toBe(`hello world\n`);
+    expect(stdout2.toString("utf8")).toBe("hello world\n");
     expect(stderr2.toString("utf8")).toBeEmpty();
     expect(exitCode2).toBe(0);
 

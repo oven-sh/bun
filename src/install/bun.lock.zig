@@ -941,7 +941,7 @@ pub const Stringifier = struct {
                 any = true;
             }
             try writer.writeAll(
-                \\ "os":
+                \\ "os": 
             );
             try Negatable(Npm.OperatingSystem).toJson(meta.os, writer);
         }
@@ -953,7 +953,7 @@ pub const Stringifier = struct {
                 any = true;
             }
             try writer.writeAll(
-                \\ "cpu":
+                \\ "cpu": 
             );
             try Negatable(Npm.Architecture).toJson(meta.arch, writer);
         }

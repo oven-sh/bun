@@ -15016,7 +15016,7 @@ pub const PackageManager = struct {
                 // added/removed/updated direct dependencies.
                 Output.pretty(
                     \\
-                    \\Saved <green>{s}<r> ({d} package{s})
+                    \\Saved <green>{s}<r> ({d} package{s}) 
                 , .{
                     switch (save_format) {
                         .text => "bun.lock",

@@ -358,6 +358,7 @@ pub const Bin = extern struct {
                 }
                 if (!any) {
                     try writer.writeByte('}');
+                    indent.* -= 1;
                     return;
                 }
 

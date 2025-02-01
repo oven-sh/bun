@@ -2241,7 +2241,7 @@ pub const Fetch = struct {
             return globalObject.ERR_INVALID_ARG_TYPE(fetch_error_blank_url, .{}).throw();
         }
 
-        if (url.port.len > 0 and !url.hasValidPort()) {
+        if (!url.hasValidPort()) {
             bun.default_allocator.free(url.href);
             return globalObject.throwInvalidArguments("Invalid port", .{});
         }

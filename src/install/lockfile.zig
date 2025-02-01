@@ -2730,6 +2730,13 @@ pub fn appendPackageNoDedupe(this: *Lockfile, pkg: *Package, buf: string) OOM!Pa
 
             resolutions = this.packages.items(.resolution);
 
+            for (existing_ids.items, 0..) |existing_id, i| {
+                if (pkg.resolution.order(&resolutions[existing_id], buf, buf) == .gt) {
+                    try existing_ids.insert(this.allocator, i, new_id);
+                    return new_id;
+                }
+            }
+
             try existing_ids.append(this.allocator, new_id);
 
             return new_id;

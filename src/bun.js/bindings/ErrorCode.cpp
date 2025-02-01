@@ -16,6 +16,7 @@
 #include "JavaScriptCore/JSType.h"
 #include "JavaScriptCore/Symbol.h"
 #include "wtf/Assertions.h"
+#include "wtf/Vector.h"
 #include "wtf/text/ASCIIFastPath.h"
 #include "wtf/text/ASCIILiteral.h"
 #include "wtf/text/MakeString.h"
@@ -350,6 +351,39 @@ extern "C" BunString Bun__ErrorCode__determineSpecificType(JSC::JSGlobalObject* 
 
 namespace Message {
 
+void addList(WTF::StringBuilder& result, WTF::Vector<WTF::String>& types)
+{
+    switch (types.size()) {
+    case 0:
+        return;
+    case 1:
+        result.append(types.at(0));
+        return;
+    case 2:
+        result.append(types.at(0));
+        result.append(" or "_s);
+        result.append(types.at(1));
+        return;
+    case 3:
+        result.append(types.at(0));
+        result.append(", "_s);
+        result.append(types.at(1));
+        result.append(", or "_s);
+        result.append(types.at(2));
+        return;
+    default: {
+        WTF::StringBuilder result;
+        for (unsigned i = 0; i < types.size() - 1; i++) {
+            result.append(types.at(i));
+            result.append(", "_s);
+        }
+        result.append("or "_s);
+        result.append(types.at(types.size() - 1));
+        return;
+    }
+    }
+}
+
 WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const StringView& arg_name, const StringView& expected_type, JSValue actual_value)
 {
     auto actual_value_string = determineSpecificType(globalObject, actual_value);
@@ -391,23 +425,29 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
         result.append("\" "_s);
         result.append(arg_name.contains('.') ? "property"_s : "argument"_s);
     }
-    result.append(" must be of type "_s);
+    result.append(" must be "_s);
 
-    unsigned length = expected_types.size();
-    if (length == 1) {
-        result.append(expected_types.at(0).toWTFString(globalObject));
-    } else if (length == 2) {
-        result.append(expected_types.at(0).toWTFString(globalObject));
-        result.append(" or "_s);
-        result.append(expected_types.at(1).toWTFString(globalObject));
-    } else {
-        for (unsigned i = 0; i < length - 1; i++) {
-            JSValue expected_type = expected_types.at(i);
-            result.append(expected_type.toWTFString(globalObject));
-            result.append(", "_s);
-        }
-        result.append("or "_s);
-        result.append(expected_types.at(length - 1).toWTFString(globalObject));
+    WTF::Vector<WTF::String> types;
+    WTF::Vector<WTF::String> instances;
+    for (unsigned i = 0; i < expected_types.size(); i++) {
+        auto ty_str = expected_types.at(i).toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto ty_first_char = ty_str[0];
+        if (ty_first_char >= 'A' && ty_first_char <= 'Z')
+            instances.append(ty_str);
+        else
+            types.append(ty_str);
+    }
+
+    if (types.size() > 0) {
+        result.append(types.size() > 1 ? "one of type "_s : "of type "_s);
+        addList(result, types);
+        if (instances.size() > 0) result.append(" or "_s);
+    }
+
+    if (instances.size() > 0) {
+        result.append("an instance of "_s);
+        addList(result, instances);
     }
 
     result.append(". Received "_s, actual_value_string);

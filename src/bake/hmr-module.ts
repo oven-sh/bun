@@ -3,6 +3,11 @@ import * as runtimeHelpers from "../runtime.bun.js";
 let refreshRuntime: any;
 const registry = new Map<Id, HotModule>();
 
+const asyncFunctionPrototype = Object.getPrototypeOf(async function () {});
+function isAsyncFunction(fn: Function) {
+  return Object.getPrototypeOf(fn) === asyncFunctionPrototype;
+}
+
 export type ModuleLoadFunction = (module: HotModule) => void;
 export type ExportsCallbackFunction = (new_exports: any) => void;
 
@@ -12,9 +17,11 @@ export const enum State {
   Error,
 }
 
+// negative = sync, positive = async
 export const enum LoadModuleType {
-  AssertPresent,
-  UserDynamic,
+  AsyncAssertPresent = 1,
+  AsyncUserDynamic = 2,
+  SyncUserDynamic = -1,
 }
 
 interface DepEntry {
@@ -46,30 +53,30 @@ export class HotModule<E = any> {
   }
 
   require(id: Id, onReload?: ExportsCallbackFunction) {
-    const mod = loadModule(id, LoadModuleType.UserDynamic);
+    const mod = loadModule(id, LoadModuleType.SyncUserDynamic) as HotModule;
     mod._deps.set(this, onReload ? { _callback: onReload, _expectedImports: undefined } : undefined);
     return mod.exports;
   }
 
-  importSync(id: Id, onReload?: ExportsCallbackFunction, expectedImports?: string[]) {
-    const mod = loadModule(id, LoadModuleType.AssertPresent);
+  async importStmt(id: Id, onReload?: ExportsCallbackFunction, expectedImports?: string[]) {
+    const mod = await (loadModule(id, LoadModuleType.AsyncAssertPresent) as Promise<HotModule>);
     mod._deps.set(this, onReload ? { _callback: onReload, _expectedImports: expectedImports } : undefined);
     const { exports, __esModule } = mod;
     const object = __esModule ? exports : (mod._ext_exports ??= { ...exports, default: exports });
 
     if (expectedImports && mod._state === State.Ready) {
-      for (const key of expectedImports) {
-        if (!(key in object)) {
-          throw new SyntaxError(`The requested module '${id}' does not provide an export named '${key}'`);
-        }
-      }
+      // for (const key of expectedImports) {
+      //   if (!(key in object)) {
+      //     throw new SyntaxError(`The requested module '${id}' does not provide an export named '${key}'`);
+      //   }
+      // }
     }
     return object;
   }
 
   /// Equivalent to `import()` in ES modules
   async dynamicImport(specifier: string, opts?: ImportCallOptions) {
-    const mod = loadModule(specifier, LoadModuleType.UserDynamic);
+    const mod = await (loadModule(specifier, LoadModuleType.AsyncUserDynamic) as Promise<HotModule>);
     // insert into the map if not present
     mod._deps.set(this, mod._deps.get(this));
     const { exports, __esModule } = mod;
@@ -172,7 +179,7 @@ function isUnsupportedViteEventName(str: string) {
  * Load a module by ID. Use `type` to specify if the module is supposed to be
  * present, or is something a user is able to dynamically specify.
  */
-export function loadModule<T = any>(key: Id, type: LoadModuleType): HotModule<T> {
+export function loadModule<T = any>(key: Id, type: LoadModuleType): HotModule<T> | Promise<HotModule<T>> {
   let mod = registry.get(key);
   if (mod) {
     // Preserve failures until they are re-saved.
@@ -182,8 +189,12 @@ export function loadModule<T = any>(key: Id, type: LoadModuleType): HotModule<T>
   }
   mod = new HotModule(key);
   const load = input_graph[key];
+  if (type < 0 && isAsyncFunction(load)) {
+    // TODO: This is possible to implement, but requires some care.
+    throw new Error("Cannot load ES module synchronously");
+  }
   if (!load) {
-    if (type == LoadModuleType.AssertPresent) {
+    if (type == LoadModuleType.AsyncAssertPresent) {
       throw new Error(
         `Failed to load bundled module '${key}'. This is not a dynamic import, and therefore is a bug in Bun's bundler.`,
       );
@@ -195,7 +206,32 @@ export function loadModule<T = any>(key: Id, type: LoadModuleType): HotModule<T>
   }
   try {
     registry.set(key, mod);
-    load(mod);
+    const promise = load(mod);
+    if (promise) {
+      if (IS_BUN_DEVELOPMENT) {
+        if (type !== LoadModuleType.AsyncUserDynamic && type !== LoadModuleType.AsyncAssertPresent) {
+          throw new Error("Did not expect a promise from loadModule");
+        }
+        if (!(promise instanceof Promise)) {
+          throw new Error("Expected a promise from loadModule");
+        }
+      }
+      return promise.then(
+        () => {
+          mod._state = State.Ready;
+          mod._deps.forEach((entry, dep) => {
+            entry?._callback(mod.exports);
+          });
+          return mod;
+        },
+        err => {
+          console.error(err);
+          mod._cached_failure = err;
+          mod._state = State.Error;
+          throw err;
+        },
+      );
+    }
     mod._state = State.Ready;
     mod._deps.forEach((entry, dep) => {
       entry?._callback(mod.exports);
@@ -263,7 +299,7 @@ if (side === "server") {
 if (side === "client") {
   const { refresh } = config;
   if (refresh) {
-    refreshRuntime = loadModule(refresh, LoadModuleType.AssertPresent).exports;
+    refreshRuntime = (await loadModule(refresh, LoadModuleType.AsyncAssertPresent)).exports;
     refreshRuntime.injectIntoGlobalHook(window);
   }
 
@@ -277,6 +313,6 @@ if (side === "client") {
   registry.set(server_module.id, server_module);
 }
 
-runtimeHelpers.__name(HotModule.prototype.importSync, "<HMR runtime> importSync");
+runtimeHelpers.__name(HotModule.prototype.importStmt, "<HMR runtime> importStmt");
 runtimeHelpers.__name(HotModule.prototype.require, "<HMR runtime> require");
 runtimeHelpers.__name(loadModule, "<HMR runtime> loadModule");

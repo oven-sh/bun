@@ -135,7 +135,7 @@ async function run() {
 
           code = debug ? `((${params}) => {${code}})\n` : `((${params})=>{${code}})\n`;
         } else {
-          code = debug ? `((${names}) => {${code}})({\n` : `((${names})=>{${code}})({`;
+          code = debug ? `(async (${names}) => {${code}})({\n` : `(async(${names})=>{${code}})({`;
         }
       }
 

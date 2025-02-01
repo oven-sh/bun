@@ -160,7 +160,7 @@ const ws = initWebSocket({
 }
 
 try {
-  loadModule<Bake.ClientEntryPoint>(config.main, LoadModuleType.AssertPresent);
+  await loadModule<Bake.ClientEntryPoint>(config.main, LoadModuleType.AsyncAssertPresent);
 } catch (e) {
   onRuntimeError(e, RuntimeErrorType.fatal);
 }

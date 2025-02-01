@@ -5972,6 +5972,9 @@ pub fn printWithWriterAndPlatform(
     if (opts.module_type == .internal_bake_dev) {
         printer.indent();
         printer.printIndent();
+        if (!ast.top_level_await_keyword.isEmpty()) {
+            printer.print("async ");
+        }
         printer.printStringLiteralUTF8(source.path.pretty, false);
         const func = parts[0].stmts[0].data.s_expr.value.data.e_function.func;
         if (!(func.body.stmts.len == 1 and func.body.stmts[0].data == .s_lazy_export)) {

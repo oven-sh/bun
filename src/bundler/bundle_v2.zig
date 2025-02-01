@@ -12349,13 +12349,16 @@ pub const LinkerContext = struct {
                     try stmts.inside_wrapper_suffix.append(stmt);
                 },
                 .s_import => |st| {
-                    // hmr-runtime.ts defines `module.importSync` to be
-                    // a synchronous import. this is different from
-                    // require in that esm <-> cjs is handled
-                    // automatically, instead of with transpiler-added
-                    // annotations like '__commonJS'.
+                    // hmr-runtime.ts defines `module.dynamicImport` to be the
+                    // ESM `import`. this is different from `require` in that
+                    // esm <-> cjs is handled by the runtime instead of via
+                    // transpiler-added annotations like '__commonJS'. These
+                    // annotations couldn't be added since the bundled file
+                    // must not have any reference to it's imports. That way
+                    // changing a module's type does not re-bundle its
+                    // incremental dependencies.
                     //
-                    // this cannot be done in the parse step because the final
+                    // This cannot be done in the parse step because the final
                     // pretty path is not yet known. the other statement types
                     // are not handled here because some of those generate
                     // new local variables (it is too late to do that here).
@@ -12387,10 +12390,13 @@ pub const LinkerContext = struct {
                             str.* = Expr.init(E.String, .{ .data = item.alias }, item.name.loc);
                         }
 
-                        break :call Expr.init(E.Call, .{
+                        const expr = Expr.init(E.Call, .{
                             .target = Expr.init(E.Dot, .{
                                 .target = module_id,
-                                .name = if (is_builtin) "importBuiltin" else "importSync",
+                                .name = if (is_builtin)
+                                    "importBuiltin"
+                                else
+                                    "importStmt",
                                 .name_loc = stmt.loc,
                             }, stmt.loc),
                             .args = js_ast.ExprNodeList.init(
@@ -12419,6 +12425,10 @@ pub const LinkerContext = struct {
                                     }),
                             ),
                         }, stmt.loc);
+                        break :call if (is_builtin)
+                            expr
+                        else
+                            Expr.init(E.Await, .{ .value = expr }, stmt.loc);
                     } else Expr.init(E.Object, .{}, stmt.loc);
 
                     if (is_bare_import) {
@@ -12471,7 +12481,7 @@ pub const LinkerContext = struct {
             Index.invalid;
 
         // referencing everything by array makes the code a lot more annoying :(
-        const ast: JSAst = c.graph.ast.get(part_range.source_index.get());
+        var ast: JSAst = c.graph.ast.get(part_range.source_index.get());
 
         // For Bun Kit, part generation is entirely special cased.
         // - export wrapping is already done.
@@ -12492,6 +12502,7 @@ pub const LinkerContext = struct {
                         Expr.init(E.Boolean, .{ .value = true }, Loc.Empty),
                     ),
                 }, Loc.Empty)) catch bun.outOfMemory();
+                ast.top_level_await_keyword = .{ .loc = .{ .start = 0 }, .len = 1 };
             }
 
             for (parts) |part| {

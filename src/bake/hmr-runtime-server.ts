@@ -1,7 +1,7 @@
 // This file is the entrypoint to the hot-module-reloading runtime.
 // On the server, communication is established with `server_exports`.
 import type { Bake } from "bun";
-import { loadModule, LoadModuleType, replaceModules, ssrManifest, serverManifest } from "./hmr-module";
+import { loadModule, LoadModuleType, replaceModules, ssrManifest, serverManifest, HotModule } from "./hmr-module";
 
 if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
   throw new Error("DCE is configured incorrectly");
@@ -35,8 +35,8 @@ server_exports = {
       });
     }
 
-    const serverRenderer = loadModule<Bake.ServerEntryPoint>(routerTypeMain, LoadModuleType.AssertPresent).exports
-      .render;
+    const serverRenderer = (await loadModule<Bake.ServerEntryPoint>(routerTypeMain, LoadModuleType.AsyncAssertPresent))
+      .exports.render;
 
     if (!serverRenderer) {
       throw new Error('Framework server entrypoint is missing a "render" export.');
@@ -45,7 +45,9 @@ server_exports = {
       throw new Error('Framework server entrypoint\'s "render" export is not a function.');
     }
 
-    const [pageModule, ...layouts] = routeModules.map(id => loadModule(id, LoadModuleType.AssertPresent).exports);
+    const [pageModule, ...layouts] = await Promise.all(
+      routeModules.map(async id => (await loadModule(id, LoadModuleType.AsyncAssertPresent)).exports),
+    );
 
     const response = await serverRenderer(req, {
       styles: styles,
@@ -68,13 +70,14 @@ server_exports = {
     if (componentManifestAdd) {
       for (const uid of componentManifestAdd) {
         try {
-          const mod = loadModule(uid, LoadModuleType.AssertPresent);
+          // TODO: async
+          const mod = loadModule(uid, LoadModuleType.SyncUserDynamic) as HotModule;
           const { exports, __esModule } = mod;
           const exp = __esModule ? exports : (mod._ext_exports ??= { ...exports, default: exports });
 
           const client = {};
           for (const exportName of Object.keys(exp)) {
-            serverManifest[uid + '#' + exportName] = {
+            serverManifest[uid + "#" + exportName] = {
               id: uid,
               name: exportName,
               chunks: [],

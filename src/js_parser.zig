@@ -24060,9 +24060,15 @@ const ReactRefresh = struct {
 
 pub const ConvertESMExportsForHmr = struct {
     last_part: *js_ast.Part,
-    imports_seen: std.AutoArrayHashMapUnmanaged(u32, void) = .{},
+    imports_seen: bun.StringArrayHashMapUnmanaged(ImportRef) = .{},
+    export_star_props: std.ArrayListUnmanaged(G.Property) = .{},
     export_props: std.ArrayListUnmanaged(G.Property) = .{},
     stmts: std.ArrayListUnmanaged(Stmt) = .{},
+
+    const ImportRef = struct {
+        /// Index into ConvertESMExportsForHmr.stmts
+        stmt_index: u32,
+    };
 
     fn convertStmt(ctx: *ConvertESMExportsForHmr, p: anytype, stmt: Stmt) !void {
         const new_stmt = switch (stmt.data) {
@@ -24209,13 +24215,21 @@ pub const ConvertESMExportsForHmr = struct {
 
                 return; // do not emit a statement here
             },
-            .s_export_from => |st| stmt: {
+            .s_export_from => |st| {
+                const namespace_ref = try ctx.deduplicatedImport(
+                    p,
+                    st.import_record_index,
+                    st.namespace_ref,
+                    st.items,
+                    stmt.loc,
+                    stmt.loc,
+                );
                 for (st.items) |*item| {
                     const ref = item.name.ref.?;
                     const symbol = &p.symbols.items[ref.innerIndex()];
                     if (symbol.namespace_alias == null) {
                         symbol.namespace_alias = .{
-                            .namespace_ref = st.namespace_ref,
+                            .namespace_ref = namespace_ref,
                             .alias = item.original_name,
                             .import_record_index = st.import_record_index,
                         };
@@ -24231,32 +24245,88 @@ pub const ConvertESMExportsForHmr = struct {
                     item.alias = item.original_name;
                     item.original_name = alias;
                 }
-
-                const gop = try ctx.imports_seen.getOrPut(p.allocator, st.import_record_index);
-                if (gop.found_existing) return;
-                break :stmt Stmt.alloc(S.Import, .{
-                    .import_record_index = st.import_record_index,
-                    .is_single_line = true,
-                    .default_name = null,
-                    .items = st.items,
-                    .namespace_ref = st.namespace_ref,
-                    .star_name_loc = null,
-                }, stmt.loc);
+                return;
             },
-            .s_export_star => {
-                bun.todoPanic(@src(), "hot-module-reloading instrumentation for 'export * from'", .{});
+            .s_export_star => |st| {
+                const namespace_ref = try ctx.deduplicatedImport(
+                    p,
+                    st.import_record_index,
+                    st.namespace_ref,
+                    &.{},
+                    stmt.loc,
+                    stmt.loc,
+                );
+                try ctx.export_star_props.append(p.allocator, .{
+                    .kind = .spread,
+                    .value = Expr.initIdentifier(namespace_ref, stmt.loc),
+                });
+                return;
             },
             // De-duplicate import statements. It is okay to disregard
             // named/default imports here as we always rewrite them as
-            // full qualified property accesses (need to so live-bindings)
-            .s_import => |st| stmt: {
-                const gop = try ctx.imports_seen.getOrPut(p.allocator, st.import_record_index);
-                if (gop.found_existing) return;
-                break :stmt stmt;
+            // full qualified property accesses (needed for live-bindings)
+            .s_import => |st| {
+                _ = try ctx.deduplicatedImport(p, st.import_record_index, st.namespace_ref, st.items, st.star_name_loc, stmt.loc);
+                return;
             },
         };
 
         try ctx.stmts.append(p.allocator, new_stmt);
+    }
+
+    /// Deduplicates imports, returning a previously used Ref if present.
+    fn deduplicatedImport(
+        ctx: *ConvertESMExportsForHmr,
+        p: anytype,
+        import_record_index: u32,
+        namespace_ref: Ref,
+        items: []js_ast.ClauseItem,
+        star_name_loc: ?logger.Loc,
+        loc: logger.Loc,
+    ) !Ref {
+        const ir = p.import_records.items[import_record_index];
+        const gop = try ctx.imports_seen.getOrPut(p.allocator, ir.path.text);
+        if (gop.found_existing) {
+            const stmt = ctx.stmts.items[gop.value_ptr.stmt_index].data.s_import;
+            if (items.len > 0) {
+                if (stmt.items.len == 0) {
+                    stmt.items = items;
+                } else {
+                    stmt.items = try std.mem.concat(p.allocator, js_ast.ClauseItem, &.{ stmt.items, items });
+                }
+            }
+            if (namespace_ref.isValid()) {
+                if (!stmt.namespace_ref.isValid()) {
+                    stmt.namespace_ref = namespace_ref;
+                    return namespace_ref;
+                } else {
+                    // Erase this namespace ref, but since it may be used in
+                    // existing AST trees, a link must be established.
+                    const symbol = &p.symbols.items[namespace_ref.innerIndex()];
+                    symbol.use_count_estimate = 0;
+                    symbol.link = stmt.namespace_ref;
+                    if (@hasField(@typeInfo(@TypeOf(p)).Pointer.child, "symbol_uses")) {
+                        _ = p.symbol_uses.swapRemove(namespace_ref);
+                    }
+                }
+            }
+            if (stmt.star_name_loc == null) if (star_name_loc) |stl| {
+                stmt.star_name_loc = stl;
+            };
+            return stmt.namespace_ref;
+        }
+
+        try ctx.stmts.append(p.allocator, Stmt.alloc(S.Import, .{
+            .import_record_index = import_record_index,
+            .is_single_line = true,
+            .default_name = null,
+            .items = items,
+            .namespace_ref = namespace_ref,
+            .star_name_loc = star_name_loc,
+        }, loc));
+
+        gop.value_ptr.* = .{ .stmt_index = @intCast(ctx.stmts.items.len - 1) };
+        return namespace_ref;
     }
 
     fn visitBindingToExport(
@@ -24340,6 +24410,18 @@ pub const ConvertESMExportsForHmr = struct {
     }
 
     pub fn finalize(ctx: *ConvertESMExportsForHmr, p: anytype, all_parts: []js_ast.Part) !void {
+        if (ctx.export_star_props.items.len > 0) {
+            if (ctx.export_props.items.len == 0) {
+                ctx.export_props = ctx.export_star_props;
+            } else {
+                const export_star_len = ctx.export_star_props.items.len;
+                try ctx.export_props.ensureUnusedCapacity(p.allocator, export_star_len);
+                const len = ctx.export_props.items.len;
+                ctx.export_props.items.len += export_star_len;
+                bun.copy(G.Property, ctx.export_props.items[export_star_len..], ctx.export_props.items[0..len]);
+                @memcpy(ctx.export_props.items[0..export_star_len], ctx.export_star_props.items);
+            }
+        }
         if (ctx.export_props.items.len > 0) {
             try ctx.stmts.append(p.allocator, Stmt.alloc(S.SExpr, .{
                 .value = Expr.assign(
@@ -24358,6 +24440,8 @@ pub const ConvertESMExportsForHmr = struct {
             try ctx.last_part.symbol_uses.put(p.allocator, p.module_ref, .{ .count_estimate = 1 });
             try ctx.last_part.declared_symbols.append(p.allocator, .{ .ref = p.module_ref, .is_top_level = true });
         }
+
+        // TODO: emit a marker for HMR runtime to know the non-star export fields.
 
         // TODO: this is a tiny mess. it is honestly trying to hard to merge all parts into one
         for (all_parts[0 .. all_parts.len - 1]) |*part| {

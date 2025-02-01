@@ -2688,7 +2688,7 @@ pub fn getPackageID(
 }
 
 /// Appends `pkg` to `this.packages` if a duplicate isn't found
-pub fn appendPackageDedupe(this: *Lockfile, pkg: *Package, buf: string) OOM!PackageID {
+pub fn appendPackageNoDedupe(this: *Lockfile, pkg: *Package, buf: string) OOM!PackageID {
     const entry = try this.package_index.getOrPut(pkg.name_hash);
 
     if (!entry.found_existing) {
@@ -2703,11 +2703,6 @@ pub fn appendPackageDedupe(this: *Lockfile, pkg: *Package, buf: string) OOM!Pack
 
     return switch (entry.value_ptr.*) {
         .id => |existing_id| {
-            if (pkg.resolution.eql(&resolutions[existing_id], buf, buf)) {
-                pkg.meta.id = existing_id;
-                return existing_id;
-            }
-
             const new_id: PackageID = @intCast(this.packages.len);
             pkg.meta.id = new_id;
             try this.packages.append(this.allocator, pkg.*);
@@ -2729,25 +2724,11 @@ pub fn appendPackageDedupe(this: *Lockfile, pkg: *Package, buf: string) OOM!Pack
             return new_id;
         },
         .ids => |*existing_ids| {
-            for (existing_ids.items) |existing_id| {
-                if (pkg.resolution.eql(&resolutions[existing_id], buf, buf)) {
-                    pkg.meta.id = existing_id;
-                    return existing_id;
-                }
-            }
-
             const new_id: PackageID = @intCast(this.packages.len);
             pkg.meta.id = new_id;
             try this.packages.append(this.allocator, pkg.*);
 
             resolutions = this.packages.items(.resolution);
-
-            for (existing_ids.items, 0..) |existing_id, i| {
-                if (pkg.resolution.order(&resolutions[existing_id], buf, buf) == .gt) {
-                    try existing_ids.insert(this.allocator, i, new_id);
-                    return new_id;
-                }
-            }
 
             try existing_ids.append(this.allocator, new_id);
 

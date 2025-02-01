@@ -27,68 +27,9 @@ const http = require('http');
 // responds to a HEAD request with data to res.end,
 // it does not send any body.
 
-<<<<<<< HEAD:test/js/node/test/parallel/http-client-timeout-event.test.js
-test("http client timeout event", async () => {
-  const server = http.createServer();
-
-  await new Promise(resolve => {
-    server.listen(0, options.host, () => {
-      options.port = server.address().port;
-      const req = http.request(options);
-
-      req.on("error", () => {
-        // This space is intentionally left blank
-      });
-
-      req.on("close", () => {
-        expect(req.destroyed).toBe(true);
-        server.close(resolve);
-      });
-
-      req.setTimeout(1);
-      req.on("timeout", () => {
-        req.end(() => {
-          setTimeout(() => {
-            req.destroy();
-          }, 100);
-        });
-      });
-    });
-  });
-||||||| a2e2d114e:test/js/node/test/parallel/http-client-timeout-event.test.js
-test("http client timeout event", async () => {
-  const server = http.createServer();
-
-  await new Promise(resolve => {
-    server.listen(0, options.host, () => {
-      options.port = server.address().port;
-      const req = http.request(options);
-
-      req.on("error", () => {
-        // This space is intentionally left blank
-      });
-
-      req.on("close", () => {
-        expect(req.destroyed).toBe(true);
-        server.close();
-        resolve();
-      });
-
-      req.setTimeout(1);
-      req.on("timeout", () => {
-        req.end(() => {
-          setTimeout(() => {
-            req.destroy();
-          }, 100);
-        });
-      });
-    });
-  });
-=======
 const server = http.createServer(function(req, res) {
   res.writeHead(200);
   res.end('FAIL'); // broken: sends FAIL from hot path.
->>>>>>> main:test/js/node/test/parallel/test-http-head-response-has-no-body-end.js
 });
 server.listen(0);
 

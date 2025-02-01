@@ -180,10 +180,10 @@ jobs:
           bun -e '
           const file = Bun.file("./types/bun/package.json");
           const json = await file.json();
-          const version = process.env.BUN_VERSION;
+          const version = process.env.BUN_VERSION.replace('bun-v', '');
           json.dependencies["bun-types"] = version;
           json.version = version.slice(0, version.lastIndexOf(".")) + ".9999";
-          await file.write(JSON.stringify(json, null, 4)+"\n");
+          await file.write(JSON.stringify(json, null, 4) + "\n");
           '
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v7
@@ -196,7 +196,7 @@ jobs:
           body: |
             Update `bun-types` version to ${{env.BUN_VERSION}}
 
-            https://bun.sh/blog/bun-v${{env.BUN_VERSION}}
+            https://bun.sh/blog/bun-${{env.BUN_VERSION}}
           push-to-fork: oven-sh/DefinitelyTyped
           branch: "bun-${{env.BUN_VERSION}}"
   docker:

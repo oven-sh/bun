@@ -90,29 +90,6 @@ using namespace Zig;
     auto napi_preamble_throw_scope__ = DECLARE_THROW_SCOPE(toJS(_env)->vm()); \
     NAPI_RETURN_IF_EXCEPTION(_env)
 
-#if NAPI_VERBOSE
-#include <stdio.h>
-#include <stdarg.h>
-
-void napi_log(long line, const char* function, const char* fmt, ...)
-{
-    printf("[napi.cpp:%ld] %s: ", line, function);
-
-    va_list ap;
-    va_start(ap, fmt);
-    vprintf(fmt, ap);
-    va_end(ap);
-
-    printf("\n");
-}
-
-#define NAPI_LOG_CURRENT_FUNCTION printf("[napi.cpp:%d] %s\n", __LINE__, __PRETTY_FUNCTION__)
-#define NAPI_LOG(fmt, ...) napi_log(__LINE__, __PRETTY_FUNCTION__, fmt __VA_OPT__(, ) __VA_ARGS__)
-#else
-#define NAPI_LOG_CURRENT_FUNCTION
-#define NAPI_LOG(fmt, ...)
-#endif
-
 // Every NAPI function should use this at the start. It does the following:
 // - if NAPI_VERBOSE is 1, log that the function was called
 // - if env is nullptr, return napi_invalid_arg

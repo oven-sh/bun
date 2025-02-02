@@ -1855,6 +1855,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         /// Defer finalization until after the request handler task is completed?
         defer_deinit_until_callback_completes: ?*bool = null,
 
+        js_request_object: JSC.JSValue = JSC.JSValue.zero,
+
         // TODO: support builtin compression
         const can_sendfile = !ssl_enabled and !Environment.isWindows;
 
@@ -3752,7 +3754,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     const result = server.config.onError.call(
                         server.globalThis,
                         server.thisObject,
-                        &.{value},
+                        &.{ value, this.js_request_object },
                     ) catch |err| server.globalThis.takeException(err);
                     defer result.ensureStillAlive();
                     if (!result.isEmptyOrUndefinedOrNull()) {
@@ -7344,8 +7346,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 }
             }
 
+            ctx.js_request_object = request_object.toJS(this.globalThis);
             return .{
-                .js_request = request_object.toJS(this.globalThis),
+                .js_request = ctx.js_request_object,
                 .request_object = request_object,
                 .ctx = ctx,
             };

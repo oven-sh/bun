@@ -3164,11 +3164,18 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void, 
         }
 
         pub fn deref(self: *T) void {
-            if (Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count - 1 });
+            const ref_count = self.ref_count;
+            if (Environment.isDebug) {
+                if (ref_count == 0 or ref_count == std.math.maxInt(@TypeOf(ref_count))) {
+                    @panic("Use after-free detected on " ++ output_name);
+                }
+            }
 
-            self.ref_count -= 1;
+            if (Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), ref_count, ref_count - 1 });
 
-            if (self.ref_count == 0) {
+            self.ref_count = ref_count - 1;
+
+            if (ref_count == 1) {
                 if (comptime deinit_fn) |deinit| {
                     deinit(self);
                 } else {

@@ -766,6 +766,7 @@ pub const VirtualMachine = struct {
     console: *ConsoleObject,
     log: *logger.Log,
     main: string = "",
+    main_is_html_entrypoint: bool = false,
     main_resolved_path: bun.String = bun.String.empty,
     main_hash: u32 = 0,
     process: bun.JSC.C.JSObjectRef = null,
@@ -3097,6 +3098,8 @@ pub const VirtualMachine = struct {
         }
     }
 
+    extern fn Bun__loadHTMLEntryPoint(global: *JSGlobalObject) *JSInternalPromise;
+
     pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
         this.has_loaded = false;
         this.main = entry_path;
@@ -3104,13 +3107,14 @@ pub const VirtualMachine = struct {
 
         try this.ensureDebugger(true);
 
-        try this.entry_point.generate(
-            this.allocator,
-            this.bun_watcher != .none,
-            entry_path,
-            main_file_name,
-        );
-        this.eventLoop().ensureWaker();
+        if (!this.main_is_html_entrypoint) {
+            try this.entry_point.generate(
+                this.allocator,
+                this.bun_watcher != .none,
+                entry_path,
+                main_file_name,
+            );
+        }
 
         if (!this.transpiler.options.disable_transpilation) {
             if (try this.loadPreloads()) |promise| {
@@ -3120,7 +3124,11 @@ pub const VirtualMachine = struct {
                 return promise;
             }
 
-            const promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(main_file_name)) orelse return error.JSError;
+            const promise = if (!this.main_is_html_entrypoint)
+                JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(main_file_name)) orelse return error.JSError
+            else
+                Bun__loadHTMLEntryPoint(this.global);
+
             this.pending_internal_promise = promise;
             JSValue.fromCell(promise).ensureStillAlive();
             return promise;

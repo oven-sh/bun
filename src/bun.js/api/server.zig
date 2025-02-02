@@ -1110,7 +1110,7 @@ pub const ServerConfig = struct {
         var port = args.address.tcp.port;
 
         if (arguments.vm.transpiler.options.transform_options.origin) |origin| {
-            args.base_uri = origin;
+            args.base_uri = try bun.default_allocator.dupeZ(u8, origin);
         }
 
         defer {
@@ -1150,16 +1150,15 @@ pub const ServerConfig = struct {
 
                 while (try iter.next()) |key| {
                     const path, const is_ascii = key.toOwnedSliceReturningAllASCII(bun.default_allocator) catch bun.outOfMemory();
+                    errdefer bun.default_allocator.free(path);
 
                     const value = iter.value;
 
-                    if (path.len == 0 or path[0] != '/') {
-                        bun.default_allocator.free(path);
+                    if (path.len == 0 or (path[0] != '/' and path[0] != '*')) {
                         return global.throwInvalidArguments("Invalid static route \"{s}\". path must start with '/'", .{path});
                     }
 
                     if (!is_ascii) {
-                        bun.default_allocator.free(path);
                         return global.throwInvalidArguments("Invalid static route \"{s}\". Please encode all non-ASCII characters in the path.", .{path});
                     }
 
@@ -1219,6 +1218,9 @@ pub const ServerConfig = struct {
 
                 if (sliced.len > 0) {
                     defer sliced.deinit();
+                    if (args.base_uri.len > 0) {
+                        bun.default_allocator.free(@constCast(args.base_uri));
+                    }
                     args.base_uri = bun.default_allocator.dupe(u8, sliced.slice()) catch unreachable;
                 }
             }
@@ -1413,6 +1415,8 @@ pub const ServerConfig = struct {
                 const protocol: string = if (args.ssl_config != null) "https" else "http";
                 const hostname = args.base_url.hostname;
                 const needsBrackets: bool = strings.isIPV6Address(hostname) and hostname[0] != '[';
+                const original_base_uri = args.base_uri;
+                defer bun.default_allocator.free(@constCast(original_base_uri));
                 if (needsBrackets) {
                     args.base_uri = (if ((port == 80 and args.ssl_config == null) or (port == 443 and args.ssl_config != null))
                         std.fmt.allocPrint(bun.default_allocator, "{s}://[{s}]/{s}", .{
@@ -7449,8 +7453,30 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             if (this.dev_server) |dev| {
                 dev.attachRoutes(this) catch bun.outOfMemory();
             } else {
-                bun.assert(this.config.onRequest != .zero);
-                app.any("/*", *ThisServer, this, onRequest);
+                const @"has /*" = brk: {
+                    for (this.config.static_routes.items) |route| {
+                        if (strings.eqlComptime(route.path, "/*")) {
+                            break :brk true;
+                        }
+                    }
+
+                    break :brk false;
+                };
+
+                // "/*" routes are added backwards, so if they have a static route, it will never be matched
+                // so we need to check for that first
+                if (!@"has /*") {
+                    bun.assert(this.config.onRequest != .zero);
+                    app.any("/*", *ThisServer, this, onRequest);
+                } else if (this.config.onRequest != .zero) {
+                    app.post("/*", *ThisServer, this, onRequest);
+                    app.put("/*", *ThisServer, this, onRequest);
+                    app.patch("/*", *ThisServer, this, onRequest);
+                    app.delete("/*", *ThisServer, this, onRequest);
+                    app.options("/*", *ThisServer, this, onRequest);
+                    app.trace("/*", *ThisServer, this, onRequest);
+                    app.connect("/*", *ThisServer, this, onRequest);
+                }
             }
         }
 

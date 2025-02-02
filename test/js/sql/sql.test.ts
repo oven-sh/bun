@@ -1,4 +1,4 @@
-import { sql, SQL } from "bun";
+import { sql, SQL, randomUUIDv7 } from "bun";
 const postgres = (...args) => new sql(...args);
 import { expect, test, mock, beforeAll, afterAll } from "bun:test";
 import { $ } from "bun";
@@ -269,7 +269,7 @@ if (isDockerEnabled()) {
   test("should not timeout in long results", async () => {
     await using db = postgres({ ...options, max: 1, idleTimeout: 5 });
     using sql = await db.reserve();
-    const random_name = "test_" + Math.random().toString(36).substring(2, 15);
+    const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
 
     await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text)`;
     const promises: Promise<any>[] = [];

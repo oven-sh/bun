@@ -1432,9 +1432,8 @@ pub const PostgresSQLConnection = struct {
     }
 
     pub fn setStatus(this: *PostgresSQLConnection, status: Status) void {
-        defer this.updateHasPendingActivity();
-
         if (this.status == status) return;
+        defer this.updateHasPendingActivity();
 
         this.status = status;
         this.resetConnectionTimeout();
@@ -1446,7 +1445,6 @@ pub const PostgresSQLConnection = struct {
                 js_value.ensureStillAlive();
                 this.globalObject.queueMicrotask(on_connect, &[_]JSValue{ JSValue.jsNull(), js_value });
                 this.poll_ref.unref(this.globalObject.bunVM());
-                this.updateHasPendingActivity();
             },
             else => {},
         }
@@ -1517,7 +1515,7 @@ pub const PostgresSQLConnection = struct {
         const loop = vm.eventLoop();
         loop.enter();
         defer loop.exit();
-        this.poll_ref.unref(this.globalObject.bunVM());
+        // this.poll_ref.unref(this.globalObject.bunVM());
 
         this.fail("Connection closed", error.ConnectionClosed);
     }
@@ -1634,7 +1632,7 @@ pub const PostgresSQLConnection = struct {
     pub fn onData(this: *PostgresSQLConnection, data: []const u8) void {
         this.ref();
         const vm = this.globalObject.bunVM();
-        // disable the connection timeout while we're processing the data
+
         this.disableConnectionTimeout();
         defer {
             if (this.status == .connected and this.requests.readableLength() == 0 and this.write_buffer.remaining().len == 0) {

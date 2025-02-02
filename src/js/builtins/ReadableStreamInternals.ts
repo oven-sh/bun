@@ -1104,15 +1104,8 @@ export function onFlushDirectStream() {
   }
 
   var _pendingRead = this._pendingRead;
-  this._pendingRead = undefined;
   if (_pendingRead && $isPromise(_pendingRead)) {
-    var flushed = this.$sink.flush();
-    if (flushed?.byteLength) {
-      this._pendingRead = $getByIdDirectPrivate(stream, "readRequests")?.shift();
-      $fulfillPromise(_pendingRead, { value: flushed, done: false });
-    } else {
-      this._pendingRead = _pendingRead;
-    }
+    this.$sink.flush();
   } else if ($getByIdDirectPrivate(stream, "readRequests")?.isNotEmpty()) {
     var flushed = this.$sink.flush();
     if (flushed?.byteLength) {

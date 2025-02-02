@@ -1718,7 +1718,8 @@ pub const VirtualMachine = struct {
             vm.is_main_thread = false;
             vm.eventLoop().ensureWaker();
 
-            vm.global.vm().holdAPILock(other_vm, @ptrCast(&start));
+            const callback = OpaqueWrap(VirtualMachine, start);
+            vm.global.vm().holdAPILock(other_vm, callback);
         }
 
         pub export fn Debugger__didConnect() void {

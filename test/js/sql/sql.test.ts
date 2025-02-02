@@ -266,6 +266,25 @@ if (isDockerEnabled()) {
     expect(result).toEqual([{ x: 3 }]);
   });
 
+  test("should not timeout in long results", async () => {
+    await using sql = postgres({ ...options, max: 1, idleTimeout: 5 });
+    const random_name = "test_" + Math.random().toString(36).substring(2, 15);
+    await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text)`;
+    const promises: Promise<any>[] = [];
+    for (let i = 0; i < 10_000; i++) {
+      promises.push(sql`INSERT INTO ${sql(random_name)} VALUES (${i}, ${"test" + i})`);
+      if (i % 50 === 0 && i > 0) {
+        await Promise.all(promises);
+        promises.length = 0;
+      }
+    }
+    await Promise.all(promises);
+    await sql`SELECT * FROM ${sql(random_name)}`;
+    await sql`SELECT * FROM ${sql(random_name)}`;
+    await sql`SELECT * FROM ${sql(random_name)}`;
+    expect().pass();
+  });
+
   test("Handles numeric column names", async () => {
     // deliberately out of order
     const result = await sql`select 1 as "1", 2 as "2", 3 as "3", 0 as "0"`;

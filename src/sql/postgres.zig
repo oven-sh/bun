@@ -2674,6 +2674,7 @@ pub const PostgresSQLConnection = struct {
 
         switch (comptime MessageType) {
             .DataRow => {
+                defer this.resetConnectionTimeout();
                 const request = this.current() orelse return error.ExpectedRequest;
                 var statement = request.statement orelse return error.ExpectedStatement;
                 var structure: JSValue = .undefined;

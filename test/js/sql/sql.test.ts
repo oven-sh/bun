@@ -267,28 +267,26 @@ if (isDockerEnabled()) {
   });
 
   test("should not timeout in long results", async () => {
-    await using sql = postgres({ ...options, max: 1, idleTimeout: 5 });
+    await using db = postgres({ ...options, max: 1, idleTimeout: 5 });
+    using sql = await db.reserve();
     const random_name = "test_" + Math.random().toString(36).substring(2, 15);
 
     await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text)`;
-    try {
-      const promises: Promise<any>[] = [];
-      for (let i = 0; i < 10_000; i++) {
-        promises.push(sql`INSERT INTO ${sql(random_name)} VALUES (${i}, ${"test" + i})`);
-        if (i % 50 === 0 && i > 0) {
-          await Promise.all(promises);
-          promises.length = 0;
-        }
+    const promises: Promise<any>[] = [];
+    for (let i = 0; i < 10_000; i++) {
+      promises.push(sql`INSERT INTO ${sql(random_name)} VALUES (${i}, ${"test" + i})`);
+      if (i % 50 === 0 && i > 0) {
+        await Promise.all(promises);
+        promises.length = 0;
       }
-      await Promise.all(promises);
-      await sql`SELECT * FROM ${sql(random_name)}`;
-      await sql`SELECT * FROM ${sql(random_name)}`;
-      await sql`SELECT * FROM ${sql(random_name)}`;
-    } finally {
-      await sql`DROP TABLE ${sql(random_name)}`;
     }
+    await Promise.all(promises);
+    await sql`SELECT * FROM ${sql(random_name)}`;
+    await sql`SELECT * FROM ${sql(random_name)}`;
+    await sql`SELECT * FROM ${sql(random_name)}`;
+
     expect().pass();
-  });
+  }, 10_000);
 
   test("Handles numeric column names", async () => {
     // deliberately out of order

@@ -3123,6 +3123,9 @@ pub fn New(comptime T: type) type {
             bun.destroy(self);
         }
 
+        /// Allocate a new uninitialized instance of `T` using the default
+        /// global allocator.  You must call `T.destroy()` to avoid leaking
+        /// memory.
         pub inline fn new(t: T) *T {
             return bun.new(T, t);
         }

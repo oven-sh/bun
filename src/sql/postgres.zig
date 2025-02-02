@@ -782,7 +782,7 @@ pub const PostgresSQLQuery = struct {
 
         PostgresSQLQuery.targetSetCached(this_value, globalObject, query);
 
-        if (connection.is_ready_for_query)
+        if (connection.flags.is_ready_for_query)
             connection.flushDataAndResetTimeout()
         else if (reset_timeout)
             connection.resetConnectionTimeout();
@@ -1120,12 +1120,8 @@ pub const PostgresSQLConnection = struct {
     pending_activity_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     js_value: JSValue = JSValue.undefined,
 
-    is_ready_for_query: bool = false,
-
     backend_parameters: bun.StringMap = bun.StringMap.init(bun.default_allocator, true),
     backend_key_data: protocol.BackendKeyData = .{},
-
-    pending_disconnect: bool = false,
 
     database: []const u8 = "",
     user: []const u8 = "",
@@ -1142,6 +1138,8 @@ pub const PostgresSQLConnection = struct {
 
     idle_timeout_interval_ms: u32 = 0,
     connection_timeout_ms: u32 = 0,
+
+    flags: ConnectionFlags = .{},
 
     /// Before being connected, this is a connection timeout timer.
     /// After being connected, this is an idle timeout timer.
@@ -1164,6 +1162,11 @@ pub const PostgresSQLConnection = struct {
             .nsec = 0,
         },
     },
+
+    pub const ConnectionFlags = packed struct {
+        is_ready_for_query: bool = false,
+        is_processing_data: bool = false,
+    };
 
     pub const TLSStatus = union(enum) {
         none,
@@ -1307,6 +1310,8 @@ pub const PostgresSQLConnection = struct {
         }
     }
     pub fn resetConnectionTimeout(this: *PostgresSQLConnection) void {
+        // if we are processing data, don't reset the timeout, wait for the data to be processed
+        if (this.flags.is_processing_data) return;
         const interval = this.getTimeoutInterval();
         if (this.timer.state == .ACTIVE) {
             this.globalObject.bunVM().timer.remove(&this.timer);
@@ -1631,6 +1636,7 @@ pub const PostgresSQLConnection = struct {
 
     pub fn onData(this: *PostgresSQLConnection, data: []const u8) void {
         this.ref();
+        this.flags.is_processing_data = true;
         const vm = this.globalObject.bunVM();
 
         this.disableConnectionTimeout();
@@ -1642,6 +1648,8 @@ pub const PostgresSQLConnection = struct {
                 // Keep the process alive if there's something to do.
                 this.poll_ref.ref(vm);
             }
+            this.flags.is_processing_data = false;
+
             // reset the connection timeout after we're done processing the data
             this.resetConnectionTimeout();
             this.deref();
@@ -2068,7 +2076,7 @@ pub const PostgresSQLConnection = struct {
     }
 
     fn hasQueryRunning(this: *PostgresSQLConnection) bool {
-        return !this.is_ready_for_query or this.current() != null;
+        return !this.flags.is_ready_for_query or this.current() != null;
     }
 
     pub const Writer = struct {
@@ -2664,7 +2672,7 @@ pub const PostgresSQLConnection = struct {
     pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_literal), comptime Context: type, reader: protocol.NewReader(Context)) AnyPostgresError!void {
         debug("on({s})", .{@tagName(MessageType)});
         if (comptime MessageType != .ReadyForQuery) {
-            this.is_ready_for_query = false;
+            this.flags.is_ready_for_query = false;
         }
 
         switch (comptime MessageType) {
@@ -2752,13 +2760,8 @@ pub const PostgresSQLConnection = struct {
                 var ready_for_query: protocol.ReadyForQuery = undefined;
                 try ready_for_query.decodeInternal(Context, reader);
 
-                if (this.pending_disconnect) {
-                    this.disconnect();
-                    return;
-                }
-
                 this.setStatus(.connected);
-                this.is_ready_for_query = true;
+                this.flags.is_ready_for_query = true;
                 this.socket.setTimeout(300);
 
                 try this.advance();

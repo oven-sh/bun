@@ -1666,6 +1666,9 @@ pub const PostgresSQLConnection = struct {
         event_loop.enter();
         defer event_loop.exit();
         SocketMonitor.read(data);
+        // reset the head to the last message so remaining reflects the right amount of bytes
+        this.read_buffer.head = this.last_message_start;
+
         if (this.read_buffer.remaining().len == 0) {
             var consumed: usize = 0;
             var offset: usize = 0;
@@ -1690,33 +1693,32 @@ pub const PostgresSQLConnection = struct {
                     this.fail("Failed to read data", err);
                 }
             };
+            // no need to reset anything, its already empty
             return;
-        } else {
-            this.read_buffer.write(bun.default_allocator, data) catch @panic("failed to write to read buffer");
-            PostgresRequest.onData(this, Reader, this.bufferedReader()) catch |err| {
-                if (err != error.ShortRead) {
-                    bun.handleErrorReturnTrace(err, @errorReturnTrace());
-                    this.fail("Failed to read data", err);
-                    return;
-                }
-
-                if (comptime bun.Environment.allow_assert) {
-                    debug("read_buffer: not empty and received short read: last_message_start: {d}, head: {d}, len: {d}", .{
-                        this.last_message_start,
-                        this.read_buffer.head,
-                        this.read_buffer.byte_list.len,
-                    });
-                }
-                // reset the head so remaining bytes are available for the next read
-                this.read_buffer.head = this.last_message_start;
-
-                return;
-            };
-            debug("clean read_buffer", .{});
-
-            this.last_message_start = 0;
-            this.read_buffer.head = 0;
         }
+        // read buffer is not empty, so we need to write the data to the buffer and then read it
+        this.read_buffer.write(bun.default_allocator, data) catch @panic("failed to write to read buffer");
+        PostgresRequest.onData(this, Reader, this.bufferedReader()) catch |err| {
+            if (err != error.ShortRead) {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                this.fail("Failed to read data", err);
+                return;
+            }
+
+            if (comptime bun.Environment.allow_assert) {
+                debug("read_buffer: not empty and received short read: last_message_start: {d}, head: {d}, len: {d}", .{
+                    this.last_message_start,
+                    this.read_buffer.head,
+                    this.read_buffer.byte_list.len,
+                });
+            }
+            return;
+        };
+
+        debug("clean read_buffer", .{});
+        // success, we read everything! let's reset the last message start and the head
+        this.last_message_start = 0;
+        this.read_buffer.head = 0;
     }
 
     pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*PostgresSQLConnection {

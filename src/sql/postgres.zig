@@ -700,7 +700,7 @@ pub const PostgresSQLQuery = struct {
         };
 
         const has_params = signature.fields.len > 0;
-        var reset_timeout = false;
+        var did_write = false;
         enqueue: {
             if (entry.found_existing) {
                 this.statement = entry.value_ptr.*;
@@ -724,7 +724,7 @@ pub const PostgresSQLQuery = struct {
                             };
                             this.status = .binding;
 
-                            reset_timeout = true;
+                            did_write = true;
                         }
                     },
                     .parsing, .pending => {},
@@ -747,7 +747,7 @@ pub const PostgresSQLQuery = struct {
                         return error.JSError;
                     };
                     this.status = .binding;
-                    reset_timeout = true;
+                    did_write = true;
                 } else {
                     log("writeQuery", .{});
                     PostgresRequest.writeQuery(query_str.slice(), signature.prepared_statement_name, signature.fields, PostgresSQLConnection.Writer, writer) catch |err| {
@@ -762,7 +762,7 @@ pub const PostgresSQLQuery = struct {
                             return globalObject.throwValue(postgresErrorToJS(globalObject, "failed to flush", err));
                         return error.JSError;
                     };
-                    reset_timeout = true;
+                    did_write = true;
                 }
             }
             {
@@ -781,15 +781,11 @@ pub const PostgresSQLQuery = struct {
         this.thisValue.upgrade(globalObject);
 
         PostgresSQLQuery.targetSetCached(this_value, globalObject, query);
-        if (connection.flags.is_processing_data) {
-            if (connection.flags.is_ready_for_query) {
-                connection.flushData();
-            }
-        } else if (connection.flags.is_ready_for_query)
-            connection.flushDataAndResetTimeout()
-        else if (reset_timeout)
+        if (did_write) {
+            connection.flushDataAndResetTimeout();
+        } else if (!connection.flags.is_processing_data) {
             connection.resetConnectionTimeout();
-
+        }
         return .undefined;
     }
 

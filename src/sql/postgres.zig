@@ -1046,7 +1046,6 @@ pub const PostgresRequest = struct {
     ) !void {
         while (true) {
             reader.markMessageStart();
-            connection.resetConnectionTimeout();
             switch (try reader.int(u8)) {
                 'D' => try connection.on(.DataRow, Context, reader),
                 'd' => try connection.on(.CopyData, Context, reader),

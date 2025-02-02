@@ -1044,8 +1044,6 @@ pub const PostgresRequest = struct {
         comptime Context: type,
         reader: protocol.NewReader(Context),
     ) !void {
-        connection.disableConnectionTimeout();
-        defer connection.resetConnectionTimeout();
         while (true) {
             reader.markMessageStart();
             connection.resetConnectionTimeout();
@@ -1637,6 +1635,8 @@ pub const PostgresSQLConnection = struct {
     pub fn onData(this: *PostgresSQLConnection, data: []const u8) void {
         this.ref();
         const vm = this.globalObject.bunVM();
+        // disable the connection timeout while we're processing the data
+        this.disableConnectionTimeout();
         defer {
             if (this.status == .connected and this.requests.readableLength() == 0 and this.write_buffer.remaining().len == 0) {
                 // Don't keep the process alive when there's nothing to do.
@@ -1645,7 +1645,7 @@ pub const PostgresSQLConnection = struct {
                 // Keep the process alive if there's something to do.
                 this.poll_ref.ref(vm);
             }
-
+            // reset the connection timeout after we're done processing the data
             this.resetConnectionTimeout();
             this.deref();
         }

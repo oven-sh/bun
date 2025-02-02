@@ -781,8 +781,11 @@ pub const PostgresSQLQuery = struct {
         this.thisValue.upgrade(globalObject);
 
         PostgresSQLQuery.targetSetCached(this_value, globalObject, query);
-
-        if (connection.flags.is_ready_for_query)
+        if (connection.flags.is_processing_data) {
+            if (connection.flags.is_ready_for_query) {
+                connection.flushData();
+            }
+        } else if (connection.flags.is_ready_for_query)
             connection.flushDataAndResetTimeout()
         else if (reset_timeout)
             connection.resetConnectionTimeout();

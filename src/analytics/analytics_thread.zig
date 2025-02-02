@@ -20,7 +20,7 @@ const Analytics = @import("./analytics_schema.zig").analytics;
 const Writer = @import("./analytics_schema.zig").Writer;
 const Headers = bun.http.Headers;
 const Futex = @import("../futex.zig");
-const Semver = @import("../install/semver.zig");
+const Semver = bun.Semver;
 
 /// Enables analytics. This is used by:
 /// - crash_handler.zig's `report` function to anonymously report crashes

@@ -59,8 +59,9 @@
 						clang
 						autoconf
 						icu
-					] ++ lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
 						apple-sdk_15
+					] ++ lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
+						pkgs.apple-sdk_15
 					];
 
 					hardeningDisable = [ "all" ];

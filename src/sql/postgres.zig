@@ -1044,9 +1044,11 @@ pub const PostgresRequest = struct {
         comptime Context: type,
         reader: protocol.NewReader(Context),
     ) !void {
+        connection.disableConnectionTimeout();
+        defer connection.resetConnectionTimeout();
         while (true) {
             reader.markMessageStart();
-
+            connection.resetConnectionTimeout();
             switch (try reader.int(u8)) {
                 'D' => try connection.on(.DataRow, Context, reader),
                 'd' => try connection.on(.CopyData, Context, reader),
@@ -1302,7 +1304,11 @@ pub const PostgresSQLConnection = struct {
             else => this.connection_timeout_ms,
         };
     }
-
+    pub fn disableConnectionTimeout(this: *PostgresSQLConnection) void {
+        if (this.timer.state == .ACTIVE) {
+            this.globalObject.bunVM().timer.remove(&this.timer);
+        }
+    }
     pub fn resetConnectionTimeout(this: *PostgresSQLConnection) void {
         const interval = this.getTimeoutInterval();
         if (this.timer.state == .ACTIVE) {
@@ -2674,7 +2680,6 @@ pub const PostgresSQLConnection = struct {
 
         switch (comptime MessageType) {
             .DataRow => {
-                defer this.resetConnectionTimeout();
                 const request = this.current() orelse return error.ExpectedRequest;
                 var statement = request.statement orelse return error.ExpectedStatement;
                 var structure: JSValue = .undefined;

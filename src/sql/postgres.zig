@@ -1306,6 +1306,7 @@ pub const PostgresSQLConnection = struct {
         if (this.timer.state == .ACTIVE) {
             this.globalObject.bunVM().timer.remove(&this.timer);
         }
+        this.timer.state = .CANCELLED;
     }
     pub fn resetConnectionTimeout(this: *PostgresSQLConnection) void {
         // if we are processing data, don't reset the timeout, wait for the data to be processed

@@ -1387,6 +1387,10 @@ pub const PostgresSQLConnection = struct {
         debug("onConnectionTimeout", .{});
 
         this.timer.state = .FIRED;
+        if (this.flags.is_processing_data) {
+            return .disarm;
+        }
+
         if (this.getTimeoutInterval() == 0) {
             this.resetConnectionTimeout();
             return .disarm;

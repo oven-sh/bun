@@ -1645,7 +1645,7 @@ pub const PostgresSQLConnection = struct {
 
         this.disableConnectionTimeout();
         defer {
-            if (this.status == .connected and this.requests.readableLength() == 0 and this.write_buffer.remaining().len == 0) {
+            if (this.status == .connected and !this.hasQueryRunning() and this.write_buffer.remaining().len == 0 and this.flags.is_ready_for_query) {
                 // Don't keep the process alive when there's nothing to do.
                 this.poll_ref.unref(vm);
             } else if (this.status == .connected) {

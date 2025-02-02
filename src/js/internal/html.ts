@@ -43,6 +43,10 @@ async function start() {
     }
   }
 
+  if (args.length === 0) {
+    throw new Error("No HTML files found matching " + JSON.stringify(Bun.main));
+  }
+
   // Add cwd to find longest common path
   let needsPop = false;
   if (args.length === 1) {
@@ -211,7 +215,6 @@ async function start() {
           console.log(`${prefix}/${route} → ${path.relative(process.cwd(), importPath)}`);
         }
       }
-      console.log();
     }
 
     if (isFirst && process.stdin.isTTY) {

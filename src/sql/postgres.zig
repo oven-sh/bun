@@ -783,7 +783,7 @@ pub const PostgresSQLQuery = struct {
         PostgresSQLQuery.targetSetCached(this_value, globalObject, query);
         if (did_write) {
             connection.flushDataAndResetTimeout();
-        } else if (!connection.flags.is_processing_data) {
+        } else {
             connection.resetConnectionTimeout();
         }
         return .undefined;

@@ -610,6 +610,12 @@ pub const ZigString = extern struct {
             return !this.allocator.isNull();
         }
 
+        pub fn toOwned(this: Slice, allocator: std.mem.Allocator) OOM!Slice {
+            const duped = try allocator.dupe(u8, this.ptr[0..this.len]);
+            return .{ .allocator = .init(allocator), .ptr = duped.ptr, .len = this.len };
+        }
+
+        // TODO: this is identical to `cloneIfNeeded`
         pub fn clone(this: Slice, allocator: std.mem.Allocator) OOM!Slice {
             if (this.isAllocated()) {
                 return Slice{ .allocator = this.allocator, .ptr = this.ptr, .len = this.len };

@@ -1515,7 +1515,7 @@ pub const PostgresSQLConnection = struct {
         const loop = vm.eventLoop();
         loop.enter();
         defer loop.exit();
-        // this.poll_ref.unref(this.globalObject.bunVM());
+        this.poll_ref.unref(this.globalObject.bunVM());
 
         this.fail("Connection closed", error.ConnectionClosed);
     }

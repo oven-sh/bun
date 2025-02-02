@@ -247,7 +247,7 @@ const ErrorableString = JSC.ErrorableString;
 const max_addressable_memory = std.math.maxInt(u56);
 const glob = @import("../../glob.zig");
 const Async = bun.Async;
-const SemverObject = @import("../../install/semver.zig").SemverObject;
+const SemverObject = bun.Semver.SemverObject;
 const Braces = @import("../../shell/braces.zig");
 const Shell = @import("../../shell/shell.zig");
 

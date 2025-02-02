@@ -20,7 +20,7 @@ const Npm = @import("./npm.zig");
 const Integrity = @import("./integrity.zig").Integrity;
 const Bin = @import("./bin.zig").Bin;
 
-const Semver = @import("./semver.zig");
+const Semver = bun.Semver;
 const String = Semver.String;
 const ExternalString = Semver.ExternalString;
 const stringHash = String.Builder.stringHash;

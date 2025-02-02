@@ -1598,7 +1598,7 @@ pub fn cstring(input: []const u8) [:0]const u8 {
     return @as([*:0]const u8, @ptrCast(input.ptr))[0..input.len :0];
 }
 
-pub const Semver = @import("./install/semver.zig");
+pub const Semver = @import("./semver.zig");
 pub const ImportRecord = @import("./import_record.zig").ImportRecord;
 pub const ImportKind = @import("./import_record.zig").ImportKind;
 

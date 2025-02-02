@@ -2509,7 +2509,7 @@ pub const PosixSignalHandle = struct {
 
 pub const PosixSignalTask = struct {
     number: u8,
-    extern "C" fn Bun__onSignalForJS(number: i32, globalObject: *JSC.JSGlobalObject) void;
+    extern "c" fn Bun__onSignalForJS(number: i32, globalObject: *JSC.JSGlobalObject) void;
 
     pub usingnamespace bun.New(@This());
     pub fn runFromJSThread(number: u8, globalObject: *JSC.JSGlobalObject) void {

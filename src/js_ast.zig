@@ -8527,7 +8527,7 @@ pub const Macro = struct {
             });
         }
 
-        extern "C" fn Bun__startMacro(function: *const anyopaque, *anyopaque) void;
+        extern "c" fn Bun__startMacro(function: *const anyopaque, *anyopaque) void;
     };
 };
 

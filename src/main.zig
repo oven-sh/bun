@@ -16,8 +16,8 @@ comptime {
 }
 
 extern fn bun_warn_avx_missing(url: [*:0]const u8) void;
-pub extern "C" var _environ: ?*anyopaque;
-pub extern "C" var environ: ?*anyopaque;
+pub extern "c" var _environ: ?*anyopaque;
+pub extern "c" var environ: ?*anyopaque;
 pub fn main() void {
     bun.crash_handler.init();
 

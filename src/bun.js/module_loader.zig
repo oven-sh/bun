@@ -1459,7 +1459,7 @@ pub const ModuleLoader = struct {
             bun.default_allocator.free(this.string_buf);
         }
 
-        extern "C" fn Bun__onFulfillAsyncModule(
+        extern "c" fn Bun__onFulfillAsyncModule(
             globalObject: *JSGlobalObject,
             promiseValue: JSValue,
             res: *JSC.ErrorableResolvedSource,

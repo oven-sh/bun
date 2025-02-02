@@ -1584,9 +1584,9 @@ pub const VirtualMachine = struct {
 
         pub const log = Output.scoped(.debugger, false);
 
-        extern "C" fn Bun__createJSDebugger(*JSGlobalObject) u32;
-        extern "C" fn Bun__ensureDebugger(u32, bool) void;
-        extern "C" fn Bun__startJSDebuggerThread(*JSGlobalObject, u32, *bun.String, c_int, bool) void;
+        extern "c" fn Bun__createJSDebugger(*JSGlobalObject) u32;
+        extern "c" fn Bun__ensureDebugger(u32, bool) void;
+        extern "c" fn Bun__startJSDebuggerThread(*JSGlobalObject, u32, *bun.String, c_int, bool) void;
         var futex_atomic: std.atomic.Value(u32) = undefined;
 
         pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {

@@ -868,7 +868,7 @@ pub fn handleSegfaultWindows(info: *windows.EXCEPTION_POINTERS) callconv(windows
     );
 }
 
-extern "C" fn gnu_get_libc_version() ?[*:0]const u8;
+extern "c" fn gnu_get_libc_version() ?[*:0]const u8;
 
 pub fn printMetadata(writer: anytype) !void {
     if (Output.enable_ansi_colors) {

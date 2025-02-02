@@ -228,7 +228,7 @@ pub const Source = struct {
     };
 
     pub const Stdio = struct {
-        extern "C" var bun_is_stdio_null: [3]i32;
+        extern "c" var bun_is_stdio_null: [3]i32;
 
         pub fn isStderrNull() bool {
             return bun_is_stdio_null[2] == 1;

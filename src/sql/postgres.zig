@@ -1044,7 +1044,9 @@ pub const PostgresRequest = struct {
     ) !void {
         while (true) {
             reader.markMessageStart();
-            switch (try reader.int(u8)) {
+            const c = try reader.int(u8);
+            debug("read: {c}", .{c});
+            switch (c) {
                 'D' => try connection.on(.DataRow, Context, reader),
                 'd' => try connection.on(.CopyData, Context, reader),
                 'S' => {
@@ -1088,9 +1090,10 @@ pub const PostgresRequest = struct {
                 'c' => try connection.on(.CopyDone, Context, reader),
                 'W' => try connection.on(.CopyBothResponse, Context, reader),
 
-                else => |c| {
-                    debug("Unknown message: {d}", .{c});
+                else => {
+                    debug("Unknown message: {c}", .{c});
                     const to_skip = try reader.length() -| 1;
+                    debug("to_skip: {d}", .{to_skip});
                     try reader.skip(@intCast(@max(to_skip, 0)));
                 },
             }
@@ -1670,20 +1673,11 @@ pub const PostgresSQLConnection = struct {
             PostgresRequest.onData(this, protocol.StackReader, reader) catch |err| {
                 if (err == error.ShortRead) {
                     if (comptime bun.Environment.allow_assert) {
-                        // if (@errorReturnTrace()) |trace| {
-                        //     debug("Received short read: last_message_start: {d}, head: {d}, len: {d}\n{}", .{
-                        //         offset,
-                        //         consumed,
-                        //         data.len,
-                        //         trace,
-                        //     });
-                        // } else {
-                        debug("Received short read: last_message_start: {d}, head: {d}, len: {d}", .{
+                        debug("read_buffer: empty and received short read: last_message_start: {d}, head: {d}, len: {d}", .{
                             offset,
                             consumed,
                             data.len,
                         });
-                        // }
                     }
 
                     this.read_buffer.head = 0;
@@ -1697,9 +1691,7 @@ pub const PostgresSQLConnection = struct {
                 }
             };
             return;
-        }
-
-        {
+        } else {
             this.read_buffer.head = this.last_message_start;
             this.read_buffer.write(bun.default_allocator, data) catch @panic("failed to write to read buffer");
             PostgresRequest.onData(this, Reader, this.bufferedReader()) catch |err| {
@@ -1710,24 +1702,17 @@ pub const PostgresSQLConnection = struct {
                 }
 
                 if (comptime bun.Environment.allow_assert) {
-                    // if (@errorReturnTrace()) |trace| {
-                    //     debug("Received short read: last_message_start: {d}, head: {d}, len: {d}\n{}", .{
-                    //         this.last_message_start,
-                    //         this.read_buffer.head,
-                    //         this.read_buffer.byte_list.len,
-                    //         trace,
-                    //     });
-                    // } else {
-                    debug("Received short read: last_message_start: {d}, head: {d}, len: {d}", .{
+                    debug("read_buffer: not empty and received short read: last_message_start: {d}, head: {d}, len: {d}", .{
                         this.last_message_start,
                         this.read_buffer.head,
                         this.read_buffer.byte_list.len,
                     });
-                    // }
                 }
+                this.read_buffer.head = this.last_message_start;
 
                 return;
             };
+            debug("clean read_buffer", .{});
 
             this.last_message_start = 0;
             this.read_buffer.head = 0;

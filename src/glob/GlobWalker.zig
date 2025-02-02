@@ -24,7 +24,6 @@ const std = @import("std");
 const bun = @import("root").bun;
 
 const eqlComptime = @import("../string_immutable.zig").eqlComptime;
-const expect = std.testing.expect;
 const isAllAscii = @import("../string_immutable.zig").isAllASCII;
 const math = std.math;
 const mem = std.mem;

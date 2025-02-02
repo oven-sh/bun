@@ -1,4 +1,5 @@
 import type { HTMLBundle, Server } from "bun";
+const initital = performance.now();
 const argv = process.argv;
 const path = require("node:path");
 const env = Bun.env;
@@ -172,7 +173,7 @@ async function start() {
       throw error;
     }
   }
-  const elapsed = (performance.now() / 1000).toFixed(2);
+  const elapsed = (performance.now() - initital).toFixed(2);
   const enableANSIColors = Bun.enableANSIColors;
   function printInitialMessage(isFirst: boolean) {
     if (enableANSIColors) {

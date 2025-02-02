@@ -1692,7 +1692,6 @@ pub const PostgresSQLConnection = struct {
             };
             return;
         } else {
-            this.read_buffer.head = this.last_message_start;
             this.read_buffer.write(bun.default_allocator, data) catch @panic("failed to write to read buffer");
             PostgresRequest.onData(this, Reader, this.bufferedReader()) catch |err| {
                 if (err != error.ShortRead) {
@@ -1708,6 +1707,7 @@ pub const PostgresSQLConnection = struct {
                         this.read_buffer.byte_list.len,
                     });
                 }
+                // reset the head so remaining bytes are available for the next read
                 this.read_buffer.head = this.last_message_start;
 
                 return;

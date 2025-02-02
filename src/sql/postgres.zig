@@ -2553,7 +2553,6 @@ pub const PostgresSQLConnection = struct {
     };
 
     fn advance(this: *PostgresSQLConnection) !void {
-        var any = false;
         while (this.requests.readableLength() > 0) {
             var req: *PostgresSQLQuery = this.requests.peekItem(0);
             switch (req.status) {
@@ -2567,7 +2566,6 @@ pub const PostgresSQLConnection = struct {
                             req.deref();
                             this.requests.discard(1);
 
-                            any = true;
                             continue;
                         },
                         .prepared => {
@@ -2585,7 +2583,6 @@ pub const PostgresSQLConnection = struct {
                                 continue;
                             };
                             req.status = .binding;
-                            any = true;
                             return;
                         },
                         .pending => {
@@ -2612,7 +2609,6 @@ pub const PostgresSQLConnection = struct {
                                 req.status = .binding;
                                 stmt.status = .parsing;
 
-                                any = true;
                                 return;
                             }
                             const connection_writer = this.writer();
@@ -2638,7 +2634,6 @@ pub const PostgresSQLConnection = struct {
                                 continue;
                             };
                             stmt.status = .parsing;
-                            any = true;
                             return;
                         },
                         .parsing => {
@@ -2656,7 +2651,6 @@ pub const PostgresSQLConnection = struct {
                 .success, .fail => {
                     req.deref();
                     this.requests.discard(1);
-                    any = true;
                     continue;
                 },
             }

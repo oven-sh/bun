@@ -330,7 +330,6 @@ pub const PostgresSQLQuery = struct {
     } = .{},
 
     pub usingnamespace JSC.Codegen.JSPostgresSQLQuery;
-    const log = bun.Output.scoped(.PostgresSQLQuery, false);
     pub fn getTarget(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         const thisValue = this.thisValue.get();
         if (thisValue == .zero) {
@@ -715,7 +714,7 @@ pub const PostgresSQLQuery = struct {
                     .prepared => {
                         if (!connection.hasQueryRunning()) {
                             this.flags.binary = this.statement.?.fields.len > 0;
-                            log("bindAndExecute", .{});
+                            debug("bindAndExecute", .{});
                             // bindAndExecute will bind + execute, it will change to running after binding is complete
                             PostgresRequest.bindAndExecute(globalObject, this.statement.?, binding_value, columns_value, PostgresSQLConnection.Writer, writer) catch |err| {
                                 if (!globalObject.hasException())
@@ -738,7 +737,7 @@ pub const PostgresSQLQuery = struct {
             if (can_execute) {
                 // If it does not have params, we can write and execute immediately in one go
                 if (!has_params) {
-                    log("prepareAndQueryWithSignature", .{});
+                    debug("prepareAndQueryWithSignature", .{});
                     // prepareAndQueryWithSignature will write + bind + execute, it will change to running after binding is complete
                     PostgresRequest.prepareAndQueryWithSignature(globalObject, query_str.slice(), binding_value, PostgresSQLConnection.Writer, writer, &signature) catch |err| {
                         signature.deinit();
@@ -749,7 +748,7 @@ pub const PostgresSQLQuery = struct {
                     this.status = .binding;
                     did_write = true;
                 } else {
-                    log("writeQuery", .{});
+                    debug("writeQuery", .{});
                     PostgresRequest.writeQuery(query_str.slice(), signature.prepared_statement_name, signature.fields, PostgresSQLConnection.Writer, writer) catch |err| {
                         signature.deinit();
                         if (!globalObject.hasException())

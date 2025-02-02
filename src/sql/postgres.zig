@@ -2553,9 +2553,7 @@ pub const PostgresSQLConnection = struct {
     };
 
     fn advance(this: *PostgresSQLConnection) !void {
-        defer this.updateRef();
         var any = false;
-        defer if (any) this.resetConnectionTimeout();
         while (this.requests.readableLength() > 0) {
             var req: *PostgresSQLQuery = this.requests.peekItem(0);
             switch (req.status) {

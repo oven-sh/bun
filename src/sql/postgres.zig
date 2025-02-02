@@ -1387,15 +1387,7 @@ pub const PostgresSQLConnection = struct {
 
     pub fn onConnectionTimeout(this: *PostgresSQLConnection) JSC.BunTimer.EventLoopTimer.Arm {
         debug("onConnectionTimeout", .{});
-        if (this.flags.is_processing_data) {
-            // we are not done processing data yet, so we need to rearm the timer
-            const interval = this.getTimeoutInterval();
-            if (interval == 0) return .disarm;
 
-            return .{
-                .rearm = bun.timespec.msFromNow(@intCast(interval)),
-            };
-        }
         this.timer.state = .FIRED;
         if (this.getTimeoutInterval() == 0) {
             this.resetConnectionTimeout();

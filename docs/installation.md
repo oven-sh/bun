@@ -46,6 +46,10 @@ To install, paste this into a terminal:
 > npm install -g bun # the last `npm` command you'll ever need
 ```
 
+```powershell#Chocolatey
+> choco install bun
+```
+
 ```powershell#Scoop
 > scoop install bun
 ```

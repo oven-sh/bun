@@ -7,11 +7,60 @@ const env = Bun.env;
 async function start() {
   let args: string[] = [];
   const cwd = process.cwd();
+  let hostname = "localhost";
+  let port: number | undefined = undefined;
 
   // Step 1. Resolve all HTML entry points
   for (let i = 1, argvLength = argv.length; i < argvLength; i++) {
     const arg = argv[i];
+
     if (!arg.endsWith(".html")) {
+      if (arg.startsWith("--hostname=")) {
+        hostname = arg.slice("--hostname=".length);
+        if (hostname.includes(":")) {
+          const [host, portString] = hostname.split(":");
+          hostname = host;
+          port = parseInt(portString, 10);
+        }
+      } else if (arg.startsWith("--port=")) {
+        port = parseInt(arg.slice("--port=".length), 10);
+      } else if (arg.startsWith("--host=")) {
+        hostname = arg.slice("--host=".length);
+        if (hostname.includes(":")) {
+          const [host, portString] = hostname.split(":");
+          hostname = host;
+          port = parseInt(portString, 10);
+        }
+      }
+
+      if (arg === "--help") {
+        console.log(`
+Bun v${Bun.version} (html)
+
+Usage:
+  bun [...html-files] [options]
+
+Options:
+
+  --port=<NUM>
+  --host=<STR>, --hostname=<STR>
+
+Examples:
+
+  bun index.html
+  bun ./index.html ./about.html --port=3000
+  bun index.html --host=localhost:3000
+  bun index.html --hostname=localhost:3000
+  bun ./*.html
+
+This is a small wrapper around Bun.serve() that automatically serves the HTML files you pass in without
+having to manually call Bun.serve() or write the boilerplate yourself. This runs Bun's bundler on
+the HTML files, their JavaScript, and CSS, and serves them up. This doesn't do anything you can't do
+yourself with Bun.serve().
+`);
+        process.exit(0);
+      }
+
       continue;
     }
 
@@ -57,12 +106,16 @@ async function start() {
 
   // Find longest common path prefix to use as the base path when there are
   // multiple entry points
-  const longestCommonPath = args.reduce((acc, curr) => {
+  let longestCommonPath = args.reduce((acc, curr) => {
     if (!acc) return curr;
     let i = 0;
     while (i < acc.length && i < curr.length && acc[i] === curr[i]) i++;
     return acc.slice(0, i);
   });
+
+  if (path.platform === "win32") {
+    longestCommonPath = longestCommonPath.replaceAll("\\", "/");
+  }
 
   if (needsPop) {
     // Remove cwd from args
@@ -75,6 +128,9 @@ async function start() {
   // - "about/foo.html" -> "/about/foo"
   // - "foo.html" -> "/foo"
   const servePaths = args.map(arg => {
+    if (process.platform === "win32") {
+      arg = arg.replaceAll("\\", "/");
+    }
     const basename = path.basename(arg);
     const isIndexHtml = basename === "index.html";
 
@@ -84,10 +140,6 @@ async function start() {
       servePath = "/";
     } else if (isIndexHtml) {
       servePath = servePath.slice(0, -"index.html".length);
-    }
-
-    if (process.platform === "win32") {
-      servePath = servePath.replaceAll("\\", "/");
     }
 
     if (servePath.endsWith(".html")) {
@@ -136,6 +188,9 @@ async function start() {
         static: staticRoutes,
         development: env.NODE_ENV !== "production",
 
+        hostname,
+        port,
+
         // use the default port via existing port detection code.
         // port: 3000,
 
@@ -146,12 +201,14 @@ async function start() {
       break getServer;
     } catch (error: any) {
       if (error?.code === "EADDRINUSE") {
-        let defaultPort = parseInt(env.PORT || env.BUN_PORT || env.NODE_PORT || "3000", 10);
+        let defaultPort = port || parseInt(env.PORT || env.BUN_PORT || env.NODE_PORT || "3000", 10);
         for (let remainingTries = 5; remainingTries > 0; remainingTries--) {
           try {
             server = Bun.serve({
               static: staticRoutes,
               development: env.NODE_ENV !== "production",
+
+              hostname,
 
               // Retry with a different port up to 4 times.
               port: defaultPort++,

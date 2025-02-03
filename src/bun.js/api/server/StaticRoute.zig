@@ -1,7 +1,7 @@
 //! A static route serving a response object's blob.
 const StaticRoute = @This();
 
-server: ?AnyServer = null,
+`: ?AnyServer = null,
 status_code: u16,
 blob: AnyBlob,
 cached_blob_size: u64 = 0,

@@ -1185,7 +1185,7 @@ fn indexFailures(dev: *DevServer) !void {
             }
         }
 
-        for (dev.incremental_result.routes_affected.items) |entry| {
+        for (dev.incremental_result.framework_routes_affected.items) |entry| {
             if (dev.router.routePtr(entry.route_index).bundle.unwrap()) |index| {
                 dev.routeBundlePtr(index).server_state = .possible_bundling_failures;
             }
@@ -1491,6 +1491,8 @@ pub fn finalizeBundle(
 
         html.head_end_tag_index = RouteBundle.HTML.ByteOffset.init(compile_result.offsets.head_end_tag).toOptional();
         html.body_end_tag_index = RouteBundle.HTML.ByteOffset.init(compile_result.offsets.body_end_tag).toOptional();
+
+        chunk.entry_point.entry_point_id = @intCast(route_bundle_index.get());
     }
 
     var gts = try dev.initGraphTraceState(bv2.graph.allocator);
@@ -1598,19 +1600,24 @@ pub fn finalizeBundle(
     // clear for those)
     if (will_hear_hot_update and
         current_bundle.had_reload_event and
-        dev.incremental_result.routes_affected.items.len > 0 and
+        (dev.incremental_result.framework_routes_affected.items.len +
+        dev.incremental_result.html_routes_affected.items.len) > 0 and
         dev.bundling_failures.count() == 0)
     {
         has_route_bits_set = true;
 
         // A bit-set is used to avoid duplicate entries. This is not a problem
-        // with `dev.incremental_result.routes_affected`
-        for (dev.incremental_result.routes_affected.items) |request| {
+        // with `dev.incremental_result.framework_routes_affected`
+        for (dev.incremental_result.framework_routes_affected.items) |request| {
             const route = dev.router.routePtr(request.route_index);
             if (route.bundle.unwrap()) |id| route_bits.set(id.get());
             if (request.should_recurse_when_visiting) {
                 markAllRouteChildren(&dev.router, 1, .{&route_bits}, request.route_index);
             }
+        }
+        for (dev.incremental_result.html_routes_affected.items) |route_bundle_index| {
+            route_bits.set(route_bundle_index.get());
+            route_bits_client.set(route_bundle_index.get());
         }
 
         // List 1
@@ -1630,7 +1637,7 @@ pub fn finalizeBundle(
     if (dev.incremental_result.client_components_affected.items.len > 0) {
         has_route_bits_set = true;
 
-        dev.incremental_result.routes_affected.clearRetainingCapacity();
+        dev.incremental_result.framework_routes_affected.clearRetainingCapacity();
         gts.clear();
 
         for (dev.incremental_result.client_components_affected.items) |index| {
@@ -1639,7 +1646,7 @@ pub fn finalizeBundle(
 
         // A bit-set is used to avoid duplicate entries. This is not a problem
         // with `dev.incremental_result.routes_affected`
-        for (dev.incremental_result.routes_affected.items) |request| {
+        for (dev.incremental_result.framework_routes_affected.items) |request| {
             const route = dev.router.routePtr(request.route_index);
             if (route.bundle.unwrap()) |id| {
                 route_bits.set(id.get());
@@ -1649,6 +1656,21 @@ pub fn finalizeBundle(
                 markAllRouteChildren(&dev.router, 2, .{ &route_bits, &route_bits_client }, request.route_index);
             }
         }
+
+        // Free old bundles
+        var it = route_bits_client.iterator(.{ .kind = .set });
+        while (it.next()) |bundled_route_index| {
+            const bundle = &dev.route_bundles.items[bundled_route_index];
+            if (bundle.client_bundle) |old| {
+                dev.allocator.free(old);
+            }
+            bundle.client_bundle = null;
+        }
+    } else if (dev.incremental_result.html_routes_affected.items.len > 0) {
+        // When only HTML routes were affected, there may not be any client
+        // components that got affected, but the bundles for these HTML routes
+        // are invalid now. That is why HTML routes above writes into
+        // `route_bits_client`.
 
         // Free old bundles
         var it = route_bits_client.iterator(.{ .kind = .set });
@@ -1777,7 +1799,10 @@ pub fn finalizeBundle(
         }
 
         Output.prettyError("<green>{s} in {d}ms<r>", .{
-            if (current_bundle.had_reload_event) "Reloaded" else "Bundled route",
+            if (current_bundle.had_reload_event)
+                "Reloaded"
+            else
+                "Bundled page",
             @divFloor(current_bundle.timer.read(), std.time.ns_per_ms),
         });
 
@@ -1785,19 +1810,19 @@ pub fn finalizeBundle(
         const file_name: ?[]const u8, const total_count: usize = if (current_bundle.had_reload_event)
             .{ null, 0 }
         else first_route_file_name: {
-            // TODO:
-            break :first_route_file_name .{ null, 0 };
-            // const opaque_id = dev.router.routePtr(
-            //     dev.routeBundlePtr(dev.current_bundle_requests.items[0].route_bundle_index)
-            //         .route,
-            // ).file_page.unwrap() orelse
-            //     break :first_route_file_name .{ null, 0 };
-            // const server_index = fromOpaqueFileId(.server, opaque_id);
+            const route_bundle = dev.routeBundlePtr(dev.current_bundle_requests.items[0].route_bundle_index);
+            
+            const opaque_id = dev.router.routePtr(
+                
+                    .route,
+            ).file_page.unwrap() orelse
+                break :first_route_file_name .{ null, 0 };
+            const server_index = fromOpaqueFileId(.server, opaque_id);
 
-            // break :first_route_file_name .{
-            //     dev.relativePath(dev.server_graph.bundled_files.keys()[server_index.get()]),
-            //     0,
-            // };
+            break :first_route_file_name .{
+                dev.relativePath(dev.server_graph.bundled_files.keys()[server_index.get()]),
+                0,
+            };
         };
         if (file_name) |name| {
             Output.prettyError("<d>:<r> {s}", .{name});
@@ -2644,8 +2669,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 // Follow this file to the route to mark it as stale.
                 try g.traceDependencies(file_index, ctx.gts, .stop_at_boundary);
             } else {
-                // TODO: Follow this file to the HMR root (info to determine is currently not stored)
-                // without this, changing a client-only file will not mark the route's client bundle as stale
+                // Follow this file to the HTML route or HMR root to mark the client bundle as stale.
+                try g.traceDependencies(file_index, ctx.gts, .stop_at_boundary);
             }
         }
 
@@ -2785,19 +2810,29 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             Output.panic("Route not in lookup index: {d} {}", .{ file_index.get(), bun.fmt.quote(g.bundled_files.keys()[file_index.get()]) });
                         igLog("\\<- Route", .{});
 
-                        try dev.incremental_result.routes_affected.append(dev.allocator, route_index);
+                        try dev.incremental_result.framework_routes_affected.append(dev.allocator, route_index);
                     }
                     if (file.is_client_component_boundary) {
                         try dev.incremental_result.client_components_affected.append(dev.allocator, file_index);
                     }
                 },
                 .client => {
+                    const dev = g.owner();
                     if (file.flags.is_hmr_root or (file.flags.kind == .css and trace_kind == .css_to_route)) {
-                        const dev = g.owner();
                         const key = g.bundled_files.keys()[file_index.get()];
                         const index = dev.server_graph.getFileIndex(key) orelse
                             Output.panic("Server Incremental Graph is missing component for {}", .{bun.fmt.quote(key)});
                         try dev.server_graph.traceDependencies(index, gts, trace_kind);
+                    } else if (file.flags.is_html_route) {
+                        const route_bundle_index = dev.html_route_lookup.get(file_index) orelse {
+                            Output.panic("HTML route not in lookup index: {d} {}", .{
+                                file_index.get(),
+                                bun.fmt.quote(g.bundled_files.keys()[file_index.get()]),
+                            });
+                        };
+                        try dev.incremental_result.html_routes_affected.append(dev.allocator, route_bundle_index);
+                        if (trace_kind == .stop_at_boundary)
+                            return;
                     }
                 },
             }
@@ -3291,10 +3326,13 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
 const IncrementalResult = struct {
     /// When tracing a file's dependencies via `traceDependencies`, this is
-    /// populated with the hit `Route.Index`s. To know what `RouteBundle`s
-    /// are affected, the route graph must be traced downwards.
+    /// populated with the hit `Route.Index`s. To know what framework
+    /// `RouteBundle`s are affected, the route graph must be traced downwards.
     /// Tracing is used for multiple purposes.
-    routes_affected: ArrayListUnmanaged(RouteIndexAndRecurseFlag),
+    framework_routes_affected: ArrayListUnmanaged(RouteIndexAndRecurseFlag),
+    /// HTML routes have slight different anatomy than framework ones, and
+    /// get a separate list.
+    html_routes_affected: ArrayListUnmanaged(RouteBundle.Index),
     /// Set to true if any IncrementalGraph edges were added or removed.
     had_adjusted_edges: bool,
 
@@ -3329,7 +3367,8 @@ const IncrementalResult = struct {
     delete_client_files_later: ArrayListUnmanaged(IncrementalGraph(.client).FileIndex),
 
     const empty: IncrementalResult = .{
-        .routes_affected = .{},
+        .framework_routes_affected = .{},
+        .html_routes_affected = .{},
         .had_adjusted_edges = false,
         .failures_removed = .{},
         .failures_added = .{},
@@ -3340,7 +3379,8 @@ const IncrementalResult = struct {
     };
 
     fn reset(result: *IncrementalResult) void {
-        result.routes_affected.clearRetainingCapacity();
+        result.framework_routes_affected.clearRetainingCapacity();
+        result.html_routes_affected.clearRetainingCapacity();
         assert(result.failures_removed.items.len == 0);
         result.failures_added.clearRetainingCapacity();
         result.client_components_added.clearRetainingCapacity();

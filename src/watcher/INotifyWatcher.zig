@@ -142,7 +142,7 @@ pub fn read(this: *INotifyWatcher) bun.JSC.Maybe([]const *align(1) Event) {
                         .events = std.posix.POLL.IN | std.posix.POLL.ERR,
                         .revents = 0,
                     }};
-                    var timespec = std.posix.timespec{ .tv_sec = 0, .tv_nsec = this.coalesce_interval };
+                    var timespec = std.posix.timespec{ .sec = 0, .nsec = this.coalesce_interval };
                     if ((std.posix.ppoll(&fds, &timespec, null) catch 0) > 0) {
                         inner: while (true) {
                             const rest = this.eventlist_bytes[read_eventlist_bytes.len..];

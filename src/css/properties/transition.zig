@@ -52,7 +52,7 @@ pub const Transition = struct {
     /// The easing function for the transition.
     timing_function: EasingFunction,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.transition);
+    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.transition, PropertyFieldMap);
     pub usingnamespace css.DefineListShorthand(@This());
 
     pub const PropertyFieldMap = .{

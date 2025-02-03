@@ -104,6 +104,43 @@ describe("bun build", () => {
     expect(stderr2.toString("utf8")).toBeEmpty();
     expect(exitCode2).toBe(0);
 
+    // bunx
+    // Bun.$``.nothrow
+    const srcX = path.join(tmp, "indexx.js");
+    fs.writeFileSync(srcX, 'console.log(await Bun.$`bunx cowsay hi`.text());', {
+      encoding: "utf8",
+    });
+    const outfileX = path.join(tmp, "indexx.exe");
+    expect(["build", srcX, "--compile", "--outfile", outfileX]).toRun();
+
+    const {
+      exitCode: exitCode3,
+      stderr: stderr3,
+      stdout: stdout3,
+    } = Bun.spawnSync({
+      cmd: [outfileX],
+      env: {
+        ...bunEnv,
+        PATH: "",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stdout3.toString("utf8")).toMatchInlineSnapshot(`
+      " ____
+      < hi >
+       ----
+              \\   ^__^
+               \\  (oo)\\_______
+                  (__)\\       )\\/\\
+                      ||----w |
+                      ||     ||
+
+      "
+    `);
+    expect(stderr3.toString("utf8")).toBeEmpty();
+    expect(exitCode3).toBe(0);
+
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 

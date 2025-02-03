@@ -4785,13 +4785,7 @@ pub const Interpreter = struct {
                 };
 
                 const first_arg_len = std.mem.len(first_arg);
-                var first_arg_real = first_arg[0..first_arg_len];
-
-                if (bun.Environment.isDebug) {
-                    if (bun.strings.eqlComptime(first_arg_real, "bun")) {
-                        first_arg_real = "bun-debug";
-                    }
-                }
+                const first_arg_real = first_arg[0..first_arg_len];
 
                 if (Builtin.Kind.fromStr(first_arg[0..first_arg_len])) |b| {
                     const cwd = this.base.shell.cwd_fd;
@@ -4831,6 +4825,12 @@ pub const Interpreter = struct {
                 const resolved = blk: {
                     if (bun.strings.eqlComptime(first_arg_real, "bun") or bun.strings.eqlComptime(first_arg_real, "bun-debug")) blk2: {
                         spawn_args.env_array.append(arena_allocator, "BUN_SKIP_STANDALONE_MODULE_GRAPH=1") catch break :blk2;
+                        break :blk bun.selfExePath() catch break :blk2;
+                    }
+
+                    if (bun.strings.eqlComptime(first_arg_real, "bunx")) blk2: {
+                        spawn_args.env_array.append(arena_allocator, "BUN_SKIP_STANDALONE_MODULE_GRAPH=1") catch break :blk2;
+                        this.args.insert(1, "x") catch bun.outOfMemory();
                         break :blk bun.selfExePath() catch break :blk2;
                     }
 

@@ -58,3 +58,5 @@ export const foo = "Hello world!"
 ```
 
 {% /codetabs %}
+
+You can also specify a different `tsconfig.json` using `--tsconfig-override`.

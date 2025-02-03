@@ -1,5 +1,5 @@
 ---
-description: JavaScript class implemented in C++
+description: 'JavaScript class implemented in C++'
 globs: *.cpp
 ---
 

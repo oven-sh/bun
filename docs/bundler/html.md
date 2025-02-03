@@ -223,7 +223,7 @@ Currently, plugins are only supported through `Bun.build`'s API or through `bunf
 
 ### Watch Mode
 
-You can run `bun build --watch` to watch for changes and rebuild automatically.
+You can run `bun build --watch` to watch for changes and rebuild automatically. This works nicely for library development.
 
 You've never seen a watch mode this fast.
 

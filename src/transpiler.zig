@@ -602,15 +602,23 @@ pub const Transpiler = struct {
 
         try this.options.loadDefines(this.allocator, this.env, &this.options.env);
 
+        var is_development = false;
         if (this.options.define.dots.get("NODE_ENV")) |NODE_ENV| {
-            if (NODE_ENV.len > 0 and NODE_ENV[0].data.value == .e_string and NODE_ENV[0].data.value.e_string.eqlComptime("production")) {
-                is_production = true;
+            if (NODE_ENV.len > 0 and NODE_ENV[0].data.value == .e_string) {
+                if (NODE_ENV[0].data.value.e_string.eqlComptime("production")) {
+                    is_production = true;
+                } else if (NODE_ENV[0].data.value.e_string.eqlComptime("development")) {
+                    is_development = true;
+                }
             }
         }
 
-        if (is_production) {
-            this.options.setProduction(is_production);
-            this.resolver.opts.setProduction(is_production);
+        if (is_development) {
+            this.options.setProduction(false);
+            this.resolver.opts.setProduction(false);
+        } else if (is_production) {
+            this.options.setProduction(true);
+            this.resolver.opts.setProduction(true);
         }
     }
 

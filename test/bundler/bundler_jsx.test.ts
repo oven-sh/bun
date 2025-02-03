@@ -142,6 +142,16 @@ function itBundledDevAndProd(
 }
 
 describe("bundler", () => {
+  itBundledDevAndProd("jsx/Production", {
+    files: {
+      "index.jsx": /* js*/ `
+        import { print } from 'bun-test-helpers'
+        print(<div>Hello World</div>)
+      `,
+      ...helpers,
+    },
+    target: "bun",
+  });
   itBundledDevAndProd("jsx/Automatic", {
     files: {
       "index.jsx": /* js*/ `

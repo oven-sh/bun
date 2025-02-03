@@ -273,7 +273,7 @@ describe.todoIf(isFlaky && isWindows)("bundler", () => {
     const { bytecode = false, format, minify = false } = additionalOptions;
     const NODE_ENV = minify ? "'production'" : undefined;
     itBundled("compile/ReactSSR" + (bytecode ? "+bytecode" : "") + "+" + format + (minify ? "+minify" : ""), {
-      install: ["react@next", "react-dom@next"],
+      install: ["react@^19", "react-dom@^19"],
       format,
       minifySyntax: minify,
       minifyIdentifiers: minify,

@@ -14,19 +14,11 @@ import { expectMaxObjectTypeCount, gc } from "harness";
 import * as React from "react";
 import * as ReactDOM from "react-dom/server";
 import { renderToReadableStream as renderToReadableStreamBrowser } from "react-dom/server.browser";
+import { renderToReadableStream as renderToReadableStreamBun } from "react-dom/server.bun";
 
 Object.defineProperty(renderToReadableStreamBrowser, "name", {
   value: "server.browser",
 });
-
-const renderToReadableStreamBun = ReactDOM.renderToReadableStreamBun || {};
-if (typeof renderToReadableStreamBun !== "function" && parseInt(ReactDOM.version.split(".")[0], 10) > 18) {
-  if (!import.meta.resolveSync("react-dom/server").includes(".bun.")) {
-    throw new Error(
-      "react-dom/server.bun is not the correct version:\n  " + import.meta.resolveSync("react-dom/server"),
-    );
-  }
-}
 
 Object.defineProperty(renderToReadableStreamBun, "name", {
   value: "server.bun",

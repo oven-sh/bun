@@ -1755,9 +1755,9 @@ generateCode({
   // "view-transition-name": {
   //   ty: "CustomIdent",
   // },
-  // "color-scheme": {
-  //   ty: "ColorScheme",
-  // },
+  "color-scheme": {
+    ty: "ColorScheme",
+  },
 });
 
 function prelude() {
@@ -1780,6 +1780,8 @@ const UnparsedProperty = css.css_properties.custom.UnparsedProperty;
 const CustomProperty = css.css_properties.custom.CustomProperty;
 const Targets = css.targets.Targets;
 const Feature = css.prefixes.Feature;
+
+const ColorScheme = css.css_properties.ui.ColorScheme;
 
 const TransformList = css.css_properties.transform.TransformList;
 const TransformStyle = css.css_properties.transform.TransformStyle;

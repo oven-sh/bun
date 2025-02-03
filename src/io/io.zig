@@ -291,7 +291,7 @@ pub const Loop = struct {
         updateTimespec(&this.cached_now);
     }
 
-    extern "C" fn clock_gettime_monotonic(sec: *i64, nsec: *i64) c_int;
+    extern "c" fn clock_gettime_monotonic(sec: *i64, nsec: *i64) c_int;
     pub fn updateTimespec(timespec: *posix.timespec) void {
         if (comptime Environment.isLinux) {
             const rc = linux.clock_gettime(linux.CLOCK.MONOTONIC, timespec);

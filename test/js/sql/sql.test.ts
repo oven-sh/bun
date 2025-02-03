@@ -1,4 +1,4 @@
-import { sql, SQL } from "bun";
+import { sql, SQL, randomUUIDv7 } from "bun";
 const postgres = (...args) => new sql(...args);
 import { expect, test, mock, beforeAll, afterAll } from "bun:test";
 import { $ } from "bun";
@@ -265,6 +265,28 @@ if (isDockerEnabled()) {
     const result = await sql`select 1 as x, 2 as x, 3 as x`;
     expect(result).toEqual([{ x: 3 }]);
   });
+
+  test("should not timeout in long results", async () => {
+    await using db = postgres({ ...options, max: 1, idleTimeout: 5 });
+    using sql = await db.reserve();
+    const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+
+    await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text)`;
+    const promises: Promise<any>[] = [];
+    for (let i = 0; i < 10_000; i++) {
+      promises.push(sql`INSERT INTO ${sql(random_name)} VALUES (${i}, ${"test" + i})`);
+      if (i % 50 === 0 && i > 0) {
+        await Promise.all(promises);
+        promises.length = 0;
+      }
+    }
+    await Promise.all(promises);
+    await sql`SELECT * FROM ${sql(random_name)}`;
+    await sql`SELECT * FROM ${sql(random_name)}`;
+    await sql`SELECT * FROM ${sql(random_name)}`;
+
+    expect().pass();
+  }, 10_000);
 
   test("Handles numeric column names", async () => {
     // deliberately out of order

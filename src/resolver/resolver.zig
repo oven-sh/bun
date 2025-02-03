@@ -43,7 +43,7 @@ const Install = @import("../install/install.zig");
 const Lockfile = @import("../install/lockfile.zig").Lockfile;
 const Package = @import("../install/lockfile.zig").Package;
 const Resolution = @import("../install/resolution.zig").Resolution;
-const Semver = @import("../install/semver.zig");
+const Semver = bun.Semver;
 const DotEnv = @import("../env_loader.zig");
 
 pub fn isPackagePath(path: string) bool {

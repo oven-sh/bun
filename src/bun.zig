@@ -1598,7 +1598,7 @@ pub fn cstring(input: []const u8) [:0]const u8 {
     return @as([*:0]const u8, @ptrCast(input.ptr))[0..input.len :0];
 }
 
-pub const Semver = @import("./install/semver.zig");
+pub const Semver = @import("./semver.zig");
 pub const ImportRecord = @import("./import_record.zig").ImportRecord;
 pub const ImportKind = @import("./import_record.zig").ImportKind;
 
@@ -1832,7 +1832,7 @@ pub fn reloadProcess(
         }
     } else if (comptime Environment.isPosix) {
         const on_before_reload_process_linux = struct {
-            pub extern "C" fn on_before_reload_process_linux() void;
+            pub extern "c" fn on_before_reload_process_linux() void;
         }.on_before_reload_process_linux;
 
         on_before_reload_process_linux();
@@ -3164,11 +3164,18 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void, 
         }
 
         pub fn deref(self: *T) void {
-            if (Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count - 1 });
+            const ref_count = self.ref_count;
+            if (Environment.isDebug) {
+                if (ref_count == 0 or ref_count == std.math.maxInt(@TypeOf(ref_count))) {
+                    @panic("Use after-free detected on " ++ output_name);
+                }
+            }
 
-            self.ref_count -= 1;
+            if (Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), ref_count, ref_count - 1 });
 
-            if (self.ref_count == 0) {
+            self.ref_count = ref_count - 1;
+
+            if (ref_count == 1) {
                 if (comptime deinit_fn) |deinit| {
                     deinit(self);
                 } else {
@@ -3251,7 +3258,7 @@ pub fn NewThreadSafeRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: 
 
 pub fn exitThread() noreturn {
     const exiter = struct {
-        pub extern "C" fn pthread_exit(?*anyopaque) noreturn;
+        pub extern "c" fn pthread_exit(?*anyopaque) noreturn;
         pub extern "kernel32" fn ExitThread(windows.DWORD) noreturn;
     };
 
@@ -3882,7 +3889,7 @@ pub fn tagName(comptime Enum: type, value: Enum) ?[:0]const u8 {
         if (@intFromEnum(value) == f.value) break f.name;
     } else null;
 }
-extern "C" fn Bun__ramSize() usize;
+extern "c" fn Bun__ramSize() usize;
 pub fn getTotalMemorySize() usize {
     return Bun__ramSize();
 }
@@ -4289,7 +4296,7 @@ pub const StackCheck = struct {
         Bun__StackCheck__initialize();
     }
 
-    extern "C" fn Bun__StackCheck__getMaxStack() usize;
+    extern "c" fn Bun__StackCheck__getMaxStack() usize;
     fn getStackEnd() usize {
         return Bun__StackCheck__getMaxStack();
     }

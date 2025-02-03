@@ -42,6 +42,7 @@ pub const Run = struct {
     entry_path: string,
     arena: Arena,
     any_unhandled: bool = false,
+    is_html_entrypoint: bool = false,
 
     pub fn bootStandalone(ctx: Command.Context, entry_path: string, graph: bun.StandaloneModuleGraph) !void {
         JSC.markBinding(@src());
@@ -170,7 +171,7 @@ pub const Run = struct {
         return bun.shell.Interpreter.initAndRunFromFile(ctx, mini, entry_path);
     }
 
-    pub fn boot(ctx: Command.Context, entry_path: string) !void {
+    pub fn boot(ctx: Command.Context, entry_path: string, loader: ?bun.options.Loader) !void {
         JSC.markBinding(@src());
 
         if (!ctx.debug.loaded_bunfig) {
@@ -276,6 +277,8 @@ pub const Run = struct {
         vm.transpiler.env.loadTracy();
 
         doPreconnect(ctx.runtime_options.preconnect);
+
+        vm.main_is_html_entrypoint = (loader orelse vm.transpiler.options.loader(std.fs.path.extension(entry_path))) == .html;
 
         const callback = OpaqueWrap(Run, Run.start);
         vm.global.vm().holdAPILock(&run, callback);

@@ -145,7 +145,7 @@ const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
 const NetworkQueue = std.fifo.LinearFifo(*NetworkTask, .{ .Static = 32 });
 const PatchTaskFifo = std.fifo.LinearFifo(*PatchTask, .{ .Static = 32 });
-const Semver = @import("./semver.zig");
+const Semver = bun.Semver;
 const ExternalString = Semver.ExternalString;
 const String = Semver.String;
 const GlobalStringBuilder = @import("../string_builder.zig");

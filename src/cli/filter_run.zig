@@ -6,7 +6,7 @@ const std = @import("std");
 const Fs = @import("../fs.zig");
 const RunCommand = @import("run_command.zig").RunCommand;
 const DependencyMap = @import("../resolver/package_json.zig").DependencyMap;
-const SemverString = @import("../install/semver.zig").String;
+const SemverString = bun.Semver.String;
 
 const CLI = bun.CLI;
 const Command = CLI.Command;

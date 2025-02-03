@@ -192,7 +192,7 @@ pub const CachedBytecode = opaque {
         return null;
     }
 
-    extern "C" fn CachedBytecode__deref(this: *CachedBytecode) void;
+    extern "c" fn CachedBytecode__deref(this: *CachedBytecode) void;
     pub fn deref(this: *CachedBytecode) void {
         return CachedBytecode__deref(this);
     }
@@ -610,7 +610,13 @@ pub const ZigString = extern struct {
             return !this.allocator.isNull();
         }
 
-        pub fn clone(this: Slice, allocator: std.mem.Allocator) !Slice {
+        pub fn toOwned(this: Slice, allocator: std.mem.Allocator) OOM!Slice {
+            const duped = try allocator.dupe(u8, this.ptr[0..this.len]);
+            return .{ .allocator = .init(allocator), .ptr = duped.ptr, .len = this.len };
+        }
+
+        // TODO: this is identical to `cloneIfNeeded`
+        pub fn clone(this: Slice, allocator: std.mem.Allocator) OOM!Slice {
             if (this.isAllocated()) {
                 return Slice{ .allocator = this.allocator, .ptr = this.ptr, .len = this.len };
             }
@@ -951,10 +957,10 @@ pub const ZigString = extern struct {
         };
     }
 
-    pub fn toSliceClone(this: ZigString, allocator: std.mem.Allocator) Slice {
+    pub fn toSliceClone(this: ZigString, allocator: std.mem.Allocator) OOM!Slice {
         if (this.len == 0)
             return Slice.empty;
-        const buffer = this.toOwnedSlice(allocator) catch unreachable;
+        const buffer = try this.toOwnedSlice(allocator);
         return Slice{
             .allocator = NullableAllocator.init(allocator),
             .ptr = buffer.ptr,
@@ -1332,7 +1338,7 @@ pub const FetchHeaders = opaque {
         });
     }
 
-    extern "C" fn WebCore__FetchHeaders__createFromJS(*JSC.JSGlobalObject, JSValue) ?*FetchHeaders;
+    extern "c" fn WebCore__FetchHeaders__createFromJS(*JSC.JSGlobalObject, JSValue) ?*FetchHeaders;
     /// Construct a `Headers` object from a JSValue.
     ///
     /// This can be:
@@ -1983,7 +1989,7 @@ pub const JSString = extern struct {
         this: *JSString,
         global: *JSGlobalObject,
         allocator: std.mem.Allocator,
-    ) ZigString.Slice {
+    ) JSError!ZigString.Slice {
         var str = ZigString.init("");
         this.toZigString(global, &str);
         return str.toSliceClone(allocator);
@@ -2993,7 +2999,7 @@ pub const JSGlobalObject = opaque {
         return this.ERR_INVALID_ARG_VALUE("The \"{s}\" argument is invalid. Received {}", .{ argname, actual_string_value }).throw();
     }
 
-    extern "C" fn Bun__ErrorCode__determineSpecificType(*JSGlobalObject, JSValue) String;
+    extern "c" fn Bun__ErrorCode__determineSpecificType(*JSGlobalObject, JSValue) String;
 
     pub fn determineSpecificType(global: *JSGlobalObject, value: JSValue) JSError!String {
         const str = Bun__ErrorCode__determineSpecificType(global, value);
@@ -4245,7 +4251,7 @@ pub const JSValue = enum(i64) {
         @import("./headers.zig").JSC__JSValue__put(value, global, key, result);
     }
 
-    extern "C" fn JSC__JSValue__putBunString(value: JSValue, global: *JSGlobalObject, key: *const bun.String, result: JSC.JSValue) void;
+    extern "c" fn JSC__JSValue__putBunString(value: JSValue, global: *JSGlobalObject, key: *const bun.String, result: JSC.JSValue) void;
     fn putBunString(value: JSValue, global: *JSGlobalObject, key: *const bun.String, result: JSC.JSValue) void {
         if (comptime bun.Environment.isDebug)
             JSC.markBinding(@src());
@@ -4644,7 +4650,7 @@ pub const JSValue = enum(i64) {
         });
     }
 
-    extern "C" fn JSC__JSValue__hasOwnPropertyValue(JSValue, *JSGlobalObject, JSValue) bool;
+    extern "c" fn JSC__JSValue__hasOwnPropertyValue(JSValue, *JSGlobalObject, JSValue) bool;
     /// Calls `Object.hasOwnProperty(value)`.
     /// Returns true if the object has the property, false otherwise
     ///

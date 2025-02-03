@@ -446,7 +446,7 @@ pub const TimerObject = struct {
     pub usingnamespace JSC.Codegen.JSTimeout;
     pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
-    extern "C" fn Bun__JSTimeout__call(encodedTimeoutValue: JSValue, globalObject: *JSC.JSGlobalObject) void;
+    extern "c" fn Bun__JSTimeout__call(encodedTimeoutValue: JSValue, globalObject: *JSC.JSGlobalObject) void;
 
     pub fn runImmediateTask(this: *TimerObject, vm: *VirtualMachine) void {
         if (this.has_cleared_timer) {

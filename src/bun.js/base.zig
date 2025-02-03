@@ -408,7 +408,7 @@ pub const ArrayBuffer = extern struct {
         return Bun__createUint8ArrayForCopy(globalThis, bytes.ptr, bytes.len, false);
     }
 
-    extern "C" fn Bun__allocUint8ArrayForCopy(*JSC.JSGlobalObject, usize, **anyopaque) JSC.JSValue;
+    extern "c" fn Bun__allocUint8ArrayForCopy(*JSC.JSGlobalObject, usize, **anyopaque) JSC.JSValue;
     pub fn allocBuffer(globalThis: *JSC.JSGlobalObject, len: usize) struct { JSC.JSValue, []u8 } {
         var ptr: [*]u8 = undefined;
         const buffer = Bun__allocUint8ArrayForCopy(globalThis, len, @ptrCast(&ptr));
@@ -418,8 +418,8 @@ pub const ArrayBuffer = extern struct {
         return .{ buffer, ptr[0..len] };
     }
 
-    extern "C" fn Bun__createUint8ArrayForCopy(*JSC.JSGlobalObject, ptr: ?*const anyopaque, len: usize, buffer: bool) JSC.JSValue;
-    extern "C" fn Bun__createArrayBufferForCopy(*JSC.JSGlobalObject, ptr: ?*const anyopaque, len: usize) JSC.JSValue;
+    extern "c" fn Bun__createUint8ArrayForCopy(*JSC.JSGlobalObject, ptr: ?*const anyopaque, len: usize, buffer: bool) JSC.JSValue;
+    extern "c" fn Bun__createArrayBufferForCopy(*JSC.JSGlobalObject, ptr: ?*const anyopaque, len: usize) JSC.JSValue;
 
     pub fn fromTypedArray(ctx: JSC.C.JSContextRef, value: JSC.JSValue) ArrayBuffer {
         var out = std.mem.zeroes(ArrayBuffer);
@@ -429,7 +429,7 @@ pub const ArrayBuffer = extern struct {
         return out;
     }
 
-    extern "C" fn JSArrayBuffer__fromDefaultAllocator(*JSC.JSGlobalObject, ptr: [*]u8, len: usize) JSC.JSValue;
+    extern "c" fn JSArrayBuffer__fromDefaultAllocator(*JSC.JSGlobalObject, ptr: [*]u8, len: usize) JSC.JSValue;
     pub fn toJSFromDefaultAllocator(globalThis: *JSC.JSGlobalObject, bytes: []u8) JSC.JSValue {
         return JSArrayBuffer__fromDefaultAllocator(globalThis, bytes.ptr, bytes.len);
     }

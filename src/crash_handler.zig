@@ -301,7 +301,13 @@ pub fn crashHandler(
                 var trace_buf: std.builtin.StackTrace = undefined;
 
                 // If a trace was not provided, compute one now
-                const trace = error_return_trace orelse get_backtrace: {
+                const trace = @as(?*std.builtin.StackTrace, if (error_return_trace) |ert|
+                    if (ert.index > 0)
+                        ert
+                    else
+                        null
+                else
+                    null) orelse get_backtrace: {
                     trace_buf = std.builtin.StackTrace{
                         .index = 0,
                         .instruction_addresses = &addr_buf,
@@ -868,7 +874,7 @@ pub fn handleSegfaultWindows(info: *windows.EXCEPTION_POINTERS) callconv(windows
     );
 }
 
-extern "C" fn gnu_get_libc_version() ?[*:0]const u8;
+extern "c" fn gnu_get_libc_version() ?[*:0]const u8;
 
 pub fn printMetadata(writer: anytype) !void {
     if (Output.enable_ansi_colors) {

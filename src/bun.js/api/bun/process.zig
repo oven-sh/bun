@@ -2042,16 +2042,16 @@ pub const sync = struct {
     }
 
     // Forward signals from parent to the child process.
-    extern "C" fn Bun__registerSignalsForForwarding() void;
-    extern "C" fn Bun__unregisterSignalsForForwarding() void;
+    extern "c" fn Bun__registerSignalsForForwarding() void;
+    extern "c" fn Bun__unregisterSignalsForForwarding() void;
 
     // The PID to forward signals to.
     // Set to 0 when unregistering.
-    extern "C" var Bun__currentSyncPID: i64;
+    extern "c" var Bun__currentSyncPID: i64;
 
     // Race condition: a signal could be sent before spawnProcessPosix returns.
     // We need to make sure to send it after the process is spawned.
-    extern "C" fn Bun__sendPendingSignalIfNecessary() void;
+    extern "c" fn Bun__sendPendingSignalIfNecessary() void;
 
     fn spawnPosix(
         options: *const Options,

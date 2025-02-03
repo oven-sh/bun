@@ -68,6 +68,7 @@ pub const HTMLBundleRoute = struct {
     }
 
     pub fn init(html_bundle: *HTMLBundle) *HTMLBundleRoute {
+        html_bundle.ref();
         return HTMLBundleRoute.new(.{
             .html_bundle = html_bundle,
             .pending_responses = .{},
@@ -287,6 +288,10 @@ pub const HTMLBundleRoute = struct {
 
         if (!server.config().development) {
             config.define.put("process.env.NODE_ENV", "\"production\"") catch bun.outOfMemory();
+            config.jsx.development = false;
+        } else {
+            config.force_node_env = .development;
+            config.jsx.development = true;
         }
 
         config.source_map = .linked;

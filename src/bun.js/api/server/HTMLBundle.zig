@@ -68,6 +68,7 @@ pub const HTMLBundleRoute = struct {
     }
 
     pub fn init(html_bundle: *HTMLBundle) *HTMLBundleRoute {
+        html_bundle.ref();
         return HTMLBundleRoute.new(.{
             .html_bundle = html_bundle,
             .pending_responses = .{},

@@ -278,3 +278,19 @@ Bun automatically handles all common web assets:
 - Any `<link>` tag with an `href` attribute pointing to a local file is rewritten to the new path, and hashed
 
 All paths are resolved relative to your HTML file, making it easy to organize your project however you want.
+
+## This is a work in progress
+
+- No HMR support yet
+- Need more plugins
+- Need more configuration options for things like asset handling
+
+## How this works
+
+This is a small wrapper around Bun's support for HTML imports in JavaScript.
+
+### Adding a backend to your frontend
+
+To add a backend to your frontend, you can use the `"static"` option in `Bun.serve`.
+
+Learn more in [the full-stack docs](/docs/bundler/fullstack).

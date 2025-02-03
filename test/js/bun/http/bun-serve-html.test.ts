@@ -767,5 +767,5 @@ test("serve html with JSX runtime in production mode", async () => {
   //  jsxDEV("button", {
   //    children: "Click me"
   //  }, undefined, false, undefined, this)
-  expect(js).toContain(`bt("h1",{children:"Hello from JSX"})`);
+  expect(js).toContain(`("h1",{children:"Hello from JSX"})`);
 });

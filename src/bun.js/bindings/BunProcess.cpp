@@ -2647,7 +2647,7 @@ JSValue createCryptoX509Object(JSGlobalObject* globalObject)
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObject, CallFrame* callFrame))
 {
-    auto& vm = jsJSC::getVM(globalObject);
+    auto& vm = JSC::getVM(jsGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto globalObject = jsCast<Zig::GlobalObject*>(jsGlobalObject);
     auto process = jsCast<Process*>(globalObject->processObject());

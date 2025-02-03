@@ -92,7 +92,7 @@ test("bun ./index.html", async () => {
 
   // Start the server by running bun with the HTML file
   await using process = Bun.spawn({
-    cmd: [bunExe(), join(dir, "index.html"), "--port=0"],
+    cmd: [bunExe(), "index.html", "--port=0"],
     env: {
       ...bunEnv,
       NODE_ENV: undefined,
@@ -210,7 +210,7 @@ test("bun ./index.html ./about.html", async () => {
 
   // Start the server by running bun with multiple HTML files
   await using process = Bun.spawn({
-    cmd: [bunExe(), join(dir, "index.html"), join(dir, "about.html"), "--port=0"],
+    cmd: [bunExe(), "index.html", "about.html", "--port=0"],
     env: {
       ...bunEnv,
       NODE_ENV: undefined,

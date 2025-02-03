@@ -64,7 +64,7 @@ pub const NapiEnv = opaque {
 fn envIsNull() napi_status {
     // in this case we don't actually have an environment to set the last error on, so it doesn't
     // make sense to call napi_set_last_error
-    @setCold(true);
+    @branchHint(.cold);
     return @intFromEnum(NapiStatus.invalid_arg);
 }
 

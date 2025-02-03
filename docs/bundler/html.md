@@ -157,7 +157,14 @@ The dev server supports plugins.
 
 ### Tailwind CSS
 
-To use TailwindCSS, add the plugin to your `bunfig.toml`:
+To use TailwindCSS, install the `bun-plugin-tailwind` plugin:
+
+```bash
+# Or any npm client
+$ bun install --dev bun-plugin-tailwind
+```
+
+Then, add the plugin to your `bunfig.toml`:
 
 ```toml
 [serve.static]

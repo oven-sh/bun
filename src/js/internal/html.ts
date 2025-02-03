@@ -1,9 +1,14 @@
+// This is the file that loads when you pass a, .html entry point to Bun.
 import type { HTMLBundle, Server } from "bun";
 const initital = performance.now();
 const argv = process.argv;
+
+// `import` cannot be used in this file and only Bun builtin modules can be used.
 const path = require("node:path");
+
 const env = Bun.env;
 
+// This function is called at startup.
 async function start() {
   let args: string[] = [];
   const cwd = process.cwd();

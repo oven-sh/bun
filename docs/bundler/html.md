@@ -284,6 +284,9 @@ All paths are resolved relative to your HTML file, making it easy to organize yo
 - No HMR support yet
 - Need more plugins
 - Need more configuration options for things like asset handling
+- Need a way to configure CORS, headers, etc.
+
+If you want to submit a PR, most of the [code is here](https://github.com/oven-sh/bun/blob/main/src/js/internal/html.ts).
 
 ## How this works
 

@@ -1,4 +1,5 @@
-// This is the file that loads when you pass a, .html entry point to Bun.
+// This is the file that loads when you pass a '.html' entry point to Bun.
+// It imports the entry points and initializes a server.
 import type { HTMLBundle, Server } from "bun";
 const initial = performance.now();
 const argv = process.argv;
@@ -247,15 +248,18 @@ yourself with Bun.serve().
   const enableANSIColors = Bun.enableANSIColors;
   function printInitialMessage(isFirst: boolean) {
     if (enableANSIColors) {
-      let topLine = `\n\x1b[1;34m\x1b[5mBun\x1b[0m \x1b[1;34mv${Bun.version}\x1b[0m`;
+      let topLine = `${server.development ? "\x1b[34;7m DEV \x1b[0m " : ""}\x1b[1;34m\x1b[5mBun\x1b[0m \x1b[1;34mv${Bun.version}\x1b[0m`;
       if (isFirst) {
         topLine += ` \x1b[2mready in\x1b[0m \x1b[1m${elapsed}\x1b[0m ms`;
       }
       console.log(topLine + "\n");
       console.log(`\x1b[1;34m➜\x1b[0m \x1b[36m${server!.url.href}\x1b[0m`);
     } else {
-      let topLine = `\n  Bun v${Bun.version}`;
+      let topLine = `Bun v${Bun.version}`;
       if (isFirst) {
+        if (server.development) {
+          topLine += " dev server";
+        }
         topLine += ` ready in ${elapsed} ms`;
       }
       console.log(topLine + "\n");

@@ -3489,10 +3489,15 @@ pub const Blob = struct {
         // milliseconds since ECMAScript epoch
         last_modified: JSC.JSTimeType = JSC.init_timestamp,
 
-        pub fn unlink(this: *const FileStore, globalThis: *JSC.JSGlobalObject) JSValue {
+        pub fn unlink(this: *const FileStore, globalThis: *JSC.JSGlobalObject) bun.JSError!JSValue {
             return switch (this.pathlike) {
                 .path => |path_like| JSC.Node.Async.unlink.create(globalThis, undefined, .{
-                    .path = .{ .encoded_slice = ZigString.init(path_like.slice()).toSliceClone(bun.default_allocator) },
+                    .path = .{
+                        .encoded_slice = switch (path_like) {
+                            .encoded_slice => |slice| try slice.toOwned(bun.default_allocator),
+                            else => try ZigString.init(path_like.slice()).toSliceClone(bun.default_allocator),
+                        },
+                    },
                 }, globalThis.bunVM()),
                 .fd => JSC.JSPromise.resolvedPromiseValue(globalThis, globalThis.createInvalidArgs("Is not possible to unlink a file descriptor", .{})),
             };
@@ -4750,15 +4755,23 @@ pub const Blob = struct {
     comptime {
         _ = Bun__Blob__getSizeForBindings;
     }
-    pub fn getStat(this: *Blob, globalThis: *JSC.JSGlobalObject, callback: *JSC.CallFrame) JSC.JSValue {
+    pub fn getStat(this: *Blob, globalThis: *JSC.JSGlobalObject, callback: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const store = this.store orelse return JSC.JSValue.jsUndefined();
         // TODO: make this async for files
         return switch (store.data) {
             .file => |*file| {
                 return switch (file.pathlike) {
-                    .path => |path_like| JSC.Node.Async.stat.create(globalThis, undefined, .{
-                        .path = .{ .encoded_slice = ZigString.init(path_like.slice()).toSliceClone(bun.default_allocator) },
-                    }, globalThis.bunVM()),
+                    .path => |path_like| {
+                        return JSC.Node.Async.stat.create(globalThis, undefined, .{
+                            .path = .{
+                                .encoded_slice = switch (path_like) {
+                                    // it's already converted to utf8
+                                    .encoded_slice => |slice| try slice.toOwned(bun.default_allocator),
+                                    else => try ZigString.init(path_like.slice()).toSliceClone(bun.default_allocator),
+                                },
+                            },
+                        }, globalThis.bunVM());
+                    },
                     .fd => |fd| JSC.Node.Async.fstat.create(globalThis, undefined, .{ .fd = fd }, globalThis.bunVM()),
                 };
             },

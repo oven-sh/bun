@@ -2519,7 +2519,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolve", "name", "non-empty string");
         }
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = try name_str.toSliceClone(globalThis, bun.default_allocator);
 
         switch (record_type) {
             RecordType.A => {
@@ -2582,7 +2582,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("reverse", "ip", "non-empty string");
         }
 
-        const ip_slice = ip_str.toSliceClone(globalThis, bun.default_allocator);
+        const ip_slice = try ip_str.toSliceClone(globalThis, bun.default_allocator);
         const ip = ip_slice.slice();
         const channel: *c_ares.Channel = switch (this.getChannel()) {
             .result => |res| res,
@@ -2718,7 +2718,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveSrv", "hostname", "non-empty string");
         }
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = try name_str.toSliceClone(globalThis, bun.default_allocator);
         return this.doResolveCAres(c_ares.struct_ares_srv_reply, "srv", name.slice(), globalThis);
     }
 
@@ -2744,7 +2744,7 @@ pub const DNSResolver = struct {
             return .zero;
         };
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = try name_str.toSliceClone(globalThis, bun.default_allocator);
         return this.doResolveCAres(c_ares.struct_ares_soa_reply, "soa", name.slice(), globalThis);
     }
 
@@ -2774,7 +2774,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveCaa", "hostname", "non-empty string");
         }
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = try name_str.toSliceClone(globalThis, bun.default_allocator);
         return this.doResolveCAres(c_ares.struct_ares_caa_reply, "caa", name.slice(), globalThis);
     }
 
@@ -2800,7 +2800,7 @@ pub const DNSResolver = struct {
             return .zero;
         };
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = try name_str.toSliceClone(globalThis, bun.default_allocator);
         return this.doResolveCAres(c_ares.struct_hostent, "ns", name.slice(), globalThis);
     }
 
@@ -2830,7 +2830,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolvePtr", "hostname", "non-empty string");
         }
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = try name_str.toSliceClone(globalThis, bun.default_allocator);
         return this.doResolveCAres(c_ares.struct_hostent, "ptr", name.slice(), globalThis);
     }
 
@@ -2860,7 +2860,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveCname", "hostname", "non-empty string");
         }
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = try name_str.toSliceClone(globalThis, bun.default_allocator);
         return this.doResolveCAres(c_ares.struct_hostent, "cname", name.slice(), globalThis);
     }
 
@@ -2890,7 +2890,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveMx", "hostname", "non-empty string");
         }
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = try name_str.toSliceClone(globalThis, bun.default_allocator);
         return this.doResolveCAres(c_ares.struct_ares_mx_reply, "mx", name.slice(), globalThis);
     }
 
@@ -2920,7 +2920,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveNaptr", "hostname", "non-empty string");
         }
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = try name_str.toSliceClone(globalThis, bun.default_allocator);
         return this.doResolveCAres(c_ares.struct_ares_naptr_reply, "naptr", name.slice(), globalThis);
     }
 
@@ -2950,7 +2950,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveTxt", "hostname", "non-empty string");
         }
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = try name_str.toSliceClone(globalThis, bun.default_allocator);
         return this.doResolveCAres(c_ares.struct_ares_txt_reply, "txt", name.slice(), globalThis);
     }
 
@@ -2980,7 +2980,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveAny", "hostname", "non-empty string");
         }
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = try name_str.toSliceClone(globalThis, bun.default_allocator);
         return this.doResolveCAres(c_ares.struct_any_reply, "any", name.slice(), globalThis);
     }
 

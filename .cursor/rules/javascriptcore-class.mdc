@@ -1,6 +1,6 @@
 ---
-description: 'JavaScript class implemented in C++'
-globs: *.cpp
+description: JavaScript class implemented in C++
+globs: '*.cpp'
 ---
 
 # Implementing JavaScript classes in C++

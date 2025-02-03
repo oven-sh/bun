@@ -1018,6 +1018,10 @@ pub const JSX = struct {
         classic_import_source: string = "react",
         package_name: []const u8 = "react",
 
+        /// Configuration Priority:
+        /// - `--define=process.env.NODE_ENV=...`
+        /// - `NODE_ENV=...`
+        /// - tsconfig.json's `compilerOptions.jsx` (`react-jsx` or `react-jsxdev`)
         development: bool = true,
         parse: bool = true,
 
@@ -1580,14 +1584,24 @@ pub const BundleOptions = struct {
 
     supports_multiple_outputs: bool = true,
 
-    force_development: ?bool = null,
+    /// This is set by the process environment, which is used to override the
+    /// JSX configuration. When this is unspecified, the tsconfig.json is used
+    /// to determine if a development jsx-runtime is used (by going between
+    /// "react-jsx" or "react-jsx-dev-runtime")
+    force_node_env: ForceNodeEnv = .unspecified,
+
+    pub const ForceNodeEnv = enum {
+        unspecified,
+        development,
+        production,
+    };
 
     pub fn isTest(this: *const BundleOptions) bool {
         return this.rewrite_jest_for_tests;
     }
 
     pub fn setProduction(this: *BundleOptions, value: bool) void {
-        if (this.force_development == null) {
+        if (this.force_node_env == .unspecified) {
             this.production = value;
             this.jsx.development = !value;
         }

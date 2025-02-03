@@ -915,7 +915,11 @@ pub const BundleV2 = struct {
         task.known_target = target;
         {
             const bundler = this.bundlerForTarget(target);
-            task.jsx.development = bundler.options.force_development orelse bundler.options.jsx.development;
+            task.jsx.development = switch (bundler.options.force_node_env) {
+                .development => true,
+                .production => false,
+                .unspecified => bundler.options.jsx.development,
+            };
         }
 
         // Handle onLoad plugins as entry points
@@ -1756,8 +1760,8 @@ pub const BundleV2 = struct {
             );
             transpiler.options.env.behavior = config.env_behavior;
             transpiler.options.env.prefix = config.env_prefix.slice();
-            if (config.force_development) {
-                transpiler.options.force_development = true;
+            if (config.force_node_env != .unspecified) {
+                transpiler.options.force_node_env = config.force_node_env;
             }
 
             transpiler.options.entry_points = config.entry_points.keys();
@@ -2881,11 +2885,11 @@ pub const BundleV2 = struct {
             resolve_task.secondary_path_for_commonjs_interop = secondary_path_to_copy;
             resolve_task.known_target = target;
             resolve_task.jsx = resolve_result.jsx;
-
-            {
-                const bundler = this.bundlerForTarget(target);
-                resolve_task.jsx.development = bundler.options.force_development orelse bundler.options.jsx.development;
-            }
+            resolve_task.jsx.development = switch (transpiler.options.force_node_env) {
+                .development => true,
+                .production => false,
+                .unspecified => transpiler.options.jsx.development,
+            };
 
             // Figure out the loader.
             {
@@ -3552,7 +3556,7 @@ pub const ParseTask = struct {
         };
     };
 
-    const debug = Output.scoped(.ParseTask, false);
+    const debug = Output.scoped(.ParseTask, true);
 
     pub fn init(resolve_result: *const _resolver.Result, source_index: Index, ctx: *BundleV2) ParseTask {
         return .{
@@ -7555,7 +7559,7 @@ pub const LinkerContext = struct {
                     continue;
                 }
 
-                _ = this.validateTLA(id, tla_keywords, tla_checks, input_files, import_records, flags);
+                _ = this.validateTLA(id, tla_keywords, tla_checks, input_files, import_records, flags, import_records_list);
 
                 for (import_records) |record| {
                     if (!record.source_index.isValid()) {
@@ -11037,6 +11041,7 @@ pub const LinkerContext = struct {
         input_files: []Logger.Source,
         import_records: []ImportRecord,
         meta_flags: []JSMeta.Flags,
+        ast_import_records: []bun.BabyList(ImportRecord),
     ) js_ast.TlaCheck {
         var result_tla_check: *js_ast.TlaCheck = &tla_checks[source_index];
 
@@ -11048,7 +11053,7 @@ pub const LinkerContext = struct {
 
             for (import_records, 0..) |record, import_record_index| {
                 if (Index.isValid(record.source_index) and (record.kind == .require or record.kind == .stmt)) {
-                    const parent = c.validateTLA(record.source_index.get(), tla_keywords, tla_checks, input_files, import_records, meta_flags);
+                    const parent = c.validateTLA(record.source_index.get(), tla_keywords, tla_checks, input_files, import_records, meta_flags, ast_import_records);
                     if (Index.isInvalid(Index.init(parent.parent))) {
                         continue;
                     }
@@ -11075,9 +11080,11 @@ pub const LinkerContext = struct {
                             const parent_source_index = other_source_index;
 
                             if (parent_result_tla_keyword.len > 0) {
-                                tla_pretty_path = input_files[other_source_index].path.pretty;
+                                const source = input_files[other_source_index];
+                                tla_pretty_path = source.path.pretty;
                                 notes.append(Logger.Data{
                                     .text = std.fmt.allocPrint(c.allocator, "The top-level await in {s} is here:", .{tla_pretty_path}) catch bun.outOfMemory(),
+                                    .location = .initOrNull(&source, parent_result_tla_keyword),
                                 }) catch bun.outOfMemory();
                                 break;
                             }
@@ -11096,6 +11103,7 @@ pub const LinkerContext = struct {
                                     input_files[parent_source_index].path.pretty,
                                     input_files[other_source_index].path.pretty,
                                 }) catch bun.outOfMemory(),
+                                .location = .initOrNull(&input_files[parent_source_index], ast_import_records[parent_source_index].slice()[tla_checks[parent_source_index].import_record_index].range),
                             }) catch bun.outOfMemory();
                         }
 

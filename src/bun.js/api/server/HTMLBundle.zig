@@ -290,7 +290,7 @@ pub const HTMLBundleRoute = struct {
             config.define.put("process.env.NODE_ENV", "\"production\"") catch bun.outOfMemory();
             config.jsx.development = false;
         } else {
-            config.force_development = true;
+            config.force_node_env = .development;
             config.jsx.development = true;
         }
 

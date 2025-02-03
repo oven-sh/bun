@@ -616,8 +616,8 @@ pub const Transpiler = struct {
         if (is_development) {
             this.options.setProduction(false);
             this.resolver.opts.setProduction(false);
-            this.options.force_development = true;
-            this.resolver.opts.force_development = true;
+            this.options.force_node_env = .development;
+            this.resolver.opts.force_node_env = .development;
         } else if (is_production) {
             this.options.setProduction(true);
             this.resolver.opts.setProduction(true);

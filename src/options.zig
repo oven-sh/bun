@@ -991,13 +991,18 @@ pub const ESMConditions = struct {
 };
 
 pub const JSX = struct {
-    pub const RuntimeMap = bun.ComptimeStringMap(JSX.Runtime, .{
-        .{ "classic", .classic },
-        .{ "automatic", .automatic },
-        .{ "react", .classic },
-        .{ "react-jsx", .automatic },
-        .{ "react-jsxdev", .automatic },
-        .{ "solid", .solid },
+    const RuntimeDevelopmentPair = struct {
+        runtime: JSX.Runtime,
+        development: ?bool,
+    };
+
+    pub const RuntimeMap = bun.ComptimeStringMap(RuntimeDevelopmentPair, .{
+        .{ "classic", RuntimeDevelopmentPair{ .runtime = .classic, .development = null } },
+        .{ "automatic", RuntimeDevelopmentPair{ .runtime = .automatic, .development = true } },
+        .{ "react", RuntimeDevelopmentPair{ .runtime = .classic, .development = null } },
+        .{ "react-jsx", RuntimeDevelopmentPair{ .runtime = .automatic, .development = true } },
+        .{ "react-jsxdev", RuntimeDevelopmentPair{ .runtime = .automatic, .development = true } },
+        .{ "solid", RuntimeDevelopmentPair{ .runtime = .solid, .development = null } },
     });
 
     pub const Pragma = struct {

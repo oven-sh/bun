@@ -450,7 +450,7 @@ pub const UDPSocket = struct {
 
         var addr: std.posix.sockaddr.storage = undefined;
         if (!parseAddr(this, globalThis, JSC.jsNumber(0), arguments[0], &addr)) {
-            return globalThis.throwValue(bun.sys.Error.fromCode(.INVAL, .setsockopt).toJSC(globalThis));
+            try throwEINVAL(globalThis);
         }
 
         var interface: std.posix.sockaddr.storage = undefined;

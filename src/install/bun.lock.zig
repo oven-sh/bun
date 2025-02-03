@@ -941,7 +941,7 @@ pub const Stringifier = struct {
                 any = true;
             }
             try writer.writeAll(
-                \\ "os": 
+                \\ "os":
             );
             try Negatable(Npm.OperatingSystem).toJson(meta.os, writer);
         }
@@ -953,7 +953,7 @@ pub const Stringifier = struct {
                 any = true;
             }
             try writer.writeAll(
-                \\ "cpu": 
+                \\ "cpu":
             );
             try Negatable(Npm.Architecture).toJson(meta.arch, writer);
         }
@@ -1154,10 +1154,10 @@ pub const Stringifier = struct {
 };
 
 const workspace_dependency_groups = [4]struct { []const u8, Dependency.Behavior }{
-    .{ "dependencies", Dependency.Behavior.prod },
-    .{ "devDependencies", Dependency.Behavior.dev },
-    .{ "optionalDependencies", Dependency.Behavior.optional },
-    .{ "peerDependencies", Dependency.Behavior.peer },
+    .{ "dependencies", .{ .prod = true } },
+    .{ "devDependencies", .{ .dev = true } },
+    .{ "optionalDependencies", .{ .optional = true } },
+    .{ "peerDependencies", .{ .peer = true } },
 };
 
 const ParseError = OOM || error{
@@ -1526,7 +1526,7 @@ pub fn parseIntoBinaryLockfile(
                 const dep: Dependency = .{
                     .name = try string_buf.appendWithHash(name, name_hash),
                     .name_hash = name_hash,
-                    .behavior = Dependency.Behavior.workspace,
+                    .behavior = .{ .workspace = true },
                     .version = .{
                         .tag = .workspace,
                         .value = .{

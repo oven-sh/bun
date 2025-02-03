@@ -17,6 +17,10 @@ const ZigString = JSC.ZigString;
 
 const ClosingState = Blob.ClosingState;
 
+pub const WriteFileResultType = SystemError.Maybe(SizeType);
+pub const WriteFileOnWriteFileCallback = *const fn (ctx: *anyopaque, count: WriteFileResultType) void;
+pub const WriteFileTask = JSC.WorkTask(WriteFile);
+
 pub const WriteFile = struct {
     file_blob: Blob,
     bytes_blob: Blob,
@@ -31,15 +35,13 @@ pub const WriteFile = struct {
     state: std.atomic.Value(ClosingState) = std.atomic.Value(ClosingState).init(.running),
 
     onCompleteCtx: *anyopaque = undefined,
-    onCompleteCallback: OnWriteFileCallback = undefined,
+    onCompleteCallback: WriteFileOnWriteFileCallback = undefined,
     total_written: usize = 0,
 
     could_block: bool = false,
     close_after_io: bool = false,
     mkdirp_if_not_exists: bool = false,
 
-    pub const ResultType = SystemError.Maybe(SizeType);
-    pub const OnWriteFileCallback = *const fn (ctx: *anyopaque, count: ResultType) void;
     pub const io_tag = io.Poll.Tag.WriteFile;
 
     pub usingnamespace FileOpenerMixin(WriteFile);
@@ -92,7 +94,7 @@ pub const WriteFile = struct {
         file_blob: Blob,
         bytes_blob: Blob,
         onWriteFileContext: *anyopaque,
-        onCompleteCallback: OnWriteFileCallback,
+        onCompleteCallback: WriteFileOnWriteFileCallback,
         mkdirp_if_not_exists: bool,
     ) !*WriteFile {
         const write_file = bun.new(WriteFile, WriteFile{
@@ -113,11 +115,11 @@ pub const WriteFile = struct {
         bytes_blob: Blob,
         comptime Context: type,
         context: Context,
-        comptime callback: fn (ctx: Context, bytes: ResultType) void,
+        comptime callback: fn (ctx: Context, bytes: WriteFileResultType) void,
         mkdirp_if_not_exists: bool,
     ) !*WriteFile {
         const Handler = struct {
-            pub fn run(ptr: *anyopaque, bytes: ResultType) void {
+            pub fn run(ptr: *anyopaque, bytes: WriteFileResultType) void {
                 callback(bun.cast(Context, ptr), bytes);
             }
         };
@@ -178,8 +180,6 @@ pub const WriteFile = struct {
         return true;
     }
 
-    pub const WriteFileTask = JSC.WorkTask(@This());
-
     pub fn then(this: *WriteFile, _: *JSC.JSGlobalObject) void {
         const cb = this.onCompleteCallback;
         const cb_ctx = this.onCompleteCtx;
@@ -199,6 +199,7 @@ pub const WriteFile = struct {
         bun.destroy(this);
         cb(cb_ctx, .{ .result = @as(SizeType, @truncate(wrote)) });
     }
+
     pub fn run(this: *WriteFile, task: *WriteFileTask) void {
         if (Environment.isWindows) {
             @panic("todo");
@@ -308,6 +309,7 @@ pub const WriteFile = struct {
     }
 
     fn doWriteLoop(this: *WriteFile) void {
+        if (Environment.isWindows) return; //why
         while (this.state.load(.monotonic) == .running) {
             var remain = this.bytes_blob.sharedView();
 
@@ -355,7 +357,7 @@ pub const WriteFileWindows = struct {
     io_request: uv.fs_t,
     file_blob: Blob,
     bytes_blob: Blob,
-    onCompleteCallback: OnWriteFileCallback,
+    onCompleteCallback: WriteFileOnWriteFileCallback,
     onCompleteCtx: *anyopaque,
     mkdirp_if_not_exists: bool = false,
     uv_bufs: [1]uv.uv_buf_t,
@@ -374,7 +376,7 @@ pub const WriteFileWindows = struct {
         bytes_blob: Blob,
         event_loop: *bun.JSC.EventLoop,
         onWriteFileContext: *anyopaque,
-        onCompleteCallback: OnWriteFileCallback,
+        onCompleteCallback: WriteFileOnWriteFileCallback,
         mkdirp_if_not_exists: bool,
     ) *WriteFileWindows {
         const write_file = WriteFileWindows.new(.{
@@ -419,8 +421,6 @@ pub const WriteFileWindows = struct {
         write_file.event_loop.refConcurrently();
         return write_file;
     }
-    pub const ResultType = WriteFile.ResultType;
-    pub const OnWriteFileCallback = WriteFile.OnWriteFileCallback;
 
     pub inline fn loop(this: *const WriteFileWindows) *uv.Loop {
         return this.event_loop.virtual_machine.event_loop_handle.?;
@@ -637,7 +637,7 @@ pub const WriteFileWindows = struct {
         bytes_blob: Blob,
         comptime Context: type,
         context: Context,
-        comptime callback: *const fn (ctx: Context, bytes: ResultType) void,
+        comptime callback: *const fn (ctx: Context, bytes: WriteFileResultType) void,
         mkdirp_if_not_exists: bool,
     ) *WriteFileWindows {
         return WriteFileWindows.createWithCtx(
@@ -654,7 +654,7 @@ pub const WriteFileWindows = struct {
 pub const WriteFilePromise = struct {
     promise: JSPromise.Strong = .{},
     globalThis: *JSGlobalObject,
-    pub fn run(handler: *@This(), count: Blob.WriteFile.ResultType) void {
+    pub fn run(handler: *@This(), count: WriteFileResultType) void {
         var promise = handler.promise.swap();
         const globalThis = handler.globalThis;
         bun.destroy(handler);

@@ -895,6 +895,8 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     vm.heap.acquireAccess();
     JSC::JSLockHolder locker(vm);
 
+    vm.heap.disableStopIfNecessaryTimer();
+
     WebCore::JSVMClientData::create(&vm, Bun__getVM());
 
     const auto createGlobalObject = [&]() -> Zig::GlobalObject* {

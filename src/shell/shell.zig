@@ -165,7 +165,7 @@ pub const ParseError = error{
     Lex,
 };
 
-extern "C" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: i32) i32;
+extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: i32) i32;
 
 fn setEnv(name: [*:0]const u8, value: [*:0]const u8) void {
     // TODO: windows

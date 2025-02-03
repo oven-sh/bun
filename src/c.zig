@@ -488,11 +488,11 @@ pub fn dlopen(filename: [:0]const u8, flags: C.RTLD) ?*anyopaque {
     return std.c.dlopen(filename, flags);
 }
 
-pub extern "C" fn Bun__ttySetMode(fd: c_int, mode: c_int) c_int;
+pub extern "c" fn Bun__ttySetMode(fd: c_int, mode: c_int) c_int;
 
-pub extern "C" fn bun_initialize_process() void;
-pub extern "C" fn bun_restore_stdio() void;
-pub extern "C" fn open_as_nonblocking_tty(i32, i32) i32;
+pub extern "c" fn bun_initialize_process() void;
+pub extern "c" fn bun_restore_stdio() void;
+pub extern "c" fn open_as_nonblocking_tty(i32, i32) i32;
 
 pub extern fn strlen(ptr: [*c]const u8) usize;
 

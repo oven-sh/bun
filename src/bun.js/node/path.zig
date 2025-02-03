@@ -2814,7 +2814,7 @@ pub fn resolveJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocato
     return if (isWindows) resolveWindowsJS_T(T, globalObject, paths, buf, buf2) else resolvePosixJS_T(T, globalObject, paths, buf, buf2);
 }
 
-extern "C" fn Process__getCachedCwd(*JSC.JSGlobalObject) JSC.JSValue;
+extern "c" fn Process__getCachedCwd(*JSC.JSGlobalObject) JSC.JSValue;
 
 pub fn resolve(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(JSC.conv) JSC.JSValue {
     var arena = bun.ArenaAllocator.init(bun.default_allocator);

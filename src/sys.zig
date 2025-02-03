@@ -3379,7 +3379,7 @@ pub fn existsAt(fd: bun.FileDescriptor, subpath: [:0]const u8) bool {
     @compileError("TODO: existsAtOSPath");
 }
 
-pub extern "C" fn is_executable_file(path: [*:0]const u8) bool;
+pub extern "c" fn is_executable_file(path: [*:0]const u8) bool;
 
 pub fn isExecutableFileOSPath(path: bun.OSPathSliceZ) bool {
     if (comptime Environment.isPosix) {

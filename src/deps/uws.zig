@@ -20,7 +20,7 @@ pub const Socket = opaque {
         debug("us_socket_write2({d}, {d}) = {d}", .{ first.len, second.len, rc });
         return rc;
     }
-    extern "C" fn us_socket_write2(ssl: i32, *Socket, header: ?[*]const u8, len: usize, payload: ?[*]const u8, usize) i32;
+    extern "c" fn us_socket_write2(ssl: i32, *Socket, header: ?[*]const u8, len: usize, payload: ?[*]const u8, usize) i32;
 };
 pub const ConnectingSocket = opaque {};
 const debug = bun.Output.scoped(.uws, false);

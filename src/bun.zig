@@ -1832,7 +1832,7 @@ pub fn reloadProcess(
         }
     } else if (comptime Environment.isPosix) {
         const on_before_reload_process_linux = struct {
-            pub extern "C" fn on_before_reload_process_linux() void;
+            pub extern "c" fn on_before_reload_process_linux() void;
         }.on_before_reload_process_linux;
 
         on_before_reload_process_linux();
@@ -3251,7 +3251,7 @@ pub fn NewThreadSafeRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: 
 
 pub fn exitThread() noreturn {
     const exiter = struct {
-        pub extern "C" fn pthread_exit(?*anyopaque) noreturn;
+        pub extern "c" fn pthread_exit(?*anyopaque) noreturn;
         pub extern "kernel32" fn ExitThread(windows.DWORD) noreturn;
     };
 
@@ -3882,7 +3882,7 @@ pub fn tagName(comptime Enum: type, value: Enum) ?[:0]const u8 {
         if (@intFromEnum(value) == f.value) break f.name;
     } else null;
 }
-extern "C" fn Bun__ramSize() usize;
+extern "c" fn Bun__ramSize() usize;
 pub fn getTotalMemorySize() usize {
     return Bun__ramSize();
 }
@@ -4289,7 +4289,7 @@ pub const StackCheck = struct {
         Bun__StackCheck__initialize();
     }
 
-    extern "C" fn Bun__StackCheck__getMaxStack() usize;
+    extern "c" fn Bun__StackCheck__getMaxStack() usize;
     fn getStackEnd() usize {
         return Bun__StackCheck__getMaxStack();
     }

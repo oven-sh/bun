@@ -161,6 +161,7 @@
 #include "JSX509Certificate.h"
 #include "JSS3File.h"
 #include "S3Error.h"
+#include <JavaScriptCore/JSBasePrivate.h>
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
 #endif
@@ -236,6 +237,22 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         return;
     has_loaded_jsc = true;
     JSC::Config::enableRestrictedOptions();
+#if OS(LINUX)
+    {
+        // By default, JavaScriptCore's garbage collector sends SIGUSR1 to the JS thread to suspend
+        // and resume it in order to scan its stack memory. Whatever signal it uses can't be
+        // reliably intercepted by JS code, and several npm packages use SIGUSR1 for various
+        // features. We tell it to use SIGPWR instead, which we assume is unlikely to be reliable
+        // for its stated purpose. Mono's garbage collector also uses SIGPWR:
+        // https://www.mono-project.com/docs/advanced/embedding/#signal-handling
+        //
+        // This call needs to be before most of the other JSC initialization, as we can't
+        // reconfigure which signal is used once the signal handler has already been registered.
+        bool configure_signal_success = JSConfigureSignalForGC(SIGPWR);
+        ASSERT(configure_signal_success);
+        ASSERT(g_wtfConfig.sigThreadSuspendResume == SIGPWR);
+    }
+#endif
 
     std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
     WTF::initializeMainThread();
@@ -877,6 +894,8 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     // This must happen before JSVMClientData::create
     vm.heap.acquireAccess();
     JSC::JSLockHolder locker(vm);
+
+    vm.heap.disableStopIfNecessaryTimer();
 
     WebCore::JSVMClientData::create(&vm, Bun__getVM());
 

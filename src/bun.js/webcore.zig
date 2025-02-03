@@ -533,7 +533,7 @@ pub const Crypto = struct {
         return globalThis.ERR_CRYPTO_SCRYPT_INVALID_PARAMETER("Invalid scrypt parameters", .{}).throw();
     }
 
-    fn throwInvalidParams(globalThis: *JSC.JSGlobalObject, comptime error_type: @Type(.EnumLiteral), comptime message: [:0]const u8, fmt: anytype) bun.JSError {
+    fn throwInvalidParams(globalThis: *JSC.JSGlobalObject, comptime error_type: @Type(.enum_literal), comptime message: [:0]const u8, fmt: anytype) bun.JSError {
         if (error_type != .RangeError) @compileError("Error type not added!");
         BoringSSL.ERR_clear_error();
         return globalThis.ERR_CRYPTO_INVALID_SCRYPT_PARAMS(message, fmt).throw();
@@ -644,7 +644,7 @@ pub const Crypto = struct {
 
     comptime {
         const Bun__randomUUIDv7 = JSC.toJSHostFunction(Bun__randomUUIDv7_);
-        @export(Bun__randomUUIDv7, .{ .name = "Bun__randomUUIDv7" });
+        @export(&Bun__randomUUIDv7, .{ .name = "Bun__randomUUIDv7" });
     }
     pub fn Bun__randomUUIDv7_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.argumentsUndef(2).slice();
@@ -736,9 +736,9 @@ pub const Crypto = struct {
 
 comptime {
     const js_alert = JSC.toJSHostFunction(alert);
-    @export(js_alert, .{ .name = "WebCore__alert" });
+    @export(&js_alert, .{ .name = "WebCore__alert" });
     const js_prompt = JSC.toJSHostFunction(Prompt.call);
-    @export(js_prompt, .{ .name = "WebCore__prompt" });
+    @export(&js_prompt, .{ .name = "WebCore__prompt" });
     const js_confirm = JSC.toJSHostFunction(confirm);
-    @export(js_confirm, .{ .name = "WebCore__confirm" });
+    @export(&js_confirm, .{ .name = "WebCore__confirm" });
 }

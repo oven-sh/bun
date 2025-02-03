@@ -1106,7 +1106,7 @@ pub const JSX = struct {
         // ...unless new is "React.createElement" and original is ["React", "createElement"]
         // saves an allocation for the majority case
         pub fn memberListToComponentsIfDifferent(allocator: std.mem.Allocator, original: []const string, new: string) ![]const string {
-            var splitter = std.mem.split(u8, new, ".");
+            var splitter = std.mem.splitScalar(u8, new, '.');
             const count = strings.countChar(new, '.') + 1;
 
             var needs_alloc = false;
@@ -1131,7 +1131,7 @@ pub const JSX = struct {
 
             var out = try allocator.alloc(string, count);
 
-            splitter = std.mem.split(u8, new, ".");
+            splitter = std.mem.splitScalar(u8, new, '.');
             var i: usize = 0;
             while (splitter.next()) |str| {
                 if (str.len == 0) continue;

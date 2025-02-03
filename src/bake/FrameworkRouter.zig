@@ -331,7 +331,7 @@ pub const Part = union(enum(u3)) {
     group: []const u8,
 
     const SerializedHeader = packed struct(u32) {
-        tag: @typeInfo(Part).Union.tag_type.?,
+        tag: @typeInfo(Part).@"union".tag_type.?,
         len: u29,
     };
 

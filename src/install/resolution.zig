@@ -1,5 +1,5 @@
 const PackageManager = @import("./install.zig").PackageManager;
-const Semver = @import("./semver.zig");
+const Semver = bun.Semver;
 const ExternalString = Semver.ExternalString;
 const String = Semver.String;
 const std = @import("std");

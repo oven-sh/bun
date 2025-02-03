@@ -12,7 +12,6 @@ const default_allocator = bun.default_allocator;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const ErrorableString = bun.JSC.ErrorableString;
 const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
-const C = bun.C;
 
 const Exception = bun.JSC.Exception;
 const Allocator = std.mem.Allocator;
@@ -41,14 +40,7 @@ const ImportRecord = ast.ImportRecord;
 const DotEnv = @import("../env_loader.zig");
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
-const WebCore = bun.JSC.WebCore;
-const Request = WebCore.Request;
-const Response = WebCore.Response;
-const Headers = WebCore.Headers;
 const String = bun.String;
-const Fetch = WebCore.Fetch;
-const FetchEvent = WebCore.FetchEvent;
-const js = bun.JSC.C;
 const JSC = bun.JSC;
 const JSError = @import("./base.zig").JSError;
 const d = @import("./base.zig").d;
@@ -66,18 +58,17 @@ const ZigException = bun.JSC.ZigException;
 const ZigStackTrace = bun.JSC.ZigStackTrace;
 const ErrorableResolvedSource = bun.JSC.ErrorableResolvedSource;
 const ResolvedSource = bun.JSC.ResolvedSource;
-const JSPromise = bun.JSC.JSPromise;
 const JSInternalPromise = bun.JSC.JSInternalPromise;
 const JSModuleLoader = bun.JSC.JSModuleLoader;
 const JSPromiseRejectionOperation = bun.JSC.JSPromiseRejectionOperation;
 const ErrorableZigString = bun.JSC.ErrorableZigString;
 const ZigGlobalObject = bun.JSC.ZigGlobalObject;
-const VM = bun.JSC.VM;
+const VM = JSC.VM;
 const JSFunction = bun.JSC.JSFunction;
 const Config = @import("./config.zig");
 const URL = @import("../url.zig").URL;
 const Bun = JSC.API.Bun;
-const EventLoop = JSC.EventLoop;
+const EventLoop = bun.JSC.EventLoop;
 const PendingResolution = @import("../resolver/resolver.zig").PendingResolution;
 const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
 const PackageManager = @import("../install/install.zig").PackageManager;
@@ -93,8 +84,6 @@ const Task = JSC.Task;
 
 pub const Buffer = MarkedArrayBuffer;
 const Lock = bun.Mutex;
-const BuildMessage = JSC.BuildMessage;
-const ResolveMessage = JSC.ResolveMessage;
 const Async = bun.Async;
 
 const Ordinal = bun.Ordinal;
@@ -321,13 +310,13 @@ pub const SavedSourceMap = struct {
         };
 
         switch (Value.from(mapping.value_ptr.*).tag()) {
-            Value.Tag.ParsedSourceMap => {
+            @field(Value.Tag, @typeName(ParsedSourceMap)) => {
                 defer this.unlock();
                 const map = Value.from(mapping.value_ptr.*).as(ParsedSourceMap);
                 map.ref();
                 return .{ .map = map };
             },
-            Value.Tag.SavedMappings => {
+            @field(Value.Tag, @typeName(SavedMappings)) => {
                 defer this.unlock();
                 var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(Value.from(mapping.value_ptr.*).as(ParsedSourceMap))) };
                 defer saved.deinit();
@@ -340,7 +329,7 @@ pub const SavedSourceMap = struct {
 
                 return .{ .map = result };
             },
-            Value.Tag.SourceProviderMap => {
+            @field(Value.Tag, @typeName(SourceProviderMap)) => {
                 const ptr: *SourceProviderMap = Value.from(mapping.value_ptr.*).as(SourceProviderMap);
                 this.unlock();
 
@@ -423,17 +412,17 @@ export fn Bun__readOriginTimerStart(vm: *JSC.VirtualMachine) f64 {
     return @as(f64, @floatCast((@as(f64, @floatFromInt(vm.origin_timestamp)) + JSC.VirtualMachine.origin_relative_epoch) / 1_000_000.0));
 }
 
-pub export fn Bun__GlobalObject__hasIPC(global: *JSC.JSGlobalObject) bool {
+pub export fn Bun__GlobalObject__hasIPC(global: *JSGlobalObject) bool {
     return global.bunVM().ipc != null;
 }
 
-extern fn Bun__Process__queueNextTick1(*JSC.ZigGlobalObject, JSC.JSValue, JSC.JSValue) void;
+extern fn Bun__Process__queueNextTick1(*ZigGlobalObject, JSValue, JSValue) void;
 
 comptime {
     const Bun__Process__send = JSC.toJSHostFunction(Bun__Process__send_);
-    @export(Bun__Process__send, .{ .name = "Bun__Process__send" });
+    @export(&Bun__Process__send, .{ .name = "Bun__Process__send" });
 }
-pub fn Bun__Process__send_(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn Bun__Process__send_(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
     JSC.markBinding(@src());
     var message, var handle, var options_, var callback = callFrame.argumentsAsArray(4);
 
@@ -449,7 +438,7 @@ pub fn Bun__Process__send_(globalObject: *JSGlobalObject, callFrame: *JSC.CallFr
     }
 
     const S = struct {
-        fn impl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        fn impl(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
             const arguments_ = callframe.arguments_old(1).slice();
             const ex = arguments_[0];
             VirtualMachine.Process__emitErrorEvent(globalThis, ex);
@@ -458,13 +447,13 @@ pub fn Bun__Process__send_(globalObject: *JSGlobalObject, callFrame: *JSC.CallFr
     };
 
     const vm = globalObject.bunVM();
-    const zigGlobal: *JSC.ZigGlobalObject = @ptrCast(globalObject);
+    const zigGlobal: *ZigGlobalObject = @ptrCast(globalObject);
     const ipc_instance = vm.getIPCInstance() orelse {
         const ex = globalObject.ERR_IPC_CHANNEL_CLOSED("Channel closed.", .{}).toJS();
         if (callback.isFunction()) {
             Bun__Process__queueNextTick1(zigGlobal, callback, ex);
         } else {
-            const fnvalue = JSC.JSFunction.create(globalObject, "", S.impl, 1, .{});
+            const fnvalue = JSFunction.create(globalObject, "", S.impl, 1, .{});
             Bun__Process__queueNextTick1(zigGlobal, fnvalue, ex);
         }
         return .false;
@@ -489,7 +478,7 @@ pub fn Bun__Process__send_(globalObject: *JSGlobalObject, callFrame: *JSC.CallFr
         if (callback.isFunction()) {
             Bun__Process__queueNextTick1(zigGlobal, callback, ex);
         } else {
-            const fnvalue = JSC.JSFunction.create(globalObject, "", S.impl, 1, .{});
+            const fnvalue = JSFunction.create(globalObject, "", S.impl, 1, .{});
             Bun__Process__queueNextTick1(zigGlobal, fnvalue, ex);
         }
     }
@@ -578,7 +567,7 @@ const WindowsOnly = struct {
 
 comptime {
     if (Environment.isWindows) {
-        @export(WindowsOnly.Bun__ZigGlobalObject__uvLoop, .{ .name = "Bun__ZigGlobalObject__uvLoop" });
+        @export(&WindowsOnly.Bun__ZigGlobalObject__uvLoop, .{ .name = "Bun__ZigGlobalObject__uvLoop" });
     }
 }
 
@@ -593,8 +582,8 @@ pub const ExitHandler = struct {
         vm.exit_handler.exit_code = code;
     }
 
-    extern fn Process__dispatchOnBeforeExit(*JSC.JSGlobalObject, code: u8) void;
-    extern fn Process__dispatchOnExit(*JSC.JSGlobalObject, code: u8) void;
+    extern fn Process__dispatchOnBeforeExit(*JSGlobalObject, code: u8) void;
+    extern fn Process__dispatchOnExit(*JSGlobalObject, code: u8) void;
     extern fn Bun__closeAllSQLiteDatabasesForTermination() void;
 
     pub fn dispatchOnExit(this: *ExitHandler) void {
@@ -777,9 +766,10 @@ pub const VirtualMachine = struct {
     console: *ConsoleObject,
     log: *logger.Log,
     main: string = "",
+    main_is_html_entrypoint: bool = false,
     main_resolved_path: bun.String = bun.String.empty,
     main_hash: u32 = 0,
-    process: js.JSObjectRef = null,
+    process: bun.JSC.C.JSObjectRef = null,
     entry_point: ServerEntryPoint = undefined,
     origin: URL = URL{},
     node_fs: ?*Node.NodeFS = null,
@@ -787,13 +777,13 @@ pub const VirtualMachine = struct {
     event_loop_handle: ?*PlatformEventLoop = null,
     pending_unref_counter: i32 = 0,
     preload: []const string = &[_][]const u8{},
-    unhandled_pending_rejection_to_capture: ?*JSC.JSValue = null,
+    unhandled_pending_rejection_to_capture: ?*JSValue = null,
     standalone_module_graph: ?*bun.StandaloneModuleGraph = null,
     smol: bool = false,
     dns_result_order: DNSResolver.Order = .verbatim,
 
     hot_reload: bun.CLI.Command.HotReload = .none,
-    jsc: *JSC.VM = undefined,
+    jsc: *VM = undefined,
 
     /// hide bun:wrap from stack traces
     /// bun:wrap is very noisy
@@ -873,7 +863,7 @@ pub const VirtualMachine = struct {
 
     rare_data: ?*JSC.RareData = null,
     is_us_loop_entered: bool = false,
-    pending_internal_promise: *JSC.JSInternalPromise = undefined,
+    pending_internal_promise: *JSInternalPromise = undefined,
     entry_point_result: struct {
         value: JSC.Strong = .{},
         cjs_set_value: bool = false,
@@ -907,7 +897,7 @@ pub const VirtualMachine = struct {
 
     is_inside_deferred_task_queue: bool = false,
 
-    pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
+    pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSGlobalObject, JSValue) void;
 
     pub const OnException = fn (*ZigException) void;
 
@@ -1102,11 +1092,11 @@ pub const VirtualMachine = struct {
         }
     };
 
-    pub fn onQuietUnhandledRejectionHandler(this: *VirtualMachine, _: *JSC.JSGlobalObject, _: JSC.JSValue) void {
+    pub fn onQuietUnhandledRejectionHandler(this: *VirtualMachine, _: *JSGlobalObject, _: JSValue) void {
         this.unhandled_error_counter += 1;
     }
 
-    pub fn onQuietUnhandledRejectionHandlerCaptureValue(this: *VirtualMachine, _: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+    pub fn onQuietUnhandledRejectionHandlerCaptureValue(this: *VirtualMachine, _: *JSGlobalObject, value: JSValue) void {
         this.unhandled_error_counter += 1;
         value.ensureStillAlive();
         if (this.unhandled_pending_rejection_to_capture) |ptr| {
@@ -1192,15 +1182,15 @@ pub const VirtualMachine = struct {
         }
     }
 
-    extern fn Bun__handleUncaughtException(*JSC.JSGlobalObject, err: JSC.JSValue, is_rejection: c_int) c_int;
-    extern fn Bun__handleUnhandledRejection(*JSC.JSGlobalObject, reason: JSC.JSValue, promise: JSC.JSValue) c_int;
-    extern fn Bun__Process__exit(*JSC.JSGlobalObject, code: c_int) noreturn;
+    extern fn Bun__handleUncaughtException(*JSGlobalObject, err: JSValue, is_rejection: c_int) c_int;
+    extern fn Bun__handleUnhandledRejection(*JSGlobalObject, reason: JSValue, promise: JSValue) c_int;
+    extern fn Bun__Process__exit(*JSGlobalObject, code: c_int) noreturn;
 
     export fn Bun__VirtualMachine__exitDuringUncaughtException(this: *JSC.VirtualMachine) void {
         this.exit_on_uncaught_exception = true;
     }
 
-    pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, reason: JSC.JSValue, promise: JSC.JSValue) bool {
+    pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObject, reason: JSValue, promise: JSValue) bool {
         if (this.isShuttingDown()) {
             Output.debugWarn("unhandledRejection during shutdown.", .{});
             return true;
@@ -1220,7 +1210,7 @@ pub const VirtualMachine = struct {
         return handled;
     }
 
-    pub fn uncaughtException(this: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, err: JSC.JSValue, is_rejection: bool) bool {
+    pub fn uncaughtException(this: *JSC.VirtualMachine, globalObject: *JSGlobalObject, err: JSValue, is_rejection: bool) bool {
         if (this.isShuttingDown()) {
             Output.debugWarn("uncaughtException during shutdown.", .{});
             return true;
@@ -1261,7 +1251,7 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn defaultOnUnhandledRejection(this: *JSC.VirtualMachine, _: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+    pub fn defaultOnUnhandledRejection(this: *JSC.VirtualMachine, _: *JSGlobalObject, value: JSValue) void {
         this.runErrorHandler(value, this.onUnhandledRejectionExceptionList);
     }
 
@@ -1270,7 +1260,7 @@ pub const VirtualMachine = struct {
     }
 
     pub fn garbageCollect(this: *const VirtualMachine, sync: bool) usize {
-        @setCold(true);
+        @branchHint(.cold);
         Global.mimalloc_cleanup(false);
         if (sync)
             return this.global.vm().runGC(true);
@@ -1405,10 +1395,10 @@ pub const VirtualMachine = struct {
     }
 
     comptime {
-        @export(scriptExecutionStatus, .{ .name = "Bun__VM__scriptExecutionStatus" });
-        @export(setEntryPointEvalResultESM, .{ .name = "Bun__VM__setEntryPointEvalResultESM" });
-        @export(setEntryPointEvalResultCJS, .{ .name = "Bun__VM__setEntryPointEvalResultCJS" });
-        @export(specifierIsEvalEntryPoint, .{ .name = "Bun__VM__specifierIsEvalEntryPoint" });
+        @export(&scriptExecutionStatus, .{ .name = "Bun__VM__scriptExecutionStatus" });
+        @export(&setEntryPointEvalResultESM, .{ .name = "Bun__VM__setEntryPointEvalResultESM" });
+        @export(&setEntryPointEvalResultCJS, .{ .name = "Bun__VM__setEntryPointEvalResultCJS" });
+        @export(&specifierIsEvalEntryPoint, .{ .name = "Bun__VM__specifierIsEvalEntryPoint" });
     }
 
     pub fn onExit(this: *VirtualMachine) void {
@@ -1516,7 +1506,7 @@ pub const VirtualMachine = struct {
 
         pub const Handle = opaque {
             extern "c" fn Bun__LifecycleAgentReportReload(agent: *Handle) void;
-            extern "c" fn Bun__LifecycleAgentReportError(agent: *Handle, exception: *JSC.ZigException) void;
+            extern "c" fn Bun__LifecycleAgentReportError(agent: *Handle, exception: *ZigException) void;
             extern "c" fn Bun__LifecycleAgentPreventExit(agent: *Handle) void;
             extern "c" fn Bun__LifecycleAgentStopPreventingExit(agent: *Handle) void;
 
@@ -1533,7 +1523,7 @@ pub const VirtualMachine = struct {
                 Bun__LifecycleAgentReportReload(this);
             }
 
-            pub fn reportError(this: *Handle, exception: *JSC.ZigException) void {
+            pub fn reportError(this: *Handle, exception: *ZigException) void {
                 debug("reportError", .{});
                 Bun__LifecycleAgentReportError(this, exception);
             }
@@ -1560,7 +1550,7 @@ pub const VirtualMachine = struct {
             }
         }
 
-        pub fn reportError(this: *LifecycleAgent, exception: *JSC.ZigException) void {
+        pub fn reportError(this: *LifecycleAgent, exception: *ZigException) void {
             if (this.handle) |handle| {
                 handle.reportError(exception);
             }
@@ -1595,9 +1585,9 @@ pub const VirtualMachine = struct {
 
         pub const log = Output.scoped(.debugger, false);
 
-        extern "C" fn Bun__createJSDebugger(*JSC.JSGlobalObject) u32;
-        extern "C" fn Bun__ensureDebugger(u32, bool) void;
-        extern "C" fn Bun__startJSDebuggerThread(*JSC.JSGlobalObject, u32, *bun.String, c_int, bool) void;
+        extern "c" fn Bun__createJSDebugger(*JSGlobalObject) u32;
+        extern "c" fn Bun__ensureDebugger(u32, bool) void;
+        extern "c" fn Bun__startJSDebuggerThread(*JSGlobalObject, u32, *bun.String, c_int, bool) void;
         var futex_atomic: std.atomic.Value(u32) = undefined;
 
         pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
@@ -1729,7 +1719,8 @@ pub const VirtualMachine = struct {
             vm.is_main_thread = false;
             vm.eventLoop().ensureWaker();
 
-            vm.global.vm().holdAPILock(other_vm, @ptrCast(&start));
+            const callback = OpaqueWrap(VirtualMachine, start);
+            vm.global.vm().holdAPILock(other_vm, callback);
         }
 
         pub export fn Debugger__didConnect() void {
@@ -1826,7 +1817,7 @@ pub const VirtualMachine = struct {
         this.eventLoop().waitForTasks();
     }
 
-    pub const MacroMap = std.AutoArrayHashMap(i32, js.JSObjectRef);
+    pub const MacroMap = std.AutoArrayHashMap(i32, bun.JSC.C.JSObjectRef);
 
     pub fn enableMacroMode(this: *VirtualMachine) void {
         JSC.markBinding(@src());
@@ -1944,7 +1935,7 @@ pub const VirtualMachine = struct {
         vm.transpiler.resolver.onWakePackageManager = .{
             .context = &vm.modules,
             .handler = ModuleLoader.AsyncModule.Queue.onWakeHandler,
-            .onDependencyError = JSC.ModuleLoader.AsyncModule.Queue.onDependencyError,
+            .onDependencyError = ModuleLoader.AsyncModule.Queue.onDependencyError,
         };
 
         vm.transpiler.resolver.standalone_module_graph = opts.graph.?;
@@ -2066,7 +2057,7 @@ pub const VirtualMachine = struct {
         vm.transpiler.resolver.onWakePackageManager = .{
             .context = &vm.modules,
             .handler = ModuleLoader.AsyncModule.Queue.onWakeHandler,
-            .onDependencyError = JSC.ModuleLoader.AsyncModule.Queue.onDependencyError,
+            .onDependencyError = ModuleLoader.AsyncModule.Queue.onDependencyError,
         };
 
         vm.transpiler.configureLinker();
@@ -2226,7 +2217,7 @@ pub const VirtualMachine = struct {
         vm.transpiler.resolver.onWakePackageManager = .{
             .context = &vm.modules,
             .handler = ModuleLoader.AsyncModule.Queue.onWakeHandler,
-            .onDependencyError = JSC.ModuleLoader.AsyncModule.Queue.onDependencyError,
+            .onDependencyError = ModuleLoader.AsyncModule.Queue.onDependencyError,
         };
         vm.transpiler.resolver.standalone_module_graph = opts.graph;
 
@@ -2321,7 +2312,7 @@ pub const VirtualMachine = struct {
         vm.transpiler.resolver.onWakePackageManager = .{
             .context = &vm.modules,
             .handler = ModuleLoader.AsyncModule.Queue.onWakeHandler,
-            .onDependencyError = JSC.ModuleLoader.AsyncModule.Queue.onDependencyError,
+            .onDependencyError = ModuleLoader.AsyncModule.Queue.onDependencyError,
         };
 
         vm.transpiler.configureLinker();
@@ -2411,7 +2402,7 @@ pub const VirtualMachine = struct {
 
     pub fn fetchWithoutOnLoadPlugins(
         jsc_vm: *VirtualMachine,
-        globalObject: *JSC.JSGlobalObject,
+        globalObject: *JSGlobalObject,
         _specifier: String,
         referrer: String,
         log: *logger.Log,
@@ -2728,7 +2719,7 @@ pub const VirtualMachine = struct {
             defer specifier_utf8.deinit();
             const source_utf8 = source.toUTF8(bun.default_allocator);
             defer source_utf8.deinit();
-            const printed = ResolveMessage.fmt(
+            const printed = JSC.ResolveMessage.fmt(
                 bun.default_allocator,
                 specifier_utf8.slice(),
                 source_utf8.slice(),
@@ -2741,7 +2732,7 @@ pub const VirtualMachine = struct {
                     printed,
                 ),
             };
-            res.* = ErrorableString.err(error.NameTooLong, ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice()).asVoid());
+            res.* = ErrorableString.err(error.NameTooLong, JSC.ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice()).asVoid());
             return;
         }
 
@@ -2809,7 +2800,7 @@ pub const VirtualMachine = struct {
                     }
                 }
 
-                const printed = ResolveMessage.fmt(
+                const printed = JSC.ResolveMessage.fmt(
                     jsc_vm.allocator,
                     specifier_utf8.slice(),
                     source_utf8.slice(),
@@ -2829,7 +2820,7 @@ pub const VirtualMachine = struct {
             };
 
             {
-                res.* = ErrorableString.err(err, ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice()).asVoid());
+                res.* = ErrorableString.err(err, JSC.ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice()).asVoid());
             }
 
             return;
@@ -2867,7 +2858,7 @@ pub const VirtualMachine = struct {
                     };
                 };
                 {
-                    ret.* = ErrorableResolvedSource.err(err, BuildMessage.create(globalThis, globalThis.allocator(), msg).asVoid());
+                    ret.* = ErrorableResolvedSource.err(err, JSC.BuildMessage.create(globalThis, globalThis.allocator(), msg).asVoid());
                 }
                 return;
             },
@@ -2875,8 +2866,8 @@ pub const VirtualMachine = struct {
             1 => {
                 const msg = log.msgs.items[0];
                 ret.* = ErrorableResolvedSource.err(err, switch (msg.metadata) {
-                    .build => BuildMessage.create(globalThis, globalThis.allocator(), msg).asVoid(),
-                    .resolve => ResolveMessage.create(
+                    .build => JSC.BuildMessage.create(globalThis, globalThis.allocator(), msg).asVoid(),
+                    .resolve => JSC.ResolveMessage.create(
                         globalThis,
                         globalThis.allocator(),
                         msg,
@@ -2894,8 +2885,8 @@ pub const VirtualMachine = struct {
 
                 for (logs, errors) |msg, *current| {
                     current.* = switch (msg.metadata) {
-                        .build => BuildMessage.create(globalThis, globalThis.allocator(), msg),
-                        .resolve => ResolveMessage.create(
+                        .build => JSC.BuildMessage.create(globalThis, globalThis.allocator(), msg),
+                        .resolve => JSC.ResolveMessage.create(
                             globalThis,
                             globalThis.allocator(),
                             msg,
@@ -2967,7 +2958,7 @@ pub const VirtualMachine = struct {
     }
 
     pub noinline fn runErrorHandler(this: *VirtualMachine, result: JSValue, exception_list: ?*ExceptionList) void {
-        @setCold(true);
+        @branchHint(.cold);
         if (!result.isEmptyOrUndefinedOrNull())
             this.last_reported_error_for_dedupe = result;
 
@@ -3007,7 +2998,7 @@ pub const VirtualMachine = struct {
         }
     }
 
-    export fn Bun__logUnhandledException(exception: JSC.JSValue) void {
+    export fn Bun__logUnhandledException(exception: JSValue) void {
         get().runErrorHandler(exception, null);
     }
 
@@ -3108,6 +3099,8 @@ pub const VirtualMachine = struct {
         }
     }
 
+    extern fn Bun__loadHTMLEntryPoint(global: *JSGlobalObject) *JSInternalPromise;
+
     pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
         this.has_loaded = false;
         this.main = entry_path;
@@ -3115,30 +3108,35 @@ pub const VirtualMachine = struct {
 
         try this.ensureDebugger(true);
 
-        try this.entry_point.generate(
-            this.allocator,
-            this.bun_watcher != .none,
-            entry_path,
-            main_file_name,
-        );
-        this.eventLoop().ensureWaker();
+        if (!this.main_is_html_entrypoint) {
+            try this.entry_point.generate(
+                this.allocator,
+                this.bun_watcher != .none,
+                entry_path,
+                main_file_name,
+            );
+        }
 
         if (!this.transpiler.options.disable_transpilation) {
             if (try this.loadPreloads()) |promise| {
-                JSC.JSValue.fromCell(promise).ensureStillAlive();
-                JSC.JSValue.fromCell(promise).protect();
+                JSValue.fromCell(promise).ensureStillAlive();
+                JSValue.fromCell(promise).protect();
                 this.pending_internal_promise = promise;
                 return promise;
             }
 
-            const promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(main_file_name)) orelse return error.JSError;
+            const promise = if (!this.main_is_html_entrypoint)
+                JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(main_file_name)) orelse return error.JSError
+            else
+                Bun__loadHTMLEntryPoint(this.global);
+
             this.pending_internal_promise = promise;
-            JSC.JSValue.fromCell(promise).ensureStillAlive();
+            JSValue.fromCell(promise).ensureStillAlive();
             return promise;
         } else {
             const promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.fromBytes(this.main)) orelse return error.JSError;
             this.pending_internal_promise = promise;
-            JSC.JSValue.fromCell(promise).ensureStillAlive();
+            JSValue.fromCell(promise).ensureStillAlive();
 
             return promise;
         }
@@ -3155,9 +3153,9 @@ pub const VirtualMachine = struct {
 
         if (!this.transpiler.options.disable_transpilation) {
             if (try this.loadPreloads()) |promise| {
-                JSC.JSValue.fromCell(promise).ensureStillAlive();
+                JSValue.fromCell(promise).ensureStillAlive();
                 this.pending_internal_promise = promise;
-                JSC.JSValue.fromCell(promise).protect();
+                JSValue.fromCell(promise).protect();
 
                 return promise;
             }
@@ -3165,7 +3163,7 @@ pub const VirtualMachine = struct {
 
         const promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.fromBytes(this.main)) orelse return error.JSError;
         this.pending_internal_promise = promise;
-        JSC.JSValue.fromCell(promise).ensureStillAlive();
+        JSValue.fromCell(promise).ensureStillAlive();
 
         return promise;
     }
@@ -3393,7 +3391,7 @@ pub const VirtualMachine = struct {
 
     fn printErrorFromMaybePrivateData(
         this: *VirtualMachine,
-        value: JSC.JSValue,
+        value: JSValue,
         exception_list: ?*ExceptionList,
         formatter: *ConsoleObject.Formatter,
         comptime Writer: type,
@@ -3462,7 +3460,7 @@ pub const VirtualMachine = struct {
         return false;
     }
 
-    pub fn reportUncaughtException(globalObject: *JSGlobalObject, exception: *JSC.Exception) JSValue {
+    pub fn reportUncaughtException(globalObject: *JSGlobalObject, exception: *Exception) JSValue {
         var jsc_vm = globalObject.bunVM();
         _ = jsc_vm.uncaughtException(globalObject, exception.value(), false);
         return .undefined;
@@ -3553,7 +3551,7 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub export fn Bun__remapStackFramePositions(globalObject: *JSC.JSGlobalObject, frames: [*]JSC.ZigStackFrame, frames_count: usize) void {
+    pub export fn Bun__remapStackFramePositions(globalObject: *JSGlobalObject, frames: [*]JSC.ZigStackFrame, frames_count: usize) void {
         globalObject.bunVM().remapStackFramePositions(frames, frames_count);
     }
 
@@ -3764,11 +3762,11 @@ pub const VirtualMachine = struct {
             if (strings.getLinesInText(
                 code.slice(),
                 @intCast(last_line),
-                JSC.ZigException.Holder.source_lines_count,
+                ZigException.Holder.source_lines_count,
             )) |lines_buf| {
                 var lines = lines_buf.slice();
-                var source_lines = exception.stack.source_lines_ptr[0..JSC.ZigException.Holder.source_lines_count];
-                var source_line_numbers = exception.stack.source_lines_numbers[0..JSC.ZigException.Holder.source_lines_count];
+                var source_lines = exception.stack.source_lines_ptr[0..ZigException.Holder.source_lines_count];
+                var source_line_numbers = exception.stack.source_lines_numbers[0..ZigException.Holder.source_lines_count];
                 @memset(source_lines, String.empty);
                 @memset(source_line_numbers, 0);
 
@@ -4007,7 +4005,7 @@ pub const VirtualMachine = struct {
         }
 
         // This is usually unsafe to do, but we are protecting them each time first
-        var errors_to_append = std.ArrayList(JSC.JSValue).init(this.allocator);
+        var errors_to_append = std.ArrayList(JSValue).init(this.allocator);
         defer {
             for (errors_to_append.items) |err| {
                 err.unprotect();
@@ -4211,8 +4209,8 @@ pub const VirtualMachine = struct {
 
     // In Github Actions, emit an annotation that renders the error and location.
     // https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#setting-an-error-message
-    pub noinline fn printGithubAnnotation(exception: *JSC.ZigException) void {
-        @setCold(true);
+    pub noinline fn printGithubAnnotation(exception: *ZigException) void {
+        @branchHint(.cold);
         const name = exception.name;
         const message = exception.message;
         const frames = exception.stack.frames();
@@ -4437,7 +4435,7 @@ pub const VirtualMachine = struct {
             this.destroy();
         }
 
-        extern fn Bun__setChannelRef(*JSC.JSGlobalObject, bool) void;
+        extern fn Bun__setChannelRef(*JSGlobalObject, bool) void;
 
         export fn Bun__closeChildIPC(global: *JSGlobalObject) void {
             if (global.bunVM().ipc) |*current_ipc| {
@@ -4533,8 +4531,8 @@ pub const VirtualMachine = struct {
     }
 };
 
-pub const HotReloader = NewHotReloader(VirtualMachine, JSC.EventLoop, false);
-pub const WatchReloader = NewHotReloader(VirtualMachine, JSC.EventLoop, true);
+pub const HotReloader = NewHotReloader(VirtualMachine, EventLoop, false);
+pub const WatchReloader = NewHotReloader(VirtualMachine, EventLoop, true);
 extern fn BunDebugger__willHotReload() void;
 
 pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime reload_immediately: bool) type {
@@ -4751,7 +4749,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 } else {
                     return this.ctx.bun_watcher.hot;
                 }
-            } else if (@typeInfo(@TypeOf(this.ctx.bun_watcher)) == .Optional) {
+            } else if (@typeInfo(@TypeOf(this.ctx.bun_watcher)) == .optional) {
                 return this.ctx.bun_watcher.?;
             } else {
                 return this.ctx.bun_watcher;
@@ -4964,11 +4962,10 @@ pub var synthetic_allocation_limit: usize = std.math.maxInt(u32);
 pub var string_allocation_limit: usize = std.math.maxInt(u32);
 
 comptime {
-    @export(synthetic_allocation_limit, .{ .name = "Bun__syntheticAllocationLimit" });
-    @export(string_allocation_limit, .{ .name = "Bun__stringSyntheticAllocationLimit" });
+    @export(&string_allocation_limit, .{ .name = "Bun__stringSyntheticAllocationLimit" });
 }
 
-pub fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+pub fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const args = callframe.arguments_old(1).slice();
     if (args.len < 1) {
         return globalObject.throwNotEnoughArguments("setSyntheticAllocationLimitForTesting", 1, args.len);

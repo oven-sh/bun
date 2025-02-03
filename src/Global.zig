@@ -170,13 +170,13 @@ pub inline fn configureAllocator(_: AllocatorConfiguration) void {
 }
 
 pub fn notimpl() noreturn {
-    @setCold(true);
+    @branchHint(.cold);
     Output.panic("Not implemented yet!!!!!", .{});
 }
 
 // Make sure we always print any leftover
 pub fn crash() noreturn {
-    @setCold(true);
+    @branchHint(.cold);
     Global.exit(1);
 }
 

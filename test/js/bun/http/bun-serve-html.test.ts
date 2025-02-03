@@ -716,3 +716,56 @@ test("wildcard static routes", async () => {
     }
   }
 });
+
+test("serve html with JSX runtime in development mode", async () => {
+  const dir = join(import.meta.dir, "jsx-runtime");
+  const { default: html } = await import(join(dir, "index.html"));
+
+  using server = Bun.serve({
+    port: 0,
+    development: true,
+    static: {
+      "/": html,
+    },
+    fetch(req) {
+      return new Response("Not found", { status: 404 });
+    },
+  });
+
+  const response = await fetch(server.url);
+  expect(response.status).toBe(200);
+  const htmlText = await response.text();
+  const jsSrc = htmlText.match(/<script type="module" crossorigin src="([^"]+)"/)?.[1]!;
+  const js = await (await fetch(new URL(jsSrc, server.url))).text();
+
+  // Development mode should use jsxDEV
+  expect(js).toContain("jsx_dev_runtime.jsxDEV");
+  expect(js).not.toContain("jsx_runtime.jsx");
+});
+
+test("serve html with JSX runtime in production mode", async () => {
+  const dir = join(import.meta.dir, "jsx-runtime");
+  const { default: html } = await import(join(dir, "index.html"));
+
+  using server = Bun.serve({
+    port: 0,
+    development: false,
+    static: {
+      "/": html,
+    },
+    fetch(req) {
+      return new Response("Not found", { status: 404 });
+    },
+  });
+
+  const response = await fetch(server.url);
+  expect(response.status).toBe(200);
+  const htmlText = await response.text();
+  const jsSrc = htmlText.match(/<script type="module" crossorigin src="([^"]+)"/)?.[1]!;
+  const js = await (await fetch(new URL(jsSrc, server.url))).text();
+  // jsxDEV looks like this:
+  //  jsxDEV("button", {
+  //    children: "Click me"
+  //  }, undefined, false, undefined, this)
+  expect(js).toContain(`bt("h1",{children:"Hello from JSX"})`);
+});

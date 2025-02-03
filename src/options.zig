@@ -1580,13 +1580,17 @@ pub const BundleOptions = struct {
 
     supports_multiple_outputs: bool = true,
 
+    force_development: ?bool = null,
+
     pub fn isTest(this: *const BundleOptions) bool {
         return this.rewrite_jest_for_tests;
     }
 
     pub fn setProduction(this: *BundleOptions, value: bool) void {
-        this.production = value;
-        this.jsx.development = !value;
+        if (this.force_development == null) {
+            this.production = value;
+            this.jsx.development = !value;
+        }
     }
 
     pub const default_unwrap_commonjs_packages = [_]string{

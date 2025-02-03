@@ -58,6 +58,7 @@ pub const JSBundler = struct {
         rootdir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         serve: Serve = .{},
         jsx: options.JSX.Pragma = .{},
+        force_development: bool = false,
         code_splitting: bool = false,
         minify: Minify = .{},
         no_macros: bool = false,

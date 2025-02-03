@@ -913,7 +913,10 @@ pub const BundleV2 = struct {
         task.tree_shaking = this.linker.options.tree_shaking;
         task.is_entry_point = is_entry_point;
         task.known_target = target;
-        task.jsx.development = this.bundlerForTarget(target).options.jsx.development;
+        {
+            const bundler = this.bundlerForTarget(target);
+            task.jsx.development = bundler.options.force_development orelse bundler.options.jsx.development;
+        }
 
         // Handle onLoad plugins as entry points
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
@@ -1753,6 +1756,9 @@ pub const BundleV2 = struct {
             );
             transpiler.options.env.behavior = config.env_behavior;
             transpiler.options.env.prefix = config.env_prefix.slice();
+            if (config.force_development) {
+                transpiler.options.force_development = true;
+            }
 
             transpiler.options.entry_points = config.entry_points.keys();
             transpiler.options.jsx = config.jsx;
@@ -2875,7 +2881,11 @@ pub const BundleV2 = struct {
             resolve_task.secondary_path_for_commonjs_interop = secondary_path_to_copy;
             resolve_task.known_target = target;
             resolve_task.jsx = resolve_result.jsx;
-            resolve_task.jsx.development = this.bundlerForTarget(target).options.jsx.development;
+
+            {
+                const bundler = this.bundlerForTarget(target);
+                resolve_task.jsx.development = bundler.options.force_development orelse bundler.options.jsx.development;
+            }
 
             // Figure out the loader.
             {

@@ -105,9 +105,8 @@ describe("bun build", () => {
     expect(exitCode2).toBe(0);
 
     // bunx
-    // Bun.$``.nothrow
     const srcX = path.join(tmp, "indexx.js");
-    fs.writeFileSync(srcX, 'console.log(await Bun.$`bunx cowsay hi`.text());', {
+    fs.writeFileSync(srcX, "console.log(await Bun.$`bunx cowsay hi`.text());", {
       encoding: "utf8",
     });
     const outfileX = path.join(tmp, "indexx.exe");

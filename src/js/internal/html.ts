@@ -1,6 +1,6 @@
 // This is the file that loads when you pass a, .html entry point to Bun.
 import type { HTMLBundle, Server } from "bun";
-const initital = performance.now();
+const initial = performance.now();
 const argv = process.argv;
 
 // `import` cannot be used in this file and only Bun builtin modules can be used.
@@ -243,7 +243,7 @@ yourself with Bun.serve().
       throw error;
     }
   }
-  const elapsed = (performance.now() - initital).toFixed(2);
+  const elapsed = (performance.now() - initial).toFixed(2);
   const enableANSIColors = Bun.enableANSIColors;
   function printInitialMessage(isFirst: boolean) {
     if (enableANSIColors) {

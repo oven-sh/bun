@@ -174,7 +174,7 @@ public:
 
     bool inGC() const
     {
-        JSC::VM& vm = m_globalObject->vm();
+        JSC::VM& vm = JSC::getVM(m_globalObject);
         return vm.isCollectorBusyOnCurrentThread();
     }
 
@@ -189,7 +189,7 @@ public:
 
     bool isVMTerminating() const
     {
-        return m_globalObject->vm().hasTerminationRequest();
+        return JSC::getVM(m_globalObject).hasTerminationRequest();
     }
 
     void doFinalizer(napi_finalize finalize_cb, void* data, void* finalize_hint)

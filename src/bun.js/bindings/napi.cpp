@@ -303,7 +303,7 @@ public:
         // TODO change to global? or find another way to avoid JSGlobalProxy
         JSC::JSObject* jscThis = globalObject->globalThis();
         if (!m_callFrame->thisValue().isUndefinedOrNull()) {
-            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+            auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
             jscThis = m_callFrame->thisValue().toObject(globalObject);
             // https://tc39.es/ecma262/#sec-toobject
             // toObject only throws for undefined and null, which we checked for
@@ -383,7 +383,7 @@ private:
 static void defineNapiProperty(napi_env env, JSC::JSObject* to, napi_property_descriptor property, bool isInstance, JSC::ThrowScope& scope)
 {
     Zig::GlobalObject* globalObject = env->globalObject();
-    JSC::VM& vm = globalObject->vm();
+    JSC::VM& vm = JSC::getVM(globalObject);
     void* dataPtr = property.data;
 
     auto getPropertyName = [&]() -> JSC::Identifier {
@@ -428,7 +428,7 @@ static void defineNapiProperty(napi_env env, JSC::JSObject* to, napi_property_de
             getter = NapiClass::create(vm, env, name, property.getter, dataPtr, 0, nullptr);
         } else {
             JSC::JSNativeStdFunction* getterFunction = JSC::JSNativeStdFunction::create(
-                globalObject->vm(), globalObject, 0, String(), [](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
+                JSC::getVM(globalObject), globalObject, 0, String(), [](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
                     return JSValue::encode(JSC::jsUndefined());
                 });
             getter = getterFunction;
@@ -626,7 +626,7 @@ extern "C" napi_status napi_set_named_property(napi_env env, napi_value object,
     NAPI_CHECK_ARG(env, value);
 
     auto globalObject = toJS(env);
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto target = toJS(object).toObject(globalObject);
     NAPI_RETURN_IF_EXCEPTION(env);
 
@@ -653,7 +653,7 @@ extern "C" napi_status napi_create_arraybuffer(napi_env env,
     NAPI_CHECK_ARG(env, result);
 
     Zig::GlobalObject* globalObject = toJS(env);
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
 
     // Node probably doesn't create uninitialized array buffers
     // but the node-api docs don't specify whether memory is initialized or not.
@@ -693,7 +693,7 @@ extern "C" napi_status napi_has_named_property(napi_env env, napi_value object,
     NAPI_CHECK_ARG(env, result);
 
     auto globalObject = toJS(env);
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
 
     JSObject* target = toJS(object).toObject(globalObject);
     NAPI_RETURN_IF_EXCEPTION(env);
@@ -714,7 +714,7 @@ extern "C" napi_status napi_get_named_property(napi_env env, napi_value object,
     NAPI_CHECK_ARG(env, result);
 
     auto globalObject = toJS(env);
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
 
     JSObject* target = toJS(object).toObject(globalObject);
     NAPI_RETURN_IF_EXCEPTION(env);
@@ -750,7 +750,7 @@ node_api_create_external_string_latin1(napi_env env,
     });
     Zig::GlobalObject* globalObject = toJS(env);
 
-    JSString* out = JSC::jsString(globalObject->vm(), WTF::String(impl.get()));
+    JSString* out = JSC::jsString(JSC::getVM(globalObject), WTF::String(impl.get()));
     ensureStillAliveHere(out);
     *result = toNapi(out, globalObject);
     ensureStillAliveHere(out);
@@ -787,7 +787,7 @@ node_api_create_external_string_utf16(napi_env env,
     });
     Zig::GlobalObject* globalObject = toJS(env);
 
-    JSString* out = JSC::jsString(globalObject->vm(), WTF::String(impl.get()));
+    JSString* out = JSC::jsString(JSC::getVM(globalObject), WTF::String(impl.get()));
     ensureStillAliveHere(out);
     *result = toNapi(out, globalObject);
     ensureStillAliveHere(out);
@@ -799,7 +799,7 @@ extern "C" void napi_module_register(napi_module* mod)
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject();
     napi_env env = globalObject->makeNapiEnv(*mod);
-    JSC::VM& vm = globalObject->vm();
+    JSC::VM& vm = JSC::getVM(globalObject);
     auto keyStr = WTF::String::fromUTF8(mod->nm_modname);
     globalObject->napiModuleRegisterCallCount++;
     Bun__napi_module_register_count++;
@@ -912,7 +912,7 @@ extern "C" napi_status napi_wrap(napi_env env,
     NAPI_CHECK_ARG(env, js_object);
 
     auto* globalObject = toJS(env);
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     JSValue jsc_value = toJS(js_object);
     JSObject* jsc_object = jsc_value.getObject();
     NAPI_RETURN_EARLY_IF_FALSE(env, jsc_object, napi_object_expected);
@@ -937,7 +937,7 @@ extern "C" napi_status napi_wrap(napi_env env,
         napi_instance->napiRef = ref;
     } else {
         // wrap the ref in an external so that it can serve as a JSValue
-        auto* external = Bun::NapiExternal::create(globalObject->vm(), globalObject->NapiExternalStructure(), ref, nullptr, env, nullptr);
+        auto* external = Bun::NapiExternal::create(JSC::getVM(globalObject), globalObject->NapiExternalStructure(), ref, nullptr, env, nullptr);
         jsc_object->putDirect(vm, propertyName, JSValue(external));
     }
 
@@ -964,7 +964,7 @@ extern "C" napi_status napi_remove_wrap(napi_env env, napi_value js_object,
     auto* napi_instance = jsDynamicCast<NapiPrototype*>(jsc_object);
 
     Zig::GlobalObject* globalObject = toJS(env);
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     NapiRef* ref = getWrapContentsIfExists(vm, globalObject, jsc_object);
     NAPI_RETURN_EARLY_IF_FALSE(env, ref, napi_invalid_arg);
 
@@ -999,7 +999,7 @@ extern "C" napi_status napi_unwrap(napi_env env, napi_value js_object,
     NAPI_RETURN_EARLY_IF_FALSE(env, jsc_object, napi_object_expected);
 
     Zig::GlobalObject* globalObject = toJS(env);
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     NapiRef* ref = getWrapContentsIfExists(vm, globalObject, jsc_object);
     NAPI_RETURN_EARLY_IF_FALSE(env, ref, napi_invalid_arg);
 
@@ -1017,7 +1017,7 @@ extern "C" napi_status napi_create_function(napi_env env, const char* utf8name,
     NAPI_CHECK_ARG(env, cb);
 
     Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
+    JSC::VM& vm = JSC::getVM(globalObject);
     auto name = WTF::String();
 
     if (utf8name != nullptr) {
@@ -1060,7 +1060,7 @@ napi_define_properties(napi_env env, napi_value object, size_t property_count,
     NAPI_RETURN_EARLY_IF_FALSE(env, properties || property_count == 0, napi_invalid_arg);
 
     Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
+    JSC::VM& vm = JSC::getVM(globalObject);
 
     JSValue objectValue = toJS(object);
     JSC::JSObject* objectObject = objectValue.getObject();
@@ -1084,10 +1084,10 @@ static JSC::ErrorInstance* createErrorWithCode(JSC::JSGlobalObject* globalObject
     // return the right error code
     ASSERT(!message.isNull());
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
 
     // we don't call JSC::createError() as it asserts the message is not an empty string ""
-    auto* error = JSC::ErrorInstance::create(globalObject->vm(), globalObject->errorStructure(type), message, JSValue(), nullptr, RuntimeType::TypeNothing, type);
+    auto* error = JSC::ErrorInstance::create(JSC::getVM(globalObject), globalObject->errorStructure(type), message, JSValue(), nullptr, RuntimeType::TypeNothing, type);
     if (!code.isNull()) {
         error->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), JSC::jsString(vm, code), 0);
     }
@@ -1099,7 +1099,7 @@ static JSC::ErrorInstance* createErrorWithCode(JSC::JSGlobalObject* globalObject
 static napi_status throwErrorWithCStrings(napi_env env, const char* code_utf8, const char* msg_utf8, JSC::ErrorType type)
 {
     auto* globalObject = toJS(env);
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (!msg_utf8) {
@@ -1120,7 +1120,7 @@ static napi_status throwErrorWithCStrings(napi_env env, const char* code_utf8, c
 static napi_status createErrorWithNapiValues(napi_env env, napi_value code, napi_value message, JSC::ErrorType type, napi_value* result)
 {
     auto* globalObject = toJS(env);
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     RETURN_IF_EXCEPTION(scope, napi_pending_exception);
 
@@ -1182,7 +1182,7 @@ extern "C" void napi_set_ref(NapiRef* ref, JSC__JSValue val_)
     NAPI_LOG_CURRENT_FUNCTION;
     JSC::JSValue val = JSC::JSValue::decode(val_);
     if (val) {
-        ref->strongRef.set(ref->globalObject->vm(), val);
+        ref->strongRef.set(JSC::getVM(&*ref->globalObject), val);
     } else {
         ref->strongRef.clear();
     }
@@ -1199,7 +1199,7 @@ extern "C" napi_status napi_add_finalizer(napi_env env, napi_value js_object,
     NAPI_CHECK_ARG(env, js_object);
     NAPI_CHECK_ARG(env, finalize_cb);
     Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
+    JSC::VM& vm = JSC::getVM(globalObject);
 
     JSC::JSValue objectValue = toJS(js_object);
     JSC::JSObject* object = objectValue.getObject();
@@ -1312,7 +1312,7 @@ extern "C" napi_status napi_detach_arraybuffer(napi_env env,
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
+    JSC::VM& vm = JSC::getVM(globalObject);
 
     JSC::JSArrayBuffer* jsArrayBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(toJS(arraybuffer));
     NAPI_RETURN_EARLY_IF_FALSE(env, jsArrayBuffer, napi_arraybuffer_expected);
@@ -1347,7 +1347,7 @@ extern "C" napi_status napi_is_exception_pending(napi_env env, bool* result)
     NAPI_CHECK_ARG(env, result);
 
     auto globalObject = toJS(env);
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     *result = scope.exception() != nullptr;
     // skip macros as they assume we made a throw scope in the preamble
     return napi_set_last_error(env, napi_ok);
@@ -1364,7 +1364,7 @@ extern "C" napi_status napi_get_and_clear_last_exception(napi_env env,
     }
 
     auto globalObject = toJS(env);
-    auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
+    auto scope = DECLARE_CATCH_SCOPE(JSC::getVM(globalObject));
     if (scope.exception()) {
         *result = toNapi(JSValue(scope.exception()->value()), globalObject);
     } else {
@@ -1394,7 +1394,7 @@ extern "C" napi_status napi_throw(napi_env env, napi_value error)
 {
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
     auto globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
+    JSC::VM& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     JSValue value = toJS(error);
@@ -1416,7 +1416,7 @@ extern "C" napi_status node_api_symbol_for(napi_env env,
     NAPI_CHECK_ARG(env, result);
 
     auto* globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
+    JSC::VM& vm = JSC::getVM(globalObject);
 
     if (utf8description == nullptr) {
         if (length == 0) {
@@ -1489,7 +1489,7 @@ extern "C" napi_status napi_object_freeze(napi_env env, napi_value object_value)
     NAPI_RETURN_EARLY_IF_FALSE(env, value.isObject(), napi_object_expected);
 
     Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
+    JSC::VM& vm = JSC::getVM(globalObject);
 
     JSC::JSObject* object = JSC::jsCast<JSC::JSObject*>(value);
     // TODO is this check necessary?
@@ -1507,7 +1507,7 @@ extern "C" napi_status napi_object_seal(napi_env env, napi_value object_value)
     NAPI_RETURN_EARLY_IF_FALSE(env, value.isObject(), napi_object_expected);
 
     Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
+    JSC::VM& vm = JSC::getVM(globalObject);
 
     JSC::JSObject* object = JSC::jsCast<JSC::JSObject*>(value);
     // TODO is this check necessary?
@@ -1563,7 +1563,7 @@ extern "C" napi_status napi_create_dataview(napi_env env, size_t length,
 {
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
     Zig::GlobalObject* globalObject = toJS(env);
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
     NAPI_CHECK_ARG(env, arraybuffer);
     NAPI_CHECK_ARG(env, result);
@@ -1683,7 +1683,7 @@ DEFINE_VISIT_CHILDREN(NapiClass);
 template<bool ConstructCall>
 JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
-    JSC::VM& vm = globalObject->vm();
+    JSC::VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* constructorTarget = asObject(callFrame->jsCallee());
     NapiClass* napi = jsDynamicCast<NapiClass*>(constructorTarget);
@@ -1823,7 +1823,7 @@ extern "C" napi_status napi_get_all_property_names(
     constexpr auto filter_by_any_descriptor = static_cast<napi_key_filter>(napi_key_enumerable | napi_key_writable | napi_key_configurable);
     // avoid expensive iteration if they don't care whether keys are enumerable, writable, or configurable
     if (key_filter & filter_by_any_descriptor) {
-        JSArray* filteredKeys = JSArray::create(globalObject->vm(), globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous), 0);
+        JSArray* filteredKeys = JSArray::create(JSC::getVM(globalObject), globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous), 0);
         for (unsigned i = 0; i < exportKeys->getArrayLength(); i++) {
             JSValue key = exportKeys->get(globalObject, i);
             PropertyDescriptor desc;
@@ -1832,7 +1832,7 @@ extern "C" napi_status napi_get_all_property_names(
                 // Climb up the prototype chain to find inherited properties
                 JSObject* current_object = object;
                 while (!current_object->getOwnPropertyDescriptor(globalObject, key.toPropertyKey(globalObject), desc)) {
-                    JSObject* proto = current_object->getPrototype(globalObject->vm(), globalObject).getObject();
+                    JSObject* proto = current_object->getPrototype(JSC::getVM(globalObject), globalObject).getObject();
                     if (!proto) {
                         break;
                     }
@@ -1880,7 +1880,7 @@ extern "C" napi_status napi_define_class(napi_env env,
     NAPI_RETURN_EARLY_IF_FALSE(env, properties || property_count == 0, napi_invalid_arg);
 
     Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
+    JSC::VM& vm = JSC::getVM(globalObject);
     size_t len = length;
     if (len == NAPI_AUTO_LENGTH) {
         len = strlen(utf8name);
@@ -2020,7 +2020,7 @@ extern "C" napi_status napi_create_external_arraybuffer(napi_env env, void* exte
     NAPI_CHECK_ARG(env, result);
 
     Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
+    JSC::VM& vm = JSC::getVM(globalObject);
 
     auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(external_data), byte_length }, createSharedTask<void(void*)>([env, finalize_hint, finalize_cb](void* p) {
         NAPI_LOG("external ArrayBuffer finalizer");
@@ -2241,7 +2241,7 @@ extern "C" napi_status napi_create_object(napi_env env, napi_value* result)
     NAPI_CHECK_ARG(env, result);
 
     Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
+    JSC::VM& vm = JSC::getVM(globalObject);
 
     JSValue value = JSValue(NapiPrototype::create(vm, globalObject->NapiPrototypeStructure()));
 
@@ -2260,7 +2260,7 @@ extern "C" napi_status napi_create_external(napi_env env, void* data,
     NAPI_CHECK_ARG(env, result);
 
     Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
+    JSC::VM& vm = JSC::getVM(globalObject);
 
     auto* structure = globalObject->NapiExternalStructure();
     JSValue value = Bun::NapiExternal::create(vm, structure, data, finalize_hint, env, finalize_cb);
@@ -2492,7 +2492,7 @@ extern "C" napi_status napi_run_script(napi_env env, napi_value script,
 
     Zig::GlobalObject* globalObject = toJS(env);
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     WTF::String code = scriptValue.getString(globalObject);
@@ -2540,7 +2540,7 @@ extern "C" napi_status napi_create_bigint_words(napi_env env,
     NAPI_RETURN_EARLY_IF_FALSE(env, word_count <= UINT_MAX, napi_invalid_arg);
 
     Zig::GlobalObject* globalObject = toJS(env);
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
 
     // we check INT_MAX here because it won't reject any bigints that should be able to be created
     // (as the true limit is much lower), and one Node.js test expects an exception instead of
@@ -2591,7 +2591,7 @@ extern "C" napi_status napi_create_symbol(napi_env env, napi_value description,
     NAPI_CHECK_ARG(env, result);
 
     Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
+    JSC::VM& vm = JSC::getVM(globalObject);
 
     JSC::JSValue descriptionValue = toJS(description);
     if (descriptionValue && !descriptionValue.isUndefinedOrNull()) {
@@ -2627,7 +2627,7 @@ extern "C" napi_status napi_new_instance(napi_env env, napi_value constructor,
     NAPI_RETURN_EARLY_IF_FALSE(env, constructData.type != JSC::CallData::Type::None, napi_function_expected);
 
     Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
+    JSC::VM& vm = JSC::getVM(globalObject);
 
     JSC::MarkedArgumentBuffer args;
     args.fill(vm, argc, [&](JSValue* buffer) {
@@ -2650,7 +2650,7 @@ extern "C" napi_status napi_instanceof(napi_env env, napi_value object, napi_val
     JSValue constructorValue = toJS(constructor);
     JSC::JSObject* constructorObject = constructorValue.getObject();
 
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
 
     if (!constructorObject || !constructorValue.isConstructor()) {
         throwVMError(globalObject, scope, JSC::createTypeError(globalObject, "Constructor must be a function"_s));
@@ -2679,7 +2679,7 @@ extern "C" napi_status napi_call_function(napi_env env, napi_value recv_napi,
     NAPI_RETURN_EARLY_IF_FALSE(env, callData.type != JSC::CallData::Type::None, napi_function_expected);
 
     Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
+    JSC::VM& vm = JSC::getVM(globalObject);
 
     JSC::MarkedArgumentBuffer args;
     args.fill(vm, argc, [&](JSValue* buffer) {
@@ -2715,7 +2715,7 @@ extern "C" napi_status napi_type_tag_object(napi_env env, napi_value value, cons
     // cannot tag an object that is already tagged
     NAPI_RETURN_EARLY_IF_FALSE(env, existing_tag == nullptr, napi_invalid_arg);
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto* new_tag = Bun::NapiTypeTag::create(vm, globalObject->NapiTypeTagStructure(), *type_tag);
     globalObject->napiTypeTags()->set(vm, js_object, new_tag);
     NAPI_RETURN_SUCCESS(env);
@@ -2782,7 +2782,7 @@ extern "C" JS_EXPORT napi_status node_api_create_buffer_from_arraybuffer(napi_en
     NAPI_RETURN_EARLY_IF_FALSE(env, jsArrayBuffer, napi_arraybuffer_expected);
 
     auto* globalObject = toJS(env);
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
 
     if (byte_offset + byte_length > jsArrayBuffer->impl()->byteLength()) {
         JSC::throwRangeError(globalObject, scope, "byteOffset exceeds source ArrayBuffer byteLength"_s);

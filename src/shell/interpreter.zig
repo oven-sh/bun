@@ -4831,11 +4831,11 @@ pub const Interpreter = struct {
                         break :blk bun.selfExePath() catch break :blk2;
                     }
 
-                    if (bun.strings.eqlComptime(first_arg_real, "bunx")) blk2: {
-                        spawn_args.env_array.append(arena_allocator, "BUN_SKIP_STANDALONE_MODULE_GRAPH=1") catch break :blk2;
-                        this.args.insert(1, "x") catch bun.outOfMemory();
-                        break :blk bun.selfExePath() catch break :blk2;
-                    }
+                    // if (bun.strings.eqlComptime(first_arg_real, "bunx")) blk2: {
+                    //     spawn_args.env_array.append(arena_allocator, "BUN_SKIP_STANDALONE_MODULE_GRAPH=1") catch break :blk2;
+                    //     this.args.insert(1, "x") catch bun.outOfMemory();
+                    //     break :blk bun.selfExePath() catch break :blk2;
+                    // }
 
                     break :blk which(path_buf, spawn_args.PATH, spawn_args.cwd, first_arg_real) orelse {
                         this.writeFailingError("bun: command not found: {s}\n", .{first_arg});

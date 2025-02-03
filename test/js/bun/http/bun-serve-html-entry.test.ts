@@ -9,7 +9,10 @@ async function getServerUrl(process: Subprocess) {
   let serverUrl = "";
   let text = "";
   for await (const chunk of process.stdout) {
-    text += decoder.decode(chunk, { stream: true });
+    const textChunk = decoder.decode(chunk, { stream: true });
+    text += textChunk;
+    console.log(textChunk);
+
     if (text.includes("http://")) {
       serverUrl = text.trim();
       serverUrl = serverUrl.slice(serverUrl.indexOf("http://"));

@@ -65,8 +65,13 @@ route_lookup: AutoArrayHashMapUnmanaged(IncrementalGraph(.server).FileIndex, Rou
 /// Quickly retrieve an HTML route's index from its incremental graph index.
 // TODO: store this in IncrementalGraph(.client).File instead of this hash map.
 html_route_lookup: AutoArrayHashMapUnmanaged(IncrementalGraph(.client).FileIndex, RouteBundle.Index),
+/// This acts as a duplicate of the lookup table in uws, but only for HTML routes
+/// Used to identify what route a connected WebSocket is on, so that only
+/// the active pages are notified of a hot updates.
+html_router: HTMLRouter,
 /// CSS files are accessible via `/_bun/css/<hex key>.css`
 /// Value is bundled code owned by `dev.allocator`
+// TODO: StaticRoute
 css_files: AutoArrayHashMapUnmanaged(u64, []const u8),
 /// JS files are accessible via `/_bun/client/route.<hex key>.js`
 /// These are randomly generated to avoid possible browser caching of old assets.
@@ -165,13 +170,11 @@ pub const RouteBundle = struct {
         /// HTMLBundle provided route
         html: HTML,
     },
-    /// Used to communicate over WebSocket the pattern. The HMR client contains code
-    /// to match this against the URL bar to determine if a reloaded route applies.
-    full_pattern: bun.CowString,
     /// Generated lazily when the client JS is requested (HTTP GET /_bun/client/*.js),
     /// which is only needed when a hard-reload is performed.
     ///
     /// Freed when a client module updates.
+    // TODO: ?*StaticRoute
     client_bundle: ?[]const u8,
 
     /// Reference count of how many HmrSockets say they are on this route. This
@@ -249,11 +252,7 @@ pub const RouteBundle = struct {
         loaded,
     };
 
-    /// Used as the input to some functions which may already have a
-    /// RouteBundle.Index, but also lookup an entry or init a new one.
-    pub const MaybeIndex = union(enum) {
-        /// Already inserted. This prevents an extra loopback to lookup.
-        resolved: RouteBundle.Index,
+    pub const UnresolvedIndex = union(enum) {
         /// FrameworkRouter provides a fullstack server-side route
         framework: FrameworkRouter.Route.Index,
         /// HTMLBundle provides a frontend-only route, SPA-style
@@ -285,11 +284,11 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .root = options.root,
         .vm = options.vm,
         .server = null,
-        .directory_watchers = DirectoryWatchStore.empty,
+        .directory_watchers = .empty,
         .server_fetch_function_callback = .{},
         .server_register_update_callback = .{},
         .generation = 0,
-        .graph_safety_lock = bun.DebugThreadLock.unlocked,
+        .graph_safety_lock = .unlocked,
         .dump_dir = dump_dir,
         .framework = options.framework,
         .bundler_options = options.bundler_options,
@@ -297,21 +296,22 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .has_pre_crash_handler = bun.FeatureFlags.bake_debugging_features and
             options.dump_state_on_crash orelse
             bun.getRuntimeFeatureFlag("BUN_DUMP_STATE_ON_CRASH"),
-        .css_files = .{},
-        .route_js_payloads = .{},
+        .css_files = .empty,
+        .route_js_payloads = .empty,
         .frontend_only = options.frontend_only,
-        .client_graph = IncrementalGraph(.client).empty,
-        .server_graph = IncrementalGraph(.server).empty,
-        .incremental_result = IncrementalResult.empty,
-        .route_lookup = .{},
-        .route_bundles = .{},
-        .html_route_lookup = .{},
+        .client_graph = .empty,
+        .server_graph = .empty,
+        .incremental_result = .empty,
+        .route_lookup = .empty,
+        .route_bundles = .empty,
+        .html_route_lookup = .empty,
+        .html_router = .empty,
         .current_bundle = null,
-        .current_bundle_requests = .{},
+        .current_bundle_requests = .empty,
         .next_bundle = .{
-            .route_queue = .{},
+            .route_queue = .empty,
             .reload_event = null,
-            .requests = .{},
+            .requests = .empty,
         },
         .log = bun.logger.Log.init(allocator),
 
@@ -606,7 +606,7 @@ fn onJsRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
     };
 
     if (maybe_route.unwrap()) |route| {
-        dev.ensureRouteIsBundled(.{ .resolved = route }, .js_payload, req, resp) catch bun.outOfMemory();
+        dev.ensureRouteIsBundled(route, .js_payload, req, resp) catch bun.outOfMemory();
     } else {
         @panic("TODO: generate client bundle with no source files");
     }
@@ -682,13 +682,11 @@ fn onIncrementalVisualizerCorked(resp: anytype) void {
 
 fn ensureRouteIsBundled(
     dev: *DevServer,
-    maybe_index: RouteBundle.MaybeIndex,
+    route_bundle_index: RouteBundle.Index,
     kind: DeferredRequest.Data.Tag,
     req: *Request,
     resp: AnyResponse,
 ) bun.OOM!void {
-    const route_bundle_index = try dev.getOrPutRouteBundle(maybe_index);
-
     // TODO: Zig 0.14 gets labelled continue:
     // - Remove the `while`
     // - Move the code after this switch into `.loaded =>`
@@ -710,7 +708,7 @@ fn ensureRouteIsBundled(
                             break :brk @unionInit(DeferredRequest.Data, @tagName(tag), resp);
                         },
                         .server_handler => brk: {
-                            assert(maybe_index == .framework);
+                            assert(dev.routeBundlePtr(route_bundle_index).data == .framework);
                             break :brk .{
                                 .server_handler = (dev.server.?.DebugHTTPServer.prepareJsRequestContext(req, resp.TCP, null) orelse return)
                                     .save(dev.vm.global, req, resp.TCP),
@@ -1705,8 +1703,6 @@ pub fn finalizeBundle(
             }
             if (route_bundle.active_viewers == 0 or !will_hear_hot_update) continue;
             try w.writeInt(i32, @intCast(i), .little);
-            try w.writeInt(u32, @intCast(route_bundle.full_pattern.flags.len), .little);
-            try w.writeAll(route_bundle.full_pattern.slice());
 
             // If no edges were changed, then it is impossible to
             // change the list of CSS files.
@@ -1997,7 +1993,7 @@ fn onRequest(dev: *DevServer, req: *Request, resp: anytype) void {
     var params: FrameworkRouter.MatchedParams = undefined;
     if (dev.router.matchSlow(req.url(), &params)) |route_index| {
         dev.ensureRouteIsBundled(
-            .{ .framework = route_index },
+            dev.getOrPutRouteBundle(.{ .framework = route_index }) catch bun.outOfMemory(),
             .server_handler,
             req,
             AnyResponse.init(resp),
@@ -2020,15 +2016,12 @@ fn onRequest(dev: *DevServer, req: *Request, resp: anytype) void {
     sendBuiltInNotFound(resp);
 }
 
-pub fn respondForHTMLBundle(dev: *DevServer, html: *HTMLBundle.HTMLBundleRoute, req: *uws.Request, resp: AnyResponse) void {
-    dev.ensureRouteIsBundled(.{ .html = html }, .bundled_html_page, req, resp) catch bun.outOfMemory();
+pub fn respondForHTMLBundle(dev: *DevServer, html: *HTMLBundle.HTMLBundleRoute, req: *uws.Request, resp: AnyResponse) !void {
+    try dev.ensureRouteIsBundled(try dev.getOrPutRouteBundle(.{ .html = html }), .bundled_html_page, req, resp);
 }
 
-fn getOrPutRouteBundle(dev: *DevServer, route: RouteBundle.MaybeIndex) !RouteBundle.Index {
+fn getOrPutRouteBundle(dev: *DevServer, route: RouteBundle.UnresolvedIndex) !RouteBundle.Index {
     const index_location: *RouteBundle.Index.Optional = switch (route) {
-        // Already inserted, return.
-        .resolved => |idx| return idx,
-
         .framework => |route_index| &dev.router.routePtr(route_index).bundle,
         .html => |html| &html.dev_server_id,
     };
@@ -2036,34 +2029,14 @@ fn getOrPutRouteBundle(dev: *DevServer, route: RouteBundle.MaybeIndex) !RouteBun
         return bundle_index;
     }
 
-    const full_pattern = switch (route) {
-        .resolved => unreachable, // returned already
-        .framework => |index| full_pattern: {
-            var buf = bake.PatternBuffer.empty;
-            var current: *Route = dev.router.routePtr(index);
-            // This loop is done to avoid prepending `/` at the root
-            // if there is more than one component.
-            buf.prependPart(current.part);
-            if (current.parent.unwrap()) |first| {
-                current = dev.router.routePtr(first);
-                while (current.parent.unwrap()) |next| {
-                    buf.prependPart(current.part);
-                    current = dev.router.routePtr(next);
-                }
-            }
-            break :full_pattern try bun.CowString.initDupe(buf.slice(), dev.allocator);
-        },
-        .html => |html_bundle| bun.CowString.initNeverFree(html_bundle.pattern),
-    };
-    errdefer full_pattern.deinit(dev.allocator);
-
     dev.graph_safety_lock.lock();
     defer dev.graph_safety_lock.unlock();
+
+    const bundle_index = RouteBundle.Index.init(@intCast(dev.route_bundles.items.len));
 
     try dev.route_bundles.ensureUnusedCapacity(dev.allocator, 1);
     dev.route_bundles.appendAssumeCapacity(.{
         .data = switch (route) {
-            .resolved => unreachable, // returned already
             .framework => |route_index| .{ .framework = .{
                 .route_index = route_index,
                 .evaluate_failure = null,
@@ -2076,7 +2049,7 @@ fn getOrPutRouteBundle(dev: *DevServer, route: RouteBundle.MaybeIndex) !RouteBun
                 try dev.html_route_lookup.put(
                     dev.allocator,
                     incremental_graph_index,
-                    RouteBundle.Index.init(@intCast(dev.route_bundles.items.len)),
+                    bundle_index,
                 );
                 break :brk .{ .html = .{
                     .html_bundle = html,
@@ -2090,13 +2063,16 @@ fn getOrPutRouteBundle(dev: *DevServer, route: RouteBundle.MaybeIndex) !RouteBun
             },
         },
         .server_state = .unqueued,
-        .full_pattern = full_pattern,
         .client_bundle = null,
         .active_viewers = 0,
     });
-    const bundle_index = RouteBundle.Index.init(@intCast(dev.route_bundles.items.len - 1));
     index_location.* = bundle_index.toOptional();
     return bundle_index;
+}
+
+fn registerCatchAllHtmlRoute(dev: *DevServer, html: *HTMLBundle.HTMLBundleRoute) !void {
+    const bundle_index = try getOrPutRouteBundle(dev, .{ .html = html });
+    dev.html_router.fallback = bundle_index.toOptional();
 }
 
 fn sendTextFile(code: []const u8, content_type: []const u8, any_resp: AnyResponse) void {
@@ -4117,6 +4093,9 @@ pub const MessageId = enum(u8) {
     ///   - `u32`: File index of the dependency file
     ///   - `u32`: File index of the imported file
     visualizer = 'v',
+    /// Sent in response to `set_url`.
+    /// - `u32`: Route index
+    set_url_response = 'n',
 
     pub inline fn char(id: MessageId) u8 {
         return @intFromEnum(id);
@@ -4189,7 +4168,7 @@ const HmrSocket = struct {
     /// By telling DevServer the active route, this enables receiving detailed
     /// `hot_update` events for when the route is updated.
     active_route: RouteBundle.Index.Optional,
-    /// Files which the client definitely has and should not be re-sent
+
     pub fn onOpen(s: *HmrSocket, ws: AnyWebSocket) void {
         _ = ws.send(&(.{MessageId.version.char()} ++ s.dev.configuration_hash_key), .binary, false, true);
     }
@@ -4242,15 +4221,16 @@ const HmrSocket = struct {
             },
             .set_url => {
                 const pattern = msg[1..];
-                var params: FrameworkRouter.MatchedParams = undefined;
-                if (s.dev.router.matchSlow(pattern, &params)) |route_index| {
-                    const rbi = s.dev.getOrPutRouteBundle(.{ .framework = route_index }) catch bun.outOfMemory();
-                    if (s.active_route.unwrap()) |old| {
-                        if (old == rbi) return;
-                        s.dev.routeBundlePtr(old).active_viewers -= 1;
-                    }
-                    s.dev.routeBundlePtr(rbi).active_viewers += 1;
+                const rbi = s.dev.routeToBundleIndexSlow(pattern) orelse
+                    return;
+                if (s.active_route.unwrap()) |old| {
+                    if (old == rbi) return;
+                    s.dev.routeBundlePtr(old).active_viewers -= 1;
                 }
+                s.dev.routeBundlePtr(rbi).active_viewers += 1;
+                s.active_route = rbi.toOptional();
+                var response: [5]u8 = .{MessageId.set_url_response.char()} ++ std.mem.toBytes(rbi.get());
+                _ = ws.send(&response, .binary, false, true);
             },
             else => ws.close(),
         }
@@ -4272,6 +4252,17 @@ const HmrSocket = struct {
         defer s.dev.allocator.destroy(s);
     }
 };
+
+pub fn routeToBundleIndexSlow(dev: *DevServer, pattern: []const u8) ?RouteBundle.Index {
+    var params: FrameworkRouter.MatchedParams = undefined;
+    if (dev.router.matchSlow(pattern, &params)) |route_index| {
+        return dev.getOrPutRouteBundle(.{ .framework = route_index }) catch bun.outOfMemory();
+    }
+    if (dev.html_router.get(pattern)) |html| {
+        return dev.getOrPutRouteBundle(.{ .html = html }) catch bun.outOfMemory();
+    }
+    return null;
+}
 
 const c = struct {
     // BakeSourceProvider.cpp
@@ -4889,6 +4880,40 @@ pub const EntryPointList = struct {
         } else {
             gop.value_ptr.* = flags;
         }
+    }
+};
+
+/// This structure does not increment the reference count of its contents, as
+/// the lifetime of them are all tied to the underling Bun.serve instance.
+const HTMLRouter = struct {
+    map: bun.StringHashMapUnmanaged(*HTMLBundle.HTMLBundleRoute),
+    /// If a catch-all route exists, it is not stored in map, but here.
+    fallback: ?*HTMLBundle.HTMLBundleRoute,
+
+    pub const empty: HTMLRouter = .{
+        .map = .empty,
+        .fallback = null,
+    };
+
+    pub fn get(router: *HTMLRouter, path: []const u8) ?*HTMLBundle.HTMLBundleRoute {
+        return router.map.get(path) orelse router.fallback;
+    }
+
+    pub fn put(router: *HTMLRouter, alloc: Allocator, path: []const u8, route: *HTMLBundle.HTMLBundleRoute) !void {
+        if (bun.strings.eqlComptime(path, "/*")) {
+            router.fallback = route;
+        } else {
+            try router.map.put(alloc, path, route);
+        }
+    }
+
+    pub fn clear(router: *HTMLRouter) void {
+        router.map.clearRetainingCapacity();
+        router.fallback = null;
+    }
+
+    pub fn deinit(router: *HTMLRouter, alloc: Allocator) void {
+        router.map.deinit(alloc);
     }
 };
 

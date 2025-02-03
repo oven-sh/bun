@@ -4551,7 +4551,6 @@ pub const ParseTask = struct {
             transpiler.options.react_fast_refresh and
             loader.isJSX() and
             !source.path.isNodeModule();
-        std.debug.print("{s} - {}\n", .{ source.path.text, opts.features.react_fast_refresh });
 
         opts.features.server_components = if (transpiler.options.server_components) switch (target) {
             .browser => .client_side,
@@ -10224,6 +10223,10 @@ pub const LinkerContext = struct {
             }
         };
 
+        // HTML bundles for Bake must be globally allocated, as it must outlive
+        // the bundle task. See `DevServer.RouteBundle.HTML.bundled_html_text`
+        const output_allocator = if (c.dev_server != null) bun.default_allocator else worker.allocator;
+
         var html_loader: HTMLLoader = .{
             .linker = c,
             .source_index = chunk.entry_point.source_index,
@@ -10233,7 +10236,7 @@ pub const LinkerContext = struct {
             .minify_whitespace = c.options.minify_whitespace,
             .chunk = chunk,
             .chunks = chunks,
-            .output = std.ArrayList(u8).init(worker.allocator),
+            .output = std.ArrayList(u8).init(output_allocator),
             .current_import_record_index = 0,
         };
 

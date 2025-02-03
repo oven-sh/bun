@@ -383,7 +383,8 @@ pub const ServerConfig = struct {
         app.any(path, T, entry, handler_wrap.handler);
     }
 
-    pub fn applyStaticRoutes(this: *ServerConfig, comptime ssl: bool, server: AnyServer, app: *uws.NewApp(ssl)) void {
+    pub fn applyStaticRoutes(this: *ServerConfig, comptime ssl: bool, server: AnyServer, app: *uws.NewApp(ssl)) !void {
+        const dev_server = server.devServer();
         for (this.static_routes.items) |*entry| {
             switch (entry.route) {
                 .StaticRoute => |static_route| {
@@ -391,6 +392,9 @@ pub const ServerConfig = struct {
                 },
                 .HTMLBundleRoute => |html_bundle_route| {
                     applyStaticRoute(server, ssl, app, *HTMLBundleRoute, html_bundle_route, entry.path);
+                    if (dev_server) |dev| {
+                        try dev.html_router.put(dev.allocator, entry.path, html_bundle_route);
+                    }
                 },
             }
         }
@@ -7463,7 +7467,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     ssl_enabled,
                     AnyServer.from(this),
                     app,
-                );
+                ) catch bun.outOfMemory();
             }
 
             if (this.config.websocket) |*websocket| {

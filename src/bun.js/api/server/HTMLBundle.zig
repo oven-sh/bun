@@ -69,9 +69,6 @@ pub const HTMLBundleRoute = struct {
     value: Value = .pending_plugins,
     /// Written and read by DevServer to identify if this route has been registered with the bundler.
     dev_server_id: bun.bake.DevServer.RouteBundle.Index.Optional = .none,
-    /// Used by DevServer
-    // TODO: design flaw: HTMLBundleRoute can be present at multiple paths
-    pattern: []const u8,
 
     pub fn memoryCost(this: *const HTMLBundleRoute) usize {
         var cost: usize = 0;
@@ -89,7 +86,6 @@ pub const HTMLBundleRoute = struct {
             .ref_count = 1,
             .server = null,
             .value = .pending_plugins,
-            .pattern = "/", // TODO: design flaw: HTMLBundleRoute can be present at multiple paths
         });
     }
 
@@ -158,7 +154,7 @@ pub const HTMLBundleRoute = struct {
 
         if (server.config().development) {
             if (server.devServer()) |dev| {
-                dev.respondForHTMLBundle(this, req, resp);
+                dev.respondForHTMLBundle(this, req, resp) catch bun.outOfMemory();
                 return;
             }
 
@@ -533,9 +529,9 @@ pub const HTMLBundleRoute = struct {
         server: ?AnyServer = null,
         route: *HTMLBundleRoute,
 
-        pub usingnamespace bun.NewRefCounted(@This(), __deinit, null);
+        pub usingnamespace bun.NewRefCounted(@This(), destroyInternal, null);
 
-        fn __deinit(this: *PendingResponse) void {
+        fn destroyInternal(this: *PendingResponse) void {
             if (this.is_response_pending) {
                 this.resp.clearAborted();
                 this.resp.clearOnWritable();

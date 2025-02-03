@@ -45,7 +45,7 @@ interface WebSocketWrapper {
 }
 
 export function initWebSocket(
-  handlers: Record<number, (dv: DataView, ws: WebSocket) => void>,
+  handlers: Record<number, (dv: DataView<ArrayBuffer>, ws: WebSocket) => void>,
   url: string = "/_bun/hmr",
 ): WebSocketWrapper {
   let firstConnection = true;

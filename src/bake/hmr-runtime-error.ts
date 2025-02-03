@@ -8,12 +8,11 @@
 // stopped by the fact this script runs synchronously.
 import { decodeAndAppendError, onErrorMessage, updateErrorOverlay } from "./client/overlay";
 import { DataViewReader } from "./client/reader";
-import { routeMatch } from "./client/route";
 import { initWebSocket } from "./client/websocket";
 import { MessageId } from "./generated";
 
 /** Injected by DevServer */
-declare const error: Uint8Array;
+declare const error: Uint8Array<ArrayBuffer>;
 
 {
   const reader = new DataViewReader(new DataView(error.buffer), 0);
@@ -24,6 +23,7 @@ declare const error: Uint8Array;
 }
 
 let firstVersionPacket = true;
+let currentRouteIndex = -1;
 
 initWebSocket({
   [MessageId.version](dv) {
@@ -39,22 +39,21 @@ initWebSocket({
 
   [MessageId.errors]: onErrorMessage,
 
-  [MessageId.route_update](view) {
+  [MessageId.hot_update](view) {
     const reader = new DataViewReader(view, 1);
-    let routeCount = reader.u32();
-
-    while (routeCount > 0) {
-      routeCount -= 1;
-      const routeId = reader.u32();
-      const routePattern = reader.stringWithLength(reader.u16());
-      if (routeMatch(routeId, routePattern)) {
+    const serverSideRoutesUpdated = new Set();
+    do {
+      const routeId = reader.i32();
+      if (routeId === -1 || routeId == undefined) break;
+      if (routeId === currentRouteIndex) {
         location.reload();
         break;
       }
-    }
+    } while (true);
   },
 
-  // [MessageId.errors_cleared]() {
-  //   location.reload();
-  // },
+  [MessageId.set_url_response](view) {
+    const reader = new DataViewReader(view, 1);
+    currentRouteIndex = reader.u32();
+  },
 });

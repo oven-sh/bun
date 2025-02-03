@@ -4,7 +4,6 @@ import { loadModule, LoadModuleType, onServerSideReload, replaceModules } from "
 import { hasFatalError, onErrorMessage, onRuntimeError, RuntimeErrorType } from "./client/overlay";
 import { Bake } from "bun";
 import { DataViewReader } from "./client/reader";
-import { routeMatch } from "./client/route";
 import { initWebSocket } from "./client/websocket";
 import { MessageId } from "./generated";
 import { editCssContent, editCssArray } from "./client/css-reloader";
@@ -16,6 +15,7 @@ if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
 
 let isPerformingRouteReload = false;
 let shouldPerformAnotherRouteReload = false;
+let currentRouteIndex: number = -1;
 
 async function performRouteReload() {
   console.info("[Bun] Server-side code changed, reloading!");
@@ -89,8 +89,7 @@ const ws = initWebSocket({
     do {
       const routeId = reader.i32();
       if (routeId === -1 || routeId == undefined) break;
-      const routePattern = reader.string32();
-      if (routeMatch(routeId, routePattern)) {
+      if (routeId === currentRouteIndex) {
         isServerSideRouteUpdate = serverSideRoutesUpdated.has(routeId);
         const cssCount = reader.i32();
         if (cssCount !== -1) {
@@ -136,6 +135,10 @@ const ws = initWebSocket({
     if (isServerSideRouteUpdate) {
       performRouteReload();
     }
+  },
+  [MessageId.set_url_response](view) {
+    const reader = new DataViewReader(view, 1);
+    currentRouteIndex = reader.u32();
   },
   [MessageId.errors]: onErrorMessage,
 });

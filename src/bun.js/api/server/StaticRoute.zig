@@ -1,4 +1,5 @@
-//! A static route serving a response object's blob.
+//! StaticRoute stores and serves a static blob. This can be created out of a JS
+//! Response object, or from globally allocated bytes.
 const StaticRoute = @This();
 
 server: ?AnyServer = null,

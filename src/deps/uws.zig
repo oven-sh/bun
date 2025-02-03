@@ -3039,7 +3039,7 @@ pub const WebSocketBehavior = extern struct {
             pub fn onMessage(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize, opcode: Opcode) callconv(.C) void {
                 const ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
-                @call(.always_inline, Type.onMessage, .{
+                @call(bun.callmod_inline, Type.onMessage, .{
                     this,
                     ws,
                     if (length > 0) message[0..length] else "",
@@ -3079,7 +3079,7 @@ pub const WebSocketBehavior = extern struct {
             pub fn onClose(raw_ws: *RawWebSocket, code: i32, message: [*c]const u8, length: usize) callconv(.C) void {
                 const ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
-                @call(.always_inline, Type.onClose, .{
+                @call(bun.callmod_inline, Type.onClose, .{
                     this,
                     ws,
                     code,
@@ -3088,7 +3088,7 @@ pub const WebSocketBehavior = extern struct {
             }
 
             pub fn onUpgrade(ptr: *anyopaque, res: *uws_res, req: *Request, context: *uws_socket_context_t, id: usize) callconv(.C) void {
-                @call(.always_inline, Server.onWebSocketUpgrade, .{
+                @call(bun.callmod_inline, Server.onWebSocketUpgrade, .{
                     bun.cast(*Server, ptr),
                     @as(*NewApp(is_ssl).Response, @ptrCast(res)),
                     req,

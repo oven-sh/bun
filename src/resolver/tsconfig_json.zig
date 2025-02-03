@@ -424,7 +424,7 @@ pub const TSConfigJSON = struct {
             return parts.items;
         }
 
-        var iter = std.mem.tokenize(u8, text, ".");
+        var iter = std.mem.tokenizeScalar(u8, text, '.');
 
         while (iter.next()) |part| {
             if (!js_lexer.isIdentifier(part)) {

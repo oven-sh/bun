@@ -59,8 +59,7 @@ RUN mkdir -p /etc/postgresql && touch /etc/postgresql/pg_hba.conf && \
     echo "host replication all 127.0.0.1/32 trust" >> /etc/postgresql/pg_hba.conf && \
     echo "host replication all ::1/128 trust" >> /etc/postgresql/pg_hba.conf
 RUN mkdir -p /docker-entrypoint-initdb.d && \
-    echo "ALTER SYSTEM SET max_prepared_transactions = '100';" > /docker-entrypoint-initdb.d/configure-postgres.sql
-
+    echo "ALTER SYSTEM SET max_prepared_transactions = '1000';ALTER SYSTEM SET max_connections = '2000';" > /docker-entrypoint-initdb.d/configure-postgres.sql
 # Set environment variables
 ENV POSTGRES_HOST_AUTH_METHOD=trust
 ENV POSTGRES_USER=postgres

@@ -7,7 +7,7 @@ const ExternalStringList = Install.ExternalStringList;
 const Features = Install.Features;
 const PackageNameHash = Install.PackageNameHash;
 const Repository = @import("./repository.zig").Repository;
-const Semver = @import("./semver.zig");
+const Semver = bun.Semver;
 const ExternalString = Semver.ExternalString;
 const SlicedString = Semver.SlicedString;
 const String = Semver.String;
@@ -1311,12 +1311,6 @@ pub const Behavior = packed struct(u8) {
     bundled: bool = false,
     _unused_2: u1 = 0,
 
-    pub const prod = Behavior{ .prod = true };
-    pub const optional = Behavior{ .optional = true };
-    pub const dev = Behavior{ .dev = true };
-    pub const peer = Behavior{ .peer = true };
-    pub const workspace = Behavior{ .workspace = true };
-
     pub inline fn isProd(this: Behavior) bool {
         return this.prod;
     }
@@ -1357,13 +1351,13 @@ pub const Behavior = packed struct(u8) {
         return @as(u8, @bitCast(lhs)) & @as(u8, @bitCast(rhs)) != 0;
     }
 
-    pub inline fn add(this: Behavior, kind: @Type(.EnumLiteral)) Behavior {
+    pub inline fn add(this: Behavior, kind: @Type(.enum_literal)) Behavior {
         var new = this;
         @field(new, @tagName(kind)) = true;
         return new;
     }
 
-    pub inline fn set(this: Behavior, kind: @Type(.EnumLiteral), value: bool) Behavior {
+    pub inline fn set(this: Behavior, kind: @Type(.enum_literal), value: bool) Behavior {
         var new = this;
         @field(new, @tagName(kind)) = value;
         return new;
@@ -1425,10 +1419,10 @@ pub const Behavior = packed struct(u8) {
     }
 
     comptime {
-        bun.assert(@as(u8, @bitCast(Behavior.prod)) == (1 << 1));
-        bun.assert(@as(u8, @bitCast(Behavior.optional)) == (1 << 2));
-        bun.assert(@as(u8, @bitCast(Behavior.dev)) == (1 << 3));
-        bun.assert(@as(u8, @bitCast(Behavior.peer)) == (1 << 4));
-        bun.assert(@as(u8, @bitCast(Behavior.workspace)) == (1 << 5));
+        bun.assert(@as(u8, @bitCast(Behavior{ .prod = true })) == (1 << 1));
+        bun.assert(@as(u8, @bitCast(Behavior{ .optional = true })) == (1 << 2));
+        bun.assert(@as(u8, @bitCast(Behavior{ .dev = true })) == (1 << 3));
+        bun.assert(@as(u8, @bitCast(Behavior{ .peer = true })) == (1 << 4));
+        bun.assert(@as(u8, @bitCast(Behavior{ .workspace = true })) == (1 << 5));
     }
 };

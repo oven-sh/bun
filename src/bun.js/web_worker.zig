@@ -536,12 +536,10 @@ pub const WebWorker = struct {
     }
 
     comptime {
-        if (!JSC.is_bindgen) {
-            @export(create, .{ .name = "WebWorker__create" });
-            @export(requestTerminate, .{ .name = "WebWorker__requestTerminate" });
-            @export(setRef, .{ .name = "WebWorker__setRef" });
-            _ = WebWorker__updatePtr;
-        }
+        @export(&create, .{ .name = "WebWorker__create" });
+        @export(&requestTerminate, .{ .name = "WebWorker__requestTerminate" });
+        @export(&setRef, .{ .name = "WebWorker__setRef" });
+        _ = WebWorker__updatePtr;
     }
 };
 

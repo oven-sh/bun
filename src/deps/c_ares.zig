@@ -1433,7 +1433,7 @@ pub const struct_any_reply = struct {
     pub fn toJS(this: *struct_any_reply, globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator) JSC.JSValue {
         const array = JSC.JSValue.createEmptyArray(globalThis, blk: {
             var len: usize = 0;
-            inline for (comptime @typeInfo(struct_any_reply).Struct.fields) |field| {
+            inline for (comptime @typeInfo(struct_any_reply).@"struct".fields) |field| {
                 if (comptime std.mem.endsWith(u8, field.name, "_reply")) {
                     len += @intFromBool(@field(this, field.name) != null);
                 }
@@ -1443,7 +1443,7 @@ pub const struct_any_reply = struct {
 
         var i: u32 = 0;
 
-        inline for (comptime @typeInfo(struct_any_reply).Struct.fields) |field| {
+        inline for (comptime @typeInfo(struct_any_reply).@"struct".fields) |field| {
             if (comptime std.mem.endsWith(u8, field.name, "_reply")) {
                 if (@field(this, field.name)) |reply| {
                     const lookup_name = comptime field.name[0 .. field.name.len - "_reply".len];
@@ -1561,7 +1561,7 @@ pub const struct_any_reply = struct {
     }
 
     pub fn deinit(this: *struct_any_reply) void {
-        inline for (@typeInfo(struct_any_reply).Struct.fields) |field| {
+        inline for (@typeInfo(struct_any_reply).@"struct".fields) |field| {
             if (comptime std.mem.endsWith(u8, field.name, "_reply")) {
                 if (@field(this, field.name)) |reply| {
                     reply.deinit();
@@ -1993,7 +1993,7 @@ pub const ares_addr_port_node = struct_ares_addr_port_node;
 
 comptime {
     const Bun__canonicalizeIP = JSC.toJSHostFunction(Bun__canonicalizeIP_);
-    @export(Bun__canonicalizeIP, .{ .name = "Bun__canonicalizeIP" });
+    @export(&Bun__canonicalizeIP, .{ .name = "Bun__canonicalizeIP" });
 }
 pub fn Bun__canonicalizeIP_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());

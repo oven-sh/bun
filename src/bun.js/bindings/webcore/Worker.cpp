@@ -423,7 +423,7 @@ extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker*
     worker->deref();
 
     if (globalObject) {
-        JSC::VM& vm = globalObject->vm();
+        auto& vm = JSC::getVM(globalObject);
         vm.setHasTerminationRequest();
 
         {
@@ -462,7 +462,7 @@ extern "C" WebCore::Worker* WebWorker__getParentWorker(void*);
 
 JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    auto& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (callFrame->argumentCount() < 1) {

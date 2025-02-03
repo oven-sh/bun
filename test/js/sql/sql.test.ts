@@ -1,4 +1,4 @@
-import { sql, SQL } from "bun";
+import { sql, SQL, randomUUIDv7 } from "bun";
 const postgres = (...args) => new sql(...args);
 import { expect, test, mock, beforeAll, afterAll } from "bun:test";
 import { $ } from "bun";
@@ -61,9 +61,7 @@ async function startContainer(): Promise<{ port: number; containerName: string }
     }
 
     // Start the container
-    await execAsync(
-      `${dockerCLI} run -d --name ${containerName} -p ${port}:5432 custom-postgres`,
-    );
+    await execAsync(`${dockerCLI} run -d --name ${containerName} -p ${port}:5432 custom-postgres`);
 
     // Wait for PostgreSQL to be ready
     await waitForPostgres(port);
@@ -99,6 +97,9 @@ if (isDockerEnabled()) {
   afterAll(async () => {
     try {
       await execAsync(`${dockerCLI} stop -t 0 ${container.containerName}`);
+    } catch (error) {}
+
+    try {
       await execAsync(`${dockerCLI} rm -f ${container.containerName}`);
     } catch (error) {}
   });
@@ -264,6 +265,28 @@ if (isDockerEnabled()) {
     const result = await sql`select 1 as x, 2 as x, 3 as x`;
     expect(result).toEqual([{ x: 3 }]);
   });
+
+  test("should not timeout in long results", async () => {
+    await using db = postgres({ ...options, max: 1, idleTimeout: 5 });
+    using sql = await db.reserve();
+    const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+
+    await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text)`;
+    const promises: Promise<any>[] = [];
+    for (let i = 0; i < 10_000; i++) {
+      promises.push(sql`INSERT INTO ${sql(random_name)} VALUES (${i}, ${"test" + i})`);
+      if (i % 50 === 0 && i > 0) {
+        await Promise.all(promises);
+        promises.length = 0;
+      }
+    }
+    await Promise.all(promises);
+    await sql`SELECT * FROM ${sql(random_name)}`;
+    await sql`SELECT * FROM ${sql(random_name)}`;
+    await sql`SELECT * FROM ${sql(random_name)}`;
+
+    expect().pass();
+  }, 10_000);
 
   test("Handles numeric column names", async () => {
     // deliberately out of order
@@ -625,7 +648,7 @@ if (isDockerEnabled()) {
   });
 
   test("Transaction requests are executed implicitly", async () => {
-    const sql = postgres({ ...options, debug: true, idle_timeout: 1, fetch_types: false });
+    await using sql = postgres(options);
     expect(
       (
         await sql.begin(sql => [
@@ -636,12 +659,21 @@ if (isDockerEnabled()) {
     ).toBe("testing");
   });
 
-  test("Uncaught transaction request errosó rs bubbles to transaction", async () => {
-    const sql = postgres({ ...options, debug: true, idle_timeout: 1, fetch_types: false });
+  test("Idle timeout retry works", async () => {
+    await using sql = postgres({ ...options, idleTimeout: 1 });
+    await sql`select 1`;
+    await Bun.sleep(1100); // 1.1 seconds so it should retry
+    await sql`select 1`;
+    expect().pass();
+  });
+
+  test("Uncaught transaction request errors bubbles to transaction", async () => {
+    const sql = postgres(options);
+    process.nextTick(() => sql.close({ timeout: 1 }));
     expect(
       await sql
         .begin(sql => [sql`select wat`, sql`select current_setting('bun_sql.test') as x, ${1} as a`])
-        .catch(e => e.errno),
+        .catch(e => e.errno || e),
     ).toBe("42703");
   });
 
@@ -993,8 +1025,6 @@ if (isDockerEnabled()) {
     const sql = postgres(options);
 
     const promise = sql`select pg_sleep(0.2) as x`.execute();
-    // we await 1 to start the query
-    await 1;
     await sql.end();
     return expect(await promise).toEqual([{ x: "" }]);
   });

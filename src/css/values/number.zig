@@ -25,19 +25,13 @@ pub const CSSNumberFns = struct {
     pub fn toCss(this: *const CSSNumber, comptime W: type, dest: *Printer(W)) PrintErr!void {
         const number: f32 = this.*;
         if (number != 0.0 and @abs(number) < 1.0) {
-            // PERF(alloc): Use stack fallback here?
-            // why the extra allocation anyway? isn't max amount of digits to stringify an f32 small?
-            var s = ArrayList(u8){};
-            defer s.deinit(dest.allocator);
-            const writer = s.writer(dest.allocator);
-            css.to_css.float32(number, writer) catch {
-                return dest.addFmtError();
-            };
+            var dtoa_buf: [129]u8 = undefined;
+            const str, _ = try css.dtoa_short(&dtoa_buf, number, 6);
             if (number < 0.0) {
                 try dest.writeChar('-');
-                try dest.writeStr(bun.strings.trimLeadingPattern2(s.items, '-', '0'));
+                try dest.writeStr(bun.strings.trimLeadingPattern2(str, '-', '0'));
             } else {
-                try dest.writeStr(bun.strings.trimLeadingChar(s.items, '0'));
+                try dest.writeStr(bun.strings.trimLeadingChar(str, '0'));
             }
         } else {
             return css.to_css.float32(number, dest) catch {

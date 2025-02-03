@@ -62,7 +62,7 @@ pub const Index = packed struct(u32) {
 
     pub fn init(num: anytype) Index {
         const NumType = @TypeOf(num);
-        if (comptime @typeInfo(NumType) == .Pointer) {
+        if (comptime @typeInfo(NumType) == .pointer) {
             return init(num.*);
         }
 

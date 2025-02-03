@@ -17,7 +17,7 @@ const PackageManager = Install.PackageManager;
 const Lockfile = @import("../install/lockfile.zig");
 const NodeModulesFolder = Lockfile.Tree.Iterator(.node_modules).Next;
 const Path = @import("../resolver/resolve_path.zig");
-const String = @import("../install/semver.zig").String;
+const String = bun.Semver.String;
 const ArrayIdentityContext = bun.ArrayIdentityContext;
 const DepIdSet = std.ArrayHashMapUnmanaged(DependencyID, void, ArrayIdentityContext, false);
 const UntrustedCommand = @import("./pm_trusted_command.zig").UntrustedCommand;
@@ -59,7 +59,7 @@ pub const PackageManagerCommand = struct {
     }
 
     pub fn printHash(ctx: Command.Context, file: File) !void {
-        @setCold(true);
+        @branchHint(.cold);
 
         const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .pm);
         var pm, const cwd = try PackageManager.init(ctx, cli, PackageManager.Subcommand.pm);

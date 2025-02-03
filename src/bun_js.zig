@@ -42,6 +42,7 @@ pub const Run = struct {
     entry_path: string,
     arena: Arena,
     any_unhandled: bool = false,
+    is_html_entrypoint: bool = false,
 
     pub fn bootStandalone(ctx: Command.Context, entry_path: string, graph: bun.StandaloneModuleGraph) !void {
         JSC.markBinding(@src());
@@ -155,7 +156,7 @@ pub const Run = struct {
     }
 
     fn bootBunShell(ctx: Command.Context, entry_path: []const u8) !bun.shell.ExitCode {
-        @setCold(true);
+        @branchHint(.cold);
 
         // this is a hack: make dummy bundler so we can use its `.runEnvLoader()` function to populate environment variables probably should split out the functionality
         var bundle = try bun.Transpiler.init(
@@ -170,7 +171,7 @@ pub const Run = struct {
         return bun.shell.Interpreter.initAndRunFromFile(ctx, mini, entry_path);
     }
 
-    pub fn boot(ctx: Command.Context, entry_path: string) !void {
+    pub fn boot(ctx: Command.Context, entry_path: string, loader: ?bun.options.Loader) !void {
         JSC.markBinding(@src());
 
         if (!ctx.debug.loaded_bunfig) {
@@ -276,6 +277,8 @@ pub const Run = struct {
         vm.transpiler.env.loadTracy();
 
         doPreconnect(ctx.runtime_options.preconnect);
+
+        vm.main_is_html_entrypoint = (loader orelse vm.transpiler.options.loader(std.fs.path.extension(entry_path))) == .html;
 
         const callback = OpaqueWrap(Run, Run.start);
         vm.global.vm().holdAPILock(&run, callback);
@@ -482,7 +485,7 @@ pub export fn Bun__onRejectEntryPointResult(global: *JSC.JSGlobalObject, callfra
 }
 
 noinline fn dumpBuildError(vm: *JSC.VirtualMachine) void {
-    @setCold(true);
+    @branchHint(.cold);
 
     Output.flush();
 
@@ -498,7 +501,7 @@ noinline fn dumpBuildError(vm: *JSC.VirtualMachine) void {
 }
 
 pub noinline fn failWithBuildError(vm: *JSC.VirtualMachine) noreturn {
-    @setCold(true);
+    @branchHint(.cold);
     dumpBuildError(vm);
     Global.exit(1);
 }

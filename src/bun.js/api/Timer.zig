@@ -302,7 +302,7 @@ pub const All = struct {
     }
 
     comptime {
-        @export(setImmediate, .{ .name = "Bun__Timer__setImmediate" });
+        @export(&setImmediate, .{ .name = "Bun__Timer__setImmediate" });
     }
 
     pub fn setTimeout(
@@ -412,11 +412,11 @@ pub const All = struct {
     });
 
     comptime {
-        @export(setTimeout, .{ .name = Export[0].symbol_name });
-        @export(setInterval, .{ .name = Export[1].symbol_name });
-        @export(clearTimeout, .{ .name = Export[2].symbol_name });
-        @export(clearInterval, .{ .name = Export[3].symbol_name });
-        @export(getNextID, .{ .name = Export[4].symbol_name });
+        @export(&setTimeout, .{ .name = Export[0].symbol_name });
+        @export(&setInterval, .{ .name = Export[1].symbol_name });
+        @export(&clearTimeout, .{ .name = Export[2].symbol_name });
+        @export(&clearInterval, .{ .name = Export[3].symbol_name });
+        @export(&getNextID, .{ .name = Export[4].symbol_name });
     }
 };
 
@@ -444,9 +444,9 @@ pub const TimerObject = struct {
     },
 
     pub usingnamespace JSC.Codegen.JSTimeout;
-    pub usingnamespace bun.NewRefCounted(@This(), deinit);
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
-    extern "C" fn Bun__JSTimeout__call(encodedTimeoutValue: JSValue, globalObject: *JSC.JSGlobalObject) void;
+    extern "c" fn Bun__JSTimeout__call(encodedTimeoutValue: JSValue, globalObject: *JSC.JSGlobalObject) void;
 
     pub fn runImmediateTask(this: *TimerObject, vm: *VirtualMachine) void {
         if (this.has_cleared_timer) {
@@ -956,6 +956,10 @@ pub const WTFTimer = struct {
         });
 
         return this;
+    }
+
+    pub export fn WTFTimer__runIfImminent(vm: *VirtualMachine) void {
+        vm.eventLoop().runImminentGCTimer();
     }
 
     pub fn run(this: *WTFTimer, vm: *VirtualMachine) void {

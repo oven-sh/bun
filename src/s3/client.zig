@@ -327,7 +327,7 @@ const S3UploadStreamWrapper = struct {
     callback_context: *anyopaque,
     ref_count: u32 = 1,
     path: []const u8, // this is owned by the task not by the wrapper
-    pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
     pub fn resolve(result: S3UploadResult, self: *@This()) void {
         const sink = self.sink;
         defer self.deref();
@@ -407,9 +407,9 @@ pub const Export = shim.exportFunctions(.{
 });
 comptime {
     const jsonResolveRequestStream = JSC.toJSHostFunction(onUploadStreamResolveRequestStream);
-    @export(jsonResolveRequestStream, .{ .name = Export[0].symbol_name });
+    @export(&jsonResolveRequestStream, .{ .name = Export[0].symbol_name });
     const jsonRejectRequestStream = JSC.toJSHostFunction(onUploadStreamRejectRequestStream);
-    @export(jsonRejectRequestStream, .{ .name = Export[1].symbol_name });
+    @export(&jsonRejectRequestStream, .{ .name = Export[1].symbol_name });
 }
 
 /// consumes the readable stream and upload to s3

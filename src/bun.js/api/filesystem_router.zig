@@ -1,6 +1,5 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
-const JavaScript = @import("../javascript.zig");
 const QueryStringMap = @import("../../url.zig").QueryStringMap;
 const CombinedScanner = @import("../../url.zig").CombinedScanner;
 const bun = @import("root").bun;
@@ -9,7 +8,6 @@ const JSC = bun.JSC;
 const js = JSC.C;
 const WebCore = JSC.WebCore;
 const Transpiler = bun.transpiler;
-const VirtualMachine = JavaScript.VirtualMachine;
 const ScriptSrcStream = std.io.FixedBufferStream([]u8);
 const ZigString = JSC.ZigString;
 const Fs = @import("../../fs.zig");
@@ -605,7 +603,7 @@ pub const MatchedRoute = struct {
         var writer = stream.writer();
         JSC.API.Bun.getPublicPathWithAssetPrefix(
             this.route.file_path,
-            if (this.base_dir) |base_dir| base_dir.slice() else VirtualMachine.get().transpiler.fs.top_level_dir,
+            if (this.base_dir) |base_dir| base_dir.slice() else JSC.VirtualMachine.get().transpiler.fs.top_level_dir,
             if (this.origin) |origin| URL.parse(origin.slice()) else URL{},
             if (this.asset_prefix) |prefix| prefix.slice() else "",
             @TypeOf(&writer),

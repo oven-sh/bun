@@ -49,9 +49,6 @@ const PathOrBlob = JSC.Node.PathOrBlob;
 const WriteFilePromise = @import("./blob/WriteFile.zig").WriteFilePromise;
 const WriteFileWaitFromLockedValueTask = @import("./blob/WriteFile.zig").WriteFileWaitFromLockedValueTask;
 const NewReadFileHandler = @import("./blob/ReadFile.zig").NewReadFileHandler;
-const WriteFile = @import("./blob/WriteFile.zig").WriteFile;
-const ReadFile = @import("./blob/ReadFile.zig").ReadFile;
-const WriteFileWindows = @import("./blob/WriteFile.zig").WriteFileWindows;
 
 const S3File = @import("./S3File.zig");
 
@@ -60,8 +57,20 @@ pub const Blob = struct {
 
     pub usingnamespace bun.New(@This());
     pub usingnamespace JSC.Codegen.JSBlob;
-    pub usingnamespace @import("./blob/WriteFile.zig");
-    pub usingnamespace @import("./blob/ReadFile.zig");
+
+    // pub usingnamespace @import("./blob/ReadFile.zig");
+    const rf = @import("./blob/ReadFile.zig");
+    pub const ReadFile = rf.ReadFile;
+    pub const ReadFileUV = rf.ReadFileUV;
+    pub const ReadFileTask = rf.ReadFileTask;
+    pub const ReadFileResultType = rf.ReadFileResultType;
+
+    // pub usingnamespace @import("./blob/WriteFile.zig");
+    const wf = @import("./blob/WriteFile.zig");
+    pub const WriteFile = wf.WriteFile;
+    pub const WriteFileWindows = wf.WriteFileWindows;
+    pub const WriteFileTask = wf.WriteFileTask;
+
     pub const ClosingState = enum(u8) {
         running,
         closing,
@@ -142,7 +151,6 @@ pub const Blob = struct {
         return store.data == .file;
     }
 
-    const ReadFileUV = @import("./blob/ReadFile.zig").ReadFileUV;
     pub fn doReadFromS3(this: *Blob, comptime Function: anytype, global: *JSGlobalObject) JSValue {
         bloblog("doReadFromS3", .{});
 
@@ -183,7 +191,7 @@ pub const Blob = struct {
             handler,
             Handler.run,
         ) catch bun.outOfMemory();
-        var read_file_task = ReadFile.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read) catch bun.outOfMemory();
+        var read_file_task = ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read) catch bun.outOfMemory();
 
         // Create the Promise only after the store has been ref()'d.
         // The garbage collector runs on memory allocations
@@ -202,7 +210,7 @@ pub const Blob = struct {
 
     pub fn NewInternalReadFileHandler(comptime Context: type, comptime Function: anytype) type {
         return struct {
-            pub fn run(handler: *anyopaque, bytes_: ReadFile.ResultType) void {
+            pub fn run(handler: *anyopaque, bytes_: ReadFileResultType) void {
                 Function(bun.cast(Context, handler), bytes_);
             }
         };
@@ -221,7 +229,7 @@ pub const Blob = struct {
             this.offset,
             this.size,
         ) catch bun.outOfMemory();
-        var read_file_task = ReadFile.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read) catch bun.outOfMemory();
+        var read_file_task = ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read) catch bun.outOfMemory();
         read_file_task.schedule();
     }
 
@@ -604,7 +612,7 @@ pub const Blob = struct {
 
         const store = Blob.Store.init(context.joiner.done(allocator) catch bun.outOfMemory(), allocator);
         var blob = Blob.initWithStore(store, globalThis);
-        blob.content_type = std.fmt.allocPrint(allocator, "multipart/form-data; boundary=\"{s}\"", .{boundary}) catch bun.outOfMemory();
+        blob.content_type = std.fmt.allocPrint(allocator, "multipart/form-data; boundary={s}", .{boundary}) catch bun.outOfMemory();
         blob.content_type_allocated = true;
         blob.content_type_was_set = true;
 
@@ -973,7 +981,7 @@ pub const Blob = struct {
                 WriteFilePromise.run,
                 options.mkdirp_if_not_exists orelse true,
             ) catch unreachable;
-            var task = WriteFile.WriteFileTask.createOnJSThread(bun.default_allocator, ctx, file_copier) catch bun.outOfMemory();
+            var task = WriteFileTask.createOnJSThread(bun.default_allocator, ctx, file_copier) catch bun.outOfMemory();
             // Defer promise creation until we're just about to schedule the task
             var promise = JSC.JSPromise.create(ctx);
             const promise_value = promise.asValue(ctx);
@@ -2294,10 +2302,7 @@ pub const Blob = struct {
                     this.update();
                 }
 
-                pub fn doClose(
-                    this: *This,
-                    is_allowed_to_close_fd: bool,
-                ) bool {
+                pub fn doClose(this: *This, is_allowed_to_close_fd: bool) bool {
                     if (@hasField(This, "io_request")) {
                         if (this.close_after_io) {
                             this.state.store(ClosingState.closing, .seq_cst);
@@ -2827,7 +2832,7 @@ pub const Blob = struct {
 
             fn truncate(this: *CopyFileWindows) void {
                 // TODO: optimize this
-                @setCold(true);
+                @branchHint(.cold);
 
                 var node_fs: JSC.Node.NodeFS = .{};
                 _ = node_fs.truncate(
@@ -2903,6 +2908,9 @@ pub const Blob = struct {
             .syscall = bun.String.static("fstat"),
         };
 
+        pub const CopyFilePromiseTask = JSC.ConcurrentPromiseTask(CopyFile);
+        pub const CopyFilePromiseTaskEventLoopTask = CopyFilePromiseTask.EventLoopTask;
+
         // blocking, but off the main thread
         pub const CopyFile = struct {
             destination_file_store: FileStore,
@@ -2927,8 +2935,6 @@ pub const Blob = struct {
             pub const ResultType = anyerror!SizeType;
 
             pub const Callback = *const fn (ctx: *anyopaque, len: ResultType) void;
-            pub const CopyFilePromiseTask = JSC.ConcurrentPromiseTask(CopyFile);
-            pub const CopyFilePromiseTaskEventLoopTask = CopyFilePromiseTask.EventLoopTask;
 
             pub fn create(
                 allocator: std.mem.Allocator,
@@ -3234,7 +3240,7 @@ pub const Blob = struct {
             }
 
             pub fn doFCopyFileWithReadWriteLoopFallback(this: *CopyFile) anyerror!void {
-                switch (bun.sys.fcopyfile(this.source_fd, this.destination_fd, posix.system.COPYFILE_DATA)) {
+                switch (bun.sys.fcopyfile(this.source_fd, this.destination_fd, posix.system.COPYFILE{ .DATA = true })) {
                     .err => |errno| {
                         switch (errno.getErrno()) {
                             // If the file type doesn't support seeking, it may return EBADF
@@ -3293,6 +3299,7 @@ pub const Blob = struct {
             }
 
             pub fn runAsync(this: *CopyFile) void {
+                if (Environment.isWindows) return; //why
                 // defer task.onFinish();
 
                 var stat_: ?bun.Stat = null;
@@ -3482,10 +3489,15 @@ pub const Blob = struct {
         // milliseconds since ECMAScript epoch
         last_modified: JSC.JSTimeType = JSC.init_timestamp,
 
-        pub fn unlink(this: *const FileStore, globalThis: *JSC.JSGlobalObject) JSValue {
+        pub fn unlink(this: *const FileStore, globalThis: *JSC.JSGlobalObject) bun.JSError!JSValue {
             return switch (this.pathlike) {
                 .path => |path_like| JSC.Node.Async.unlink.create(globalThis, undefined, .{
-                    .path = .{ .encoded_slice = ZigString.init(path_like.slice()).toSliceClone(bun.default_allocator) },
+                    .path = .{
+                        .encoded_slice = switch (path_like) {
+                            .encoded_slice => |slice| try slice.toOwned(bun.default_allocator),
+                            else => try ZigString.init(path_like.slice()).toSliceClone(bun.default_allocator),
+                        },
+                    },
                 }, globalThis.bunVM()),
                 .fd => JSC.JSPromise.resolvedPromiseValue(globalThis, globalThis.createInvalidArgs("Is not possible to unlink a file descriptor", .{})),
             };
@@ -4135,9 +4147,9 @@ pub const Blob = struct {
     });
     comptime {
         const jsonResolveRequestStream = JSC.toJSHostFunction(onFileStreamResolveRequestStream);
-        @export(jsonResolveRequestStream, .{ .name = Export[0].symbol_name });
+        @export(&jsonResolveRequestStream, .{ .name = Export[0].symbol_name });
         const jsonRejectRequestStream = JSC.toJSHostFunction(onFileStreamRejectRequestStream);
-        @export(jsonRejectRequestStream, .{ .name = Export[1].symbol_name });
+        @export(&jsonRejectRequestStream, .{ .name = Export[1].symbol_name });
     }
     pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *JSC.JSGlobalObject, readable_stream: JSC.WebCore.ReadableStream, extra_options: ?JSValue) JSC.JSValue {
         var store = this.store orelse {
@@ -4795,15 +4807,23 @@ pub const Blob = struct {
     comptime {
         _ = Bun__Blob__getSizeForBindings;
     }
-    pub fn getStat(this: *Blob, globalThis: *JSC.JSGlobalObject, callback: *JSC.CallFrame) JSC.JSValue {
+    pub fn getStat(this: *Blob, globalThis: *JSC.JSGlobalObject, callback: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const store = this.store orelse return JSC.JSValue.jsUndefined();
         // TODO: make this async for files
         return switch (store.data) {
             .file => |*file| {
                 return switch (file.pathlike) {
-                    .path => |path_like| JSC.Node.Async.stat.create(globalThis, undefined, .{
-                        .path = .{ .encoded_slice = ZigString.init(path_like.slice()).toSliceClone(bun.default_allocator) },
-                    }, globalThis.bunVM()),
+                    .path => |path_like| {
+                        return JSC.Node.Async.stat.create(globalThis, undefined, .{
+                            .path = .{
+                                .encoded_slice = switch (path_like) {
+                                    // it's already converted to utf8
+                                    .encoded_slice => |slice| try slice.toOwned(bun.default_allocator),
+                                    else => try ZigString.init(path_like.slice()).toSliceClone(bun.default_allocator),
+                                },
+                            },
+                        }, globalThis.bunVM());
+                    },
                     .fd => |fd| JSC.Node.Async.fstat.create(globalThis, undefined, .{ .fd = fd }, globalThis.bunVM()),
                 };
             },
@@ -4876,7 +4896,7 @@ pub const Blob = struct {
                         Blob.max_size;
                     store.data.file.mode = @intCast(stat.mode);
                     store.data.file.seekable = bun.isRegularFile(stat.mode);
-                    store.data.file.last_modified = JSC.toJSTime(stat.mtime().tv_sec, stat.mtime().tv_nsec);
+                    store.data.file.last_modified = JSC.toJSTime(stat.mtime().sec, stat.mtime().nsec);
                 },
                 // the file may not exist yet. Thats's okay.
                 else => {},
@@ -4890,7 +4910,7 @@ pub const Blob = struct {
                         Blob.max_size;
                     store.data.file.mode = @intCast(stat.mode);
                     store.data.file.seekable = bun.isRegularFile(stat.mode);
-                    store.data.file.last_modified = JSC.toJSTime(stat.mtime().tv_sec, stat.mtime().tv_nsec);
+                    store.data.file.last_modified = JSC.toJSTime(stat.mtime().sec, stat.mtime().nsec);
                 },
                 // the file may not exist yet. Thats's okay.
                 else => {},

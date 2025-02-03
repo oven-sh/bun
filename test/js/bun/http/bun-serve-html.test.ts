@@ -1,4 +1,4 @@
-import { Subprocess } from "bun";
+import type { Subprocess, Server } from "bun";
 import { describe, test, expect } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
@@ -96,10 +96,15 @@ test("serve html", async () => {
     `,
   });
 
-  const { subprocess, port, hostname } = await waitForServer(dir, {
+  const {
+    subprocess: subprocess1,
+    port,
+    hostname,
+  } = await waitForServer(dir, {
     "/": join(dir, "index.html"),
     "/dashboard": join(dir, "dashboard.html"),
   });
+  await using subprocess = subprocess1;
 
   {
     const html = await (await fetch(`http://${hostname}:${port}/`)).text();
@@ -310,9 +315,14 @@ export default p;
 `,
     });
 
-    const { subprocess, port, hostname } = await waitForServer(dir, {
+    const {
+      subprocess: subprocess1,
+      port,
+      hostname,
+    } = await waitForServer(dir, {
       "/": join(dir, "index.html"),
     });
+    await using subprocess = subprocess1;
     const response = await fetch(`http://${hostname}:${port}/`);
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("text/html;charset=utf-8");
@@ -390,9 +400,14 @@ export default p;
 `,
     });
 
-    const { subprocess, port, hostname } = await waitForServer(dir, {
+    const {
+      subprocess: subprocess1,
+      port,
+      hostname,
+    } = await waitForServer(dir, {
       "/": join(dir, "index.html"),
     });
+    await using subprocess = subprocess1;
     const response = await fetch(`http://${hostname}:${port}/`);
     expect(response.status).toBe(500);
 
@@ -439,9 +454,14 @@ export default p;
 plugins = []`,
     });
 
-    const { subprocess, port, hostname } = await waitForServer(dir, {
+    const {
+      subprocess: subprocess1,
+      port,
+      hostname,
+    } = await waitForServer(dir, {
       "/": join(dir, "index.html"),
     });
+    await using subprocess = subprocess1;
     const response = await fetch(`http://${hostname}:${port}/`);
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("text/html");
@@ -510,7 +530,11 @@ export default {
     });
 
     console.log("Waiting for server");
-    const { subprocess, port, hostname } = await waitForServer(dir, {
+    const {
+      subprocess: subprocess1,
+      port,
+      hostname,
+    } = await waitForServer(dir, {
       "/": join(dir, "index.html"),
       "/about": join(dir, "about.html"),
       "/contact": join(dir, "contact.html"),
@@ -523,7 +547,7 @@ export default {
       "/ooga": join(dir, "ooga.html"),
     });
     console.log("done waiting for server");
-
+    await using subprocess = subprocess1;
     // Make concurrent requests to all routes while plugins are loading
     const responses = await Promise.all([
       fetch(`http://${hostname}:${port}/`),
@@ -594,3 +618,101 @@ async function waitForServer(
   });
   return defer.promise;
 }
+
+test("serve html error handling", async () => {
+  const dir = tempDirWithFiles("bun-serve-html-error-handling", {
+    "index.html": /*html*/ `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Error Page</title>
+        </head>
+        <body>
+          <h1>Error Page</h1>
+          <script type="module" src="error.js"></script>
+        </body>
+      </html>
+    `,
+    "error.js": /*js*/ `
+      throw new Error("Error on purpose");
+    `,
+  });
+  async function getServers() {
+    const path = join(dir, "index.html");
+
+    const { default: html } = await import(path);
+    let servers: Server[] = [];
+    for (let i = 0; i < 10; i++) {
+      servers.push(
+        Bun.serve({
+          port: 0,
+          static: {
+            "/": html,
+          },
+          development: true,
+          fetch(req) {
+            return new Response("Not found", { status: 404 });
+          },
+        }),
+      );
+    }
+
+    delete require.cache[path];
+
+    return servers;
+  }
+
+  {
+    let servers = await getServers();
+    Bun.gc();
+    await Bun.sleep(1);
+    for (const server of servers) {
+      await server.stop(true);
+    }
+    servers = [];
+    Bun.gc();
+  }
+
+  Bun.gc(true);
+});
+
+test("wildcard static routes", async () => {
+  const dir = tempDirWithFiles("bun-serve-html-error-handling", {
+    "index.html": /*html*/ `
+      <!DOCTYPE html>
+      <html>
+        <head>         
+        </head>
+        <body>
+          <title>Error Page</title>
+          <h1>Error Page</h1>
+          <script type="module" src="error.js"></script>
+        </body>
+      </html>
+    `,
+    "error.js": /*js*/ `
+      throw new Error("Error on purpose");
+    `,
+  });
+  const { default: html } = await import(join(dir, "index.html"));
+  for (let development of [true, false]) {
+    using server = Bun.serve({
+      port: 0,
+      static: {
+        "/*": html,
+      },
+      development,
+      fetch(req) {
+        return new Response("Not found", { status: 404 });
+      },
+    });
+
+    for (let url of [server.url, new URL("/potato", server.url)]) {
+      const response = await fetch(url);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toContain("text/html");
+      const text = await response.text();
+      expect(text).toContain("<title>Error Page</title>");
+    }
+  }
+});

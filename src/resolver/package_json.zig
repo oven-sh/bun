@@ -28,9 +28,9 @@ pub const MacroImportReplacementMap = bun.StringArrayHashMap(string);
 pub const MacroMap = bun.StringArrayHashMapUnmanaged(MacroImportReplacementMap);
 
 const ScriptsMap = bun.StringArrayHashMap(string);
-const Semver = @import("../install/semver.zig");
+const Semver = bun.Semver;
 const Dependency = @import("../install/dependency.zig");
-const String = @import("../install/semver.zig").String;
+const String = Semver.String;
 const Version = Semver.Version;
 const Install = @import("../install/install.zig");
 const FolderResolver = @import("../install/resolvers/folder_resolver.zig");

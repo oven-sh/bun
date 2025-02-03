@@ -134,7 +134,15 @@ yourself with Bun.serve().
     const basename = path.basename(arg);
     const isIndexHtml = basename === "index.html";
 
-    let servePath = arg.startsWith(longestCommonPath) ? arg.slice(longestCommonPath.length) : arg;
+    let servePath = arg;
+    if (servePath.startsWith(longestCommonPath)) {
+      servePath = servePath.slice(longestCommonPath.length);
+    } else {
+      const relative = path.relative(longestCommonPath, servePath);
+      if (!relative.startsWith("..")) {
+        servePath = relative;
+      }
+    }
 
     if (isIndexHtml && servePath.length === 0) {
       servePath = "/";
@@ -295,7 +303,7 @@ yourself with Bun.serve().
     process.on("SIGHUP", () => process.exit());
     process.on("SIGTERM", () => process.exit());
     process.stdin.on("data", data => {
-      const key = data.toString().toLowerCase();
+      const key = data.toString().toLowerCase().replaceAll("\r\n", "\n");
 
       switch (key) {
         case "\x03": // Ctrl+C

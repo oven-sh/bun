@@ -4392,7 +4392,7 @@ pub fn CowSlice(T: type) type {
     return struct {
         ptr: [*]const T,
         flags: packed struct(usize) {
-            len: @Type(.{ .Int = .{
+            len: @Type(.{ .int = .{
                 .bits = @bitSizeOf(usize) - 1,
                 .signedness = .unsigned,
             } }),

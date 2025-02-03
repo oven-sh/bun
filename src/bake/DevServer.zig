@@ -544,11 +544,11 @@ fn scanInitialRoutes(dev: *DevServer) !void {
     try dev.client_graph.ensureStaleBitCapacity(true);
 }
 
-pub fn attachRoutes(dev: *DevServer, server: anytype) !void {
+/// Returns true if a catch-all handler was attached.
+pub fn attachRoutes(dev: *DevServer, server: anytype) !bool {
     dev.server = bun.JSC.API.AnyServer.from(server);
     const app = server.app.?;
-    const Server = @typeInfo(@TypeOf(server)).Pointer.child;
-    const is_ssl = @typeInfo(@TypeOf(app)).Pointer.child.is_ssl;
+    const is_ssl = @typeInfo(@TypeOf(app)).pointer.child.is_ssl;
 
     app.get(client_prefix ++ "/:route", *DevServer, dev, wrapGenericRequestHandler(onJsRequest, is_ssl));
     app.get(asset_prefix ++ "/:asset", *DevServer, dev, wrapGenericRequestHandler(onAssetRequest, is_ssl));
@@ -575,8 +575,9 @@ pub fn attachRoutes(dev: *DevServer, server: anytype) !void {
     // types. Otherwise, this can just be Bun.serve's default handler.
     if (dev.framework.file_system_router_types.len > 0) {
         app.any("/*", *DevServer, dev, wrapGenericRequestHandler(onRequest, is_ssl));
+        return true;
     } else {
-        app.any("/*", *Server, server, Server.onRequest);
+        return false;
     }
 }
 
@@ -656,7 +657,7 @@ inline fn wrapGenericRequestHandler(
     req: *Request,
     resp: *uws.NewApp(is_ssl).Response,
 ) void {
-    const fn_info = @typeInfo(@TypeOf(handler)).Fn;
+    const fn_info = @typeInfo(@TypeOf(handler)).@"fn";
     assert(fn_info.params.len == 3);
     const uses_any_response = if (fn_info.params[2].type) |t| t == AnyResponse else false;
     return struct {
@@ -1807,23 +1808,23 @@ pub fn finalizeBundle(
         });
 
         // Compute a file name to display
-        const file_name: ?[]const u8, const total_count: usize = if (current_bundle.had_reload_event)
-            .{ null, 0 }
-        else first_route_file_name: {
-            const route_bundle = dev.routeBundlePtr(dev.current_bundle_requests.items[0].route_bundle_index);
-            
-            const opaque_id = dev.router.routePtr(
-                
-                    .route,
-            ).file_page.unwrap() orelse
-                break :first_route_file_name .{ null, 0 };
-            const server_index = fromOpaqueFileId(.server, opaque_id);
-
-            break :first_route_file_name .{
-                dev.relativePath(dev.server_graph.bundled_files.keys()[server_index.get()]),
-                0,
-            };
+        const file_name: ?[]const u8 = if (current_bundle.had_reload_event)
+            dev.relativePath(
+                bv2.graph.input_files.items(.source)[bv2.graph.entry_points.items[0].get()].path.text,
+            )
+        else switch (dev.routeBundlePtr(dev.current_bundle_requests.items[0].route_bundle_index).data) {
+            .html => |html| dev.relativePath(html.html_bundle.html_bundle.path),
+            .framework => |fw| file_name: {
+                const route = dev.router.routePtr(fw.route_index);
+                const opaque_id = route.file_page.unwrap() orelse
+                    route.file_layout.unwrap() orelse
+                    break :file_name null;
+                const server_index = fromOpaqueFileId(.server, opaque_id);
+                const abs_path = dev.server_graph.bundled_files.keys()[server_index.get()];
+                break :file_name dev.relativePath(abs_path);
+            },
         };
+        const total_count = bv2.graph.entry_points.items.len;
         if (file_name) |name| {
             Output.prettyError("<d>:<r> {s}", .{name});
             if (total_count > 1) {
@@ -2006,7 +2007,7 @@ fn onRequest(dev: *DevServer, req: *Request, resp: anytype) void {
 
     switch (dev.server.?) {
         inline else => |s| {
-            if (@typeInfo(@TypeOf(s.app.?)).Pointer.child.Response != @typeInfo(@TypeOf(resp)).Pointer.child) {
+            if (@typeInfo(@TypeOf(s.app.?)).pointer.child.Response != @typeInfo(@TypeOf(resp)).pointer.child) {
                 unreachable; // mismatch between `is_ssl` with server and response types. optimize these checks out.
             }
             if (s.config.onRequest != .zero) {

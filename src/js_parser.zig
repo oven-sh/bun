@@ -24310,7 +24310,7 @@ pub const ConvertESMExportsForHmr = struct {
                     const symbol = &p.symbols.items[namespace_ref.innerIndex()];
                     symbol.use_count_estimate = 0;
                     symbol.link = stmt.namespace_ref;
-                    if (@hasField(@typeInfo(@TypeOf(p)).Pointer.child, "symbol_uses")) {
+                    if (@hasField(@typeInfo(@TypeOf(p)).pointer.child, "symbol_uses")) {
                         _ = p.symbol_uses.swapRemove(namespace_ref);
                     }
                 }

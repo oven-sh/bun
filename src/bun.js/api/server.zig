@@ -7488,25 +7488,23 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 app.get("/src:/*", *ThisServer, this, onSrcRequest);
             }
 
+            var has_dev_catch_all = false;
             if (this.dev_server) |dev| {
-                dev.attachRoutes(this) catch bun.outOfMemory();
-            } else {
-                const @"has /*" = brk: {
-                    for (this.config.static_routes.items) |route| {
-                        if (strings.eqlComptime(route.path, "/*")) {
-                            break :brk true;
-                        }
-                    }
+                has_dev_catch_all = dev.attachRoutes(this) catch bun.outOfMemory();
+            }
+            if (!has_dev_catch_all) {
+                const has_html_catch_all = for (this.config.static_routes.items) |route| {
+                    if (strings.eqlComptime(route.path, "/*"))
+                        break true;
+                } else false;
 
-                    break :brk false;
-                };
-
-                // "/*" routes are added backwards, so if they have a static route, it will never be matched
-                // so we need to check for that first
-                if (!@"has /*") {
+                // "/*" routes are added backwards, so if they have a static route,
+                // it will never be matched so we need to check for that first
+                if (!has_html_catch_all) {
                     bun.assert(this.config.onRequest != .zero);
                     app.any("/*", *ThisServer, this, onRequest);
                 } else if (this.config.onRequest != .zero) {
+                    // The HTML catch all recieves GET, HEAD, and OPTIONS
                     app.post("/*", *ThisServer, this, onRequest);
                     app.put("/*", *ThisServer, this, onRequest);
                     app.patch("/*", *ThisServer, this, onRequest);

@@ -396,12 +396,12 @@ pub const UDPSocket = struct {
 
     fn throwEBADFIfNecessary(this: *This, globalThis: *JSGlobalObject) bun.JSError!void {
         if (this.closed) {
-            return globalThis.throwValue(bun.sys.Error.fromCode(.BADF, .setsockopt).toJS(globalThis));
+            return globalThis.throwValue(bun.sys.Error.fromCode(.BADF, .setsockopt).toJSC(globalThis));
         }
     }
 
     fn throwEINVAL(globalThis: *JSGlobalObject) bun.JSError!void {
-        return globalThis.throwValue(bun.sys.Error.fromCode(.INVAL, .setsockopt).toJS(globalThis));
+        return globalThis.throwValue(bun.sys.Error.fromCode(.INVAL, .setsockopt).toJSC(globalThis));
     }
 
     pub fn setBroadcast(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
@@ -450,7 +450,7 @@ pub const UDPSocket = struct {
 
         var addr: std.posix.sockaddr.storage = undefined;
         if (!parseAddr(this, globalThis, JSC.jsNumber(0), arguments[0], &addr)) {
-            return globalThis.throwValue(bun.sys.Error.fromCode(.INVAL, .setsockopt).toJS(globalThis));
+            return globalThis.throwValue(bun.sys.Error.fromCode(.INVAL, .setsockopt).toJSC(globalThis));
         }
 
         var interface: std.posix.sockaddr.storage = undefined;

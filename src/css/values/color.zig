@@ -260,7 +260,7 @@ pub const CssColor = union(enum) {
         };
 
         switch (token.*) {
-            .hash, .idhash => |v| {
+            .unrestrictedhash, .idhash => |v| {
                 const r, const g, const b, const a = css.color.parseHashColor(v) orelse return .{ .err = location.newUnexpectedTokenError(token.*) };
                 return .{ .result = .{
                     .rgba = RGBA.new(r, g, b, a),
@@ -1620,7 +1620,7 @@ pub const LAB = struct {
     /// The alpha component.
     alpha: f32,
 
-    pub usingnamespace DefineColorspace(@This());
+    pub usingnamespace DefineColorspace(@This(), ChannelTypeMap);
     pub usingnamespace ColorspaceConversions(@This());
     pub usingnamespace UnboundedColorGamut(@This());
 
@@ -1650,7 +1650,7 @@ pub const SRGB = struct {
     /// The alpha component.
     alpha: f32,
 
-    pub usingnamespace DefineColorspace(@This());
+    pub usingnamespace DefineColorspace(@This(), ChannelTypeMap);
     pub usingnamespace ColorspaceConversions(@This());
     pub usingnamespace BoundedColorGamut(@This());
 
@@ -1690,7 +1690,7 @@ pub const HSL = struct {
     /// The alpha component.
     alpha: f32,
 
-    pub usingnamespace DefineColorspace(@This());
+    pub usingnamespace DefineColorspace(@This(), ChannelTypeMap);
     pub usingnamespace ColorspaceConversions(@This());
     pub usingnamespace HslHwbColorGamut(@This(), "s", "l");
 
@@ -1734,7 +1734,7 @@ pub const HWB = struct {
     /// The alpha component.
     alpha: f32,
 
-    pub usingnamespace DefineColorspace(@This());
+    pub usingnamespace DefineColorspace(@This(), ChannelTypeMap);
     pub usingnamespace ColorspaceConversions(@This());
     pub usingnamespace HslHwbColorGamut(@This(), "w", "b");
 
@@ -1773,7 +1773,7 @@ pub const SRGBLinear = struct {
     /// The alpha component.
     alpha: f32,
 
-    pub usingnamespace DefineColorspace(@This());
+    pub usingnamespace DefineColorspace(@This(), ChannelTypeMap);
     pub usingnamespace ColorspaceConversions(@This());
     pub usingnamespace BoundedColorGamut(@This());
 
@@ -1803,7 +1803,7 @@ pub const P3 = struct {
     /// The alpha component.
     alpha: f32,
 
-    pub usingnamespace DefineColorspace(@This());
+    pub usingnamespace DefineColorspace(@This(), ChannelTypeMap);
     pub usingnamespace ColorspaceConversions(@This());
     pub usingnamespace BoundedColorGamut(@This());
 
@@ -1827,7 +1827,7 @@ pub const A98 = struct {
     /// The alpha component.
     alpha: f32,
 
-    pub usingnamespace DefineColorspace(@This());
+    pub usingnamespace DefineColorspace(@This(), ChannelTypeMap);
     pub usingnamespace ColorspaceConversions(@This());
     pub usingnamespace BoundedColorGamut(@This());
 
@@ -1851,7 +1851,7 @@ pub const ProPhoto = struct {
     /// The alpha component.
     alpha: f32,
 
-    pub usingnamespace DefineColorspace(@This());
+    pub usingnamespace DefineColorspace(@This(), ChannelTypeMap);
     pub usingnamespace ColorspaceConversions(@This());
     pub usingnamespace BoundedColorGamut(@This());
 
@@ -1875,7 +1875,7 @@ pub const Rec2020 = struct {
     /// The alpha component.
     alpha: f32,
 
-    pub usingnamespace DefineColorspace(@This());
+    pub usingnamespace DefineColorspace(@This(), ChannelTypeMap);
     pub usingnamespace ColorspaceConversions(@This());
     pub usingnamespace BoundedColorGamut(@This());
 
@@ -1899,7 +1899,7 @@ pub const XYZd50 = struct {
     /// The alpha component.
     alpha: f32,
 
-    pub usingnamespace DefineColorspace(@This());
+    pub usingnamespace DefineColorspace(@This(), ChannelTypeMap);
     pub usingnamespace ColorspaceConversions(@This());
     pub usingnamespace UnboundedColorGamut(@This());
 
@@ -1926,7 +1926,7 @@ pub const XYZd65 = struct {
     /// The alpha component.
     alpha: f32,
 
-    pub usingnamespace DefineColorspace(@This());
+    pub usingnamespace DefineColorspace(@This(), ChannelTypeMap);
     pub usingnamespace ColorspaceConversions(@This());
     pub usingnamespace UnboundedColorGamut(@This());
 
@@ -1956,7 +1956,7 @@ pub const LCH = struct {
     /// The alpha component.
     alpha: f32,
 
-    pub usingnamespace DefineColorspace(@This());
+    pub usingnamespace DefineColorspace(@This(), ChannelTypeMap);
     pub usingnamespace ColorspaceConversions(@This());
     pub usingnamespace UnboundedColorGamut(@This());
 
@@ -1984,7 +1984,7 @@ pub const OKLAB = struct {
     /// The alpha component.
     alpha: f32,
 
-    pub usingnamespace DefineColorspace(@This());
+    pub usingnamespace DefineColorspace(@This(), ChannelTypeMap);
     pub usingnamespace ColorspaceConversions(@This());
     pub usingnamespace UnboundedColorGamut(@This());
 
@@ -2014,7 +2014,7 @@ pub const OKLCH = struct {
     /// The alpha component.
     alpha: f32,
 
-    pub usingnamespace DefineColorspace(@This());
+    pub usingnamespace DefineColorspace(@This(), ChannelTypeMap);
     pub usingnamespace ColorspaceConversions(@This());
     pub usingnamespace UnboundedColorGamut(@This());
 
@@ -3037,12 +3037,7 @@ pub fn ColorspaceConversions(comptime T: type) type {
     };
 }
 
-pub fn DefineColorspace(comptime T: type) type {
-    if (!@hasDecl(T, "ChannelTypeMap")) {
-        @compileError("A Colorspace must define a ChannelTypeMap");
-    }
-    const ChannelTypeMap = T.ChannelTypeMap;
-
+pub fn DefineColorspace(comptime T: type, comptime ChannelTypeMap: anytype) type {
     const fields: []const std.builtin.Type.StructField = std.meta.fields(T);
     const a = fields[0].name;
     const b = fields[1].name;

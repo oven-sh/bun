@@ -572,7 +572,6 @@ pub const FSWatcher = struct {
 
     // this can be called from Watcher Thread or JS Context Thread
     pub fn refTask(this: *FSWatcher) bool {
-        @fence(.acquire);
         this.mutex.lock();
         defer this.mutex.unlock();
         if (this.closed) return false;
@@ -582,7 +581,6 @@ pub const FSWatcher = struct {
     }
 
     pub fn hasPendingActivity(this: *FSWatcher) bool {
-        @fence(.acquire);
         return this.pending_activity_count.load(.acquire) > 0;
     }
 

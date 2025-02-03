@@ -45,15 +45,15 @@ pub inline fn implementDeepClone(comptime T: type, this: *const T, allocator: Al
         return this.*;
     }
 
-    if (comptime @typeInfo(T) == .Pointer) {
+    if (comptime @typeInfo(T) == .pointer) {
         const TT = std.meta.Child(T);
         return implementEql(TT, this.*);
     }
 
     return switch (tyinfo) {
-        .Struct => {
+        .@"struct" => {
             var strct: T = undefined;
-            inline for (tyinfo.Struct.fields) |field| {
+            inline for (tyinfo.@"struct".fields) |field| {
                 if (comptime canTransitivelyImplementDeepClone(field.type) and @hasDecl(field.type, "__generateDeepClone")) {
                     @field(strct, field.name) = implementDeepClone(field.type, &field(this, field.name, allocator));
                 } else {
@@ -62,8 +62,8 @@ pub inline fn implementDeepClone(comptime T: type, this: *const T, allocator: Al
             }
             return strct;
         },
-        .Union => {
-            inline for (bun.meta.EnumFields(T), tyinfo.Union.fields) |enum_field, union_field| {
+        .@"union" => {
+            inline for (bun.meta.EnumFields(T), tyinfo.@"union".fields) |enum_field, union_field| {
                 if (@intFromEnum(this.*) == enum_field.value) {
                     if (comptime canTransitivelyImplementDeepClone(union_field.type) and @hasDecl(union_field.type, "__generateDeepClone")) {
                         return @unionInit(T, enum_field.name, implementDeepClone(union_field.type, &@field(this, enum_field.name), allocator));
@@ -97,11 +97,11 @@ pub fn implementEql(comptime T: type, this: *const T, other: *const T) bool {
     if (comptime T == []const u8) {
         return bun.strings.eql(this.*, other.*);
     }
-    if (comptime @typeInfo(T) == .Pointer) {
+    if (comptime @typeInfo(T) == .pointer) {
         const TT = std.meta.Child(T);
         return implementEql(TT, this.*, other.*);
     }
-    if (comptime @typeInfo(T) == .Optional) {
+    if (comptime @typeInfo(T) == .optional) {
         const TT = std.meta.Child(T);
         if (this.* != null and other.* != null) return implementEql(TT, &this.*.?, &other.*.?);
         return false;
@@ -110,9 +110,9 @@ pub fn implementEql(comptime T: type, this: *const T, other: *const T) bool {
         return VendorPrefix.eql(this.*, other.*);
     }
     return switch (tyinfo) {
-        .Optional => @compileError("Handled above, this means Zack wrote a bug."),
-        .Pointer => @compileError("Handled above, this means Zack wrote a bug."),
-        .Array => {
+        .optional => @compileError("Handled above, this means Zack wrote a bug."),
+        .pointer => @compileError("Handled above, this means Zack wrote a bug."),
+        .array => {
             const Child = std.meta.Child(T);
             if (comptime bun.meta.isSimpleEqlType(Child)) {
                 return std.mem.eql(Child, &this.*, &other.*);
@@ -129,14 +129,14 @@ pub fn implementEql(comptime T: type, this: *const T, other: *const T) bool {
             }
             return true;
         },
-        .Struct => {
-            inline for (tyinfo.Struct.fields) |field| {
+        .@"struct" => {
+            inline for (tyinfo.@"struct".fields) |field| {
                 if (!eql(field.type, &@field(this, field.name), &@field(other, field.name))) return false;
             }
             return true;
         },
-        .Union => {
-            if (tyinfo.Union.tag_type == null) @compileError("Unions must have a tag type");
+        .@"union" => {
+            if (tyinfo.@"union".tag_type == null) @compileError("Unions must have a tag type");
             if (@intFromEnum(this.*) != @intFromEnum(other.*)) return false;
             const enum_fields = bun.meta.EnumFields(T);
             inline for (enum_fields, std.meta.fields(T)) |enum_field, union_field| {
@@ -171,42 +171,42 @@ pub fn implementHash(comptime T: type, this: *const T, hasher: *std.hash.Wyhash)
         };
         bun.writeAnyToHasher(hasher, list.len);
         for (list) |*item| {
-            hash(tyinfo.Array.child, item, hasher);
+            hash(tyinfo.array.child, item, hasher);
         }
         return;
     }
     if (comptime T == []const u8) {
         return hasher.update(this.*);
     }
-    if (comptime @typeInfo(T) == .Pointer) {
+    if (comptime @typeInfo(T) == .pointer) {
         @compileError("Invalid type for implementHash(): " ++ @typeName(T));
     }
-    if (comptime @typeInfo(T) == .Optional) {
+    if (comptime @typeInfo(T) == .optional) {
         @compileError("Invalid type for implementHash(): " ++ @typeName(T));
     }
     return switch (tyinfo) {
-        .Optional => {
+        .optional => {
             if (this.* == null) {
                 bun.writeAnyToHasher(hasher, "null");
             } else {
                 bun.writeAnyToHasher(hasher, "some");
-                hash(tyinfo.Optional.child, &this.*.?, hasher);
+                hash(tyinfo.optional.child, &this.*.?, hasher);
             }
         },
-        .Pointer => {
-            hash(tyinfo.Pointer.child, &this.*, hasher);
+        .pointer => {
+            hash(tyinfo.pointer.child, &this.*, hasher);
         },
-        .Array => {
+        .array => {
             bun.writeAnyToHasher(hasher, this.len);
             for (this.*[0..]) |*item| {
-                hash(tyinfo.Array.child, item, hasher);
+                hash(tyinfo.array.child, item, hasher);
             }
         },
-        .Struct => {
-            inline for (tyinfo.Struct.fields) |field| {
+        .@"struct" => {
+            inline for (tyinfo.@"struct".fields) |field| {
                 if (comptime hasHash(field.type)) {
                     hash(field.type, &@field(this, field.name), hasher);
-                } else if (@hasDecl(field.type, "__generateHash") and @typeInfo(field.type) == .Struct) {
+                } else if (@hasDecl(field.type, "__generateHash") and @typeInfo(field.type) == .@"struct") {
                     implementHash(field.type, &@field(this, field.name), hasher);
                 } else {
                     @compileError("Can't hash these fields: " ++ @typeName(field.type) ++ ". On " ++ @typeName(T));
@@ -214,11 +214,11 @@ pub fn implementHash(comptime T: type, this: *const T, hasher: *std.hash.Wyhash)
             }
             return;
         },
-        .Enum => {
+        .@"enum" => {
             bun.writeAnyToHasher(hasher, @intFromEnum(this.*));
         },
-        .Union => {
-            if (tyinfo.Union.tag_type == null) @compileError("Unions must have a tag type");
+        .@"union" => {
+            if (tyinfo.@"union".tag_type == null) @compileError("Unions must have a tag type");
             bun.writeAnyToHasher(hasher, @intFromEnum(this.*));
             const enum_fields = bun.meta.EnumFields(T);
             inline for (enum_fields, std.meta.fields(T)) |enum_field, union_field| {
@@ -226,7 +226,7 @@ pub fn implementHash(comptime T: type, this: *const T, hasher: *std.hash.Wyhash)
                     const field = union_field;
                     if (comptime hasHash(field.type)) {
                         hash(field.type, &@field(this, field.name), hasher);
-                    } else if (@hasDecl(field.type, "__generateHash") and @typeInfo(field.type) == .Struct) {
+                    } else if (@hasDecl(field.type, "__generateHash") and @typeInfo(field.type) == .@"struct") {
                         implementHash(field.type, &@field(this, field.name), hasher);
                     } else {
                         @compileError("Can't hash these fields: " ++ @typeName(field.type) ++ ". On " ++ @typeName(T));
@@ -253,7 +253,7 @@ pub fn slice(comptime T: type, val: *const T) []const bun.meta.looksLikeListCont
 pub fn isCompatible(comptime T: type, val: *const T, browsers: bun.css.targets.Browsers) bool {
     if (@hasDecl(T, "isCompatible")) return T.isCompatible(val, browsers);
     const tyinfo = @typeInfo(T);
-    if (tyinfo == .Pointer) {
+    if (tyinfo == .pointer) {
         const TT = std.meta.Child(T);
         return isCompatible(TT, val.*, browsers);
     }
@@ -291,14 +291,14 @@ pub inline fn parseWithOptions(comptime T: type, input: *Parser, options: *const
 }
 
 pub inline fn parse(comptime T: type, input: *Parser) Result(T) {
-    if (comptime @typeInfo(T) == .Pointer) {
+    if (comptime @typeInfo(T) == .pointer) {
         const TT = std.meta.Child(T);
         return switch (parse(TT, input)) {
             .result => |v| .{ .result = bun.create(input.allocator(), TT, v) },
             .err => |e| .{ .err = e },
         };
     }
-    if (comptime @typeInfo(T) == .Optional) {
+    if (comptime @typeInfo(T) == .optional) {
         const TT = std.meta.Child(T);
         return .{ .result = input.tryParse(parseFor(TT), .{}).asValue() };
     }
@@ -334,11 +334,11 @@ pub inline fn parseFor(comptime T: type) @TypeOf(struct {
 pub fn hasToCss(comptime T: type) bool {
     const tyinfo = @typeInfo(T);
     if (comptime T == []const u8) return false;
-    if (tyinfo == .Pointer) {
+    if (tyinfo == .pointer) {
         const TT = std.meta.Child(T);
         return hasToCss(TT);
     }
-    if (tyinfo == .Optional) {
+    if (tyinfo == .optional) {
         const TT = std.meta.Child(T);
         return hasToCss(TT);
     }
@@ -356,11 +356,11 @@ pub fn hasToCss(comptime T: type) bool {
 }
 
 pub inline fn toCss(comptime T: type, this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
-    if (@typeInfo(T) == .Pointer) {
+    if (@typeInfo(T) == .pointer) {
         const TT = std.meta.Child(T);
         return toCss(TT, this.*, W, dest);
     }
-    if (@typeInfo(T) == .Optional) {
+    if (@typeInfo(T) == .optional) {
         const TT = std.meta.Child(T);
 
         if (this.*) |*val| {
@@ -397,29 +397,30 @@ pub fn eqlList(comptime T: type, lhs: *const ArrayList(T), rhs: *const ArrayList
 
 pub fn canTransitivelyImplementEql(comptime T: type) bool {
     return switch (@typeInfo(T)) {
-        .Struct, .Union => true,
+        .@"struct", .@"union" => true,
         else => false,
     };
 }
 
 pub inline fn eql(comptime T: type, lhs: *const T, rhs: *const T) bool {
     const tyinfo = comptime @typeInfo(T);
-    if (comptime tyinfo == .Pointer) {
+    @setEvalBranchQuota(10_000);
+    if (comptime tyinfo == .pointer) {
         if (comptime T == []const u8) return bun.strings.eql(lhs.*, rhs.*);
-        if (comptime tyinfo.Pointer.size == .One) {
+        if (comptime tyinfo.pointer.size == .one) {
             const TT = std.meta.Child(T);
             return eql(TT, lhs.*, rhs.*);
-        } else if (comptime tyinfo.Pointer.size == .Slice) {
+        } else if (comptime tyinfo.pointer.size == .slice) {
             if (lhs.*.len != rhs.*.len) return false;
             for (lhs.*[0..], rhs.*[0..]) |*a, *b| {
-                if (!eql(tyinfo.Pointer.child, a, b)) return false;
+                if (!eql(tyinfo.pointer.child, a, b)) return false;
             }
             return true;
         } else {
-            @compileError("Unsupported pointer size: " ++ @tagName(tyinfo.Pointer.size) ++ " (" ++ @typeName(T) ++ ")");
+            @compileError("Unsupported pointer size: " ++ @tagName(tyinfo.pointer.size) ++ " (" ++ @typeName(T) ++ ")");
         }
     }
-    if (comptime tyinfo == .Optional) {
+    if (comptime tyinfo == .optional) {
         const TT = std.meta.Child(T);
         if (lhs.* == null and rhs.* == null) return true;
         if (lhs.* != null and rhs.* != null) return eql(TT, &lhs.*.?, &rhs.*.?);
@@ -450,32 +451,32 @@ pub inline fn eql(comptime T: type, lhs: *const T, rhs: *const T) bool {
 
 pub fn canTransitivelyImplementDeepClone(comptime T: type) bool {
     return switch (@typeInfo(T)) {
-        .Struct, .Union => true,
+        .@"struct", .@"union" => true,
         else => false,
     };
 }
 
 pub inline fn deepClone(comptime T: type, this: *const T, allocator: Allocator) T {
     const tyinfo = comptime @typeInfo(T);
-    if (comptime tyinfo == .Pointer) {
-        if (comptime tyinfo.Pointer.size == .One) {
+    if (comptime tyinfo == .pointer) {
+        if (comptime tyinfo.pointer.size == .one) {
             const TT = std.meta.Child(T);
             return bun.create(allocator, TT, deepClone(TT, this.*, allocator));
         }
-        if (comptime tyinfo.Pointer.size == .Slice) {
-            var slc = allocator.alloc(tyinfo.Pointer.child, this.len) catch bun.outOfMemory();
-            if (comptime bun.meta.isSimpleCopyType(tyinfo.Pointer.child) or tyinfo.Pointer.child == []const u8) {
+        if (comptime tyinfo.pointer.size == .slice) {
+            var slc = allocator.alloc(tyinfo.pointer.child, this.len) catch bun.outOfMemory();
+            if (comptime bun.meta.isSimpleCopyType(tyinfo.pointer.child) or tyinfo.pointer.child == []const u8) {
                 @memcpy(slc, this.*);
             } else {
                 for (this.*, 0..) |*e, i| {
-                    slc[i] = deepClone(tyinfo.Pointer.child, e, allocator);
+                    slc[i] = deepClone(tyinfo.pointer.child, e, allocator);
                 }
             }
             return slc;
         }
-        @compileError("Deep clone not supported for this kind of pointer: " ++ @tagName(tyinfo.Pointer.size) ++ " (" ++ @typeName(T) ++ ")");
+        @compileError("Deep clone not supported for this kind of pointer: " ++ @tagName(tyinfo.pointer.size) ++ " (" ++ @typeName(T) ++ ")");
     }
-    if (comptime tyinfo == .Optional) {
+    if (comptime tyinfo == .optional) {
         const TT = std.meta.Child(T);
         if (this.* != null) return deepClone(TT, &this.*.?, allocator);
         return null;
@@ -607,11 +608,11 @@ pub fn hasHash(comptime T: type) bool {
     const tyinfo = @typeInfo(T);
     if (comptime T == []const u8) return true;
     if (comptime bun.meta.isSimpleEqlType(T)) return true;
-    if (tyinfo == .Pointer) {
+    if (tyinfo == .pointer) {
         const TT = std.meta.Child(T);
         return hasHash(TT);
     }
-    if (tyinfo == .Optional) {
+    if (tyinfo == .optional) {
         const TT = std.meta.Child(T);
         return hasHash(TT);
     }
@@ -630,11 +631,11 @@ pub fn hasHash(comptime T: type) bool {
 pub fn hash(comptime T: type, this: *const T, hasher: *std.hash.Wyhash) void {
     if (comptime T == void) return;
     const tyinfo = @typeInfo(T);
-    if (comptime tyinfo == .Pointer and T != []const u8) {
+    if (comptime tyinfo == .pointer and T != []const u8) {
         const TT = std.meta.Child(T);
-        if (tyinfo.Pointer.size == .One) {
+        if (tyinfo.pointer.size == .one) {
             return hash(TT, this.*, hasher);
-        } else if (tyinfo.Pointer.size == .Slice) {
+        } else if (tyinfo.pointer.size == .slice) {
             for (this.*) |*item| {
                 hash(TT, item, hasher);
             }
@@ -643,7 +644,7 @@ pub fn hash(comptime T: type, this: *const T, hasher: *std.hash.Wyhash) void {
             @compileError("Can't hash this pointer type: " ++ @typeName(T));
         }
     }
-    if (comptime @typeInfo(T) == .Optional) {
+    if (comptime @typeInfo(T) == .optional) {
         const TT = std.meta.Child(T);
         if (this.* != null) return hash(TT, &this.*.?, hasher);
         return;

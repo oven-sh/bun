@@ -1,5 +1,5 @@
 const ExternalStringList = @import("./install.zig").ExternalStringList;
-const Semver = @import("./semver.zig");
+const Semver = bun.Semver;
 const ExternalString = Semver.ExternalString;
 const String = Semver.String;
 const Output = bun.Output;
@@ -364,7 +364,7 @@ pub const Bin = extern struct {
     }
 
     pub fn init() Bin {
-        return bun.serializable(.{ .tag = .none, .value = Value.init(.{ .none = {} }) });
+        return bun.serializable(Bin{ .tag = .none, .value = Value.init(.{ .none = {} }) });
     }
 
     pub const Value = extern union {

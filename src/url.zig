@@ -1043,7 +1043,7 @@ pub const FormData = struct {
 
     comptime {
         const jsFunctionFromMultipartData = JSC.toJSHostFunction(fromMultipartData);
-        @export(jsFunctionFromMultipartData, .{ .name = "FormData__jsFunctionFromMultipartData" });
+        @export(&jsFunctionFromMultipartData, .{ .name = "FormData__jsFunctionFromMultipartData" });
     }
 
     pub fn toJSFromMultipartData(

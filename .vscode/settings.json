@@ -140,6 +140,7 @@
   },
   "files.associations": {
     "*.idl": "cpp",
+    "*.mdc": "markdown",
     "array": "cpp",
   },
   "C_Cpp.files.exclude": {

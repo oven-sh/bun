@@ -1,6 +1,6 @@
 const std = @import("std");
 const bun = @import("root").bun;
-pub extern "C" fn memmem(haystack: [*]const u8, haystacklen: usize, needle: [*]const u8, needlelen: usize) ?[*]const u8;
+pub extern "c" fn memmem(haystack: [*]const u8, haystacklen: usize, needle: [*]const u8, needlelen: usize) ?[*]const u8;
 pub const SystemErrno = enum(u8) {
     SUCCESS = 0,
     EPERM = 1,
@@ -606,7 +606,7 @@ pub const RWFFlagSupport = enum(u8) {
     }
 };
 
-pub extern "C" fn sys_preadv2(
+pub extern "c" fn sys_preadv2(
     fd: c_int,
     iov: [*]const std.posix.iovec,
     iovcnt: c_int,
@@ -614,7 +614,7 @@ pub extern "C" fn sys_preadv2(
     flags: c_uint,
 ) isize;
 
-pub extern "C" fn sys_pwritev2(
+pub extern "c" fn sys_pwritev2(
     fd: c_int,
     iov: [*]const std.posix.iovec_const,
     iovcnt: c_int,
@@ -630,8 +630,8 @@ pub const RENAME_NOREPLACE = 1 << 0;
 pub const RENAME_EXCHANGE = 1 << 1;
 pub const RENAME_WHITEOUT = 1 << 2;
 
-pub extern "C" fn quick_exit(code: c_int) noreturn;
-pub extern "C" fn memrchr(ptr: [*]const u8, val: c_int, len: usize) ?[*]const u8;
+pub extern "c" fn quick_exit(code: c_int) noreturn;
+pub extern "c" fn memrchr(ptr: [*]const u8, val: c_int, len: usize) ?[*]const u8;
 
 export fn sys_epoll_pwait2(epfd: i32, events: ?[*]std.os.linux.epoll_event, maxevents: i32, timeout: ?*const std.os.linux.timespec, sigmask: ?*const std.os.linux.sigset_t) isize {
     return @bitCast(
@@ -642,6 +642,9 @@ export fn sys_epoll_pwait2(epfd: i32, events: ?[*]std.os.linux.epoll_event, maxe
             @bitCast(@as(isize, @intCast(maxevents))),
             @intFromPtr(timeout),
             @intFromPtr(sigmask),
+            // This is the correct value. glibc claims to pass `sizeof sigset_t` for this argument,
+            // which would be 128, but they actually pass 8 which is what the kernel expects.
+            // https://github.com/ziglang/zig/issues/12715
             8,
         ),
     );
@@ -699,10 +702,10 @@ comptime {
     _ = fstat64;
     _ = fstatat;
     _ = statx;
-    @export(stat, .{ .name = "stat64" });
-    @export(lstat, .{ .name = "lstat64" });
-    @export(fstat, .{ .name = "fstat64" });
-    @export(fstatat, .{ .name = "fstatat64" });
+    @export(&stat, .{ .name = "stat64" });
+    @export(&lstat, .{ .name = "lstat64" });
+    @export(&fstat, .{ .name = "fstat64" });
+    @export(&fstatat, .{ .name = "fstatat64" });
 }
 
 // *********************************************************************************

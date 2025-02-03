@@ -18,7 +18,7 @@ const NodeFSFunctionEnum = std.meta.DeclEnum(JSC.Node.NodeFS);
 /// Async calls use a thread pool.
 fn Bindings(comptime function_name: NodeFSFunctionEnum) type {
     const function = @field(JSC.Node.NodeFS, @tagName(function_name));
-    const fn_info = @typeInfo(@TypeOf(function)).Fn;
+    const fn_info = @typeInfo(@TypeOf(function)).@"fn";
     if (fn_info.params.len != 3) {
         @compileError("Expected fn(NodeFS, Arguments) Return for NodeFS." ++ @tagName(function_name));
     }

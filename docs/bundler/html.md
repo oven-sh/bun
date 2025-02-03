@@ -286,7 +286,7 @@ All paths are resolved relative to your HTML file, making it easy to organize yo
 - Need more configuration options for things like asset handling
 - Need a way to configure CORS, headers, etc.
 
-If you want to submit a PR, most of the [code is here](https://github.com/oven-sh/bun/blob/main/src/js/internal/html.ts).
+If you want to submit a PR, most of the [code is here](https://github.com/oven-sh/bun/blob/main/src/js/internal/html.ts). You could even copy paste that file into your project and use it as a starting point.
 
 ## How this works
 

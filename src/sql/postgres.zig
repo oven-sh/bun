@@ -43,6 +43,7 @@ pub const AnyPostgresError = error{
     UNSUPPORTED_AUTHENTICATION_METHOD,
     UnsupportedByteaFormat,
     UnsupportedIntegerSize,
+    UnsupportedArrayFormat,
 };
 
 pub fn postgresErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8, err: AnyPostgresError) JSValue {
@@ -72,6 +73,7 @@ pub fn postgresErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8
         error.UNKNOWN_AUTHENTICATION_METHOD => JSC.Error.ERR_POSTGRES_UNKNOWN_AUTHENTICATION_METHOD,
         error.UNSUPPORTED_AUTHENTICATION_METHOD => JSC.Error.ERR_POSTGRES_UNSUPPORTED_AUTHENTICATION_METHOD,
         error.UnsupportedByteaFormat => JSC.Error.ERR_POSTGRES_UNSUPPORTED_BYTEA_FORMAT,
+        error.UnsupportedArrayFormat => JSC.Error.ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT,
         error.UnsupportedIntegerSize => JSC.Error.ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE,
         error.JSError => {
             return globalObject.takeException(error.JSError);
@@ -2186,10 +2188,23 @@ pub const PostgresSQLConnection = struct {
         pub const Array = extern struct {
             ptr: ?[*]DataCell = null,
             len: u32,
-
+            cap: u32,
             pub fn slice(this: *Array) []DataCell {
                 const ptr = this.ptr orelse return &.{};
                 return ptr[0..this.len];
+            }
+
+            pub fn allocatedSlice(this: *Array) []DataCell {
+                const ptr = this.ptr orelse return &.{};
+                return ptr[0..this.cap];
+            }
+
+            pub fn deinit(this: *Array) void {
+                const allocated = this.allocatedSlice();
+                this.ptr = null;
+                this.len = 0;
+                this.cap = 0;
+                bun.default_allocator.free(allocated);
             }
         };
         pub const Raw = extern struct {
@@ -2237,7 +2252,7 @@ pub const PostgresSQLConnection = struct {
                     for (this.value.array.slice()) |*cell| {
                         cell.deinit();
                     }
-                    bun.default_allocator.free(this.value.array.slice());
+                    this.value.array.deinit();
                 },
                 .typed_array => {
                     bun.default_allocator.free(this.value.typed_array.byteSlice());
@@ -2260,6 +2275,264 @@ pub const PostgresSQLConnection = struct {
                 .value = .{ .null = 0 },
             };
         }
+
+        fn parseBytea(hex: []const u8) !DataCell {
+            const len = hex.len / 2;
+            const buf = try bun.default_allocator.alloc(u8, len);
+            errdefer bun.default_allocator.free(buf);
+
+            return DataCell{
+                .tag = .bytea,
+                .value = .{
+                    .bytea = .{
+                        @intFromPtr(buf.ptr),
+                        try bun.strings.decodeHexToBytes(buf, u8, hex),
+                    },
+                },
+                .free_value = 1,
+            };
+        }
+        fn trySlice(slice: []const u8, count: usize) []const u8 {
+            if (slice.len <= count) return "";
+            return slice[count..];
+        }
+        fn parseArray(bytes: []const u8, bigint: bool, arrayType: ?types.Tag, offset: ?*usize) !DataCell {
+            // not an array
+            if (bytes.len < 2 or bytes[0] != '{') {
+                return error.UnsupportedArrayFormat;
+            }
+            // // empty array
+            if (bytes.len == 2 and bytes[1] == '}') {
+                if (offset) |offset_ptr| {
+                    offset_ptr.* = 2;
+                }
+                return DataCell{ .tag = .array, .value = .{ .array = .{ .ptr = null, .len = 0, .cap = 0 } } };
+            }
+
+            var array = std.ArrayListUnmanaged(DataCell){};
+
+            errdefer {
+                if (array.capacity > 0) array.deinit(bun.default_allocator);
+            }
+            var slice = bytes[1..];
+            var reached_end = false;
+            while (slice.len > 0) {
+                switch (slice[0]) {
+                    '}' => {
+                        if (reached_end) {
+                            // cannot reach end twice
+                            return error.UnsupportedArrayFormat;
+                        }
+                        // end of array
+                        reached_end = true;
+                        slice = trySlice(slice, 1);
+                        break;
+                    },
+                    '{',
+                    => {
+                        var sub_array_offset: usize = 0;
+                        const sub_array = try parseArray(slice, bigint, arrayType, &sub_array_offset);
+                        try array.append(bun.default_allocator, sub_array);
+                        slice = trySlice(slice, sub_array_offset);
+                        continue;
+                    },
+                    '"' => {
+                        // parse string
+                        var current_idx: usize = 1;
+                        const source = slice[1..];
+                        for (source, 0..source.len) |byte, index| {
+                            if (byte == '"' and (index == 0 or source[index - 1] != '\\')) {
+                                current_idx = index + 1;
+                                break;
+                            }
+                        }
+                        // did not find a closing quote
+                        if (current_idx == 1) return error.UnsupportedArrayFormat;
+                        if (arrayType == .bytea_array) {
+                            // this is a bytea array so we need to parse the bytea strings
+                            const bytea_bytes = slice[1..current_idx];
+                            if (bun.strings.startsWith(bytea_bytes, "\\\\x")) {
+                                // its a bytea string lets parse it as a bytea
+                                try array.append(bun.default_allocator, try parseBytea(bytea_bytes[3..][0 .. bytea_bytes.len - 3]));
+                                slice = trySlice(slice, current_idx + 1);
+                                continue;
+                            }
+                            // invalid bytea array
+                            return error.UnsupportedByteaFormat;
+                        }
+                        const string_bytes = slice[0 .. current_idx + 1];
+                        // the format is a json valid string that can contain escaped characters, so we parse it as a json to simplify the parsing
+                        try array.append(bun.default_allocator, DataCell{ .tag = .json, .value = .{ .json = if (string_bytes.len > 0) String.createUTF8(string_bytes).value.WTFStringImpl else null }, .free_value = 1 });
+
+                        slice = trySlice(slice, current_idx + 1);
+                        continue;
+                    },
+                    '+', ',' => {
+                        // next element or positive number, just advance
+                        slice = trySlice(slice, 1);
+                        continue;
+                    },
+                    'I', 'i' => {
+                        // infinity
+                        if (slice.len < 3) return error.UnsupportedArrayFormat;
+                        if (slice.len >= 8) {
+                            // most common case
+                            if (bun.strings.eqlCaseInsensitiveASCII(slice[0..8], "infinity", true)) {
+                                try array.append(bun.default_allocator, DataCell{ .tag = .float8, .value = .{ .float8 = std.math.inf(f64) } });
+                                slice = trySlice(slice, 8);
+                                continue;
+                            }
+                        }
+                        if (bun.strings.eqlCaseInsensitiveASCII(slice[0..3], "inf", true)) {
+                            try array.append(bun.default_allocator, DataCell{ .tag = .float8, .value = .{ .float8 = std.math.inf(f64) } });
+                            slice = trySlice(slice, 3);
+                            continue;
+                        }
+
+                        return error.UnsupportedArrayFormat;
+                    },
+                    'N', 'n' => {
+                        // null or nan
+                        if (slice.len < 3) return error.UnsupportedArrayFormat;
+                        if (slice.len >= 4) {
+                            // most common case
+                            if (bun.strings.eqlCaseInsensitiveASCII(slice[0..4], "null", true)) {
+                                try array.append(bun.default_allocator, DataCell{ .tag = .null, .value = .{ .null = 0 } });
+                                slice = trySlice(slice, 4);
+                                continue;
+                            }
+                        }
+                        if (bun.strings.eqlCaseInsensitiveASCII(slice[0..3], "nan", true)) {
+                            try array.append(bun.default_allocator, DataCell{ .tag = .float8, .value = .{ .float8 = std.math.nan(f64) } });
+                            slice = trySlice(slice, 3);
+                            continue;
+                        }
+                        return error.UnsupportedArrayFormat;
+                    },
+                    'F', 'f' => {
+                        if (slice.len < 5) return error.UnsupportedArrayFormat;
+                        if (bun.strings.eqlCaseInsensitiveASCII(slice[0..5], "false", true)) {
+                            try array.append(bun.default_allocator, DataCell{ .tag = .bool, .value = .{ .bool = 0 } });
+                            slice = trySlice(slice, 5);
+                            continue;
+                        }
+                        return error.UnsupportedArrayFormat;
+                    },
+                    'T', 't' => {
+                        if (slice.len < 4) return error.UnsupportedArrayFormat;
+                        if (bun.strings.eqlCaseInsensitiveASCII(slice[0..4], "true", true)) {
+                            try array.append(bun.default_allocator, DataCell{ .tag = .bool, .value = .{ .bool = 1 } });
+                            slice = trySlice(slice, 4);
+                            continue;
+                        }
+                        return error.UnsupportedArrayFormat;
+                    },
+                    '-', '0'...'9' => {
+                        // parse number, detect float, int, if starts with - it can be -Infinity or -Infinity
+                        var is_negative = false;
+                        var is_float = false;
+                        var current_idx: usize = 0;
+                        var is_infinity = false;
+                        for (slice, 0..slice.len) |byte, index| {
+                            switch (byte) {
+                                '-' => {
+                                    if (index == 0) {
+                                        is_negative = true;
+                                        continue;
+                                    }
+                                    return error.UnsupportedArrayFormat;
+                                },
+                                '.' => {
+                                    // we can only have one dot
+                                    if (is_float) return error.UnsupportedArrayFormat;
+                                    is_float = true;
+                                },
+                                '0'...'9' => {},
+                                ',' => {
+                                    current_idx = index;
+                                    // end of element
+                                    break;
+                                },
+                                '}' => {
+                                    current_idx = index;
+                                    reached_end = true;
+                                    // end of array
+                                    break;
+                                },
+                                'I', 'i' => {
+                                    // infinity
+                                    is_infinity = true;
+                                    const element = if (is_negative) slice[1..] else slice;
+                                    if (element.len < 3) return error.UnsupportedArrayFormat;
+                                    if (element.len >= 8) {
+                                        if (bun.strings.eqlCaseInsensitiveASCII(element[0..8], "infinity", true)) {
+                                            try array.append(bun.default_allocator, DataCell{ .tag = .float8, .value = .{ .float8 = if (is_negative) -std.math.inf(f64) else std.math.inf(f64) } });
+                                            slice = trySlice(slice, 8 + @as(usize, @intFromBool(is_negative)));
+                                            break;
+                                        }
+                                    }
+                                    if (bun.strings.eqlCaseInsensitiveASCII(element[0..3], "inf", true)) {
+                                        try array.append(bun.default_allocator, DataCell{ .tag = .float8, .value = .{ .float8 = if (is_negative) -std.math.inf(f64) else std.math.inf(f64) } });
+                                        slice = trySlice(slice, 3 + @as(usize, @intFromBool(is_negative)));
+                                        break;
+                                    }
+
+                                    return error.UnsupportedArrayFormat;
+                                },
+                                else => {
+                                    return error.UnsupportedArrayFormat;
+                                },
+                            }
+                        }
+                        if (is_infinity) {
+                            continue;
+                        }
+                        if (current_idx == 0) return error.UnsupportedArrayFormat;
+                        const element = slice[0..current_idx];
+                        if (is_float) {
+                            try array.append(bun.default_allocator, DataCell{ .tag = .float8, .value = .{ .float8 = bun.parseDouble(element) catch std.math.nan(f64) } });
+                            slice = trySlice(slice, current_idx);
+                            continue;
+                        }
+
+                        const value = bun.fmt.parseInt(i64, element, 0) catch return error.UnsupportedArrayFormat;
+
+                        if (value < std.math.minInt(i32) or value > std.math.maxInt(i32)) {
+                            if (bigint) {
+                                try array.append(bun.default_allocator, DataCell{ .tag = .int8, .value = .{ .int8 = value } });
+                            } else {
+                                try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) bun.String.createUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 });
+                            }
+                        } else {
+                            try array.append(bun.default_allocator, DataCell{ .tag = .int4, .value = .{ .int4 = @intCast(value) } });
+                        }
+                        slice = trySlice(slice, current_idx);
+                        continue;
+                    },
+                    else => {
+                        std.log.info("slice ({d}, {c}): {s}\n", .{ slice[0], slice[0], slice });
+                        // parse array
+                        return error.UnsupportedArrayFormat;
+                    },
+                }
+            }
+
+            if (!reached_end) {
+                // nothing more to parse but no closing brace
+                return error.UnsupportedArrayFormat;
+            }
+            if (offset) |offset_ptr| {
+                offset_ptr.* = bytes.len - slice.len;
+            }
+
+            // postgres dont really support arrays with more than 2^31 elements, 2ˆ32 is the max we support, but users should never reach this branch
+            if (array.items.len > std.math.maxInt(u32)) {
+                @branchHint(.unlikely);
+                return error.UnsupportedArrayFormat;
+            }
+            return DataCell{ .tag = .array, .value = .{ .array = .{ .ptr = array.items.ptr, .len = @truncate(array.items.len), .cap = @truncate(array.capacity) } } };
+        }
+
         pub fn fromBytes(binary: bool, bigint: bool, oid: int4, bytes: []const u8, globalObject: *JSC.JSGlobalObject) !DataCell {
             switch (@as(types.Tag, @enumFromInt(@as(short, @intCast(oid))))) {
                 // TODO: .int2_array, .float8_array
@@ -2310,8 +2583,7 @@ pub const PostgresSQLConnection = struct {
                             },
                         };
                     } else {
-                        // TODO:
-                        return fromBytes(false, bigint, @intFromEnum(types.Tag.bytea), bytes, globalObject);
+                        return try parseArray(bytes, bigint, tag, null);
                     }
                 },
                 .int4 => {
@@ -2369,30 +2641,23 @@ pub const PostgresSQLConnection = struct {
                         return DataCell{ .tag = .date, .value = .{ .date = str.parseDate(globalObject) } };
                     }
                 },
+
                 .bytea => {
                     if (binary) {
                         return DataCell{ .tag = .bytea, .value = .{ .bytea = .{ @intFromPtr(bytes.ptr), bytes.len } } };
                     } else {
                         if (bun.strings.hasPrefixComptime(bytes, "\\x")) {
-                            const hex = bytes[2..];
-                            const len = hex.len / 2;
-                            const buf = try bun.default_allocator.alloc(u8, len);
-                            errdefer bun.default_allocator.free(buf);
-
-                            return DataCell{
-                                .tag = .bytea,
-                                .value = .{
-                                    .bytea = .{
-                                        @intFromPtr(buf.ptr),
-                                        try bun.strings.decodeHexToBytes(buf, u8, hex),
-                                    },
-                                },
-                                .free_value = 1,
-                            };
-                        } else {
-                            return error.UnsupportedByteaFormat;
+                            return try parseBytea(bytes[2..]);
                         }
+                        return error.UnsupportedByteaFormat;
                     }
+                },
+                .text_array, .float8_array, .char_array, .name_array, .int8_array, .int2_array, .bool_array, .bytea_array => |tag| {
+                    if (binary) {
+                        // we still dont support binary arrays for this types
+                        return error.UnsupportedArrayFormat;
+                    }
+                    return try parseArray(bytes, bigint, tag, null);
                 },
                 else => {
                     return DataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) bun.String.createUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };

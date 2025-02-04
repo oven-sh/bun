@@ -166,6 +166,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_POSTGRES_UNKNOWN_AUTHENTICATION_METHOD", Error, "PostgresError"],
   ["ERR_POSTGRES_UNSUPPORTED_AUTHENTICATION_METHOD", Error, "PostgresError"],
   ["ERR_POSTGRES_UNSUPPORTED_BYTEA_FORMAT", TypeError, "PostgresError"],
+  ["ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT", TypeError, "PostgresError"],
   ["ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE", TypeError, "PostgresError"],
   ["ERR_POSTGRES_IDLE_TIMEOUT", Error, "PostgresError"],
   ["ERR_POSTGRES_CONNECTION_TIMEOUT", Error, "PostgresError"],

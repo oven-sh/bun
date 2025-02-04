@@ -496,6 +496,22 @@ static napi_value bigint_to_64_null(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+static napi_value test_is_buffer(const Napi::CallbackInfo &info) {
+  bool result;
+  napi_env env = info.Env();
+  NODE_API_CALL(info.Env(), napi_is_buffer(env, info[1], &result));
+  printf("napi_is_buffer -> %s\n", result ? "true" : "false");
+  return ok(env);
+}
+
+static napi_value test_is_typedarray(const Napi::CallbackInfo &info) {
+  bool result;
+  napi_env env = info.Env();
+  NODE_API_CALL(info.Env(), napi_is_typedarray(env, info[1], &result));
+  printf("napi_is_typedarray -> %s\n", result ? "true" : "false");
+  return ok(env);
+}
+
 void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_issue_7685);
   REGISTER_FUNCTION(env, exports, test_issue_11949);
@@ -514,6 +530,8 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, bigint_to_i64);
   REGISTER_FUNCTION(env, exports, bigint_to_u64);
   REGISTER_FUNCTION(env, exports, bigint_to_64_null);
+  REGISTER_FUNCTION(env, exports, test_is_buffer);
+  REGISTER_FUNCTION(env, exports, test_is_typedarray);
 }
 
 } // namespace napitests

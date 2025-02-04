@@ -633,7 +633,6 @@ pub const PostgresSQLQuery = struct {
                 .bigint = bigint,
             },
         };
-        ptr.query.ref();
 
         PostgresSQLQuery.bindingSetCached(this_value, globalThis, values);
         PostgresSQLQuery.pendingValueSetCached(this_value, globalThis, pending_value);

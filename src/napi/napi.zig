@@ -821,17 +821,9 @@ pub export fn napi_get_arraybuffer_info(env_: napi_env, arraybuffer_: napi_value
         len.* = slice.len;
     return env.ok();
 }
-pub export fn napi_is_typedarray(env_: napi_env, value_: napi_value, result_: ?*bool) napi_status {
-    log("napi_is_typedarray", .{});
-    const env = env_ orelse {
-        return envIsNull();
-    };
-    env.checkGC();
-    const value = value_.get();
-    const result = result_ orelse return env.invalidArg();
-    result.* = value.jsTypeLoose().isTypedArray();
-    return env.ok();
-}
+
+pub extern fn napi_is_typedarray(napi_env, napi_value, *bool) napi_status;
+
 pub export fn napi_get_typedarray_info(
     env_: napi_env,
     typedarray_: napi_value,
@@ -1253,18 +1245,7 @@ pub export fn napi_create_buffer_copy(env_: napi_env, length: usize, data: [*]u8
 
     return env.ok();
 }
-pub export fn napi_is_buffer(env_: napi_env, value_: napi_value, result_: ?*bool) napi_status {
-    log("napi_is_buffer", .{});
-    const env = env_ orelse {
-        return envIsNull();
-    };
-    const result = result_ orelse {
-        return env.invalidArg();
-    };
-    const value = value_.get();
-    result.* = value.isBuffer(env.toJS());
-    return env.ok();
-}
+extern fn napi_is_buffer(napi_env, napi_value, *bool) napi_status;
 pub export fn napi_get_buffer_info(env_: napi_env, value_: napi_value, data: ?*[*]u8, length: ?*usize) napi_status {
     log("napi_get_buffer_info", .{});
     const env = env_ orelse {

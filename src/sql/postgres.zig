@@ -2406,6 +2406,10 @@ pub const PostgresSQLConnection = struct {
                             .text_array,
                             .name_array,
                             .numeric_array,
+                            .money_array,
+                            .varbit_array,
+                            .int2vector_array,
+                            .bit_array,
                             .path_array,
                             .xml_array,
                             .point_array,
@@ -2414,6 +2418,11 @@ pub const PostgresSQLConnection = struct {
                             .polygon_array,
                             .line_array,
                             .cidr_array,
+                            .circle_array,
+                            .macaddr8_array,
+                            .macaddr_array,
+                            .inet_array,
+                            .aclitem_array,
                             => {
                                 // this is also a string until we reach "," or "}" but a single word string like Bun
                                 var current_idx: usize = 0;
@@ -2723,7 +2732,15 @@ pub const PostgresSQLConnection = struct {
                 .line_array,
                 .cidr_array,
                 .numeric_array,
-
+                .money_array,
+                .varbit_array,
+                .bit_array,
+                .int2vector_array,
+                .circle_array,
+                .macaddr8_array,
+                .macaddr_array,
+                .inet_array,
+                .aclitem_array,
                 // numeric array types
                 .int8_array,
                 .int2_array,

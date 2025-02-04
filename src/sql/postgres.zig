@@ -2301,7 +2301,7 @@ pub const PostgresSQLConnection = struct {
             if (bytes.len < 2 or bytes[0] != '{') {
                 return error.UnsupportedArrayFormat;
             }
-            // // empty array
+            // empty array
             if (bytes.len == 2 and bytes[1] == '}') {
                 if (offset) |offset_ptr| {
                     offset_ptr.* = 2;
@@ -2338,7 +2338,7 @@ pub const PostgresSQLConnection = struct {
                     },
                     '"' => {
                         // parse string
-                        var current_idx: usize = 1;
+                        var current_idx: usize = 0;
                         const source = slice[1..];
                         for (source, 0..source.len) |byte, index| {
                             if (byte == '"' and (index == 0 or source[index - 1] != '\\')) {
@@ -2347,7 +2347,7 @@ pub const PostgresSQLConnection = struct {
                             }
                         }
                         // did not find a closing quote
-                        if (current_idx == 1) return error.UnsupportedArrayFormat;
+                        if (current_idx == 0) return error.UnsupportedArrayFormat;
                         if (arrayType == .bytea_array) {
                             // this is a bytea array so we need to parse the bytea strings
                             const bytea_bytes = slice[1..current_idx];
@@ -2448,15 +2448,9 @@ pub const PostgresSQLConnection = struct {
                                     is_float = true;
                                 },
                                 '0'...'9' => {},
-                                ',' => {
+                                '}', ',' => {
                                     current_idx = index;
                                     // end of element
-                                    break;
-                                },
-                                '}' => {
-                                    current_idx = index;
-                                    reached_end = true;
-                                    // end of array
                                     break;
                                 },
                                 'I', 'i' => {
@@ -2510,24 +2504,35 @@ pub const PostgresSQLConnection = struct {
                         continue;
                     },
                     else => {
-                        std.log.info("slice ({d}, {c}): {s}\n", .{ slice[0], slice[0], slice });
-                        // parse array
-                        return error.UnsupportedArrayFormat;
+                        // this is also a string until we reach "," or "}"
+                        var current_idx: usize = 0;
+
+                        for (slice, 0..slice.len) |byte, index| {
+                            switch (byte) {
+                                '}', ',' => {
+                                    current_idx = index;
+                                    break;
+                                },
+                                else => {},
+                            }
+                        }
+                        if (current_idx == 0) return error.UnsupportedArrayFormat;
+                        const element = slice[0..current_idx];
+                        try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (element.len > 0) bun.String.createUTF8(element).value.WTFStringImpl else null }, .free_value = 1 });
+                        slice = trySlice(slice, current_idx);
+                        continue;
                     },
                 }
             }
 
-            if (!reached_end) {
-                // nothing more to parse but no closing brace
-                return error.UnsupportedArrayFormat;
-            }
             if (offset) |offset_ptr| {
                 offset_ptr.* = bytes.len - slice.len;
             }
 
             // postgres dont really support arrays with more than 2^31 elements, 2ˆ32 is the max we support, but users should never reach this branch
-            if (array.items.len > std.math.maxInt(u32)) {
+            if (!reached_end or array.items.len > std.math.maxInt(u32)) {
                 @branchHint(.unlikely);
+
                 return error.UnsupportedArrayFormat;
             }
             return DataCell{ .tag = .array, .value = .{ .array = .{ .ptr = array.items.ptr, .len = @truncate(array.items.len), .cap = @truncate(array.capacity) } } };

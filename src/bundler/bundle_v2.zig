@@ -3045,8 +3045,20 @@ pub const BundleV2 = struct {
                     result.source.contents.len
                 else
                     @as(usize, 0);
+
                 graph.input_files.items(.unique_key_for_additional_file)[result.source.index.get()] = result.unique_key_for_additional_file;
                 graph.input_files.items(.content_hash_for_additional_file)[result.source.index.get()] = result.content_hash_for_additional_file;
+                if (result.unique_key_for_additional_file.len > 0 and result.loader.shouldCopyForBundling()) {
+                    if (this.transpiler.options.dev_server) |dev| {
+                        dev.putOrOverwriteAsset(
+                            result.source.path.text,
+                            // SAFETY: when shouldCopyForBundling is true, the
+                            // contents are allocated by bun.default_allocator
+                            @constCast(result.source.contents),
+                            result.content_hash_for_additional_file,
+                        ) catch bun.outOfMemory();
+                    }
+                }
 
                 // Record which loader we used for this file
                 graph.input_files.items(.loader)[result.source.index.get()] = result.loader;
@@ -3772,6 +3784,11 @@ pub const ParseTask = struct {
         return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
     }
 
+    const FileLoaderHash = struct {
+        key: []const u8,
+        content_hash: u64,
+    };
+
     fn getAST(
         log: *Logger.Log,
         transpiler: *Transpiler,
@@ -3781,7 +3798,7 @@ pub const ParseTask = struct {
         source: Logger.Source,
         loader: Loader,
         unique_key_prefix: u64,
-        unique_key_for_additional_file: *[]const u8,
+        unique_key_for_additional_file: *FileLoaderHash,
     ) !JSAst {
         switch (loader) {
             .jsx, .tsx, .js, .ts => {
@@ -3841,7 +3858,10 @@ pub const ParseTask = struct {
                     // Implements embedded sqlite
                     if (loader == .sqlite_embedded) {
                         const embedded_path = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
-                        unique_key_for_additional_file.* = embedded_path;
+                        unique_key_for_additional_file.* = .{
+                            .key = embedded_path,
+                            .content_hash = ContentHasher.run(source.contents),
+                        };
                         break :brk embedded_path;
                     }
 
@@ -3918,7 +3938,10 @@ pub const ParseTask = struct {
                     .args = BabyList(Expr).init(require_args),
                 }, Logger.Loc{ .start = 0 });
 
-                unique_key_for_additional_file.* = unique_key;
+                unique_key_for_additional_file.* = .{
+                    .key = unique_key,
+                    .content_hash = ContentHasher.run(source.contents),
+                };
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
             },
             .html => {
@@ -4000,16 +4023,48 @@ pub const ParseTask = struct {
                 ast.import_records = import_records;
                 return ast;
             },
-            else => {},
+            // TODO:
+            .dataurl, .base64, .bunsh => {
+                return try getEmptyAST(log, transpiler, opts, allocator, source, E.String);
+            },
+            .file, .wasm => {
+                bun.assert(loader.shouldCopyForBundling());
+
+                // Put a unique key in the AST to implement the URL loader. At the end
+                // of the bundle, the key is replaced with the actual URL.
+                const content_hash = ContentHasher.run(source.contents);
+
+                const unique_key: []const u8 = if (transpiler.options.dev_server != null)
+                    // With DevServer, the actual URL is added now, since it can be
+                    // known this far ahead of time, and it means the unique key code
+                    // does not have to perform an additional pass over files.
+                    //
+                    // To avoid a mutex, the actual insertion of the asset to DevServer
+                    // is done on the bundler thread.
+                    try std.fmt.allocPrint(
+                        allocator,
+                        bun.bake.DevServer.asset_prefix ++ "/{s}{s}",
+                        .{
+                            &std.fmt.bytesToHex(std.mem.asBytes(&content_hash), .lower),
+                            std.fs.path.extension(source.path.text),
+                        },
+                    )
+                else
+                    try std.fmt.allocPrint(
+                        allocator,
+                        "{any}A{d:0>8}",
+                        .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() },
+                    );
+                const root = Expr.init(E.String, .{ .data = unique_key }, .{ .start = 0 });
+                unique_key_for_additional_file.* = .{
+                    .key = unique_key,
+                    .content_hash = content_hash,
+                };
+                var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
+                ast.addUrlForCss(allocator, &source, null, unique_key);
+                return ast;
+            },
         }
-        const unique_key = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
-        const root = Expr.init(E.String, E.String{
-            .data = unique_key,
-        }, Logger.Loc{ .start = 0 });
-        unique_key_for_additional_file.* = unique_key;
-        var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
-        ast.addUrlForCss(allocator, &source, null, unique_key);
-        return ast;
     }
 
     fn getCodeForParseTaskWithoutPlugins(
@@ -4596,7 +4651,10 @@ pub const ParseTask = struct {
 
         task.jsx.parse = loader.isJSX();
 
-        var unique_key_for_additional_file: []const u8 = "";
+        var unique_key_for_additional_file: FileLoaderHash = .{
+            .key = "",
+            .content_hash = 0,
+        };
         var ast: JSAst = if (!is_empty)
             try getAST(log, transpiler, opts, allocator, resolver, source, loader, task.ctx.unique_key, &unique_key_for_additional_file)
         else switch (opts.module_type == .esm) {
@@ -4621,6 +4679,8 @@ pub const ParseTask = struct {
             task.side_effects = .no_side_effects__empty_ast;
         }
 
+        bun.debugAssert(ast.parts.len > 0); // when parts.len == 0, it is assumed to be pending/failed. empty ast has at least 1 part.
+
         step.* = .resolve;
 
         return .{
@@ -4628,13 +4688,13 @@ pub const ParseTask = struct {
             .source = source,
             .log = log.*,
             .use_directive = use_directive,
-            .unique_key_for_additional_file = unique_key_for_additional_file,
+            .unique_key_for_additional_file = unique_key_for_additional_file.key,
             .side_effects = task.side_effects,
             .loader = loader,
 
             // Hash the files in here so that we do it in parallel.
             .content_hash_for_additional_file = if (loader.shouldCopyForBundling())
-                ContentHasher.run(source.contents)
+                unique_key_for_additional_file.content_hash
             else
                 0,
         };

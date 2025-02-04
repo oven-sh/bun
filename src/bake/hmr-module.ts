@@ -62,7 +62,9 @@ export class HotModule<E = any> {
     const mod = await (loadModule(id, LoadModuleType.AsyncAssertPresent) as Promise<HotModule>);
     mod._deps.set(this, onReload ? { _callback: onReload, _expectedImports: expectedImports } : undefined);
     const { exports, __esModule } = mod;
-    const object = __esModule ? exports : (mod._ext_exports ??= { ...exports, default: exports });
+    const object = __esModule
+      ? exports
+      : (mod._ext_exports ??= { ...(typeof exports === "object" && exports), default: exports });
 
     if (expectedImports && mod._state === State.Ready) {
       // for (const key of expectedImports) {

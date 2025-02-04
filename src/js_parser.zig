@@ -1470,12 +1470,6 @@ pub const ImportScanner = struct {
                             }
                         }
                     }
-
-                    // when bundling, all top-level variables become var
-                    // TODO(@paperdave): we already do this earlier in visiting?
-                    if (!hot_module_reloading_transformations and p.options.bundle and !st.kind.isUsing()) {
-                        st.kind = .k_var;
-                    }
                 },
                 .s_export_default => |st| {
                     // This is defer'd so that we still record export default for identifiers
@@ -24225,6 +24219,7 @@ pub const ConvertESMExportsForHmr = struct {
                     st.namespace_ref,
                     st.items,
                     stmt.loc,
+                    null,
                     stmt.loc,
                 );
                 for (st.items) |*item| {
@@ -24257,6 +24252,7 @@ pub const ConvertESMExportsForHmr = struct {
                     st.namespace_ref,
                     &.{},
                     stmt.loc,
+                    null,
                     stmt.loc,
                 );
                 try ctx.export_star_props.append(p.allocator, .{
@@ -24269,7 +24265,15 @@ pub const ConvertESMExportsForHmr = struct {
             // named/default imports here as we always rewrite them as
             // full qualified property accesses (needed for live-bindings)
             .s_import => |st| {
-                _ = try ctx.deduplicatedImport(p, st.import_record_index, st.namespace_ref, st.items, st.star_name_loc, stmt.loc);
+                _ = try ctx.deduplicatedImport(
+                    p,
+                    st.import_record_index,
+                    st.namespace_ref,
+                    st.items,
+                    st.star_name_loc,
+                    st.default_name,
+                    stmt.loc,
+                );
                 return;
             },
         };
@@ -24285,6 +24289,7 @@ pub const ConvertESMExportsForHmr = struct {
         namespace_ref: Ref,
         items: []js_ast.ClauseItem,
         star_name_loc: ?logger.Loc,
+        default_name: ?js_ast.LocRef,
         loc: logger.Loc,
     ) !Ref {
         const ir = &p.import_records.items[import_record_index];
@@ -24321,13 +24326,16 @@ pub const ConvertESMExportsForHmr = struct {
             if (stmt.star_name_loc == null) if (star_name_loc) |stl| {
                 stmt.star_name_loc = stl;
             };
+            if (stmt.default_name == null) if (default_name) |dn| {
+                stmt.default_name = dn;
+            };
             return stmt.namespace_ref;
         }
 
         try ctx.stmts.append(p.allocator, Stmt.alloc(S.Import, .{
             .import_record_index = import_record_index,
             .is_single_line = true,
-            .default_name = null,
+            .default_name = default_name,
             .items = items,
             .namespace_ref = namespace_ref,
             .star_name_loc = star_name_loc,

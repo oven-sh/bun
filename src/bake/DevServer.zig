@@ -76,8 +76,8 @@ css_files: AutoArrayHashMapUnmanaged(u64, []const u8),
 /// JS files are accessible via `/_bun/client/route.<hex key>.js`
 /// These are randomly generated to avoid possible browser caching of old assets.
 route_js_payloads: AutoArrayHashMapUnmanaged(u64, RouteBundle.Index.Optional),
-// /// Assets are accessible via `/_bun/asset/<key>`
-// assets: bun.StringArrayHashMapUnmanaged(u64, Asset),
+/// Assets are accessible via `/_bun/asset/<key>`
+assets: Assets,
 /// All bundling failures are stored until a file is saved and rebuilt.
 /// They are stored in the wire format the HMR runtime expects so that
 /// serialization only happens once.
@@ -313,7 +313,12 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
             .reload_event = null,
             .requests = .empty,
         },
-        .log = bun.logger.Log.init(allocator),
+        .assets = .{
+            .path_map = .empty,
+            .files = .empty,
+            .refs = .empty,
+        },
+        .log = .init(allocator),
 
         .server_bundler = undefined,
         .client_bundler = undefined,
@@ -352,10 +357,10 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
 
     dev.framework.initBundler(allocator, &dev.log, .development, .server, &dev.server_bundler) catch |err|
         return global.throwError(err, generic_action);
-    dev.client_bundler.options.dev_server = dev;
+    dev.server_bundler.options.dev_server = dev;
     dev.framework.initBundler(allocator, &dev.log, .development, .client, &dev.client_bundler) catch |err|
         return global.throwError(err, generic_action);
-    dev.server_bundler.options.dev_server = dev;
+    dev.client_bundler.options.dev_server = dev;
     if (separate_ssr_graph) {
         dev.framework.initBundler(allocator, &dev.log, .development, .ssr, &dev.ssr_bundler) catch |err|
             return global.throwError(err, generic_action);
@@ -612,16 +617,20 @@ fn onJsRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
     }
 }
 
-fn onAssetRequest(dev: *DevServer, req: *Request, resp: anytype) void {
-    _ = dev;
-    _ = req;
-    _ = resp;
-    bun.todoPanic(@src(), "serve asset file", .{});
-    // const route_id = req.parameter(0);
-    // const asset = dev.assets.get(route_id) orelse
-    //     return req.setYield(true);
-    // _ = asset; // autofix
-
+fn onAssetRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
+    const param = req.parameter(0);
+    const last_dot = std.mem.lastIndexOf(u8, param, ".") orelse param.len;
+    const hex = param[0..last_dot];
+    if (hex.len != @sizeOf(u64) * 2)
+        return req.setYield(true);
+    var out: [@sizeOf(u64)]u8 = undefined;
+    assert((std.fmt.hexToBytes(&out, hex) catch
+        return req.setYield(true)).len == @sizeOf(u64));
+    const hash: u64 = @bitCast(out);
+    const asset = dev.assets.get(hash) orelse
+        return req.setYield(true);
+    req.setYield(false);
+    asset.on(resp);
 }
 
 fn onCssRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
@@ -2957,6 +2966,26 @@ pub fn IncrementalGraph(side: bake.Side) type {
             return file_index;
         }
 
+        /// Returns the key that was inserted.
+        pub fn insertEmpty(g: *@This(), abs_path: []const u8) bun.OOM![]const u8 {
+            comptime assert(side == .client); // not implemented
+            g.owner().graph_safety_lock.assertLocked();
+            const gop = try g.bundled_files.getOrPut(g.owner().allocator, abs_path);
+            if (!gop.found_existing) {
+                gop.key_ptr.* = try bun.default_allocator.dupe(u8, abs_path);
+                gop.value_ptr.* = File.init("", .{
+                    .failed = false,
+                    .is_hmr_root = false,
+                    .is_special_framework_file = false,
+                    .is_html_route = false,
+                    .kind = .unknown,
+                });
+                try g.first_dep.append(g.owner().allocator, .none);
+                try g.first_import.append(g.owner().allocator, .none);
+            }
+            return gop.key_ptr.*;
+        }
+
         /// Server CSS files are just used to be targets for graph traversal.
         /// Its content lives only on the client.
         pub fn insertCssFileOnServer(g: *@This(), ctx: *HotUpdateContext, index: bun.JSAst.Index, abs_path: []const u8) bun.OOM!void {
@@ -4627,6 +4656,7 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
     for (events) |event| {
         // TODO: why does this out of bounds when you delete every file in the directory?
         if (event.index >= file_paths.len) continue;
+
         const file_path = file_paths[event.index];
         const update_count = counts[event.index] + 1;
         counts[event.index] = update_count;
@@ -4917,6 +4947,105 @@ const HTMLRouter = struct {
     }
 };
 
+pub fn putOrOverwriteAsset(
+    dev: *DevServer,
+    abs_path: []const u8,
+    contents: []u8,
+    content_hash: u64,
+) !void {
+    try dev.assets.putOrOverwrite(dev.allocator, abs_path, contents, content_hash);
+}
+
+pub const Assets = struct {
+    /// Keys are absolute paths, sharing memory with the keys in IncrementalGraph(.client)
+    /// Values are indexes into files
+    path_map: bun.StringArrayHashMapUnmanaged(u32),
+    /// Content-addressable store. Multiple paths can point to the same content
+    /// hash, which is tracked by the `refs` array. One reference is held to
+    /// contained StaticRoute instances when they are stored.
+    files: AutoArrayHashMapUnmanaged(u64, *StaticRoute),
+    /// Indexed by the same index of `files`. The value is never `0`.
+    refs: ArrayListUnmanaged(u32),
+
+    needs_reindex: bool = false,
+
+    fn owner(assets: *Assets) *DevServer {
+        return @alignCast(@fieldParentPtr("assets", assets));
+    }
+
+    pub fn putOrOverwrite(
+        assets: *Assets,
+        alloc: Allocator,
+        /// not allocated
+        abs_path: []const u8,
+        /// allocated by bun.default_allocator, ownership given to DevServer
+        contents: []u8,
+        /// content hash of the asset
+        content_hash: u64,
+    ) !void {
+        assets.owner().graph_safety_lock.lock();
+        defer assets.owner().graph_safety_lock.unlock();
+
+        const gop = try assets.path_map.getOrPut(alloc, abs_path);
+        if (!gop.found_existing) {
+            // Locate a stable pointer for the file path
+            const stable_abs_path = try assets.owner().client_graph.insertEmpty(abs_path);
+            gop.key_ptr.* = stable_abs_path;
+        } else {
+            const i = gop.value_ptr.*;
+            // When there is one reference to the asset, the entry can be
+            // replaced in-place with the new asset.
+            if (assets.refs.items[i] == 1) {
+                const slice = assets.files.entries.slice();
+                slice.items(.key)[i] = content_hash;
+                slice.items(.value)[i] = initStaticRouteFromBytes(alloc, contents, .detectFromPath(abs_path));
+                comptime assert(@TypeOf(slice.items(.hash)[0]) == void);
+                assets.needs_reindex = true;
+                return;
+            } else {
+                assets.refs.items[gop.value_ptr.*] -= 1;
+            }
+        }
+
+        try assets.reindexIfNeeded(alloc);
+        const file_index_gop = try assets.files.getOrPut(alloc, content_hash);
+        if (!file_index_gop.found_existing) {
+            try assets.refs.append(alloc, 1);
+            file_index_gop.value_ptr.* = initStaticRouteFromBytes(alloc, contents, .detectFromPath(abs_path));
+        } else {
+            file_index_gop.value_ptr.*.ref_count += 1;
+            bun.default_allocator.free(contents);
+        }
+        gop.value_ptr.* = @intCast(file_index_gop.index);
+    }
+
+    pub fn reindexIfNeeded(assets: *Assets, alloc: Allocator) !void {
+        if (assets.needs_reindex) {
+            try assets.files.reIndex(alloc);
+            assets.needs_reindex = false;
+        }
+    }
+
+    pub fn get(assets: *Assets, content_hash: u64) ?*StaticRoute {
+        return assets.files.get(content_hash);
+    }
+
+    pub fn deinit(assets: *Assets, alloc: Allocator) void {
+        assets.map.deinit(alloc);
+        assets.hash_lookups.deinit(alloc);
+    }
+};
+
+/// `bytes` is allocated by `allocator`, ownership moved into the Blob
+fn initAnyBlobFromBytes(allocator: Allocator, bytes: []u8) JSC.WebCore.AnyBlob {
+    return .{ .InternalBlob = .{ .bytes = .fromOwnedSlice(allocator, bytes) } };
+}
+
+fn initStaticRouteFromBytes(allocator: Allocator, bytes: []u8, mime_type: MimeType) *StaticRoute {
+    _ = mime_type;
+    return .initFromBlob(initAnyBlobFromBytes(allocator, bytes));
+}
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Mutex = bun.Mutex;
@@ -4958,3 +5087,5 @@ const HTMLBundle = JSC.API.HTMLBundle;
 
 const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
 const Chunk = bun.bundle_v2.Chunk;
+
+const StaticRoute = bun.server.StaticRoute;

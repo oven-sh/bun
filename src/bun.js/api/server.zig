@@ -175,7 +175,7 @@ pub fn writeStatus(comptime ssl: bool, resp_ptr: ?*uws.NewApp(ssl).Response, sta
 }
 
 // TODO: rename to StaticBlobRoute, rename AnyStaticRoute to StaticRoute
-const StaticRoute = @import("./server/StaticRoute.zig");
+pub const StaticRoute = @import("./server/StaticRoute.zig");
 
 const HTMLBundle = JSC.API.HTMLBundle;
 const HTMLBundleRoute = HTMLBundle.HTMLBundleRoute;

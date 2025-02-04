@@ -24,13 +24,96 @@ pub const TimeoutMap = std.AutoArrayHashMapUnmanaged(
     *EventLoopTimer,
 );
 
-const TimerHeap = heap.Intrusive(EventLoopTimer, void, EventLoopTimer.less);
+/// Array of linked lists of EventLoopTimers. Each list holds all the timers that will fire in the
+/// same millisecond, in the order they will fire.
+const TimerList = struct {
+    // TODO: could we use a priority queue here? would avoid O(n) removal
+    lists: std.ArrayListUnmanaged(List),
+
+    pub const empty: TimerList = .{ .lists = .empty };
+
+    /// Add a new timer into the list
+    pub fn insert(self: *TimerList, timer: *EventLoopTimer.Node) void {
+        const target_list_index = std.sort.lowerBound(List, self.lists.items, &timer.data.next, List.compare);
+        if (target_list_index == self.lists.items.len) {
+            // suitable insertion point not found so insert at the end
+            self.lists.append(bun.default_allocator, .{
+                .absolute_time = timer.data.next,
+                .timers = .{},
+            }) catch bun.outOfMemory();
+            // now target_list_index is a valid index and points to the right list
+        } else if (List.compare(&timer.data.next, self.lists.items[target_list_index]) != .eq) {
+            // lowerBound did not find an exact match, so target_list_index is really the index of
+            // the first list *after* the one we want to use.
+            // so we need to add a new list in the middle, before target_list_index
+            self.lists.insert(bun.default_allocator, target_list_index, .{
+                .absolute_time = timer.data.next,
+                .timers = .{},
+            }) catch bun.outOfMemory();
+            // now target_list_index points to the list we just inserted
+        }
+        const list = &self.lists.items[target_list_index];
+        list.timers.append(timer);
+    }
+
+    /// Remove the given timer
+    pub fn remove(self: *TimerList, timer: *EventLoopTimer.Node) void {
+        const maybe_list_containing_index = std.sort.binarySearch(List, self.lists.items, &timer.data.next, List.compare);
+        // in safe builds, assert we found the list. in unsafe builds, do not remove anything
+        assert(maybe_list_containing_index != null);
+        const list_containing_index = maybe_list_containing_index orelse return;
+        const list_containing = &self.lists.items[list_containing_index].timers;
+        list_containing.remove(timer);
+        if (list_containing.len == 0) {
+            _ = self.lists.orderedRemove(list_containing_index);
+        }
+    }
+
+    /// Get the timer that will fire next, but don't remove it
+    pub fn peek(self: *const TimerList) ?*EventLoopTimer.Node {
+        if (self.lists.items.len == 0) {
+            return null;
+        } else {
+            assert(self.lists.items[0].timers.len > 0);
+            return self.lists.items[0].timers.first;
+        }
+    }
+
+    /// Remove and return the next timer to fire
+    pub fn deleteMin(self: *TimerList) ?*EventLoopTimer.Node {
+        if (self.lists.items.len == 0) {
+            // empty
+            return null;
+        } else {
+            const list = &self.lists.items[0].timers;
+            const timer = list.popFirst();
+            // if this list contains no timers it should have been removed
+            assert(timer != null);
+            // if it is now empty then we remove it from the list of lists
+            if (list.len == 0) {
+                _ = self.lists.orderedRemove(0);
+            }
+        }
+    }
+
+    const List = struct {
+        absolute_time: struct {
+            sec: isize,
+            msec: u16,
+        },
+        timers: std.DoublyLinkedList(EventLoopTimer),
+
+        fn compare(context: *const bun.timespec, item: List) std.math.Order {
+            const sec_order = std.math.order(context.sec, item.absolute_time.sec);
+            if (sec_order != .eq) return sec_order;
+            return std.math.order(@divFloor(context.nsec, std.time.ns_per_ms), item.absolute_time.msec);
+        }
+    };
+};
 
 pub const All = struct {
     last_id: i32 = 1,
-    timers: TimerHeap = .{
-        .context = {},
-    },
+    timers: TimerList = .empty,
     active_timer_count: i32 = 0,
     uv_timer: if (Environment.isWindows) uv.Timer else void = if (Environment.isWindows) std.mem.zeroes(uv.Timer),
 
@@ -934,13 +1017,12 @@ const heap = bun.io.heap;
 pub const EventLoopTimer = struct {
     /// The absolute time to fire this timer next.
     next: timespec,
-
-    /// Internal heap fields.
-    heap: heap.IntrusiveField(EventLoopTimer) = .{},
-
     state: State = .PENDING,
-
     tag: Tag = .TimerCallback,
+
+    /// A linked list node containing an EventLoopTimer. This is the type that specific kinds of
+    /// timers should store, as these timers need to be stoerd in linked lists.
+    pub const Node = std.DoublyLinkedList(EventLoopTimer).Node;
 
     pub const Tag = if (Environment.isWindows) enum {
         TimerCallback,
@@ -1024,23 +1106,6 @@ pub const EventLoopTimer = struct {
             },
             else => return null,
         }
-    }
-
-    fn less(_: void, a: *const EventLoopTimer, b: *const EventLoopTimer) bool {
-        const order = a.next.order(&b.next);
-        if (order == .eq) {
-            if (a.jsTimerInternals()) |a_internals| {
-                if (b.jsTimerInternals()) |b_internals| {
-                    return a_internals.id < b_internals.id;
-                }
-            }
-
-            if (b.tag == .TimeoutObject or b.tag == .ImmediateObject) {
-                return false;
-            }
-        }
-
-        return order == .lt;
     }
 
     fn ns(self: *const EventLoopTimer) u64 {

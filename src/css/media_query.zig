@@ -708,7 +708,7 @@ pub const MediaFeatureId = enum {
     /// The non-standard -moz-device-pixel-ratio media feature.
     @"-moz-device-pixel-ratio",
 
-    pub usingnamespace css.DeriveValueType(@This());
+    pub usingnamespace css.DeriveValueType(@This(), ValueTypeMap);
 
     pub const ValueTypeMap = .{
         .width = MediaFeatureType.length,
@@ -1510,7 +1510,7 @@ pub fn MediaFeatureName(comptime FeatureId: type) type {
                 // this only works if FeatureId doesn't hold any references to the input string.
                 // i.e. it is an enum
                 comptime {
-                    std.debug.assert(@typeInfo(FeatureId) == .Enum);
+                    std.debug.assert(@typeInfo(FeatureId) == .@"enum");
                 }
                 input.allocator().free(final_name);
             };

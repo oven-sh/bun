@@ -2,11 +2,13 @@ const std = @import("std");
 
 pub fn Bitflags(comptime T: type) type {
     const tyinfo = @typeInfo(T);
-    const IntType = tyinfo.Struct.backing_integer.?;
+    const IntType = tyinfo.@"struct".backing_integer.?;
     const IntTypeInfo = @typeInfo(IntType);
-    const IntRepresentingNumOfBits = std.math.IntFittingRange(0, IntTypeInfo.Int.bits);
+    const IntRepresentingNumOfBits = std.math.IntFittingRange(0, IntTypeInfo.int.bits);
 
     return struct {
+        pub const IMPL_BITFLAGS: u0 = 0;
+
         pub inline fn empty() T {
             return @bitCast(@as(IntType, 0));
         }

@@ -94,7 +94,7 @@ pub const FlexFlow = struct {
     /// How the flex items wrap.
     wrap: FlexWrap,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"flex-flow");
+    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"flex-flow", PropertyFieldMap);
 
     pub const PropertyFieldMap = .{
         .direction = css.PropertyIdTag.@"flex-direction",
@@ -170,7 +170,7 @@ pub const Flex = struct {
     /// The flex basis.
     basis: LengthPercentageOrAuto,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.flex);
+    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.flex, PropertyFieldMap);
 
     pub const PropertyFieldMap = .{
         .grow = css.PropertyIdTag.@"flex-grow",
@@ -303,6 +303,8 @@ pub const BoxDirection = enum {
     pub usingnamespace css.DefineEnumProperty(@This());
 };
 
+pub const FlexAlign = BoxAlign;
+
 /// A value for the legacy (prefixed) [box-align](https://www.w3.org/TR/2009/WD-css3-flexbox-20090723/#alignment) property.
 /// Equivalent to the `align-items` property in the standard syntax.
 /// A value for the legacy (prefixed) [box-align](https://www.w3.org/TR/2009/WD-css3-flexbox-20090723/#alignment) property.
@@ -320,6 +322,19 @@ pub const BoxAlign = enum {
     stretch,
 
     pub usingnamespace css.DefineEnumProperty(@This());
+
+    pub fn fromStandard(@"align": *const css.css_properties.@"align".AlignItems) ?BoxAlign {
+        return switch (@"align".*) {
+            .self_position => |sp| if (sp.overflow == null) switch (sp.value) {
+                .start, .@"flex-start" => .start,
+                .end, .@"flex-end" => .end,
+                .center => .center,
+                else => null,
+            } else null,
+            .stretch => .stretch,
+            else => null,
+        };
+    }
 };
 
 /// A value for the legacy (prefixed) [box-pack](https://www.w3.org/TR/2009/WD-css3-flexbox-20090723/#packing) property.
@@ -337,6 +352,21 @@ pub const BoxPack = enum {
     justify,
 
     pub usingnamespace css.DefineEnumProperty(@This());
+
+    pub fn fromStandard(justify: *const css.css_properties.@"align".JustifyContent) ?BoxPack {
+        return switch (justify.*) {
+            .content_distribution => |cd| switch (cd) {
+                .@"space-between" => .justify,
+                else => null,
+            },
+            .content_position => |cp| if (cp.overflow == null) switch (cp.value) {
+                .start, .@"flex-start" => .start,
+                .end, .@"flex-end" => .end,
+                .center => .center,
+            } else null,
+            else => null,
+        };
+    }
 };
 
 /// A value for the legacy (prefixed) [box-lines](https://www.w3.org/TR/2009/WD-css3-flexbox-20090723/#multiple) property.
@@ -378,6 +408,22 @@ pub const FlexPack = enum {
     distribute,
 
     pub usingnamespace css.DefineEnumProperty(@This());
+
+    pub fn fromStandard(justify: *const css.css_properties.@"align".JustifyContent) ?FlexPack {
+        return switch (justify.*) {
+            .content_distribution => |cd| switch (cd) {
+                .@"space-between" => .justify,
+                .@"space-around" => .distribute,
+                else => null,
+            },
+            .content_position => |cp| if (cp.overflow == null) switch (cp.value) {
+                .start, .@"flex-start" => .start,
+                .end, .@"flex-end" => .end,
+                .center => .center,
+            } else null,
+            else => null,
+        };
+    }
 };
 
 /// A value for the legacy (prefixed) [flex-item-align](https://www.w3.org/TR/2012/WD-css3-flexbox-20120322/#flex-align) property.
@@ -399,6 +445,20 @@ pub const FlexItemAlign = enum {
     stretch,
 
     pub usingnamespace css.DefineEnumProperty(@This());
+
+    pub fn fromStandard(justify: *const css.css_properties.@"align".AlignSelf) ?FlexItemAlign {
+        return switch (justify.*) {
+            .auto => .auto,
+            .stretch => .stretch,
+            .self_position => |sp| if (sp.overflow == null) switch (sp.value) {
+                .start, .@"flex-start" => .start,
+                .end, .@"flex-end" => .end,
+                .center => .center,
+                else => null,
+            } else null,
+            else => null,
+        };
+    }
 };
 
 /// A value for the legacy (prefixed) [flex-line-pack](https://www.w3.org/TR/2012/WD-css3-flexbox-20120322/#flex-line-pack) property.
@@ -420,6 +480,23 @@ pub const FlexLinePack = enum {
     stretch,
 
     pub usingnamespace css.DefineEnumProperty(@This());
+
+    pub fn fromStandard(justify: *const css.css_properties.@"align".AlignContent) ?FlexLinePack {
+        return switch (justify.*) {
+            .content_distribution => |cd| switch (cd) {
+                .@"space-between" => .justify,
+                .@"space-around" => .distribute,
+                .stretch => .stretch,
+                else => null,
+            },
+            .content_position => |cp| if (cp.overflow == null) switch (cp.value) {
+                .start, .@"flex-start" => .start,
+                .end, .@"flex-end" => .end,
+                .center => .center,
+            } else null,
+            else => null,
+        };
+    }
 };
 
 pub const BoxOrdinalGroup = CSSInteger;

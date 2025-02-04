@@ -484,8 +484,9 @@ public:
 
     LazyProperty<JSGlobalObject, Structure> m_JSS3FileStructure;
     LazyProperty<JSGlobalObject, Structure> m_S3ErrorStructure;
-    LazyClassStructure m_JSStatsClassStructure;
-    LazyClassStructure m_JSStatsBigIntClassStructure;
+    JSC::LazyClassStructure m_JSStatsClassStructure;
+    JSC::LazyClassStructure m_JSStatsBigIntClassStructure;
+    JSC::LazyClassStructure m_JSDirentClassStructure;
 
     JSObject* cryptoObject() const { return m_cryptoObject.getInitializedOnMainThread(this); }
     JSObject* JSDOMFileConstructor() const { return m_JSDOMFileConstructor.getInitializedOnMainThread(this); }

@@ -44,7 +44,7 @@ const dbg = builtin.mode == .Debug;
 const std = @import("std");
 const w = std.os.windows;
 const assert = std.debug.assert;
-const fmt16 = std.unicode.fmtUtf16le;
+const fmt16 = std.unicode.fmtUtf16Le;
 
 const is_standalone = @import("root") == @This();
 const bun = if (!is_standalone) @import("root").bun else @compileError("cannot use 'bun' in standalone build of bun_shim_impl");
@@ -260,7 +260,7 @@ var failure_reason_data: [512]u8 = undefined;
 var failure_reason_argument: ?[]const u8 = null;
 
 noinline fn failAndExitWithReason(reason: FailReason) noreturn {
-    @setCold(true);
+    @branchHint(.cold);
 
     const console_handle = w.teb().ProcessEnvironmentBlock.ProcessParameters.hStdError;
     var mode: w.DWORD = 0;
@@ -310,7 +310,7 @@ pub const LauncherMode = enum {
     }
 
     noinline fn fail(comptime mode: LauncherMode, comptime reason: FailReason) mode.FailRetType() {
-        @setCold(true);
+        @branchHint(.cold);
         return switch (mode) {
             .launch => failAndExitWithReason(reason),
             .read_without_launch => ReadWithoutLaunchResult{ .err = reason },
@@ -363,8 +363,8 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
     const suffix = comptime (if (is_standalone) wliteral("exe") else wliteral("bunx"));
     if (dbg) if (!std.mem.endsWith(u16, image_path_u16, suffix)) {
         std.debug.panic("assert failed: image path expected to end with {}, got {}", .{
-            std.unicode.fmtUtf16le(suffix),
-            std.unicode.fmtUtf16le(image_path_u16),
+            std.unicode.fmtUtf16Le(suffix),
+            std.unicode.fmtUtf16Le(image_path_u16),
         });
     };
     const image_path_to_copy_b_len = image_path_b_len - 2 * suffix.len;
@@ -487,7 +487,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
         assert(ptr[1] == '.');
 
         while (true) {
-            if (dbg) debug("1 - {}", .{std.unicode.fmtUtf16le(ptr[0..1])});
+            if (dbg) debug("1 - {}", .{std.unicode.fmtUtf16Le(ptr[0..1])});
             if (ptr[0] == '\\') {
                 left -= 1;
                 // ptr is of type [*]u16, which means -= operates on number of ITEMS, not BYTES
@@ -505,7 +505,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
         // inlined loop to do this again, because the completion case is different
         // using `inline for` caused comptime issues that made the code much harder to read
         while (true) {
-            if (dbg) debug("2 - {}", .{std.unicode.fmtUtf16le(ptr[0..1])});
+            if (dbg) debug("2 - {}", .{std.unicode.fmtUtf16Le(ptr[0..1])});
             if (ptr[0] == '\\') {
                 // ptr is at the position marked S, so move forward one *character*
                 break :brk ptr + 1;

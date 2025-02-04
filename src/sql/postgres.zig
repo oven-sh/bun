@@ -2292,6 +2292,104 @@ pub const PostgresSQLConnection = struct {
                 .free_value = 1,
             };
         }
+
+        fn unescapePostgresString(input: []const u8, buffer: []u8) ![]u8 {
+            var out_index: usize = 0;
+            var i: usize = 0;
+
+            while (i < input.len) : (i += 1) {
+                if (out_index >= buffer.len) return error.BufferTooSmall;
+
+                if (input[i] == '\\' and i + 1 < input.len) {
+                    i += 1;
+                    switch (input[i]) {
+                        // Common escapes
+                        'b' => buffer[out_index] = '\x08', // Backspace
+                        'f' => buffer[out_index] = '\x0C', // Form feed
+                        'n' => buffer[out_index] = '\n', // Line feed
+                        'r' => buffer[out_index] = '\r', // Carriage return
+                        't' => buffer[out_index] = '\t', // Tab
+                        '"' => buffer[out_index] = '"', // Double quote
+                        '\\' => buffer[out_index] = '\\', // Backslash
+                        '\'' => buffer[out_index] = '\'', // Single quote
+
+                        // PostgreSQL specific escapes
+                        '0'...'7' => {
+                            // Octal escape sequence (\nnn)
+                            if (i + 2 >= input.len) return error.InvalidOctalSequence;
+
+                            const octal_str = input[i..@min(i + 3, input.len)];
+                            var octal_len: usize = 1;
+                            while (octal_len < 3 and octal_len < octal_str.len and
+                                octal_str[octal_len] >= '0' and octal_str[octal_len] <= '7') : (octal_len += 1)
+                            {}
+
+                            const octal_value = try std.fmt.parseInt(u8, octal_str[0..octal_len], 8);
+                            buffer[out_index] = octal_value;
+                            i += octal_len - 1;
+                        },
+
+                        // JSON allows forward slash escaping
+                        '/' => buffer[out_index] = '/',
+
+                        // Unicode escapes
+                        'u' => {
+                            if (i + 4 >= input.len) return error.InvalidUnicodeSequence;
+
+                            const high = try std.fmt.parseInt(u16, input[i + 1 .. i + 5], 16);
+                            var unicode_value: u21 = undefined;
+                            var additional_offset: usize = 0;
+
+                            if (high >= 0xD800 and high <= 0xDBFF) {
+                                // Surrogate pair handling
+                                if (i + 10 < input.len and
+                                    input[i + 5] == '\\' and
+                                    input[i + 6] == 'u')
+                                {
+                                    const low = try std.fmt.parseInt(u16, input[i + 7 .. i + 11], 16);
+                                    if (low >= 0xDC00 and low <= 0xDFFF) {
+                                        unicode_value = 0x10000 +
+                                            (@as(u21, high & 0x3FF) << 10) +
+                                            @as(u21, low & 0x3FF);
+                                        additional_offset = 6;
+                                    } else return error.InvalidSurrogatePair;
+                                } else return error.InvalidSurrogatePair;
+                            } else if (high >= 0xDC00 and high <= 0xDFFF) {
+                                return error.UnexpectedLowSurrogate;
+                            } else {
+                                unicode_value = high;
+                            }
+
+                            var utf8_buf: [4]u8 = undefined;
+                            const len = try std.unicode.utf8Encode(unicode_value, &utf8_buf);
+                            if (out_index + len > buffer.len) return error.BufferTooSmall;
+
+                            @memcpy(buffer[out_index..], utf8_buf[0..len]);
+                            out_index += len - 1;
+                            i += 4 + additional_offset;
+                        },
+
+                        // PostgreSQL hex escapes
+                        'x' => {
+                            if (i + 2 >= input.len) return error.InvalidEscapeSequence;
+                            const hex_value = try std.fmt.parseInt(u8, input[i + 1 .. i + 3], 16);
+                            buffer[out_index] = hex_value;
+                            i += 2;
+                        },
+
+                        // psql specific escape codes
+                        'a' => buffer[out_index] = '\x07', // Bell
+                        'v' => buffer[out_index] = '\x0B', // Vertical tab
+                        else => return error.UnknownEscapeSequence,
+                    }
+                } else {
+                    buffer[out_index] = input[i];
+                }
+                out_index += 1;
+            }
+
+            return buffer[0..out_index];
+        }
         fn trySlice(slice: []const u8, count: usize) []const u8 {
             if (slice.len <= count) return "";
             return slice[count..];
@@ -2310,6 +2408,7 @@ pub const PostgresSQLConnection = struct {
             }
 
             var array = std.ArrayListUnmanaged(DataCell){};
+            var stack_buffer: [16 * 1024]u8 = undefined;
 
             errdefer {
                 if (array.capacity > 0) array.deinit(bun.default_allocator);
@@ -2373,15 +2472,31 @@ pub const PostgresSQLConnection = struct {
                                 slice = trySlice(slice, current_idx + 1);
                                 continue;
                             },
+                            .json_array,
+                            .jsonb_array,
+                            => {
+                                const str_bytes = slice[1..current_idx];
+                                const needs_dynamic_buffer = str_bytes.len < stack_buffer.len;
+                                const buffer = if (needs_dynamic_buffer) try bun.default_allocator.alloc(u8, str_bytes.len) else stack_buffer[0..];
+                                defer if (needs_dynamic_buffer) bun.default_allocator.free(buffer);
+                                const unescaped = unescapePostgresString(str_bytes, buffer) catch return error.InvalidByteSequence;
+                                try array.append(bun.default_allocator, DataCell{ .tag = .json, .value = .{ .json = if (unescaped.len > 0) String.createUTF8(unescaped).value.WTFStringImpl else null }, .free_value = 1 });
+                                slice = trySlice(slice, current_idx + 1);
+                                continue;
+                            },
                             else => {},
                         }
-                        const string_bytes = slice[1..current_idx];
-                        if (string_bytes.len == 0) {
+                        const str_bytes = slice[1..current_idx];
+                        if (str_bytes.len == 0) {
                             // empty string
                             try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = null }, .free_value = 1 });
                             slice = trySlice(slice, current_idx + 1);
                             continue;
                         }
+                        const needs_dynamic_buffer = str_bytes.len < stack_buffer.len;
+                        const buffer = if (needs_dynamic_buffer) try bun.default_allocator.alloc(u8, str_bytes.len) else stack_buffer[0..];
+                        defer if (needs_dynamic_buffer) bun.default_allocator.free(buffer);
+                        const string_bytes = unescapePostgresString(str_bytes, buffer) catch return error.InvalidByteSequence;
                         try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (string_bytes.len > 0) String.createUTF8(string_bytes).value.WTFStringImpl else null }, .free_value = 1 });
 
                         slice = trySlice(slice, current_idx + 1);
@@ -2722,6 +2837,8 @@ pub const PostgresSQLConnection = struct {
                 .char_array,
                 .text_array,
                 .name_array,
+                .json_array,
+                .jsonb_array,
                 // special types handled as text array
                 .path_array,
                 .xml_array,

@@ -3805,7 +3805,7 @@ pub const JSValue = enum(i64) {
             };
         }
 
-        pub fn isTypedArray(this: JSType) bool {
+        pub fn isTypedArrayOrArrayBuffer(this: JSType) bool {
             return switch (this) {
                 .ArrayBuffer,
                 .BigInt64Array,

@@ -3529,7 +3529,7 @@ const UnsafeObject = struct {
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
         const args = callframe.arguments_old(2).slice();
-        if (args.len < 1 or !args[0].isCell() or !args[0].jsType().isTypedArray()) {
+        if (args.len < 1 or !args[0].isCell() or !args[0].jsType().isTypedArrayOrArrayBuffer()) {
             return globalThis.throwInvalidArguments("Expected an ArrayBuffer", .{});
         }
 

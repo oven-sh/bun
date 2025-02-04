@@ -510,9 +510,9 @@ pub const Stringifier = struct {
                     const name_and_version, const patch_path = value.*;
                     try writeIndent(writer, indent);
                     try writer.print(
-                        \\"{s}": "{s}",
+                        \\{}: {},
                         \\
-                    , .{ name_and_version, patch_path.slice(buf) });
+                    , .{ bun.fmt.formatJSONStringUTF8(name_and_version, .{}), patch_path.fmtJson(buf, .{}) });
                 }
 
                 try decIndent(writer, indent);
@@ -534,9 +534,9 @@ pub const Stringifier = struct {
                     const name, const version = value.*;
                     try writeIndent(writer, indent);
                     try writer.print(
-                        \\"{s}": "{s}",
+                        \\{}: {},
                         \\
-                    , .{ name.slice(buf), version.literal.slice(buf) });
+                    , .{ name.fmtJson(buf, .{}), version.literal.fmtJson(buf, .{}) });
                 }
 
                 try decIndent(writer, indent);

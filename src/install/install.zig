@@ -15014,10 +15014,7 @@ pub const PackageManager = struct {
             if (manager.options.do.summary) {
                 // TODO(dylan-conway): packages aren't installed but we can still print
                 // added/removed/updated direct dependencies.
-                Output.pretty(
-                    \\
-                    \\Saved <green>{s}<r> ({d} package{s}) 
-                , .{
+                Output.pretty("\nSaved <green>{s}<r> ({d} package{s}) ", .{
                     switch (save_format) {
                         .text => "bun.lock",
                         .binary => "bun.lockb",

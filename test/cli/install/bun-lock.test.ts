@@ -1,8 +1,12 @@
 import { spawn, write, file } from "bun";
 import { expect, it, beforeAll, afterAll } from "bun:test";
 import { access, copyFile, open, writeFile, exists, cp, rm } from "fs/promises";
-import { bunExe, bunEnv as env, isWindows, VerdaccioRegistry, runBunInstall, readdirSorted } from "harness";
+import { bunExe, bunEnv as env, isWindows, VerdaccioRegistry, runBunInstall, toBeValidBin } from "harness";
 import { join } from "path";
+
+expect.extend({
+  toBeValidBin,
+});
 
 var registry = new VerdaccioRegistry();
 
@@ -389,18 +393,17 @@ index d156130662798530e852e1afaec5b1c03d429cdc..b4ddf35975a952fdaed99f2b14236519
         exists(join(packageDir, "node_modules", "pkg3", "package.json")),
         file(join(packageDir, "node_modules", "hoist-lockfile-shared", "package.json")).json(),
         exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt")),
-        readdirSorted(join(packageDir, "node_modules", ".bin")),
         file(join(packageDir, "node_modules", "optional-peer-deps", "package.json")).json(),
       ]),
-    ).toMatchObject([
-      true,
-      true,
-      true,
-      { name: "hoist-lockfile-shared", version: "1.0.1" },
-      true,
-      ["bin-1.js", "map-bin", "map_bin", "pkg1-1", "pkg1-2", "pkg1-3", "pkg2-1", "what-bin"],
-      { hi: true },
-    ]);
+    ).toMatchObject([true, true, true, { name: "hoist-lockfile-shared", version: "1.0.1" }, true, { hi: true }]);
+    expect(join(packageDir, "node_modules", ".bin", "bin-1.js")).toBeValidBin(join("..", "pkg3", "bin", "bin-1.js"));
+    expect(join(packageDir, "node_modules", ".bin", "map-bin")).toBeValidBin(join("..", "map-bin", "bin", "map-bin"));
+    expect(join(packageDir, "node_modules", ".bin", "map_bin")).toBeValidBin(join("..", "map-bin", "bin", "map-bin"));
+    expect(join(packageDir, "node_modules", ".bin", "pkg1-1")).toBeValidBin(join("..", "pkg1", "bin-1.js"));
+    expect(join(packageDir, "node_modules", ".bin", "pkg1-2")).toBeValidBin(join("..", "pkg1", "bin-2.js"));
+    expect(join(packageDir, "node_modules", ".bin", "pkg1-3")).toBeValidBin(join("..", "pkg1", "bin-3.js"));
+    expect(join(packageDir, "node_modules", ".bin", "pkg2-1")).toBeValidBin(join("..", "pkg2", "bin-1.js"));
+    expect(join(packageDir, "node_modules", ".bin", "what-bin")).toBeValidBin(join("..", "what-bin", "what-bin.js"));
   }
 
   let { exited, stdout } = spawn({

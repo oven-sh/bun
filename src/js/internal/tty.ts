@@ -53,12 +53,11 @@ function warnOnDeactivatedColors(env) {
   }
 }
 
-function getColorDepth(env: NodeJS.ProcessEnv) {
-  const FORCE_COLOR = env.FORCE_COLOR;
+function getColorDepth(env: NodeJS.ProcessEnv = process.env) {
   // Use level 0-3 to support the same levels as `chalk` does. This is done for
   // consistency throughout the ecosystem.
-  if (FORCE_COLOR !== undefined) {
-    switch (FORCE_COLOR) {
+  if (env.FORCE_COLOR !== undefined) {
+    switch (env.FORCE_COLOR) {
       case "":
       case "1":
       case "true":
@@ -121,9 +120,8 @@ function getColorDepth(env: NodeJS.ProcessEnv) {
     return COLORS_2;
   }
 
-  const TEAMCITY_VERSION = env.TEAMCITY_VERSION;
-  if (TEAMCITY_VERSION) {
-    return /^(9\.(0*[1-9]\d*)\.|\d{2,}\.)/.test(TEAMCITY_VERSION) ? COLORS_16 : COLORS_2;
+  if ("TEAMCITY_VERSION" in env) {
+    return /^(9\.(0*[1-9]\d*)\.|\d{2,}\.)/.test(env.TEAMCITY_VERSION) ? COLORS_16 : COLORS_2;
   }
 
   switch (env.TERM_PROGRAM) {
@@ -141,20 +139,16 @@ function getColorDepth(env: NodeJS.ProcessEnv) {
       return COLORS_256;
   }
 
-  const COLORTERM = env.COLORTERM;
-
-  if (COLORTERM === "truecolor" || COLORTERM === "24bit") {
+  if (env.COLORTERM === "truecolor" || env.COLORTERM === "24bit") {
     return COLORS_16m;
   }
 
-  const TERM = env.TERM;
-
-  if (TERM) {
-    if (/^xterm-256/.test(TERM) !== null) {
+  if (env.TERM) {
+    if (/^xterm-256/.test(env.TERM)) {
       return COLORS_256;
     }
 
-    const termEnv = TERM.toLowerCase();
+    const termEnv = env.TERM.toLowerCase();
 
     if (TERM_ENVS[termEnv]) {
       return TERM_ENVS[termEnv];

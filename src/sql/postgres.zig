@@ -2483,7 +2483,7 @@ pub const PostgresSQLConnection = struct {
                         }
                         if (current_idx == 0) return error.UnsupportedArrayFormat;
                         const element = slice[0..current_idx];
-                        if (is_float) {
+                        if (is_float or arrayType == .float8_array) {
                             try array.append(bun.default_allocator, DataCell{ .tag = .float8, .value = .{ .float8 = bun.parseDouble(element) catch std.math.nan(f64) } });
                             slice = trySlice(slice, current_idx);
                             continue;

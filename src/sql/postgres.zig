@@ -2375,9 +2375,14 @@ pub const PostgresSQLConnection = struct {
                             },
                             else => {},
                         }
-                        const string_bytes = slice[0 .. current_idx + 1];
-                        // the format is a json valid string that can contain escaped characters, so we parse it as a json to simplify the parsing
-                        try array.append(bun.default_allocator, DataCell{ .tag = .json, .value = .{ .json = if (string_bytes.len > 0) String.createUTF8(string_bytes).value.WTFStringImpl else null }, .free_value = 1 });
+                        const string_bytes = slice[1..current_idx];
+                        if (string_bytes.len == 0) {
+                            // empty string
+                            try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = null }, .free_value = 1 });
+                            slice = trySlice(slice, current_idx + 1);
+                            continue;
+                        }
+                        try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (string_bytes.len > 0) String.createUTF8(string_bytes).value.WTFStringImpl else null }, .free_value = 1 });
 
                         slice = trySlice(slice, current_idx + 1);
                         continue;
@@ -2400,6 +2405,15 @@ pub const PostgresSQLConnection = struct {
                             .char_array,
                             .text_array,
                             .name_array,
+                            .numeric_array,
+                            .path_array,
+                            .xml_array,
+                            .point_array,
+                            .lseg_array,
+                            .box_array,
+                            .polygon_array,
+                            .line_array,
+                            .cidr_array,
                             => {
                                 // this is also a string until we reach "," or "}" but a single word string like Bun
                                 var current_idx: usize = 0;
@@ -2699,6 +2713,17 @@ pub const PostgresSQLConnection = struct {
                 .char_array,
                 .text_array,
                 .name_array,
+                // special types handled as text array
+                .path_array,
+                .xml_array,
+                .point_array,
+                .lseg_array,
+                .box_array,
+                .polygon_array,
+                .line_array,
+                .cidr_array,
+                .numeric_array,
+
                 // numeric array types
                 .int8_array,
                 .int2_array,

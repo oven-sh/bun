@@ -91,7 +91,7 @@ pub fn has(this: *ObjectURLRegistry, pathname: []const u8) bool {
 
 comptime {
     const Bun__createObjectURL = JSC.toJSHostFunction(Bun__createObjectURL_);
-    @export(Bun__createObjectURL, .{ .name = "Bun__createObjectURL" });
+    @export(&Bun__createObjectURL, .{ .name = "Bun__createObjectURL" });
 }
 fn Bun__createObjectURL_(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(1);
@@ -109,7 +109,7 @@ fn Bun__createObjectURL_(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Call
 
 comptime {
     const Bun__revokeObjectURL = JSC.toJSHostFunction(Bun__revokeObjectURL_);
-    @export(Bun__revokeObjectURL, .{ .name = "Bun__revokeObjectURL" });
+    @export(&Bun__revokeObjectURL, .{ .name = "Bun__revokeObjectURL" });
 }
 fn Bun__revokeObjectURL_(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(1);
@@ -138,7 +138,7 @@ fn Bun__revokeObjectURL_(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Call
 
 comptime {
     const jsFunctionResolveObjectURL = JSC.toJSHostFunction(jsFunctionResolveObjectURL_);
-    @export(jsFunctionResolveObjectURL, .{ .name = "jsFunctionResolveObjectURL" });
+    @export(&jsFunctionResolveObjectURL, .{ .name = "jsFunctionResolveObjectURL" });
 }
 fn jsFunctionResolveObjectURL_(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(1);

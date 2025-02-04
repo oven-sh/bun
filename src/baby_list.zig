@@ -342,7 +342,7 @@ pub fn BabyList(comptime Type: type) type {
             return this.len - initial;
         }
 
-        pub fn writeLatin1(this: *@This(), allocator: std.mem.Allocator, str: []const u8) !u32 {
+        pub fn writeLatin1(this: *@This(), allocator: std.mem.Allocator, str: []const u8) OOM!u32 {
             if (comptime Type != u8)
                 @compileError("Unsupported for type " ++ @typeName(Type));
             const initial = this.len;
@@ -352,7 +352,7 @@ pub fn BabyList(comptime Type: type) type {
             return this.len - initial;
         }
 
-        pub fn writeUTF16(this: *@This(), allocator: std.mem.Allocator, str: []const u16) !u32 {
+        pub fn writeUTF16(this: *@This(), allocator: std.mem.Allocator, str: []const u16) OOM!u32 {
             if (comptime Type != u8)
                 @compileError("Unsupported for type " ++ @typeName(Type));
 

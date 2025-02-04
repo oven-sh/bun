@@ -406,3 +406,29 @@ describe("NODE_PATH test", () => {
     expect(stdout.toString().trim()).toBe("NODE_PATH from lib works");
   });
 });
+
+it("can resolve with source directories that do not exist", () => {
+  // In Nuxt/Vite, the following call happens:
+  // `require("module").createRequire("file:///Users/clo/my-nuxt-app/@vue/server-renderer")("vue")`
+  // This seems to be a bug in their code, not using a concrete file path for
+  // this virtual module, such as 'node_modules/@vue/server-renderer/index.js',
+  // but the same exact resolution happens and succeeds in Node.js
+  const dir = tempDirWithFiles("resolve", {
+    "node_modules/vue/index.js": "export default 123;",
+    "test.js": `
+      const { createRequire } = require('module');
+      const assert = require('assert');
+      const req = createRequire(import.meta.url + '/@vue/server-renderer');
+      assert.strictEqual(req('vue').default, 123);
+    `,
+  });
+
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), "test.js"],
+    env: bunEnv,
+    cwd: dir,
+    stdio: ["ignore", "inherit", "inherit"],
+  });
+
+  expect(exitCode).toBe(0);
+});

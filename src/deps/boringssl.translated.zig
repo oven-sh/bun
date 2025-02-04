@@ -18791,7 +18791,7 @@ pub extern fn ERR_get_next_error_library() c_int;
 
 pub const struct_bio_st = extern struct {
     method: [*c]const BIO_METHOD,
-    init: c_int,
+    _init: c_int,
     shutdown: c_int,
     flags: c_int,
     retry_reason: c_int,

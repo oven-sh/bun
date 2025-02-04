@@ -9,7 +9,7 @@ on:
         required: true
 
 env:
-  BUN_VERSION: "1.1.44"
+  BUN_VERSION: "1.2.0"
 
 jobs:
   bump:

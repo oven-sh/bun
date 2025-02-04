@@ -147,7 +147,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor,
     // In node, this is supposed to be the actual CommonJSModule constructor.
     // We are cutting a huge corner by not doing all that work.
     // This code is only to support babel.
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     JSString* idString = JSC::jsString(vm, WTF::String("."_s));
 
     JSString* dirname = jsEmptyString(vm);
@@ -192,7 +192,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsBuiltinModule,
     (JSC::JSGlobalObject * globalObject,
         JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue moduleName = callFrame->argument(0);
     if (!moduleName.isString()) {
@@ -207,7 +207,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsBuiltinModule,
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionWrap, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSString* code = callFrame->argument(0).toStringOrNull(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -229,7 +229,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
     (JSC::JSGlobalObject * globalObject,
         JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (callFrame->argumentCount() < 1) {
         return Bun::throwError(globalObject, scope,
@@ -296,7 +296,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSyncBuiltinExports,
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSourceMap, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     throwException(globalObject, scope,
         createError(globalObject, "Not implemented"_s));
@@ -307,7 +307,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
     (JSC::JSGlobalObject * globalObject,
         JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
 
     switch (callFrame->argumentCount()) {
     case 0: {
@@ -442,7 +442,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveLookupPaths,
     (JSC::JSGlobalObject * globalObject,
         JSC::CallFrame* callFrame))
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     String request = callFrame->argument(0).toWTFString(globalObject);
@@ -501,7 +501,7 @@ extern "C" JSC::EncodedJSValue NodeModuleModule__findPath(JSGlobalObject*,
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPath, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue request_value = callFrame->argument(0);
@@ -820,7 +820,7 @@ void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
     JSC::MarkedArgumentBuffer& exportValues)
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto catchScope = DECLARE_CATCH_SCOPE(vm);
     auto* constructor = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(
         globalObject);

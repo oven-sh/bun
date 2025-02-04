@@ -66,7 +66,7 @@ extern "C" JSC::EncodedJSValue Bun__JSWrappingFunction__create(
     Bun::NativeFunctionPtr functionPointer,
     JSC::EncodedJSValue wrappedFnEncoded)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     JSC::JSValue wrappedFn = JSC::JSValue::decode(wrappedFnEncoded);
     auto function = JSWrappingFunction::create(vm, globalObject, symbolName, functionPointer, wrappedFn);
     return JSC::JSValue::encode(function);

@@ -53,16 +53,8 @@ const JSC = bun.JSC;
 const PackageManager = @import("./install/install.zig").PackageManager;
 const DataURL = @import("./resolver/data_url.zig").DataURL;
 
-pub fn MacroJSValueType_() type {
-    if (comptime JSC.is_bindgen) {
-        return struct {
-            pub const zero = @This(){};
-        };
-    }
-    return JSC.JSValue;
-}
-pub const MacroJSValueType = MacroJSValueType_();
-const default_macro_js_value = if (JSC.is_bindgen) MacroJSValueType{} else JSC.JSValue.zero;
+pub const MacroJSValueType = JSC.JSValue;
+const default_macro_js_value = JSC.JSValue.zero;
 
 const EntryPoints = @import("./bundler/entry_points.zig");
 const SystemTimer = @import("./system_timer.zig").Timer;
@@ -561,6 +553,7 @@ pub const Transpiler = struct {
                 const has_production_env = this.env.isProduction();
                 if (!was_production and has_production_env) {
                     this.options.setProduction(true);
+                    this.resolver.opts.setProduction(true);
                 }
 
                 if (this.options.isTest() or this.env.isTest()) {
@@ -575,6 +568,7 @@ pub const Transpiler = struct {
                 this.env.loadProcess();
                 if (this.env.isProduction()) {
                     this.options.setProduction(true);
+                    this.resolver.opts.setProduction(true);
                 }
             },
             else => {},
@@ -598,7 +592,7 @@ pub const Transpiler = struct {
 
         try this.runEnvLoader(false);
 
-        this.options.jsx.setProduction(this.env.isProduction());
+        var is_production = this.env.isProduction();
 
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();
@@ -608,10 +602,25 @@ pub const Transpiler = struct {
 
         try this.options.loadDefines(this.allocator, this.env, &this.options.env);
 
+        var is_development = false;
         if (this.options.define.dots.get("NODE_ENV")) |NODE_ENV| {
-            if (NODE_ENV.len > 0 and NODE_ENV[0].data.value == .e_string and NODE_ENV[0].data.value.e_string.eqlComptime("production")) {
-                this.options.production = true;
+            if (NODE_ENV.len > 0 and NODE_ENV[0].data.value == .e_string) {
+                if (NODE_ENV[0].data.value.e_string.eqlComptime("production")) {
+                    is_production = true;
+                } else if (NODE_ENV[0].data.value.e_string.eqlComptime("development")) {
+                    is_development = true;
+                }
             }
+        }
+
+        if (is_development) {
+            this.options.setProduction(false);
+            this.resolver.opts.setProduction(false);
+            this.options.force_node_env = .development;
+            this.resolver.opts.force_node_env = .development;
+        } else if (is_production) {
+            this.options.setProduction(true);
+            this.resolver.opts.setProduction(true);
         }
     }
 
@@ -621,7 +630,7 @@ pub const Transpiler = struct {
     }
 
     pub noinline fn dumpEnvironmentVariables(transpiler: *const Transpiler) void {
-        @setCold(true);
+        @branchHint(.cold);
         const opts = std.json.StringifyOptions{
             .whitespace = .indent_2,
         };
@@ -1332,10 +1341,8 @@ pub const Transpiler = struct {
                 opts.features.top_level_await = true;
 
                 opts.macro_context = &transpiler.macro_context.?;
-                if (comptime !JSC.is_bindgen) {
-                    if (target != .bun_macro) {
-                        opts.macro_context.javascript_object = this_parse.macro_js_ctx;
-                    }
+                if (target != .bun_macro) {
+                    opts.macro_context.javascript_object = this_parse.macro_js_ctx;
                 }
 
                 opts.features.is_macro_runtime = target == .bun_macro;

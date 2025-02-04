@@ -2814,7 +2814,7 @@ pub fn resolveJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocato
     return if (isWindows) resolveWindowsJS_T(T, globalObject, paths, buf, buf2) else resolvePosixJS_T(T, globalObject, paths, buf, buf2);
 }
 
-extern "C" fn Process__getCachedCwd(*JSC.JSGlobalObject) JSC.JSValue;
+extern "c" fn Process__getCachedCwd(*JSC.JSGlobalObject) JSC.JSValue;
 
 pub fn resolve(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(JSC.conv) JSC.JSValue {
     var arena = bun.ArenaAllocator.init(bun.default_allocator);
@@ -2976,17 +2976,17 @@ pub fn toNamespacedPath(globalObject: *JSC.JSGlobalObject, isWindows: bool, args
 pub const Extern = [_][]const u8{"create"};
 
 comptime {
-    @export(Path.basename, .{ .name = "Bun__Path__basename" });
-    @export(Path.dirname, .{ .name = "Bun__Path__dirname" });
-    @export(Path.extname, .{ .name = "Bun__Path__extname" });
-    @export(path_format, .{ .name = "Bun__Path__format" });
-    @export(Path.isAbsolute, .{ .name = "Bun__Path__isAbsolute" });
-    @export(Path.join, .{ .name = "Bun__Path__join" });
-    @export(Path.normalize, .{ .name = "Bun__Path__normalize" });
-    @export(Path.parse, .{ .name = "Bun__Path__parse" });
-    @export(Path.relative, .{ .name = "Bun__Path__relative" });
-    @export(Path.resolve, .{ .name = "Bun__Path__resolve" });
-    @export(Path.toNamespacedPath, .{ .name = "Bun__Path__toNamespacedPath" });
+    @export(&Path.basename, .{ .name = "Bun__Path__basename" });
+    @export(&Path.dirname, .{ .name = "Bun__Path__dirname" });
+    @export(&Path.extname, .{ .name = "Bun__Path__extname" });
+    @export(&path_format, .{ .name = "Bun__Path__format" });
+    @export(&Path.isAbsolute, .{ .name = "Bun__Path__isAbsolute" });
+    @export(&Path.join, .{ .name = "Bun__Path__join" });
+    @export(&Path.normalize, .{ .name = "Bun__Path__normalize" });
+    @export(&Path.parse, .{ .name = "Bun__Path__parse" });
+    @export(&Path.relative, .{ .name = "Bun__Path__relative" });
+    @export(&Path.resolve, .{ .name = "Bun__Path__resolve" });
+    @export(&Path.toNamespacedPath, .{ .name = "Bun__Path__toNamespacedPath" });
 }
 
 fn path_format(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(JSC.conv) JSC.JSValue {

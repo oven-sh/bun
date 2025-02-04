@@ -27,7 +27,7 @@
   },
   "scripts": {
     "prebuild": "echo $(pwd)",
-    "copy-docs": "rm -rf docs && cp -rL ../../docs/ ./docs && sed -i 's/\\$BUN_LATEST_VERSION/'\"${BUN_VERSION:-1.0.0}\"'/g' ./docs/**/*.md",
+    "copy-docs": "rm -rf docs && cp -rL ../../docs/ ./docs && find ./docs -type f -name '*.md' -exec sed -i 's/\\$BUN_LATEST_VERSION/'\"${BUN_VERSION#bun-v:-1.0.0}\"'/g' {} +",
     "build": "bun run copy-docs && bun scripts/build.ts && bun run fmt",
     "test": "tsc",
     "fmt": "echo $(which biome) && biome format --write ."

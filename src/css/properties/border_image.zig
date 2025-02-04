@@ -40,7 +40,7 @@ pub const BorderImage = struct {
     /// How the border image is scaled and tiled.
     repeat: BorderImageRepeat,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-image");
+    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-image", PropertyFieldMap);
 
     pub const PropertyFieldMap = .{
         .source = css.PropertyIdTag.@"border-image-source",
@@ -188,9 +188,7 @@ pub const BorderImage = struct {
         var res = css.SmallList(BorderImage, 6).initCapacity(allocator, fallbacks.len());
         res.setLen(fallbacks.len());
         for (fallbacks.slice(), res.slice_mut()) |fallback, *out| {
-            out.* = this.*;
-            out.source = Image.default();
-            out.* = out.deepClone(allocator);
+            out.* = this.deepClone(allocator);
             out.source = fallback;
         }
 
@@ -395,33 +393,33 @@ pub const BorderImageSlice = struct {
 };
 
 pub const BorderImageProperty = packed struct(u8) {
-    @"border-image-source": bool = false,
-    @"border-image-slice": bool = false,
-    @"border-image-width": bool = false,
-    @"border-image-outset": bool = false,
-    @"border-image-repeat": bool = false,
+    source: bool = false,
+    slice: bool = false,
+    width: bool = false,
+    outset: bool = false,
+    repeat: bool = false,
     __unused: u3 = 0,
 
-    pub const @"border-image-source" = BorderImageProperty{ .@"border-image-source" = true };
-    pub const @"border-image-slice" = BorderImageProperty{ .@"border-image-slice" = true };
-    pub const @"border-image-width" = BorderImageProperty{ .@"border-image-width" = true };
-    pub const @"border-image-outset" = BorderImageProperty{ .@"border-image-outset" = true };
-    pub const @"border-image-repeat" = BorderImageProperty{ .@"border-image-repeat" = true };
+    pub const @"border-image-source" = BorderImageProperty{ .source = true };
+    pub const @"border-image-slice" = BorderImageProperty{ .slice = true };
+    pub const @"border-image-width" = BorderImageProperty{ .width = true };
+    pub const @"border-image-outset" = BorderImageProperty{ .outset = true };
+    pub const @"border-image-repeat" = BorderImageProperty{ .repeat = true };
 
     pub usingnamespace css.Bitflags(@This());
 
     pub const @"border-image" = BorderImageProperty{
-        .@"border-image-source" = true,
-        .@"border-image-slice" = true,
-        .@"border-image-width" = true,
-        .@"border-image-outset" = true,
-        .@"border-image-repeat" = true,
+        .source = true,
+        .slice = true,
+        .width = true,
+        .outset = true,
+        .repeat = true,
     };
 
     pub fn tryFromPropertyId(property_id: css.PropertyIdTag) ?BorderImageProperty {
         inline for (std.meta.fields(BorderImageProperty)) |field| {
             if (comptime std.mem.eql(u8, field.name, "__unused")) continue;
-            const desired = comptime @field(css.PropertyIdTag, field.name);
+            const desired = comptime @field(css.PropertyIdTag, "border-image-" ++ field.name);
             if (desired == property_id) {
                 var result: BorderImageProperty = .{};
                 @field(result, field.name) = true;
@@ -601,7 +599,7 @@ pub const BorderImageHandler = struct {
             this.flushed_properties.insert(BorderImageProperty.@"border-image");
         } else {
             if (source) |*mut_source| {
-                if (!this.flushed_properties.contains(BorderImageProperty{ .@"border-image-source" = true })) {
+                if (!this.flushed_properties.contains(BorderImageProperty.@"border-image-source")) {
                     for (mut_source.getFallbacks(allocator, context.targets).slice()) |fallback| {
                         dest.append(allocator, Property{ .@"border-image-source" = fallback }) catch bun.outOfMemory();
                     }

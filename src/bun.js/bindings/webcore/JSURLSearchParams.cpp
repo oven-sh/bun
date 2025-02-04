@@ -118,7 +118,7 @@ using JSURLSearchParamsDOMConstructor = JSDOMConstructor<JSURLSearchParams>;
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSURLSearchParamsDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = jsCast<JSURLSearchParamsDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
@@ -157,7 +157,7 @@ template<> void JSURLSearchParamsDOMConstructor::initializeProperties(VM& vm, JS
 
 JSC_DEFINE_CUSTOM_GETTER(jsURLSearchParamsPrototype_getLength, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = jsDynamicCast<JSURLSearchParams*>(JSValue::decode(thisValue));
     if (UNLIKELY(!thisObject))
@@ -236,7 +236,7 @@ void JSURLSearchParams::destroy(JSC::JSCell* cell)
 
 JSC_DEFINE_CUSTOM_GETTER(jsURLSearchParamsConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSURLSearchParamsPrototype*>(JSValue::decode(thisValue));
     if (UNLIKELY(!prototype))

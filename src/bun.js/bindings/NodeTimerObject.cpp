@@ -22,7 +22,7 @@ void callInternal(T* timeout, JSGlobalObject* globalObject)
     static_assert(std::is_same_v<T, WebCore::JSTimeout> || std::is_same_v<T, WebCore::JSImmediate>,
         "wrong type passed to callInternal");
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSCell* callbackCell = timeout->m_callback.get().asCell();

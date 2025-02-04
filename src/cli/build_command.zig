@@ -39,7 +39,7 @@ pub const BuildCommand = struct {
         "process.versions.bun",
     };
 
-    pub fn exec(ctx: Command.Context) !void {
+    pub fn exec(ctx: Command.Context, fetcher: ?*BundleV2.DependenciesScanner) !void {
         Global.configureAllocator(.{ .long_running = true });
         const allocator = ctx.allocator;
         var log = ctx.log;
@@ -50,6 +50,11 @@ pub const BuildCommand = struct {
 
         if (ctx.bundler_options.bake) {
             return bun.bake.production.buildCommand(ctx);
+        }
+
+        if (fetcher != null) {
+            ctx.args.packages = .external;
+            ctx.bundler_options.compile = false;
         }
 
         const compile_target = &ctx.bundler_options.compile_target;
@@ -75,6 +80,10 @@ pub const BuildCommand = struct {
         }
 
         var this_transpiler = try transpiler.Transpiler.init(allocator, log, ctx.args, null);
+        if (fetcher) |fetch| {
+            this_transpiler.options.entry_points = fetch.entry_points;
+            this_transpiler.resolver.opts.entry_points = fetch.entry_points;
+        }
 
         this_transpiler.options.source_map = options.SourceMapOption.fromApi(ctx.args.source_map);
 
@@ -167,7 +176,7 @@ pub const BuildCommand = struct {
             }
         }
 
-        if (ctx.bundler_options.outdir.len == 0 and !ctx.bundler_options.compile) {
+        if (ctx.bundler_options.outdir.len == 0 and !ctx.bundler_options.compile and fetcher == null) {
             if (this_transpiler.options.entry_points.len > 1) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> Must use <b>--outdir<r> when specifying more than one entry point.", .{});
                 Global.exit(1);
@@ -313,6 +322,7 @@ pub const BuildCommand = struct {
                 &reachable_file_count,
                 &minify_duration,
                 &input_code_length,
+                fetcher,
             ) catch |err| {
                 if (log.msgs.items.len > 0) {
                     try log.print(Output.errorWriter());

@@ -1451,6 +1451,64 @@ pub const BundleV2 = struct {
         return @intCast(source_index);
     }
 
+    pub const DependenciesScanner = struct {
+        ctx: *anyopaque,
+        entry_points: []const []const u8,
+
+        onFetch: *const fn (
+            ctx: *anyopaque,
+            dependencies: *bun.StringSet,
+        ) anyerror!void,
+    };
+
+    pub fn getAllDependencies(this: *BundleV2, reachable_files: []const Index, fetcher: *const DependenciesScanner) !void {
+
+        // Find all external dependencies from reachable files
+        var external_deps = bun.StringSet.init(bun.default_allocator);
+        defer external_deps.deinit();
+
+        const import_records = this.graph.ast.items(.import_records);
+
+        for (reachable_files) |source_index| {
+            const records: []const ImportRecord = import_records[source_index.get()].slice();
+            for (records) |record| {
+                if (!record.source_index.isValid() and record.tag == .none) {
+                    // External dependency
+                    if (record.path.text.len > 0) {
+                        var package_path: []const u8 = "";
+                        if (record.path.text[0] == '@') {
+                            if (strings.indexOfChar(record.path.text, '/')) |slash_index| {
+                                // Ignore "@/", as that is sometimes a way to say package root.
+                                if (slash_index > 1 and record.path.text.len > 2) {
+                                    const after_slash = record.path.text[slash_index + 1 ..];
+                                    if (after_slash.len > 0) {
+                                        if (strings.indexOfChar(after_slash, '/')) |second_slash_index| {
+                                            package_path = record.path.text[0 .. second_slash_index + 1 + slash_index];
+                                        } else {
+                                            package_path = record.path.text;
+                                        }
+                                    }
+                                }
+                            }
+                        } else if (strings.indexOfChar(record.path.text, '/')) |slash_index| {
+                            if (slash_index > 0) {
+                                package_path = record.path.text[0..slash_index];
+                            }
+                        } else {
+                            package_path = record.path.text;
+                        }
+
+                        if (strings.isNPMPackageName(package_path)) {
+                            try external_deps.insert(package_path);
+                        }
+                    }
+                }
+            }
+        }
+
+        try fetcher.onFetch(fetcher.ctx, &external_deps);
+    }
+
     pub fn generateFromCLI(
         transpiler: *Transpiler,
         allocator: std.mem.Allocator,
@@ -1459,6 +1517,7 @@ pub const BundleV2 = struct {
         reachable_files_count: *usize,
         minify_duration: *u64,
         source_code_size: *u64,
+        fetcher: ?*DependenciesScanner,
     ) !std.ArrayList(options.OutputFile) {
         var this = try BundleV2.init(transpiler, null, allocator, event_loop, enable_reloading, null, null);
         this.unique_key = generateUniqueKey();
@@ -1486,6 +1545,11 @@ pub const BundleV2 = struct {
 
         const reachable_files = try this.findReachableFiles();
         reachable_files_count.* = reachable_files.len -| 1; // - 1 for the runtime
+
+        if (fetcher) |fetch| {
+            try this.getAllDependencies(reachable_files, fetch);
+            return std.ArrayList(options.OutputFile).init(allocator);
+        }
 
         try this.processFilesToCopy(reachable_files);
 

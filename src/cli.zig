@@ -1802,7 +1802,7 @@ pub const Command = struct {
             .BuildCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BuildCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .BuildCommand);
-                try BuildCommand.exec(ctx);
+                try BuildCommand.exec(ctx, null);
             },
             .InstallCompletionsCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .InstallCompletionsCommand) unreachable;

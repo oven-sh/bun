@@ -387,6 +387,27 @@ describe("napi", () => {
     });
   });
 
+  describe.each(["buffer", "typedarray"])("napi_is_%s", kind => {
+    const tests: Array<[string, boolean]> = [
+      ["new Uint8Array()", true],
+      ["new BigUint64Array()", true],
+      ["new ArrayBuffer()", false],
+      ["Buffer.alloc(0)", true],
+      ["new DataView(new ArrayBuffer())", kind == "buffer"],
+      ["new (class Foo extends Uint8Array {})()", true],
+      ["false", false],
+      ["[1, 2, 3]", false],
+      ["'hello'", false],
+    ];
+    it("returns consistent values with node.js", () => {
+      for (const [value, expected] of tests) {
+        // main.js does eval then spread so to pass a single value we need to wrap in an array
+        const output = checkSameOutput(`test_is_${kind}`, "[" + value + "]");
+        expect(output).toBe(`napi_is_${kind} -> ${expected.toString()}`);
+      }
+    });
+  });
+
   it.each([
     ["nullptr", { number: 123 }],
     ["null", null],

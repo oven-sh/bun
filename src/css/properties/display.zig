@@ -241,14 +241,14 @@ pub const DisplayInside = union(enum) {
         const displayInsideMap = bun.ComptimeStringMap(DisplayInside, .{
             .{ "flow", DisplayInside.flow },
             .{ "flow-root", DisplayInside.flow_root },
-            .{ "table", .table },
-            .{ "flex", .{ .flex = css.VendorPrefix{ .none = true } } },
-            .{ "-webkit-flex", .{ .flex = css.VendorPrefix{ .webkit = true } } },
-            .{ "-ms-flexbox", .{ .flex = css.VendorPrefix{ .ms = true } } },
-            .{ "-webkit-box", .{ .box = css.VendorPrefix{ .webkit = true } } },
-            .{ "-moz-box", .{ .box = css.VendorPrefix{ .moz = true } } },
-            .{ "grid", .grid },
-            .{ "ruby", .ruby },
+            .{ "table", DisplayInside.table },
+            .{ "flex", DisplayInside{ .flex = css.VendorPrefix{ .none = true } } },
+            .{ "-webkit-flex", DisplayInside{ .flex = css.VendorPrefix{ .webkit = true } } },
+            .{ "-ms-flexbox", DisplayInside{ .flex = css.VendorPrefix{ .ms = true } } },
+            .{ "-webkit-box", DisplayInside{ .box = css.VendorPrefix{ .webkit = true } } },
+            .{ "-moz-box", DisplayInside{ .box = css.VendorPrefix{ .moz = true } } },
+            .{ "grid", DisplayInside.grid },
+            .{ "ruby", DisplayInside.ruby },
         });
 
         const location = input.currentSourceLocation();

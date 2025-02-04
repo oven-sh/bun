@@ -23,7 +23,7 @@ pub const S3Credentials = struct {
     insecure_http: bool = false,
 
     ref_count: u32 = 1,
-    pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
     pub fn estimatedSize(this: *const @This()) usize {
         return @sizeOf(S3Credentials) + this.accessKeyId.len + this.region.len + this.secretAccessKey.len + this.endpoint.len + this.bucket.len;

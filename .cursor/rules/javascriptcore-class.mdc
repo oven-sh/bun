@@ -349,7 +349,7 @@ extern "C" JSC::EncodedJSValue Bun__JSBigIntStatsObjectConstructor(Zig::GlobalOb
 
 Zig:
 ```zig
-extern "C" fn Bun__JSBigIntStatsObjectConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+extern "c" fn Bun__JSBigIntStatsObjectConstructor(*JSC.JSGlobalObject) JSC.JSValue;
 pub const getBigIntStatsConstructor =  Bun__JSBigIntStatsObjectConstructor;
 ```
 

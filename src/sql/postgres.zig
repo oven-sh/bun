@@ -2296,7 +2296,7 @@ pub const PostgresSQLConnection = struct {
             if (slice.len <= count) return "";
             return slice[count..];
         }
-        fn parseArray(bytes: []const u8, bigint: bool, arrayType: ?types.Tag, offset: ?*usize) !DataCell {
+        fn parseArray(bytes: []const u8, bigint: bool, arrayType: types.Tag, offset: ?*usize) !DataCell {
             // not an array
             if (bytes.len < 2 or bytes[0] != '{') {
                 return error.UnsupportedArrayFormat;
@@ -2367,160 +2367,168 @@ pub const PostgresSQLConnection = struct {
                         slice = trySlice(slice, current_idx + 1);
                         continue;
                     },
-                    '+', ',' => {
+                    ',' => {
                         // next element or positive number, just advance
                         slice = trySlice(slice, 1);
                         continue;
                     },
-                    'I', 'i' => {
-                        // infinity
-                        if (slice.len < 3) return error.UnsupportedArrayFormat;
-                        if (slice.len >= 8) {
-                            // most common case
-                            if (bun.strings.eqlCaseInsensitiveASCII(slice[0..8], "infinity", true)) {
-                                try array.append(bun.default_allocator, DataCell{ .tag = .float8, .value = .{ .float8 = std.math.inf(f64) } });
-                                slice = trySlice(slice, 8);
-                                continue;
-                            }
-                        }
-                        if (bun.strings.eqlCaseInsensitiveASCII(slice[0..3], "inf", true)) {
-                            try array.append(bun.default_allocator, DataCell{ .tag = .float8, .value = .{ .float8 = std.math.inf(f64) } });
-                            slice = trySlice(slice, 3);
-                            continue;
-                        }
-
-                        return error.UnsupportedArrayFormat;
-                    },
-                    'N', 'n' => {
-                        // null or nan
-                        if (slice.len < 3) return error.UnsupportedArrayFormat;
-                        if (slice.len >= 4) {
-                            // most common case
-                            if (bun.strings.eqlCaseInsensitiveASCII(slice[0..4], "null", true)) {
-                                try array.append(bun.default_allocator, DataCell{ .tag = .null, .value = .{ .null = 0 } });
-                                slice = trySlice(slice, 4);
-                                continue;
-                            }
-                        }
-                        if (bun.strings.eqlCaseInsensitiveASCII(slice[0..3], "nan", true)) {
-                            try array.append(bun.default_allocator, DataCell{ .tag = .float8, .value = .{ .float8 = std.math.nan(f64) } });
-                            slice = trySlice(slice, 3);
-                            continue;
-                        }
-                        return error.UnsupportedArrayFormat;
-                    },
-                    'F', 'f' => {
-                        if (slice.len < 5) return error.UnsupportedArrayFormat;
-                        if (bun.strings.eqlCaseInsensitiveASCII(slice[0..5], "false", true)) {
-                            try array.append(bun.default_allocator, DataCell{ .tag = .bool, .value = .{ .bool = 0 } });
-                            slice = trySlice(slice, 5);
-                            continue;
-                        }
-                        return error.UnsupportedArrayFormat;
-                    },
-                    'T', 't' => {
-                        if (slice.len < 4) return error.UnsupportedArrayFormat;
-                        if (bun.strings.eqlCaseInsensitiveASCII(slice[0..4], "true", true)) {
-                            try array.append(bun.default_allocator, DataCell{ .tag = .bool, .value = .{ .bool = 1 } });
-                            slice = trySlice(slice, 4);
-                            continue;
-                        }
-                        return error.UnsupportedArrayFormat;
-                    },
-                    '-', '0'...'9' => {
-                        // parse number, detect float, int, if starts with - it can be -Infinity or -Infinity
-                        var is_negative = false;
-                        var is_float = false;
-                        var current_idx: usize = 0;
-                        var is_infinity = false;
-                        for (slice, 0..slice.len) |byte, index| {
-                            switch (byte) {
-                                '-' => {
-                                    if (index == 0) {
-                                        is_negative = true;
-                                        continue;
-                                    }
-                                    return error.UnsupportedArrayFormat;
-                                },
-                                '.' => {
-                                    // we can only have one dot
-                                    if (is_float) return error.UnsupportedArrayFormat;
-                                    is_float = true;
-                                },
-                                '0'...'9' => {},
-                                '}', ',' => {
-                                    current_idx = index;
-                                    // end of element
-                                    break;
-                                },
-                                'I', 'i' => {
-                                    // infinity
-                                    is_infinity = true;
-                                    const element = if (is_negative) slice[1..] else slice;
-                                    if (element.len < 3) return error.UnsupportedArrayFormat;
-                                    if (element.len >= 8) {
-                                        if (bun.strings.eqlCaseInsensitiveASCII(element[0..8], "infinity", true)) {
-                                            try array.append(bun.default_allocator, DataCell{ .tag = .float8, .value = .{ .float8 = if (is_negative) -std.math.inf(f64) else std.math.inf(f64) } });
-                                            slice = trySlice(slice, 8 + @as(usize, @intFromBool(is_negative)));
-                                            break;
-                                        }
-                                    }
-                                    if (bun.strings.eqlCaseInsensitiveASCII(element[0..3], "inf", true)) {
-                                        try array.append(bun.default_allocator, DataCell{ .tag = .float8, .value = .{ .float8 = if (is_negative) -std.math.inf(f64) else std.math.inf(f64) } });
-                                        slice = trySlice(slice, 3 + @as(usize, @intFromBool(is_negative)));
-                                        break;
-                                    }
-
-                                    return error.UnsupportedArrayFormat;
-                                },
-                                else => {
-                                    return error.UnsupportedArrayFormat;
-                                },
-                            }
-                        }
-                        if (is_infinity) {
-                            continue;
-                        }
-                        if (current_idx == 0) return error.UnsupportedArrayFormat;
-                        const element = slice[0..current_idx];
-                        if (is_float or arrayType == .float8_array) {
-                            try array.append(bun.default_allocator, DataCell{ .tag = .float8, .value = .{ .float8 = bun.parseDouble(element) catch std.math.nan(f64) } });
-                            slice = trySlice(slice, current_idx);
-                            continue;
-                        }
-
-                        const value = bun.fmt.parseInt(i64, element, 0) catch return error.UnsupportedArrayFormat;
-
-                        if (value < std.math.minInt(i32) or value > std.math.maxInt(i32)) {
-                            if (bigint) {
-                                try array.append(bun.default_allocator, DataCell{ .tag = .int8, .value = .{ .int8 = value } });
-                            } else {
-                                try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) bun.String.createUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 });
-                            }
-                        } else {
-                            try array.append(bun.default_allocator, DataCell{ .tag = .int4, .value = .{ .int4 = @intCast(value) } });
-                        }
-                        slice = trySlice(slice, current_idx);
-                        continue;
-                    },
                     else => {
-                        // this is also a string until we reach "," or "}"
-                        var current_idx: usize = 0;
+                        switch (arrayType) {
+                            .varchar_array,
+                            .char_array,
+                            .text_array,
+                            .name_array,
+                            => {
+                                // this is also a string until we reach "," or "}" but a single word string like Bun
+                                var current_idx: usize = 0;
 
-                        for (slice, 0..slice.len) |byte, index| {
-                            switch (byte) {
-                                '}', ',' => {
-                                    current_idx = index;
-                                    break;
-                                },
-                                else => {},
-                            }
+                                for (slice, 0..slice.len) |byte, index| {
+                                    switch (byte) {
+                                        '}', ',' => {
+                                            current_idx = index;
+                                            break;
+                                        },
+                                        else => {},
+                                    }
+                                }
+                                if (current_idx == 0) return error.UnsupportedArrayFormat;
+                                const element = slice[0..current_idx];
+                                // lets handle NULL case here, if is a string "NULL" it will have quotes, if its a NULL it will be just NULL
+                                if (bun.strings.eqlComptime(element, "NULL")) {
+                                    try array.append(bun.default_allocator, DataCell{ .tag = .null, .value = .{ .null = 0 } });
+                                    slice = trySlice(slice, current_idx);
+                                    continue;
+                                }
+                                try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (element.len > 0) bun.String.createUTF8(element).value.WTFStringImpl else null }, .free_value = 1 });
+                                slice = trySlice(slice, current_idx);
+                                continue;
+                            },
+                            else => {
+                                // non text array, NaN, Null, False, True etc are special cases here
+                                switch (slice[0]) {
+                                    'N' => {
+                                        // null or nan
+                                        if (slice.len < 3) return error.UnsupportedArrayFormat;
+                                        if (slice.len >= 4) {
+                                            // most common case
+                                            if (bun.strings.eqlComptime(slice[0..4], "NULL")) {
+                                                try array.append(bun.default_allocator, DataCell{ .tag = .null, .value = .{ .null = 0 } });
+                                                slice = trySlice(slice, 4);
+                                                continue;
+                                            }
+                                        }
+                                        if (bun.strings.eqlComptime(slice[0..3], "NaN")) {
+                                            try array.append(bun.default_allocator, DataCell{ .tag = .float8, .value = .{ .float8 = std.math.nan(f64) } });
+                                            slice = trySlice(slice, 3);
+                                            continue;
+                                        }
+                                        return error.UnsupportedArrayFormat;
+                                    },
+                                    'f' => {
+                                        // false
+                                        try array.append(bun.default_allocator, DataCell{ .tag = .bool, .value = .{ .bool = 0 } });
+                                        slice = trySlice(slice, 1);
+                                        continue;
+                                    },
+                                    't' => {
+                                        // true
+                                        try array.append(bun.default_allocator, DataCell{ .tag = .bool, .value = .{ .bool = 1 } });
+                                        slice = trySlice(slice, 1);
+                                        continue;
+                                    },
+                                    'I',
+                                    => {
+                                        // infinity
+                                        if (slice.len < 8) return error.UnsupportedArrayFormat;
+
+                                        if (bun.strings.eqlComptime(slice[0..8], "Infinity")) {
+                                            try array.append(bun.default_allocator, DataCell{ .tag = .float8, .value = .{ .float8 = std.math.inf(f64) } });
+                                            slice = trySlice(slice, 8);
+                                            continue;
+                                        }
+
+                                        return error.UnsupportedArrayFormat;
+                                    },
+                                    '+' => {
+                                        slice = trySlice(slice, 1);
+                                        continue;
+                                    },
+                                    '-', '0'...'9' => {
+                                        // parse number, detect float, int, if starts with - it can be -Infinity or -Infinity
+                                        var is_negative = false;
+                                        var is_float = false;
+                                        var current_idx: usize = 0;
+                                        var is_infinity = false;
+
+                                        for (slice, 0..slice.len) |byte, index| {
+                                            switch (byte) {
+                                                '-' => {
+                                                    if (index == 0) {
+                                                        is_negative = true;
+                                                        continue;
+                                                    }
+                                                    return error.UnsupportedArrayFormat;
+                                                },
+                                                '.' => {
+                                                    // we can only have one dot
+                                                    if (is_float) return error.UnsupportedArrayFormat;
+                                                    is_float = true;
+                                                },
+                                                '0'...'9' => {},
+                                                '}', ',' => {
+                                                    current_idx = index;
+                                                    // end of element
+                                                    break;
+                                                },
+                                                'I', 'i' => {
+                                                    // infinity
+                                                    is_infinity = true;
+                                                    const element = if (is_negative) slice[1..] else slice;
+                                                    if (element.len < 8) return error.UnsupportedArrayFormat;
+                                                    if (bun.strings.eqlComptime(element[0..8], "Infinity")) {
+                                                        try array.append(bun.default_allocator, DataCell{ .tag = .float8, .value = .{ .float8 = if (is_negative) -std.math.inf(f64) else std.math.inf(f64) } });
+                                                        slice = trySlice(slice, 8 + @as(usize, @intFromBool(is_negative)));
+                                                        break;
+                                                    }
+
+                                                    return error.UnsupportedArrayFormat;
+                                                },
+                                                else => {
+                                                    return error.UnsupportedArrayFormat;
+                                                },
+                                            }
+                                        }
+                                        if (is_infinity) {
+                                            continue;
+                                        }
+                                        if (current_idx == 0) return error.UnsupportedArrayFormat;
+                                        const element = slice[0..current_idx];
+                                        if (is_float or arrayType == .float8_array) {
+                                            try array.append(bun.default_allocator, DataCell{ .tag = .float8, .value = .{ .float8 = bun.parseDouble(element) catch std.math.nan(f64) } });
+                                            slice = trySlice(slice, current_idx);
+                                            continue;
+                                        }
+
+                                        const value = bun.fmt.parseInt(i64, element, 0) catch return error.UnsupportedArrayFormat;
+
+                                        if (value < std.math.minInt(i32) or value > std.math.maxInt(i32)) {
+                                            if (bigint) {
+                                                try array.append(bun.default_allocator, DataCell{ .tag = .int8, .value = .{ .int8 = value } });
+                                            } else {
+                                                try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) bun.String.createUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 });
+                                            }
+                                        } else {
+                                            try array.append(bun.default_allocator, DataCell{ .tag = .int4, .value = .{ .int4 = @intCast(value) } });
+                                        }
+                                        slice = trySlice(slice, current_idx);
+                                        continue;
+                                    },
+                                    else => {
+                                        return error.UnsupportedArrayFormat;
+                                    },
+                                }
+                            },
                         }
-                        if (current_idx == 0) return error.UnsupportedArrayFormat;
-                        const element = slice[0..current_idx];
-                        try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (element.len > 0) bun.String.createUTF8(element).value.WTFStringImpl else null }, .free_value = 1 });
-                        slice = trySlice(slice, current_idx);
-                        continue;
                     },
                 }
             }
@@ -2657,7 +2665,7 @@ pub const PostgresSQLConnection = struct {
                         return error.UnsupportedByteaFormat;
                     }
                 },
-                .text_array, .float8_array, .char_array, .name_array, .int8_array, .int2_array, .bool_array, .bytea_array => |tag| {
+                .varchar_array, .char_array, .text_array, .name_array, .int8_array, .int2_array, .float8_array, .bool_array, .bytea_array => |tag| {
                     if (binary) {
                         // we still dont support binary arrays for this types
                         return error.UnsupportedArrayFormat;

@@ -538,9 +538,9 @@ pub const Loader = struct {
     }
 
     // mostly for tests
-    pub fn loadFromString(this: *Loader, str: string, comptime overwrite: bool) void {
+    pub fn loadFromString(this: *Loader, str: string, comptime overwrite: bool, comptime expand: bool) void {
         var source = logger.Source.initPathString("test", str);
-        Parser.parse(&source, this.allocator, this.map, overwrite, false);
+        Parser.parse(&source, this.allocator, this.map, overwrite, false, expand);
         std.mem.doNotOptimizeAway(&source);
     }
 
@@ -803,6 +803,7 @@ pub const Loader = struct {
             this.map,
             override,
             false,
+            true,
         );
 
         @field(this, base) = source;
@@ -873,6 +874,7 @@ pub const Loader = struct {
             this.map,
             override,
             false,
+            true,
         );
 
         try this.custom_files_loaded.put(file_path, source);
@@ -1097,6 +1099,7 @@ const Parser = struct {
         map: *Map,
         comptime override: bool,
         comptime is_process: bool,
+        comptime expand: bool,
     ) void {
         var count = map.map.count();
         while (this.pos < this.src.len) {
@@ -1120,7 +1123,7 @@ const Parser = struct {
                 .conditional = false,
             };
         }
-        if (comptime !is_process) {
+        if (comptime !is_process and expand) {
             var it = map.iterator();
             while (it.next()) |entry| {
                 if (count > 0) {
@@ -1142,9 +1145,10 @@ const Parser = struct {
         map: *Map,
         comptime override: bool,
         comptime is_process: bool,
+        comptime expand: bool,
     ) void {
         var parser = Parser{ .src = source.contents };
-        parser._parse(allocator, map, override, is_process);
+        parser._parse(allocator, map, override, is_process, expand);
     }
 };
 

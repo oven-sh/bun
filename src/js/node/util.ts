@@ -7,6 +7,7 @@ const { validateString, validateOneOf, validateBoolean } = require("internal/val
 const { isReadableStream, isWritableStream, isNodeStream } = require("internal/streams/utils");
 
 const internalErrorName = $newZigFunction("node_util_binding.zig", "internalErrorName", 1);
+const parseEnv = $newZigFunction("node_util_binding.zig", "parseEnv", 1);
 
 const NumberIsSafeInteger = Number.isSafeInteger;
 const ObjectKeys = Object.keys;
@@ -359,7 +360,7 @@ cjs_exports = {
   // transferableAbortController,
   aborted,
   types,
-  // parseEnv,
+  parseEnv,
   parseArgs,
   TextDecoder,
   TextEncoder,

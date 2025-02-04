@@ -1,3 +1,5 @@
+// Note: please keep this module's loading constrants light, as some users
+// import it just to call `isatty`. In that case, `node:stream` is not needed.
 const {
   setRawMode: ttySetMode,
   isatty,
@@ -6,14 +8,11 @@ const {
 
 const { validateInteger } = require("internal/validators");
 
-function ReadStream(fd) {
+function ReadStream(fd): void {
   if (!(this instanceof ReadStream)) {
     return new ReadStream(fd);
   }
-  if (fd >> 0 !== fd || fd < 0) throw new RangeError("fd must be a positive integer");
-
   require("node:fs").ReadStream.$apply(this, ["", { fd }]);
-
   this.isRaw = false;
   this.isTTY = true;
 }
@@ -49,7 +48,8 @@ Object.defineProperty(ReadStream, "prototype", {
 
         // If you call setRawMode before you call on('data'), the stream will
         // not be constructed, leading to EBADF
-        this[require("node:stream")[Symbol.for("::bunternal::")].kEnsureConstructed]();
+        // This corresponds to the `ensureConstructed` function in `native-readable.ts`
+        this.$start();
 
         const err = handle.setRawMode(flag);
         if (err) {
@@ -77,12 +77,10 @@ Object.defineProperty(ReadStream, "prototype", {
   configurable: true,
 });
 
-function WriteStream(fd) {
+function WriteStream(fd): void {
   if (!(this instanceof WriteStream)) return new WriteStream(fd);
-  if (fd >> 0 !== fd || fd < 0) throw new RangeError("fd must be a positive integer");
 
-  const stream = require("node:fs").WriteStream.$call(this, "", { fd });
-
+  const stream = require("node:fs").WriteStream.$call(this, null, { fd, $fastPath: true, autoClose: false });
   stream.columns = undefined;
   stream.rows = undefined;
   stream.isTTY = isatty(stream.fd);

@@ -115,6 +115,7 @@ using namespace JSC;
     macro(inFlightCloseRequest) \
     macro(inFlightWriteRequest) \
     macro(initializeWith) \
+    macro(inherits) \
     macro(internalModuleRegistry) \
     macro(internalRequire) \
     macro(internalStream) \
@@ -133,10 +134,10 @@ using namespace JSC;
     macro(Loader) \
     macro(localStreams) \
     macro(main) \
+    macro(makeAbortError) \
     macro(makeDOMException) \
     macro(makeErrorWithCode) \
     macro(makeGetterTypeError) \
-    macro(makeThisTypeError) \
     macro(method) \
     macro(mockedFunction) \
     macro(nextTick) \
@@ -258,6 +259,13 @@ using namespace JSC;
     macro(written) \
     macro(napiDlopenHandle) \
     macro(napiWrappedContents) \
+    macro(fastPath) \
+    macro(SQL) \
+    macro(atimeMs) \
+    macro(mtimeMs) \
+    macro(ctimeMs) \
+    macro(birthtimeMs) \
+    macro(mode) \
     BUN_ADDITIONAL_BUILTIN_NAMES(macro)
 // --- END of BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME ---
 

@@ -232,7 +232,7 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject, WTF::N
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionLoadModule, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
 {
-    auto& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     JSCommonJSModule* moduleObject = jsDynamicCast<JSCommonJSModule*>(callframe->argument(0));
@@ -302,7 +302,7 @@ Structure* RequireResolveFunctionPrototype::createStructure(
 
 RequireResolveFunctionPrototype* RequireResolveFunctionPrototype::create(JSC::JSGlobalObject* globalObject)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
 
     auto* structure = RequireResolveFunctionPrototype::createStructure(vm, globalObject);
     RequireResolveFunctionPrototype* prototype = new (NotNull, JSC::allocateCell<RequireResolveFunctionPrototype>(vm)) RequireResolveFunctionPrototype(vm, structure);
@@ -313,7 +313,7 @@ RequireResolveFunctionPrototype* RequireResolveFunctionPrototype::create(JSC::JS
 RequireFunctionPrototype* RequireFunctionPrototype::create(
     JSC::JSGlobalObject* globalObject)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
 
     auto* structure = RequireFunctionPrototype::createStructure(vm, globalObject);
     RequireFunctionPrototype* prototype = new (NotNull, JSC::allocateCell<RequireFunctionPrototype>(vm)) RequireFunctionPrototype(vm, structure);
@@ -527,7 +527,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject *
         return JSValue::encode(jsUndefined());
     }
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     String sourceString = callframe->argument(0).toWTFString(globalObject);
@@ -658,7 +658,7 @@ void JSCommonJSModule::finishCreation(JSC::VM& vm, JSC::JSString* id, JSValue fi
 JSC::Structure* JSCommonJSModule::createStructure(
     JSC::JSGlobalObject* globalObject)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
 
     auto* prototype = JSCommonJSModulePrototype::create(vm, globalObject, JSCommonJSModulePrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
 
@@ -700,7 +700,7 @@ JSCommonJSModule* JSCommonJSModule::create(
     bool hasEvaluated,
     JSValue parent)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto key = requireMapKey->value(globalObject);
     auto index = key->reverseFind(PLATFORM_SEP, key->length());
 
@@ -742,7 +742,7 @@ JSCommonJSModule* JSCommonJSModule::create(
     bool hasEvaluated,
     JSValue parent)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto* requireMapKey = JSC::jsStringWithCache(vm, key);
     return JSCommonJSModule::create(globalObject, requireMapKey, exportsObject, hasEvaluated, parent);
 }
@@ -776,7 +776,7 @@ bool JSCommonJSModule::evaluate(
 {
     Vector<JSC::Identifier, 4> propertyNames;
     JSC::MarkedArgumentBuffer arguments;
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     generator(globalObject, JSC::Identifier::fromString(vm, key), propertyNames, arguments);
     RETURN_IF_EXCEPTION(throwScope, false);
@@ -795,7 +795,7 @@ void populateESMExports(
     JSC::MarkedArgumentBuffer& exportValues,
     bool ignoreESModuleAnnotation)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     const Identifier& esModuleMarker = vm.propertyNames->__esModule;
 
     // Bun's intepretation of the "__esModule" annotation:
@@ -1077,7 +1077,7 @@ const JSC::ClassInfo RequireFunctionPrototype::s_info = { "require"_s, &Base::s_
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
 {
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(callframe->thisValue());
@@ -1144,7 +1144,7 @@ bool JSCommonJSModule::evaluate(
     ResolvedSource& source,
     bool isBuiltIn)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), source, JSC::SourceProviderSourceType::Program, isBuiltIn);
     this->ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
     if (this->hasEvaluated)
@@ -1188,7 +1188,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     }
 
     if (!moduleObject) {
-        auto& vm = globalObject->vm();
+        auto& vm = JSC::getVM(globalObject);
         auto* requireMapKey = specifierValue.toString(globalObject);
         auto index = sourceURL.reverseFind(PLATFORM_SEP, sourceURL.length());
         JSString* dirname;
@@ -1224,7 +1224,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
                 Vector<JSC::Identifier, 4>& exportNames,
                 JSC::MarkedArgumentBuffer& exportValues) -> void {
                 auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
-                auto& vm = globalObject->vm();
+                auto& vm = JSC::getVM(globalObject);
 
                 JSValue keyValue = identifierToJSValue(vm, moduleKey);
                 JSValue entry = globalObject->requireMap()->get(globalObject, keyValue);

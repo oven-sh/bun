@@ -8,11 +8,18 @@ namespace Bun {
 
 using namespace JSC;
 
+// this function does prototype lookups but stops at the object prototype,
+// preventing a class of vulnerabilities where a badly written parser
+// mutates `globalThis.Object.prototype`.
+//
+// TODO: this function sometimes returns false positives.
+// see test cases in test-fs-rm.js where the `force` argument needs to throw
+// when it is `undefined`, but implementing that code makes cases where `force`
+// is omitted will make it think it is defined.
 static bool getNonIndexPropertySlotPrototypePollutionMitigation(JSC::VM& vm, JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
     // This method only supports non-index PropertyNames.
     ASSERT(!parseIndex(propertyName));
-
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* objectPrototype = nullptr;
     while (true) {

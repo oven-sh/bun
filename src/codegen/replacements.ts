@@ -2,6 +2,7 @@ import { LoaderKeys } from "../api/schema";
 import NodeErrors from "../bun.js/bindings/ErrorCode.ts";
 import { sliceSourceCode } from "./builtin-parser";
 import { registerNativeCall } from "./generate-js2native";
+import jsclasses from "./../bun.js/bindings/js_classes";
 
 // This is a list of extra syntax replacements to do. Kind of like macros
 // These are only run on code itself, not string contents or comments.
@@ -13,11 +14,29 @@ export const replacements: ReplacementRule[] = [
   { from: /\bexport\s*default/g, to: "$exports =" },
 ];
 
+let error_i = 0;
 for (let i = 0; i < NodeErrors.length; i++) {
-  const [code] = NodeErrors[i];
+  const [code, _constructor, _name, ...other_constructors] = NodeErrors[i];
   replacements.push({
     from: new RegExp(`\\b\\__intrinsic__${code}\\(`, "g"),
-    to: `$makeErrorWithCode(${i}, `,
+    to: `$makeErrorWithCode(${error_i}, `,
+  });
+  error_i += 1;
+  for (const con of other_constructors) {
+    if (con == null) continue;
+    replacements.push({
+      from: new RegExp(`\\b\\__intrinsic__${code}_${con.name}\\(`, "g"),
+      to: `$makeErrorWithCode(${error_i}, `,
+    });
+    error_i += 1;
+  }
+}
+
+for (let id = 0; id < jsclasses.length; id++) {
+  const name = jsclasses[id][0];
+  replacements.push({
+    from: new RegExp(`\\b\\__intrinsic__inherits${name}\\(`, "g"),
+    to: `$inherits(${id}, `,
   });
 }
 
@@ -74,7 +93,8 @@ replacements.push({
 export const enums = {
   Loader: LoaderKeys,
   ImportKind: [
-    "entry-point",
+    "entry-point-run",
+    "entry-point-build",
     "import-statement",
     "require-call",
     "dynamic-import",
@@ -181,7 +201,7 @@ export function applyReplacements(src: string, length: number) {
       }
       return [
         slice.slice(0, match.index) +
-          "(IS_BUN_DEVELOPMENT?$assert(" +
+          "!(IS_BUN_DEVELOPMENT?$assert(" +
           checkSlice.result.slice(1, -1) +
           "," +
           JSON.stringify(

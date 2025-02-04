@@ -12,7 +12,7 @@ JSC::JSObject* createNotEnoughArgumentsErrorBun(JSC::JSGlobalObject* globalObjec
 {
     JSC::JSObject* error = JSC::createNotEnoughArgumentsError(globalObject);
     if (LIKELY(error)) {
-        auto& vm = globalObject->vm();
+        auto& vm = JSC::getVM(globalObject);
         const auto& names = WebCore::builtinNames(vm);
         error->putDirect(vm, names.codePublicName(), JSC::jsString(vm, WTF::String("ERR_MISSING_ARGS"_s)), 0);
     }

@@ -7,6 +7,7 @@ pub const WORD = windows.WORD;
 pub const DWORD = windows.DWORD;
 pub const CHAR = windows.CHAR;
 pub const BOOL = windows.BOOL;
+pub const BOOLEAN = windows.BOOLEAN;
 pub const LPVOID = windows.LPVOID;
 pub const LPCVOID = windows.LPCVOID;
 pub const LPWSTR = windows.LPWSTR;
@@ -33,6 +34,7 @@ pub const STATUS_SUCCESS = windows.STATUS_SUCCESS;
 pub const MOVEFILE_COPY_ALLOWED = 0x2;
 pub const MOVEFILE_REPLACE_EXISTING = 0x1;
 pub const MOVEFILE_WRITE_THROUGH = 0x8;
+pub const FILETIME = windows.FILETIME;
 
 pub const DUPLICATE_SAME_ACCESS = windows.DUPLICATE_SAME_ACCESS;
 pub const OBJECT_ATTRIBUTES = windows.OBJECT_ATTRIBUTES;
@@ -70,11 +72,11 @@ pub const INVALID_FILE_ATTRIBUTES: u32 = std.math.maxInt(u32);
 
 pub const nt_object_prefix = [4]u16{ '\\', '?', '?', '\\' };
 pub const nt_unc_object_prefix = [8]u16{ '\\', '?', '?', '\\', 'U', 'N', 'C', '\\' };
-pub const nt_maxpath_prefix = [4]u16{ '\\', '\\', '?', '\\' };
+pub const long_path_prefix = [4]u16{ '\\', '\\', '?', '\\' };
 
 pub const nt_object_prefix_u8 = [4]u8{ '\\', '?', '?', '\\' };
 pub const nt_unc_object_prefix_u8 = [8]u8{ '\\', '?', '?', '\\', 'U', 'N', 'C', '\\' };
-pub const nt_maxpath_prefix_u8 = [4]u8{ '\\', '\\', '?', '\\' };
+pub const long_path_prefix_u8 = [4]u8{ '\\', '\\', '?', '\\' };
 
 const std = @import("std");
 const Environment = bun.Environment;
@@ -3075,6 +3077,7 @@ pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.C.E {
         else => |t| {
             if (bun.Environment.isDebug) {
                 bun.Output.warn("Called translateNTStatusToErrno with {s} which does not have a mapping to errno.", .{@tagName(t)});
+                bun.crash_handler.dumpCurrentStackTrace(null);
             }
             return .UNKNOWN;
         },
@@ -3258,8 +3261,8 @@ fn Bun__UVSignalHandle__close(signal: *libuv.uv_signal_t) callconv(.C) void {
 
 comptime {
     if (Environment.isWindows) {
-        @export(Bun__UVSignalHandle__init, .{ .name = "Bun__UVSignalHandle__init" });
-        @export(Bun__UVSignalHandle__close, .{ .name = "Bun__UVSignalHandle__close" });
+        @export(&Bun__UVSignalHandle__init, .{ .name = "Bun__UVSignalHandle__init" });
+        @export(&Bun__UVSignalHandle__close, .{ .name = "Bun__UVSignalHandle__close" });
     }
 }
 
@@ -3425,7 +3428,7 @@ pub fn GetFinalPathNameByHandle(
 
     bun.sys.syslog("GetFinalPathNameByHandleW({*p}) = {}", .{ hFile, bun.fmt.utf16(ret) });
 
-    if (bun.strings.hasPrefixComptimeType(u16, ret, nt_maxpath_prefix)) {
+    if (bun.strings.hasPrefixComptimeType(u16, ret, long_path_prefix)) {
         // '\\?\C:\absolute\path' -> 'C:\absolute\path'
         ret = ret[4..];
         if (bun.strings.hasPrefixComptimeUTF16(ret, "UNC\\")) {
@@ -3657,3 +3660,13 @@ pub const rescle = struct {
         };
     }
 };
+
+pub extern "kernel32" fn CloseHandle(hObject: HANDLE) callconv(.winapi) BOOL;
+pub extern "kernel32" fn GetFinalPathNameByHandleW(hFile: HANDLE, lpszFilePath: [*]u16, cchFilePath: DWORD, dwFlags: DWORD) callconv(.winapi) DWORD;
+pub extern "kernel32" fn DeleteFileW(lpFileName: [*:0]const u16) callconv(.winapi) BOOL;
+pub extern "kernel32" fn CreateSymbolicLinkW(lpSymlinkFileName: [*:0]const u16, lpTargetFileName: [*:0]const u16, dwFlags: DWORD) callconv(.winapi) BOOLEAN;
+pub extern "kernel32" fn GetCurrentThread() callconv(.winapi) HANDLE;
+pub extern "kernel32" fn GetCommandLineW() callconv(.winapi) LPWSTR;
+pub extern "kernel32" fn CreateDirectoryW(lpPathName: [*:0]const u16, lpSecurityAttributes: ?*windows.SECURITY_ATTRIBUTES) callconv(.winapi) BOOL;
+pub extern "kernel32" fn SetEndOfFile(hFile: HANDLE) callconv(.winapi) BOOL;
+pub extern "kernel32" fn GetProcessTimes(in_hProcess: HANDLE, out_lpCreationTime: *FILETIME, out_lpExitTime: *FILETIME, out_lpKernelTime: *FILETIME, out_lpUserTime: *FILETIME) callconv(.winapi) BOOL;

@@ -73,11 +73,15 @@ declare function $getByIdDirectPrivate<T = any>(obj: any, key: string): T;
 declare function $getByValWithThis(target: any, receiver: any, propertyKey: string): void;
 /** gets the prototype of an object */
 declare function $getPrototypeOf(value: any): any;
-/** gets an internal property on a promise
+/**
+ * Gets an internal property on a promise
  *
  *  You can pass
- *  - $promiseFieldFlags - get a number with flags
- *  - $promiseFieldReactionsOrResult - get the result (like Bun.peek)
+ *  - {@link $promiseFieldFlags} - get a number with flags
+ *  - {@link $promiseFieldReactionsOrResult} - get the result (like {@link Bun.peek})
+ *
+ * @param promise the promise to get the field from
+ * @param key an internal field id.
  */
 declare function $getPromiseInternalField<K extends PromiseFieldType, V>(
   promise: Promise<V>,
@@ -99,6 +103,19 @@ declare function $getMapIteratorInternalField(): TODO;
 declare function $getSetIteratorInternalField(): TODO;
 declare function $getProxyInternalField(): TODO;
 declare function $idWithProfile(): TODO;
+/**
+ * True for object-like `JSCell`s. That is, this is roughly equivalent to this
+ * JS code:
+ * ```js
+ * typeof obj === "object" && obj !== null
+ * ```
+ *
+ * @param obj The object to check
+ * @returns `true` if `obj` is an object-like `JSCell`
+ *
+ * @see [JSCell.h](https://github.com/oven-sh/WebKit/blob/main/Source/JavaScriptCore/runtime/JSCell.h)
+ * @see [JIT implementation](https://github.com/oven-sh/WebKit/blob/433f7598bf3537a295d0af5ffd83b9a307abec4e/Source/JavaScriptCore/jit/JITOpcodes.cpp#L311)
+ */
 declare function $isObject(obj: unknown): obj is object;
 declare function $isArray(obj: unknown): obj is any[];
 declare function $isCallable(fn: unknown): fn is CallableFunction;
@@ -346,7 +363,6 @@ declare function $isAbortSignal(signal: unknown): signal is AbortSignal;
 declare function $isAbsolute(): TODO;
 declare function $isDisturbed(): TODO;
 declare function $isPaused(): TODO;
-declare function $isWindows(): TODO;
 declare function $join(): TODO;
 declare function $kind(): TODO;
 declare function $lazyStreamPrototypeMap(): TODO;
@@ -355,7 +371,6 @@ declare function $localStreams(): TODO;
 declare function $main(): TODO;
 declare function $makeDOMException(): TODO;
 declare function $makeGetterTypeError(className: string, prop: string): Error;
-declare function $makeThisTypeError(className: string, method: string): Error;
 declare function $map(): TODO;
 declare function $method(): TODO;
 declare function $nextTick(): TODO;
@@ -560,13 +575,24 @@ declare interface Function {
   path: string;
 }
 
+interface String {
+  $charCodeAt: String["charCodeAt"];
+  // add others as needed
+}
+
 declare var $Buffer: {
-  new (a: any, b?: any, c?: any): Buffer;
+  new (array: Array): Buffer;
+  new (arrayBuffer: ArrayBuffer, byteOffset?: number, length?: number): Buffer;
+  new (buffer: Buffer): Buffer;
+  new (size: number): Buffer;
+  new (string: string, encoding?: BufferEncoding): Buffer;
 };
 
 declare interface Error {
   code?: string;
 }
+
+declare function $makeAbortError(message?: string, options?: { cause: Error }): Error;
 
 /**
  * -- Error Codes with manual messages
@@ -574,6 +600,12 @@ declare interface Error {
 declare function $ERR_INVALID_ARG_TYPE(argName: string, expectedType: string, actualValue: string): TypeError;
 declare function $ERR_INVALID_ARG_TYPE(argName: string, expectedTypes: any[], actualValue: string): TypeError;
 declare function $ERR_INVALID_ARG_VALUE(name: string, value: any, reason?: string): TypeError;
+declare function $ERR_UNKNOWN_ENCODING(enc: string): TypeError;
+declare function $ERR_STREAM_DESTROYED(method: string): Error;
+declare function $ERR_METHOD_NOT_IMPLEMENTED(method: string): Error;
+declare function $ERR_STREAM_ALREADY_FINISHED(method: string): Error;
+declare function $ERR_MISSING_ARGS(a1: string, a2?: string): TypeError;
+declare function $ERR_INVALID_RETURN_VALUE(expected_type: string, name: string, actual_value: any): TypeError;
 
 declare function $ERR_IPC_DISCONNECTED(): Error;
 declare function $ERR_SERVER_NOT_RUNNING(): Error;
@@ -588,6 +620,15 @@ declare function $ERR_SOCKET_DGRAM_IS_CONNECTED(): Error;
 declare function $ERR_SOCKET_DGRAM_NOT_CONNECTED(): Error;
 declare function $ERR_SOCKET_DGRAM_NOT_RUNNING(): Error;
 declare function $ERR_INVALID_CURSOR_POS(): Error;
+declare function $ERR_MULTIPLE_CALLBACK(): Error;
+declare function $ERR_STREAM_PREMATURE_CLOSE(): Error;
+declare function $ERR_STREAM_NULL_VALUES(): TypeError;
+declare function $ERR_STREAM_CANNOT_PIPE(): Error;
+declare function $ERR_STREAM_WRITE_AFTER_END(): Error;
+declare function $ERR_STREAM_UNSHIFT_AFTER_END_EVENT(): Error;
+declare function $ERR_STREAM_PUSH_AFTER_EOF(): Error;
+declare function $ERR_STREAM_UNABLE_TO_PIPE(): Error;
+declare function $ERR_ILLEGAL_CONSTRUCTOR(): TypeError;
 
 /**
  * Convert a function to a class-like object.
@@ -602,3 +643,5 @@ declare function $ERR_INVALID_CURSOR_POS(): Error;
  * @param base - The base class to inherit from
  */
 declare function $toClass(fn: Function, name: string, base?: Function | undefined | null);
+
+declare function $min(a: number, b: number): number;

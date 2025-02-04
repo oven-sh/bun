@@ -44,7 +44,6 @@ const [H2FrameParser, assertSettings, getPackedSettings, getUnpackedSettings] = 
 
 const sensitiveHeaders = Symbol.for("nodejs.http2.sensitiveHeaders");
 const bunHTTP2Native = Symbol.for("::bunhttp2native::");
-const bunHTTP2StreamReadQueue = Symbol.for("::bunhttp2ReadQueue::");
 
 const bunHTTP2Socket = Symbol.for("::bunhttp2socket::");
 const bunHTTP2StreamFinal = Symbol.for("::bunHTTP2StreamFinal::");
@@ -141,6 +140,10 @@ function onRequestResume() {
 function onStreamDrain() {
   const response = this[kResponse];
   if (response !== undefined) response.emit("drain");
+}
+
+function onStreamAbortedResponse() {
+  // no-op for now
 }
 
 function onStreamAbortedRequest() {
@@ -388,6 +391,7 @@ class Http2ServerResponse extends Stream {
     this.writable = true;
     this.req = stream[kRequest];
     stream.on("drain", onStreamDrain);
+    stream.on("aborted", onStreamAbortedResponse);
     stream.on("close", onStreamCloseResponse);
     stream.on("wantTrailers", onStreamTrailersReady);
     stream.on("timeout", onStreamTimeout);
@@ -1502,13 +1506,8 @@ function assertSession(session) {
 }
 hideFromStack(assertSession);
 
-function pushToStream(stream, data) {
-  // if (stream.writableEnded) return;
-  const queue = stream[bunHTTP2StreamReadQueue];
-  if (queue.isEmpty()) {
-    if (stream.push(data)) return;
-  }
-  queue.push(data);
+function pushToStream(stream, data) {;
+  stream.push(data);
 }
 
 enum StreamState {
@@ -1546,7 +1545,6 @@ class Http2Stream extends Duplex {
   [bunHTTP2StreamStatus]: number = 0;
 
   rstCode: number | undefined = undefined;
-  [bunHTTP2StreamReadQueue]: Array<Buffer> = $createFIFO();
   [bunHTTP2Headers]: any;
   [kInfoHeaders]: any;
   #sentTrailers: any;
@@ -1767,17 +1765,10 @@ class Http2Stream extends Duplex {
     }
   }
 
-  _read(size) {
-    const queue = this[bunHTTP2StreamReadQueue];
-    let chunk;
-    while ((chunk = queue.peek())) {
-      if (!this.push(chunk)) {
-        queue.shift();
-        return;
-      }
-      queue.shift();
-    }
+  _read(_size) {
+    // we always use the internal stream queue now
   }
+
 
   end(chunk, encoding, callback) {
     const status = this[bunHTTP2StreamStatus];

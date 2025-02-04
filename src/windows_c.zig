@@ -27,7 +27,7 @@ pub export fn memmem(haystack: ?[*]const u8, haystacklen: usize, needle: ?[*]con
 }
 
 comptime {
-    @export(memmem, .{ .name = "zig_memmem" });
+    @export(&memmem, .{ .name = "zig_memmem" });
 }
 
 pub const lstat = blk: {
@@ -57,7 +57,7 @@ pub fn getSystemLoadavg() [3]f32 {
     return .{ 0, 0, 0 };
 }
 
-pub const Mode = i32;
+pub const Mode = u16;
 const Win32Error = bun.windows.Win32Error;
 
 // The way we do errors in Bun needs to get cleaned up.
@@ -1239,18 +1239,22 @@ pub fn renameAtW(
         switch (bun.sys.openFileAtWindows(
             old_dir_fd,
             old_path_w,
-            w.SYNCHRONIZE | w.GENERIC_WRITE | w.DELETE | w.FILE_TRAVERSE,
-            w.FILE_OPEN,
-            w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+            .{
+                .access_mask = w.SYNCHRONIZE | w.GENERIC_WRITE | w.DELETE | w.FILE_TRAVERSE,
+                .disposition = w.FILE_OPEN,
+                .options = w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+            },
         )) {
             .err => {
                 // retry, wtihout FILE_TRAVERSE flag
                 switch (bun.sys.openFileAtWindows(
                     old_dir_fd,
                     old_path_w,
-                    w.SYNCHRONIZE | w.GENERIC_WRITE | w.DELETE,
-                    w.FILE_OPEN,
-                    w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+                    .{
+                        .access_mask = w.SYNCHRONIZE | w.GENERIC_WRITE | w.DELETE,
+                        .disposition = w.FILE_OPEN,
+                        .options = w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+                    },
                 )) {
                     .err => |err2| return .{ .err = err2 },
                     .result => |fd| break :brk fd,

@@ -43,7 +43,7 @@ public:
 
     static CallSite* create(JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSCStackFrame& stackFrame, bool encounteredStrictFrame)
     {
-        JSC::VM& vm = globalObject->vm();
+        auto& vm = JSC::getVM(globalObject);
         CallSite* callSite = new (NotNull, JSC::allocateCell<CallSite>(vm)) CallSite(vm, structure);
         callSite->finishCreation(vm, globalObject, stackFrame, encounteredStrictFrame);
         return callSite;

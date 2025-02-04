@@ -4,7 +4,6 @@ const kCustomPromisifyArgsSymbol = Symbol("customPromisifyArgs");
 function defineCustomPromisify(target, callback) {
   Object.defineProperty(target, kCustomPromisifiedSymbol, {
     value: callback,
-    __proto__: null,
     configurable: true,
   });
 
@@ -13,7 +12,6 @@ function defineCustomPromisify(target, callback) {
 
 function defineCustomPromisifyArgs(target, args) {
   Object.defineProperty(target, kCustomPromisifyArgsSymbol, {
-    __proto__: null,
     value: args,
     enumerable: false,
   });
@@ -32,7 +30,6 @@ var promisify = function promisify(original) {
   }
 
   const callbackArgs = original[kCustomPromisifyArgsSymbol];
-
   function fn(...originalArgs) {
     const { promise, resolve, reject } = Promise.withResolvers();
     try {
@@ -43,13 +40,13 @@ var promisify = function promisify(original) {
             return reject(err);
           }
 
-          if (callbackArgs !== undefined && values.length > 0) {
-            if (!Array.isArray(callbackArgs)) {
-              throw new TypeError('The "customPromisifyArgs" argument must be of type Array');
-            }
-            if (callbackArgs.length !== values.length) {
-              throw new Error("Mismatched length in promisify callback args");
-            }
+          if (callbackArgs !== undefined) {
+            // if (!Array.isArray(callbackArgs)) {
+            //   throw new TypeError('The "customPromisifyArgs" argument must be of type Array');
+            // }
+            // if (callbackArgs.length !== values.length) {
+            //   throw new Error("Mismatched length in promisify callback args");
+            // }
             const result = {};
             for (let i = 0; i < callbackArgs.length; i++) {
               result[callbackArgs[i]] = values[i];

@@ -415,7 +415,7 @@ pub const FSWatcher = struct {
 
             should_deinit_path = false;
 
-            return Arguments{
+            return .{
                 .path = path,
                 .listener = listener,
                 .global_this = ctx,
@@ -531,7 +531,7 @@ pub const FSWatcher = struct {
                 filename = JSC.ZigString.fromUTF8(file_name).toJS(globalObject);
             } else {
                 // convert to desired encoding
-                filename = Encoder.toStringAtRuntime(file_name.ptr, file_name.len, globalObject, this.encoding);
+                filename = Encoder.toString(file_name, globalObject, this.encoding);
             }
         }
 
@@ -572,7 +572,6 @@ pub const FSWatcher = struct {
 
     // this can be called from Watcher Thread or JS Context Thread
     pub fn refTask(this: *FSWatcher) bool {
-        @fence(.acquire);
         this.mutex.lock();
         defer this.mutex.unlock();
         if (this.closed) return false;
@@ -582,7 +581,6 @@ pub const FSWatcher = struct {
     }
 
     pub fn hasPendingActivity(this: *FSWatcher) bool {
-        @fence(.acquire);
         return this.pending_activity_count.load(.acquire) > 0;
     }
 
@@ -698,7 +696,11 @@ pub const FSWatcher = struct {
                 .result => |r| r,
                 .err => |err| {
                     ctx.deinit();
-                    return .{ .err = err };
+                    return .{ .err = .{
+                        .errno = err.errno,
+                        .syscall = .watch,
+                        .path = args.path.slice(),
+                    } };
                 },
             }
         else

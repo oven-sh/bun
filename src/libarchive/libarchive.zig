@@ -262,7 +262,7 @@ pub const Archiver = struct {
                     // it will require us to pull in libiconv
                     // though we should probably validate the utf8 here nonetheless
                     var pathname = entry.pathname();
-                    var tokenizer = std.mem.tokenize(u8, bun.asByteSlice(pathname), std.fs.path.sep_str);
+                    var tokenizer = std.mem.tokenizeScalar(u8, bun.asByteSlice(pathname), std.fs.path.sep);
                     comptime var depth_i: usize = 0;
                     inline while (depth_i < depth_to_skip) : (depth_i += 1) {
                         if (tokenizer.next() == null) continue :loop;
@@ -473,12 +473,12 @@ pub const Archiver = struct {
                             const file_handle_native = brk: {
                                 if (Environment.isWindows) {
                                     const flags = bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC;
-                                    switch (bun.sys.openatWindows(bun.toFD(dir_fd), path, flags)) {
+                                    switch (bun.sys.openatWindows(bun.toFD(dir_fd), path, flags, 0)) {
                                         .result => |fd| break :brk fd,
                                         .err => |e| switch (e.errno) {
                                             @intFromEnum(bun.C.E.PERM), @intFromEnum(bun.C.E.NOENT) => {
                                                 bun.MakePath.makePath(u16, dir, bun.Dirname.dirname(u16, path_slice) orelse return bun.errnoToZigErr(e.errno)) catch {};
-                                                break :brk try bun.sys.openatWindows(bun.toFD(dir_fd), path, flags).unwrap();
+                                                break :brk try bun.sys.openatWindows(bun.toFD(dir_fd), path, flags, 0).unwrap();
                                             },
                                             else => {
                                                 return bun.errnoToZigErr(e.errno);

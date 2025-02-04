@@ -10,7 +10,7 @@ const wss = new WebSocketServer({
 server.on("listening", () => {
   const { address, port, family } = server.address();
   const { href } = new URL(family === "IPv6" ? `ws://[${address}]:${port}` : `ws://${address}:${port}`);
-  console.log(href);
+  process.send({ href });
   console.error("Listening:", href);
 });
 

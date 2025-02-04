@@ -2,13 +2,15 @@ option(WEBKIT_VERSION "The version of WebKit to use")
 option(WEBKIT_LOCAL "If a local version of WebKit should be used instead of downloading")
 
 if(NOT WEBKIT_VERSION)
-  set(WEBKIT_VERSION 4a2db3254a9535949a5d5380eb58cf0f77c8e15a)
+  set(WEBKIT_VERSION e32c6356625cfacebff0c61d182f759abf6f508a)
 endif()
+
+string(SUBSTRING ${WEBKIT_VERSION} 0 16 WEBKIT_VERSION_PREFIX)
 
 if(WEBKIT_LOCAL)
   set(DEFAULT_WEBKIT_PATH ${VENDOR_PATH}/WebKit/WebKitBuild/${CMAKE_BUILD_TYPE})
 else()
-  set(DEFAULT_WEBKIT_PATH ${CACHE_PATH}/webkit-${WEBKIT_VERSION})
+  set(DEFAULT_WEBKIT_PATH ${CACHE_PATH}/webkit-${WEBKIT_VERSION_PREFIX})
 endif()
 
 option(WEBKIT_PATH "The path to the WebKit directory")
@@ -30,6 +32,8 @@ if(WEBKIT_LOCAL)
       ${WEBKIT_PATH}/JavaScriptCore/PrivateHeaders
       ${WEBKIT_PATH}/bmalloc/Headers
       ${WEBKIT_PATH}/WTF/Headers
+      ${WEBKIT_PATH}/JavaScriptCore/DerivedSources/inspector
+      ${WEBKIT_PATH}/JavaScriptCore/PrivateHeaders/JavaScriptCore
     )
   endif()
 
@@ -63,12 +67,16 @@ else()
   message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 endif()
 
+if(LINUX AND ABI STREQUAL "musl")
+  set(WEBKIT_SUFFIX "-musl")
+endif()
+
 if(DEBUG)
-  set(WEBKIT_SUFFIX "-debug")
+  set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}-debug")
 elseif(ENABLE_LTO AND NOT WIN32)
-  set(WEBKIT_SUFFIX "-lto")
+  set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}-lto")
 else()
-  set(WEBKIT_SUFFIX "")
+  set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}")
 endif()
 
 set(WEBKIT_NAME bun-webkit-${WEBKIT_OS}-${WEBKIT_ARCH}${WEBKIT_SUFFIX})

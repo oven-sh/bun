@@ -1,0 +1,24 @@
+{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "bun-plugin",
+      "dependencies": {
+        "js-yaml": "^4.1.0",
+      },
+      "devDependencies": {
+        "@types/js-yaml": "^4.0.5",
+        "bun-types": "canary",
+      },
+    },
+  },
+  "packages": {
+    "@types/js-yaml": ["@types/js-yaml@4.0.5", "", {}, "sha512-FhpRzf927MNQdRZP0J5DLIdTXhjLYzeUTmLAu69mnVksLH9CJY3IuSeEgbKUki7GQZm0WqDkGzyxju2EZGD2wA=="],
+
+    "argparse": ["argparse@2.0.1", "", {}, "sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q=="],
+
+    "bun-types": ["bun-types@0.6.0-canary.20230415T004546", "", {}, "sha512-zmF3aWwDT2ENoVWEo0BMl7GuDDmMJ9Rq8eK8VG8g/p/qq6dpRDmbA9SzxGk7FO4/WJnHjyq6S6UP4BuYX4gi5w=="],
+
+    "js-yaml": ["js-yaml@4.1.0", "", { "dependencies": { "argparse": "^2.0.1" }, "bin": { "js-yaml": "bin/js-yaml.js" } }, "sha512-wpxZs9NoxZaJESJGIZTyDEaYpl0FKSA+FB9aJiyemKhMwkxQg63h4T1KJgUGHpTqPDNRcmmYLugrRjJlBtWvRA=="],
+  }
+}

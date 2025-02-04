@@ -101,7 +101,7 @@ import pkg from "./package.json";
 import bunfig from "./bunfig.toml";
 ```
 
-## WASM
+## WASI
 
 {% callout %}
 🚧 **Experimental**

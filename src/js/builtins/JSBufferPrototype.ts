@@ -175,48 +175,87 @@ export function readBigUInt64BE(this: BufferExt, offset) {
 }
 
 export function writeInt8(this: BufferExt, value, offset) {
-  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt8(offset, value);
+  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt8(
+    offset === undefined ? (offset = 0) : offset,
+    value,
+  );
   return offset + 1;
 }
 export function writeUInt8(this: BufferExt, value, offset) {
-  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint8(offset, value);
+  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint8(
+    offset === undefined ? (offset = 0) : offset,
+    value,
+  );
   return offset + 1;
 }
 export function writeInt16LE(this: BufferExt, value, offset) {
-  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt16(offset, value, true);
+  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt16(
+    offset === undefined ? (offset = 0) : offset,
+    value,
+    true,
+  );
   return offset + 2;
 }
 export function writeInt16BE(this: BufferExt, value, offset) {
-  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt16(offset, value, false);
+  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt16(
+    offset === undefined ? (offset = 0) : offset,
+    value,
+    false,
+  );
   return offset + 2;
 }
 export function writeUInt16LE(this: BufferExt, value, offset) {
-  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint16(offset, value, true);
+  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint16(
+    offset === undefined ? (offset = 0) : offset,
+    value,
+    true,
+  );
   return offset + 2;
 }
 export function writeUInt16BE(this: BufferExt, value, offset) {
-  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint16(offset, value, false);
+  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint16(
+    offset === undefined ? (offset = 0) : offset,
+    value,
+    false,
+  );
   return offset + 2;
 }
 export function writeInt32LE(this: BufferExt, value, offset) {
-  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt32(offset, value, true);
+  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt32(
+    offset === undefined ? (offset = 0) : offset,
+    value,
+    true,
+  );
   return offset + 4;
 }
 export function writeInt32BE(this: BufferExt, value, offset) {
-  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt32(offset, value, false);
+  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt32(
+    offset === undefined ? (offset = 0) : offset,
+    value,
+    false,
+  );
   return offset + 4;
 }
 export function writeUInt32LE(this: BufferExt, value, offset) {
-  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint32(offset, value, true);
+  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint32(
+    offset === undefined ? (offset = 0) : offset,
+    value,
+    true,
+  );
   return offset + 4;
 }
 export function writeUInt32BE(this: BufferExt, value, offset) {
-  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint32(offset, value, false);
+  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint32(
+    offset === undefined ? (offset = 0) : offset,
+    value,
+    false,
+  );
   return offset + 4;
 }
 
 export function writeIntLE(this: BufferExt, value, offset, byteLength) {
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
+
   switch (byteLength) {
     case 1: {
       view.setInt8(offset, value);
@@ -253,6 +292,7 @@ export function writeIntLE(this: BufferExt, value, offset, byteLength) {
 }
 export function writeIntBE(this: BufferExt, value, offset, byteLength) {
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
+
   switch (byteLength) {
     case 1: {
       view.setInt8(offset, value);
@@ -289,6 +329,7 @@ export function writeIntBE(this: BufferExt, value, offset, byteLength) {
 }
 export function writeUIntLE(this: BufferExt, value, offset, byteLength) {
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
+
   switch (byteLength) {
     case 1: {
       view.setUint8(offset, value);
@@ -325,6 +366,7 @@ export function writeUIntLE(this: BufferExt, value, offset, byteLength) {
 }
 export function writeUIntBE(this: BufferExt, value, offset, byteLength) {
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
+
   switch (byteLength) {
     case 1: {
       view.setUint8(offset, value);
@@ -361,42 +403,74 @@ export function writeUIntBE(this: BufferExt, value, offset, byteLength) {
 }
 
 export function writeFloatLE(this: BufferExt, value, offset) {
-  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setFloat32(offset, value, true);
+  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setFloat32(
+    offset === undefined ? (offset = 0) : offset,
+    value,
+    true,
+  );
   return offset + 4;
 }
 
 export function writeFloatBE(this: BufferExt, value, offset) {
-  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setFloat32(offset, value, false);
+  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setFloat32(
+    offset === undefined ? (offset = 0) : offset,
+    value,
+    false,
+  );
   return offset + 4;
 }
 
 export function writeDoubleLE(this: BufferExt, value, offset) {
-  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setFloat64(offset, value, true);
+  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setFloat64(
+    offset === undefined ? (offset = 0) : offset,
+    value,
+    true,
+  );
   return offset + 8;
 }
 
 export function writeDoubleBE(this: BufferExt, value, offset) {
-  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setFloat64(offset, value, false);
+  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setFloat64(
+    offset === undefined ? (offset = 0) : offset,
+    value,
+    false,
+  );
   return offset + 8;
 }
 
 export function writeBigInt64LE(this: BufferExt, value, offset) {
-  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigInt64(offset, value, true);
+  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigInt64(
+    offset === undefined ? (offset = 0) : offset,
+    value,
+    true,
+  );
   return offset + 8;
 }
 
 export function writeBigInt64BE(this: BufferExt, value, offset) {
-  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigInt64(offset, value, false);
+  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigInt64(
+    offset === undefined ? (offset = 0) : offset,
+    value,
+    false,
+  );
   return offset + 8;
 }
 
 export function writeBigUInt64LE(this: BufferExt, value, offset) {
-  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigUint64(offset, value, true);
+  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigUint64(
+    offset === undefined ? (offset = 0) : offset,
+    value,
+    true,
+  );
   return offset + 8;
 }
 
 export function writeBigUInt64BE(this: BufferExt, value, offset) {
-  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigUint64(offset, value, false);
+  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigUint64(
+    offset === undefined ? (offset = 0) : offset,
+    value,
+    false,
+  );
   return offset + 8;
 }
 

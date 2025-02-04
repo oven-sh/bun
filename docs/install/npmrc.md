@@ -6,11 +6,11 @@ Bun supports loading configuration options from [`.npmrc`](https://docs.npmjs.co
 
 {% /callout %}
 
-# Supported options
+## Supported options
 
 ### `registry`: Set the default registry
 
-The default registry is used to resolve packages, it's default value is `npm`'s official registry (`https://registry.npmjs.org/`).
+The default registry is used to resolve packages, its default value is `npm`'s official registry (`https://registry.npmjs.org/`).
 
 To change it, you can set the `registry` option in `.npmrc`:
 
@@ -39,7 +39,7 @@ The equivalent `bunfig.toml` option is to add a key in [`install.scopes`](https:
 myorg = "http://localhost:4873/"
 ```
 
-### `//<registry_url>/:<key>=<value>`: Confgure options for a specific registry
+### `//<registry_url>/:<key>=<value>`: Configure options for a specific registry
 
 Allows you to set options for a specific registry:
 

@@ -1,10 +1,13 @@
+const ObjectFreeze = Object.freeze;
+
 class NotImplementedError extends Error {
   code: string;
-  constructor(feature: string, issue?: number) {
+  constructor(feature: string, issue?: number, extra?: string) {
     super(
       feature +
         " is not yet implemented in Bun." +
-        (issue ? " Track the status & thumbs up the issue: https://github.com/oven-sh/bun/issues/" + issue : ""),
+        (issue ? " Track the status & thumbs up the issue: https://github.com/oven-sh/bun/issues/" + issue : "") +
+        (!!extra ? ". " + extra : ""),
     );
     this.name = "NotImplementedError";
     this.code = "ERR_NOT_IMPLEMENTED";
@@ -14,11 +17,11 @@ class NotImplementedError extends Error {
   }
 }
 
-function throwNotImplemented(feature: string, issue?: number): never {
+function throwNotImplemented(feature: string, issue?: number, extra?: string): never {
   // in the definition so that it isn't bundled unless used
   hideFromStack(throwNotImplemented);
 
-  throw new NotImplementedError(feature, issue);
+  throw new NotImplementedError(feature, issue, extra);
 }
 
 function hideFromStack(...fns) {
@@ -42,15 +45,14 @@ function warnNotImplementedOnce(feature: string, issue?: number) {
   console.warn(new NotImplementedError(feature, issue));
 }
 
-const fileSinkSymbol = Symbol("fileSink");
-
 //
 
-let util;
+let util: typeof import("node:util");
 class ExceptionWithHostPort extends Error {
   errno: number;
   syscall: string;
   port?: number;
+  address;
 
   constructor(err, syscall, address, port) {
     // TODO(joyeecheung): We have to use the type-checked
@@ -78,6 +80,20 @@ class ExceptionWithHostPort extends Error {
   }
 }
 
+function once(callback, { preserveReturnValue = false } = kEmptyObject) {
+  let called = false;
+  let returnValue;
+  return function (...args) {
+    if (called) return returnValue;
+    called = true;
+    const result = callback.$apply(this, args);
+    returnValue = preserveReturnValue ? result : undefined;
+    return result;
+  };
+}
+
+const kEmptyObject = ObjectFreeze({ __proto__: null });
+
 //
 
 export default {
@@ -85,8 +101,13 @@ export default {
   throwNotImplemented,
   hideFromStack,
   warnNotImplementedOnce,
-  fileSinkSymbol,
   ExceptionWithHostPort,
+  once,
+
   kHandle: Symbol("kHandle"),
   kAutoDestroyed: Symbol("kAutoDestroyed"),
+  kResistStopPropagation: Symbol("kResistStopPropagation"),
+  kWeakHandler: Symbol("kWeak"),
+  kGetNativeReadableProto: Symbol("kGetNativeReadableProto"),
+  kEmptyObject,
 };

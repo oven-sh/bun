@@ -66,6 +66,20 @@ function getBody() {
     case "urlsearchparams":
       body = getURLSearchParams();
       break;
+    case "iterator":
+      body = async function* iter() {
+        yield (cachedBody ??= getString());
+      };
+      break;
+    case "stream":
+      body = new ReadableStream({
+        async pull(c) {
+          await Bun.sleep(10);
+          c.enqueue((cachedBody ??= getBuffer()));
+          c.close();
+        },
+      });
+      break;
     default:
       throw new Error(`Invalid type: ${type}`);
   }
@@ -85,7 +99,8 @@ try {
 
     {
       Bun.gc(true);
-      await Bun.sleep(10);
+      await Bun.sleep(100);
+      Bun.gc(true);
       const stats = getHeapStats();
       expect(stats.Response || 0).toBeLessThanOrEqual(threshold);
       expect(stats.Promise || 0).toBeLessThanOrEqual(threshold);

@@ -12,6 +12,7 @@ struct BunOptions {
     bool unref { false };
     RefPtr<SerializedScriptValue> data;
     Vector<TransferredMessagePort> dataMessagePorts;
+    Vector<String> preloadModules;
     std::unique_ptr<HashMap<String, String>> env { nullptr };
     std::unique_ptr<Vector<String>> argv { nullptr };
     std::unique_ptr<Vector<String>> execArgv { nullptr };

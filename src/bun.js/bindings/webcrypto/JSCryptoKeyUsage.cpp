@@ -65,14 +65,14 @@ template<> std::optional<CryptoKeyUsage> parseEnumeration<CryptoKeyUsage>(JSGlob
 {
     auto stringValue = value.toWTFString(&lexicalGlobalObject);
     static constexpr std::pair<ComparableASCIILiteral, CryptoKeyUsage> mappings[] = {
-        { "decrypt", CryptoKeyUsage::Decrypt },
-        { "deriveBits", CryptoKeyUsage::DeriveBits },
-        { "deriveKey", CryptoKeyUsage::DeriveKey },
-        { "encrypt", CryptoKeyUsage::Encrypt },
-        { "sign", CryptoKeyUsage::Sign },
-        { "unwrapKey", CryptoKeyUsage::UnwrapKey },
-        { "verify", CryptoKeyUsage::Verify },
-        { "wrapKey", CryptoKeyUsage::WrapKey },
+        { "decrypt"_s, CryptoKeyUsage::Decrypt },
+        { "deriveBits"_s, CryptoKeyUsage::DeriveBits },
+        { "deriveKey"_s, CryptoKeyUsage::DeriveKey },
+        { "encrypt"_s, CryptoKeyUsage::Encrypt },
+        { "sign"_s, CryptoKeyUsage::Sign },
+        { "unwrapKey"_s, CryptoKeyUsage::UnwrapKey },
+        { "verify"_s, CryptoKeyUsage::Verify },
+        { "wrapKey"_s, CryptoKeyUsage::WrapKey },
     };
     static constexpr SortedArrayMap enumerationMapping { mappings };
     if (auto* enumerationValue = enumerationMapping.tryGet(stringValue); LIKELY(enumerationValue))

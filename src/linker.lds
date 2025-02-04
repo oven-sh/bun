@@ -1,4 +1,4 @@
-BUN_1.1 {
+BUN_1.2 {
     global:
 	napi*;
 	node_api_*;
@@ -10,7 +10,6 @@ BUN_1.1 {
 	extern "C++" {
 		v8::*;
 		node::*;
-		JSC::CallFrame::describeFrame;
 	};
     local:
 	*;

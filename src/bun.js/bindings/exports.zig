@@ -1,7 +1,6 @@
 const JSC = bun.JSC;
 const Fs = @import("../../fs.zig");
 const CAPI = JSC.C;
-const JS = @import("../javascript.zig");
 const JSBase = @import("../base.zig");
 const ZigURL = @import("../../url.zig").URL;
 const Api = @import("../../api/schema.zig").Api;
@@ -12,7 +11,6 @@ const strings = bun.strings;
 const default_allocator = bun.default_allocator;
 const NewGlobalObject = JSC.NewGlobalObject;
 const JSGlobalObject = JSC.JSGlobalObject;
-const is_bindgen: bool = false;
 const ZigString = JSC.ZigString;
 const string = bun.string;
 const JSValue = JSC.JSValue;
@@ -21,7 +19,6 @@ const Environment = bun.Environment;
 const ScriptArguments = opaque {};
 const JSPromise = JSC.JSPromise;
 const JSPromiseRejectionOperation = JSC.JSPromiseRejectionOperation;
-const Exception = JSC.Exception;
 const JSModuleLoader = JSC.JSModuleLoader;
 const Microtask = JSC.Microtask;
 
@@ -31,6 +28,18 @@ const typeBaseName = @import("../../meta.zig").typeBaseName;
 const String = bun.String;
 const JestPrettyFormat = @import("../test/pretty_format.zig").JestPrettyFormat;
 
+pub const Exception = opaque {
+    extern fn JSC__Exception__getStackTrace(this: *Exception, global: *JSGlobalObject, stack: *ZigStackTrace) void;
+    extern fn JSC__Exception__asJSValue(this: *Exception) JSValue;
+    pub fn getStackTrace(this: *Exception, global: *JSGlobalObject, stack: *ZigStackTrace) void {
+        JSC__Exception__getStackTrace(this, global, stack);
+    }
+
+    pub fn value(this: *Exception) JSValue {
+        return JSC__Exception__asJSValue(this);
+    }
+};
+
 pub const ZigGlobalObject = extern struct {
     pub const shim = Shimmer("Zig", "GlobalObject", @This());
     bytes: shim.Bytes,
@@ -38,16 +47,22 @@ pub const ZigGlobalObject = extern struct {
     pub const name = "Zig::GlobalObject";
     pub const include = "\"ZigGlobalObject.h\"";
     pub const namespace = shim.namespace;
-    pub const Interface: type = NewGlobalObject(JS.VirtualMachine);
+    pub const Interface: type = NewGlobalObject(JSC.VirtualMachine);
 
     pub fn create(
+        vm: *JSC.VirtualMachine,
         console: *anyopaque,
         context_id: i32,
         mini_mode: bool,
         eval_mode: bool,
         worker_ptr: ?*anyopaque,
     ) *JSGlobalObject {
+        vm.eventLoop().ensureWaker();
         const global = shim.cppFn("create", .{ console, context_id, mini_mode, eval_mode, worker_ptr });
+
+        // JSC might mess with the stack size.
+        bun.StackCheck.configureThread();
+
         return global;
     }
 
@@ -97,11 +112,11 @@ pub const ZigGlobalObject = extern struct {
     pub const Extern = [_][]const u8{ "create", "getModuleRegistryMap", "resetModuleRegistryMap" };
 
     comptime {
-        @export(import, .{ .name = Export[0].symbol_name });
-        @export(resolve, .{ .name = Export[1].symbol_name });
-        @export(promiseRejectionTracker, .{ .name = Export[2].symbol_name });
-        @export(reportUncaughtException, .{ .name = Export[3].symbol_name });
-        @export(onCrash, .{ .name = Export[4].symbol_name });
+        @export(&import, .{ .name = Export[0].symbol_name });
+        @export(&resolve, .{ .name = Export[1].symbol_name });
+        @export(&promiseRejectionTracker, .{ .name = Export[2].symbol_name });
+        @export(&reportUncaughtException, .{ .name = Export[3].symbol_name });
+        @export(&onCrash, .{ .name = Export[4].symbol_name });
     }
 };
 
@@ -140,6 +155,7 @@ pub const JSArrayBufferSink = JSC.WebCore.ArrayBufferSink.JSSink;
 pub const JSHTTPSResponseSink = JSC.WebCore.HTTPSResponseSink.JSSink;
 pub const JSHTTPResponseSink = JSC.WebCore.HTTPResponseSink.JSSink;
 pub const JSFileSink = JSC.WebCore.FileSink.JSSink;
+pub const JSNetworkSink = JSC.WebCore.NetworkSink.JSSink;
 
 // WebSocket
 pub const WebSocketHTTPClient = @import("../../http/websocket_http_client.zig").WebSocketHTTPClient;
@@ -208,13 +224,15 @@ pub const ResolvedSource = extern struct {
 
     allocator: ?*anyopaque = null,
 
-    jsvalue_for_export: JSC.JSValue = .zero,
+    jsvalue_for_export: JSValue = .zero,
 
     tag: Tag = Tag.javascript,
 
     /// This is for source_code
     source_code_needs_deref: bool = true,
     already_bundled: bool = false,
+    bytecode_cache: ?[*]u8 = null,
+    bytecode_cache_size: usize = 0,
 
     pub const Tag = @import("ResolvedSourceTag").ResolvedSourceTag;
 };
@@ -355,15 +373,22 @@ pub const Process = extern struct {
     pub const shim = Shimmer("Bun", "Process", @This());
     pub const name = "Process";
     pub const namespace = shim.namespace;
-    const _bun: string = "bun";
+    var title_mutex = bun.Mutex{};
 
     pub fn getTitle(_: *JSGlobalObject, title: *ZigString) callconv(.C) void {
-        title.* = ZigString.init(_bun);
+        title_mutex.lock();
+        defer title_mutex.unlock();
+        const str = bun.CLI.Bun__Node__ProcessTitle;
+        title.* = ZigString.init(str orelse "bun");
     }
 
     // TODO: https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-proctitle.c
-    pub fn setTitle(globalObject: *JSGlobalObject, _: *ZigString) callconv(.C) JSValue {
-        return ZigString.init(_bun).toJS(globalObject);
+    pub fn setTitle(globalObject: *JSGlobalObject, newvalue: *ZigString) callconv(.C) JSValue {
+        title_mutex.lock();
+        defer title_mutex.unlock();
+        if (bun.CLI.Bun__Node__ProcessTitle) |_| bun.default_allocator.free(bun.CLI.Bun__Node__ProcessTitle.?);
+        bun.CLI.Bun__Node__ProcessTitle = newvalue.dupe(bun.default_allocator) catch bun.outOfMemory();
+        return newvalue.toJS(globalObject);
     }
 
     pub const getArgv = JSC.Node.Process.getArgv;
@@ -387,36 +412,33 @@ pub const Process = extern struct {
     });
 
     comptime {
-        if (!is_bindgen) {
-            @export(getTitle, .{
-                .name = Export[0].symbol_name,
-            });
-            @export(setTitle, .{
-                .name = Export[1].symbol_name,
-            });
-            @export(getArgv, .{
-                .name = Export[2].symbol_name,
-            });
-            @export(getCwd, .{
-                .name = Export[3].symbol_name,
-            });
-            @export(setCwd, .{
-                .name = Export[4].symbol_name,
-            });
-            @export(exit, .{
-                .name = Export[5].symbol_name,
-            });
-            @export(getArgv0, .{
-                .name = Export[6].symbol_name,
-            });
-            @export(getExecPath, .{
-                .name = Export[7].symbol_name,
-            });
-
-            @export(getExecArgv, .{
-                .name = Export[8].symbol_name,
-            });
-        }
+        @export(&getTitle, .{
+            .name = Export[0].symbol_name,
+        });
+        @export(&setTitle, .{
+            .name = Export[1].symbol_name,
+        });
+        @export(&getArgv, .{
+            .name = Export[2].symbol_name,
+        });
+        @export(&getCwd, .{
+            .name = Export[3].symbol_name,
+        });
+        @export(&setCwd, .{
+            .name = Export[4].symbol_name,
+        });
+        @export(&exit, .{
+            .name = Export[5].symbol_name,
+        });
+        @export(&getArgv0, .{
+            .name = Export[6].symbol_name,
+        });
+        @export(&getExecPath, .{
+            .name = Export[7].symbol_name,
+        });
+        @export(&getExecArgv, .{
+            .name = Export[8].symbol_name,
+        });
     }
 };
 
@@ -662,9 +684,17 @@ pub const ZigStackFrame = extern struct {
 
             switch (this.code_type) {
                 .Eval => {
-                    try writer.writeAll("(eval)");
+                    if (this.enable_color) {
+                        try std.fmt.format(writer, comptime Output.prettyFmt("<r><d>", true) ++ "eval" ++ Output.prettyFmt("<r>", true), .{});
+                    } else {
+                        try writer.writeAll("eval");
+                    }
                     if (!name.isEmpty()) {
-                        try std.fmt.format(writer, "{}", .{name});
+                        if (this.enable_color) {
+                            try std.fmt.format(writer, comptime Output.prettyFmt(" <r><b><i>{}<r>", true), .{name});
+                        } else {
+                            try std.fmt.format(writer, " {}", .{name});
+                        }
                     }
                 },
                 .Function => {
@@ -674,15 +704,15 @@ pub const ZigStackFrame = extern struct {
                         } else {
                             try std.fmt.format(writer, "{}", .{name});
                         }
-                    }
-                },
-                .Global => {
-                    if (!name.isEmpty()) {
-                        try std.fmt.format(writer, "globalThis {}", .{name});
                     } else {
-                        try writer.writeAll("globalThis");
+                        if (this.enable_color) {
+                            try std.fmt.format(writer, comptime Output.prettyFmt("<r><d>", true) ++ "<anonymous>" ++ Output.prettyFmt("<r>", true), .{});
+                        } else {
+                            try writer.writeAll("<anonymous>");
+                        }
                     }
                 },
+                .Global => {},
                 .Wasm => {
                     if (!name.isEmpty()) {
                         try std.fmt.format(writer, "{}", .{name});
@@ -756,7 +786,7 @@ pub const ZigStackFramePosition = extern struct {
 };
 
 pub const ZigException = extern struct {
-    code: JSErrorCode,
+    type: JSErrorCode,
     runtime_type: JSRuntimeType,
 
     /// SystemError only
@@ -777,6 +807,12 @@ pub const ZigException = extern struct {
     remapped: bool = false,
 
     fd: i32 = -1,
+
+    pub extern fn ZigException__collectSourceLines(jsValue: JSValue, global: *JSGlobalObject, exception: *ZigException) void;
+
+    pub fn collectSourceLines(this: *ZigException, value: JSValue, global: *JSGlobalObject) void {
+        ZigException__collectSourceLines(value, global, this);
+    }
 
     pub fn deinit(this: *ZigException) void {
         this.syscall.deref();
@@ -800,7 +836,6 @@ pub const ZigException = extern struct {
     }
 
     pub const shim = Shimmer("Zig", "Exception", @This());
-    pub const name = "ZigException";
     pub const namespace = shim.namespace;
 
     pub const Holder = extern struct {
@@ -850,7 +885,7 @@ pub const ZigException = extern struct {
         pub fn zigException(this: *Holder) *ZigException {
             if (!this.loaded) {
                 this.zig_exception = ZigException{
-                    .code = @as(JSErrorCode, @enumFromInt(255)),
+                    .type = @as(JSErrorCode, @enumFromInt(255)),
                     .runtime_type = JSRuntimeType.Nothing,
                     .name = String.empty,
                     .message = String.empty,
@@ -892,7 +927,7 @@ pub const ZigException = extern struct {
         var is_empty = true;
         var api_exception = Api.JsException{
             .runtime_type = @intFromEnum(this.runtime_type),
-            .code = @intFromEnum(this.code),
+            .code = @intFromEnum(this.type),
         };
 
         if (_name.len > 0) {
@@ -929,8 +964,8 @@ pub inline fn toGlobalContextRef(ptr: *JSGlobalObject) CAPI.JSGlobalContextRef {
 }
 
 comptime {
-    @export(ErrorCode.ParserError, .{ .name = "Zig_ErrorCodeParserError" });
-    @export(ErrorCode.JSErrorObject, .{ .name = "Zig_ErrorCodeJSErrorObject" });
+    @export(&ErrorCode.ParserError, .{ .name = "Zig_ErrorCodeParserError" });
+    @export(&ErrorCode.JSErrorObject, .{ .name = "Zig_ErrorCodeJSErrorObject" });
 }
 
 const Bun = JSC.API.Bun;
@@ -943,33 +978,32 @@ pub const HTTPDebugSSLServerRequestContext = JSC.API.DebugHTTPSServer.RequestCon
 pub const BodyValueBuffererContext = JSC.WebCore.BodyValueBufferer;
 pub const TestScope = @import("../test/jest.zig").TestScope;
 comptime {
-    if (!is_bindgen) {
-        WebSocketHTTPClient.shim.ref();
-        WebSocketHTTPSClient.shim.ref();
-        WebSocketClient.shim.ref();
-        WebSocketClientTLS.shim.ref();
+    WebSocketHTTPClient.shim.ref();
+    WebSocketHTTPSClient.shim.ref();
+    WebSocketClient.shim.ref();
+    WebSocketClientTLS.shim.ref();
 
-        HTTPServerRequestContext.shim.ref();
-        HTTPSSLServerRequestContext.shim.ref();
-        HTTPDebugServerRequestContext.shim.ref();
-        HTTPDebugSSLServerRequestContext.shim.ref();
+    HTTPServerRequestContext.shim.ref();
+    HTTPSSLServerRequestContext.shim.ref();
+    HTTPDebugServerRequestContext.shim.ref();
+    HTTPDebugSSLServerRequestContext.shim.ref();
 
-        _ = Process.getTitle;
-        _ = Process.setTitle;
-        NodePath.shim.ref();
-        JSArrayBufferSink.shim.ref();
-        JSHTTPResponseSink.shim.ref();
-        JSHTTPSResponseSink.shim.ref();
-        JSFileSink.shim.ref();
-        JSFileSink.shim.ref();
-        _ = ZigString__free;
-        _ = ZigString__free_global;
+    _ = Process.getTitle;
+    _ = Process.setTitle;
+    NodePath.shim.ref();
+    JSArrayBufferSink.shim.ref();
+    JSHTTPResponseSink.shim.ref();
+    JSHTTPSResponseSink.shim.ref();
+    JSNetworkSink.shim.ref();
+    JSFileSink.shim.ref();
+    JSFileSink.shim.ref();
+    _ = ZigString__free;
+    _ = ZigString__free_global;
 
-        TestScope.shim.ref();
-        BodyValueBuffererContext.shim.ref();
+    TestScope.shim.ref();
+    BodyValueBuffererContext.shim.ref();
 
-        _ = Bun__LoadLibraryBunString;
-    }
+    _ = Bun__LoadLibraryBunString;
 }
 
 /// Returns null on error. Use windows API to lookup the actual error.

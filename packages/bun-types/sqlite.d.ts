@@ -580,6 +580,15 @@ declare module "bun:sqlite" {
     get(...params: ParamsType): ReturnType | null;
 
     /**
+     * Execute the prepared statement and return an
+     *
+     * @param params optional values to bind to the statement. If omitted, the statement is run with the last bound values or no parameters if there are none.
+     *
+     */
+    iterate(...params: ParamsType): IterableIterator<ReturnType>;
+    [Symbol.iterator](): IterableIterator<ReturnType>;
+
+    /**
      * Execute the prepared statement. This returns `undefined`.
      *
      * @param params optional values to bind to the statement. If omitted, the statement is run with the last bound values or no parameters if there are none.
@@ -1118,7 +1127,7 @@ declare module "bun:sqlite" {
    *
    * @since Bun v1.1.14
    */
-  interface Changes {
+  export interface Changes {
     /**
      * The number of rows changed by the last `run` or `exec` call.
      */

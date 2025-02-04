@@ -1,0 +1,43 @@
+{
+  "name": "bundled-true",
+  "versions": {
+    "1.0.0": {
+      "name": "bundled-true",
+      "version": "1.0.0",
+      "dependencies": {
+        "no-deps": "1.0.0",
+        "one-dep": "1.0.0"
+      },
+      "bundleDependencies": true,
+      "_id": "bundled-true@1.0.0",
+      "_nodeVersion": "23.5.0",
+      "_npmVersion": "10.9.2",
+      "dist": {
+        "integrity": "sha512-VRh+fxqRwtIsAn8P8EH8sETvUD8Yh5zMwujrjISki+37DHQr7jfj8tZW0LaE5rGZW49BeT83zqddRoI237zA/Q==",
+        "shasum": "e45979379fbf62c4f92e9d7297374c37cb191537",
+        "tarball": "http://localhost:4873/bundled-true/-/bundled-true-1.0.0.tgz"
+      },
+      "contributors": []
+    }
+  },
+  "time": {
+    "modified": "2024-12-30T21:52:11.900Z",
+    "created": "2024-12-30T21:52:11.900Z",
+    "1.0.0": "2024-12-30T21:52:11.900Z"
+  },
+  "users": {},
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "_uplinks": {},
+  "_distfiles": {},
+  "_attachments": {
+    "bundled-true-1.0.0.tgz": {
+      "shasum": "e45979379fbf62c4f92e9d7297374c37cb191537",
+      "version": "1.0.0"
+    }
+  },
+  "_rev": "",
+  "_id": "bundled-true",
+  "readme": "ERROR: No README data found!"
+}

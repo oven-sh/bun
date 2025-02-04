@@ -34,7 +34,7 @@ const G = js_ast.G;
 const T = js_lexer.T;
 const E = js_ast.E;
 const Stmt = js_ast.Stmt;
-const Expr = js_ast.Expr;
+pub const Expr = js_ast.Expr;
 const Binding = js_ast.Binding;
 const Symbol = js_ast.Symbol;
 const Level = js_ast.Op.Level;
@@ -87,7 +87,7 @@ const HashMapPool = struct {
 
 fn newExpr(t: anytype, loc: logger.Loc) Expr {
     const Type = @TypeOf(t);
-    if (comptime @typeInfo(Type) == .Pointer) {
+    if (comptime @typeInfo(Type) == .pointer) {
         @compileError("Unexpected pointer");
     }
 
@@ -115,7 +115,6 @@ fn JSONLikeParser(comptime opts: js_lexer.JSONOptions) type {
         opts.ignore_trailing_escape_sequences,
         opts.json_warn_duplicate_keys,
         opts.was_originally_macro,
-        opts.always_decode_escape_sequences,
         opts.guess_indentation,
     );
 }
@@ -128,7 +127,6 @@ fn JSONLikeParser_(
     comptime opts_ignore_trailing_escape_sequences: bool,
     comptime opts_json_warn_duplicate_keys: bool,
     comptime opts_was_originally_macro: bool,
-    comptime opts_always_decode_escape_sequences: bool,
     comptime opts_guess_indentation: bool,
 ) type {
     const opts = js_lexer.JSONOptions{
@@ -139,7 +137,6 @@ fn JSONLikeParser_(
         .ignore_trailing_escape_sequences = opts_ignore_trailing_escape_sequences,
         .json_warn_duplicate_keys = opts_json_warn_duplicate_keys,
         .was_originally_macro = opts_was_originally_macro,
-        .always_decode_escape_sequences = opts_always_decode_escape_sequences,
         .guess_indentation = opts_guess_indentation,
     };
     return struct {
@@ -193,7 +190,7 @@ fn JSONLikeParser_(
                     return newExpr(E.Null{}, loc);
                 },
                 .t_string_literal => {
-                    var str: E.String = p.lexer.toEString();
+                    var str: E.String = try p.lexer.toEString();
                     if (comptime force_utf8) {
                         str.toUTF8(p.allocator) catch unreachable;
                     }
@@ -253,13 +250,9 @@ fn JSONLikeParser_(
                     const DuplicateNodeType = comptime if (opts.json_warn_duplicate_keys) *HashMapPool.LinkedList.Node else void;
                     const HashMapType = comptime if (opts.json_warn_duplicate_keys) HashMapPool.HashMap else void;
 
-                    var duplicates_node: DuplicateNodeType = if (comptime opts.json_warn_duplicate_keys)
-                        HashMapPool.get(p.allocator)
-                    else {};
+                    var duplicates_node: DuplicateNodeType = if (comptime opts.json_warn_duplicate_keys) HashMapPool.get(p.allocator);
 
-                    var duplicates: HashMapType = if (comptime opts.json_warn_duplicate_keys)
-                        duplicates_node.data
-                    else {};
+                    var duplicates: HashMapType = if (comptime opts.json_warn_duplicate_keys) duplicates_node.data;
 
                     defer {
                         if (comptime opts.json_warn_duplicate_keys) {
@@ -282,9 +275,9 @@ fn JSONLikeParser_(
                         }
 
                         const str = if (comptime force_utf8)
-                            p.lexer.toUTF8EString()
+                            try p.lexer.toUTF8EString()
                         else
-                            p.lexer.toEString();
+                            try p.lexer.toEString();
 
                         const key_range = p.lexer.range();
                         const key = newExpr(str, key_range.loc);
@@ -297,7 +290,7 @@ fn JSONLikeParser_(
 
                             // Warn about duplicate keys
                             if (duplicate_get_or_put.found_existing) {
-                                p.log.addRangeWarningFmt(p.source(), key_range, p.allocator, "Duplicate key \"{s}\" in object literal", .{p.lexer.string_literal_slice}) catch unreachable;
+                                p.log.addRangeWarningFmt(p.source(), key_range, p.allocator, "Duplicate key \"{s}\" in object literal", .{try str.string(p.allocator)}) catch unreachable;
                             }
                         }
 
@@ -419,7 +412,7 @@ pub const PackageJSONVersionChecker = struct {
                 return newExpr(E.Null{}, loc);
             },
             .t_string_literal => {
-                const str: E.String = p.lexer.toEString();
+                const str: E.String = try p.lexer.toEString();
 
                 try p.lexer.next();
                 return newExpr(str, loc);
@@ -466,7 +459,7 @@ pub const PackageJSONVersionChecker = struct {
                         }
                     }
 
-                    const str = p.lexer.toEString();
+                    const str = try p.lexer.toEString();
                     const key_range = p.lexer.range();
 
                     const key = newExpr(str, key_range.loc);
@@ -503,6 +496,7 @@ pub const PackageJSONVersionChecker = struct {
                     }
 
                     if (p.has_found_name and p.has_found_version) return newExpr(E.Missing{}, loc);
+
                     has_properties = true;
                 }
 
@@ -539,7 +533,7 @@ pub fn toAST(
     const type_info: std.builtin.Type = @typeInfo(Type);
 
     switch (type_info) {
-        .Bool => {
+        .bool => {
             return Expr{
                 .data = .{ .e_boolean = .{
                     .value = value,
@@ -547,7 +541,7 @@ pub fn toAST(
                 .loc = logger.Loc{},
             };
         },
-        .Int => {
+        .int => {
             return Expr{
                 .data = .{
                     .e_number = .{
@@ -557,7 +551,7 @@ pub fn toAST(
                 .loc = logger.Loc{},
             };
         },
-        .Float => {
+        .float => {
             return Expr{
                 .data = .{
                     .e_number = .{
@@ -567,9 +561,9 @@ pub fn toAST(
                 .loc = logger.Loc{},
             };
         },
-        .Pointer => |ptr_info| switch (ptr_info.size) {
-            .One => switch (@typeInfo(ptr_info.child)) {
-                .Array => {
+        .pointer => |ptr_info| switch (ptr_info.size) {
+            .one => switch (@typeInfo(ptr_info.child)) {
+                .array => {
                     const Slice = []const std.meta.Elem(ptr_info.child);
                     return try toAST(allocator, Slice, value.*);
                 },
@@ -577,7 +571,7 @@ pub fn toAST(
                     return try toAST(allocator, @TypeOf(value.*), value.*);
                 },
             },
-            .Slice => {
+            .slice => {
                 if (ptr_info.child == u8) {
                     return Expr.init(js_ast.E.String, js_ast.E.String.init(value), logger.Loc.Empty);
                 }
@@ -589,7 +583,7 @@ pub fn toAST(
             },
             else => @compileError("Unable to stringify type '" ++ @typeName(T) ++ "'"),
         },
-        .Array => |Array| {
+        .array => |Array| {
             if (Array.child == u8) {
                 return Expr.init(js_ast.E.String, js_ast.E.String.init(value), logger.Loc.Empty);
             }
@@ -599,7 +593,7 @@ pub fn toAST(
 
             return Expr.init(js_ast.E.Array, js_ast.E.Array{ .items = exprs }, logger.Loc.Empty);
         },
-        .Struct => |Struct| {
+        .@"struct" => |Struct| {
             const fields: []const std.builtin.Type.StructField = Struct.fields;
             var properties = try allocator.alloc(js_ast.G.Property, fields.len);
             var property_i: usize = 0;
@@ -620,25 +614,25 @@ pub fn toAST(
                 logger.Loc.Empty,
             );
         },
-        .Null => {
+        .null => {
             return Expr{ .data = .{ .e_null = .{} }, .loc = logger.Loc{} };
         },
-        .Optional => {
+        .optional => {
             if (value) |_value| {
                 return try toAST(allocator, @TypeOf(_value), _value);
             } else {
                 return Expr{ .data = .{ .e_null = .{} }, .loc = logger.Loc{} };
             }
         },
-        .Enum => {
+        .@"enum" => {
             _ = std.meta.intToEnum(Type, @intFromEnum(value)) catch {
                 return Expr{ .data = .{ .e_null = .{} }, .loc = logger.Loc{} };
             };
 
             return toAST(allocator, string, @as(string, @tagName(value)));
         },
-        .ErrorSet => return try toAST(allocator, []const u8, bun.asByteSlice(@errorName(value))),
-        .Union => |Union| {
+        .error_set => return try toAST(allocator, []const u8, bun.asByteSlice(@errorName(value))),
+        .@"union" => |Union| {
             const info = Union;
             if (info.tag_type) |UnionTagType| {
                 inline for (info.fields) |u_field| {
@@ -656,7 +650,7 @@ pub fn toAST(
                                                 @field(value, u_field.name),
                                             ),
                                             .is_comptime = false,
-                                            .default_value = undefined,
+                                            .default_value_ptr = undefined,
                                             .alignment = @alignOf(
                                                 @TypeOf(
                                                     @field(value, u_field.name),
@@ -710,10 +704,11 @@ var empty_array_data = Expr.Data{ .e_array = &empty_array };
 /// Parse JSON
 /// This leaves UTF-16 strings as UTF-16 strings
 /// The JavaScript Printer will handle escaping strings if necessary
-pub fn ParseJSON(
+pub fn parse(
     source: *const logger.Source,
     log: *logger.Log,
     allocator: std.mem.Allocator,
+    comptime force_utf8: bool,
 ) !Expr {
     var parser = try JSONParser.init(allocator, source.*, log);
     switch (source.contents.len) {
@@ -734,7 +729,7 @@ pub fn ParseJSON(
         else => {},
     }
 
-    return try parser.parseExpr(false, false);
+    return try parser.parseExpr(false, force_utf8);
 }
 
 /// Parse Package JSON
@@ -742,7 +737,7 @@ pub fn ParseJSON(
 /// This eagerly transcodes UTF-16 strings into UTF-8 strings
 /// Use this when the text may need to be reprinted to disk as JSON (and not as JavaScript)
 /// Eagerly converting UTF-8 to UTF-16 can cause a performance issue
-pub fn ParsePackageJSONUTF8(
+pub fn parsePackageJSONUTF8(
     source: *const logger.Source,
     log: *logger.Log,
     allocator: std.mem.Allocator,
@@ -769,43 +764,6 @@ pub fn ParsePackageJSONUTF8(
 
     var parser = try JSONLikeParser(.{
         .is_json = true,
-        .always_decode_escape_sequences = false,
-        .allow_comments = true,
-        .allow_trailing_commas = true,
-    }).init(allocator, source.*, log);
-    bun.assert(parser.source().contents.len > 0);
-
-    return try parser.parseExpr(false, true);
-}
-
-pub fn ParsePackageJSONUTF8AlwaysDecode(
-    source: *const logger.Source,
-    log: *logger.Log,
-    allocator: std.mem.Allocator,
-) !Expr {
-    const len = source.contents.len;
-
-    switch (len) {
-        // This is to be consisntent with how disabled JS files are handled
-        0 => {
-            return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
-        },
-        // This is a fast pass I guess
-        2 => {
-            if (strings.eqlComptime(source.contents[0..1], "\"\"") or strings.eqlComptime(source.contents[0..1], "''")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_string_data };
-            } else if (strings.eqlComptime(source.contents[0..1], "{}")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
-            } else if (strings.eqlComptime(source.contents[0..1], "[]")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_array_data };
-            }
-        },
-        else => {},
-    }
-
-    var parser = try JSONLikeParser(.{
-        .is_json = true,
-        .always_decode_escape_sequences = true,
         .allow_comments = true,
         .allow_trailing_commas = true,
     }).init(allocator, source.*, log);
@@ -819,7 +777,7 @@ const JsonResult = struct {
     indentation: Indentation = .{},
 };
 
-pub fn ParsePackageJSONUTF8WithOpts(
+pub fn parsePackageJSONUTF8WithOpts(
     source: *const logger.Source,
     log: *logger.Log,
     allocator: std.mem.Allocator,
@@ -863,15 +821,15 @@ pub fn ParsePackageJSONUTF8WithOpts(
 /// This eagerly transcodes UTF-16 strings into UTF-8 strings
 /// Use this when the text may need to be reprinted to disk as JSON (and not as JavaScript)
 /// Eagerly converting UTF-8 to UTF-16 can cause a performance issue
-pub fn ParseJSONUTF8(
+pub fn parseUTF8(
     source: *const logger.Source,
     log: *logger.Log,
     allocator: std.mem.Allocator,
 ) !Expr {
-    return try ParseJSONUTF8Impl(source, log, allocator, false);
+    return try parseUTF8Impl(source, log, allocator, false);
 }
 
-pub fn ParseJSONUTF8Impl(
+pub fn parseUTF8Impl(
     source: *const logger.Source,
     log: *logger.Log,
     allocator: std.mem.Allocator,
@@ -908,7 +866,7 @@ pub fn ParseJSONUTF8Impl(
     }
     return result;
 }
-pub fn ParseJSONForMacro(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !Expr {
+pub fn parseForMacro(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !Expr {
     switch (source.contents.len) {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
@@ -943,7 +901,7 @@ pub const JSONParseResult = struct {
     };
 };
 
-pub fn ParseJSONForBundling(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !JSONParseResult {
+pub fn parseForBundling(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !JSONParseResult {
     switch (source.contents.len) {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
@@ -972,7 +930,7 @@ pub fn ParseJSONForBundling(source: *const logger.Source, log: *logger.Log, allo
 
 // threadlocal var env_json_auto_quote_buffer: MutableString = undefined;
 // threadlocal var env_json_auto_quote_buffer_loaded: bool = false;
-pub fn ParseEnvJSON(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !Expr {
+pub fn parseEnvJSON(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !Expr {
     switch (source.contents.len) {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
@@ -1023,7 +981,7 @@ pub fn ParseEnvJSON(source: *const logger.Source, log: *logger.Log, allocator: s
     }
 }
 
-pub fn ParseTSConfig(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !Expr {
+pub fn parseTSConfig(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator, comptime force_utf8: bool) !Expr {
     switch (source.contents.len) {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
@@ -1044,7 +1002,7 @@ pub fn ParseTSConfig(source: *const logger.Source, log: *logger.Log, allocator: 
 
     var parser = try TSConfigParser.init(allocator, source.*, log);
 
-    return parser.parseExpr(false, true);
+    return parser.parseExpr(false, force_utf8);
 }
 
 const duplicateKeyJson = "{ \"name\": \"valid\", \"name\": \"invalid\" }";
@@ -1053,8 +1011,8 @@ const js_printer = bun.js_printer;
 const renamer = @import("renamer.zig");
 const SymbolList = [][]Symbol;
 
-const Bundler = bun.Bundler;
-const ParseResult = bun.bundler.ParseResult;
+const Transpiler = bun.Transpiler;
+const ParseResult = bun.transpiler.ParseResult;
 fn expectPrintedJSON(_contents: string, expected: string) !void {
     Expr.Data.Store.create(default_allocator);
     Stmt.Data.Store.create(default_allocator);
@@ -1072,7 +1030,7 @@ fn expectPrintedJSON(_contents: string, expected: string) !void {
         "source.json",
         contents,
     );
-    const expr = try ParseJSON(&source, &log, default_allocator);
+    const expr = try parse(&source, &log, default_allocator);
 
     if (log.msgs.items.len > 0) {
         Output.panic("--FAIL--\nExpr {s}\nLog: {s}\n--FAIL--", .{ expr, log.msgs.items[0].data.text });

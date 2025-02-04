@@ -17,6 +17,59 @@ describe("web worker", () => {
     }
   }
 
+  describe("preload", () => {
+    test("invalid file URL", async () => {
+      expect(() => new Worker("file://:!:!:!!!!", {})).toThrow(/Invalid file URL/);
+      expect(
+        () =>
+          new Worker(import.meta.url, {
+            preload: ["file://:!:!:!!!!", "file://:!:!:!!!!2"],
+          }),
+      ).toThrow(/Invalid file URL/);
+    });
+
+    test("string", async () => {
+      const worker = new Worker(new URL("worker-fixture-preload-entry.js", import.meta.url).href, {
+        preload: new URL("worker-fixture-preload.js", import.meta.url).href,
+      });
+      const result = await waitForWorkerResult(worker, "hello world");
+      expect(result).toEqual("hello world");
+    });
+
+    test("array of 2 strings", async () => {
+      const worker = new Worker(new URL("worker-fixture-preload-entry.js", import.meta.url).href, {
+        preload: [
+          new URL("worker-fixture-preload.js", import.meta.url).href,
+          new URL("worker-fixture-preload-2.js", import.meta.url).href,
+        ],
+      });
+      const result = await waitForWorkerResult(worker, "hello world world");
+      expect(result).toEqual("hello world world");
+    });
+
+    test("array of string", async () => {
+      const worker = new Worker(new URL("worker-fixture-preload-entry.js", import.meta.url).href, {
+        preload: [new URL("worker-fixture-preload.js", import.meta.url).href],
+      });
+      const result = await waitForWorkerResult(worker, "hello world");
+      expect(result).toEqual("hello world");
+    });
+
+    test("error in preload doesn't crash parent", async () => {
+      const worker = new Worker(new URL("worker-fixture-preload-entry.js", import.meta.url).href, {
+        preload: [new URL("worker-fixture-preload-bad.js", import.meta.url).href],
+      });
+      const { resolve, promise } = Promise.withResolvers();
+      worker.onerror = e => {
+        resolve(e.message);
+      };
+      const result = await promise;
+      expect(result).toMatch(
+        /THIS IS AN ERROR AND THIS PARTICULAR STRING DOESNT APPEAR IN THE SOURCE CODE SO WE KNOW FOR SURE IT SENT THE ACTUAL MESSAGE AND NOT JUST A DUMP OF THE SOURCE CODE AS IT ORIGINALLY WAS/,
+      );
+    });
+  });
+
   test("worker", done => {
     const worker = new Worker(new URL("worker-fixture.js", import.meta.url).href, {
       smol: true,

@@ -164,6 +164,9 @@ export default {
     page("cli/update", "`bun update`", {
       description: "Update your project's dependencies.",
     }),
+    page("cli/publish", "`bun publish`", {
+      description: "Publish your package to an npm registry.",
+    }),
     page("cli/outdated", "`bun outdated`", {
       description: "Check for outdated dependencies.",
     }),
@@ -188,7 +191,7 @@ export default {
     }),
     page("install/lockfile", "Lockfile", {
       description:
-        "Bun's binary lockfile `bun.lockb` tracks your resolved dependency tree, making future installs fast and repeatable.",
+        "Bun's lockfile `bun.lock` tracks your resolved dependency tree, making future installs fast and repeatable.",
     }),
     page("install/registries", "Scopes and registries", {
       description: "How to configure private scopes and custom package registries.",
@@ -211,9 +214,12 @@ export default {
     page("bundler", "`Bun.build`", {
       description: "Bundle code for consumption in the browser with Bun's native bundler.",
     }),
-    // page("bundler/intro", "How bundlers work", {
-    //   description: "A visual introduction to bundling",
-    // }),
+    page("bundler/html", "Frontend & static sites", {
+      description: `Bundle html files with Bun's native bundler.`,
+    }),
+    page("bundler/fullstack", "Fullstack Dev Server", {
+      description: "Serve your frontend and backend from the same app with Bun's dev server.",
+    }),
     page("bundler/loaders", "Loaders", {
       description: "Bun's built-in loaders for the bundler and runtime",
     }),
@@ -223,6 +229,7 @@ export default {
     page("bundler/macros", "Macros", {
       description: `Run JavaScript functions at bundle-time and inline the results into your bundle`,
     }),
+
     page("bundler/vs-esbuild", "vs esbuild", {
       description: `Guides for migrating from other bundlers to Bun.`,
     }),
@@ -307,6 +314,12 @@ export default {
     page("api/streams", "Streams", {
       description: `Reading, writing, and manipulating streams of data in Bun.`,
     }), // "`Bun.serve`"),
+    page("api/sql", "SQL", {
+      description: `Bun provides fast, native bindings for interacting with PostgreSQL databases.`,
+    }),
+    page("api/s3", "S3 Object Storage", {
+      description: `Bun provides fast, native bindings for interacting with S3-compatible object storage services.`,
+    }),
     page("api/file-io", "File I/O", {
       description: `Read and write files fast with Bun's heavily optimized file system API.`,
     }), // "`Bun.write`"),
@@ -346,6 +359,9 @@ export default {
     page("api/ffi", "FFI", {
       description: `Call native code from JavaScript with Bun's foreign function interface (FFI) API.`,
     }), // "`bun:ffi`"),
+    page("api/cc", "C Compiler", {
+      description: `Build & run native C from JavaScript with Bun's native C compiler API`,
+    }), // "`bun:ffi`"),
     page("api/html-rewriter", "HTMLRewriter", {
       description: `Parse and transform HTML with Bun's native HTMLRewriter API, inspired by Cloudflare Workers.`,
     }), // "`HTMLRewriter`"),
@@ -371,6 +387,10 @@ export default {
       description: `Bun's native Semver implementation is 20x faster than the popular \`node-semver\` package.`,
     }), // "`Semver`"),
 
+    page("api/color", "Color", {
+      description: `Bun's color function leverages Bun's CSS parser for parsing, normalizing, and converting colors from user input to a variety of output formats.`,
+    }), // "`Color`"),
+
     // divider("Dev Server"),
     // page("bun-dev", "Vanilla"),
     // page("dev/css", "CSS"),
@@ -391,6 +411,9 @@ export default {
     }),
     page("project/building-windows", "Building Windows", {
       description: "Learn how to setup a development environment for contributing to the Windows build of Bun.",
+    }),
+    page("project/bindgen", "Bindgen", {
+      description: "About the bindgen code generator",
     }),
     page("project/licensing", "License", {
       description: `Bun is a MIT-licensed project with a large number of statically-linked dependencies with various licenses.`,

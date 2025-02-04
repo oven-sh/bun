@@ -1,4 +1,4 @@
-import { bench, run } from "./runner.mjs";
+import { bench, run } from "../runner.mjs";
 
 var err = new Error();
 bench("Error.captureStackTrace(err)", () => {

@@ -59,6 +59,7 @@ class BunWebSocket extends EventEmitter {
   #paused = false;
   #fragments = false;
   #binaryType = "nodebuffer";
+  static [Symbol.toStringTag] = "WebSocket";
 
   // Bitset to track whether event handlers are set.
   #eventId = 0;
@@ -69,9 +70,104 @@ class BunWebSocket extends EventEmitter {
     if (!WebSocket) {
       WebSocket = $cpp("JSWebSocket.cpp", "getWebSocketConstructor");
     }
-    let ws = (this.#ws = new WebSocket(url, protocols));
+
+    if (protocols === undefined) {
+      protocols = [];
+    } else if (!Array.isArray(protocols)) {
+      if (typeof protocols === "object" && protocols !== null) {
+        options = protocols;
+        protocols = [];
+      } else {
+        protocols = [protocols];
+      }
+    }
+
+    let headers;
+    let method = "GET";
+    // https://github.com/websockets/ws/blob/0d1b5e6c4acad16a6b1a1904426eb266a5ba2f72/lib/websocket.js#L741-L747
+    if ($isObject(options)) {
+      headers = options?.headers;
+    }
+
+    const finishRequest = options?.finishRequest;
+    if ($isCallable(finishRequest)) {
+      if (headers) {
+        headers = {
+          __proto__: null,
+          ...headers,
+        };
+      }
+      let lazyRawHeaders;
+      let didCallEnd = false;
+      const nodeHttpClientRequestSimulated = {
+        __proto__: Object.create(EventEmitter.prototype),
+        setHeader: function (name, value) {
+          if (!headers) headers = Object.create(null);
+          headers[name.toLowerCase()] = value;
+        },
+        getHeader: function (name) {
+          return headers ? headers[name.toLowerCase()] : undefined;
+        },
+        removeHeader: function (name) {
+          if (headers) delete headers[name.toLowerCase()];
+        },
+        getHeaders: function () {
+          return { ...headers };
+        },
+        hasHeader: function (name) {
+          return headers ? name.toLowerCase() in headers : false;
+        },
+        headersSent: false,
+        method: method,
+        path: url,
+        abort: function () {
+          // No-op for now, as we don't have a real request to abort
+        },
+        end: () => {
+          if (!didCallEnd) {
+            didCallEnd = true;
+            this.#createWebSocket(url, protocols, headers, method);
+          }
+        },
+        write() {},
+        writeHead() {},
+        [Symbol.toStringTag]: "ClientRequest",
+        get rawHeaders() {
+          if (lazyRawHeaders === undefined) {
+            lazyRawHeaders = [];
+            for (const key in headers) {
+              lazyRawHeaders.push(key, headers[key]);
+            }
+          }
+          return lazyRawHeaders;
+        },
+        set rawHeaders(value) {
+          lazyRawHeaders = value;
+        },
+        rawTrailers: [],
+        trailers: null,
+        finished: false,
+        socket: undefined,
+        _header: null,
+        _headerSent: false,
+        _last: null,
+      };
+      EventEmitter.$call(nodeHttpClientRequestSimulated);
+      finishRequest(nodeHttpClientRequestSimulated);
+      if (!didCallEnd) {
+        this.#createWebSocket(url, protocols, headers, method);
+      }
+      return;
+    }
+
+    this.#createWebSocket(url, protocols, headers, method);
+  }
+
+  #createWebSocket(url, protocols, headers, method) {
+    let ws = (this.#ws = new WebSocket(url, headers ? { headers, method, protocols } : protocols));
     ws.binaryType = "nodebuffer";
-    // TODO: options
+
+    return ws;
   }
 
   #onOrOnce(event, listener, once) {

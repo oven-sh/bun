@@ -1,6 +1,6 @@
 import { pbkdf2 } from "node:crypto";
 
-import { bench, run } from "./runner.mjs";
+import { bench, run } from "../runner.mjs";
 
 const password = "password";
 const salt = "salt";

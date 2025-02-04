@@ -61,7 +61,7 @@ import pkg from "./package.json";
 import data from "./data.toml";
 ```
 
-## WASM
+## WASI
 
 {% callout %}
 🚧 **Experimental**

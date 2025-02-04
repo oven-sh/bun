@@ -61,18 +61,18 @@ private:
     NapiHandleScopeImpl(JSC::VM& vm, JSC::Structure* structure, NapiHandleScopeImpl* parent, bool escapable);
 };
 
-// Wrapper class used to push a new handle scope and pop it when this instance goes out of scope
+// Wrapper class used to open a new handle scope and close it when this instance goes out of scope
 class NapiHandleScope {
 public:
     NapiHandleScope(Zig::GlobalObject* globalObject);
     ~NapiHandleScope();
 
     // Create a new handle scope in the given environment
-    static NapiHandleScopeImpl* push(Zig::GlobalObject* globalObject, bool escapable);
+    static NapiHandleScopeImpl* open(Zig::GlobalObject* globalObject, bool escapable);
 
-    // Pop the most recently created handle scope in the given environment and restore the old one.
+    // Closes the most recently created handle scope in the given environment and restores the old one.
     // Asserts that `current` is the active handle scope.
-    static void pop(Zig::GlobalObject* globalObject, NapiHandleScopeImpl* current);
+    static void close(Zig::GlobalObject* globalObject, NapiHandleScopeImpl* current);
 
 private:
     NapiHandleScopeImpl* m_impl;
@@ -80,11 +80,11 @@ private:
 };
 
 // Create a new handle scope in the given environment
-extern "C" NapiHandleScopeImpl* NapiHandleScope__push(Zig::GlobalObject* globalObject, bool escapable);
+extern "C" NapiHandleScopeImpl* NapiHandleScope__open(Zig::GlobalObject* globalObject, bool escapable);
 
 // Pop the most recently created handle scope in the given environment and restore the old one.
 // Asserts that `current` is the active handle scope.
-extern "C" void NapiHandleScope__pop(Zig::GlobalObject* globalObject, NapiHandleScopeImpl* current);
+extern "C" void NapiHandleScope__close(Zig::GlobalObject* globalObject, NapiHandleScopeImpl* current);
 
 // Store a value in the active handle scope in the given environment
 extern "C" void NapiHandleScope__append(Zig::GlobalObject* globalObject, JSC::EncodedJSValue value);

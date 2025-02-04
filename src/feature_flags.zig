@@ -3,7 +3,7 @@ const bun = @import("root").bun;
 
 /// Enable breaking changes for the next major release of Bun
 // TODO: Make this a CLI flag / runtime var so that we can verify disabled code paths can compile
-pub const breaking_changes_1_2 = false;
+pub const breaking_changes_1_3 = false;
 
 /// Store and reuse file descriptors during module resolution
 /// This was a ~5% performance improvement
@@ -12,9 +12,6 @@ pub const store_file_descriptors = !env.isBrowser;
 pub const jsx_runtime_is_cjs = true;
 
 pub const tracing = true;
-
-/// Disabled due to bugs
-pub const minify_javascript_string_length = false;
 
 // TODO: remove this flag, it should use bun.Output.scoped
 pub const verbose_watcher = false;
@@ -65,7 +62,7 @@ pub const hardcode_localhost_to_127_0_0_1 = false;
 /// https://github.com/oven-sh/bun/issues/10733
 pub const support_jsxs_in_jsx_transform = true;
 
-pub const use_simdutf = bun.Environment.isNative and !bun.JSC.is_bindgen;
+pub const use_simdutf = bun.Environment.isNative;
 
 pub const inline_properties_in_transpiler = true;
 
@@ -158,5 +155,12 @@ pub fn isLibdeflateEnabled() bool {
     return !bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_NO_LIBDEFLATE");
 }
 
-/// Enable experimental bundler tools, codenamed "bun kit"
-pub const kit = env.is_canary or env.isDebug;
+/// Enable Bun Kit's experimental bundler tools.
+pub fn bake() bool {
+    // In canary or if an environment variable is specified.
+    return env.is_canary or env.isDebug or bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE");
+}
+
+/// Additional debugging features for Bake, such as the incremental visualizer.
+/// To use them, extra flags are passed in addition to this one.
+pub const bake_debugging_features = env.is_canary or env.isDebug;

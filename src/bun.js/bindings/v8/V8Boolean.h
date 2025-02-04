@@ -12,4 +12,4 @@ public:
     BUN_EXPORT static Local<Boolean> New(Isolate* isolate, bool value);
 };
 
-}
+} // namespace v8

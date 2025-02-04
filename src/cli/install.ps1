@@ -1,6 +1,5 @@
 #!/usr/bin/env pwsh
 param(
-  # TODO: change this to 'latest' when Bun for Windows is stable.
   [String]$Version = "latest",
   # Forces installing the baseline build regardless of what CPU you are actually using.
   [Switch]$ForceBaseline = $false,

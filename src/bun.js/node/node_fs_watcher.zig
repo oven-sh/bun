@@ -4,7 +4,7 @@ const bun = @import("root").bun;
 const Fs = @import("../../fs.zig");
 const Path = @import("../../resolver/resolve_path.zig");
 const Encoder = JSC.WebCore.Encoder;
-const Mutex = @import("../../lock.zig").Lock;
+const Mutex = bun.Mutex;
 
 const VirtualMachine = JSC.VirtualMachine;
 const EventLoop = JSC.EventLoop;
@@ -340,21 +340,15 @@ pub const FSWatcher = struct {
         recursive: bool,
         encoding: JSC.Node.Encoding,
         verbose: bool,
-        pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Arguments {
-            const vm = ctx.vm();
-            const path = PathLike.fromJS(ctx, arguments, exception) orelse {
-                if (exception.* == null) {
-                    JSC.throwInvalidArguments(
-                        "filename must be a string or TypedArray",
-                        .{},
-                        ctx,
-                        exception,
-                    );
-                }
-                return null;
-            };
 
-            if (exception.* != null) return null;
+        pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Arguments {
+            const vm = ctx.vm();
+            const path = try PathLike.fromJS(ctx, arguments) orelse {
+                return ctx.throwInvalidArguments("filename must be a string or TypedArray", .{});
+            };
+            var should_deinit_path = true;
+            defer if (should_deinit_path) path.deinit();
+
             var listener: JSC.JSValue = .zero;
             var signal: ?*JSC.AbortSignal = null;
             var persistent: bool = true;
@@ -365,108 +359,63 @@ pub const FSWatcher = struct {
 
                 // options
                 if (options_or_callable.isObject()) {
-                    if (options_or_callable.get(ctx, "persistent")) |persistent_| {
+                    if (try options_or_callable.getTruthy(ctx, "persistent")) |persistent_| {
                         if (!persistent_.isBoolean()) {
-                            JSC.throwInvalidArguments(
-                                "persistent must be a boolean.",
-                                .{},
-                                ctx,
-                                exception,
-                            );
-                            return null;
+                            return ctx.throwInvalidArguments("persistent must be a boolean", .{});
                         }
                         persistent = persistent_.toBoolean();
                     }
 
-                    if (options_or_callable.get(ctx, "verbose")) |verbose_| {
+                    if (try options_or_callable.getTruthy(ctx, "verbose")) |verbose_| {
                         if (!verbose_.isBoolean()) {
-                            JSC.throwInvalidArguments(
-                                "verbose must be a boolean.",
-                                .{},
-                                ctx,
-                                exception,
-                            );
-                            return null;
+                            return ctx.throwInvalidArguments("verbose must be a boolean", .{});
                         }
                         verbose = verbose_.toBoolean();
                     }
 
-                    if (options_or_callable.get(ctx, "encoding")) |encoding_| {
-                        if (!encoding_.isString()) {
-                            JSC.throwInvalidArguments(
-                                "encoding must be a string.",
-                                .{},
-                                ctx,
-                                exception,
-                            );
-                            return null;
-                        }
-                        if (JSC.Node.Encoding.fromJS(encoding_, ctx.ptr())) |node_encoding| {
-                            encoding = node_encoding;
-                        } else {
-                            JSC.throwInvalidArguments(
-                                "invalid encoding.",
-                                .{},
-                                ctx,
-                                exception,
-                            );
-                            return null;
-                        }
+                    if (options_or_callable.fastGet(ctx, .encoding)) |encoding_| {
+                        encoding = try JSC.Node.Encoding.assert(encoding_, ctx, encoding);
                     }
 
-                    if (options_or_callable.get(ctx, "recursive")) |recursive_| {
+                    if (try options_or_callable.getTruthy(ctx, "recursive")) |recursive_| {
                         if (!recursive_.isBoolean()) {
-                            JSC.throwInvalidArguments(
-                                "recursive must be a boolean.",
-                                .{},
-                                ctx,
-                                exception,
-                            );
-                            return null;
+                            return ctx.throwInvalidArguments("recursive must be a boolean", .{});
                         }
                         recursive = recursive_.toBoolean();
                     }
 
                     // abort signal
-                    if (options_or_callable.get(ctx, "signal")) |signal_| {
+                    if (try options_or_callable.getTruthy(ctx, "signal")) |signal_| {
                         if (JSC.AbortSignal.fromJS(signal_)) |signal_obj| {
                             //Keep it alive
                             signal_.ensureStillAlive();
                             signal = signal_obj;
                         } else {
-                            JSC.throwInvalidArguments(
-                                "signal is not of type AbortSignal.",
-                                .{},
-                                ctx,
-                                exception,
-                            );
-
-                            return null;
+                            return ctx.throwInvalidArguments("signal is not of type AbortSignal", .{});
                         }
                     }
 
                     // listener
                     if (arguments.nextEat()) |callable| {
                         if (!callable.isCell() or !callable.isCallable(vm)) {
-                            exception.* = JSC.toInvalidArguments("Expected \"listener\" callback to be a function", .{}, ctx).asObjectRef();
-                            return null;
+                            return ctx.throwInvalidArguments("Expected \"listener\" callback to be a function", .{});
                         }
                         listener = callable;
                     }
                 } else {
                     if (!options_or_callable.isCell() or !options_or_callable.isCallable(vm)) {
-                        exception.* = JSC.toInvalidArguments("Expected \"listener\" callback to be a function", .{}, ctx).asObjectRef();
-                        return null;
+                        return ctx.throwInvalidArguments("Expected \"listener\" callback to be a function", .{});
                     }
                     listener = options_or_callable;
                 }
             }
             if (listener == .zero) {
-                exception.* = JSC.toInvalidArguments("Expected \"listener\" callback", .{}, ctx).asObjectRef();
-                return null;
+                return ctx.throwInvalidArguments("Expected \"listener\" callback", .{});
             }
 
-            return Arguments{
+            should_deinit_path = false;
+
+            return .{
                 .path = path,
                 .listener = listener,
                 .global_this = ctx,
@@ -478,12 +427,7 @@ pub const FSWatcher = struct {
             };
         }
 
-        pub fn createFSWatcher(this: Arguments) JSC.Maybe(JSC.JSValue) {
-            return switch (FSWatcher.init(this)) {
-                .result => |result| .{ .result = result.js_this },
-                .err => |err| .{ .err = err },
-            };
-        }
+        pub const createFSWatcher = FSWatcher.init;
     };
 
     pub fn initJS(this: *FSWatcher, listener: JSC.JSValue) void {
@@ -587,7 +531,7 @@ pub const FSWatcher = struct {
                 filename = JSC.ZigString.fromUTF8(file_name).toJS(globalObject);
             } else {
                 // convert to desired encoding
-                filename = Encoder.toStringAtRuntime(file_name.ptr, file_name.len, globalObject, this.encoding);
+                filename = Encoder.toString(file_name, globalObject, this.encoding);
             }
         }
 
@@ -606,7 +550,7 @@ pub const FSWatcher = struct {
         ) catch |err| globalObject.reportActiveExceptionAsUnhandled(err);
     }
 
-    pub fn doRef(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn doRef(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         if (!this.closed and !this.persistent) {
             this.persistent = true;
             this.poll_ref.ref(this.ctx);
@@ -614,7 +558,7 @@ pub const FSWatcher = struct {
         return .undefined;
     }
 
-    pub fn doUnref(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn doUnref(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         if (this.persistent) {
             this.persistent = false;
             this.poll_ref.unref(this.ctx);
@@ -622,13 +566,12 @@ pub const FSWatcher = struct {
         return .undefined;
     }
 
-    pub fn hasRef(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn hasRef(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         return JSC.JSValue.jsBoolean(this.persistent);
     }
 
     // this can be called from Watcher Thread or JS Context Thread
     pub fn refTask(this: *FSWatcher) bool {
-        @fence(.acquire);
         this.mutex.lock();
         defer this.mutex.unlock();
         if (this.closed) return false;
@@ -638,7 +581,6 @@ pub const FSWatcher = struct {
     }
 
     pub fn hasPendingActivity(this: *FSWatcher) bool {
-        @fence(.acquire);
         return this.pending_activity_count.load(.acquire) > 0;
     }
 
@@ -692,7 +634,7 @@ pub const FSWatcher = struct {
         this.js_this = .zero;
     }
 
-    pub fn doClose(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn doClose(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         this.close();
         return .undefined;
     }
@@ -754,7 +696,11 @@ pub const FSWatcher = struct {
                 .result => |r| r,
                 .err => |err| {
                     ctx.deinit();
-                    return .{ .err = err };
+                    return .{ .err = .{
+                        .errno = err.errno,
+                        .syscall = .watch,
+                        .path = args.path.slice(),
+                    } };
                 },
             }
         else

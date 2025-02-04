@@ -3,6 +3,15 @@ import { spawn } from "bun";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, nodeExe } from "harness";
 import * as path from "node:path";
+function test(
+  label: string,
+  fn: (ws: WebSocket, done: (err?: unknown) => void) => void,
+  timeout?: number,
+  isOnly = false,
+) {
+  return makeTest(label, fn, timeout, isOnly);
+}
+test.only = (label, fn, timeout) => makeTest(label, fn, timeout, true);
 
 const strings = [
   {
@@ -236,8 +245,13 @@ describe("WebSocket", () => {
   });
 });
 
-function test(label: string, fn: (ws: WebSocket, done: (err?: unknown) => void) => void, timeout?: number) {
-  it(
+function makeTest(
+  label: string,
+  fn: (ws: WebSocket, done: (err?: unknown) => void) => void,
+  timeout?: number,
+  isOnly = false,
+) {
+  return (isOnly ? it.only : it)(
     label,
     testDone => {
       let isDone = false;
@@ -261,21 +275,27 @@ function test(label: string, fn: (ws: WebSocket, done: (err?: unknown) => void) 
 
 async function listen(): Promise<URL> {
   const pathname = path.join(import.meta.dir, "./websocket-server-echo.mjs");
+  const { promise, resolve, reject } = Promise.withResolvers();
   const server = spawn({
     cmd: [nodeExe() ?? bunExe(), pathname],
     cwd: import.meta.dir,
     env: bunEnv,
-    stderr: "ignore",
-    stdout: "pipe",
+    stdout: "inherit",
+    stderr: "inherit",
+    serialization: "json",
+    ipc(message) {
+      const url = message?.href;
+      if (url) {
+        try {
+          resolve(new URL(url));
+        } catch (error) {
+          reject(error);
+        }
+      }
+    },
   });
+
   servers.push(server);
-  for await (const chunk of server.stdout) {
-    const text = new TextDecoder().decode(chunk);
-    try {
-      return new URL(text);
-    } catch {
-      throw new Error(`Invalid URL: '${text}'`);
-    }
-  }
-  throw new Error("No URL found?");
+
+  return await promise;
 }

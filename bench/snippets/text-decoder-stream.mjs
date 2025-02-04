@@ -1,4 +1,4 @@
-import { bench, run } from "./runner.mjs";
+import { bench, run } from "../runner.mjs";
 
 const latin1 = `hello hello hello!!!! `.repeat(10240);
 

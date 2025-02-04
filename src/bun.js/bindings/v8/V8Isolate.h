@@ -1,20 +1,30 @@
 #pragma once
 
 #include "v8.h"
-#include "V8Context.h"
 #include "V8Local.h"
-#include "V8GlobalInternals.h"
 
 namespace v8 {
 
 class HandleScope;
+class Context;
 
-// This currently is just a pointer to a v8::Roots
-// We do that so that we can recover the context and the VM from the "Isolate," and so that inlined
-// V8 functions can find values at certain fixed offsets from the Isolate
+namespace shim {
+class GlobalInternals;
+}
+
+// The only fields here are "roots," which are the global locations of V8's versions of nullish and
+// boolean values. These are computed as offsets from an Isolate pointer in many V8 functions so
+// they need to have the correct layout.
 class Isolate final {
 public:
-    Isolate() = default;
+    // v8-internal.h:775
+    static constexpr int kUndefinedValueRootIndex = 4;
+    static constexpr int kTheHoleValueRootIndex = 5;
+    static constexpr int kNullValueRootIndex = 6;
+    static constexpr int kTrueValueRootIndex = 7;
+    static constexpr int kFalseValueRootIndex = 8;
+
+    Isolate(shim::GlobalInternals* globalInternals);
 
     // Returns the isolate inside which the current thread is running or nullptr.
     BUN_EXPORT static Isolate* TryGetCurrent();
@@ -24,11 +34,25 @@ public:
 
     BUN_EXPORT Local<Context> GetCurrentContext();
 
-    static Isolate* fromGlobalObject(Zig::GlobalObject* globalObject) { return reinterpret_cast<Isolate*>(&globalObject->V8GlobalInternals()->roots); }
-    Zig::GlobalObject* globalObject() { return reinterpret_cast<Roots*>(this)->parent->globalObject; }
+    Zig::GlobalObject* globalObject() { return m_globalObject; }
     JSC::VM& vm() { return globalObject()->vm(); }
-    GlobalInternals* globalInternals() { return globalObject()->V8GlobalInternals(); }
-    HandleScope* currentHandleScope() { return globalInternals()->currentHandleScope(); }
+    shim::GlobalInternals* globalInternals() { return m_globalInternals; }
+    HandleScope* currentHandleScope();
+
+    TaggedPointer* undefinedSlot() { return &m_roots[Isolate::kUndefinedValueRootIndex]; }
+
+    TaggedPointer* nullSlot() { return &m_roots[Isolate::kNullValueRootIndex]; }
+
+    TaggedPointer* trueSlot() { return &m_roots[Isolate::kTrueValueRootIndex]; }
+
+    TaggedPointer* falseSlot() { return &m_roots[Isolate::kFalseValueRootIndex]; }
+
+    shim::GlobalInternals* m_globalInternals;
+    Zig::GlobalObject* m_globalObject;
+
+    uintptr_t m_padding[72];
+
+    std::array<TaggedPointer, 9> m_roots;
 };
 
-}
+} // namespace v8

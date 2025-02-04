@@ -2296,7 +2296,7 @@ pub const PostgresSQLConnection = struct {
             if (slice.len <= count) return "";
             return slice[count..];
         }
-        fn parseArray(bytes: []const u8, bigint: bool, arrayType: types.Tag, offset: ?*usize) !DataCell {
+        fn parseArray(bytes: []const u8, bigint: bool, arrayType: types.Tag, globalObject: *JSC.JSGlobalObject, offset: ?*usize) !DataCell {
             // not an array
             if (bytes.len < 2 or bytes[0] != '{') {
                 return error.UnsupportedArrayFormat;
@@ -2331,7 +2331,7 @@ pub const PostgresSQLConnection = struct {
                     '{',
                     => {
                         var sub_array_offset: usize = 0;
-                        const sub_array = try parseArray(slice, bigint, arrayType, &sub_array_offset);
+                        const sub_array = try parseArray(slice, bigint, arrayType, globalObject, &sub_array_offset);
                         try array.append(bun.default_allocator, sub_array);
                         slice = trySlice(slice, sub_array_offset);
                         continue;
@@ -2348,17 +2348,32 @@ pub const PostgresSQLConnection = struct {
                         }
                         // did not find a closing quote
                         if (current_idx == 0) return error.UnsupportedArrayFormat;
-                        if (arrayType == .bytea_array) {
-                            // this is a bytea array so we need to parse the bytea strings
-                            const bytea_bytes = slice[1..current_idx];
-                            if (bun.strings.startsWith(bytea_bytes, "\\\\x")) {
-                                // its a bytea string lets parse it as a bytea
-                                try array.append(bun.default_allocator, try parseBytea(bytea_bytes[3..][0 .. bytea_bytes.len - 3]));
+                        switch (arrayType) {
+                            .bytea_array => {
+                                // this is a bytea array so we need to parse the bytea strings
+                                const bytea_bytes = slice[1..current_idx];
+                                if (bun.strings.startsWith(bytea_bytes, "\\\\x")) {
+                                    // its a bytea string lets parse it as a bytea
+                                    try array.append(bun.default_allocator, try parseBytea(bytea_bytes[3..][0 .. bytea_bytes.len - 3]));
+                                    slice = trySlice(slice, current_idx + 1);
+                                    continue;
+                                }
+                                // invalid bytea array
+                                return error.UnsupportedByteaFormat;
+                            },
+                            .timestamptz_array,
+                            .timestamp_array,
+                            .date_array,
+                            => {
+                                const date_str = slice[1..current_idx];
+                                var str = bun.String.init(date_str);
+                                defer str.deref();
+                                try array.append(bun.default_allocator, DataCell{ .tag = .date, .value = .{ .date = str.parseDate(globalObject) } });
+
                                 slice = trySlice(slice, current_idx + 1);
                                 continue;
-                            }
-                            // invalid bytea array
-                            return error.UnsupportedByteaFormat;
+                            },
+                            else => {},
                         }
                         const string_bytes = slice[0 .. current_idx + 1];
                         // the format is a json valid string that can contain escaped characters, so we parse it as a json to simplify the parsing
@@ -2374,6 +2389,13 @@ pub const PostgresSQLConnection = struct {
                     },
                     else => {
                         switch (arrayType) {
+                            // timez, date, time, interval are handled like single string cases
+                            .timetz_array,
+                            .date_array,
+                            .time_array,
+                            .interval_array,
+                            // text array types
+                            .bpchar_array,
                             .varchar_array,
                             .char_array,
                             .text_array,
@@ -2399,7 +2421,13 @@ pub const PostgresSQLConnection = struct {
                                     slice = trySlice(slice, current_idx);
                                     continue;
                                 }
-                                try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (element.len > 0) bun.String.createUTF8(element).value.WTFStringImpl else null }, .free_value = 1 });
+                                if (arrayType == .date_array) {
+                                    var str = bun.String.init(element);
+                                    defer str.deref();
+                                    try array.append(bun.default_allocator, DataCell{ .tag = .date, .value = .{ .date = str.parseDate(globalObject) } });
+                                } else {
+                                    try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (element.len > 0) bun.String.createUTF8(element).value.WTFStringImpl else null }, .free_value = 1 });
+                                }
                                 slice = trySlice(slice, current_idx);
                                 continue;
                             },
@@ -2596,7 +2624,7 @@ pub const PostgresSQLConnection = struct {
                             },
                         };
                     } else {
-                        return try parseArray(bytes, bigint, tag, null);
+                        return try parseArray(bytes, bigint, tag, globalObject, null);
                     }
                 },
                 .int4 => {
@@ -2665,12 +2693,34 @@ pub const PostgresSQLConnection = struct {
                         return error.UnsupportedByteaFormat;
                     }
                 },
-                .varchar_array, .char_array, .text_array, .name_array, .int8_array, .int2_array, .float8_array, .bool_array, .bytea_array => |tag| {
+                // text array types
+                .bpchar_array,
+                .varchar_array,
+                .char_array,
+                .text_array,
+                .name_array,
+                // numeric array types
+                .int8_array,
+                .int2_array,
+                .float8_array,
+
+                // special types
+                .bool_array,
+                .bytea_array,
+
+                //time types
+                .time_array,
+                .date_array,
+                .timetz_array,
+                .timestamp_array,
+                .timestamptz_array,
+                .interval_array,
+                => |tag| {
                     if (binary) {
                         // we still dont support binary arrays for this types
                         return error.UnsupportedArrayFormat;
                     }
-                    return try parseArray(bytes, bigint, tag, null);
+                    return try parseArray(bytes, bigint, tag, globalObject, null);
                 },
                 else => {
                     return DataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) bun.String.createUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };

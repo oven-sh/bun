@@ -238,12 +238,12 @@ pub const BoxShadowHandler = struct {
                 var p3 = SmallList(BoxShadow, 1).initCapacity(context.allocator, box_shadows.len());
                 p3.setLen(box_shadows.len());
                 for (box_shadows.slice(), p3.slice_mut()) |*input, *output| {
+                    output.color = input.color.toP3(context.allocator) orelse input.color.deepClone(context.allocator);
                     const fields = std.meta.fields(BoxShadow);
                     inline for (fields) |field| {
-                        if (comptime !std.mem.eql(u8, field.name, "color")) continue;
+                        if (comptime std.mem.eql(u8, field.name, "color")) continue;
                         @field(output, field.name) = css.generic.deepClone(field.type, &@field(input, field.name), context.allocator);
                     }
-                    output.color = input.color.toP3(context.allocator) orelse input.color.deepClone(context.allocator);
                 }
                 dest.append(context.allocator, .{ .@"box-shadow" = .{ p3, VendorPrefix.NONE } }) catch bun.outOfMemory();
             }
@@ -252,12 +252,12 @@ pub const BoxShadowHandler = struct {
                 var lab = SmallList(BoxShadow, 1).initCapacity(context.allocator, box_shadows.len());
                 lab.setLen(box_shadows.len());
                 for (box_shadows.slice(), lab.slice_mut()) |*input, *output| {
+                    output.color = input.color.toLAB(context.allocator) orelse input.color.deepClone(context.allocator);
                     const fields = std.meta.fields(BoxShadow);
                     inline for (fields) |field| {
-                        if (comptime !std.mem.eql(u8, field.name, "color")) continue;
+                        if (comptime std.mem.eql(u8, field.name, "color")) continue;
                         @field(output, field.name) = css.generic.deepClone(field.type, &@field(input, field.name), context.allocator);
                     }
-                    output.color = input.color.toP3(context.allocator) orelse input.color.deepClone(context.allocator);
                 }
                 dest.append(context.allocator, .{ .@"box-shadow" = .{ lab, VendorPrefix.NONE } }) catch bun.outOfMemory();
             } else {

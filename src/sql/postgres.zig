@@ -2669,7 +2669,7 @@ pub const PostgresSQLConnection = struct {
                         return DataCell{ .tag = .bool, .value = .{ .bool = @intFromBool(bytes.len > 0 and bytes[0] == 't') } };
                     }
                 },
-                .timestamp, .timestamptz => |tag| {
+                .date, .timestamp, .timestamptz => |tag| {
                     if (binary and bytes.len == 8) {
                         switch (tag) {
                             .timestamptz => return DataCell{ .tag = .date_with_time_zone, .value = .{ .date_with_time_zone = types.date.fromBinary(bytes) } },

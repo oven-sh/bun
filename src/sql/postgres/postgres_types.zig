@@ -345,7 +345,7 @@ pub const Tag = enum(short) {
                 return .timestamptz;
             }
 
-            if (tag.isTypedArray()) {
+            if (tag.isTypedArrayOrArrayBuffer()) {
                 if (tag == .Int32Array)
                     return .int4_array;
 

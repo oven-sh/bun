@@ -189,7 +189,7 @@ pub const HTMLRewriter = struct {
         const kind: ResponseKind = brk: {
             if (response_value.isString())
                 break :brk .string
-            else if (response_value.jsType().isTypedArray())
+            else if (response_value.jsType().isTypedArrayOrArrayBuffer())
                 break :brk .array_buffer
             else
                 break :brk .other;

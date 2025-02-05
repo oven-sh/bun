@@ -65,7 +65,7 @@ const TokenKind = enum {
     option,
     @"option-terminator",
 
-    const COUNT = @typeInfo(TokenKind).Enum.fields.len;
+    const COUNT = @typeInfo(TokenKind).@"enum".fields.len;
 };
 const Token = union(TokenKind) {
     positional: struct { index: u32, value: ValueRef },
@@ -652,7 +652,7 @@ pub fn parseArgs(
 
 comptime {
     const parseArgsFn = JSC.toJSHostFunction(parseArgs);
-    @export(parseArgsFn, .{ .name = "Bun__NodeUtil__jsParseArgs" });
+    @export(&parseArgsFn, .{ .name = "Bun__NodeUtil__jsParseArgs" });
 }
 
 pub fn parseArgsImpl(globalThis: *JSGlobalObject, config_obj: JSValue) bun.JSError!JSValue {

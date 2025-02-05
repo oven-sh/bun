@@ -7,7 +7,6 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
-const typeBaseName = @import("./meta.zig").typeBaseName;
 
 const TagSize = u15;
 const AddressableSize = u49;
@@ -24,7 +23,7 @@ pub const TaggedPointer = packed struct {
             return .{ ._ptr = 0, .data = data };
         }
 
-        if (comptime @typeInfo(Ptr) != .Pointer and Ptr != ?*anyopaque) {
+        if (comptime @typeInfo(Ptr) != .pointer and Ptr != ?*anyopaque) {
             @compileError(@typeName(Ptr) ++ " must be a ptr, received: " ++ @tagName(@typeInfo(Ptr)));
         }
 
@@ -74,7 +73,7 @@ pub fn TagTypeEnumWithTypeMap(comptime Types: anytype) struct {
     @memset(&typeMap, TypeMapT{ .value = 0, .ty = void, .name = "" });
 
     inline for (Types, 0..) |field, i| {
-        const name = comptime typeBaseName(@typeName(field));
+        const name = comptime @typeName(field);
         enumFields[i] = .{
             .name = name,
             .value = 1024 - i,
@@ -84,7 +83,7 @@ pub fn TagTypeEnumWithTypeMap(comptime Types: anytype) struct {
 
     return .{
         .tag_type = @Type(.{
-            .Enum = .{
+            .@"enum" = .{
                 .tag_type = TagSize,
                 .fields = &enumFields,
                 .decls = &.{},
@@ -106,7 +105,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
         pub const type_map: TypeMap(Types) = result.ty_map;
         repr: TaggedPointer,
 
-        pub const Null = .{ .repr = .{ ._ptr = 0, .data = 0 } };
+        pub const Null: @This() = .{ .repr = .{ ._ptr = 0, .data = 0 } };
 
         pub fn clear(this: *@This()) void {
             this.* = Null;
@@ -132,7 +131,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
 
         const This = @This();
         pub fn assert_type(comptime Type: type) void {
-            const name = comptime typeBaseName(@typeName(Type));
+            const name = comptime @typeName(Type);
             if (!comptime @hasField(Tag, name)) {
                 @compileError("TaggedPointerUnion does not have " ++ name ++ ".");
             }
@@ -163,7 +162,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
 
         pub inline fn is(this: This, comptime Type: type) bool {
             comptime assert_type(Type);
-            return this.repr.data == comptime @intFromEnum(@field(Tag, typeBaseName(@typeName(Type))));
+            return this.repr.data == comptime @intFromEnum(@field(Tag, @typeName(Type)));
         }
 
         pub fn set(this: *@This(), _ptr: anytype) void {
@@ -177,9 +176,9 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
         pub inline fn isValid(this: This) bool {
             return switch (this.repr.data) {
                 @intFromEnum(
-                    @field(Tag, typeBaseName(@typeName(Types[Types.len - 1]))),
+                    @field(Tag, @typeName(Types[Types.len - 1])),
                 )...@intFromEnum(
-                    @field(Tag, typeBaseName(@typeName(Types[0]))),
+                    @field(Tag, @typeName(Types[0])),
                 ) => true,
                 else => false,
             };
@@ -200,7 +199,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
 
         pub inline fn init(_ptr: anytype) @This() {
             const tyinfo = @typeInfo(@TypeOf(_ptr));
-            if (tyinfo != .Pointer) @compileError("Only pass pointers to TaggedPointerUnion.init(), you gave us a: " ++ @typeName(@TypeOf(_ptr)));
+            if (tyinfo != .pointer) @compileError("Only pass pointers to TaggedPointerUnion.init(), you gave us a: " ++ @typeName(@TypeOf(_ptr)));
 
             const Type = std.meta.Child(@TypeOf(_ptr));
             return initWithType(Type, _ptr);
@@ -208,8 +207,8 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
 
         pub inline fn initWithType(comptime Type: type, _ptr: anytype) @This() {
             const tyinfo = @typeInfo(@TypeOf(_ptr));
-            if (tyinfo != .Pointer) @compileError("Only pass pointers to TaggedPointerUnion.init(), you gave us a: " ++ @typeName(@TypeOf(_ptr)));
-            const name = comptime typeBaseName(@typeName(Type));
+            if (tyinfo != .pointer) @compileError("Only pass pointers to TaggedPointerUnion.init(), you gave us a: " ++ @typeName(@TypeOf(_ptr)));
+            const name = comptime @typeName(Type);
 
             // there will be a compiler error if the passed in type doesn't exist in the enum
             return This{ .repr = TaggedPointer.init(_ptr, @intFromEnum(@field(Tag, name))) };

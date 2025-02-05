@@ -1,6 +1,6 @@
-As of Bun v1.1.44, we've added initial support for bundling frontend apps directly in Bun's HTTP server: `Bun.serve()`. Run your frontend and backend in the same app with no extra steps.
+Using `Bun.serve()`'s `static` option, you can run your frontend and backend in the same app with no extra steps.
 
-To get started, import your HTML files and pass them to the `static` option in `Bun.serve()`.
+To get started, import HTML files and pass them to the `static` option in `Bun.serve()`.
 
 ```ts
 import dashboard from "./dashboard.html";
@@ -33,7 +33,7 @@ const server = Bun.serve({
   },
 });
 
-console.log(`Listening on ${server.url}`)
+console.log(`Listening on ${server.url}`);
 ```
 
 ```bash
@@ -211,6 +211,7 @@ For example, enable TailwindCSS on your routes by installing and adding the `bun
 ```sh
 $ bun add bun-plugin-tailwind
 ```
+
 ```toml#bunfig.toml
 [serve.static]
 plugins = ["bun-plugin-tailwind"]

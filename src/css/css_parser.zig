@@ -243,6 +243,7 @@ pub const Location = css_rules.Location;
 pub const Error = Err(ParserError);
 
 pub fn Result(comptime T: type) type {
+    @setEvalBranchQuota(1_000_000);
     return Maybe(T, ParseError(ParserError));
 }
 
@@ -271,11 +272,11 @@ pub fn DefineListShorthand(comptime T: type) type {
     return struct {};
 }
 
-pub fn DefineShorthand(comptime T: type, comptime property_name: PropertyIdTag) type {
+pub fn DefineShorthand(comptime T: type, comptime property_name: PropertyIdTag, comptime PropertyFieldMap: anytype) type {
     _ = property_name; // autofix
     // TODO: validate map, make sure each field is set
     // make sure each field is same index as in T
-    _ = T.PropertyFieldMap;
+    _ = PropertyFieldMap;
 
     return struct {
         /// Returns a shorthand from the longhand properties defined in the given declaration block.
@@ -527,9 +528,9 @@ pub fn DefineSizeShorthand(comptime T: type, comptime V: type) type {
 
 pub fn DeriveParse(comptime T: type) type {
     const tyinfo = @typeInfo(T);
-    const is_union_enum = tyinfo == .Union;
-    const enum_type = if (comptime is_union_enum) @typeInfo(tyinfo.Union.tag_type.?) else tyinfo;
-    const enum_actual_type = if (comptime is_union_enum) tyinfo.Union.tag_type.? else T;
+    const is_union_enum = tyinfo == .@"union";
+    const enum_type = if (comptime is_union_enum) @typeInfo(tyinfo.@"union".tag_type.?) else tyinfo;
+    const enum_actual_type = if (comptime is_union_enum) tyinfo.@"union".tag_type.? else T;
 
     const Map = bun.ComptimeEnumMap(enum_actual_type);
 
@@ -541,7 +542,7 @@ pub fn DeriveParse(comptime T: type) type {
                     var first_payload_index: ?usize = null;
                     var payload_count: usize = 0;
                     var void_count: usize = 0;
-                    for (tyinfo.Union.fields, 0..) |field, i| {
+                    for (tyinfo.@"union".fields, 0..) |field, i| {
                         if (field.type == void) {
                             void_count += 1;
                             if (first_void_index == null) first_void_index = i;
@@ -619,7 +620,7 @@ pub fn DeriveParse(comptime T: type) type {
         ) Result(T) {
             const last_payload_index = first_payload_index + payload_count - 1;
             if (comptime maybe_first_void_index == null) {
-                inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
+                inline for (tyinfo.@"union".fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
                     if (comptime (i == last_payload_index)) {
                         return .{ .result = switch (generic.parseFor(field.type)(input)) {
                             .result => |v| @unionInit(T, field.name, v),
@@ -637,7 +638,7 @@ pub fn DeriveParse(comptime T: type) type {
             const void_fields = bun.meta.EnumFields(T)[first_void_index .. first_void_index + void_count];
 
             if (comptime void_count == 1) {
-                const void_field = enum_type.Enum.fields[first_void_index];
+                const void_field = enum_type.@"enum".fields[first_void_index];
                 // The field is declared before the payload fields.
                 // So try to parse an ident matching the name of the field, then fallthrough
                 // to parsing the payload fields.
@@ -647,7 +648,7 @@ pub fn DeriveParse(comptime T: type) type {
                         return .{ .result = @enumFromInt(void_field.value) };
                     }
 
-                    inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
+                    inline for (tyinfo.@"union".fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
                         if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
                             return .{ .result = switch (generic.parseFor(field.type)(input)) {
                                 .result => |v| @unionInit(T, field.name, v),
@@ -659,7 +660,7 @@ pub fn DeriveParse(comptime T: type) type {
                         }
                     }
                 } else {
-                    inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
+                    inline for (tyinfo.@"union".fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
                         if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
                             return .{ .result = switch (generic.parseFor(field.type)(input)) {
                                 .result => |v| @unionInit(T, field.name, v),
@@ -692,7 +693,7 @@ pub fn DeriveParse(comptime T: type) type {
                     input.reset(&state);
                 }
 
-                inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
+                inline for (tyinfo.@"union".fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
                     if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
                         return .{ .result = switch (generic.parseFor(field.type)(input)) {
                             .result => |v| @unionInit(T, field.name, v),
@@ -704,7 +705,7 @@ pub fn DeriveParse(comptime T: type) type {
                     }
                 }
             } else if (comptime first_void_index > first_payload_index) {
-                inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
+                inline for (tyinfo.@"union".fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
                     if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
                         return .{ .result = switch (generic.parseFor(field.type)(input)) {
                             .result => |v| @unionInit(T, field.name, v),
@@ -742,7 +743,7 @@ pub fn DeriveParse(comptime T: type) type {
         //     comptime payload_count: usize,
         // ) Result(T) {
         //     const last_payload_index = first_payload_index + payload_count - 1;
-        //     inline for (tyinfo.Union.fields[first_payload_index..], first_payload_index..) |field, i| {
+        //     inline for (tyinfo.@"union".fields[first_payload_index..], first_payload_index..) |field, i| {
         //         if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
         //             return generic.parseFor(field.type)(input);
         //         }
@@ -773,24 +774,24 @@ pub fn DeriveParse(comptime T: type) type {
 pub fn DeriveToCss(comptime T: type) type {
     const tyinfo = @typeInfo(T);
     const enum_fields = bun.meta.EnumFields(T);
-    const is_enum_or_union_enum = tyinfo == .Union or tyinfo == .Enum;
+    const is_enum_or_union_enum = tyinfo == .@"union" or tyinfo == .@"enum";
 
     return struct {
         pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
             if (comptime is_enum_or_union_enum) {
                 inline for (std.meta.fields(T), 0..) |field, i| {
                     if (@intFromEnum(this.*) == enum_fields[i].value) {
-                        if (comptime tyinfo == .Enum or field.type == void) {
+                        if (comptime tyinfo == .@"enum" or field.type == void) {
                             return dest.writeStr(enum_fields[i].name);
                         } else if (comptime generic.hasToCss(field.type)) {
                             return generic.toCss(field.type, &@field(this, field.name), W, dest);
-                        } else if (@hasDecl(field.type, "__generateToCss") and @typeInfo(field.type) == .Struct) {
+                        } else if (@hasDecl(field.type, "__generateToCss") and @typeInfo(field.type) == .@"struct") {
                             const variant_fields = std.meta.fields(field.type);
                             if (variant_fields.len > 1) {
                                 const last = variant_fields.len - 1;
                                 inline for (variant_fields, 0..) |variant_field, j| {
                                     // Unwrap it from the optional
-                                    if (@typeInfo(variant_field.type) == .Optional) {
+                                    if (@typeInfo(variant_field.type) == .optional) {
                                         if (@field(@field(this, field.name), variant_field.name)) |*value| {
                                             try value.toCss(W, dest);
                                         }
@@ -899,10 +900,7 @@ pub fn DefineEnumProperty(comptime T: type) type {
     };
 }
 
-pub fn DeriveValueType(comptime T: type) type {
-    _ = @typeInfo(T).Enum;
-
-    const ValueTypeMap = T.ValueTypeMap;
+pub fn DeriveValueType(comptime T: type, comptime ValueTypeMap: anytype) type {
     const field_values: []const MediaFeatureType = field_values: {
         const fields = std.meta.fields(T);
         var mapping: [fields.len]MediaFeatureType = undefined;
@@ -927,7 +925,7 @@ pub fn DeriveValueType(comptime T: type) type {
 }
 
 fn consume_until_end_of_block(block_type: BlockType, tokenizer: *Tokenizer) void {
-    @setCold(true);
+    @branchHint(.cold);
     var stack = SmallList(BlockType, 16){};
     stack.appendAssumeCapacity(block_type);
 
@@ -4086,7 +4084,7 @@ pub const Delimiters = packed struct(u8) {
 
     const NONE: Delimiters = .{};
 
-    pub fn getDelimiter(comptime tag: @TypeOf(.EnumLiteral)) Delimiters {
+    pub fn getDelimiter(comptime tag: @TypeOf(.enum_literal)) Delimiters {
         var empty = Delimiters{};
         @field(empty, @tagName(tag)) = true;
         return empty;
@@ -4440,7 +4438,7 @@ const Tokenizer = struct {
                     // Any other valid case here already resulted in IDHash.
                     '0'...'9', '-' => true,
                     else => false,
-                }) break :brk .{ .hash = this.consumeName() };
+                }) break :brk .{ .unrestrictedhash = this.consumeName() };
                 break :brk .{ .delim = '#' };
             },
             '$' => brk: {
@@ -5012,7 +5010,7 @@ const Tokenizer = struct {
             // todo_stuff.match_byte
             switch (this.nextByteUnchecked()) {
                 ' ', '\t', '\n', '\r', FORM_FEED_BYTE => {
-                    var value = .{ .borrowed = this.sliceFrom(start_pos) };
+                    var value: CopyOnWriteStr = .{ .borrowed = this.sliceFrom(start_pos) };
                     return this.consumeUrlEnd(start_pos, &value);
                 },
                 ')' => {
@@ -5475,7 +5473,7 @@ const TokenKind = enum {
     /// A [`<hash-token>`](https://drafts.csswg.org/css-syntax/#hash-token-diagram) with the type flag set to "unrestricted"
     ///
     /// The value does not include the `#` marker.
-    hash,
+    unrestrictedhash,
 
     /// A [`<hash-token>`](https://drafts.csswg.org/css-syntax/#hash-token-diagram) with the type flag set to "id"
     ///
@@ -5599,7 +5597,7 @@ pub const Token = union(TokenKind) {
     /// A [`<hash-token>`](https://drafts.csswg.org/css-syntax/#hash-token-diagram) with the type flag set to "unrestricted"
     ///
     /// The value does not include the `#` marker.
-    hash: []const u8,
+    unrestrictedhash: []const u8,
 
     /// A [`<hash-token>`](https://drafts.csswg.org/css-syntax/#hash-token-diagram) with the type flag set to "id"
     ///
@@ -5718,7 +5716,7 @@ pub const Token = union(TokenKind) {
             inline .ident,
             .function,
             .at_keyword,
-            .hash,
+            .unrestrictedhash,
             .idhash,
             .quoted_string,
             .bad_string,
@@ -5765,13 +5763,9 @@ pub const Token = union(TokenKind) {
                 try writer.writeAll("@");
                 try serializer.serializeIdentifier(this.at_keyword, writer);
             },
-            .hash => {
+            .unrestrictedhash, .idhash => |v| {
                 try writer.writeAll("#");
-                try serializer.serializeName(this.hash, writer);
-            },
-            .idhash => {
-                try writer.writeAll("#");
-                try serializer.serializeName(this.idhash, writer);
+                try serializer.serializeName(v, writer);
             },
             .quoted_string => |x| {
                 try serializer.serializeName(x, writer);
@@ -5864,7 +5858,7 @@ pub const Token = union(TokenKind) {
                 try dest.writeStr("@");
                 return serializer.serializeIdentifier(value, dest) catch return dest.addFmtError();
             },
-            .hash => |value| {
+            .unrestrictedhash => |value| {
                 try dest.writeStr("#");
                 return serializer.serializeName(value, dest) catch return dest.addFmtError();
             },

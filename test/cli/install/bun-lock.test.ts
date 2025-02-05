@@ -1,6 +1,6 @@
 import { spawn, write, file } from "bun";
 import { expect, it, beforeAll, afterAll } from "bun:test";
-import { access, copyFile, open, writeFile, exists, cp } from "fs/promises";
+import { access, copyFile, open, writeFile, exists, cp, rm } from "fs/promises";
 import { bunExe, bunEnv as env, isWindows, VerdaccioRegistry, runBunInstall } from "harness";
 import { join } from "path";
 
@@ -208,4 +208,68 @@ it("should convert a binary lockfile with invalid optional peers", async () => {
 
   expect(await exited).toBe(0);
   expect(await file(join(packageDir, "bun.lock")).text()).toBe(firstLockfile);
+});
+
+it("should not deduplicate bundled packages with un-bundled packages", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "bundled-deps",
+        dependencies: {
+          "debug-1": "4.4.0",
+          "npm-1": "10.9.2",
+        },
+      }),
+    ),
+  ]);
+
+  let { exited, stdout } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    env,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+
+  expect(await exited).toBe(0);
+
+  async function checkModules() {
+    const res = await Promise.all([
+      exists(join(packageDir, "node_modules/debug-1")),
+      exists(join(packageDir, "node_modules/npm-1")),
+      exists(join(packageDir, "node_modules/ms-1")),
+    ]);
+    expect(res).toEqual([true, true, true]);
+  }
+
+  await checkModules();
+
+  const out1 = (await Bun.readableStreamToText(stdout))
+    .replaceAll(/\s*\[[0-9\.]+m?s\]\s*$/g, "")
+    .split(/\r?\n/)
+    .slice(1);
+  expect(out1).toMatchSnapshot();
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+  // running install again will install all packages to node_modules
+  ({ exited, stdout } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    env,
+    stdout: "pipe",
+    stderr: "inherit",
+  }));
+
+  expect(await exited).toBe(0);
+
+  await checkModules();
+  const out2 = (await Bun.readableStreamToText(stdout))
+    .replaceAll(/\s*\[[0-9\.]+m?s\]\s*$/g, "")
+    .split(/\r?\n/)
+    .slice(1);
+  expect(out2).toEqual(out1);
 });

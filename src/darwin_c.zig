@@ -66,7 +66,7 @@ pub const COPYFILE_CONTINUE = @as(c_int, 0);
 pub const COPYFILE_SKIP = @as(c_int, 1);
 pub const COPYFILE_QUIT = @as(c_int, 2);
 
-pub extern "C" fn memmem(haystack: [*]const u8, haystacklen: usize, needle: [*]const u8, needlelen: usize) ?[*]const u8;
+pub extern "c" fn memmem(haystack: [*]const u8, haystacklen: usize, needle: [*]const u8, needlelen: usize) ?[*]const u8;
 
 // int clonefileat(int src_dirfd, const char * src, int dst_dirfd, const char * dst, int flags);
 pub extern "c" fn clonefileat(c_int, [*:0]const u8, c_int, [*:0]const u8, uint32_t: c_int) c_int;
@@ -150,9 +150,9 @@ pub const stat = blk: {
 //                 else => Kind.Unknown,
 //             },
 //         },
-//         .atime = @as(i128, atime.tv_sec) * std.time.ns_per_s + atime.tv_nsec,
-//         .mtime = @as(i128, mtime.tv_sec) * std.time.ns_per_s + mtime.tv_nsec,
-//         .ctime = @as(i128, ctime.tv_sec) * std.time.ns_per_s + ctime.tv_nsec,
+//         .atime = @as(i128, atime.sec) * std.time.ns_per_s + atime.nsec,
+//         .mtime = @as(i128, mtime.sec) * std.time.ns_per_s + mtime.nsec,
+//         .ctime = @as(i128, ctime.sec) * std.time.ns_per_s + ctime.nsec,
 //     };
 // }
 
@@ -487,7 +487,7 @@ pub fn getSystemUptime() u64 {
         else => return 0,
     };
 
-    return @intCast(std.time.timestamp() - boot_time.tv_sec);
+    return @intCast(std.time.timestamp() - boot_time.sec);
 }
 
 pub fn getSystemLoadavg() [3]f64 {

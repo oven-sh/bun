@@ -427,7 +427,7 @@ pub const MaskBorder = struct {
     /// How the mask image is interpreted.
     mode: MaskBorderMode,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"mask-border");
+    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"mask-border", PropertyFieldMap);
 
     pub const PropertyFieldMap = .{
         .source = css.PropertyIdTag.@"mask-border-source",

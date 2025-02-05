@@ -238,20 +238,11 @@ pub const FDImpl = packed struct {
         const this_fmt = if (environment.isDebug) std.fmt.bufPrint(&buf, "{}", .{this}) catch unreachable;
 
         const result: ?bun.sys.Error = switch (environment.os) {
-            .linux => result: {
+            .linux, .mac => result: {
                 const fd = this.encode();
                 bun.assert(fd != bun.invalid_fd);
                 bun.assert(fd.cast() >= 0);
                 break :result switch (bun.C.getErrno(bun.sys.syscall.close(fd.cast()))) {
-                    .BADF => bun.sys.Error{ .errno = @intFromEnum(posix.E.BADF), .syscall = .close, .fd = fd },
-                    else => null,
-                };
-            },
-            .mac => result: {
-                const fd = this.encode();
-                bun.assert(fd != bun.invalid_fd);
-                bun.assert(fd.cast() >= 0);
-                break :result switch (bun.C.getErrno(bun.sys.syscall.@"close$NOCANCEL"(fd.cast()))) {
                     .BADF => bun.sys.Error{ .errno = @intFromEnum(posix.E.BADF), .syscall = .close, .fd = fd },
                     else => null,
                 };

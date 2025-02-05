@@ -77,7 +77,7 @@ pub const Lexer = struct {
     }
 
     pub fn syntaxError(self: *Lexer) !void {
-        @setCold(true);
+        @branchHint(.cold);
 
         // Only add this if there is not already an error.
         // It is possible that there is a more descriptive error already emitted.
@@ -88,7 +88,7 @@ pub const Lexer = struct {
     }
 
     pub fn addError(self: *Lexer, _loc: usize, comptime format: []const u8, args: anytype) void {
-        @setCold(true);
+        @branchHint(.cold);
 
         var __loc = logger.usize2Loc(_loc);
         if (__loc.eql(self.prev_error_loc)) {
@@ -109,20 +109,20 @@ pub const Lexer = struct {
     }
 
     pub fn addDefaultError(self: *Lexer, msg: []const u8) !void {
-        @setCold(true);
+        @branchHint(.cold);
 
         self.addError(self.start, "{s}", .{msg});
         return Error.SyntaxError;
     }
 
     pub fn addSyntaxError(self: *Lexer, _loc: usize, comptime fmt: []const u8, args: anytype) !void {
-        @setCold(true);
+        @branchHint(.cold);
         self.addError(_loc, fmt, args);
         return Error.SyntaxError;
     }
 
     pub fn addRangeError(self: *Lexer, r: logger.Range, comptime format: []const u8, args: anytype) !void {
-        @setCold(true);
+        @branchHint(.cold);
 
         if (self.prev_error_loc.eql(r.loc)) {
             return;

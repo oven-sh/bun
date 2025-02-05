@@ -38,7 +38,7 @@ else()
   set(ZIG_FILENAME ${ZIG_NAME}.tar.xz)
 endif()
 
-set(ZIG_DOWNLOAD_URL https://ziglang.org/download/${ZIG_VERSION}/${ZIG_FILENAME})
+set(ZIG_DOWNLOAD_URL https://bun-ci-assets.bun.sh/${ZIG_FILENAME})
 
 execute_process(
   COMMAND

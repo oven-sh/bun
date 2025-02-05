@@ -60,7 +60,7 @@ const kAbortController = Symbol.for("kAbortController");
 const statusMessageSymbol = Symbol("statusMessage");
 const kInternalSocketData = Symbol.for("::bunternal::");
 const serverSymbol = Symbol.for("::bunternal::");
-
+const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
 
 const kEmptyObject = Object.freeze(Object.create(null));
@@ -1826,6 +1826,7 @@ function ServerResponse(req, options) {
   this.sendDate = true;
   this._sent100 = false;
   this[headerStateSymbol] = NodeHTTPHeaderState.none;
+  this[kPendingCallbacks] = [];
 
   // this is matching node's behaviour
   // https://github.com/nodejs/node/blob/cf8c6994e0f764af02da4fa70bc5962142181bf3/lib/_http_server.js#L192
@@ -1915,6 +1916,7 @@ const ServerResponsePrototype = {
       this[finishedSymbol] = this.finished = true;
 
       this.emit("prefinish");
+      this._flushPendingCallbacks();
 
       if (callback) {
         process.nextTick(
@@ -1987,13 +1989,16 @@ const ServerResponsePrototype = {
     }
 
     if (result < 0) {
-      handle.onwritable = callback
-        ? ServerResponsePrototypeOnWritable.bind(this, callback)
-        : ServerResponsePrototypeOnWritable.bind(this);
+      if (callback) {
+        // The write was buffered due to backpressure.
+        // We need to defer the callback until the write actually goes through.
+        this[kPendingCallbacks].push(callback);
+      }
       return false;
     }
 
-    if (result > 0) {
+    if (result >= 0) {
+      this._flushPendingCallbacks();
       if (callback) {
         process.nextTick(callback);
       }
@@ -2001,6 +2006,22 @@ const ServerResponsePrototype = {
     }
 
     return true;
+  },
+
+  _flushPendingCallbacks() {
+    const originalLength = this[kPendingCallbacks].length;
+
+    for (let i = 0; i < originalLength; ++i) {
+      process.nextTick(this[kPendingCallbacks][i]);
+    }
+
+    if (this[kPendingCallbacks].length == originalLength) {
+      // If the array wasn't somehow appended to, just set it to an empty array
+      this[kPendingCallbacks] = [];
+    } else {
+      // Otherwise, splice it.
+      this[kPendingCallbacks].splice(0, originalLength);
+    }
   },
 
   _finish() {
@@ -2426,7 +2447,7 @@ function ClientRequest(input, options, cb) {
         return this;
       }
 
-      write_(chunk, encoding, callback);
+      write_(chunk, encoding, null);
     } else if (this[finishedSymbol]) {
       if (callback) {
         if (!this.writableFinished) {

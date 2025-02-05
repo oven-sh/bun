@@ -1583,6 +1583,20 @@ const OutgoingMessagePrototype = {
     return getHeader(this[headersSymbol], name);
   },
 
+  // Overridden by ClientRequest and ServerResponse; this version will be called only if the user constructs OutgoingMessage directly.
+  write(chunk, encoding, callback) {
+    if ($isCallable(chunk)) {
+      callback = chunk;
+      chunk = undefined;
+    } else if ($isCallable(encoding)) {
+      callback = encoding;
+    } else if (!$isCallable(callback)) {
+      callback = undefined;
+    }
+    hasServerResponseFinished(this, chunk, callback);
+    return false;
+  },
+
   getHeaderNames() {
     var headers = this[headersSymbol];
     if (!headers) return [];

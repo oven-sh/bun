@@ -990,6 +990,14 @@ pub const Symbol = struct {
     /// code. But it should always be non-zero when the symbol is used.
     use_count_estimate: u32 = 0,
 
+    /// The number of times this symbol is used where it could be referring to a
+    /// typescript type. Examples:
+    /// - T `export { T }`
+    /// - T in `@Decorate() myField?: T` when using emitDecoratorMetadata
+    /// If this symbol came from an import statement, this is used to determine
+    /// if an error should be emitted if the import is not found.
+    use_count_as_type: u32 = 0,
+
     /// This is for generating cross-chunk imports and exports for code splitting.
     ///
     /// Do not use this directly. Use `chunkIndex()` instead.
@@ -7052,6 +7060,7 @@ pub const Ast = struct {
     /// We use this with `commonjs_at_runtime` to re-export CommonJS
     has_commonjs_export_names: bool = false,
     import_meta_ref: Ref = Ref.None,
+    is_from_typescript: bool = false,
 
     pub const CommonJSNamedExport = struct {
         loc_ref: LocRef,
@@ -7227,6 +7236,7 @@ pub const BundledAst = struct {
             .has_lazy_export = this.flags.has_lazy_export,
             .commonjs_module_exports_assigned_deoptimized = this.flags.commonjs_module_exports_assigned_deoptimized,
             .directive = if (this.flags.has_explicit_use_strict_directive) "use strict" else null,
+            .is_from_typescript = false,
         };
     }
 

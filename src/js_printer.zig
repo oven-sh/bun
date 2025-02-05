@@ -1039,7 +1039,7 @@ fn NewPrinter(
                     printInternalBunImport(p, import, @TypeOf("globalThis.Bun.jest(__filename)"), "globalThis.Bun.jest(__filename)");
                 },
                 else => {
-                    if (p.moduleInfo()) |mi| mi.contains_import_meta = true;
+                    if (p.moduleInfo()) |mi| mi.flags.contains_import_meta = true;
                     printInternalBunImport(p, import, @TypeOf("globalThis.Bun.jest(import.meta.path)"), "globalThis.Bun.jest(import.meta.path)");
                 },
             }
@@ -1742,14 +1742,14 @@ fn NewPrinter(
                             if (module_type == .cjs) {
                                 p.print("Promise.resolve(globalThis.Bun.jest(__filename))");
                             } else {
-                                if (p.moduleInfo()) |mi| mi.contains_import_meta = true;
+                                if (p.moduleInfo()) |mi| mi.flags.contains_import_meta = true;
                                 p.print("Promise.resolve(globalThis.Bun.jest(import.meta.path))");
                             }
                         } else if (record.kind == .require) {
                             if (module_type == .cjs) {
                                 p.print("globalThis.Bun.jest(__filename)");
                             } else {
-                                if (p.moduleInfo()) |mi| mi.contains_import_meta = true;
+                                if (p.moduleInfo()) |mi| mi.flags.contains_import_meta = true;
                                 p.print("globalThis.Bun.jest(import.meta.path)");
                             }
                         }
@@ -2106,7 +2106,7 @@ fn NewPrinter(
                         p.print(".importMeta");
                     } else if (!p.options.import_meta_ref.isValid()) {
                         // Most of the time, leave it in there
-                        if (p.moduleInfo()) |mi| mi.contains_import_meta = true;
+                        if (p.moduleInfo()) |mi| mi.flags.contains_import_meta = true;
                         p.print("import.meta");
                     } else {
                         // Note: The bundler will not hit this code path. The bundler will replace
@@ -2132,7 +2132,7 @@ fn NewPrinter(
                             p.printSpaceBeforeIdentifier();
                             p.addSourceMapping(expr.loc);
                         }
-                        if (p.moduleInfo()) |mi| mi.contains_import_meta = true;
+                        if (p.moduleInfo()) |mi| mi.flags.contains_import_meta = true;
                         p.print("import.meta.main");
                     } else {
                         bun.debugAssert(p.options.module_type != .internal_bake_dev);
@@ -4557,7 +4557,7 @@ fn NewPrinter(
 
                         if (p.moduleInfo()) |mi| {
                             try mi.addVar(local_name, .lexical);
-                            try mi.addImportInfoSingle(import_record_path, "default", local_name);
+                            try mi.addImportInfoSingle(import_record_path, "default", local_name, false);
                         }
                     }
 
@@ -4598,8 +4598,9 @@ fn NewPrinter(
                             }
 
                             if (p.moduleInfo()) |mi| {
+                                const symbol = p.symbols().get(item.name.ref.?).?;
                                 try mi.addVar(local_name, .lexical);
-                                try mi.addImportInfoSingle(import_record_path, item.alias, local_name);
+                                try mi.addImportInfoSingle(import_record_path, item.alias, local_name, symbol.use_count_as_type > 0 and symbol.use_count_estimate <= symbol.use_count_as_type);
                             }
                         }
 
@@ -6112,7 +6113,7 @@ pub fn printAst(
         //
         // This is never a symbol collision because `uses_require_ref` means
         // `require` must be an unbound variable.
-        if (printer.moduleInfo()) |mi| mi.contains_import_meta = true;
+        if (printer.moduleInfo()) |mi| mi.flags.contains_import_meta = true;
         printer.print("var {require}=import.meta;");
     }
 

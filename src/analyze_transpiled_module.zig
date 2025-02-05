@@ -10,6 +10,8 @@ pub const RecordKind = enum(u8) {
     lexical_variable,
     /// module_name, import_name, local_name
     import_info_single,
+    /// module_name, import_name, local_name
+    import_info_single_type_script,
     /// module_name, import_name = '*', local_name
     import_info_namespace,
     /// export_name, import_name, module_name
@@ -26,6 +28,7 @@ pub const RecordKind = enum(u8) {
         return switch (record) {
             .declared_variable, .lexical_variable => 1,
             .import_info_single => 3,
+            .import_info_single_type_script => 3,
             .import_info_namespace => 3,
             .export_info_indirect => 3,
             .export_info_local => 3,
@@ -36,6 +39,11 @@ pub const RecordKind = enum(u8) {
     }
 };
 
+const Flags = packed struct(u8) {
+    contains_import_meta: bool,
+    is_typescript: bool,
+    _padding: u6 = 0,
+};
 pub const ModuleInfoDeserialized = struct {
     strings_buf: []const u8,
     strings_lens: []align(1) const u32,
@@ -43,7 +51,7 @@ pub const ModuleInfoDeserialized = struct {
     requested_modules_values: []align(1) const ModuleInfo.FetchParameters,
     buffer: []align(1) const StringID,
     record_kinds: []align(1) const RecordKind,
-    contains_import_meta: bool,
+    flags: Flags,
     owner: union(enum) {
         module_info,
         allocated_slice: struct {
@@ -92,7 +100,7 @@ pub const ModuleInfoDeserialized = struct {
         const requested_modules_len = std.mem.readInt(u32, try eatC(&rem, 4), .little);
         const requested_modules_keys = std.mem.bytesAsSlice(StringID, try eat(&rem, requested_modules_len * @sizeOf(StringID)));
         const requested_modules_values = std.mem.bytesAsSlice(ModuleInfo.FetchParameters, try eat(&rem, requested_modules_len * @sizeOf(ModuleInfo.FetchParameters)));
-        const contains_import_meta = (try eatC(&rem, 1))[0] != 0;
+        const flags: Flags = @bitCast((try eatC(&rem, 1))[0]);
         const strings_len = std.mem.readInt(u32, try eatC(&rem, 4), .little);
         const strings_lens = std.mem.bytesAsSlice(u32, try eat(&rem, strings_len * @sizeOf(u32)));
         const strings_buf = rem;
@@ -104,7 +112,7 @@ pub const ModuleInfoDeserialized = struct {
             .requested_modules_values = requested_modules_values,
             .buffer = buffer,
             .record_kinds = record_kinds,
-            .contains_import_meta = contains_import_meta,
+            .flags = flags,
             .owner = .{ .allocated_slice = .{
                 .slice = source,
                 .allocator = gpa,
@@ -122,7 +130,7 @@ pub const ModuleInfoDeserialized = struct {
         try writer.writeAll(std.mem.sliceAsBytes(self.requested_modules_keys));
         try writer.writeAll(std.mem.sliceAsBytes(self.requested_modules_values));
 
-        try writer.writeInt(u8, @intFromBool(self.contains_import_meta), .little);
+        try writer.writeInt(u8, @bitCast(self.flags), .little);
 
         try writer.writeInt(u32, @truncate(self.strings_lens.len), .little);
         try writer.writeAll(std.mem.sliceAsBytes(self.strings_lens));
@@ -154,8 +162,8 @@ pub const ModuleInfo = struct {
     requested_modules: std.AutoArrayHashMap(StringID, FetchParameters),
     buffer: std.ArrayList(StringID),
     record_kinds: std.ArrayList(RecordKind),
+    flags: Flags,
     exported_names: std.AutoArrayHashMapUnmanaged(StringID, void),
-    contains_import_meta: bool,
     finalized: bool = false,
 
     _deserialized: ModuleInfoDeserialized = undefined,
@@ -196,8 +204,8 @@ pub const ModuleInfo = struct {
     pub fn addLexicalVariable(self: *ModuleInfo, id: []const u8) !void {
         try self._addRecord(.lexical_variable, &.{try self.str(id)});
     }
-    pub fn addImportInfoSingle(self: *ModuleInfo, module_name: []const u8, import_name: []const u8, local_name: []const u8) !void {
-        try self._addRecord(.import_info_single, &.{ try self.str(module_name), try self.str(import_name), try self.str(local_name) });
+    pub fn addImportInfoSingle(self: *ModuleInfo, module_name: []const u8, import_name: []const u8, local_name: []const u8, only_used_as_type: bool) !void {
+        try self._addRecord(if (only_used_as_type) .import_info_single_type_script else .import_info_single, &.{ try self.str(module_name), try self.str(import_name), try self.str(local_name) });
     }
     pub fn addImportInfoNamespace(self: *ModuleInfo, module_name: []const u8, local_name: []const u8) !void {
         try self._addRecord(.import_info_namespace, &.{ try self.str(module_name), try self.str("*"), try self.str(local_name) });
@@ -226,12 +234,12 @@ pub const ModuleInfo = struct {
         return false;
     }
 
-    pub fn create(gpa: std.mem.Allocator) !*ModuleInfo {
+    pub fn create(gpa: std.mem.Allocator, is_typescript: bool) !*ModuleInfo {
         const res = try gpa.create(ModuleInfo);
-        res.* = ModuleInfo.init(gpa);
+        res.* = ModuleInfo.init(gpa, is_typescript);
         return res;
     }
-    fn init(allocator: std.mem.Allocator) ModuleInfo {
+    fn init(allocator: std.mem.Allocator, is_typescript: bool) ModuleInfo {
         return .{
             .gpa = allocator,
             .strings_map = .{},
@@ -241,7 +249,7 @@ pub const ModuleInfo = struct {
             .requested_modules = std.AutoArrayHashMap(StringID, FetchParameters).init(allocator),
             .buffer = std.ArrayList(StringID).init(allocator),
             .record_kinds = std.ArrayList(RecordKind).init(allocator),
-            .contains_import_meta = false,
+            .flags = .{ .contains_import_meta = false, .is_typescript = is_typescript },
         };
     }
     fn deinit(self: *ModuleInfo) void {
@@ -288,7 +296,7 @@ pub const ModuleInfo = struct {
         {
             var i: usize = 0;
             for (self.record_kinds.items) |k| {
-                if (k == .import_info_single) {
+                if (k == .import_info_single or k == .import_info_single_type_script) {
                     try local_name_to_module_name.put(self.buffer.items[i + 2], .{ .module_name = self.buffer.items[i], .import_name = self.buffer.items[i + 1] });
                 }
                 i += k.len() catch unreachable;
@@ -316,7 +324,7 @@ pub const ModuleInfo = struct {
             .requested_modules_values = self.requested_modules.values(),
             .buffer = self.buffer.items,
             .record_kinds = self.record_kinds.items,
-            .contains_import_meta = self.contains_import_meta,
+            .flags = self.flags,
             .owner = .module_info,
         };
 
@@ -371,14 +379,14 @@ export fn zig__ModuleInfoDeserialized__toJSModuleRecord(
             switch (k) {
                 .declared_variable => declared_variables.add(identifiers, res.buffer[i]),
                 .lexical_variable => lexical_variables.add(identifiers, res.buffer[i]),
-                .import_info_single, .import_info_namespace, .export_info_indirect, .export_info_local, .export_info_namespace, .export_info_star => {},
+                .import_info_single, .import_info_single_type_script, .import_info_namespace, .export_info_indirect, .export_info_local, .export_info_namespace, .export_info_star => {},
                 else => return null,
             }
             i += k.len() catch unreachable; // handled above
         }
     }
 
-    const module_record = JSModuleRecord.create(globalObject, vm, module_key, source_code, declared_variables, lexical_variables, res.contains_import_meta);
+    const module_record = JSModuleRecord.create(globalObject, vm, module_key, source_code, declared_variables, lexical_variables, res.flags.contains_import_meta, res.flags.is_typescript);
 
     for (res.requested_modules_keys, res.requested_modules_values) |reqk, reqv| {
         switch (reqv) {
@@ -397,6 +405,7 @@ export fn zig__ModuleInfoDeserialized__toJSModuleRecord(
             switch (k) {
                 .declared_variable, .lexical_variable => {},
                 .import_info_single => module_record.addImportEntrySingle(identifiers, res.buffer[i + 1], res.buffer[i + 2], res.buffer[i]),
+                .import_info_single_type_script => module_record.addImportEntrySingleTypeScript(identifiers, res.buffer[i + 1], res.buffer[i + 2], res.buffer[i]),
                 .import_info_namespace => module_record.addImportEntryNamespace(identifiers, res.buffer[i + 1], res.buffer[i + 2], res.buffer[i]),
                 .export_info_indirect => module_record.addIndirectExport(identifiers, res.buffer[i + 0], res.buffer[i + 1], res.buffer[i + 2]),
                 .export_info_local => module_record.addLocalExport(identifiers, res.buffer[i], res.buffer[i + 1]),
@@ -436,7 +445,7 @@ const IdentifierArray = opaque {
 };
 const SourceCode = opaque {};
 const JSModuleRecord = opaque {
-    extern fn JSC_JSModuleRecord__create(global_object: *bun.JSC.JSGlobalObject, vm: *bun.JSC.VM, module_key: *const IdentifierArray, source_code: *const SourceCode, declared_variables: *VariableEnvironment, lexical_variables: *VariableEnvironment, has_import_meta: bool) *JSModuleRecord;
+    extern fn JSC_JSModuleRecord__create(global_object: *bun.JSC.JSGlobalObject, vm: *bun.JSC.VM, module_key: *const IdentifierArray, source_code: *const SourceCode, declared_variables: *VariableEnvironment, lexical_variables: *VariableEnvironment, has_import_meta: bool, is_typescript: bool) *JSModuleRecord;
     pub const create = JSC_JSModuleRecord__create;
 
     extern fn JSC_JSModuleRecord__declaredVariables(module_record: *JSModuleRecord) *VariableEnvironment;
@@ -466,6 +475,13 @@ const JSModuleRecord = opaque {
 
     extern fn JSC_JSModuleRecord__addImportEntrySingle(module_record: *JSModuleRecord, identifier_array: *IdentifierArray, import_name: StringID, local_name: StringID, module_name: StringID) void;
     pub const addImportEntrySingle = JSC_JSModuleRecord__addImportEntrySingle;
+    extern fn JSC_JSModuleRecord__addImportEntrySingleTypeScript(module_record: *JSModuleRecord, identifier_array: *IdentifierArray, import_name: StringID, local_name: StringID, module_name: StringID) void;
+    pub const addImportEntrySingleTypeScript = JSC_JSModuleRecord__addImportEntrySingleTypeScript;
     extern fn JSC_JSModuleRecord__addImportEntryNamespace(module_record: *JSModuleRecord, identifier_array: *IdentifierArray, import_name: StringID, local_name: StringID, module_name: StringID) void;
     pub const addImportEntryNamespace = JSC_JSModuleRecord__addImportEntryNamespace;
 };
+
+export fn zig_log(msg: [*:0]const u8) void {
+    const stderr = std.io.getStdErr().writer();
+    stderr.print("{s}\n", .{std.mem.span(msg)}) catch {};
+}

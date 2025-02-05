@@ -96,9 +96,11 @@ extern "C" VariableEnvironment* JSC_JSModuleRecord__lexicalVariables(JSModuleRec
     return &moduleRecord->m_lexicalVariables;
 }
 
-extern "C" JSModuleRecord* JSC_JSModuleRecord__create(JSGlobalObject* globalObject, VM& vm, const Identifier* moduleKey, const SourceCode& sourceCode, const VariableEnvironment& declaredVariables, const VariableEnvironment& lexicalVariables, bool hasImportMeta)
+extern "C" JSModuleRecord* JSC_JSModuleRecord__create(JSGlobalObject* globalObject, VM& vm, const Identifier* moduleKey, const SourceCode& sourceCode, const VariableEnvironment& declaredVariables, const VariableEnvironment& lexicalVariables, bool hasImportMeta, bool isTypescript)
 {
-    return JSModuleRecord::create(globalObject, vm, globalObject->moduleRecordStructure(), moduleKey[0], sourceCode, declaredVariables, lexicalVariables, hasImportMeta ? ImportMetaFeature : 0);
+    JSModuleRecord* result = JSModuleRecord::create(globalObject, vm, globalObject->moduleRecordStructure(), moduleKey[0], sourceCode, declaredVariables, lexicalVariables, hasImportMeta ? ImportMetaFeature : 0);
+    result->m_isTypeScript = isTypescript;
+    return result;
 }
 
 extern "C" void JSC_JSModuleRecord__addIndirectExport(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t exportName, uint32_t importName, uint32_t moduleName)
@@ -147,6 +149,15 @@ extern "C" void JSC_JSModuleRecord__addImportEntrySingle(JSModuleRecord* moduleR
 {
     moduleRecord->addImportEntry(JSModuleRecord::ImportEntry {
         .type = JSModuleRecord::ImportEntryType::Single,
+        .moduleRequest = identifierArray[moduleName],
+        .importName = identifierArray[importName],
+        .localName = identifierArray[localName],
+    });
+}
+extern "C" void JSC_JSModuleRecord__addImportEntrySingleTypeScript(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t importName, uint32_t localName, uint32_t moduleName)
+{
+    moduleRecord->addImportEntry(JSModuleRecord::ImportEntry {
+        .type = JSModuleRecord::ImportEntryType::SingleTypeScript,
         .moduleRequest = identifierArray[moduleName],
         .importName = identifierArray[importName],
         .localName = identifierArray[localName],

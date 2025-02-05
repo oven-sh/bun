@@ -657,7 +657,7 @@ pub const RuntimeTranspilerStore = struct {
             printer.ctx.reset();
 
             const is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs;
-            const module_info: ?*ModuleInfo = if (is_commonjs_module) null else ModuleInfo.create(bun.default_allocator) catch bun.outOfMemory();
+            const module_info: ?*ModuleInfo = if (is_commonjs_module) null else ModuleInfo.create(bun.default_allocator, parse_result.ast.is_from_typescript) catch bun.outOfMemory();
             // defer module_info.destroy(); // TODO: do not leak module_info
 
             {
@@ -1427,7 +1427,7 @@ pub const ModuleLoader = struct {
             printer.ctx.reset();
 
             const is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs;
-            const module_info: ?*ModuleInfo = if (is_commonjs_module) null else ModuleInfo.create(bun.default_allocator) catch bun.outOfMemory();
+            const module_info: ?*ModuleInfo = if (is_commonjs_module) null else ModuleInfo.create(bun.default_allocator, parse_result.ast.is_from_typescript) catch bun.outOfMemory();
             // defer module_info.destroy(); // TODO: do not leak module_info
 
             {
@@ -1956,7 +1956,7 @@ pub const ModuleLoader = struct {
                 defer source_code_printer.* = printer;
 
                 const is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs;
-                const module_info: ?*ModuleInfo = if (is_commonjs_module) null else ModuleInfo.create(bun.default_allocator) catch bun.outOfMemory();
+                const module_info: ?*ModuleInfo = if (is_commonjs_module) null else ModuleInfo.create(bun.default_allocator, parse_result.ast.is_from_typescript) catch bun.outOfMemory();
                 // defer module_info.destroy(); // TODO: do not leak module_info
 
                 _ = brk: {

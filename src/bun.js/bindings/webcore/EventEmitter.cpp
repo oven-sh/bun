@@ -148,6 +148,7 @@ int EventEmitter::listenerCount(const Identifier& eventType)
                 continue;
 
             if (JSC::JSObject* jsFunction = registeredListener->callback().jsFunction()) {
+                (void)jsFunction;
                 result++;
             }
         }

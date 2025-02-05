@@ -330,6 +330,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
     AsymmetricMatcherConstructorType constructorType = AsymmetricMatcherConstructorType::none;
 
     if (auto* expectAnything = jsDynamicCast<JSExpectAnything*>(matcherPropCell)) {
+        (void)expectAnything;
         if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
@@ -382,6 +383,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
             }
 
             if (auto* booleanObject = jsDynamicCast<BooleanObject*>(otherProp)) {
+                (void)booleanObject;
                 return AsymmetricMatcherResult::PASS;
             }
 
@@ -394,6 +396,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
             }
 
             if (auto* numberObject = jsDynamicCast<NumberObject*>(otherProp)) {
+                (void)numberObject;
                 return AsymmetricMatcherResult::PASS;
             }
 
@@ -2165,6 +2168,7 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC__JSValue value, JSC__
 
     case WebCore::JSDOMWrapperType: {
         if (auto* headers = jsDynamicCast<WebCore::JSFetchHeaders*>(cell))
+            (void)headers;
             return static_cast<double>(jsCast<WebCore::JSFetchHeaders*>(cell)->wrapped().size());
 
         if (auto* blob = jsDynamicCast<WebCore::JSBlob*>(cell)) {
@@ -2363,8 +2367,10 @@ void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__
     auto* cell = JSC::JSValue::decode(JSValue0).asCell();
 
     if (JSC::JSPromise* promise = JSC::jsDynamicCast<JSC::JSPromise*>(cell)) {
+        (void)promise;
         handlePromise<JSC::JSPromise, false>(promise, arg1, arg2, ArgFn3, ArgFn4);
     } else if (JSC::JSInternalPromise* promise = JSC::jsDynamicCast<JSC::JSInternalPromise*>(cell)) {
+        (void)promise;
         RELEASE_ASSERT(false);
     }
 }

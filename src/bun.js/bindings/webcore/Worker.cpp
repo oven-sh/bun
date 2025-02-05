@@ -481,6 +481,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
         return JSC::JSValue::encode(messagePort->wrapped().tryTakeMessage(lexicalGlobalObject));
     } else if (auto* broadcastChannel = jsDynamicCast<JSBroadcastChannel*>(port)) {
         // TODO: support broadcast channels
+        (void)broadcastChannel;
         return JSC::JSValue::encode(jsUndefined());
     }
 

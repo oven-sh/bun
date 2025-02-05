@@ -1174,6 +1174,7 @@ void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::
     const bool wasConnecting = m_state == CONNECTING;
     m_state = CLOSED;
     if (auto* context = scriptExecutionContext()) {
+        (void)context;
         this->incPendingActivityCount();
         if (wasConnecting && isConnectionError) {
             ErrorEvent::Init eventInit = {};

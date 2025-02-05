@@ -1235,8 +1235,6 @@ std::optional<bool> specialObjectsDequal(JSC__JSGlobalObject* globalObject, Mark
             // check arbitrary enumerable properties. `.stack` is not checked.
             left->materializeErrorInfoIfNeeded(vm);
             right->materializeErrorInfoIfNeeded(vm);
-            // JSObject* o1 = c1->getObject();
-            // JSObject* o2 = c2->getObject();
             JSC::PropertyNameArray a1(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
             JSC::PropertyNameArray a2(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
             left->getPropertyNames(globalObject, a1, DontEnumPropertiesMode::Exclude);

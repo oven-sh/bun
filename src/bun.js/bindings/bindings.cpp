@@ -1218,15 +1218,16 @@ std::optional<bool> specialObjectsDequal(JSC__JSGlobalObject* globalObject, Mark
             // `.cause` is non-enumerable, so it must be checked explicitly.
             // note that an undefined cause is different than a missing cause in
             // strict mode.
-            const Identifier causeIdent = Identifier::fromString(vm, "cause"_s);
-            const PropertyName cause(causeIdent);
+            const PropertyName cause(vm.propertyNames->cause);
             if constexpr (isStrict) {
                 if (left->hasProperty(globalObject, cause) != right->hasProperty(globalObject, cause)) {
                     return false;
                 }
             }
             auto leftCause = left->get(globalObject, cause);
+            RETURN_IF_EXCEPTION(*scope, false);
             auto rightCause = right->get(globalObject, cause);
+            RETURN_IF_EXCEPTION(*scope, false);
             if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, leftCause, rightCause, gcBuffer, stack, scope, true)) {
                 return false;
             }
@@ -1254,7 +1255,7 @@ std::optional<bool> specialObjectsDequal(JSC__JSGlobalObject* globalObject, Mark
             size_t i;
             for (i = 0; i < propertyArrayLength1; i++) {
                 Identifier i1 = a1[i];
-                if (!i1.isEmpty() && !i1.isSymbol() && i1.string() == "stack"_s) continue;
+                if (i1 == vm.propertyNames->stack) continue;
                 PropertyName propertyName1 = PropertyName(i1);
 
                 JSValue prop1 = left->get(globalObject, propertyName1);
@@ -1287,6 +1288,7 @@ std::optional<bool> specialObjectsDequal(JSC__JSGlobalObject* globalObject, Mark
             // for the remaining properties in the other object, make sure they are undefined
             for (; i < propertyArrayLength2; i++) {
                 Identifier i2 = a2[i];
+                if (i2 == vm.propertyNames->stack) continue;
                 PropertyName propertyName2 = PropertyName(i2);
 
                 JSValue prop2 = right->getIfPropertyExists(globalObject, propertyName2);
@@ -1314,6 +1316,11 @@ std::optional<bool> specialObjectsDequal(JSC__JSGlobalObject* globalObject, Mark
     case BigInt64ArrayType:
     case BigUint64ArrayType: {
         if (!isTypedArrayType(static_cast<JSC::JSType>(c2Type)) || c1Type != c2Type) {
+            return false;
+        }
+        auto info = c1->classInfo();
+        auto info2 = c2->classInfo();
+        if (!info || !info2) {
             return false;
         }
 

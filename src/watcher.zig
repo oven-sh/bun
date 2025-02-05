@@ -35,7 +35,7 @@ ctx: *anyopaque,
 onFileUpdate: *const fn (this: *anyopaque, events: []WatchEvent, changed_files: []?[:0]u8, watchlist: WatchList) void,
 onError: *const fn (this: *anyopaque, err: bun.sys.Error) void,
 
-thread_lock: bun.DebugThreadLock = bun.DebugThreadLock.unlocked,
+thread_lock: bun.DebugThreadLock = .unlocked,
 
 /// Initializes a watcher. Each watcher is tied to some context type, which
 /// recieves watch callbacks on the watcher thread. This function does not

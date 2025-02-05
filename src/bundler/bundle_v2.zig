@@ -1637,9 +1637,8 @@ pub const BundleV2 = struct {
         plugins: ?*bun.JSC.API.JSBundler.Plugin,
         globalThis: *JSC.JSGlobalObject,
         event_loop: *bun.JSC.EventLoop,
-        allocator: std.mem.Allocator,
+        _: std.mem.Allocator,
     ) OOM!*JSBundleCompletionTask {
-        _ = allocator; // autofix
         const completion = JSBundleCompletionTask.new(.{
             .config = config,
             .jsc_event_loop = event_loop,
@@ -16734,12 +16733,12 @@ pub const CssEntryPointMeta = struct {
     imported_on_server: bool,
 };
 
-/// The lifetime of this structure is tied to the transpiler's arena
+/// The lifetime of this structure is tied to the bundler's arena
 pub const DevServerInput = struct {
     css_entry_points: std.AutoArrayHashMapUnmanaged(Index, CssEntryPointMeta),
 };
 
-/// The lifetime of this structure is tied to the transpiler's arena
+/// The lifetime of this structure is tied to the bundler's arena
 pub const DevServerOutput = struct {
     chunks: []Chunk,
     css_file_list: std.AutoArrayHashMapUnmanaged(Index, CssEntryPointMeta),

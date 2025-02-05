@@ -27,10 +27,10 @@ pub const Options = struct {
     verbose_watcher: bool = false,
 };
 
-// The fields `client_graph`, `server_graph`, and `directory_watchers` all
-// use `@fieldParentPointer` to access DevServer's state. This pattern has
-// made it easier to group related fields together, but one must remember
-// those structures still depend on the DevServer pointer.
+// The fields `client_graph`, `server_graph`, `directory_watchers`, and `assets`
+// all use `@fieldParentPointer` to access DevServer's state. This pattern has
+// made it easier to group related fields together, but one must remember those
+// structures still depend on the DevServer pointer.
 
 /// Used for all server-wide allocations. In debug, this shows up in
 /// a separate named heap. Thread-safe.
@@ -115,6 +115,17 @@ ssr_bundler: Transpiler,
 /// Note that it is rarely correct to write messages into it. Instead, associate
 /// messages with the IncrementalGraph file or Route using `SerializedFailure`
 log: Log,
+plugin_state: enum {
+    /// Should ask server for plugins. Once plugins are loaded, the plugin
+    /// pointer is written into `server_bundler.options.plugin`
+    unknown,
+    // These two states mean that `server.getOrLoadPlugins()` was called.
+    pending,
+    loaded,
+    /// Currently, this represents a degraded state where no bundle can
+    /// be correctly executed because the plugins did not load successfully.
+    err,
+},
 /// There is only ever one bundle executing at the same time, since all bundles
 /// inevitably share state. This bundle is asynchronous, storing its state here
 /// while in-flight. All allocations held by `.bv2.graph.heap`'s arena
@@ -130,7 +141,7 @@ current_bundle: ?struct {
     had_reload_event: bool,
 },
 /// This is not stored in `current_bundle` so that its memory can be reused when
-/// there is no active bundle. After the bundle finishes, these requests will
+/// there is no active bundle. After a bundle finishes, these requests will
 /// be continued, either calling their handler on success or sending the error
 /// page on failure.
 current_bundle_requests: ArrayListUnmanaged(DeferredRequest),
@@ -319,6 +330,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
             .refs = .empty,
         },
         .log = .init(allocator),
+        .plugin_state = .unknown,
 
         .server_bundler = undefined,
         .client_bundler = undefined,
@@ -696,122 +708,134 @@ fn ensureRouteIsBundled(
     req: *Request,
     resp: AnyResponse,
 ) bun.OOM!void {
-    // TODO: Zig 0.14 gets labelled continue:
-    // - Remove the `while`
-    // - Move the code after this switch into `.loaded =>`
-    // - Replace `break` with `continue :sw .loaded`
-    // - Replace `continue` with `continue :sw <state>`
-    while (true) {
-        switch (dev.routeBundlePtr(route_bundle_index).server_state) {
-            .unqueued => {
-                try dev.next_bundle.requests.ensureUnusedCapacity(dev.allocator, 1);
-                if (dev.current_bundle != null) {
-                    try dev.next_bundle.route_queue.ensureUnusedCapacity(dev.allocator, 1);
-                }
-
-                const deferred: DeferredRequest = .{
-                    .route_bundle_index = route_bundle_index,
-                    .data = switch (kind) {
-                        inline .js_payload, .bundled_html_page => |tag| brk: {
-                            resp.onAborted(*DeferredRequest, DeferredRequest.onAbort, undefined); // TODO: pass stable pointer.
-                            break :brk @unionInit(DeferredRequest.Data, @tagName(tag), resp);
-                        },
-                        .server_handler => brk: {
-                            assert(dev.routeBundlePtr(route_bundle_index).data == .framework);
-                            break :brk .{
-                                .server_handler = (dev.server.?.DebugHTTPServer.prepareJsRequestContext(req, resp.TCP, null) orelse return)
-                                    .save(dev.vm.global, req, resp.TCP),
-                            };
-                        },
-                    },
-                };
-                errdefer @compileError("cannot error since the request is already stored");
-
-                dev.next_bundle.requests.appendAssumeCapacity(deferred);
-                if (dev.current_bundle != null) {
-                    dev.next_bundle.route_queue.putAssumeCapacity(route_bundle_index, {});
-                } else {
-                    var sfa = std.heap.stackFallback(4096, dev.allocator);
-                    const temp_alloc = sfa.get();
-
-                    var entry_points: EntryPointList = EntryPointList.empty;
-                    defer entry_points.deinit(temp_alloc);
-
-                    dev.appendRouteEntryPointsIfNotStale(&entry_points, temp_alloc, route_bundle_index) catch bun.outOfMemory();
-
-                    if (entry_points.set.count() == 0) {
-                        if (dev.bundling_failures.count() > 0) {
-                            dev.routeBundlePtr(route_bundle_index).server_state = .possible_bundling_failures;
-                        } else {
-                            dev.routeBundlePtr(route_bundle_index).server_state = .loaded;
-                        }
-                        continue;
-                    }
-
-                    dev.startAsyncBundle(
-                        entry_points,
-                        false,
-                        std.time.Timer.start() catch @panic("timers unsupported"),
-                    ) catch bun.outOfMemory();
-                }
+    sw: switch (dev.routeBundlePtr(route_bundle_index).server_state) {
+        .unqueued => {
+            if (dev.current_bundle != null) {
+                try dev.next_bundle.route_queue.put(dev.allocator, route_bundle_index, {});
                 dev.routeBundlePtr(route_bundle_index).server_state = .bundling;
-                return;
-            },
-            .bundling => {
-                bun.assert(dev.current_bundle != null);
-                try dev.current_bundle_requests.ensureUnusedCapacity(dev.allocator, 1);
-
-                const deferred: DeferredRequest = .{
-                    .route_bundle_index = route_bundle_index,
-                    .data = switch (kind) {
-                        .js_payload => .{ .js_payload = resp },
-                        .bundled_html_page => .{ .bundled_html_page = resp },
-                        .server_handler => .{
-                            .server_handler = (dev.server.?.DebugHTTPServer.prepareJsRequestContext(req, resp.TCP, null) orelse return)
-                                .save(dev.vm.global, req, resp.TCP),
+                try dev.deferRequest(&dev.next_bundle.requests, route_bundle_index, kind, req, resp);
+            } else {
+                // If plugins are not yet loaded, prepare them.
+                // In the case plugins are set to &.{}, this will not hit `.pending`.
+                plugin: switch (dev.plugin_state) {
+                    .unknown => if (dev.bundler_options.plugin != null) {
+                        // Framework-provided plugin is likely going to be phased out later
+                        dev.plugin_state = .loaded;
+                    } else switch (dev.server.?.getOrLoadPlugins(.{ .dev_server = dev })) {
+                        .pending => {
+                            dev.plugin_state = .pending;
+                            continue :plugin .pending;
                         },
+                        .err => {
+                            dev.plugin_state = .err;
+                            continue :plugin .err;
+                        },
+                        .ready => {},
                     },
-                };
-
-                dev.current_bundle_requests.appendAssumeCapacity(deferred);
-                return;
-            },
-            .possible_bundling_failures => {
-                // TODO: perform a graph trace to find just the errors that are needed
-                if (dev.bundling_failures.count() > 0) {
-                    resp.corked(sendSerializedFailures, .{
-                        dev,
-                        resp,
-                        dev.bundling_failures.keys(),
-                        .bundler,
-                    });
-                    return;
-                } else {
-                    dev.routeBundlePtr(route_bundle_index).server_state = .loaded;
-                    break;
+                    .pending => {
+                        try dev.next_bundle.route_queue.put(dev.allocator, route_bundle_index, {});
+                        dev.routeBundlePtr(route_bundle_index).server_state = .bundling;
+                        try dev.deferRequest(&dev.next_bundle.requests, route_bundle_index, kind, req, resp);
+                        return;
+                    },
+                    .err => {
+                        // TODO: render plugin error page
+                        resp.endWithoutBody(true);
+                        return;
+                    },
+                    .loaded => {},
                 }
-            },
-            .evaluation_failure => {
+
+                // Prepare a bundle with just this route.
+                var sfa = std.heap.stackFallback(4096, dev.allocator);
+                const temp_alloc = sfa.get();
+
+                var entry_points: EntryPointList = .empty;
+                defer entry_points.deinit(temp_alloc);
+                try dev.appendRouteEntryPointsIfNotStale(&entry_points, temp_alloc, route_bundle_index);
+
+                // If all files were already bundled (possible with layouts),
+                // then no entry points will be queued up here. That does
+                // not mean the route is ready for presentation.
+                if (entry_points.set.count() == 0) {
+                    if (dev.bundling_failures.count() > 0) {
+                        dev.routeBundlePtr(route_bundle_index).server_state = .possible_bundling_failures;
+                        continue :sw .possible_bundling_failures;
+                    } else {
+                        dev.routeBundlePtr(route_bundle_index).server_state = .loaded;
+                        continue :sw .loaded;
+                    }
+                }
+
+                try dev.deferRequest(&dev.next_bundle.requests, route_bundle_index, kind, req, resp);
+
+                dev.startAsyncBundle(
+                    entry_points,
+                    false,
+                    std.time.Timer.start() catch @panic("timers unsupported"),
+                ) catch bun.outOfMemory();
+            }
+
+            dev.routeBundlePtr(route_bundle_index).server_state = .bundling;
+        },
+        .bundling => {
+            bun.assert(dev.current_bundle != null);
+            try dev.deferRequest(&dev.current_bundle_requests, route_bundle_index, kind, req, resp);
+        },
+        .possible_bundling_failures => {
+            // TODO: perform a graph trace to find just the errors that are needed
+            if (dev.bundling_failures.count() > 0) {
                 resp.corked(sendSerializedFailures, .{
                     dev,
                     resp,
-                    (&(dev.routeBundlePtr(route_bundle_index).data.framework.evaluate_failure.?))[0..1],
-                    .evaluation,
+                    dev.bundling_failures.keys(),
+                    .bundler,
                 });
                 return;
+            } else {
+                dev.routeBundlePtr(route_bundle_index).server_state = .loaded;
+                continue :sw .loaded;
+            }
+        },
+        .evaluation_failure => {
+            resp.corked(sendSerializedFailures, .{
+                dev,
+                resp,
+                (&(dev.routeBundlePtr(route_bundle_index).data.framework.evaluate_failure.?))[0..1],
+                .evaluation,
+            });
+        },
+        .loaded => switch (kind) {
+            .server_handler => dev.onFrameworkRequestWithBundle(route_bundle_index, .{ .stack = req }, resp),
+            .bundled_html_page => dev.onHtmlRequestWithBundle(route_bundle_index, resp),
+            .js_payload => dev.onJsRequestWithBundle(route_bundle_index, resp),
+        },
+    }
+}
+
+fn deferRequest(
+    dev: *DevServer,
+    requests_array: *std.ArrayListUnmanaged(DeferredRequest),
+    route_bundle_index: RouteBundle.Index,
+    kind: DeferredRequest.Data.Tag,
+    req: *Request,
+    resp: AnyResponse,
+) !void {
+    try requests_array.ensureUnusedCapacity(dev.allocator, 1);
+
+    const deferred: DeferredRequest = .{
+        .route_bundle_index = route_bundle_index,
+        .data = switch (kind) {
+            .js_payload => .{ .js_payload = resp },
+            .bundled_html_page => .{ .bundled_html_page = resp },
+            .server_handler => .{
+                .server_handler = (dev.server.?.DebugHTTPServer.prepareJsRequestContext(req, resp.TCP, null) orelse return)
+                    .save(dev.vm.global, req, resp.TCP),
             },
-            .loaded => break,
-        }
+        },
+    };
 
-        // this error is here to make sure there are no accidental loop exits
-        @compileError("all branches above should `return`, `break` or `continue`");
-    }
-
-    switch (kind) {
-        .server_handler => dev.onFrameworkRequestWithBundle(route_bundle_index, .{ .stack = req }, resp),
-        .bundled_html_page => dev.onHtmlRequestWithBundle(route_bundle_index, resp),
-        .js_payload => dev.onJsRequestWithBundle(route_bundle_index, resp),
-    }
+    requests_array.appendAssumeCapacity(deferred);
 }
 
 fn appendRouteEntryPointsIfNotStale(dev: *DevServer, entry_points: *EntryPointList, alloc: Allocator, rbi: RouteBundle.Index) bun.OOM!void {
@@ -1093,6 +1117,18 @@ const DeferredRequest = struct {
         _ = this;
         _ = resp;
         @panic("TODO");
+    }
+
+    fn abortAndDeinit(this: *DeferredRequest) void {
+        switch (this.data) {
+            .server_handler => |*saved| {
+                saved.response.endWithoutBody(true);
+                saved.deinit();
+            },
+            .bundled_html_page, .js_payload => |resp| {
+                resp.endWithoutBody(true);
+            },
+        }
     }
 };
 
@@ -1385,9 +1421,10 @@ pub fn finalizeBundle(
     bv2: *bun.bundle_v2.BundleV2,
     result: bun.bundle_v2.DevServerOutput,
 ) bun.OOM!void {
-    defer dev.startNextBundleIfPresent();
     defer {
         bv2.deinit();
+        dev.current_bundle = null;
+        dev.startNextBundleIfPresent();
     }
     const current_bundle = &dev.current_bundle.?;
 
@@ -1858,7 +1895,7 @@ pub fn finalizeBundle(
 
 fn startNextBundleIfPresent(dev: *DevServer) void {
     // Clear the current bundle
-    dev.current_bundle = null;
+    assert(dev.current_bundle == null);
     dev.log.clearAndFree();
     dev.current_bundle_requests.clearRetainingCapacity();
     dev.emitVisualizerMessageIfNeeded();
@@ -2877,7 +2914,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         }
 
                         // Do not count css files as a client module
-                        // and also do not trace its dependencies.
+                        // and also do not trace its imports.
                         //
                         // The server version of this code does not need to
                         // early return, since server css files never have
@@ -5036,6 +5073,22 @@ pub const Assets = struct {
     }
 };
 
+pub fn onPluginsResolved(dev: *DevServer, plugins: ?*Plugin) !void {
+    dev.bundler_options.plugin = plugins;
+    dev.plugin_state = .loaded;
+    dev.startNextBundleIfPresent();
+}
+
+pub fn onPluginsRejected(dev: *DevServer) !void {
+    dev.plugin_state = .err;
+    for (dev.next_bundle.requests.items) |*item| {
+        item.abortAndDeinit();
+    }
+    dev.next_bundle.requests.clearRetainingCapacity();
+    dev.next_bundle.route_queue.clearRetainingCapacity();
+    // TODO: allow recovery from this state
+}
+
 /// `bytes` is allocated by `allocator`, ownership moved into the Blob
 fn initAnyBlobFromBytes(allocator: Allocator, bytes: []u8) JSC.WebCore.AnyBlob {
     return .{ .InternalBlob = .{ .bytes = .fromOwnedSlice(allocator, bytes) } };
@@ -5084,6 +5137,7 @@ const VirtualMachine = JSC.VirtualMachine;
 const JSModuleLoader = JSC.JSModuleLoader;
 const EventLoopHandle = JSC.EventLoopHandle;
 const HTMLBundle = JSC.API.HTMLBundle;
+const Plugin = JSC.API.JSBundler.Plugin;
 
 const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
 const Chunk = bun.bundle_v2.Chunk;

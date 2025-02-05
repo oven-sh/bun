@@ -14,6 +14,7 @@ if (NOT CI)
   # a tempdir such as /private/tmp/bun-node-ce532901c/bun, which may cause this
   # CMake configuration break after tempdir is cleaned up (ex. after reboot).
   get_filename_component(BUN_EXECUTABLE ${BUN_EXECUTABLE} REALPATH)
+  set(BUN_EXECUTABLE ${BUN_EXECUTABLE} CACHE FILEPATH "Bun executable" FORCE)
 endif()
 
 # If this is not set, some advanced features are not checked.

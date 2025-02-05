@@ -383,23 +383,6 @@ pub const ServerConfig = struct {
         app.any(path, T, entry, handler_wrap.handler);
     }
 
-    pub fn applyStaticRoutes(this: *ServerConfig, comptime ssl: bool, server: AnyServer, app: *uws.NewApp(ssl)) !void {
-        const dev_server = server.devServer();
-        for (this.static_routes.items) |*entry| {
-            switch (entry.route) {
-                .StaticRoute => |static_route| {
-                    applyStaticRoute(server, ssl, app, *StaticRoute, static_route, entry.path);
-                },
-                .HTMLBundleRoute => |html_bundle_route| {
-                    applyStaticRoute(server, ssl, app, *HTMLBundleRoute, html_bundle_route, entry.path);
-                    if (dev_server) |dev| {
-                        try dev.html_router.put(dev.allocator, entry.path, html_bundle_route);
-                    }
-                },
-            }
-        }
-    }
-
     pub fn deinit(this: *ServerConfig) void {
         this.address.deinit(bun.default_allocator);
 
@@ -5829,40 +5812,76 @@ pub const ServerWebSocket = struct {
     }
 };
 
+/// State machine to handle loading plugins asyncronously. This structure is not thread-safe.
 const ServePlugins = struct {
-    value: Value,
+    state: State,
     ref_count: u32 = 1,
 
+    /// Reference count is incremented while there are other objects that are waiting on plugin loads.
     pub usingnamespace bun.NewRefCounted(ServePlugins, deinit, null);
 
-    pub const Value = union(enum) {
+    pub const State = union(enum) {
+        unqueued: []const []const u8,
         pending: struct {
-            raw_plugins: []const []const u8,
+            /// Promise may be empty if the plugin load finishes synchronously.
+            plugin: *bun.JSC.API.JSBundler.Plugin,
             promise: JSC.JSPromise.Strong,
-            plugins: ?*bun.JSC.API.JSBundler.Plugin,
-            pending_bundled_routes: bun.ArrayList(*HTMLBundleRoute),
+            html_bundle_routes: std.ArrayListUnmanaged(*HTMLBundleRoute),
+            dev_server: ?*bun.bake.DevServer,
         },
-        result: ?*bun.JSC.API.JSBundler.Plugin,
+        loaded: *bun.JSC.API.JSBundler.Plugin,
+        /// Error information is not stored as it is already reported.
         err,
     };
 
-    pub fn init(server: AnyServer, plugins: []const []const u8, initial_pending: *HTMLBundleRoute) *ServePlugins {
+    pub const GetOrStartLoadResult = union(enum) {
+        /// null = no plugins, used by server implementation
+        ready: ?*bun.JSC.API.JSBundler.Plugin,
+        pending,
+        err,
+    };
 
-        // TODO: call builtin which resolves and imports plugin modules
+    pub const Callback = union(enum) {
+        html_bundle_route: *HTMLBundleRoute,
+        dev_server: *bun.bake.DevServer,
+    };
 
-        var pending_bundled_routes = bun.ArrayList(*HTMLBundleRoute){};
-        pending_bundled_routes.append(bun.default_allocator, initial_pending) catch bun.outOfMemory();
-        const this = ServePlugins.new(.{
-            .value = .{
-                .pending = .{
-                    .plugins = null,
-                    .raw_plugins = plugins,
-                    .promise = JSC.JSPromise.Strong.init(server.globalThis()),
-                    .pending_bundled_routes = pending_bundled_routes,
-                },
+    pub fn init(plugins: []const []const u8) *ServePlugins {
+        return ServePlugins.new(.{ .state = .{ .unqueued = plugins } });
+    }
+
+    pub fn deinit(this: *ServePlugins) void {
+        switch (this.state) {
+            .unqueued => {},
+            .pending => assert(false), // should have one ref while pending!
+            .loaded => |loaded| loaded.deinit(),
+            .err => {},
+        }
+        this.destroy();
+    }
+
+    pub fn getOrStartLoad(this: *ServePlugins, global: *JSC.JSGlobalObject, cb: Callback) bun.OOM!GetOrStartLoadResult {
+        sw: switch (this.state) {
+            .unqueued => {
+                this.loadAndResolvePlugins(global);
+                continue :sw this.state; // could jump to any branch if syncronously resolved
             },
-        });
-        return this;
+            .pending => |*pending| {
+                switch (cb) {
+                    .html_bundle_route => |route| {
+                        route.ref();
+                        try pending.html_bundle_routes.append(bun.default_allocator, route);
+                    },
+                    .dev_server => |server| {
+                        assert(pending.dev_server == null or pending.dev_server == server); // one dev server per server
+                        pending.dev_server = server;
+                    },
+                }
+                return .pending;
+            },
+            .loaded => |plugins| return .{ .ready = plugins },
+            .err => return .err,
+        }
     }
 
     extern fn JSBundlerPlugin__loadAndResolvePluginsForServe(
@@ -5871,41 +5890,51 @@ const ServePlugins = struct {
         bunfig_folder: JSC.JSValue,
     ) JSValue;
 
-    pub fn loadAndResolvePlugins(this: *ServePlugins, globalThis: *JSC.JSGlobalObject, bunfig_folder: string) void {
-        bun.assert(this.value == .pending);
+    fn loadAndResolvePlugins(this: *ServePlugins, global: *JSC.JSGlobalObject) void {
+        bun.assert(this.state == .unqueued);
+        const plugin_list = this.state.unqueued;
+        const bunfig_folder = bun.path.dirname(global.bunVM().transpiler.options.bunfig_path, .auto);
+
         this.ref();
         defer this.deref();
 
-        const plugin = bun.JSC.API.JSBundler.Plugin.create(globalThis, .browser);
-        this.value.pending.plugins = plugin;
+        const plugin = bun.JSC.API.JSBundler.Plugin.create(global, .browser);
         var sfb = std.heap.stackFallback(@sizeOf(bun.String) * 4, bun.default_allocator);
         const alloc = sfb.get();
-        const bunstring_array = alloc.alloc(bun.String, this.value.pending.raw_plugins.len) catch bun.outOfMemory();
+        const bunstring_array = alloc.alloc(bun.String, plugin_list.len) catch bun.outOfMemory();
         defer alloc.free(bunstring_array);
-        for (this.value.pending.raw_plugins, bunstring_array) |raw_plugin, *out| {
+        for (plugin_list, bunstring_array) |raw_plugin, *out| {
             out.* = bun.String.init(raw_plugin);
         }
-        const plugins = bun.String.toJSArray(globalThis, bunstring_array);
-        const bunfig_folder_bunstr = bun.String.createUTF8ForJS(globalThis, bunfig_folder);
+        const plugin_js_array = bun.String.toJSArray(global, bunstring_array);
+        const bunfig_folder_bunstr = bun.String.createUTF8ForJS(global, bunfig_folder);
 
-        globalThis.bunVM().eventLoop().enter();
-        const result = JSBundlerPlugin__loadAndResolvePluginsForServe(plugin, plugins, bunfig_folder_bunstr);
-        globalThis.bunVM().eventLoop().exit();
+        this.state = .{ .pending = .{
+            .promise = JSC.JSPromise.Strong.init(global),
+            .plugin = plugin,
+            .html_bundle_routes = .empty,
+            .dev_server = null,
+        } };
+
+        global.bunVM().eventLoop().enter();
+        const result = JSBundlerPlugin__loadAndResolvePluginsForServe(plugin, plugin_js_array, bunfig_folder_bunstr);
+        global.bunVM().eventLoop().exit();
+
         // handle the case where js synchronously throws an error
-        if (globalThis.tryTakeException()) |e| {
-            handleOnReject(this, globalThis, e);
+        if (global.tryTakeException()) |e| {
+            handleOnReject(this, global, e);
             return;
         }
 
         if (!result.isEmptyOrUndefinedOrNull()) {
             // handle the case where js returns a promise
             if (result.asAnyPromise()) |promise| {
-                switch (promise.status(globalThis.vm())) {
+                switch (promise.status(global.vm())) {
                     // promise not fulfilled yet
                     .pending => {
                         this.ref();
-                        this.value.pending.promise.strong.set(globalThis, promise.asValue(globalThis));
-                        promise.asValue(globalThis).then(globalThis, this, onResolveImpl, onRejectImpl);
+                        this.state.pending.promise.strong.set(global, promise.asValue(global));
+                        promise.asValue(global).then(global, this, onResolveImpl, onRejectImpl);
                         return;
                     },
                     .fulfilled => {
@@ -5913,29 +5942,19 @@ const ServePlugins = struct {
                         return;
                     },
                     .rejected => {
-                        // const value = promise.asValue(globalThis);
-                        const value = promise.result(globalThis.vm());
-                        handleOnReject(this, globalThis, value);
+                        const value = promise.result(global.vm());
+                        handleOnReject(this, global, value);
                         return;
                     },
                 }
             }
 
             if (result.toError()) |e| {
-                handleOnReject(this, globalThis, e);
+                handleOnReject(this, global, e);
             } else {
                 handleOnResolve(this);
             }
         }
-    }
-
-    pub fn deinit(this: *ServePlugins) void {
-        if (this.value == .result) {
-            if (this.value.result) |plugins| {
-                plugins.deinit();
-            }
-        }
-        ServePlugins.destroy(this);
     }
 
     pub const onResolve = JSC.toJSHostFunction(onResolveImpl);
@@ -5944,10 +5963,9 @@ const ServePlugins = struct {
     pub fn onResolveImpl(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         ctxLog("onResolve", .{});
 
-        const arguments = callframe.arguments_old(2);
-        var plugins = arguments.ptr[1].asPromisePtr(ServePlugins);
+        const plugins_js, const plugins_result = callframe.argumentsAsArray(2);
+        var plugins = plugins_js.asPromisePtr(ServePlugins);
         defer plugins.deref();
-        const plugins_result = arguments.ptr[0];
         plugins_result.ensureStillAlive();
 
         handleOnResolve(plugins);
@@ -5956,38 +5974,52 @@ const ServePlugins = struct {
     }
 
     pub fn handleOnResolve(this: *ServePlugins) void {
-        this.value.pending.promise.deinit();
-        var pending_bundled_routes = this.value.pending.pending_bundled_routes;
-        defer pending_bundled_routes.deinit(bun.default_allocator);
-        this.value = .{ .result = this.value.pending.plugins };
-        for (pending_bundled_routes.items) |route| {
-            route.onPluginsResolved(this.value.result);
+        bun.assert(this.state == .pending);
+        const pending = &this.state.pending;
+        const plugin = pending.plugin;
+        pending.promise.deinit();
+        defer pending.html_bundle_routes.deinit(bun.default_allocator);
+
+        this.state = .{ .loaded = plugin };
+
+        for (pending.html_bundle_routes.items) |route| {
+            route.onPluginsResolved(plugin) catch bun.outOfMemory();
             route.deref();
+        }
+        if (pending.dev_server) |server| {
+            server.onPluginsResolved(plugin) catch bun.outOfMemory();
         }
     }
 
     pub fn onRejectImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         ctxLog("onReject", .{});
 
-        const arguments = callframe.arguments_old(2);
-        const plugins = arguments.ptr[1].asPromisePtr(ServePlugins);
-        handleOnReject(plugins, globalThis, arguments.ptr[0]);
+        const error_js, const plugin_js = callframe.argumentsAsArray(2);
+        const plugins = plugin_js.asPromisePtr(ServePlugins);
+        handleOnReject(plugins, globalThis, error_js);
 
         return JSValue.jsUndefined();
     }
 
-    pub fn handleOnReject(plugins: *ServePlugins, globalThis: *JSC.JSGlobalObject, e: JSValue) void {
-        defer plugins.deref();
-        var pending_bundled_routes = plugins.value.pending.pending_bundled_routes;
-        defer pending_bundled_routes.deinit(bun.default_allocator);
-        plugins.value.pending.promise.deinit();
-        plugins.value.pending.pending_bundled_routes = .{};
-        plugins.value = .err;
-        for (pending_bundled_routes.items) |route| {
-            route.onPluginsRejected();
+    pub fn handleOnReject(this: *ServePlugins, global: *JSC.JSGlobalObject, err: JSValue) void {
+        bun.assert(this.state == .pending);
+        const pending = &this.state.pending;
+        pending.plugin.deinit();
+        pending.promise.deinit();
+        defer pending.html_bundle_routes.deinit(bun.default_allocator);
+
+        this.state = .err;
+
+        Output.errGeneric("Failed to load plugins for Bun.serve:", .{});
+        global.bunVM().runErrorHandler(err, null);
+
+        for (pending.html_bundle_routes.items) |route| {
+            route.onPluginsRejected() catch bun.outOfMemory();
             route.deref();
         }
-        globalThis.bunVM().runErrorHandler(e, null);
+        if (pending.dev_server) |server| {
+            server.onPluginsRejected() catch bun.outOfMemory();
+        }
     }
 
     comptime {
@@ -6050,48 +6082,16 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub const doRequestIP = JSC.wrapInstanceMethod(ThisServer, "requestIP", false);
         pub const doTimeout = JSC.wrapInstanceMethod(ThisServer, "timeout", false);
 
-        pub fn getPlugins(
-            this: *ThisServer,
-        ) PluginsResult {
-            if (this.plugins) |p| {
-                switch (p.value) {
-                    .result => |plugins| {
-                        return .{ .found = plugins };
-                    },
-                    .pending => return .pending,
-                    .err => return .err,
-                }
+        /// Returns:
+        /// - .ready if no plugin has to be loaded
+        /// - .err if there is a cached failure. Currently, this requires restarting the entire server.
+        /// - .pending if `callback` was stored. It will call `onPluginsResolved` or `onPluginsRejected` later.
+        pub fn getOrLoadPlugins(server: *ThisServer, callback: ServePlugins.Callback) ServePlugins.GetOrStartLoadResult {
+            if (server.plugins) |p| {
+                return p.getOrStartLoad(server.globalThis, callback) catch bun.outOfMemory();
             }
-            return .pending;
-        }
-
-        // rename to loadAndResolvePlugins
-        pub fn getPluginsAsync(
-            this: *ThisServer,
-            bundle: *HTMLBundleRoute,
-            raw_plugins: []const []const u8,
-            bunfig_folder: string,
-        ) void {
-            bun.assert(this.plugins == null or this.plugins.?.value == .pending);
-            if (this.plugins) |p| {
-                bun.assert(p.value != .err); // call .getPlugins() first
-                switch (p.value) {
-                    .pending => {
-                        bundle.ref();
-                        p.value.pending.pending_bundled_routes.append(
-                            bun.default_allocator,
-                            bundle,
-                        ) catch unreachable;
-
-                        return;
-                    },
-                    .result => {},
-                    .err => {},
-                }
-            } else {
-                this.plugins = ServePlugins.init(AnyServer.from(this), raw_plugins, bundle);
-                this.plugins.?.loadAndResolvePlugins(this.globalThis, bunfig_folder);
-            }
+            // no plugins
+            return .{ .ready = null };
         }
 
         pub fn doSubscriberCount(this: *ThisServer, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -7462,14 +7462,45 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
         fn setRoutes(this: *ThisServer) void {
             const app = this.app.?;
+            const any_server = AnyServer.from(this);
+            const dev_server = this.dev_server;
+
+            // Plugins need to be registered if any of the following are
+            // assigned. This is done in `setRoutes` so that reloading
+            // a server can initialize such state.
+            // - DevServer
+            // - HTML Bundle
+            var needs_plugins = dev_server != null;
+            var has_html_catch_all = false;
+
             if (this.config.static_routes.items.len > 0) {
-                this.config.applyStaticRoutes(
-                    ssl_enabled,
-                    AnyServer.from(this),
-                    app,
-                ) catch bun.outOfMemory();
+                for (this.config.static_routes.items) |*entry| {
+                    switch (entry.route) {
+                        .StaticRoute => |static_route| {
+                            ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *StaticRoute, static_route, entry.path);
+                        },
+                        .HTMLBundleRoute => |html_bundle_route| {
+                            ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *HTMLBundleRoute, html_bundle_route, entry.path);
+                            if (dev_server) |dev| {
+                                dev.html_router.put(dev.allocator, entry.path, html_bundle_route) catch bun.outOfMemory();
+                            }
+                            needs_plugins = true;
+                        },
+                    }
+                    if (strings.eqlComptime(entry.path, "/*")) {
+                        has_html_catch_all = true;
+                    }
+                }
             }
 
+            // If there are plugins, initialize the ServePlugins object in
+            // an unqueued state. The first thing (HTML Bundle, DevServer)
+            // that needs plugins will cause the load to happen.
+            if (needs_plugins and this.plugins == null) if (this.vm.transpiler.options.serve_plugins) |serve_plugins| {
+                this.plugins = ServePlugins.init(serve_plugins);
+            };
+
+            // Setup user websocket routes.
             if (this.config.websocket) |*websocket| {
                 websocket.globalObject = this.globalThis;
                 websocket.handler.app = app;
@@ -7482,7 +7513,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 );
             }
 
-            if (comptime debug_mode) {
+            if (debug_mode) {
                 app.get("/bun:info", *ThisServer, this, onBunInfoRequest);
                 if (this.config.inspector) {
                     JSC.markBinding(@src());
@@ -7493,15 +7524,11 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             var has_dev_catch_all = false;
-            if (this.dev_server) |dev| {
+            if (dev_server) |dev| {
+                // DevServer adds a catch-all handler to use FrameworkRouter (full stack apps)
                 has_dev_catch_all = dev.attachRoutes(this) catch bun.outOfMemory();
             }
             if (!has_dev_catch_all) {
-                const has_html_catch_all = for (this.config.static_routes.items) |route| {
-                    if (strings.eqlComptime(route.path, "/*"))
-                        break true;
-                } else false;
-
                 // "/*" routes are added backwards, so if they have a static route,
                 // it will never be matched so we need to check for that first
                 if (!has_html_catch_all) {
@@ -7720,21 +7747,13 @@ pub const AnyServer = union(enum) {
     DebugHTTPServer: *DebugHTTPServer,
     DebugHTTPSServer: *DebugHTTPSServer,
 
-    pub fn plugins(this: AnyServer) ?*ServePlugins {
-        return switch (this) {
-            inline else => |server| server.plugins,
-        };
-    }
-
-    pub fn getPlugins(this: AnyServer) PluginsResult {
-        return switch (this) {
-            inline else => |server| server.getPlugins(),
-        };
-    }
-
-    pub fn loadAndResolvePlugins(this: AnyServer, bundle: *HTMLBundleRoute, raw_plugins: []const []const u8, bunfig_path: []const u8) void {
-        return switch (this) {
-            inline else => |server| server.getPluginsAsync(bundle, raw_plugins, bunfig_path),
+    /// Returns:
+    /// - .ready if no plugin has to be loaded
+    /// - .err if there is a cached failure. Currently, this requires restarting the entire server.
+    /// - .pending if `callback` was stored. It will call `onPluginsResolved` or `onPluginsRejected` later.
+    pub fn getOrLoadPlugins(server: AnyServer, callback: ServePlugins.Callback) ServePlugins.GetOrStartLoadResult {
+        return switch (server) {
+            inline else => |s| s.getOrLoadPlugins(callback),
         };
     }
 

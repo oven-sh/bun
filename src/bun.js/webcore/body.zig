@@ -578,7 +578,7 @@ pub const Body = struct {
                 };
             }
 
-            if (js_type.isTypedArray()) {
+            if (js_type.isTypedArrayOrArrayBuffer()) {
                 if (value.asArrayBuffer(globalThis)) |buffer| {
                     const bytes = buffer.byteSlice();
 

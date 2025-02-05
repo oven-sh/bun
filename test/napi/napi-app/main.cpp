@@ -1131,6 +1131,22 @@ static napi_value test_extended_error_messages(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+static napi_value test_is_buffer(const Napi::CallbackInfo &info) {
+  bool result;
+  napi_env env = info.Env();
+  NODE_API_CALL(info.Env(), napi_is_buffer(env, info[1], &result));
+  printf("napi_is_buffer -> %s\n", result ? "true" : "false");
+  return ok(env);
+}
+
+static napi_value test_is_typedarray(const Napi::CallbackInfo &info) {
+  bool result;
+  napi_env env = info.Env();
+  NODE_API_CALL(info.Env(), napi_is_typedarray(env, info[1], &result));
+  printf("napi_is_typedarray -> %s\n", result ? "true" : "false");
+  return ok(env);
+}
+
 Napi::Value RunCallback(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   // this function is invoked without the GC callback
@@ -1204,6 +1220,9 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
               Napi::Function::New(env, create_weird_bigints));
   exports.Set("test_extended_error_messages",
               Napi::Function::New(env, test_extended_error_messages));
+  exports.Set("test_is_buffer", Napi::Function::New(env, test_is_buffer));
+  exports.Set("test_is_typedarray",
+              Napi::Function::New(env, test_is_typedarray));
 
   napitests::register_wrap_tests(env, exports);
 

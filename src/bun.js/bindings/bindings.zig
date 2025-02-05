@@ -429,3 +429,7 @@ comptime {
     // because zig will complain about outside-of-module stuff
     _ = @import("./GeneratedJS2Native.zig");
 }
+
+comptime {
+    _ = @import("../../analyze_transpiled_module.zig");
+}

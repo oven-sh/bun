@@ -12,6 +12,7 @@ class Function : public Object {
 public:
     BUN_EXPORT void SetName(Local<String> name);
     BUN_EXPORT Local<Value> GetName() const;
+    BUN_EXPORT MaybeLocal<Value> Call(Local<Context> context, Local<Value> recv, int argc, Local<Value> argv[]);
 };
 
 } // namespace v8

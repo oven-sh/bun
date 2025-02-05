@@ -1767,7 +1767,7 @@ pub const Command = struct {
         // bun build --compile entry point
         if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
             bun.is_standalone = true;
-            
+
             context_data = .{
                 .args = std.mem.zeroes(Api.TransformOptions),
                 .log = log,

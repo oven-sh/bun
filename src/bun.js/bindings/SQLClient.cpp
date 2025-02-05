@@ -60,6 +60,7 @@ typedef union DataCellValue {
     DataCellArray array;
     TypedArrayDataCell typed_array;
     DataCellRaw raw;
+    uint32_t unsigned_integer;
 } DataCellValue;
 
 enum class DataCellTag : uint8_t {
@@ -76,6 +77,7 @@ enum class DataCellTag : uint8_t {
     Array = 10,
     TypedArray = 11,
     Raw = 12,
+    UnsignedInteger = 13,
 };
 
 enum class BunResultMode : uint8_t {
@@ -140,6 +142,9 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         break;
     case DataCellTag::Integer:
         return jsNumber(cell.value.integer);
+        break;
+    case DataCellTag::UnsignedInteger:
+        return jsNumber(cell.value.unsigned_integer);
         break;
     case DataCellTag::Bigint:
         return JSC::JSBigInt::createFrom(globalObject, cell.value.bigint);

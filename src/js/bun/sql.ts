@@ -134,6 +134,7 @@ class Query extends PublicPromise {
       resolve_ = resolve;
       reject_ = reject;
     });
+
     this[_resolve] = resolve_;
     this[_reject] = reject_;
     this[_handle] = null;

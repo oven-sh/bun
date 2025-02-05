@@ -2167,6 +2167,7 @@ pub const PostgresSQLConnection = struct {
             array = 10,
             typed_array = 11,
             raw = 12,
+            uint4 = 13,
         };
 
         pub const Value = extern union {
@@ -2183,6 +2184,7 @@ pub const PostgresSQLConnection = struct {
             array: Array,
             typed_array: TypedArray,
             raw: Raw,
+            uint4: u32,
         };
 
         pub const Array = extern struct {
@@ -2376,13 +2378,14 @@ pub const PostgresSQLConnection = struct {
             if (slice.len <= count) return "";
             return slice[count..];
         }
-        fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, globalObject: *JSC.JSGlobalObject, offset: ?*usize) !DataCell {
-            // not an array
-            if (bytes.len < 2 or bytes[0] != '{') {
+        fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, globalObject: *JSC.JSGlobalObject, offset: ?*usize, comptime is_json_sub_array: bool) !DataCell {
+            const closing_brace = if (is_json_sub_array) ']' else '}';
+            const opening_brace = if (is_json_sub_array) '[' else '{';
+            if (bytes.len < 2 or bytes[0] != opening_brace) {
                 return error.UnsupportedArrayFormat;
             }
             // empty array
-            if (bytes.len == 2 and bytes[1] == '}') {
+            if (bytes.len == 2 and bytes[1] == closing_brace) {
                 if (offset) |offset_ptr| {
                     offset_ptr.* = 2;
                 }
@@ -2403,7 +2406,7 @@ pub const PostgresSQLConnection = struct {
             };
             while (slice.len > 0) {
                 switch (slice[0]) {
-                    '}' => {
+                    closing_brace => {
                         if (reached_end) {
                             // cannot reach end twice
                             return error.UnsupportedArrayFormat;
@@ -2413,10 +2416,9 @@ pub const PostgresSQLConnection = struct {
                         slice = trySlice(slice, 1);
                         break;
                     },
-                    '{',
-                    => {
+                    opening_brace => {
                         var sub_array_offset: usize = 0;
-                        const sub_array = try parseArray(slice, bigint, arrayType, globalObject, &sub_array_offset);
+                        const sub_array = try parseArray(slice, bigint, arrayType, globalObject, &sub_array_offset, is_json_sub_array);
                         try array.append(bun.default_allocator, sub_array);
                         slice = trySlice(slice, sub_array_offset);
                         continue;
@@ -2425,11 +2427,14 @@ pub const PostgresSQLConnection = struct {
                         // parse string
                         var current_idx: usize = 0;
                         const source = slice[1..];
+                        // simple escape check to avoid something like "\\\\" and "\""
+                        var is_escaped = false;
                         for (source, 0..source.len) |byte, index| {
-                            if (byte == '"' and (index == 0 or source[index - 1] != '\\')) {
+                            if (byte == '"' and !is_escaped) {
                                 current_idx = index + 1;
                                 break;
                             }
+                            is_escaped = !is_escaped and byte == '\\';
                         }
                         // did not find a closing quote
                         if (current_idx == 0) return error.UnsupportedArrayFormat;
@@ -2550,7 +2555,12 @@ pub const PostgresSQLConnection = struct {
                                     defer str.deref();
                                     try array.append(bun.default_allocator, DataCell{ .tag = .date, .value = .{ .date = str.parseDate(globalObject) } });
                                 } else {
-                                    try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (element.len > 0) bun.String.createUTF8(element).value.WTFStringImpl else null }, .free_value = 1 });
+                                    // the only escape sequency possible here is \b
+                                    if (bun.strings.eqlComptime(element, "\\b")) {
+                                        try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = bun.String.static("\x08").value.WTFStringImpl }, .free_value = 1 });
+                                    } else {
+                                        try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (element.len > 0) bun.String.createUTF8(element).value.WTFStringImpl else null }, .free_value = 1 });
+                                    }
                                 }
                                 slice = trySlice(slice, current_idx);
                                 continue;
@@ -2562,7 +2572,6 @@ pub const PostgresSQLConnection = struct {
                                         // null or nan
                                         if (slice.len < 3) return error.UnsupportedArrayFormat;
                                         if (slice.len >= 4) {
-                                            // most common case
                                             if (bun.strings.eqlComptime(slice[0..4], "NULL")) {
                                                 try array.append(bun.default_allocator, DataCell{ .tag = .null, .value = .{ .null = 0 } });
                                                 slice = trySlice(slice, 4);
@@ -2578,15 +2587,33 @@ pub const PostgresSQLConnection = struct {
                                     },
                                     'f' => {
                                         // false
-                                        try array.append(bun.default_allocator, DataCell{ .tag = .bool, .value = .{ .bool = 0 } });
-                                        slice = trySlice(slice, 1);
-                                        continue;
+                                        if (arrayType == .json_array or arrayType == .jsonb_array) {
+                                            if (slice.len < 5) return error.UnsupportedArrayFormat;
+                                            if (bun.strings.eqlComptime(slice[0..5], "false")) {
+                                                try array.append(bun.default_allocator, DataCell{ .tag = .bool, .value = .{ .bool = 0 } });
+                                                slice = trySlice(slice, 5);
+                                                continue;
+                                            }
+                                        } else {
+                                            try array.append(bun.default_allocator, DataCell{ .tag = .bool, .value = .{ .bool = 0 } });
+                                            slice = trySlice(slice, 1);
+                                            continue;
+                                        }
                                     },
                                     't' => {
                                         // true
-                                        try array.append(bun.default_allocator, DataCell{ .tag = .bool, .value = .{ .bool = 1 } });
-                                        slice = trySlice(slice, 1);
-                                        continue;
+                                        if (arrayType == .json_array or arrayType == .jsonb_array) {
+                                            if (slice.len < 4) return error.UnsupportedArrayFormat;
+                                            if (bun.strings.eqlComptime(slice[0..4], "true")) {
+                                                try array.append(bun.default_allocator, DataCell{ .tag = .bool, .value = .{ .bool = 1 } });
+                                                slice = trySlice(slice, 4);
+                                                continue;
+                                            }
+                                        } else {
+                                            try array.append(bun.default_allocator, DataCell{ .tag = .bool, .value = .{ .bool = 1 } });
+                                            slice = trySlice(slice, 1);
+                                            continue;
+                                        }
                                     },
                                     'I',
                                     => {
@@ -2660,24 +2687,40 @@ pub const PostgresSQLConnection = struct {
                                             slice = trySlice(slice, current_idx);
                                             continue;
                                         }
+                                        switch (arrayType) {
+                                            .int8_array => {
+                                                if (bigint) {
+                                                    try array.append(bun.default_allocator, DataCell{ .tag = .int8, .value = .{ .int8 = bun.fmt.parseInt(i64, element, 0) catch return error.UnsupportedArrayFormat } });
+                                                } else {
+                                                    try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (element.len > 0) bun.String.createUTF8(element).value.WTFStringImpl else null }, .free_value = 1 });
+                                                }
+                                                slice = trySlice(slice, current_idx);
+                                                continue;
+                                            },
+                                            .cid_array, .xid_array, .oid_array => {
+                                                try array.append(bun.default_allocator, DataCell{ .tag = .uint4, .value = .{ .uint4 = bun.fmt.parseInt(u32, element, 0) catch 0 } });
+                                                slice = trySlice(slice, current_idx);
+                                                continue;
+                                            },
+                                            else => {
+                                                const value = bun.fmt.parseInt(i32, element, 0) catch return error.UnsupportedArrayFormat;
 
-                                        if (arrayType == .int8_array) {
-                                            if (bigint) {
-                                                try array.append(bun.default_allocator, DataCell{ .tag = .int8, .value = .{ .int8 = bun.fmt.parseInt(i64, element, 0) catch return error.UnsupportedArrayFormat } });
-                                            } else {
-                                                try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (element.len > 0) bun.String.createUTF8(element).value.WTFStringImpl else null }, .free_value = 1 });
-                                            }
-                                            slice = trySlice(slice, current_idx);
-                                            continue;
-                                        } else {
-                                            const value = bun.fmt.parseInt(i32, element, 0) catch return error.UnsupportedArrayFormat;
-
-                                            try array.append(bun.default_allocator, DataCell{ .tag = .int4, .value = .{ .int4 = @intCast(value) } });
-                                            slice = trySlice(slice, current_idx);
+                                                try array.append(bun.default_allocator, DataCell{ .tag = .int4, .value = .{ .int4 = @intCast(value) } });
+                                                slice = trySlice(slice, current_idx);
+                                                continue;
+                                            },
                                         }
-                                        continue;
                                     },
                                     else => {
+                                        if (arrayType == .json_array or arrayType == .jsonb_array) {
+                                            if (slice[0] == '[') {
+                                                var sub_array_offset: usize = 0;
+                                                const sub_array = try parseArray(slice, bigint, arrayType, globalObject, &sub_array_offset, true);
+                                                try array.append(bun.default_allocator, sub_array);
+                                                slice = trySlice(slice, sub_array_offset);
+                                                continue;
+                                            }
+                                        }
                                         return error.UnsupportedArrayFormat;
                                     },
                                 }
@@ -2750,7 +2793,7 @@ pub const PostgresSQLConnection = struct {
                             },
                         };
                     } else {
-                        return try parseArray(bytes, bigint, tag, globalObject, null);
+                        return try parseArray(bytes, bigint, tag, globalObject, null, false);
                     }
                 },
                 .int2 => {
@@ -2758,6 +2801,13 @@ pub const PostgresSQLConnection = struct {
                         return DataCell{ .tag = .int4, .value = .{ .int4 = try parseBinary(.int2, i16, bytes) } };
                     } else {
                         return DataCell{ .tag = .int4, .value = .{ .int4 = bun.fmt.parseInt(i32, bytes, 0) catch 0 } };
+                    }
+                },
+                .cid, .xid, .oid => {
+                    if (binary) {
+                        return DataCell{ .tag = .uint4, .value = .{ .uint4 = try parseBinary(.oid, u32, bytes) } };
+                    } else {
+                        return DataCell{ .tag = .uint4, .value = .{ .uint4 = bun.fmt.parseInt(u32, bytes, 0) catch 0 } };
                     }
                 },
                 .int4 => {
@@ -2853,10 +2903,14 @@ pub const PostgresSQLConnection = struct {
                 .macaddr_array,
                 .inet_array,
                 .aclitem_array,
+                .tid_array,
                 // numeric array types
                 .int8_array,
                 .int2_array,
                 .float8_array,
+                .oid_array,
+                .xid_array,
+                .cid_array,
 
                 // special types
                 .bool_array,
@@ -2870,7 +2924,7 @@ pub const PostgresSQLConnection = struct {
                 .timestamptz_array,
                 .interval_array,
                 => |tag| {
-                    return try parseArray(bytes, bigint, tag, globalObject, null);
+                    return try parseArray(bytes, bigint, tag, globalObject, null, false);
                 },
                 else => {
                     return DataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) bun.String.createUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
@@ -2925,6 +2979,22 @@ pub const PostgresSQLConnection = struct {
                         },
                         4 => {
                             return @bitCast(pg_ntoh32(@as(u32, @bitCast(bytes[0..4].*))));
+                        },
+                        else => {
+                            return error.UnsupportedIntegerSize;
+                        },
+                    }
+                },
+                .oid => {
+                    switch (bytes.len) {
+                        1 => {
+                            return bytes[0];
+                        },
+                        2 => {
+                            return pg_ntoh16(@as(u16, @bitCast(bytes[0..2].*)));
+                        },
+                        4 => {
+                            return pg_ntoh32(@as(u32, @bitCast(bytes[0..4].*)));
                         },
                         else => {
                             return error.UnsupportedIntegerSize;

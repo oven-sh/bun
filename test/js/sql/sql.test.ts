@@ -4191,4 +4191,1585 @@ if (isDockerEnabled()) {
       expect(result[0].signed_zeros).toEqual([0, 0, 0]);
     });
   });
+
+  describe("int2[] Array Type", () => {
+    test("int2[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::int2[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("int2[] - single value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[1]::int2[] as single_value`;
+      expect(result[0].single_value).toEqual([1]);
+    });
+
+    test("int2[] - multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[1, 2, 3]::int2[] as multiple_values`;
+      expect(result[0].multiple_values).toEqual([1, 2, 3]);
+    });
+
+    test("int2[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[1, NULL, 3, NULL]::int2[] as array_with_nulls`;
+      expect(result[0].array_with_nulls).toEqual([1, null, 3, null]);
+    });
+
+    test("int2[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::int2[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("int2[] - maximum values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          32767,        -- Maximum int2
+          -32768        -- Minimum int2
+        ]::int2[] as extreme_values
+      `;
+      expect(result[0].extreme_values).toEqual([
+        32767, // Maximum 16-bit integer
+        -32768, // Minimum 16-bit integer
+      ]);
+    });
+
+    test("int2[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY[1, 2, 3]::int2[])[1] as first_element,
+          (ARRAY[1, 2, 3]::int2[])[2] as second_element,
+          (ARRAY[1, 2, 3]::int2[])[3] as third_element
+      `;
+
+      expect(result[0].first_element).toBe(1);
+      expect(result[0].second_element).toBe(2);
+      expect(result[0].third_element).toBe(3);
+    });
+
+    test("int2[] - array contains operator", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY[1, 2, 3]::int2[] @> ARRAY[1]::int2[] as contains_first,
+          ARRAY[1, 2, 3]::int2[] @> ARRAY[2]::int2[] as contains_second,
+          ARRAY[1, 2, 3]::int2[] @> ARRAY[4]::int2[] as contains_none,
+          ARRAY[1, 2, 3]::int2[] @> ARRAY[1, 2]::int2[] as contains_multiple
+      `;
+
+      expect(result[0].contains_first).toBe(true);
+      expect(result[0].contains_second).toBe(true);
+      expect(result[0].contains_none).toBe(false);
+      expect(result[0].contains_multiple).toBe(true);
+    });
+
+    test("int2[] - array overlap operator", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY[1, 2]::int2[] && ARRAY[2, 3]::int2[] as has_overlap,
+          ARRAY[1, 2]::int2[] && ARRAY[3, 4]::int2[] as no_overlap
+      `;
+
+      expect(result[0].has_overlap).toBe(true);
+      expect(result[0].no_overlap).toBe(false);
+    });
+
+    test("int2[] - array concatenation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY[1, 2]::int2[] || ARRAY[3, 4]::int2[] as concatenated,
+          ARRAY[1]::int2[] || ARRAY[2]::int2[] || ARRAY[3]::int2[] as triple_concat
+      `;
+
+      expect(result[0].concatenated).toEqual([1, 2, 3, 4]);
+      expect(result[0].triple_concat).toEqual([1, 2, 3]);
+    });
+
+    test("int2[] - array unnesting", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT unnest(ARRAY[1, 2, 3]::int2[]) as unnested
+        ORDER BY unnested
+      `;
+
+      expect(result.map(r => r.unnested)).toEqual([1, 2, 3]);
+    });
+
+    test("int2[] - array arithmetic operations", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (SELECT array_agg(val + 1) FROM unnest(ARRAY[1, 2, 3]::int2[]) as val) as addition,
+          (SELECT array_agg(val * 2) FROM unnest(ARRAY[1, 2, 3]::int2[]) as val) as multiplication
+      `;
+
+      expect(result[0].addition).toEqual([2, 3, 4]);
+      expect(result[0].multiplication).toEqual([2, 4, 6]);
+    });
+
+    test("int2[] - array comparison", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY[1, 2]::int2[] = ARRAY[1, 2]::int2[] as equal_arrays,
+          ARRAY[1, 2]::int2[] = ARRAY[2, 1]::int2[] as different_order,
+          ARRAY[1, 2]::int2[] < ARRAY[2, 2]::int2[] as less_than,
+          ARRAY[2, 2]::int2[] > ARRAY[1, 2]::int2[] as greater_than
+      `;
+
+      expect(result[0].equal_arrays).toBe(true);
+      expect(result[0].different_order).toBe(false);
+      expect(result[0].less_than).toBe(true);
+      expect(result[0].greater_than).toBe(true);
+    });
+
+    test("int2[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY[1, 2, 3]::int2[], 1) as array_length,
+          array_dims(ARRAY[1, 2, 3]::int2[]) as dimensions,
+          array_upper(ARRAY[1, 2, 3]::int2[], 1) as upper_bound,
+          array_lower(ARRAY[1, 2, 3]::int2[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(3);
+      expect(result[0].dimensions).toBe("[1:3]");
+      expect(result[0].upper_bound).toBe(3);
+      expect(result[0].lower_bound).toBe(1);
+    });
+
+    test("int2[] - array aggregation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        WITH numbers AS (
+          SELECT unnest(ARRAY[-1, 1, 2, 1, 3]::int2[]) as num
+        )
+        SELECT array_agg(num ORDER BY num) as aggregated
+        FROM numbers
+      `;
+
+      expect(result[0].aggregated).toEqual([-1, 1, 1, 2, 3]);
+    });
+
+    test("int2[] - array mathematical functions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (SELECT sum(val) FROM unnest(ARRAY[1, 2, 3]::int2[]) as val)::int2 as total,
+          (SELECT avg(val) FROM unnest(ARRAY[1, 2, 3]::int2[]) as val)::int2 as average,
+          (SELECT min(val) FROM unnest(ARRAY[1, 2, 3]::int2[]) as val)::int2 as minimum,
+          (SELECT max(val) FROM unnest(ARRAY[1, 2, 3]::int2[]) as val)::int2 as maximum
+      `;
+
+      expect(result[0].total).toBe(6);
+      expect(result[0].average).toBe(2);
+      expect(result[0].minimum).toBe(1);
+      expect(result[0].maximum).toBe(3);
+    });
+
+    test("int2[] - array type casting", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY[1, 2, 3]::int4[] = ARRAY[1, 2, 3]::int2[]::int4[] as cast_to_int4,
+          ARRAY[1, 2, 3]::int8[] = ARRAY[1, 2, 3]::int2[]::int8[] as cast_to_int8,
+          ARRAY[1, 2, 3]::float4[] = ARRAY[1, 2, 3]::int2[]::float4[] as cast_to_float4
+      `;
+
+      expect(result[0].cast_to_int4).toBe(true);
+      expect(result[0].cast_to_int8).toBe(true);
+      expect(result[0].cast_to_float4).toBe(true);
+    });
+
+    test("int2[] - overflow behavior", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      expect(
+        await sql`
+        SELECT ARRAY[32768]::int2[] -- One more than maximum int2
+      `.catch(e => e.errno),
+      ).toBe("22003"); //smallint out of range
+      expect(
+        await sql`
+        SELECT ARRAY[-32769]::int2[] -- One less than minimum int2
+      `.catch(e => e.errno),
+      ).toBe("22003"); //smallint out of range
+    });
+  });
+  // old, deprecated not entire documented but we keep the same behavior as postgres.js
+  describe("int2vector[] Array Type", () => {
+    test("int2vector[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::int2vector[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("int2vector[] - single empty vector", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['0'::int2vector] as single_empty_vector`;
+      // YEAH this is weird but it's what postgres.js does because is what we receive from the server
+      expect(result[0].single_empty_vector[0]).toEqual("1");
+    });
+
+    test("int2vector[] - single vector with one value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['1'::int2vector] as single_value_vector`;
+      expect(result[0].single_value_vector[0]).toEqual("1");
+    });
+
+    test("int2vector[] - single vector with multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['1 2 3'::int2vector] as multi_value_vector`;
+      expect(result[0].multi_value_vector[0]).toEqual("1");
+    });
+
+    test("int2vector[] - multiple vectors", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY['1 2'::int2vector, '3 4'::int2vector] as multiple_vectors
+      `;
+      expect(result[0].multiple_vectors).toEqual("1 0");
+    });
+
+    test("int2vector[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      try {
+        const result = await sql`
+          SELECT ARRAY['1 2'::int2vector, NULL, '3 4'::int2vector] as array_with_nulls
+        `;
+        expect.unreachable();
+      } catch (e: any) {
+        //multidimensional arrays must have array expressions with matching dimensions
+        expect(e.errno).toBe("2202E");
+      }
+    });
+
+    test("int2vector[] - array contains operator", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['1 2'::int2vector, '3 4'::int2vector] @> 
+          ARRAY['1 2'::int2vector] as contains_first,
+          
+          ARRAY['1 2'::int2vector, '3 4'::int2vector] @> 
+          ARRAY['3 4'::int2vector] as contains_second,
+          
+          ARRAY['1 2'::int2vector, '3 4'::int2vector] @> 
+          ARRAY['5 6'::int2vector] as contains_none
+      `;
+
+      expect(result[0].contains_first).toBe(true);
+      expect(result[0].contains_second).toBe(true);
+      expect(result[0].contains_none).toBe(false);
+    });
+
+    test("int2vector[] - array with maximum int2 values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY['32767 -32768'::int2vector] as extreme_values
+      `;
+      expect(result[0].extreme_values).toEqual("1");
+    });
+
+    test("int2vector[] - unnesting and aggregation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        WITH vectors AS (
+          SELECT unnest(ARRAY['1 2'::int2vector, '3 4'::int2vector, '1 2'::int2vector]) as vec
+        )
+        SELECT array_agg(vec ORDER BY vec) as aggregated
+        FROM vectors
+      `;
+
+      expect(result[0].aggregated).toEqual([1, 1, 2, 2, 3, 4]);
+    });
+  });
+
+  describe("text[] Array Type", () => {
+    test("text[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::text[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("text[] - single value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['hello']::text[] as single_value`;
+      expect(result[0].single_value).toEqual(["hello"]);
+    });
+
+    test("text[] - multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['hello', 'world', 'test']::text[] as multiple_values`;
+      expect(result[0].multiple_values).toEqual(["hello", "world", "test"]);
+    });
+
+    test("text[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['hello', NULL, 'world', NULL]::text[] as array_with_nulls`;
+      expect(result[0].array_with_nulls).toEqual(["hello", null, "world", null]);
+    });
+
+    test("text[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::text[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("text[] - empty strings", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['', '', 'test']::text[] as array_with_empty`;
+      expect(result[0].array_with_empty).toEqual(["", "", "test"]);
+    });
+
+    test("text[] - special characters", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          'special\nline',
+          'tab\there',
+          'back\\slash',
+          'quotes''here'
+        ]::text[] as special_chars
+      `;
+      expect(result[0].special_chars).toEqual(["special\nline", "tab\there", "back\\slash", "quotes'here"]);
+    });
+
+    test("text[] - unicode characters", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '你好',
+          'こんにちは',
+          '안녕하세요',
+          '👋 🌍'
+        ]::text[] as unicode_chars
+      `;
+      expect(result[0].unicode_chars).toEqual(["你好", "こんにちは", "안녕하세요", "👋 🌍"]);
+    });
+
+    test("text[] - long strings", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const longString = "a".repeat(1000);
+      const result = await sql`SELECT ARRAY[${longString}]::text[] as long_string_array`;
+      expect(result[0].long_string_array[0].length).toBe(1000);
+    });
+
+    test("text[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY['first', 'second', 'third']::text[])[1] as first_element,
+          (ARRAY['first', 'second', 'third']::text[])[2] as second_element,
+          (ARRAY['first', 'second', 'third']::text[])[3] as third_element
+      `;
+
+      expect(result[0].first_element).toBe("first");
+      expect(result[0].second_element).toBe("second");
+      expect(result[0].third_element).toBe("third");
+    });
+
+    test("text[] - array contains operator", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['a', 'b', 'c']::text[] @> ARRAY['a']::text[] as contains_first,
+          ARRAY['a', 'b', 'c']::text[] @> ARRAY['b']::text[] as contains_second,
+          ARRAY['a', 'b', 'c']::text[] @> ARRAY['d']::text[] as contains_none,
+          ARRAY['a', 'b', 'c']::text[] @> ARRAY['a', 'b']::text[] as contains_multiple
+      `;
+
+      expect(result[0].contains_first).toBe(true);
+      expect(result[0].contains_second).toBe(true);
+      expect(result[0].contains_none).toBe(false);
+      expect(result[0].contains_multiple).toBe(true);
+    });
+
+    test("text[] - array overlap operator", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['a', 'b']::text[] && ARRAY['b', 'c']::text[] as has_overlap,
+          ARRAY['a', 'b']::text[] && ARRAY['c', 'd']::text[] as no_overlap
+      `;
+
+      expect(result[0].has_overlap).toBe(true);
+      expect(result[0].no_overlap).toBe(false);
+    });
+
+    test("text[] - array concatenation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['a', 'b']::text[] || ARRAY['c', 'd']::text[] as concatenated,
+          ARRAY['a']::text[] || ARRAY['b']::text[] || ARRAY['c']::text[] as triple_concat
+      `;
+
+      expect(result[0].concatenated).toEqual(["a", "b", "c", "d"]);
+      expect(result[0].triple_concat).toEqual(["a", "b", "c"]);
+    });
+
+    test("text[] - case sensitivity", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['Test']::text[] = ARRAY['test']::text[] as case_sensitive,
+          ARRAY['test']::text[] = ARRAY['test']::text[] as same_case
+      `;
+
+      expect(result[0].case_sensitive).toBe(false);
+      expect(result[0].same_case).toBe(true);
+    });
+
+    test("text[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY['a', 'b', 'c']::text[], 1) as array_length,
+          array_dims(ARRAY['a', 'b', 'c']::text[]) as dimensions,
+          array_upper(ARRAY['a', 'b', 'c']::text[], 1) as upper_bound,
+          array_lower(ARRAY['a', 'b', 'c']::text[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(3);
+      expect(result[0].dimensions).toBe("[1:3]");
+      expect(result[0].upper_bound).toBe(3);
+      expect(result[0].lower_bound).toBe(1);
+    });
+
+    test("text[] - array string functions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (SELECT array_agg(upper(val)) FROM unnest(ARRAY['a', 'b', 'c']::text[]) as val) as uppercase,
+          (SELECT array_agg(length(val)) FROM unnest(ARRAY['a', 'bb', 'ccc']::text[]) as val) as lengths
+      `;
+
+      expect(result[0].uppercase).toEqual(["A", "B", "C"]);
+      expect(result[0].lengths).toEqual([1, 2, 3]);
+    });
+
+    test("text[] - array sorting", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        WITH texts AS (
+          SELECT unnest(ARRAY['c', 'a', 'b', 'a']::text[]) as txt
+        )
+        SELECT array_agg(txt ORDER BY txt) as sorted
+        FROM texts
+      `;
+
+      expect(result[0].sorted).toEqual(["a", "a", "b", "c"]);
+    });
+
+    test("text[] - array with json strings", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '{"key": "value"}',
+          '{"array": [1, 2, 3]}'
+        ]::text[] as json_strings
+      `;
+
+      expect(result[0].json_strings).toEqual(['{"key": "value"}', '{"array": [1, 2, 3]}']);
+    });
+    test("text[] - multiple word phrases", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          'Hello World',
+          'Good Morning',
+          'PostgreSQL Database',
+          'Multiple Words Here'
+        ]::text[] as phrases
+      `;
+      expect(result[0].phrases).toEqual(["Hello World", "Good Morning", "PostgreSQL Database", "Multiple Words Here"]);
+    });
+
+    test("text[] - single characters", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          'a',
+          'b',
+          ' ',
+          '.',
+          '?',
+          '1',
+          '漢',
+          'й'
+        ]::text[] as single_chars
+      `;
+      expect(result[0].single_chars).toEqual(["a", "b", " ", ".", "?", "1", "漢", "й"]);
+    });
+
+    test("text[] - very large text values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          repeat('a', 10000),
+          repeat('b', 50000),
+          repeat('Hello World ', 1000)
+        ]::text[] as large_texts
+      `;
+
+      expect(result[0].large_texts[0].length).toBe(10000);
+      expect(result[0].large_texts[1].length).toBe(50000);
+      expect(result[0].large_texts[2].length).toBe(12000); // 'Hello World ' is 12 chars
+    });
+
+    test("text[] - mixed length content", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          'x',
+          'Hello World',
+          repeat('a', 1000),
+          '漢',
+          'Some More Words Here',
+          '!'
+        ]::text[] as mixed_content
+      `;
+
+      expect(result[0].mixed_content).toEqual([
+        "x",
+        "Hello World",
+        "a".repeat(1000),
+        "漢",
+        "Some More Words Here",
+        "!",
+      ]);
+    });
+
+    test("text[] - spaces and whitespace handling", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '   leading spaces',
+          'trailing spaces   ',
+          '   both sides   ',
+          'multiple   internal    spaces',
+          E'tab\there',
+          E'new\nline',
+          ' '
+        ]::text[] as whitespace_cases
+      `;
+
+      expect(result[0].whitespace_cases).toEqual([
+        "   leading spaces",
+        "trailing spaces   ",
+        "   both sides   ",
+        "multiple   internal    spaces",
+        "tab\there",
+        "new\nline",
+        " ",
+      ]);
+    });
+
+    test("text[] - mixed case phrases", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          'Hello World',
+          'HELLO WORLD',
+          'hello world',
+          'HeLLo WoRLD',
+          'hELLO wORLD'
+        ]::text[] as mixed_case_phrases
+      `;
+
+      expect(result[0].mixed_case_phrases).toEqual([
+        "Hello World",
+        "HELLO WORLD",
+        "hello world",
+        "HeLLo WoRLD",
+        "hELLO wORLD",
+      ]);
+    });
+
+    test("text[] - searching within text containing spaces", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        WITH texts AS (
+          SELECT unnest(ARRAY[
+            'Hello World',
+            'Hello Universe',
+            'Goodbye World',
+            'Hello There'
+          ]::text[]) as phrase
+        )
+        SELECT 
+          array_agg(phrase ORDER BY phrase) FILTER (WHERE phrase LIKE 'Hello%') as hello_phrases,
+          array_agg(phrase ORDER BY phrase) FILTER (WHERE phrase LIKE '%World') as world_phrases
+        FROM texts
+      `;
+
+      expect(result[0].hello_phrases).toEqual(["Hello There", "Hello Universe", "Hello World"]);
+      expect(result[0].world_phrases).toEqual(["Goodbye World", "Hello World"]);
+    });
+
+    test("text[] - comparison with spaces", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['Hello World']::text[] @> ARRAY['Hello World']::text[] as exact_match,
+          ARRAY['Hello World']::text[] @> ARRAY['Hello']::text[] as partial_match,
+          ARRAY['Hello', 'World']::text[] @> ARRAY['Hello World']::text[] as separate_words
+      `;
+
+      expect(result[0].exact_match).toBe(true);
+      expect(result[0].partial_match).toBe(false);
+      expect(result[0].separate_words).toBe(false);
+    });
+
+    test("text[] - concatenation with spaces", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['Hello', 'World']::text[] || ARRAY['Good Morning']::text[] as concatenated,
+          string_agg(word, ' ') as joined
+        FROM unnest(ARRAY['Hello', 'World']::text[]) as word
+      `;
+
+      expect(result[0].concatenated).toEqual(["Hello", "World", "Good Morning"]);
+      expect(result[0].joined).toBe("Hello World");
+    });
+
+    test("text[] - unicode escape sequences", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          E'\\u0041',             -- A
+          E'\\u0042',             -- B
+          E'\\u00A9',             -- ©
+          E'\\u00AE',             -- ®
+          E'\\u2122',             -- ™
+          E'\\u2764',             -- ❤
+          E'\\u0024\\u0025',      -- $%
+          E'\\u0048\\u0069'       -- Hi
+        ]::text[] as unicode_escapes
+      `;
+
+      expect(result[0].unicode_escapes).toEqual(["A", "B", "©", "®", "™", "❤", "$%", "Hi"]);
+    });
+
+    test("text[] - hex escape sequences", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          E'\\x41',              -- A
+          E'\\x42',              -- B
+          E'\\x43',              -- C
+          E'\\x414243',          -- A4243
+          E'\\x48656C6C6F',      -- H656C6C6F
+          E'\\x48\\x69'          -- Hi
+        ]::text[] as hex_escapes
+      `;
+
+      expect(result[0].hex_escapes).toEqual(["A", "B", "C", "A4243", "H656C6C6F", "Hi"]);
+    });
+
+    test("text[] - mixed escape sequences", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          E'\\x41\\u0042\\x43',          -- ABC
+          E'\\u0041\\x42\\u0043',        -- ABC
+          E'\\x48\\u0069\\x21'           -- Hi!
+        ]::text[] as mixed_escapes
+      `;
+
+      expect(result[0].mixed_escapes).toEqual(["ABC", "ABC", "Hi!"]);
+    });
+
+    test("text[] - special character escaping", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          E'\\b',                -- backspace
+          E'\\f',                -- form feed
+          E'\\n',                -- newline
+          E'\\r',                -- carriage return
+          E'\\t',                -- tab
+          E'\\v',                -- vertical tab (not in postgres.js)
+          E'\\\\',               -- backslash
+          E'\"'                  -- quote
+        ]::text[] as special_escapes
+      `;
+      // vertical tab will be just "v"
+      expect(result[0].special_escapes).toEqual(["\b", "\f", "\n", "\r", "\t", "v", "\\", '"']);
+    });
+
+    test("text[] - octal escape sequences", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          E'\\101',              -- A (octal 101 = 65 decimal)
+          E'\\102',              -- B (octal 102 = 66 decimal)
+          E'\\103',              -- C (octal 103 = 67 decimal)
+          E'\\077',              -- ? (octal 77 = 63 decimal)
+          E'\\011'               -- tab (octal 11 = 9 decimal)
+        ]::text[] as octal_escapes
+      `;
+
+      expect(result[0].octal_escapes).toEqual(["A", "B", "C", "?", "\t"]);
+    });
+
+    test("text[] - combined escapes in words", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          E'Hello\\nWorld',
+          E'Tab\\tHere',
+          E'Quote\\' here',
+          E'\\x48\\x69\\u0021',          -- Hi!
+          E'\\x48\\145\\u006C\\154\\157' -- Hello (mixed hex, octal, unicode)
+        ]::text[] as combined_escapes
+      `;
+
+      expect(result[0].combined_escapes).toEqual(["Hello\nWorld", "Tab\tHere", "Quote' here", "Hi!", "Hello"]);
+    });
+
+    test("text[] - escape sequences with spaces", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          E'\\u0048\\u0069 \\u0057\\u006F\\u0072\\u006C\\u0064',  -- Hi World
+          E'\\x48\\x69\\x20\\x57\\x6F\\x72\\x6C\\x64',            -- Hi World
+          E'\\110\\151\\040\\127\\157\\162\\154\\144'             -- Hi World (octal)
+        ]::text[] as escaped_phrases
+      `;
+
+      expect(result[0].escaped_phrases).toEqual(["Hi World", "Hi World", "Hi World"]);
+    });
+
+    test("text[] - nested escapes and quotes", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          E'Escaped \\"quote\\"',
+          E'Double \\\\ backslash',
+          E'Multiple \\\\\\\ backslashes',
+          E'Quote in \\u0022string\\u0022',
+          E'Mixed \\u0027\\x27\\047'      -- Three single quotes (unicode, hex, octal)
+        ]::text[] as nested_escapes
+      `;
+
+      expect(result[0].nested_escapes).toEqual([
+        'Escaped "quote"',
+        "Double \\ backslash",
+        "Multiple \\ backslashes", // this is the right behavior (same in postgres.js)
+        'Quote in "string"',
+        "Mixed '''",
+      ]);
+    });
+
+    test("text[] - escape sequence error handling", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+
+      // Invalid unicode escape
+      expect(
+        await sql`
+        SELECT ARRAY[E'\\u123']::text[] as invalid_unicode
+      `.catch(e => e.errno || e),
+      ).toBe("22025");
+      // Invalid octal escape
+      expect(
+        await sql`
+        SELECT ARRAY[E'\\400']::text[] as invalid_octal
+      `.catch(e => e.errno || e),
+      ).toBe("22021");
+      // Invalid hex escape
+      expect(
+        await sql`
+        SELECT ARRAY[E'\\xGG']::text[] as invalid_hex`.then(result => result[0].invalid_hex),
+      ).toEqual(["xGG"]);
+    });
+  });
+
+  describe("oid[] Array type", () => {
+    test("oid[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::oid[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("oid[] - single value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[1]::oid[] as single_value`;
+      expect(result[0].single_value).toEqual([1]);
+    });
+
+    test("oid[] - multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[1, 2, 3]::oid[] as multiple_values`;
+      expect(result[0].multiple_values).toEqual([1, 2, 3]);
+    });
+
+    test("oid[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[1, NULL, 3, NULL]::oid[] as array_with_nulls`;
+      expect(result[0].array_with_nulls).toEqual([1, null, 3, null]);
+    });
+
+    test("oid[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::oid[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("oid[] - system OIDs", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          'pg_type'::regclass::oid,
+          'pg_class'::regclass::oid,
+          'pg_attribute'::regclass::oid
+        ]::oid[] as system_oids
+      `;
+      expect(result[0].system_oids).toEqual(
+        expect.arrayContaining([expect.any(Number), expect.any(Number), expect.any(Number)]),
+      );
+    });
+
+    test("oid[] - large OID values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          4294967295,  -- Maximum OID value (2^32 - 1)
+          0,           -- Minimum OID value
+          4294967294   -- Maximum OID value - 1
+        ]::oid[] as extreme_values
+      `;
+      expect(result[0].extreme_values).toEqual([4294967295, 0, 4294967294]);
+    });
+
+    test("oid[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY[1, 2, 3]::oid[])[1] as first_element,
+          (ARRAY[1, 2, 3]::oid[])[2] as second_element,
+          (ARRAY[1, 2, 3]::oid[])[3] as third_element
+      `;
+
+      expect(result[0].first_element).toBe(1);
+      expect(result[0].second_element).toBe(2);
+      expect(result[0].third_element).toBe(3);
+    });
+
+    test("oid[] - array contains operator", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY[1, 2, 3]::oid[] @> ARRAY[1]::oid[] as contains_first,
+          ARRAY[1, 2, 3]::oid[] @> ARRAY[2]::oid[] as contains_second,
+          ARRAY[1, 2, 3]::oid[] @> ARRAY[4]::oid[] as contains_none,
+          ARRAY[1, 2, 3]::oid[] @> ARRAY[1, 2]::oid[] as contains_multiple
+      `;
+
+      expect(result[0].contains_first).toBe(true);
+      expect(result[0].contains_second).toBe(true);
+      expect(result[0].contains_none).toBe(false);
+      expect(result[0].contains_multiple).toBe(true);
+    });
+
+    test("oid[] - array overlap operator", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY[1, 2]::oid[] && ARRAY[2, 3]::oid[] as has_overlap,
+          ARRAY[1, 2]::oid[] && ARRAY[3, 4]::oid[] as no_overlap
+      `;
+
+      expect(result[0].has_overlap).toBe(true);
+      expect(result[0].no_overlap).toBe(false);
+    });
+
+    test("oid[] - array concatenation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY[1, 2]::oid[] || ARRAY[3, 4]::oid[] as concatenated,
+          ARRAY[1]::oid[] || ARRAY[2]::oid[] || ARRAY[3]::oid[] as triple_concat
+      `;
+
+      expect(result[0].concatenated).toEqual([1, 2, 3, 4]);
+      expect(result[0].triple_concat).toEqual([1, 2, 3]);
+    });
+
+    test("oid[] - array unnesting", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT unnest(ARRAY[1, 2, 3]::oid[]) as unnested
+        ORDER BY unnested
+      `;
+
+      expect(result.map(r => r.unnested)).toEqual([1, 2, 3]);
+    });
+
+    test("oid[] - array comparison", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY[1, 2]::oid[] = ARRAY[1, 2]::oid[] as equal_arrays,
+          ARRAY[1, 2]::oid[] = ARRAY[2, 1]::oid[] as different_order,
+          ARRAY[1, 2]::oid[] < ARRAY[2, 2]::oid[] as less_than,
+          ARRAY[2, 2]::oid[] > ARRAY[1, 2]::oid[] as greater_than
+      `;
+
+      expect(result[0].equal_arrays).toBe(true);
+      expect(result[0].different_order).toBe(false);
+      expect(result[0].less_than).toBe(true);
+      expect(result[0].greater_than).toBe(true);
+    });
+
+    test("oid[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY[1, 2, 3]::oid[], 1) as array_length,
+          array_dims(ARRAY[1, 2, 3]::oid[]) as dimensions,
+          array_upper(ARRAY[1, 2, 3]::oid[], 1) as upper_bound,
+          array_lower(ARRAY[1, 2, 3]::oid[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(3);
+      expect(result[0].dimensions).toBe("[1:3]");
+      expect(result[0].upper_bound).toBe(3);
+      expect(result[0].lower_bound).toBe(1);
+    });
+
+    test("oid[] - type casting", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY[1, 2, 3]::int4[] = ARRAY[1, 2, 3]::oid[]::int4[] as cast_to_int4,
+          ARRAY[1, 2, 3]::int8[] = ARRAY[1, 2, 3]::oid[]::int8[] as cast_to_int8
+      `;
+
+      expect(result[0].cast_to_int4).toBe(true);
+      expect(result[0].cast_to_int8).toBe(true);
+    });
+
+    test("oid[] - regclass to oid conversion", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          oid,
+          relowner::oid,
+          relnamespace::oid
+        ]::oid[] as class_oids
+        FROM pg_class 
+        WHERE relname = 'pg_class'
+      `;
+
+      expect(result[0].class_oids).toEqual(
+        expect.arrayContaining([expect.any(Number), expect.any(Number), expect.any(Number)]),
+      );
+    });
+  });
+
+  describe("tid[] Array type", () => {
+    test("tid[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::tid[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("tid[] - single value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['(0,1)']::tid[] as single_value`;
+      expect(result[0].single_value).toEqual(["(0,1)"]);
+    });
+
+    test("tid[] - multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY['(0,1)', '(0,2)', '(1,1)']::tid[] as multiple_values
+      `;
+      expect(result[0].multiple_values).toEqual(["(0,1)", "(0,2)", "(1,1)"]);
+    });
+
+    test("tid[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY['(0,1)', NULL, '(0,2)', NULL]::tid[] as array_with_nulls
+      `;
+      expect(result[0].array_with_nulls).toEqual(["(0,1)", null, "(0,2)", null]);
+    });
+
+    test("tid[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::tid[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("tid[] - boundary values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '(0,0)',              -- Minimum possible values
+          '(0,1)',              -- First tuple in block 0
+          '(4294967295,65535)'  -- Maximum possible values (2^32-1, 2^16-1)
+        ]::tid[] as boundary_values
+      `;
+      expect(result[0].boundary_values).toEqual(["(0,0)", "(0,1)", "(4294967295,65535)"]);
+    });
+
+    test("tid[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY['(0,1)', '(0,2)', '(0,3)']::tid[])[1] as first_element,
+          (ARRAY['(0,1)', '(0,2)', '(0,3)']::tid[])[2] as second_element,
+          (ARRAY['(0,1)', '(0,2)', '(0,3)']::tid[])[3] as third_element
+      `;
+
+      expect(result[0].first_element).toBe("(0,1)");
+      expect(result[0].second_element).toBe("(0,2)");
+      expect(result[0].third_element).toBe("(0,3)");
+    });
+
+    test("tid[] - array contains operator", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['(0,1)', '(0,2)', '(0,3)']::tid[] @> ARRAY['(0,1)']::tid[] as contains_first,
+          ARRAY['(0,1)', '(0,2)', '(0,3)']::tid[] @> ARRAY['(0,2)']::tid[] as contains_second,
+          ARRAY['(0,1)', '(0,2)', '(0,3)']::tid[] @> ARRAY['(0,4)']::tid[] as contains_none,
+          ARRAY['(0,1)', '(0,2)', '(0,3)']::tid[] @> ARRAY['(0,1)', '(0,2)']::tid[] as contains_multiple
+      `;
+
+      expect(result[0].contains_first).toBe(true);
+      expect(result[0].contains_second).toBe(true);
+      expect(result[0].contains_none).toBe(false);
+      expect(result[0].contains_multiple).toBe(true);
+    });
+
+    test("tid[] - array overlap operator", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['(0,1)', '(0,2)']::tid[] && ARRAY['(0,2)', '(0,3)']::tid[] as has_overlap,
+          ARRAY['(0,1)', '(0,2)']::tid[] && ARRAY['(0,3)', '(0,4)']::tid[] as no_overlap
+      `;
+
+      expect(result[0].has_overlap).toBe(true);
+      expect(result[0].no_overlap).toBe(false);
+    });
+
+    test("tid[] - array concatenation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['(0,1)', '(0,2)']::tid[] || ARRAY['(0,3)', '(0,4)']::tid[] as concatenated,
+          ARRAY['(0,1)']::tid[] || ARRAY['(0,2)']::tid[] || ARRAY['(0,3)']::tid[] as triple_concat
+      `;
+
+      expect(result[0].concatenated).toEqual(["(0,1)", "(0,2)", "(0,3)", "(0,4)"]);
+      expect(result[0].triple_concat).toEqual(["(0,1)", "(0,2)", "(0,3)"]);
+    });
+
+    test("tid[] - array unnesting", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT unnest(ARRAY['(0,1)', '(0,2)', '(0,3)']::tid[]) as unnested
+        ORDER BY unnested
+      `;
+
+      expect(result.map(r => r.unnested)).toEqual(["(0,1)", "(0,2)", "(0,3)"]);
+    });
+
+    test("tid[] - array comparison", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['(0,1)', '(0,2)']::tid[] = ARRAY['(0,1)', '(0,2)']::tid[] as equal_arrays,
+          ARRAY['(0,1)', '(0,2)']::tid[] = ARRAY['(0,2)', '(0,1)']::tid[] as different_order,
+          ARRAY['(0,1)', '(0,2)']::tid[] < ARRAY['(0,2)', '(0,2)']::tid[] as less_than,
+          ARRAY['(0,2)', '(0,2)']::tid[] > ARRAY['(0,1)', '(0,2)']::tid[] as greater_than
+      `;
+
+      expect(result[0].equal_arrays).toBe(true);
+      expect(result[0].different_order).toBe(false);
+      expect(result[0].less_than).toBe(true);
+      expect(result[0].greater_than).toBe(true);
+    });
+
+    test("tid[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY['(0,1)', '(0,2)', '(0,3)']::tid[], 1) as array_length,
+          array_dims(ARRAY['(0,1)', '(0,2)', '(0,3)']::tid[]) as dimensions,
+          array_upper(ARRAY['(0,1)', '(0,2)', '(0,3)']::tid[], 1) as upper_bound,
+          array_lower(ARRAY['(0,1)', '(0,2)', '(0,3)']::tid[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(3);
+      expect(result[0].dimensions).toBe("[1:3]");
+      expect(result[0].upper_bound).toBe(3);
+      expect(result[0].lower_bound).toBe(1);
+    });
+
+    test("tid[] - comparing tids from actual tuples", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        WITH test_table AS (
+          SELECT '(1,2)'::tid as ctid, 'test' as col FROM (VALUES (1), (2), (3)) v(x)
+        )
+        SELECT array_agg(ctid) as tid_array
+        FROM test_table
+      `;
+
+      expect(result[0].tid_array).toEqual(expect.arrayContaining([expect.stringMatching(/^\(\d+,\d+\)$/)]));
+    });
+
+    test("tid[] - sorting", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        WITH unsorted_tids AS (
+          SELECT unnest(ARRAY['(1,1)', '(0,1)', '(0,2)', '(1,0)']::tid[]) as tid
+        )
+        SELECT array_agg(tid ORDER BY tid) as sorted_tids
+        FROM unsorted_tids
+      `;
+
+      expect(result[0].sorted_tids).toEqual(["(0,1)", "(0,2)", "(1,0)", "(1,1)"]);
+    });
+  });
+
+  describe("xid[] Array type", () => {
+    test("xid[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::xid[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("xid[] - single value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['1'::xid]::xid[] as single_value`;
+      expect(result[0].single_value).toEqual([1]);
+    });
+
+    test("xid[] - multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['1'::xid, '2'::xid, '3'::xid]::xid[] as multiple_values`;
+      expect(result[0].multiple_values).toEqual([1, 2, 3]);
+    });
+
+    test("xid[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['1'::xid, NULL, '3'::xid, NULL]::xid[] as array_with_nulls`;
+      expect(result[0].array_with_nulls).toEqual([1, null, 3, null]);
+    });
+
+    test("xid[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::xid[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("xid[] - boundary values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '0'::xid,                -- Minimum XID
+          '1'::xid,                -- First valid XID
+          '2147483647'::xid,       -- Maximum XID (2^31 - 1)
+          '4294967295'::xid       -- Wrapping point
+        ]::xid[] as boundary_values
+      `;
+      expect(result[0].boundary_values).toEqual([0, 1, 2147483647, 4294967295]);
+    });
+
+    test("xid[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY['1'::xid, '2'::xid, '3'::xid]::xid[])[1] as first_element,
+          (ARRAY['1'::xid, '2'::xid, '3'::xid]::xid[])[2] as second_element,
+          (ARRAY['1'::xid, '2'::xid, '3'::xid]::xid[])[3] as third_element
+      `;
+
+      expect(result[0].first_element).toBe(1);
+      expect(result[0].second_element).toBe(2);
+      expect(result[0].third_element).toBe(3);
+    });
+
+    test("xid[] - array contains operator", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['1'::xid, '2'::xid, '3'::xid]::xid[] @> ARRAY['1'::xid]::xid[] as contains_first,
+          ARRAY['1'::xid, '2'::xid, '3'::xid]::xid[] @> ARRAY['2'::xid]::xid[] as contains_second,
+          ARRAY['1'::xid, '2'::xid, '3'::xid]::xid[] @> ARRAY['4'::xid]::xid[] as contains_none,
+          ARRAY['1'::xid, '2'::xid, '3'::xid]::xid[] @> ARRAY['1'::xid, '2'::xid]::xid[] as contains_multiple
+      `;
+
+      expect(result[0].contains_first).toBe(true);
+      expect(result[0].contains_second).toBe(true);
+      expect(result[0].contains_none).toBe(false);
+      expect(result[0].contains_multiple).toBe(true);
+    });
+
+    test("xid[] - array overlap operator", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['1'::xid, '2'::xid]::xid[] && ARRAY['2'::xid, '3'::xid]::xid[] as has_overlap,
+          ARRAY['1'::xid, '2'::xid]::xid[] && ARRAY['3'::xid, '4'::xid]::xid[] as no_overlap
+      `;
+
+      expect(result[0].has_overlap).toBe(true);
+      expect(result[0].no_overlap).toBe(false);
+    });
+
+    test("xid[] - array concatenation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['1'::xid, '2'::xid]::xid[] || ARRAY['3'::xid, '4'::xid]::xid[] as concatenated,
+          ARRAY['1'::xid]::xid[] || ARRAY['2'::xid]::xid[] || ARRAY['3'::xid]::xid[] as triple_concat
+      `;
+
+      expect(result[0].concatenated).toEqual([1, 2, 3, 4]);
+      expect(result[0].triple_concat).toEqual([1, 2, 3]);
+    });
+
+    test("xid[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY['1'::xid, '2'::xid, '3'::xid]::xid[], 1) as array_length,
+          array_dims(ARRAY['1'::xid, '2'::xid, '3'::xid]::xid[]) as dimensions,
+          array_upper(ARRAY['1'::xid, '2'::xid, '3'::xid]::xid[], 1) as upper_bound,
+          array_lower(ARRAY['1'::xid, '2'::xid, '3'::xid]::xid[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(3);
+      expect(result[0].dimensions).toBe("[1:3]");
+      expect(result[0].upper_bound).toBe(3);
+      expect(result[0].lower_bound).toBe(1);
+    });
+
+    test("xid[] - transaction related operations", async () => {
+      await using sql = postgres({ ...options, max: 1, bigint: true });
+      // txid is a BigInt
+      const result = await sql`
+        SELECT ARRAY[
+          txid_current()
+        ] as transaction_xids
+      `;
+
+      expect(result[0].transaction_xids).toEqual(expect.arrayContaining([expect.any(BigInt)]));
+    });
+
+    test("xid[] - xid wrapping behavior", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '4294967295'::xid,      -- Maximum uint32
+          '0'::xid,               -- Wraps to 0
+          '1'::xid                -- First after wrap
+        ]::xid[] as wrap_sequence
+      `;
+
+      expect(result[0].wrap_sequence).toEqual([4294967295, 0, 1]);
+    });
+  });
+
+  describe("cid[] Array type", () => {
+    test("cid[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::cid[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("cid[] - single value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['0'::cid]::cid[] as single_value`;
+      expect(result[0].single_value).toEqual([0]);
+    });
+
+    test("cid[] - multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['0'::cid, '1'::cid, '2'::cid]::cid[] as multiple_values`;
+      expect(result[0].multiple_values).toEqual([0, 1, 2]);
+    });
+
+    test("cid[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['0'::cid, NULL, '2'::cid, NULL]::cid[] as array_with_nulls`;
+      expect(result[0].array_with_nulls).toEqual([0, null, 2, null]);
+    });
+
+    test("cid[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::cid[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("cid[] - boundary values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '0'::cid,                -- First command in transaction
+          '1'::cid,                -- Second command
+          '4294967295'::cid        -- Maximum possible CID (2^32 - 1)
+        ]::cid[] as boundary_values
+      `;
+      expect(result[0].boundary_values).toEqual([0, 1, 4294967295]);
+    });
+
+    test("cid[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY['0'::cid, '1'::cid, '2'::cid]::cid[])[1] as first_element,
+          (ARRAY['0'::cid, '1'::cid, '2'::cid]::cid[])[2] as second_element,
+          (ARRAY['0'::cid, '1'::cid, '2'::cid]::cid[])[3] as third_element
+      `;
+
+      expect(result[0].first_element).toBe(0);
+      expect(result[0].second_element).toBe(1);
+      expect(result[0].third_element).toBe(2);
+    });
+
+    test("cid[] - array contains operator", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['0'::cid, '1'::cid, '2'::cid]::cid[] @> ARRAY['0'::cid]::cid[] as contains_first,
+          ARRAY['0'::cid, '1'::cid, '2'::cid]::cid[] @> ARRAY['1'::cid]::cid[] as contains_second,
+          ARRAY['0'::cid, '1'::cid, '2'::cid]::cid[] @> ARRAY['3'::cid]::cid[] as contains_none,
+          ARRAY['0'::cid, '1'::cid, '2'::cid]::cid[] @> ARRAY['0'::cid, '1'::cid]::cid[] as contains_multiple
+      `;
+
+      expect(result[0].contains_first).toBe(true);
+      expect(result[0].contains_second).toBe(true);
+      expect(result[0].contains_none).toBe(false);
+      expect(result[0].contains_multiple).toBe(true);
+    });
+
+    test("cid[] - array overlap operator", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['0'::cid, '1'::cid]::cid[] && ARRAY['1'::cid, '2'::cid]::cid[] as has_overlap,
+          ARRAY['0'::cid, '1'::cid]::cid[] && ARRAY['2'::cid, '3'::cid]::cid[] as no_overlap
+      `;
+
+      expect(result[0].has_overlap).toBe(true);
+      expect(result[0].no_overlap).toBe(false);
+    });
+
+    test("cid[] - array concatenation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['0'::cid, '1'::cid]::cid[] || ARRAY['2'::cid, '3'::cid]::cid[] as concatenated,
+          ARRAY['0'::cid]::cid[] || ARRAY['1'::cid]::cid[] || ARRAY['2'::cid]::cid[] as triple_concat
+      `;
+
+      expect(result[0].concatenated).toEqual([0, 1, 2, 3]);
+      expect(result[0].triple_concat).toEqual([0, 1, 2]);
+    });
+
+    test("cid[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY['0'::cid, '1'::cid, '2'::cid]::cid[], 1) as array_length,
+          array_dims(ARRAY['0'::cid, '1'::cid, '2'::cid]::cid[]) as dimensions,
+          array_upper(ARRAY['0'::cid, '1'::cid, '2'::cid]::cid[], 1) as upper_bound,
+          array_lower(ARRAY['0'::cid, '1'::cid, '2'::cid]::cid[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(3);
+      expect(result[0].dimensions).toBe("[1:3]");
+      expect(result[0].upper_bound).toBe(3);
+      expect(result[0].lower_bound).toBe(1);
+    });
+  });
+
+  describe("json[] Array type", () => {
+    test("json[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::json[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("json[] - single value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['{"key": "value"}']::json[] as single_value`;
+      expect(result[0].single_value).toEqual([{ "key": "value" }]);
+    });
+
+    test("json[] - multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '{"a": 1}',
+          '{"b": 2}',
+          '{"c": 3}'
+        ]::json[] as multiple_values
+      `;
+      expect(result[0].multiple_values).toEqual([{ "a": 1 }, { "b": 2 }, { "c": 3 }]);
+    });
+
+    test("json[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '{"a": 1}',
+          NULL,
+          '{"c": 3}',
+          NULL
+        ]::json[] as array_with_nulls
+      `;
+      expect(result[0].array_with_nulls).toEqual([{ "a": 1 }, null, { "c": 3 }, null]);
+    });
+
+    test("json[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::json[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("json[] - array with different JSON types", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          'null'::json,
+          'true'::json,
+          'false'::json,
+          '123'::json,
+          '3.14'::json,
+          '"string"'::json,
+          '[]'::json,
+          '{}'::json,
+          '[1,2,3]'::json,
+          '{"a":1,"b":2}'::json,
+          '[{"a":1,"b":2},{"c":3,"d":4}]'::json,
+          '[{"a":1,"b":2},{"c":3,"d":4}]'::json
+        ]::json[] as json_types
+      `;
+      expect(result[0].json_types).toEqual([
+        null,
+        true,
+        false,
+        123,
+        3.14,
+        "string",
+        [],
+        {},
+        [1, 2, 3],
+        { a: 1, b: 2 },
+        [
+          { a: 1, b: 2 },
+          { c: 3, d: 4 },
+        ],
+        [
+          { a: 1, b: 2 },
+          { c: 3, d: 4 },
+        ],
+      ]);
+    });
+
+    test("json[] - nested JSON objects", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '{"outer": {"inner": "value"}}'::json,
+          '{"array": [1, 2, {"key": "value"}]}'::json
+        ]::json[] as nested_json
+      `;
+      expect(result[0].nested_json).toEqual([
+        { "outer": { "inner": "value" } },
+        { "array": [1, 2, { "key": "value" }] },
+      ]);
+    });
+
+    test("json[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY['{"a": 1}', '{"b": 2}', '{"c": 3}']::json[])[1] as first_element,
+          (ARRAY['{"a": 1}', '{"b": 2}', '{"c": 3}']::json[])[2] as second_element,
+          (ARRAY['{"a": 1}', '{"b": 2}', '{"c": 3}']::json[])[3] as third_element
+      `;
+
+      expect(result[0].first_element).toEqual({ "a": 1 });
+      expect(result[0].second_element).toEqual({ "b": 2 });
+      expect(result[0].third_element).toEqual({ "c": 3 });
+    });
+
+    test("json[] - array concatenation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['{"a": 1}', '{"b": 2}']::json[] || 
+          ARRAY['{"c": 3}', '{"d": 4}']::json[] as concatenated
+      `;
+
+      expect(result[0].concatenated).toEqual([{ "a": 1 }, { "b": 2 }, { "c": 3 }, { "d": 4 }]);
+    });
+
+    test("json[] - special characters in JSON", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '{"special\\nline": "value"}',
+          '{"quo\\"te": "value"}',
+          '{"unicode\\u0041": "A"}'
+        ]::json[] as special_chars
+      `;
+
+      expect(result[0].special_chars).toEqual([
+        { "special\nline": "value" },
+        { 'quo"te': "value" },
+        { "unicodeA": "A" },
+      ]);
+    });
+
+    test("json[] - large JSON objects", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const largeObj = {
+        id: 1,
+        data: Array(100)
+          .fill(0)
+          .map((_, i) => ({ key: `key${i}`, value: `value${i}` })),
+      };
+
+      const result = await sql`
+        SELECT ARRAY[${largeObj}::json]::json[] as large_json
+      `;
+
+      expect(result[0].large_json).toEqual([largeObj]);
+    });
+
+    test("json[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY['{"a": 1}', '{"b": 2}', '{"c": 3}']::json[], 1) as array_length,
+          array_dims(ARRAY['{"a": 1}', '{"b": 2}', '{"c": 3}']::json[]) as dimensions,
+          array_upper(ARRAY['{"a": 1}', '{"b": 2}', '{"c": 3}']::json[], 1) as upper_bound,
+          array_lower(ARRAY['{"a": 1}', '{"b": 2}', '{"c": 3}']::json[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(3);
+      expect(result[0].dimensions).toBe("[1:3]");
+      expect(result[0].upper_bound).toBe(3);
+      expect(result[0].lower_bound).toBe(1);
+    });
+  });
 }

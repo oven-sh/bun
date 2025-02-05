@@ -1072,6 +1072,7 @@ std::optional<bool> specialObjectsDequal(JSC__JSGlobalObject* globalObject, Mark
                     foundMatchingKey = true;
                     break;
                 }
+                RETURN_IF_EXCEPTION(*scope, false);
             }
 
             if (!foundMatchingKey) {
@@ -1110,6 +1111,7 @@ std::optional<bool> specialObjectsDequal(JSC__JSGlobalObject* globalObject, Mark
                         foundMatchingKey = true;
                         break;
                     }
+                    RETURN_IF_EXCEPTION(*scope, false);
                 }
 
                 if (!foundMatchingKey) {
@@ -1377,9 +1379,18 @@ std::optional<bool> specialObjectsDequal(JSC__JSGlobalObject* globalObject, Mark
     }
     // globalThis is only equal to globalThis
     // NOTE: Zig::GlobalObject is tagged as GlobalProxyType
-    case GlobalObjectType:
-    case GlobalProxyType:
-        return c1Type == c2Type;
+    case GlobalObjectType: {
+        if (c1Type != c2Type) return false;
+        auto* g1 = jsDynamicCast<JSC::JSGlobalObject*, JSCell>(c1);
+        auto* g2 = jsDynamicCast<JSC::JSGlobalObject*, JSCell>(c2);
+        return g1->m_globalThis == g2->m_globalThis;
+    }
+    case GlobalProxyType: {
+        if (c1Type != c2Type) return false;
+        auto* gp1 = jsDynamicCast<JSC::JSGlobalProxy*, JSCell>(c1);
+        auto* gp2 = jsDynamicCast<JSC::JSGlobalProxy*, JSCell>(c2);
+        return gp1->target()->m_globalThis == gp2->target()->m_globalThis;
+    }
     default: {
         break;
     }

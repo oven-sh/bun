@@ -2753,6 +2753,13 @@ pub const PostgresSQLConnection = struct {
                         return try parseArray(bytes, bigint, tag, globalObject, null);
                     }
                 },
+                .int2 => {
+                    if (binary) {
+                        return DataCell{ .tag = .int4, .value = .{ .int4 = try parseBinary(.int2, i16, bytes) } };
+                    } else {
+                        return DataCell{ .tag = .int4, .value = .{ .int4 = bun.fmt.parseInt(i32, bytes, 0) catch 0 } };
+                    }
+                },
                 .int4 => {
                     if (binary) {
                         return DataCell{ .tag = .int4, .value = .{ .int4 = try parseBinary(.int4, i32, bytes) } };
@@ -2931,7 +2938,11 @@ pub const PostgresSQLConnection = struct {
                             return bytes[0];
                         },
                         2 => {
-                            return pg_ntoh16(@as(u16, @bitCast(bytes[0..2].*)));
+                            // PostgreSQL stores numbers in big-endian format, so we must read as big-endian
+                            // Read as raw 16-bit unsigned integer
+                            const value: u16 = @bitCast(bytes[0..2].*);
+                            // Convert from big-endian to native-endian (we always use little endian)
+                            return @bitCast(@byteSwap(value)); // Cast to signed 16-bit integer (i16)
                         },
                         else => {
                             return error.UnsupportedIntegerSize;

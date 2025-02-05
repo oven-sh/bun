@@ -914,7 +914,6 @@ const TimerObjectInternals = struct {
             if (arguments != .zero)
                 ImmediateObject.argumentsSetCached(timer_js, globalThis, arguments);
             ImmediateObject.callbackSetCached(timer_js, globalThis, callback);
-            this.setEnableKeepingEventLoopAlive(globalThis.bunVM(), true);
         } else {
             if (arguments != .zero)
                 TimeoutObject.argumentsSetCached(timer_js, globalThis, arguments);
@@ -985,6 +984,8 @@ const TimerObjectInternals = struct {
     }
 
     pub fn reschedule(this: *TimerObjectInternals, vm: *VirtualMachine) void {
+        if (this.kind == .setImmediate) return;
+
         const now = timespec.msFromNow(this.interval);
         const was_active = this.eventLoopTimer().state == .ACTIVE;
         if (was_active) {
@@ -1006,7 +1007,13 @@ const TimerObjectInternals = struct {
             return;
         }
         this.is_keeping_event_loop_alive = enable;
-        vm.timer.incrementTimerRef(if (enable) 1 else -1);
+
+        switch (this.kind) {
+            .setTimeout, .setInterval => {
+                vm.timer.incrementTimerRef(if (enable) 1 else -1);
+            },
+            else => {},
+        }
     }
 
     pub fn hasRef(this: *TimerObjectInternals, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {

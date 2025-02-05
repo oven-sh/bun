@@ -1547,15 +1547,15 @@ bool Bun__deepMatch(
 
 // anonymous namespace to avoid name collision
 namespace {
-    template<bool isStrict, bool enableAsymmetricMatchers>
-    inline bool deepEqualsWrapperImpl(JSC__JSValue a, JSC__JSValue b, JSC__JSGlobalObject* global)
-    {
-        auto& vm = global->vm();
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16> stack;
-        MarkedArgumentBuffer args;
-        return Bun__deepEquals<isStrict, enableAsymmetricMatchers>(global, JSC::JSValue::decode(a), JSC::JSValue::decode(b), args, stack, &scope, true);
-    }
+template<bool isStrict, bool enableAsymmetricMatchers>
+inline bool deepEqualsWrapperImpl(JSC__JSValue a, JSC__JSValue b, JSC__JSGlobalObject* global)
+{
+    auto& vm = global->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16> stack;
+    MarkedArgumentBuffer args;
+    return Bun__deepEquals<isStrict, enableAsymmetricMatchers>(global, JSC::JSValue::decode(a), JSC::JSValue::decode(b), args, stack, &scope, true);
+}
 }
 
 extern "C" {

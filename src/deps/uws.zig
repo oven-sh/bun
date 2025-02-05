@@ -3255,13 +3255,13 @@ pub const AnyResponse = union(enum) {
         }
     }
 
-    pub fn onData(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, []const u8, bool) void, opcional_data: UserDataType) void {
+    pub fn onData(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, []const u8, bool) void, optional_data: UserDataType) void {
         return switch (this) {
             inline .SSL, .TCP => |resp, ssl| resp.onData(UserDataType, struct {
                 pub fn onDataCallback(user_data: UserDataType, _: *uws.NewApp(ssl == .SSL).Response, data: []const u8, last: bool) void {
                     @call(.always_inline, handler, .{ user_data, data, last });
                 }
-            }.onDataCallback, opcional_data),
+            }.onDataCallback, optional_data),
         };
     }
 
@@ -3335,7 +3335,7 @@ pub const AnyResponse = union(enum) {
         };
     }
 
-    pub fn onWritable(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, u64, AnyResponse) bool, opcional_data: UserDataType) void {
+    pub fn onWritable(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, u64, AnyResponse) bool, optional_data: UserDataType) void {
         const wrapper = struct {
             pub fn ssl_handler(user_data: UserDataType, offset: u64, resp: *NewApp(true).Response) bool {
                 return handler(user_data, offset, .{ .SSL = resp });
@@ -3346,12 +3346,12 @@ pub const AnyResponse = union(enum) {
             }
         };
         return switch (this) {
-            .SSL => |resp| resp.onWritable(UserDataType, wrapper.ssl_handler, opcional_data),
-            .TCP => |resp| resp.onWritable(UserDataType, wrapper.tcp_handler, opcional_data),
+            .SSL => |resp| resp.onWritable(UserDataType, wrapper.ssl_handler, optional_data),
+            .TCP => |resp| resp.onWritable(UserDataType, wrapper.tcp_handler, optional_data),
         };
     }
 
-    pub fn onTimeout(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, AnyResponse) void, opcional_data: UserDataType) void {
+    pub fn onTimeout(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, AnyResponse) void, optional_data: UserDataType) void {
         const wrapper = struct {
             pub fn ssl_handler(user_data: UserDataType, resp: *NewApp(true).Response) void {
                 handler(user_data, .{ .SSL = resp });
@@ -3362,12 +3362,12 @@ pub const AnyResponse = union(enum) {
         };
 
         return switch (this) {
-            .SSL => |resp| resp.onTimeout(UserDataType, wrapper.ssl_handler, opcional_data),
-            .TCP => |resp| resp.onTimeout(UserDataType, wrapper.tcp_handler, opcional_data),
+            .SSL => |resp| resp.onTimeout(UserDataType, wrapper.ssl_handler, optional_data),
+            .TCP => |resp| resp.onTimeout(UserDataType, wrapper.tcp_handler, optional_data),
         };
     }
 
-    pub fn onAborted(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, AnyResponse) void, opcional_data: UserDataType) void {
+    pub fn onAborted(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, AnyResponse) void, optional_data: UserDataType) void {
         const wrapper = struct {
             pub fn ssl_handler(user_data: UserDataType, resp: *NewApp(true).Response) void {
                 handler(user_data, .{ .SSL = resp });
@@ -3377,8 +3377,8 @@ pub const AnyResponse = union(enum) {
             }
         };
         return switch (this) {
-            .SSL => |resp| resp.onAborted(UserDataType, wrapper.ssl_handler, opcional_data),
-            .TCP => |resp| resp.onAborted(UserDataType, wrapper.tcp_handler, opcional_data),
+            .SSL => |resp| resp.onAborted(UserDataType, wrapper.ssl_handler, optional_data),
+            .TCP => |resp| resp.onAborted(UserDataType, wrapper.tcp_handler, optional_data),
         };
     }
 
@@ -3423,10 +3423,10 @@ pub const AnyResponse = union(enum) {
         };
     }
 
-    pub fn runCorkedWithType(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType) void, opcional_data: UserDataType) void {
+    pub fn runCorkedWithType(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType) void, optional_data: UserDataType) void {
         return switch (this) {
-            .SSL => |resp| resp.runCorkedWithType(UserDataType, handler, opcional_data),
-            .TCP => |resp| resp.runCorkedWithType(UserDataType, handler, opcional_data),
+            .SSL => |resp| resp.runCorkedWithType(UserDataType, handler, optional_data),
+            .TCP => |resp| resp.runCorkedWithType(UserDataType, handler, optional_data),
         };
     }
 
@@ -3857,7 +3857,7 @@ pub fn NewApp(comptime ssl: bool) type {
                     us_socket_mark_needs_more_not_ssl(res.downcast());
                 }
             }
-            pub fn onAborted(res: *Response, comptime UserDataType: type, comptime handler: fn (UserDataType, *Response) void, opcional_data: UserDataType) void {
+            pub fn onAborted(res: *Response, comptime UserDataType: type, comptime handler: fn (UserDataType, *Response) void, optional_data: UserDataType) void {
                 const Wrapper = struct {
                     pub fn handle(this: *uws_res, user_data: ?*anyopaque) callconv(.C) void {
                         if (comptime UserDataType == void) {
@@ -3867,13 +3867,13 @@ pub fn NewApp(comptime ssl: bool) type {
                         }
                     }
                 };
-                uws_res_on_aborted(ssl_flag, res.downcast(), Wrapper.handle, opcional_data);
+                uws_res_on_aborted(ssl_flag, res.downcast(), Wrapper.handle, optional_data);
             }
 
             pub fn clearAborted(res: *Response) void {
                 uws_res_on_aborted(ssl_flag, res.downcast(), null, null);
             }
-            pub fn onTimeout(res: *Response, comptime UserDataType: type, comptime handler: fn (UserDataType, *Response) void, opcional_data: UserDataType) void {
+            pub fn onTimeout(res: *Response, comptime UserDataType: type, comptime handler: fn (UserDataType, *Response) void, optional_data: UserDataType) void {
                 const Wrapper = struct {
                     pub fn handle(this: *uws_res, user_data: ?*anyopaque) callconv(.C) void {
                         if (comptime UserDataType == void) {
@@ -3883,7 +3883,7 @@ pub fn NewApp(comptime ssl: bool) type {
                         }
                     }
                 };
-                uws_res_on_timeout(ssl_flag, res.downcast(), Wrapper.handle, opcional_data);
+                uws_res_on_timeout(ssl_flag, res.downcast(), Wrapper.handle, optional_data);
             }
 
             pub fn clearTimeout(res: *Response) void {
@@ -3897,7 +3897,7 @@ pub fn NewApp(comptime ssl: bool) type {
                 res: *Response,
                 comptime UserDataType: type,
                 comptime handler: fn (UserDataType, *Response, chunk: []const u8, last: bool) void,
-                opcional_data: UserDataType,
+                optional_data: UserDataType,
             ) void {
                 const Wrapper = struct {
                     pub fn handle(this: *uws_res, chunk_ptr: [*c]const u8, len: usize, last: bool, user_data: ?*anyopaque) callconv(.C) void {
@@ -3919,7 +3919,7 @@ pub fn NewApp(comptime ssl: bool) type {
                     }
                 };
 
-                uws_res_on_data(ssl_flag, res.downcast(), Wrapper.handle, opcional_data);
+                uws_res_on_data(ssl_flag, res.downcast(), Wrapper.handle, optional_data);
             }
 
             pub fn endStream(res: *Response, close_connection: bool) void {
@@ -3947,7 +3947,7 @@ pub fn NewApp(comptime ssl: bool) type {
                 res: *Response,
                 comptime UserDataType: type,
                 comptime handler: fn (UserDataType) void,
-                opcional_data: UserDataType,
+                optional_data: UserDataType,
             ) void {
                 const Wrapper = struct {
                     pub fn handle(user_data: ?*anyopaque) callconv(.C) void {
@@ -3963,14 +3963,14 @@ pub fn NewApp(comptime ssl: bool) type {
                     }
                 };
 
-                uws_res_cork(ssl_flag, res.downcast(), opcional_data, Wrapper.handle);
+                uws_res_cork(ssl_flag, res.downcast(), optional_data, Wrapper.handle);
             }
 
             // pub fn onSocketWritable(
             //     res: *Response,
             //     comptime UserDataType: type,
             //     comptime handler: fn (UserDataType, fd: i32) void,
-            //     opcional_data: UserDataType,
+            //     optional_data: UserDataType,
             // ) void {
             //     const Wrapper = struct {
             //         pub fn handle(user_data: ?*anyopaque, fd: i32) callconv(.C) void {
@@ -4216,14 +4216,14 @@ extern fn uws_res_override_write_offset(ssl: i32, res: *uws_res, u64) void;
 extern fn uws_res_has_responded(ssl: i32, res: *uws_res) bool;
 extern fn uws_res_on_writable(ssl: i32, res: *uws_res, handler: ?*const fn (*uws_res, u64, ?*anyopaque) callconv(.C) bool, user_data: ?*anyopaque) void;
 extern fn uws_res_clear_on_writable(ssl: i32, res: *uws_res) void;
-extern fn uws_res_on_aborted(ssl: i32, res: *uws_res, handler: ?*const fn (*uws_res, ?*anyopaque) callconv(.C) void, opcional_data: ?*anyopaque) void;
-extern fn uws_res_on_timeout(ssl: i32, res: *uws_res, handler: ?*const fn (*uws_res, ?*anyopaque) callconv(.C) void, opcional_data: ?*anyopaque) void;
+extern fn uws_res_on_aborted(ssl: i32, res: *uws_res, handler: ?*const fn (*uws_res, ?*anyopaque) callconv(.C) void, optional_data: ?*anyopaque) void;
+extern fn uws_res_on_timeout(ssl: i32, res: *uws_res, handler: ?*const fn (*uws_res, ?*anyopaque) callconv(.C) void, optional_data: ?*anyopaque) void;
 
 extern fn uws_res_on_data(
     ssl: i32,
     res: *uws_res,
     handler: ?*const fn (*uws_res, [*c]const u8, usize, bool, ?*anyopaque) callconv(.C) void,
-    opcional_data: ?*anyopaque,
+    optional_data: ?*anyopaque,
 ) void;
 extern fn uws_res_upgrade(
     ssl: i32,

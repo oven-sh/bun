@@ -3319,7 +3319,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                         this.state.original_request_body == .sendfile or this.state.original_request_body == .stream,
                 );
 
-                // we sent everything, but there's some body leftover
+                // we sent everything, but there's some body left over
                 if (try_sending_more_data) {
                     this.onWritable(false, is_ssl, socket);
                 }

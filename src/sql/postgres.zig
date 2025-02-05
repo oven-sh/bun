@@ -2362,9 +2362,6 @@ pub const PostgresSQLConnection = struct {
                             i += 2;
                         },
 
-                        // psql specific escape codes
-                        'a' => buffer[out_index] = '\x07', // Bell
-                        'v' => buffer[out_index] = '\x0B', // Vertical tab
                         else => return error.UnknownEscapeSequence,
                     }
                 } else {

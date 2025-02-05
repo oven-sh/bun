@@ -44,6 +44,13 @@ if(WIN32)
   )
 endif()
 
+if(ENABLE_ASAN)
+  register_compiler_flags(
+    DESCRIPTION "Enable AddressSanitizer"
+    -fsanitize=address
+  )
+endif()
+
 # --- Optimization level ---
 if(DEBUG)
   register_compiler_flags(

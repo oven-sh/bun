@@ -181,7 +181,7 @@ yourself with Bun.serve().
 
   // If you're only providing one entry point, then match everything to it.
   // (except for assets, which have higher precedence)
-  if (htmlImports.length === 1 && servePaths[0] === "") {
+  if (htmlImports.length === 1) {
     servePaths[0] = "*";
   }
 

@@ -1218,7 +1218,7 @@ std::optional<bool> specialObjectsDequal(JSC__JSGlobalObject* globalObject, Mark
             // `.cause` is non-enumerable, so it must be checked explicitly.
             // note that an undefined cause is different than a missing cause in
             // strict mode.
-            const Identifier causeIdent = Identifier::fromLatin1(vm, "cause");
+            const Identifier causeIdent = Identifier::fromString(vm, "cause"_s);
             const PropertyName cause(causeIdent);
             if constexpr (isStrict) {
                 if (left->hasProperty(globalObject, cause) != right->hasProperty(globalObject, cause)) {

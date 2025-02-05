@@ -2376,7 +2376,7 @@ pub const PostgresSQLConnection = struct {
             if (slice.len <= count) return "";
             return slice[count..];
         }
-        fn parseArray(bytes: []const u8, bigint: bool, arrayType: types.Tag, globalObject: *JSC.JSGlobalObject, offset: ?*usize) !DataCell {
+        fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, globalObject: *JSC.JSGlobalObject, offset: ?*usize) !DataCell {
             // not an array
             if (bytes.len < 2 or bytes[0] != '{') {
                 return error.UnsupportedArrayFormat;
@@ -2397,6 +2397,10 @@ pub const PostgresSQLConnection = struct {
             }
             var slice = bytes[1..];
             var reached_end = false;
+            const separator = switch (arrayType) {
+                .box_array => ';',
+                else => ',',
+            };
             while (slice.len > 0) {
                 switch (slice[0]) {
                     '}' => {
@@ -2484,7 +2488,7 @@ pub const PostgresSQLConnection = struct {
                         slice = trySlice(slice, current_idx + 1);
                         continue;
                     },
-                    ',' => {
+                    separator => {
                         // next element or positive number, just advance
                         slice = trySlice(slice, 1);
                         continue;
@@ -2526,7 +2530,7 @@ pub const PostgresSQLConnection = struct {
 
                                 for (slice, 0..slice.len) |byte, index| {
                                     switch (byte) {
-                                        '}', ',' => {
+                                        '}', separator => {
                                             current_idx = index;
                                             break;
                                         },
@@ -2623,7 +2627,7 @@ pub const PostgresSQLConnection = struct {
                                                     is_float = true;
                                                 },
                                                 '0'...'9' => {},
-                                                '}', ',' => {
+                                                '}', separator => {
                                                     current_idx = index;
                                                     // end of element
                                                     break;
@@ -2657,18 +2661,20 @@ pub const PostgresSQLConnection = struct {
                                             continue;
                                         }
 
-                                        const value = bun.fmt.parseInt(i64, element, 0) catch return error.UnsupportedArrayFormat;
-
-                                        if (value < std.math.minInt(i32) or value > std.math.maxInt(i32)) {
+                                        if (arrayType == .int8_array) {
                                             if (bigint) {
-                                                try array.append(bun.default_allocator, DataCell{ .tag = .int8, .value = .{ .int8 = value } });
+                                                try array.append(bun.default_allocator, DataCell{ .tag = .int8, .value = .{ .int8 = bun.fmt.parseInt(i64, element, 0) catch return error.UnsupportedArrayFormat } });
                                             } else {
-                                                try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) bun.String.createUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 });
+                                                try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (element.len > 0) bun.String.createUTF8(element).value.WTFStringImpl else null }, .free_value = 1 });
                                             }
+                                            slice = trySlice(slice, current_idx);
+                                            continue;
                                         } else {
+                                            const value = bun.fmt.parseInt(i32, element, 0) catch return error.UnsupportedArrayFormat;
+
                                             try array.append(bun.default_allocator, DataCell{ .tag = .int4, .value = .{ .int4 = @intCast(value) } });
+                                            slice = trySlice(slice, current_idx);
                                         }
-                                        slice = trySlice(slice, current_idx);
                                         continue;
                                     },
                                     else => {
@@ -2814,7 +2820,7 @@ pub const PostgresSQLConnection = struct {
                     }
                 },
                 // text array types
-                .bpchar_array,
+                inline .bpchar_array,
                 .varchar_array,
                 .char_array,
                 .text_array,
@@ -2857,10 +2863,6 @@ pub const PostgresSQLConnection = struct {
                 .timestamptz_array,
                 .interval_array,
                 => |tag| {
-                    if (binary) {
-                        // we still dont support binary arrays for this types
-                        return error.UnsupportedArrayFormat;
-                    }
                     return try parseArray(bytes, bigint, tag, globalObject, null);
                 },
                 else => {

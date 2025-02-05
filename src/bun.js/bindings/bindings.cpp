@@ -1191,6 +1191,7 @@ std::optional<bool> specialObjectsDequal(JSC__JSGlobalObject* globalObject, Mark
             return false;
         }
 
+        // NOTE(@DonIsaac): could `left` ever _not_ be a JSC::ErrorInstance?
         if (JSC::ErrorInstance* left = jsDynamicCast<JSC::ErrorInstance*, JSCell>(c1)) {
             JSC::ErrorInstance* right = jsDynamicCast<JSC::ErrorInstance*, JSCell>(c2);
 
@@ -1198,9 +1199,109 @@ std::optional<bool> specialObjectsDequal(JSC__JSGlobalObject* globalObject, Mark
                 return false;
             }
 
-            return (
-                left->sanitizedNameString(globalObject) == right->sanitizedNameString(globalObject) && left->sanitizedMessageString(globalObject) == right->sanitizedMessageString(globalObject));
+            if (
+                left->errorType() != right->errorType() || // quick check on ctors (does not handle subclasses)
+                left->sanitizedNameString(globalObject) != right->sanitizedNameString(globalObject) || // manual `.name` changes (usually in subclasses)
+                left->sanitizedMessageString(globalObject) != right->sanitizedMessageString(globalObject) // `.message`
+            ) {
+                return false;
+            }
+
+            if constexpr (isStrict) {
+                if (left->runtimeTypeForCause() != right->runtimeTypeForCause()) {
+                    return false;
+                }
+            }
+
+            VM& vm = globalObject->vm();
+
+            // `.cause` is non-enumerable, so it must be checked explicitly.
+            // note that an undefined cause is different than a missing cause in
+            // strict mode.
+            const Identifier causeIdent = Identifier::fromLatin1(vm, "cause");
+            const PropertyName cause(causeIdent);
+            if constexpr (isStrict) {
+                if (left->hasProperty(globalObject, cause) != right->hasProperty(globalObject, cause)) {
+                    return false;
+                }
+            }
+            auto leftCause = left->get(globalObject, cause);
+            auto rightCause = right->get(globalObject, cause);
+            if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, leftCause, rightCause, gcBuffer, stack, scope, true)) {
+                return false;
+            }
+            RETURN_IF_EXCEPTION(*scope, false);
+
+            // check arbitrary enumerable properties. `.stack` is not checked.
+            left->materializeErrorInfoIfNeeded(vm);
+            right->materializeErrorInfoIfNeeded(vm);
+            // JSObject* o1 = c1->getObject();
+            // JSObject* o2 = c2->getObject();
+            JSC::PropertyNameArray a1(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+            JSC::PropertyNameArray a2(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+            left->getPropertyNames(globalObject, a1, DontEnumPropertiesMode::Exclude);
+            RETURN_IF_EXCEPTION(*scope, false);
+            right->getPropertyNames(globalObject, a2, DontEnumPropertiesMode::Exclude);
+            RETURN_IF_EXCEPTION(*scope, false);
+
+            const size_t propertyArrayLength1 = a1.size();
+            const size_t propertyArrayLength2 = a2.size();
+            if constexpr (isStrict) {
+                if (propertyArrayLength1 != propertyArrayLength2) {
+                    return false;
+                }
+            }
+
+            // take a property name from one, try to get it from both
+            size_t i;
+            for (i = 0; i < propertyArrayLength1; i++) {
+                Identifier i1 = a1[i];
+                if (!i1.isEmpty() && !i1.isSymbol() && i1.string() == "stack"_s) continue;
+                PropertyName propertyName1 = PropertyName(i1);
+
+                JSValue prop1 = left->get(globalObject, propertyName1);
+                RETURN_IF_EXCEPTION(*scope, false);
+
+                if (UNLIKELY(!prop1)) {
+                    return false;
+                }
+
+                JSValue prop2 = right->getIfPropertyExists(globalObject, propertyName1);
+                RETURN_IF_EXCEPTION(*scope, false);
+
+                if constexpr (!isStrict) {
+                    if (prop1.isUndefined() && prop2.isEmpty()) {
+                        continue;
+                    }
+                }
+
+                if (!prop2) {
+                    return false;
+                }
+
+                if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, prop1, prop2, gcBuffer, stack, scope, true)) {
+                    return false;
+                }
+
+                RETURN_IF_EXCEPTION(*scope, false);
+            }
+
+            // for the remaining properties in the other object, make sure they are undefined
+            for (; i < propertyArrayLength2; i++) {
+                Identifier i2 = a2[i];
+                PropertyName propertyName2 = PropertyName(i2);
+
+                JSValue prop2 = right->getIfPropertyExists(globalObject, propertyName2);
+                RETURN_IF_EXCEPTION(*scope, false);
+
+                if (!prop2.isUndefined()) {
+                    return false;
+                }
+            }
+
+            return true;
         }
+        break;
     }
     case Int8ArrayType:
     case Uint8ArrayType:

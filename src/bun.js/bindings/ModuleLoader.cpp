@@ -1,4 +1,5 @@
 #include "root.h"
+
 #include "headers-handwritten.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "ModuleLoader.h"
@@ -35,7 +36,7 @@
 #include "NativeModuleImpl.h"
 
 #include "../modules/ObjectModule.h"
-#include "wtf/Assertions.h"
+#include "CommonJSModuleRecord.h"
 
 namespace Bun {
 using namespace JSC;
@@ -64,7 +65,7 @@ extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, BunString* 
 
 static JSC::JSInternalPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     JSInternalPromise* promise = JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
     auto scope = DECLARE_THROW_SCOPE(vm);
     scope.throwException(globalObject, value);
@@ -73,7 +74,7 @@ static JSC::JSInternalPromise* rejectedInternalPromise(JSC::JSGlobalObject* glob
 
 static JSC::JSInternalPromise* resolvedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     JSInternalPromise* promise = JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
     promise->internalField(JSC::JSPromise::Field::ReactionsOrResult).set(vm, promise, value);
     promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32AsAnyInt() | JSC::JSPromise::isFirstResolvingFunctionCalledFlag | static_cast<unsigned>(JSC::JSPromise::Status::Fulfilled)));
@@ -87,7 +88,7 @@ static JSC::SyntheticSourceProvider::SyntheticSourceGenerator generateInternalMo
                JSC::Identifier moduleKey,
                Vector<JSC::Identifier, 4>& exportNames,
                JSC::MarkedArgumentBuffer& exportValues) -> void {
-        JSC::VM& vm = lexicalGlobalObject->vm();
+        auto& vm = JSC::getVM(lexicalGlobalObject);
         GlobalObject* globalObject = jsCast<GlobalObject*>(lexicalGlobalObject);
         auto throwScope = DECLARE_THROW_SCOPE(vm);
 
@@ -128,7 +129,7 @@ static OnLoadResult handleOnLoadObjectResult(Zig::GlobalObject* globalObject, JS
 {
     OnLoadResult result {};
     result.type = OnLoadResultTypeObject;
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto& builtinNames = WebCore::builtinNames(vm);
     if (JSC::JSValue exportsValue = object->getIfPropertyExists(globalObject, builtinNames.exportsPublicName())) {
         if (exportsValue.isObject()) {
@@ -198,7 +199,7 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
 {
     OnLoadResult result = {};
     result.type = OnLoadResultTypeError;
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     result.value.error = JSC::jsUndefined();
     auto scope = DECLARE_THROW_SCOPE(vm);
     BunLoaderType loader = Bun__getDefaultLoader(globalObject, specifier);
@@ -302,10 +303,11 @@ static JSValue handleVirtualModuleResult(
     ErrorableResolvedSource* res,
     BunString* specifier,
     BunString* referrer,
-    bool wasModuleMock = false)
+    bool wasModuleMock = false,
+    JSCommonJSModule* commonJSModule = nullptr)
 {
     auto onLoadResult = handleOnLoadResult(globalObject, virtualModuleResult, specifier, wasModuleMock);
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ResolvedSourceCodeHolder sourceCodeHolder(res);
 
@@ -364,6 +366,21 @@ static JSValue handleVirtualModuleResult(
 
     case OnLoadResultTypeObject: {
         JSC::JSObject* object = onLoadResult.value.object.getObject();
+        if (commonJSModule) {
+            const auto& __esModuleIdentifier = vm.propertyNames->__esModule;
+            JSValue esModuleValue = object->getIfPropertyExists(globalObject, __esModuleIdentifier);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (esModuleValue && esModuleValue.toBoolean(globalObject)) {
+                JSValue defaultValue = object->getIfPropertyExists(globalObject, vm.propertyNames->defaultKeyword);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (defaultValue && !defaultValue.isUndefined()) {
+                    commonJSModule->setExportsObject(defaultValue);
+                    commonJSModule->hasEvaluated = true;
+                    return commonJSModule;
+                }
+            }
+        }
+
         JSC::ensureStillAliveHere(object);
         auto function = generateObjectModuleSourceCode(
             globalObject,
@@ -408,7 +425,7 @@ extern "C" void Bun__onFulfillAsyncModule(
     BunString* referrer)
 {
     ResolvedSourceCodeHolder sourceCodeHolder(res);
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSInternalPromise* promise = jsCast<JSC::JSInternalPromise*>(JSC::JSValue::decode(encodedPromiseValue));
 
@@ -464,7 +481,7 @@ JSValue fetchCommonJSModule(
     BunString* typeAttribute)
 {
     void* bunVM = globalObject->bunVM();
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorableResolvedSource resValue;
     memset(&resValue, 0, sizeof(ErrorableResolvedSource));
@@ -479,7 +496,14 @@ JSValue fetchCommonJSModule(
     // This is important for being able to trivially mock things like the filesystem.
     if (isBunTest) {
         if (JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier, wasModuleMock)) {
-            JSPromise* promise = jsCast<JSPromise*>(handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, specifier, referrer, wasModuleMock));
+            JSValue promiseOrCommonJSModule = handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, specifier, referrer, wasModuleMock, target);
+            RETURN_IF_EXCEPTION(scope, {});
+
+            // If we assigned module.exports to the virtual module, we're done here.
+            if (promiseOrCommonJSModule == target) {
+                RELEASE_AND_RETURN(scope, target);
+            }
+            JSPromise* promise = jsCast<JSPromise*>(promiseOrCommonJSModule);
             switch (promise->status(vm)) {
             case JSPromise::Status::Rejected: {
                 uint32_t promiseFlags = promise->internalField(JSPromise::Field::Flags).get().asUInt32AsAnyInt();
@@ -515,11 +539,19 @@ JSValue fetchCommonJSModule(
 
         auto tag = res->result.value.tag;
         switch (tag) {
+        // require("bun")
+        case SyntheticModuleType::BunObject: {
+            target->setExportsObject(globalObject->bunObject());
+            target->hasEvaluated = true;
+            RELEASE_AND_RETURN(scope, target);
+        }
+        // require("module"), require("node:module")
         case SyntheticModuleType::NodeModule: {
             target->setExportsObject(globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject));
             target->hasEvaluated = true;
             RELEASE_AND_RETURN(scope, target);
         }
+        // require("process"), require("node:process")
         case SyntheticModuleType::NodeProcess: {
             target->setExportsObject(globalObject->processObject());
             target->hasEvaluated = true;
@@ -561,7 +593,14 @@ JSValue fetchCommonJSModule(
     // When "bun test" is NOT enabled, disable users from overriding builtin modules
     if (!isBunTest) {
         if (JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier, wasModuleMock)) {
-            JSPromise* promise = jsCast<JSPromise*>(handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, specifier, referrer, wasModuleMock));
+            JSValue promiseOrCommonJSModule = handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, specifier, referrer, wasModuleMock, target);
+            RETURN_IF_EXCEPTION(scope, {});
+
+            // If we assigned module.exports to the virtual module, we're done here.
+            if (promiseOrCommonJSModule == target) {
+                RELEASE_AND_RETURN(scope, target);
+            }
+            JSPromise* promise = jsCast<JSPromise*>(promiseOrCommonJSModule);
             switch (promise->status(vm)) {
             case JSPromise::Status::Rejected: {
                 uint32_t promiseFlags = promise->internalField(JSPromise::Field::Flags).get().asUInt32AsAnyInt();
@@ -672,7 +711,7 @@ static JSValue fetchESMSourceCode(
     BunString* typeAttribute)
 {
     void* bunVM = globalObject->bunVM();
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ResolvedSourceCodeHolder sourceCodeHolder(res);
 
@@ -901,7 +940,7 @@ using namespace Bun;
 
 BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     ErrorableResolvedSource res = {};
     res.success = false;
     JSC::JSValue objectResult = callFrame->argument(0);
@@ -939,7 +978,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
 
 BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultReject, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     JSC::JSValue reason = callFrame->argument(0);
     PendingVirtualModuleResult* pendingModule = JSC::jsCast<PendingVirtualModuleResult*>(callFrame->argument(1));
     pendingModule->internalField(0).set(vm, pendingModule, JSC::jsUndefined());

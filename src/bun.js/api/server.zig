@@ -69,7 +69,6 @@ const Config = @import("../config.zig");
 const URL = @import("../../url.zig").URL;
 const VirtualMachine = JSC.VirtualMachine;
 const IOTask = JSC.IOTask;
-const is_bindgen = JSC.is_bindgen;
 const uws = bun.uws;
 const Fallback = Runtime.Fallback;
 const MimeType = HTTP.MimeType;
@@ -270,6 +269,7 @@ pub const ServerConfig = struct {
     reuse_port: bool = false,
     id: []const u8 = "",
     allow_hot: bool = true,
+    ipv6_only: bool = false,
 
     static_routes: std.ArrayList(StaticRouteEntry) = std.ArrayList(StaticRouteEntry).init(bun.default_allocator),
 
@@ -447,6 +447,20 @@ pub const ServerConfig = struct {
         }
 
         return arraylist.items;
+    }
+
+    pub fn getUsocketsOptions(this: *const ServerConfig) i32 {
+        // Unlike Node.js, we set exclusive port in case reuse port is not set
+        var out: i32 = if (this.reuse_port)
+            uws.LIBUS_LISTEN_REUSE_PORT | uws.LIBUS_LISTEN_REUSE_ADDR
+        else
+            uws.LIBUS_LISTEN_EXCLUSIVE_PORT;
+
+        if (this.ipv6_only) {
+            out |= uws.LIBUS_SOCKET_IPV6_ONLY;
+        }
+
+        return out;
     }
 
     pub const SSLConfig = struct {
@@ -662,7 +676,7 @@ pub const ServerConfig = struct {
 
             // Required
             if (try obj.getTruthy(global, "keyFile")) |key_file_name| {
-                var sliced = key_file_name.toSlice(global, bun.default_allocator);
+                var sliced = try key_file_name.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
                     result.key_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
@@ -754,7 +768,7 @@ pub const ServerConfig = struct {
             }
 
             if (try obj.getTruthy(global, "certFile")) |cert_file_name| {
-                var sliced = cert_file_name.toSlice(global, bun.default_allocator);
+                var sliced = try cert_file_name.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
                     result.cert_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
@@ -880,7 +894,7 @@ pub const ServerConfig = struct {
             }
 
             if (try obj.getTruthy(global, "ciphers")) |ssl_ciphers| {
-                var sliced = ssl_ciphers.toSlice(global, bun.default_allocator);
+                var sliced = try ssl_ciphers.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
                     result.ssl_ciphers = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
@@ -890,7 +904,7 @@ pub const ServerConfig = struct {
             }
 
             if (try obj.getTruthy(global, "serverName") orelse try obj.getTruthy(global, "servername")) |server_name| {
-                var sliced = server_name.toSlice(global, bun.default_allocator);
+                var sliced = try server_name.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
                     result.server_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
@@ -979,7 +993,7 @@ pub const ServerConfig = struct {
             }
 
             if (try obj.getTruthy(global, "caFile")) |ca_file_name| {
-                var sliced = ca_file_name.toSlice(global, bun.default_allocator);
+                var sliced = try ca_file_name.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
                     result.ca_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
@@ -1009,7 +1023,7 @@ pub const ServerConfig = struct {
                 }
 
                 if (try obj.getTruthy(global, "dhParamsFile")) |dh_params_file_name| {
-                    var sliced = dh_params_file_name.toSlice(global, bun.default_allocator);
+                    var sliced = try dh_params_file_name.toSlice(global, bun.default_allocator);
                     defer sliced.deinit();
                     if (sliced.len > 0) {
                         result.dh_params_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
@@ -1020,7 +1034,7 @@ pub const ServerConfig = struct {
                 }
 
                 if (try obj.getTruthy(global, "passphrase")) |passphrase| {
-                    var sliced = passphrase.toSlice(global, bun.default_allocator);
+                    var sliced = try passphrase.toSlice(global, bun.default_allocator);
                     defer sliced.deinit();
                     if (sliced.len > 0) {
                         result.passphrase = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
@@ -1096,7 +1110,7 @@ pub const ServerConfig = struct {
         var port = args.address.tcp.port;
 
         if (arguments.vm.transpiler.options.transform_options.origin) |origin| {
-            args.base_uri = origin;
+            args.base_uri = try bun.default_allocator.dupeZ(u8, origin);
         }
 
         defer {
@@ -1136,16 +1150,15 @@ pub const ServerConfig = struct {
 
                 while (try iter.next()) |key| {
                     const path, const is_ascii = key.toOwnedSliceReturningAllASCII(bun.default_allocator) catch bun.outOfMemory();
+                    errdefer bun.default_allocator.free(path);
 
                     const value = iter.value;
 
-                    if (path.len == 0 or path[0] != '/') {
-                        bun.default_allocator.free(path);
+                    if (path.len == 0 or (path[0] != '/' and path[0] != '*')) {
                         return global.throwInvalidArguments("Invalid static route \"{s}\". path must start with '/'", .{path});
                     }
 
                     if (!is_ascii) {
-                        bun.default_allocator.free(path);
                         return global.throwInvalidArguments("Invalid static route \"{s}\". Please encode all non-ASCII characters in the path.", .{path});
                     }
 
@@ -1201,10 +1214,13 @@ pub const ServerConfig = struct {
             if (global.hasException()) return error.JSError;
 
             if (try arg.getTruthy(global, "baseURI")) |baseURI| {
-                var sliced = baseURI.toSlice(global, bun.default_allocator);
+                var sliced = try baseURI.toSlice(global, bun.default_allocator);
 
                 if (sliced.len > 0) {
                     defer sliced.deinit();
+                    if (args.base_uri.len > 0) {
+                        bun.default_allocator.free(@constCast(args.base_uri));
+                    }
                     args.base_uri = bun.default_allocator.dupe(u8, sliced.slice()) catch unreachable;
                 }
             }
@@ -1240,7 +1256,7 @@ pub const ServerConfig = struct {
                 if (id.isUndefinedOrNull()) {
                     args.allow_hot = false;
                 } else {
-                    const id_str = id.toSlice(
+                    const id_str = try id.toSlice(
                         global,
                         bun.default_allocator,
                     );
@@ -1276,6 +1292,11 @@ pub const ServerConfig = struct {
 
             if (try arg.get(global, "reusePort")) |dev| {
                 args.reuse_port = dev.coerce(bool, global);
+            }
+            if (global.hasException()) return error.JSError;
+
+            if (try arg.get(global, "ipv6Only")) |dev| {
+                args.ipv6_only = dev.coerce(bool, global);
             }
             if (global.hasException()) return error.JSError;
 
@@ -1394,6 +1415,8 @@ pub const ServerConfig = struct {
                 const protocol: string = if (args.ssl_config != null) "https" else "http";
                 const hostname = args.base_url.hostname;
                 const needsBrackets: bool = strings.isIPV6Address(hostname) and hostname[0] != '[';
+                const original_base_uri = args.base_uri;
+                defer bun.default_allocator.free(@constCast(original_base_uri));
                 if (needsBrackets) {
                     args.base_uri = (if ((port == 80 and args.ssl_config == null) or (port == 443 and args.ssl_config != null))
                         std.fmt.allocPrint(bun.default_allocator, "{s}://[{s}]/{s}", .{
@@ -1588,7 +1611,7 @@ pub const AnyRequestContext = struct {
 
     tagged_pointer: Pointer,
 
-    pub const Null = .{ .tagged_pointer = Pointer.Null };
+    pub const Null: @This() = .{ .tagged_pointer = Pointer.Null };
 
     pub fn init(request_ctx: anytype) AnyRequestContext {
         return .{ .tagged_pointer = Pointer.init(request_ctx) };
@@ -2732,7 +2755,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
         }
 
-        pub fn onReadFile(this: *RequestContext, result: Blob.ReadFile.ResultType) void {
+        pub fn onReadFile(this: *RequestContext, result: Blob.ReadFileResultType) void {
             defer this.deref();
 
             if (this.isAbortedOrEnded()) {
@@ -3036,6 +3059,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
         fn endRequestStreaming(this: *RequestContext) bool {
             assert(this.server != null);
+
+            this.request_body_buf.clearAndFree(bun.default_allocator);
+
             // if we cannot, we have to reject pending promises
             // first, we reject the request body promise
             if (this.request_body) |body| {
@@ -3049,6 +3075,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             return false;
         }
         fn detachResponse(this: *RequestContext) void {
+            this.request_body_buf.clearAndFree(bun.default_allocator);
+
             if (this.resp) |resp| {
                 this.resp = null;
 
@@ -4102,7 +4130,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         var body = this.request_body.?;
                         var old = body.value;
                         old.Locked.onReceiveValue = null;
-                        var new_body = .{ .Null = {} };
+                        var new_body: WebCore.Body.Value = .{ .Null = {} };
                         old.resolve(&new_body, server.globalThis, null);
                         body.value = new_body;
                     }
@@ -4158,13 +4186,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         comptime {
             const jsonResolve = JSC.toJSHostFunction(onResolve);
-            @export(jsonResolve, .{ .name = Export[0].symbol_name });
+            @export(&jsonResolve, .{ .name = Export[0].symbol_name });
             const jsonReject = JSC.toJSHostFunction(onReject);
-            @export(jsonReject, .{ .name = Export[1].symbol_name });
+            @export(&jsonReject, .{ .name = Export[1].symbol_name });
             const jsonResolveStream = JSC.toJSHostFunction(onResolveStream);
-            @export(jsonResolveStream, .{ .name = Export[2].symbol_name });
+            @export(&jsonResolveStream, .{ .name = Export[2].symbol_name });
             const jsonRejectStream = JSC.toJSHostFunction(onRejectStream);
-            @export(jsonRejectStream, .{ .name = Export[3].symbol_name });
+            @export(&jsonRejectStream, .{ .name = Export[3].symbol_name });
         }
     };
 }
@@ -4643,11 +4671,7 @@ pub const ServerWebSocket = struct {
         const arguments = [_]JSValue{
             this.getThisValue(),
             switch (opcode) {
-                .text => brk: {
-                    var str = ZigString.init(message);
-                    str.markUTF8();
-                    break :brk str.toJS(globalObject);
-                },
+                .text => bun.String.createUTF8ForJS(globalObject, message),
                 .binary => this.binaryToJS(globalObject, message),
                 else => unreachable,
             },
@@ -4811,13 +4835,12 @@ pub const ServerWebSocket = struct {
         }
 
         if (!handler.onClose.isEmptyOrUndefinedOrNull()) {
-            var str = ZigString.init(message);
             const globalObject = handler.globalObject;
             const loop = vm.eventLoop();
 
             loop.enter();
             defer loop.exit();
-            str.markUTF8();
+
             if (signal) |sig| {
                 if (!sig.aborted()) {
                     sig.signal(handler.globalObject, .ConnectionClosed);
@@ -4827,7 +4850,7 @@ pub const ServerWebSocket = struct {
             _ = handler.onClose.call(
                 globalObject,
                 .undefined,
-                &[_]JSC.JSValue{ this.getThisValue(), JSValue.jsNumber(code), str.toJS(globalObject) },
+                &[_]JSC.JSValue{ this.getThisValue(), JSValue.jsNumber(code), bun.String.createUTF8ForJS(globalObject, message) },
             ) catch |e| {
                 const err = globalObject.takeException(e);
                 log("onClose error", .{});
@@ -4888,7 +4911,7 @@ pub const ServerWebSocket = struct {
             return globalThis.throw("publish requires a topic string", .{});
         }
 
-        var topic_slice = topic_value.toSlice(globalThis, bun.default_allocator);
+        var topic_slice = try topic_value.toSlice(globalThis, bun.default_allocator);
         defer topic_slice.deinit();
         if (topic_slice.len == 0) {
             return globalThis.throw("publish requires a non-empty topic", .{});
@@ -4976,7 +4999,7 @@ pub const ServerWebSocket = struct {
             return globalThis.throw("publishText requires a topic string", .{});
         }
 
-        var topic_slice = topic_value.toSlice(globalThis, bun.default_allocator);
+        var topic_slice = try topic_value.toSlice(globalThis, bun.default_allocator);
         defer topic_slice.deinit();
 
         if (!compress_value.isBoolean() and !compress_value.isUndefined() and compress_value != .zero) {
@@ -5041,7 +5064,7 @@ pub const ServerWebSocket = struct {
             return globalThis.throw("publishBinary requires a topic string", .{});
         }
 
-        var topic_slice = topic_value.toSlice(globalThis, bun.default_allocator);
+        var topic_slice = try topic_value.toSlice(globalThis, bun.default_allocator);
         defer topic_slice.deinit();
         if (topic_slice.len == 0) {
             return globalThis.throw("publishBinary requires a non-empty topic", .{});
@@ -5685,7 +5708,7 @@ pub const ServerWebSocket = struct {
             return globalThis.throwInvalidArgumentTypeValue("topic", "string", args.ptr[0]);
         }
 
-        var topic = args.ptr[0].toSlice(globalThis, bun.default_allocator);
+        var topic = try args.ptr[0].toSlice(globalThis, bun.default_allocator);
         defer topic.deinit();
 
         if (topic.len == 0) {
@@ -5708,7 +5731,7 @@ pub const ServerWebSocket = struct {
             return globalThis.throwInvalidArgumentTypeValue("topic", "string", args.ptr[0]);
         }
 
-        var topic = args.ptr[0].toSlice(globalThis, bun.default_allocator);
+        var topic = try args.ptr[0].toSlice(globalThis, bun.default_allocator);
         defer topic.deinit();
 
         if (topic.len == 0) {
@@ -5735,7 +5758,7 @@ pub const ServerWebSocket = struct {
             return globalThis.throwInvalidArgumentTypeValue("topic", "string", args.ptr[0]);
         }
 
-        var topic = args.ptr[0].toSlice(globalThis, bun.default_allocator);
+        var topic = try args.ptr[0].toSlice(globalThis, bun.default_allocator);
         defer topic.deinit();
 
         if (topic.len == 0) {
@@ -5764,7 +5787,7 @@ pub const ServerWebSocket = struct {
         };
 
         const text = bun.fmt.formatIp(address, &text_buf) catch unreachable;
-        return ZigString.init(text).toJS(globalThis);
+        return bun.String.createUTF8ForJS(globalThis, text);
     }
 };
 
@@ -5772,7 +5795,7 @@ const ServePlugins = struct {
     value: Value,
     ref_count: u32 = 1,
 
-    pub usingnamespace bun.NewRefCounted(ServePlugins, deinit);
+    pub usingnamespace bun.NewRefCounted(ServePlugins, deinit, null);
 
     pub const Value = union(enum) {
         pending: struct {
@@ -5930,8 +5953,8 @@ const ServePlugins = struct {
     }
 
     comptime {
-        @export(onResolve, .{ .name = "BunServe__onResolvePlugins" });
-        @export(onReject, .{ .name = "BunServe__onRejectPlugins" });
+        @export(&onResolve, .{ .name = "BunServe__onResolvePlugins" });
+        @export(&onReject, .{ .name = "BunServe__onRejectPlugins" });
     }
 };
 
@@ -6042,11 +6065,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 return globalThis.throwInvalidArguments("subscriberCount requires a topic name as a string", .{});
             }
 
-            var topic = arguments.ptr[0].toSlice(globalThis, bun.default_allocator);
+            var topic = try arguments.ptr[0].toSlice(globalThis, bun.default_allocator);
             defer topic.deinit();
-            if (globalThis.hasException()) {
-                return .zero;
-            }
 
             if (topic.len == 0) {
                 return JSValue.jsNumber(0);
@@ -6075,7 +6095,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             return if (request.request_context.getRemoteSocketInfo()) |info|
                 JSSocketAddress__create(
                     this.globalThis,
-                    bun.String.init(info.ip).toJS(this.globalThis),
+                    bun.String.createUTF8ForJS(this.globalThis, info.ip),
                     info.port,
                     info.is_ipv6,
                 )
@@ -6432,7 +6452,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             // TODO: set User-Agent header
             // TODO: unify with fetch() implementation.
             if (first_arg.isString()) {
-                const url_zig_str = arguments[0].toSlice(ctx, bun.default_allocator);
+                const url_zig_str = try arguments[0].toSlice(ctx, bun.default_allocator);
                 defer url_zig_str.deinit();
                 var temp_url_str = url_zig_str.slice();
 
@@ -6455,7 +6475,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 if (arguments.len >= 2 and arguments[1].isObject()) {
                     var opts = arguments[1];
                     if (opts.fastGet(ctx, .method)) |method_| {
-                        var slice_ = method_.toSlice(ctx, getAllocator(ctx));
+                        var slice_ = try method_.toSlice(ctx, getAllocator(ctx));
                         defer slice_.deinit();
                         method = HTTP.Method.which(slice_.slice()) orelse method;
                     }
@@ -7433,8 +7453,30 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             if (this.dev_server) |dev| {
                 dev.attachRoutes(this) catch bun.outOfMemory();
             } else {
-                bun.assert(this.config.onRequest != .zero);
-                app.any("/*", *ThisServer, this, onRequest);
+                const @"has /*" = brk: {
+                    for (this.config.static_routes.items) |route| {
+                        if (strings.eqlComptime(route.path, "/*")) {
+                            break :brk true;
+                        }
+                    }
+
+                    break :brk false;
+                };
+
+                // "/*" routes are added backwards, so if they have a static route, it will never be matched
+                // so we need to check for that first
+                if (!@"has /*") {
+                    bun.assert(this.config.onRequest != .zero);
+                    app.any("/*", *ThisServer, this, onRequest);
+                } else if (this.config.onRequest != .zero) {
+                    app.post("/*", *ThisServer, this, onRequest);
+                    app.put("/*", *ThisServer, this, onRequest);
+                    app.patch("/*", *ThisServer, this, onRequest);
+                    app.delete("/*", *ThisServer, this, onRequest);
+                    app.options("/*", *ThisServer, this, onRequest);
+                    app.trace("/*", *ThisServer, this, onRequest);
+                    app.connect("/*", *ThisServer, this, onRequest);
+                }
             }
         }
 
@@ -7554,8 +7596,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     app.listenWithConfig(*ThisServer, this, onListen, .{
                         .port = tcp.port,
                         .host = host,
-                        // IPV6_ONLY is the default for bun, different from node it also set exclusive port in case reuse port is not set
-                        .options = (if (this.config.reuse_port) uws.LIBUS_SOCKET_REUSE_PORT else uws.LIBUS_LISTEN_EXCLUSIVE_PORT) | uws.LIBUS_SOCKET_IPV6_ONLY,
+                        .options = this.config.getUsocketsOptions(),
                     });
                 },
 
@@ -7565,8 +7606,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         this,
                         onListen,
                         unix,
-                        // IPV6_ONLY is the default for bun, different from node it also set exclusive port in case reuse port is not set
-                        (if (this.config.reuse_port) uws.LIBUS_SOCKET_REUSE_PORT else uws.LIBUS_LISTEN_EXCLUSIVE_PORT) | uws.LIBUS_SOCKET_IPV6_ONLY,
+                        this.config.getUsocketsOptions(),
                     );
                 },
             }
@@ -7770,9 +7810,7 @@ pub fn Server__setIdleTimeout_(server: JSC.JSValue, seconds: JSC.JSValue, global
 }
 
 comptime {
-    if (!JSC.is_bindgen) {
-        _ = Server__setIdleTimeout;
-    }
+    _ = Server__setIdleTimeout;
 }
 
 fn throwSSLErrorIfNecessary(globalThis: *JSC.JSGlobalObject) bool {

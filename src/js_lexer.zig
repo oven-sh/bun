@@ -187,7 +187,7 @@ fn NewLexer_(
         }
 
         pub fn syntaxError(self: *LexerType) !void {
-            @setCold(true);
+            @branchHint(.cold);
 
             // Only add this if there is not already an error.
             // It is possible that there is a more descriptive error already emitted.
@@ -198,20 +198,20 @@ fn NewLexer_(
         }
 
         pub fn addDefaultError(self: *LexerType, msg: []const u8) !void {
-            @setCold(true);
+            @branchHint(.cold);
 
             self.addError(self.start, "{s}", .{msg}, true);
             return Error.SyntaxError;
         }
 
         pub fn addSyntaxError(self: *LexerType, _loc: usize, comptime fmt: []const u8, args: anytype) !void {
-            @setCold(true);
+            @branchHint(.cold);
             self.addError(_loc, fmt, args, false);
             return Error.SyntaxError;
         }
 
         pub fn addError(self: *LexerType, _loc: usize, comptime format: []const u8, args: anytype, _: bool) void {
-            @setCold(true);
+            @branchHint(.cold);
 
             if (self.is_log_disabled) return;
             var __loc = logger.usize2Loc(_loc);
@@ -224,7 +224,7 @@ fn NewLexer_(
         }
 
         pub fn addRangeError(self: *LexerType, r: logger.Range, comptime format: []const u8, args: anytype, _: bool) !void {
-            @setCold(true);
+            @branchHint(.cold);
 
             if (self.is_log_disabled) return;
             if (self.prev_error_loc.eql(r.loc)) {
@@ -241,7 +241,7 @@ fn NewLexer_(
         }
 
         pub fn addRangeErrorWithNotes(self: *LexerType, r: logger.Range, comptime format: []const u8, args: anytype, notes: []const logger.Data) !void {
-            @setCold(true);
+            @branchHint(.cold);
 
             if (self.is_log_disabled) return;
             if (self.prev_error_loc.eql(r.loc)) {

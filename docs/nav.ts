@@ -214,7 +214,7 @@ export default {
     page("bundler", "`Bun.build`", {
       description: "Bundle code for consumption in the browser with Bun's native bundler.",
     }),
-    page("bundler/html", "HTML", {
+    page("bundler/html", "Frontend & static sites", {
       description: `Bundle html files with Bun's native bundler.`,
     }),
     page("bundler/fullstack", "Fullstack Dev Server", {

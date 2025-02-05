@@ -85,7 +85,7 @@ pub const DefineData = struct {
     }
 
     pub fn fromMergeableInputEntry(user_defines: *UserDefines, key: []const u8, value_str: []const u8, value_is_undefined: bool, method_call_must_be_replaced_with_undefined: bool, log: *logger.Log, allocator: std.mem.Allocator) !void {
-        var keySplitter = std.mem.split(u8, key, ".");
+        var keySplitter = std.mem.splitScalar(u8, key, '.');
         while (keySplitter.next()) |part| {
             if (!js_lexer.isIdentifier(part)) {
                 if (strings.eql(part, key)) {
@@ -98,7 +98,7 @@ pub const DefineData = struct {
         }
 
         // check for nested identifiers
-        var valueSplitter = std.mem.split(u8, value_str, ".");
+        var valueSplitter = std.mem.splitScalar(u8, value_str, '.');
         var isIdent = true;
 
         while (valueSplitter.next()) |part| {
@@ -217,7 +217,7 @@ pub const Define = struct {
             const remainder = key[0..last_dot];
             const count = std.mem.count(u8, remainder, ".") + 1;
             var parts = try allocator.alloc(string, count + 1);
-            var splitter = std.mem.split(u8, remainder, ".");
+            var splitter = std.mem.splitScalar(u8, remainder, '.');
             var i: usize = 0;
             while (splitter.next()) |split| : (i += 1) {
                 parts[i] = split;

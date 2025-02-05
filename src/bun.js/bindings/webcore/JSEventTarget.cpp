@@ -102,7 +102,7 @@ using JSEventTargetDOMConstructor = JSDOMConstructor<JSEventTarget>;
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventTargetDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = jsCast<JSEventTargetDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
@@ -197,7 +197,7 @@ void JSEventTarget::destroy(JSC::JSCell* cell)
 
 JSC_DEFINE_CUSTOM_GETTER(jsEventTargetConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSEventTargetPrototype*>(JSValue::decode(thisValue));
     if (UNLIKELY(!prototype))
@@ -348,7 +348,7 @@ void JSEventTargetOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* contex
 
 JSC_DEFINE_HOST_FUNCTION(jsEventTargetGetEventListenersCount, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* thisValue = jsDynamicCast<WebCore::JSEventTarget*>(callFrame->argument(0));
     if (!thisValue) return JSC::JSValue::encode(JSC::jsUndefined());

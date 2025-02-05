@@ -24,19 +24,19 @@ function measureMemory() {
 
 class Module {
   constructor() {
-    throwNotImplemented("node:vm Module");
+    throwNotImplemented("node:vm.Module");
   }
 }
 
 class SourceTextModule {
   constructor() {
-    throwNotImplemented("node:vm Module");
+    throwNotImplemented("node:vm.SourceTextModule");
   }
 }
 
 class SyntheticModule {
   constructor() {
-    throwNotImplemented("node:vm Module");
+    throwNotImplemented("node:vm.SyntheticModule");
   }
 }
 

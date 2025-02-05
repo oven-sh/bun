@@ -2600,7 +2600,7 @@ const InvalidLoc = struct {
     };
 
     pub fn addError(loc: InvalidLoc, log: *logger.Log, source: *const logger.Source) void {
-        @setCold(true);
+        @branchHint(.cold);
         const text = switch (loc.kind) {
             .spread => "Unexpected trailing comma after rest element",
             .parentheses => "Unexpected parentheses in binding pattern",
@@ -5617,7 +5617,7 @@ fn NewParser_(
             }
 
             // Output.print("\nStmt: {s} - {d}\n", .{ @typeName(@TypeOf(t)), loc.start });
-            if (@typeInfo(Type) == .Pointer) {
+            if (@typeInfo(Type) == .pointer) {
                 // ExportFrom normally becomes import records during the visiting pass
                 // However, we skip the visiting pass in this mode
                 // So we must generate a minimum version of it here.
@@ -5707,7 +5707,7 @@ fn NewParser_(
             }
 
             // Output.print("\nExpr: {s} - {d}\n", .{ @typeName(@TypeOf(t)), loc.start });
-            if (@typeInfo(Type) == .Pointer) {
+            if (@typeInfo(Type) == .pointer) {
                 if (comptime only_scan_imports_and_do_not_visit) {
                     if (Type == *E.Call) {
                         const call: *E.Call = t;
@@ -5743,7 +5743,7 @@ fn NewParser_(
         }
 
         pub fn b(p: *P, t: anytype, loc: logger.Loc) Binding {
-            if (@typeInfo(@TypeOf(t)) == .Pointer) {
+            if (@typeInfo(@TypeOf(t)) == .pointer) {
                 return Binding.init(t, loc);
             } else {
                 return Binding.alloc(p.allocator, t, loc);
@@ -6812,7 +6812,10 @@ fn NewParser_(
 
             if (p.lexer.jsx_pragma.jsxRuntime()) |runtime| {
                 if (options.JSX.RuntimeMap.get(runtime.text)) |jsx_runtime| {
-                    p.options.jsx.runtime = jsx_runtime;
+                    p.options.jsx.runtime = jsx_runtime.runtime;
+                    if (jsx_runtime.development) |dev| {
+                        p.options.jsx.development = dev;
+                    }
                 } else {
                     // make this a warning instead of an error because we don't support "preserve" right now
                     try p.log.addRangeWarningFmt(p.source, runtime.range, p.allocator, "Unsupported JSX runtime: \"{s}\"", .{runtime.text});
@@ -9213,7 +9216,7 @@ fn NewParser_(
         }
 
         fn validateImportType(p: *P, import_tag: ImportRecord.Tag, stmt: *S.Import) !void {
-            @setCold(true);
+            @branchHint(.cold);
 
             if (import_tag.loader() != null) {
                 p.import_records.items[stmt.import_record_index].tag = import_tag;
@@ -14760,8 +14763,8 @@ fn NewParser_(
         }
 
         pub fn panic(p: *P, comptime fmt: string, args: anytype) noreturn {
+            @branchHint(.cold);
             p.panicLoc(fmt, args, null);
-            @setCold(true);
         }
 
         pub fn panicLoc(p: *P, comptime fmt: string, args: anytype, loc: ?logger.Loc) noreturn {

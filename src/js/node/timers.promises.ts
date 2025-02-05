@@ -181,6 +181,8 @@ function setIntervalPromise(after = 1, value, options = {}) {
           if (notYielded > 0) {
             notYielded = notYielded - 1;
             return { done: false, value: value };
+          } else if (signal?.aborted) {
+            throw $makeAbortError(undefined, { cause: signal.reason });
           }
           return { done: true };
         });

@@ -824,9 +824,11 @@ fn BaseWindowsPipeWriter(
                     .sync_file, .file => |file| {
                         // always cancel the current one
                         file.fs.cancel();
-                        // always use close_fs here because we can have a operation in progress
-                        file.close_fs.data = file;
-                        _ = uv.uv_fs_close(uv.Loop.get(), &file.close_fs, file.file, onFileClose);
+                        if (this.owns_fd) {
+                            // always use close_fs here because we can have a operation in progress
+                            file.close_fs.data = file;
+                            _ = uv.uv_fs_close(uv.Loop.get(), &file.close_fs, file.file, onFileClose);
+                        }
                     },
                     .pipe => |pipe| {
                         pipe.data = pipe;
@@ -1044,7 +1046,6 @@ pub fn WindowsBufferedWriter(
             this.is_done = true;
             if (this.pending_payload_size == 0) {
                 // will auto close when pending stuff get written
-                if (!this.owns_fd) return;
                 this.close();
             }
         }

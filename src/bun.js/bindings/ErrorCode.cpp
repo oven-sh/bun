@@ -372,7 +372,6 @@ void addList(WTF::StringBuilder& result, WTF::Vector<WTF::String>& types)
         result.append(types.at(2));
         return;
     default: {
-        WTF::StringBuilder result;
         for (unsigned i = 0; i < types.size() - 1; i++) {
             result.append(types.at(i));
             result.append(", "_s);

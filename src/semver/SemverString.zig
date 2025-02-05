@@ -139,7 +139,7 @@ pub const String = extern struct {
         }
     };
 
-    /// Escapes for json. Expects string to be prequoted
+    /// Escapes for json. Defaults to quoting the string.
     pub inline fn fmtJson(self: *const String, buf: []const u8, opts: JsonFormatter.Options) JsonFormatter {
         return .{
             .buf = buf,

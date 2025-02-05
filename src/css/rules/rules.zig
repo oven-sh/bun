@@ -409,7 +409,9 @@ pub fn CssRuleList(comptime AtRule: type) type {
                         }
 
                         if (logical.items.len > 0) {
-                            debug("Adding logical: {}\n", .{logical.items[0].style.selectors.debug()});
+                            if (bun.Environment.isDebug and logical.items[0] == .style) {
+                                debug("Adding logical: {}\n", .{logical.items[0].style.selectors.debug()});
+                            }
                             var log = CssRuleList(AtRule){ .v = logical };
                             try log.minify(context, parent_is_unused);
                             rules.appendSlice(context.allocator, log.v.items) catch bun.outOfMemory();

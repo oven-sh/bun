@@ -1545,6 +1545,19 @@ bool Bun__deepMatch(
     return true;
 }
 
+// anonymous namespace to avoid name collision
+namespace {
+    template<bool isStrict, bool enableAsymmetricMatchers>
+    inline bool deepEqualsWrapperImpl(JSC__JSValue a, JSC__JSValue b, JSC__JSGlobalObject* global)
+    {
+        auto& vm = global->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16> stack;
+        MarkedArgumentBuffer args;
+        return Bun__deepEquals<isStrict, enableAsymmetricMatchers>(global, JSC::JSValue::decode(a), JSC::JSValue::decode(b), args, stack, &scope, true);
+    }
+}
+
 extern "C" {
 
 bool WebCore__FetchHeaders__isEmpty(WebCore__FetchHeaders* arg0)
@@ -2452,33 +2465,24 @@ bool JSC__JSValue__isSameValue(JSC__JSValue JSValue0, JSC__JSValue JSValue1,
     return JSC::sameValue(globalObject, left, right);
 }
 
-#define IMPL_DEEP_EQUALS_WRAPPER(strict, enableAsymmetricMatchers, globalObject, a, b) \
-    ASSERT_NO_PENDING_EXCEPTION(globalObject);                                         \
-    JSValue v1 = JSValue::decode(a);                                                   \
-    JSValue v2 = JSValue::decode(b);                                                   \
-    ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());                        \
-    Vector<std::pair<JSValue, JSValue>, 16> stack;                                     \
-    MarkedArgumentBuffer args;                                                         \
-    return Bun__deepEquals<strict, enableAsymmetricMatchers>(globalObject, v1, v2, args, stack, &scope, true)
-
 bool JSC__JSValue__deepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject)
 {
-    IMPL_DEEP_EQUALS_WRAPPER(false, false, globalObject, JSValue0, JSValue1);
+    return deepEqualsWrapperImpl<false, false>(JSValue0, JSValue1, globalObject);
 }
 
 bool JSC__JSValue__jestDeepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject)
 {
-    IMPL_DEEP_EQUALS_WRAPPER(false, true, globalObject, JSValue0, JSValue1);
+    return deepEqualsWrapperImpl<false, true>(JSValue0, JSValue1, globalObject);
 }
 
 bool JSC__JSValue__strictDeepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject)
 {
-    IMPL_DEEP_EQUALS_WRAPPER(true, false, globalObject, JSValue0, JSValue1);
+    return deepEqualsWrapperImpl<true, false>(JSValue0, JSValue1, globalObject);
 }
 
 bool JSC__JSValue__jestStrictDeepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject)
 {
-    IMPL_DEEP_EQUALS_WRAPPER(true, true, globalObject, JSValue0, JSValue1);
+    return deepEqualsWrapperImpl<true, true>(JSValue0, JSValue1, globalObject);
 }
 
 #undef IMPL_DEEP_EQUALS_WRAPPER

@@ -189,9 +189,8 @@ assert.equal = function equal(actual: unknown, expected: unknown, message?: stri
   if (arguments.length < 2) {
     throw $ERR_MISSING_ARGS("actual", "expected");
   }
-  // eslint-disable-next-line eqeqeq
-  // if (actual != expected && (!NumberIsNaN(actual) || !NumberIsNaN(expected))) {
-  if (actual != expected && !(isNaN(actual) && isNaN(expected))) {
+
+  if (actual != expected && (!NumberIsNaN(actual) || !NumberIsNaN(expected))) {
     innerFail({
       actual,
       expected,

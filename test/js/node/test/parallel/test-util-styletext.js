@@ -75,31 +75,30 @@ assert.strictEqual(
   styled,
 );
 
-// const fd = common.getTTYfd();
-// if (fd !== -1) {
-//   const writeStream = new WriteStream(fd);
+const fd = common.getTTYfd();
+if (fd !== -1) {
+  const writeStream = new WriteStream(fd);
 
-//   const originalEnv = process.env;
-//   [
-//     { isTTY: true, env: {}, expected: styled },
-//     { isTTY: false, env: {}, expected: noChange },
-//     { isTTY: true, env: { NODE_DISABLE_COLORS: '1' }, expected: noChange },
-//     { isTTY: true, env: { NO_COLOR: '1' }, expected: noChange },
-//     { isTTY: true, env: { FORCE_COLOR: '1' }, expected: styled },
-//     { isTTY: true, env: { FORCE_COLOR: '1', NODE_DISABLE_COLORS: '1' }, expected: styled },
-//     { isTTY: false, env: { FORCE_COLOR: '1', NO_COLOR: '1', NODE_DISABLE_COLORS: '1' }, expected: styled },
-//     { isTTY: true, env: { FORCE_COLOR: '1', NO_COLOR: '1', NODE_DISABLE_COLORS: '1' }, expected: styled },
-//   ].forEach((testCase) => {
-//     writeStream.isTTY = testCase.isTTY;
-//     process.env = {
-//       ...process.env,
-//       ...testCase.env
-//     };
-//     console.log(testCase);
-//     const output = util.styleText('red', 'test', { stream: writeStream });
-//     assert.strictEqual(output, testCase.expected);
-//     process.env = originalEnv;
-//   });
-// } else {
-//   common.skip('Could not create TTY fd');
-// }
+  const originalEnv = process.env;
+  [
+    { isTTY: true, env: {}, expected: styled },
+    { isTTY: false, env: {}, expected: noChange },
+    { isTTY: true, env: { NODE_DISABLE_COLORS: '1' }, expected: noChange },
+    { isTTY: true, env: { NO_COLOR: '1' }, expected: noChange },
+    { isTTY: true, env: { FORCE_COLOR: '1' }, expected: styled },
+    { isTTY: true, env: { FORCE_COLOR: '1', NODE_DISABLE_COLORS: '1' }, expected: styled },
+    { isTTY: false, env: { FORCE_COLOR: '1', NO_COLOR: '1', NODE_DISABLE_COLORS: '1' }, expected: styled },
+    { isTTY: true, env: { FORCE_COLOR: '1', NO_COLOR: '1', NODE_DISABLE_COLORS: '1' }, expected: styled },
+  ].forEach((testCase) => {
+    writeStream.isTTY = testCase.isTTY;
+    process.env = {
+      ...process.env,
+      ...testCase.env
+    };
+    const output = util.styleText('red', 'test', { stream: writeStream });
+    assert.strictEqual(output, testCase.expected);
+    process.env = originalEnv;
+  });
+} else {
+  common.skip('Could not create TTY fd');
+}

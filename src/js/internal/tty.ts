@@ -121,12 +121,12 @@ function getColorDepth(env: NodeJS.ProcessEnv = process.env) {
   }
 
   if ("TEAMCITY_VERSION" in env) {
-    return /^(9\.(0*[1-9]\d*)\.|\d{2,}\.)/.test(env.TEAMCITY_VERSION) ? COLORS_16 : COLORS_2;
+    return /^(9\.(0*[1-9]\d*)\.|\d{2,}\.)/.exec(env.TEAMCITY_VERSION) !== null ? COLORS_16 : COLORS_2;
   }
 
   switch (env.TERM_PROGRAM) {
     case "iTerm.app":
-      if (!env.TERM_PROGRAM_VERSION || /^[0-2]\./.test(env.TERM_PROGRAM_VERSION)) {
+      if (!env.TERM_PROGRAM_VERSION || /^[0-2]\./.exec(env.TERM_PROGRAM_VERSION) !== null) {
         return COLORS_256;
       }
       return COLORS_16m;
@@ -144,7 +144,7 @@ function getColorDepth(env: NodeJS.ProcessEnv = process.env) {
   }
 
   if (env.TERM) {
-    if (/^xterm-256/.test(env.TERM)) {
+    if (/^xterm-256/.exec(env.TERM) !== null) {
       return COLORS_256;
     }
 
@@ -153,7 +153,7 @@ function getColorDepth(env: NodeJS.ProcessEnv = process.env) {
     if (TERM_ENVS[termEnv]) {
       return TERM_ENVS[termEnv];
     }
-    if (TERM_ENVS_REG_EXP.some(term => term.test(termEnv))) {
+    if (TERM_ENVS_REG_EXP.some(term => term.exec(termEnv) !== null)) {
       return COLORS_16;
     }
   }

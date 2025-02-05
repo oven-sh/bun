@@ -12,7 +12,7 @@ describe("assert(expr)", () => {
   });
 
   it("is an alias for assert.ok", () => {
-    expect(assert).toBe(assert.ok);
+    expect(assert as Function).toBe(assert.ok);
   });
 });
 
@@ -42,7 +42,7 @@ describe("assert.equal(actual, expected)", () => {
 
 describe("assert.deepEqual(actual, expected)", () => {
   describe("error instances", () => {
-    let e1: Error, e2: Error;
+    let e1: Error & Record<string, any>, e2: Error & Record<string, any>;
 
     beforeEach(() => {
       e1 = new Error("oops");

@@ -287,7 +287,7 @@ public:
     int getKeyLength() const;
     int getBlockSize() const;
     WTF::ASCIILiteral getModeLabel() const;
-    WTF::StringView getName() const;
+    WTF::String getName() const;
 
     bool isSupportedAuthenticatedMode() const;
 

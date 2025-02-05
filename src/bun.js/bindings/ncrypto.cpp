@@ -3074,12 +3074,12 @@ WTF::ASCIILiteral Cipher::getModeLabel() const
     return "{unknown}"_s;
 }
 
-WTF::StringView Cipher::getName() const
+WTF::String Cipher::getName() const
 {
     if (!cipher_) return {};
     // OBJ_nid2sn(EVP_CIPHER_nid(cipher)) is used here instead of
     // EVP_CIPHER_name(cipher) for compatibility with BoringSSL.
-    return WTF::StringView::fromLatin1(OBJ_nid2sn(getNid()));
+    return WTF::String::fromUTF8(OBJ_nid2sn(getNid()));
 }
 
 bool Cipher::isSupportedAuthenticatedMode() const

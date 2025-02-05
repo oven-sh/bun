@@ -323,9 +323,9 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
     // Get cipher from name or nid
     ncrypto::Cipher cipher;
     if (callFrame->argument(1).isString()) {
-        auto cipherName = callFrame->argument(1).toWTFString(lexicalGlobalObject);
+        JSString* cipherName = callFrame->argument(1).toString(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        cipher = ncrypto::Cipher::FromName(cipherName.utf8().data());
+        cipher = ncrypto::Cipher::FromName(cipherName->view(lexicalGlobalObject));
     } else if (callFrame->argument(1).isInt32()) {
         int nid = callFrame->argument(1).asInt32();
         cipher = ncrypto::Cipher::FromNid(nid);
@@ -376,17 +376,17 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
     }
 
     // Set mode if available
-    auto mode_label = cipher.getModeLabel();
-    if (!mode_label.empty()) {
+    WTF::ASCIILiteral mode_label = cipher.getModeLabel();
+    if (!mode_label.isEmpty()) {
         info->putDirect(vm, PropertyName(Identifier::fromString(vm, "mode"_s)),
-            jsString(vm, String::fromUTF8({ mode_label.data(), mode_label.length() })));
+            jsString(vm, String::fromUTF8(mode_label)));
         RETURN_IF_EXCEPTION(scope, {});
     }
 
     // Set name
-    auto name = cipher.getName();
+    WTF::String name = cipher.getName();
     info->putDirect(vm, vm.propertyNames->name,
-        jsString(vm, String::fromUTF8({ name.data(), name.length() })));
+        jsString(vm, name));
     RETURN_IF_EXCEPTION(scope, {});
 
     // Set nid

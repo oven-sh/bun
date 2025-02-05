@@ -116,40 +116,45 @@ afterAll(() => {
   }
 });
 
-test("ssr works for 100-ish requests", async () => {
-  expect(dev_server).not.toBeUndefined();
-  expect(baseUrl).not.toBeUndefined();
-  const lockfile = parseLockfile(root);
-  expect(lockfile).toMatchNodeModulesAt(root);
-  expect(lockfile).toMatchSnapshot();
+const timeout = Bun.version.includes("debug") ? 1_000_000 : 100_000;
+test(
+  "ssr works for 100-ish requests",
+  async () => {
+    expect(dev_server).not.toBeUndefined();
+    expect(baseUrl).not.toBeUndefined();
+    const lockfile = parseLockfile(root);
+    expect(lockfile).toMatchNodeModulesAt(root);
+    expect(lockfile).toMatchSnapshot();
 
-  const batchSize = 16;
-  const promises = [];
-  for (let j = 0; j < 100; j += batchSize) {
-    for (let i = j; i < j + batchSize; i++) {
-      promises.push(
-        (async () => {
-          const x = await fetch(`${baseUrl}/?i=${i}`, {
-            headers: {
-              "Cache-Control": "private, no-cache, no-store, must-revalidate",
-            },
-          });
-          expect(x.status).toBe(200);
-          const text = await x.text();
-          console.count("Completed request");
-          expect(text).toContain(`>${Bun.version}</code>`);
-        })(),
-      );
+    const batchSize = 16;
+    const promises = [];
+    for (let j = 0; j < 100; j += batchSize) {
+      for (let i = j; i < j + batchSize; i++) {
+        promises.push(
+          (async () => {
+            const x = await fetch(`${baseUrl}/?i=${i}`, {
+              headers: {
+                "Cache-Control": "private, no-cache, no-store, must-revalidate",
+              },
+            });
+            expect(x.status).toBe(200);
+            const text = await x.text();
+            console.count("Completed request");
+            expect(text).toContain(`>${Bun.version}</code>`);
+          })(),
+        );
+      }
+      await Promise.allSettled(promises);
     }
-    await Promise.allSettled(promises);
-  }
 
-  const x = await Promise.allSettled(promises);
-  const failing = x.filter(x => x.status === "rejected").map(x => x.reason!);
-  if (failing.length) {
-    throw new AggregateError(failing, failing.length + " requests failed", {});
-  }
-  for (const y of x) {
-    expect(y.status).toBe("fulfilled");
-  }
-}, 100000);
+    const x = await Promise.allSettled(promises);
+    const failing = x.filter(x => x.status === "rejected").map(x => x.reason!);
+    if (failing.length) {
+      throw new AggregateError(failing, failing.length + " requests failed", {});
+    }
+    for (const y of x) {
+      expect(y.status).toBe("fulfilled");
+    }
+  },
+  timeout,
+);

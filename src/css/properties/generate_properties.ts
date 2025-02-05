@@ -283,7 +283,7 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
       ${Object.entries(property_defs)
         .map(([name, meta]) => {
           if (meta.valid_prefixes !== undefined)
-            return `.${escapeIdent(name)} => |*v| css.generic.eql(${meta.ty}, &v[0], &v[0]) and v[1].eq(rhs.${escapeIdent(name)}[1]),`;
+            return `.${escapeIdent(name)} => |*v| css.generic.eql(${meta.ty}, &v[0], &rhs.${escapeIdent(name)}[0]) and v[1].eq(rhs.${escapeIdent(name)}[1]),`;
           return `.${escapeIdent(name)} => |*v| css.generic.eql(${meta.ty}, v, &rhs.${escapeIdent(name)}),`;
         })
         .join("\n")}
@@ -358,6 +358,7 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
   return `
   /// Returns the property name, without any vendor prefixes.
   pub inline fn name(this: *const PropertyId) []const u8 {
+      if (this.* == .custom) return this.custom.asStr();
       return @tagName(this.*);
   }
 
@@ -435,6 +436,21 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
   pub fn hash(this: *const PropertyId, hasher: *std.hash.Wyhash) void {
     const tag = @intFromEnum(this.*);
     hasher.update(std.mem.asBytes(&tag));
+  }
+
+  pub fn setPrefixesForTargets(this: *PropertyId, targets: Targets) void {
+    switch (this.*) {
+      ${Object.entries(property_defs)
+        .map(([name, meta]) => {
+          if (meta.unprefixed === false || meta.valid_prefixes === undefined) return `.${escapeIdent(name)} => {},`;
+          return `.${escapeIdent(name)} => |*x| {
+            x.* = targets.prefixes(x.*, Feature.${featureName(name)});
+          },
+          `;
+        })
+        .join("\n")}
+      else => {},
+    }
   }
 `;
 }
@@ -1273,27 +1289,27 @@ generateCode({
   // "font-palette": {
   //   ty: "DashedIdentReference",
   // },
-  // "transition-property": {
-  //   ty: "SmallList(PropertyId, 1)",
-  //   valid_prefixes: ["webkit", "moz", "ms"],
-  // },
-  // "transition-duration": {
-  //   ty: "SmallList(Time, 1)",
-  //   valid_prefixes: ["webkit", "moz", "ms"],
-  // },
-  // "transition-delay": {
-  //   ty: "SmallList(Time, 1)",
-  //   valid_prefixes: ["webkit", "moz", "ms"],
-  // },
-  // "transition-timing-function": {
-  //   ty: "SmallList(EasingFunction, 1)",
-  //   valid_prefixes: ["webkit", "moz", "ms"],
-  // },
-  // transition: {
-  //   ty: "SmallList(Transition, 1)",
-  //   valid_prefixes: ["webkit", "moz", "ms"],
-  //   shorthand: true,
-  // },
+  "transition-property": {
+    ty: "SmallList(PropertyId, 1)",
+    valid_prefixes: ["webkit", "moz", "ms"],
+  },
+  "transition-duration": {
+    ty: "SmallList(Time, 1)",
+    valid_prefixes: ["webkit", "moz", "ms"],
+  },
+  "transition-delay": {
+    ty: "SmallList(Time, 1)",
+    valid_prefixes: ["webkit", "moz", "ms"],
+  },
+  "transition-timing-function": {
+    ty: "SmallList(EasingFunction, 1)",
+    valid_prefixes: ["webkit", "moz", "ms"],
+  },
+  transition: {
+    ty: "SmallList(Transition, 1)",
+    valid_prefixes: ["webkit", "moz", "ms"],
+    shorthand: true,
+  },
   // "animation-name": {
   //   ty: "AnimationNameList",
   //   valid_prefixes: ["webkit", "moz", "o"],
@@ -1346,42 +1362,42 @@ generateCode({
   //   valid_prefixes: ["webkit", "moz", "o"],
   //   shorthand: true,
   // },
-  // transform: {
-  //   ty: "TransformList",
-  //   valid_prefixes: ["webkit", "moz", "ms", "o"],
-  // },
-  // "transform-origin": {
-  //   ty: "Position",
-  //   valid_prefixes: ["webkit", "moz", "ms", "o"],
-  // },
-  // "transform-style": {
-  //   ty: "TransformStyle",
-  //   valid_prefixes: ["webkit", "moz"],
-  // },
-  // "transform-box": {
-  //   ty: "TransformBox",
-  // },
-  // "backface-visibility": {
-  //   ty: "BackfaceVisibility",
-  //   valid_prefixes: ["webkit", "moz"],
-  // },
-  // perspective: {
-  //   ty: "Perspective",
-  //   valid_prefixes: ["webkit", "moz"],
-  // },
-  // "perspective-origin": {
-  //   ty: "Position",
-  //   valid_prefixes: ["webkit", "moz"],
-  // },
-  // translate: {
-  //   ty: "Translate",
-  // },
-  // rotate: {
-  //   ty: "Rotate",
-  // },
-  // scale: {
-  //   ty: "Scale",
-  // },
+  transform: {
+    ty: "TransformList",
+    valid_prefixes: ["webkit", "moz", "ms", "o"],
+  },
+  "transform-origin": {
+    ty: "Position",
+    valid_prefixes: ["webkit", "moz", "ms", "o"],
+  },
+  "transform-style": {
+    ty: "TransformStyle",
+    valid_prefixes: ["webkit", "moz"],
+  },
+  "transform-box": {
+    ty: "TransformBox",
+  },
+  "backface-visibility": {
+    ty: "BackfaceVisibility",
+    valid_prefixes: ["webkit", "moz"],
+  },
+  perspective: {
+    ty: "Perspective",
+    valid_prefixes: ["webkit", "moz"],
+  },
+  "perspective-origin": {
+    ty: "Position",
+    valid_prefixes: ["webkit", "moz"],
+  },
+  translate: {
+    ty: "Translate",
+  },
+  rotate: {
+    ty: "Rotate",
+  },
+  scale: {
+    ty: "Scale",
+  },
   // "text-transform": {
   //   ty: "TextTransform",
   // },
@@ -1673,6 +1689,7 @@ generateCode({
     ty: "MaskBorder",
     shorthand: true,
   },
+  // WebKit additions
   "-webkit-mask-composite": {
     ty: "SmallList(WebKitMaskComposite, 1)",
   },
@@ -1711,6 +1728,7 @@ generateCode({
     valid_prefixes: ["webkit"],
     unprefixed: false,
   },
+
   // TODO: Hello future Zack, if you uncomment this, remember to uncomment the corresponding value in FallbackHandler in prefix_handler.zig :)
   // filter: {
   //   ty: "FilterList",
@@ -1760,6 +1778,17 @@ const PropertyIdImpl = @import("./properties_impl.zig").PropertyIdImpl;
 const CSSWideKeyword = css.css_properties.CSSWideKeyword;
 const UnparsedProperty = css.css_properties.custom.UnparsedProperty;
 const CustomProperty = css.css_properties.custom.CustomProperty;
+const Targets = css.targets.Targets;
+const Feature = css.prefixes.Feature;
+
+const TransformList = css.css_properties.transform.TransformList;
+const TransformStyle = css.css_properties.transform.TransformStyle;
+const TransformBox = css.css_properties.transform.TransformBox;
+const BackfaceVisibility = css.css_properties.transform.BackfaceVisibility;
+const Perspective = css.css_properties.transform.Perspective;
+const Translate = css.css_properties.transform.Translate;
+const Rotate = css.css_properties.transform.Rotate;
+const Scale = css.css_properties.transform.Scale;
 
 const css_values = css.css_values;
 const CssColor = css.css_values.color.CssColor;
@@ -1892,7 +1921,7 @@ const FontVariantCaps = font.FontVariantCaps;
 const LineHeight = font.LineHeight;
 const Font = font.Font;
 // const VerticalAlign = font.VerticalAlign;
-// const Transition = transition.Transition;
+const Transition = transition.Transition;
 // const AnimationNameList = animation.AnimationNameList;
 // const AnimationList = animation.AnimationList;
 // const AnimationIterationCount = animation.AnimationIterationCount;
@@ -1992,4 +2021,8 @@ const ArrayList = std.ArrayListUnmanaged;
 const SmallList = css.SmallList;
 
 `;
+}
+
+function featureName(name: string): string {
+  return name.replaceAll("-", "_");
 }

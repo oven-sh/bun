@@ -520,15 +520,25 @@ let browsersZig = `pub const Browsers = struct {
   ${allBrowsers.join(": ?u32 = null,\n")}: ?u32 = null,
     pub usingnamespace BrowsersImpl(@This());
 }`;
+let field_len = 0;
 let flagsZig = `pub const Features = packed struct(u32) {
     ${flags
       .map((flag, i) => {
         if (Array.isArray(flag)) {
           // return `const ${flag[0]} = ${flag[1].map(f => `Self::${f}.bits()`).join(" | ")};`;
-          return `const ${flag[0]} = Features.fromNames(${flag[1].map(f => `"${f}"`).join(", ")});`;
+          return `pub const ${flag[0]} = Features.fromNames(&.{${flag[1].map(f => `"${f}"`).join(", ")}});`;
         } else {
-          return `${flag}: bool = 1 << ${i},`;
+          field_len++;
+          return `${flag}: bool = false,`;
         }
+      })
+      .concat(`__unused: u${32 - field_len} = 0,`)
+      .sort((a, b) => {
+        const a_is_const = a.startsWith("const");
+        const b_is_const = b.startsWith("const");
+        if (a_is_const && !b_is_const) return 1;
+        if (!a_is_const && b_is_const) return -1;
+        return 0;
       })
       .join("\n    ")}
 
@@ -593,7 +603,7 @@ pub const Feature = enum {
 
   pub fn prefixesFor(this: *const Feature, browsers: Browsers) VendorPrefix {
     var prefixes = VendorPrefix{ .none = true };
-    switch (this.*) {
+    switch (this) {
       ${[...p]
         .map(([features, versions]) => {
           return `${features.map(name => `.${enumify(name)}`).join(" ,\n      ")} => {
@@ -673,7 +683,7 @@ const Browsers = @import("./targets.zig").Browsers;
 pub const Feature = enum {
   ${[...compat.keys()].flat().map(enumify).sort().join(",\n  ")},
 
-  pub fn isCompatible(this: *const Feature, browsers: Browsers) bool {
+  pub fn isCompatible(this: Feature, browsers: Browsers) bool {
     switch (this.*) {
       ${[...compat]
         .map(

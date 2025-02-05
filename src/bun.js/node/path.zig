@@ -970,25 +970,44 @@ pub fn format(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]J
     const allocator = stack_fallback.get();
 
     var root: []const u8 = "";
+    var root_slice: ?JSC.ZigString.Slice = null;
+    defer if (root_slice) |slice| slice.deinit();
+
     if (try pathObject_ptr.getTruthy(globalObject, "root")) |jsValue| {
-        root = jsValue.toSlice(globalObject, allocator).slice();
+        root_slice = try jsValue.toSlice(globalObject, allocator);
+        root = root_slice.?.slice();
     }
     var dir: []const u8 = "";
+    var dir_slice: ?JSC.ZigString.Slice = null;
+    defer if (dir_slice) |slice| slice.deinit();
+
     if (try pathObject_ptr.getTruthy(globalObject, "dir")) |jsValue| {
-        dir = jsValue.toSlice(globalObject, allocator).slice();
+        dir_slice = try jsValue.toSlice(globalObject, allocator);
+        dir = dir_slice.?.slice();
     }
     var base: []const u8 = "";
+    var base_slice: ?JSC.ZigString.Slice = null;
+    defer if (base_slice) |slice| slice.deinit();
+
     if (try pathObject_ptr.getTruthy(globalObject, "base")) |jsValue| {
-        base = jsValue.toSlice(globalObject, allocator).slice();
+        base_slice = try jsValue.toSlice(globalObject, allocator);
+        base = base_slice.?.slice();
     }
-    // Prefix with _ to avoid shadowing the identifier in the outer scope.
     var _name: []const u8 = "";
+    var _name_slice: ?JSC.ZigString.Slice = null;
+    defer if (_name_slice) |slice| slice.deinit();
+
     if (try pathObject_ptr.getTruthy(globalObject, "name")) |jsValue| {
-        _name = jsValue.toSlice(globalObject, allocator).slice();
+        _name_slice = try jsValue.toSlice(globalObject, allocator);
+        _name = _name_slice.?.slice();
     }
     var ext: []const u8 = "";
+    var ext_slice: ?JSC.ZigString.Slice = null;
+    defer if (ext_slice) |slice| slice.deinit();
+
     if (try pathObject_ptr.getTruthy(globalObject, "ext")) |jsValue| {
-        ext = jsValue.toSlice(globalObject, allocator).slice();
+        ext_slice = try jsValue.toSlice(globalObject, allocator);
+        ext = ext_slice.?.slice();
     }
     return formatJS_T(u8, globalObject, allocator, isWindows, .{ .root = root, .dir = dir, .base = base, .ext = ext, .name = _name });
 }
@@ -2795,7 +2814,7 @@ pub fn resolveJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocato
     return if (isWindows) resolveWindowsJS_T(T, globalObject, paths, buf, buf2) else resolvePosixJS_T(T, globalObject, paths, buf, buf2);
 }
 
-extern "C" fn Process__getCachedCwd(*JSC.JSGlobalObject) JSC.JSValue;
+extern "c" fn Process__getCachedCwd(*JSC.JSGlobalObject) JSC.JSValue;
 
 pub fn resolve(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(JSC.conv) JSC.JSValue {
     var arena = bun.ArenaAllocator.init(bun.default_allocator);
@@ -2957,17 +2976,17 @@ pub fn toNamespacedPath(globalObject: *JSC.JSGlobalObject, isWindows: bool, args
 pub const Extern = [_][]const u8{"create"};
 
 comptime {
-    @export(Path.basename, .{ .name = "Bun__Path__basename" });
-    @export(Path.dirname, .{ .name = "Bun__Path__dirname" });
-    @export(Path.extname, .{ .name = "Bun__Path__extname" });
-    @export(path_format, .{ .name = "Bun__Path__format" });
-    @export(Path.isAbsolute, .{ .name = "Bun__Path__isAbsolute" });
-    @export(Path.join, .{ .name = "Bun__Path__join" });
-    @export(Path.normalize, .{ .name = "Bun__Path__normalize" });
-    @export(Path.parse, .{ .name = "Bun__Path__parse" });
-    @export(Path.relative, .{ .name = "Bun__Path__relative" });
-    @export(Path.resolve, .{ .name = "Bun__Path__resolve" });
-    @export(Path.toNamespacedPath, .{ .name = "Bun__Path__toNamespacedPath" });
+    @export(&Path.basename, .{ .name = "Bun__Path__basename" });
+    @export(&Path.dirname, .{ .name = "Bun__Path__dirname" });
+    @export(&Path.extname, .{ .name = "Bun__Path__extname" });
+    @export(&path_format, .{ .name = "Bun__Path__format" });
+    @export(&Path.isAbsolute, .{ .name = "Bun__Path__isAbsolute" });
+    @export(&Path.join, .{ .name = "Bun__Path__join" });
+    @export(&Path.normalize, .{ .name = "Bun__Path__normalize" });
+    @export(&Path.parse, .{ .name = "Bun__Path__parse" });
+    @export(&Path.relative, .{ .name = "Bun__Path__relative" });
+    @export(&Path.resolve, .{ .name = "Bun__Path__resolve" });
+    @export(&Path.toNamespacedPath, .{ .name = "Bun__Path__toNamespacedPath" });
 }
 
 fn path_format(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(JSC.conv) JSC.JSValue {

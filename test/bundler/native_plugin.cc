@@ -79,11 +79,12 @@ void log_error(const OnBeforeParseArguments *args,
 extern "C" BUN_PLUGIN_EXPORT void
 plugin_impl_with_needle(const OnBeforeParseArguments *args,
                         OnBeforeParseResult *result, const char *needle) {
-  // if (args->__struct_size < sizeof(OnBeforeParseArguments)) {
-  //     log_error(args, result, BUN_LOG_LEVEL_ERROR, "Invalid
-  //     OnBeforeParseArguments struct size", sizeof("Invalid
-  //     OnBeforeParseArguments struct size") - 1); return;
-  // }
+  if (args->__struct_size < sizeof(OnBeforeParseArguments)) {
+    const char *msg = "This plugin is built for a newer version of Bun than "
+                      "the one currently running.";
+    log_error(args, result, BUN_LOG_LEVEL_ERROR, msg, strlen(msg));
+    return;
+  }
 
   if (args->external) {
     External *external = (External *)args->external;
@@ -100,7 +101,6 @@ plugin_impl_with_needle(const OnBeforeParseArguments *args,
 
   int fetch_result = result->fetchSourceCode(args, result);
   if (fetch_result != 0) {
-    printf("FUCK\n");
     exit(1);
   }
 
@@ -123,7 +123,6 @@ plugin_impl_with_needle(const OnBeforeParseArguments *args,
   if (needle_count > 0) {
     char *new_source = (char *)malloc(result->source_len);
     if (new_source == nullptr) {
-      printf("FUCK\n");
       exit(1);
     }
     memcpy(new_source, result->source_ptr, result->source_len);
@@ -147,7 +146,6 @@ plugin_impl_with_needle(const OnBeforeParseArguments *args,
       } else if (strcmp(needle, "baz") == 0) {
         needle_atomic_value = &external->baz_count;
       }
-      printf("FUCK: %d %s\n", needle_count, needle);
       needle_atomic_value->fetch_add(needle_count);
       free_counter = &external->compilation_ctx_freed_count;
     }
@@ -561,8 +559,9 @@ napi_value Init(napi_env env, napi_value exports) {
                      "Failed to add create_external function to exports");
     return nullptr;
   }
-
-  return exports;
+  // this should be the same as returning `exports`, but it would crash in
+  // previous versions of Bun
+  return nullptr;
 }
 
 struct NewOnBeforeParseArguments {

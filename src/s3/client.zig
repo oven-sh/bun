@@ -7,6 +7,7 @@ pub const ACL = @import("./acl.zig").ACL;
 pub const S3HttpDownloadStreamingTask = @import("./download_stream.zig").S3HttpDownloadStreamingTask;
 pub const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploadOptions;
 pub const MultiPartUpload = @import("./multipart.zig").MultiPartUpload;
+pub const StorageClass = @import("./storage_class.zig").StorageClass;
 
 pub const Error = @import("./error.zig");
 pub const throwSignError = Error.throwSignError;
@@ -105,6 +106,7 @@ pub fn upload(
     content_type: ?[]const u8,
     acl: ?ACL,
     proxy_url: ?[]const u8,
+    storage_class: ?StorageClass,
     callback: *const fn (S3UploadResult, *anyopaque) void,
     callback_context: *anyopaque,
 ) void {
@@ -115,6 +117,7 @@ pub fn upload(
         .body = content,
         .content_type = content_type,
         .acl = acl,
+        .storage_class = storage_class,
     }, .{ .upload = callback }, callback_context);
 }
 /// returns a writable stream that writes to the s3 path
@@ -125,6 +128,7 @@ pub fn writableStream(
     options: MultiPartUploadOptions,
     content_type: ?[]const u8,
     proxy: ?[]const u8,
+    storage_class: ?StorageClass,
 ) bun.JSError!JSC.JSValue {
     const Wrapper = struct {
         pub fn callback(result: S3UploadResult, sink: *JSC.WebCore.NetworkSink) void {
@@ -158,6 +162,7 @@ pub fn writableStream(
         .path = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
         .proxy = if (proxy_url.len > 0) bun.default_allocator.dupe(u8, proxy_url) catch bun.outOfMemory() else "",
         .content_type = if (content_type) |ct| bun.default_allocator.dupe(u8, ct) catch bun.outOfMemory() else null,
+        .storage_class = storage_class,
 
         .callback = @ptrCast(&Wrapper.callback),
         .callback_context = undefined,
@@ -197,7 +202,7 @@ const S3UploadStreamWrapper = struct {
     callback_context: *anyopaque,
     ref_count: u32 = 1,
     path: []const u8, // this is owned by the task not by the wrapper
-    pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
     pub fn resolve(result: S3UploadResult, self: *@This()) void {
         const sink = self.sink;
         defer self.deref();
@@ -277,9 +282,9 @@ pub const Export = shim.exportFunctions(.{
 });
 comptime {
     const jsonResolveRequestStream = JSC.toJSHostFunction(onUploadStreamResolveRequestStream);
-    @export(jsonResolveRequestStream, .{ .name = Export[0].symbol_name });
+    @export(&jsonResolveRequestStream, .{ .name = Export[0].symbol_name });
     const jsonRejectRequestStream = JSC.toJSHostFunction(onUploadStreamRejectRequestStream);
-    @export(jsonRejectRequestStream, .{ .name = Export[1].symbol_name });
+    @export(&jsonRejectRequestStream, .{ .name = Export[1].symbol_name });
 }
 
 /// consumes the readable stream and upload to s3
@@ -290,6 +295,7 @@ pub fn uploadStream(
     globalThis: *JSC.JSGlobalObject,
     options: MultiPartUploadOptions,
     acl: ?ACL,
+    storage_class: ?StorageClass,
     content_type: ?[]const u8,
     proxy: ?[]const u8,
     callback: ?*const fn (S3UploadResult, *anyopaque) void,
@@ -333,6 +339,7 @@ pub fn uploadStream(
         .state = .wait_stream_check,
         .options = options,
         .acl = acl,
+        .storage_class = storage_class,
         .vm = JSC.VirtualMachine.get(),
     });
 

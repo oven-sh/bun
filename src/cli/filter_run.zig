@@ -6,7 +6,7 @@ const std = @import("std");
 const Fs = @import("../fs.zig");
 const RunCommand = @import("run_command.zig").RunCommand;
 const DependencyMap = @import("../resolver/package_json.zig").DependencyMap;
-const SemverString = @import("../install/semver.zig").String;
+const SemverString = bun.Semver.String;
 
 const CLI = bun.CLI;
 const Command = CLI.Command;
@@ -409,12 +409,7 @@ const AbortHandler = struct {
                 .mask = std.posix.empty_sigset,
                 .flags = std.posix.SA.SIGINFO | std.posix.SA.RESTART | std.posix.SA.RESETHAND,
             };
-            // if we can't set the handler, we just ignore it
-            std.posix.sigaction(std.posix.SIG.INT, &action, null) catch |err| {
-                if (Environment.isDebug) {
-                    Output.warn("Failed to set abort handler: {s}\n", .{@errorName(err)});
-                }
-            };
+            std.posix.sigaction(std.posix.SIG.INT, &action, null);
         } else {
             const res = bun.windows.SetConsoleCtrlHandler(windowsCtrlHandler, std.os.windows.TRUE);
             if (res == 0) {

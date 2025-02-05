@@ -1,6 +1,6 @@
 const std = @import("std");
 const bun = @import("root").bun;
-pub extern "C" fn memmem(haystack: [*]const u8, haystacklen: usize, needle: [*]const u8, needlelen: usize) ?[*]const u8;
+pub extern "c" fn memmem(haystack: [*]const u8, haystacklen: usize, needle: [*]const u8, needlelen: usize) ?[*]const u8;
 pub const SystemErrno = enum(u8) {
     SUCCESS = 0,
     EPERM = 1,
@@ -494,6 +494,8 @@ pub fn posix_spawn_file_actions_addchdir_np(actions: *posix_spawn_file_actions_t
 pub extern fn vmsplice(fd: c_int, iovec: [*]const std.posix.iovec, iovec_count: usize, flags: u32) isize;
 
 const net_c = @cImport({
+    // TODO: remove this c import! instead of adding to it, add to
+    // c-headers-for-zig.h and use bun.C.translated.
     @cInclude("ifaddrs.h"); // getifaddrs, freeifaddrs
     @cInclude("net/if.h"); // IFF_RUNNING, IFF_UP
     @cInclude("fcntl.h"); // F_DUPFD_CLOEXEC
@@ -549,6 +551,8 @@ pub fn getErrno(rc: anytype) E {
 pub const getuid = std.os.linux.getuid;
 pub const getgid = std.os.linux.getgid;
 pub const linux_fs = if (bun.Environment.isLinux) @cImport({
+    // TODO: remove this c import! instead of adding to it, add to
+    // c-headers-for-zig.h and use bun.C.translated.
     @cInclude("linux/fs.h");
 }) else struct {};
 
@@ -582,7 +586,7 @@ pub const RWFFlagSupport = enum(u8) {
         if (comptime !bun.Environment.isLinux) return false;
         switch (rwf_bool.load(.monotonic)) {
             .unknown => {
-                if (isLinuxKernelVersionWithBuggyRWF_NONBLOCK()) {
+                if (isLinuxKernelVersionWithBuggyRWF_NONBLOCK() or bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK")) {
                     rwf_bool.store(.unsupported, .monotonic);
                     return false;
                 }
@@ -602,7 +606,7 @@ pub const RWFFlagSupport = enum(u8) {
     }
 };
 
-pub extern "C" fn sys_preadv2(
+pub extern "c" fn sys_preadv2(
     fd: c_int,
     iov: [*]const std.posix.iovec,
     iovcnt: c_int,
@@ -610,7 +614,7 @@ pub extern "C" fn sys_preadv2(
     flags: c_uint,
 ) isize;
 
-pub extern "C" fn sys_pwritev2(
+pub extern "c" fn sys_pwritev2(
     fd: c_int,
     iov: [*]const std.posix.iovec_const,
     iovcnt: c_int,
@@ -626,12 +630,8 @@ pub const RENAME_NOREPLACE = 1 << 0;
 pub const RENAME_EXCHANGE = 1 << 1;
 pub const RENAME_WHITEOUT = 1 << 2;
 
-pub extern "C" fn quick_exit(code: c_int) noreturn;
-pub extern "C" fn memrchr(ptr: [*]const u8, val: c_int, len: usize) ?[*]const u8;
-
-pub const netdb = @cImport({
-    @cInclude("netdb.h");
-});
+pub extern "c" fn quick_exit(code: c_int) noreturn;
+pub extern "c" fn memrchr(ptr: [*]const u8, val: c_int, len: usize) ?[*]const u8;
 
 export fn sys_epoll_pwait2(epfd: i32, events: ?[*]std.os.linux.epoll_event, maxevents: i32, timeout: ?*const std.os.linux.timespec, sigmask: ?*const std.os.linux.sigset_t) isize {
     return @bitCast(
@@ -642,6 +642,9 @@ export fn sys_epoll_pwait2(epfd: i32, events: ?[*]std.os.linux.epoll_event, maxe
             @bitCast(@as(isize, @intCast(maxevents))),
             @intFromPtr(timeout),
             @intFromPtr(sigmask),
+            // This is the correct value. glibc claims to pass `sizeof sigset_t` for this argument,
+            // which would be 128, but they actually pass 8 which is what the kernel expects.
+            // https://github.com/ziglang/zig/issues/12715
             8,
         ),
     );
@@ -699,10 +702,10 @@ comptime {
     _ = fstat64;
     _ = fstatat;
     _ = statx;
-    @export(stat, .{ .name = "stat64" });
-    @export(lstat, .{ .name = "lstat64" });
-    @export(fstat, .{ .name = "fstat64" });
-    @export(fstatat, .{ .name = "fstatat64" });
+    @export(&stat, .{ .name = "stat64" });
+    @export(&lstat, .{ .name = "lstat64" });
+    @export(&fstat, .{ .name = "fstat64" });
+    @export(&fstatat, .{ .name = "fstatat64" });
 }
 
 // *********************************************************************************

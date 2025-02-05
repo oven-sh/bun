@@ -2334,39 +2334,24 @@ pub const PostgresSQLConnection = struct {
 
                         // Unicode escapes
                         'u' => {
-                            if (i + 4 >= input.len) return error.InvalidUnicodeSequence;
-
-                            const high = try std.fmt.parseInt(u16, input[i + 1 .. i + 5], 16);
-                            var unicode_value: u21 = undefined;
-                            var additional_offset: usize = 0;
-
-                            if (high >= 0xD800 and high <= 0xDBFF) {
-                                // Surrogate pair handling
-                                if (i + 10 < input.len and
-                                    input[i + 5] == '\\' and
-                                    input[i + 6] == 'u')
-                                {
-                                    const low = try std.fmt.parseInt(u16, input[i + 7 .. i + 11], 16);
-                                    if (low >= 0xDC00 and low <= 0xDFFF) {
-                                        unicode_value = 0x10000 +
-                                            (@as(u21, high & 0x3FF) << 10) +
-                                            @as(u21, low & 0x3FF);
-                                        additional_offset = 6;
-                                    } else return error.InvalidSurrogatePair;
-                                } else return error.InvalidSurrogatePair;
-                            } else if (high >= 0xDC00 and high <= 0xDFFF) {
-                                return error.UnexpectedLowSurrogate;
-                            } else {
-                                unicode_value = high;
+                            const data = input[i..];
+                            if (data.len < 6) return error.InvalidUnicodeSequence;
+                            var codepoint: u32 = 0;
+                            for (data[2..6]) |c| {
+                                codepoint *= 16;
+                                if (c >= '0' and c <= '9') {
+                                    codepoint += c - '0';
+                                } else if (c >= 'A' and c <= 'F') {
+                                    codepoint += c - 'A' + 10;
+                                } else if (c >= 'a' and c <= 'f') {
+                                    codepoint += c - 'a' + 10;
+                                } else {
+                                    return error.InvalidUnicodeSequence;
+                                }
                             }
-
-                            var utf8_buf: [4]u8 = undefined;
-                            const len = try std.unicode.utf8Encode(unicode_value, &utf8_buf);
-                            if (out_index + len > buffer.len) return error.BufferTooSmall;
-
-                            @memcpy(buffer[out_index..], utf8_buf[0..len]);
-                            out_index += len - 1;
-                            i += 4 + additional_offset;
+                            const result = try bun.strings.encodeUTF8(codepoint, buffer[out_index..]);
+                            out_index += result.len - 1;
+                            i += 4;
                         },
 
                         // PostgreSQL hex escapes

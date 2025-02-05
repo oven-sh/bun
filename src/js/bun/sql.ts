@@ -34,7 +34,6 @@ const escapeIdentifier = function escape(str) {
 class SQLResultArray extends PublicArray {
   static [Symbol.toStringTag] = "SQLResults";
 
-  statement;
   command;
   count;
 }

@@ -3761,6 +3761,43 @@ pub fn utf16EqlString(text: []const u16, str: string) bool {
     return j == str.len;
 }
 
+pub fn encodeUTF8(cp: u32, buffer: []u8) ![]const u8 {
+    const HEADER_CONT_BYTE: u8 = 0b10000000;
+    const HEADER_2BYTE: u8 = 0b11000000;
+    const HEADER_3BYTE: u8 = 0b11100000;
+    const HEADER_4BYTE: u8 = 0b11100000;
+
+    return switch (cp) {
+        0x0...0x7F => {
+            if (buffer.len < 1) return error.BufferTooSmall;
+            buffer[0] = @intCast(cp);
+            return buffer[0..1];
+        },
+        0x80...0x7FF => {
+            if (buffer.len < 2) return error.BufferTooSmall;
+            buffer[0] = HEADER_2BYTE | @as(u8, @intCast(cp >> 6));
+            buffer[1] = HEADER_CONT_BYTE | @as(u8, @intCast(cp & 0b00111111));
+            return buffer[0..2];
+        },
+        0x800...0xFFFF => {
+            if (buffer.len < 3) return error.BufferTooSmall;
+            buffer[0] = HEADER_3BYTE | @as(u8, @intCast(cp >> 12));
+            buffer[1] = HEADER_CONT_BYTE | @as(u8, @intCast((cp >> 6) & 0b00111111));
+            buffer[2] = HEADER_CONT_BYTE | @as(u8, @intCast(cp & 0b00111111));
+            return buffer[0..3];
+        },
+        0x10000...0x10FFFF => {
+            if (buffer.len < 4) return error.BufferTooSmall;
+            buffer[0] = HEADER_4BYTE | @as(u8, @intCast(cp >> 18));
+            buffer[1] = HEADER_CONT_BYTE | @as(u8, @intCast((cp >> 12) & 0b00111111));
+            buffer[2] = HEADER_CONT_BYTE | @as(u8, @intCast((cp >> 6) & 0b00111111));
+            buffer[3] = HEADER_CONT_BYTE | @as(u8, @intCast(cp & 0b00111111));
+            return buffer[0..4];
+        },
+        else => error.InvalidCodepoint,
+    };
+}
+
 pub fn encodeUTF8Comptime(comptime cp: u32) []const u8 {
     const HEADER_CONT_BYTE: u8 = 0b10000000;
     const HEADER_2BYTE: u8 = 0b11000000;

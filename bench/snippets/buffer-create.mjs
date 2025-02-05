@@ -25,6 +25,10 @@ bench("Buffer.from('short string')", () => {
   return Buffer.from("short string");
 });
 
+bench("new Buffer('short string')", () => {
+  return new Buffer("short string");
+});
+
 const loooong = "long string".repeat(9999).split("").join(" ");
 bench("Buffer.byteLength('long string'.repeat(9999))", () => {
   return Buffer.byteLength(loooong);
@@ -35,9 +39,17 @@ bench("Buffer.from(ArrayBuffer(100))", () => {
   return Buffer.from(hundred);
 });
 
+bench("new Buffer(ArrayBuffer(100))", () => {
+  return new Buffer(hundred);
+});
+
 var hundredArray = new Uint8Array(100);
 bench("Buffer.from(Uint8Array(100))", () => {
   return Buffer.from(hundredArray);
+});
+
+bench("new Buffer(Uint8Array(100))", () => {
+  return new Buffer(hundredArray);
 });
 
 var empty = new Uint8Array(0);

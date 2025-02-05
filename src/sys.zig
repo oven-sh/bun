@@ -65,11 +65,11 @@ pub const O = switch (Environment.os) {
         pub const NOFOLLOW = 0x0100;
         pub const SYMLINK = 0x200000;
         pub const EVTONLY = 0x8000;
-        pub const CLOEXEC = 0x1000000;
+        pub const CLOEXEC = 0x01000000;
         pub const ACCMODE = 3;
         pub const ALERT = 536870912;
         pub const ASYNC = 64;
-        pub const DIRECTORY = 1048576;
+        pub const DIRECTORY = 0x00100000;
         pub const DP_GETRAWENCRYPTED = 1;
         pub const DP_GETRAWUNENCRYPTED = 2;
         pub const DSYNC = 4194304;
@@ -220,6 +220,7 @@ pub const Tag = enum(u8) {
     symlinkat,
     unlink,
     utime,
+    utimensat,
     write,
     getcwd,
     getenv,
@@ -455,6 +456,7 @@ pub const Error = struct {
 
     /// Simpler formatting which does not allocate a message
     pub fn toShellSystemError(this: Error) SystemError {
+        @setEvalBranchQuota(1_000_000);
         var err = SystemError{
             .errno = @as(c_int, this.errno) * -1,
             .syscall = bun.String.static(@tagName(this.syscall)),
@@ -593,20 +595,58 @@ pub fn getcwdZ(buf: *bun.PathBuffer) Maybe([:0]const u8) {
         Result.errnoSysP(@as(c_int, 0), .getcwd, buf).?;
 }
 
+const syscall_or_C = if (Environment.isLinux) syscall else bun.C;
+
+pub fn fchown(fd: bun.FileDescriptor, uid: JSC.Node.uid_t, gid: JSC.Node.gid_t) Maybe(void) {
+    if (comptime Environment.isWindows) {
+        return sys_uv.fchown(fd, uid, gid);
+    }
+
+    while (true) {
+        const rc = syscall_or_C.fchown(fd.cast(), uid, gid);
+        if (Maybe(void).errnoSysFd(rc, .fchown, fd)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+
+        return Maybe(void).success;
+    }
+
+    unreachable;
+}
+
 pub fn fchmod(fd: bun.FileDescriptor, mode: bun.Mode) Maybe(void) {
     if (comptime Environment.isWindows) {
         return sys_uv.fchmod(fd, mode);
     }
 
-    return Maybe(void).errnoSysFd(C.fchmod(fd.cast(), mode), .fchmod, fd) orelse
-        Maybe(void).success;
+    while (true) {
+        const rc = syscall_or_C.fchmod(fd.cast(), mode);
+        if (Maybe(void).errnoSysFd(rc, .fchmod, fd)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+
+        return Maybe(void).success;
+    }
+
+    unreachable;
 }
 
-pub fn fchmodat(fd: bun.FileDescriptor, path: [:0]const u8, mode: bun.Mode, flags: i32) Maybe(void) {
+pub fn fchmodat(fd: bun.FileDescriptor, path: [:0]const u8, mode: bun.Mode, flags: if (Environment.isLinux) u32 else i32) Maybe(void) {
     if (comptime Environment.isWindows) @compileError("Use fchmod instead");
 
-    return Maybe(void).errnoSysFd(C.fchmodat(fd.cast(), path.ptr, mode, flags), .fchmodat, fd) orelse
-        Maybe(void).success;
+    while (true) {
+        const rc = syscall_or_C.fchmodat(fd.cast(), path.ptr, mode, flags);
+        if (Maybe(void).errnoSysFd(rc, .fchmodat, fd)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+
+        return Maybe(void).success;
+    }
+
+    unreachable;
 }
 
 pub fn chmod(path: [:0]const u8, mode: bun.Mode) Maybe(void) {
@@ -614,8 +654,17 @@ pub fn chmod(path: [:0]const u8, mode: bun.Mode) Maybe(void) {
         return sys_uv.chmod(path, mode);
     }
 
-    return Maybe(void).errnoSysP(C.chmod(path.ptr, mode), .chmod, path) orelse
-        Maybe(void).success;
+    while (true) {
+        const rc = syscall_or_C.chmod(path.ptr, mode);
+        if (Maybe(void).errnoSysP(rc, .chmod, path)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+
+        return Maybe(void).success;
+    }
+
+    unreachable;
 }
 
 pub fn chdirOSPath(path: bun.stringZ, destination: if (Environment.isPosix) bun.stringZ else bun.string) Maybe(void) {
@@ -702,7 +751,11 @@ pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
         return sys_uv.stat(path);
     } else {
         var stat_ = mem.zeroes(bun.Stat);
-        const rc = C.stat(path, &stat_);
+        const rc = if (Environment.isLinux)
+            // aarch64 linux doesn't implement a "stat" syscall. It's all fstatat.
+            linux.fstatat(std.posix.AT.FDCWD, path, &stat_, 0)
+        else
+            syscall_or_C.stat(path, &stat_);
 
         if (comptime Environment.allow_assert)
             log("stat({s}) = {d}", .{ bun.asByteSlice(path), rc });
@@ -753,13 +806,20 @@ pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
 
     var stat_ = mem.zeroes(bun.Stat);
 
-    const rc = C.fstat(fd.cast(), &stat_);
+    const rc = syscall_or_C.fstat(fd.cast(), &stat_);
 
     if (comptime Environment.allow_assert)
         log("fstat({}) = {d}", .{ fd, rc });
 
     if (Maybe(bun.Stat).errnoSysFd(rc, .fstat, fd)) |err| return err;
     return Maybe(bun.Stat){ .result = stat_ };
+}
+pub fn lutimes(path: [:0]const u8, atime: JSC.Node.TimeLike, mtime: JSC.Node.TimeLike) Maybe(void) {
+    if (comptime Environment.isWindows) {
+        return sys_uv.lutimes(path, atime, mtime);
+    }
+
+    return utimensWithFlags(path, atime, mtime, std.posix.AT.SYMLINK_NOFOLLOW);
 }
 
 pub fn mkdiratA(dir_fd: bun.FileDescriptor, file_path: []const u8) Maybe(void) {
@@ -819,7 +879,7 @@ pub fn fstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
     return Maybe(bun.Stat){ .result = stat_buf };
 }
 
-pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
+pub fn mkdir(file_path: [:0]const u8, flags: mode_t) Maybe(void) {
     return switch (Environment.os) {
         .mac => Maybe(void).errnoSysP(syscall.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success,
 
@@ -829,7 +889,7 @@ pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
             const wbuf = bun.WPathBufferPool.get();
             defer bun.WPathBufferPool.put(wbuf);
             return Maybe(void).errnoSysP(
-                kernel32.CreateDirectoryW(bun.strings.toKernel32Path(wbuf, file_path).ptr, null),
+                bun.windows.CreateDirectoryW(bun.strings.toKernel32Path(wbuf, file_path).ptr, null),
                 .mkdir,
                 file_path,
             ) orelse Maybe(void).success;
@@ -839,7 +899,7 @@ pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
     };
 }
 
-pub fn mkdirA(file_path: []const u8, flags: bun.Mode) Maybe(void) {
+pub fn mkdirA(file_path: []const u8, flags: mode_t) Maybe(void) {
     if (comptime Environment.isMac) {
         return Maybe(void).errnoSysP(syscall.mkdir(&(std.posix.toPosixPath(file_path) catch return Maybe(void){
             .err = .{
@@ -871,7 +931,7 @@ pub fn mkdirA(file_path: []const u8, flags: bun.Mode) Maybe(void) {
     }
 }
 
-pub fn mkdirOSPath(file_path: bun.OSPathSliceZ, flags: bun.Mode) Maybe(void) {
+pub fn mkdirOSPath(file_path: bun.OSPathSliceZ, flags: mode_t) Maybe(void) {
     return switch (Environment.os) {
         else => mkdir(file_path, flags),
         .windows => {
@@ -892,9 +952,14 @@ pub fn mkdirOSPath(file_path: bun.OSPathSliceZ, flags: bun.Mode) Maybe(void) {
 }
 
 const fnctl_int = if (Environment.isLinux) usize else c_int;
-pub fn fcntl(fd: bun.FileDescriptor, cmd: i32, arg: fnctl_int) Maybe(fnctl_int) {
+pub fn fcntl(fd: bun.FileDescriptor, cmd: i32, arg: anytype) Maybe(fnctl_int) {
     while (true) {
-        const result = fcntl_symbol(fd.cast(), cmd, arg);
+        const result = switch (@TypeOf(arg)) {
+            i32, comptime_int, c_int => fcntl_symbol(fd.cast(), cmd, @as(c_int, arg)),
+            i64 => fcntl_symbol(fd.cast(), cmd, @as(c_long, @bitCast(arg))),
+            *const anyopaque, *anyopaque, usize => fcntl_symbol(fd.cast(), cmd, arg),
+            else => @compileError("Unsupported argument type for fcntl"),
+        };
         if (Maybe(fnctl_int).errnoSysFd(result, .fcntl, fd)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
@@ -1508,11 +1573,11 @@ pub noinline fn openFileAtWindowsA(
     return openFileAtWindowsT(u8, dirFd, path, opts);
 }
 
-pub fn openatWindowsT(comptime T: type, dir: bun.FileDescriptor, path: []const T, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+pub fn openatWindowsT(comptime T: type, dir: bun.FileDescriptor, path: []const T, flags: i32, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     return openatWindowsTMaybeNormalize(T, dir, path, flags, perm, true);
 }
 
-fn openatWindowsTMaybeNormalize(comptime T: type, dir: bun.FileDescriptor, path: []const T, flags: bun.Mode, perm: bun.Mode, comptime normalize: bool) Maybe(bun.FileDescriptor) {
+fn openatWindowsTMaybeNormalize(comptime T: type, dir: bun.FileDescriptor, path: []const T, flags: i32, perm: bun.Mode, comptime normalize: bool) Maybe(bun.FileDescriptor) {
     if (flags & O.DIRECTORY != 0) {
         const windows_options: WindowsOpenDirOptions = .{
             .iterable = flags & O.PATH == 0,
@@ -1588,7 +1653,7 @@ fn openatWindowsTMaybeNormalize(comptime T: type, dir: bun.FileDescriptor, path:
 pub fn openatWindows(
     dir: anytype,
     path: []const u16,
-    flags: bun.Mode,
+    flags: i32,
     perm: bun.Mode,
 ) Maybe(bun.FileDescriptor) {
     return openatWindowsT(u16, bun.toFD(dir), path, flags, perm);
@@ -1597,18 +1662,18 @@ pub fn openatWindows(
 pub fn openatWindowsA(
     dir: bun.FileDescriptor,
     path: []const u8,
-    flags: bun.Mode,
+    flags: i32,
     perm: bun.Mode,
 ) Maybe(bun.FileDescriptor) {
     return openatWindowsT(u8, dir, path, flags, perm);
 }
 
-pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSliceZ, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSliceZ, flags: i32, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isMac) {
         // https://opensource.apple.com/source/xnu/xnu-7195.81.3/libsyscall/wrappers/open-base.c
         const rc = syscall.@"openat$NOCANCEL"(dirfd.cast(), file_path.ptr, @as(c_uint, @intCast(flags)), @as(c_int, @intCast(perm)));
         if (comptime Environment.allow_assert)
-            log("openat({}, {s}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), rc });
+            log("openat({}, {s}, {d}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), flags, rc });
 
         return Maybe(bun.FileDescriptor).errnoSysFP(rc, .open, dirfd, file_path) orelse .{ .result = bun.toFD(rc) };
     } else if (comptime Environment.isWindows) {
@@ -1618,7 +1683,8 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSliceZ, flag
     while (true) {
         const rc = syscall.openat(dirfd.cast(), file_path, bun.O.toPacked(flags), perm);
         if (comptime Environment.allow_assert)
-            log("openat({}, {s}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), rc });
+            log("openat({}, {s}, {d}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), flags, rc });
+
         return switch (Syscall.getErrno(rc)) {
             .SUCCESS => .{ .result = bun.toFD(@as(i32, @intCast(rc))) },
             .INTR => continue,
@@ -1634,7 +1700,7 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSliceZ, flag
     }
 }
 
-pub fn access(path: bun.OSPathSliceZ, mode: bun.Mode) Maybe(void) {
+pub fn access(path: bun.OSPathSliceZ, mode: i32) Maybe(void) {
     if (Environment.isWindows) {
         const attrs = getFileAttributes(path) orelse {
             return .{ .err = .{
@@ -1658,7 +1724,7 @@ pub fn access(path: bun.OSPathSliceZ, mode: bun.Mode) Maybe(void) {
     return Maybe(void).errnoSysP(syscall.access(path, mode), .access, path) orelse .{ .result = {} };
 }
 
-pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: i32, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isWindows) {
         return openatWindowsT(u8, dirfd, file_path, flags, perm);
     } else {
@@ -1680,7 +1746,7 @@ pub fn openatFileWithLibuvFlags(dirfd: bun.FileDescriptor, file_path: [:0]const 
     }
 }
 
-pub fn openatA(dirfd: bun.FileDescriptor, file_path: []const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+pub fn openatA(dirfd: bun.FileDescriptor, file_path: []const u8, flags: i32, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isWindows) {
         return openatWindowsT(u8, dirfd, file_path, flags, perm);
     }
@@ -1700,12 +1766,12 @@ pub fn openatA(dirfd: bun.FileDescriptor, file_path: []const u8, flags: bun.Mode
     );
 }
 
-pub fn openA(file_path: []const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+pub fn openA(file_path: []const u8, flags: i32, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     // this is what open() does anyway.
     return openatA(bun.toFD((std.fs.cwd().fd)), file_path, flags, perm);
 }
 
-pub fn open(file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+pub fn open(file_path: [:0]const u8, flags: i32, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     // TODO(@paperclover): this should not use libuv; when the libuv path is
     // removed here, the call sites in node_fs.zig should make sure they parse
     // the libuv specific file flags using the WindowsOpenFlags structure.
@@ -2070,7 +2136,7 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
             var amount_read: u32 = 0;
             const rc = kernel32.ReadFile(fd.cast(), buf.ptr, @as(u32, @intCast(adjusted_len)), &amount_read, null);
             if (rc == windows.FALSE) {
-                const ret = .{
+                const ret: Maybe(usize) = .{
                     .err = Syscall.Error{
                         .errno = @intFromEnum(bun.windows.getLastErrno()),
                         .syscall = .read,
@@ -2469,7 +2535,7 @@ pub fn symlinkW(dest: [:0]const u16, target: [:0]const u16, options: WindowsSyml
     while (true) {
         const flags = options.flags();
 
-        if (windows.kernel32.CreateSymbolicLinkW(dest, target, flags) == 0) {
+        if (windows.CreateSymbolicLinkW(dest, target, flags) == 0) {
             const errno = bun.windows.Win32Error.get();
             log("CreateSymbolicLinkW({}, {}, {any}) = {s}", .{
                 bun.fmt.fmtPath(u16, dest, .{}),
@@ -2522,7 +2588,7 @@ pub fn clonefile(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
     }
 }
 
-pub fn copyfile(from: [:0]const u8, to: [:0]const u8, flags: c_int) Maybe(void) {
+pub fn copyfile(from: [:0]const u8, to: [:0]const u8, flags: posix.system.COPYFILE) Maybe(void) {
     if (comptime !Environment.isMac) @compileError("macOS only");
 
     while (true) {
@@ -2534,7 +2600,7 @@ pub fn copyfile(from: [:0]const u8, to: [:0]const u8, flags: c_int) Maybe(void) 
     }
 }
 
-pub fn fcopyfile(fd_in: bun.FileDescriptor, fd_out: bun.FileDescriptor, flags: u32) Maybe(void) {
+pub fn fcopyfile(fd_in: bun.FileDescriptor, fd_out: bun.FileDescriptor, flags: posix.system.COPYFILE) Maybe(void) {
     if (comptime !Environment.isMac) @compileError("macOS only");
 
     while (true) {
@@ -2636,8 +2702,9 @@ pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *[MAX_PATH_BYTES]u8) Maybe(
             // On macOS, we can use F.GETPATH fcntl command to query the OS for
             // the path to the file descriptor.
             @memset(out_buffer[0..MAX_PATH_BYTES], 0);
-            if (Maybe([]u8).errnoSys(syscall.fcntl(fd.cast(), posix.F.GETPATH, out_buffer), .fcntl)) |err| {
-                return err;
+            switch (fcntl(fd, posix.F.GETPATH, @intFromPtr(out_buffer))) {
+                .err => |err| return .{ .err = err },
+                .result => {},
             }
             const len = mem.indexOfScalar(u8, out_buffer[0..], @as(u8, 0)) orelse MAX_PATH_BYTES;
             return .{ .result = out_buffer[0..len] };
@@ -2874,13 +2941,17 @@ pub fn setPipeCapacityOnLinux(fd: bun.FileDescriptor, capacity: usize) Maybe(usi
 
     // We don't use glibc here
     // It didn't work. Always returned 0.
-    const pipe_len = std.os.linux.fcntl(fd.cast(), F_GETPIPE_SZ, 0);
-    if (Maybe(usize).errnoSysFd(pipe_len, .fcntl, fd)) |err| return err;
+    const pipe_len = switch (fcntl(fd, F_GETPIPE_SZ, 0)) {
+        .result => |result| result,
+        .err => |err| return err,
+    };
     if (pipe_len == 0) return Maybe(usize){ .result = 0 };
     if (pipe_len >= capacity) return Maybe(usize){ .result = pipe_len };
 
-    const new_pipe_len = std.os.linux.fcntl(fd.cast(), F_SETPIPE_SZ, capacity);
-    if (Maybe(usize).errnoSysFd(new_pipe_len, .fcntl, fd)) |err| return err;
+    const new_pipe_len = switch (fcntl(fd, F_SETPIPE_SZ, capacity)) {
+        .result => |result| result,
+        .err => |err| return err,
+    };
     return Maybe(usize){ .result = new_pipe_len };
 }
 
@@ -3027,7 +3098,7 @@ pub fn existsOSPath(path: bun.OSPathSliceZ, file_only: bool) bool {
                 null,
             );
             if (rc == w.INVALID_HANDLE_VALUE) return false;
-            defer _ = std.os.windows.kernel32.CloseHandle(rc);
+            defer _ = bun.windows.CloseHandle(rc);
             return true;
         }
         return true;
@@ -3168,21 +3239,93 @@ pub fn directoryExistsAt(dir: anytype, subpath: anytype) JSC.Maybe(bool) {
     };
 }
 
-pub fn setNonblocking(fd: bun.FileDescriptor) Maybe(void) {
-    const flags = switch (bun.sys.fcntl(
+pub fn futimens(fd: bun.FileDescriptor, atime: JSC.Node.TimeLike, mtime: JSC.Node.TimeLike) Maybe(void) {
+    if (comptime Environment.isWindows) @compileError("TODO: futimes");
+
+    while (true) {
+        const rc = syscall.futimens(fd.cast(), &[2]syscall.timespec{
+            .{ .sec = @intCast(atime.sec), .nsec = atime.nsec },
+            .{ .sec = @intCast(mtime.sec), .nsec = mtime.nsec },
+        });
+
+        log("futimens({}, accessed=({d}, {d}), modified=({d}, {d})) = {d}", .{ fd, atime.sec, atime.nsec, mtime.sec, mtime.nsec, rc });
+
+        if (rc == 0) {
+            return Maybe(void).success;
+        }
+
+        switch (bun.C.getErrno(rc)) {
+            .INTR => continue,
+            else => return Maybe(void).errnoSysFd(rc, .futimens, fd).?,
+        }
+    }
+
+    unreachable;
+}
+
+fn utimensWithFlags(path: bun.OSPathSliceZ, atime: JSC.Node.TimeLike, mtime: JSC.Node.TimeLike, flags: u32) Maybe(void) {
+    if (comptime Environment.isWindows) @compileError("TODO: utimens");
+
+    while (true) {
+        var times: [2]syscall.timespec = .{
+            .{ .sec = @intCast(atime.sec), .nsec = atime.nsec },
+            .{ .sec = @intCast(mtime.sec), .nsec = mtime.nsec },
+        };
+        const rc = syscall.utimensat(
+            std.fs.cwd().fd,
+            path,
+            // this var should be a const, the zig type definition is wrong.
+            &times,
+            flags,
+        );
+
+        log("utimensat({d}, atime=({d}, {d}), mtime=({d}, {d})) = {d}", .{ std.fs.cwd().fd, atime.sec, atime.nsec, mtime.sec, mtime.nsec, rc });
+
+        if (rc == 0) {
+            return Maybe(void).success;
+        }
+
+        switch (bun.C.getErrno(rc)) {
+            .INTR => continue,
+            else => return Maybe(void).errnoSysP(rc, .utimensat, path).?,
+        }
+    }
+
+    unreachable;
+}
+
+pub fn getFcntlFlags(fd: bun.FileDescriptor) Maybe(fnctl_int) {
+    return switch (bun.sys.fcntl(
         fd,
         std.posix.F.GETFL,
         0,
     )) {
-        .result => |f| f,
+        .result => |f| .{ .result = f },
+        .err => |err| .{ .err = err },
+    };
+}
+
+pub fn utimens(path: bun.OSPathSliceZ, atime: JSC.Node.TimeLike, mtime: JSC.Node.TimeLike) Maybe(void) {
+    return utimensWithFlags(path, atime, mtime, 0);
+}
+
+pub fn setNonblocking(fd: bun.FileDescriptor) Maybe(void) {
+    return updateNonblocking(fd, true);
+}
+
+pub fn updateNonblocking(fd: bun.FileDescriptor, nonblocking: bool) Maybe(void) {
+    const current_flags: i32 = switch (getFcntlFlags(fd)) {
+        .result => |f| @intCast(f),
         .err => |err| return .{ .err = err },
     };
 
-    const new_flags = flags | bun.O.NONBLOCK;
+    const new_flags: i32 = if (nonblocking) current_flags | @as(i32, bun.O.NONBLOCK) else current_flags & ~@as(i32, bun.O.NONBLOCK);
 
-    switch (bun.sys.fcntl(fd, std.posix.F.SETFL, new_flags)) {
-        .err => |err| return .{ .err = err },
-        .result => {},
+    if (new_flags != current_flags) {
+        switch (bun.sys.fcntl(fd, std.posix.F.SETFL, @as(fnctl_int, @intCast(new_flags)))) {
+            .err => |err| return .{ .err = err },
+            .result => {},
+        }
     }
 
     return Maybe(void).success;
@@ -3236,7 +3379,7 @@ pub fn existsAt(fd: bun.FileDescriptor, subpath: [:0]const u8) bool {
     @compileError("TODO: existsAtOSPath");
 }
 
-pub extern "C" fn is_executable_file(path: [*:0]const u8) bool;
+pub extern "c" fn is_executable_file(path: [*:0]const u8) bool;
 
 pub fn isExecutableFileOSPath(path: bun.OSPathSliceZ) bool {
     if (comptime Environment.isPosix) {
@@ -3367,7 +3510,7 @@ pub fn openNullDevice() Maybe(bun.FileDescriptor) {
     return open("/dev/null", bun.O.RDWR, 0);
 }
 
-pub fn dupWithFlags(fd: bun.FileDescriptor, flags: i32) Maybe(bun.FileDescriptor) {
+pub fn dupWithFlags(fd: bun.FileDescriptor, _: i32) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isWindows) {
         var target: windows.HANDLE = undefined;
         const process = kernel32.GetCurrentProcess();
@@ -3391,16 +3534,10 @@ pub fn dupWithFlags(fd: bun.FileDescriptor, flags: i32) Maybe(bun.FileDescriptor
     }
 
     const ArgType = if (comptime Environment.isLinux) usize else c_int;
-    const out = syscall.fcntl(fd.cast(), @as(i32, bun.C.F.DUPFD_CLOEXEC), @as(ArgType, 0));
-    log("dup({d}) = {d}", .{ fd.cast(), out });
-    if (Maybe(bun.FileDescriptor).errnoSysFd(out, .dup, fd)) |err| {
-        return err;
-    }
-
-    if (flags != 0) {
-        const fd_flags: ArgType = @intCast(syscall.fcntl(@intCast(out), @as(i32, std.posix.F.GETFD), @as(ArgType, 0)));
-        _ = syscall.fcntl(@intCast(out), @as(i32, std.posix.F.SETFD), @as(ArgType, @intCast(fd_flags | @as(ArgType, @intCast(flags)))));
-    }
+    const out = switch (fcntl(fd, @as(i32, bun.C.F.DUPFD_CLOEXEC), @as(ArgType, 0))) {
+        .result => |result| result,
+        .err => |err| return .{ .err = err },
+    };
 
     return Maybe(bun.FileDescriptor){
         .result = bun.toFD(@as(u32, @intCast(out))),
@@ -3616,18 +3753,18 @@ pub const File = struct {
     // "handle" matches std.fs.File
     handle: bun.FileDescriptor,
 
-    pub fn openat(other: anytype, path: [:0]const u8, flags: bun.Mode, mode: bun.Mode) Maybe(File) {
+    pub fn openat(other: anytype, path: [:0]const u8, flags: i32, mode: bun.Mode) Maybe(File) {
         return switch (This.openat(bun.toFD(other), path, flags, mode)) {
             .result => |fd| .{ .result = .{ .handle = fd } },
             .err => |err| .{ .err = err },
         };
     }
 
-    pub fn open(path: [:0]const u8, flags: bun.Mode, mode: bun.Mode) Maybe(File) {
+    pub fn open(path: [:0]const u8, flags: i32, mode: bun.Mode) Maybe(File) {
         return File.openat(bun.FD.cwd(), path, flags, mode);
     }
 
-    pub fn openatOSPath(other: anytype, path: bun.OSPathSliceZ, flags: bun.Mode, mode: bun.Mode) Maybe(File) {
+    pub fn openatOSPath(other: anytype, path: bun.OSPathSliceZ, flags: i32, mode: bun.Mode) Maybe(File) {
         return switch (This.openatOSPath(bun.toFD(other), path, flags, mode)) {
             .result => |fd| .{ .result = .{ .handle = fd } },
             .err => |err| .{ .err = err },

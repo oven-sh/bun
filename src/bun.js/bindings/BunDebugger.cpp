@@ -550,7 +550,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObj
     if (!targetContext || !onMessageFn)
         return JSValue::encode(jsUndefined());
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto connection = BunInspectorConnection::create(
         *targetContext,
         targetContext->jsGlobalObject(), shouldRef);

@@ -42,7 +42,7 @@ using namespace JSC;
 
 void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* exception, CachedScript* cachedScript, bool fromModule, ExceptionDetails* exceptionDetails)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     RELEASE_ASSERT(vm.currentThreadIsHoldingAPILock());
     if (vm.isTerminationException(exception))
         return;
@@ -86,7 +86,7 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* except
 
 void reportException(JSGlobalObject* lexicalGlobalObject, JSValue exceptionValue, CachedScript* cachedScript, bool fromModule)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     RELEASE_ASSERT(vm.currentThreadIsHoldingAPILock());
     auto* exception = jsDynamicCast<JSC::Exception*>(exceptionValue);
     if (!exception) {
@@ -136,7 +136,7 @@ String retrieveErrorMessage(JSGlobalObject& lexicalGlobalObject, VM& vm, JSValue
 
 void reportCurrentException(JSGlobalObject* lexicalGlobalObject)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_CATCH_SCOPE(vm);
     auto* exception = scope.exception();
     scope.clearException();
@@ -145,7 +145,7 @@ void reportCurrentException(JSGlobalObject* lexicalGlobalObject)
 
 JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec, const String& message)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     if (UNLIKELY(vm.hasPendingTerminationException()))
         return jsUndefined();
 

@@ -88,9 +88,9 @@ pub fn lstat_absolute(path: [:0]const u8) !Stat {
                 else => Kind.unknown,
             },
         },
-        .atime = @as(i128, atime.tv_sec) * std.time.ns_per_s + atime.tv_nsec,
-        .mtime = @as(i128, mtime.tv_sec) * std.time.ns_per_s + mtime.tv_nsec,
-        .ctime = @as(i128, ctime.tv_sec) * std.time.ns_per_s + ctime.tv_nsec,
+        .atime = @as(i128, atime.sec) * std.time.ns_per_s + atime.nsec,
+        .mtime = @as(i128, mtime.sec) * std.time.ns_per_s + mtime.nsec,
+        .ctime = @as(i128, ctime.sec) * std.time.ns_per_s + ctime.nsec,
     };
 }
 
@@ -417,7 +417,7 @@ pub fn _dlsym(handle: ?*anyopaque, name: [:0]const u8) ?*anyopaque {
 }
 
 pub fn dlsymWithHandle(comptime Type: type, comptime name: [:0]const u8, comptime handle_getter: fn () ?*anyopaque) ?Type {
-    if (comptime @typeInfo(Type) != .Pointer) {
+    if (comptime @typeInfo(Type) != .pointer) {
         @compileError("dlsym must be a pointer type (e.g. ?const *fn()). Received " ++ @typeName(Type) ++ ".");
     }
 
@@ -480,7 +480,7 @@ pub extern fn memmove(dest: [*]u8, src: [*]const u8, n: usize) void;
 // https://man7.org/linux/man-pages/man3/fmod.3.html
 pub extern fn fmod(f64, f64) f64;
 
-pub fn dlopen(filename: [:0]const u8, flags: i32) ?*anyopaque {
+pub fn dlopen(filename: [:0]const u8, flags: C.RTLD) ?*anyopaque {
     if (comptime Environment.isWindows) {
         return bun.windows.LoadLibraryA(filename);
     }
@@ -488,11 +488,11 @@ pub fn dlopen(filename: [:0]const u8, flags: i32) ?*anyopaque {
     return std.c.dlopen(filename, flags);
 }
 
-pub extern "C" fn Bun__ttySetMode(fd: c_int, mode: c_int) c_int;
+pub extern "c" fn Bun__ttySetMode(fd: c_int, mode: c_int) c_int;
 
-pub extern "C" fn bun_initialize_process() void;
-pub extern "C" fn bun_restore_stdio() void;
-pub extern "C" fn open_as_nonblocking_tty(i32, i32) i32;
+pub extern "c" fn bun_initialize_process() void;
+pub extern "c" fn bun_restore_stdio() void;
+pub extern "c" fn open_as_nonblocking_tty(i32, i32) i32;
 
 pub extern fn strlen(ptr: [*c]const u8) usize;
 

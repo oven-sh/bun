@@ -39,20 +39,7 @@ pub const Resolution = union(enum) {
     }
 
     pub fn eql(this: *const Resolution, other: *const Resolution) bool {
-        return switch (this.*) {
-            .dpi => |*a| switch (other.*) {
-                .dpi => a.* == other.dpi,
-                else => false,
-            },
-            .dpcm => |*a| switch (other.*) {
-                .dpcm => a.* == other.dpcm,
-                else => false,
-            },
-            .dppx => |*a| switch (other.*) {
-                .dppx => a.* == other.dppx,
-                else => false,
-            },
-        };
+        return css.implementEql(@This(), this, other);
     }
 
     pub fn parse(input: *css.Parser) Result(Resolution) {

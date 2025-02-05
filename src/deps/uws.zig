@@ -1,4 +1,3 @@
-pub const is_bindgen = false;
 const bun = @import("root").bun;
 const Api = bun.ApiSchema;
 const std = @import("std");
@@ -10,8 +9,10 @@ pub const u_int64_t = c_ulonglong;
 pub const LIBUS_LISTEN_DEFAULT: i32 = 0;
 pub const LIBUS_LISTEN_EXCLUSIVE_PORT: i32 = 1;
 pub const LIBUS_SOCKET_ALLOW_HALF_OPEN: i32 = 2;
-pub const LIBUS_SOCKET_REUSE_PORT: i32 = 4;
+pub const LIBUS_LISTEN_REUSE_PORT: i32 = 4;
 pub const LIBUS_SOCKET_IPV6_ONLY: i32 = 8;
+pub const LIBUS_LISTEN_REUSE_ADDR: i32 = 16;
+pub const LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE: i32 = 32;
 
 pub const Socket = opaque {
     pub fn write2(this: *Socket, first: []const u8, second: []const u8) i32 {
@@ -19,7 +20,7 @@ pub const Socket = opaque {
         debug("us_socket_write2({d}, {d}) = {d}", .{ first.len, second.len, rc });
         return rc;
     }
-    extern "C" fn us_socket_write2(ssl: i32, *Socket, header: ?[*]const u8, len: usize, payload: ?[*]const u8, usize) i32;
+    extern "c" fn us_socket_write2(ssl: i32, *Socket, header: ?[*]const u8, len: usize, payload: ?[*]const u8, usize) i32;
 };
 pub const ConnectingSocket = opaque {};
 const debug = bun.Output.scoped(.uws, false);
@@ -1797,8 +1798,8 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         /// # Returns
         /// This function returns a slice of the buffer on success, or null on failure.
         pub fn localAddressText(this: ThisSocket, buf: []u8, is_ipv6: *bool) ?[]const u8 {
-            const addr_v4_len = @sizeOf(std.meta.FieldType(std.posix.sockaddr.in, .addr));
-            const addr_v6_len = @sizeOf(std.meta.FieldType(std.posix.sockaddr.in6, .addr));
+            const addr_v4_len = @sizeOf(@FieldType(std.posix.sockaddr.in, "addr"));
+            const addr_v6_len = @sizeOf(@FieldType(std.posix.sockaddr.in6, "addr"));
 
             var sa_buf: [addr_v6_len + 1]u8 = undefined;
             const binary = this.localAddressBinary(&sa_buf) orelse return null;
@@ -2103,23 +2104,23 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 }
             };
 
-            if (comptime @hasDecl(Type, "onOpen") and @typeInfo(@TypeOf(Type.onOpen)) != .Null)
+            if (comptime @hasDecl(Type, "onOpen") and @typeInfo(@TypeOf(Type.onOpen)) != .null)
                 us_socket_context_on_open(ssl_int, ctx, SocketHandler.on_open);
-            if (comptime @hasDecl(Type, "onClose") and @typeInfo(@TypeOf(Type.onClose)) != .Null)
+            if (comptime @hasDecl(Type, "onClose") and @typeInfo(@TypeOf(Type.onClose)) != .null)
                 us_socket_context_on_close(ssl_int, ctx, SocketHandler.on_close);
-            if (comptime @hasDecl(Type, "onData") and @typeInfo(@TypeOf(Type.onData)) != .Null)
+            if (comptime @hasDecl(Type, "onData") and @typeInfo(@TypeOf(Type.onData)) != .null)
                 us_socket_context_on_data(ssl_int, ctx, SocketHandler.on_data);
-            if (comptime @hasDecl(Type, "onWritable") and @typeInfo(@TypeOf(Type.onWritable)) != .Null)
+            if (comptime @hasDecl(Type, "onWritable") and @typeInfo(@TypeOf(Type.onWritable)) != .null)
                 us_socket_context_on_writable(ssl_int, ctx, SocketHandler.on_writable);
-            if (comptime @hasDecl(Type, "onTimeout") and @typeInfo(@TypeOf(Type.onTimeout)) != .Null)
+            if (comptime @hasDecl(Type, "onTimeout") and @typeInfo(@TypeOf(Type.onTimeout)) != .null)
                 us_socket_context_on_timeout(ssl_int, ctx, SocketHandler.on_timeout);
-            if (comptime @hasDecl(Type, "onConnectError") and @typeInfo(@TypeOf(Type.onConnectError)) != .Null) {
+            if (comptime @hasDecl(Type, "onConnectError") and @typeInfo(@TypeOf(Type.onConnectError)) != .null) {
                 us_socket_context_on_socket_connect_error(ssl_int, ctx, SocketHandler.on_connect_error);
                 us_socket_context_on_connect_error(ssl_int, ctx, SocketHandler.on_connect_error_connecting_socket);
             }
-            if (comptime @hasDecl(Type, "onEnd") and @typeInfo(@TypeOf(Type.onEnd)) != .Null)
+            if (comptime @hasDecl(Type, "onEnd") and @typeInfo(@TypeOf(Type.onEnd)) != .null)
                 us_socket_context_on_end(ssl_int, ctx, SocketHandler.on_end);
-            if (comptime @hasDecl(Type, "onHandshake") and @typeInfo(@TypeOf(Type.onHandshake)) != .Null)
+            if (comptime @hasDecl(Type, "onHandshake") and @typeInfo(@TypeOf(Type.onHandshake)) != .null)
                 us_socket_context_on_handshake(ssl_int, ctx, SocketHandler.on_handshake, null);
         }
 
@@ -2248,25 +2249,25 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 }
             };
 
-            if (comptime @hasDecl(Type, "onOpen") and @typeInfo(@TypeOf(Type.onOpen)) != .Null)
+            if (comptime @hasDecl(Type, "onOpen") and @typeInfo(@TypeOf(Type.onOpen)) != .null)
                 us_socket_context_on_open(ssl_int, ctx, SocketHandler.on_open);
-            if (comptime @hasDecl(Type, "onClose") and @typeInfo(@TypeOf(Type.onClose)) != .Null)
+            if (comptime @hasDecl(Type, "onClose") and @typeInfo(@TypeOf(Type.onClose)) != .null)
                 us_socket_context_on_close(ssl_int, ctx, SocketHandler.on_close);
-            if (comptime @hasDecl(Type, "onData") and @typeInfo(@TypeOf(Type.onData)) != .Null)
+            if (comptime @hasDecl(Type, "onData") and @typeInfo(@TypeOf(Type.onData)) != .null)
                 us_socket_context_on_data(ssl_int, ctx, SocketHandler.on_data);
-            if (comptime @hasDecl(Type, "onWritable") and @typeInfo(@TypeOf(Type.onWritable)) != .Null)
+            if (comptime @hasDecl(Type, "onWritable") and @typeInfo(@TypeOf(Type.onWritable)) != .null)
                 us_socket_context_on_writable(ssl_int, ctx, SocketHandler.on_writable);
-            if (comptime @hasDecl(Type, "onTimeout") and @typeInfo(@TypeOf(Type.onTimeout)) != .Null)
+            if (comptime @hasDecl(Type, "onTimeout") and @typeInfo(@TypeOf(Type.onTimeout)) != .null)
                 us_socket_context_on_timeout(ssl_int, ctx, SocketHandler.on_timeout);
-            if (comptime @hasDecl(Type, "onConnectError") and @typeInfo(@TypeOf(Type.onConnectError)) != .Null) {
+            if (comptime @hasDecl(Type, "onConnectError") and @typeInfo(@TypeOf(Type.onConnectError)) != .null) {
                 us_socket_context_on_socket_connect_error(ssl_int, ctx, SocketHandler.on_connect_error);
                 us_socket_context_on_connect_error(ssl_int, ctx, SocketHandler.on_connect_error_connecting_socket);
             }
-            if (comptime @hasDecl(Type, "onEnd") and @typeInfo(@TypeOf(Type.onEnd)) != .Null)
+            if (comptime @hasDecl(Type, "onEnd") and @typeInfo(@TypeOf(Type.onEnd)) != .null)
                 us_socket_context_on_end(ssl_int, ctx, SocketHandler.on_end);
-            if (comptime @hasDecl(Type, "onHandshake") and @typeInfo(@TypeOf(Type.onHandshake)) != .Null)
+            if (comptime @hasDecl(Type, "onHandshake") and @typeInfo(@TypeOf(Type.onHandshake)) != .null)
                 us_socket_context_on_handshake(ssl_int, ctx, SocketHandler.on_handshake, null);
-            if (comptime @hasDecl(Type, "onLongTimeout") and @typeInfo(@TypeOf(Type.onLongTimeout)) != .Null)
+            if (comptime @hasDecl(Type, "onLongTimeout") and @typeInfo(@TypeOf(Type.onLongTimeout)) != .null)
                 us_socket_context_on_long_timeout(ssl_int, ctx, SocketHandler.on_long_timeout);
         }
 
@@ -2641,9 +2642,8 @@ pub const us_bun_socket_context_options_t = extern struct {
     client_renegotiation_limit: u32 = 3,
     client_renegotiation_window: u32 = 600,
 };
-pub extern fn create_ssl_context_from_bun_options(options: us_bun_socket_context_options_t) ?*BoringSSL.SSL_CTX;
 
-pub const create_bun_socket_error_t = enum(i32) {
+pub const create_bun_socket_error_t = enum(c_int) {
     none = 0,
     load_ca_file,
     invalid_ca_file,
@@ -2661,6 +2661,8 @@ pub const create_bun_socket_error_t = enum(i32) {
         };
     }
 };
+
+pub extern fn create_ssl_context_from_bun_options(options: us_bun_socket_context_options_t, err: *create_bun_socket_error_t) ?*BoringSSL.SSL_CTX;
 
 pub const us_bun_verify_error_t = extern struct {
     error_no: i32 = 0,
@@ -3370,10 +3372,6 @@ pub fn NewApp(comptime ssl: bool) type {
         }
 
         pub fn clearRoutes(app: *ThisApp) void {
-            if (comptime is_bindgen) {
-                unreachable;
-            }
-
             return uws_app_clear_routes(ssl_flag, @as(*uws_app_t, @ptrCast(app)));
         }
 

@@ -81,8 +81,8 @@ const Offsets = extern struct {
     JSArrayBufferView__offsetOfVector: u32,
     JSCell__offsetOfType: u32,
 
-    extern "C" var Bun__FFI__offsets: Offsets;
-    extern "C" fn Bun__FFI__ensureOffsetsAreLoaded() void;
+    extern "c" var Bun__FFI__offsets: Offsets;
+    extern "c" fn Bun__FFI__ensureOffsetsAreLoaded() void;
     fn loadOnce() void {
         Bun__FFI__ensureOffsetsAreLoaded();
     }
@@ -165,27 +165,27 @@ pub const FFI = struct {
         };
 
         const stdarg = struct {
-            extern "C" fn ffi_vfprintf(*anyopaque, [*:0]const u8, ...) callconv(.C) c_int;
-            extern "C" fn ffi_vprintf([*:0]const u8, ...) callconv(.C) c_int;
-            extern "C" fn ffi_fprintf(*anyopaque, [*:0]const u8, ...) callconv(.C) c_int;
-            extern "C" fn ffi_printf([*:0]const u8, ...) callconv(.C) c_int;
-            extern "C" fn ffi_fscanf(*anyopaque, [*:0]const u8, ...) callconv(.C) c_int;
-            extern "C" fn ffi_scanf([*:0]const u8, ...) callconv(.C) c_int;
-            extern "C" fn ffi_sscanf([*:0]const u8, [*:0]const u8, ...) callconv(.C) c_int;
-            extern "C" fn ffi_vsscanf([*:0]const u8, [*:0]const u8, ...) callconv(.C) c_int;
-            extern "C" fn ffi_fopen([*:0]const u8, [*:0]const u8) callconv(.C) *anyopaque;
-            extern "C" fn ffi_fclose(*anyopaque) callconv(.C) c_int;
-            extern "C" fn ffi_fgetc(*anyopaque) callconv(.C) c_int;
-            extern "C" fn ffi_fputc(c: c_int, *anyopaque) callconv(.C) c_int;
-            extern "C" fn ffi_feof(*anyopaque) callconv(.C) c_int;
-            extern "C" fn ffi_fileno(*anyopaque) callconv(.C) c_int;
-            extern "C" fn ffi_ungetc(c: c_int, *anyopaque) callconv(.C) c_int;
-            extern "C" fn ffi_ftell(*anyopaque) callconv(.C) c_long;
-            extern "C" fn ffi_fseek(*anyopaque, c_long, c_int) callconv(.C) c_int;
-            extern "C" fn ffi_fflush(*anyopaque) callconv(.C) c_int;
+            extern "c" fn ffi_vfprintf(*anyopaque, [*:0]const u8, ...) callconv(.C) c_int;
+            extern "c" fn ffi_vprintf([*:0]const u8, ...) callconv(.C) c_int;
+            extern "c" fn ffi_fprintf(*anyopaque, [*:0]const u8, ...) callconv(.C) c_int;
+            extern "c" fn ffi_printf([*:0]const u8, ...) callconv(.C) c_int;
+            extern "c" fn ffi_fscanf(*anyopaque, [*:0]const u8, ...) callconv(.C) c_int;
+            extern "c" fn ffi_scanf([*:0]const u8, ...) callconv(.C) c_int;
+            extern "c" fn ffi_sscanf([*:0]const u8, [*:0]const u8, ...) callconv(.C) c_int;
+            extern "c" fn ffi_vsscanf([*:0]const u8, [*:0]const u8, ...) callconv(.C) c_int;
+            extern "c" fn ffi_fopen([*:0]const u8, [*:0]const u8) callconv(.C) *anyopaque;
+            extern "c" fn ffi_fclose(*anyopaque) callconv(.C) c_int;
+            extern "c" fn ffi_fgetc(*anyopaque) callconv(.C) c_int;
+            extern "c" fn ffi_fputc(c: c_int, *anyopaque) callconv(.C) c_int;
+            extern "c" fn ffi_feof(*anyopaque) callconv(.C) c_int;
+            extern "c" fn ffi_fileno(*anyopaque) callconv(.C) c_int;
+            extern "c" fn ffi_ungetc(c: c_int, *anyopaque) callconv(.C) c_int;
+            extern "c" fn ffi_ftell(*anyopaque) callconv(.C) c_long;
+            extern "c" fn ffi_fseek(*anyopaque, c_long, c_int) callconv(.C) c_int;
+            extern "c" fn ffi_fflush(*anyopaque) callconv(.C) c_int;
 
-            extern "C" fn calloc(nmemb: usize, size: usize) callconv(.C) ?*anyopaque;
-            extern "C" fn perror([*:0]const u8) callconv(.C) void;
+            extern "c" fn calloc(nmemb: usize, size: usize) callconv(.C) ?*anyopaque;
+            extern "c" fn perror([*:0]const u8) callconv(.C) void;
 
             const mac = if (Environment.isMac) struct {
                 var ffi_stdinp: *anyopaque = @extern(*anyopaque, .{ .name = "__stdinp" });
@@ -275,7 +275,9 @@ pub const FFI = struct {
                         "macosx",
                         "-show-sdk-path",
                     },
-                    .envp = std.c.environ,
+                    // ?[*:null]?[*:0]const u8
+                    //  [*:null]?[*:0]u8
+                    .envp = @ptrCast(std.c.environ),
                 }) catch return;
                 if (process == .result) {
                     defer process.result.deinit();
@@ -677,7 +679,7 @@ pub const FFI = struct {
                     if (!value.isString()) {
                         return globalThis.throwInvalidArgumentTypeValue("flags", "array of strings", value);
                     }
-                    const slice = value.toSlice(globalThis, bun.default_allocator);
+                    const slice = try value.toSlice(globalThis, bun.default_allocator);
                     if (slice.len == 0) continue;
                     defer slice.deinit();
                     flags.append(' ') catch bun.outOfMemory();
@@ -1338,7 +1340,7 @@ pub const FFI = struct {
                     return ZigString.static("param must be a string (type name) or number").toErrorInstance(global);
                 }
 
-                var type_name = val.toSlice(global, allocator);
+                var type_name = try val.toSlice(global, allocator);
                 defer type_name.deinit();
                 abi_types.appendAssumeCapacity(ABIType.label.get(type_name.slice()) orelse {
                     abi_types.clearAndFree(allocator);
@@ -1370,7 +1372,7 @@ pub const FFI = struct {
                 }
             }
 
-            var ret_slice = ret_value.toSlice(global, allocator);
+            var ret_slice = try ret_value.toSlice(global, allocator);
             defer ret_slice.deinit();
             return_type = ABIType.label.get(ret_slice.slice()) orelse {
                 abi_types.clearAndFree(allocator);
@@ -1469,7 +1471,7 @@ pub const FFI = struct {
             return val.return_type == ABIType.napi_value;
         }
 
-        extern "C" fn FFICallbackFunctionWrapper_destroy(*anyopaque) void;
+        extern "c" fn FFICallbackFunctionWrapper_destroy(*anyopaque) void;
 
         pub fn deinit(val: *Function, globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator) void {
             JSC.markBinding(@src());
@@ -2438,13 +2440,13 @@ const CompilerRT = struct {
         bun_call: *const @TypeOf(JSC.C.JSObjectCallAsFunction),
     };
     const headers = @import("../bindings/headers.zig");
-    var workaround: MyFunctionSStructWorkAround = if (!JSC.is_bindgen) .{
+    var workaround: MyFunctionSStructWorkAround = .{
         .JSVALUE_TO_INT64 = headers.JSC__JSValue__toInt64,
         .JSVALUE_TO_UINT64 = headers.JSC__JSValue__toUInt64NoTruncate,
         .INT64_TO_JSVALUE = headers.JSC__JSValue__fromInt64NoTruncate,
         .UINT64_TO_JSVALUE = headers.JSC__JSValue__fromUInt64NoTruncate,
         .bun_call = &JSC.C.JSObjectCallAsFunction,
-    } else undefined;
+    };
 
     noinline fn memset(
         dest: [*]u8,
@@ -2520,12 +2522,10 @@ const CompilerRT = struct {
             "JSVALUE_TO_UINT64_SLOW",
             workaround.JSVALUE_TO_UINT64,
         );
-        if (!comptime JSC.is_bindgen) {
-            std.mem.doNotOptimizeAway(headers.JSC__JSValue__toUInt64NoTruncate);
-            std.mem.doNotOptimizeAway(headers.JSC__JSValue__toInt64);
-            std.mem.doNotOptimizeAway(headers.JSC__JSValue__fromInt64NoTruncate);
-            std.mem.doNotOptimizeAway(headers.JSC__JSValue__fromUInt64NoTruncate);
-        }
+        std.mem.doNotOptimizeAway(headers.JSC__JSValue__toUInt64NoTruncate);
+        std.mem.doNotOptimizeAway(headers.JSC__JSValue__toInt64);
+        std.mem.doNotOptimizeAway(headers.JSC__JSValue__fromInt64NoTruncate);
+        std.mem.doNotOptimizeAway(headers.JSC__JSValue__fromUInt64NoTruncate);
         _ = TCC.tcc_add_symbol(
             state,
             "INT64_TO_JSVALUE_SLOW",

@@ -18,7 +18,7 @@ using namespace JSC;
 
 extern "C" void Bun__JSTimeout__call(JSC::EncodedJSValue encodedTimeoutValue, JSC::JSGlobalObject* globalObject)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (UNLIKELY(vm.hasPendingTerminationException())) {
         return;

@@ -10,9 +10,9 @@ class VM;
 
 namespace Bun {
 
-class JSX509CertificatePrototype final : public JSC::JSObject {
+class JSX509CertificatePrototype final : public JSC::JSNonFinalObject {
 public:
-    using Base = JSC::JSObject;
+    using Base = JSC::JSNonFinalObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     static JSX509CertificatePrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)

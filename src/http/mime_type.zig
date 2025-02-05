@@ -21,7 +21,7 @@ category: Category,
 pub const Map = bun.StringHashMap(MimeType);
 
 pub fn createHashTable(allocator: std.mem.Allocator) !Map {
-    @setCold(true);
+    @branchHint(.cold);
 
     const decls = comptime std.meta.declarations(all);
 

@@ -25,6 +25,7 @@
 #if DARWIN
 #include <sys/mount.h>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
 #elif LINUX
 #include <sys/statfs.h>
 #include <sys/stat.h>

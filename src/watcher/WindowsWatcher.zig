@@ -38,7 +38,7 @@ const DirWatcher = struct {
 
     // invalidates any EventIterators
     fn prepare(this: *DirWatcher) bun.JSC.Maybe(void) {
-        const filter = w.FILE_NOTIFY_CHANGE_FILE_NAME | w.FILE_NOTIFY_CHANGE_DIR_NAME | w.FILE_NOTIFY_CHANGE_LAST_WRITE | w.FILE_NOTIFY_CHANGE_CREATION;
+        const filter: w.FileNotifyChangeFilter = .{ .file_name = true, .dir_name = true, .last_write = true, .creation = true };
         if (w.kernel32.ReadDirectoryChangesW(this.dirHandle, &this.buf, this.buf.len, 1, filter, null, &this.overlapped, null) == 0) {
             const err = w.kernel32.GetLastError();
             log("failed to start watching directory: {s}", .{@tagName(err)});
@@ -117,10 +117,10 @@ pub fn init(this: *WindowsWatcher, root: []const u8) !void {
         log("failed to open directory for watching: {s}", .{@tagName(err)});
         return Error.CreateFileFailed;
     }
-    errdefer _ = w.kernel32.CloseHandle(handle);
+    errdefer _ = bun.windows.CloseHandle(handle);
 
     this.iocp = try w.CreateIoCompletionPort(handle, null, 0, 1);
-    errdefer _ = w.kernel32.CloseHandle(this.iocp);
+    errdefer _ = bun.windows.CloseHandle(this.iocp);
 
     this.watcher = .{ .dirHandle = handle };
 

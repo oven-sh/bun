@@ -865,7 +865,7 @@ const DeferredRequest = struct {
         server_handler: bun.JSC.API.SavedRequest,
         js_payload: *Response,
 
-        const Tag = @typeInfo(Data).Union.tag_type.?;
+        const Tag = @typeInfo(Data).@"union".tag_type.?;
     };
 };
 
@@ -3715,20 +3715,20 @@ const HmrTopic = enum(u8) {
     /// Invalid data
     _,
 
-    pub const max_count = @typeInfo(HmrTopic).Enum.fields.len;
-    pub const Bits = @Type(.{ .Struct = .{
-        .backing_integer = @Type(.{ .Int = .{
+    pub const max_count = @typeInfo(HmrTopic).@"enum".fields.len;
+    pub const Bits = @Type(.{ .@"struct" = .{
+        .backing_integer = @Type(.{ .int = .{
             .bits = max_count,
             .signedness = .unsigned,
         } }),
         .fields = &brk: {
-            const enum_fields = @typeInfo(HmrTopic).Enum.fields;
+            const enum_fields = @typeInfo(HmrTopic).@"enum".fields;
             var fields: [enum_fields.len]std.builtin.Type.StructField = undefined;
             for (enum_fields, &fields) |e, *s| {
                 s.* = .{
                     .name = e.name,
                     .type = bool,
-                    .default_value = &false,
+                    .default_value_ptr = &false,
                     .is_comptime = false,
                     .alignment = 0,
                 };
@@ -3768,7 +3768,7 @@ const HmrSocket = struct {
                 const topics = msg[1..];
                 if (topics.len > HmrTopic.max_count) return;
                 outer: for (topics) |char| {
-                    inline for (@typeInfo(HmrTopic).Enum.fields) |field| {
+                    inline for (@typeInfo(HmrTopic).@"enum".fields) |field| {
                         if (char == field.value) {
                             @field(new_bits, field.name) = true;
                             continue :outer;
@@ -4063,7 +4063,7 @@ const WatcherAtomics = struct {
                     ev.timer = std.time.Timer.start() catch unreachable;
             },
             1 => {
-                // @branchHint(.unlikely);
+                @branchHint(.unlikely);
                 // DevServer stole this event. Unlikely but possible when
                 // the user is saving very heavily (10-30 times per second)
                 state.current +%= 1;
@@ -4087,12 +4087,12 @@ const WatcherAtomics = struct {
         ev.owner.bun_watcher.thread_lock.assertLocked();
 
         if (ev.files.count() > 0) {
-            // @branchHint(.likely);
+            @branchHint(.likely);
             // There are files to be processed, increment this count first.
             const prev_count = state.watcher_events_emitted.fetchAdd(1, .seq_cst);
 
             if (prev_count == 0) {
-                // @branchHint(.likely);
+                @branchHint(.likely);
                 // Submit a task to the DevServer, notifying it that there is
                 // work to do. The watcher will move to the other event.
                 ev.concurrent_task = .{
@@ -4434,7 +4434,7 @@ pub const EntryPointList = struct {
     pub fn append(entry_points: *EntryPointList, allocator: std.mem.Allocator, abs_path: []const u8, flags: Flags) !void {
         const gop = try entry_points.set.getOrPut(allocator, abs_path);
         if (gop.found_existing) {
-            const T = @typeInfo(Flags).Struct.backing_integer.?;
+            const T = @typeInfo(Flags).@"struct".backing_integer.?;
             gop.value_ptr.* = @bitCast(@as(T, @bitCast(gop.value_ptr.*)) | @as(T, @bitCast(flags)));
         } else {
             gop.value_ptr.* = flags;

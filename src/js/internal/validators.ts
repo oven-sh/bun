@@ -68,7 +68,7 @@ function validateLinkHeaderValue(hints) {
 }
 hideFromStack(validateLinkHeaderValue);
 // TODO: do it in NodeValidator.cpp
-function validateObject(value, name) {
+function validateObject(value: unknown, name: string): asserts value is object {
   if (typeof value !== "object" || value === null) throw $ERR_INVALID_ARG_TYPE(name, "object", value);
 }
 hideFromStack(validateObject);

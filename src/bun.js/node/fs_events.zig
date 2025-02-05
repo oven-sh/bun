@@ -79,13 +79,6 @@ pub const kFSEventStreamEventFlagRootChanged: c_int = 32;
 pub const kFSEventStreamEventFlagUnmount: c_int = 128;
 pub const kFSEventStreamEventFlagUserDropped: c_int = 2;
 
-// Lazy function call binding.
-const RTLD_LAZY = 0x1;
-// Symbols exported from this image (dynamic library or bundle)
-// are generally hidden and only availble to dlsym() when
-// directly using the handle returned by this call to dlopen().
-const RTLD_LOCAL = 0x4;
-
 pub const kFSEventsModified: c_int =
     kFSEventStreamEventFlagItemChangeOwner |
     kFSEventStreamEventFlagItemFinderInfoMod |
@@ -191,7 +184,7 @@ var fsevents_cf: ?CoreFoundation = null;
 var fsevents_cs: ?CoreServices = null;
 
 fn InitLibrary() void {
-    const fsevents_cf_handle = bun.C.dlopen("/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation", RTLD_LAZY | RTLD_LOCAL);
+    const fsevents_cf_handle = bun.C.dlopen("/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation", .{ .LAZY = true, .LOCAL = true });
     if (fsevents_cf_handle == null) @panic("Cannot Load CoreFoundation");
 
     fsevents_cf = CoreFoundation{
@@ -210,7 +203,7 @@ fn InitLibrary() void {
         .RunLoopDefaultMode = dlsym(fsevents_cf_handle, *CFStringRef, "kCFRunLoopDefaultMode") orelse @panic("Cannot Load CoreFoundation"),
     };
 
-    const fsevents_cs_handle = bun.C.dlopen("/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices", RTLD_LAZY | RTLD_LOCAL);
+    const fsevents_cs_handle = bun.C.dlopen("/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices", .{ .LAZY = true, .LOCAL = true });
     if (fsevents_cs_handle == null) @panic("Cannot Load CoreServices");
 
     fsevents_cs = CoreServices{

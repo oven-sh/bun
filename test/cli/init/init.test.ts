@@ -21,6 +21,9 @@ test("bun init works", () => {
     "name": path.basename(temp).toLowerCase(),
     "module": "index.ts",
     "type": "module",
+    "engines": {
+      "bun": "*",
+    },
     "devDependencies": {
       "@types/bun": "latest",
     },
@@ -57,6 +60,9 @@ test("bun init with piped cli", () => {
     "name": path.basename(temp).toLowerCase(),
     "module": "index.ts",
     "type": "module",
+    "engines": {
+      "bun": "*",
+    },
     "devDependencies": {
       "@types/bun": "latest",
     },

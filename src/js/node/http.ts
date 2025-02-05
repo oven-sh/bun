@@ -1713,7 +1713,7 @@ const OutgoingMessagePrototype = {
   },
 
   get writableFinished() {
-    return this[finishedSymbol];
+    return this[finishedSymbol] && !!(this[kEmitState] & (1 << ClientRequestEmitState.finish));
   },
 
   _send(data, encoding, callback, byteLength) {
@@ -1930,7 +1930,7 @@ const ServerResponsePrototype = {
       this[finishedSymbol] = this.finished = true;
 
       this.emit("prefinish");
-      this._flushPendingCallbacks();
+      this._callPendingCallbacks();
 
       if (callback) {
         process.nextTick(
@@ -2012,7 +2012,7 @@ const ServerResponsePrototype = {
     }
 
     if (result >= 0) {
-      this._flushPendingCallbacks();
+      this._callPendingCallbacks();
       if (callback) {
         process.nextTick(callback);
       }
@@ -2022,7 +2022,7 @@ const ServerResponsePrototype = {
     return true;
   },
 
-  _flushPendingCallbacks() {
+  _callPendingCallbacks() {
     const originalLength = this[kPendingCallbacks].length;
 
     for (let i = 0; i < originalLength; ++i) {
@@ -2061,8 +2061,7 @@ const ServerResponsePrototype = {
   },
 
   get writableFinished() {
-    const isWritableFinished = this[finishedSymbol] && (!this[kHandle] || this[kHandle].finished);
-    return isWritableFinished;
+    return !!(this[finishedSymbol] && (!this[kHandle] || this[kHandle].finished));
   },
 
   get writableLength() {
@@ -2415,10 +2414,8 @@ function ClientRequest(input, options, cb) {
     let bodySize = 0;
     if (!canSkipReEncodingData) {
       chunk = Buffer.from(chunk, encoding);
-      bodySize = chunk.length;
-    } else {
-      bodySize = chunk.length;
     }
+    bodySize = chunk.length;
 
     if (!this[kBodyChunks]) {
       this[kBodyChunks] = [chunk];

@@ -144,6 +144,8 @@ $ bun upgrade
 
 {% /callout %}
 
+You can use HTTP_PROXY environment variable to accelerate the progress when downloading assets from GitHub.
+
 ## Canary builds
 
 Bun automatically releases an (untested) canary build on every commit to `main`. To upgrade to the latest canary build:

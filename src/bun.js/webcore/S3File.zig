@@ -603,11 +603,11 @@ pub fn hasInstance(_: JSC.JSValue, _: *JSC.JSGlobalObject, value: JSC.JSValue) c
 }
 
 comptime {
-    @export(exports.JSS3File__presign, .{ .name = "JSS3File__presign" });
-    @export(construct, .{ .name = "JSS3File__construct" });
-    @export(hasInstance, .{ .name = "JSS3File__hasInstance" });
-    @export(getBucket, .{ .name = "JSS3File__bucket" });
-    @export(getStat, .{ .name = "JSS3File__stat" });
+    @export(&exports.JSS3File__presign, .{ .name = "JSS3File__presign" });
+    @export(&construct, .{ .name = "JSS3File__construct" });
+    @export(&hasInstance, .{ .name = "JSS3File__hasInstance" });
+    @export(&getBucket, .{ .name = "JSS3File__bucket" });
+    @export(&getStat, .{ .name = "JSS3File__stat" });
 }
 
 pub const exports = struct {

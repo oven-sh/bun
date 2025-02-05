@@ -170,7 +170,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "tailwindcss",
         "version": "==3.3.3",
       },
-      "package_id": 379,
+      "package_id": 381,
     },
     {
       "behavior": {
@@ -183,7 +183,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "typescript",
         "version": "==5.2.2",
       },
-      "package_id": 399,
+      "package_id": 401,
     },
     {
       "behavior": {
@@ -235,7 +235,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "chalk",
         "version": ">=2.4.2 <3.0.0",
       },
-      "package_id": 425,
+      "package_id": 428,
     },
     {
       "behavior": {
@@ -417,7 +417,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "strip-json-comments",
         "version": ">=3.1.1 <4.0.0",
       },
-      "package_id": 374,
+      "package_id": 376,
     },
     {
       "behavior": {
@@ -469,7 +469,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "string-width",
         "version": ">=5.1.2 <6.0.0",
       },
-      "package_id": 426,
+      "package_id": 429,
     },
     {
       "behavior": {
@@ -483,7 +483,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "string-width",
         "version": ">=4.2.0 <5.0.0",
       },
-      "package_id": 367,
+      "package_id": 368,
     },
     {
       "behavior": {
@@ -496,7 +496,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "strip-ansi",
         "version": ">=7.0.1 <8.0.0",
       },
-      "package_id": 427,
+      "package_id": 430,
     },
     {
       "behavior": {
@@ -510,7 +510,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "strip-ansi",
         "version": ">=6.0.1 <7.0.0",
       },
-      "package_id": 372,
+      "package_id": 374,
     },
     {
       "behavior": {
@@ -523,7 +523,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "wrap-ansi",
         "version": ">=8.1.0 <9.0.0",
       },
-      "package_id": 428,
+      "package_id": 431,
     },
     {
       "behavior": {
@@ -537,7 +537,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "wrap-ansi",
         "version": ">=7.0.0 <8.0.0",
       },
-      "package_id": 414,
+      "package_id": 417,
     },
     {
       "behavior": {
@@ -680,7 +680,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "debug",
         "version": "==4.3.4",
       },
-      "package_id": 429,
+      "package_id": 432,
     },
     {
       "behavior": {
@@ -732,7 +732,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "semver",
         "version": "==7.6.0",
       },
-      "package_id": 430,
+      "package_id": 433,
     },
     {
       "behavior": {
@@ -745,7 +745,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "tar-fs",
         "version": "==3.0.5",
       },
-      "package_id": 381,
+      "package_id": 383,
     },
     {
       "behavior": {
@@ -758,7 +758,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "unbzip2-stream",
         "version": "==1.4.3",
       },
-      "package_id": 401,
+      "package_id": 403,
     },
     {
       "behavior": {
@@ -771,7 +771,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "yargs",
         "version": "==17.7.2",
       },
-      "package_id": 420,
+      "package_id": 423,
     },
     {
       "behavior": {
@@ -784,7 +784,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "tslib",
         "version": ">=2.4.0 <3.0.0",
       },
-      "package_id": 392,
+      "package_id": 394,
     },
     {
       "behavior": {
@@ -849,7 +849,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "@types/node",
         "version": ">=0.0.0",
       },
-      "package_id": 431,
+      "package_id": 434,
     },
     {
       "behavior": {
@@ -862,7 +862,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "@types/node",
         "version": ">=0.0.0",
       },
-      "package_id": 431,
+      "package_id": 435,
     },
     {
       "behavior": {
@@ -1044,7 +1044,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "minimatch",
         "version": "==9.0.3",
       },
-      "package_id": 432,
+      "package_id": 436,
     },
     {
       "behavior": {
@@ -1057,7 +1057,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "semver",
         "version": ">=7.5.4 <8.0.0",
       },
-      "package_id": 430,
+      "package_id": 437,
     },
     {
       "behavior": {
@@ -1070,7 +1070,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "ts-api-utils",
         "version": ">=1.0.1 <2.0.0",
       },
-      "package_id": 389,
+      "package_id": 391,
     },
     {
       "behavior": {
@@ -1174,7 +1174,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "uri-js",
         "version": ">=4.2.2 <5.0.0",
       },
-      "package_id": 405,
+      "package_id": 407,
     },
     {
       "behavior": {
@@ -1824,7 +1824,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "tslib",
         "version": ">=2.0.1 <3.0.0",
       },
-      "package_id": 392,
+      "package_id": 394,
     },
     {
       "behavior": {
@@ -2097,7 +2097,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "update-browserslist-db",
         "version": ">=1.0.13 <2.0.0",
       },
-      "package_id": 404,
+      "package_id": 406,
     },
     {
       "behavior": {
@@ -2136,7 +2136,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "@types/node",
         "version": ">=20.12.8 <20.13.0",
       },
-      "package_id": 431,
+      "package_id": 438,
     },
     {
       "behavior": {
@@ -2253,7 +2253,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "supports-color",
         "version": ">=7.1.0 <8.0.0",
       },
-      "package_id": 377,
+      "package_id": 379,
     },
     {
       "behavior": {
@@ -2305,7 +2305,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "glob-parent",
         "version": ">=5.1.2 <5.2.0",
       },
-      "package_id": 433,
+      "package_id": 439,
     },
     {
       "behavior": {
@@ -2396,7 +2396,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "urlpattern-polyfill",
         "version": "==10.0.0",
       },
-      "package_id": 406,
+      "package_id": 408,
     },
     {
       "behavior": {
@@ -2409,7 +2409,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "zod",
         "version": "==3.23.8",
       },
-      "package_id": 424,
+      "package_id": 427,
     },
     {
       "behavior": {
@@ -2435,7 +2435,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "strip-ansi",
         "version": ">=6.0.1 <7.0.0",
       },
-      "package_id": 372,
+      "package_id": 373,
     },
     {
       "behavior": {
@@ -2448,7 +2448,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "wrap-ansi",
         "version": ">=7.0.0 <8.0.0",
       },
-      "package_id": 414,
+      "package_id": 416,
     },
     {
       "behavior": {
@@ -2475,7 +2475,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "typescript",
         "version": ">=4.9.5",
       },
-      "package_id": 399,
+      "package_id": 401,
     },
     {
       "behavior": {
@@ -2566,7 +2566,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "which",
         "version": ">=2.0.1 <3.0.0",
       },
-      "package_id": 408,
+      "package_id": 410,
     },
     {
       "behavior": {
@@ -2878,7 +2878,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "tapable",
         "version": ">=2.2.0 <3.0.0",
       },
-      "package_id": 380,
+      "package_id": 382,
     },
     {
       "behavior": {
@@ -3385,7 +3385,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "string.prototype.trim",
         "version": ">=1.2.9 <2.0.0",
       },
-      "package_id": 369,
+      "package_id": 370,
     },
     {
       "behavior": {
@@ -3398,7 +3398,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "string.prototype.trimend",
         "version": ">=1.0.8 <2.0.0",
       },
-      "package_id": 370,
+      "package_id": 371,
     },
     {
       "behavior": {
@@ -3411,7 +3411,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "string.prototype.trimstart",
         "version": ">=1.0.8 <2.0.0",
       },
-      "package_id": 371,
+      "package_id": 372,
     },
     {
       "behavior": {
@@ -3424,7 +3424,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "typed-array-buffer",
         "version": ">=1.0.2 <2.0.0",
       },
-      "package_id": 395,
+      "package_id": 397,
     },
     {
       "behavior": {
@@ -3437,7 +3437,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "typed-array-byte-length",
         "version": ">=1.0.1 <2.0.0",
       },
-      "package_id": 396,
+      "package_id": 398,
     },
     {
       "behavior": {
@@ -3450,7 +3450,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "typed-array-byte-offset",
         "version": ">=1.0.2 <2.0.0",
       },
-      "package_id": 397,
+      "package_id": 399,
     },
     {
       "behavior": {
@@ -3463,7 +3463,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "typed-array-length",
         "version": ">=1.0.6 <2.0.0",
       },
-      "package_id": 398,
+      "package_id": 400,
     },
     {
       "behavior": {
@@ -3476,7 +3476,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "unbox-primitive",
         "version": ">=1.0.2 <2.0.0",
       },
-      "package_id": 400,
+      "package_id": 402,
     },
     {
       "behavior": {
@@ -3489,7 +3489,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "which-typed-array",
         "version": ">=1.1.15 <2.0.0",
       },
-      "package_id": 412,
+      "package_id": 414,
     },
     {
       "behavior": {
@@ -4308,7 +4308,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "strip-ansi",
         "version": ">=6.0.1 <7.0.0",
       },
-      "package_id": 372,
+      "package_id": 373,
     },
     {
       "behavior": {
@@ -4321,7 +4321,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "text-table",
         "version": ">=0.2.0 <0.3.0",
       },
-      "package_id": 384,
+      "package_id": 386,
     },
     {
       "behavior": {
@@ -4348,7 +4348,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "typescript",
         "version": ">=3.3.1",
       },
-      "package_id": 399,
+      "package_id": 401,
     },
     {
       "behavior": {
@@ -4478,7 +4478,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "debug",
         "version": ">=3.2.7 <4.0.0",
       },
-      "package_id": 434,
+      "package_id": 440,
     },
     {
       "behavior": {
@@ -4634,7 +4634,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "debug",
         "version": ">=3.2.7 <4.0.0",
       },
-      "package_id": 434,
+      "package_id": 441,
     },
     {
       "behavior": {
@@ -4712,7 +4712,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "debug",
         "version": ">=3.2.7 <4.0.0",
       },
-      "package_id": 434,
+      "package_id": 442,
     },
     {
       "behavior": {
@@ -4725,7 +4725,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "doctrine",
         "version": ">=2.1.0 <3.0.0",
       },
-      "package_id": 435,
+      "package_id": 443,
     },
     {
       "behavior": {
@@ -4868,7 +4868,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "tsconfig-paths",
         "version": ">=3.15.0 <4.0.0",
       },
-      "package_id": 391,
+      "package_id": 393,
     },
     {
       "behavior": {
@@ -5180,7 +5180,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "doctrine",
         "version": ">=2.1.0 <3.0.0",
       },
-      "package_id": 435,
+      "package_id": 444,
     },
     {
       "behavior": {
@@ -5310,7 +5310,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "resolve",
         "version": ">=2.0.0-next.5 <3.0.0",
       },
-      "package_id": 436,
+      "package_id": 445,
     },
     {
       "behavior": {
@@ -5336,7 +5336,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "string.prototype.matchall",
         "version": ">=4.0.11 <5.0.0",
       },
-      "package_id": 368,
+      "package_id": 369,
     },
     {
       "behavior": {
@@ -5492,7 +5492,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "yauzl",
         "version": ">=2.10.0 <3.0.0",
       },
-      "package_id": 422,
+      "package_id": 425,
     },
     {
       "behavior": {
@@ -5531,7 +5531,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "glob-parent",
         "version": ">=5.1.2 <6.0.0",
       },
-      "package_id": 433,
+      "package_id": 446,
     },
     {
       "behavior": {
@@ -5609,7 +5609,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "to-regex-range",
         "version": ">=5.0.1 <6.0.0",
       },
-      "package_id": 388,
+      "package_id": 390,
     },
     {
       "behavior": {
@@ -5752,7 +5752,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "universalify",
         "version": ">=2.0.0 <3.0.0",
       },
-      "package_id": 403,
+      "package_id": 405,
     },
     {
       "behavior": {
@@ -6025,7 +6025,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "minimatch",
         "version": ">=9.0.1 <10.0.0",
       },
-      "package_id": 437,
+      "package_id": 447,
     },
     {
       "behavior": {
@@ -6077,7 +6077,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "type-fest",
         "version": ">=0.20.2 <0.21.0",
       },
-      "package_id": 394,
+      "package_id": 396,
     },
     {
       "behavior": {
@@ -6337,7 +6337,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "wrappy",
         "version": "<2.0.0 >=1.0.0",
       },
-      "package_id": 415,
+      "package_id": 418,
     },
     {
       "behavior": {
@@ -6662,7 +6662,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "which-typed-array",
         "version": ">=1.1.14 <2.0.0",
       },
-      "package_id": 412,
+      "package_id": 414,
     },
     {
       "behavior": {
@@ -6844,7 +6844,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "universalify",
         "version": ">=2.0.0 <3.0.0",
       },
-      "package_id": 403,
+      "package_id": 405,
     },
     {
       "behavior": {
@@ -6948,7 +6948,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "type-check",
         "version": ">=0.4.0 <0.5.0",
       },
-      "package_id": 393,
+      "package_id": 395,
     },
     {
       "behavior": {
@@ -7052,7 +7052,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "thenify-all",
         "version": ">=1.0.0 <2.0.0",
       },
-      "package_id": 386,
+      "package_id": 388,
     },
     {
       "behavior": {
@@ -7301,7 +7301,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "postcss",
         "version": "==8.4.31",
       },
-      "package_id": 438,
+      "package_id": 448,
     },
     {
       "behavior": {
@@ -7314,7 +7314,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "styled-jsx",
         "version": "==5.1.1",
       },
-      "package_id": 375,
+      "package_id": 377,
     },
     {
       "behavior": {
@@ -7587,7 +7587,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "wrappy",
         "version": "<2.0.0 >=1.0.0",
       },
-      "package_id": 415,
+      "package_id": 418,
     },
     {
       "behavior": {
@@ -7652,7 +7652,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "type-check",
         "version": ">=0.4.0 <0.5.0",
       },
-      "package_id": 393,
+      "package_id": 395,
     },
     {
       "behavior": {
@@ -7665,7 +7665,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "word-wrap",
         "version": ">=1.2.5 <2.0.0",
       },
-      "package_id": 413,
+      "package_id": 415,
     },
     {
       "behavior": {
@@ -7678,7 +7678,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "yocto-queue",
         "version": ">=0.1.0 <0.2.0",
       },
-      "package_id": 423,
+      "package_id": 426,
     },
     {
       "behavior": {
@@ -7899,7 +7899,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "lru-cache",
         "version": ">=10.2.0 <11.0.0",
       },
-      "package_id": 439,
+      "package_id": 449,
     },
     {
       "behavior": {
@@ -8070,7 +8070,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "lilconfig",
         "version": ">=3.0.0 <4.0.0",
       },
-      "package_id": 440,
+      "package_id": 450,
     },
     {
       "behavior": {
@@ -8083,7 +8083,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "yaml",
         "version": ">=2.3.4 <3.0.0",
       },
-      "package_id": 419,
+      "package_id": 422,
     },
     {
       "behavior": {
@@ -8135,7 +8135,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "util-deprecate",
         "version": ">=1.0.2 <2.0.0",
       },
-      "package_id": 407,
+      "package_id": 409,
     },
     {
       "behavior": {
@@ -8421,7 +8421,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "ws",
         "version": "==8.17.1",
       },
-      "package_id": 416,
+      "package_id": 419,
     },
     {
       "behavior": {
@@ -8590,7 +8590,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "which-builtin-type",
         "version": ">=1.1.3 <2.0.0",
       },
-      "package_id": 410,
+      "package_id": 412,
     },
     {
       "behavior": {
@@ -8681,7 +8681,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "supports-preserve-symlinks-flag",
         "version": ">=1.0.0 <2.0.0",
       },
-      "package_id": 378,
+      "package_id": 380,
     },
     {
       "behavior": {
@@ -8694,7 +8694,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "glob",
         "version": ">=7.1.3 <8.0.0",
       },
-      "package_id": 441,
+      "package_id": 451,
     },
     {
       "behavior": {
@@ -9123,7 +9123,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "text-decoder",
         "version": ">=1.1.0 <2.0.0",
       },
-      "package_id": 383,
+      "package_id": 385,
     },
     {
       "behavior": {
@@ -9136,7 +9136,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "emoji-regex",
         "version": ">=8.0.0 <9.0.0",
       },
-      "package_id": 442,
+      "package_id": 452,
     },
     {
       "behavior": {
@@ -9162,7 +9162,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "strip-ansi",
         "version": ">=6.0.1 <7.0.0",
       },
-      "package_id": 372,
+      "package_id": 373,
     },
     {
       "behavior": {
@@ -9175,7 +9175,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "emoji-regex",
         "version": ">=8.0.0 <9.0.0",
       },
-      "package_id": null,
+      "package_id": 453,
     },
     {
       "behavior": {
@@ -9188,7 +9188,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "is-fullwidth-code-point",
         "version": ">=3.0.0 <4.0.0",
       },
-      "package_id": null,
+      "package_id": 228,
     },
     {
       "behavior": {
@@ -9201,7 +9201,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "strip-ansi",
         "version": ">=6.0.1 <7.0.0",
       },
-      "package_id": null,
+      "package_id": 373,
     },
     {
       "behavior": {
@@ -9513,7 +9513,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "ansi-regex",
         "version": ">=5.0.1 <6.0.0",
       },
-      "package_id": null,
+      "package_id": 55,
     },
     {
       "behavior": {
@@ -9630,7 +9630,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "ts-interface-checker",
         "version": ">=0.1.9 <0.2.0",
       },
-      "package_id": 390,
+      "package_id": 392,
     },
     {
       "behavior": {
@@ -9929,7 +9929,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "sucrase",
         "version": ">=3.32.0 <4.0.0",
       },
-      "package_id": 376,
+      "package_id": 378,
     },
     {
       "behavior": {
@@ -9981,7 +9981,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "tar-stream",
         "version": ">=3.1.5 <4.0.0",
       },
-      "package_id": 382,
+      "package_id": 384,
     },
     {
       "behavior": {
@@ -10059,7 +10059,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "thenify",
         "version": ">=3.1.0 && <4.0.0",
       },
-      "package_id": 385,
+      "package_id": 387,
     },
     {
       "behavior": {
@@ -10085,7 +10085,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "typescript",
         "version": ">=4.2.0",
       },
-      "package_id": 399,
+      "package_id": 401,
     },
     {
       "behavior": {
@@ -10137,7 +10137,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "strip-bom",
         "version": ">=3.0.0 <4.0.0",
       },
-      "package_id": 373,
+      "package_id": 375,
     },
     {
       "behavior": {
@@ -10462,7 +10462,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "which-boxed-primitive",
         "version": ">=1.0.2 <2.0.0",
       },
-      "package_id": 409,
+      "package_id": 411,
     },
     {
       "behavior": {
@@ -10488,7 +10488,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "through",
         "version": ">=2.3.8 <3.0.0",
       },
-      "package_id": 387,
+      "package_id": 389,
     },
     {
       "behavior": {
@@ -10748,7 +10748,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "which-boxed-primitive",
         "version": ">=1.0.2 <2.0.0",
       },
-      "package_id": 409,
+      "package_id": 411,
     },
     {
       "behavior": {
@@ -10761,7 +10761,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "which-collection",
         "version": ">=1.0.1 <2.0.0",
       },
-      "package_id": 411,
+      "package_id": 413,
     },
     {
       "behavior": {
@@ -10774,7 +10774,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "which-typed-array",
         "version": ">=1.1.9 <2.0.0",
       },
-      "package_id": 412,
+      "package_id": 414,
     },
     {
       "behavior": {
@@ -10930,7 +10930,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "strip-ansi",
         "version": ">=6.0.0 <7.0.0",
       },
-      "package_id": 372,
+      "package_id": 373,
     },
     {
       "behavior": {
@@ -10943,7 +10943,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "ansi-styles",
         "version": ">=4.0.0 <5.0.0",
       },
-      "package_id": null,
+      "package_id": 56,
     },
     {
       "behavior": {
@@ -10956,7 +10956,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "string-width",
         "version": ">=4.1.0 <5.0.0",
       },
-      "package_id": null,
+      "package_id": 367,
     },
     {
       "behavior": {
@@ -10969,7 +10969,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "strip-ansi",
         "version": ">=6.0.0 <7.0.0",
       },
-      "package_id": null,
+      "package_id": 373,
     },
     {
       "behavior": {
@@ -11075,7 +11075,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "y18n",
         "version": ">=5.0.5 <6.0.0",
       },
-      "package_id": 417,
+      "package_id": 420,
     },
     {
       "behavior": {
@@ -11088,7 +11088,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "yargs-parser",
         "version": ">=21.1.1 <22.0.0",
       },
-      "package_id": 421,
+      "package_id": 424,
     },
     {
       "behavior": {
@@ -11127,7 +11127,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "ansi-styles",
         "version": ">=3.2.1 <4.0.0",
       },
-      "package_id": 443,
+      "package_id": 454,
     },
     {
       "behavior": {
@@ -11140,7 +11140,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "escape-string-regexp",
         "version": ">=1.0.5 <2.0.0",
       },
-      "package_id": 444,
+      "package_id": 455,
     },
     {
       "behavior": {
@@ -11153,7 +11153,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "supports-color",
         "version": ">=5.3.0 <6.0.0",
       },
-      "package_id": 445,
+      "package_id": 456,
     },
     {
       "behavior": {
@@ -11192,7 +11192,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "strip-ansi",
         "version": ">=7.0.1 <8.0.0",
       },
-      "package_id": 427,
+      "package_id": 430,
     },
     {
       "behavior": {
@@ -11205,7 +11205,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "ansi-regex",
         "version": ">=6.0.1 <7.0.0",
       },
-      "package_id": 446,
+      "package_id": 457,
     },
     {
       "behavior": {
@@ -11218,7 +11218,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "ansi-styles",
         "version": ">=6.1.0 <7.0.0",
       },
-      "package_id": 447,
+      "package_id": 458,
     },
     {
       "behavior": {
@@ -11231,7 +11231,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "string-width",
         "version": ">=5.0.1 <6.0.0",
       },
-      "package_id": 426,
+      "package_id": 429,
     },
     {
       "behavior": {
@@ -11244,7 +11244,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "strip-ansi",
         "version": ">=7.0.1 <8.0.0",
       },
-      "package_id": 427,
+      "package_id": 430,
     },
     {
       "behavior": {
@@ -11270,7 +11270,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "lru-cache",
         "version": ">=6.0.0 <7.0.0",
       },
-      "package_id": 448,
+      "package_id": 459,
     },
     {
       "behavior": {
@@ -11283,7 +11283,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "undici-types",
         "version": ">=5.26.4 <5.27.0",
       },
-      "package_id": 402,
+      "package_id": 404,
     },
     {
       "behavior": {
@@ -11296,7 +11296,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "undici-types",
         "version": ">=5.26.4 <5.27.0",
       },
-      "package_id": null,
+      "package_id": 404,
     },
     {
       "behavior": {
@@ -11309,7 +11309,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "brace-expansion",
         "version": ">=2.0.1 <3.0.0",
       },
-      "package_id": 449,
+      "package_id": 460,
     },
     {
       "behavior": {
@@ -11322,7 +11322,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "lru-cache",
         "version": ">=6.0.0 <7.0.0",
       },
-      "package_id": null,
+      "package_id": 461,
     },
     {
       "behavior": {
@@ -11335,7 +11335,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "undici-types",
         "version": ">=5.26.4 <5.27.0",
       },
-      "package_id": null,
+      "package_id": 404,
     },
     {
       "behavior": {
@@ -11374,7 +11374,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "ms",
         "version": ">=2.1.1 <3.0.0",
       },
-      "package_id": null,
+      "package_id": 276,
     },
     {
       "behavior": {
@@ -11387,7 +11387,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "ms",
         "version": ">=2.1.1 <3.0.0",
       },
-      "package_id": null,
+      "package_id": 276,
     },
     {
       "behavior": {
@@ -11413,7 +11413,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "esutils",
         "version": ">=2.0.2 <3.0.0",
       },
-      "package_id": null,
+      "package_id": 162,
     },
     {
       "behavior": {
@@ -11452,7 +11452,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "supports-preserve-symlinks-flag",
         "version": ">=1.0.0 <2.0.0",
       },
-      "package_id": 378,
+      "package_id": 380,
     },
     {
       "behavior": {
@@ -11465,7 +11465,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "is-glob",
         "version": ">=4.0.1 <5.0.0",
       },
-      "package_id": null,
+      "package_id": 230,
     },
     {
       "behavior": {
@@ -11478,7 +11478,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "brace-expansion",
         "version": ">=2.0.1 <3.0.0",
       },
-      "package_id": 449,
+      "package_id": 462,
     },
     {
       "behavior": {
@@ -11608,7 +11608,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "color-convert",
         "version": ">=1.9.0 <2.0.0",
       },
-      "package_id": 450,
+      "package_id": 463,
     },
     {
       "behavior": {
@@ -11621,7 +11621,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "has-flag",
         "version": ">=3.0.0 <4.0.0",
       },
-      "package_id": 451,
+      "package_id": 464,
     },
     {
       "behavior": {
@@ -11634,7 +11634,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "yallist",
         "version": ">=4.0.0 <5.0.0",
       },
-      "package_id": 418,
+      "package_id": 421,
     },
     {
       "behavior": {
@@ -11660,7 +11660,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "yallist",
         "version": ">=4.0.0 <5.0.0",
       },
-      "package_id": null,
+      "package_id": 421,
     },
     {
       "behavior": {
@@ -11673,7 +11673,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "balanced-match",
         "version": ">=1.0.0 <2.0.0",
       },
-      "package_id": null,
+      "package_id": 79,
     },
     {
       "behavior": {
@@ -11686,7 +11686,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "color-name",
         "version": "==1.1.3",
       },
-      "package_id": 452,
+      "package_id": 465,
     },
   ],
   "format": "v2",
@@ -11731,7 +11731,9 @@ exports[`ssr works for 100-ish requests 1`] = `
     "@tootallnate/quickjs-emscripten": 37,
     "@types/json5": 38,
     "@types/node": [
-      431,
+      434,
+      435,
+      438,
       39,
     ],
     "@types/prop-types": 40,
@@ -11750,13 +11752,13 @@ exports[`ssr works for 100-ish requests 1`] = `
     "agent-base": 53,
     "ajv": 54,
     "ansi-regex": [
-      446,
+      457,
       55,
     ],
     "ansi-styles": [
-      447,
+      458,
       56,
-      443,
+      454,
     ],
     "any-promise": 57,
     "anymatch": 58,
@@ -11790,7 +11792,8 @@ exports[`ssr works for 100-ish requests 1`] = `
     "basic-ftp": 86,
     "binary-extensions": 87,
     "brace-expansion": [
-      449,
+      460,
+      462,
       88,
     ],
     "braces": 89,
@@ -11805,7 +11808,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     "caniuse-lite": 98,
     "chalk": [
       99,
-      425,
+      428,
     ],
     "chokidar": 100,
     "chromium-bidi": 101,
@@ -11813,11 +11816,11 @@ exports[`ssr works for 100-ish requests 1`] = `
     "cliui": 103,
     "color-convert": [
       104,
-      450,
+      463,
     ],
     "color-name": [
       105,
-      452,
+      465,
     ],
     "commander": 106,
     "concat-map": 107,
@@ -11832,8 +11835,10 @@ exports[`ssr works for 100-ish requests 1`] = `
     "data-view-byte-offset": 116,
     "debug": [
       117,
-      429,
-      434,
+      432,
+      440,
+      441,
+      442,
     ],
     "deep-is": 118,
     "default-create-template": 0,
@@ -11847,13 +11852,15 @@ exports[`ssr works for 100-ish requests 1`] = `
     "dlv": 126,
     "doctrine": [
       127,
-      435,
+      443,
+      444,
     ],
     "eastasianwidth": 128,
     "electron-to-chromium": 129,
     "emoji-regex": [
       130,
-      442,
+      452,
+      453,
     ],
     "end-of-stream": 131,
     "enhanced-resolve": 132,
@@ -11870,7 +11877,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     "escalade": 143,
     "escape-string-regexp": [
       144,
-      444,
+      455,
     ],
     "escodegen": 145,
     "eslint": 146,
@@ -11920,11 +11927,12 @@ exports[`ssr works for 100-ish requests 1`] = `
     "get-uri": 190,
     "glob": [
       191,
-      441,
+      451,
     ],
     "glob-parent": [
       192,
-      433,
+      439,
+      446,
     ],
     "globals": 193,
     "globalthis": 194,
@@ -11935,7 +11943,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     "has-bigints": 199,
     "has-flag": [
       200,
-      451,
+      464,
     ],
     "has-property-descriptors": 201,
     "has-proto": 202,
@@ -12001,7 +12009,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     "language-tags": 262,
     "levn": 263,
     "lilconfig": [
-      440,
+      450,
       264,
     ],
     "lines-and-columns": 265,
@@ -12009,15 +12017,16 @@ exports[`ssr works for 100-ish requests 1`] = `
     "lodash.merge": 267,
     "loose-envify": 268,
     "lru-cache": [
-      439,
+      449,
       269,
-      448,
+      459,
+      461,
     ],
     "merge2": 270,
     "micromatch": 271,
     "minimatch": [
-      437,
-      432,
+      447,
+      436,
       272,
     ],
     "minimist": 273,
@@ -12063,7 +12072,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     "pirates": 313,
     "possible-typed-array-names": 314,
     "postcss": [
-      438,
+      448,
       315,
     ],
     "postcss-import": 316,
@@ -12093,7 +12102,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     "regexp.prototype.flags": 340,
     "require-directory": 341,
     "resolve": [
-      436,
+      445,
       342,
     ],
     "resolve-from": 343,
@@ -12105,7 +12114,8 @@ exports[`ssr works for 100-ish requests 1`] = `
     "safe-regex-test": 349,
     "scheduler": 350,
     "semver": [
-      430,
+      433,
+      437,
       351,
     ],
     "set-function-length": 352,
@@ -12124,75 +12134,78 @@ exports[`ssr works for 100-ish requests 1`] = `
     "streamsearch": 365,
     "streamx": 366,
     "string-width": [
-      426,
+      429,
       367,
+      368,
     ],
-    "string.prototype.matchall": 368,
-    "string.prototype.trim": 369,
-    "string.prototype.trimend": 370,
-    "string.prototype.trimstart": 371,
+    "string.prototype.matchall": 369,
+    "string.prototype.trim": 370,
+    "string.prototype.trimend": 371,
+    "string.prototype.trimstart": 372,
     "strip-ansi": [
-      427,
-      372,
+      430,
+      373,
+      374,
     ],
-    "strip-bom": 373,
-    "strip-json-comments": 374,
-    "styled-jsx": 375,
-    "sucrase": 376,
+    "strip-bom": 375,
+    "strip-json-comments": 376,
+    "styled-jsx": 377,
+    "sucrase": 378,
     "supports-color": [
-      377,
-      445,
+      379,
+      456,
     ],
-    "supports-preserve-symlinks-flag": 378,
-    "tailwindcss": 379,
-    "tapable": 380,
-    "tar-fs": 381,
-    "tar-stream": 382,
-    "text-decoder": 383,
-    "text-table": 384,
-    "thenify": 385,
-    "thenify-all": 386,
-    "through": 387,
-    "to-regex-range": 388,
-    "ts-api-utils": 389,
-    "ts-interface-checker": 390,
-    "tsconfig-paths": 391,
-    "tslib": 392,
-    "type-check": 393,
-    "type-fest": 394,
-    "typed-array-buffer": 395,
-    "typed-array-byte-length": 396,
-    "typed-array-byte-offset": 397,
-    "typed-array-length": 398,
-    "typescript": 399,
-    "unbox-primitive": 400,
-    "unbzip2-stream": 401,
-    "undici-types": 402,
-    "universalify": 403,
-    "update-browserslist-db": 404,
-    "uri-js": 405,
-    "urlpattern-polyfill": 406,
-    "util-deprecate": 407,
-    "which": 408,
-    "which-boxed-primitive": 409,
-    "which-builtin-type": 410,
-    "which-collection": 411,
-    "which-typed-array": 412,
-    "word-wrap": 413,
+    "supports-preserve-symlinks-flag": 380,
+    "tailwindcss": 381,
+    "tapable": 382,
+    "tar-fs": 383,
+    "tar-stream": 384,
+    "text-decoder": 385,
+    "text-table": 386,
+    "thenify": 387,
+    "thenify-all": 388,
+    "through": 389,
+    "to-regex-range": 390,
+    "ts-api-utils": 391,
+    "ts-interface-checker": 392,
+    "tsconfig-paths": 393,
+    "tslib": 394,
+    "type-check": 395,
+    "type-fest": 396,
+    "typed-array-buffer": 397,
+    "typed-array-byte-length": 398,
+    "typed-array-byte-offset": 399,
+    "typed-array-length": 400,
+    "typescript": 401,
+    "unbox-primitive": 402,
+    "unbzip2-stream": 403,
+    "undici-types": 404,
+    "universalify": 405,
+    "update-browserslist-db": 406,
+    "uri-js": 407,
+    "urlpattern-polyfill": 408,
+    "util-deprecate": 409,
+    "which": 410,
+    "which-boxed-primitive": 411,
+    "which-builtin-type": 412,
+    "which-collection": 413,
+    "which-typed-array": 414,
+    "word-wrap": 415,
     "wrap-ansi": [
-      428,
-      414,
+      431,
+      416,
+      417,
     ],
-    "wrappy": 415,
-    "ws": 416,
-    "y18n": 417,
-    "yallist": 418,
-    "yaml": 419,
-    "yargs": 420,
-    "yargs-parser": 421,
-    "yauzl": 422,
-    "yocto-queue": 423,
-    "zod": 424,
+    "wrappy": 418,
+    "ws": 419,
+    "y18n": 420,
+    "yallist": 421,
+    "yaml": 422,
+    "yargs": 423,
+    "yargs-parser": 424,
+    "yauzl": 425,
+    "yocto-queue": 426,
+    "zod": 427,
   },
   "packages": [
     {
@@ -19111,6 +19124,26 @@ exports[`ssr works for 100-ish requests 1`] = `
     {
       "bin": null,
       "dependencies": [
+        704,
+        705,
+        706,
+      ],
+      "id": 368,
+      "integrity": "sha512-wKyQRQpjJ0sIp62ErSZdGsjMJWsap5oRNihHhu6G7JVO/9jIB6UyevL+tXuOqrng8j/cxKTWyWUwvSTriiZz/g==",
+      "man_dir": "",
+      "name": "string-width",
+      "name_hash": "15727733666069179645",
+      "origin": "npm",
+      "resolution": {
+        "resolved": "https://registry.npmjs.org/string-width/-/string-width-4.2.3.tgz",
+        "tag": "npm",
+        "value": "4.2.3",
+      },
+      "scripts": {},
+    },
+    {
+      "bin": null,
+      "dependencies": [
         707,
         708,
         709,
@@ -19124,7 +19157,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         717,
         718,
       ],
-      "id": 368,
+      "id": 369,
       "integrity": "sha512-NUdh0aDavY2og7IbBPenWqR9exH+E26Sv8e0/eTe1tltDGZL+GtBkDAnnyBtmekfK6/Dq3MkcGtzXFEd1LQrtg==",
       "man_dir": "",
       "name": "string.prototype.matchall",
@@ -19145,7 +19178,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         721,
         722,
       ],
-      "id": 369,
+      "id": 370,
       "integrity": "sha512-klHuCNxiMZ8MlsOihJhJEBJAiMVqU3Z2nEXWfWnIqjN0gEFS9J9+IxKozWWtQGcgoa1WUZzLjKPTr4ZHNFTFxw==",
       "man_dir": "",
       "name": "string.prototype.trim",
@@ -19165,7 +19198,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         724,
         725,
       ],
-      "id": 370,
+      "id": 371,
       "integrity": "sha512-p73uL5VCHCO2BZZ6krwwQE3kCzM7NKmis8S//xEC6fQonchbum4eP6kR4DLEjQFO3Wnj3Fuo8NM0kOSjVdHjZQ==",
       "man_dir": "",
       "name": "string.prototype.trimend",
@@ -19185,7 +19218,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         727,
         728,
       ],
-      "id": 371,
+      "id": 372,
       "integrity": "sha512-UXSH262CSZY1tfu3G3Secr6uGLCFVPMhIqHjlgCUtCCcgihYc/xKs9djMTMUOb2j1mVSeU8EU6NWc/iQKU6Gfg==",
       "man_dir": "",
       "name": "string.prototype.trimstart",
@@ -19203,7 +19236,25 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [
         729,
       ],
-      "id": 372,
+      "id": 373,
+      "integrity": "sha512-Y38VPSHcqkFrCpFnQ9vuSXmquuv5oXOKpGeT6aGrr3o3Gc9AlVa6JBfUSOCnbxGGZF+/0ooI7KrPuUSztUdU5A==",
+      "man_dir": "",
+      "name": "strip-ansi",
+      "name_hash": "13340235767065158173",
+      "origin": "npm",
+      "resolution": {
+        "resolved": "https://registry.npmjs.org/strip-ansi/-/strip-ansi-6.0.1.tgz",
+        "tag": "npm",
+        "value": "6.0.1",
+      },
+      "scripts": {},
+    },
+    {
+      "bin": null,
+      "dependencies": [
+        730,
+      ],
+      "id": 374,
       "integrity": "sha512-Y38VPSHcqkFrCpFnQ9vuSXmquuv5oXOKpGeT6aGrr3o3Gc9AlVa6JBfUSOCnbxGGZF+/0ooI7KrPuUSztUdU5A==",
       "man_dir": "",
       "name": "strip-ansi",
@@ -19219,7 +19270,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     {
       "bin": null,
       "dependencies": [],
-      "id": 373,
+      "id": 375,
       "integrity": "sha512-vavAMRXOgBVNF6nyEEmL3DBK19iRpDcoIwW+swQ+CbGiu7lju6t+JklA1MHweoWtadgt4ISVUsXLyDq34ddcwA==",
       "man_dir": "",
       "name": "strip-bom",
@@ -19235,7 +19286,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     {
       "bin": null,
       "dependencies": [],
-      "id": 374,
+      "id": 376,
       "integrity": "sha512-6fPc+R4ihwqP6N/aIv2f1gMH8lOVtWQHoqC4yK6oSDVVocumAsfCqjkXnqiYMhmMwS/mEHLp7Vehlt3ql6lEig==",
       "man_dir": "",
       "name": "strip-json-comments",
@@ -19254,7 +19305,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         731,
         732,
       ],
-      "id": 375,
+      "id": 377,
       "integrity": "sha512-pW7uC1l4mBZ8ugbiZrcIsiIvVx1UmTfw7UkC3Um2tmfUq9Bhk8IiyEIPl6F8agHgjzku6j0xQEZbfA5uSgSaCw==",
       "man_dir": "",
       "name": "styled-jsx",
@@ -19281,7 +19332,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         738,
         739,
       ],
-      "id": 376,
+      "id": 378,
       "integrity": "sha512-8EbVDiu9iN/nESwxeSxDKe0dunta1GOlHufmSSXxMD2z2/tMZpDMpvXQGsc+ajGo8y2uYUmixaSRUc/QPoQ0GA==",
       "man_dir": "",
       "name": "sucrase",
@@ -19299,7 +19350,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [
         740,
       ],
-      "id": 377,
+      "id": 379,
       "integrity": "sha512-qpCAvRl9stuOHveKsn7HncJRvv501qIacKzQlO/+Lwxc9+0q2wLyv4Dfvt80/DPn2pqOBsJdDiogXGR9+OvwRw==",
       "man_dir": "",
       "name": "supports-color",
@@ -19315,7 +19366,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     {
       "bin": null,
       "dependencies": [],
-      "id": 378,
+      "id": 380,
       "integrity": "sha512-ot0WnXS9fgdkgIcePe6RHNk1WA8+muPa6cSjeR3V8K27q9BB1rTE3R1p7Hv0z1ZyAc8s6Vvv8DIyWf681MAt0w==",
       "man_dir": "",
       "name": "supports-preserve-symlinks-flag",
@@ -19357,7 +19408,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         761,
         762,
       ],
-      "id": 379,
+      "id": 381,
       "integrity": "sha512-A0KgSkef7eE4Mf+nKJ83i75TMyq8HqY3qmFIJSWy8bNt0v1lG7jUcpGpoTFxAwYcWOphcTBLPPJg+bDfhDf52w==",
       "man_dir": "",
       "name": "tailwindcss",
@@ -19373,7 +19424,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     {
       "bin": null,
       "dependencies": [],
-      "id": 380,
+      "id": 382,
       "integrity": "sha512-GNzQvQTOIP6RyTfE2Qxb8ZVlNmw0n88vp1szwWRimP02mnTsx3Wtn5qRdqY9w2XduFNUgvOwhNnQsjwCp+kqaQ==",
       "man_dir": "",
       "name": "tapable",
@@ -19394,7 +19445,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         765,
         766,
       ],
-      "id": 381,
+      "id": 383,
       "integrity": "sha512-JOgGAmZyMgbqpLwct7ZV8VzkEB6pxXFBVErLtb+XCOqzc6w1xiWKI9GVd6bwk68EX7eJ4DWmfXVmq8K2ziZTGg==",
       "man_dir": "",
       "name": "tar-fs",
@@ -19414,7 +19465,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         768,
         769,
       ],
-      "id": 382,
+      "id": 384,
       "integrity": "sha512-qJj60CXt7IU1Ffyc3NJMjh6EkuCFej46zUqJ4J7pqYlThyd9bO0XBTmcOIhSzZJVWfsLks0+nle/j538YAW9RQ==",
       "man_dir": "",
       "name": "tar-stream",
@@ -19432,7 +19483,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [
         770,
       ],
-      "id": 383,
+      "id": 385,
       "integrity": "sha512-TmLJNj6UgX8xcUZo4UDStGQtDiTzF7BzWlzn9g7UWrjkpHr5uJTK1ld16wZ3LXb2vb6jH8qU89dW5whuMdXYdw==",
       "man_dir": "",
       "name": "text-decoder",
@@ -19448,7 +19499,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     {
       "bin": null,
       "dependencies": [],
-      "id": 384,
+      "id": 386,
       "integrity": "sha512-N+8UisAXDGk8PFXP4HAzVR9nbfmVJ3zYLAWiTIoqC5v5isinhr+r5uaO8+7r3BMfuNIufIsA7RdpVgacC2cSpw==",
       "man_dir": "",
       "name": "text-table",
@@ -19466,7 +19517,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [
         771,
       ],
-      "id": 385,
+      "id": 387,
       "integrity": "sha512-RVZSIV5IG10Hk3enotrhvz0T9em6cyHBLkH/YAZuKqd8hRkKhSfCGIcP2KUY0EPxndzANBmNllzWPwak+bheSw==",
       "man_dir": "",
       "name": "thenify",
@@ -19484,7 +19535,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [
         772,
       ],
-      "id": 386,
+      "id": 388,
       "integrity": "sha512-RNxQH/qI8/t3thXJDwcstUO4zeqo64+Uy/+sNVRBx4Xn2OX+OZ9oP+iJnNFqplFra2ZUVeKCSa2oVWi3T4uVmA==",
       "man_dir": "",
       "name": "thenify-all",
@@ -19500,7 +19551,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     {
       "bin": null,
       "dependencies": [],
-      "id": 387,
+      "id": 389,
       "integrity": "sha512-w89qg7PI8wAdvX60bMDP+bFoD5Dvhm9oLheFp5O4a2QF0cSBGsBX4qZmadPMvVqlLJBBci+WqGGOAPvcDeNSVg==",
       "man_dir": "",
       "name": "through",
@@ -19518,7 +19569,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [
         773,
       ],
-      "id": 388,
+      "id": 390,
       "integrity": "sha512-65P7iz6X5yEr1cwcgvQxbbIw7Uk3gOy5dIdtZ4rDveLqhrdJP+Li/Hx6tyK0NEb+2GCyneCMJiGqrADCSNk8sQ==",
       "man_dir": "",
       "name": "to-regex-range",
@@ -19536,7 +19587,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [
         774,
       ],
-      "id": 389,
+      "id": 391,
       "integrity": "sha512-UQMIo7pb8WRomKR1/+MFVLTroIvDVtMX3K6OUir8ynLyzB8Jeriont2bTAtmNPa1ekAgN7YPDyf6V+ygrdU+eQ==",
       "man_dir": "",
       "name": "ts-api-utils",
@@ -19552,7 +19603,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     {
       "bin": null,
       "dependencies": [],
-      "id": 390,
+      "id": 392,
       "integrity": "sha512-Y/arvbn+rrz3JCKl9C4kVNfTfSm2/mEp5FSz5EsZSANGPSlQrpRI5M4PKF+mJnE52jOO90PnPSc3Ur3bTQw0gA==",
       "man_dir": "",
       "name": "ts-interface-checker",
@@ -19573,7 +19624,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         777,
         778,
       ],
-      "id": 391,
+      "id": 393,
       "integrity": "sha512-2Ac2RgzDe/cn48GvOe3M+o82pEFewD3UPbyoUHHdKasHwJKjds4fLXWf/Ux5kATBKN20oaFGu+jbElp1pos0mg==",
       "man_dir": "",
       "name": "tsconfig-paths",
@@ -19589,7 +19640,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     {
       "bin": null,
       "dependencies": [],
-      "id": 392,
+      "id": 394,
       "integrity": "sha512-xNvxJEOUiWPGhUuUdQgAJPKOOJfGnIyKySOc09XkKsgdUV/3E2zvwZYdejjmRgPCgcym1juLH3226yA7sEFJKQ==",
       "man_dir": "",
       "name": "tslib",
@@ -19607,7 +19658,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [
         779,
       ],
-      "id": 393,
+      "id": 395,
       "integrity": "sha512-XleUoc9uwGXqjWwXaUTZAmzMcFZ5858QA2vvx1Ur5xIcixXIP+8LnFDgRplU30us6teqdlskFfu+ae4K79Ooew==",
       "man_dir": "",
       "name": "type-check",
@@ -19623,7 +19674,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     {
       "bin": null,
       "dependencies": [],
-      "id": 394,
+      "id": 396,
       "integrity": "sha512-Ne+eE4r0/iWnpAxD852z3A+N0Bt5RN//NjJwRd2VFHEmrywxf5vsZlh4R6lixl6B+wz/8d+maTSAkN1FIkI3LQ==",
       "man_dir": "",
       "name": "type-fest",
@@ -19643,7 +19694,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         781,
         782,
       ],
-      "id": 395,
+      "id": 397,
       "integrity": "sha512-gEymJYKZtKXzzBzM4jqa9w6Q1Jjm7x2d+sh19AdsD4wqnMPDYyvwpsIc2Q/835kHuo3BEQ7CjelGhfTsoBb2MQ==",
       "man_dir": "",
       "name": "typed-array-buffer",
@@ -19665,7 +19716,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         786,
         787,
       ],
-      "id": 396,
+      "id": 398,
       "integrity": "sha512-3iMJ9q0ao7WE9tWcaYKIptkNBuOIcZCCT0d4MRvuuH88fEoEH62IuQe0OtraD3ebQEoTRk8XCBoknUNc1Y67pw==",
       "man_dir": "",
       "name": "typed-array-byte-length",
@@ -19688,7 +19739,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         792,
         793,
       ],
-      "id": 397,
+      "id": 399,
       "integrity": "sha512-Ous0vodHa56FviZucS2E63zkgtgrACj7omjwd/8lTEMEPFFyjfixMZ1ZXenpgCFBBt4EC1J2XsyVS2gkG0eTFA==",
       "man_dir": "",
       "name": "typed-array-byte-offset",
@@ -19711,7 +19762,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         798,
         799,
       ],
-      "id": 398,
+      "id": 400,
       "integrity": "sha512-/OxDN6OtAk5KBpGb28T+HZc2M+ADtvRxXrKKbUwtsLgdoxgX13hyy7ek6bFRl5+aBs2yZzB0c4CnQfAtVypW/g==",
       "man_dir": "",
       "name": "typed-array-length",
@@ -19730,7 +19781,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "tsserver": "bin/tsserver",
       },
       "dependencies": [],
-      "id": 399,
+      "id": 401,
       "integrity": "sha512-mI4WrpHsbCIcwT9cF4FZvr80QUeKvsUsUvKDoR+X/7XHQH98xYD8YHZg7ANtz2GtZt/CBq2QJ0thkGJMHfqc1w==",
       "man_dir": "",
       "name": "typescript",
@@ -19751,7 +19802,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         802,
         803,
       ],
-      "id": 400,
+      "id": 402,
       "integrity": "sha512-61pPlCD9h51VoreyJ0BReideM3MDKMKnh6+V9L08331ipq6Q8OFXZYiqP6n/tbHx4s5I9uRhcye6BrbkizkBDw==",
       "man_dir": "",
       "name": "unbox-primitive",
@@ -19770,7 +19821,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         804,
         805,
       ],
-      "id": 401,
+      "id": 403,
       "integrity": "sha512-mlExGW4w71ebDJviH16lQLtZS32VKqsSfk80GCfUlwT/4/hNRFsoscrF/c++9xinkMzECL1uL9DDwXqFWkruPg==",
       "man_dir": "",
       "name": "unbzip2-stream",
@@ -19786,7 +19837,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     {
       "bin": null,
       "dependencies": [],
-      "id": 402,
+      "id": 404,
       "integrity": "sha512-JlCMO+ehdEIKqlFxk6IfVoAUVmgz7cU7zD/h9XZ0qzeosSHmUJVOzSQvvYSYWXkFXC+IfLKSIffhv0sVZup6pA==",
       "man_dir": "",
       "name": "undici-types",
@@ -19802,7 +19853,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     {
       "bin": null,
       "dependencies": [],
-      "id": 403,
+      "id": 405,
       "integrity": "sha512-gptHNQghINnc/vTGIk0SOFGFNXw7JVrlRUtConJRlvaw6DuX0wO5Jeko9sWrMBhh+PsYAZ7oXAiOnf/UKogyiw==",
       "man_dir": "",
       "name": "universalify",
@@ -19825,7 +19876,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         807,
         808,
       ],
-      "id": 404,
+      "id": 406,
       "integrity": "sha512-KVbTxlBYlckhF5wgfyZXTWnMn7MMZjMu9XG8bPlliUOP9ThaF4QnhP8qrjrH7DRzHfSk0oQv1wToW+iA5GajEQ==",
       "man_dir": "",
       "name": "update-browserslist-db",
@@ -19843,7 +19894,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [
         809,
       ],
-      "id": 405,
+      "id": 407,
       "integrity": "sha512-7rKUyy33Q1yc98pQ1DAmLtwX109F7TIfWlW1Ydo8Wl1ii1SeHieeh0HHfPeL2fMXK6z0s8ecKs9frCuLJvndBg==",
       "man_dir": "",
       "name": "uri-js",
@@ -19859,7 +19910,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     {
       "bin": null,
       "dependencies": [],
-      "id": 406,
+      "id": 408,
       "integrity": "sha512-H/A06tKD7sS1O1X2SshBVeA5FLycRpjqiBeqGKmBwBDBy28EnRjORxTNe269KSSr5un5qyWi1iL61wLxpd+ZOg==",
       "man_dir": "",
       "name": "urlpattern-polyfill",
@@ -19875,7 +19926,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     {
       "bin": null,
       "dependencies": [],
-      "id": 407,
+      "id": 409,
       "integrity": "sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==",
       "man_dir": "",
       "name": "util-deprecate",
@@ -19896,7 +19947,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [
         810,
       ],
-      "id": 408,
+      "id": 410,
       "integrity": "sha512-BLI3Tl1TW3Pvl70l3yq3Y64i+awpwXqsGBYWkkqMtnbXgrMD+yj7rhW0kuEDxzJaYXGjEW5ogapKNMEKNMjibA==",
       "man_dir": "",
       "name": "which",
@@ -19918,7 +19969,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         814,
         815,
       ],
-      "id": 409,
+      "id": 411,
       "integrity": "sha512-bwZdv0AKLpplFY2KZRX6TvyuN7ojjr7lwkg6ml0roIy9YeuSr7JS372qlNW18UQYzgYK9ziGcerWqZOmEn9VNg==",
       "man_dir": "",
       "name": "which-boxed-primitive",
@@ -19947,7 +19998,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         826,
         827,
       ],
-      "id": 410,
+      "id": 412,
       "integrity": "sha512-YmjsSMDBYsM1CaFiayOVT06+KJeXf0o5M/CAd4o1lTadFAtacTUM49zoYxr/oroopFDfhvN6iEcBxUyc3gvKmw==",
       "man_dir": "",
       "name": "which-builtin-type",
@@ -19968,7 +20019,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         830,
         831,
       ],
-      "id": 411,
+      "id": 413,
       "integrity": "sha512-K4jVyjnBdgvc86Y6BkaLZEN933SwYOuBFkdmBu9ZfkcAbdVbpITnDmjvZ/aQjRXQrv5EPkTnD1s39GiiqbngCw==",
       "man_dir": "",
       "name": "which-collection",
@@ -19990,7 +20041,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         835,
         836,
       ],
-      "id": 412,
+      "id": 414,
       "integrity": "sha512-oV0jmFtUky6CXfkqehVvBP/LSWJ2sy4vWMioiENyJLePrBO/yKyV9OyJySfAKosh+RYkIl5zJCNZ8/4JncrpdA==",
       "man_dir": "",
       "name": "which-typed-array",
@@ -20006,7 +20057,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     {
       "bin": null,
       "dependencies": [],
-      "id": 413,
+      "id": 415,
       "integrity": "sha512-BN22B5eaMMI9UMtjrGd5g5eCYPpCPDUy0FJXbYsaT5zYxjFOckS53SQDE3pWkVoWpHXVb3BrYcEN4Twa55B5cA==",
       "man_dir": "",
       "name": "word-wrap",
@@ -20026,7 +20077,27 @@ exports[`ssr works for 100-ish requests 1`] = `
         838,
         839,
       ],
-      "id": 414,
+      "id": 416,
+      "integrity": "sha512-YVGIj2kamLSTxw6NsZjoBxfSwsn0ycdesmc4p+Q21c5zPuZ1pl+NfxVdxPtdHvmNVOQ6XSYG4AUtyt/Fi7D16Q==",
+      "man_dir": "",
+      "name": "wrap-ansi",
+      "name_hash": "6417752039399150421",
+      "origin": "npm",
+      "resolution": {
+        "resolved": "https://registry.npmjs.org/wrap-ansi/-/wrap-ansi-7.0.0.tgz",
+        "tag": "npm",
+        "value": "7.0.0",
+      },
+      "scripts": {},
+    },
+    {
+      "bin": null,
+      "dependencies": [
+        840,
+        841,
+        842,
+      ],
+      "id": 417,
       "integrity": "sha512-YVGIj2kamLSTxw6NsZjoBxfSwsn0ycdesmc4p+Q21c5zPuZ1pl+NfxVdxPtdHvmNVOQ6XSYG4AUtyt/Fi7D16Q==",
       "man_dir": "",
       "name": "wrap-ansi",
@@ -20042,7 +20113,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     {
       "bin": null,
       "dependencies": [],
-      "id": 415,
+      "id": 418,
       "integrity": "sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==",
       "man_dir": "",
       "name": "wrappy",
@@ -20061,7 +20132,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         843,
         844,
       ],
-      "id": 416,
+      "id": 419,
       "integrity": "sha512-6XQFvXTkbfUOZOKKILFG1PDK2NDQs4azKQl26T0YS5CxqWLgXajbPZ+h4gZekJyRqFU8pvnbAbbs/3TgRPy+GQ==",
       "man_dir": "",
       "name": "ws",
@@ -20077,7 +20148,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     {
       "bin": null,
       "dependencies": [],
-      "id": 417,
+      "id": 420,
       "integrity": "sha512-0pfFzegeDWJHJIAmTLRP2DwHjdF5s7jo9tuztdQxAhINCdvS+3nGINqPd00AphqJR/0LhANUS6/+7SCb98YOfA==",
       "man_dir": "",
       "name": "y18n",
@@ -20093,7 +20164,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     {
       "bin": null,
       "dependencies": [],
-      "id": 418,
+      "id": 421,
       "integrity": "sha512-3wdGidZyq5PB084XLES5TpOSRA3wjXAlIWMhum2kRcv/41Sn2emQ0dycQW4uZXLejwKvg6EsvbdlVL+FYEct7A==",
       "man_dir": "",
       "name": "yallist",
@@ -20112,7 +20183,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "name": "yaml",
       },
       "dependencies": [],
-      "id": 419,
+      "id": 422,
       "integrity": "sha512-sntgmxj8o7DE7g/Qi60cqpLBA3HG3STcDA0kO+WfB05jEKhZMbY7umNm2rBpQvsmZ16/lPXCJGW2672dgOUkrg==",
       "man_dir": "",
       "name": "yaml",
@@ -20136,7 +20207,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         850,
         851,
       ],
-      "id": 420,
+      "id": 423,
       "integrity": "sha512-7dSzzRQ++CKnNI/krKnYRV7JKKPUXMEh61soaHKg9mrWEhzFWhFnxPxGl+69cD1Ou63C13NUPCnmIcrvqCuM6w==",
       "man_dir": "",
       "name": "yargs",
@@ -20152,7 +20223,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     {
       "bin": null,
       "dependencies": [],
-      "id": 421,
+      "id": 424,
       "integrity": "sha512-tVpsJW7DdjecAiFpbIB1e3qxIQsE6NoPc5/eTdrbbIC4h0LVsWhnoa3g+m2HclBIujHzsxZ4VJVA+GUuc2/LBw==",
       "man_dir": "",
       "name": "yargs-parser",
@@ -20171,7 +20242,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         852,
         853,
       ],
-      "id": 422,
+      "id": 425,
       "integrity": "sha512-p4a9I6X6nu6IhoGmBqAcbJy1mlC4j27vEPZX9F4L4/vZT3Lyq1VkFHw/V/PUcB9Buo+DG3iHkT0x3Qya58zc3g==",
       "man_dir": "",
       "name": "yauzl",
@@ -20187,7 +20258,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     {
       "bin": null,
       "dependencies": [],
-      "id": 423,
+      "id": 426,
       "integrity": "sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q==",
       "man_dir": "",
       "name": "yocto-queue",
@@ -20203,7 +20274,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     {
       "bin": null,
       "dependencies": [],
-      "id": 424,
+      "id": 427,
       "integrity": "sha512-XBx9AXhXktjUqnepgTiE5flcKIYWi/rme0Eaj+5Y0lftuGBq+jyRu/md4WnuxqgP1ubdpNCsYEYPxrzVHD8d6g==",
       "man_dir": "",
       "name": "zod",
@@ -20223,7 +20294,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         855,
         856,
       ],
-      "id": 425,
+      "id": 428,
       "integrity": "sha512-Mti+f9lpJNcwF4tWV8/OrTTtF1gZi+f8FqlyAdouralcFWFQWF2+NgCHShjkCb+IFBLq9buZwE1xckQU4peSuQ==",
       "man_dir": "",
       "name": "chalk",
@@ -20243,7 +20314,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         858,
         859,
       ],
-      "id": 426,
+      "id": 429,
       "integrity": "sha512-HnLOCR3vjcY8beoNLtcjZ5/nxn2afmME6lhrDrebokqMap+XbeW8n9TXpPDOqdGK5qcI3oT0GKTW6wC7EMiVqA==",
       "man_dir": "",
       "name": "string-width",
@@ -20261,7 +20332,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [
         860,
       ],
-      "id": 427,
+      "id": 430,
       "integrity": "sha512-iq6eVVI64nQQTRYq2KtEg2d2uU7LElhTJwsH4YzIHZshxlgZms/wIc4VoDQTlG/IvVIrBKG06CrZnp0qv7hkcQ==",
       "man_dir": "",
       "name": "strip-ansi",
@@ -20281,7 +20352,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         862,
         863,
       ],
-      "id": 428,
+      "id": 431,
       "integrity": "sha512-si7QWI6zUMq56bESFvagtmzMdGOtoxfR+Sez11Mobfc7tm+VkUckk9bW2UeffTGVUbOksxmSw0AA2gs8g71NCQ==",
       "man_dir": "",
       "name": "wrap-ansi",
@@ -20299,7 +20370,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [
         864,
       ],
-      "id": 429,
+      "id": 432,
       "integrity": "sha512-PRWFHuSU3eDtQJPvnNY7Jcket1j0t5OuOsFzPPzsekD52Zl8qUfFIPEiswXqIvHWGVHOgX+7G/vCNNhehwxfkQ==",
       "man_dir": "",
       "name": "debug",
@@ -20320,7 +20391,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [
         865,
       ],
-      "id": 430,
+      "id": 433,
       "integrity": "sha512-EnwXhrlwXMk9gKu5/flx5sv/an57AkRplG3hTK68W7FRDN+k+OWBj65M7719OkA82XLBxrcX0KSHj+X5COhOVg==",
       "man_dir": "",
       "name": "semver",
@@ -20338,7 +20409,25 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [
         866,
       ],
-      "id": 431,
+      "id": 434,
+      "integrity": "sha512-scnD59RpYD91xngrQQLGkE+6UrHUPzeKZWhhjBSa3HSkwjbQc38+q3RoIVEwxQGRw3M+j5hpNAM+lgV3cVormg==",
+      "man_dir": "",
+      "name": "@types/node",
+      "name_hash": "4124652010926124945",
+      "origin": "npm",
+      "resolution": {
+        "resolved": "https://registry.npmjs.org/@types/node/-/node-20.12.14.tgz",
+        "tag": "npm",
+        "value": "20.12.14",
+      },
+      "scripts": {},
+    },
+    {
+      "bin": null,
+      "dependencies": [
+        867,
+      ],
+      "id": 435,
       "integrity": "sha512-scnD59RpYD91xngrQQLGkE+6UrHUPzeKZWhhjBSa3HSkwjbQc38+q3RoIVEwxQGRw3M+j5hpNAM+lgV3cVormg==",
       "man_dir": "",
       "name": "@types/node",
@@ -20356,7 +20445,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [
         868,
       ],
-      "id": 432,
+      "id": 436,
       "integrity": "sha512-RHiac9mvaRw0x3AYRgDC1CxAP7HTcNrrECeA8YYJeWnpo+2Q5CegtZjaotWTWxDG3UeGA1coE05iH1mPjT/2mg==",
       "man_dir": "",
       "name": "minimatch",
@@ -20370,11 +20459,50 @@ exports[`ssr works for 100-ish requests 1`] = `
       "scripts": {},
     },
     {
+      "bin": {
+        "file": "bin/semver.js",
+        "name": "semver",
+      },
+      "dependencies": [
+        869,
+      ],
+      "id": 437,
+      "integrity": "sha512-EnwXhrlwXMk9gKu5/flx5sv/an57AkRplG3hTK68W7FRDN+k+OWBj65M7719OkA82XLBxrcX0KSHj+X5COhOVg==",
+      "man_dir": "",
+      "name": "semver",
+      "name_hash": "16367367531761322261",
+      "origin": "npm",
+      "resolution": {
+        "resolved": "https://registry.npmjs.org/semver/-/semver-7.6.0.tgz",
+        "tag": "npm",
+        "value": "7.6.0",
+      },
+      "scripts": {},
+    },
+    {
+      "bin": null,
+      "dependencies": [
+        870,
+      ],
+      "id": 438,
+      "integrity": "sha512-scnD59RpYD91xngrQQLGkE+6UrHUPzeKZWhhjBSa3HSkwjbQc38+q3RoIVEwxQGRw3M+j5hpNAM+lgV3cVormg==",
+      "man_dir": "",
+      "name": "@types/node",
+      "name_hash": "4124652010926124945",
+      "origin": "npm",
+      "resolution": {
+        "resolved": "https://registry.npmjs.org/@types/node/-/node-20.12.14.tgz",
+        "tag": "npm",
+        "value": "20.12.14",
+      },
+      "scripts": {},
+    },
+    {
       "bin": null,
       "dependencies": [
         871,
       ],
-      "id": 433,
+      "id": 439,
       "integrity": "sha512-AOIgSQCepiJYwP3ARnGx+5VnTu2HBYdzbGP45eLw1vr3zB3vZLeyed1sC9hnbcOc9/SrMyM5RPQrkGz4aS9Zow==",
       "man_dir": "",
       "name": "glob-parent",
@@ -20392,7 +20520,43 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [
         872,
       ],
-      "id": 434,
+      "id": 440,
+      "integrity": "sha512-CFjzYYAi4ThfiQvizrFQevTTXHtnCqWfe7x1AhgEscTz6ZbLbfoLRLPugTQyBth6f8ZERVUSyWHFD/7Wu4t1XQ==",
+      "man_dir": "",
+      "name": "debug",
+      "name_hash": "14324291119347696526",
+      "origin": "npm",
+      "resolution": {
+        "resolved": "https://registry.npmjs.org/debug/-/debug-3.2.7.tgz",
+        "tag": "npm",
+        "value": "3.2.7",
+      },
+      "scripts": {},
+    },
+    {
+      "bin": null,
+      "dependencies": [
+        873,
+      ],
+      "id": 441,
+      "integrity": "sha512-CFjzYYAi4ThfiQvizrFQevTTXHtnCqWfe7x1AhgEscTz6ZbLbfoLRLPugTQyBth6f8ZERVUSyWHFD/7Wu4t1XQ==",
+      "man_dir": "",
+      "name": "debug",
+      "name_hash": "14324291119347696526",
+      "origin": "npm",
+      "resolution": {
+        "resolved": "https://registry.npmjs.org/debug/-/debug-3.2.7.tgz",
+        "tag": "npm",
+        "value": "3.2.7",
+      },
+      "scripts": {},
+    },
+    {
+      "bin": null,
+      "dependencies": [
+        874,
+      ],
+      "id": 442,
       "integrity": "sha512-CFjzYYAi4ThfiQvizrFQevTTXHtnCqWfe7x1AhgEscTz6ZbLbfoLRLPugTQyBth6f8ZERVUSyWHFD/7Wu4t1XQ==",
       "man_dir": "",
       "name": "debug",
@@ -20410,7 +20574,25 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [
         875,
       ],
-      "id": 435,
+      "id": 443,
+      "integrity": "sha512-35mSku4ZXK0vfCuHEDAwt55dg2jNajHZ1odvF+8SSr82EsZY4QmXfuWso8oEd8zRhVObSN18aM0CjSdoBX7zIw==",
+      "man_dir": "",
+      "name": "doctrine",
+      "name_hash": "17204823894354646410",
+      "origin": "npm",
+      "resolution": {
+        "resolved": "https://registry.npmjs.org/doctrine/-/doctrine-2.1.0.tgz",
+        "tag": "npm",
+        "value": "2.1.0",
+      },
+      "scripts": {},
+    },
+    {
+      "bin": null,
+      "dependencies": [
+        876,
+      ],
+      "id": 444,
       "integrity": "sha512-35mSku4ZXK0vfCuHEDAwt55dg2jNajHZ1odvF+8SSr82EsZY4QmXfuWso8oEd8zRhVObSN18aM0CjSdoBX7zIw==",
       "man_dir": "",
       "name": "doctrine",
@@ -20433,7 +20615,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         878,
         879,
       ],
-      "id": 436,
+      "id": 445,
       "integrity": "sha512-U7WjGVG9sH8tvjW5SmGbQuui75FiyjAX72HX15DwBBwF9dNiQZRQAg9nnPhYy+TUnE0+VcrttuvNI8oSxZcocA==",
       "man_dir": "",
       "name": "resolve",
@@ -20449,9 +20631,27 @@ exports[`ssr works for 100-ish requests 1`] = `
     {
       "bin": null,
       "dependencies": [
+        880,
+      ],
+      "id": 446,
+      "integrity": "sha512-AOIgSQCepiJYwP3ARnGx+5VnTu2HBYdzbGP45eLw1vr3zB3vZLeyed1sC9hnbcOc9/SrMyM5RPQrkGz4aS9Zow==",
+      "man_dir": "",
+      "name": "glob-parent",
+      "name_hash": "11965780159102682782",
+      "origin": "npm",
+      "resolution": {
+        "resolved": "https://registry.npmjs.org/glob-parent/-/glob-parent-5.1.2.tgz",
+        "tag": "npm",
+        "value": "5.1.2",
+      },
+      "scripts": {},
+    },
+    {
+      "bin": null,
+      "dependencies": [
         881,
       ],
-      "id": 437,
+      "id": 447,
       "integrity": "sha512-KqWh+VchfxcMNRAJjj2tnsSJdNbHsVgnkBhTNrW7AjVo6OvLtxw8zfT9oLw1JSohlFzJ8jCoTgaoXvJ+kHt6fw==",
       "man_dir": "",
       "name": "minimatch",
@@ -20471,7 +20671,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         883,
         884,
       ],
-      "id": 438,
+      "id": 448,
       "integrity": "sha512-PS08Iboia9mts/2ygV3eLpY5ghnUcfLV/EXTOW1E2qYxJKGGBUtNjN76FYHnMs36RmARn41bC0AZmn+rR0OVpQ==",
       "man_dir": "",
       "name": "postcss",
@@ -20487,7 +20687,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     {
       "bin": null,
       "dependencies": [],
-      "id": 439,
+      "id": 449,
       "integrity": "sha512-9hp3Vp2/hFQUiIwKo8XCeFVnrg8Pk3TYNPIR7tJADKi5YfcF7vEaK7avFHTlSy3kOKYaJQaalfEo6YuXdceBOQ==",
       "man_dir": "",
       "name": "lru-cache",
@@ -20503,7 +20703,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     {
       "bin": null,
       "dependencies": [],
-      "id": 440,
+      "id": 450,
       "integrity": "sha512-O18pf7nyvHTckunPWCV1XUNXU1piu01y2b7ATJ0ppkUkk8ocqVWBrYjJBCwHDjD/ZWcfyrA0P4gKhzWGi5EINQ==",
       "man_dir": "",
       "name": "lilconfig",
@@ -20526,7 +20726,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         889,
         890,
       ],
-      "id": 441,
+      "id": 451,
       "integrity": "sha512-nFR0zLpU2YCaRxwoCJvL6UvCH2JFyFVIvwTLsIf21AuHlMskA1hhTdk+LlYJtOlYt9v6dvszD2BGRqBL+iQK9Q==",
       "man_dir": "",
       "name": "glob",
@@ -20542,7 +20742,23 @@ exports[`ssr works for 100-ish requests 1`] = `
     {
       "bin": null,
       "dependencies": [],
-      "id": 442,
+      "id": 452,
+      "integrity": "sha512-MSjYzcWNOA0ewAHpz0MxpYFvwg6yjy1NG3xteoqz644VCo/RPgnr1/GGt+ic3iJTzQ8Eu3TdM14SawnVUmGE6A==",
+      "man_dir": "",
+      "name": "emoji-regex",
+      "name_hash": "4954026511424972012",
+      "origin": "npm",
+      "resolution": {
+        "resolved": "https://registry.npmjs.org/emoji-regex/-/emoji-regex-8.0.0.tgz",
+        "tag": "npm",
+        "value": "8.0.0",
+      },
+      "scripts": {},
+    },
+    {
+      "bin": null,
+      "dependencies": [],
+      "id": 453,
       "integrity": "sha512-MSjYzcWNOA0ewAHpz0MxpYFvwg6yjy1NG3xteoqz644VCo/RPgnr1/GGt+ic3iJTzQ8Eu3TdM14SawnVUmGE6A==",
       "man_dir": "",
       "name": "emoji-regex",
@@ -20560,7 +20776,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [
         891,
       ],
-      "id": 443,
+      "id": 454,
       "integrity": "sha512-VT0ZI6kZRdTh8YyJw3SMbYm/u+NqfsAxEpWO0Pf9sq8/e94WxxOpPKx9FR1FlyCtOVDNOQ+8ntlqFxiRc+r5qA==",
       "man_dir": "",
       "name": "ansi-styles",
@@ -20576,7 +20792,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     {
       "bin": null,
       "dependencies": [],
-      "id": 444,
+      "id": 455,
       "integrity": "sha512-vbRorB5FUQWvla16U8R/qgaFIya2qGzwDrNmCZuYKrbdSUMG6I1ZCGQRefkRVhuOkIGVne7BQ35DSfo1qvJqFg==",
       "man_dir": "",
       "name": "escape-string-regexp",
@@ -20594,7 +20810,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [
         892,
       ],
-      "id": 445,
+      "id": 456,
       "integrity": "sha512-QjVjwdXIt408MIiAqCX4oUKsgU2EqAGzs2Ppkm4aQYbjm+ZEWEcW4SfFNTr4uMNZma0ey4f5lgLrkB0aX0QMow==",
       "man_dir": "",
       "name": "supports-color",
@@ -20610,7 +20826,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     {
       "bin": null,
       "dependencies": [],
-      "id": 446,
+      "id": 457,
       "integrity": "sha512-n5M855fKb2SsfMIiFFoVrABHJC8QtHwVx+mHWP3QcEqBHYienj5dHSgjbxtC0WEZXYt4wcD6zrQElDPhFuZgfA==",
       "man_dir": "",
       "name": "ansi-regex",
@@ -20626,7 +20842,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     {
       "bin": null,
       "dependencies": [],
-      "id": 447,
+      "id": 458,
       "integrity": "sha512-bN798gFfQX+viw3R7yrGWRqnrN2oRkEkUjjl4JNn4E8GxxbjtG3FbrEIIY3l8/hrwUwIeCZvi4QuOTP4MErVug==",
       "man_dir": "",
       "name": "ansi-styles",
@@ -20644,7 +20860,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [
         893,
       ],
-      "id": 448,
+      "id": 459,
       "integrity": "sha512-Jo6dJ04CmSjuznwJSS3pUeWmd/H0ffTlkXXgwZi+eq1UCmqQwCh+eLsYOYCwY991i2Fah4h1BEMCx4qThGbsiA==",
       "man_dir": "",
       "name": "lru-cache",
@@ -20662,7 +20878,43 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [
         894,
       ],
-      "id": 449,
+      "id": 460,
+      "integrity": "sha512-XnAIvQ8eM+kC6aULx6wuQiwVsnzsi9d3WxzV3FpWTGA19F621kwdbsAcFKXgKUHZWsy+mY6iL1sHTxWEFCytDA==",
+      "man_dir": "",
+      "name": "brace-expansion",
+      "name_hash": "2949258092693339993",
+      "origin": "npm",
+      "resolution": {
+        "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-2.0.1.tgz",
+        "tag": "npm",
+        "value": "2.0.1",
+      },
+      "scripts": {},
+    },
+    {
+      "bin": null,
+      "dependencies": [
+        895,
+      ],
+      "id": 461,
+      "integrity": "sha512-Jo6dJ04CmSjuznwJSS3pUeWmd/H0ffTlkXXgwZi+eq1UCmqQwCh+eLsYOYCwY991i2Fah4h1BEMCx4qThGbsiA==",
+      "man_dir": "",
+      "name": "lru-cache",
+      "name_hash": "15261810304153928944",
+      "origin": "npm",
+      "resolution": {
+        "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-6.0.0.tgz",
+        "tag": "npm",
+        "value": "6.0.0",
+      },
+      "scripts": {},
+    },
+    {
+      "bin": null,
+      "dependencies": [
+        896,
+      ],
+      "id": 462,
       "integrity": "sha512-XnAIvQ8eM+kC6aULx6wuQiwVsnzsi9d3WxzV3FpWTGA19F621kwdbsAcFKXgKUHZWsy+mY6iL1sHTxWEFCytDA==",
       "man_dir": "",
       "name": "brace-expansion",
@@ -20680,7 +20932,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [
         897,
       ],
-      "id": 450,
+      "id": 463,
       "integrity": "sha512-QfAUtd+vFdAtFQcC8CCyYt1fYWxSqAiK2cSD6zDB8N3cpsEBAvRxp9zOGg6G/SHHJYAT88/az/IuDGALsNVbGg==",
       "man_dir": "",
       "name": "color-convert",
@@ -20696,7 +20948,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     {
       "bin": null,
       "dependencies": [],
-      "id": 451,
+      "id": 464,
       "integrity": "sha512-sKJf1+ceQBr4SMkvQnBDNDtf4TXpVhVGateu0t918bl30FnbE2m4vNLX+VWe/dpjlb+HugGYzW7uQXH98HPEYw==",
       "man_dir": "",
       "name": "has-flag",
@@ -20712,7 +20964,7 @@ exports[`ssr works for 100-ish requests 1`] = `
     {
       "bin": null,
       "dependencies": [],
-      "id": 452,
+      "id": 465,
       "integrity": "sha512-72fSenhMw2HZMTVHeCA9KCmpEIbzWiQsjN+BHcBbS9vr1mtt+vJjPdksIBNUmKAW8TFUDPJK5SUU3QhE9NEXDw==",
       "man_dir": "",
       "name": "color-name",
@@ -22199,243 +22451,243 @@ exports[`ssr works for 100-ish requests 1`] = `
         },
         "string-width-cjs": {
           "id": 36,
-          "package_id": 367,
+          "package_id": 368,
         },
         "string.prototype.matchall": {
           "id": 409,
-          "package_id": 368,
+          "package_id": 369,
         },
         "string.prototype.trim": {
           "id": 259,
-          "package_id": 369,
+          "package_id": 370,
         },
         "string.prototype.trimend": {
           "id": 260,
-          "package_id": 370,
+          "package_id": 371,
         },
         "string.prototype.trimstart": {
           "id": 261,
-          "package_id": 371,
+          "package_id": 372,
         },
         "strip-ansi": {
           "id": 330,
-          "package_id": 372,
+          "package_id": 373,
         },
         "strip-ansi-cjs": {
           "id": 38,
-          "package_id": 372,
+          "package_id": 374,
         },
         "strip-bom": {
           "id": 778,
-          "package_id": 373,
+          "package_id": 375,
         },
         "strip-json-comments": {
           "id": 31,
-          "package_id": 374,
+          "package_id": 376,
         },
         "styled-jsx": {
           "id": 561,
-          "package_id": 375,
+          "package_id": 377,
         },
         "sucrase": {
           "id": 762,
-          "package_id": 376,
+          "package_id": 378,
         },
         "supports-color": {
           "id": 172,
-          "package_id": 377,
+          "package_id": 379,
         },
         "supports-preserve-symlinks-flag": {
           "id": 666,
-          "package_id": 378,
+          "package_id": 380,
         },
         "tailwindcss": {
           "id": 12,
-          "package_id": 379,
+          "package_id": 381,
         },
         "tapable": {
           "id": 220,
-          "package_id": 380,
+          "package_id": 382,
         },
         "tar-fs": {
           "id": 56,
-          "package_id": 381,
+          "package_id": 383,
         },
         "tar-stream": {
           "id": 766,
-          "package_id": 382,
+          "package_id": 384,
         },
         "text-decoder": {
           "id": 700,
-          "package_id": 383,
+          "package_id": 385,
         },
         "text-table": {
           "id": 331,
-          "package_id": 384,
+          "package_id": 386,
         },
         "thenify": {
           "id": 772,
-          "package_id": 385,
+          "package_id": 387,
         },
         "thenify-all": {
           "id": 541,
-          "package_id": 386,
+          "package_id": 388,
         },
         "through": {
           "id": 805,
-          "package_id": 387,
+          "package_id": 389,
         },
         "to-regex-range": {
           "id": 430,
-          "package_id": 388,
+          "package_id": 390,
         },
         "ts-api-utils": {
           "id": 81,
-          "package_id": 389,
+          "package_id": 391,
         },
         "ts-interface-checker": {
           "id": 739,
-          "package_id": 390,
+          "package_id": 392,
         },
         "tsconfig-paths": {
           "id": 373,
-          "package_id": 391,
+          "package_id": 393,
         },
         "tslib": {
           "id": 59,
-          "package_id": 392,
+          "package_id": 394,
         },
         "type-check": {
           "id": 533,
-          "package_id": 393,
+          "package_id": 395,
         },
         "type-fest": {
           "id": 466,
-          "package_id": 394,
+          "package_id": 396,
         },
         "typed-array-buffer": {
           "id": 262,
-          "package_id": 395,
+          "package_id": 397,
         },
         "typed-array-byte-length": {
           "id": 263,
-          "package_id": 396,
+          "package_id": 398,
         },
         "typed-array-byte-offset": {
           "id": 264,
-          "package_id": 397,
+          "package_id": 399,
         },
         "typed-array-length": {
           "id": 265,
-          "package_id": 398,
+          "package_id": 400,
         },
         "typescript": {
           "id": 13,
-          "package_id": 399,
+          "package_id": 401,
         },
         "unbox-primitive": {
           "id": 266,
-          "package_id": 400,
+          "package_id": 402,
         },
         "unbzip2-stream": {
           "id": 57,
-          "package_id": 401,
+          "package_id": 403,
         },
         "undici-types": {
-          "id": 866,
-          "package_id": 402,
+          "id": 870,
+          "package_id": 404,
         },
         "universalify": {
           "id": 441,
-          "package_id": 403,
+          "package_id": 405,
         },
         "update-browserslist-db": {
           "id": 160,
-          "package_id": 404,
+          "package_id": 406,
         },
         "uri-js": {
           "id": 89,
-          "package_id": 405,
+          "package_id": 407,
         },
         "urlpattern-polyfill": {
           "id": 183,
-          "package_id": 406,
+          "package_id": 408,
         },
         "util-deprecate": {
           "id": 624,
-          "package_id": 407,
+          "package_id": 409,
         },
         "which": {
           "id": 196,
-          "package_id": 408,
+          "package_id": 410,
         },
         "which-boxed-primitive": {
           "id": 803,
-          "package_id": 409,
+          "package_id": 411,
         },
         "which-builtin-type": {
           "id": 659,
-          "package_id": 410,
+          "package_id": 412,
         },
         "which-collection": {
           "id": 826,
-          "package_id": 411,
+          "package_id": 413,
         },
         "which-typed-array": {
           "id": 267,
-          "package_id": 412,
+          "package_id": 414,
         },
         "word-wrap": {
           "id": 588,
-          "package_id": 413,
+          "package_id": 415,
         },
         "wrap-ansi": {
           "id": 187,
-          "package_id": 414,
+          "package_id": 416,
         },
         "wrap-ansi-cjs": {
           "id": 40,
-          "package_id": 414,
+          "package_id": 417,
         },
         "wrappy": {
           "id": 582,
-          "package_id": 415,
+          "package_id": 418,
         },
         "ws": {
           "id": 646,
-          "package_id": 416,
+          "package_id": 419,
         },
         "y18n": {
           "id": 850,
-          "package_id": 417,
+          "package_id": 420,
         },
         "yallist": {
           "id": 893,
-          "package_id": 418,
+          "package_id": 421,
         },
         "yaml": {
           "id": 620,
-          "package_id": 419,
+          "package_id": 422,
         },
         "yargs": {
           "id": 58,
-          "package_id": 420,
+          "package_id": 423,
         },
         "yargs-parser": {
           "id": 851,
-          "package_id": 421,
+          "package_id": 424,
         },
         "yauzl": {
           "id": 421,
-          "package_id": 422,
+          "package_id": 425,
         },
         "yocto-queue": {
           "id": 589,
-          "package_id": 423,
+          "package_id": 426,
         },
         "zod": {
           "id": 184,
-          "package_id": 424,
+          "package_id": 427,
         },
       },
       "depth": 0,
@@ -22446,7 +22698,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": {
         "@types/node": {
           "id": 163,
-          "package_id": 431,
+          "package_id": 438,
         },
       },
       "depth": 1,
@@ -22457,7 +22709,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": {
         "postcss": {
           "id": 560,
-          "package_id": 438,
+          "package_id": 448,
         },
       },
       "depth": 1,
@@ -22468,7 +22720,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": {
         "@types/node": {
           "id": 64,
-          "package_id": 431,
+          "package_id": 434,
         },
       },
       "depth": 1,
@@ -22479,7 +22731,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": {
         "debug": {
           "id": 343,
-          "package_id": 434,
+          "package_id": 440,
         },
       },
       "depth": 1,
@@ -22490,11 +22742,11 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": {
         "debug": {
           "id": 361,
-          "package_id": 434,
+          "package_id": 442,
         },
         "doctrine": {
           "id": 362,
-          "package_id": 435,
+          "package_id": 443,
         },
       },
       "depth": 1,
@@ -22505,11 +22757,11 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": {
         "doctrine": {
           "id": 397,
-          "package_id": 435,
+          "package_id": 444,
         },
         "resolve": {
           "id": 407,
-          "package_id": 436,
+          "package_id": 445,
         },
       },
       "depth": 1,
@@ -22520,11 +22772,11 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": {
         "debug": {
           "id": 51,
-          "package_id": 429,
+          "package_id": 432,
         },
         "semver": {
           "id": 55,
-          "package_id": 430,
+          "package_id": 433,
         },
       },
       "depth": 1,
@@ -22535,7 +22787,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": {
         "glob-parent": {
           "id": 176,
-          "package_id": 433,
+          "package_id": 439,
         },
       },
       "depth": 1,
@@ -22546,7 +22798,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": {
         "glob-parent": {
           "id": 424,
-          "package_id": 433,
+          "package_id": 446,
         },
       },
       "depth": 1,
@@ -22557,7 +22809,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": {
         "lilconfig": {
           "id": 619,
-          "package_id": 440,
+          "package_id": 450,
         },
       },
       "depth": 1,
@@ -22568,7 +22820,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": {
         "minimatch": {
           "id": 462,
-          "package_id": 437,
+          "package_id": 447,
         },
       },
       "depth": 1,
@@ -22579,11 +22831,11 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": {
         "minimatch": {
           "id": 79,
-          "package_id": 432,
+          "package_id": 436,
         },
         "semver": {
           "id": 80,
-          "package_id": 430,
+          "package_id": 437,
         },
       },
       "depth": 1,
@@ -22594,7 +22846,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": {
         "debug": {
           "id": 355,
-          "package_id": 434,
+          "package_id": 441,
         },
       },
       "depth": 1,
@@ -22605,7 +22857,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": {
         "lru-cache": {
           "id": 865,
-          "package_id": 448,
+          "package_id": 459,
         },
       },
       "depth": 2,
@@ -22616,7 +22868,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": {
         "glob": {
           "id": 667,
-          "package_id": 441,
+          "package_id": 451,
         },
       },
       "depth": 1,
@@ -22627,7 +22879,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": {
         "brace-expansion": {
           "id": 881,
-          "package_id": 449,
+          "package_id": 462,
         },
       },
       "depth": 2,
@@ -22638,7 +22890,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": {
         "lru-cache": {
           "id": 606,
-          "package_id": 439,
+          "package_id": 449,
         },
       },
       "depth": 1,
@@ -22649,7 +22901,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": {
         "brace-expansion": {
           "id": 868,
-          "package_id": 449,
+          "package_id": 460,
         },
       },
       "depth": 2,
@@ -22659,8 +22911,8 @@ exports[`ssr works for 100-ish requests 1`] = `
     {
       "dependencies": {
         "lru-cache": {
-          "id": 865,
-          "package_id": 448,
+          "id": 869,
+          "package_id": 461,
         },
       },
       "depth": 2,
@@ -22671,7 +22923,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": {
         "@types/node": {
           "id": 65,
-          "package_id": 431,
+          "package_id": 435,
         },
       },
       "depth": 1,
@@ -22682,7 +22934,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": {
         "emoji-regex": {
           "id": 701,
-          "package_id": 442,
+          "package_id": 452,
         },
       },
       "depth": 1,
@@ -22693,15 +22945,15 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": {
         "string-width": {
           "id": 35,
-          "package_id": 426,
+          "package_id": 429,
         },
         "strip-ansi": {
           "id": 37,
-          "package_id": 427,
+          "package_id": 430,
         },
         "wrap-ansi": {
           "id": 39,
-          "package_id": 428,
+          "package_id": 431,
         },
       },
       "depth": 1,
@@ -22712,7 +22964,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": {
         "chalk": {
           "id": 17,
-          "package_id": 425,
+          "package_id": 428,
         },
       },
       "depth": 1,
@@ -22722,8 +22974,8 @@ exports[`ssr works for 100-ish requests 1`] = `
     {
       "dependencies": {
         "emoji-regex": {
-          "id": 701,
-          "package_id": 442,
+          "id": 704,
+          "package_id": 453,
         },
       },
       "depth": 1,
@@ -22734,7 +22986,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": {
         "ansi-regex": {
           "id": 860,
-          "package_id": 446,
+          "package_id": 457,
         },
       },
       "depth": 2,
@@ -22745,7 +22997,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": {
         "ansi-styles": {
           "id": 861,
-          "package_id": 447,
+          "package_id": 458,
         },
       },
       "depth": 2,
@@ -22756,15 +23008,15 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": {
         "ansi-styles": {
           "id": 854,
-          "package_id": 443,
+          "package_id": 454,
         },
         "escape-string-regexp": {
           "id": 855,
-          "package_id": 444,
+          "package_id": 455,
         },
         "supports-color": {
           "id": 856,
-          "package_id": 445,
+          "package_id": 456,
         },
       },
       "depth": 2,
@@ -22775,7 +23027,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": {
         "color-convert": {
           "id": 891,
-          "package_id": 450,
+          "package_id": 463,
         },
       },
       "depth": 3,
@@ -22786,7 +23038,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": {
         "has-flag": {
           "id": 892,
-          "package_id": 451,
+          "package_id": 464,
         },
       },
       "depth": 3,
@@ -22797,7 +23049,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": {
         "color-name": {
           "id": 897,
-          "package_id": 452,
+          "package_id": 465,
         },
       },
       "depth": 4,

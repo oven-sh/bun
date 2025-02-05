@@ -10,7 +10,7 @@ namespace v8 {
 Local<External> External::New(Isolate* isolate, void* value)
 {
     auto globalObject = isolate->globalObject();
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto structure = globalObject->NapiExternalStructure();
     Bun::NapiExternal* val = Bun::NapiExternal::create(vm, structure, value, nullptr, nullptr);
     return isolate->currentHandleScope()->createLocal<External>(vm, val);

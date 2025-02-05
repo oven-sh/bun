@@ -524,63 +524,54 @@ pub const AspectRatio = struct {
 };
 
 pub const BackgroundProperty = packed struct(u16) {
-    @"background-color": bool = false,
-    @"background-image": bool = false,
-    @"background-position-x": bool = false,
-    @"background-position-y": bool = false,
-    @"background-repeat": bool = false,
-    @"background-size": bool = false,
-    @"background-attachment": bool = false,
-    @"background-origin": bool = false,
-    @"background-clip": bool = false,
+    color: bool = false,
+    image: bool = false,
+    @"position-x": bool = false,
+    @"position-y": bool = false,
+    repeat: bool = false,
+    size: bool = false,
+    attachment: bool = false,
+    origin: bool = false,
+    clip: bool = false,
     __unused: u7 = 0,
 
     pub usingnamespace css.Bitflags(@This());
 
-    pub const @"background-color" = BackgroundProperty{ .@"background-color" = true };
-    pub const @"background-image" = BackgroundProperty{ .@"background-image" = true };
-    pub const @"background-position-x" = BackgroundProperty{ .@"background-position-x" = true };
-    pub const @"background-position-y" = BackgroundProperty{ .@"background-position-y" = true };
-    pub const @"background-position" = BackgroundProperty{ .@"background-position-x" = true, .@"background-position-y" = true };
-    pub const @"background-repeat" = BackgroundProperty{ .@"background-repeat" = true };
-    pub const @"background-size" = BackgroundProperty{ .@"background-size" = true };
-    pub const @"background-attachment" = BackgroundProperty{ .@"background-attachment" = true };
-    pub const @"background-origin" = BackgroundProperty{ .@"background-origin" = true };
-    pub const @"background-clip" = BackgroundProperty{ .@"background-clip" = true };
+    pub const @"background-color" = BackgroundProperty{ .color = true };
+    pub const @"background-image" = BackgroundProperty{ .image = true };
+    pub const @"background-position-x" = BackgroundProperty{ .@"position-x" = true };
+    pub const @"background-position-y" = BackgroundProperty{ .@"position-y" = true };
+    pub const @"background-position" = BackgroundProperty{ .@"position-x" = true, .@"position-y" = true };
+    pub const @"background-repeat" = BackgroundProperty{ .repeat = true };
+    pub const @"background-size" = BackgroundProperty{ .size = true };
+    pub const @"background-attachment" = BackgroundProperty{ .attachment = true };
+    pub const @"background-origin" = BackgroundProperty{ .origin = true };
+    pub const @"background-clip" = BackgroundProperty{ .clip = true };
+
     pub const background = BackgroundProperty{
-        .@"background-color" = true,
-        .@"background-image" = true,
-        .@"background-position-x" = true,
-        .@"background-position-y" = true,
-        .@"background-repeat" = true,
-        .@"background-size" = true,
-        .@"background-attachment" = true,
-        .@"background-origin" = true,
-        .@"background-clip" = true,
+        .color = true,
+        .image = true,
+        .@"position-x" = true,
+        .@"position-y" = true,
+        .repeat = true,
+        .size = true,
+        .attachment = true,
+        .origin = true,
+        .clip = true,
     };
 
-    pub fn fromPropertyId(property_id: css.PropertyId) ?BackgroundProperty {
+    pub fn tryFromPropertyId(property_id: css.PropertyId) ?BackgroundProperty {
         return switch (property_id) {
-            .@"background-color" => BackgroundProperty{ .@"background-color" = true },
-            .@"background-image" => BackgroundProperty{ .@"background-image" = true },
-            .@"background-position-x" => BackgroundProperty{ .@"background-position-x" = true },
-            .@"background-position-y" => BackgroundProperty{ .@"background-position-y" = true },
-            .@"background-position" => BackgroundProperty{ .@"background-position-x" = true, .@"background-position-y" = true },
-            .@"background-repeat" => BackgroundProperty{ .@"background-repeat" = true },
-            .@"background-size" => BackgroundProperty{ .@"background-size" = true },
-            .@"background-attachment" => BackgroundProperty{ .@"background-attachment" = true },
-            .@"background-origin" => BackgroundProperty{ .@"background-origin" = true },
-            .background => BackgroundProperty{
-                .@"background-color" = true,
-                .@"background-image" = true,
-                .@"background-position-x" = true,
-                .@"background-position-y" = true,
-                .@"background-repeat" = true,
-                .@"background-size" = true,
-                .@"background-attachment" = true,
-                .@"background-origin" = true,
-                .@"background-clip" = true,
-            },
+            .@"background-color" => @"background-color",
+            .@"background-image" => @"background-image",
+            .@"background-position-x" => @"background-position-x",
+            .@"background-position-y" => @"background-position-y",
+            .@"background-position" => @"background-position",
+            .@"background-repeat" => @"background-repeat",
+            .@"background-size" => @"background-size",
+            .@"background-attachment" => @"background-attachment",
+            .@"background-origin" => @"background-origin",
+            .background => background,
             else => null,
         };
     }
@@ -726,7 +717,7 @@ pub const BackgroundHandler = struct {
                     this.flush(allocator, dest, context);
                     var unparsed = val.deepClone(allocator);
                     context.addUnparsedFallbacks(&unparsed);
-                    if (BackgroundProperty.fromPropertyId(val.property_id)) |prop| {
+                    if (BackgroundProperty.tryFromPropertyId(val.property_id)) |prop| {
                         this.flushed_properties.insert(prop);
                     }
 

@@ -282,7 +282,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
 
 static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, unsigned count, JSC::JSGlobalObject* globalObject, Bun::BunStructureFlags flags, BunResultMode result_mode)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     switch (result_mode) {
@@ -420,7 +420,7 @@ typedef struct ExternColumnIdentifier {
 
 extern "C" EncodedJSValue JSC__createStructure(JSC::JSGlobalObject* globalObject, JSC::JSCell* owner, unsigned int inlineCapacity, ExternColumnIdentifier* namesPtr)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
 
     PropertyNameArray propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
     std::span<ExternColumnIdentifier> names(namesPtr, inlineCapacity);
@@ -457,7 +457,7 @@ extern "C" EncodedJSValue JSC__createStructure(JSC::JSGlobalObject* globalObject
 
 extern "C" EncodedJSValue JSC__createEmptyObjectWithStructure(JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto* object = JSC::constructEmptyObject(vm, structure);
 
     ensureStillAliveHere(object);

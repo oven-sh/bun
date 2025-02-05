@@ -608,7 +608,7 @@ pub const Font = struct {
     /// How the text should be capitalized. Only CSS 2.1 values are supported.
     variant_caps: FontVariantCaps,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.font);
+    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.font, PropertyFieldMap);
 
     pub const PropertyFieldMap = .{
         .family = css.PropertyIdTag.@"font-family",

@@ -2023,20 +2023,20 @@ pub const UV_CLOCK_MONOTONIC: c_int = 0;
 pub const UV_CLOCK_REALTIME: c_int = 1;
 pub const uv_clock_id = c_uint;
 pub const uv_timespec_t = extern struct {
-    tv_sec: c_long,
-    tv_nsec: c_long,
+    sec: c_long,
+    nsec: c_long,
 };
 pub const uv_timespec64_t = extern struct {
-    tv_sec: i64,
-    tv_nsec: i32,
+    sec: i64,
+    nsec: i32,
 };
 pub const uv_timeval_t = extern struct {
-    tv_sec: c_long,
-    tv_usec: c_long,
+    sec: c_long,
+    usec: c_long,
 };
 pub const uv_timeval64_t = extern struct {
-    tv_sec: i64,
-    tv_usec: i32,
+    sec: i64,
+    usec: i32,
 };
 pub const uv_stat_t = extern struct {
     dev: u64,

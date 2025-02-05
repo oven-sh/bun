@@ -160,6 +160,18 @@ pub fn Printer(comptime Writer: type) type {
             return PrintErr.lol;
         }
 
+        pub fn addInvalidCssModulesPatternInGridError(this: *This) PrintErr!void {
+            this.error_kind = css.PrinterError{
+                .kind = .invalid_css_modules_pattern_in_grid,
+                .loc = css.ErrorLocation{
+                    .filename = this.filename(),
+                    .line = this.loc.line,
+                    .column = this.loc.column,
+                },
+            };
+            return PrintErr.lol;
+        }
+
         /// Returns an error of the given kind at the provided location in the current source file.
         pub fn newError(
             this: *This,

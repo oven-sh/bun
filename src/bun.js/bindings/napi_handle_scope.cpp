@@ -80,7 +80,7 @@ NapiHandleScopeImpl::Slot* NapiHandleScopeImpl::reserveSlot()
 
 NapiHandleScopeImpl* NapiHandleScope::open(Zig::GlobalObject* globalObject, bool escapable)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     // Do not create a new handle scope while a finalizer is in progress
     // This state is possible because we call napi finalizers immediately
     // so a finalizer can be called while an allocation is in progress.

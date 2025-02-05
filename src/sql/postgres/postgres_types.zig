@@ -177,7 +177,7 @@ pub const Tag = enum(short) {
     jsonpath_array = 4073,
     _,
 
-    pub fn name(this: Tag) ?[]const u8 {
+    pub fn tagName(this: Tag) ?[]const u8 {
         return std.enums.tagName(Tag, this);
     }
 
@@ -345,7 +345,7 @@ pub const Tag = enum(short) {
                 return .timestamptz;
             }
 
-            if (tag.isTypedArray()) {
+            if (tag.isTypedArrayOrArrayBuffer()) {
                 if (tag == .Int32Array)
                     return .int4_array;
 

@@ -16,7 +16,12 @@ bunfig_dir: []const u8,
 /// `plugins` is array of serve plugins defined in the bunfig.toml file. They will be resolved and loaded.
 /// `bunfig_path` is the path to the bunfig.toml configuration file. It used to resolve the plugins relative
 /// to the bunfig.toml file.
-pub fn init(globalObject: *JSGlobalObject, path: []const u8, bunfig_path: []const u8, plugins: ?[]const []const u8) !*HTMLBundle {
+pub fn init(
+    globalObject: *JSGlobalObject,
+    path: []const u8,
+    bunfig_path: []const u8,
+    plugins: ?[]const []const u8,
+) !*HTMLBundle {
     var config = bun.JSC.API.JSBundler.Config{};
     try config.entry_points.insert(path);
     config.target = .browser;
@@ -63,6 +68,7 @@ pub const HTMLBundleRoute = struct {
     }
 
     pub fn init(html_bundle: *HTMLBundle) *HTMLBundleRoute {
+        html_bundle.ref();
         return HTMLBundleRoute.new(.{
             .html_bundle = html_bundle,
             .pending_responses = .{},
@@ -72,7 +78,7 @@ pub const HTMLBundleRoute = struct {
         });
     }
 
-    pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
+    pub usingnamespace bun.NewRefCounted(@This(), _deinit, null);
 
     pub const Value = union(enum) {
         pending_plugins,
@@ -109,7 +115,7 @@ pub const HTMLBundleRoute = struct {
         }
     };
 
-    pub fn deinit(this: *HTMLBundleRoute) void {
+    fn _deinit(this: *HTMLBundleRoute) void {
         for (this.pending_responses.items) |pending_response| {
             pending_response.deref();
         }
@@ -261,12 +267,33 @@ pub const HTMLBundleRoute = struct {
         config.entry_points = config.entry_points.clone() catch bun.outOfMemory();
         config.public_path = config.public_path.clone() catch bun.outOfMemory();
         config.define = config.define.clone() catch bun.outOfMemory();
-        if (!server.config().development) {
-            config.minify.syntax = true;
-            config.minify.whitespace = true;
+
+        if (bun.CLI.Command.get().args.serve_minify_identifiers) |minify_identifiers| {
+            config.minify.identifiers = minify_identifiers;
+        } else if (!server.config().development) {
             config.minify.identifiers = true;
-            config.define.put("process.env.NODE_ENV", "\"production\"") catch bun.outOfMemory();
         }
+
+        if (bun.CLI.Command.get().args.serve_minify_whitespace) |minify_whitespace| {
+            config.minify.whitespace = minify_whitespace;
+        } else if (!server.config().development) {
+            config.minify.whitespace = true;
+        }
+
+        if (bun.CLI.Command.get().args.serve_minify_syntax) |minify_syntax| {
+            config.minify.syntax = minify_syntax;
+        } else if (!server.config().development) {
+            config.minify.syntax = true;
+        }
+
+        if (!server.config().development) {
+            config.define.put("process.env.NODE_ENV", "\"production\"") catch bun.outOfMemory();
+            config.jsx.development = false;
+        } else {
+            config.force_node_env = .development;
+            config.jsx.development = true;
+        }
+
         config.source_map = .linked;
 
         const completion_task = bun.BundleV2.createAndScheduleCompletionTask(
@@ -490,9 +517,9 @@ pub const HTMLBundleRoute = struct {
         server: ?AnyServer = null,
         route: *HTMLBundleRoute,
 
-        pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
+        pub usingnamespace bun.NewRefCounted(@This(), __deinit, null);
 
-        pub fn deinit(this: *PendingResponse) void {
+        fn __deinit(this: *PendingResponse) void {
             if (this.is_response_pending) {
                 this.resp.clearAborted();
                 this.resp.clearOnWritable();
@@ -522,7 +549,7 @@ pub const HTMLBundleRoute = struct {
 };
 
 pub usingnamespace JSC.Codegen.JSHTMLBundle;
-pub usingnamespace bun.NewRefCounted(HTMLBundle, deinit);
+pub usingnamespace bun.NewRefCounted(HTMLBundle, deinit, null);
 const bun = @import("root").bun;
 const std = @import("std");
 const JSC = bun.JSC;

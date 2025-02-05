@@ -1342,9 +1342,7 @@ fn NewSocket(comptime ssl: bool) type {
         // This is wasteful because it means we are keeping a JSC::Weak for every single open socket
         has_pending_activity: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
         native_callback: NativeCallbacks = .none,
-        pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
-
-        pub const DEBUG_REFCOUNT_NAME = "Socket";
+        pub usingnamespace bun.NewRefCounted(@This(), deinit, "Socket");
 
         // We use this direct callbacks on HTTP2 when available
         pub const NativeCallbacks = union(enum) {
@@ -1395,8 +1393,6 @@ fn NewSocket(comptime ssl: bool) type {
             JSC.Codegen.JSTLSSocket;
 
         pub fn hasPendingActivity(this: *This) callconv(.C) bool {
-            @fence(.acquire);
-
             return this.has_pending_activity.load(.acquire);
         }
 
@@ -4377,6 +4373,9 @@ pub fn jsCreateSocketPair(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JS
         const err = bun.sys.Error.fromCode(bun.C.getErrno(rc), .socketpair);
         return global.throwValue(err.toJSC(global));
     }
+
+    _ = bun.sys.setNonblocking(bun.toFD(fds_[0]));
+    _ = bun.sys.setNonblocking(bun.toFD(fds_[1]));
 
     const array = JSC.JSValue.createEmptyArray(global, 2);
     array.putIndex(global, 0, JSC.jsNumber(fds_[0]));

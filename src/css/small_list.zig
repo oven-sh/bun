@@ -404,10 +404,10 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
         }
 
         pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
-            var ret: @This() = .{};
-            ret.appendSlice(allocator, this.slice());
-            for (ret.slice_mut()) |*item| {
-                item.* = generic.deepClone(T, item, allocator);
+            var ret: @This() = initCapacity(allocator, this.len());
+            ret.setLen(this.len());
+            for (this.slice(), ret.slice_mut()) |*in, *out| {
+                out.* = generic.deepClone(T, in, allocator);
             }
             return ret;
         }
@@ -575,7 +575,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
         }
 
         fn reserveOneUnchecked(this: *@This(), allocator: Allocator) void {
-            @setCold(true);
+            @branchHint(.cold);
             bun.assert(this.len() == this.capacity);
             const new_cap = growCapacity(this.capacity, this.len() + 1);
             this.tryGrow(allocator, new_cap);

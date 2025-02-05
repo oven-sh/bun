@@ -2,7 +2,6 @@
 
 #include "root.h"
 #include "ActiveDOMObject.h"
-#include "ContextDestructionObserver.h"
 #include <wtf/CrossThreadTask.h>
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
@@ -32,6 +31,8 @@ class MessagePort;
 
 class ScriptExecutionContext;
 class EventLoopTask;
+
+class ContextDestructionObserver;
 
 using ScriptExecutionContextIdentifier = uint32_t;
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ScriptExecutionContext);

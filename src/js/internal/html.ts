@@ -247,13 +247,14 @@ yourself with Bun.serve().
   const elapsed = (performance.now() - initial).toFixed(2);
   const enableANSIColors = Bun.enableANSIColors;
   function printInitialMessage(isFirst: boolean) {
+    const pathnameToPrint = servePaths[0] === "" || servePaths[0] === "*" ? "/" : servePaths[0];
     if (enableANSIColors) {
       let topLine = `${server.development ? "\x1b[34;7m DEV \x1b[0m " : ""}\x1b[1;34m\x1b[5mBun\x1b[0m \x1b[1;34mv${Bun.version}\x1b[0m`;
       if (isFirst) {
         topLine += ` \x1b[2mready in\x1b[0m \x1b[1m${elapsed}\x1b[0m ms`;
       }
       console.log(topLine + "\n");
-      console.log(`\x1b[1;34m➜\x1b[0m \x1b[36m${server!.url.href}\x1b[0m`);
+      console.log(`\x1b[1;34m➜\x1b[0m \x1b[36m${new URL(pathnameToPrint, server!.url)}\x1b[0m`);
     } else {
       let topLine = `Bun v${Bun.version}`;
       if (isFirst) {
@@ -263,7 +264,7 @@ yourself with Bun.serve().
         topLine += ` ready in ${elapsed} ms`;
       }
       console.log(topLine + "\n");
-      console.log(`url: ${server!.url.href}`);
+      console.log(`url: ${new URL(pathnameToPrint, server!.url)}`);
     }
     if (htmlImports.length > 1 || (servePaths[0] !== "" && servePaths[0] !== "*")) {
       console.log("\nRoutes:");

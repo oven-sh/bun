@@ -83,6 +83,8 @@ pub const BuildCommand = struct {
         if (fetcher) |fetch| {
             this_transpiler.options.entry_points = fetch.entry_points;
             this_transpiler.resolver.opts.entry_points = fetch.entry_points;
+            this_transpiler.options.ignore_module_resolution_errors = true;
+            this_transpiler.resolver.opts.ignore_module_resolution_errors = true;
         }
 
         this_transpiler.options.source_map = options.SourceMapOption.fromApi(ctx.args.source_map);

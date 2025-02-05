@@ -738,7 +738,7 @@ pub const BundleV2 = struct {
 
                     const path_to_use = import_record.specifier;
 
-                    if (!handles_import_errors) {
+                    if (!handles_import_errors and !this.transpiler.options.ignore_module_resolution_errors) {
                         if (isPackagePath(import_record.specifier)) {
                             if (target == .browser and options.ExternalModules.isNodeBuiltin(path_to_use)) {
                                 addError(
@@ -1457,8 +1457,14 @@ pub const BundleV2 = struct {
 
         onFetch: *const fn (
             ctx: *anyopaque,
-            dependencies: *bun.StringSet,
+            result: *DependenciesScanner.Result,
         ) anyerror!void,
+
+        pub const Result = struct {
+            dependencies: bun.StringSet,
+            reachable_files: []const Index,
+            bundle_v2: *BundleV2,
+        };
     };
 
     pub fn getAllDependencies(this: *BundleV2, reachable_files: []const Index, fetcher: *const DependenciesScanner) !void {
@@ -1478,7 +1484,6 @@ pub const BundleV2 = struct {
                         var package_path: []const u8 = "";
                         if (record.path.text[0] == '@') {
                             if (strings.indexOfChar(record.path.text, '/')) |slash_index| {
-                                // Ignore "@/", as that is sometimes a way to say package root.
                                 if (slash_index > 1 and record.path.text.len > 2) {
                                     const after_slash = record.path.text[slash_index + 1 ..];
                                     if (after_slash.len > 0) {
@@ -1505,8 +1510,12 @@ pub const BundleV2 = struct {
                 }
             }
         }
-
-        try fetcher.onFetch(fetcher.ctx, &external_deps);
+        var result = DependenciesScanner.Result{
+            .dependencies = external_deps,
+            .bundle_v2 = this,
+            .reachable_files = reachable_files,
+        };
+        try fetcher.onFetch(fetcher.ctx, &result);
     }
 
     pub fn generateFromCLI(
@@ -2832,7 +2841,7 @@ pub const BundleV2 = struct {
                     error.ModuleNotFound => {
                         const addError = Logger.Log.addResolveErrorWithTextDupe;
 
-                        if (!import_record.handles_import_errors) {
+                        if (!import_record.handles_import_errors and !this.transpiler.options.ignore_module_resolution_errors) {
                             last_error = err;
                             if (isPackagePath(import_record.path.text)) {
                                 if (ast.target == .browser and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {

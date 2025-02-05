@@ -1,0 +1,9 @@
+{
+  "name": "react-tailwind-spa",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "bun './*.html'",
+    "build": "bun *.build.ts"
+  }
+}

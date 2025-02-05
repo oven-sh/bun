@@ -7538,6 +7538,7 @@ pub const PackageManager = struct {
 
             if (maybe_cli) |cli| {
                 this.do.analyze = cli.analyze;
+                this.enable.only_missing = cli.only_missing or cli.analyze;
 
                 if (cli.registry.len > 0) {
                     this.scope.url = URL.parse(cli.registry);
@@ -7742,6 +7743,7 @@ pub const PackageManager = struct {
             force_install: bool = false,
 
             exact_versions: bool = false,
+            only_missing: bool = false,
         };
     };
 
@@ -8170,7 +8172,7 @@ pub const PackageManager = struct {
             const allocator = manager.allocator;
             var remaining = updates.len;
             var replacing: usize = 0;
-            const only_add_missing = manager.options.do.analyze;
+            const only_add_missing = manager.options.enable.only_missing;
 
             // There are three possible scenarios here
             // 1. There is no "dependencies" (or equivalent list) or it is empty
@@ -9625,6 +9627,7 @@ pub const PackageManager = struct {
         clap.parseParam("-E, --exact                  Add the exact version instead of the ^range") catch unreachable,
         clap.parseParam("--filter <STR>...                 Install packages for the matching workspaces") catch unreachable,
         clap.parseParam("-a, --analyze                   Analyze & install all dependencies of files passed as arguments recursively (using Bun's bundler)") catch unreachable,
+        clap.parseParam("--only-missing                  Only add dependencies to package.json if they are not already present") catch unreachable,
         clap.parseParam("<POS> ...                         ") catch unreachable,
     });
 
@@ -9648,6 +9651,7 @@ pub const PackageManager = struct {
         clap.parseParam("--peer                        Add dependency to \"peerDependencies\"") catch unreachable,
         clap.parseParam("-E, --exact                  Add the exact version instead of the ^range") catch unreachable,
         clap.parseParam("-a, --analyze                   Recursively analyze & install dependencies of files passed as arguments (using Bun's bundler)") catch unreachable,
+        clap.parseParam("--only-missing                  Only add dependencies to package.json if they are not already present") catch unreachable,
         clap.parseParam("<POS> ...                         \"name\" or \"name@version\" of package(s) to install") catch unreachable,
     });
 
@@ -9705,6 +9709,7 @@ pub const PackageManager = struct {
         network_concurrency: ?u16 = null,
         backend: ?PackageInstall.Method = null,
         analyze: bool = false,
+        only_missing: bool = false,
         positionals: []const string = &[_]string{},
 
         yarn: bool = false,
@@ -10218,6 +10223,7 @@ pub const PackageManager = struct {
                 cli.peer = args.flag("--peer");
                 cli.exact = args.flag("--exact");
                 cli.analyze = args.flag("--analyze");
+                cli.only_missing = args.flag("--only-missing");
             }
 
             if (args.option("--concurrent-scripts")) |concurrency| {
@@ -10545,12 +10551,12 @@ pub const PackageManager = struct {
                 subcommand: Subcommand,
                 pub fn onAnalyze(
                     this: *@This(),
-                    entry_points: *bun.StringSet,
+                    result: *bun.bundle_v2.BundleV2.DependenciesScanner.Result,
                 ) anyerror!void {
                     // TODO: add separate argument that makes it so positionals[1..] is not done and instead the positionals are passed
-                    var positionals = bun.default_allocator.alloc(string, entry_points.keys().len + 1) catch bun.outOfMemory();
+                    var positionals = bun.default_allocator.alloc(string, result.dependencies.keys().len + 1) catch bun.outOfMemory();
                     positionals[0] = "add";
-                    bun.copy(string, positionals[1..], entry_points.keys());
+                    bun.copy(string, positionals[1..], result.dependencies.keys());
                     this.cli.positionals = positionals;
 
                     try updatePackageJSONAndInstallAndCLI(this.ctx, this.subcommand, this.cli.*);
@@ -12328,11 +12334,11 @@ pub const PackageManager = struct {
             const Analyzer = struct {
                 ctx: Command.Context,
                 cli: *CommandLineArguments,
-                pub fn onAnalyze(this: *@This(), entry_points: *bun.StringSet) anyerror!void {
-                    // TODO: add separate argument that makes it so positionals[1..] is not done and instead the positionals are passed
-                    var positionals = bun.default_allocator.alloc(string, entry_points.keys().len + 1) catch bun.outOfMemory();
+                pub fn onAnalyze(this: *@This(), result: *bun.bundle_v2.BundleV2.DependenciesScanner.Result) anyerror!void {
+                    // TODO: add separate argument that makes it so positionals[1..] is not done     and instead the positionals are passed
+                    var positionals = bun.default_allocator.alloc(string, result.dependencies.keys().len + 1) catch bun.outOfMemory();
                     positionals[0] = "install";
-                    bun.copy(string, positionals[1..], entry_points.keys());
+                    bun.copy(string, positionals[1..], result.dependencies.keys());
                     this.cli.positionals = positionals;
 
                     try installWithCLI(this.ctx, this.cli.*);
@@ -15384,13 +15390,15 @@ pub const PackageManager = struct {
             } else if (install_summary.skipped > 0 and install_summary.fail == 0 and this.update_requests.len == 0) {
                 const count = @as(PackageID, @truncate(this.lockfile.packages.len));
                 if (count != install_summary.skipped) {
-                    Output.pretty("Checked <green>{d} install{s}<r> across {d} package{s} <d>(no changes)<r> ", .{
-                        install_summary.skipped,
-                        if (install_summary.skipped == 1) "" else "s",
-                        count,
-                        if (count == 1) "" else "s",
-                    });
-                    Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
+                    if (!this.options.enable.only_missing) {
+                        Output.pretty("Checked <green>{d} install{s}<r> across {d} package{s} <d>(no changes)<r> ", .{
+                            install_summary.skipped,
+                            if (install_summary.skipped == 1) "" else "s",
+                            count,
+                            if (count == 1) "" else "s",
+                        });
+                        Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
+                    }
                     printed_timestamp = true;
                     printBlockedPackagesInfo(install_summary, this.options.global);
                 } else {

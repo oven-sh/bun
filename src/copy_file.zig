@@ -60,7 +60,7 @@ const CopyFileReturnType = bun.sys.Maybe(void);
 
 pub fn copyFileWithState(in: InputType, out: InputType, copy_file_state: *CopyFileState) CopyFileReturnType {
     if (comptime Environment.isMac) {
-        const rc = posix.system.fcopyfile(in, out, null, posix.system.COPYFILE_DATA);
+        const rc = posix.system.fcopyfile(in, out, null, posix.system.COPYFILE{ .DATA = true });
 
         switch (posix.errno(rc)) {
             .SUCCESS => return CopyFileReturnType.success,

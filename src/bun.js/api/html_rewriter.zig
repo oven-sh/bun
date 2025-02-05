@@ -18,7 +18,7 @@ pub const LOLHTMLContext = struct {
     document_handlers: std.ArrayListUnmanaged(*DocumentHandler) = .{},
     ref_count: u32 = 1,
 
-    pub usingnamespace bun.NewRefCounted(@This(), deinit);
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
     fn deinit(this: *LOLHTMLContext) void {
         for (this.selectors.items) |selector| {
@@ -189,7 +189,7 @@ pub const HTMLRewriter = struct {
         const kind: ResponseKind = brk: {
             if (response_value.isString())
                 break :brk .string
-            else if (response_value.jsType().isTypedArray())
+            else if (response_value.jsType().isTypedArrayOrArrayBuffer())
                 break :brk .array_buffer
             else
                 break :brk .other;
@@ -395,7 +395,7 @@ pub const HTMLRewriter = struct {
         bodyValueBufferer: ?JSC.WebCore.BodyValueBufferer = null,
         tmp_sync_error: ?*JSC.JSValue = null,
         ref_count: u32 = 1,
-        pub usingnamespace bun.NewRefCounted(BufferOutputSink, deinit);
+        pub usingnamespace bun.NewRefCounted(BufferOutputSink, deinit, null);
 
         // const log = bun.Output.scoped(.BufferOutputSink, false);
         pub fn init(context: *LOLHTMLContext, global: *JSGlobalObject, original: *Response, builder: *LOLHTML.HTMLRewriter.Builder) JSC.JSValue {
@@ -1066,7 +1066,7 @@ pub const TextChunk = struct {
     ref_count: u32 = 1,
 
     pub usingnamespace JSC.Codegen.JSTextChunk;
-    pub usingnamespace bun.NewRefCounted(@This(), deinit);
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
     pub fn init(text_chunk: *LOLHTML.TextChunk) *TextChunk {
         return TextChunk.new(.{ .text_chunk = text_chunk, .ref_count = 2 });
     }
@@ -1175,7 +1175,7 @@ pub const DocType = struct {
         return DocType.new(.{ .doctype = doctype, .ref_count = 2 });
     }
 
-    pub usingnamespace bun.NewRefCounted(@This(), deinit);
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
     pub usingnamespace JSC.Codegen.JSDocType;
 
     /// The doctype name.
@@ -1242,7 +1242,7 @@ pub const DocEnd = struct {
     doc_end: ?*LOLHTML.DocEnd,
     ref_count: u32 = 1,
 
-    pub usingnamespace bun.NewRefCounted(@This(), deinit);
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
     pub usingnamespace JSC.Codegen.JSDocEnd;
 
     pub fn init(doc_end: *LOLHTML.DocEnd) *DocEnd {
@@ -1291,7 +1291,7 @@ pub const Comment = struct {
     comment: ?*LOLHTML.Comment = null,
     ref_count: u32 = 1,
 
-    pub usingnamespace bun.NewRefCounted(@This(), deinit);
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
     pub usingnamespace JSC.Codegen.JSComment;
 
     pub fn init(comment: *LOLHTML.Comment) *Comment {
@@ -1436,7 +1436,7 @@ pub const EndTag = struct {
     };
 
     pub usingnamespace JSC.Codegen.JSEndTag;
-    pub usingnamespace bun.NewRefCounted(@This(), deinit);
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
     fn contentHandler(this: *EndTag, comptime Callback: (fn (*LOLHTML.EndTag, []const u8, bool) LOLHTML.Error!void), thisObject: JSValue, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
         if (this.end_tag == null)
@@ -1554,7 +1554,7 @@ pub const AttributeIterator = struct {
     }
 
     pub usingnamespace JSC.Codegen.JSAttributeIterator;
-    pub usingnamespace bun.NewRefCounted(@This(), deinit);
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
     pub fn next(this: *AttributeIterator, globalObject: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         const done_label = JSC.ZigString.static("done");
@@ -1591,7 +1591,7 @@ pub const Element = struct {
     ref_count: u32 = 1,
 
     pub usingnamespace JSC.Codegen.JSElement;
-    pub usingnamespace bun.NewRefCounted(@This(), deinit);
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
     pub fn init(element: *LOLHTML.Element) *Element {
         return Element.new(.{ .element = element, .ref_count = 2 });

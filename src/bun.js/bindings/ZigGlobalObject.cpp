@@ -161,7 +161,9 @@
 #include "JSX509Certificate.h"
 #include "JSS3File.h"
 #include "S3Error.h"
+#include "ProcessBindingBuffer.h"
 #include <JavaScriptCore/JSBasePrivate.h>
+
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
 #endif
@@ -894,6 +896,8 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     // This must happen before JSVMClientData::create
     vm.heap.acquireAccess();
     JSC::JSLockHolder locker(vm);
+
+    vm.heap.disableStopIfNecessaryTimer();
 
     WebCore::JSVMClientData::create(&vm, Bun__getVM());
 
@@ -3220,6 +3224,14 @@ void GlobalObject::finishCreation(VM& vm)
                 InternalModuleRegistry::create(
                     init.vm,
                     InternalModuleRegistry::createStructure(init.vm, init.owner)));
+        });
+
+    m_processBindingBuffer.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+            init.set(
+                ProcessBindingBuffer::create(
+                    init.vm,
+                    ProcessBindingBuffer::createStructure(init.vm, init.owner)));
         });
 
     m_processBindingConstants.initLater(

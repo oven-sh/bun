@@ -313,7 +313,7 @@ pub const PatchTask = struct {
         var resolution_buf: [512]u8 = undefined;
         const resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{this.callback.apply.resolution.fmt(strbuf, .posix)}) catch unreachable;
 
-        const dummy_node_modules = .{
+        const dummy_node_modules: PackageManager.NodeModulesFolder = .{
             .path = std.ArrayList(u8).init(this.manager.allocator),
             .tree_id = 0,
         };
@@ -335,7 +335,7 @@ pub const PatchTask = struct {
 
         switch (pkg_install.installImpl(true, system_tmpdir, .copyfile, this.callback.apply.resolution.tag)) {
             .success => {},
-            .fail => |reason| {
+            .failure => |reason| {
                 return try log.addErrorFmtOpts(
                     this.manager.allocator,
                     "{s} while executing step: {s}",

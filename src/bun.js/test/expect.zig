@@ -4696,7 +4696,7 @@ pub const Expect = struct {
     };
 
     fn throwInvalidMatcherError(globalThis: *JSGlobalObject, matcher_name: bun.String, result: JSValue) bun.JSError {
-        @setCold(true);
+        @branchHint(.cold);
 
         var formatter = JSC.ConsoleObject.Formatter{
             .globalThis = globalThis,
@@ -4981,7 +4981,7 @@ pub const ExpectStatic = struct {
     }
 
     fn asyncChainingError(globalThis: *JSGlobalObject, flags: Expect.Flags, name: string) bun.JSError!JSValue {
-        @setCold(true);
+        @branchHint(.cold);
         const str = switch (flags.promise) {
             .resolves => "resolvesTo",
             .rejects => "rejectsTo",
@@ -5619,9 +5619,9 @@ extern fn Expect__getPrototype(globalThis: *JSGlobalObject) JSValue;
 extern fn ExpectStatic__getPrototype(globalThis: *JSGlobalObject) JSValue;
 
 comptime {
-    @export(ExpectMatcherUtils.createSingleton, .{ .name = "ExpectMatcherUtils_createSigleton" });
-    @export(Expect.readFlagsAndProcessPromise, .{ .name = "Expect_readFlagsAndProcessPromise" });
-    @export(ExpectCustomAsymmetricMatcher.execute, .{ .name = "ExpectCustomAsymmetricMatcher__execute" });
+    @export(&ExpectMatcherUtils.createSingleton, .{ .name = "ExpectMatcherUtils_createSigleton" });
+    @export(&Expect.readFlagsAndProcessPromise, .{ .name = "Expect_readFlagsAndProcessPromise" });
+    @export(&ExpectCustomAsymmetricMatcher.execute, .{ .name = "ExpectCustomAsymmetricMatcher__execute" });
 }
 
 fn incrementExpectCallCounter() void {
@@ -5674,7 +5674,7 @@ test "Expect.trimLeadingWhitespaceForInlineSnapshot" {
     try testTrimLeadingWhitespaceForSnapshot(
         \\
         \\  Hello, world!
-        \\               
+        \\
     ,
         \\
         \\Hello, world!
@@ -5699,7 +5699,7 @@ test "Expect.trimLeadingWhitespaceForInlineSnapshot" {
         \\  key: value
         \\
         \\  }
-        \\                
+        \\
     ,
         \\
         \\Object{
@@ -5713,13 +5713,13 @@ test "Expect.trimLeadingWhitespaceForInlineSnapshot" {
         \\    Object{
         \\  key: value
         \\  }
-        \\                
+        \\
     ,
         \\
         \\    Object{
         \\  key: value
         \\  }
-        \\                
+        \\
     );
     try testTrimLeadingWhitespaceForSnapshot(
         \\

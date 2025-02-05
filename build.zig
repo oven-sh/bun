@@ -19,7 +19,7 @@ const OperatingSystem = @import("src/env.zig").OperatingSystem;
 const pathRel = fs.path.relative;
 
 /// Do not rename this constant. It is scanned by some scripts to determine which zig version to install.
-const recommended_zig_version = "0.13.0";
+const recommended_zig_version = "0.14.0-dev.2987+183bb8b08";
 
 comptime {
     if (!std.mem.eql(u8, builtin.zig_version_string, recommended_zig_version)) {
@@ -154,8 +154,6 @@ pub fn build(b: *Build) !void {
     std.log.info("zig compiler v{s}", .{builtin.zig_version_string});
     checked_file_exists = std.AutoHashMap(u64, void).init(b.allocator);
 
-    b.zig_lib_dir = b.zig_lib_dir orelse b.path("vendor/zig/lib");
-
     // TODO: Upgrade path for 0.14.0
     // b.graph.zig_lib_directory = brk: {
     //     const sub_path = "vendor/zig/lib";
@@ -209,7 +207,7 @@ pub fn build(b: *Build) !void {
     const bun_version = b.option([]const u8, "version", "Value of `Bun.version`") orelse "0.0.0";
 
     b.reference_trace = ref_trace: {
-        const trace = b.option(u32, "reference-trace", "Set the reference trace") orelse 16;
+        const trace = b.option(u32, "reference-trace", "Set the reference trace") orelse 24;
         break :ref_trace if (trace == 0) null else trace;
     };
 
@@ -331,11 +329,25 @@ pub fn build(b: *Build) !void {
             .{ .os = .windows, .arch = .x86_64 },
         });
     }
+    {
+        const step = b.step("check-macos", "Check for semantic analysis errors on Windows");
+        addMultiCheck(b, step, build_options, &.{
+            .{ .os = .mac, .arch = .x86_64 },
+            .{ .os = .mac, .arch = .aarch64 },
+        });
+    }
+    {
+        const step = b.step("check-linux", "Check for semantic analysis errors on Windows");
+        addMultiCheck(b, step, build_options, &.{
+            .{ .os = .linux, .arch = .x86_64 },
+            .{ .os = .linux, .arch = .aarch64 },
+        });
+    }
 
     // zig build translate-c-headers
     {
         const step = b.step("translate-c", "Copy generated translated-c-headers.zig to zig-out");
-        step.dependOn(&b.addInstallFile(getTranslateC(b, b.host, .Debug).getOutput(), "translated-c-headers.zig").step);
+        step.dependOn(&b.addInstallFile(getTranslateC(b, b.graph.host, .Debug).getOutput(), "translated-c-headers.zig").step);
     }
 
     // zig build enum-extractor
@@ -363,7 +375,7 @@ pub fn addMultiCheck(
             const check_target = b.resolveTargetQuery(.{
                 .os_tag = OperatingSystem.stdOSTag(check.os),
                 .cpu_arch = check.arch,
-                .cpu_model = getCpuModel(check.os, check.arch) orelse .determined_by_cpu_arch,
+                .cpu_model = getCpuModel(check.os, check.arch) orelse .determined_by_arch_os,
                 .os_version_min = getOSVersionMin(check.os),
                 .glibc_version = if (check.musl) null else getOSGlibCVersion(check.os),
             });
@@ -429,7 +441,6 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
         .strip = false, // stripped at the end
     });
     obj.bundle_compiler_rt = false;
-    obj.formatted_panics = true;
     obj.root_module.omit_frame_pointer = false;
 
     // Link libc
@@ -614,7 +625,7 @@ const WindowsShim = struct {
             .optimize = .ReleaseFast,
             .use_llvm = true,
             .use_lld = true,
-            .unwind_tables = false,
+            .unwind_tables = .none,
             .omit_frame_pointer = true,
             .strip = true,
             .linkage = .static,

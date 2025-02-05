@@ -462,9 +462,9 @@ pub const TokenList = struct {
                     }
                     continue;
                 },
-                .hash, .idhash => {
+                .unrestrictedhash, .idhash => {
                     const h = switch (tok.*) {
-                        .hash => |h| h,
+                        .unrestrictedhash => |h| h,
                         .idhash => |h| h,
                         else => unreachable,
                     };
@@ -472,7 +472,7 @@ pub const TokenList = struct {
                         const r, const g, const b, const a = css.color.parseHashColor(h) orelse {
                             tokens.append(
                                 input.allocator(),
-                                .{ .token = .{ .hash = h } },
+                                .{ .token = .{ .unrestrictedhash = h } },
                             ) catch unreachable;
                             break :brk;
                         };
@@ -859,13 +859,12 @@ pub const UnresolvedColor = union(enum) {
                 const dark: *const TokenList = &ld.dark;
 
                 if (!dest.targets.isCompatible(.light_dark)) {
-                    // TODO(zack): lightningcss -> buncss
-                    try dest.writeStr("var(--lightningcss-light)");
+                    try dest.writeStr("var(--buncss-light");
                     try dest.delim(',', false);
                     try light.toCss(W, dest, is_custom_property);
                     try dest.writeChar(')');
                     try dest.whitespace();
-                    try dest.writeStr("var(--lightningcss-dark");
+                    try dest.writeStr("var(--buncss-dark");
                     try dest.delim(',', false);
                     try dark.toCss(W, dest, is_custom_property);
                     return dest.writeChar(')');

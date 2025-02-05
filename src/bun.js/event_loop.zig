@@ -1513,6 +1513,8 @@ pub const EventLoop = struct {
         }
 
         this.flushImmediateQueue();
+        this.tickImmediateTasks(ctx);
+
         ctx.onAfterEventLoop();
     }
 
@@ -1591,6 +1593,7 @@ pub const EventLoop = struct {
         }
 
         this.flushImmediateQueue();
+        this.tickImmediateTasks(ctx);
         ctx.onAfterEventLoop();
     }
 

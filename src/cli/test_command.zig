@@ -1740,6 +1740,7 @@ pub const TestCommand = struct {
                 }
 
                 vm.eventLoop().flushImmediateQueue();
+                vm.eventLoop().tickImmediateTasks(vm);
 
                 switch (vm.aggressive_garbage_collection) {
                     .none => {},

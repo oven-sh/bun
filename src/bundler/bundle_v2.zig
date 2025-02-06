@@ -2347,17 +2347,18 @@ pub const BundleV2 = struct {
                 // Actual empty files will contain a part exporting an empty object.
                 if (part_list.len != 0) {
                     if (maybe_css != null) {
-                        // @branchHint(.unlikely);
+                        @branchHint(.unlikely);
                         css_total_files.appendAssumeCapacity(Index.init(index));
-                    } else if (loaders[index] == .html) {
-                        // @branchHint(.unlikely);
-                        try html_files.put(this.graph.allocator, Index.init(index), {});
                     } else {
-                        js_files.appendAssumeCapacity(Index.init(index));
+                        if (loaders[index] == .html) {
+                            try html_files.put(this.graph.allocator, Index.init(index), {});
+                        } else {
+                            js_files.appendAssumeCapacity(Index.init(index));
 
-                        // Mark every part live.
-                        for (part_list.slice()) |*p| {
-                            p.is_live = true;
+                            // Mark every part live.
+                            for (part_list.slice()) |*p| {
+                                p.is_live = true;
+                            }
                         }
 
                         // Discover all CSS roots.

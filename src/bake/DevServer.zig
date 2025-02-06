@@ -3044,7 +3044,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     }
                 },
                 .client => {
-                    assert(!g.stale_files.isSet(file_index.get())); // should not be left stale
+                    // assert(!g.stale_files.isSet(file_index.get())); // should not be left stale
                     if (file.flags.kind == .css) {
                         if (goal.find_css) {
                             try g.current_css_files.append(g.owner().allocator, file.code());

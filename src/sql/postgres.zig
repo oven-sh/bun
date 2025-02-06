@@ -2315,22 +2315,6 @@ pub const PostgresSQLConnection = struct {
                         '\\' => buffer[out_index] = '\\', // Backslash
                         '\'' => buffer[out_index] = '\'', // Single quote
 
-                        // PostgreSQL specific escapes
-                        '0'...'7' => {
-                            // Octal escape sequence (\nnn)
-                            if (i + 2 >= input.len) return error.InvalidOctalSequence;
-
-                            const octal_str = input[i..@min(i + 3, input.len)];
-                            var octal_len: usize = 1;
-                            while (octal_len < 3 and octal_len < octal_str.len and
-                                octal_str[octal_len] >= '0' and octal_str[octal_len] <= '7') : (octal_len += 1)
-                            {}
-
-                            const octal_value = try std.fmt.parseInt(u8, octal_str[0..octal_len], 8);
-                            buffer[out_index] = octal_value;
-                            i += octal_len - 1;
-                        },
-
                         // JSON allows forward slash escaping
                         '/' => buffer[out_index] = '/',
 

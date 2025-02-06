@@ -2018,12 +2018,8 @@ declare module "bun" {
     username?: string;
     /** Database password for authentication */
     password?: string;
-    /** Database password for authentication (alias for password) */
-    pass?: string;
     /** Name of the database to connect to */
     database?: string;
-    /** Name of the database to connect to (alias for database) */
-    db?: string;
     /** Database adapter/driver to use */
     adapter?: string;
     /** Maximum time in seconds to wait for connection to become available */

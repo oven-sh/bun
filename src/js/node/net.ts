@@ -1493,16 +1493,6 @@ function toNumber(x) {
   return (x = Number(x)) >= 0 ? x : false;
 }
 
-// // TODO:
-// class BlockList {
-//   constructor() {}
-
-//   addSubnet(net, prefix, type) {}
-
-//   check(address, type) {
-//     return false;
-//   }
-// }
 var BlockList: BlockListType | undefined;
 
 export default {

@@ -471,7 +471,7 @@ describe("bunx --no-install", () => {
 
 it("should handle postinstall scripts correctly with symlinked bunx", async () => {
   // Create a symlink to bun called "bunx"
-  const bunxPath = join(x_dir, "bunx" + (isWindows ? ".exe" : ""));
+  const bunxPath = join(x_dir, isWindows ? "bunx.exe" : "bunx");
   copyFileSync(bunExe(), bunxPath);
 
   const subprocess = spawn({
@@ -480,7 +480,10 @@ it("should handle postinstall scripts correctly with symlinked bunx", async () =
     stdout: "pipe",
     stdin: "inherit",
     stderr: "pipe",
-    env: env,
+    env: {
+      ...env,
+      PATH: `${x_dir}${isWindows ? ";" : ":"}${env.PATH || ""}`,
+    },
   });
 
   let [err, out, exited] = await Promise.all([

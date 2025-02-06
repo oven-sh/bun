@@ -5772,4 +5772,1661 @@ if (isDockerEnabled()) {
       expect(result[0].lower_bound).toBe(1);
     });
   });
+
+  describe("xml[] Array type", () => {
+    test("xml[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::xml[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("xml[] - single value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['<root>value</root>']::xml[] as single_value`;
+      expect(result[0].single_value).toEqual(["<root>value</root>"]);
+    });
+
+    test("xml[] - multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '<a>1</a>',
+          '<b>2</b>',
+          '<c>3</c>'
+        ]::xml[] as multiple_values
+      `;
+      expect(result[0].multiple_values).toEqual(["<a>1</a>", "<b>2</b>", "<c>3</c>"]);
+    });
+
+    test("xml[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '<a>1</a>',
+          NULL,
+          '<c>3</c>',
+          NULL
+        ]::xml[] as array_with_nulls
+      `;
+      expect(result[0].array_with_nulls).toEqual(["<a>1</a>", null, "<c>3</c>", null]);
+    });
+
+    test("xml[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::xml[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("xml[] - array with XML attributes", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '<element id="1" class="test">content</element>',
+          '<tag attr="value" data-test="true">text</tag>'
+        ]::xml[] as xml_with_attributes
+      `;
+      expect(result[0].xml_with_attributes).toEqual([
+        '<element id="1" class="test">content</element>',
+        '<tag attr="value" data-test="true">text</tag>',
+      ]);
+    });
+
+    test("xml[] - nested XML elements", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '<outer><inner>value</inner></outer>',
+          '<parent><child><grandchild>text</grandchild></child></parent>'
+        ]::xml[] as nested_xml
+      `;
+      expect(result[0].nested_xml).toEqual([
+        "<outer><inner>value</inner></outer>",
+        "<parent><child><grandchild>text</grandchild></child></parent>",
+      ]);
+    });
+
+    test("xml[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY['<a>1</a>', '<b>2</b>', '<c>3</c>']::xml[])[1] as first_element,
+          (ARRAY['<a>1</a>', '<b>2</b>', '<c>3</c>']::xml[])[2] as second_element,
+          (ARRAY['<a>1</a>', '<b>2</b>', '<c>3</c>']::xml[])[3] as third_element
+      `;
+
+      expect(result[0].first_element).toBe("<a>1</a>");
+      expect(result[0].second_element).toBe("<b>2</b>");
+      expect(result[0].third_element).toBe("<c>3</c>");
+    });
+
+    test("xml[] - array concatenation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['<a>1</a>', '<b>2</b>']::xml[] || 
+          ARRAY['<c>3</c>', '<d>4</d>']::xml[] as concatenated
+      `;
+
+      expect(result[0].concatenated).toEqual(["<a>1</a>", "<b>2</b>", "<c>3</c>", "<d>4</d>"]);
+    });
+
+    test("xml[] - special characters and CDATA", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '<elem><![CDATA[Special & chars < > "" '' here]]></elem>',
+          '<data value="&quot;quoted&quot;">&amp; ampersand</data>'
+        ]::xml[] as special_chars
+      `;
+
+      expect(result[0].special_chars).toEqual([
+        '<elem><![CDATA[Special & chars < > "" \' here]]></elem>',
+        '<data value="&quot;quoted&quot;">&amp; ampersand</data>',
+      ]);
+    });
+
+    test("xml[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY['<a>1</a>', '<b>2</b>', '<c>3</c>']::xml[], 1) as array_length,
+          array_dims(ARRAY['<a>1</a>', '<b>2</b>', '<c>3</c>']::xml[]) as dimensions,
+          array_upper(ARRAY['<a>1</a>', '<b>2</b>', '<c>3</c>']::xml[], 1) as upper_bound,
+          array_lower(ARRAY['<a>1</a>', '<b>2</b>', '<c>3</c>']::xml[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(3);
+      expect(result[0].dimensions).toBe("[1:3]");
+      expect(result[0].upper_bound).toBe(3);
+      expect(result[0].lower_bound).toBe(1);
+    });
+
+    test("xml[] - XML declaration and processing instructions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '<?xml version="1.0" encoding="UTF-8"?><root>content</root>',
+          '<?xml-stylesheet type="text/xsl" href="style.xsl"?><data>styled</data>'
+        ]::xml[] as xml_processing
+      `;
+
+      expect(result[0].xml_processing).toEqual([
+        "<root>content</root>",
+        '<?xml-stylesheet type="text/xsl" href="style.xsl"?><data>styled</data>',
+      ]);
+    });
+  });
+
+  describe("point[] Array type", () => {
+    test("point[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::point[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("point[] - single value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['(1,2)']::point[] as single_value`;
+      expect(result[0].single_value).toEqual(["(1,2)"]);
+    });
+
+    test("point[] - multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '(1,2)',
+          '(3,4)',
+          '(5,6)'
+        ]::point[] as multiple_values
+      `;
+      expect(result[0].multiple_values).toEqual(["(1,2)", "(3,4)", "(5,6)"]);
+    });
+
+    test("point[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '(1,2)',
+          NULL,
+          '(5,6)',
+          NULL
+        ]::point[] as array_with_nulls
+      `;
+      expect(result[0].array_with_nulls).toEqual(["(1,2)", null, "(5,6)", null]);
+    });
+
+    test("point[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::point[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("point[] - decimal coordinates", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '(1.5,2.7)',
+          '(3.14,4.89)',
+          '(-1.2,5.6)'
+        ]::point[] as decimal_points
+      `;
+      expect(result[0].decimal_points).toEqual(["(1.5,2.7)", "(3.14,4.89)", "(-1.2,5.6)"]);
+    });
+
+    test("point[] - negative coordinates", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '(-1,-2)',
+          '(-3.5,-4.2)',
+          '(-5,-6)'
+        ]::point[] as negative_points
+      `;
+      expect(result[0].negative_points).toEqual(["(-1,-2)", "(-3.5,-4.2)", "(-5,-6)"]);
+    });
+
+    test("point[] - zero coordinates", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '(0,0)',
+          '(0,1)',
+          '(1,0)'
+        ]::point[] as zero_points
+      `;
+      expect(result[0].zero_points).toEqual(["(0,0)", "(0,1)", "(1,0)"]);
+    });
+
+    test("point[] - large coordinates", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '(1000000,2000000)',
+          '(-1000000,-2000000)',
+          '(999999.999,888888.888)'
+        ]::point[] as large_points
+      `;
+      expect(result[0].large_points).toEqual(["(1000000,2000000)", "(-1000000,-2000000)", "(999999.999,888888.888)"]);
+    });
+
+    test("point[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY['(1,2)', '(3,4)', '(5,6)']::point[])[1] as first_element,
+          (ARRAY['(1,2)', '(3,4)', '(5,6)']::point[])[2] as second_element,
+          (ARRAY['(1,2)', '(3,4)', '(5,6)']::point[])[3] as third_element
+      `;
+
+      expect(result[0].first_element).toBe("(1,2)");
+      expect(result[0].second_element).toBe("(3,4)");
+      expect(result[0].third_element).toBe("(5,6)");
+    });
+
+    test("point[] - array concatenation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['(1,2)', '(3,4)']::point[] || ARRAY['(5,6)', '(7,8)']::point[] as concatenated
+      `;
+
+      expect(result[0].concatenated).toEqual(["(1,2)", "(3,4)", "(5,6)", "(7,8)"]);
+    });
+
+    test("point[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY['(1,2)', '(3,4)', '(5,6)']::point[], 1) as array_length,
+          array_dims(ARRAY['(1,2)', '(3,4)', '(5,6)']::point[]) as dimensions,
+          array_upper(ARRAY['(1,2)', '(3,4)', '(5,6)']::point[], 1) as upper_bound,
+          array_lower(ARRAY['(1,2)', '(3,4)', '(5,6)']::point[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(3);
+      expect(result[0].dimensions).toBe("[1:3]");
+      expect(result[0].upper_bound).toBe(3);
+      expect(result[0].lower_bound).toBe(1);
+    });
+  });
+
+  describe("lseg[] Array type", () => {
+    test("lseg[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::lseg[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("lseg[] - single value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['[(1,2),(3,4)]']::lseg[] as single_value`;
+      expect(result[0].single_value).toEqual(["[(1,2),(3,4)]"]);
+    });
+
+    test("lseg[] - multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '[(1,2),(3,4)]',
+          '[(5,6),(7,8)]',
+          '[(9,10),(11,12)]'
+        ]::lseg[] as multiple_values
+      `;
+      expect(result[0].multiple_values).toEqual(["[(1,2),(3,4)]", "[(5,6),(7,8)]", "[(9,10),(11,12)]"]);
+    });
+
+    test("lseg[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '[(1,2),(3,4)]',
+          NULL,
+          '[(5,6),(7,8)]',
+          NULL
+        ]::lseg[] as array_with_nulls
+      `;
+      expect(result[0].array_with_nulls).toEqual(["[(1,2),(3,4)]", null, "[(5,6),(7,8)]", null]);
+    });
+
+    test("lseg[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::lseg[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("lseg[] - decimal coordinates", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '[(1.5,2.7),(3.14,4.89)]',
+          '[(0.1,0.2),(0.3,0.4)]',
+          '[(-1.2,5.6),(7.8,-9.0)]'
+        ]::lseg[] as decimal_segments
+      `;
+      expect(result[0].decimal_segments).toEqual([
+        "[(1.5,2.7),(3.14,4.89)]",
+        "[(0.1,0.2),(0.3,0.4)]",
+        "[(-1.2,5.6),(7.8,-9)]",
+      ]);
+    });
+
+    test("lseg[] - negative coordinates", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '[(-1,-2),(-3,-4)]',
+          '[(-5,-6),(-7,-8)]',
+          '[(-9,-10),(-11,-12)]'
+        ]::lseg[] as negative_segments
+      `;
+      expect(result[0].negative_segments).toEqual(["[(-1,-2),(-3,-4)]", "[(-5,-6),(-7,-8)]", "[(-9,-10),(-11,-12)]"]);
+    });
+
+    test("lseg[] - zero length segments", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '[(0,0),(0,0)]',
+          '[(1,1),(1,1)]',
+          '[(2,2),(2,2)]'
+        ]::lseg[] as zero_segments
+      `;
+      expect(result[0].zero_segments).toEqual(["[(0,0),(0,0)]", "[(1,1),(1,1)]", "[(2,2),(2,2)]"]);
+    });
+
+    test("lseg[] - horizontal and vertical segments", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '[(0,0),(5,0)]',    -- horizontal
+          '[(0,0),(0,5)]',    -- vertical
+          '[(1,1),(1,6)]'     -- vertical offset
+        ]::lseg[] as axis_segments
+      `;
+      expect(result[0].axis_segments).toEqual(["[(0,0),(5,0)]", "[(0,0),(0,5)]", "[(1,1),(1,6)]"]);
+    });
+
+    test("lseg[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY['[(1,2),(3,4)]', '[(5,6),(7,8)]', '[(9,10),(11,12)]']::lseg[])[1] as first_element,
+          (ARRAY['[(1,2),(3,4)]', '[(5,6),(7,8)]', '[(9,10),(11,12)]']::lseg[])[2] as second_element,
+          (ARRAY['[(1,2),(3,4)]', '[(5,6),(7,8)]', '[(9,10),(11,12)]']::lseg[])[3] as third_element
+      `;
+
+      expect(result[0].first_element).toBe("[(1,2),(3,4)]");
+      expect(result[0].second_element).toBe("[(5,6),(7,8)]");
+      expect(result[0].third_element).toBe("[(9,10),(11,12)]");
+    });
+
+    test("lseg[] - array concatenation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['[(1,2),(3,4)]', '[(5,6),(7,8)]']::lseg[] || 
+          ARRAY['[(9,10),(11,12)]', '[(13,14),(15,16)]']::lseg[] as concatenated
+      `;
+
+      expect(result[0].concatenated).toEqual([
+        "[(1,2),(3,4)]",
+        "[(5,6),(7,8)]",
+        "[(9,10),(11,12)]",
+        "[(13,14),(15,16)]",
+      ]);
+    });
+    test("lseg[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY['[(1,2),(3,4)]', '[(5,6),(7,8)]', '[(9,10),(11,12)]']::lseg[], 1) as array_length,
+          array_dims(ARRAY['[(1,2),(3,4)]', '[(5,6),(7,8)]', '[(9,10),(11,12)]']::lseg[]) as dimensions,
+          array_upper(ARRAY['[(1,2),(3,4)]', '[(5,6),(7,8)]', '[(9,10),(11,12)]']::lseg[], 1) as upper_bound,
+          array_lower(ARRAY['[(1,2),(3,4)]', '[(5,6),(7,8)]', '[(9,10),(11,12)]']::lseg[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(3);
+      expect(result[0].dimensions).toBe("[1:3]");
+      expect(result[0].upper_bound).toBe(3);
+      expect(result[0].lower_bound).toBe(1);
+    });
+  });
+
+  describe("path[] Array type", () => {
+    test("path[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::path[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("path[] - single open path", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['[(1,2),(3,4),(5,6)]']::path[] as single_open_path`;
+      expect(result[0].single_open_path).toEqual(["[(1,2),(3,4),(5,6)]"]);
+    });
+
+    test("path[] - single closed path", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['((1,2),(3,4),(5,6))']::path[] as single_closed_path`;
+      expect(result[0].single_closed_path).toEqual(["((1,2),(3,4),(5,6))"]);
+    });
+
+    test("path[] - multiple mixed paths", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '[(1,2),(3,4),(5,6)]',
+          '((7,8),(9,10),(11,12))',
+          '[(13,14),(15,16),(17,18)]'
+        ]::path[] as mixed_paths
+      `;
+      expect(result[0].mixed_paths).toEqual([
+        "[(1,2),(3,4),(5,6)]",
+        "((7,8),(9,10),(11,12))",
+        "[(13,14),(15,16),(17,18)]",
+      ]);
+    });
+
+    test("path[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '[(1,2),(3,4)]',
+          NULL,
+          '((5,6),(7,8))',
+          NULL
+        ]::path[] as array_with_nulls
+      `;
+      expect(result[0].array_with_nulls).toEqual(["[(1,2),(3,4)]", null, "((5,6),(7,8))", null]);
+    });
+
+    test("path[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::path[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("path[] - decimal coordinates", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '[(1.5,2.7),(3.14,4.89),(5.5,6.6)]',
+          '((0.1,0.2),(0.3,0.4),(0.5,0.6))'
+        ]::path[] as decimal_paths
+      `;
+      expect(result[0].decimal_paths).toEqual(["[(1.5,2.7),(3.14,4.89),(5.5,6.6)]", "((0.1,0.2),(0.3,0.4),(0.5,0.6))"]);
+    });
+
+    test("path[] - negative coordinates", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '[(-1,-2),(-3,-4),(-5,-6)]',
+          '((-7,-8),(-9,-10),(-11,-12))'
+        ]::path[] as negative_paths
+      `;
+      expect(result[0].negative_paths).toEqual(["[(-1,-2),(-3,-4),(-5,-6)]", "((-7,-8),(-9,-10),(-11,-12))"]);
+    });
+
+    test("path[] - minimum points (2)", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '[(0,0),(1,1)]',
+          '((2,2),(3,3))'
+        ]::path[] as minimum_paths
+      `;
+      expect(result[0].minimum_paths).toEqual(["[(0,0),(1,1)]", "((2,2),(3,3))"]);
+    });
+
+    test("path[] - complex paths", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '[(0,0),(1,1),(2,0),(1,-1),(0,0)]',          -- pentagon
+          '((0,0),(2,2),(4,0),(4,-2),(0,-2),(0,0))'    -- hexagon
+        ]::path[] as complex_paths
+      `;
+      expect(result[0].complex_paths).toEqual([
+        "[(0,0),(1,1),(2,0),(1,-1),(0,0)]",
+        "((0,0),(2,2),(4,0),(4,-2),(0,-2),(0,0))",
+      ]);
+    });
+
+    test("path[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY['[(1,2),(3,4)]', '((5,6),(7,8))', '[(9,10),(11,12)]']::path[])[1] as first_element,
+          (ARRAY['[(1,2),(3,4)]', '((5,6),(7,8))', '[(9,10),(11,12)]']::path[])[2] as second_element,
+          (ARRAY['[(1,2),(3,4)]', '((5,6),(7,8))', '[(9,10),(11,12)]']::path[])[3] as third_element
+      `;
+
+      expect(result[0].first_element).toBe("[(1,2),(3,4)]");
+      expect(result[0].second_element).toBe("((5,6),(7,8))");
+      expect(result[0].third_element).toBe("[(9,10),(11,12)]");
+    });
+
+    test("path[] - array concatenation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['[(1,2),(3,4)]', '((5,6),(7,8))']::path[] || 
+          ARRAY['[(9,10),(11,12)]']::path[] as concatenated
+      `;
+
+      expect(result[0].concatenated).toEqual(["[(1,2),(3,4)]", "((5,6),(7,8))", "[(9,10),(11,12)]"]);
+    });
+
+    test("path[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY['[(1,2),(3,4)]', '((5,6),(7,8))', '[(9,10),(11,12)]']::path[], 1) as array_length,
+          array_dims(ARRAY['[(1,2),(3,4)]', '((5,6),(7,8))', '[(9,10),(11,12)]']::path[]) as dimensions,
+          array_upper(ARRAY['[(1,2),(3,4)]', '((5,6),(7,8))', '[(9,10),(11,12)]']::path[], 1) as upper_bound,
+          array_lower(ARRAY['[(1,2),(3,4)]', '((5,6),(7,8))', '[(9,10),(11,12)]']::path[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(3);
+      expect(result[0].dimensions).toBe("[1:3]");
+      expect(result[0].upper_bound).toBe(3);
+      expect(result[0].lower_bound).toBe(1);
+    });
+  });
+  describe("box[] Array type", () => {
+    test("box[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::box[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("box[] - single value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['((0,0),(1,1))']::box[] as single_value`;
+      expect(result[0].single_value).toEqual(["(1,1),(0,0)"]); // PostgreSQL normalizes to upper-right, lower-left
+    });
+
+    test("box[] - multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '((0,0),(1,1))',
+          '((2,2),(3,3))',
+          '((4,4),(5,5))'
+        ]::box[] as multiple_values
+      `;
+      expect(result[0].multiple_values).toEqual(["(1,1),(0,0)", "(3,3),(2,2)", "(5,5),(4,4)"]);
+    });
+
+    test("box[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '((0,0),(1,1))',
+          NULL,
+          '((2,2),(3,3))',
+          NULL
+        ]::box[] as array_with_nulls
+      `;
+      expect(result[0].array_with_nulls).toEqual(["(1,1),(0,0)", null, "(3,3),(2,2)", null]);
+    });
+
+    test("box[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::box[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("box[] - decimal coordinates", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '((0.5,0.5),(1.5,1.5))',
+          '((2.25,2.25),(3.75,3.75))'
+        ]::box[] as decimal_boxes
+      `;
+      expect(result[0].decimal_boxes).toEqual(["(1.5,1.5),(0.5,0.5)", "(3.75,3.75),(2.25,2.25)"]);
+    });
+
+    test("box[] - negative coordinates", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '((-1,-1),(1,1))',
+          '((-2,-2),(2,2))'
+        ]::box[] as negative_boxes
+      `;
+      expect(result[0].negative_boxes).toEqual(["(1,1),(-1,-1)", "(2,2),(-2,-2)"]);
+    });
+
+    test("box[] - degenerate boxes (point)", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '((1,1),(1,1))',
+          '((2,2),(2,2))'
+        ]::box[] as point_boxes
+      `;
+      expect(result[0].point_boxes).toEqual(["(1,1),(1,1)", "(2,2),(2,2)"]);
+    });
+
+    test("box[] - degenerate boxes (line)", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '((0,1),(2,1))',     -- horizontal line
+          '((1,0),(1,2))'      -- vertical line
+        ]::box[] as line_boxes
+      `;
+      expect(result[0].line_boxes).toEqual(["(2,1),(0,1)", "(1,2),(1,0)"]);
+    });
+
+    test("box[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY['((0,0),(1,1))', '((2,2),(3,3))', '((4,4),(5,5))']::box[])[1] as first_element,
+          (ARRAY['((0,0),(1,1))', '((2,2),(3,3))', '((4,4),(5,5))']::box[])[2] as second_element,
+          (ARRAY['((0,0),(1,1))', '((2,2),(3,3))', '((4,4),(5,5))']::box[])[3] as third_element
+      `;
+
+      expect(result[0].first_element).toBe("(1,1),(0,0)");
+      expect(result[0].second_element).toBe("(3,3),(2,2)");
+      expect(result[0].third_element).toBe("(5,5),(4,4)");
+    });
+
+    test("box[] - array concatenation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['((0,0),(1,1))', '((2,2),(3,3))']::box[] || 
+          ARRAY['((4,4),(5,5))']::box[] as concatenated
+      `;
+
+      expect(result[0].concatenated).toEqual(["(1,1),(0,0)", "(3,3),(2,2)", "(5,5),(4,4)"]);
+    });
+
+    test("box[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY['((0,0),(1,1))', '((2,2),(3,3))']::box[], 1) as array_length,
+          array_dims(ARRAY['((0,0),(1,1))', '((2,2),(3,3))']::box[]) as dimensions,
+          array_upper(ARRAY['((0,0),(1,1))', '((2,2),(3,3))']::box[], 1) as upper_bound,
+          array_lower(ARRAY['((0,0),(1,1))', '((2,2),(3,3))']::box[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(2);
+      expect(result[0].dimensions).toBe("[1:2]");
+      expect(result[0].upper_bound).toBe(2);
+      expect(result[0].lower_bound).toBe(1);
+    });
+
+    test("box[] - box operators", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          box '((0,0),(1,1))' = box '((1,1),(0,0))' as same_box,
+          box '((0,0),(2,2))' @> box '((1,1),(1.5,1.5))' as contains_box,
+          box '((0,0),(2,2))' && box '((1,1),(3,3))' as overlaps_box
+      `;
+
+      expect(result[0].same_box).toBe(true);
+      expect(result[0].contains_box).toBe(true);
+      expect(result[0].overlaps_box).toBe(true);
+    });
+  });
+
+  describe("polygon[] Array type", () => {
+    test("polygon[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::polygon[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("polygon[] - single triangle", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['((0,0),(1,1),(2,0))']::polygon[] as single_triangle`;
+      expect(result[0].single_triangle).toEqual(["((0,0),(1,1),(2,0))"]);
+    });
+
+    test("polygon[] - multiple polygons", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '((0,0),(1,1),(2,0))',              -- triangle
+          '((0,0),(0,1),(1,1),(1,0))',        -- square
+          '((0,0),(1,1),(2,0),(1,-1))'        -- diamond
+        ]::polygon[] as multiple_polygons
+      `;
+      expect(result[0].multiple_polygons).toEqual([
+        "((0,0),(1,1),(2,0))",
+        "((0,0),(0,1),(1,1),(1,0))",
+        "((0,0),(1,1),(2,0),(1,-1))",
+      ]);
+    });
+
+    test("polygon[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '((0,0),(1,1),(2,0))',
+          NULL,
+          '((0,0),(0,1),(1,1),(1,0))',
+          NULL
+        ]::polygon[] as array_with_nulls
+      `;
+      expect(result[0].array_with_nulls).toEqual(["((0,0),(1,1),(2,0))", null, "((0,0),(0,1),(1,1),(1,0))", null]);
+    });
+
+    test("polygon[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::polygon[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("polygon[] - decimal coordinates", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '((0.5,0.5),(1.5,1.5),(2.5,0.5))',
+          '((0.1,0.1),(0.1,0.9),(0.9,0.9),(0.9,0.1))'
+        ]::polygon[] as decimal_polygons
+      `;
+      expect(result[0].decimal_polygons).toEqual([
+        "((0.5,0.5),(1.5,1.5),(2.5,0.5))",
+        "((0.1,0.1),(0.1,0.9),(0.9,0.9),(0.9,0.1))",
+      ]);
+    });
+
+    test("polygon[] - negative coordinates", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '((-1,-1),(0,1),(1,-1))',
+          '((-2,-2),(-2,2),(2,2),(2,-2))'
+        ]::polygon[] as negative_polygons
+      `;
+      expect(result[0].negative_polygons).toEqual(["((-1,-1),(0,1),(1,-1))", "((-2,-2),(-2,2),(2,2),(2,-2))"]);
+    });
+
+    test("polygon[] - common shapes", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '((0,0),(0,1),(1,1),(1,0))',                          -- square
+          '((0,0),(1,2),(2,0))',                                -- triangle
+          '((0,0),(1,1),(2,0),(1,-1))',                        -- diamond
+          '((0,0),(1,1),(2,0),(2,-1),(1,-2),(0,-1))'          -- hexagon
+        ]::polygon[] as common_shapes
+      `;
+      expect(result[0].common_shapes).toEqual([
+        "((0,0),(0,1),(1,1),(1,0))",
+        "((0,0),(1,2),(2,0))",
+        "((0,0),(1,1),(2,0),(1,-1))",
+        "((0,0),(1,1),(2,0),(2,-1),(1,-2),(0,-1))",
+      ]);
+    });
+
+    test("polygon[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY['((0,0),(1,1),(2,0))', '((0,0),(0,1),(1,1),(1,0))']::polygon[])[1] as first_element,
+          (ARRAY['((0,0),(1,1),(2,0))', '((0,0),(0,1),(1,1),(1,0))']::polygon[])[2] as second_element
+      `;
+
+      expect(result[0].first_element).toBe("((0,0),(1,1),(2,0))");
+      expect(result[0].second_element).toBe("((0,0),(0,1),(1,1),(1,0))");
+    });
+
+    test("polygon[] - array concatenation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['((0,0),(1,1),(2,0))']::polygon[] || 
+          ARRAY['((0,0),(0,1),(1,1),(1,0))']::polygon[] as concatenated
+      `;
+
+      expect(result[0].concatenated).toEqual(["((0,0),(1,1),(2,0))", "((0,0),(0,1),(1,1),(1,0))"]);
+    });
+
+    test("polygon[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY['((0,0),(1,1),(2,0))', '((0,0),(0,1),(1,1),(1,0))']::polygon[], 1) as array_length,
+          array_dims(ARRAY['((0,0),(1,1),(2,0))', '((0,0),(0,1),(1,1),(1,0))']::polygon[]) as dimensions,
+          array_upper(ARRAY['((0,0),(1,1),(2,0))', '((0,0),(0,1),(1,1),(1,0))']::polygon[], 1) as upper_bound,
+          array_lower(ARRAY['((0,0),(1,1),(2,0))', '((0,0),(0,1),(1,1),(1,0))']::polygon[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(2);
+      expect(result[0].dimensions).toBe("[1:2]");
+      expect(result[0].upper_bound).toBe(2);
+      expect(result[0].lower_bound).toBe(1);
+    });
+
+    test("polygon[] - polygon operators", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          '((0,0),(1,1),(1,0))'::polygon @> point '(0.5,0.5)' as contains_point,
+          '((0,0),(2,2),(2,0))'::polygon @> '((0.5,0.5),(1.5,1.5),(1.5,0.5))'::polygon as contains_polygon,
+          '((0,0),(2,2),(2,0))'::polygon && '((1,1),(3,3),(3,1))'::polygon as overlaps_polygon
+      `;
+
+      expect(result[0].contains_point).toBe(true);
+      expect(result[0].contains_polygon).toBe(true);
+      expect(result[0].overlaps_polygon).toBe(true);
+    });
+  });
+  describe("line[] Array type", () => {
+    test("line[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::line[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("line[] - single value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['{1,2,3}']::line[] as single_value`; // x + 2y + 3 = 0
+      expect(result[0].single_value).toEqual(["{1,2,3}"]);
+    });
+
+    test("line[] - multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '{1,0,0}',   -- x = 0 (vertical line)
+          '{0,1,0}',   -- y = 0 (horizontal line)
+          '{1,1,-1}'   -- x + y = 1
+        ]::line[] as multiple_values
+      `;
+      expect(result[0].multiple_values).toEqual(["{1,0,0}", "{0,1,0}", "{1,1,-1}"]);
+    });
+
+    test("line[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '{1,2,3}',
+          NULL,
+          '{4,5,6}',
+          NULL
+        ]::line[] as array_with_nulls
+      `;
+      expect(result[0].array_with_nulls).toEqual(["{1,2,3}", null, "{4,5,6}", null]);
+    });
+
+    test("line[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::line[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("line[] - special cases", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '{1,0,0}',      -- vertical line: x = 0
+          '{0,1,0}',      -- horizontal line: y = 0
+          '{1,1,0}',      -- diagonal line: x + y = 0
+          '{1,-1,0}'      -- diagonal line: x - y = 0
+        ]::line[] as special_lines
+      `;
+      expect(result[0].special_lines).toEqual(["{1,0,0}", "{0,1,0}", "{1,1,0}", "{1,-1,0}"]);
+    });
+
+    test("line[] - decimal coefficients", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '{1.5,2.5,3.5}',
+          '{0.1,0.2,0.3}'
+        ]::line[] as decimal_lines
+      `;
+      expect(result[0].decimal_lines).toEqual(["{1.5,2.5,3.5}", "{0.1,0.2,0.3}"]);
+    });
+
+    test("line[] - negative coefficients", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '{-1,-2,-3}',
+          '{-1.5,-2.5,-3.5}'
+        ]::line[] as negative_lines
+      `;
+      expect(result[0].negative_lines).toEqual(["{-1,-2,-3}", "{-1.5,-2.5,-3.5}"]);
+    });
+
+    test("line[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY['{1,2,3}', '{4,5,6}', '{7,8,9}']::line[])[1] as first_element,
+          (ARRAY['{1,2,3}', '{4,5,6}', '{7,8,9}']::line[])[2] as second_element,
+          (ARRAY['{1,2,3}', '{4,5,6}', '{7,8,9}']::line[])[3] as third_element
+      `;
+
+      expect(result[0].first_element).toBe("{1,2,3}");
+      expect(result[0].second_element).toBe("{4,5,6}");
+      expect(result[0].third_element).toBe("{7,8,9}");
+    });
+
+    test("line[] - array concatenation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['{1,2,3}', '{4,5,6}']::line[] || 
+          ARRAY['{7,8,9}']::line[] as concatenated
+      `;
+
+      expect(result[0].concatenated).toEqual(["{1,2,3}", "{4,5,6}", "{7,8,9}"]);
+    });
+
+    test("line[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY['{1,2,3}', '{4,5,6}']::line[], 1) as array_length,
+          array_dims(ARRAY['{1,2,3}', '{4,5,6}']::line[]) as dimensions,
+          array_upper(ARRAY['{1,2,3}', '{4,5,6}']::line[], 1) as upper_bound,
+          array_lower(ARRAY['{1,2,3}', '{4,5,6}']::line[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(2);
+      expect(result[0].dimensions).toBe("[1:2]");
+      expect(result[0].upper_bound).toBe(2);
+      expect(result[0].lower_bound).toBe(1);
+    });
+  });
+
+  describe("cidr[] Array type", () => {
+    test("cidr[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::cidr[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("cidr[] - single value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['192.168.1.0/24']::cidr[] as single_value`;
+      expect(result[0].single_value).toEqual(["192.168.1.0/24"]);
+    });
+
+    test("cidr[] - multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '192.168.1.0/24',
+          '10.0.0.0/8',
+          '172.16.0.0/16'
+        ]::cidr[] as multiple_values
+      `;
+      expect(result[0].multiple_values).toEqual(["192.168.1.0/24", "10.0.0.0/8", "172.16.0.0/16"]);
+    });
+
+    test("cidr[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '192.168.1.0/24',
+          NULL,
+          '10.0.0.0/8',
+          NULL
+        ]::cidr[] as array_with_nulls
+      `;
+      expect(result[0].array_with_nulls).toEqual(["192.168.1.0/24", null, "10.0.0.0/8", null]);
+    });
+
+    test("cidr[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::cidr[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("cidr[] - IPv4 different prefix lengths", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '192.168.1.0/24',    -- Class C size
+          '192.168.0.0/16',    -- Class B size
+          '192.0.0.0/8',       -- Class A size
+          '192.168.1.0/25',    -- Half of Class C
+          '192.168.1.0/26',    -- Quarter of Class C
+          '192.168.1.0/32'     -- Single host
+        ]::cidr[] as prefix_lengths
+      `;
+      expect(result[0].prefix_lengths).toEqual([
+        "192.168.1.0/24",
+        "192.168.0.0/16",
+        "192.0.0.0/8",
+        "192.168.1.0/25",
+        "192.168.1.0/26",
+        "192.168.1.0/32",
+      ]);
+    });
+
+    test("cidr[] - IPv6 addresses", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '2001:db8::/32',
+          'fe80::/10',
+          '::1/128',
+          '::/0'
+        ]::cidr[] as ipv6_networks
+      `;
+      expect(result[0].ipv6_networks).toEqual(["2001:db8::/32", "fe80::/10", "::1/128", "::/0"]);
+    });
+
+    test("cidr[] - special networks", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '127.0.0.0/8',      -- Loopback
+          '10.0.0.0/8',       -- Private network
+          '172.16.0.0/12',    -- Private network
+          '192.168.0.0/16',   -- Private network
+          '169.254.0.0/16',   -- Link-local
+          '224.0.0.0/4'       -- Multicast
+        ]::cidr[] as special_networks
+      `;
+      expect(result[0].special_networks).toEqual([
+        "127.0.0.0/8",
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "169.254.0.0/16",
+        "224.0.0.0/4",
+      ]);
+    });
+
+    test("cidr[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY['192.168.1.0/24', '10.0.0.0/8', '172.16.0.0/16']::cidr[])[1] as first_element,
+          (ARRAY['192.168.1.0/24', '10.0.0.0/8', '172.16.0.0/16']::cidr[])[2] as second_element,
+          (ARRAY['192.168.1.0/24', '10.0.0.0/8', '172.16.0.0/16']::cidr[])[3] as third_element
+      `;
+
+      expect(result[0].first_element).toBe("192.168.1.0/24");
+      expect(result[0].second_element).toBe("10.0.0.0/8");
+      expect(result[0].third_element).toBe("172.16.0.0/16");
+    });
+
+    test("cidr[] - array concatenation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['192.168.1.0/24', '10.0.0.0/8']::cidr[] || 
+          ARRAY['172.16.0.0/16']::cidr[] as concatenated
+      `;
+
+      expect(result[0].concatenated).toEqual(["192.168.1.0/24", "10.0.0.0/8", "172.16.0.0/16"]);
+    });
+
+    test("cidr[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY['192.168.1.0/24', '10.0.0.0/8']::cidr[], 1) as array_length,
+          array_dims(ARRAY['192.168.1.0/24', '10.0.0.0/8']::cidr[]) as dimensions,
+          array_upper(ARRAY['192.168.1.0/24', '10.0.0.0/8']::cidr[], 1) as upper_bound,
+          array_lower(ARRAY['192.168.1.0/24', '10.0.0.0/8']::cidr[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(2);
+      expect(result[0].dimensions).toBe("[1:2]");
+      expect(result[0].upper_bound).toBe(2);
+      expect(result[0].lower_bound).toBe(1);
+    });
+  });
+
+  describe("float4[] Array type", () => {
+    test("float4[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::float4[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("float4[] - single value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[1.0]::float4[] as single_value`;
+      expect(result[0].single_value).toEqual([1.0]);
+    });
+
+    test("float4[] - multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[1.0, 2.0, 3.0]::float4[] as multiple_values
+      `;
+      expect(result[0].multiple_values).toEqual([1.0, 2.0, 3.0]);
+    });
+
+    test("float4[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[1.0, NULL, 3.0, NULL]::float4[] as array_with_nulls
+      `;
+      expect(result[0].array_with_nulls).toEqual([1.0, null, 3.0, null]);
+    });
+
+    test("float4[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::float4[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("float4[] - decimal places", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          1.23456,
+          2.34567,
+          3.45678
+        ]::float4[] as decimal_values
+      `;
+
+      result[0].decimal_values.forEach((value, index) => {
+        expect(value).toBeCloseTo([1.23456, 2.34567, 3.45678][index], 5);
+      });
+    });
+
+    test("float4[] - negative values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          -1.23,
+          -2.34,
+          -3.45
+        ]::float4[] as negative_values
+      `;
+      expect(result[0].negative_values).toEqual([-1.23, -2.34, -3.45]);
+    });
+
+    test("float4[] - zero values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          0.0,
+          -0.0,
+          0.000
+        ]::float4[] as zero_values
+      `;
+      expect(result[0].zero_values).toEqual([0, 0, 0]);
+    });
+
+    test("float4[] - scientific notation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          1.23e-4,
+          1.23e4,
+          1.23e+4
+        ]::float4[] as scientific_notation
+      `;
+      expect(result[0].scientific_notation.map(n => Number(n.toExponential()))).toEqual([1.23e-4, 1.23e4, 1.23e4]);
+    });
+
+    test("float4[] - special values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          'Infinity'::float4,
+          '-Infinity'::float4,
+          'NaN'::float4
+        ]::float4[] as special_values
+      `;
+      expect(result[0].special_values).toEqual([Infinity, -Infinity, NaN]);
+    });
+
+    test("float4[] - boundary values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '3.4028235e+38'::float4,    -- Maximum float4
+          '-3.4028235e+38'::float4,   -- Minimum float4
+          '1.175494e-38'::float4      -- Smallest positive float4
+        ]::float4[] as boundary_values
+      `;
+
+      expect(result[0].boundary_values[0]).toBeCloseTo(3.4028235e38);
+      expect(result[0].boundary_values[1]).toBeCloseTo(-3.4028235e38);
+      expect(result[0].boundary_values[2]).toBeCloseTo(1.175494e-38);
+    });
+
+    test("float4[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY[1.1, 2.2, 3.3]::float4[])[1] as first_element,
+          (ARRAY[1.1, 2.2, 3.3]::float4[])[2] as second_element,
+          (ARRAY[1.1, 2.2, 3.3]::float4[])[3] as third_element
+      `;
+
+      expect(result[0].first_element).toBe(1.1);
+      expect(result[0].second_element).toBe(2.2);
+      expect(result[0].third_element).toBe(3.3);
+    });
+
+    test("float4[] - array contains operator", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY[1.1, 2.2, 3.3]::float4[] @> ARRAY[1.1]::float4[] as contains_first,
+          ARRAY[1.1, 2.2, 3.3]::float4[] @> ARRAY[2.2]::float4[] as contains_second,
+          ARRAY[1.1, 2.2, 3.3]::float4[] @> ARRAY[4.4]::float4[] as contains_none,
+          ARRAY[1.1, 2.2, 3.3]::float4[] @> ARRAY[1.1, 2.2]::float4[] as contains_multiple
+      `;
+
+      expect(result[0].contains_first).toBe(true);
+      expect(result[0].contains_second).toBe(true);
+      expect(result[0].contains_none).toBe(false);
+      expect(result[0].contains_multiple).toBe(true);
+    });
+
+    test("float4[] - array overlap operator", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY[1.1, 2.2]::float4[] && ARRAY[2.2, 3.3]::float4[] as has_overlap,
+          ARRAY[1.1, 2.2]::float4[] && ARRAY[3.3, 4.4]::float4[] as no_overlap
+      `;
+
+      expect(result[0].has_overlap).toBe(true);
+      expect(result[0].no_overlap).toBe(false);
+    });
+
+    test("float4[] - array concatenation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY[1.1, 2.2]::float4[] || ARRAY[3.3, 4.4]::float4[] as concatenated
+      `;
+
+      expect(result[0].concatenated).toEqual([1.1, 2.2, 3.3, 4.4]);
+    });
+
+    test("float4[] - mathematical operations", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (SELECT array_agg((value * 2)::float4) FROM unnest(ARRAY[1.1, 2.2, 3.3]::float4[]) as value) as multiplication,
+          (SELECT array_agg((value + 1)::float4) FROM unnest(ARRAY[1.1, 2.2, 3.3]::float4[]) as value) as addition
+      `;
+
+      expect(result[0].multiplication).toEqual([2.2, 4.4, 6.6]);
+      expect(result[0].addition).toEqual([2.1, 3.2, 4.3]);
+    });
+
+    test("float4[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY[1.1, 2.2, 3.3]::float4[], 1) as array_length,
+          array_dims(ARRAY[1.1, 2.2, 3.3]::float4[]) as dimensions,
+          array_upper(ARRAY[1.1, 2.2, 3.3]::float4[], 1) as upper_bound,
+          array_lower(ARRAY[1.1, 2.2, 3.3]::float4[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(3);
+      expect(result[0].dimensions).toBe("[1:3]");
+      expect(result[0].upper_bound).toBe(3);
+      expect(result[0].lower_bound).toBe(1);
+    });
+
+    test("float4[] - precision comparison", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY[1.23456789::float4]::float4[] as high_precision,
+          ARRAY[1.23456789::float8::float4]::float4[] as converted_precision
+      `;
+
+      // float4 has about 6-7 decimal digits of precision
+      expect(result[0].high_precision[0]).toBeCloseTo(result[0].converted_precision[0], 6);
+    });
+  });
+
+  describe("float8[] Array type", () => {
+    test("float8[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::float8[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("float8[] - single value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[1.0]::float8[] as single_value`;
+      expect(result[0].single_value).toEqual([1.0]);
+    });
+
+    test("float8[] - multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[1.0, 2.0, 3.0]::float8[] as multiple_values
+      `;
+      expect(result[0].multiple_values).toEqual([1.0, 2.0, 3.0]);
+    });
+
+    test("float8[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[1.0, NULL, 3.0, NULL]::float8[] as array_with_nulls
+      `;
+      expect(result[0].array_with_nulls).toEqual([1.0, null, 3.0, null]);
+    });
+
+    test("float8[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::float8[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("float8[] - high precision decimals", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          1.2345678901234567,
+          2.3456789012345678,
+          3.4567890123456789
+        ]::float8[] as high_precision_values
+      `;
+
+      result[0].high_precision_values.forEach((value, index) => {
+        expect(value).toBeCloseTo([1.2345678901234567, 2.3456789012345678, 3.4567890123456789][index], 15);
+      });
+    });
+
+    test("float8[] - negative values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          -1.2345678901234567,
+          -2.3456789012345678,
+          -3.4567890123456789
+        ]::float8[] as negative_values
+      `;
+
+      result[0].negative_values.forEach((value, index) => {
+        expect(value).toBeCloseTo([-1.2345678901234567, -2.3456789012345678, -3.4567890123456789][index], 15);
+      });
+    });
+
+    test("float8[] - zero values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          0.0,
+          -0.0,
+          0.000000000000000
+        ]::float8[] as zero_values
+      `;
+      expect(result[0].zero_values).toEqual([0, 0, 0]);
+    });
+
+    test("float8[] - scientific notation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          1.23456789e-10,
+          1.23456789e10,
+          1.23456789e+10
+        ]::float8[] as scientific_notation
+      `;
+      expect(result[0].scientific_notation.map(n => Number(n.toExponential(8)))).toEqual([
+        1.23456789e-10, 1.23456789e10, 1.23456789e10,
+      ]);
+    });
+
+    test("float8[] - special values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          'Infinity'::float8,
+          '-Infinity'::float8,
+          'NaN'::float8
+        ]::float8[] as special_values
+      `;
+      expect(result[0].special_values).toEqual([Infinity, -Infinity, NaN]);
+    });
+
+    test("float8[] - boundary values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '1.7976931348623157e+308'::float8,    -- Maximum float8
+          '-1.7976931348623157e+308'::float8,   -- Minimum float8
+          '2.2250738585072014e-308'::float8     -- Smallest positive normal float8
+        ]::float8[] as boundary_values
+      `;
+
+      expect(result[0].boundary_values[0]).toBe(1.7976931348623157e308);
+      expect(result[0].boundary_values[1]).toBe(-1.7976931348623157e308);
+      expect(result[0].boundary_values[2]).toBe(2.2250738585072014e-308);
+    });
+
+    test("float8[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY[1.1, 2.2, 3.3]::float8[])[1] as first_element,
+          (ARRAY[1.1, 2.2, 3.3]::float8[])[2] as second_element,
+          (ARRAY[1.1, 2.2, 3.3]::float8[])[3] as third_element
+      `;
+
+      expect(result[0].first_element).toBe(1.1);
+      expect(result[0].second_element).toBe(2.2);
+      expect(result[0].third_element).toBe(3.3);
+    });
+
+    test("float8[] - array contains operator", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY[1.1, 2.2, 3.3]::float8[] @> ARRAY[1.1]::float8[] as contains_first,
+          ARRAY[1.1, 2.2, 3.3]::float8[] @> ARRAY[2.2]::float8[] as contains_second,
+          ARRAY[1.1, 2.2, 3.3]::float8[] @> ARRAY[4.4]::float8[] as contains_none,
+          ARRAY[1.1, 2.2, 3.3]::float8[] @> ARRAY[1.1, 2.2]::float8[] as contains_multiple
+      `;
+
+      expect(result[0].contains_first).toBe(true);
+      expect(result[0].contains_second).toBe(true);
+      expect(result[0].contains_none).toBe(false);
+      expect(result[0].contains_multiple).toBe(true);
+    });
+
+    test("float8[] - array overlap operator", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY[1.1, 2.2]::float8[] && ARRAY[2.2, 3.3]::float8[] as has_overlap,
+          ARRAY[1.1, 2.2]::float8[] && ARRAY[3.3, 4.4]::float8[] as no_overlap
+      `;
+
+      expect(result[0].has_overlap).toBe(true);
+      expect(result[0].no_overlap).toBe(false);
+    });
+
+    test("float8[] - array concatenation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY[1.1, 2.2]::float8[] || ARRAY[3.3, 4.4]::float8[] as concatenated
+      `;
+
+      expect(result[0].concatenated).toEqual([1.1, 2.2, 3.3, 4.4]);
+    });
+
+    test("float8[] - mathematical operations", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (SELECT array_agg((value * 2)::float8) FROM unnest(ARRAY[1.1, 2.2, 3.3]::float8[]) as value) as multiplication,
+          (SELECT array_agg((value + 1)::float8) FROM unnest(ARRAY[1.1, 2.2, 3.3]::float8[]) as value) as addition,
+          (SELECT array_agg(round(value::numeric, 10)) FROM unnest(ARRAY[1.1111111111, 2.2222222222]::float8[]) as value) as rounding
+      `;
+
+      expect(result[0].multiplication).toEqual([2.2, 4.4, 6.6]);
+      expect(result[0].addition).toEqual([2.1, 3.2, 4.3]);
+      expect(result[0].rounding).toEqual(["1.1111111111", "2.2222222222"]);
+    });
+
+    test("float8[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY[1.1, 2.2, 3.3]::float8[], 1) as array_length,
+          array_dims(ARRAY[1.1, 2.2, 3.3]::float8[]) as dimensions,
+          array_upper(ARRAY[1.1, 2.2, 3.3]::float8[], 1) as upper_bound,
+          array_lower(ARRAY[1.1, 2.2, 3.3]::float8[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(3);
+      expect(result[0].dimensions).toBe("[1:3]");
+      expect(result[0].upper_bound).toBe(3);
+      expect(result[0].lower_bound).toBe(1);
+    });
+
+    test("float8[] - precision comparison with float4", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY[1.23456789012345::float8]::float8[] as double_precision,
+          ARRAY[1.23456789012345::float4::float8]::float8[] as converted_precision
+      `;
+
+      // float8 preserves precision that float4 would lose
+      expect(result[0].double_precision[0]).not.toBe(result[0].converted_precision[0]);
+      // float4 has about 6-7 decimal digits of precision
+      expect(result[0].converted_precision[0]).toBeCloseTo(1.23456789012345, 6);
+      // float8 has about 15-17 decimal digits of precision
+      expect(result[0].double_precision[0]).toBeCloseTo(1.23456789012345, 14);
+    });
+  });
+  describe("circle[] Array type", () => {
+    test("circle[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::circle[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("circle[] - single value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['<(0,0),1>']::circle[] as single_value`;
+      expect(result[0].single_value).toEqual(["<(0,0),1>"]);
+    });
+
+    test("circle[] - multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '<(0,0),1>',
+          '<(1,1),2>',
+          '<(2,2),3>'
+        ]::circle[] as multiple_values
+      `;
+      expect(result[0].multiple_values).toEqual(["<(0,0),1>", "<(1,1),2>", "<(2,2),3>"]);
+    });
+
+    test("circle[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '<(0,0),1>',
+          NULL,
+          '<(2,2),3>',
+          NULL
+        ]::circle[] as array_with_nulls
+      `;
+      expect(result[0].array_with_nulls).toEqual(["<(0,0),1>", null, "<(2,2),3>", null]);
+    });
+
+    test("circle[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::circle[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("circle[] - decimal coordinates and radius", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '<(0.5,0.5),1.5>',
+          '<(1.25,1.75),2.25>',
+          '<(3.14,2.71),1.41>'
+        ]::circle[] as decimal_circles
+      `;
+      expect(result[0].decimal_circles).toEqual(["<(0.5,0.5),1.5>", "<(1.25,1.75),2.25>", "<(3.14,2.71),1.41>"]);
+    });
+
+    test("circle[] - negative coordinates", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '<(-1,-1),1>',
+          '<(-2.5,-3.5),2>',
+          '<(-5,-5),3>'
+        ]::circle[] as negative_circles
+      `;
+      expect(result[0].negative_circles).toEqual(["<(-1,-1),1>", "<(-2.5,-3.5),2>", "<(-5,-5),3>"]);
+    });
+
+    test("circle[] - zero radius", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '<(0,0),0>',
+          '<(1,1),0>',
+          '<(2,2),0>'
+        ]::circle[] as point_circles
+      `;
+      expect(result[0].point_circles).toEqual(["<(0,0),0>", "<(1,1),0>", "<(2,2),0>"]);
+    });
+
+    test("circle[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY['<(0,0),1>', '<(1,1),2>', '<(2,2),3>']::circle[])[1] as first_element,
+          (ARRAY['<(0,0),1>', '<(1,1),2>', '<(2,2),3>']::circle[])[2] as second_element,
+          (ARRAY['<(0,0),1>', '<(1,1),2>', '<(2,2),3>']::circle[])[3] as third_element
+      `;
+
+      expect(result[0].first_element).toBe("<(0,0),1>");
+      expect(result[0].second_element).toBe("<(1,1),2>");
+      expect(result[0].third_element).toBe("<(2,2),3>");
+    });
+
+    test("circle[] - array concatenation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['<(0,0),1>', '<(1,1),2>']::circle[] || 
+          ARRAY['<(2,2),3>']::circle[] as concatenated
+      `;
+
+      expect(result[0].concatenated).toEqual(["<(0,0),1>", "<(1,1),2>", "<(2,2),3>"]);
+    });
+
+    test("circle[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY['<(0,0),1>', '<(1,1),2>']::circle[], 1) as array_length,
+          array_dims(ARRAY['<(0,0),1>', '<(1,1),2>']::circle[]) as dimensions,
+          array_upper(ARRAY['<(0,0),1>', '<(1,1),2>']::circle[], 1) as upper_bound,
+          array_lower(ARRAY['<(0,0),1>', '<(1,1),2>']::circle[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(2);
+      expect(result[0].dimensions).toBe("[1:2]");
+      expect(result[0].upper_bound).toBe(2);
+      expect(result[0].lower_bound).toBe(1);
+    });
+  });
 }

@@ -2638,26 +2638,44 @@ pub const PostgresSQLConnection = struct {
                                         var is_float = false;
                                         var current_idx: usize = 0;
                                         var is_infinity = false;
-
+                                        // track exponent stuff (1.1e-12, 1.1e+12)
+                                        var has_exponent = false;
+                                        var has_negative_sign = false;
+                                        var has_positive_sign = false;
                                         for (slice, 0..slice.len) |byte, index| {
                                             switch (byte) {
+                                                '0'...'9' => {},
+                                                closing_brace, separator => {
+                                                    current_idx = index;
+                                                    // end of element
+                                                    break;
+                                                },
+                                                'e' => {
+                                                    if (!is_float) return error.UnsupportedArrayFormat;
+                                                    if (has_exponent) return error.UnsupportedArrayFormat;
+                                                    has_exponent = true;
+                                                    continue;
+                                                },
+                                                '+' => {
+                                                    if (!has_exponent) return error.UnsupportedArrayFormat;
+                                                    if (has_positive_sign) return error.UnsupportedArrayFormat;
+                                                    has_positive_sign = true;
+                                                    continue;
+                                                },
                                                 '-' => {
                                                     if (index == 0) {
                                                         is_negative = true;
                                                         continue;
                                                     }
-                                                    return error.UnsupportedArrayFormat;
+                                                    if (!has_exponent) return error.UnsupportedArrayFormat;
+                                                    if (has_negative_sign) return error.UnsupportedArrayFormat;
+                                                    has_negative_sign = true;
+                                                    continue;
                                                 },
                                                 '.' => {
-                                                    // we can only have one dot
+                                                    // we can only have one dot and the dot must be before the exponent
                                                     if (is_float) return error.UnsupportedArrayFormat;
                                                     is_float = true;
-                                                },
-                                                '0'...'9' => {},
-                                                '}', separator => {
-                                                    current_idx = index;
-                                                    // end of element
-                                                    break;
                                                 },
                                                 'I', 'i' => {
                                                     // infinity

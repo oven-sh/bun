@@ -1580,6 +1580,175 @@ describe("css tests", () => {
     );
   });
 
+  describe("box-shadow", () => {
+    minify_test(
+      ".foo { box-shadow: 64px 64px 12px 40px rgba(0,0,0,0.4) }",
+      ".foo{box-shadow:64px 64px 12px 40px #0006}",
+    );
+    minify_test(
+      ".foo { box-shadow: 12px 12px 0px 8px rgba(0,0,0,0.4) inset }",
+      ".foo{box-shadow:inset 12px 12px 0 8px #0006}",
+    );
+    minify_test(
+      ".foo { box-shadow: inset 12px 12px 0px 8px rgba(0,0,0,0.4) }",
+      ".foo{box-shadow:inset 12px 12px 0 8px #0006}",
+    );
+    minify_test(".foo { box-shadow: 12px 12px 8px 0px rgba(0,0,0,0.4) }", ".foo{box-shadow:12px 12px 8px #0006}");
+    minify_test(".foo { box-shadow: 12px 12px 0px 0px rgba(0,0,0,0.4) }", ".foo{box-shadow:12px 12px #0006}");
+    minify_test(
+      ".foo { box-shadow: 64px 64px 12px 40px rgba(0,0,0,0.4), 12px 12px 0px 8px rgba(0,0,0,0.4) inset }",
+      ".foo{box-shadow:64px 64px 12px 40px #0006,inset 12px 12px 0 8px #0006}",
+    );
+
+    prefix_test(
+      ".foo { box-shadow: 12px 12px lab(40% 56.6 39) }",
+      `.foo {
+          box-shadow: 12px 12px #b32323;
+          box-shadow: 12px 12px lab(40% 56.6 39);
+        }
+              `,
+      { chrome: Some(90 << 16) },
+    );
+
+    prefix_test(
+      ".foo { box-shadow: 12px 12px lab(40% 56.6 39) }",
+      `.foo {
+          -webkit-box-shadow: 12px 12px #b32323;
+          box-shadow: 12px 12px #b32323;
+          box-shadow: 12px 12px lab(40% 56.6 39);
+        }
+              `,
+      { chrome: Some(4 << 16) },
+    );
+
+    prefix_test(
+      ".foo { box-shadow: 12px 12px lab(40% 56.6 39), 12px 12px yellow }",
+      `.foo {
+          -webkit-box-shadow: 12px 12px #b32323, 12px 12px #ff0;
+          box-shadow: 12px 12px #b32323, 12px 12px #ff0;
+          box-shadow: 12px 12px lab(40% 56.6 39), 12px 12px #ff0;
+        }
+              `,
+      { chrome: Some(4 << 16) },
+    );
+
+    prefix_test(
+      ".foo { -webkit-box-shadow: 12px 12px #0006 }",
+      `.foo {
+          -webkit-box-shadow: 12px 12px rgba(0, 0, 0, .4);
+        }
+              `,
+      { chrome: Some(4 << 16) },
+    );
+
+    prefix_test(
+      `.foo {
+        -webkit-box-shadow: 12px 12px #0006;
+        -moz-box-shadow: 12px 12px #0009;
+      }`,
+      `.foo {
+          -webkit-box-shadow: 12px 12px rgba(0, 0, 0, .4);
+          -moz-box-shadow: 12px 12px rgba(0, 0, 0, .6);
+        }
+              `,
+      { chrome: Some(4 << 16) },
+    );
+
+    prefix_test(
+      `.foo {
+        -webkit-box-shadow: 12px 12px #0006;
+        -moz-box-shadow: 12px 12px #0006;
+        box-shadow: 12px 12px #0006;
+      }`,
+      `.foo {
+          box-shadow: 12px 12px #0006;
+        }
+              `,
+      { chrome: Some(95 << 16) },
+    );
+
+    prefix_test(
+      ".foo { box-shadow: var(--foo) 12px lab(40% 56.6 39) }",
+      `.foo {
+          box-shadow: var(--foo) 12px #b32323;
+        }
+        
+        @supports (color: lab(0% 0 0)) {
+          .foo {
+            box-shadow: var(--foo) 12px lab(40% 56.6 39);
+          }
+        }
+              `,
+      { chrome: Some(90 << 16) },
+    );
+
+    prefix_test(
+      `.foo {
+        box-shadow: 0px 0px 22px red;
+        box-shadow: 0px 0px max(2cqw, 22px) red;
+      }
+    `,
+      `.foo {
+          box-shadow: 0 0 22px red;
+          box-shadow: 0 0 max(2cqw, 22px) red;
+        }
+            `,
+      { safari: Some(14 << 16) },
+    );
+    prefix_test(
+      `.foo {
+        box-shadow: 0px 0px 22px red;
+        box-shadow: 0px 0px max(2cqw, 22px) red;
+      }
+    `,
+      `.foo {
+          box-shadow: 0 0 max(2cqw, 22px) red;
+        }
+            `,
+      { safari: Some(16 << 16) },
+    );
+
+    prefix_test(
+      `.foo {
+        box-shadow: 0px 0px 22px red;
+        box-shadow: 0px 0px 22px lab(40% 56.6 39);
+      }
+    `,
+      `.foo {
+          box-shadow: 0 0 22px red;
+          box-shadow: 0 0 22px lab(40% 56.6 39);
+        }
+            `,
+      { safari: Some(14 << 16) },
+    );
+    prefix_test(
+      `.foo {
+        box-shadow: 0px 0px 22px red;
+        box-shadow: 0px 0px 22px lab(40% 56.6 39);
+      }
+    `,
+      `.foo {
+          box-shadow: 0 0 22px lab(40% 56.6 39);
+        }
+            `,
+      { safari: Some(16 << 16) },
+    );
+
+    prefix_test(
+      `.foo {
+        box-shadow: var(--fallback);
+        box-shadow: 0px 0px 22px lab(40% 56.6 39);
+      }
+    `,
+      `.foo {
+          box-shadow: var(--fallback);
+          box-shadow: 0 0 22px lab(40% 56.6 39);
+        }
+            `,
+      { safari: Some(16 << 16) },
+    );
+  });
+
   describe("margin", () => {
     cssTest(
       `
@@ -6754,7 +6923,7 @@ describe("css tests", () => {
       ".foo{transform:matrix3d(1,0,0,0,0,1,6,0,0,0,1,0,50,100,0,1.1)}",
     );
     // TODO: Re-enable with a better solution
-    //       See: https://github.com/parcel-bundler/lightningcss/issues/288
+    //       See: https://github.com/parcel-bundler/buncss/issues/288
     // minify_test(
     //   ".foo{transform:translate(100px,200px) rotate(45deg) skew(10deg) scale(2)}",
     //   ".foo{transform:matrix(1.41421,1.41421,-1.16485,1.66358,100,200)}",
@@ -6772,7 +6941,7 @@ describe("css tests", () => {
       ".foo{transform:rotate3d(1,1,1,45deg)translate3d(100px,100px,10px)}",
     );
     // TODO: Re-enable with a better solution
-    //       See: https://github.com/parcel-bundler/lightningcss/issues/288
+    //       See: https://github.com/parcel-bundler/buncss/issues/288
     // minify_test(
     //   ".foo{transform:translate3d(100px, 100px, 10px) skew(10deg) scale3d(2, 3, 4)}",
     //   ".foo{transform:matrix3d(2,0,0,0,.528981,3,0,0,0,0,4,0,100,100,10,1)}",
@@ -6842,7 +7011,7 @@ describe("css tests", () => {
     minify_test(".foo { scale: 1 0 0 }", ".foo{scale:1 0 0}");
 
     // TODO: Re-enable with a better solution
-    //       See: https://github.com/parcel-bundler/lightningcss/issues/288
+    //       See: https://github.com/parcel-bundler/buncss/issues/288
     // minify_test(".foo { transform: scale(3); scale: 0.5 }", ".foo{transform:scale(1.5)}");
     minify_test(".foo { scale: 0.5; transform: scale(3); }", ".foo{transform:scale(3)}");
 
@@ -6896,6 +7065,163 @@ describe("css tests", () => {
         transform: translateX(20px);
       }
       `,
+    );
+  });
+
+  describe("color-scheme", () => {
+    minify_test(".foo { color-scheme: normal; }", ".foo{color-scheme:normal}");
+    minify_test(".foo { color-scheme: light; }", ".foo{color-scheme:light}");
+    minify_test(".foo { color-scheme: dark; }", ".foo{color-scheme:dark}");
+    minify_test(".foo { color-scheme: light dark; }", ".foo{color-scheme:light dark}");
+    minify_test(".foo { color-scheme: dark light; }", ".foo{color-scheme:light dark}");
+    minify_test(".foo { color-scheme: only light; }", ".foo{color-scheme:light only}");
+    minify_test(".foo { color-scheme: only dark; }", ".foo{color-scheme:dark only}");
+    minify_test(".foo { color-scheme: dark light only; }", ".foo{color-scheme:light dark only}");
+    minify_test(".foo { color-scheme: foo bar light; }", ".foo{color-scheme:light}");
+    minify_test(".foo { color-scheme: only foo dark bar; }", ".foo{color-scheme:dark only}");
+    prefix_test(
+      ".foo { color-scheme: dark; }",
+      `.foo {
+          --buncss-light: ;
+          --buncss-dark: initial;
+          color-scheme: dark;
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      ".foo { color-scheme: light; }",
+      `.foo {
+          --buncss-light: initial;
+          --buncss-dark: ;
+          color-scheme: light;
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      ".foo { color-scheme: light dark; }",
+      `.foo {
+          --buncss-light: initial;
+          --buncss-dark: ;
+          color-scheme: light dark;
+        }
+        
+        @media (prefers-color-scheme: dark) {
+          .foo {
+            --buncss-light: ;
+            --buncss-dark: initial;
+          }
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      ".foo { color-scheme: light dark; }",
+      `.foo {
+          color-scheme: light dark;
+        }
+        `,
+      { firefox: Some(120 << 16) },
+    );
+
+    minify_test(".foo { color: light-dark(yellow, red); }", ".foo{color:light-dark(#ff0,red)}");
+    minify_test(
+      ".foo { color: light-dark(light-dark(yellow, red), light-dark(yellow, red)); }",
+      ".foo{color:light-dark(#ff0,red)}",
+    );
+    minify_test(
+      ".foo { color: light-dark(rgb(0, 0, 255), hsl(120deg, 50%, 50%)); }",
+      ".foo{color:light-dark(#00f,#40bf40)}",
+    );
+    prefix_test(
+      ".foo { color: light-dark(oklch(40% 0.1268735435 34.568626), oklab(59.686% 0.1009 0.1192)); }",
+      `.foo {
+        color: var(--buncss-light, #7e250f) var(--buncss-dark, #c65d07);
+        color: var(--buncss-light, lab(29.2661% 38.2437 35.3889)) var(--buncss-dark, lab(52.2319% 40.1449 59.9171));
+      }
+      `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      ".foo { color: light-dark(oklch(40% 0.1268735435 34.568626), oklab(59.686% 0.1009 0.1192)); }",
+      `.foo {
+        color: light-dark(oklch(40% .126874 34.5686), oklab(59.686% .1009 .1192));
+      }
+      `,
+      { firefox: Some(120 << 16) },
+    );
+    prefix_test(
+      `
+      .foo {
+        box-shadow:
+            oklch(100% 0 0deg / 50%) 0 0.63rem 0.94rem -0.19rem,
+            currentColor 0 0.44rem 0.8rem -0.58rem;
+      }
+    `,
+      `.foo {
+          box-shadow: 0 .63rem .94rem -.19rem #ffffff80, 0 .44rem .8rem -.58rem;
+          box-shadow: 0 .63rem .94rem -.19rem lab(100% 0 0 / .5), 0 .44rem .8rem -.58rem;
+        }
+        `,
+      { chrome: Some(95 << 16) },
+    );
+    prefix_test(
+      `
+      .foo {
+        box-shadow:
+            oklch(100% 0 0deg / 50%) 0 0.63rem 0.94rem -0.19rem,
+            currentColor 0 0.44rem 0.8rem -0.58rem;
+      }
+    `,
+      `.foo {
+          box-shadow: 0 .63rem .94rem -.19rem color(display-p3 1 1 1 / .5), 0 .44rem .8rem -.58rem;
+          box-shadow: 0 .63rem .94rem -.19rem lab(100% 0 0 / .5), 0 .44rem .8rem -.58rem;
+        }
+        `,
+      { safari: Some(14 << 16) },
+    );
+
+    prefix_test(
+      ".foo { color: light-dark(var(--light), var(--dark)); }",
+      `.foo {
+          color: var(--buncss-light, var(--light)) var(--buncss-dark, var(--dark));
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      ".foo { color: rgb(from light-dark(yellow, red) r g b / 10%); }",
+      `.foo {
+          color: var(--buncss-light, #ffff001a) var(--buncss-dark, #ff00001a);
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      ".foo { color: rgb(from light-dark(yellow, red) r g b / var(--alpha)); }",
+      `.foo {
+          color: var(--buncss-light, rgb(255 255 0 / var(--alpha))) var(--buncss-dark, rgb(255 0 0 / var(--alpha)));
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      ".foo { color: color(from light-dark(yellow, red) srgb r g b / 10%); }",
+      `.foo {
+          color: var(--buncss-light, #ffff001a) var(--buncss-dark, #ff00001a);
+          color: var(--buncss-light, color(srgb 1 1 0 / .1)) var(--buncss-dark, color(srgb 1 0 0 / .1));
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      ".foo { color: color-mix(in srgb, light-dark(yellow, red), light-dark(red, pink)); }",
+      `.foo {
+          color: var(--buncss-light, #ff8000) var(--buncss-dark, #ff6066);
+        }
+        `,
+      { chrome: Some(90 << 16) },
     );
   });
 });

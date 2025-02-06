@@ -387,8 +387,15 @@ int bsd_socket_multicast_interface(LIBUS_SOCKET_DESCRIPTOR fd, const struct sock
 static int bsd_socket_set_membership4(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_in *addr, const struct sockaddr_in *iface, int drop) {
     struct ip_mreq mreq;
     memset(&mreq, 0, sizeof(mreq));
+
     mreq.imr_multiaddr.s_addr = addr->sin_addr.s_addr;
-    mreq.imr_interface.s_addr = iface->sin_addr.s_addr;
+
+    if (iface != NULL) {
+        mreq.imr_interface.s_addr = iface->sin_addr.s_addr;
+    } else {
+        mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+    }
+
     int option = drop ? IP_DROP_MEMBERSHIP : IP_ADD_MEMBERSHIP;
     return setsockopt(fd, IPPROTO_IP, option, &mreq, sizeof(mreq));
 }
@@ -397,13 +404,15 @@ static int bsd_socket_set_membership6(LIBUS_SOCKET_DESCRIPTOR fd, const struct s
     struct ipv6_mreq mreq;
     memset(&mreq, 0, sizeof(mreq));
     mreq.ipv6mr_multiaddr = addr->sin6_addr;
-    mreq.ipv6mr_interface = iface->sin6_scope_id;
+    if (iface != NULL) {
+        mreq.ipv6mr_interface = iface->sin6_scope_id;
+    }
     int option = drop ? IPV6_LEAVE_GROUP : IPV6_JOIN_GROUP;
     return setsockopt(fd, IPPROTO_IP, option, &mreq, sizeof(mreq));
 }
 
 int bsd_socket_set_membership(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_storage *addr, const struct sockaddr_storage *iface, int drop) {
-    if (addr->ss_family != iface->ss_family) {
+    if (iface != NULL && addr->ss_family != iface->ss_family) {
         errno = EINVAL;
         return -1;
     }

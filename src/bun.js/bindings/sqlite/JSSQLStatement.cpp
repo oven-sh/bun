@@ -44,7 +44,6 @@
 #include "sqlite3_error_codes.h"
 #include "wtf/BitVector.h"
 #include "wtf/FastBitVector.h"
-#include "wtf/IsoMalloc.h"
 #include "wtf/Vector.h"
 #include <atomic>
 #include "wtf/LazyRef.h"

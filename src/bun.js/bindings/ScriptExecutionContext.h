@@ -35,13 +35,13 @@ class EventLoopTask;
 class ContextDestructionObserver;
 
 using ScriptExecutionContextIdentifier = uint32_t;
-DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ScriptExecutionContext);
 
 class ScriptExecutionContext : public CanMakeWeakPtr<ScriptExecutionContext>, public RefCounted<ScriptExecutionContext> {
 #if ENABLE(MALLOC_BREAKDOWN)
+    DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ScriptExecutionContext);
     WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(ScriptExecutionContext);
 #else
-    WTF_MAKE_ISO_ALLOCATED(ScriptExecutionContext);
+    WTF_MAKE_FAST_ALLOCATED(ScriptExecutionContext);
 #endif
 
 public:

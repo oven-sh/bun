@@ -33,7 +33,7 @@ public:
 };
 
 class EventEmitter final : public ScriptWrappable, public CanMakeWeakPtr<EventEmitter>, public RefCounted<EventEmitter>, public ContextDestructionObserver {
-    WTF_MAKE_ISO_ALLOCATED(EventEmitter);
+    WTF_MAKE_TZONE_ALLOCATED(EventEmitter);
 
 public:
     static Ref<EventEmitter> create(ScriptExecutionContext&);

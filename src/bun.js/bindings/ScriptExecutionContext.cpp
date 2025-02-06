@@ -31,7 +31,9 @@ static ScriptExecutionContextIdentifier initialIdentifier()
 }
 #endif
 
+#if ENABLE(MALLOC_BREAKDOWN)
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ScriptExecutionContext);
+#endif
 
 ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject)
     : m_vm(vm)
@@ -56,12 +58,6 @@ ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject*
     relaxAdoptionRequirement();
     addToContextsMap();
 }
-
-WTF_MAKE_ISO_ALLOCATED_IMPL(EventLoopTask);
-
-#if !ENABLE(MALLOC_BREAKDOWN)
-WTF_MAKE_ISO_ALLOCATED_IMPL(ScriptExecutionContext);
-#endif
 
 static Lock allScriptExecutionContextsMapLock;
 static HashMap<ScriptExecutionContextIdentifier, ScriptExecutionContext*>& allScriptExecutionContextsMap() WTF_REQUIRES_LOCK(allScriptExecutionContextsMapLock)

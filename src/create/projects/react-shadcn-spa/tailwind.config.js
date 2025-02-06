@@ -1,49 +1,54 @@
-module.exports = {
+// tailwind.config.js
+import { animate } from "tailwindcss-animate";
+
+/** @type {import('tailwindcss').Config} */
+export default {
   darkMode: ["class"],
-  content: ["app/**/*.{ts,tsx}", "components/**/*.{ts,tsx}"],
+  content: ["src/**/*.{ts,tsx}", "styles/**/*.{css,scss}"],
   theme: {
     extend: {
       colors: {
-        border: "hsl(var(--border))",
-        input: "hsl(var(--input))",
-        ring: "hsl(var(--ring))",
-        background: "hsl(var(--background))",
-        foreground: "hsl(var(--foreground))",
+        border: "var(--text-border)",
+        input: "var(--text-input)",
+        ring: "var(--text-ring)",
+        background: "var(--text-background)",
+        foreground: "var(--text-foreground)",
         primary: {
-          DEFAULT: "hsl(var(--primary))",
-          foreground: "hsl(var(--primary-foreground))",
+          DEFAULT: "var(--text-primary)",
+          foreground: "var(--text-primary-foreground)",
         },
         secondary: {
-          DEFAULT: "hsl(var(--secondary))",
-          foreground: "hsl(var(--secondary-foreground))",
+          DEFAULT: "var(--text-secondary)",
+          foreground: "var(--text-secondary-foreground)",
         },
         destructive: {
-          DEFAULT: "hsl(var(--destructive))",
-          foreground: "hsl(var(--destructive-foreground))",
+          DEFAULT: "var(--text-destructive)",
+          foreground: "var(--text-destructive-foreground)",
         },
         muted: {
-          DEFAULT: "hsl(var(--muted))",
-          foreground: "hsl(var(--muted-foreground))",
+          DEFAULT: "var(--text-muted)",
+          foreground: "var(--text-muted-foreground)",
         },
         accent: {
-          DEFAULT: "hsl(var(--accent))",
-          foreground: "hsl(var(--accent-foreground))",
+          DEFAULT: "var(--text-accent)",
+          foreground: "var(--text-accent-foreground)",
         },
         popover: {
-          DEFAULT: "hsl(var(--popover))",
-          foreground: "hsl(var(--popover-foreground))",
+          DEFAULT: "var(--text-popover)",
+          foreground: "var(--text-popover-foreground)",
         },
         card: {
-          DEFAULT: "hsl(var(--card))",
-          foreground: "hsl(var(--card-foreground))",
+          DEFAULT: "var(--text-card)",
+          foreground: "var(--text-card-foreground)",
         },
       },
       borderRadius: {
-        lg: `var(--radius)`,
-        md: `calc(var(--radius) - 2px)`,
-        sm: "calc(var(--radius) - 4px)",
+        xs: `calc(var(--radius) - 4px)`,
+        sm: `calc(var(--radius) - 2px)`,
+        md: `var(--radius)`,
+        lg: `calc(var(--radius) + 2px)`,
       },
     },
   },
-  plugins: [require("tailwindcss-animate")],
+  plugins: [animate],
 };

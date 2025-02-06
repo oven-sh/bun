@@ -129,8 +129,8 @@ fn stringWithReplacements(input: []const u8, basename: []const u8, relative_name
 // Template for React + Shadcn project
 const ReactShadcnSpa = struct {
     pub const files = .{
-        .@"lib/utils.ts" = @embedFile("projects/react-shadcn-spa/src/lib/utils.ts"),
-        .@"src/index.css" = @embedFile("projects/react-shadcn-spa/src/index.css"),
+        .@"lib/utils.ts" = @embedFile("projects/react-shadcn-spa/lib/utils.ts"),
+        .@"src/index.css" = @embedFile("projects/react-shadcn-spa/styles/index.css"),
         .@"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts" = @embedFile("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts"),
         .@"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.client.tsx" = @embedFile("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.client.tsx"),
         .@"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css" = @embedFile("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css"),
@@ -360,7 +360,7 @@ fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *Bun
                     var shadcn_argv = try std.ArrayList([]const u8).initCapacity(default_allocator, 10);
                     try shadcn_argv.append(try bun.selfExePath());
                     try shadcn_argv.append("x");
-                    try shadcn_argv.append("shadcn");
+                    try shadcn_argv.append("shadcn@canary");
                     try shadcn_argv.append("add");
                     if (strings.contains(normalized_name, "/src")) {
                         try shadcn_argv.append("--src-dir");
@@ -611,4 +611,4 @@ const Command = bun.CLI.Command;
 const Example = @import("../cli/create_command.zig").Example;
 
 // Disabled until Tailwind v4 is supported.
-const enable_shadcn_ui = false;
+const enable_shadcn_ui = true;

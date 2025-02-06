@@ -18,6 +18,9 @@ comptime {
 extern fn bun_warn_avx_missing(url: [*:0]const u8) void;
 pub extern "c" var _environ: ?*anyopaque;
 pub extern "c" var environ: ?*anyopaque;
+/// Linux only: Change the signal used by GC to suspend and resume threads to `signal`.
+/// Returns true on success.
+extern "C" fn JSConfigureSignalForGC(signal: c_int) bool;
 pub fn main() void {
     bun.crash_handler.init();
 
@@ -55,6 +58,19 @@ pub fn main() void {
         bun_warn_avx_missing(@import("./cli/upgrade_command.zig").Version.Bun__githubBaselineURL.ptr);
     }
     bun.StackCheck.configureThread();
+    if (Environment.isLinux) {
+        // By default, JavaScriptCore's garbage collector sends SIGUSR1 to the JS thread to suspend
+        // and resume it in order to scan its stack memory. Whatever signal it uses can't be
+        // reliably intercepted by JS code, and several npm packages use SIGUSR1 for various
+        // features. We tell it to use SIGPWR instead, which we assume is unlikely to be reliable
+        // for its stated purpose. Mono's garbage collector also uses SIGPWR:
+        // https://www.mono-project.com/docs/advanced/embedding/#signal-handling
+        //
+        // This call needs to be before any of the other JSC initialization, as we can't
+        // reconfigure which signal is used once the signal handler has already been registered.
+        const configure_signal_success = JSConfigureSignalForGC(std.posix.SIG.PWR);
+        bun.assert(configure_signal_success);
+    }
     bun.CLI.Cli.start(bun.default_allocator);
     bun.Global.exit(0);
 }

@@ -3162,7 +3162,7 @@ pub fn faccessat(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
 pub fn directoryExistsAt(dir: anytype, subpath: anytype) JSC.Maybe(bool) {
     const dir_fd = bun.toFD(dir);
     return switch (existsAtType(dir_fd, subpath)) {
-        .err => |err| .{ .err = if (err.getErrno() == .NOENT) .{ .errno = @intFromEnum(bun.C.E.UNKNOWN), .syscall = .access } else err },
+        .err => |err| if (err.getErrno() == .NOENT) .{ .result = false } else .{ .err = err },
         .result => |result| .{ .result = result == .directory },
     };
 }

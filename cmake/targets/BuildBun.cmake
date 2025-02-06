@@ -567,6 +567,7 @@ register_command(
       -Dcanary=${CANARY_REVISION}
       -Dcodegen_path=${CODEGEN_PATH}
       -Dcodegen_embed=$<IF:$<BOOL:${CODEGEN_EMBED}>,true,false>
+      -Denable_asan=$<IF:$<BOOL:${ENABLE_ASAN}>,true,false>
       --prominent-compile-errors
       ${ZIG_FLAGS_BUN}
   ARTIFACTS
@@ -828,6 +829,15 @@ if(NOT WIN32)
       )
       target_link_libraries(${bun} PRIVATE
         -fsanitize=null
+      )
+    endif()
+
+    if (ENABLE_ASAN)
+      target_compile_options(${bun} PUBLIC
+        -fsanitize=address
+      )
+      target_link_libraries(${bun} PUBLIC
+        -fsanitize=address
       )
     endif()
 

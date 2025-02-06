@@ -86,6 +86,11 @@ optionx(ENABLE_LTO BOOL "If LTO (link-time optimization) should be used" DEFAULT
 if(LINUX)
   optionx(ENABLE_VALGRIND BOOL "If Valgrind support should be enabled" DEFAULT OFF)
 endif()
+if(DEBUG AND APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+  optionx(ENABLE_ASAN BOOL "If ASAN support should be enabled" DEFAULT ON)
+else()
+  optionx(ENABLE_ASAN BOOL "If ASAN support should be enabled" DEFAULT OFF)
+endif()
 
 optionx(ENABLE_PRETTIER BOOL "If prettier should be ran" DEFAULT OFF)
 

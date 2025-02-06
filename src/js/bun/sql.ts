@@ -34,7 +34,6 @@ const escapeIdentifier = function escape(str) {
 class SQLResultArray extends PublicArray {
   static [Symbol.toStringTag] = "SQLResults";
 
-  statement;
   command;
   count;
 }
@@ -135,6 +134,7 @@ class Query extends PublicPromise {
       resolve_ = resolve;
       reject_ = reject;
     });
+
     this[_resolve] = resolve_;
     this[_reject] = reject_;
     this[_handle] = null;

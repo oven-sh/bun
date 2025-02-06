@@ -824,3 +824,13 @@ it("dispose keyword works", async () => {
   expect(captured.exitCode).toBe(null);
   expect(captured.signalCode).toBe("SIGTERM");
 });
+
+it("error does not UAF", async () => {
+  let emsg = "";
+  try {
+    Bun.spawnSync({ cmd: ["command-is-not-found-uh-oh"] });
+  } catch (e) {
+    emsg = (e as Error).message;
+  }
+  expect(emsg).toInclude(" ");
+});

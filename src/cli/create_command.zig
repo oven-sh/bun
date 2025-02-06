@@ -310,7 +310,7 @@ pub const CreateCommand = struct {
                 var analyzer = Analyzer{
                     .ctx = ctx,
                     .example_tag = example_tag,
-                    .entry_point = destination,
+                    .entry_point = template,
                     .progress = &progress,
                     .node = node,
                 };

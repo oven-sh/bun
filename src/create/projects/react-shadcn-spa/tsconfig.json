@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "allowJs": true,
+
+    // Bundler mode
+    "moduleResolution": "bundler",
+    "module": "preserve",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./*"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts", "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.client.tsx", "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts", "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.client.tsx"]
+}

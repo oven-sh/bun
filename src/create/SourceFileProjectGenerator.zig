@@ -5,7 +5,8 @@ pub fn generate(_: Command.Context, example_tag: Example.Tag, entry_point: strin
         needs_to_inject_tailwind = hasAnyTailwindClassesInSourceFiles(result.bundle_v2, result.reachable_files);
     }
 
-    const needs_to_inject_shadcn_ui = hasAnyShadcnImports(result.bundle_v2, result.reachable_files);
+    const shadcn = try getShadcnComponents(result.bundle_v2, result.reachable_files);
+    const needs_to_inject_shadcn_ui = shadcn.keys().len > 0;
 
     if (needs_to_inject_tailwind) {
         try result.dependencies.insert("tailwindcss");
@@ -15,13 +16,12 @@ pub fn generate(_: Command.Context, example_tag: Example.Tag, entry_point: strin
     if (needs_to_inject_shadcn_ui) {
         // https://ui.shadcn.com/docs/installation/manual
         // This will probably be tricky to keep updated.
+        // but hopefully the dependency scanning will just handle it for us.
         try result.dependencies.insert("tailwindcss-animate");
         try result.dependencies.insert("class-variance-authority");
         try result.dependencies.insert("clsx");
         try result.dependencies.insert("tailwind-merge");
         try result.dependencies.insert("lucide-react");
-
-        // TODO: insert components.json and other boilerplate for `shadcn/ui add` to work.
     }
 
     const uses_tailwind = has_tailwind_in_dependencies or needs_to_inject_tailwind;
@@ -29,9 +29,17 @@ pub fn generate(_: Command.Context, example_tag: Example.Tag, entry_point: strin
         try result.dependencies.insert("react-dom");
     }
 
-    if (uses_tailwind and result.dependencies.contains("react") and example_tag == .jslike_file) {
-        try ReactTailwindSpa.generate(entry_point, result);
-    }
+    const template: Template = brk: {
+        if (needs_to_inject_shadcn_ui and example_tag == .jslike_file) {
+            break :brk .{ .ReactShadcnSpa = .{ .components = shadcn } };
+        } else if (uses_tailwind and example_tag == .jslike_file) {
+            break :brk .ReactTailwindSpa;
+        } else {
+            Global.exit(0);
+        }
+    };
+
+    try generateFiles(default_allocator, entry_point, result, template);
 
     Global.exit(0);
 }
@@ -43,6 +51,11 @@ fn createFile(filename: []const u8, contents: []const u8) bun.JSC.Maybe(bool) {
             return .{ .result = false };
         }
     }
+
+    if (std.fs.path.dirname(filename)) |dirname| {
+        bun.makePath(std.fs.cwd(), dirname) catch {};
+    }
+
     const fd = switch (bun.sys.openatA(bun.toFD(std.fs.cwd()), filename, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o644)) {
         .result => |fd| fd,
         .err => |err| return .{ .err = err },
@@ -87,195 +100,361 @@ fn replaceAllOccurrencesOfString(allocator: std.mem.Allocator, input: []const u8
     return result.items;
 }
 
-fn stringWithReplacements(input: []const u8, basename: []const u8, allocator: std.mem.Allocator) ![]u8 {
-    return try replaceAllOccurrencesOfString(allocator, input, "REPLACE_ME_WITH_YOUR_APP_FILE_NAME", basename);
+fn stringWithReplacements(input: []const u8, basename: []const u8, relative_name: []const u8, allocator: std.mem.Allocator) ![]u8 {
+    if (strings.contains(input, "REPLACE_ME_WITH_YOUR_APP_BASE_NAME")) {
+        return try replaceAllOccurrencesOfString(allocator, input, "REPLACE_ME_WITH_YOUR_APP_BASE_NAME", basename);
+    }
+
+    return try replaceAllOccurrencesOfString(allocator, input, "REPLACE_ME_WITH_YOUR_APP_FILE_NAME", relative_name);
 }
+
+const ReactShadcnSpa = struct {
+    pub const files = .{
+        .@"lib/utils.ts" = @embedFile("projects/react-shadcn-spa/src/lib/utils.ts"),
+        .@"src/index.css" = @embedFile("projects/react-shadcn-spa/src/index.css"),
+        .@"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts" = @embedFile("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts"),
+        .@"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.client.tsx" = @embedFile("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.client.tsx"),
+        .@"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css" = @embedFile("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css"),
+        .@"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.html" = @embedFile("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.html"),
+        .@"styles/globals.css" = @embedFile("projects/react-shadcn-spa/styles/globals.css"),
+    };
+
+    pub const bunfig = @embedFile("projects/react-shadcn-spa/bunfig.toml");
+    pub const package_json = @embedFile("projects/react-shadcn-spa/package.json");
+    pub const tailwind_config = @embedFile("projects/react-shadcn-spa/tailwind.config.js");
+    pub const tsconfig = @embedFile("projects/react-shadcn-spa/tsconfig.json");
+    pub const components_json = @embedFile("projects/react-shadcn-spa/components.json");
+};
 
 const ReactTailwindSpa = struct {
     pub const files = .{
-        .@"bunfig.toml" = @embedFile("projects/react-tailwind-spa/bunfig.toml"),
-        .@"package.json" = @embedFile("projects/react-tailwind-spa/package.json"),
-        .@"build.ts" = @embedFile("projects/react-tailwind-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts"),
-        .css = @embedFile("projects/react-tailwind-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css"),
-        .html = @embedFile("projects/react-tailwind-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.html"),
-        .@"init.tsx" = @embedFile("projects/react-tailwind-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.client.tsx"),
+        .@"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts" = @embedFile("projects/react-tailwind-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts"),
+        .@"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css" = @embedFile("projects/react-tailwind-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css"),
+        .@"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.html" = @embedFile("projects/react-tailwind-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.html"),
+        .@"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.client.tsx" = @embedFile("projects/react-tailwind-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.client.tsx"),
     };
 
-    pub fn generate(entry_point: string, result: *BundleV2.DependenciesScanner.Result) !void {
-        var basename = std.fs.path.basename(entry_point);
-        const extension = std.fs.path.extension(basename);
-        if (extension.len > 0) {
-            basename = basename[0 .. basename.len - extension.len];
-        }
+    pub const bunfig = @embedFile("projects/react-tailwind-spa/bunfig.toml");
+    pub const package_json = @embedFile("projects/react-tailwind-spa/package.json");
+    pub const tailwind_config = "";
+    pub const tsconfig = "";
+    pub const components_json = "";
+};
 
-        var is_new = false;
+const Template = union(Tag) {
+    ReactTailwindSpa: void,
+    ReactShadcnSpa: struct {
+        components: bun.StringSet,
+    },
 
-        if (!bun.sys.exists("package.json")) {
-            switch (createFile("package.json", files.@"package.json")) {
-                .result => |new| {
-                    if (new) {
-                        is_new = true;
-                        Output.prettyln("<r> <green>✓<r> package.json created\n", .{});
+    pub const Tag = enum {
+        ReactTailwindSpa,
+        ReactShadcnSpa,
+    };
+};
+const SourceFileProjectGenerator = @This();
+fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *BundleV2.DependenciesScanner.Result, template: Template) !void {
+    var is_new = false;
+    var basename = std.fs.path.basename(entry_point);
+    const extension = std.fs.path.extension(basename);
+    if (extension.len > 0) {
+        basename = basename[0 .. basename.len - extension.len];
+    }
+
+    var normalized_buf: bun.PathBuffer = undefined;
+    var normalized_name: []const u8 = if (std.fs.path.isAbsolute(entry_point))
+        bun.path.relativeNormalizedBuf(&normalized_buf, bun.fs.FileSystem.instance.top_level_dir, entry_point, .posix, true)
+    else
+        bun.path.normalizeBuf(entry_point, &normalized_buf, .posix);
+
+    if (extension.len > 0) {
+        normalized_name = normalized_name[0 .. normalized_name.len - extension.len];
+    }
+
+    switch (@as(Template.Tag, template)) {
+        inline else => |active| {
+            const current = @field(SourceFileProjectGenerator, @tagName(active));
+
+            if (current.tailwind_config.len > 0) {
+                if (!bun.sys.exists("tailwind.config.js")) {
+                    switch (createFile("tailwind.config.js", current.tailwind_config)) {
+                        .result => |new| {
+                            if (new) {
+                                is_new = true;
+                                Output.prettyln("<r> <green>✓<r> tailwind.config.js created\n", .{});
+                            }
+                        },
+                        .err => |err| {
+                            Output.err(err, "failed to create tailwind.config.js", .{});
+                            Global.crash();
+                        },
                     }
-                },
-                .err => |err| {
-                    Output.err(err, "failed to create package.json", .{});
-                    Global.crash();
-                },
+                }
             }
-        }
 
-        if (!bun.sys.exists("bunfig.toml")) {
-            switch (createFile("bunfig.toml", files.@"bunfig.toml")) {
-                .result => |new| {
-                    if (new) {
-                        is_new = true;
-                        Output.prettyln("<r> <green>✓<r> bunfig.toml created\n", .{});
+            if (current.components_json.len > 0) {
+                if (!bun.sys.exists("components.json")) {
+                    switch (createFile("components.json", current.components_json)) {
+                        .result => |new| {
+                            if (new) {
+                                is_new = true;
+                                Output.prettyln("<r> <green>✓<r> components.json created\n", .{});
+                            }
+                        },
+                        .err => |err| {
+                            Output.err(err, "failed to create components.json", .{});
+                            Global.crash();
+                        },
                     }
-                },
-                .err => |err| {
-                    Output.err(err, "failed to create bunfig.toml", .{});
-                    Global.crash();
-                },
+                }
             }
-        }
 
-        // We leak all these, but it's pretty much fine.
-        const css_filename = try stringWithReplacements("REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css", basename, default_allocator);
-        const html_filename = try stringWithReplacements("REPLACE_ME_WITH_YOUR_APP_FILE_NAME.html", basename, default_allocator);
-        const init_filename = try stringWithReplacements("REPLACE_ME_WITH_YOUR_APP_FILE_NAME.client.tsx", basename, default_allocator);
-        const build_filename = try stringWithReplacements("REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts", basename, default_allocator);
-        const pairs = [_][2][]const u8{
-            .{ try stringWithReplacements(files.css, basename, default_allocator), css_filename },
-            .{ try stringWithReplacements(files.html, basename, default_allocator), html_filename },
-            .{ try stringWithReplacements(files.@"init.tsx", basename, default_allocator), init_filename },
-            .{ try stringWithReplacements(files.@"build.ts", basename, default_allocator), build_filename },
-        };
-
-        for (pairs) |pair| {
-            switch (createFile(pair[1], pair[0])) {
-                .result => |new| {
-                    if (new) {
-                        is_new = true;
-                        Output.prettyln("<r> <green>✓<r> <b>{s}<r> generated\n", .{pair[1]});
-                    }
-                },
-                .err => |err| {
-                    Output.err(err, "failed to create file: {s}", .{pair[1]});
-                    Global.crash();
-                },
+            if (!bun.sys.exists("package.json")) {
+                switch (createFile("package.json", current.package_json)) {
+                    .result => |new| {
+                        if (new) {
+                            is_new = true;
+                            Output.prettyln("<r> <green>✓<r> package.json created\n", .{});
+                        }
+                    },
+                    .err => |err| {
+                        Output.err(err, "failed to create package.json", .{});
+                        Global.crash();
+                    },
+                }
             }
-        }
-        var argv = std.ArrayList([]const u8).init(default_allocator);
-        try argv.append(try bun.selfExePath());
-        try argv.append("--only-missing");
-        try argv.append("install");
-        try argv.appendSlice(result.dependencies.keys());
 
-        const process = bun.spawnSync(&.{
-            .argv = argv.items,
-            .envp = null,
-            .cwd = bun.fs.FileSystem.instance.top_level_dir,
-            .stderr = .inherit,
-            .stdout = .inherit,
-            .stdin = .inherit,
+            if (!bun.sys.exists("tsconfig.json")) {
+                switch (createFile("tsconfig.json", current.tsconfig)) {
+                    .result => |new| {
+                        if (new) {
+                            is_new = true;
+                            Output.prettyln("<r> <green>✓<r> tsconfig.json created\n", .{});
+                        }
+                    },
+                    .err => |err| {
+                        Output.err(err, "failed to create tsconfig.json", .{});
+                        Global.crash();
+                    },
+                }
+            }
 
-            .windows = if (Environment.isWindows) .{
-                .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
-            },
-        }) catch |err| {
+            if (!bun.sys.exists("bunfig.toml")) {
+                switch (createFile("bunfig.toml", current.bunfig)) {
+                    .result => |new| {
+                        if (new) {
+                            is_new = true;
+                            Output.prettyln("<r> <green>✓<r> bunfig.toml created\n", .{});
+                        }
+                    },
+                    .err => |err| {
+                        Output.err(err, "failed to create bunfig.toml", .{});
+                        Global.crash();
+                    },
+                }
+            }
+
+            inline for (comptime std.meta.fieldNames(@TypeOf(current.files))) |name| {
+                const file_name = try stringWithReplacements(name, basename, normalized_name, allocator);
+                switch (createFile(file_name, try stringWithReplacements(@field(current.files, name), basename, normalized_name, default_allocator))) {
+                    .result => |new| {
+                        if (new) {
+                            is_new = true;
+                            Output.prettyln("<r> <green>✓<r> {s} created\n", .{file_name});
+                        }
+                    },
+                    .err => |err| {
+                        Output.err(err, "failed to create {s}", .{file_name});
+                        Global.crash();
+                    },
+                }
+            }
+        },
+    }
+
+    // We leak all these, but it's pretty much fine.
+
+    var argv = std.ArrayList([]const u8).init(default_allocator);
+    try argv.append(try bun.selfExePath());
+    try argv.append("--only-missing");
+    try argv.append("install");
+    try argv.appendSlice(result.dependencies.keys());
+
+    const process = bun.spawnSync(&.{
+        .argv = argv.items,
+        .envp = null,
+        .cwd = bun.fs.FileSystem.instance.top_level_dir,
+        .stderr = .inherit,
+        .stdout = .inherit,
+        .stdin = .inherit,
+
+        .windows = if (Environment.isWindows) .{
+            .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+        },
+    }) catch |err| {
+        Output.err(err, "failed to install dependencies", .{});
+        Global.crash();
+    };
+
+    switch (process) {
+        .err => |err| {
             Output.err(err, "failed to install dependencies", .{});
             Global.crash();
-        };
+        },
+        .result => |spawn_result| {
+            if (!spawn_result.status.isOK()) {
+                if (spawn_result.status.signalCode()) |signal| {
+                    if (signal.toExitCode()) |exit_code| {
+                        Global.exit(exit_code);
+                    }
+                }
 
-        switch (process) {
-            .err => |err| {
-                Output.err(err, "failed to install dependencies", .{});
+                if (spawn_result.status == .exited) {
+                    Global.exit(spawn_result.status.exited.code);
+                }
+
                 Global.crash();
-            },
-            .result => |spawn_result| {
-                if (!spawn_result.status.isOK()) {
-                    if (spawn_result.status.signalCode()) |signal| {
-                        if (signal.toExitCode()) |exit_code| {
-                            Global.exit(exit_code);
-                        }
+            }
+        },
+    }
+
+    if (is_new) {
+        switch (template) {
+            .ReactShadcnSpa => |*shadcn| {
+                if (shadcn.components.keys().len > 0) {
+                    var shadcn_argv = try std.ArrayList([]const u8).initCapacity(default_allocator, 10);
+                    try shadcn_argv.append(try bun.selfExePath());
+                    try shadcn_argv.append("x");
+                    try shadcn_argv.append("shadcn");
+                    try shadcn_argv.append("add");
+                    if (strings.contains(normalized_name, "/src")) {
+                        try shadcn_argv.append("--src-dir");
+                    }
+                    try shadcn_argv.append("-y");
+                    try shadcn_argv.appendSlice(shadcn.components.keys());
+                    // Now we need to run shadcn to add the components to the project
+                    const shadcn_process = bun.spawnSync(&.{
+                        .argv = shadcn_argv.items,
+                        .envp = null,
+                        .cwd = bun.fs.FileSystem.instance.top_level_dir,
+                        .stderr = .inherit,
+                        .stdout = .inherit,
+                        .stdin = .inherit,
+                    }) catch |err| {
+                        Output.err(err, "failed to add shadcn components", .{});
+                        Global.crash();
+                    };
+
+                    switch (shadcn_process) {
+                        .err => |err| {
+                            Output.err(err, "failed to add shadcn components", .{});
+                            Global.crash();
+                        },
+                        .result => |spawn_result| {
+                            if (!spawn_result.status.isOK()) {
+                                if (spawn_result.status.signalCode()) |signal| {
+                                    if (signal.toExitCode()) |exit_code| {
+                                        Global.exit(exit_code);
+                                    }
+                                }
+
+                                if (spawn_result.status == .exited) {
+                                    Global.exit(spawn_result.status.exited.code);
+                                }
+
+                                Global.crash();
+                            }
+                        },
                     }
 
-                    if (spawn_result.status == .exited) {
-                        Global.exit(spawn_result.status.exited.code);
-                    }
-
-                    Global.crash();
+                    Output.prettyln(
+                        \\<r> <green>✓<r> Shadcn SPA created successfully!
+                        \\
+                        \\To start your app, run<d>:<r>
+                        \\
+                        \\    <b><cyan>bun dev<r>
+                        \\
+                        \\To open your app in the browser<d>:<r>
+                        \\
+                        \\    <b><cyan>open http://localhost:3000/{s}<r>
+                        \\
+                        \\To build your app<d>:<r>
+                        \\
+                        \\    <b><cyan>bun run build<r>
+                        \\
+                    , .{
+                        basename,
+                    });
                 }
             },
+            .ReactTailwindSpa => {
+                Output.prettyln(
+                    \\<r> <green>✓<r> React Tailwind SPA created successfully!
+                    \\
+                    \\To start your app, run<d>:<r>
+                    \\
+                    \\    <b><cyan>bun dev<r>
+                    \\
+                    \\To open your app in the browser<d>:<r>
+                    \\
+                    \\    <b><cyan>open http://localhost:3000/{s}<r>
+                    \\
+                    \\To build your app<d>:<r>
+                    \\
+                    \\    <b><cyan>bun run build<r>
+                    \\
+                , .{
+                    basename,
+                });
+            },
         }
 
-        if (is_new) {
-            Output.prettyln(
-                \\<r> <green>✓<r> React Tailwind SPA created successfully!
-                \\
-                \\To start your app, run<d>:<r>
-                \\
-                \\    <b><cyan>bun dev<r>
-                \\
-                \\To open your app in the browser<d>:<r>
-                \\
-                \\    <b><cyan>open http://localhost:3000/{s}<r>
-                \\
-                \\To build your app<d>:<r>
-                \\
-                \\    <b><cyan>bun run build<r>
-                \\
-            , .{
-                basename,
-            });
-            Output.flush();
-        }
+        Output.flush();
+    }
 
-        const start = bun.spawnSync(&.{
-            .argv = &.{
-                try bun.selfExePath(),
-                "dev",
-            },
-            .envp = null,
-            .cwd = bun.fs.FileSystem.instance.top_level_dir,
-            .stderr = .inherit,
-            .stdout = .inherit,
-            .stdin = .inherit,
+    const start = bun.spawnSync(&.{
+        .argv = &.{
+            try bun.selfExePath(),
+            "dev",
+        },
+        .envp = null,
+        .cwd = bun.fs.FileSystem.instance.top_level_dir,
+        .stderr = .inherit,
+        .stdout = .inherit,
+        .stdin = .inherit,
 
-            .windows = if (Environment.isWindows) .{
-                .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
-            },
-        }) catch |err| {
+        .windows = if (Environment.isWindows) .{
+            .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+        },
+    }) catch |err| {
+        Output.err(err, "failed to start app", .{});
+        Global.crash();
+    };
+
+    switch (start) {
+        .err => |err| {
             Output.err(err, "failed to start app", .{});
             Global.crash();
-        };
-
-        switch (start) {
-            .err => |err| {
-                Output.err(err, "failed to start app", .{});
-                Global.crash();
-            },
-            .result => |spawn_result| {
-                if (!spawn_result.status.isOK()) {
-                    if (spawn_result.status.signalCode()) |signal| {
-                        if (signal.toExitCode()) |exit_code| {
-                            Global.exit(exit_code);
-                        }
+        },
+        .result => |spawn_result| {
+            if (!spawn_result.status.isOK()) {
+                if (spawn_result.status.signalCode()) |signal| {
+                    if (signal.toExitCode()) |exit_code| {
+                        Global.exit(exit_code);
                     }
-
-                    if (spawn_result.status == .exited) {
-                        Global.exit(spawn_result.status.exited.code);
-                    }
-
-                    Global.crash();
                 }
-            },
-        }
 
-        Global.exit(0);
+                if (spawn_result.status == .exited) {
+                    Global.exit(spawn_result.status.exited.code);
+                }
+
+                Global.crash();
+            }
+        },
     }
-};
+
+    Global.exit(0);
+}
 
 fn hasAnyTailwindClassesInSourceFiles(bundler: *BundleV2, reachable_files: []const js_ast.Index) bool {
     const input_files = bundler.graph.input_files.slice();
@@ -346,17 +525,18 @@ fn hasAnyTailwindClassesInSourceFiles(bundler: *BundleV2, reachable_files: []con
     return false;
 }
 
-fn hasAnyShadcnImports(bundler: *BundleV2, reachable_files: []const js_ast.Index) bool {
+fn getShadcnComponents(bundler: *BundleV2, reachable_files: []const js_ast.Index) !bun.StringSet {
     const input_files = bundler.graph.input_files.slice();
     const loaders = input_files.items(.loader);
     const all = bundler.graph.ast.items(.import_records);
+    var icons = bun.StringSet.init(default_allocator);
     for (reachable_files) |file| {
         switch (loaders[file.get()]) {
             .tsx, .jsx => {
                 const import_records = all[file.get()];
                 for (import_records.slice()) |*import_record| {
-                    if (strings.contains(import_record.path.text, "@/components/ui/")) {
-                        return true;
+                    if (strings.hasPrefixComptime(import_record.path.text, "@/components/ui/")) {
+                        try icons.insert(import_record.path.text["@/components/ui/".len..]);
                     }
                 }
             },
@@ -364,7 +544,7 @@ fn hasAnyShadcnImports(bundler: *BundleV2, reachable_files: []const js_ast.Index
         }
     }
 
-    return false;
+    return icons;
 }
 const bun = @import("root").bun;
 const string = bun.string;

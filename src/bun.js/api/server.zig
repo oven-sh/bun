@@ -5890,8 +5890,8 @@ pub const NodeHTTPResponse = struct {
         const upgrade_ctx = this.upgrade_context.context orelse return false;
         const ws_handler = this.server.webSocketHandler() orelse return false;
         defer {
-            this.upgrade_context.deinit();
             this.setOnAbortedHandler();
+            this.upgrade_context.deinit();
         }
         data_value.ensureStillAlive();
 

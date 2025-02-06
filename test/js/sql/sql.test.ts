@@ -10501,4 +10501,74 @@ if (isDockerEnabled()) {
       expect(result[0].large_unicode[0]["长文本"].length).toBe(1000);
     });
   });
+
+  describe("pg_database[] Array type", () => {
+    test("pg_database[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::pg_database[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("pg_database[] - system databases", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT array_agg(d.*)::pg_database[] FROM pg_database d;`;
+      expect(result[0].array_agg[0]).toContain("(5,postgres,10,6,c,f,t,-1,717,1,1663,en_US.utf8,en_US.utf8,,2.36,)");
+    });
+
+    test("pg_database[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          NULL,
+          '(5,postgres,10,6,c,f,t,-1,716,1,1663,C,C,,,)'::pg_database,
+          NULL
+        ]::pg_database[] as array_with_nulls
+      `;
+      expect(result[0].array_with_nulls[0]).toBeNull();
+      expect(result[0].array_with_nulls[1]).toBe("(5,postgres,10,6,c,f,t,-1,716,1,1663,C,C,,,)");
+      expect(result[0].array_with_nulls[2]).toBeNull();
+    });
+
+    test("pg_database[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::pg_database[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+  });
+
+  describe("aclitem[] Array type", () => {
+    test("aclitem[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::aclitem[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("aclitem[] system databases", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT datacl FROM pg_database;`;
+      expect(result[0].datacl).toBeNull();
+      expect(result[result.length - 2].datacl).toEqual(["=c/postgres", "postgres=CTc/postgres"]);
+      expect(result[result.length - 1].datacl).toEqual(["=Tc/bun_sql_test", "bun_sql_test=CTc/bun_sql_test"]);
+    });
+
+    test("aclitem[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          NULL,
+          '=c/postgres'::aclitem,
+          NULL
+        ]::aclitem[] as array_with_nulls
+      `;
+      expect(result[0].array_with_nulls[0]).toBeNull();
+      expect(result[0].array_with_nulls[1]).toBe("=c/postgres");
+      expect(result[0].array_with_nulls[2]).toBeNull();
+    });
+
+    test("aclitem[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::aclitem[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+  });
 }

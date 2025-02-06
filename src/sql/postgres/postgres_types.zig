@@ -175,6 +175,8 @@ pub const Tag = enum(short) {
     // Not really sure what this is.
     jsonpath = 4072,
     jsonpath_array = 4073,
+    // another oid for pg_database
+    pg_database_array2 = 10052,
     _,
 
     pub fn tagName(this: Tag) ?[]const u8 {

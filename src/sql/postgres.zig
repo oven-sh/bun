@@ -2507,6 +2507,8 @@ pub const PostgresSQLConnection = struct {
                             .macaddr_array,
                             .inet_array,
                             .aclitem_array,
+                            .pg_database_array,
+                            .pg_database_array2,
                             => {
                                 // this is also a string until we reach "," or "}" but a single word string like Bun
                                 var current_idx: usize = 0;
@@ -2909,6 +2911,8 @@ pub const PostgresSQLConnection = struct {
                 .inet_array,
                 .aclitem_array,
                 .tid_array,
+                .pg_database_array,
+                .pg_database_array2,
                 // numeric array types
                 .int8_array,
                 .int2_array,

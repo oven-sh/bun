@@ -3320,7 +3320,7 @@ pub fn existsAtType(fd: bun.FileDescriptor, path: anytype) Maybe(ExistsAtType) {
     }
 
     return switch (fstatat(fd, path)) {
-        .err => |err| if (err.getErrno() == .NOENT) .{ .result = false } else .{ .err = err },
+        .err => |err| .{ .err = err },
         .result => |result| if (S.ISDIR(result.mode)) .{ .result = .directory } else .{ .result = .file },
     };
 }

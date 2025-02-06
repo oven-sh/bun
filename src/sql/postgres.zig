@@ -2334,29 +2334,7 @@ pub const PostgresSQLConnection = struct {
                         // JSON allows forward slash escaping
                         '/' => buffer[out_index] = '/',
 
-                        // Unicode escapes
-                        'u' => {
-                            const data = input[i..];
-                            if (data.len < 6) return error.InvalidUnicodeSequence;
-                            var codepoint: u32 = 0;
-                            for (data[2..6]) |c| {
-                                codepoint *= 16;
-                                if (c >= '0' and c <= '9') {
-                                    codepoint += c - '0';
-                                } else if (c >= 'A' and c <= 'F') {
-                                    codepoint += c - 'A' + 10;
-                                } else if (c >= 'a' and c <= 'f') {
-                                    codepoint += c - 'a' + 10;
-                                } else {
-                                    return error.InvalidUnicodeSequence;
-                                }
-                            }
-                            const result = try bun.strings.encodeUTF8(codepoint, buffer[out_index..]);
-                            out_index += result.len - 1;
-                            i += 4;
-                        },
-
-                        // PostgreSQL hex escapes
+                        // PostgreSQL hex escapes (used for unicode too)
                         'x' => {
                             if (i + 2 >= input.len) return error.InvalidEscapeSequence;
                             const hex_value = try std.fmt.parseInt(u8, input[i + 1 .. i + 3], 16);
@@ -2616,12 +2594,17 @@ pub const PostgresSQLConnection = struct {
                                         }
                                     },
                                     'I',
+                                    'i',
                                     => {
                                         // infinity
                                         if (slice.len < 8) return error.UnsupportedArrayFormat;
 
-                                        if (bun.strings.eqlComptime(slice[0..8], "Infinity")) {
-                                            try array.append(bun.default_allocator, DataCell{ .tag = .float8, .value = .{ .float8 = std.math.inf(f64) } });
+                                        if (bun.strings.eqlCaseInsensitiveASCII(slice[0..8], "Infinity", false)) {
+                                            if (arrayType == .date_array or arrayType == .timestamp_array or arrayType == .timestamptz_array) {
+                                                try array.append(bun.default_allocator, DataCell{ .tag = .date, .value = .{ .date = std.math.inf(f64) } });
+                                            } else {
+                                                try array.append(bun.default_allocator, DataCell{ .tag = .float8, .value = .{ .float8 = std.math.inf(f64) } });
+                                            }
                                             slice = trySlice(slice, 8);
                                             continue;
                                         }
@@ -2682,8 +2665,12 @@ pub const PostgresSQLConnection = struct {
                                                     is_infinity = true;
                                                     const element = if (is_negative) slice[1..] else slice;
                                                     if (element.len < 8) return error.UnsupportedArrayFormat;
-                                                    if (bun.strings.eqlComptime(element[0..8], "Infinity")) {
-                                                        try array.append(bun.default_allocator, DataCell{ .tag = .float8, .value = .{ .float8 = if (is_negative) -std.math.inf(f64) else std.math.inf(f64) } });
+                                                    if (bun.strings.eqlCaseInsensitiveASCII(element[0..8], "Infinity", false)) {
+                                                        if (arrayType == .date_array or arrayType == .timestamp_array or arrayType == .timestamptz_array) {
+                                                            try array.append(bun.default_allocator, DataCell{ .tag = .date, .value = .{ .date = if (is_negative) -std.math.inf(f64) else std.math.inf(f64) } });
+                                                        } else {
+                                                            try array.append(bun.default_allocator, DataCell{ .tag = .float8, .value = .{ .float8 = if (is_negative) -std.math.inf(f64) else std.math.inf(f64) } });
+                                                        }
                                                         slice = trySlice(slice, 8 + @as(usize, @intFromBool(is_negative)));
                                                         break;
                                                     }

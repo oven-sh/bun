@@ -7429,4 +7429,3076 @@ if (isDockerEnabled()) {
       expect(result[0].lower_bound).toBe(1);
     });
   });
+  describe("macaddr8[] Array type", () => {
+    test("macaddr8[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::macaddr8[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("macaddr8[] - single value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['08:00:2b:01:02:03:04:05']::macaddr8[] as single_value`;
+      expect(result[0].single_value).toEqual(["08:00:2b:01:02:03:04:05"]);
+    });
+
+    test("macaddr8[] - multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '08:00:2b:01:02:03:04:05',
+          '08:00:2b:01:02:03:04:06',
+          '08:00:2b:01:02:03:04:07'
+        ]::macaddr8[] as multiple_values
+      `;
+      expect(result[0].multiple_values).toEqual([
+        "08:00:2b:01:02:03:04:05",
+        "08:00:2b:01:02:03:04:06",
+        "08:00:2b:01:02:03:04:07",
+      ]);
+    });
+
+    test("macaddr8[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '08:00:2b:01:02:03:04:05',
+          NULL,
+          '08:00:2b:01:02:03:04:07',
+          NULL
+        ]::macaddr8[] as array_with_nulls
+      `;
+      expect(result[0].array_with_nulls).toEqual(["08:00:2b:01:02:03:04:05", null, "08:00:2b:01:02:03:04:07", null]);
+    });
+
+    test("macaddr8[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::macaddr8[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("macaddr8[] - different input formats", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '08-00-2b-01-02-03-04-05',                    -- with hyphens
+          '08:00:2b:01:02:03:04:05',                    -- with colons
+          '08002b0102030405',                           -- without separators
+          '0800.2b01.0203.0405'                         -- with dots
+        ]::macaddr8[] as format_values
+      `;
+      // PostgreSQL normalizes to colon format
+      expect(result[0].format_values).toEqual([
+        "08:00:2b:01:02:03:04:05",
+        "08:00:2b:01:02:03:04:05",
+        "08:00:2b:01:02:03:04:05",
+        "08:00:2b:01:02:03:04:05",
+      ]);
+    });
+
+    test("macaddr8[] - case insensitivity", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '08:00:2B:01:02:03:04:05',
+          '08:00:2b:01:02:03:04:05',
+          '08:00:2B:01:02:03:04:05'
+        ]::macaddr8[] as case_values
+      `;
+      // PostgreSQL normalizes to lowercase
+      expect(result[0].case_values).toEqual([
+        "08:00:2b:01:02:03:04:05",
+        "08:00:2b:01:02:03:04:05",
+        "08:00:2b:01:02:03:04:05",
+      ]);
+    });
+
+    test("macaddr8[] - broadcast address", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          'ff:ff:ff:ff:ff:ff:ff:ff'    -- broadcast address
+        ]::macaddr8[] as broadcast_addr
+      `;
+      expect(result[0].broadcast_addr).toEqual(["ff:ff:ff:ff:ff:ff:ff:ff"]);
+    });
+
+    test("macaddr8[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY['08:00:2b:01:02:03:04:05', '08:00:2b:01:02:03:04:06']::macaddr8[])[1] as first_element,
+          (ARRAY['08:00:2b:01:02:03:04:05', '08:00:2b:01:02:03:04:06']::macaddr8[])[2] as second_element
+      `;
+
+      expect(result[0].first_element).toBe("08:00:2b:01:02:03:04:05");
+      expect(result[0].second_element).toBe("08:00:2b:01:02:03:04:06");
+    });
+
+    test("macaddr8[] - array concatenation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['08:00:2b:01:02:03:04:05']::macaddr8[] || 
+          ARRAY['08:00:2b:01:02:03:04:06']::macaddr8[] as concatenated
+      `;
+
+      expect(result[0].concatenated).toEqual(["08:00:2b:01:02:03:04:05", "08:00:2b:01:02:03:04:06"]);
+    });
+
+    test("macaddr8[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY['08:00:2b:01:02:03:04:05', '08:00:2b:01:02:03:04:06']::macaddr8[], 1) as array_length,
+          array_dims(ARRAY['08:00:2b:01:02:03:04:05', '08:00:2b:01:02:03:04:06']::macaddr8[]) as dimensions,
+          array_upper(ARRAY['08:00:2b:01:02:03:04:05', '08:00:2b:01:02:03:04:06']::macaddr8[], 1) as upper_bound,
+          array_lower(ARRAY['08:00:2b:01:02:03:04:05', '08:00:2b:01:02:03:04:06']::macaddr8[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(2);
+      expect(result[0].dimensions).toBe("[1:2]");
+      expect(result[0].upper_bound).toBe(2);
+      expect(result[0].lower_bound).toBe(1);
+    });
+  });
+
+  describe("money[] Array type", () => {
+    test("money[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::money[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("money[] - single value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['$100.00']::money[] as single_value`;
+      expect(result[0].single_value).toEqual(["$100.00"]);
+    });
+
+    test("money[] - multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '$100.00',
+          '$200.00',
+          '$300.00'
+        ]::money[] as multiple_values
+      `;
+      expect(result[0].multiple_values).toEqual(["$100.00", "$200.00", "$300.00"]);
+    });
+
+    test("money[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '$100.00',
+          NULL,
+          '$300.00',
+          NULL
+        ]::money[] as array_with_nulls
+      `;
+      expect(result[0].array_with_nulls).toEqual(["$100.00", null, "$300.00", null]);
+    });
+
+    test("money[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::money[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("money[] - different input formats", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '12345.67'::money,        -- numeric input
+          '$12,345.67',            -- with currency symbol and comma
+          '12345.67',              -- without currency symbol
+          '12345',                 -- integer value
+          '.67',                   -- decimal only
+          '$0.01',                 -- minimum value
+          '$0.00'                  -- zero value
+        ]::money[] as format_values
+      `;
+      expect(result[0].format_values).toEqual([
+        "$12,345.67",
+        "$12,345.67",
+        "$12,345.67",
+        "$12,345.00",
+        "$0.67",
+        "$0.01",
+        "$0.00",
+      ]);
+    });
+
+    test("money[] - negative values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '-12345.67'::money,
+          '($12,345.67)',
+          '-$12,345.67'
+        ]::money[] as negative_values
+      `;
+
+      // PostgreSQL normalizes negative money formats
+      expect(result[0].negative_values).toEqual(["-$12,345.67", "-$12,345.67", "-$12,345.67"]);
+    });
+
+    test("money[] - large values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '92233720368547758.07'::money,   -- Maximum money value
+          '-92233720368547758.08'::money   -- Minimum money value
+        ]::money[] as boundary_values
+      `;
+      expect(result[0].boundary_values).toEqual(["$92,233,720,368,547,758.07", "-$92,233,720,368,547,758.08"]);
+    });
+
+    test("money[] - rounding behavior", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '1.234'::money,          -- rounds to 1.23
+          '1.235'::money,          -- rounds to 1.24
+          '1.236'::money,          -- rounds to 1.24
+          '-1.234'::money,         -- rounds to -1.23
+          '-1.235'::money         -- rounds to -1.24
+        ]::money[] as rounded_values
+      `;
+      expect(result[0].rounded_values).toEqual(["$1.23", "$1.24", "$1.24", "-$1.23", "-$1.24"]);
+    });
+
+    test("money[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY['$100.00', '$200.00', '$300.00']::money[])[1] as first_element,
+          (ARRAY['$100.00', '$200.00', '$300.00']::money[])[2] as second_element,
+          (ARRAY['$100.00', '$200.00', '$300.00']::money[])[3] as third_element
+      `;
+
+      expect(result[0].first_element).toBe("$100.00");
+      expect(result[0].second_element).toBe("$200.00");
+      expect(result[0].third_element).toBe("$300.00");
+    });
+
+    test("money[] - array concatenation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['$100.00', '$200.00']::money[] || ARRAY['$300.00']::money[] as concatenated
+      `;
+
+      expect(result[0].concatenated).toEqual(["$100.00", "$200.00", "$300.00"]);
+    });
+
+    test("money[] - array aggregation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        WITH money_values AS (
+          SELECT unnest(ARRAY['$100.00', '$200.00', '$300.00']::money[]) as amount
+        )
+        SELECT 
+          sum(amount)::money as total,
+          min(amount)::money as minimum,
+          max(amount)::money as maximum
+        FROM money_values
+      `;
+
+      expect(result[0].total).toBe("$600.00");
+      expect(result[0].minimum).toBe("$100.00");
+      expect(result[0].maximum).toBe("$300.00");
+    });
+
+    test("money[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY['$100.00', '$200.00']::money[], 1) as array_length,
+          array_dims(ARRAY['$100.00', '$200.00']::money[]) as dimensions,
+          array_upper(ARRAY['$100.00', '$200.00']::money[], 1) as upper_bound,
+          array_lower(ARRAY['$100.00', '$200.00']::money[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(2);
+      expect(result[0].dimensions).toBe("[1:2]");
+      expect(result[0].upper_bound).toBe(2);
+      expect(result[0].lower_bound).toBe(1);
+    });
+  });
+
+  describe("macaddr[] Array type", () => {
+    test("macaddr[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::macaddr[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("macaddr[] - single value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['08:00:2b:01:02:03']::macaddr[] as single_value`;
+      expect(result[0].single_value).toEqual(["08:00:2b:01:02:03"]);
+    });
+
+    test("macaddr[] - multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '08:00:2b:01:02:03',
+          '08:00:2b:01:02:04',
+          '08:00:2b:01:02:05'
+        ]::macaddr[] as multiple_values
+      `;
+      expect(result[0].multiple_values).toEqual(["08:00:2b:01:02:03", "08:00:2b:01:02:04", "08:00:2b:01:02:05"]);
+    });
+
+    test("macaddr[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '08:00:2b:01:02:03',
+          NULL,
+          '08:00:2b:01:02:05',
+          NULL
+        ]::macaddr[] as array_with_nulls
+      `;
+      expect(result[0].array_with_nulls).toEqual(["08:00:2b:01:02:03", null, "08:00:2b:01:02:05", null]);
+    });
+
+    test("macaddr[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::macaddr[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("macaddr[] - different input formats", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '08-00-2b-01-02-03',                    -- with hyphens
+          '08:00:2b:01:02:03',                    -- with colons
+          '08002b010203',                         -- without separators
+          '0800.2b01.0203'                        -- with dots
+        ]::macaddr[] as format_values
+      `;
+      // PostgreSQL normalizes to colon format
+      expect(result[0].format_values).toEqual([
+        "08:00:2b:01:02:03",
+        "08:00:2b:01:02:03",
+        "08:00:2b:01:02:03",
+        "08:00:2b:01:02:03",
+      ]);
+    });
+
+    test("macaddr[] - case insensitivity", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '08:00:2B:01:02:03',
+          '08:00:2b:01:02:03',
+          '08:00:2B:01:02:03'
+        ]::macaddr[] as case_values
+      `;
+      // PostgreSQL normalizes to lowercase
+      expect(result[0].case_values).toEqual(["08:00:2b:01:02:03", "08:00:2b:01:02:03", "08:00:2b:01:02:03"]);
+    });
+
+    test("macaddr[] - special addresses", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          'ff:ff:ff:ff:ff:ff',    -- broadcast address
+          '00:00:00:00:00:00',    -- null address
+          '01:00:5e:00:00:00'     -- multicast address
+        ]::macaddr[] as special_addresses
+      `;
+      expect(result[0].special_addresses).toEqual(["ff:ff:ff:ff:ff:ff", "00:00:00:00:00:00", "01:00:5e:00:00:00"]);
+    });
+
+    test("macaddr[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY['08:00:2b:01:02:03', '08:00:2b:01:02:04']::macaddr[])[1] as first_element,
+          (ARRAY['08:00:2b:01:02:03', '08:00:2b:01:02:04']::macaddr[])[2] as second_element
+      `;
+
+      expect(result[0].first_element).toBe("08:00:2b:01:02:03");
+      expect(result[0].second_element).toBe("08:00:2b:01:02:04");
+    });
+
+    test("macaddr[] - array concatenation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['08:00:2b:01:02:03']::macaddr[] || 
+          ARRAY['08:00:2b:01:02:04']::macaddr[] as concatenated
+      `;
+
+      expect(result[0].concatenated).toEqual(["08:00:2b:01:02:03", "08:00:2b:01:02:04"]);
+    });
+
+    test("macaddr[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY['08:00:2b:01:02:03', '08:00:2b:01:02:04']::macaddr[], 1) as array_length,
+          array_dims(ARRAY['08:00:2b:01:02:03', '08:00:2b:01:02:04']::macaddr[]) as dimensions,
+          array_upper(ARRAY['08:00:2b:01:02:03', '08:00:2b:01:02:04']::macaddr[], 1) as upper_bound,
+          array_lower(ARRAY['08:00:2b:01:02:03', '08:00:2b:01:02:04']::macaddr[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(2);
+      expect(result[0].dimensions).toBe("[1:2]");
+      expect(result[0].upper_bound).toBe(2);
+      expect(result[0].lower_bound).toBe(1);
+    });
+
+    test("macaddr[] - trunc operation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          trunc('08:00:2b:01:02:03'::macaddr),  -- Set last 3 bytes to zero
+          trunc('12:34:56:78:9a:bc'::macaddr)   -- Set last 3 bytes to zero
+        ]::macaddr[] as truncated_macs
+      `;
+
+      expect(result[0].truncated_macs).toEqual(["08:00:2b:00:00:00", "12:34:56:00:00:00"]);
+    });
+  });
+
+  describe("inet[] Array type", () => {
+    test("inet[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::inet[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("inet[] - single value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['192.168.1.1']::inet[] as single_value`;
+      expect(result[0].single_value).toEqual(["192.168.1.1"]);
+    });
+
+    test("inet[] - multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '192.168.1.1',
+          '10.0.0.1',
+          '172.16.0.1'
+        ]::inet[] as multiple_values
+      `;
+      expect(result[0].multiple_values).toEqual(["192.168.1.1", "10.0.0.1", "172.16.0.1"]);
+    });
+
+    test("inet[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '192.168.1.1',
+          NULL,
+          '10.0.0.1',
+          NULL
+        ]::inet[] as array_with_nulls
+      `;
+      expect(result[0].array_with_nulls).toEqual(["192.168.1.1", null, "10.0.0.1", null]);
+    });
+
+    test("inet[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::inet[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("inet[] - IPv4 addresses with CIDR", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '192.168.1.1/24',       -- Class C network
+          '10.0.0.1/8',           -- Class A network
+          '172.16.0.1/16',        -- Class B network
+          '192.168.1.1/32'        -- Single host
+        ]::inet[] as ipv4_with_cidr
+      `;
+      expect(result[0].ipv4_with_cidr).toEqual(["192.168.1.1/24", "10.0.0.1/8", "172.16.0.1/16", "192.168.1.1"]);
+    });
+
+    test("inet[] - IPv6 addresses", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '2001:db8::1',                  -- Standard IPv6
+          '::1',                          -- Localhost
+          'fe80::1',                      -- Link-local
+          '2001:db8::1/64',              -- With network prefix
+          '::ffff:192.168.1.1'           -- IPv4-mapped IPv6
+        ]::inet[] as ipv6_addresses
+      `;
+      expect(result[0].ipv6_addresses).toEqual([
+        "2001:db8::1",
+        "::1",
+        "fe80::1",
+        "2001:db8::1/64",
+        "::ffff:192.168.1.1",
+      ]);
+    });
+
+    test("inet[] - special addresses", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '0.0.0.0',              -- IPv4 unspecified
+          '255.255.255.255',      -- IPv4 broadcast
+          '127.0.0.1',            -- IPv4 localhost
+          '::',                   -- IPv6 unspecified
+          '::1'                   -- IPv6 localhost
+        ]::inet[] as special_addresses
+      `;
+      expect(result[0].special_addresses).toEqual(["0.0.0.0", "255.255.255.255", "127.0.0.1", "::", "::1"]);
+    });
+
+    test("inet[] - private network addresses", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '10.0.0.0/8',          -- Class A private network
+          '172.16.0.0/12',       -- Class B private network
+          '192.168.0.0/16',      -- Class C private network
+          'fc00::/7'             -- IPv6 unique local addresses
+        ]::inet[] as private_networks
+      `;
+      expect(result[0].private_networks).toEqual(["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"]);
+    });
+
+    test("inet[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY['192.168.1.1', '10.0.0.1']::inet[])[1] as first_element,
+          (ARRAY['192.168.1.1', '10.0.0.1']::inet[])[2] as second_element
+      `;
+
+      expect(result[0].first_element).toBe("192.168.1.1");
+      expect(result[0].second_element).toBe("10.0.0.1");
+    });
+
+    test("inet[] - network containment operators", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          '192.168.1.0/24'::inet << '192.168.1.1'::inet as network_contains_address,
+          '192.168.1.0/24'::inet <<= '192.168.1.0/24'::inet as network_contains_equals,
+          '192.168.1.1'::inet >> '192.168.1.0/24'::inet as address_contained_by,
+          '192.168.1.0/24'::inet >>= '192.168.1.0/24'::inet as network_contained_equals
+      `;
+
+      expect(result[0].network_contains_address).toBe(false);
+      expect(result[0].network_contains_equals).toBe(true);
+      expect(result[0].address_contained_by).toBe(false);
+      expect(result[0].network_contained_equals).toBe(true);
+    });
+
+    test("inet[] - array concatenation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['192.168.1.1', '10.0.0.1']::inet[] || 
+          ARRAY['172.16.0.1']::inet[] as concatenated
+      `;
+
+      expect(result[0].concatenated).toEqual(["192.168.1.1", "10.0.0.1", "172.16.0.1"]);
+    });
+
+    test("inet[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY['192.168.1.1', '10.0.0.1']::inet[], 1) as array_length,
+          array_dims(ARRAY['192.168.1.1', '10.0.0.1']::inet[]) as dimensions,
+          array_upper(ARRAY['192.168.1.1', '10.0.0.1']::inet[], 1) as upper_bound,
+          array_lower(ARRAY['192.168.1.1', '10.0.0.1']::inet[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(2);
+      expect(result[0].dimensions).toBe("[1:2]");
+      expect(result[0].upper_bound).toBe(2);
+      expect(result[0].lower_bound).toBe(1);
+    });
+  });
+
+  describe("bpchar[] Array type", () => {
+    test("bpchar[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::bpchar[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("bpchar[] - single value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['A']::bpchar[] as single_value`;
+      expect(result[0].single_value[0].trim()).toBe("A");
+    });
+
+    test("bpchar[] - multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          'A',
+          'B',
+          'C'
+        ]::bpchar[] as multiple_values
+      `;
+      expect(result[0].multiple_values.map(v => v.trim())).toEqual(["A", "B", "C"]);
+    });
+
+    test("bpchar[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          'A',
+          NULL,
+          'C',
+          NULL
+        ]::bpchar[] as array_with_nulls
+      `;
+      expect(result[0].array_with_nulls.map(v => v?.trim() ?? null)).toEqual(["A", null, "C", null]);
+    });
+
+    test("bpchar[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::bpchar[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("bpchar[] - fixed length strings", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          'abc'::char(5),
+          'def'::char(5),
+          'ghi'::char(5)
+        ]::bpchar[] as fixed_length
+      `;
+
+      const values = result[0].fixed_length;
+      // Each value should be padded to length 5
+      expect(values[0].length).toBe(5);
+      expect(values[1].length).toBe(5);
+      expect(values[2].length).toBe(5);
+      // Trimmed values should match original
+      expect(values.map(v => v.trim())).toEqual(["abc", "def", "ghi"]);
+    });
+
+    test("bpchar[] - space padding behavior", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          'x'::char(3),
+          'xy'::char(3),
+          'xyz'::char(3)
+        ]::bpchar[] as padding_test
+      `;
+
+      const values = result[0].padding_test;
+      // All values should be padded to length 3
+      expect(values.every(v => v.length === 3)).toBe(true);
+      // Original values should be preserved when trimmed
+      expect(values.map(v => v.trim())).toEqual(["x", "xy", "xyz"]);
+    });
+
+    test("bpchar[] - mixed case strings", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          'Abc'::char(3),
+          'DEF'::char(3),
+          'gHi'::char(3)
+        ]::bpchar[] as mixed_case
+      `;
+
+      expect(result[0].mixed_case.map(v => v.trim())).toEqual(["Abc", "DEF", "gHi"]);
+    });
+
+    test("bpchar[] - special characters", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          ' x '::char(3),    -- spaces
+          '$y$'::char(3),    -- symbols
+          '#z#'::char(3)     -- hash
+        ]::bpchar[] as special_chars
+      `;
+      //bpchar trims whitespace
+      expect(result[0].special_chars.map(v => v.trim())).toEqual(["x", "$y$", "#z#"]);
+    });
+
+    test("bpchar[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY['A', 'B', 'C']::bpchar[])[1] as first_element,
+          (ARRAY['A', 'B', 'C']::bpchar[])[2] as second_element,
+          (ARRAY['A', 'B', 'C']::bpchar[])[3] as third_element
+      `;
+
+      expect(result[0].first_element.trim()).toBe("A");
+      expect(result[0].second_element.trim()).toBe("B");
+      expect(result[0].third_element.trim()).toBe("C");
+    });
+
+    test("bpchar[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY['A', 'B', 'C']::bpchar[], 1) as array_length,
+          array_dims(ARRAY['A', 'B', 'C']::bpchar[]) as dimensions,
+          array_upper(ARRAY['A', 'B', 'C']::bpchar[], 1) as upper_bound,
+          array_lower(ARRAY['A', 'B', 'C']::bpchar[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(3);
+      expect(result[0].dimensions).toBe("[1:3]");
+      expect(result[0].upper_bound).toBe(3);
+      expect(result[0].lower_bound).toBe(1);
+    });
+
+    test("bpchar[] - string comparison", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['abc'::char(5)] = ARRAY['abc  '::char(5)]::bpchar[] as equal_with_padding,
+          ARRAY['abc'::char(5)] = ARRAY['def  '::char(5)]::bpchar[] as not_equal,
+          ARRAY['abc'::char(5)] < ARRAY['def  '::char(5)]::bpchar[] as less_than,
+          ARRAY['def'::char(5)] > ARRAY['abc  '::char(5)]::bpchar[] as greater_than
+      `;
+
+      expect(result[0].equal_with_padding).toBe(true);
+      expect(result[0].not_equal).toBe(false);
+      expect(result[0].less_than).toBe(true);
+      expect(result[0].greater_than).toBe(true);
+    });
+  });
+
+  describe("varchar[] Array type", () => {
+    test("varchar[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::varchar[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("varchar[] - single value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['test']::varchar[] as single_value`;
+      expect(result[0].single_value).toEqual(["test"]);
+    });
+
+    test("varchar[] - multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          'first',
+          'second',
+          'third'
+        ]::varchar[] as multiple_values
+      `;
+      expect(result[0].multiple_values).toEqual(["first", "second", "third"]);
+    });
+
+    test("varchar[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          'first',
+          NULL,
+          'third',
+          NULL
+        ]::varchar[] as array_with_nulls
+      `;
+      expect(result[0].array_with_nulls).toEqual(["first", null, "third", null]);
+    });
+
+    test("varchar[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::varchar[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("varchar[] - strings of different lengths", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '',                   -- empty string
+          'a',                  -- single character
+          'ab',                 -- two characters
+          'test string',        -- with space
+          'longer test string'  -- longer string
+        ]::varchar[] as varying_lengths
+      `;
+      expect(result[0].varying_lengths).toEqual(["", "a", "ab", "test string", "longer test string"]);
+    });
+
+    test("varchar[] - with length specification", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          'short'::varchar(10),
+          'exactlyten'::varchar(10),
+          'truncated_string'::varchar(10)
+        ]::varchar[] as length_limited
+      `;
+      expect(result[0].length_limited).toEqual(["short", "exactlyten", "truncated_"]);
+    });
+
+    test("varchar[] - special characters", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          ' leading space',
+          'trailing space ',
+          '  multiple  spaces  ',
+          'tab\there',
+          'new\nline',
+          'special@#$%chars'
+        ]::varchar[] as special_chars
+      `;
+      expect(result[0].special_chars).toEqual([
+        " leading space",
+        "trailing space ",
+        "  multiple  spaces  ",
+        "tab\there",
+        "new\nline",
+        "special@#$%chars",
+      ]);
+    });
+
+    test("varchar[] - unicode characters", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '你好',              -- Chinese
+          'こんにちは',        -- Japanese
+          'αβγ',              -- Greek
+          'привет',           -- Russian
+          '👋 🌍'             -- Emojis
+        ]::varchar[] as unicode_chars
+      `;
+      expect(result[0].unicode_chars).toEqual(["你好", "こんにちは", "αβγ", "привет", "👋 🌍"]);
+    });
+
+    test("varchar[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY['first', 'second', 'third']::varchar[])[1] as first_element,
+          (ARRAY['first', 'second', 'third']::varchar[])[2] as second_element,
+          (ARRAY['first', 'second', 'third']::varchar[])[3] as third_element
+      `;
+
+      expect(result[0].first_element).toBe("first");
+      expect(result[0].second_element).toBe("second");
+      expect(result[0].third_element).toBe("third");
+    });
+
+    test("varchar[] - array concatenation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['first', 'second']::varchar[] || 
+          ARRAY['third']::varchar[] as concatenated
+      `;
+
+      expect(result[0].concatenated).toEqual(["first", "second", "third"]);
+    });
+
+    test("varchar[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY['first', 'second', 'third']::varchar[], 1) as array_length,
+          array_dims(ARRAY['first', 'second', 'third']::varchar[]) as dimensions,
+          array_upper(ARRAY['first', 'second', 'third']::varchar[], 1) as upper_bound,
+          array_lower(ARRAY['first', 'second', 'third']::varchar[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(3);
+      expect(result[0].dimensions).toBe("[1:3]");
+      expect(result[0].upper_bound).toBe(3);
+      expect(result[0].lower_bound).toBe(1);
+    });
+
+    test("varchar[] - text pattern matching", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        WITH test_array AS (
+          SELECT ARRAY['test1', 'test2', 'other', 'test3']::varchar[] as values
+        )
+        SELECT 
+          array_agg(v ORDER BY v) FILTER (WHERE v LIKE 'test%') as filtered
+        FROM test_array, unnest(values) as v
+      `;
+
+      expect(result[0].filtered).toEqual(["test1", "test2", "test3"]);
+    });
+
+    test("varchar[] - large strings", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const longString = "a".repeat(1000);
+      const result = await sql`
+        SELECT ARRAY[${longString}]::varchar[] as long_string_array
+      `;
+
+      expect(result[0].long_string_array[0].length).toBe(1000);
+    });
+  });
+
+  describe("date[] Array type", () => {
+    test("date[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::date[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("date[] - single value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['2024-01-01']::date[] as single_value`;
+      expect(result[0].single_value.map(d => d.toISOString().split("T")[0])).toEqual(["2024-01-01"]);
+    });
+
+    test("date[] - multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '2024-01-01',
+          '2024-01-02',
+          '2024-01-03'
+        ]::date[] as multiple_values
+      `;
+      expect(result[0].multiple_values.map(d => d.toISOString().split("T")[0])).toEqual([
+        "2024-01-01",
+        "2024-01-02",
+        "2024-01-03",
+      ]);
+    });
+
+    test("date[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '2024-01-01',
+          NULL,
+          '2024-01-03',
+          NULL
+        ]::date[] as array_with_nulls
+      `;
+      expect(result[0].array_with_nulls.map(d => (d ? d.toISOString().split("T")[0] : null))).toEqual([
+        "2024-01-01",
+        null,
+        "2024-01-03",
+        null,
+      ]);
+    });
+
+    test("date[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::date[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("date[] - different date formats", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '2024-01-15',                    -- ISO format
+          '15-Jan-2024',                   -- Postgres format
+          'Jan 15 2024',                   -- Postgres format
+          'January 15 2024',               -- Postgres format
+          '01/15/2024'                     -- US format (if DateStyle allows)
+        ]::date[] as date_formats
+      `;
+      expect(result[0].date_formats.map(d => d.toISOString().split("T")[0])).toEqual([
+        "2024-01-15",
+        "2024-01-15",
+        "2024-01-15",
+        "2024-01-15",
+        "2024-01-15",
+      ]);
+    });
+
+    test("date[] - special dates", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          'infinity'::date,
+          '-infinity'::date,
+          'today'::date,
+          'yesterday'::date,
+          'tomorrow'::date
+        ]::date[] as special_dates
+      `;
+
+      const values = result[0].special_dates;
+      expect(values[0].toString()).toBe("Invalid Date");
+      expect(values[1].toString()).toBe("Invalid Date");
+      // Skip testing today/yesterday/tomorrow as they depend on current date
+    });
+
+    test("date[] - date calculations", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '2024-01-15'::date + '1 day'::interval,
+          '2024-01-15'::date + '1 month'::interval,
+          '2024-01-15'::date + '1 year'::interval,
+          '2024-01-15'::date - '1 day'::interval
+        ]::date[] as date_calcs
+      `;
+      expect(result[0].date_calcs.map(d => d.toISOString().split("T")[0])).toEqual([
+        "2024-01-16",
+        "2024-02-15",
+        "2025-01-15",
+        "2024-01-14",
+      ]);
+    });
+
+    test("date[] - boundary dates", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '4713-01-01 BC',                 -- Earliest possible date
+          '5874897-01-01',                 -- Latest possible date
+          '1970-01-01',                    -- Unix epoch
+          '2000-01-01',                    -- Y2K
+          '9999-12-31'                     -- End of common range
+        ]::date[] as boundary_dates
+      `;
+
+      expect(result[0].boundary_dates.map(d => (isNaN(d) ? "Invalid Date" : d.toISOString().split("T")[0]))).toEqual([
+        "Invalid Date",
+        "Invalid Date",
+        "1970-01-01",
+        "2000-01-01",
+        "9999-12-31",
+      ]);
+    });
+
+    test("date[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY['2024-01-01', '2024-01-02', '2024-01-03']::date[])[1] as first_element,
+          (ARRAY['2024-01-01', '2024-01-02', '2024-01-03']::date[])[2] as second_element,
+          (ARRAY['2024-01-01', '2024-01-02', '2024-01-03']::date[])[3] as third_element
+      `;
+
+      expect(result[0].first_element.toISOString().split("T")[0]).toBe("2024-01-01");
+      expect(result[0].second_element.toISOString().split("T")[0]).toBe("2024-01-02");
+      expect(result[0].third_element.toISOString().split("T")[0]).toBe("2024-01-03");
+    });
+
+    test("date[] - array contains operator", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['2024-01-01', '2024-01-02']::date[] @> 
+          ARRAY['2024-01-01']::date[] as contains_first,
+          
+          ARRAY['2024-01-01', '2024-01-02']::date[] @> 
+          ARRAY['2024-01-02']::date[] as contains_second,
+          
+          ARRAY['2024-01-01', '2024-01-02']::date[] @> 
+          ARRAY['2024-01-03']::date[] as contains_none
+      `;
+
+      expect(result[0].contains_first).toBe(true);
+      expect(result[0].contains_second).toBe(true);
+      expect(result[0].contains_none).toBe(false);
+    });
+
+    test("date[] - array overlap operator", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['2024-01-01', '2024-01-02']::date[] && 
+          ARRAY['2024-01-02', '2024-01-03']::date[] as has_overlap,
+          
+          ARRAY['2024-01-01', '2024-01-02']::date[] && 
+          ARRAY['2024-01-03', '2024-01-04']::date[] as no_overlap
+      `;
+
+      expect(result[0].has_overlap).toBe(true);
+      expect(result[0].no_overlap).toBe(false);
+    });
+
+    test("date[] - array concatenation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['2024-01-01', '2024-01-02']::date[] || 
+          ARRAY['2024-01-03']::date[] as concatenated
+      `;
+
+      expect(result[0].concatenated.map(d => d.toISOString().split("T")[0])).toEqual([
+        "2024-01-01",
+        "2024-01-02",
+        "2024-01-03",
+      ]);
+    });
+
+    test("date[] - array comparison", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['2024-01-01', '2024-01-02']::date[] = 
+          ARRAY['2024-01-01', '2024-01-02']::date[] as equal_arrays,
+          
+          ARRAY['2024-01-01', '2024-01-02']::date[] < 
+          ARRAY['2024-01-02', '2024-01-02']::date[] as less_than,
+          
+          ARRAY['2024-01-02', '2024-01-02']::date[] > 
+          ARRAY['2024-01-01', '2024-01-02']::date[] as greater_than
+      `;
+
+      expect(result[0].equal_arrays).toBe(true);
+      expect(result[0].less_than).toBe(true);
+      expect(result[0].greater_than).toBe(true);
+    });
+
+    test("date[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY['2024-01-01', '2024-01-02']::date[], 1) as array_length,
+          array_dims(ARRAY['2024-01-01', '2024-01-02']::date[]) as dimensions,
+          array_upper(ARRAY['2024-01-01', '2024-01-02']::date[], 1) as upper_bound,
+          array_lower(ARRAY['2024-01-01', '2024-01-02']::date[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(2);
+      expect(result[0].dimensions).toBe("[1:2]");
+      expect(result[0].upper_bound).toBe(2);
+      expect(result[0].lower_bound).toBe(1);
+    });
+  });
+
+  describe("time[] Array type", () => {
+    test("time[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::time[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("time[] - single value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['12:34:56']::time[] as single_value`;
+      expect(result[0].single_value).toEqual(["12:34:56"]);
+    });
+
+    test("time[] - multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '12:34:56',
+          '15:45:32',
+          '23:59:59'
+        ]::time[] as multiple_values
+      `;
+      expect(result[0].multiple_values).toEqual(["12:34:56", "15:45:32", "23:59:59"]);
+    });
+
+    test("time[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '12:34:56',
+          NULL,
+          '15:45:32',
+          NULL
+        ]::time[] as array_with_nulls
+      `;
+      expect(result[0].array_with_nulls).toEqual(["12:34:56", null, "15:45:32", null]);
+    });
+
+    test("time[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::time[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("time[] - different time formats", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '12:34:56',              -- HH:MM:SS
+          '12:34',                 -- HH:MM (defaults to 00 seconds)
+          '12:34:56.789',          -- With milliseconds
+          '12:34:56.789123',       -- With microseconds
+          '1:2:3'                  -- Single digits (normalized to HH:MM:SS)
+        ]::time[] as time_formats
+      `;
+      expect(result[0].time_formats).toEqual(["12:34:56", "12:34:00", "12:34:56.789", "12:34:56.789123", "01:02:03"]);
+    });
+
+    test("time[] - boundary times", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '00:00:00',              -- Midnight
+          '23:59:59.999999',       -- Just before midnight
+          '12:00:00',              -- Noon
+          '00:00:00.000001'        -- Just after midnight
+        ]::time[] as boundary_times
+      `;
+      expect(result[0].boundary_times).toEqual(["00:00:00", "23:59:59.999999", "12:00:00", "00:00:00.000001"]);
+    });
+
+    test("time[] - precision handling", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '12:34:56'::time(0),          -- Second precision
+          '12:34:56.7'::time(1),        -- Decisecond precision
+          '12:34:56.78'::time(2),       -- Centisecond precision
+          '12:34:56.789'::time(3),      -- Millisecond precision
+          '12:34:56.789123'::time(6)    -- Microsecond precision
+        ]::time[] as time_precisions
+      `;
+      expect(result[0].time_precisions).toEqual([
+        "12:34:56",
+        "12:34:56.7",
+        "12:34:56.78",
+        "12:34:56.789",
+        "12:34:56.789123",
+      ]);
+    });
+
+    test("time[] - interval arithmetic", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '12:34:56'::time + '1 hour'::interval,
+          '12:34:56'::time + '1 minute'::interval,
+          '12:34:56'::time + '1 second'::interval,
+          '12:34:56'::time - '1 hour'::interval
+        ]::time[] as time_calculations
+      `;
+      expect(result[0].time_calculations).toEqual(["13:34:56", "12:35:56", "12:34:57", "11:34:56"]);
+    });
+
+    test("time[] - military time", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '00:00:00',     -- 24:00 normalizes to 00:00
+          '13:00:00',     -- 1 PM
+          '23:00:00'      -- 11 PM
+        ]::time[] as military_times
+      `;
+      expect(result[0].military_times).toEqual(["00:00:00", "13:00:00", "23:00:00"]);
+    });
+
+    test("time[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY['12:34:56', '15:45:32', '23:59:59']::time[])[1] as first_element,
+          (ARRAY['12:34:56', '15:45:32', '23:59:59']::time[])[2] as second_element,
+          (ARRAY['12:34:56', '15:45:32', '23:59:59']::time[])[3] as third_element
+      `;
+
+      expect(result[0].first_element).toBe("12:34:56");
+      expect(result[0].second_element).toBe("15:45:32");
+      expect(result[0].third_element).toBe("23:59:59");
+    });
+
+    test("time[] - array concatenation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['12:34:56', '15:45:32']::time[] || 
+          ARRAY['23:59:59']::time[] as concatenated
+      `;
+
+      expect(result[0].concatenated).toEqual(["12:34:56", "15:45:32", "23:59:59"]);
+    });
+
+    test("time[] - array comparison", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['12:34:56', '15:45:32']::time[] = 
+          ARRAY['12:34:56', '15:45:32']::time[] as equal_arrays,
+          
+          ARRAY['12:34:56', '15:45:32']::time[] < 
+          ARRAY['15:45:32', '15:45:32']::time[] as less_than,
+          
+          ARRAY['15:45:32', '15:45:32']::time[] > 
+          ARRAY['12:34:56', '15:45:32']::time[] as greater_than
+      `;
+
+      expect(result[0].equal_arrays).toBe(true);
+      expect(result[0].less_than).toBe(true);
+      expect(result[0].greater_than).toBe(true);
+    });
+
+    test("time[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY['12:34:56', '15:45:32']::time[], 1) as array_length,
+          array_dims(ARRAY['12:34:56', '15:45:32']::time[]) as dimensions,
+          array_upper(ARRAY['12:34:56', '15:45:32']::time[], 1) as upper_bound,
+          array_lower(ARRAY['12:34:56', '15:45:32']::time[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(2);
+      expect(result[0].dimensions).toBe("[1:2]");
+      expect(result[0].upper_bound).toBe(2);
+      expect(result[0].lower_bound).toBe(1);
+    });
+  });
+
+  describe("timestamp[] Array type", () => {
+    test("timestamp[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::timestamp[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("timestamp[] - single value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['2024-01-01 12:00:00']::timestamp[] as single_value`;
+      expect(result[0].single_value[0].toISOString()).toBe("2024-01-01T12:00:00.000Z");
+    });
+
+    test("timestamp[] - multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '2024-01-01 12:00:00',
+          '2024-01-02 13:30:45',
+          '2024-01-03 23:59:59'
+        ]::timestamp[] as multiple_values
+      `;
+      expect(result[0].multiple_values.map(d => d.toISOString())).toEqual([
+        "2024-01-01T12:00:00.000Z",
+        "2024-01-02T13:30:45.000Z",
+        "2024-01-03T23:59:59.000Z",
+      ]);
+    });
+
+    test("timestamp[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '2024-01-01 12:00:00',
+          NULL,
+          '2024-01-03 23:59:59',
+          NULL
+        ]::timestamp[] as array_with_nulls
+      `;
+      expect(result[0].array_with_nulls.map(d => d?.toISOString() || null)).toEqual([
+        "2024-01-01T12:00:00.000Z",
+        null,
+        "2024-01-03T23:59:59.000Z",
+        null,
+      ]);
+    });
+
+    test("timestamp[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::timestamp[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("timestamp[] - different input formats", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '2024-01-15 14:30:00',                   -- ISO format
+          'January 15 2024 14:30:00',              -- Verbose format
+          'Jan 15 2024 14:30:00',                  -- Abbreviated format
+          '15-Jan-2024 14:30:00',                  -- Alternative format
+          '01/15/2024 14:30:00'                    -- US format (if DateStyle allows)
+        ]::timestamp[] as timestamp_formats
+      `;
+
+      // All should be normalized to the same timestamp
+      const expected = "2024-01-15T14:30:00.000Z";
+      expect(result[0].timestamp_formats.every(d => d.toISOString() === expected)).toBe(true);
+    });
+
+    test("timestamp[] - precision handling", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '2024-01-01 12:00:00',                    -- Second precision
+          '2024-01-01 12:00:00.1',                  -- Decisecond precision
+          '2024-01-01 12:00:00.12',                 -- Centisecond precision
+          '2024-01-01 12:00:00.123',                -- Millisecond precision
+          '2024-01-01 12:00:00.123456'              -- Microsecond precision
+        ]::timestamp[] as timestamp_precisions
+      `;
+
+      expect(result[0].timestamp_precisions.map(d => d.toISOString())).toEqual([
+        "2024-01-01T12:00:00.000Z",
+        "2024-01-01T12:00:00.100Z",
+        "2024-01-01T12:00:00.120Z",
+        "2024-01-01T12:00:00.123Z",
+        "2024-01-01T12:00:00.123Z", // JS Date only supports millisecond precision
+      ]);
+    });
+
+    test("timestamp[] - special values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          'infinity'::timestamp,
+          '-infinity'::timestamp,
+          'epoch'::timestamp                        -- 1970-01-01 00:00:00
+        ]::timestamp[] as special_timestamps
+      `;
+
+      expect(result[0].special_timestamps[0].toString()).toBe("Invalid Date");
+      expect(result[0].special_timestamps[1].toString()).toBe("Invalid Date");
+      expect(result[0].special_timestamps[2].toISOString()).toBe("1970-01-01T00:00:00.000Z");
+    });
+
+    test("timestamp[] - interval arithmetic", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '2024-01-01 12:00:00'::timestamp + '1 day'::interval,
+          '2024-01-01 12:00:00'::timestamp + '1 hour'::interval,
+          '2024-01-01 12:00:00'::timestamp + '1 minute'::interval,
+          '2024-01-01 12:00:00'::timestamp - '1 day'::interval
+        ]::timestamp[] as timestamp_calcs
+      `;
+
+      expect(result[0].timestamp_calcs.map(d => d.toISOString())).toEqual([
+        "2024-01-02T12:00:00.000Z",
+        "2024-01-01T13:00:00.000Z",
+        "2024-01-01T12:01:00.000Z",
+        "2023-12-31T12:00:00.000Z",
+      ]);
+    });
+
+    test("timestamp[] - boundary values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '4713-01-01 00:00:00 BC'::timestamp,     -- Earliest finite timestamp
+          '294276-12-31 23:59:59.999999'::timestamp, -- Latest finite timestamp
+          '1970-01-01 00:00:00'::timestamp,        -- Unix epoch
+          '2000-01-01 00:00:00'::timestamp,        -- Y2K
+          '9999-12-31 23:59:59.999999'::timestamp  -- End of common range
+        ]::timestamp[] as boundary_timestamps
+      `;
+
+      expect(result[0].boundary_timestamps[2].toISOString()).toBe("1970-01-01T00:00:00.000Z"); // Unix epoch
+      expect(result[0].boundary_timestamps[3].toISOString()).toBe("2000-01-01T00:00:00.000Z"); // Y2K
+    });
+
+    test("timestamp[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY['2024-01-01 12:00:00', '2024-01-02 13:00:00']::timestamp[])[1] as first_element,
+          (ARRAY['2024-01-01 12:00:00', '2024-01-02 13:00:00']::timestamp[])[2] as second_element
+      `;
+
+      expect(result[0].first_element.toISOString()).toBe("2024-01-01T12:00:00.000Z");
+      expect(result[0].second_element.toISOString()).toBe("2024-01-02T13:00:00.000Z");
+    });
+
+    test("timestamp[] - array concatenation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['2024-01-01 12:00:00', '2024-01-02 13:00:00']::timestamp[] || 
+          ARRAY['2024-01-03 14:00:00']::timestamp[] as concatenated
+      `;
+
+      expect(result[0].concatenated.map(d => d.toISOString())).toEqual([
+        "2024-01-01T12:00:00.000Z",
+        "2024-01-02T13:00:00.000Z",
+        "2024-01-03T14:00:00.000Z",
+      ]);
+    });
+
+    test("timestamp[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY['2024-01-01 12:00:00', '2024-01-02 13:00:00']::timestamp[], 1) as array_length,
+          array_dims(ARRAY['2024-01-01 12:00:00', '2024-01-02 13:00:00']::timestamp[]) as dimensions,
+          array_upper(ARRAY['2024-01-01 12:00:00', '2024-01-02 13:00:00']::timestamp[], 1) as upper_bound,
+          array_lower(ARRAY['2024-01-01 12:00:00', '2024-01-02 13:00:00']::timestamp[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(2);
+      expect(result[0].dimensions).toBe("[1:2]");
+      expect(result[0].upper_bound).toBe(2);
+      expect(result[0].lower_bound).toBe(1);
+    });
+  });
+
+  describe("timestamptz[] Array type", () => {
+    test("timestamptz[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::timestamptz[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("timestamptz[] - single value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['2024-01-01 12:00:00+00']::timestamptz[] as single_value`;
+      expect(result[0].single_value[0].toISOString()).toBe("2024-01-01T12:00:00.000Z");
+    });
+
+    test("timestamptz[] - multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '2024-01-01 12:00:00+00',
+          '2024-01-02 13:30:45+00',
+          '2024-01-03 23:59:59+00'
+        ]::timestamptz[] as multiple_values
+      `;
+      expect(result[0].multiple_values.map(d => d.toISOString())).toEqual([
+        "2024-01-01T12:00:00.000Z",
+        "2024-01-02T13:30:45.000Z",
+        "2024-01-03T23:59:59.000Z",
+      ]);
+    });
+
+    test("timestamptz[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '2024-01-01 12:00:00+00',
+          NULL,
+          '2024-01-03 23:59:59+00',
+          NULL
+        ]::timestamptz[] as array_with_nulls
+      `;
+      expect(result[0].array_with_nulls.map(d => d?.toISOString() || null)).toEqual([
+        "2024-01-01T12:00:00.000Z",
+        null,
+        "2024-01-03T23:59:59.000Z",
+        null,
+      ]);
+    });
+
+    test("timestamptz[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::timestamptz[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("timestamptz[] - different timezone inputs", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '2024-01-15 12:00:00+00',                -- UTC
+          '2024-01-15 12:00:00+05:30',             -- UTC+5:30 (India)
+          '2024-01-15 12:00:00-05:00',             -- UTC-5 (Eastern)
+          '2024-01-15 12:00:00+01:00',             -- UTC+1 (Central European)
+          '2024-01-15 12:00:00+09:00'              -- UTC+9 (Japan)
+        ]::timestamptz[] as timezone_formats
+      `;
+
+      expect(result[0].timezone_formats.map(d => d.toISOString())).toEqual([
+        "2024-01-15T12:00:00.000Z",
+        "2024-01-15T06:30:00.000Z", // UTC+5:30 converted to UTC
+        "2024-01-15T17:00:00.000Z", // UTC-5 converted to UTC
+        "2024-01-15T11:00:00.000Z", // UTC+1 converted to UTC
+        "2024-01-15T03:00:00.000Z", // UTC+9 converted to UTC
+      ]);
+    });
+
+    test("timestamptz[] - timezone conversions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '2024-01-15 12:00:00 America/New_York'::timestamptz,
+          '2024-01-15 17:00:00+00'::timestamptz
+        ] as times
+      `;
+
+      // Both should represent the same moment in time
+      expect(result[0].times[0].toISOString()).toBe("2024-01-15T17:00:00.000Z");
+      expect(result[0].times[1].toISOString()).toBe("2024-01-15T17:00:00.000Z");
+    });
+
+    test("timestamptz[] - precision handling", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '2024-01-01 12:00:00+00',                    -- Second precision
+          '2024-01-01 12:00:00.1+00',                  -- Decisecond precision
+          '2024-01-01 12:00:00.12+00',                 -- Centisecond precision
+          '2024-01-01 12:00:00.123+00',                -- Millisecond precision
+          '2024-01-01 12:00:00.123456+00'              -- Microsecond precision
+        ]::timestamptz[] as timestamp_precisions
+      `;
+
+      expect(result[0].timestamp_precisions.map(d => d.toISOString())).toEqual([
+        "2024-01-01T12:00:00.000Z",
+        "2024-01-01T12:00:00.100Z",
+        "2024-01-01T12:00:00.120Z",
+        "2024-01-01T12:00:00.123Z",
+        "2024-01-01T12:00:00.123Z", // JS Date only supports millisecond precision
+      ]);
+    });
+
+    test("timestamptz[] - special values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          'infinity'::timestamptz,
+          '-infinity'::timestamptz,
+          '1970-01-01 00:00:00+00'::timestamptz        -- Unix epoch
+        ]::timestamptz[] as special_timestamps
+      `;
+
+      expect(result[0].special_timestamps[0].toString()).toBe("Invalid Date");
+      expect(result[0].special_timestamps[1].toString()).toBe("Invalid Date");
+      expect(result[0].special_timestamps[2].toISOString()).toBe("1970-01-01T00:00:00.000Z");
+    });
+
+    test("timestamptz[] - interval arithmetic", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '2024-01-01 12:00:00+00'::timestamptz + '1 day'::interval,
+          '2024-01-01 12:00:00+00'::timestamptz + '1 hour'::interval,
+          '2024-01-01 12:00:00+00'::timestamptz + '1 minute'::interval,
+          '2024-01-01 12:00:00+00'::timestamptz - '1 day'::interval
+        ]::timestamptz[] as timestamp_calcs
+      `;
+
+      expect(result[0].timestamp_calcs.map(d => d.toISOString())).toEqual([
+        "2024-01-02T12:00:00.000Z",
+        "2024-01-01T13:00:00.000Z",
+        "2024-01-01T12:01:00.000Z",
+        "2023-12-31T12:00:00.000Z",
+      ]);
+    });
+
+    test("timestamptz[] - boundary values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '4713-01-01 00:00:00 BC+00'::timestamptz,     -- Earliest finite timestamp
+          '294276-12-31 23:59:59.999999+00'::timestamptz, -- Latest finite timestamp
+          '1970-01-01 00:00:00+00'::timestamptz,        -- Unix epoch
+          '2000-01-01 00:00:00+00'::timestamptz         -- Y2K
+        ]::timestamptz[] as boundary_timestamps
+      `;
+
+      expect(result[0].boundary_timestamps[2].toISOString()).toBe("1970-01-01T00:00:00.000Z"); // Unix epoch
+      expect(result[0].boundary_timestamps[3].toISOString()).toBe("2000-01-01T00:00:00.000Z"); // Y2K
+    });
+
+    test("timestamptz[] - daylight saving time handling", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '2024-03-10 06:59:59+00',  -- 1:59:59 EST
+          '2024-03-10 07:00:00+00',  -- 3:00:00 EDT (after spring forward)
+          '2024-11-03 05:59:59+00',  -- 1:59:59 EDT
+          '2024-11-03 06:00:00+00'   -- 1:00:00 EST (after fall back)
+        ]::timestamptz[] as dst_times
+      `;
+
+      // Verify timestamps are in correct sequence
+      const timestamps = result[0].dst_times.map(d => d.toISOString());
+      expect(timestamps[1].localeCompare(timestamps[0])).toBe(1); // Second time should be later
+      expect(timestamps[3].localeCompare(timestamps[2])).toBe(1); // Fourth time should be later
+    });
+
+    test("timestamptz[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY['2024-01-01 12:00:00+00', '2024-01-02 13:00:00+00']::timestamptz[])[1] as first_element,
+          (ARRAY['2024-01-01 12:00:00+00', '2024-01-02 13:00:00+00']::timestamptz[])[2] as second_element
+      `;
+
+      expect(result[0].first_element.toISOString()).toBe("2024-01-01T12:00:00.000Z");
+      expect(result[0].second_element.toISOString()).toBe("2024-01-02T13:00:00.000Z");
+    });
+
+    test("timestamptz[] - array contains operator", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['2024-01-01 12:00:00+00', '2024-01-02 13:00:00+00']::timestamptz[] @> 
+          ARRAY['2024-01-01 12:00:00+00']::timestamptz[] as contains_first,
+          
+          ARRAY['2024-01-01 12:00:00+00', '2024-01-02 13:00:00+00']::timestamptz[] @> 
+          ARRAY['2024-01-02 13:00:00+00']::timestamptz[] as contains_second,
+          
+          ARRAY['2024-01-01 12:00:00+00', '2024-01-02 13:00:00+00']::timestamptz[] @> 
+          ARRAY['2024-01-03 14:00:00+00']::timestamptz[] as contains_none
+      `;
+
+      expect(result[0].contains_first).toBe(true);
+      expect(result[0].contains_second).toBe(true);
+      expect(result[0].contains_none).toBe(false);
+    });
+
+    test("timestamptz[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY['2024-01-01 12:00:00+00', '2024-01-02 13:00:00+00']::timestamptz[], 1) as array_length,
+          array_dims(ARRAY['2024-01-01 12:00:00+00', '2024-01-02 13:00:00+00']::timestamptz[]) as dimensions,
+          array_upper(ARRAY['2024-01-01 12:00:00+00', '2024-01-02 13:00:00+00']::timestamptz[], 1) as upper_bound,
+          array_lower(ARRAY['2024-01-01 12:00:00+00', '2024-01-02 13:00:00+00']::timestamptz[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(2);
+      expect(result[0].dimensions).toBe("[1:2]");
+      expect(result[0].upper_bound).toBe(2);
+      expect(result[0].lower_bound).toBe(1);
+    });
+  });
+
+  describe("timetz[] Array type", () => {
+    test("timetz[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::timetz[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("timetz[] - single value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['12:00:00+00']::timetz[] as single_value`;
+      expect(result[0].single_value).toEqual(["12:00:00+00"]);
+    });
+
+    test("timetz[] - multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '12:00:00+00',
+          '13:30:45+00',
+          '23:59:59+00'
+        ]::timetz[] as multiple_values
+      `;
+      expect(result[0].multiple_values).toEqual(["12:00:00+00", "13:30:45+00", "23:59:59+00"]);
+    });
+
+    test("timetz[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '12:00:00+00',
+          NULL,
+          '23:59:59+00',
+          NULL
+        ]::timetz[] as array_with_nulls
+      `;
+      expect(result[0].array_with_nulls).toEqual(["12:00:00+00", null, "23:59:59+00", null]);
+    });
+
+    test("timetz[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::timetz[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("timetz[] - different timezone offsets", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '12:00:00+00',                -- UTC
+          '12:00:00+05:30',             -- UTC+5:30 (India)
+          '12:00:00-05:00',             -- UTC-5 (Eastern)
+          '12:00:00+01:00',             -- UTC+1 (Central European)
+          '12:00:00+09:00'              -- UTC+9 (Japan)
+        ]::timetz[] as timezone_formats
+      `;
+      expect(result[0].timezone_formats).toEqual([
+        "12:00:00+00",
+        "12:00:00+05:30",
+        "12:00:00-05",
+        "12:00:00+01",
+        "12:00:00+09",
+      ]);
+    });
+
+    test("timetz[] - precision handling", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '12:00:00+00',                    -- Second precision
+          '12:00:00.1+00',                  -- Decisecond precision
+          '12:00:00.12+00',                 -- Centisecond precision
+          '12:00:00.123+00',                -- Millisecond precision
+          '12:00:00.123456+00'              -- Microsecond precision
+        ]::timetz[] as time_precisions
+      `;
+      expect(result[0].time_precisions).toEqual([
+        "12:00:00+00",
+        "12:00:00.1+00",
+        "12:00:00.12+00",
+        "12:00:00.123+00",
+        "12:00:00.123456+00",
+      ]);
+    });
+
+    test("timetz[] - boundary times", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '00:00:00+00',              -- Midnight UTC
+          '23:59:59.999999+00',       -- Just before midnight UTC
+          '12:00:00+00',              -- Noon UTC
+          '00:00:00.000001+00'        -- Just after midnight UTC
+        ]::timetz[] as boundary_times
+      `;
+      expect(result[0].boundary_times).toEqual([
+        "00:00:00+00",
+        "23:59:59.999999+00",
+        "12:00:00+00",
+        "00:00:00.000001+00",
+      ]);
+    });
+
+    test("timetz[] - interval arithmetic", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          ('12:00:00+00'::timetz + '1 hour'::interval)::timetz,
+          ('12:00:00+00'::timetz + '1 minute'::interval)::timetz,
+          ('12:00:00+00'::timetz + '1 second'::interval)::timetz,
+          ('12:00:00+00'::timetz - '1 hour'::interval)::timetz
+        ] as time_calculations
+      `;
+      expect(result[0].time_calculations).toEqual(["13:00:00+00", "12:01:00+00", "12:00:01+00", "11:00:00+00"]);
+    });
+
+    test("timetz[] - military time", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '00:00:00+00',     -- 00:00 (midnight)
+          '13:00:00+00',     -- 13:00 (1 PM)
+          '23:00:00+00'      -- 23:00 (11 PM)
+        ]::timetz[] as military_times
+      `;
+      expect(result[0].military_times).toEqual(["00:00:00+00", "13:00:00+00", "23:00:00+00"]);
+    });
+
+    test("timetz[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY['12:00:00+00', '13:00:00+00']::timetz[])[1] as first_element,
+          (ARRAY['12:00:00+00', '13:00:00+00']::timetz[])[2] as second_element
+      `;
+
+      expect(result[0].first_element).toBe("12:00:00+00");
+      expect(result[0].second_element).toBe("13:00:00+00");
+    });
+
+    test("timetz[] - array contains operator", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['12:00:00+00', '13:00:00+00']::timetz[] @> 
+          ARRAY['12:00:00+00']::timetz[] as contains_first,
+          
+          ARRAY['12:00:00+00', '13:00:00+00']::timetz[] @> 
+          ARRAY['13:00:00+00']::timetz[] as contains_second,
+          
+          ARRAY['12:00:00+00', '13:00:00+00']::timetz[] @> 
+          ARRAY['14:00:00+00']::timetz[] as contains_none
+      `;
+
+      expect(result[0].contains_first).toBe(true);
+      expect(result[0].contains_second).toBe(true);
+      expect(result[0].contains_none).toBe(false);
+    });
+
+    test("timetz[] - array overlap operator", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['12:00:00+00', '13:00:00+00']::timetz[] && 
+          ARRAY['13:00:00+00', '14:00:00+00']::timetz[] as has_overlap,
+          
+          ARRAY['12:00:00+00', '13:00:00+00']::timetz[] && 
+          ARRAY['14:00:00+00', '15:00:00+00']::timetz[] as no_overlap
+      `;
+
+      expect(result[0].has_overlap).toBe(true);
+      expect(result[0].no_overlap).toBe(false);
+    });
+
+    test("timetz[] - array concatenation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['12:00:00+00', '13:00:00+00']::timetz[] || 
+          ARRAY['14:00:00+00']::timetz[] as concatenated
+      `;
+
+      expect(result[0].concatenated).toEqual(["12:00:00+00", "13:00:00+00", "14:00:00+00"]);
+    });
+
+    test("timetz[] - comparison of same time different zones", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['12:00:00+00', '13:00:00+00']::timetz[] = 
+          ARRAY['12:00:00+01', '13:00:00+01']::timetz[] as equal_arrays,
+          
+          ARRAY['12:00:00+00']::timetz[] = 
+          ARRAY['13:00:00+01']::timetz[] as different_times
+      `;
+
+      // Times with different zones are considered different even if they represent the same moment
+      expect(result[0].equal_arrays).toBe(false);
+      expect(result[0].different_times).toBe(false);
+    });
+
+    test("timetz[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY['12:00:00+00', '13:00:00+00']::timetz[], 1) as array_length,
+          array_dims(ARRAY['12:00:00+00', '13:00:00+00']::timetz[]) as dimensions,
+          array_upper(ARRAY['12:00:00+00', '13:00:00+00']::timetz[], 1) as upper_bound,
+          array_lower(ARRAY['12:00:00+00', '13:00:00+00']::timetz[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(2);
+      expect(result[0].dimensions).toBe("[1:2]");
+      expect(result[0].upper_bound).toBe(2);
+      expect(result[0].lower_bound).toBe(1);
+    });
+  });
+
+  describe("interval[] Array type", () => {
+    test("interval[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::interval[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("interval[] - single value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['1 year']::interval[] as single_value`;
+      expect(result[0].single_value).toEqual(["1 year"]);
+    });
+
+    test("interval[] - multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '1 year',
+          '2 months',
+          '3 days'
+        ]::interval[] as multiple_values
+      `;
+      expect(result[0].multiple_values).toEqual(["1 year", "2 mons", "3 days"]);
+    });
+
+    test("interval[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '1 year',
+          NULL,
+          '3 days',
+          NULL
+        ]::interval[] as array_with_nulls
+      `;
+      expect(result[0].array_with_nulls).toEqual(["1 year", null, "3 days", null]);
+    });
+
+    test("interval[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::interval[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("interval[] - different units", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '1 year',
+          '1 month',
+          '1 week',
+          '1 day',
+          '1 hour',
+          '1 minute',
+          '1 second',
+          '1 millisecond',
+          '1 microsecond'
+        ]::interval[] as different_units
+      `;
+      expect(result[0].different_units).toEqual([
+        "1 year",
+        "1 mon",
+        "7 days",
+        "1 day",
+        "01:00:00",
+        "00:01:00",
+        "00:00:01",
+        "00:00:00.001",
+        "00:00:00.000001",
+      ]);
+    });
+
+    test("interval[] - combined intervals", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '1 year 2 months 3 days',
+          '1 day 2 hours 3 minutes 4 seconds',
+          '2 weeks 3 days',
+          '1 year 6 months'
+        ]::interval[] as combined_intervals
+      `;
+      expect(result[0].combined_intervals).toEqual([
+        "1 year 2 mons 3 days",
+        "1 day 02:03:04",
+        "17 days",
+        "1 year 6 mons",
+      ]);
+    });
+
+    test("interval[] - negative intervals", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '-1 year',
+          '-2 months',
+          '-3 days',
+          '-1 hour',
+          '-1 year -2 months -3 days'
+        ]::interval[] as negative_intervals
+      `;
+      expect(result[0].negative_intervals).toEqual([
+        "-1 years",
+        "-2 mons",
+        "-3 days",
+        "-01:00:00",
+        "-1 years -2 mons -3 days",
+      ]);
+    });
+
+    test("interval[] - ISO 8601 format", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          'P1Y',              -- 1 year
+          'P1M',              -- 1 month
+          'P1D',              -- 1 day
+          'PT1H',             -- 1 hour
+          'P1Y2M3DT4H5M6S'    -- Combined
+        ]::interval[] as iso_intervals
+      `;
+      expect(result[0].iso_intervals).toEqual([
+        "1 year",
+        "1 mon",
+        "1 day",
+        "01:00:00",
+        "1 year 2 mons 3 days 04:05:06",
+      ]);
+    });
+
+    test("interval[] - arithmetic operations", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '1 year'::interval + '2 months'::interval,
+          '1 day'::interval * 2,
+          '1 hour'::interval / 2,
+          '2 hours'::interval - '1 hour'::interval
+        ]::interval[] as interval_math
+      `;
+      expect(result[0].interval_math).toEqual(["1 year 2 mons", "2 days", "00:30:00", "01:00:00"]);
+    });
+
+    test("interval[] - justification", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          justify_hours('25:00:00'::interval),        -- Convert to days
+          justify_days('30 days'::interval),          -- Convert to months
+          justify_interval('1 year 25 months'::interval)  -- Normalize years and months
+        ]::interval[] as justified_intervals
+      `;
+      expect(result[0].justified_intervals).toEqual(["1 day 01:00:00", "1 mon", "3 years 1 mon"]);
+    });
+
+    test("interval[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY['1 year', '2 months']::interval[])[1] as first_element,
+          (ARRAY['1 year', '2 months']::interval[])[2] as second_element
+      `;
+
+      expect(result[0].first_element).toBe("1 year");
+      expect(result[0].second_element).toBe("2 mons");
+    });
+
+    test("interval[] - array contains operator", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['1 year', '2 months']::interval[] @> 
+          ARRAY['1 year']::interval[] as contains_first,
+          
+          ARRAY['1 year', '2 months']::interval[] @> 
+          ARRAY['2 months']::interval[] as contains_second,
+          
+          ARRAY['1 year', '2 months']::interval[] @> 
+          ARRAY['3 months']::interval[] as contains_none
+      `;
+
+      expect(result[0].contains_first).toBe(true);
+      expect(result[0].contains_second).toBe(true);
+      expect(result[0].contains_none).toBe(false);
+    });
+
+    test("interval[] - array overlap operator", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['1 year', '2 months']::interval[] && 
+          ARRAY['2 months', '3 months']::interval[] as has_overlap,
+          
+          ARRAY['1 year', '2 months']::interval[] && 
+          ARRAY['3 months', '4 months']::interval[] as no_overlap
+      `;
+
+      expect(result[0].has_overlap).toBe(true);
+      expect(result[0].no_overlap).toBe(false);
+    });
+
+    test("interval[] - array concatenation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['1 year', '2 months']::interval[] || 
+          ARRAY['3 days']::interval[] as concatenated
+      `;
+
+      expect(result[0].concatenated).toEqual(["1 year", "2 mons", "3 days"]);
+    });
+
+    test("interval[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY['1 year', '2 months']::interval[], 1) as array_length,
+          array_dims(ARRAY['1 year', '2 months']::interval[]) as dimensions,
+          array_upper(ARRAY['1 year', '2 months']::interval[], 1) as upper_bound,
+          array_lower(ARRAY['1 year', '2 months']::interval[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(2);
+      expect(result[0].dimensions).toBe("[1:2]");
+      expect(result[0].upper_bound).toBe(2);
+      expect(result[0].lower_bound).toBe(1);
+    });
+  });
+
+  describe("bit[] Array type", () => {
+    test("bit[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::bit[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("bit[] - single value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['1']::bit[] as single_value`;
+      expect(result[0].single_value).toEqual(["1"]);
+    });
+
+    test("bit[] - multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          B'1',
+          B'0',
+          B'1'
+        ]::bit[] as multiple_values
+      `;
+      expect(result[0].multiple_values).toEqual(["1", "0", "1"]);
+    });
+
+    test("bit[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          B'1',
+          NULL,
+          B'0',
+          NULL
+        ]::bit[] as array_with_nulls
+      `;
+      expect(result[0].array_with_nulls).toEqual(["1", null, "0", null]);
+    });
+
+    test("bit[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::bit[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("bit[] - fixed length bits", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          B'000'::bit(3),
+          B'111'::bit(3),
+          B'101'::bit(3)
+        ]::bit(3)[] as fixed_length_bits
+      `;
+      expect(result[0].fixed_length_bits).toEqual(["000", "111", "101"]);
+    });
+
+    test("bit[] - single bits in different formats", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '1'::bit(1),            -- String syntax
+          B'1',                   -- Binary syntax
+          '0'::bit(1),
+          B'0'
+        ]::bit(1)[] as single_bits
+      `;
+      expect(result[0].single_bits).toEqual(["1", "1", "0", "0"]);
+    });
+
+    test("bit[] - longer bit strings", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          B'10101010',              -- 8 bits
+          B'1111000011110000',      -- 16 bits
+          B'11111111111111111111'   -- 20 bits
+        ]::bit(20)[] as long_bits
+      `;
+      // PostgreSQL pads shorter bit strings with zeros to match the declared length
+      expect(result[0].long_bits).toEqual(["10101010000000000000", "11110000111100000000", "11111111111111111111"]);
+    });
+
+    test("bit[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY[B'101', B'111', B'000']::bit(3)[])[1] as first_element,
+          (ARRAY[B'101', B'111', B'000']::bit(3)[])[2] as second_element,
+          (ARRAY[B'101', B'111', B'000']::bit(3)[])[3] as third_element
+      `;
+
+      expect(result[0].first_element).toBe("101");
+      expect(result[0].second_element).toBe("111");
+      expect(result[0].third_element).toBe("000");
+    });
+
+    test("bit[] - array contains operator", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY[B'101', B'111']::bit(3)[] @> ARRAY[B'101']::bit(3)[] as contains_first,
+          ARRAY[B'101', B'111']::bit(3)[] @> ARRAY[B'111']::bit(3)[] as contains_second,
+          ARRAY[B'101', B'111']::bit(3)[] @> ARRAY[B'000']::bit(3)[] as contains_none
+      `;
+
+      expect(result[0].contains_first).toBe(true);
+      expect(result[0].contains_second).toBe(true);
+      expect(result[0].contains_none).toBe(false);
+    });
+
+    test("bit[] - array overlap operator", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY[B'101', B'111']::bit(3)[] && 
+          ARRAY[B'111', B'000']::bit(3)[] as has_overlap,
+          
+          ARRAY[B'101', B'111']::bit(3)[] && 
+          ARRAY[B'000', B'010']::bit(3)[] as no_overlap
+      `;
+
+      expect(result[0].has_overlap).toBe(true);
+      expect(result[0].no_overlap).toBe(false);
+    });
+
+    test("bit[] - array concatenation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY[B'101', B'111']::bit(3)[] || 
+          ARRAY[B'000']::bit(3)[] as concatenated
+      `;
+
+      expect(result[0].concatenated).toEqual(["101", "111", "000"]);
+    });
+
+    test("bit[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY[B'101', B'111']::bit(3)[], 1) as array_length,
+          array_dims(ARRAY[B'101', B'111']::bit(3)[]) as dimensions,
+          array_upper(ARRAY[B'101', B'111']::bit(3)[], 1) as upper_bound,
+          array_lower(ARRAY[B'101', B'111']::bit(3)[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(2);
+      expect(result[0].dimensions).toBe("[1:2]");
+      expect(result[0].upper_bound).toBe(2);
+      expect(result[0].lower_bound).toBe(1);
+    });
+  });
+
+  describe("varbit[] Array type", () => {
+    test("varbit[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::varbit[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("varbit[] - single value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['1']::varbit[] as single_value`;
+      expect(result[0].single_value).toEqual(["1"]);
+    });
+
+    test("varbit[] - multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          B'1',
+          B'0',
+          B'1'
+        ]::varbit[] as multiple_values
+      `;
+      expect(result[0].multiple_values).toEqual(["1", "0", "1"]);
+    });
+
+    test("varbit[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          B'1',
+          NULL,
+          B'0',
+          NULL
+        ]::varbit[] as array_with_nulls
+      `;
+      expect(result[0].array_with_nulls).toEqual(["1", null, "0", null]);
+    });
+
+    test("varbit[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::varbit[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("varbit[] - varying length bits", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          B'0',                -- 1 bit
+          B'10',              -- 2 bits
+          B'101',             -- 3 bits
+          B'1010',            -- 4 bits
+          B'10101'            -- 5 bits
+        ]::varbit[] as varying_length_bits
+      `;
+      expect(result[0].varying_length_bits).toEqual(["0", "10", "101", "1010", "10101"]);
+    });
+
+    test("varbit[] - different input formats", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '101'::varbit,          -- String cast
+          B'101',                 -- Binary literal
+          varbit '101',           -- Explicit type
+          '101'::bit VARYING      -- Alternative syntax
+        ]::varbit[] as format_variations
+      `;
+      expect(result[0].format_variations).toEqual(["101", "101", "101", "101"]);
+    });
+
+    test("varbit[] - longer bit strings", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          B'10101010',                      -- 8 bits
+          B'1111000011110000',              -- 16 bits
+          B'11111111111111111111',          -- 20 bits
+          B'1010101010101010101010101010'   -- 28 bits
+        ]::varbit[] as long_bits
+      `;
+      expect(result[0].long_bits).toEqual([
+        "10101010",
+        "1111000011110000",
+        "11111111111111111111",
+        "1010101010101010101010101010",
+      ]);
+    });
+
+    test("varbit[] - bit string operations", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          B'101' & B'100',      -- AND
+          B'101' | B'010',      -- OR
+          B'101' # B'110',      -- XOR
+          ~B'101'::varbit,      -- NOT
+          B'101' << 1,          -- Left shift
+          B'101' >> 1           -- Right shift
+        ]::varbit[] as bit_operations
+      `;
+      expect(result[0].bit_operations).toEqual(["100", "111", "011", "010", "010", "010"]);
+    });
+
+    test("varbit[] - concatenation of bits", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          B'101' || B'111',           -- Direct concatenation
+          B'000' || B'1',             -- Different lengths
+          B'1' || B'0' || B'1'        -- Multiple concatenation
+        ]::varbit[] as bit_concatenation
+      `;
+      expect(result[0].bit_concatenation).toEqual(["101111", "0001", "101"]);
+    });
+
+    test("varbit[] - substring operations", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          substring(B'10101' from 1 for 3),    -- First 3 bits
+          substring(B'10101' from 2),          -- From position 2 to end
+          substring(B'10101' from 3 for 2)     -- 2 bits from position 3
+        ]::varbit[] as bit_substrings
+      `;
+      expect(result[0].bit_substrings).toEqual(["101", "0101", "10"]);
+    });
+
+    test("varbit[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY[B'101', B'11', B'1']::varbit[])[1] as first_element,
+          (ARRAY[B'101', B'11', B'1']::varbit[])[2] as second_element,
+          (ARRAY[B'101', B'11', B'1']::varbit[])[3] as third_element
+      `;
+
+      expect(result[0].first_element).toBe("101");
+      expect(result[0].second_element).toBe("11");
+      expect(result[0].third_element).toBe("1");
+    });
+
+    test("varbit[] - array contains operator", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY[B'101', B'11']::varbit[] @> ARRAY[B'101']::varbit[] as contains_first,
+          ARRAY[B'101', B'11']::varbit[] @> ARRAY[B'11']::varbit[] as contains_second,
+          ARRAY[B'101', B'11']::varbit[] @> ARRAY[B'1111']::varbit[] as contains_none
+      `;
+
+      expect(result[0].contains_first).toBe(true);
+      expect(result[0].contains_second).toBe(true);
+      expect(result[0].contains_none).toBe(false);
+    });
+
+    test("varbit[] - array overlap operator", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY[B'101', B'11']::varbit[] && 
+          ARRAY[B'11', B'1']::varbit[] as has_overlap,
+          
+          ARRAY[B'101', B'11']::varbit[] && 
+          ARRAY[B'000', B'0000']::varbit[] as no_overlap
+      `;
+
+      expect(result[0].has_overlap).toBe(true);
+      expect(result[0].no_overlap).toBe(false);
+    });
+
+    test("varbit[] - array concatenation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY[B'101', B'11']::varbit[] || 
+          ARRAY[B'1']::varbit[] as concatenated
+      `;
+
+      expect(result[0].concatenated).toEqual(["101", "11", "1"]);
+    });
+
+    test("varbit[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY[B'101', B'11']::varbit[], 1) as array_length,
+          array_dims(ARRAY[B'101', B'11']::varbit[]) as dimensions,
+          array_upper(ARRAY[B'101', B'11']::varbit[], 1) as upper_bound,
+          array_lower(ARRAY[B'101', B'11']::varbit[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(2);
+      expect(result[0].dimensions).toBe("[1:2]");
+      expect(result[0].upper_bound).toBe(2);
+      expect(result[0].lower_bound).toBe(1);
+    });
+  });
+
+  describe("numeric[] Array type", () => {
+    test("numeric[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::numeric[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("numeric[] - single value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[1.23]::numeric[] as single_value`;
+      expect(result[0].single_value).toEqual(["1.23"]);
+    });
+
+    test("numeric[] - multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          1.23,
+          4.56,
+          7.89
+        ]::numeric[] as multiple_values
+      `;
+      expect(result[0].multiple_values).toEqual(["1.23", "4.56", "7.89"]);
+    });
+
+    test("numeric[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          1.23,
+          NULL,
+          4.56,
+          NULL
+        ]::numeric[] as array_with_nulls
+      `;
+      expect(result[0].array_with_nulls).toEqual(["1.23", null, "4.56", null]);
+    });
+
+    test("numeric[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::numeric[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("numeric[] - different precisions and scales", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          1.23::numeric(5,2),              -- 5 total digits, 2 decimal places
+          123.456::numeric(6,3),           -- 6 total digits, 3 decimal places
+          1.2345678::numeric(10,7),        -- 10 total digits, 7 decimal places
+          12345::numeric(5,0)              -- 5 digits, no decimal places
+        ]::numeric[] as different_precisions
+      `;
+      expect(result[0].different_precisions).toEqual(["1.23", "123.456", "1.2345678", "12345"]);
+    });
+
+    test("numeric[] - integer values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          0,
+          123,
+          -456,
+          789012345678901234567890        -- Very large integer
+        ]::numeric[] as integer_values
+      `;
+      expect(result[0].integer_values).toEqual(["0", "123", "-456", "789012345678901234567890"]);
+    });
+
+    test("numeric[] - decimal values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          0.0,
+          1.23,
+          -4.56,
+          0.000000001,                     -- Very small decimal
+          123456789.987654321              -- Large decimal
+        ]::numeric[] as decimal_values
+      `;
+      expect(result[0].decimal_values).toEqual(["0.0", "1.23", "-4.56", "0.000000001", "123456789.987654321"]);
+    });
+
+    test("numeric[] - special representations", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          0.00001,                         -- Scientific notation in output
+          1e-5,                           -- Scientific notation input
+          1.23e5,                         -- Positive exponent
+          1.23e-5                         -- Negative exponent
+        ]::numeric[] as special_formats
+      `;
+      expect(result[0].special_formats).toEqual(["0.00001", "0.00001", "123000", "0.0000123"]);
+    });
+
+    test("numeric[] - rounding behavior", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          1.234::numeric(3,2),            -- Rounds to 1.23
+          1.235::numeric(3,2),            -- Rounds to 1.24
+          -1.234::numeric(3,2),           -- Rounds to -1.23
+          -1.235::numeric(3,2)            -- Rounds to -1.24
+        ]::numeric[] as rounded_values
+      `;
+      expect(result[0].rounded_values).toEqual(["1.23", "1.24", "-1.23", "-1.24"]);
+    });
+
+    test("numeric[] - arithmetic operations", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          1.23 + 4.56,
+          1.23 - 4.56,
+          1.23 * 4.56,
+          5.00 / 2.00,
+          5.00 % 2.00,                     -- Modulo
+          abs(-1.23),                      -- Absolute value
+          round(1.23456, 2)               -- Round to 2 decimal places
+        ]::numeric[] as arithmetic_results
+      `;
+      expect(result[0].arithmetic_results).toEqual([
+        "5.79",
+        "-3.33",
+        "5.6088",
+        "2.5000000000000000",
+        "1.00",
+        "1.23",
+        "1.23",
+      ]);
+    });
+
+    test("numeric[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY[1.23, 4.56, 7.89]::numeric[])[1] as first_element,
+          (ARRAY[1.23, 4.56, 7.89]::numeric[])[2] as second_element,
+          (ARRAY[1.23, 4.56, 7.89]::numeric[])[3] as third_element
+      `;
+
+      expect(result[0].first_element).toBe("1.23");
+      expect(result[0].second_element).toBe("4.56");
+      expect(result[0].third_element).toBe("7.89");
+    });
+
+    test("numeric[] - array contains operator", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY[1.23, 4.56]::numeric[] @> ARRAY[1.23]::numeric[] as contains_first,
+          ARRAY[1.23, 4.56]::numeric[] @> ARRAY[4.56]::numeric[] as contains_second,
+          ARRAY[1.23, 4.56]::numeric[] @> ARRAY[7.89]::numeric[] as contains_none
+      `;
+
+      expect(result[0].contains_first).toBe(true);
+      expect(result[0].contains_second).toBe(true);
+      expect(result[0].contains_none).toBe(false);
+    });
+
+    test("numeric[] - array overlap operator", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY[1.23, 4.56]::numeric[] && 
+          ARRAY[4.56, 7.89]::numeric[] as has_overlap,
+          
+          ARRAY[1.23, 4.56]::numeric[] && 
+          ARRAY[7.89, 0.12]::numeric[] as no_overlap
+      `;
+
+      expect(result[0].has_overlap).toBe(true);
+      expect(result[0].no_overlap).toBe(false);
+    });
+
+    test("numeric[] - array concatenation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY[1.23, 4.56]::numeric[] || 
+          ARRAY[7.89]::numeric[] as concatenated
+      `;
+
+      expect(result[0].concatenated).toEqual(["1.23", "4.56", "7.89"]);
+    });
+
+    test("numeric[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY[1.23, 4.56]::numeric[], 1) as array_length,
+          array_dims(ARRAY[1.23, 4.56]::numeric[]) as dimensions,
+          array_upper(ARRAY[1.23, 4.56]::numeric[], 1) as upper_bound,
+          array_lower(ARRAY[1.23, 4.56]::numeric[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(2);
+      expect(result[0].dimensions).toBe("[1:2]");
+      expect(result[0].upper_bound).toBe(2);
+      expect(result[0].lower_bound).toBe(1);
+    });
+
+    test("numeric[] - aggregate functions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        WITH numbers AS (
+          SELECT unnest(ARRAY[1.23, 4.56, 7.89]::numeric[]) as num
+        )
+        SELECT 
+          sum(num) as total,
+          avg(num) as average,
+          min(num) as minimum,
+          max(num) as maximum,
+          count(num) as count
+        FROM numbers
+      `;
+
+      expect(result[0].total).toBe("13.68");
+      expect(result[0].average).toBe("4.5600000000000000");
+      expect(result[0].minimum).toBe("1.23");
+      expect(result[0].maximum).toBe("7.89");
+      expect(result[0].count).toBe("3");
+    });
+  });
+
+  describe("jsonb[] Array type", () => {
+    test("jsonb[] - empty array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY[]::jsonb[] as empty_array`;
+      expect(result[0].empty_array).toEqual([]);
+    });
+
+    test("jsonb[] - single value", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT ARRAY['{"key": "value"}']::jsonb[] as single_value`;
+      expect(result[0].single_value).toEqual([{ "key": "value" }]);
+    });
+
+    test("jsonb[] - multiple values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '{"a": 1}',
+          '{"b": 2}',
+          '{"c": 3}'
+        ]::jsonb[] as multiple_values
+      `;
+      expect(result[0].multiple_values).toEqual([{ "a": 1 }, { "b": 2 }, { "c": 3 }]);
+    });
+
+    test("jsonb[] - null values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '{"a": 1}'::jsonb,
+          NULL,
+          '{"c": 3}'::jsonb,
+          NULL
+        ]::jsonb[] as array_with_nulls
+      `;
+      expect(result[0].array_with_nulls).toEqual([{ "a": 1 }, null, { "c": 3 }, null]);
+    });
+
+    test("jsonb[] - null array", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`SELECT NULL::jsonb[] as null_array`;
+      expect(result[0].null_array).toBeNull();
+    });
+
+    test("jsonb[] - different json types", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          'null'::jsonb,                          -- null
+          'true'::jsonb,                          -- boolean
+          '123'::jsonb,                           -- number
+          '"string"'::jsonb,                      -- string
+          '{"key": "value"}'::jsonb,              -- object
+          '[1, 2, 3]'::jsonb                      -- array
+        ]::jsonb[] as json_types
+      `;
+      expect(result[0].json_types).toEqual([null, true, 123, "string", { "key": "value" }, [1, 2, 3]]);
+    });
+
+    test("jsonb[] - nested structures", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '{"outer": {"inner": "value"}}'::jsonb,
+          '{"array": [1, {"nested": "object"}, [1, 2, 3]]}'::jsonb,
+          '{"mixed": {"array": [1, 2], "object": {"key": "value"}}}'::jsonb
+        ]::jsonb[] as nested_structures
+      `;
+      expect(result[0].nested_structures).toEqual([
+        { "outer": { "inner": "value" } },
+        { "array": [1, { "nested": "object" }, [1, 2, 3]] },
+        { "mixed": { "array": [1, 2], "object": { "key": "value" } } },
+      ]);
+    });
+
+    test("jsonb[] - key ordering", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '{"b": 2, "a": 1}'::jsonb,             -- Keys in reverse order
+          '{"a": 1, "b": 2}'::jsonb              -- Keys in normal order
+        ]::jsonb[] as ordered_keys
+      `;
+      // JSONB normalizes key order
+      expect(result[0].ordered_keys[0]).toEqual(result[0].ordered_keys[1]);
+    });
+
+    test("jsonb[] - whitespace handling", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '{"key" :   "value"}'::jsonb,          -- Extra spaces
+          '{\n"key"\n:\n"value"\n}'::jsonb,      -- Newlines
+          '{ "key" : "value" }'::jsonb           -- Spaces around braces
+        ]::jsonb[] as whitespace_variants
+      `;
+      // JSONB normalizes whitespace
+      expect(result[0].whitespace_variants).toEqual([{ "key": "value" }, { "key": "value" }, { "key": "value" }]);
+    });
+
+    test("jsonb[] - array operators", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          '{"a": 1, "b": 2}'::jsonb ? 'a' as has_key_a,
+          '{"a": 1, "b": 2}'::jsonb ? 'c' as has_key_c,
+          '{"a": 1, "b": 2}'::jsonb @> '{"a": 1}'::jsonb as contains_object,
+          '{"a": 1, "b": 2}'::jsonb <@ '{"a": 1, "b": 2, "c": 3}'::jsonb as contained_by
+      `;
+
+      expect(result[0].has_key_a).toBe(true);
+      expect(result[0].has_key_c).toBe(false);
+      expect(result[0].contains_object).toBe(true);
+      expect(result[0].contained_by).toBe(true);
+    });
+
+    test("jsonb[] - json path expressions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '{"a": {"b": {"c": "value"}}}'::jsonb -> 'a' -> 'b' ->> 'c',
+          '{"array": [1, 2, 3]}'::jsonb -> 'array' -> 0,
+          '{"nested": {"array": [{"key": "value"}]}}'::jsonb #> '{nested,array,0}' ->> 'key'
+        ]::text[] as path_expressions
+      `;
+
+      expect(result[0].path_expressions).toEqual(["value", "1", "value"]);
+    });
+
+    test("jsonb[] - array element access", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          (ARRAY['{"a": 1}', '{"b": 2}']::jsonb[])[1] as first_element,
+          (ARRAY['{"a": 1}', '{"b": 2}']::jsonb[])[2] as second_element
+      `;
+
+      expect(result[0].first_element).toEqual({ "a": 1 });
+      expect(result[0].second_element).toEqual({ "b": 2 });
+    });
+
+    test("jsonb[] - array contains operator", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['{"a": 1}', '{"b": 2}']::jsonb[] @> 
+          ARRAY['{"a": 1}']::jsonb[] as contains_first,
+          
+          ARRAY['{"a": 1}', '{"b": 2}']::jsonb[] @> 
+          ARRAY['{"b": 2}']::jsonb[] as contains_second,
+          
+          ARRAY['{"a": 1}', '{"b": 2}']::jsonb[] @> 
+          ARRAY['{"c": 3}']::jsonb[] as contains_none
+      `;
+
+      expect(result[0].contains_first).toBe(true);
+      expect(result[0].contains_second).toBe(true);
+      expect(result[0].contains_none).toBe(false);
+    });
+
+    test("jsonb[] - array overlap operator", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['{"a": 1}', '{"b": 2}']::jsonb[] && 
+          ARRAY['{"b": 2}', '{"c": 3}']::jsonb[] as has_overlap,
+          
+          ARRAY['{"a": 1}', '{"b": 2}']::jsonb[] && 
+          ARRAY['{"c": 3}', '{"d": 4}']::jsonb[] as no_overlap
+      `;
+
+      expect(result[0].has_overlap).toBe(true);
+      expect(result[0].no_overlap).toBe(false);
+    });
+
+    test("jsonb[] - array concatenation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          ARRAY['{"a": 1}', '{"b": 2}']::jsonb[] || 
+          ARRAY['{"c": 3}']::jsonb[] as concatenated
+      `;
+
+      expect(result[0].concatenated).toEqual([{ "a": 1 }, { "b": 2 }, { "c": 3 }]);
+    });
+
+    test("jsonb[] - array dimensions", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          array_length(ARRAY['{"a": 1}', '{"b": 2}']::jsonb[], 1) as array_length,
+          array_dims(ARRAY['{"a": 1}', '{"b": 2}']::jsonb[]) as dimensions,
+          array_upper(ARRAY['{"a": 1}', '{"b": 2}']::jsonb[], 1) as upper_bound,
+          array_lower(ARRAY['{"a": 1}', '{"b": 2}']::jsonb[], 1) as lower_bound
+      `;
+
+      expect(result[0].array_length).toBe(2);
+      expect(result[0].dimensions).toBe("[1:2]");
+      expect(result[0].upper_bound).toBe(2);
+      expect(result[0].lower_bound).toBe(1);
+    });
+
+    test("jsonb[] - unicode characters in strings", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '{"text": "Hello 世界"}'::jsonb,
+          '{"text": "Привет мир"}'::jsonb,
+          '{"text": "안녕하세요"}'::jsonb,
+          '{"text": "مرحبا بالعالم"}'::jsonb,
+          '{"text": "👋 🌍 😊"}'::jsonb
+        ]::jsonb[] as unicode_strings
+      `;
+
+      expect(result[0].unicode_strings).toEqual([
+        { "text": "Hello 世界" },
+        { "text": "Привет мир" },
+        { "text": "안녕하세요" },
+        { "text": "مرحبا بالعالم" },
+        { "text": "👋 🌍 😊" },
+      ]);
+    });
+
+    test("jsonb[] - unicode escape sequences", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '{"text": "\\u0041\\u0042\\u0043"}'::jsonb,                -- ABC
+          '{"text": "\\u00A9\\u00AE\\u2122"}'::jsonb,                -- ©®™
+          '{"text": "\\u0048\\u0065\\u006C\\u006C\\u006F"}'::jsonb,  -- Hello
+          '{"text": "\\uD83D\\uDC4B"}'::jsonb                        -- 👋 (surrogate pair)
+        ]::jsonb[] as escaped_unicode
+      `;
+
+      expect(result[0].escaped_unicode).toEqual([
+        { "text": "ABC" },
+        { "text": "©®™" },
+        { "text": "Hello" },
+        { "text": "👋" },
+      ]);
+    });
+
+    test("jsonb[] - mixed unicode and escape sequences", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '{"hello\\u4E16\\u754C": "你好世界"}'::jsonb,              -- Mixed escaped and raw
+          '{"text": "Hello\\u0020世界"}'::jsonb,                     -- Escaped space with unicode
+          '{"\\u0041\\u0042\\u0043": "エービーシー"}'::jsonb         -- Escaped key with unicode value
+        ]::jsonb[] as mixed_unicode
+      `;
+
+      expect(result[0].mixed_unicode).toEqual([
+        { "hello世界": "你好世界" },
+        { "text": "Hello 世界" },
+        { "ABC": "エービーシー" },
+      ]);
+    });
+
+    test("jsonb[] - unicode in nested structures", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          '{"outer": {"世界": {"内部": "value"}}}'::jsonb,
+          '{"array": ["你好", {"키": "값"}, ["สวัสดี"]]}'::jsonb,
+          '{"mixed": {"配列": ["こんにちは", "안녕"], "オブジェクト": {"키": "값"}}}'::jsonb
+        ]::jsonb[] as nested_unicode
+      `;
+
+      expect(result[0].nested_unicode).toEqual([
+        { "outer": { "世界": { "内部": "value" } } },
+        { "array": ["你好", { "키": "값" }, ["สวัสดี"]] },
+        { "mixed": { "配列": ["こんにちは", "안녕"], "オブジェクト": { "키": "값" } } },
+      ]);
+    });
+
+    test("jsonb[] - unicode objects comparison", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT 
+          '{"键": "值", "キー": "値"}'::jsonb = 
+          '{"キー": "値", "键": "值"}'::jsonb as equal_objects,
+          
+          '{"配列": [1, 2]}'::jsonb @> 
+          '{"配列": [1]}'::jsonb as contains_check
+      `;
+
+      expect(result[0].equal_objects).toBe(true);
+      expect(result[0].contains_check).toBe(true);
+    });
+
+    test("jsonb[] - large unicode content", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const result = await sql`
+        SELECT ARRAY[
+          json_build_object(
+            '長いテキスト', repeat('あ', 1000),
+            '긴텍스트', repeat('가', 1000),
+            '长文本', repeat('好', 1000)
+          )::jsonb
+        ]::jsonb[] as large_unicode
+      `;
+
+      expect(result[0].large_unicode[0]["長いテキスト"].length).toBe(1000);
+      expect(result[0].large_unicode[0]["긴텍스트"].length).toBe(1000);
+      expect(result[0].large_unicode[0]["长文本"].length).toBe(1000);
+    });
+  });
 }

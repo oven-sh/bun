@@ -443,6 +443,8 @@ pub const Msg = struct {
             };
         } else if (err.as(JSC.BuildMessage)) |build_message| {
             return build_message.msg.clone(allocator);
+        } else if (err.as(JSC.ResolveMessage)) |resolve_message| {
+            return resolve_message.msg.clone(allocator);
         }
 
         var err_message = err.toBunString(globalObject);

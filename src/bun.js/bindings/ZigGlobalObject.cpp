@@ -558,7 +558,7 @@ WTF::String Bun::formatStackTrace(
                     remappedFrame.source_url = Bun::toStringRef(sourceURLForFrame);
 
                     // This ensures the lifetime of the sourceURL is accounted for correctly
-                    Bun__remapStackFramePositions(globalObject, &remappedFrame, 1);
+                    !isDefaultGlobalObjectInAFinalizer ? Bun__remapStackFramePositions(globalObject, &remappedFrame, 1) : Bun__remapStackFramePositionsWithoutGlobalObject(&remappedFrame, 1);
 
                     sourceURLForFrame = remappedFrame.source_url.toWTFString();
                 }

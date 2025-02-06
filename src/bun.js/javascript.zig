@@ -3555,6 +3555,10 @@ pub const VirtualMachine = struct {
         globalObject.bunVM().remapStackFramePositions(frames, frames_count);
     }
 
+    pub export fn Bun__remapStackFramePositionsWithoutGlobalObject(frames: [*]JSC.ZigStackFrame, frames_count: usize) void {
+        VirtualMachine.get().remapStackFramePositions(frames, frames_count);
+    }
+
     pub fn remapStackFramePositions(this: *VirtualMachine, frames: [*]JSC.ZigStackFrame, frames_count: usize) void {
         for (frames[0..frames_count]) |*frame| {
             if (frame.position.isInvalid() or frame.remapped) continue;

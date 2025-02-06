@@ -2440,7 +2440,7 @@ pub const Subprocess = struct {
 
     fn throwCommandNotFound(globalThis: *JSC.JSGlobalObject, command: []const u8) bun.JSError {
         const message = bun.String.createFormat("Executable not found in $PATH: \"{s}\"", .{command}) catch bun.outOfMemory();
-        const err = message.toZigString().toErrorInstance(globalThis);
+        const err = message.toErrorInstance(globalThis);
         err.putZigString(globalThis, JSC.ZigString.static("code"), JSC.ZigString.init("ENOENT").toJS(globalThis));
         err.putZigString(globalThis, JSC.ZigString.static("path"), JSC.ZigString.init(command).toJS(globalThis));
         return globalThis.throwValue(err);

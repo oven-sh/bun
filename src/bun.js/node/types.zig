@@ -199,9 +199,9 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
                     []u8 => JSC.ArrayBuffer.fromBytes(r, .ArrayBuffer).toJS(globalObject, null),
 
                     else => switch (@typeInfo(ReturnType)) {
-                        .Int, .Float, .ComptimeInt, .ComptimeFloat => JSC.JSValue.jsNumber(r),
-                        .Struct, .Enum, .Opaque, .Union => r.toJS(globalObject),
-                        .Pointer => {
+                        .int, .float, .comptime_int, .comptime_float => JSC.JSValue.jsNumber(r),
+                        .@"struct", .@"enum", .@"opaque", .@"union" => r.toJS(globalObject),
+                        .pointer => {
                             if (bun.trait.isZigString(ReturnType))
                                 JSC.ZigString.init(bun.asByteSlice(r)).withEncoding().toJS(globalObject);
 
@@ -1285,8 +1285,8 @@ fn timeLikeFromSeconds(seconds: f64) TimeLike {
         return seconds;
     }
     return .{
-        .tv_sec = @intFromFloat(seconds),
-        .tv_nsec = @intFromFloat(@mod(seconds, 1) * std.time.ns_per_s),
+        .sec = @intFromFloat(seconds),
+        .nsec = @intFromFloat(@mod(seconds, 1) * std.time.ns_per_s),
     };
 }
 
@@ -1304,8 +1304,8 @@ fn timeLikeFromMilliseconds(milliseconds: f64) TimeLike {
     }
 
     return .{
-        .tv_sec = @intFromFloat(sec),
-        .tv_nsec = @intFromFloat(nsec),
+        .sec = @intFromFloat(sec),
+        .nsec = @intFromFloat(nsec),
     };
 }
 
@@ -1335,15 +1335,15 @@ fn timeLikeFromNow() TimeLike {
     //        ownership or permission checks are performed, and the file
     //        timestamps are not modified, but other error conditions may still
     return .{
-        .tv_sec = 0,
-        .tv_nsec = if (Environment.isLinux) std.os.linux.UTIME.NOW else bun.C.translated.UTIME_NOW,
+        .sec = 0,
+        .nsec = if (Environment.isLinux) std.os.linux.UTIME.NOW else bun.C.translated.UTIME_NOW,
     };
 }
 
 pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue) bun.JSError!?Mode {
     const mode_int = if (value.isNumber()) brk: {
         const m = try validators.validateUint32(ctx, value, "mode", .{}, false);
-        break :brk @as(Mode, @as(u24, @truncate(m)));
+        break :brk @as(Mode, @truncate(m));
     } else brk: {
         if (value.isUndefinedOrNull()) return null;
 
@@ -1438,8 +1438,8 @@ pub const PathOrFileDescriptor = union(Tag) {
     }
 };
 
-pub const FileSystemFlags = enum(if (Environment.isWindows) c_int else c_uint) {
-    pub const tag_type = @typeInfo(FileSystemFlags).Enum.tag_type;
+pub const FileSystemFlags = enum(c_int) {
+    pub const tag_type = @typeInfo(FileSystemFlags).@"enum".tag_type;
     const O = bun.O;
 
     /// Open file for appending. The file is created if it does not exist.
@@ -1473,7 +1473,7 @@ pub const FileSystemFlags = enum(if (Environment.isWindows) c_int else c_uint) {
 
     _,
 
-    const map = bun.ComptimeStringMap(Mode, .{
+    const map = bun.ComptimeStringMap(i32, .{
         .{ "r", O.RDONLY },
         .{ "rs", O.RDONLY | O.SYNC },
         .{ "sr", O.RDONLY | O.SYNC },
@@ -1549,7 +1549,7 @@ pub const FileSystemFlags = enum(if (Environment.isWindows) c_int else c_uint) {
                 return ctx.throwInvalidArguments("Invalid flag '{any}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags", .{str});
             }
 
-            const flags = brk: {
+            const flags: i32 = brk: {
                 switch (str.is16Bit()) {
                     inline else => |is_16bit| {
                         const chars = if (is_16bit) str.utf16SliceAligned() else str.slice();
@@ -1560,20 +1560,20 @@ pub const FileSystemFlags = enum(if (Environment.isWindows) c_int else c_uint) {
                                 const slice = str.toSlice(bun.default_allocator);
                                 defer slice.deinit();
 
-                                break :brk std.fmt.parseInt(Mode, slice.slice(), 10) catch null;
+                                break :brk @as(i32, @intCast(std.fmt.parseInt(Mode, slice.slice(), 10) catch break :brk null));
                             } else {
-                                break :brk std.fmt.parseInt(Mode, chars, 10) catch null;
+                                break :brk @as(i32, @intCast(std.fmt.parseInt(Mode, chars, 10) catch break :brk null));
                             }
                         }
                     },
                 }
 
-                break :brk map.getWithEql(str, JSC.ZigString.eqlComptime);
+                break :brk map.getWithEql(str, JSC.ZigString.eqlComptime) orelse break :brk null;
             } orelse {
                 return ctx.throwInvalidArguments("Invalid flag '{any}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags", .{str});
             };
 
-            return @as(FileSystemFlags, @enumFromInt(@as(Mode, @intCast(flags))));
+            return @enumFromInt(flags);
         }
 
         return null;
@@ -1622,16 +1622,16 @@ pub fn StatType(comptime big: bool) type {
         const Float = if (big) i64 else f64;
 
         inline fn toNanoseconds(ts: StatTimespec) u64 {
-            if (ts.tv_sec < 0) {
+            if (ts.sec < 0) {
                 return @intCast(@max(bun.timespec.nsSigned(&bun.timespec{
-                    .sec = @intCast(ts.tv_sec),
-                    .nsec = @intCast(ts.tv_nsec),
+                    .sec = @intCast(ts.sec),
+                    .nsec = @intCast(ts.nsec),
                 }), 0));
             }
 
             return bun.timespec.ns(&bun.timespec{
-                .sec = @intCast(ts.tv_sec),
-                .nsec = @intCast(ts.tv_nsec),
+                .sec = @intCast(ts.sec),
+                .nsec = @intCast(ts.nsec),
             });
         }
 
@@ -1641,8 +1641,8 @@ pub fn StatType(comptime big: bool) type {
             // > libuv calculates tv_sec and tv_nsec from it and converts to signed long,
             // > which causes Y2038 overflow. On the other platforms it is safe to treat
             // > negative values as pre-epoch time.
-            const tv_sec = if (Environment.isWindows) @as(u32, @bitCast(ts.tv_sec)) else ts.tv_sec;
-            const tv_nsec = if (Environment.isWindows) @as(u32, @bitCast(ts.tv_nsec)) else ts.tv_nsec;
+            const tv_sec = if (Environment.isWindows) @as(u32, @bitCast(ts.sec)) else ts.sec;
+            const tv_nsec = if (Environment.isWindows) @as(u32, @bitCast(ts.nsec)) else ts.nsec;
             if (big) {
                 const sec: i64 = tv_sec;
                 const nsec: i64 = tv_nsec;
@@ -1837,112 +1837,42 @@ pub const Dirent = struct {
     kind: Kind,
 
     pub const Kind = std.fs.File.Kind;
-    pub usingnamespace JSC.Codegen.JSDirent;
-    pub usingnamespace bun.New(@This());
 
-    pub fn constructor(global: *JSC.JSGlobalObject, call_frame: *JSC.CallFrame) bun.JSError!*Dirent {
-        const name_js, const type_js, const path_js = call_frame.argumentsAsArray(3);
+    extern fn Bun__JSDirentObjectConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+    pub const getConstructor = Bun__JSDirentObjectConstructor;
 
-        const name = try name_js.toBunString2(global);
-        errdefer name.deref();
+    extern fn Bun__Dirent__toJS(*JSC.JSGlobalObject, i32, *bun.String, *bun.String, cached_previous_path_jsvalue: ?*?*JSC.JSString) JSC.JSValue;
+    pub fn toJS(this: *Dirent, globalObject: *JSC.JSGlobalObject, cached_previous_path_jsvalue: ?*?*JSC.JSString) JSC.JSValue {
+        return Bun__Dirent__toJS(
+            globalObject,
+            switch (this.kind) {
+                .file => bun.windows.libuv.UV_DIRENT_FILE,
+                .block_device => bun.windows.libuv.UV_DIRENT_BLOCK,
+                .character_device => bun.windows.libuv.UV_DIRENT_CHAR,
+                .directory => bun.windows.libuv.UV_DIRENT_DIR,
+                // event_port is deliberate there.
+                .event_port, .named_pipe => bun.windows.libuv.UV_DIRENT_FIFO,
 
-        const path = try path_js.toBunString2(global);
-        errdefer path.deref();
+                .unix_domain_socket => bun.windows.libuv.UV_DIRENT_SOCKET,
+                .sym_link => bun.windows.libuv.UV_DIRENT_LINK,
 
-        const kind = type_js.toInt32();
-        const kind_enum: Kind = switch (kind) {
-            // these correspond to the libuv constants
-            else => .unknown,
-            1 => .file,
-            2 => .directory,
-            3 => .sym_link,
-            4 => .named_pipe,
-            5 => .unix_domain_socket,
-            6 => .character_device,
-            7 => .block_device,
-        };
-
-        return Dirent.new(.{
-            .name = name,
-            .path = path,
-            .kind = kind_enum,
-        });
+                .whiteout, .door, .unknown => bun.windows.libuv.UV_DIRENT_UNKNOWN,
+            },
+            &this.name,
+            &this.path,
+            cached_previous_path_jsvalue,
+        );
     }
 
-    pub fn toJS(this: *Dirent, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        return Dirent.toJSUnchecked(globalObject, this);
-    }
-
-    pub fn toJSNewlyCreated(this: *const Dirent, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        return toJS(Dirent.new(this.*), globalObject);
-    }
-
-    pub fn getName(this: *Dirent, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        return this.name.toJS(globalObject);
-    }
-
-    pub fn getPath(this: *Dirent, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        return this.path.toJS(globalThis);
-    }
-
-    pub fn isBlockDevice(
-        this: *Dirent,
-        _: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
-        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.block_device);
-    }
-    pub fn isCharacterDevice(
-        this: *Dirent,
-        _: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
-        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.character_device);
-    }
-    pub fn isDirectory(
-        this: *Dirent,
-        _: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
-        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.directory);
-    }
-    pub fn isFIFO(
-        this: *Dirent,
-        _: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
-        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.named_pipe or this.kind == std.fs.File.Kind.event_port);
-    }
-    pub fn isFile(
-        this: *Dirent,
-        _: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
-        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.file);
-    }
-    pub fn isSocket(
-        this: *Dirent,
-        _: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
-        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.unix_domain_socket);
-    }
-    pub fn isSymbolicLink(
-        this: *Dirent,
-        _: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
-        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.sym_link);
+    pub fn toJSNewlyCreated(this: *Dirent, globalObject: *JSC.JSGlobalObject, previous_jsstring: ?*?*JSC.JSString) JSC.JSValue {
+        // Shouldn't techcnically be necessary.
+        defer this.deref();
+        return this.toJS(globalObject, previous_jsstring);
     }
 
     pub fn deref(this: *const Dirent) void {
         this.name.deref();
         this.path.deref();
-    }
-
-    pub fn finalize(this: *Dirent) void {
-        this.deref();
-        this.destroy();
     }
 };
 
@@ -2202,7 +2132,7 @@ pub const Process = struct {
 
     comptime {
         if (Environment.export_cpp_apis and Environment.isWindows) {
-            @export(Bun__Process__editWindowsEnvVar, .{ .name = "Bun__Process__editWindowsEnvVar" });
+            @export(&Bun__Process__editWindowsEnvVar, .{ .name = "Bun__Process__editWindowsEnvVar" });
         }
     }
 
@@ -2264,13 +2194,13 @@ pub fn StatFSType(comptime big: bool) type {
         pub usingnamespace bun.New(@This());
 
         // Common fields between Linux and macOS
-        fstype: Int,
-        bsize: Int,
-        blocks: Int,
-        bfree: Int,
-        bavail: Int,
-        files: Int,
-        ffree: Int,
+        _fstype: Int,
+        _bsize: Int,
+        _blocks: Int,
+        _bfree: Int,
+        _bavail: Int,
+        _files: Int,
+        _ffree: Int,
 
         const This = @This();
 
@@ -2281,7 +2211,7 @@ pub fn StatFSType(comptime big: bool) type {
                 pub fn callback(this: *This, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
                     const value = @field(this, @tagName(field));
                     const Type = @TypeOf(value);
-                    if (comptime big and @typeInfo(Type) == .Int) {
+                    if (comptime big and @typeInfo(Type) == .int) {
                         return JSC.JSValue.fromInt64NoTruncate(globalObject, value);
                     }
 
@@ -2294,13 +2224,13 @@ pub fn StatFSType(comptime big: bool) type {
             }.callback;
         }
 
-        pub const fstype = getter(.fstype);
-        pub const bsize = getter(.bsize);
-        pub const blocks = getter(.blocks);
-        pub const bfree = getter(.bfree);
-        pub const bavail = getter(.bavail);
-        pub const files = getter(.files);
-        pub const ffree = getter(.ffree);
+        pub const fstype = getter(._fstype);
+        pub const bsize = getter(._bsize);
+        pub const blocks = getter(._blocks);
+        pub const bfree = getter(._bfree);
+        pub const bavail = getter(._bavail);
+        pub const files = getter(._files);
+        pub const ffree = getter(._ffree);
 
         pub fn finalize(this: *This) void {
             this.destroy();
@@ -2329,13 +2259,13 @@ pub fn StatFSType(comptime big: bool) type {
                 else => @compileError("Unsupported OS"),
             };
             return .{
-                .fstype = @truncate(@as(i64, @intCast(fstype_))),
-                .bsize = @truncate(@as(i64, @intCast(bsize_))),
-                .blocks = @truncate(@as(i64, @intCast(blocks_))),
-                .bfree = @truncate(@as(i64, @intCast(bfree_))),
-                .bavail = @truncate(@as(i64, @intCast(bavail_))),
-                .files = @truncate(@as(i64, @intCast(files_))),
-                .ffree = @truncate(@as(i64, @intCast(ffree_))),
+                ._fstype = @truncate(@as(i64, @intCast(fstype_))),
+                ._bsize = @truncate(@as(i64, @intCast(bsize_))),
+                ._blocks = @truncate(@as(i64, @intCast(blocks_))),
+                ._bfree = @truncate(@as(i64, @intCast(bfree_))),
+                ._bavail = @truncate(@as(i64, @intCast(bavail_))),
+                ._files = @truncate(@as(i64, @intCast(files_))),
+                ._ffree = @truncate(@as(i64, @intCast(ffree_))),
             };
         }
 
@@ -2347,13 +2277,13 @@ pub fn StatFSType(comptime big: bool) type {
             var args = callFrame.arguments();
 
             const this = This.new(.{
-                .fstype = if (args.len > 0 and args[0].isNumber()) args[0].toInt32() else 0,
-                .bsize = if (args.len > 1 and args[1].isNumber()) args[1].toInt32() else 0,
-                .blocks = if (args.len > 2 and args[2].isNumber()) args[2].toInt32() else 0,
-                .bfree = if (args.len > 3 and args[3].isNumber()) args[3].toInt32() else 0,
-                .bavail = if (args.len > 4 and args[4].isNumber()) args[4].toInt32() else 0,
-                .files = if (args.len > 5 and args[5].isNumber()) args[5].toInt32() else 0,
-                .ffree = if (args.len > 6 and args[6].isNumber()) args[6].toInt32() else 0,
+                ._fstype = if (args.len > 0 and args[0].isNumber()) args[0].toInt32() else 0,
+                ._bsize = if (args.len > 1 and args[1].isNumber()) args[1].toInt32() else 0,
+                ._blocks = if (args.len > 2 and args[2].isNumber()) args[2].toInt32() else 0,
+                ._bfree = if (args.len > 3 and args[3].isNumber()) args[3].toInt32() else 0,
+                ._bavail = if (args.len > 4 and args[4].isNumber()) args[4].toInt32() else 0,
+                ._files = if (args.len > 5 and args[5].isNumber()) args[5].toInt32() else 0,
+                ._ffree = if (args.len > 6 and args[6].isNumber()) args[6].toInt32() else 0,
             });
 
             return this;

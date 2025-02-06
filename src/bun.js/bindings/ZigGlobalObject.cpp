@@ -161,11 +161,15 @@
 #include "JSX509Certificate.h"
 #include "JSS3File.h"
 #include "S3Error.h"
+#include "ProcessBindingBuffer.h"
+#include <JavaScriptCore/JSBasePrivate.h>
+
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
 #endif
 
 #include "NodeFSBinding.h"
+#include "NodeDirent.h"
 
 #if !OS(WINDOWS)
 #include <dlfcn.h>
@@ -235,6 +239,22 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         return;
     has_loaded_jsc = true;
     JSC::Config::enableRestrictedOptions();
+#if OS(LINUX)
+    {
+        // By default, JavaScriptCore's garbage collector sends SIGUSR1 to the JS thread to suspend
+        // and resume it in order to scan its stack memory. Whatever signal it uses can't be
+        // reliably intercepted by JS code, and several npm packages use SIGUSR1 for various
+        // features. We tell it to use SIGPWR instead, which we assume is unlikely to be reliable
+        // for its stated purpose. Mono's garbage collector also uses SIGPWR:
+        // https://www.mono-project.com/docs/advanced/embedding/#signal-handling
+        //
+        // This call needs to be before most of the other JSC initialization, as we can't
+        // reconfigure which signal is used once the signal handler has already been registered.
+        bool configure_signal_success = JSConfigureSignalForGC(SIGPWR);
+        ASSERT(configure_signal_success);
+        ASSERT(g_wtfConfig.sigThreadSuspendResume == SIGPWR);
+    }
+#endif
 
     std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
     WTF::initializeMainThread();
@@ -876,6 +896,8 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     // This must happen before JSVMClientData::create
     vm.heap.acquireAccess();
     JSC::JSLockHolder locker(vm);
+
+    vm.heap.disableStopIfNecessaryTimer();
 
     WebCore::JSVMClientData::create(&vm, Bun__getVM());
 
@@ -2790,6 +2812,11 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(Bun::createNodeHTTPServerSocketStructure(init.vm, init.owner));
         });
 
+    m_JSDirentClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::initJSDirentClassStructure(init);
+        });
+
     m_JSX509CertificateClassStructure.initLater([](LazyClassStructure::Initializer& init) {
         setupX509CertificateClassStructure(init);
     });
@@ -3201,6 +3228,14 @@ void GlobalObject::finishCreation(VM& vm)
                 InternalModuleRegistry::create(
                     init.vm,
                     InternalModuleRegistry::createStructure(init.vm, init.owner)));
+        });
+
+    m_processBindingBuffer.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+            init.set(
+                ProcessBindingBuffer::create(
+                    init.vm,
+                    ProcessBindingBuffer::createStructure(init.vm, init.owner)));
         });
 
     m_processBindingConstants.initLater(
@@ -3846,6 +3881,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_memoryFootprintStructure.visit(visitor);
     thisObject->m_JSStatsClassStructure.visit(visitor);
     thisObject->m_JSStatsBigIntClassStructure.visit(visitor);
+    thisObject->m_JSDirentClassStructure.visit(visitor);
     thisObject->m_NapiClassStructure.visit(visitor);
     thisObject->m_NapiExternalStructure.visit(visitor);
     thisObject->m_NAPIFunctionStructure.visit(visitor);

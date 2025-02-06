@@ -441,7 +441,7 @@ pub const Feature = enum {
                     }
                 }
                 if (browsers.android) |version| {
-                    if (version < 8323072) {
+                    if (version < 8585216) {
                         return false;
                     }
                 }
@@ -533,7 +533,7 @@ pub const Feature = enum {
                     }
                 }
                 if (browsers.android) |version| {
-                    if (version < 8323072) {
+                    if (version < 8585216) {
                         return false;
                     }
                 }
@@ -578,7 +578,7 @@ pub const Feature = enum {
                     }
                 }
                 if (browsers.android) |version| {
-                    if (version < 8323072) {
+                    if (version < 8585216) {
                         return false;
                     }
                 }
@@ -623,7 +623,7 @@ pub const Feature = enum {
                     }
                 }
                 if (browsers.android) |version| {
-                    if (version < 8323072) {
+                    if (version < 8585216) {
                         return false;
                     }
                 }
@@ -668,7 +668,7 @@ pub const Feature = enum {
                     }
                 }
                 if (browsers.android) |version| {
-                    if (version < 8323072) {
+                    if (version < 8585216) {
                         return false;
                     }
                 }
@@ -713,7 +713,7 @@ pub const Feature = enum {
                     }
                 }
                 if (browsers.android) |version| {
-                    if (version < 8323072) {
+                    if (version < 8585216) {
                         return false;
                     }
                 }
@@ -758,7 +758,7 @@ pub const Feature = enum {
                     }
                 }
                 if (browsers.android) |version| {
-                    if (version < 8323072) {
+                    if (version < 8585216) {
                         return false;
                     }
                 }
@@ -803,7 +803,7 @@ pub const Feature = enum {
                     }
                 }
                 if (browsers.android) |version| {
-                    if (version < 8323072) {
+                    if (version < 8585216) {
                         return false;
                     }
                 }
@@ -895,7 +895,7 @@ pub const Feature = enum {
                     }
                 }
                 if (browsers.android) |version| {
-                    if (version < 8323072) {
+                    if (version < 8585216) {
                         return false;
                     }
                 }
@@ -940,7 +940,7 @@ pub const Feature = enum {
                     }
                 }
                 if (browsers.android) |version| {
-                    if (version < 8323072) {
+                    if (version < 8585216) {
                         return false;
                     }
                 }
@@ -1004,23 +1004,13 @@ pub const Feature = enum {
                         return false;
                     }
                 }
-                if (browsers.safari) |version| {
-                    if (version < 721152) {
-                        return false;
-                    }
-                }
                 if (browsers.opera) |version| {
                     if (version < 4718592) {
                         return false;
                     }
                 }
-                if (browsers.ios_saf) |version| {
-                    if (version < 721664) {
-                        return false;
-                    }
-                }
                 if (browsers.android) |version| {
-                    if (version < 8323072) {
+                    if (version < 8585216) {
                         return false;
                     }
                 }
@@ -1029,7 +1019,7 @@ pub const Feature = enum {
                         return false;
                     }
                 }
-                if (browsers.ie != null) {
+                if (browsers.ie != null or browsers.ios_saf != null or browsers.safari != null) {
                     return false;
                 }
             },
@@ -1065,7 +1055,7 @@ pub const Feature = enum {
                     }
                 }
                 if (browsers.android) |version| {
-                    if (version < 8323072) {
+                    if (version < 8585216) {
                         return false;
                     }
                 }
@@ -1155,7 +1145,7 @@ pub const Feature = enum {
                     }
                 }
                 if (browsers.android) |version| {
-                    if (version < 8323072) {
+                    if (version < 8585216) {
                         return false;
                     }
                 }
@@ -1200,7 +1190,7 @@ pub const Feature = enum {
                     }
                 }
                 if (browsers.android) |version| {
-                    if (version < 8323072) {
+                    if (version < 8585216) {
                         return false;
                     }
                 }
@@ -1250,7 +1240,7 @@ pub const Feature = enum {
                     }
                 }
                 if (browsers.android) |version| {
-                    if (version < 8323072) {
+                    if (version < 8585216) {
                         return false;
                     }
                 }
@@ -1337,7 +1327,7 @@ pub const Feature = enum {
                     }
                 }
                 if (browsers.android) |version| {
-                    if (version < 8323072) {
+                    if (version < 8585216) {
                         return false;
                     }
                 }
@@ -1382,7 +1372,7 @@ pub const Feature = enum {
                     }
                 }
                 if (browsers.android) |version| {
-                    if (version < 8323072) {
+                    if (version < 8585216) {
                         return false;
                     }
                 }
@@ -1427,7 +1417,7 @@ pub const Feature = enum {
                     }
                 }
                 if (browsers.android) |version| {
-                    if (version < 8323072) {
+                    if (version < 8585216) {
                         return false;
                     }
                 }
@@ -1467,7 +1457,7 @@ pub const Feature = enum {
                     }
                 }
                 if (browsers.android) |version| {
-                    if (version < 8323072) {
+                    if (version < 8585216) {
                         return false;
                     }
                 }
@@ -1512,7 +1502,7 @@ pub const Feature = enum {
                     }
                 }
                 if (browsers.android) |version| {
-                    if (version < 8323072) {
+                    if (version < 8585216) {
                         return false;
                     }
                 }
@@ -1557,7 +1547,7 @@ pub const Feature = enum {
                     }
                 }
                 if (browsers.android) |version| {
-                    if (version < 8323072) {
+                    if (version < 8585216) {
                         return false;
                     }
                 }
@@ -1617,7 +1607,7 @@ pub const Feature = enum {
                     }
                 }
                 if (browsers.android) |version| {
-                    if (version < 8323072) {
+                    if (version < 8585216) {
                         return false;
                     }
                 }

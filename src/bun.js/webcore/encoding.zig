@@ -31,7 +31,7 @@ const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 
 const VirtualMachine = JSC.VirtualMachine;
-const Task = @import("../javascript.zig").Task;
+const Task = JSC.Task;
 
 const picohttp = bun.picohttp;
 

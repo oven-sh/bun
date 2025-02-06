@@ -950,7 +950,7 @@ pub const Fetch = struct {
 
             pub const Empty: HTTPRequestBody = .{ .AnyBlob = .{ .Blob = .{} } };
 
-            pub fn store(this: *HTTPRequestBody) ?*JSC.WebCore.Blob.Store {
+            pub fn store(this: *HTTPRequestBody) ?*Blob.Store {
                 return switch (this.*) {
                     .AnyBlob => this.AnyBlob.store(),
                     else => null,
@@ -1179,9 +1179,9 @@ pub const Fetch = struct {
         });
         comptime {
             const jsonResolveRequestStream = JSC.toJSHostFunction(onResolveRequestStream);
-            @export(jsonResolveRequestStream, .{ .name = Export[0].symbol_name });
+            @export(&jsonResolveRequestStream, .{ .name = Export[0].symbol_name });
             const jsonRejectRequestStream = JSC.toJSHostFunction(onRejectRequestStream);
-            @export(jsonRejectRequestStream, .{ .name = Export[1].symbol_name });
+            @export(&jsonRejectRequestStream, .{ .name = Export[1].symbol_name });
         }
 
         pub fn startRequestStream(this: *FetchTasklet) void {
@@ -2255,7 +2255,7 @@ pub const Fetch = struct {
 
     comptime {
         const Bun__fetchPreconnect = JSC.toJSHostFunction(Bun__fetchPreconnect_);
-        @export(Bun__fetchPreconnect, .{ .name = "Bun__fetchPreconnect" });
+        @export(&Bun__fetchPreconnect, .{ .name = "Bun__fetchPreconnect" });
     }
     pub fn Bun__fetchPreconnect_(
         globalObject: *JSC.JSGlobalObject,
@@ -2316,7 +2316,7 @@ pub const Fetch = struct {
 
     comptime {
         const Bun__fetch = JSC.toJSHostFunction(Bun__fetch_);
-        @export(Bun__fetch, .{ .name = "Bun__fetch" });
+        @export(&Bun__fetch, .{ .name = "Bun__fetch" });
     }
 
     /// Implementation of `Bun.fetch`

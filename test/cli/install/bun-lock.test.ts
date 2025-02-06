@@ -1,8 +1,12 @@
 import { spawn, write, file } from "bun";
 import { expect, it, beforeAll, afterAll } from "bun:test";
-import { access, copyFile, open, writeFile, exists, cp } from "fs/promises";
-import { bunExe, bunEnv as env, isWindows, VerdaccioRegistry, runBunInstall } from "harness";
+import { access, copyFile, open, writeFile, exists, cp, rm } from "fs/promises";
+import { bunExe, bunEnv as env, isWindows, VerdaccioRegistry, runBunInstall, toBeValidBin } from "harness";
 import { join } from "path";
+
+expect.extend({
+  toBeValidBin,
+});
 
 var registry = new VerdaccioRegistry();
 
@@ -208,4 +212,240 @@ it("should convert a binary lockfile with invalid optional peers", async () => {
 
   expect(await exited).toBe(0);
   expect(await file(join(packageDir, "bun.lock")).text()).toBe(firstLockfile);
+});
+
+it("should not deduplicate bundled packages with un-bundled packages", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "bundled-deps",
+        dependencies: {
+          "debug-1": "4.4.0",
+          "npm-1": "10.9.2",
+        },
+      }),
+    ),
+  ]);
+
+  let { exited, stdout } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    env,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+
+  expect(await exited).toBe(0);
+
+  async function checkModules() {
+    const res = await Promise.all([
+      exists(join(packageDir, "node_modules/debug-1")),
+      exists(join(packageDir, "node_modules/npm-1")),
+      exists(join(packageDir, "node_modules/ms-1")),
+    ]);
+    expect(res).toEqual([true, true, true]);
+  }
+
+  await checkModules();
+
+  const out1 = (await Bun.readableStreamToText(stdout))
+    .replaceAll(/\s*\[[0-9\.]+m?s\]\s*$/g, "")
+    .split(/\r?\n/)
+    .slice(1);
+  expect(out1).toMatchSnapshot();
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+  // running install again will install all packages to node_modules
+  ({ exited, stdout } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    env,
+    stdout: "pipe",
+    stderr: "inherit",
+  }));
+
+  expect(await exited).toBe(0);
+
+  await checkModules();
+  const out2 = (await Bun.readableStreamToText(stdout))
+    .replaceAll(/\s*\[[0-9\.]+m?s\]\s*$/g, "")
+    .split(/\r?\n/)
+    .slice(1);
+  expect(out2).toEqual(out1);
+});
+
+it("should not change formatting unexpectedly", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  const patch = `diff --git a/package.json b/package.json
+index d156130662798530e852e1afaec5b1c03d429cdc..b4ddf35975a952fdaed99f2b14236519694f850d 100644
+--- a/package.json
++++ b/package.json
+@@ -1,6 +1,7 @@
+ {
+     "name": "optional-peer-deps",
+     "version": "1.0.0",
++    "hi": true,
+     "peerDependencies": {
+         "no-deps": "*"
+     },
+`;
+
+  // attempt to snapshot most things that can be printed
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "pkg-root",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+        scripts: {
+          preinstall: "echo 'preinstall'",
+        },
+        overrides: {
+          "hoist-lockfile-shared": "1.0.1",
+        },
+        bin: "index.js",
+        optionalDependencies: {
+          "optional-native": "1.0.0",
+        },
+        devDependencies: {
+          "optional-peer-deps": "1.0.0",
+        },
+        dependencies: {
+          "uses-what-bin": "1.0.0",
+        },
+        trustedDependencies: ["uses-what-bin"],
+        patchedDependencies: {
+          "optional-peer-deps@1.0.0": "patches/optional-peer-deps@1.0.0.patch",
+        },
+      }),
+    ),
+    write(join(packageDir, "patches", "optional-peer-deps@1.0.0.patch"), patch),
+    write(join(packageDir, "index.js"), "console.log('hello world')"),
+    write(
+      join(packageDir, "packages", "pkg1", "package.json"),
+      JSON.stringify({
+        name: "pkg1",
+        version: "2.2.2",
+        peerDependenciesMeta: {
+          "a-dep": {
+            optional: true,
+          },
+        },
+        peerDependencies: {
+          "a-dep": "1.0.1",
+        },
+        dependencies: {
+          "bundled-1": "1.0.0",
+        },
+        bin: {
+          "pkg1-1": "bin-1.js",
+          "pkg1-2": "bin-2.js",
+          "pkg1-3": "bin-3.js",
+        },
+        scripts: {
+          install: "echo 'install'",
+          postinstall: "echo 'postinstall'",
+        },
+      }),
+    ),
+    write(join(packageDir, "packages", "pkg1", "bin-1.js"), "console.log('bin-1')"),
+    write(join(packageDir, "packages", "pkg1", "bin-2.js"), "console.log('bin-2')"),
+    write(join(packageDir, "packages", "pkg1", "bin-3.js"), "console.log('bin-3')"),
+    write(
+      join(packageDir, "packages", "pkg2", "package.json"),
+      JSON.stringify({
+        name: "pkg2",
+        bin: {
+          "pkg2-1": "bin-1.js",
+        },
+        dependencies: {
+          "map-bin": "1.0.2",
+        },
+      }),
+    ),
+    write(join(packageDir, "packages", "pkg2", "bin-1.js"), "console.log('bin-1')"),
+    write(
+      join(packageDir, "packages", "pkg3", "package.json"),
+      JSON.stringify({
+        name: "pkg3",
+        directories: {
+          bin: "bin",
+        },
+        devDependencies: {
+          "hoist-lockfile-1": "1.0.0",
+        },
+      }),
+    ),
+    write(join(packageDir, "packages", "pkg3", "bin", "bin-1.js"), "console.log('bin-1')"),
+  ]);
+
+  async function checkInstall() {
+    expect(
+      await Promise.all([
+        exists(join(packageDir, "node_modules", "pkg1", "package.json")),
+        exists(join(packageDir, "node_modules", "pkg2", "package.json")),
+        exists(join(packageDir, "node_modules", "pkg3", "package.json")),
+        file(join(packageDir, "node_modules", "hoist-lockfile-shared", "package.json")).json(),
+        exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt")),
+        file(join(packageDir, "node_modules", "optional-peer-deps", "package.json")).json(),
+      ]),
+    ).toMatchObject([true, true, true, { name: "hoist-lockfile-shared", version: "1.0.1" }, true, { hi: true }]);
+    expect(join(packageDir, "node_modules", ".bin", "bin-1.js")).toBeValidBin(join("..", "pkg3", "bin", "bin-1.js"));
+    expect(join(packageDir, "node_modules", ".bin", "map-bin")).toBeValidBin(join("..", "map-bin", "bin", "map-bin"));
+    expect(join(packageDir, "node_modules", ".bin", "map_bin")).toBeValidBin(join("..", "map-bin", "bin", "map-bin"));
+    expect(join(packageDir, "node_modules", ".bin", "pkg1-1")).toBeValidBin(join("..", "pkg1", "bin-1.js"));
+    expect(join(packageDir, "node_modules", ".bin", "pkg1-2")).toBeValidBin(join("..", "pkg1", "bin-2.js"));
+    expect(join(packageDir, "node_modules", ".bin", "pkg1-3")).toBeValidBin(join("..", "pkg1", "bin-3.js"));
+    expect(join(packageDir, "node_modules", ".bin", "pkg2-1")).toBeValidBin(join("..", "pkg2", "bin-1.js"));
+    expect(join(packageDir, "node_modules", ".bin", "what-bin")).toBeValidBin(join("..", "what-bin", "what-bin.js"));
+  }
+
+  let { exited, stdout } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    env,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+
+  expect(await exited).toBe(0);
+  const out1 = (await Bun.readableStreamToText(stdout))
+    .replaceAll(/\s*\[[0-9\.]+m?s\]\s*$/g, "")
+    .split(/\r?\n/)
+    .slice(1);
+  expect(out1).toMatchSnapshot();
+
+  await checkInstall();
+
+  const lockfile = (await file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234");
+  expect(lockfile).toMatchSnapshot();
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+  ({ exited, stdout } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: join(packageDir, "packages", "pkg1"),
+    env,
+    stdout: "pipe",
+    stderr: "inherit",
+  }));
+
+  expect(await exited).toBe(0);
+  const out2 = (await Bun.readableStreamToText(stdout))
+    .replaceAll(/\s*\[[0-9\.]+m?s\]\s*$/g, "")
+    .split(/\r?\n/)
+    .slice(1);
+  expect(out2).toMatchSnapshot();
+
+  await checkInstall();
+
+  expect((await file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234")).toBe(
+    lockfile,
+  );
 });

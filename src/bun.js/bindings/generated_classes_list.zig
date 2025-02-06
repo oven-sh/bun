@@ -12,7 +12,6 @@ pub const Classes = struct {
     pub const EndTag = JSC.Cloudflare.EndTag;
     pub const AttributeIterator = JSC.Cloudflare.AttributeIterator;
     pub const CryptoHasher = JSC.API.Bun.Crypto.CryptoHasher;
-    pub const Dirent = JSC.Node.Dirent;
     pub const Expect = JSC.Expect.Expect;
     pub const ExpectAny = JSC.Expect.ExpectAny;
     pub const ExpectAnything = JSC.Expect.ExpectAnything;

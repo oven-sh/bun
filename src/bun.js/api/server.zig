@@ -1113,7 +1113,7 @@ pub const ServerConfig = struct {
         var port = args.address.tcp.port;
 
         if (arguments.vm.transpiler.options.transform_options.origin) |origin| {
-            args.base_uri = origin;
+            args.base_uri = try bun.default_allocator.dupeZ(u8, origin);
         }
 
         defer {
@@ -1153,16 +1153,15 @@ pub const ServerConfig = struct {
 
                 while (try iter.next()) |key| {
                     const path, const is_ascii = key.toOwnedSliceReturningAllASCII(bun.default_allocator) catch bun.outOfMemory();
+                    errdefer bun.default_allocator.free(path);
 
                     const value = iter.value;
 
-                    if (path.len == 0 or path[0] != '/') {
-                        bun.default_allocator.free(path);
+                    if (path.len == 0 or (path[0] != '/' and path[0] != '*')) {
                         return global.throwInvalidArguments("Invalid static route \"{s}\". path must start with '/'", .{path});
                     }
 
                     if (!is_ascii) {
-                        bun.default_allocator.free(path);
                         return global.throwInvalidArguments("Invalid static route \"{s}\". Please encode all non-ASCII characters in the path.", .{path});
                     }
 
@@ -1222,6 +1221,9 @@ pub const ServerConfig = struct {
 
                 if (sliced.len > 0) {
                     defer sliced.deinit();
+                    if (args.base_uri.len > 0) {
+                        bun.default_allocator.free(@constCast(args.base_uri));
+                    }
                     args.base_uri = bun.default_allocator.dupe(u8, sliced.slice()) catch unreachable;
                 }
             }
@@ -1425,6 +1427,8 @@ pub const ServerConfig = struct {
                 const protocol: string = if (args.ssl_config != null) "https" else "http";
                 const hostname = args.base_url.hostname;
                 const needsBrackets: bool = strings.isIPV6Address(hostname) and hostname[0] != '[';
+                const original_base_uri = args.base_uri;
+                defer bun.default_allocator.free(@constCast(original_base_uri));
                 if (needsBrackets) {
                     args.base_uri = (if ((port == 80 and args.ssl_config == null) or (port == 443 and args.ssl_config != null))
                         std.fmt.allocPrint(bun.default_allocator, "{s}://[{s}]/{s}", .{
@@ -1619,7 +1623,7 @@ pub const AnyRequestContext = struct {
 
     tagged_pointer: Pointer,
 
-    pub const Null = .{ .tagged_pointer = Pointer.Null };
+    pub const Null: @This() = .{ .tagged_pointer = Pointer.Null };
 
     pub fn init(request_ctx: anytype) AnyRequestContext {
         return .{ .tagged_pointer = Pointer.init(request_ctx) };
@@ -2763,7 +2767,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
         }
 
-        pub fn onReadFile(this: *RequestContext, result: Blob.ReadFile.ResultType) void {
+        pub fn onReadFile(this: *RequestContext, result: Blob.ReadFileResultType) void {
             defer this.deref();
 
             if (this.isAbortedOrEnded()) {
@@ -4138,7 +4142,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         var body = this.request_body.?;
                         var old = body.value;
                         old.Locked.onReceiveValue = null;
-                        var new_body = .{ .Null = {} };
+                        var new_body: WebCore.Body.Value = .{ .Null = {} };
                         old.resolve(&new_body, server.globalThis, null);
                         body.value = new_body;
                     }
@@ -4194,13 +4198,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         comptime {
             const jsonResolve = JSC.toJSHostFunction(onResolve);
-            @export(jsonResolve, .{ .name = Export[0].symbol_name });
+            @export(&jsonResolve, .{ .name = Export[0].symbol_name });
             const jsonReject = JSC.toJSHostFunction(onReject);
-            @export(jsonReject, .{ .name = Export[1].symbol_name });
+            @export(&jsonReject, .{ .name = Export[1].symbol_name });
             const jsonResolveStream = JSC.toJSHostFunction(onResolveStream);
-            @export(jsonResolveStream, .{ .name = Export[2].symbol_name });
+            @export(&jsonResolveStream, .{ .name = Export[2].symbol_name });
             const jsonRejectStream = JSC.toJSHostFunction(onRejectStream);
-            @export(jsonRejectStream, .{ .name = Export[3].symbol_name });
+            @export(&jsonRejectStream, .{ .name = Export[3].symbol_name });
         }
     };
 }
@@ -5827,7 +5831,7 @@ pub const NodeHTTPResponse = struct {
 
     const log = bun.Output.scoped(.NodeHTTPResponse, false);
     pub usingnamespace JSC.Codegen.JSNodeHTTPResponse;
-    pub usingnamespace bun.NewRefCounted(@This(), deinit);
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
     pub const UpgradeCTX = struct {
         context: ?*uws.uws_socket_context_t = null,
@@ -6801,7 +6805,7 @@ pub const NodeHTTPResponse = struct {
     }
 
     comptime {
-        @export(create, .{ .name = "NodeHTTPResponse__createForJS" });
+        @export(&create, .{ .name = "NodeHTTPResponse__createForJS" });
     }
 };
 
@@ -6809,7 +6813,7 @@ const ServePlugins = struct {
     value: Value,
     ref_count: u32 = 1,
 
-    pub usingnamespace bun.NewRefCounted(ServePlugins, deinit);
+    pub usingnamespace bun.NewRefCounted(ServePlugins, deinit, null);
 
     pub const Value = union(enum) {
         pending: struct {
@@ -6967,8 +6971,8 @@ const ServePlugins = struct {
     }
 
     comptime {
-        @export(onResolve, .{ .name = "BunServe__onResolvePlugins" });
-        @export(onReject, .{ .name = "BunServe__onRejectPlugins" });
+        @export(&onResolve, .{ .name = "BunServe__onResolvePlugins" });
+        @export(&onReject, .{ .name = "BunServe__onRejectPlugins" });
     }
 };
 
@@ -8740,6 +8744,46 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 }
 
                 app.get("/src:/*", *ThisServer, this, onSrcRequest);
+            }
+
+            if (this.dev_server) |dev| {
+                dev.attachRoutes(this) catch bun.outOfMemory();
+            } else {
+                const @"has /*" = brk: {
+                    for (this.config.static_routes.items) |route| {
+                        if (strings.eqlComptime(route.path, "/*")) {
+                            break :brk true;
+                        }
+                    }
+
+                    break :brk false;
+                };
+
+                // "/*" routes are added backwards, so if they have a static route, it will never be matched
+                // so we need to check for that first
+                if (!@"has /*") {
+                    if (this.config.onRequest != .zero) {
+                        app.any("/*", *ThisServer, this, onRequest);
+                    } else if (this.config.onNodeHTTPRequest != .zero) {
+                        app.any("/*", *ThisServer, this, onNodeHTTPRequest);
+                    }
+                } else if (this.config.onNodeHTTPRequest != .zero) {
+                    app.post("/*", *ThisServer, this, onNodeHTTPRequest);
+                    app.put("/*", *ThisServer, this, onNodeHTTPRequest);
+                    app.patch("/*", *ThisServer, this, onNodeHTTPRequest);
+                    app.delete("/*", *ThisServer, this, onNodeHTTPRequest);
+                    app.options("/*", *ThisServer, this, onNodeHTTPRequest);
+                    app.trace("/*", *ThisServer, this, onNodeHTTPRequest);
+                    app.connect("/*", *ThisServer, this, onNodeHTTPRequest);
+                } else if (this.config.onRequest != .zero) {
+                    app.post("/*", *ThisServer, this, onRequest);
+                    app.put("/*", *ThisServer, this, onRequest);
+                    app.patch("/*", *ThisServer, this, onRequest);
+                    app.delete("/*", *ThisServer, this, onRequest);
+                    app.options("/*", *ThisServer, this, onRequest);
+                    app.trace("/*", *ThisServer, this, onRequest);
+                    app.connect("/*", *ThisServer, this, onRequest);
+                }
             }
         }
 

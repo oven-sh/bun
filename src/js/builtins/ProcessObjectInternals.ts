@@ -30,12 +30,12 @@ const enum BunProcessStdinFdType {
   socket = 2,
 }
 
-export function getStdioWriteStream(fd) {
+export function getStdioWriteStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType) {
   $assert(typeof fd === "number", `Expected fd to be a number, got ${typeof fd}`);
-  const tty = require("node:tty");
 
   let stream;
-  if (tty.isatty(fd)) {
+  if (isTTY) {
+    const tty = require("node:tty");
     stream = new tty.WriteStream(fd);
     // TODO: this is the wrong place for this property.
     // but the TTY is technically duplex

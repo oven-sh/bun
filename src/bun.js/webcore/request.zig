@@ -609,7 +609,7 @@ pub const Request = struct {
                     }
                 }
 
-                if (value.asDirect(JSC.WebCore.Response)) |response| {
+                if (value.asDirect(Response)) |response| {
                     if (!fields.contains(.method)) {
                         req.method = response.init.method;
                         fields.insert(.method);

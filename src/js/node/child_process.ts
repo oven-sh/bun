@@ -1266,55 +1266,64 @@ class ChildProcess extends EventEmitter {
     const stdioCount = stdio.length;
     const hasSocketsToEagerlyLoad = stdioCount >= 3;
 
-    this.#handle = Bun.spawn({
-      cmd: spawnargs,
-      stdio: bunStdio,
-      cwd: options.cwd || undefined,
-      env: env,
-      detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,
-      onExit: (handle, exitCode, signalCode, err) => {
-        this.#handle = handle;
-        this.pid = this.#handle.pid;
-        $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
+    try {
+      this.#handle = Bun.spawn({
+        cmd: spawnargs,
+        stdio: bunStdio,
+        cwd: options.cwd || undefined,
+        env: env,
+        detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,
+        onExit: (handle, exitCode, signalCode, err) => {
+          this.#handle = handle;
+          this.pid = this.#handle.pid;
+          $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
 
-        if (hasSocketsToEagerlyLoad) {
-          process.nextTick(() => {
-            this.stdio;
-            $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
-          });
-        }
+          if (hasSocketsToEagerlyLoad) {
+            process.nextTick(() => {
+              this.stdio;
+              $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
+            });
+          }
 
-        process.nextTick(
-          (exitCode, signalCode, err) => this.#handleOnExit(exitCode, signalCode, err),
-          exitCode,
-          signalCode,
-          err,
-        );
-      },
-      lazy: true,
-      ipc: has_ipc ? this.#emitIpcMessage.bind(this) : undefined,
-      onDisconnect: has_ipc ? ok => this.#disconnect(ok) : undefined,
-      serialization,
-      argv0,
-      windowsHide: !!options.windowsHide,
-      windowsVerbatimArguments: !!options.windowsVerbatimArguments,
-    });
-    this.pid = this.#handle.pid;
+          process.nextTick(
+            (exitCode, signalCode, err) => this.#handleOnExit(exitCode, signalCode, err),
+            exitCode,
+            signalCode,
+            err,
+          );
+        },
+        lazy: true,
+        ipc: has_ipc ? this.#emitIpcMessage.bind(this) : undefined,
+        onDisconnect: has_ipc ? ok => this.#disconnect(ok) : undefined,
+        serialization,
+        argv0,
+        windowsHide: !!options.windowsHide,
+        windowsVerbatimArguments: !!options.windowsVerbatimArguments,
+      });
+      this.pid = this.#handle.pid;
 
-    $debug("ChildProcess: spawn", this.pid, spawnargs);
+      $debug("ChildProcess: spawn", this.pid, spawnargs);
 
-    onSpawnNT(this);
+      onSpawnNT(this);
 
-    if (has_ipc) {
-      this.send = this.#send;
-      this.disconnect = this.#disconnect;
-      if (options[kFromNode]) this.#closesNeeded += 1;
-    }
-
-    if (hasSocketsToEagerlyLoad) {
-      for (let item of this.stdio) {
-        item?.ref?.();
+      if (has_ipc) {
+        this.send = this.#send;
+        this.disconnect = this.#disconnect;
+        if (options[kFromNode]) this.#closesNeeded += 1;
       }
+
+      if (hasSocketsToEagerlyLoad) {
+        for (let item of this.stdio) {
+          item?.ref?.();
+        }
+      }
+    } catch (ex) {
+      if (ex == null || typeof ex !== "object" || !Object.hasOwn(ex, "errno")) throw ex;
+      this.#handle = null;
+      process.nextTick(() => {
+        this.emit("error", ex);
+        this.emit("close", (ex as SystemError).errno ?? -1);
+      });
     }
   }
 
@@ -1593,6 +1602,10 @@ class ShimmedStdioOutStream extends EventEmitter {
   }
 
   destroy() {
+    return this;
+  }
+
+  setEncoding() {
     return this;
   }
 }

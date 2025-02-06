@@ -103,6 +103,10 @@ yourself with Bun.serve().
     throw new Error("No HTML files found matching " + JSON.stringify(Bun.main));
   }
 
+  args.sort((a, b) => {
+    return a.localeCompare(b);
+  });
+
   // Add cwd to find longest common path
   let needsPop = false;
   if (args.length === 1) {
@@ -247,7 +251,17 @@ yourself with Bun.serve().
   const elapsed = (performance.now() - initial).toFixed(2);
   const enableANSIColors = Bun.enableANSIColors;
   function printInitialMessage(isFirst: boolean) {
-    const pathnameToPrint = servePaths[0] === "" || servePaths[0] === "*" ? "/" : servePaths[0];
+    let pathnameToPrint;
+    if (servePaths.length === 1) {
+      pathnameToPrint = servePaths[0];
+    } else {
+      const indexRoute = servePaths.find(a => {
+        return a === "index" || a === "" || a === "/";
+      });
+      pathnameToPrint = indexRoute !== undefined ? indexRoute : servePaths[0];
+    }
+
+    pathnameToPrint ||= "/";
     if (enableANSIColors) {
       let topLine = `${server.development ? "\x1b[34;7m DEV \x1b[0m " : ""}\x1b[1;34m\x1b[5mBun\x1b[0m \x1b[1;34mv${Bun.version}\x1b[0m`;
       if (isFirst) {

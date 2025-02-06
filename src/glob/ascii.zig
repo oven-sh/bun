@@ -70,7 +70,6 @@ const Wildcard = struct {
     path_index: u32 = 0,
 };
 
-
 /// This function checks returns a boolean value if the pathname `path` matches
 /// the pattern `glob`.
 ///
@@ -320,11 +319,11 @@ fn matchBrace(state: *State, glob: []const u8, path: []const u8) bool {
 
     const max_sub_len = open_brace_index + max_branch_len + (glob.len - (close_brace_index + 1));
 
+    var buf: [GLOB_STACK_BUF_SIZE]u8 = undefined;
+    var fixed_buf_alloc = std.heap.FixedBufferAllocator.init(&buf);
+    const buf_alloc = fixed_buf_alloc.allocator();
     // PERF: doing the following results in a large performance improvement over using std.heap.stackFallback
     var buffer = if (max_sub_len <= GLOB_STACK_BUF_SIZE) blk: {
-        var buf: [GLOB_STACK_BUF_SIZE]u8 = undefined;
-        var fixed_buf_alloc = std.heap.FixedBufferAllocator.init(&buf);
-        const buf_alloc = fixed_buf_alloc.allocator();
         break :blk std.ArrayList(u8).initCapacity(buf_alloc, GLOB_STACK_BUF_SIZE) catch unreachable;
     } else blk: {
         break :blk std.ArrayList(u8).initCapacity(state.allocator, max_sub_len) catch bun.outOfMemory();
@@ -338,7 +337,7 @@ fn matchBrace(state: *State, glob: []const u8, path: []const u8) bool {
     if (is_empty) {
         // add tail to buffer
         // e.g. for glob `b{{}}m` match `bm` against path instead of `b{}m`
-        buffer.appendSliceAssumeCapacity(glob[close_brace_index + 1..]);
+        buffer.appendSliceAssumeCapacity(glob[close_brace_index + 1 ..]);
         var branch_state = state.*;
         branch_state.glob_index = open_brace_index;
         branch_state.depth += 1;
@@ -475,7 +474,6 @@ pub fn detectGlobSyntax(potential_pattern: []const u8) bool {
 
     return false;
 }
-
 
 const BraceIndex = struct {
     start: u32 = 0,

@@ -5,7 +5,7 @@ pub fn generate(_: Command.Context, example_tag: Example.Tag, entry_point: strin
         needs_to_inject_tailwind = hasAnyTailwindClassesInSourceFiles(result.bundle_v2, result.reachable_files);
     }
 
-    const shadcn = try getShadcnComponents(result.bundle_v2, result.reachable_files);
+    const shadcn = if (enable_shadcn_ui) try getShadcnComponents(result.bundle_v2, result.reachable_files) else bun.StringSet.init(default_allocator);
     const needs_to_inject_shadcn_ui = shadcn.keys().len > 0;
 
     if (needs_to_inject_tailwind) {
@@ -571,3 +571,6 @@ const resolve_path = @import("../resolver/resolve_path.zig");
 const BundleV2 = bun.bundle_v2.BundleV2;
 const Command = bun.CLI.Command;
 const Example = @import("../cli/create_command.zig").Example;
+
+// Disabled until Tailwind v4 is supported.
+const enable_shadcn_ui = false;

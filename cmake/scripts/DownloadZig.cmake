@@ -44,6 +44,7 @@ else()
 endif()
 
 set(ZIG_DOWNLOAD_URL https://bun-ci-assets.bun.sh/${ZIG_FILENAME})
+set(ZIG_REPOSITORY_URL https://bun-ci-assets.bun.sh/${ZIG_COMMIT}.tar.gz )
 
 execute_process(
   COMMAND
@@ -77,10 +78,9 @@ set(ZIG_REPOSITORY_PATH ${ZIG_PATH}/repository)
 execute_process(
   COMMAND
     ${CMAKE_COMMAND}
-      -DGIT_PATH=${ZIG_REPOSITORY_PATH}
-      -DGIT_REPOSITORY=oven-sh/zig
-      -DGIT_COMMIT=${ZIG_COMMIT}
-      -P ${CMAKE_CURRENT_LIST_DIR}/GitClone.cmake
+      -DDOWNLOAD_URL=${ZIG_REPOSITORY_URL}
+      -DDOWNLOAD_PATH=${ZIG_REPOSITORY_PATH}
+      -P ${CMAKE_CURRENT_LIST_DIR}/DownloadUrl.cmake
   ERROR_STRIP_TRAILING_WHITESPACE
   ERROR_VARIABLE
     ZIG_REPOSITORY_ERROR

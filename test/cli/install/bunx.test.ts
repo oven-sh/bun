@@ -471,8 +471,8 @@ describe("bunx --no-install", () => {
 
 it("should handle postinstall scripts correctly with symlinked bunx", async () => {
   // Create a symlink to bun called "bunx"
-  const bunxPath = join(x_dir, isWindows ? "bunx.exe" : "bunx");
-  copyFileSync(bunExe(), bunxPath);
+  copyFileSync(bunExe(), join(x_dir, isWindows ? "bun.exe" : "bun"));
+  copyFileSync(bunExe(), join(x_dir, isWindows ? "bunx.exe" : "bunx"));
 
   const subprocess = spawn({
     cmd: ["bunx", "esbuild@latest", "--version"],

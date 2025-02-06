@@ -69,7 +69,9 @@ pub fn main() void {
         // This call needs to be before any of the other JSC initialization, as we can't
         // reconfigure which signal is used once the signal handler has already been registered.
         const configure_signal_success = JSConfigureSignalForGC(std.posix.SIG.PWR);
-        bun.assert(configure_signal_success);
+        if (!configure_signal_success) {
+            Output.panic("Failed to configure signal for GC thread", .{});
+        }
     }
     bun.CLI.Cli.start(bun.default_allocator);
     bun.Global.exit(0);

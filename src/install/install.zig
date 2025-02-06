@@ -145,7 +145,7 @@ const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
 const NetworkQueue = std.fifo.LinearFifo(*NetworkTask, .{ .Static = 32 });
 const PatchTaskFifo = std.fifo.LinearFifo(*PatchTask, .{ .Static = 32 });
-const Semver = @import("./semver.zig");
+const Semver = bun.Semver;
 const ExternalString = Semver.ExternalString;
 const String = Semver.String;
 const GlobalStringBuilder = @import("../string_builder.zig");
@@ -255,7 +255,8 @@ pub const Aligner = struct {
 };
 
 const NetworkTask = struct {
-    http: AsyncHTTP = undefined,
+    unsafe_http_client: AsyncHTTP = undefined,
+    response: bun.http.HTTPClientResult = .{},
     task_id: u64,
     url_buf: []const u8 = &[_]u8{},
     retried: u16 = 0,
@@ -282,10 +283,11 @@ const NetworkTask = struct {
     };
     pub const DedupeMap = std.HashMap(u64, DedupeMapEntry, IdentityContext(u64), 80);
 
-    pub fn notify(this: *NetworkTask, async_http: *AsyncHTTP, _: anytype) void {
+    pub fn notify(this: *NetworkTask, async_http: *AsyncHTTP, result: bun.http.HTTPClientResult) void {
         defer this.package_manager.wake();
         async_http.real.?.* = async_http.*;
         async_http.real.?.response_buffer = async_http.response_buffer;
+        this.response = result;
         this.package_manager.async_network_task_queue.push(this);
     }
 
@@ -454,13 +456,13 @@ const NetworkTask = struct {
         this.allocator = allocator;
 
         const url = URL.parse(this.url_buf);
-        this.http = AsyncHTTP.init(allocator, .GET, url, header_builder.entries, header_builder.content.ptr.?[0..header_builder.content.len], &this.response_buffer, "", this.getCompletionCallback(), HTTP.FetchRedirect.follow, .{
+        this.unsafe_http_client = AsyncHTTP.init(allocator, .GET, url, header_builder.entries, header_builder.content.ptr.?[0..header_builder.content.len], &this.response_buffer, "", this.getCompletionCallback(), HTTP.FetchRedirect.follow, .{
             .http_proxy = this.package_manager.httpProxy(url),
         });
-        this.http.client.flags.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
+        this.unsafe_http_client.client.flags.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
 
         if (PackageManager.verbose_install) {
-            this.http.client.verbose = .headers;
+            this.unsafe_http_client.client.verbose = .headers;
         }
 
         this.callback = .{
@@ -471,14 +473,14 @@ const NetworkTask = struct {
         };
 
         if (PackageManager.verbose_install) {
-            this.http.verbose = .headers;
-            this.http.client.verbose = .headers;
+            this.unsafe_http_client.verbose = .headers;
+            this.unsafe_http_client.client.verbose = .headers;
         }
 
         // Incase the ETag causes invalidation, we fallback to the last modified date.
         if (last_modified.len != 0 and bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304")) {
-            this.http.client.flags.force_last_modified = true;
-            this.http.client.if_modified_since = last_modified;
+            this.unsafe_http_client.client.flags.force_last_modified = true;
+            this.unsafe_http_client.client.if_modified_since = last_modified;
         }
     }
 
@@ -487,7 +489,7 @@ const NetworkTask = struct {
     }
 
     pub fn schedule(this: *NetworkTask, batch: *ThreadPool.Batch) void {
-        this.http.schedule(this.allocator, batch);
+        this.unsafe_http_client.schedule(this.allocator, batch);
     }
 
     pub const ForTarballError = OOM || error{
@@ -547,12 +549,12 @@ const NetworkTask = struct {
 
         const url = URL.parse(this.url_buf);
 
-        this.http = AsyncHTTP.init(allocator, .GET, url, header_builder.entries, header_buf, &this.response_buffer, "", this.getCompletionCallback(), HTTP.FetchRedirect.follow, .{
+        this.unsafe_http_client = AsyncHTTP.init(allocator, .GET, url, header_builder.entries, header_buf, &this.response_buffer, "", this.getCompletionCallback(), HTTP.FetchRedirect.follow, .{
             .http_proxy = this.package_manager.httpProxy(url),
         });
-        this.http.client.flags.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
+        this.unsafe_http_client.client.flags.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
         if (PackageManager.verbose_install) {
-            this.http.client.verbose = .headers;
+            this.unsafe_http_client.client.verbose = .headers;
         }
     }
 };
@@ -715,7 +717,7 @@ pub const Task = struct {
                     if (pt.callback.apply.logger.errors > 0) {
                         defer pt.callback.apply.logger.deinit();
                         // this.log.addErrorFmt(null, logger.Loc.Empty, bun.default_allocator, "failed to apply patch: {}", .{e}) catch unreachable;
-                        pt.callback.apply.logger.print(Output.writer()) catch {};
+                        pt.callback.apply.logger.print(Output.errorWriter()) catch {};
                     }
                 }
             }
@@ -736,7 +738,7 @@ pub const Task = struct {
                 const package_manifest = Npm.Registry.getPackageMetadata(
                     allocator,
                     manager.scopeForPackageName(manifest.name.slice()),
-                    manifest.network.http.response.?,
+                    (manifest.network.response.metadata orelse @panic("Assertion failure: Expected metadata to be set")).response,
                     body,
                     &this.log,
                     manifest.name.slice(),
@@ -1316,7 +1318,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
         pub const Result = union(Tag) {
             success: void,
-            fail: struct {
+            failure: struct {
                 err: anyerror,
                 step: Step,
                 debug_trace: if (Environment.isDebug) bun.crash_handler.StoredTrace else void,
@@ -1326,13 +1328,10 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 }
             },
 
-            pub inline fn success() Result {
-                return .{ .success = {} };
-            }
-
+            /// Init a Result with the 'fail' tag. use `.success` for the 'success' tag.
             pub inline fn fail(err: anyerror, step: Step, trace: ?*std.builtin.StackTrace) Result {
                 return .{
-                    .fail = .{
+                    .failure = .{
                         .err = err,
                         .step = step,
                         .debug_trace = if (Environment.isDebug)
@@ -1347,13 +1346,13 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             pub fn isFail(this: @This()) bool {
                 return switch (this) {
                     .success => false,
-                    .fail => true,
+                    .failure => true,
                 };
             }
 
             pub const Tag = enum {
                 success,
-                fail,
+                failure,
             };
         };
 
@@ -1540,10 +1539,10 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                     state.walker.deinit();
                     return Result.fail(err, .opening_dest_dir, @errorReturnTrace());
                 };
-                return Result.success();
+                return .success;
             }
 
-            const dest_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(destbase.fd, &state.buf, state.buf.len, 0);
+            const dest_path_length = bun.windows.GetFinalPathNameByHandleW(destbase.fd, &state.buf, state.buf.len, 0);
             if (dest_path_length == 0) {
                 const e = bun.windows.Win32Error.get();
                 const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
@@ -1567,7 +1566,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false);
             state.to_copy_buf = state.buf[fullpath.len..];
 
-            const cache_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(state.cached_package_dir.fd, &state.buf2, state.buf2.len, 0);
+            const cache_path_length = bun.windows.GetFinalPathNameByHandleW(state.cached_package_dir.fd, &state.buf2, state.buf2.len, 0);
             if (cache_path_length == 0) {
                 const e = bun.windows.Win32Error.get();
                 const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
@@ -1585,7 +1584,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             }
 
             state.to_copy_buf2 = to_copy_buf2;
-            return Result.success();
+            return .success;
         }
 
         fn installWithCopyfile(this: *@This(), destination_dir: std.fs.Dir) Result {
@@ -1715,7 +1714,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 if (Environment.isWindows) &state.buf2 else void{},
             ) catch |err| return Result.fail(err, .copying_files, @errorReturnTrace());
 
-            return Result.success();
+            return .success;
         }
 
         fn NewTaskQueue(comptime TaskType: type) type {
@@ -1726,7 +1725,6 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 wake_value: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
                 pub fn completeOne(this: *@This()) void {
-                    @fence(.release);
                     if (this.remaining.fetchSub(1, .monotonic) == 1) {
                         _ = this.wake_value.fetchAdd(1, .monotonic);
                         bun.Futex.wake(&this.wake_value, std.math.maxInt(u32));
@@ -1739,7 +1737,6 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 }
 
                 pub fn wait(this: *@This()) void {
-                    @fence(.acquire);
                     this.wake_value.store(0, .monotonic);
                     while (this.remaining.load(.monotonic) > 0) {
                         bun.Futex.wait(&this.wake_value, 0, std.time.ns_per_ms * 5) catch {};
@@ -1963,7 +1960,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 return Result.fail(err, .copying_files, @errorReturnTrace());
             };
 
-            return Result.success();
+            return .success;
         }
 
         fn installWithSymlink(this: *@This(), dest_dir: std.fs.Dir) !Result {
@@ -2103,7 +2100,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 return Result.fail(err, .copying_files, @errorReturnTrace());
             };
 
-            return Result.success();
+            return .success;
         }
 
         pub fn uninstall(this: *@This(), destination_dir: std.fs.Dir) void {
@@ -2263,7 +2260,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             // When we're linking on Windows, we want to avoid keeping the source directory handle open
             if (comptime Environment.isWindows) {
                 var wbuf: bun.WPathBuffer = undefined;
-                const dest_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(destination_dir.fd, &wbuf, dest_buf.len, 0);
+                const dest_path_length = bun.windows.GetFinalPathNameByHandleW(destination_dir.fd, &wbuf, dest_buf.len, 0);
                 if (dest_path_length == 0) {
                     const e = bun.windows.Win32Error.get();
                     const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
@@ -2334,7 +2331,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
             if (isDanglingSymlink(symlinked_path)) return Result.fail(error.DanglingSymlink, .linking_dependency, @errorReturnTrace());
 
-            return Result.success();
+            return .success;
         }
 
         pub fn getInstallMethod(this: *const @This()) Method {
@@ -2402,12 +2399,12 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             const fd = bun.toFD(destination_dir.fd);
             const subpath = bun.path.joinZ(&[_][]const u8{ this.destination_dir_subpath, ".bun-patch-tag" });
             const tag_fd = switch (bun.sys.openat(fd, subpath, bun.O.CREAT | bun.O.WRONLY, 0o666)) {
-                .err => |e| return .{ .fail = .{ .err = bun.errnoToZigErr(e.getErrno()), .step = Step.patching } },
+                .err => |e| return .fail(bun.errnoToZigErr(e.getErrno()), .patching, @errorReturnTrace()),
                 .result => |f| f,
             };
             defer _ = bun.sys.close(tag_fd);
 
-            if (bun.sys.File.writeAll(.{ .handle = tag_fd }, this.package_version).asErr()) |e| return .{ .fail = .{ .err = bun.errnoToZigErr(e.getErrno()), .step = Step.patching } };
+            if (bun.sys.File.writeAll(.{ .handle = tag_fd }, this.package_version).asErr()) |e| return .fail(bun.errnoToZigErr(e.getErrno()), .patching, @errorReturnTrace());
         }
 
         pub fn installImpl(this: *@This(), skip_delete: bool, destination_dir: std.fs.Dir, method_: Method, resolution_tag: Resolution.Tag) Result {
@@ -2486,7 +2483,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 else => {},
             }
 
-            if (supported_method_to_use != .copyfile) return Result.success();
+            if (supported_method_to_use != .copyfile) return .success;
 
             // TODO: linux io_uring
             return this.installWithCopyfile(destination_dir);
@@ -6407,7 +6404,7 @@ pub const PackageManager = struct {
                         }
                     }
 
-                    if (!has_network_error and task.http.response == null) {
+                    if (!has_network_error and task.response.metadata == null) {
                         has_network_error = true;
                         const min = manager.options.min_simultaneous_requests;
                         const max = AsyncHTTP.max_simultaneous_requests.load(.monotonic);
@@ -6417,8 +6414,8 @@ pub const PackageManager = struct {
                     }
 
                     // Handle retry-able errors.
-                    if (task.http.response == null or task.http.response.?.status_code > 499) {
-                        const err = task.http.err orelse error.HTTPError;
+                    if (task.response.metadata == null or task.response.metadata.?.response.status_code > 499) {
+                        const err = task.response.fail orelse error.HTTPError;
 
                         if (task.retried < manager.options.max_retry_count) {
                             task.retried += 1;
@@ -6438,9 +6435,9 @@ pub const PackageManager = struct {
                         }
                     }
 
-                    const response = task.http.response orelse {
+                    const metadata = task.response.metadata orelse {
                         // Handle non-retry-able errors.
-                        const err = task.http.err orelse error.HTTPError;
+                        const err = task.response.fail orelse error.HTTPError;
 
                         if (@TypeOf(callbacks.onPackageManifestError) != void) {
                             callbacks.onPackageManifestError(
@@ -6483,6 +6480,7 @@ pub const PackageManager = struct {
 
                         continue;
                     };
+                    const response = metadata.response;
 
                     if (response.status_code > 399) {
                         if (@TypeOf(callbacks.onPackageManifestError) != void) {
@@ -6512,7 +6510,7 @@ pub const PackageManager = struct {
                                 logger.Loc.Empty,
                                 manager.allocator,
                                 "<r><red><b>GET<r><red> {s}<d> - {d}<r>",
-                                .{ task.http.client.url.href, response.status_code },
+                                .{ metadata.url, response.status_code },
                             ) catch bun.outOfMemory();
                         } else {
                             manager.log.addWarningFmt(
@@ -6520,7 +6518,7 @@ pub const PackageManager = struct {
                                 logger.Loc.Empty,
                                 manager.allocator,
                                 "<r><yellow><b>GET<r><yellow> {s}<d> - {d}<r>",
-                                .{ task.http.client.url.href, response.status_code },
+                                .{ metadata.url, response.status_code },
                             ) catch bun.outOfMemory();
                         }
                         if (manager.subcommand != .remove) {
@@ -6539,7 +6537,7 @@ pub const PackageManager = struct {
 
                     if (comptime log_level.isVerbose()) {
                         Output.prettyError("    ", .{});
-                        Output.printElapsed(@as(f64, @floatFromInt(task.http.elapsed)) / std.time.ns_per_ms);
+                        Output.printElapsed(@as(f64, @floatFromInt(task.unsafe_http_client.elapsed)) / std.time.ns_per_ms);
                         Output.prettyError("\n<d>Downloaded <r><green>{s}<r> versions\n", .{name.slice()});
                         Output.flush();
                     }
@@ -6587,7 +6585,7 @@ pub const PackageManager = struct {
                     manager.task_batch.push(ThreadPool.Batch.from(manager.enqueueParseNPMPackage(task.task_id, name, task)));
                 },
                 .extract => |*extract| {
-                    if (!has_network_error and task.http.response == null) {
+                    if (!has_network_error and task.response.metadata == null) {
                         has_network_error = true;
                         const min = manager.options.min_simultaneous_requests;
                         const max = AsyncHTTP.max_simultaneous_requests.load(.monotonic);
@@ -6596,8 +6594,8 @@ pub const PackageManager = struct {
                         }
                     }
 
-                    if (task.http.response == null or task.http.response.?.status_code > 499) {
-                        const err = task.http.err orelse error.TarballFailedToDownload;
+                    if (task.response.metadata == null or task.response.metadata.?.response.status_code > 499) {
+                        const err = task.response.fail orelse error.TarballFailedToDownload;
 
                         if (task.retried < manager.options.max_retry_count) {
                             task.retried += 1;
@@ -6623,8 +6621,8 @@ pub const PackageManager = struct {
                         }
                     }
 
-                    const response = task.http.response orelse {
-                        const err = task.http.err orelse error.TarballFailedToDownload;
+                    const metadata = task.response.metadata orelse {
+                        const err = task.response.fail orelse error.TarballFailedToDownload;
 
                         if (@TypeOf(callbacks.onPackageDownloadError) != void) {
                             const package_id = manager.lockfile.buffers.resolutions.items[extract.dependency_id];
@@ -6679,6 +6677,8 @@ pub const PackageManager = struct {
                         continue;
                     };
 
+                    const response = metadata.response;
+
                     if (response.status_code > 399) {
                         if (@TypeOf(callbacks.onPackageDownloadError) != void) {
                             const err = switch (response.status_code) {
@@ -6710,7 +6710,7 @@ pub const PackageManager = struct {
                                 manager.allocator,
                                 "<r><red><b>GET<r><red> {s}<d> - {d}<r>",
                                 .{
-                                    task.http.client.url.href,
+                                    metadata.url,
                                     response.status_code,
                                 },
                             ) catch bun.outOfMemory();
@@ -6721,7 +6721,7 @@ pub const PackageManager = struct {
                                 manager.allocator,
                                 "<r><yellow><b>GET<r><yellow> {s}<d> - {d}<r>",
                                 .{
-                                    task.http.client.url.href,
+                                    metadata.url,
                                     response.status_code,
                                 },
                             ) catch bun.outOfMemory();
@@ -6742,7 +6742,7 @@ pub const PackageManager = struct {
 
                     if (comptime log_level.isVerbose()) {
                         Output.prettyError("    ", .{});
-                        Output.printElapsed(@as(f64, @floatCast(@as(f64, @floatFromInt(task.http.elapsed)) / std.time.ns_per_ms)));
+                        Output.printElapsed(@as(f64, @floatCast(@as(f64, @floatFromInt(task.unsafe_http_client.elapsed)) / std.time.ns_per_ms)));
                         Output.prettyError("<d> Downloaded <r><green>{s}<r> tarball\n", .{extract.name.slice()});
                         Output.flush();
                     }
@@ -7801,10 +7801,10 @@ pub const PackageManager = struct {
         const trusted_dependencies_string = "trustedDependencies";
 
         const dependency_groups = &.{
-            .{ "optionalDependencies", Dependency.Behavior.optional },
-            .{ "devDependencies", Dependency.Behavior.dev },
-            .{ "dependencies", Dependency.Behavior.prod },
-            .{ "peerDependencies", Dependency.Behavior.peer },
+            .{ "optionalDependencies", .{ .optional = true } },
+            .{ "devDependencies", .{ .dev = true } },
+            .{ "dependencies", .{ .prod = true } },
+            .{ "peerDependencies", .{ .peer = true } },
         };
 
         pub const EditOptions = struct {
@@ -11632,7 +11632,7 @@ pub const PackageManager = struct {
         var out_dir: if (bun.Environment.isWindows) []const u16 else void = undefined;
 
         if (comptime bun.Environment.isWindows) {
-            const inlen = bun.windows.kernel32.GetFinalPathNameByHandleW(pkg_in_cache_dir.fd, &buf1, buf1.len, 0);
+            const inlen = bun.windows.GetFinalPathNameByHandleW(pkg_in_cache_dir.fd, &buf1, buf1.len, 0);
             if (inlen == 0) {
                 const e = bun.windows.Win32Error.get();
                 const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
@@ -11640,7 +11640,7 @@ pub const PackageManager = struct {
                 Global.crash();
             }
             in_dir = buf1[0..inlen];
-            const outlen = bun.windows.kernel32.GetFinalPathNameByHandleW(node_modules_folder.fd, &buf2, buf2.len, 0);
+            const outlen = bun.windows.GetFinalPathNameByHandleW(node_modules_folder.fd, &buf2, buf2.len, 0);
             if (outlen == 0) {
                 const e = bun.windows.Win32Error.get();
                 const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
@@ -12197,7 +12197,7 @@ pub const PackageManager = struct {
         const ESCAPE_TABLE: [256]EscapeVal = comptime brk: {
             var table: [256]EscapeVal = [_]EscapeVal{.other} ** 256;
             const ty = @typeInfo(EscapeVal);
-            for (ty.Enum.fields) |field| {
+            for (ty.@"enum".fields) |field| {
                 if (field.name.len == 1) {
                     const c = field.name[0];
                     table[c] = @enumFromInt(field.value);
@@ -12238,7 +12238,7 @@ pub const PackageManager = struct {
                 Output.prettyln("<r><b>bun add <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
                 Output.flush();
             }
-            return try switch (manager.options.log_level) {
+            return switch (manager.options.log_level) {
                 inline else => |log_level| manager.updatePackageJSONAndInstallWithManager(ctx, original_cwd, log_level),
             };
         }
@@ -13372,7 +13372,7 @@ pub const PackageManager = struct {
 
                 var lazy_package_dir: LazyPackageDestinationDir = .{ .dir = destination_dir };
 
-                const install_result = switch (resolution.tag) {
+                const install_result: PackageInstall.Result = switch (resolution.tag) {
                     .symlink, .workspace => installer.installFromLink(this.skip_delete, destination_dir),
                     else => result: {
                         if (resolution.tag == .root or (resolution.tag == .folder and !this.lockfile.isWorkspaceTreeId(this.current_tree_id))) {
@@ -13381,15 +13381,15 @@ pub const PackageManager = struct {
                             const dirname = std.fs.path.dirname(this.node_modules.path.items) orelse this.node_modules.path.items;
 
                             installer.cache_dir = this.root_node_modules_folder.openDir(dirname, .{ .iterate = true, .access_sub_paths = true }) catch |err|
-                                break :result PackageInstall.Result.fail(err, .opening_cache_dir, @errorReturnTrace());
+                                break :result .fail(err, .opening_cache_dir, @errorReturnTrace());
 
                             const result = if (resolution.tag == .root)
                                 installer.installFromLink(this.skip_delete, destination_dir)
                             else
                                 installer.install(this.skip_delete, destination_dir, resolution.tag);
 
-                            if (result.isFail() and (result.fail.err == error.ENOENT or result.fail.err == error.FileNotFound))
-                                break :result PackageInstall.Result.success();
+                            if (result.isFail() and (result.failure.err == error.ENOENT or result.failure.err == error.FileNotFound))
+                                break :result .success;
 
                             break :result result;
                         }
@@ -13472,7 +13472,7 @@ pub const PackageManager = struct {
 
                         if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, &lazy_package_dir, !is_pending_package_install, log_level);
                     },
-                    .fail => |cause| {
+                    .failure => |cause| {
                         if (comptime Environment.allow_assert) {
                             bun.assert(!cause.isPackageMissingFromCache() or (resolution.tag != .symlink and resolution.tag != .workspace));
                         }
@@ -13541,7 +13541,7 @@ pub const PackageManager = struct {
                                 cause.err,
                                 "failed {s} for package <b>{s}<r>",
                                 .{
-                                    install_result.fail.step.name(),
+                                    install_result.failure.step.name(),
                                     this.names[package_id].slice(this.lockfile.buffers.string_bytes.items),
                                 },
                             );
@@ -15019,10 +15019,7 @@ pub const PackageManager = struct {
             if (manager.options.do.summary) {
                 // TODO(dylan-conway): packages aren't installed but we can still print
                 // added/removed/updated direct dependencies.
-                Output.pretty(
-                    \\
-                    \\Saved <green>{s}<r> ({d} package{s}) 
-                , .{
+                Output.pretty("\nSaved <green>{s}<r> ({d} package{s}) ", .{
                     switch (save_format) {
                         .text => "bun.lock",
                         .binary => "bun.lockb",

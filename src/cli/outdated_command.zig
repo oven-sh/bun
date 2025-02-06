@@ -427,14 +427,12 @@ pub const OutdatedCommand = struct {
         table.printColumnNames();
 
         for (workspace_pkg_ids) |workspace_pkg_id| {
-            inline for (
-                .{
-                    Behavior.prod,
-                    Behavior.dev,
-                    Behavior.peer,
-                    Behavior.optional,
-                },
-            ) |group_behavior| {
+            inline for ([_]Behavior{
+                .{ .prod = true },
+                .{ .dev = true },
+                .{ .peer = true },
+                .{ .optional = true },
+            }) |group_behavior| {
                 for (outdated_ids.items) |ids| {
                     if (workspace_pkg_id != ids.workspace_pkg_id) continue;
                     const package_id = ids.package_id;

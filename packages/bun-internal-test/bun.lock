@@ -1,5 +1,5 @@
 {
-  "lockfileVersion": 0,
+  "lockfileVersion": 1,
   "workspaces": {
     "": {
       "dependencies": {
@@ -26,7 +26,7 @@
 
     "@types/p-queue": ["@types/p-queue@3.2.1", "", { "dependencies": { "p-queue": "*" } }, "sha512-tgAdn5zEs05NuHzOyRM34cMO0rczStphR/kLo/ZJwwwJ5S2+QVxwA6gST3vDHWPB1oDfUuT6wOouhJvJkBCA0w=="],
 
-    "bun": ["bun@workspace:runners/bun", {}],
+    "bun": ["bun@workspace:runners/bun"],
 
     "bun-types": ["bun-types@1.0.4-canary.20230929T233451", "", {}, "sha512-Ke/y3GX0T2ZYKx0UKKCnFRRP9bXzVRcRZCrIlF5/aRNEpgbfrMBw+s5imPqrV2CqJ7q6kIbMikCahzMr4N9PTg=="],
 
@@ -38,7 +38,7 @@
 
     "prettier": ["prettier@2.8.8", "", { "bin": { "prettier": "bin-prettier.js" } }, "sha512-tdN8qQGvNjw4CHbY+XXk0JgCXn9QiF21a55rBe5LJAU+kDyC4WQn4+awm2Xfk2lQMk5fKup9XgzTZtGkjBdP9Q=="],
 
-    "qunit": ["qunit@workspace:runners/qunit", {}],
+    "qunit": ["qunit@workspace:runners/qunit"],
 
     "tunnel": ["tunnel@0.0.6", "", {}, "sha512-1h/Lnq9yajKY2PEbBadPXj3VxsDDu844OnaAo52UVmIzIvwwtBPIuNvkjuzBlTWpfJyUbG3ez0KSBibQkj4ojg=="],
 

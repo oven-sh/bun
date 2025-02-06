@@ -528,7 +528,7 @@ pub const Expect = struct {
                 }
 
                 const signature = comptime getSignature("toBe", "<green>expected<r>", false);
-                if (left.deepEquals(right, globalThis) or left.strictDeepEquals(right, globalThis)) {
+                if (try left.deepEquals(right, globalThis) or try left.strictDeepEquals(right, globalThis)) {
                     const fmt =
                         (if (!has_custom_label) "\n\n<d>If this test should pass, replace \"toBe\" with \"toEqual\" or \"toStrictEqual\"<r>" else "") ++
                         "\n\nExpected: <green>{any}<r>\n" ++
@@ -1629,7 +1629,7 @@ pub const Expect = struct {
         const value: JSValue = try this.getValue(globalThis, thisValue, "toStrictEqual", "<green>expected<r>");
 
         const not = this.flags.not;
-        var pass = value.jestStrictDeepEquals(expected, globalThis);
+        var pass = try value.jestStrictDeepEquals(expected, globalThis);
 
         if (not) pass = !pass;
         if (pass) return .undefined;
@@ -2351,7 +2351,7 @@ pub const Expect = struct {
 
             if (Expect.isAsymmetricMatcher(expected_value)) {
                 const signature = comptime getSignature("toThrow", "<green>expected<r>", false);
-                const is_equal = result.jestStrictDeepEquals(expected_value, globalThis);
+                const is_equal = try result.jestStrictDeepEquals(expected_value, globalThis);
 
                 if (globalThis.hasException()) {
                     return .zero;
@@ -4696,7 +4696,7 @@ pub const Expect = struct {
     };
 
     fn throwInvalidMatcherError(globalThis: *JSGlobalObject, matcher_name: bun.String, result: JSValue) bun.JSError {
-        @setCold(true);
+        @branchHint(.cold);
 
         var formatter = JSC.ConsoleObject.Formatter{
             .globalThis = globalThis,
@@ -4981,7 +4981,7 @@ pub const ExpectStatic = struct {
     }
 
     fn asyncChainingError(globalThis: *JSGlobalObject, flags: Expect.Flags, name: string) bun.JSError!JSValue {
-        @setCold(true);
+        @branchHint(.cold);
         const str = switch (flags.promise) {
             .resolves => "resolvesTo",
             .rejects => "rejectsTo",
@@ -5619,9 +5619,9 @@ extern fn Expect__getPrototype(globalThis: *JSGlobalObject) JSValue;
 extern fn ExpectStatic__getPrototype(globalThis: *JSGlobalObject) JSValue;
 
 comptime {
-    @export(ExpectMatcherUtils.createSingleton, .{ .name = "ExpectMatcherUtils_createSigleton" });
-    @export(Expect.readFlagsAndProcessPromise, .{ .name = "Expect_readFlagsAndProcessPromise" });
-    @export(ExpectCustomAsymmetricMatcher.execute, .{ .name = "ExpectCustomAsymmetricMatcher__execute" });
+    @export(&ExpectMatcherUtils.createSingleton, .{ .name = "ExpectMatcherUtils_createSigleton" });
+    @export(&Expect.readFlagsAndProcessPromise, .{ .name = "Expect_readFlagsAndProcessPromise" });
+    @export(&ExpectCustomAsymmetricMatcher.execute, .{ .name = "ExpectCustomAsymmetricMatcher__execute" });
 }
 
 fn incrementExpectCallCounter() void {
@@ -5674,7 +5674,7 @@ test "Expect.trimLeadingWhitespaceForInlineSnapshot" {
     try testTrimLeadingWhitespaceForSnapshot(
         \\
         \\  Hello, world!
-        \\               
+        \\
     ,
         \\
         \\Hello, world!
@@ -5699,7 +5699,7 @@ test "Expect.trimLeadingWhitespaceForInlineSnapshot" {
         \\  key: value
         \\
         \\  }
-        \\                
+        \\
     ,
         \\
         \\Object{
@@ -5713,13 +5713,13 @@ test "Expect.trimLeadingWhitespaceForInlineSnapshot" {
         \\    Object{
         \\  key: value
         \\  }
-        \\                
+        \\
     ,
         \\
         \\    Object{
         \\  key: value
         \\  }
-        \\                
+        \\
     );
     try testTrimLeadingWhitespaceForSnapshot(
         \\

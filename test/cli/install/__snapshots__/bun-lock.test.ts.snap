@@ -273,3 +273,134 @@ exports[`should convert a binary lockfile with invalid optional peers 1`] = `
 }
 "
 `;
+
+exports[`should not deduplicate bundled packages with un-bundled packages 1`] = `
+[
+  "",
+  "+ debug-1@4.4.0",
+  "+ npm-1@10.9.2",
+  "",
+  "3 packages installed",
+]
+`;
+
+exports[`should not change formatting unexpectedly 1`] = `
+[
+  "preinstall",
+  "",
+  "+ optional-native@1.0.0",
+  "+ optional-peer-deps@1.0.0 (v1.0.1 available)",
+  "+ uses-what-bin@1.0.0 (v1.5.0 available)",
+  "",
+  "13 packages installed",
+]
+`;
+
+exports[`should not change formatting unexpectedly 2`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "pkg-root",
+      "dependencies": {
+        "uses-what-bin": "1.0.0",
+      },
+      "devDependencies": {
+        "optional-peer-deps": "1.0.0",
+      },
+      "optionalDependencies": {
+        "optional-native": "1.0.0",
+      },
+    },
+    "packages/pkg1": {
+      "name": "pkg1",
+      "version": "2.2.2",
+      "bin": {
+        "pkg1-1": "bin-1.js",
+        "pkg1-2": "bin-2.js",
+        "pkg1-3": "bin-3.js",
+      },
+      "dependencies": {
+        "bundled-1": "1.0.0",
+      },
+      "peerDependencies": {
+        "a-dep": "1.0.1",
+      },
+      "optionalPeers": [
+        "a-dep",
+      ],
+    },
+    "packages/pkg2": {
+      "name": "pkg2",
+      "bin": {
+        "pkg2-1": "bin-1.js",
+      },
+      "dependencies": {
+        "map-bin": "1.0.2",
+      },
+    },
+    "packages/pkg3": {
+      "name": "pkg3",
+      "binDir": "bin",
+      "devDependencies": {
+        "hoist-lockfile-1": "1.0.0",
+      },
+    },
+  },
+  "trustedDependencies": [
+    "uses-what-bin",
+  ],
+  "patchedDependencies": {
+    "optional-peer-deps@1.0.0": "patches/optional-peer-deps@1.0.0.patch",
+  },
+  "overrides": {
+    "hoist-lockfile-shared": "1.0.1",
+  },
+  "packages": {
+    "bundled-1": ["bundled-1@1.0.0", "http://localhost:1234/bundled-1/-/bundled-1-1.0.0.tgz", { "dependencies": { "no-deps": "1.0.0" } }, "sha512-YQ/maWZliKQyp1VIdYnPBH6qBHLCQ8Iy6G5vRZFXUHVXufiXT5aTjPVnLQ7xpVAgURFrzd/Fu1113ROLlaJBkQ=="],
+
+    "hoist-lockfile-1": ["hoist-lockfile-1@1.0.0", "http://localhost:1234/hoist-lockfile-1/-/hoist-lockfile-1-1.0.0.tgz", { "dependencies": { "hoist-lockfile-shared": "*" } }, "sha512-E2nwR7egMFDoYjeRno7CAa59kiwkLGfhTFy2Q335JWp2r2bDkwoAt1LdChd5PdGYkbo7SfViHkW44ga+WXA+eA=="],
+
+    "hoist-lockfile-shared": ["hoist-lockfile-shared@1.0.1", "http://localhost:1234/hoist-lockfile-shared/-/hoist-lockfile-shared-1.0.1.tgz", {}, "sha512-wPw8pTRj2OeZ/n7NeixjaSeI7FoM9DbMHWzdLv1kuBesSXJn+17UA0N7LV7t9dREnIMLw7ycRomhDL+56NRBmQ=="],
+
+    "map-bin": ["map-bin@1.0.2", "http://localhost:1234/map-bin/-/map-bin-1.0.2.tgz", { "bin": { "map-bin": "bin/map-bin", "map_bin": "bin/map-bin" } }, "sha512-d5+2d5socrCT/99w16Gdl/wQu+C3WHflIE/3idFuJOW9xuvt+8VW4bDND/kptCNI63w/ePSJoYm327Sn+I7QCQ=="],
+
+    "native-bar-x64": ["native-bar-x64@1.0.0", "http://localhost:1234/native-bar-x64/-/native-bar-x64-1.0.0.tgz", { "os": "none", "cpu": "x64" }, "sha512-wNjF++hO2mWgeg1uyFzyTUq1tWiO/1kEjKqvgf344NmKJ3JiUp58dSaes4b26AoUT/rrrHEU9SGUu550E9/sUA=="],
+
+    "native-foo-x64": ["native-foo-x64@1.0.0", "http://localhost:1234/native-foo-x64/-/native-foo-x64-1.0.0.tgz", { "os": "none", "cpu": "x64" }, "sha512-+KlZNC/c4RF1wx4ZYdrr2ZfouSHMWM4YLT/yCfh97dlIW1JuRs9LnbdUwrsM007hVF0khUGM9TSVcx+elB6NpQ=="],
+
+    "native-foo-x86": ["native-foo-x86@1.0.0", "http://localhost:1234/native-foo-x86/-/native-foo-x86-1.0.0.tgz", { "os": "none", "cpu": "none" }, "sha512-pUktFGar8JctgQh4Ow5Y9bMp3PB5bHBgbC6M3igED5q99z51WErG2GO3LnPG651SyHtRf+zdeMdhGFWzP54apQ=="],
+
+    "native-libc-glibc": ["native-libc-glibc@1.0.0", "http://localhost:1234/native-libc-glibc/-/native-libc-glibc-1.0.0.tgz", {}, "sha512-D7ivPUqV+bs4jZCFt/fm0BRchhE1kO3XMKZ7/Tt3cF2gfJcewMy/zuId79iaVn9aztJYkOk1GWFpMPXmX5rJHA=="],
+
+    "native-libc-musl": ["native-libc-musl@1.0.0", "http://localhost:1234/native-libc-musl/-/native-libc-musl-1.0.0.tgz", {}, "sha512-1uffg8IA4EJ4VUnuZU4zyRO9EyduuNfbqg2MMVCWSMAsQkfzZnNR0hqtL0GW/EuhE8FWU/FE//Srf1px1pnN2Q=="],
+
+    "optional-native": ["optional-native@1.0.0", "http://localhost:1234/optional-native/-/optional-native-1.0.0.tgz", { "optionalDependencies": { "native-bar-x64": "1.0.0", "native-foo-x64": "1.0.0", "native-foo-x86": "1.0.0", "native-libc-glibc": "1.0.0", "native-libc-musl": "1.0.0" } }, "sha512-E+XTkTpxRqU09BnKGkOkS9vk0sPDhPtArBw6FfL5ciYkb7k6EljnqXEQ1b9l0S1YCVZxZkOZIJCYZfCwj7AgSw=="],
+
+    "optional-peer-deps": ["optional-peer-deps@1.0.0", "http://localhost:1234/optional-peer-deps/-/optional-peer-deps-1.0.0.tgz", { "peerDependencies": { "no-deps": "*" }, "optionalPeers": ["no-deps"] }, "sha512-gJZ2WKSXFwQHjjYNxAjYYIwtgNvDnL+CKURXTtOKNDX27XZN0a9bt+cDgLcCVBTy0V/nQ8h6yW7a6fO34Lv22w=="],
+
+    "pkg1": ["pkg1@workspace:packages/pkg1"],
+
+    "pkg2": ["pkg2@workspace:packages/pkg2"],
+
+    "pkg3": ["pkg3@workspace:packages/pkg3"],
+
+    "uses-what-bin": ["uses-what-bin@1.0.0", "http://localhost:1234/uses-what-bin/-/uses-what-bin-1.0.0.tgz", { "dependencies": { "what-bin": "1.0.0" } }, "sha512-87/Emb1Hh7HtsMMU1yXXhI/+/5opQFbnqtR0Yq/1rgr7jp4mzkMU8wQBiYtS8C45GJY6YfdIqq1Dci+0ivJB2g=="],
+
+    "what-bin": ["what-bin@1.0.0", "http://localhost:1234/what-bin/-/what-bin-1.0.0.tgz", { "bin": { "what-bin": "what-bin.js" } }, "sha512-sa99On1k5aDqCvpni/TQ6rLzYprUWBlb8fNwWOzbjDlM24fRr7FKDOuaBO/Y9WEIcZuzoPkCW5EkBCpflj8REQ=="],
+
+    "bundled-1/no-deps": ["no-deps@1.0.0", "http://localhost:1234/no-deps/-/no-deps-1.0.0.tgz", { "bundled": true }, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="],
+  }
+}
+"
+`;
+
+exports[`should not change formatting unexpectedly 3`] = `
+[
+  "preinstall",
+  "",
+  "+ bundled-1@1.0.0",
+  "",
+  "13 packages installed",
+]
+`;

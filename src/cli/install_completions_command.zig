@@ -303,7 +303,7 @@ pub const InstallCompletionsCommand = struct {
                 },
                 .zsh => {
                     if (bun.getenvZ("fpath")) |fpath| {
-                        var splitter = std.mem.split(u8, fpath, " ");
+                        var splitter = std.mem.splitScalar(u8, fpath, ' ');
 
                         while (splitter.next()) |dir| {
                             completions_dir = dir;

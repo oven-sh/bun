@@ -162,55 +162,6 @@ export default [
     values: ["arguments", "callback"],
   }),
   define({
-    name: "Dirent",
-    construct: true,
-    finalize: true,
-
-    klass: {},
-
-    // TODO: generate-classes needs to handle Object.create properly when
-    // functions are used. The functions need a fallback implementation to use
-    // getters.
-    supportsObjectCreate: true,
-
-    proto: {
-      isBlockDevice: {
-        fn: "isBlockDevice",
-        length: 0,
-      },
-      isCharacterDevice: {
-        fn: "isCharacterDevice",
-        length: 0,
-      },
-      isDirectory: {
-        fn: "isDirectory",
-        length: 0,
-      },
-      isFIFO: {
-        fn: "isFIFO",
-        length: 0,
-      },
-      isFile: {
-        fn: "isFile",
-        length: 0,
-      },
-      isSocket: {
-        fn: "isSocket",
-        length: 0,
-      },
-      isSymbolicLink: {
-        fn: "isSymbolicLink",
-        length: 0,
-      },
-    },
-
-    own: {
-      name: "getName",
-      path: "getPath",
-      parentPath: "getPath",
-    },
-  }),
-  define({
     name: "NodeJSFS",
     construct: true,
     noConstructor: true,

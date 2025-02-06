@@ -10,7 +10,7 @@ headers: Headers = .{
 },
 ref_count: u32 = 1,
 
-pub usingnamespace bun.NewRefCounted(@This(), deinit);
+pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
 fn deinit(this: *StaticRoute) void {
     this.blob.detach();

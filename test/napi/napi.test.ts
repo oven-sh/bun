@@ -241,7 +241,10 @@ describe("napi", () => {
 
   describe("napi_threadsafe_function", () => {
     it("keeps the event loop alive without async_work", () => {
-      checkSameOutput("test_promise_with_threadsafe_function", []);
+      const result = checkSameOutput("test_promise_with_threadsafe_function", []);
+      expect(result).toContain("tsfn_callback");
+      expect(result).toContain("resolved to 1234");
+      expect(result).toContain("tsfn_finalize_callback");
     });
 
     it("does not hang on finalize", () => {
@@ -382,6 +385,38 @@ describe("napi", () => {
     it("returns information from the most recent call", () => {
       checkSameOutput("test_extended_error_messages", []);
     });
+  });
+
+  describe.each(["buffer", "typedarray"])("napi_is_%s", kind => {
+    const tests: Array<[string, boolean]> = [
+      ["new Uint8Array()", true],
+      ["new BigUint64Array()", true],
+      ["new ArrayBuffer()", false],
+      ["Buffer.alloc(0)", true],
+      ["new DataView(new ArrayBuffer())", kind == "buffer"],
+      ["new (class Foo extends Uint8Array {})()", true],
+      ["false", false],
+      ["[1, 2, 3]", false],
+      ["'hello'", false],
+    ];
+    it("returns consistent values with node.js", () => {
+      for (const [value, expected] of tests) {
+        // main.js does eval then spread so to pass a single value we need to wrap in an array
+        const output = checkSameOutput(`test_is_${kind}`, "[" + value + "]");
+        expect(output).toBe(`napi_is_${kind} -> ${expected.toString()}`);
+      }
+    });
+  });
+
+  it.each([
+    ["nullptr", { number: 123 }],
+    ["null", null],
+    ["undefined", undefined],
+  ])("works when the module register function returns %s", (returnKind, expected) => {
+    expect(require(`./napi-app/build/Release/${returnKind}_addon.node`)).toEqual(expected);
+  });
+  it("works when the module register function throws", () => {
+    expect(() => require("./napi-app/build/Release/throw_addon.node")).toThrow(new Error("oops!"));
   });
 });
 

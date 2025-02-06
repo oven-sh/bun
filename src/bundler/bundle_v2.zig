@@ -913,7 +913,14 @@ pub const BundleV2 = struct {
         task.tree_shaking = this.linker.options.tree_shaking;
         task.is_entry_point = is_entry_point;
         task.known_target = target;
-        task.jsx.development = this.bundlerForTarget(target).options.jsx.development;
+        {
+            const bundler = this.bundlerForTarget(target);
+            task.jsx.development = switch (bundler.options.force_node_env) {
+                .development => true,
+                .production => false,
+                .unspecified => bundler.options.jsx.development,
+            };
+        }
 
         // Handle onLoad plugins as entry points
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
@@ -1719,7 +1726,7 @@ pub const BundleV2 = struct {
         ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
         started_at_ns: u64 = 0,
 
-        pub usingnamespace bun.NewThreadSafeRefCounted(JSBundleCompletionTask, @This().deinit);
+        pub usingnamespace bun.NewThreadSafeRefCounted(JSBundleCompletionTask, _deinit, null);
 
         pub fn configureBundler(
             completion: *JSBundleCompletionTask,
@@ -1753,6 +1760,9 @@ pub const BundleV2 = struct {
             );
             transpiler.options.env.behavior = config.env_behavior;
             transpiler.options.env.prefix = config.env_prefix.slice();
+            if (config.force_node_env != .unspecified) {
+                transpiler.options.force_node_env = config.force_node_env;
+            }
 
             transpiler.options.entry_points = config.entry_points.keys();
             transpiler.options.jsx = config.jsx;
@@ -1797,7 +1807,7 @@ pub const BundleV2 = struct {
 
         pub const TaskCompletion = bun.JSC.AnyTask.New(JSBundleCompletionTask, onComplete);
 
-        pub fn deinit(this: *JSBundleCompletionTask) void {
+        fn _deinit(this: *JSBundleCompletionTask) void {
             this.result.deinit();
             this.log.deinit();
             this.poll_ref.disable();
@@ -2875,7 +2885,11 @@ pub const BundleV2 = struct {
             resolve_task.secondary_path_for_commonjs_interop = secondary_path_to_copy;
             resolve_task.known_target = target;
             resolve_task.jsx = resolve_result.jsx;
-            resolve_task.jsx.development = this.bundlerForTarget(target).options.jsx.development;
+            resolve_task.jsx.development = switch (transpiler.options.force_node_env) {
+                .development => true,
+                .production => false,
+                .unspecified => transpiler.options.jsx.development,
+            };
 
             // Figure out the loader.
             {
@@ -3542,7 +3556,7 @@ pub const ParseTask = struct {
         };
     };
 
-    const debug = Output.scoped(.ParseTask, false);
+    const debug = Output.scoped(.ParseTask, true);
 
     pub fn init(resolve_result: *const _resolver.Result, source_index: Index, ctx: *BundleV2) ParseTask {
         return .{
@@ -7545,7 +7559,7 @@ pub const LinkerContext = struct {
                     continue;
                 }
 
-                _ = this.validateTLA(id, tla_keywords, tla_checks, input_files, import_records, flags);
+                _ = this.validateTLA(id, tla_keywords, tla_checks, input_files, import_records, flags, import_records_list);
 
                 for (import_records) |record| {
                     if (!record.source_index.isValid()) {
@@ -11027,6 +11041,7 @@ pub const LinkerContext = struct {
         input_files: []Logger.Source,
         import_records: []ImportRecord,
         meta_flags: []JSMeta.Flags,
+        ast_import_records: []bun.BabyList(ImportRecord),
     ) js_ast.TlaCheck {
         var result_tla_check: *js_ast.TlaCheck = &tla_checks[source_index];
 
@@ -11038,7 +11053,7 @@ pub const LinkerContext = struct {
 
             for (import_records, 0..) |record, import_record_index| {
                 if (Index.isValid(record.source_index) and (record.kind == .require or record.kind == .stmt)) {
-                    const parent = c.validateTLA(record.source_index.get(), tla_keywords, tla_checks, input_files, import_records, meta_flags);
+                    const parent = c.validateTLA(record.source_index.get(), tla_keywords, tla_checks, input_files, import_records, meta_flags, ast_import_records);
                     if (Index.isInvalid(Index.init(parent.parent))) {
                         continue;
                     }
@@ -11065,9 +11080,11 @@ pub const LinkerContext = struct {
                             const parent_source_index = other_source_index;
 
                             if (parent_result_tla_keyword.len > 0) {
-                                tla_pretty_path = input_files[other_source_index].path.pretty;
+                                const source = input_files[other_source_index];
+                                tla_pretty_path = source.path.pretty;
                                 notes.append(Logger.Data{
                                     .text = std.fmt.allocPrint(c.allocator, "The top-level await in {s} is here:", .{tla_pretty_path}) catch bun.outOfMemory(),
+                                    .location = .initOrNull(&source, parent_result_tla_keyword),
                                 }) catch bun.outOfMemory();
                                 break;
                             }
@@ -11086,6 +11103,7 @@ pub const LinkerContext = struct {
                                     input_files[parent_source_index].path.pretty,
                                     input_files[other_source_index].path.pretty,
                                 }) catch bun.outOfMemory(),
+                                .location = .initOrNull(&input_files[parent_source_index], ast_import_records[parent_source_index].slice()[tla_checks[parent_source_index].import_record_index].range),
                             }) catch bun.outOfMemory();
                         }
 
@@ -13571,6 +13589,7 @@ pub const LinkerContext = struct {
                             .js;
 
                         if (loader.isJavaScriptLike()) {
+                            JSC.VirtualMachine.is_bundler_thread_for_bytecode_cache = true;
                             JSC.initialize(false);
                             var fdpath: bun.PathBuffer = undefined;
                             var source_provider_url = try bun.String.createFormat("{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path});
@@ -13915,6 +13934,7 @@ pub const LinkerContext = struct {
                         .js;
 
                     if (loader.isJavaScriptLike()) {
+                        JSC.VirtualMachine.is_bundler_thread_for_bytecode_cache = true;
                         JSC.initialize(false);
                         var fdpath: bun.PathBuffer = undefined;
                         var source_provider_url = try bun.String.createFormat("{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path});
@@ -14788,7 +14808,7 @@ pub const LinkerContext = struct {
                             Part.SymbolUseMap,
                             c.allocator,
                             .{
-                                .{ wrapper_ref, .{ .count_estimate = 1 } },
+                                .{ wrapper_ref, Symbol.Use{ .count_estimate = 1 } },
                             },
                         ) catch unreachable,
                         .declared_symbols = js_ast.DeclaredSymbol.List.fromSlice(
@@ -14845,10 +14865,10 @@ pub const LinkerContext = struct {
                 const part_index = c.graph.addPartToFile(
                     source_index,
                     .{
-                        .symbol_uses = bun.from(
+                        .symbol_uses = bun.fromMapLike(
                             Part.SymbolUseMap,
                             c.allocator,
-                            .{
+                            &.{
                                 .{ wrapper_ref, .{ .count_estimate = 1 } },
                             },
                         ) catch unreachable,

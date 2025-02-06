@@ -3329,7 +3329,7 @@ pub fn existsAt(fd: bun.FileDescriptor, subpath: [:0]const u8) bool {
     if (comptime Environment.isPosix) {
         return switch (faccessat(fd, subpath)) {
             .err => false,
-            .result => true,
+            .result => |r| r,
         };
     }
 

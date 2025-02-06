@@ -3304,7 +3304,12 @@ pub fn existsAtType(fd: bun.FileDescriptor, path: anytype) Maybe(ExistsAtType) {
             basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_READONLY == 0);
         syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = {d}", .{ bun.fmt.fmtOSPath(path, .{}), @intFromBool(is_regular_file) });
 
-        return if (is_regular_file) .file else if (basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_DIRECTORY != 0) .directory else .{ .err = .{ .errno = @intFromEnum(bun.C.E.UNKNOWN), .syscall = .access } };
+        return if (is_regular_file)
+            .{ .result = .file }
+        else if (basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_DIRECTORY != 0)
+            .{ .result = .directory }
+        else
+            .{ .err = bun.sys.Error.fromCode(.UNKNOWN, .access) };
     }
 
     if (std.meta.sentinel(@TypeOf(path)) == null) {

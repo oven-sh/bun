@@ -3327,6 +3327,9 @@ pub fn existsAtType(fd: bun.FileDescriptor, path: anytype) Maybe(ExistsAtType) {
         const rc = kernel32.NtQueryAttributesFile(&attr, &basic_info);
         if (JSC.Maybe(bool).errnoSys(rc, .access)) |err| {
             syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = {}", .{ bun.fmt.fmtOSPath(path, .{}), err });
+            if (err.getErrno() == .NOENT) {
+                return .{ .result = false };
+            }
             return .{ .err = err };
         }
 
@@ -3350,7 +3353,7 @@ pub fn existsAtType(fd: bun.FileDescriptor, path: anytype) Maybe(ExistsAtType) {
     }
 
     return switch (fstatat(fd, path)) {
-        .err => |err| .{ .err = err },
+        .err => |err| if (err.getErrno() == .NOENT) .{ .result = false } else .{ .err = err },
         .result => |result| if (S.ISDIR(result.mode)) .{ .result = .directory } else .{ .result = .file },
     };
 }
@@ -3364,7 +3367,7 @@ pub fn existsAt(fd: bun.FileDescriptor, subpath: [:0]const u8) bool {
     }
 
     if (comptime Environment.isWindows) {
-        if (existsAtType(fd, subpath)) |exists_at_type| {
+        if (existsAtType(fd, subpath).asValue()) |exists_at_type| {
             return exists_at_type == .file;
         }
         return false;

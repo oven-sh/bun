@@ -47,7 +47,7 @@ public:
 
     static RefPtr<DeferredPromise> create(JSDOMGlobalObject& globalObject, Mode mode = Mode::ClearPromiseOnResolve)
     {
-        JSC::VM& vm = JSC::getVM(&globalObject);
+        auto& vm = JSC::getVM(&globalObject);
         auto* promise = JSC::JSPromise::create(vm, globalObject.promiseStructure());
         ASSERT(promise);
         return adoptRef(new DeferredPromise(globalObject, *promise, mode));
@@ -150,7 +150,7 @@ public:
         ASSERT(deferred());
         ASSERT(globalObject());
         auto* lexicalGlobalObject = globalObject();
-        JSC::VM& vm = lexicalGlobalObject->vm();
+        auto& vm = JSC::getVM(lexicalGlobalObject);
         JSC::JSLockHolder locker(vm);
         auto scope = DECLARE_CATCH_SCOPE(vm);
         resolve(*lexicalGlobalObject, callback(*globalObject()));
@@ -167,7 +167,7 @@ public:
         ASSERT(deferred());
         ASSERT(globalObject());
         auto* lexicalGlobalObject = globalObject();
-        JSC::VM& vm = lexicalGlobalObject->vm();
+        auto& vm = JSC::getVM(lexicalGlobalObject);
         JSC::JSLockHolder locker(vm);
         auto scope = DECLARE_CATCH_SCOPE(vm);
         reject(*lexicalGlobalObject, callback(*globalObject()), rejectAsHandled);
@@ -326,7 +326,7 @@ using PromiseFunction = void(JSC::JSGlobalObject&, JSC::CallFrame&, Ref<Deferred
 template<PromiseFunction promiseFunction>
 inline JSC::JSValue callPromiseFunction(JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame)
 {
-    JSC::VM& vm = JSC::getVM(&lexicalGlobalObject);
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto catchScope = DECLARE_CATCH_SCOPE(vm);
 
     auto& globalObject = *JSC::jsSecureCast<JSDOMGlobalObject*>(&lexicalGlobalObject);
@@ -345,7 +345,7 @@ inline JSC::JSValue callPromiseFunction(JSC::JSGlobalObject& lexicalGlobalObject
 template<typename PromiseFunctor>
 inline JSC::JSValue callPromiseFunction(JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame, PromiseFunctor functor)
 {
-    JSC::VM& vm = JSC::getVM(&lexicalGlobalObject);
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto catchScope = DECLARE_CATCH_SCOPE(vm);
 
     auto& globalObject = *JSC::jsSecureCast<JSDOMGlobalObject*>(&lexicalGlobalObject);

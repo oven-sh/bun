@@ -7,7 +7,7 @@ const Command = @import("../cli.zig").Command;
 const Install = @import("../install/install.zig");
 const LifecycleScriptSubprocess = Install.LifecycleScriptSubprocess;
 const PackageID = Install.PackageID;
-const String = @import("../install/semver.zig").String;
+const String = bun.Semver.String;
 const PackageManager = Install.PackageManager;
 const PackageManagerCommand = @import("./package_manager_command.zig").PackageManagerCommand;
 const Lockfile = Install.Lockfile;
@@ -417,14 +417,7 @@ pub const TrustCommand = struct {
             try pm.lockfile.trusted_dependencies.?.put(ctx.allocator, @truncate(String.Builder.stringHash(name)), {});
         }
 
-        const save_format: Lockfile.LoadResult.LockfileFormat = if (pm.options.save_text_lockfile)
-            .text
-        else switch (load_lockfile) {
-            .not_found => .binary,
-            .err => |err| err.format,
-            .ok => |ok| ok.format,
-        };
-        pm.lockfile.saveToDisk(save_format, pm.options.log_level.isVerbose());
+        pm.lockfile.saveToDisk(&load_lockfile, &pm.options);
 
         var buffer_writer = try bun.js_printer.BufferWriter.init(ctx.allocator);
         try buffer_writer.buffer.list.ensureTotalCapacity(ctx.allocator, package_json_contents.len + 1);

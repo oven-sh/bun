@@ -1,6 +1,5 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
-const JavaScript = @import("../javascript.zig");
 const QueryStringMap = @import("../../url.zig").QueryStringMap;
 const CombinedScanner = @import("../../url.zig").CombinedScanner;
 const bun = @import("root").bun;
@@ -9,7 +8,6 @@ const JSC = bun.JSC;
 const js = JSC.C;
 const WebCore = JSC.WebCore;
 const Transpiler = bun.transpiler;
-const VirtualMachine = JavaScript.VirtualMachine;
 const ScriptSrcStream = std.io.FixedBufferStream([]u8);
 const ZigString = JSC.ZigString;
 const Fs = @import("../../fs.zig");
@@ -78,7 +76,7 @@ pub const FileSystemRouter = struct {
             if (!dir.isString()) {
                 return globalThis.throwInvalidArguments("Expected dir to be a string", .{});
             }
-            const root_dir_path_ = dir.toSlice(globalThis, globalThis.allocator());
+            const root_dir_path_ = try dir.toSlice(globalThis, globalThis.allocator());
             if (!(root_dir_path_.len == 0 or strings.eqlComptime(root_dir_path_.slice(), "."))) {
                 // resolve relative path if needed
                 const path = root_dir_path_.slice();
@@ -115,7 +113,7 @@ pub const FileSystemRouter = struct {
                     return globalThis.throwInvalidArguments("Expected fileExtensions to be an Array of strings", .{});
                 }
                 if (val.getLength(globalThis) == 0) continue;
-                extensions.appendAssumeCapacity((val.toSlice(globalThis, allocator).clone(allocator) catch unreachable).slice()[1..]);
+                extensions.appendAssumeCapacity(((try val.toSlice(globalThis, allocator)).clone(allocator) catch unreachable).slice()[1..]);
             }
         }
 
@@ -127,7 +125,7 @@ pub const FileSystemRouter = struct {
                 return globalThis.throwInvalidArguments("Expected assetPrefix to be a string", .{});
             }
 
-            asset_prefix_slice = asset_prefix.toSlice(globalThis, allocator).clone(allocator) catch unreachable;
+            asset_prefix_slice = (try asset_prefix.toSlice(globalThis, allocator)).clone(allocator) catch unreachable;
         }
         const orig_log = vm.transpiler.resolver.log;
         var log = Log.Log.init(allocator);
@@ -167,7 +165,7 @@ pub const FileSystemRouter = struct {
                 globalThis.allocator().destroy(arena);
                 return globalThis.throwInvalidArguments("Expected origin to be a string", .{});
             }
-            origin_str = origin.toSlice(globalThis, globalThis.allocator());
+            origin_str = try origin.toSlice(globalThis, globalThis.allocator());
         }
 
         if (log.errors + log.warnings > 0) {
@@ -299,7 +297,7 @@ pub const FileSystemRouter = struct {
 
         var path: ZigString.Slice = brk: {
             if (argument.isString()) {
-                break :brk argument.toSlice(globalThis, globalThis.allocator()).clone(globalThis.allocator()) catch unreachable;
+                break :brk (try argument.toSlice(globalThis, globalThis.allocator())).clone(globalThis.allocator()) catch unreachable;
             }
 
             if (argument.isCell()) {
@@ -605,7 +603,7 @@ pub const MatchedRoute = struct {
         var writer = stream.writer();
         JSC.API.Bun.getPublicPathWithAssetPrefix(
             this.route.file_path,
-            if (this.base_dir) |base_dir| base_dir.slice() else VirtualMachine.get().transpiler.fs.top_level_dir,
+            if (this.base_dir) |base_dir| base_dir.slice() else JSC.VirtualMachine.get().transpiler.fs.top_level_dir,
             if (this.origin) |origin| URL.parse(origin.slice()) else URL{},
             if (this.asset_prefix) |prefix| prefix.slice() else "",
             @TypeOf(&writer),

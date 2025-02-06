@@ -41,10 +41,7 @@ const LibInfo = struct {
         if (loaded)
             return handle;
         loaded = true;
-        const RTLD_LAZY = 1;
-        const RTLD_LOCAL = 4;
-
-        handle = bun.C.dlopen("libinfo.dylib", RTLD_LAZY | RTLD_LOCAL);
+        handle = bun.C.dlopen("libinfo.dylib", .{ .LAZY = true, .LOCAL = true });
         if (handle == null)
             Output.debug("libinfo.dylib not found", .{});
         return handle;
@@ -1395,7 +1392,7 @@ pub const InternalDNS = struct {
         // https://github.com/nodejs/node/issues/33816
         // https://github.com/aio-libs/aiohttp/issues/5357
         // https://github.com/libuv/libuv/issues/2225
-        .flags = if (Environment.isPosix) bun.C.netdb.AI_ADDRCONFIG else 0,
+        .flags = if (Environment.isPosix) .{ .ADDRCONFIG = true } else .{},
         .next = null,
         .protocol = 0,
         .socktype = std.c.SOCK.STREAM,
@@ -1527,7 +1524,7 @@ pub const InternalDNS = struct {
         if (Environment.isWindows) {
             const wsa = std.os.windows.ws2_32;
             const wsa_hints = wsa.addrinfo{
-                .flags = 0,
+                .flags = .{},
                 .family = wsa.AF.UNSPEC,
                 .socktype = wsa.SOCK.STREAM,
                 .protocol = 0,
@@ -1691,7 +1688,7 @@ pub const InternalDNS = struct {
         defer hostname_slice.deinit();
 
         if (hostname_or_url.isString()) {
-            hostname_slice = hostname_or_url.toSlice(globalThis, bun.default_allocator);
+            hostname_slice = try hostname_or_url.toSlice(globalThis, bun.default_allocator);
         } else {
             return globalThis.throwInvalidArguments("hostname must be a string", .{});
         }
@@ -1756,16 +1753,16 @@ pub const InternalDNS = struct {
 pub const InternalDNSRequest = InternalDNS.Request;
 
 comptime {
-    @export(InternalDNS.us_getaddrinfo_set, .{
+    @export(&InternalDNS.us_getaddrinfo_set, .{
         .name = "Bun__addrinfo_set",
     });
-    @export(InternalDNS.us_getaddrinfo, .{
+    @export(&InternalDNS.us_getaddrinfo, .{
         .name = "Bun__addrinfo_get",
     });
-    @export(InternalDNS.freeaddrinfo, .{
+    @export(&InternalDNS.freeaddrinfo, .{
         .name = "Bun__addrinfo_freeRequest",
     });
-    @export(InternalDNS.getRequestResult, .{
+    @export(&InternalDNS.getRequestResult, .{
         .name = "Bun__addrinfo_getRequestResult",
     });
 }
@@ -1802,7 +1799,7 @@ pub const DNSResolver = struct {
     pending_nameinfo_cache_cares: NameInfoPendingCache = NameInfoPendingCache.init(),
 
     pub usingnamespace JSC.Codegen.JSDNSResolver;
-    pub usingnamespace bun.NewRefCounted(@This(), deinit);
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
     const PollsMap = std.AutoArrayHashMap(c_ares.ares_socket_t, *PollType);
 
@@ -1912,7 +1909,7 @@ pub const DNSResolver = struct {
     }
 
     fn anyRequestsPending(this: *DNSResolver) bool {
-        inline for (@typeInfo(DNSResolver).Struct.fields) |field| {
+        inline for (@typeInfo(DNSResolver).@"struct".fields) |field| {
             if (comptime std.mem.startsWith(u8, field.name, "pending_")) {
                 const set = &@field(this, field.name).available;
                 if (set.count() < set.capacity()) {
@@ -2522,7 +2519,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolve", "name", "non-empty string");
         }
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = try name_str.toSliceClone(globalThis, bun.default_allocator);
 
         switch (record_type) {
             RecordType.A => {
@@ -2585,7 +2582,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("reverse", "ip", "non-empty string");
         }
 
-        const ip_slice = ip_str.toSliceClone(globalThis, bun.default_allocator);
+        const ip_slice = try ip_str.toSliceClone(globalThis, bun.default_allocator);
         const ip = ip_slice.slice();
         const channel: *c_ares.Channel = switch (this.getChannel()) {
             .result => |res| res,
@@ -2721,7 +2718,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveSrv", "hostname", "non-empty string");
         }
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = try name_str.toSliceClone(globalThis, bun.default_allocator);
         return this.doResolveCAres(c_ares.struct_ares_srv_reply, "srv", name.slice(), globalThis);
     }
 
@@ -2747,7 +2744,7 @@ pub const DNSResolver = struct {
             return .zero;
         };
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = try name_str.toSliceClone(globalThis, bun.default_allocator);
         return this.doResolveCAres(c_ares.struct_ares_soa_reply, "soa", name.slice(), globalThis);
     }
 
@@ -2777,7 +2774,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveCaa", "hostname", "non-empty string");
         }
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = try name_str.toSliceClone(globalThis, bun.default_allocator);
         return this.doResolveCAres(c_ares.struct_ares_caa_reply, "caa", name.slice(), globalThis);
     }
 
@@ -2803,7 +2800,7 @@ pub const DNSResolver = struct {
             return .zero;
         };
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = try name_str.toSliceClone(globalThis, bun.default_allocator);
         return this.doResolveCAres(c_ares.struct_hostent, "ns", name.slice(), globalThis);
     }
 
@@ -2833,7 +2830,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolvePtr", "hostname", "non-empty string");
         }
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = try name_str.toSliceClone(globalThis, bun.default_allocator);
         return this.doResolveCAres(c_ares.struct_hostent, "ptr", name.slice(), globalThis);
     }
 
@@ -2863,7 +2860,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveCname", "hostname", "non-empty string");
         }
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = try name_str.toSliceClone(globalThis, bun.default_allocator);
         return this.doResolveCAres(c_ares.struct_hostent, "cname", name.slice(), globalThis);
     }
 
@@ -2893,7 +2890,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveMx", "hostname", "non-empty string");
         }
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = try name_str.toSliceClone(globalThis, bun.default_allocator);
         return this.doResolveCAres(c_ares.struct_ares_mx_reply, "mx", name.slice(), globalThis);
     }
 
@@ -2923,7 +2920,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveNaptr", "hostname", "non-empty string");
         }
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = try name_str.toSliceClone(globalThis, bun.default_allocator);
         return this.doResolveCAres(c_ares.struct_ares_naptr_reply, "naptr", name.slice(), globalThis);
     }
 
@@ -2953,7 +2950,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveTxt", "hostname", "non-empty string");
         }
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = try name_str.toSliceClone(globalThis, bun.default_allocator);
         return this.doResolveCAres(c_ares.struct_ares_txt_reply, "txt", name.slice(), globalThis);
     }
 
@@ -2983,7 +2980,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveAny", "hostname", "non-empty string");
         }
 
-        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
+        const name = try name_str.toSliceClone(globalThis, bun.default_allocator);
         return this.doResolveCAres(c_ares.struct_any_reply, "any", name.slice(), globalThis);
     }
 
@@ -3396,40 +3393,40 @@ pub const DNSResolver = struct {
 
     comptime {
         const js_resolve = JSC.toJSHostFunction(globalResolve);
-        @export(js_resolve, .{ .name = "Bun__DNS__resolve" });
+        @export(&js_resolve, .{ .name = "Bun__DNS__resolve" });
         const js_lookup = JSC.toJSHostFunction(globalLookup);
-        @export(js_lookup, .{ .name = "Bun__DNS__lookup" });
+        @export(&js_lookup, .{ .name = "Bun__DNS__lookup" });
         const js_resolveTxt = JSC.toJSHostFunction(globalResolveTxt);
-        @export(js_resolveTxt, .{ .name = "Bun__DNS__resolveTxt" });
+        @export(&js_resolveTxt, .{ .name = "Bun__DNS__resolveTxt" });
         const js_resolveSoa = JSC.toJSHostFunction(globalResolveSoa);
-        @export(js_resolveSoa, .{ .name = "Bun__DNS__resolveSoa" });
+        @export(&js_resolveSoa, .{ .name = "Bun__DNS__resolveSoa" });
         const js_resolveMx = JSC.toJSHostFunction(globalResolveMx);
-        @export(js_resolveMx, .{ .name = "Bun__DNS__resolveMx" });
+        @export(&js_resolveMx, .{ .name = "Bun__DNS__resolveMx" });
         const js_resolveNaptr = JSC.toJSHostFunction(globalResolveNaptr);
-        @export(js_resolveNaptr, .{ .name = "Bun__DNS__resolveNaptr" });
+        @export(&js_resolveNaptr, .{ .name = "Bun__DNS__resolveNaptr" });
         const js_resolveSrv = JSC.toJSHostFunction(globalResolveSrv);
-        @export(js_resolveSrv, .{ .name = "Bun__DNS__resolveSrv" });
+        @export(&js_resolveSrv, .{ .name = "Bun__DNS__resolveSrv" });
         const js_resolveCaa = JSC.toJSHostFunction(globalResolveCaa);
-        @export(js_resolveCaa, .{ .name = "Bun__DNS__resolveCaa" });
+        @export(&js_resolveCaa, .{ .name = "Bun__DNS__resolveCaa" });
         const js_resolveNs = JSC.toJSHostFunction(globalResolveNs);
-        @export(js_resolveNs, .{ .name = "Bun__DNS__resolveNs" });
+        @export(&js_resolveNs, .{ .name = "Bun__DNS__resolveNs" });
         const js_resolvePtr = JSC.toJSHostFunction(globalResolvePtr);
-        @export(js_resolvePtr, .{ .name = "Bun__DNS__resolvePtr" });
+        @export(&js_resolvePtr, .{ .name = "Bun__DNS__resolvePtr" });
         const js_resolveCname = JSC.toJSHostFunction(globalResolveCname);
-        @export(js_resolveCname, .{ .name = "Bun__DNS__resolveCname" });
+        @export(&js_resolveCname, .{ .name = "Bun__DNS__resolveCname" });
         const js_resolveAny = JSC.toJSHostFunction(globalResolveAny);
-        @export(js_resolveAny, .{ .name = "Bun__DNS__resolveAny" });
+        @export(&js_resolveAny, .{ .name = "Bun__DNS__resolveAny" });
         const js_getGlobalServers = JSC.toJSHostFunction(getGlobalServers);
-        @export(js_getGlobalServers, .{ .name = "Bun__DNS__getServers" });
+        @export(&js_getGlobalServers, .{ .name = "Bun__DNS__getServers" });
         const js_setGlobalServers = JSC.toJSHostFunction(setGlobalServers);
-        @export(js_setGlobalServers, .{ .name = "Bun__DNS__setServers" });
+        @export(&js_setGlobalServers, .{ .name = "Bun__DNS__setServers" });
         const js_reverse = JSC.toJSHostFunction(globalReverse);
-        @export(js_reverse, .{ .name = "Bun__DNS__reverse" });
+        @export(&js_reverse, .{ .name = "Bun__DNS__reverse" });
         const js_lookupService = JSC.toJSHostFunction(globalLookupService);
-        @export(js_lookupService, .{ .name = "Bun__DNS__lookupService" });
+        @export(&js_lookupService, .{ .name = "Bun__DNS__lookupService" });
         const js_prefetchFromJS = JSC.toJSHostFunction(InternalDNS.prefetchFromJS);
-        @export(js_prefetchFromJS, .{ .name = "Bun__DNS__prefetch" });
+        @export(&js_prefetchFromJS, .{ .name = "Bun__DNS__prefetch" });
         const js_getDNSCacheStats = JSC.toJSHostFunction(InternalDNS.getDNSCacheStats);
-        @export(js_getDNSCacheStats, .{ .name = "Bun__DNS__getCacheStats" });
+        @export(&js_getDNSCacheStats, .{ .name = "Bun__DNS__getCacheStats" });
     }
 };

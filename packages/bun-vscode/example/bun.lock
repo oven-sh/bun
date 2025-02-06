@@ -1,5 +1,5 @@
 {
-  "lockfileVersion": 0,
+  "lockfileVersion": 1,
   "workspaces": {
     "": {
       "dependencies": {
@@ -20,6 +20,9 @@
       "peerDependencies": {
         "typescript": "^5.0.0",
       },
+      "optionalPeers": [
+        "typescript",
+      ],
     },
   },
   "trustedDependencies": [

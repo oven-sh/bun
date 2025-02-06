@@ -86,7 +86,8 @@ pub fn isParentOrEqual(parent_: []const u8, child: []const u8) ParentEqual {
     return .unrelated;
 }
 
-pub fn getIfExistsLongestCommonPathGeneric(input: []const []const u8, comptime platform: Platform) ?[]const u8 {
+pub fn getIfExistsLongestCommonPathGeneric(input: []const []const u8, comptime _platform: Platform) ?[]const u8 {
+    const platform = comptime _platform.resolve();
     const separator = comptime platform.separator();
     const isPathSeparator = comptime platform.getSeparatorFunc();
 
@@ -177,7 +178,8 @@ pub fn getIfExistsLongestCommonPathGeneric(input: []const []const u8, comptime p
 // TODO: is it faster to determine longest_common_separator in the while loop
 // or as an extra step at the end?
 // only boether to check if this function appears in benchmarking
-pub fn longestCommonPathGeneric(input: []const []const u8, comptime platform: Platform) []const u8 {
+pub fn longestCommonPathGeneric(input: []const []const u8, comptime _platform: Platform) []const u8 {
+    const platform = comptime _platform.resolve();
     const separator = comptime platform.separator();
     const isPathSeparator = comptime platform.getSeparatorFunc();
 
@@ -305,7 +307,7 @@ pub fn longestCommonPathPosix(input: []const []const u8) []const u8 {
     return longestCommonPathGeneric(input, .posix);
 }
 
-threadlocal var relative_to_common_path_buf: bun.PathBuffer = undefined;
+pub threadlocal var relative_to_common_path_buf: bun.PathBuffer = undefined;
 
 /// Find a relative path from a common path
 // Loosely based on Node.js' implementation of path.relative
@@ -316,8 +318,9 @@ pub fn relativeToCommonPath(
     normalized_to_: []const u8,
     buf: []u8,
     comptime always_copy: bool,
-    comptime platform: Platform,
+    comptime _platform: Platform,
 ) []const u8 {
+    const platform = comptime _platform.resolve();
     var normalized_from = normalized_from_;
     var normalized_to = normalized_to_;
     const win_root_len = if (platform == .windows) k: {
@@ -460,7 +463,8 @@ pub fn relativeToCommonPath(
     return out_slice;
 }
 
-pub fn relativeNormalizedBuf(buf: []u8, from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
+pub fn relativeNormalizedBuf(buf: []u8, from: []const u8, to: []const u8, comptime _platform: Platform, comptime always_copy: bool) []const u8 {
+    const platform = comptime _platform.resolve();
     if ((if (platform == .windows)
         strings.eqlCaseInsensitiveASCII(from, to, true)
     else
@@ -476,7 +480,7 @@ pub fn relativeNormalizedBuf(buf: []u8, from: []const u8, to: []const u8, compti
 }
 
 pub fn relativeNormalized(from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
-    return relativeNormalizedBuf(&relative_to_common_path_buf, from, to, platform, always_copy);
+    return relativeNormalizedBuf(&relative_to_common_path_buf, from, to, comptime platform.resolve(), always_copy);
 }
 
 pub fn dirname(str: []const u8, comptime platform: Platform) []const u8 {
@@ -527,7 +531,8 @@ pub fn relativeBufZ(buf: []u8, from: []const u8, to: []const u8) [:0]const u8 {
     return buf[0..rel.len :0];
 }
 
-pub fn relativePlatformBuf(buf: []u8, from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
+pub fn relativePlatformBuf(buf: []u8, from: []const u8, to: []const u8, comptime _platform: Platform, comptime always_copy: bool) []const u8 {
+    const platform = comptime _platform.resolve();
     const normalized_from = if (platform.isAbsolute(from)) brk: {
         if (platform == .loose and bun.Environment.isWindows) {
             // we want to invoke the windows resolution behavior but end up with a
@@ -572,7 +577,7 @@ pub fn relativePlatformBuf(buf: []u8, from: []const u8, to: []const u8, comptime
 }
 
 pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
-    return relativePlatformBuf(&relative_to_common_path_buf, from, to, platform, always_copy);
+    return relativePlatformBuf(&relative_to_common_path_buf, from, to, comptime platform.resolve(), always_copy);
 }
 
 pub fn relativeAlloc(allocator: std.mem.Allocator, from: []const u8, to: []const u8) ![]const u8 {
@@ -828,10 +833,7 @@ pub fn normalizeStringGenericTZ(
                 }
             } else {
                 // drive letter
-                buf[buf_i] = switch (path_[0]) {
-                    'a'...'z' => path_[0] & (std.math.maxInt(T) ^ (1 << 5)),
-                    else => path_[0],
-                };
+                buf[buf_i] = std.ascii.toUpper(@truncate(path_[0]));
                 buf[buf_i + 1] = ':';
                 buf_i += 2;
                 dotdot = buf_i;
@@ -850,7 +852,7 @@ pub fn normalizeStringGenericTZ(
                 @memcpy(buf[buf_i .. buf_i + 4], &strings.literalBuf(T, "\\??\\"));
                 buf_i += 4;
             }
-            buf[buf_i] = path_[0];
+            buf[buf_i] = std.ascii.toUpper(@truncate(path_[0]));
             buf[buf_i + 1] = ':';
             buf_i += 2;
             dotdot = buf_i;
@@ -1133,7 +1135,7 @@ pub const Platform = enum {
         }
     }
 
-    pub fn resolve(comptime _platform: Platform) Platform {
+    pub inline fn resolve(comptime _platform: Platform) Platform {
         if (comptime _platform == .auto) {
             return switch (@import("builtin").target.os.tag) {
                 .windows => Platform.windows,
@@ -1392,8 +1394,9 @@ pub fn joinAbsStringBufZTrailingSlash(cwd: []const u8, buf: []u8, _parts: anytyp
     return out;
 }
 
-fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd: []const u8, buf: []u8, _parts: anytype, comptime platform: Platform) ReturnType {
-    if (platform.resolve() == .windows or
+fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) ReturnType {
+    const platform = comptime _platform.resolve();
+    if (platform == .windows or
         (bun.Environment.os == .windows and platform == .loose))
     {
         return _joinAbsStringBufWindows(is_sentinel, ReturnType, _cwd, buf, _parts);
@@ -1741,8 +1744,9 @@ pub fn normalizeStringNodeT(
     comptime T: type,
     str: []const T,
     buf: []T,
-    comptime platform: Platform,
+    comptime _platform: Platform,
 ) []const T {
+    const platform = comptime _platform.resolve();
     if (str.len == 0) {
         buf[0] = '.';
         return buf[0..1];

@@ -3,7 +3,7 @@ const bun = @import("root").bun;
 
 /// Enable breaking changes for the next major release of Bun
 // TODO: Make this a CLI flag / runtime var so that we can verify disabled code paths can compile
-pub const breaking_changes_1_2 = false;
+pub const breaking_changes_1_3 = false;
 
 /// Store and reuse file descriptors during module resolution
 /// This was a ~5% performance improvement
@@ -62,7 +62,7 @@ pub const hardcode_localhost_to_127_0_0_1 = false;
 /// https://github.com/oven-sh/bun/issues/10733
 pub const support_jsxs_in_jsx_transform = true;
 
-pub const use_simdutf = bun.Environment.isNative and !bun.JSC.is_bindgen;
+pub const use_simdutf = bun.Environment.isNative;
 
 pub const inline_properties_in_transpiler = true;
 

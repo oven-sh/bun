@@ -186,6 +186,23 @@ export async function makeTree(base: string, tree: DirectoryTree) {
   }
 }
 
+/**
+ * Recursively create files within a new temporary directory.
+ *
+ * @param basename prefix of the new temporary directory
+ * @param files directory tree. Each key is a folder or file, and each value is the contents of the file. Use objects for directories.
+ * @returns an absolute path to the new temporary directory
+ *
+ * @example
+ * ```ts
+ * const dir = tempDirWithFiles("my-test", {
+ *   "index.js": `import foo from "./src/foo";`,
+ *   "src": {
+ *     "foo.js": `export default "foo";`,
+ *   },
+ * });
+ * ```
+ */
 export function tempDirWithFiles(basename: string, files: DirectoryTree): string {
   const base = fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), basename + "_"));
   makeTree(base, files);
@@ -1040,8 +1057,8 @@ export function mergeWindowEnvs(envs: Record<string, string | undefined>[]) {
   return flat;
 }
 
-export function tmpdirSync(pattern: string = "bun.test.") {
-  return fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), pattern));
+export function tmpdirSync(pattern: string = "bun.test."): string {
+  return fs.mkdtempSync(join(fs.realpathSync.native(os.tmpdir()), pattern));
 }
 
 export async function runBunInstall(
@@ -1053,10 +1070,29 @@ export async function runBunInstall(
     expectedExitCode?: number;
     savesLockfile?: boolean;
     production?: boolean;
+    frozenLockfile?: boolean;
+    saveTextLockfile?: boolean;
+    packages?: string[];
+    verbose?: boolean;
   },
 ) {
   const production = options?.production ?? false;
   const args = production ? [bunExe(), "install", "--production"] : [bunExe(), "install"];
+  if (options?.packages) {
+    args.push(...options.packages);
+  }
+  if (production) {
+    args.push("--production");
+  }
+  if (options?.frozenLockfile) {
+    args.push("--frozen-lockfile");
+  }
+  if (options?.saveTextLockfile) {
+    args.push("--save-text-lockfile");
+  }
+  if (options?.verbose) {
+    args.push("--verbose");
+  }
   const { stdout, stderr, exited } = Bun.spawn({
     cmd: args,
     cwd,
@@ -1437,6 +1473,7 @@ export class VerdaccioRegistry {
   process: ChildProcess | undefined;
   configPath: string;
   packagesPath: string;
+  users: Record<string, string> = {};
 
   constructor(opts?: { configPath?: string; packagesPath?: string; verbose?: boolean }) {
     this.port = randomPort();
@@ -1486,24 +1523,79 @@ export class VerdaccioRegistry {
 
   stop() {
     rmSync(join(dirname(this.configPath), "htpasswd"), { force: true });
-    this.process?.kill();
+    this.process?.kill(0);
   }
 
-  async createTestDir() {
+  /**
+   * returns auth token
+   */
+  async generateUser(username: string, password: string): Promise<string> {
+    if (this.users[username]) {
+      throw new Error(`User ${username} already exists`);
+    } else this.users[username] = password;
+
+    const url = `http://localhost:${this.port}/-/user/org.couchdb.user:${username}`;
+    const user = {
+      name: username,
+      password: password,
+      email: `${username}@example.com`,
+    };
+
+    const response = await fetch(url, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(user),
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      return data.token;
+    }
+
+    throw new Error("Failed to create user:", response.statusText);
+  }
+
+  async authBunfig(user: string) {
+    const authToken = await this.generateUser(user, user);
+    return `
+        [install]
+        cache = false
+        registry = { url = "http://localhost:${this.port}/", token = "${authToken}" }
+        `;
+  }
+
+  async createTestDir(bunfigOpts: BunfigOpts = {}) {
+    await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
+    await rm(join(this.packagesPath, "private-pkg-dont-touch"), { force: true });
     const packageDir = tmpdirSync();
     const packageJson = join(packageDir, "package.json");
-    await write(
-      join(packageDir, "bunfig.toml"),
-      `
-      [install]
-      cache = "${join(packageDir, ".bun-cache")}"
-      registry = "${this.registryUrl()}"
-      `,
-    );
-
+    this.writeBunfig(packageDir, bunfigOpts);
+    this.users = {};
     return { packageDir, packageJson };
   }
+
+  async writeBunfig(dir: string, opts: BunfigOpts = {}) {
+    let bunfig = `
+    [install]
+    cache = "${join(dir, ".bun-cache")}"
+    `;
+    if ("saveTextLockfile" in opts) {
+      bunfig += `saveTextLockfile = ${opts.saveTextLockfile}
+      `;
+    }
+    if (!opts.npm) {
+      bunfig += `registry = "${this.registryUrl()}"`;
+    }
+    await write(join(dir, "bunfig.toml"), bunfig);
+  }
 }
+
+type BunfigOpts = {
+  saveTextLockfile?: boolean;
+  npm?: boolean;
+};
 
 export async function readdirSorted(path: string): Promise<string[]> {
   const results = await readdir(path);

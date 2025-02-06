@@ -86,7 +86,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsCustomGetterGetNativeModule, (JSC::JSGlobalObject * l
 extern "C" void Bun__ExposeNodeModuleGlobals(Zig::GlobalObject* globalObject)
 {
 
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
 #define PUT_CUSTOM_GETTER_SETTER(id, field) \
     globalObject->putDirectCustomAccessor( \
         vm, \

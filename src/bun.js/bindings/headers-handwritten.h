@@ -69,6 +69,8 @@ typedef struct BunString {
     // It's only truly zero-copy if it was already a WTFStringImpl (which it is if it came from JS and we didn't use ZigString)
     WTF::String toWTFString(ZeroCopyTag) const;
 
+    WTF::String transferToWTFString();
+
     // This one usually will clone the raw bytes.
     WTF::String toWTFString() const;
 

@@ -319,7 +319,48 @@ it("process.execArgv", () => {
 });
 
 it("process.binding", () => {
-  expect(() => process.binding("buffer")).toThrow();
+  expect(() => process.binding("async_wrap")).toThrow();
+  expect(() => process.binding("buffer")).not.toThrow();
+  expect(() => process.binding("cares_wrap")).toThrow();
+  expect(() => process.binding("config")).not.toThrow();
+  expect(() => process.binding("constants")).not.toThrow();
+  expect(() => process.binding("contextify")).toThrow();
+  expect(() => process.binding("crypto")).toThrow();
+  expect(() => process.binding("crypto/x509")).not.toThrow();
+  expect(() => process.binding("fs")).toThrow();
+  expect(() => process.binding("fs_event_wrap")).toThrow();
+  expect(() => process.binding("http_parser")).toThrow();
+  expect(() => process.binding("icu")).toThrow();
+  expect(() => process.binding("inspector")).toThrow();
+  expect(() => process.binding("js_stream")).toThrow();
+  expect(() => process.binding("natives")).not.toThrow();
+  expect(() => process.binding("os")).toThrow();
+  expect(() => process.binding("pipe_wrap")).toThrow();
+  expect(() => process.binding("process_wrap")).toThrow();
+  expect(() => process.binding("signal_wrap")).toThrow();
+  expect(() => process.binding("spawn_sync")).toThrow();
+  expect(() => process.binding("stream_wrap")).toThrow();
+  expect(() => process.binding("tcp_wrap")).toThrow();
+  expect(() => process.binding("tls_wrap")).toThrow();
+  expect(() => process.binding("tty_wrap")).not.toThrow();
+  expect(() => process.binding("udp_wrap")).toThrow();
+  expect(() => process.binding("url")).toThrow();
+  expect(() => process.binding("util")).not.toThrow();
+  expect(() => process.binding("uv")).not.toThrow();
+  expect(() => process.binding("v8")).toThrow();
+  expect(() => process.binding("zlib")).toThrow();
+
+  expect(() => process.binding()).toThrow();
+  expect(() => process.binding(10)).toThrow();
+  expect(() => process.binding(10n)).toThrow();
+  expect(() => process.binding(null)).toThrow();
+  expect(() => process.binding(true)).toThrow();
+  expect(() => process.binding("")).toThrow();
+  expect(() => process.binding(function () {})).toThrow();
+  expect(() => process.binding(() => {})).toThrow();
+  expect(() => process.binding(Symbol("ab"))).toThrow();
+  expect(() => process.binding({})).toThrow();
+  expect(() => process.binding(Object.freeze({ __proto__: null }))).toThrow();
 });
 
 it("process.argv in testing", () => {

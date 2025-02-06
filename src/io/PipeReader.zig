@@ -972,7 +972,7 @@ pub const WindowsBufferedReader = struct {
     parent: *anyopaque = undefined,
     vtable: WindowsOutputReaderVTable = undefined,
     ref_count: u32 = 1,
-    pub usingnamespace bun.NewRefCounted(@This(), deinit);
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
     const WindowsOutputReader = @This();
 
@@ -1017,6 +1017,8 @@ pub const WindowsBufferedReader = struct {
             .source = other.source,
         };
         other.flags.is_done = true;
+        other._offset = 0;
+        other.buffer().* = std.ArrayList(u8).init(bun.default_allocator);
         other.source = null;
         to.setParent(parent);
     }

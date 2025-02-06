@@ -6,7 +6,7 @@ It's common for a monorepo to have the following structure:
 tree
 <root>
 ├── README.md
-├── bun.lockb
+├── bun.lock
 ├── package.json
 ├── tsconfig.json
 └── packages

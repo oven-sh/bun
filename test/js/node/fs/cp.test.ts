@@ -1,6 +1,6 @@
 import { describe, expect, jest, test } from "bun:test";
 import fs from "fs";
-import { isWindows, tempDirWithFiles } from "harness";
+import { tempDirWithFiles } from "harness";
 import { join } from "path";
 
 const impls = [
@@ -43,7 +43,7 @@ for (const [name, copy] of impls) {
 
       const e = await copyShouldThrow(basename + "/from", basename + "/result");
       expect(e.code).toBe("EISDIR");
-      expect(e.path).toBe(basename + "/from");
+      expect(e.path).toBe(join(basename, "from"));
     });
 
     test("recursive directory structure - no destination", async () => {
@@ -137,7 +137,7 @@ for (const [name, copy] of impls) {
         errorOnExist: true,
       });
       expect(e.code).toBe("EEXIST");
-      expect(e.path).toBe(basename + "/result/a.txt");
+      expect(e.path).toBe(join(basename, "result", "a.txt"));
 
       assertContent(basename + "/result/a.txt", "win");
     });

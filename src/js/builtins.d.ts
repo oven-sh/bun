@@ -73,11 +73,15 @@ declare function $getByIdDirectPrivate<T = any>(obj: any, key: string): T;
 declare function $getByValWithThis(target: any, receiver: any, propertyKey: string): void;
 /** gets the prototype of an object */
 declare function $getPrototypeOf(value: any): any;
-/** gets an internal property on a promise
+/**
+ * Gets an internal property on a promise
  *
  *  You can pass
- *  - $promiseFieldFlags - get a number with flags
- *  - $promiseFieldReactionsOrResult - get the result (like Bun.peek)
+ *  - {@link $promiseFieldFlags} - get a number with flags
+ *  - {@link $promiseFieldReactionsOrResult} - get the result (like {@link Bun.peek})
+ *
+ * @param promise the promise to get the field from
+ * @param key an internal field id.
  */
 declare function $getPromiseInternalField<K extends PromiseFieldType, V>(
   promise: Promise<V>,
@@ -99,6 +103,19 @@ declare function $getMapIteratorInternalField(): TODO;
 declare function $getSetIteratorInternalField(): TODO;
 declare function $getProxyInternalField(): TODO;
 declare function $idWithProfile(): TODO;
+/**
+ * True for object-like `JSCell`s. That is, this is roughly equivalent to this
+ * JS code:
+ * ```js
+ * typeof obj === "object" && obj !== null
+ * ```
+ *
+ * @param obj The object to check
+ * @returns `true` if `obj` is an object-like `JSCell`
+ *
+ * @see [JSCell.h](https://github.com/oven-sh/WebKit/blob/main/Source/JavaScriptCore/runtime/JSCell.h)
+ * @see [JIT implementation](https://github.com/oven-sh/WebKit/blob/433f7598bf3537a295d0af5ffd83b9a307abec4e/Source/JavaScriptCore/jit/JITOpcodes.cpp#L311)
+ */
 declare function $isObject(obj: unknown): obj is object;
 declare function $isArray(obj: unknown): obj is any[];
 declare function $isCallable(fn: unknown): fn is CallableFunction;
@@ -346,7 +363,6 @@ declare function $isAbortSignal(signal: unknown): signal is AbortSignal;
 declare function $isAbsolute(): TODO;
 declare function $isDisturbed(): TODO;
 declare function $isPaused(): TODO;
-declare function $isWindows(): TODO;
 declare function $join(): TODO;
 declare function $kind(): TODO;
 declare function $lazyStreamPrototypeMap(): TODO;
@@ -559,8 +575,17 @@ declare interface Function {
   path: string;
 }
 
+interface String {
+  $charCodeAt: String["charCodeAt"];
+  // add others as needed
+}
+
 declare var $Buffer: {
-  new (a: any, b?: any, c?: any): Buffer;
+  new (array: Array): Buffer;
+  new (arrayBuffer: ArrayBuffer, byteOffset?: number, length?: number): Buffer;
+  new (buffer: Buffer): Buffer;
+  new (size: number): Buffer;
+  new (string: string, encoding?: BufferEncoding): Buffer;
 };
 
 declare interface Error {
@@ -618,3 +643,5 @@ declare function $ERR_ILLEGAL_CONSTRUCTOR(): TypeError;
  * @param base - The base class to inherit from
  */
 declare function $toClass(fn: Function, name: string, base?: Function | undefined | null);
+
+declare function $min(a: number, b: number): number;

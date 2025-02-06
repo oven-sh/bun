@@ -50,7 +50,7 @@ describe("bun", () => {
       stderr: "pipe",
     });
     expect(stdout.toString()).toBeEmpty();
-    expect(stderr.toString()).toMatch(/File not found/);
+    expect(stderr.toString()).toMatch(/Module not found/);
     expect(exitCode).toBe(1);
   });
 });

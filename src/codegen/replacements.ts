@@ -93,7 +93,8 @@ replacements.push({
 export const enums = {
   Loader: LoaderKeys,
   ImportKind: [
-    "entry-point",
+    "entry-point-run",
+    "entry-point-build",
     "import-statement",
     "require-call",
     "dynamic-import",
@@ -200,7 +201,7 @@ export function applyReplacements(src: string, length: number) {
       }
       return [
         slice.slice(0, match.index) +
-          "(IS_BUN_DEVELOPMENT?$assert(" +
+          "!(IS_BUN_DEVELOPMENT?$assert(" +
           checkSlice.result.slice(1, -1) +
           "," +
           JSON.stringify(

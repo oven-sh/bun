@@ -35,7 +35,7 @@ ctx: *anyopaque,
 onFileUpdate: *const fn (this: *anyopaque, events: []WatchEvent, changed_files: []?[:0]u8, watchlist: WatchList) void,
 onError: *const fn (this: *anyopaque, err: bun.sys.Error) void,
 
-thread_lock: bun.DebugThreadLock = .unlocked,
+thread_lock: bun.DebugThreadLock = bun.DebugThreadLock.unlocked,
 
 /// Initializes a watcher. Each watcher is tied to some context type, which
 /// recieves watch callbacks on the watcher thread. This function does not
@@ -119,8 +119,7 @@ pub fn getHash(filepath: string) HashType {
 pub const WatchItemIndex = u16;
 pub const max_eviction_count = 8096;
 
-const DebugLogScope = bun.Output.Scoped(.watcher, false);
-const log = DebugLogScope.log;
+const log = bun.Output.scoped(.watcher, false);
 
 const WindowsWatcher = @import("./watcher/WindowsWatcher.zig");
 // TODO: some platform-specific behavior is implemented in
@@ -215,7 +214,7 @@ fn threadMain(this: *Watcher) !void {
     Output.Source.configureNamedThread("File Watcher");
 
     defer Output.flush();
-    log("Watcher started", .{});
+    if (FeatureFlags.verbose_watcher) Output.prettyln("Watcher started", .{});
 
     switch (this.watchLoop()) {
         .err => |err| {
@@ -535,11 +534,12 @@ pub fn appendFileMaybeLock(
         .result => {},
     }
 
-    if (DebugLogScope.isVisible()) {
-        log("Added <b>{s}<r> to watch list.", .{if (strings.indexOf(file_path, this.cwd)) |i|
-            file_path[i + this.cwd.len ..]
-        else
-            file_path});
+    if (comptime FeatureFlags.verbose_watcher) {
+        if (strings.indexOf(file_path, this.cwd)) |i| {
+            Output.prettyln("<r><d>Added <b>./{s}<r><d> to watch list.<r>", .{file_path[i + this.cwd.len ..]});
+        } else {
+            Output.prettyln("<r><d>Added <b>{s}<r><d> to watch list.<r>", .{file_path});
+        }
     }
 
     return .{ .result = {} };

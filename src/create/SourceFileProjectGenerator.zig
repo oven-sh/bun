@@ -1,18 +1,24 @@
+// Generate project files based on the entry point and dependencies
 pub fn generate(_: Command.Context, example_tag: Example.Tag, entry_point: string, result: *BundleV2.DependenciesScanner.Result) !void {
+    // Check if Tailwind is already in dependencies
     const has_tailwind_in_dependencies = result.dependencies.contains("tailwindcss") or result.dependencies.contains("bun-plugin-tailwind");
     var needs_to_inject_tailwind = false;
     if (!has_tailwind_in_dependencies) {
+        // Scan source files for Tailwind classes if not already in dependencies
         needs_to_inject_tailwind = hasAnyTailwindClassesInSourceFiles(result.bundle_v2, result.reachable_files);
     }
 
+    // Get any shadcn components used in the project
     const shadcn = if (enable_shadcn_ui) try getShadcnComponents(result.bundle_v2, result.reachable_files) else bun.StringSet.init(default_allocator);
     const needs_to_inject_shadcn_ui = shadcn.keys().len > 0;
 
+    // Add Tailwind dependencies if needed
     if (needs_to_inject_tailwind) {
         try result.dependencies.insert("tailwindcss");
         try result.dependencies.insert("bun-plugin-tailwind");
     }
 
+    // Add shadcn-ui dependencies if needed
     if (needs_to_inject_shadcn_ui) {
         // https://ui.shadcn.com/docs/installation/manual
         // This will probably be tricky to keep updated.
@@ -25,10 +31,12 @@ pub fn generate(_: Command.Context, example_tag: Example.Tag, entry_point: strin
     }
 
     const uses_tailwind = has_tailwind_in_dependencies or needs_to_inject_tailwind;
+    // Add react-dom if react is used
     if (result.dependencies.contains("react")) {
         try result.dependencies.insert("react-dom");
     }
 
+    // Choose template based on dependencies and example type
     const template: Template = brk: {
         if (needs_to_inject_shadcn_ui and example_tag == .jslike_file) {
             break :brk .{ .ReactShadcnSpa = .{ .components = shadcn } };
@@ -39,12 +47,15 @@ pub fn generate(_: Command.Context, example_tag: Example.Tag, entry_point: strin
         }
     };
 
+    // Generate project files from template
     try generateFiles(default_allocator, entry_point, result, template);
 
     Global.exit(0);
 }
 
+// Create a file with given contents, returns if file was newly created
 fn createFile(filename: []const u8, contents: []const u8) bun.JSC.Maybe(bool) {
+    // Check if file exists and has same contents
     if (bun.sys.File.readFrom(bun.toFD(std.fs.cwd()), filename, default_allocator).asValue()) |source_contents| {
         defer default_allocator.free(source_contents);
         if (strings.eqlLong(source_contents, contents, true)) {
@@ -52,21 +63,26 @@ fn createFile(filename: []const u8, contents: []const u8) bun.JSC.Maybe(bool) {
         }
     }
 
+    // Create parent directories if needed
     if (std.fs.path.dirname(filename)) |dirname| {
         bun.makePath(std.fs.cwd(), dirname) catch {};
     }
 
+    // Open file for writing
     const fd = switch (bun.sys.openatA(bun.toFD(std.fs.cwd()), filename, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o644)) {
         .result => |fd| fd,
         .err => |err| return .{ .err = err },
     };
     defer _ = bun.sys.close(fd);
+
+    // Write contents
     switch (bun.sys.File.writeAll(.{ .handle = fd }, contents)) {
         .result => return .{ .result = true },
         .err => |err| return .{ .err = err },
     }
 }
 
+// Count number of occurrences to calculate buffer size
 fn countReplaceAllOccurrences(input: []const u8, needle: []const u8, replacement: []const u8) usize {
     var remaining = input;
     var count: usize = 0;
@@ -82,6 +98,7 @@ fn countReplaceAllOccurrences(input: []const u8, needle: []const u8, replacement
     return input.len + (count * (replacement.len -| needle.len));
 }
 
+// Replace all occurrences of needle with replacement
 fn replaceAllOccurrencesOfString(allocator: std.mem.Allocator, input: []const u8, needle: []const u8, replacement: []const u8) ![]u8 {
     var result = try std.ArrayList(u8).initCapacity(allocator, countReplaceAllOccurrences(input, needle, replacement));
     var remaining = input;
@@ -100,6 +117,7 @@ fn replaceAllOccurrencesOfString(allocator: std.mem.Allocator, input: []const u8
     return result.items;
 }
 
+// Replace template placeholders with actual values
 fn stringWithReplacements(input: []const u8, basename: []const u8, relative_name: []const u8, allocator: std.mem.Allocator) ![]u8 {
     if (strings.contains(input, "REPLACE_ME_WITH_YOUR_APP_BASE_NAME")) {
         return try replaceAllOccurrencesOfString(allocator, input, "REPLACE_ME_WITH_YOUR_APP_BASE_NAME", basename);
@@ -108,6 +126,7 @@ fn stringWithReplacements(input: []const u8, basename: []const u8, relative_name
     return try replaceAllOccurrencesOfString(allocator, input, "REPLACE_ME_WITH_YOUR_APP_FILE_NAME", relative_name);
 }
 
+// Template for React + Shadcn project
 const ReactShadcnSpa = struct {
     pub const files = .{
         .@"lib/utils.ts" = @embedFile("projects/react-shadcn-spa/src/lib/utils.ts"),
@@ -126,6 +145,7 @@ const ReactShadcnSpa = struct {
     pub const components_json = @embedFile("projects/react-shadcn-spa/components.json");
 };
 
+// Template for React + Tailwind project
 const ReactTailwindSpa = struct {
     pub const files = .{
         .@"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts" = @embedFile("projects/react-tailwind-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts"),
@@ -141,6 +161,7 @@ const ReactTailwindSpa = struct {
     pub const components_json = "";
 };
 
+// Template type to handle different project types
 const Template = union(Tag) {
     ReactTailwindSpa: void,
     ReactShadcnSpa: struct {
@@ -152,7 +173,10 @@ const Template = union(Tag) {
         ReactShadcnSpa,
     };
 };
+
 const SourceFileProjectGenerator = @This();
+
+// Generate all project files from template
 fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *BundleV2.DependenciesScanner.Result, template: Template) !void {
     var is_new = false;
     var basename = std.fs.path.basename(entry_point);
@@ -161,6 +185,7 @@ fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *Bun
         basename = basename[0 .. basename.len - extension.len];
     }
 
+    // Normalize file paths
     var normalized_buf: bun.PathBuffer = undefined;
     var normalized_name: []const u8 = if (std.fs.path.isAbsolute(entry_point))
         bun.path.relativeNormalizedBuf(&normalized_buf, bun.fs.FileSystem.instance.top_level_dir, entry_point, .posix, true)
@@ -171,10 +196,12 @@ fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *Bun
         normalized_name = normalized_name[0 .. normalized_name.len - extension.len];
     }
 
+    // Generate files based on template type
     switch (@as(Template.Tag, template)) {
         inline else => |active| {
             const current = @field(SourceFileProjectGenerator, @tagName(active));
 
+            // Create tailwind config if needed
             if (current.tailwind_config.len > 0) {
                 if (!bun.sys.exists("tailwind.config.js")) {
                     switch (createFile("tailwind.config.js", current.tailwind_config)) {
@@ -192,6 +219,7 @@ fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *Bun
                 }
             }
 
+            // Create components.json if needed
             if (current.components_json.len > 0) {
                 if (!bun.sys.exists("components.json")) {
                     switch (createFile("components.json", current.components_json)) {
@@ -209,6 +237,7 @@ fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *Bun
                 }
             }
 
+            // Create package.json if needed
             if (!bun.sys.exists("package.json")) {
                 switch (createFile("package.json", current.package_json)) {
                     .result => |new| {
@@ -224,6 +253,7 @@ fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *Bun
                 }
             }
 
+            // Create tsconfig.json if needed
             if (!bun.sys.exists("tsconfig.json")) {
                 switch (createFile("tsconfig.json", current.tsconfig)) {
                     .result => |new| {
@@ -239,6 +269,7 @@ fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *Bun
                 }
             }
 
+            // Create bunfig.toml if needed
             if (!bun.sys.exists("bunfig.toml")) {
                 switch (createFile("bunfig.toml", current.bunfig)) {
                     .result => |new| {
@@ -254,6 +285,7 @@ fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *Bun
                 }
             }
 
+            // Create all template files
             inline for (comptime std.meta.fieldNames(@TypeOf(current.files))) |name| {
                 const file_name = try stringWithReplacements(name, basename, normalized_name, allocator);
                 switch (createFile(file_name, try stringWithReplacements(@field(current.files, name), basename, normalized_name, default_allocator))) {
@@ -274,6 +306,7 @@ fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *Bun
 
     // We leak all these, but it's pretty much fine.
 
+    // Install dependencies
     var argv = std.ArrayList([]const u8).init(default_allocator);
     try argv.append(try bun.selfExePath());
     try argv.append("--only-missing");
@@ -318,10 +351,12 @@ fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *Bun
         },
     }
 
+    // Show success message and start dev server
     if (is_new) {
         switch (template) {
             .ReactShadcnSpa => |*shadcn| {
                 if (shadcn.components.keys().len > 0) {
+                    // Add shadcn components
                     var shadcn_argv = try std.ArrayList([]const u8).initCapacity(default_allocator, 10);
                     try shadcn_argv.append(try bun.selfExePath());
                     try shadcn_argv.append("x");
@@ -412,6 +447,7 @@ fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *Bun
         Output.flush();
     }
 
+    // Start dev server
     const start = bun.spawnSync(&.{
         .argv = &.{
             try bun.selfExePath(),
@@ -456,6 +492,7 @@ fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *Bun
     Global.exit(0);
 }
 
+// Check if any source files contain Tailwind classes
 fn hasAnyTailwindClassesInSourceFiles(bundler: *BundleV2, reachable_files: []const js_ast.Index) bool {
     const input_files = bundler.graph.input_files.slice();
     const sources = input_files.items(.source);
@@ -471,7 +508,6 @@ fn hasAnyTailwindClassesInSourceFiles(bundler: *BundleV2, reachable_files: []con
                 var source_code: []const u8 = source.contents;
 
                 // First check for className=" or className='
-
                 while (strings.indexOf(source_code, "className=")) |index| {
                     source_code = source_code[index + "className=".len ..];
                     if (source_code.len < 1) return false;
@@ -525,6 +561,7 @@ fn hasAnyTailwindClassesInSourceFiles(bundler: *BundleV2, reachable_files: []con
     return false;
 }
 
+// Get list of shadcn components used in source files
 fn getShadcnComponents(bundler: *BundleV2, reachable_files: []const js_ast.Index) !bun.StringSet {
     const input_files = bundler.graph.input_files.slice();
     const loaders = input_files.items(.loader);
@@ -546,6 +583,7 @@ fn getShadcnComponents(bundler: *BundleV2, reachable_files: []const js_ast.Index
 
     return icons;
 }
+
 const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;

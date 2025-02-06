@@ -1,3 +1,18 @@
+#!/usr/bin/env bun
+/**
+ * Build script for bundling the application for production.
+ *
+ * Usage:
+ *   bun run build.ts [outdir]
+ *
+ * Arguments:
+ *   outdir  Optional output directory (default: "dist")
+ *
+ * Example:
+ *   bun run build.ts              # Builds to ./dist
+ *   bun run build.ts build/       # Builds to ./build
+ */
+
 import { build } from "bun";
 import plugin from "bun-plugin-tailwind";
 import { existsSync } from "fs";
@@ -7,7 +22,7 @@ import path from "path";
 const outdir = path.join(import.meta.dir, process.argv.length > 2 ? process.argv[2] : "dist");
 
 if (existsSync(outdir)) {
-  console.log(`Removing existing dist directory ${outdir}`);
+  console.log(`🗑️  Removing existing dist directory "${outdir}"`);
   await rm(outdir, { recursive: true, force: true });
 }
 
@@ -31,7 +46,9 @@ const result = await build({
 
 // Print the results
 const end = performance.now();
-console.log(`[${(end - start).toFixed(2)}ms] Bundled ${result.outputs.length} files to ${outdir}`);
+const duration = (end - start).toFixed(2);
+console.log(`✨ Successfully bundled ${result.outputs.length} files in ${duration}ms`);
+console.log(`📦 Output directory: ${outdir}`);
 
 const number = new Intl.NumberFormat({
   style: "decimal",
@@ -39,6 +56,11 @@ const number = new Intl.NumberFormat({
   unit: "B",
 });
 
+console.log("\n📄 Generated files:");
 console.table(
-  result.outputs.map(o => ({ name: path.relative(process.cwd(), o.name), size: number.format(o.size / 1024) + " KB" })),
+  result.outputs.map(o => ({
+    "File": path.relative(process.cwd(), o.name),
+    "Size": number.format(o.size / 1024) + " KB",
+  })),
+  ["File", "Size"],
 );

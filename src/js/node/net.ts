@@ -24,6 +24,7 @@ const { Duplex } = require("node:stream");
 const EventEmitter = require("node:events");
 const { addServerName, upgradeDuplexToTLS, isNamedPipeSocket } = require("../internal/net");
 const { ExceptionWithHostPort } = require("internal/shared");
+const { validatePort } = require("internal/validators");
 
 // IPv4 Segment
 const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
@@ -1203,13 +1204,14 @@ Server.prototype.getConnections = function (callback) {
   return this;
 };
 
-Server.prototype.listen = function (port, hostname, onListen) {
+Server.prototype.listen = function listen(port, hostname, onListen) {
   let backlog;
   let path;
   let exclusive = false;
   let allowHalfOpen = false;
   let reusePort = false;
   let ipv6Only = false;
+  let options: Record<string, any> | undefined;
   //port is actually path
   if (typeof port === "string") {
     if (Number.isSafeInteger(hostname)) {
@@ -1235,13 +1237,17 @@ Server.prototype.listen = function (port, hostname, onListen) {
       onListen = port;
       port = 0;
     } else if (typeof port === "object") {
-      const options = port;
+      if (port === null) {
+        throw $ERR_INVALID_ARG_VALUE("options", port, "a non-null object");
+      }
+      options = port;
+      $assert(options); // make tsc happy
       options.signal?.addEventListener("abort", () => this.close());
 
       hostname = options.host;
       exclusive = options.exclusive;
       path = options.path;
-      port = options.port;
+      port = validatePort(options.port, "options.port");
       ipv6Only = options.ipv6Only;
       allowHalfOpen = options.allowHalfOpen;
       reusePort = options.reusePort;
@@ -1271,8 +1277,6 @@ Server.prototype.listen = function (port, hostname, onListen) {
           error.code = "ERR_INVALID_ARG_VALUE";
           throw error;
         }
-      } else if (!Number.isSafeInteger(port) || port < 0) {
-        port = 0;
       }
 
       // port <number>
@@ -1286,8 +1290,11 @@ Server.prototype.listen = function (port, hostname, onListen) {
       // signal <AbortSignal> An AbortSignal that may be used to close a listening server.
 
       if (typeof options.callback === "function") onListen = options?.callback;
-    } else if (!Number.isSafeInteger(port) || port < 0) {
-      port = 0;
+    }
+
+    // port is already validated when an options object gets passed
+    if ($isUndefinedOrNull(options)) {
+      port = validatePort(port, "port");
     }
     hostname = hostname || "::";
   }
@@ -1445,8 +1452,23 @@ function listenInCluster(
   onListen,
 ) {
   exclusive = !!exclusive;
+  // shim until SocketAddress gets added. lazy-loaded b/c isIP is quite expensive.
+  const getConnKeyShim = (() => {
+    let key;
+    return () => {
+      if (!key) {
+        key = isIP(hostname) + ":" + hostname + ":" + port;
+      }
+      return key;
+    };
+  })();
 
   if (cluster === undefined) cluster = require("node:cluster");
+  Object.defineProperty(server, "_connectionKey", {
+    get() {
+      return getConnKeyShim();
+    },
+  });
 
   if (cluster.isPrimary || exclusive) {
     server[kRealListen](path, port, hostname, exclusive, ipv6Only, allowHalfOpen, reusePort, tls, contexts, onListen);

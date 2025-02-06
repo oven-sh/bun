@@ -54,7 +54,7 @@ cluster._setupWorker = function () {
 };
 
 // `obj` is a net#Server or a dgram#Socket object.
-cluster._getServer = function (obj, options, cb) {
+cluster._getServer = function _getServer(obj, options, cb) {
   let address = options.address;
 
   // Resolve unix socket paths to absolute paths

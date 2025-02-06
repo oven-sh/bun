@@ -1746,7 +1746,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
             throwOutOfMemoryError(globalObject, throwScope);
             return {};
         }
-        WTF::StringImpl::copyCharacters(ptr.data(), encodedString.span16());
+        WTF::StringImpl::copyCharacters(ptr, encodedString.span16());
         encodedString = WTFMove(dest);
     }
 

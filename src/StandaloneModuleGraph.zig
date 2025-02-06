@@ -81,14 +81,8 @@ pub const StandaloneModuleGraph = struct {
     pub fn findAssumeStandalonePath(this: *const StandaloneModuleGraph, name: []const u8) ?*File {
         if (Environment.isWindows) {
             var normalized_buf: bun.PathBuffer = undefined;
-            var input = name;
-            if (strings.hasPrefixComptime(input, bun.windows.nt_object_prefix_u8)) {
-                input = input[bun.windows.nt_object_prefix_u8.len..];
-            } else if (strings.hasPrefixComptime(input, bun.windows.long_path_prefix_u8)) {
-                input = input[bun.windows.long_path_prefix_u8.len..];
-            }
-
-            const normalized = bun.path.platformToPosixBuf(u8, name, &normalized_buf);
+            const input = strings.withoutNTPrefix(u8, name);
+            const normalized = bun.path.platformToPosixBuf(u8, input, &normalized_buf);
             return this.files.getPtr(normalized);
         }
         return this.files.getPtr(name);

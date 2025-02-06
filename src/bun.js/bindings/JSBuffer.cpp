@@ -116,7 +116,7 @@ static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_write);
 extern "C" EncodedJSValue WebCore_BufferEncodingType_toJS(JSC::JSGlobalObject* lexicalGlobalObject, WebCore::BufferEncodingType encoding)
 {
     // clang-format off
-    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     switch (encoding) {
     case WebCore::BufferEncodingType::utf8:      return JSC::JSValue::encode(globalObject->commonStrings().utf8String(globalObject));
     case WebCore::BufferEncodingType::ucs2:      return JSC::JSValue::encode(globalObject->commonStrings().ucs2String(globalObject));
@@ -218,7 +218,7 @@ static JSUint8Array* allocBuffer(JSC::JSGlobalObject* lexicalGlobalObject, size_
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 #endif
 
-    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
 
     auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, byteLength);
@@ -319,7 +319,7 @@ JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalO
 
     JSC::JSUint8Array* uint8Array = nullptr;
 
-    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
 
     if (LIKELY(length > 0)) {
@@ -416,7 +416,7 @@ JSC::JSUint8Array* createEmptyBuffer(JSC::JSGlobalObject* lexicalGlobalObject)
 
 JSC::JSUint8Array* createUninitializedBuffer(JSC::JSGlobalObject* lexicalGlobalObject, size_t length)
 {
-    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
 
     return JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, subclassStructure, length);
@@ -435,7 +435,7 @@ static inline JSC::JSUint8Array* JSBuffer__bufferFromLengthAsArray(JSC::JSGlobal
         return nullptr;
     }
 
-    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
     JSC::JSUint8Array* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, static_cast<size_t>(length));
 
@@ -2379,7 +2379,7 @@ JSC::JSObject* createBufferConstructor(JSC::VM& vm, JSC::JSGlobalObject* globalO
 
 EncodedJSValue constructBufferFromArray(JSC::ThrowScope& throwScope, JSGlobalObject* lexicalGlobalObject, JSValue arrayValue)
 {
-    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
     auto* constructor = lexicalGlobalObject->m_typedArrayUint8.constructor(lexicalGlobalObject);
     MarkedArgumentBuffer argsBuffer;
@@ -2393,7 +2393,7 @@ EncodedJSValue constructBufferFromArray(JSC::ThrowScope& throwScope, JSGlobalObj
 
 EncodedJSValue constructBufferFromArrayBuffer(JSC::ThrowScope& throwScope, JSGlobalObject* lexicalGlobalObject, size_t argsCount, JSValue arrayBufferValue, JSValue offsetValue, JSValue lengthValue)
 {
-    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
     auto* jsBuffer = jsCast<JSC::JSArrayBuffer*>(arrayBufferValue.asCell());
     RefPtr<ArrayBuffer> buffer = jsBuffer->impl();
@@ -2441,7 +2441,7 @@ static inline JSC::EncodedJSValue createJSBufferFromJS(JSC::JSGlobalObject* lexi
     }
     JSValue distinguishingArg = args.at(0);
     JSValue encodingArg = argsCount > 1 ? args.at(1) : JSValue();
-    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     if (distinguishingArg.isAnyInt()) {
         throwScope.release();
         if (args.at(1).isString()) {
@@ -2464,7 +2464,6 @@ static inline JSC::EncodedJSValue createJSBufferFromJS(JSC::JSGlobalObject* lexi
         auto type = distinguishingArg.asCell()->type();
         switch (type) {
         case StringType:
-
         case StringObjectType:
         case DerivedStringObjectType: {
             throwScope.release();

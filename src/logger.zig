@@ -430,13 +430,27 @@ pub const Msg = struct {
         var zig_exception_holder: bun.JSC.ZigException.Holder = bun.JSC.ZigException.Holder.init();
         if (err.toError()) |value| {
             value.toZigException(globalObject, zig_exception_holder.zigException());
-        } else {
-            zig_exception_holder.zig_exception.message = err.toBunString(globalObject);
+
+            return Msg{
+                .data = .{
+                    .text = try zig_exception_holder.zigException().message.toOwnedSlice(allocator),
+                    .location = Location{
+                        .file = file,
+                        .line = 0,
+                        .column = 0,
+                    },
+                },
+            };
+        } else if (err.as(JSC.BuildMessage)) |build_message| {
+            return build_message.msg.clone(allocator);
         }
+
+        var err_message = err.toBunString(globalObject);
+        defer err_message.deref();
 
         return Msg{
             .data = .{
-                .text = try zig_exception_holder.zigException().message.toOwnedSlice(allocator),
+                .text = try err_message.toOwnedSlice(allocator),
                 .location = Location{
                     .file = file,
                     .line = 0,

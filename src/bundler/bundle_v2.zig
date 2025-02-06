@@ -1481,30 +1481,8 @@ pub const BundleV2 = struct {
                 if (!record.source_index.isValid() and record.tag == .none) {
                     // External dependency
                     if (record.path.text.len > 0) {
-                        var package_path: []const u8 = "";
-                        if (record.path.text[0] == '@') {
-                            if (strings.indexOfChar(record.path.text, '/')) |slash_index| {
-                                if (slash_index > 1 and record.path.text.len > 2) {
-                                    const after_slash = record.path.text[slash_index + 1 ..];
-                                    if (after_slash.len > 0) {
-                                        if (strings.indexOfChar(after_slash, '/')) |second_slash_index| {
-                                            package_path = record.path.text[0 .. second_slash_index + 1 + slash_index];
-                                        } else {
-                                            package_path = record.path.text;
-                                        }
-                                    }
-                                }
-                            }
-                        } else if (strings.indexOfChar(record.path.text, '/')) |slash_index| {
-                            if (slash_index > 0) {
-                                package_path = record.path.text[0..slash_index];
-                            }
-                        } else {
-                            package_path = record.path.text;
-                        }
-
-                        if (strings.isNPMPackageName(package_path)) {
-                            try external_deps.insert(package_path);
+                        if (strings.isNPMPackageNameIgnoreLength(record.path.text)) {
+                            try external_deps.insert(record.path.text);
                         }
                     }
                 }
@@ -1555,11 +1533,6 @@ pub const BundleV2 = struct {
         const reachable_files = try this.findReachableFiles();
         reachable_files_count.* = reachable_files.len -| 1; // - 1 for the runtime
 
-        if (fetcher) |fetch| {
-            try this.getAllDependencies(reachable_files, fetch);
-            return std.ArrayList(options.OutputFile).init(allocator);
-        }
-
         try this.processFilesToCopy(reachable_files);
 
         try this.addServerComponentBoundariesAsExtraEntryPoints();
@@ -1572,6 +1545,12 @@ pub const BundleV2 = struct {
             this.graph.server_component_boundaries,
             reachable_files,
         );
+
+        // Do this at the very end, after processing all the imports/exports so that we can follow exports as needed.
+        if (fetcher) |fetch| {
+            try this.getAllDependencies(reachable_files, fetch);
+            return std.ArrayList(options.OutputFile).init(allocator);
+        }
 
         return try this.linker.generateChunksInParallel(chunks, false);
     }

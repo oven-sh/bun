@@ -524,6 +524,10 @@ pub const Length = union(enum) {
     /// A computed length value using `calc()`.
     calc: *Calc(Length),
 
+    pub fn zero() Length {
+        return .{ .value = LengthValue.zero() };
+    }
+
     pub fn deepClone(this: *const Length, allocator: Allocator) Length {
         return switch (this.*) {
             .value => |v| .{ .value = v },

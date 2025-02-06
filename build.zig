@@ -46,6 +46,7 @@ const BunBuildOptions = struct {
     sha: []const u8,
     /// enable debug logs in release builds
     enable_logs: bool = false,
+    enable_asan: bool,
     tracy_callstack_depth: u16,
     reported_nodejs_version: Version,
     /// To make iterating on some '@embedFile's faster, we load them at runtime
@@ -275,6 +276,7 @@ pub fn build(b: *Build) !void {
 
         .tracy_callstack_depth = b.option(u16, "tracy_callstack_depth", "") orelse 10,
         .enable_logs = b.option(bool, "enable_logs", "Enable logs in release") orelse false,
+        .enable_asan = b.option(bool, "enable_asan", "Enable asan") orelse false,
     };
 
     // zig build obj
@@ -393,6 +395,7 @@ pub fn addMultiCheck(
                 .reported_nodejs_version = root_build_options.reported_nodejs_version,
                 .codegen_path = root_build_options.codegen_path,
                 .no_llvm = root_build_options.no_llvm,
+                .enable_asan = root_build_options.enable_asan,
             };
 
             var obj = addBunObject(b, &options);
@@ -440,6 +443,14 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
         .omit_frame_pointer = false,
         .strip = false, // stripped at the end
     });
+    if (opts.enable_asan) {
+        if (@hasField(Build.Module, "sanitize_address")) {
+            obj.root_module.sanitize_address = true;
+        } else {
+            const fail_step = b.addFail("asan is not supported on this platform");
+            obj.step.dependOn(&fail_step.step);
+        }
+    }
     obj.bundle_compiler_rt = false;
     obj.root_module.omit_frame_pointer = false;
 

@@ -1099,706 +1099,699 @@ fn NewLexer_(
             lexer.has_no_side_effect_comment_before = false;
             lexer.prev_token_was_await_keyword = false;
 
-            while (true) {
-                lexer.start = lexer.end;
-                lexer.token = T.t_end_of_file;
+            lex: switch (lexer.code_point) {
+                -1 => {
+                    lexer.start = lexer.end;
+                    lexer.token = T.t_end_of_file;
+                },
 
-                switch (lexer.code_point) {
-                    -1 => {
-                        lexer.token = T.t_end_of_file;
-                    },
+                '#' => {
+                    lexer.start = lexer.end;
 
-                    '#' => {
-                        if (comptime is_json) {
-                            return lexer.addUnsupportedSyntaxError("Private identifiers are not allowed in JSON");
-                        }
-                        if (lexer.start == 0 and lexer.source.contents[1] == '!') {
-                            // "#!/usr/bin/env node"
-                            lexer.token = .t_hashbang;
-                            hashbang: while (true) {
-                                lexer.step();
-                                switch (lexer.code_point) {
-                                    '\r', '\n', 0x2028, 0x2029 => {
-                                        break :hashbang;
-                                    },
-                                    -1 => {
-                                        break :hashbang;
-                                    },
-                                    else => {},
-                                }
+                    if (comptime is_json) {
+                        return lexer.addUnsupportedSyntaxError("Private identifiers are not allowed in JSON");
+                    }
+                    if (lexer.start == 0 and lexer.source.contents[1] == '!') {
+                        // "#!/usr/bin/env node"
+                        lexer.token = .t_hashbang;
+                        lexer.step();
+                        while (true) {
+                            switch (lexer.code_point) {
+                                '\r', '\n', 0x2028, 0x2029, -1 => break,
+                                else => lexer.step(),
                             }
-                            lexer.identifier = lexer.raw();
+                        }
+                        lexer.identifier = lexer.raw();
+                    } else {
+                        // "#foo"
+                        lexer.step();
+                        if (lexer.code_point == '\\') {
+                            lexer.identifier = (try lexer.scanIdentifierWithEscapes(.private)).contents;
                         } else {
-                            // "#foo"
+                            if (!isIdentifierStart(lexer.code_point)) {
+                                try lexer.syntaxError();
+                            }
+
                             lexer.step();
+                            while (isIdentifierContinue(lexer.code_point)) {
+                                lexer.step();
+                            }
                             if (lexer.code_point == '\\') {
                                 lexer.identifier = (try lexer.scanIdentifierWithEscapes(.private)).contents;
                             } else {
-                                if (!isIdentifierStart(lexer.code_point)) {
-                                    try lexer.syntaxError();
-                                }
-
-                                lexer.step();
-                                while (isIdentifierContinue(lexer.code_point)) {
-                                    lexer.step();
-                                }
-                                if (lexer.code_point == '\\') {
-                                    lexer.identifier = (try lexer.scanIdentifierWithEscapes(.private)).contents;
-                                } else {
-                                    lexer.identifier = lexer.raw();
-                                }
-                            }
-                            lexer.token = T.t_private_identifier;
-                            break;
-                        }
-                    },
-                    '\r', '\n', 0x2028, 0x2029 => {
-                        lexer.has_newline_before = true;
-
-                        if (comptime json_options.guess_indentation) {
-                            if (lexer.indent_info.first_newline and lexer.code_point == '\n') {
-                                while (lexer.code_point == '\n' or lexer.code_point == '\r') {
-                                    lexer.step();
-                                }
-
-                                if (lexer.code_point != ' ' and lexer.code_point != '\t') {
-                                    // try to get the next one. this handles cases where the file starts
-                                    // with a newline
-                                    continue;
-                                }
-
-                                lexer.indent_info.first_newline = false;
-
-                                const indent_character = lexer.code_point;
-                                var count: usize = 0;
-                                while (lexer.code_point == indent_character) {
-                                    lexer.step();
-                                    count += 1;
-                                }
-
-                                lexer.indent_info.guess.character = if (indent_character == ' ') .space else .tab;
-                                lexer.indent_info.guess.scalar = count;
-                                continue;
+                                lexer.identifier = lexer.raw();
                             }
                         }
+                        lexer.token = T.t_private_identifier;
+                    }
+                },
+                '\r', '\n', 0x2028, 0x2029 => {
+                    lexer.has_newline_before = true;
 
-                        lexer.step();
-                        continue;
-                    },
-                    '\t', ' ' => {
-                        lexer.step();
-                        continue;
-                    },
-                    '(' => {
-                        lexer.step();
-                        lexer.token = T.t_open_paren;
-                    },
-                    ')' => {
-                        lexer.step();
-                        lexer.token = T.t_close_paren;
-                    },
-                    '[' => {
-                        lexer.step();
-                        lexer.token = T.t_open_bracket;
-                    },
-                    ']' => {
-                        lexer.step();
-                        lexer.token = T.t_close_bracket;
-                    },
-                    '{' => {
-                        lexer.step();
-                        lexer.token = T.t_open_brace;
-                    },
-                    '}' => {
-                        lexer.step();
-                        lexer.token = T.t_close_brace;
-                    },
-                    ',' => {
-                        lexer.step();
-                        lexer.token = T.t_comma;
-                    },
-                    ':' => {
-                        lexer.step();
-                        lexer.token = T.t_colon;
-                    },
-                    ';' => {
-                        if (comptime is_json) {
-                            return lexer.addUnsupportedSyntaxError("Semicolons are not allowed in JSON");
-                        }
-
-                        lexer.step();
-                        lexer.token = T.t_semicolon;
-                    },
-                    '@' => {
-                        if (comptime is_json) {
-                            return lexer.addUnsupportedSyntaxError("Decorators are not allowed in JSON");
-                        }
-
-                        lexer.step();
-                        lexer.token = T.t_at;
-                    },
-                    '~' => {
-                        if (comptime is_json) {
-                            return lexer.addUnsupportedSyntaxError("~ is not allowed in JSON");
-                        }
-
-                        lexer.step();
-                        lexer.token = T.t_tilde;
-                    },
-                    '?' => {
-                        // '?' or '?.' or '??' or '??='
-                        lexer.step();
-                        switch (lexer.code_point) {
-                            '?' => {
+                    if (comptime json_options.guess_indentation) {
+                        if (lexer.indent_info.first_newline and lexer.code_point == '\n') {
+                            while (lexer.code_point == '\n' or lexer.code_point == '\r') {
                                 lexer.step();
-                                switch (lexer.code_point) {
-                                    '=' => {
-                                        lexer.step();
-                                        lexer.token = T.t_question_question_equals;
-                                    },
-                                    else => {
-                                        lexer.token = T.t_question_question;
-                                    },
-                                }
-                            },
+                            }
 
-                            '.' => {
-                                lexer.token = T.t_question;
-                                const current = lexer.current;
-                                const contents = lexer.source.contents;
+                            if (lexer.code_point != ' ' and lexer.code_point != '\t') {
+                                // try to get the next one. this handles cases where the file starts
+                                // with a newline
+                                continue :lex lexer.code_point;
+                            }
 
-                                // Lookahead to disambiguate with 'a?.1:b'
-                                if (current < contents.len) {
-                                    const c = contents[current];
-                                    if (c < '0' or c > '9') {
-                                        lexer.step();
-                                        lexer.token = T.t_question_dot;
-                                    }
-                                }
-                            },
-                            else => {
-                                lexer.token = T.t_question;
-                            },
-                        }
-                    },
-                    '%' => {
-                        if (comptime is_json) {
-                            return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
-                        }
+                            lexer.indent_info.first_newline = false;
 
-                        // '%' or '%='
-                        lexer.step();
-                        switch (lexer.code_point) {
-                            '=' => {
+                            const indent_character = lexer.code_point;
+                            var count: usize = 0;
+                            while (lexer.code_point == indent_character) {
                                 lexer.step();
-                                lexer.token = T.t_percent_equals;
-                            },
+                                count += 1;
+                            }
 
-                            else => {
-                                lexer.token = T.t_percent;
-                            },
+                            lexer.indent_info.guess.character = if (indent_character == ' ') .space else .tab;
+                            lexer.indent_info.guess.scalar = count;
+                            continue :lex lexer.code_point;
                         }
-                    },
+                    }
 
-                    '&' => {
-                        if (comptime is_json) {
-                            return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
-                        }
+                    lexer.step();
+                    continue :lex lexer.code_point;
+                },
+                '\t', ' ' => {
+                    lexer.step();
+                    continue :lex lexer.code_point;
+                },
+                '(' => {
+                    lexer.start = lexer.end;
+                    lexer.step();
+                    lexer.token = T.t_open_paren;
+                },
+                ')' => {
+                    lexer.start = lexer.end;
+                    lexer.step();
+                    lexer.token = T.t_close_paren;
+                },
+                '[' => {
+                    lexer.start = lexer.end;
+                    lexer.step();
+                    lexer.token = T.t_open_bracket;
+                },
+                ']' => {
+                    lexer.start = lexer.end;
+                    lexer.step();
+                    lexer.token = T.t_close_bracket;
+                },
+                '{' => {
+                    lexer.start = lexer.end;
+                    lexer.step();
+                    lexer.token = T.t_open_brace;
+                },
+                '}' => {
+                    lexer.start = lexer.end;
+                    lexer.step();
+                    lexer.token = T.t_close_brace;
+                },
+                ',' => {
+                    lexer.start = lexer.end;
+                    lexer.step();
+                    lexer.token = T.t_comma;
+                },
+                ':' => {
+                    lexer.start = lexer.end;
+                    lexer.step();
+                    lexer.token = T.t_colon;
+                },
+                ';' => {
+                    if (comptime is_json) {
+                        return lexer.addUnsupportedSyntaxError("Semicolons are not allowed in JSON");
+                    }
 
-                        // '&' or '&=' or '&&' or '&&='
-                        lexer.step();
-                        switch (lexer.code_point) {
-                            '=' => {
-                                lexer.step();
-                                lexer.token = T.t_ampersand_equals;
-                            },
+                    lexer.start = lexer.end;
+                    lexer.step();
+                    lexer.token = T.t_semicolon;
+                },
+                '@' => {
+                    if (comptime is_json) {
+                        return lexer.addUnsupportedSyntaxError("Decorators are not allowed in JSON");
+                    }
 
-                            '&' => {
-                                lexer.step();
-                                switch (lexer.code_point) {
-                                    '=' => {
-                                        lexer.step();
-                                        lexer.token = T.t_ampersand_ampersand_equals;
-                                    },
+                    lexer.start = lexer.end;
+                    lexer.step();
+                    lexer.token = T.t_at;
+                },
+                '~' => {
+                    if (comptime is_json) {
+                        return lexer.addUnsupportedSyntaxError("~ is not allowed in JSON");
+                    }
 
-                                    else => {
-                                        lexer.token = T.t_ampersand_ampersand;
-                                    },
-                                }
-                            },
-                            else => {
-                                lexer.token = T.t_ampersand;
-                            },
-                        }
-                    },
-
-                    '|' => {
-                        if (comptime is_json) {
-                            return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
-                        }
-
-                        // '|' or '|=' or '||' or '||='
-                        lexer.step();
-                        switch (lexer.code_point) {
-                            '=' => {
-                                lexer.step();
-                                lexer.token = T.t_bar_equals;
-                            },
-                            '|' => {
-                                lexer.step();
-                                switch (lexer.code_point) {
-                                    '=' => {
-                                        lexer.step();
-                                        lexer.token = T.t_bar_bar_equals;
-                                    },
-
-                                    else => {
-                                        lexer.token = T.t_bar_bar;
-                                    },
-                                }
-                            },
-                            else => {
-                                lexer.token = T.t_bar;
-                            },
-                        }
-                    },
-
-                    '^' => {
-                        if (comptime is_json) {
-                            return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
-                        }
-
-                        // '^' or '^='
-                        lexer.step();
-                        switch (lexer.code_point) {
-                            '=' => {
-                                lexer.step();
-                                lexer.token = T.t_caret_equals;
-                            },
-
-                            else => {
-                                lexer.token = T.t_caret;
-                            },
-                        }
-                    },
-
-                    '+' => {
-                        if (comptime is_json) {
-                            return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
-                        }
-
-                        // '+' or '+=' or '++'
-                        lexer.step();
-                        switch (lexer.code_point) {
-                            '=' => {
-                                lexer.step();
-                                lexer.token = T.t_plus_equals;
-                            },
-
-                            '+' => {
-                                lexer.step();
-                                lexer.token = T.t_plus_plus;
-                            },
-
-                            else => {
-                                lexer.token = T.t_plus;
-                            },
-                        }
-                    },
-
-                    '-' => {
-
-                        // '+' or '+=' or '++'
-                        lexer.step();
-                        switch (lexer.code_point) {
-                            '=' => {
-                                if (comptime is_json) {
-                                    return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
-                                }
-                                lexer.step();
-                                lexer.token = T.t_minus_equals;
-                            },
-
-                            '-' => {
-                                if (comptime is_json) {
-                                    return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
-                                }
-                                lexer.step();
-
-                                if (lexer.code_point == '>' and lexer.has_newline_before) {
+                    lexer.start = lexer.end;
+                    lexer.step();
+                    lexer.token = T.t_tilde;
+                },
+                '?' => {
+                    // '?' or '?.' or '??' or '??='
+                    lexer.start = lexer.end;
+                    lexer.step();
+                    switch (lexer.code_point) {
+                        '?' => {
+                            lexer.step();
+                            switch (lexer.code_point) {
+                                '=' => {
                                     lexer.step();
-                                    lexer.log.addRangeWarning(&lexer.source, lexer.range(), "Treating \"-->\" as the start of a legacy HTML single-line comment") catch unreachable;
+                                    lexer.token = T.t_question_question_equals;
+                                },
+                                else => {
+                                    lexer.token = T.t_question_question;
+                                },
+                            }
+                        },
 
-                                    singleLineHTMLCloseComment: while (true) {
-                                        switch (lexer.code_point) {
-                                            '\r', '\n', 0x2028, 0x2029 => {
-                                                break :singleLineHTMLCloseComment;
-                                            },
-                                            -1 => {
-                                                break :singleLineHTMLCloseComment;
-                                            },
-                                            else => {},
-                                        }
-                                        lexer.step();
-                                    }
-                                    continue;
-                                }
+                        '.' => {
+                            lexer.token = T.t_question;
+                            const current = lexer.current;
+                            const contents = lexer.source.contents;
 
-                                lexer.token = T.t_minus_minus;
-                            },
-
-                            else => {
-                                lexer.token = T.t_minus;
-                            },
-                        }
-                    },
-
-                    '*' => {
-                        // '*' or '*=' or '**' or '**='
-
-                        lexer.step();
-                        switch (lexer.code_point) {
-                            '=' => {
-                                lexer.step();
-                                lexer.token = .t_asterisk_equals;
-                            },
-                            '*' => {
-                                lexer.step();
-                                switch (lexer.code_point) {
-                                    '=' => {
-                                        lexer.step();
-                                        lexer.token = .t_asterisk_asterisk_equals;
-                                    },
-                                    else => {
-                                        lexer.token = .t_asterisk_asterisk;
-                                    },
-                                }
-                            },
-                            else => {
-                                lexer.token = .t_asterisk;
-                            },
-                        }
-                    },
-                    '/' => {
-
-                        // '/' or '/=' or '//' or '/* ... */'
-                        lexer.step();
-
-                        switch (lexer.code_point) {
-                            '=' => {
-                                lexer.step();
-                                lexer.token = .t_slash_equals;
-                            },
-                            '/' => {
-                                singleLineComment: while (true) {
+                            // Lookahead to disambiguate with 'a?.1:b'
+                            if (current < contents.len) {
+                                const c = contents[current];
+                                if (c < '0' or c > '9') {
                                     lexer.step();
-                                    switch (lexer.code_point) {
-                                        '\r', '\n', 0x2028, 0x2029 => {
-                                            break :singleLineComment;
-                                        },
-                                        -1 => {
-                                            break :singleLineComment;
-                                        },
-                                        else => {},
-                                    }
+                                    lexer.token = T.t_question_dot;
                                 }
+                            }
+                        },
+                        else => {
+                            lexer.token = T.t_question;
+                        },
+                    }
+                },
+                '%' => {
+                    if (comptime is_json) {
+                        return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
+                    }
 
-                                if (comptime is_json) {
-                                    if (!json.allow_comments) {
-                                        try lexer.addRangeError(lexer.range(), "JSON does not support comments", .{}, true);
-                                        return;
-                                    }
-                                }
-                                lexer.scanCommentText();
-                                continue;
-                            },
-                            '*' => {
+                    // '%' or '%='
+                    lexer.start = lexer.end;
+                    lexer.step();
+                    switch (lexer.code_point) {
+                        '=' => {
+                            lexer.step();
+                            lexer.token = T.t_percent_equals;
+                        },
+
+                        else => {
+                            lexer.token = T.t_percent;
+                        },
+                    }
+                },
+
+                '&' => {
+                    if (comptime is_json) {
+                        return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
+                    }
+
+                    // '&' or '&=' or '&&' or '&&='
+                    lexer.start = lexer.end;
+                    lexer.step();
+                    switch (lexer.code_point) {
+                        '=' => {
+                            lexer.step();
+                            lexer.token = T.t_ampersand_equals;
+                        },
+
+                        '&' => {
+                            lexer.step();
+                            switch (lexer.code_point) {
+                                '=' => {
+                                    lexer.step();
+                                    lexer.token = T.t_ampersand_ampersand_equals;
+                                },
+
+                                else => {
+                                    lexer.token = T.t_ampersand_ampersand;
+                                },
+                            }
+                        },
+                        else => {
+                            lexer.token = T.t_ampersand;
+                        },
+                    }
+                },
+
+                '|' => {
+                    if (comptime is_json) {
+                        return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
+                    }
+
+                    // '|' or '|=' or '||' or '||='
+                    lexer.start = lexer.end;
+                    lexer.step();
+                    switch (lexer.code_point) {
+                        '=' => {
+                            lexer.step();
+                            lexer.token = T.t_bar_equals;
+                        },
+                        '|' => {
+                            lexer.step();
+                            switch (lexer.code_point) {
+                                '=' => {
+                                    lexer.step();
+                                    lexer.token = T.t_bar_bar_equals;
+                                },
+
+                                else => {
+                                    lexer.token = T.t_bar_bar;
+                                },
+                            }
+                        },
+                        else => {
+                            lexer.token = T.t_bar;
+                        },
+                    }
+                },
+
+                '^' => {
+                    if (comptime is_json) {
+                        return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
+                    }
+
+                    // '^' or '^='
+                    lexer.start = lexer.end;
+                    lexer.step();
+                    switch (lexer.code_point) {
+                        '=' => {
+                            lexer.step();
+                            lexer.token = T.t_caret_equals;
+                        },
+
+                        else => {
+                            lexer.token = T.t_caret;
+                        },
+                    }
+                },
+
+                '+' => {
+                    if (comptime is_json) {
+                        return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
+                    }
+
+                    // '+' or '+=' or '++'
+                    lexer.start = lexer.end;
+                    lexer.step();
+                    switch (lexer.code_point) {
+                        '=' => {
+                            lexer.step();
+                            lexer.token = T.t_plus_equals;
+                        },
+
+                        '+' => {
+                            lexer.step();
+                            lexer.token = T.t_plus_plus;
+                        },
+
+                        else => {
+                            lexer.token = T.t_plus;
+                        },
+                    }
+                },
+                '-' => {
+                    lexer.start = lexer.end;
+                    lexer.step();
+                    switch (lexer.code_point) {
+                        '=' => {
+                            if (comptime is_json) {
+                                return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
+                            }
+                            lexer.step();
+                            lexer.token = T.t_minus_equals;
+                        },
+
+                        '-' => {
+                            if (comptime is_json) {
+                                return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
+                            }
+                            lexer.step();
+
+                            if (lexer.code_point == '>' and lexer.has_newline_before) {
                                 lexer.step();
+                                lexer.log.addRangeWarning(&lexer.source, lexer.range(), "Treating \"-->\" as the start of a legacy HTML single-line comment") catch unreachable;
 
-                                multiLineComment: while (true) {
-                                    switch (lexer.code_point) {
-                                        '*' => {
-                                            lexer.step();
-                                            if (lexer.code_point == '/') {
-                                                lexer.step();
-                                                break :multiLineComment;
-                                            }
-                                        },
-                                        '\r', '\n', 0x2028, 0x2029 => {
-                                            lexer.step();
-                                            lexer.has_newline_before = true;
-                                        },
-                                        -1 => {
-                                            lexer.start = lexer.end;
-                                            try lexer.addSyntaxError(
-                                                lexer.start,
-                                                "Expected \"*/\" to terminate multi-line comment",
-                                                .{},
-                                            );
-                                        },
-                                        else => {
-                                            // if (comptime Environment.enableSIMD) {
-                                            // TODO: this seems to work, but we shouldn't enable this until after improving test coverage
-                                            // if (lexer.code_point < 128) {
-                                            //     const remainder = lexer.source.contents[lexer.current..];
-                                            //     if (remainder.len >= 4096) {
-                                            //         lexer.current += skipToInterestingCharacterInMultilineComment(remainder) orelse {
-                                            //             lexer.step();
-                                            //             continue;
-                                            //         };
-                                            //         lexer.end = lexer.current -| 1;
-                                            //         lexer.step();
-                                            //         continue;
-                                            //     }
-                                            // }
-                                            // }
-
-                                            lexer.step();
-                                        },
-                                    }
-                                }
-                                if (comptime is_json) {
-                                    if (!json.allow_comments) {
-                                        try lexer.addRangeError(lexer.range(), "JSON does not support comments", .{}, true);
-                                        return;
-                                    }
-                                }
-                                lexer.scanCommentText();
-                                continue;
-                            },
-                            else => {
-                                lexer.token = .t_slash;
-                            },
-                        }
-                    },
-
-                    '=' => {
-                        if (comptime is_json) {
-                            return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
-                        }
-
-                        // '=' or '=>' or '==' or '==='
-                        lexer.step();
-                        switch (lexer.code_point) {
-                            '>' => {
-                                lexer.step();
-                                lexer.token = T.t_equals_greater_than;
-                            },
-
-                            '=' => {
-                                lexer.step();
-                                switch (lexer.code_point) {
-                                    '=' => {
-                                        lexer.step();
-                                        lexer.token = T.t_equals_equals_equals;
-                                    },
-
+                                html_comment: switch (lexer.code_point) {
+                                    '\r', '\n', 0x2028, 0x2029, -1 => {},
                                     else => {
-                                        lexer.token = T.t_equals_equals;
-                                    },
-                                }
-                            },
-
-                            else => {
-                                lexer.token = T.t_equals;
-                            },
-                        }
-                    },
-
-                    '<' => {
-                        if (comptime is_json) {
-                            return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
-                        }
-
-                        // '<' or '<<' or '<=' or '<<=' or '<!--'
-                        lexer.step();
-                        switch (lexer.code_point) {
-                            '=' => {
-                                lexer.step();
-                                lexer.token = T.t_less_than_equals;
-                            },
-
-                            '<' => {
-                                lexer.step();
-                                switch (lexer.code_point) {
-                                    '=' => {
                                         lexer.step();
-                                        lexer.token = T.t_less_than_less_than_equals;
-                                    },
-
-                                    else => {
-                                        lexer.token = T.t_less_than_less_than;
+                                        continue :html_comment lexer.code_point;
                                     },
                                 }
-                            },
-                            // Handle legacy HTML-style comments
-                            '!' => {
-                                if (strings.eqlComptime(lexer.peek("--".len), "--")) {
-                                    try lexer.addUnsupportedSyntaxError("Legacy HTML comments not implemented yet!");
+                                continue :lex lexer.code_point;
+                            }
+
+                            lexer.token = T.t_minus_minus;
+                        },
+
+                        else => {
+                            lexer.token = T.t_minus;
+                        },
+                    }
+                },
+
+                '*' => {
+                    // '*' or '*=' or '**' or '**='
+                    lexer.start = lexer.end;
+                    lexer.step();
+                    switch (lexer.code_point) {
+                        '=' => {
+                            lexer.step();
+                            lexer.token = .t_asterisk_equals;
+                        },
+                        '*' => {
+                            lexer.step();
+                            switch (lexer.code_point) {
+                                '=' => {
+                                    lexer.step();
+                                    lexer.token = .t_asterisk_asterisk_equals;
+                                },
+                                else => {
+                                    lexer.token = .t_asterisk_asterisk;
+                                },
+                            }
+                        },
+                        else => {
+                            lexer.token = .t_asterisk;
+                        },
+                    }
+                },
+                '/' => {
+                    // '/' or '/=' or '//' or '/* ... */'
+                    lexer.start = lexer.end;
+                    lexer.step();
+
+                    switch (lexer.code_point) {
+                        '=' => {
+                            lexer.step();
+                            lexer.token = .t_slash_equals;
+                        },
+                        '/' => {
+                            // Single line comment
+                            single_comment: switch (lexer.code_point) {
+                                '\r', '\n', 0x2028, 0x2029, -1 => {},
+                                else => {
+                                    lexer.step();
+                                    continue :single_comment lexer.code_point;
+                                },
+                            }
+
+                            if (comptime is_json) {
+                                if (!json.allow_comments) {
+                                    try lexer.addRangeError(lexer.range(), "JSON does not support comments", .{}, true);
                                     return;
                                 }
-
-                                lexer.token = T.t_less_than;
-                            },
-
-                            else => {
-                                lexer.token = T.t_less_than;
-                            },
-                        }
-                    },
-
-                    '>' => {
-                        if (comptime is_json) {
-                            return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
-                        }
-
-                        // '>' or '>>' or '>>>' or '>=' or '>>=' or '>>>='
-                        lexer.step();
-
-                        switch (lexer.code_point) {
-                            '=' => {
-                                lexer.step();
-                                lexer.token = T.t_greater_than_equals;
-                            },
-                            '>' => {
-                                lexer.step();
-                                switch (lexer.code_point) {
-                                    '=' => {
-                                        lexer.step();
-                                        lexer.token = T.t_greater_than_greater_than_equals;
-                                    },
-                                    '>' => {
-                                        lexer.step();
-                                        switch (lexer.code_point) {
-                                            '=' => {
-                                                lexer.step();
-                                                lexer.token = T.t_greater_than_greater_than_greater_than_equals;
-                                            },
-                                            else => {
-                                                lexer.token = T.t_greater_than_greater_than_greater_than;
-                                            },
-                                        }
-                                    },
-                                    else => {
-                                        lexer.token = T.t_greater_than_greater_than;
-                                    },
-                                }
-                            },
-                            else => {
-                                lexer.token = T.t_greater_than;
-                            },
-                        }
-                    },
-
-                    '!' => {
-                        if (comptime is_json) {
-                            return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
-                        }
-
-                        // '!' or '!=' or '!=='
-                        lexer.step();
-                        switch (lexer.code_point) {
-                            '=' => {
-                                lexer.step();
-                                switch (lexer.code_point) {
-                                    '=' => {
-                                        lexer.step();
-                                        lexer.token = T.t_exclamation_equals_equals;
-                                    },
-
-                                    else => {
-                                        lexer.token = T.t_exclamation_equals;
-                                    },
-                                }
-                            },
-                            else => {
-                                lexer.token = T.t_exclamation;
-                            },
-                        }
-                    },
-
-                    '\'' => {
-                        try lexer.parseStringLiteral('\'');
-                    },
-                    '"' => {
-                        try lexer.parseStringLiteral('"');
-                    },
-                    '`' => {
-                        try lexer.parseStringLiteral('`');
-                    },
-
-                    '_', '$', 'a'...'z', 'A'...'Z' => {
-                        const advance = latin1IdentifierContinueLength(lexer.source.contents[lexer.current..]);
-
-                        lexer.end = lexer.current + advance;
-                        lexer.current = lexer.end;
-
-                        lexer.step();
-
-                        if (lexer.code_point >= 0x80) {
-                            while (isIdentifierContinue(lexer.code_point)) {
-                                lexer.step();
                             }
-                        }
+                            lexer.scanCommentText();
+                            continue :lex lexer.code_point;
+                        },
+                        '*' => {
+                            lexer.step();
 
-                        if (lexer.code_point != '\\') {
-                            // this code is so hot that if you save lexer.raw() into a temporary variable
-                            // it shows up in profiling
-                            lexer.identifier = lexer.raw();
-                            lexer.token = Keywords.get(lexer.identifier) orelse T.t_identifier;
-                        } else {
-                            const scan_result = try lexer.scanIdentifierWithEscapes(.normal);
-                            lexer.identifier = scan_result.contents;
-                            lexer.token = scan_result.token;
-                        }
-                    },
-
-                    '\\' => {
-                        if (comptime is_json and json_options.ignore_leading_escape_sequences) {
-                            if (lexer.start == 0 or lexer.current == lexer.source.contents.len - 1) {
-                                lexer.step();
-                                continue;
+                            multi_comment: switch (lexer.code_point) {
+                                '*' => {
+                                    lexer.step();
+                                    if (lexer.code_point == '/') {
+                                        lexer.step();
+                                    } else {
+                                        continue :multi_comment lexer.code_point;
+                                    }
+                                },
+                                '\r', '\n', 0x2028, 0x2029 => {
+                                    lexer.step();
+                                    lexer.has_newline_before = true;
+                                    continue :multi_comment lexer.code_point;
+                                },
+                                -1 => {
+                                    lexer.start = lexer.end;
+                                    try lexer.addSyntaxError(
+                                        lexer.start,
+                                        "Expected \"*/\" to terminate multi-line comment",
+                                        .{},
+                                    );
+                                },
+                                else => {
+                                    // TODO: SIMD optimization path commented out for now
+                                    lexer.step();
+                                    continue :multi_comment lexer.code_point;
+                                },
                             }
-                        }
 
+                            if (comptime is_json) {
+                                if (!json.allow_comments) {
+                                    try lexer.addRangeError(lexer.range(), "JSON does not support comments", .{}, true);
+                                    return;
+                                }
+                            }
+                            lexer.scanCommentText();
+                            continue :lex lexer.code_point;
+                        },
+                        else => {
+                            lexer.token = .t_slash;
+                        },
+                    }
+                },
+
+                '=' => {
+                    if (comptime is_json) {
+                        return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
+                    }
+
+                    // '=' or '=>' or '==' or '==='
+                    lexer.start = lexer.end;
+                    lexer.step();
+                    switch (lexer.code_point) {
+                        '>' => {
+                            lexer.step();
+                            lexer.token = T.t_equals_greater_than;
+                        },
+
+                        '=' => {
+                            lexer.step();
+                            switch (lexer.code_point) {
+                                '=' => {
+                                    lexer.step();
+                                    lexer.token = T.t_equals_equals_equals;
+                                },
+
+                                else => {
+                                    lexer.token = T.t_equals_equals;
+                                },
+                            }
+                        },
+
+                        else => {
+                            lexer.token = T.t_equals;
+                        },
+                    }
+                },
+
+                '<' => {
+                    if (comptime is_json) {
+                        return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
+                    }
+
+                    // '<' or '<<' or '<=' or '<<=' or '<!--'
+                    lexer.start = lexer.end;
+                    lexer.step();
+                    switch (lexer.code_point) {
+                        '=' => {
+                            lexer.step();
+                            lexer.token = T.t_less_than_equals;
+                        },
+
+                        '<' => {
+                            lexer.step();
+                            switch (lexer.code_point) {
+                                '=' => {
+                                    lexer.step();
+                                    lexer.token = T.t_less_than_less_than_equals;
+                                },
+
+                                else => {
+                                    lexer.token = T.t_less_than_less_than;
+                                },
+                            }
+                        },
+                        // Handle legacy HTML-style comments
+                        '!' => {
+                            if (strings.eqlComptime(lexer.peek("--".len), "--")) {
+                                try lexer.addUnsupportedSyntaxError("Legacy HTML comments not implemented yet!");
+                                return;
+                            }
+
+                            lexer.token = T.t_less_than;
+                        },
+
+                        else => {
+                            lexer.token = T.t_less_than;
+                        },
+                    }
+                },
+
+                '>' => {
+                    if (comptime is_json) {
+                        return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
+                    }
+
+                    // '>' or '>>' or '>>>' or '>=' or '>>=' or '>>>='
+                    lexer.start = lexer.end;
+                    lexer.step();
+
+                    switch (lexer.code_point) {
+                        '=' => {
+                            lexer.step();
+                            lexer.token = T.t_greater_than_equals;
+                        },
+                        '>' => {
+                            lexer.step();
+                            switch (lexer.code_point) {
+                                '=' => {
+                                    lexer.step();
+                                    lexer.token = T.t_greater_than_greater_than_equals;
+                                },
+                                '>' => {
+                                    lexer.step();
+                                    switch (lexer.code_point) {
+                                        '=' => {
+                                            lexer.step();
+                                            lexer.token = T.t_greater_than_greater_than_greater_than_equals;
+                                        },
+                                        else => {
+                                            lexer.token = T.t_greater_than_greater_than_greater_than;
+                                        },
+                                    }
+                                },
+                                else => {
+                                    lexer.token = T.t_greater_than_greater_than;
+                                },
+                            }
+                        },
+                        else => {
+                            lexer.token = T.t_greater_than;
+                        },
+                    }
+                },
+
+                '!' => {
+                    if (comptime is_json) {
+                        return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
+                    }
+
+                    // '!' or '!=' or '!=='
+                    lexer.start = lexer.end;
+                    lexer.step();
+                    switch (lexer.code_point) {
+                        '=' => {
+                            lexer.step();
+                            switch (lexer.code_point) {
+                                '=' => {
+                                    lexer.step();
+                                    lexer.token = T.t_exclamation_equals_equals;
+                                },
+
+                                else => {
+                                    lexer.token = T.t_exclamation_equals;
+                                },
+                            }
+                        },
+                        else => {
+                            lexer.token = T.t_exclamation;
+                        },
+                    }
+                },
+
+                '\'' => {
+                    lexer.start = lexer.end;
+                    try lexer.parseStringLiteral('\'');
+                },
+                '"' => {
+                    lexer.start = lexer.end;
+                    try lexer.parseStringLiteral('"');
+                },
+                '`' => {
+                    lexer.start = lexer.end;
+                    try lexer.parseStringLiteral('`');
+                },
+
+                '_', '$', 'a'...'z', 'A'...'Z' => {
+                    lexer.start = lexer.end;
+                    const advance = latin1IdentifierContinueLength(lexer.source.contents[lexer.current..]);
+
+                    lexer.end = lexer.current + advance;
+                    lexer.current = lexer.end;
+
+                    lexer.step();
+
+                    if (lexer.code_point >= 0x80) {
+                        while (isIdentifierContinue(lexer.code_point)) {
+                            lexer.step();
+                        }
+                    }
+
+                    if (lexer.code_point != '\\') {
+                        // this code is so hot that if you save lexer.raw() into a temporary variable
+                        // it shows up in profiling
+                        lexer.identifier = lexer.raw();
+                        lexer.token = Keywords.get(lexer.identifier) orelse T.t_identifier;
+                    } else {
                         const scan_result = try lexer.scanIdentifierWithEscapes(.normal);
                         lexer.identifier = scan_result.contents;
                         lexer.token = scan_result.token;
-                    },
+                    }
+                },
 
-                    '.', '0'...'9' => {
-                        try lexer.parseNumericLiteralOrDot();
-                    },
-
-                    else => {
-                        // Check for unusual whitespace characters
-                        if (isWhitespace(lexer.code_point)) {
+                '\\' => {
+                    if (comptime is_json and json_options.ignore_leading_escape_sequences) {
+                        if (lexer.start == 0 or lexer.current == lexer.source.contents.len - 1) {
                             lexer.step();
-                            continue;
+                            continue :lex lexer.code_point;
                         }
+                    }
 
-                        if (isIdentifierStart(lexer.code_point)) {
+                    lexer.start = lexer.end;
+                    const scan_result = try lexer.scanIdentifierWithEscapes(.normal);
+                    lexer.identifier = scan_result.contents;
+                    lexer.token = scan_result.token;
+                },
+
+                '.', '0'...'9' => {
+                    lexer.start = lexer.end;
+                    try lexer.parseNumericLiteralOrDot();
+                },
+
+                else => {
+                    lexer.start = lexer.end;
+                    // Check for unusual whitespace characters
+                    if (isWhitespace(lexer.code_point)) {
+                        lexer.step();
+                        continue :lex lexer.code_point;
+                    }
+
+                    if (isIdentifierStart(lexer.code_point)) {
+                        lexer.step();
+                        while (isIdentifierContinue(lexer.code_point)) {
                             lexer.step();
-                            while (isIdentifierContinue(lexer.code_point)) {
-                                lexer.step();
-                            }
-                            if (lexer.code_point == '\\') {
-                                const scan_result = try lexer.scanIdentifierWithEscapes(.normal);
-                                lexer.identifier = scan_result.contents;
-                                lexer.token = scan_result.token;
-                            } else {
-                                lexer.token = T.t_identifier;
-                                lexer.identifier = lexer.raw();
-                            }
-                            break;
                         }
-
+                        if (lexer.code_point == '\\') {
+                            const scan_result = try lexer.scanIdentifierWithEscapes(.normal);
+                            lexer.identifier = scan_result.contents;
+                            lexer.token = scan_result.token;
+                        } else {
+                            lexer.token = T.t_identifier;
+                            lexer.identifier = lexer.raw();
+                        }
+                    } else {
                         lexer.end = lexer.current;
                         lexer.token = T.t_syntax_error;
-                    },
-                }
-
-                return;
+                    }
+                },
             }
         }
 

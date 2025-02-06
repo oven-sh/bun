@@ -36,6 +36,17 @@ pub const StandaloneModuleGraph = struct {
     pub const base_public_path = targetBasePublicPath(Environment.os, "");
 
     pub const base_public_path_with_default_suffix = targetBasePublicPath(Environment.os, "root/");
+    const Instance = struct {
+        pub var instance: ?*StandaloneModuleGraph = null;
+    };
+
+    pub fn get() ?*StandaloneModuleGraph {
+        return Instance.instance;
+    }
+
+    pub fn set(instance: *StandaloneModuleGraph) void {
+        Instance.instance = instance;
+    }
 
     pub fn targetBasePublicPath(target: Environment.OperatingSystem, comptime suffix: [:0]const u8) [:0]const u8 {
         return switch (target) {
@@ -62,9 +73,21 @@ pub const StandaloneModuleGraph = struct {
         return this.findAssumeStandalonePath(name);
     }
 
+    pub fn stat(this: *const StandaloneModuleGraph, name: []const u8) ?bun.Stat {
+        const file = this.find(name) orelse return null;
+        return file.stat();
+    }
+
     pub fn findAssumeStandalonePath(this: *const StandaloneModuleGraph, name: []const u8) ?*File {
         if (Environment.isWindows) {
             var normalized_buf: bun.PathBuffer = undefined;
+            var input = name;
+            if (strings.hasPrefixComptime(input, bun.windows.nt_object_prefix_u8)) {
+                input = input[bun.windows.nt_object_prefix_u8.len..];
+            } else if (strings.hasPrefixComptime(input, bun.windows.long_path_prefix_u8)) {
+                input = input[bun.windows.long_path_prefix_u8.len..];
+            }
+
             const normalized = bun.path.platformToPosixBuf(u8, name, &normalized_buf);
             return this.files.getPtr(normalized);
         }
@@ -106,6 +129,13 @@ pub const StandaloneModuleGraph = struct {
         wtf_string: bun.String = bun.String.empty,
         bytecode: []u8 = "",
         module_format: ModuleFormat = .none,
+
+        pub fn stat(this: *const File) bun.Stat {
+            var result = std.mem.zeroes(bun.Stat);
+            result.size = @intCast(this.contents.len);
+            result.mode = bun.S.IFREG | 0o644;
+            return result;
+        }
 
         pub fn lessThanByIndex(ctx: []const File, lhs_i: u32, rhs_i: u32) bool {
             const lhs = ctx[lhs_i];

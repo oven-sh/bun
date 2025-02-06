@@ -66,7 +66,7 @@ const db = new Database("mydb.sqlite", { create: true });
 Added in Bun v1.1.14
 {% /callout %}
 
-By default, `bun:sqlite` requires binding parameters to include the `$`, `:`, or `@` prefix, and does not throw an error if a parameter is missing.
+By default, `bun:sqlite` requires binding parameters to include the `$`, `:`, or `@` prefix (see [binding values](#binding-values)), and does not throw an error if a parameter is missing.
 
 To instead throw an error when a parameter is missing and allow binding without a prefix, set `strict: true` on the `Database` constructor:
 
@@ -642,15 +642,16 @@ class Database {
         },
   );
 
-  query<Params, ReturnType>(sql: string): Statement<Params, ReturnType>;
-  run(
+  query<ReturnType, Params>(sql: string): Statement<ReturnType, Params>;
+
+  run<Params>(
     sql: string,
-    params?: SQLQueryBindings,
+    ...params: Params[]
   ): { lastInsertRowid: number; changes: number };
   exec = this.run;
 }
 
-class Statement<Params, ReturnType> {
+class Statement<ReturnType, Params> {
   all(params: Params): ReturnType[];
   get(params: Params): ReturnType | undefined;
   run(params: Params): {
@@ -669,14 +670,15 @@ class Statement<Params, ReturnType> {
   as(Class: new () => ReturnType): this;
 }
 
-type SQLQueryBindings =
+type PrimitiveSQLQueryBindings =
   | string
   | bigint
   | TypedArray
   | number
   | boolean
-  | null
-  | Record<string, string | bigint | TypedArray | number | boolean | null>;
+  | null;
+
+type SQLQueryBindings = PrimitiveSQLQueryBindings[] | Record<string, PrimitiveSQLQueryBindings>;
 ```
 
 ### Datatypes

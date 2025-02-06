@@ -1364,7 +1364,6 @@ static int64_t indexOf(const uint8_t* thisPtr, int64_t thisLength, const uint8_t
     if (thisLength < valueLength + byteOffset)
         return -1;
     auto start = thisPtr + byteOffset;
-
     auto it = static_cast<uint8_t*>(MEMMEM_IMPL(start, static_cast<size_t>(thisLength - byteOffset), valuePtr, static_cast<size_t>(valueLength)));
     if (it != NULL) {
         return it - thisPtr;
@@ -1374,7 +1373,7 @@ static int64_t indexOf(const uint8_t* thisPtr, int64_t thisLength, const uint8_t
 
 static int64_t indexOf16(const uint8_t* thisPtr, int64_t thisLength, const uint8_t* valuePtr, int64_t valueLength, int64_t byteOffset)
 {
-    size_t finalresult = 0;
+    int64_t finalresult = 0;
     if (thisLength == 1) return -1;
     thisLength = thisLength / 2 * 2;
     if (valueLength == 1) return -1;
@@ -1410,6 +1409,13 @@ static int64_t indexOfNumber(JSC::JSGlobalObject* lexicalGlobalObject, bool last
     ssize_t byteOffset = indexOfOffset(byteLength, byteOffsetD, 1, !last);
     if (byteOffset == -1) return -1;
     if (last) {
+#if OS(LINUX)
+#ifdef __GNU_LIBRARY__
+        const void* offset = memrchr(reinterpret_cast<const void*>(typedVector + byteOffset), byteValue, byteLength - byteOffset);
+        if (offset != NULL) return static_cast<const uint8_t*>(offset) - typedVector;
+        return -1;
+#endif
+#endif
         for (int64_t i = byteOffset; i >= 0; --i) {
             if (byteValue == typedVector[i]) return i;
         }
@@ -1482,7 +1488,7 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*
     if (std::isnan(byteOffsetD)) byteOffsetD = dir ? 0 : byteLength;
 
     if (valueValue.isNumber()) {
-        uint8_t byteValue = (valueValue.toInt32(lexicalGlobalObject)) % 256;
+        uint8_t byteValue = valueValue.asAnyInt() % 256;
         RETURN_IF_EXCEPTION(scope, -1);
         return indexOfNumber(lexicalGlobalObject, last, typedVector, byteLength, byteOffsetD, byteValue);
     }

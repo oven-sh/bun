@@ -3294,9 +3294,7 @@ pub fn existsAtType(fd: bun.FileDescriptor, path: anytype) Maybe(ExistsAtType) {
         const rc = kernel32.NtQueryAttributesFile(&attr, &basic_info);
         if (JSC.Maybe(bool).errnoSys(rc, .access)) |err| {
             syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = {}", .{ bun.fmt.fmtOSPath(path, .{}), err });
-            if (err.getErrno() == .NOENT) {
-                return .{ .result = false };
-            }
+
             return .{ .err = err };
         }
 

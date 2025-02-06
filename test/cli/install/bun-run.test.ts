@@ -513,6 +513,8 @@ it("should preserve '--' in process.argv", async () => {
   expect(argv[2]).toBe("--");
   expect(argv[3]).toBe("rest");
   expect(argv[4]).toBe("--foo=bar");
+
+});
   
 it("$npm_command is accurate", async () => {
   await writeFile(

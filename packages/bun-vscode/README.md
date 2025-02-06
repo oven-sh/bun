@@ -3,7 +3,7 @@
 ![Visual Studio Marketplace Version](https://img.shields.io/visual-studio-marketplace/v/oven.bun-vscode?labelColor=212121&color=fbf0df
 )
 
-<img align="right" src="https://bun.sh/logo.svg" height="150px">
+<img align="right" src="https://bun.sh/logo@4x.png" height="150px">
 
 This extension adds support for using [Bun](https://bun.sh/) with Visual Studio Code. Bun is an all-in-one toolkit for JavaScript and TypeScript apps.
 

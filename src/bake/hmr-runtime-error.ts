@@ -25,7 +25,7 @@ declare const error: Uint8Array<ArrayBuffer>;
 let firstVersionPacket = true;
 let currentRouteIndex = -1;
 
-initWebSocket({
+const ws = initWebSocket({
   [MessageId.version](dv) {
     if (firstVersionPacket) {
       firstVersionPacket = false;
@@ -35,6 +35,7 @@ initWebSocket({
       // ensure this bundle is enqueued.
       location.reload();
     }
+    ws.send("se"); // IncomingMessageId.subscribe with route_update
   },
 
   [MessageId.errors]: onErrorMessage,

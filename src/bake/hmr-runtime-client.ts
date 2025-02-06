@@ -129,8 +129,17 @@ const ws = initWebSocket({
     // JavaScript modules
     if (reader.hasMoreData()) {
       const code = td.decode(reader.rest());
-      const modules = (0, eval)(code);
-      replaceModules(modules);
+      try {
+        const modules = (0, eval)(code);
+        replaceModules(modules);
+      } catch (e) {
+        if (IS_BUN_DEVELOPMENT) {
+          console.error(e, "Failed to parse HMR payload", { code });
+          onRuntimeError(e, RuntimeErrorType.fatal);
+          return;
+        }
+        throw e;
+      }
     }
     if (isServerSideRouteUpdate) {
       performRouteReload();

@@ -4023,7 +4023,7 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
             return @enumFromInt(int);
         }
 
-        /// Prefer this over @intFromEnum because of type confusion with `.optional`
+        /// Prefer this over @intFromEnum because of type confusion with `.Optional`
         pub inline fn get(i: @This()) backing_int {
             bun.assert(@intFromEnum(i) != null_value); // memory corruption
             return @intFromEnum(i);

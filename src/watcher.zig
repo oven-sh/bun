@@ -119,7 +119,8 @@ pub fn getHash(filepath: string) HashType {
 pub const WatchItemIndex = u16;
 pub const max_eviction_count = 8096;
 
-const log = bun.Output.scoped(.watcher, false);
+const DebugLogScope = bun.Output.Scoped(.watcher, false);
+const log = DebugLogScope.log;
 
 const WindowsWatcher = @import("./watcher/WindowsWatcher.zig");
 // TODO: some platform-specific behavior is implemented in
@@ -214,7 +215,7 @@ fn threadMain(this: *Watcher) !void {
     Output.Source.configureNamedThread("File Watcher");
 
     defer Output.flush();
-    if (FeatureFlags.verbose_watcher) Output.prettyln("Watcher started", .{});
+    log("Watcher started", .{});
 
     switch (this.watchLoop()) {
         .err => |err| {
@@ -534,12 +535,11 @@ pub fn appendFileMaybeLock(
         .result => {},
     }
 
-    if (comptime FeatureFlags.verbose_watcher) {
-        if (strings.indexOf(file_path, this.cwd)) |i| {
-            Output.prettyln("<r><d>Added <b>./{s}<r><d> to watch list.<r>", .{file_path[i + this.cwd.len ..]});
-        } else {
-            Output.prettyln("<r><d>Added <b>{s}<r><d> to watch list.<r>", .{file_path});
-        }
+    if (DebugLogScope.isVisible()) {
+        log("Added <b>{s}<r> to watch list.", .{if (strings.indexOf(file_path, this.cwd)) |i|
+            file_path[i + this.cwd.len ..]
+        else
+            file_path});
     }
 
     return .{ .result = {} };

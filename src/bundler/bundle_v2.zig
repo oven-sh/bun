@@ -400,7 +400,7 @@ pub const BundleV2 = struct {
     dynamic_import_entry_points: std.AutoArrayHashMap(Index.Int, void) = undefined,
     has_on_parse_plugins: bool = false,
 
-    finalizers: std.ArrayListUnmanaged(CacheEntry.External) = .{},
+    finalizers: std.ArrayListUnmanaged(CacheEntry.ExternalFreeFunction) = .{},
 
     drain_defer_task: DeferredBatchTask = .{},
 
@@ -453,8 +453,14 @@ pub const BundleV2 = struct {
         };
     }
 
-    pub fn hasOnParsePlugins(this: *const BundleV2) bool {
-        return this.has_on_parse_plugins;
+    /// By calling this function, it implies that the returned log *will* be
+    /// written to. For DevServer, this allocates a per-file log for the sources
+    /// it is called on. Function must be called on the bundle thread.
+    pub fn logForResolutionFailures(this: *BundleV2, abs_path: []const u8, bake_graph: bake.Graph) *bun.logger.Log {
+        if (this.transpiler.options.dev_server) |dev| {
+            return dev.getLogForResolutionFailures(abs_path, bake_graph) catch bun.outOfMemory();
+        }
+        return this.transpiler.log;
     }
 
     /// Same semantics as bundlerForTarget for `path_to_source_index_map`
@@ -718,7 +724,7 @@ pub const BundleV2 = struct {
 
             var handles_import_errors = false;
             var source: ?*const Logger.Source = null;
-            const log = &this.completion.?.log;
+            const log = this.logForResolutionFailures(import_record.source_file, target.bakeGraph());
 
             if (import_record.importer_source_index) |importer| {
                 var record: *ImportRecord = &this.graph.ast.items(.import_records)[importer].slice()[import_record.import_record_index];
@@ -2064,7 +2070,6 @@ pub const BundleV2 = struct {
                 this.graph.heap.gc(true);
             }
         }
-        const log = this.transpiler.log;
 
         switch (resolve.value.consume()) {
             .no_match => {
@@ -2075,6 +2080,8 @@ pub const BundleV2 = struct {
                     this.runResolver(resolve.import_record, resolve.import_record.original_target);
                     return;
                 }
+
+                const log = this.logForResolutionFailures(resolve.import_record.source_file, resolve.import_record.original_target.bakeGraph());
 
                 // When it's not a file, this is an error and we should report it.
                 //
@@ -2197,6 +2204,7 @@ pub const BundleV2 = struct {
                 }
             },
             .err => |err| {
+                const log = this.logForResolutionFailures(resolve.import_record.source_file, resolve.import_record.original_target.bakeGraph());
                 log.msgs.append(err) catch unreachable;
                 log.errors += @as(u32, @intFromBool(err.kind == .err));
                 log.warnings += @as(u32, @intFromBool(err.kind == .warn));
@@ -2713,13 +2721,13 @@ pub const BundleV2 = struct {
                 continue;
             }
 
-            const transpiler, const renderer: bake.Graph, const target =
+            const transpiler, const bake_graph: bake.Graph, const target =
                 if (import_record.tag == .bake_resolve_to_ssr_graph)
             brk: {
                 // TODO: consider moving this error into js_parser so it is caught more reliably
                 // Then we can assert(this.framework != null)
                 if (this.framework == null) {
-                    this.transpiler.log.addErrorFmt(
+                    this.logForResolutionFailures(source.path.text, .ssr).addErrorFmt(
                         source,
                         import_record.range.loc,
                         this.graph.allocator,
@@ -2732,7 +2740,7 @@ pub const BundleV2 = struct {
                 const is_supported = this.framework.?.server_components != null and
                     this.framework.?.server_components.?.separate_ssr_graph;
                 if (!is_supported) {
-                    this.transpiler.log.addErrorFmt(
+                    this.logForResolutionFailures(source.path.text, .ssr).addErrorFmt(
                         source,
                         import_record.range.loc,
                         this.graph.allocator,
@@ -2759,9 +2767,11 @@ pub const BundleV2 = struct {
                 import_record.path.text,
                 import_record.kind,
             ) catch |err| {
+                const log = this.logForResolutionFailures(source.path.text, bake_graph);
+
                 // Only perform directory busting when hot-reloading is enabled
                 if (err == error.ModuleNotFound) {
-                    if (this.transpiler.options.dev_server) |dev| {
+                    if (this.bun_watcher != null) {
                         if (!had_busted_dir_cache) {
                             // Only re-query if we previously had something cached.
                             if (transpiler.resolver.bustDirCacheFromSpecifier(
@@ -2772,13 +2782,14 @@ pub const BundleV2 = struct {
                                 continue :inner;
                             }
                         }
-
-                        // Tell Bake's Dev Server to wait for the file to be imported.
-                        dev.directory_watchers.trackResolutionFailure(
-                            source.path.text,
-                            import_record.path.text,
-                            ast.target.bakeGraph(), // use the source file target not the altered one
-                        ) catch bun.outOfMemory();
+                        if (this.transpiler.options.dev_server) |dev| {
+                            // Tell DevServer about the resolution failure.
+                            dev.directory_watchers.trackResolutionFailure(
+                                source.path.text,
+                                import_record.path.text,
+                                ast.target.bakeGraph(), // use the source file target not the altered one
+                            ) catch bun.outOfMemory();
+                        }
                     }
                 }
 
@@ -2797,7 +2808,7 @@ pub const BundleV2 = struct {
                             if (isPackagePath(import_record.path.text)) {
                                 if (ast.target == .browser and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
                                     addError(
-                                        this.transpiler.log,
+                                        log,
                                         source,
                                         import_record.range,
                                         this.graph.allocator,
@@ -2807,7 +2818,7 @@ pub const BundleV2 = struct {
                                     ) catch @panic("unexpected log error");
                                 } else {
                                     addError(
-                                        this.transpiler.log,
+                                        log,
                                         source,
                                         import_record.range,
                                         this.graph.allocator,
@@ -2818,14 +2829,12 @@ pub const BundleV2 = struct {
                                 }
                             } else {
                                 addError(
-                                    this.transpiler.log,
+                                    log,
                                     source,
                                     import_record.range,
                                     this.graph.allocator,
                                     "Could not resolve: \"{s}\"",
-                                    .{
-                                        import_record.path.text,
-                                    },
+                                    .{import_record.path.text},
                                     import_record.kind,
                                 ) catch @panic("unexpected log error");
                             }
@@ -2860,7 +2869,7 @@ pub const BundleV2 = struct {
                 import_record.source_index = Index.invalid;
                 import_record.is_external_without_side_effects = true;
 
-                if (dev_server.isFileCached(path.text, renderer)) |entry| {
+                if (dev_server.isFileCached(path.text, bake_graph)) |entry| {
                     const rel = bun.path.relativePlatform(this.transpiler.fs.top_level_dir, path.text, .loose, false);
                     import_record.path.text = rel;
                     import_record.path.pretty = rel;
@@ -3470,9 +3479,8 @@ pub const DeferredBatchTask = struct {
         };
     }
 
-    pub fn getCompletion(this: *DeferredBatchTask) ?*bun.BundleV2.JSBundleCompletionTask {
-        const transpiler: *BundleV2 = @alignCast(@fieldParentPtr("drain_defer_task", this));
-        return transpiler.completion;
+    pub fn getBundleV2(this: *DeferredBatchTask) *bun.BundleV2 {
+        return @alignCast(@fieldParentPtr("drain_defer_task", this));
     }
 
     pub fn schedule(this: *DeferredBatchTask) void {
@@ -3480,7 +3488,7 @@ pub const DeferredBatchTask = struct {
             bun.assert(!this.running);
             this.running = false;
         }
-        this.getCompletion().?.jsc_event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.Task.init(this)));
+        this.getBundleV2().jsLoopForPlugins().enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.Task.init(this)));
     }
 
     pub fn deinit(this: *DeferredBatchTask) void {
@@ -3491,11 +3499,8 @@ pub const DeferredBatchTask = struct {
 
     pub fn runOnJSThread(this: *DeferredBatchTask) void {
         defer this.deinit();
-        var completion: *bun.BundleV2.JSBundleCompletionTask = this.getCompletion() orelse {
-            return;
-        };
-
-        completion.transpiler.plugins.?.drainDeferred(completion.result == .err);
+        var bv2 = this.getBundleV2();
+        bv2.plugins.?.drainDeferred(bv2.transpiler.log.hasErrors());
     }
 };
 
@@ -3513,7 +3518,7 @@ pub const ParseTask = struct {
     path: Fs.Path,
     secondary_path_for_commonjs_interop: ?Fs.Path = null,
     contents_or_fd: ContentsOrFd,
-    external: CacheEntry.External = .{},
+    external_free_function: CacheEntry.ExternalFreeFunction = .none,
     side_effects: _resolver.SideEffects,
     loader: ?Loader = null,
     jsx: options.JSX.Pragma,
@@ -3540,7 +3545,7 @@ pub const ParseTask = struct {
         /// This is used for native onBeforeParsePlugins to store
         /// a function pointer and context pointer to free the
         /// returned source code by the plugin.
-        external: CacheEntry.External = .{},
+        external: CacheEntry.ExternalFreeFunction = .none,
 
         pub const Value = union(enum) {
             success: Success,
@@ -3846,7 +3851,7 @@ pub const ParseTask = struct {
             .sqlite_embedded, .sqlite => {
                 if (!transpiler.options.target.isBun()) {
                     log.addError(
-                        null,
+                        &source,
                         Logger.Loc.Empty,
                         "To use the \"sqlite\" loader, set target to \"bun\"",
                     ) catch bun.outOfMemory();
@@ -3913,7 +3918,7 @@ pub const ParseTask = struct {
                 // (dap-eval-cb "source.contents.ptr")
                 if (transpiler.options.target == .browser) {
                     log.addError(
-                        null,
+                        &source,
                         Logger.Loc.Empty,
                         "Loading .node files won't work in the browser. Make sure to set target to \"bun\" or \"node\"",
                     ) catch bun.outOfMemory();
@@ -4084,7 +4089,7 @@ pub const ParseTask = struct {
                     if (task.ctx.framework) |f| {
                         if (f.built_in_modules.get(file_path.text)) |file| {
                             switch (file) {
-                                .code => |code| break :brk .{ .contents = code },
+                                .code => |code| break :brk .{ .contents = code, .fd = bun.invalid_fd },
                                 .import => |path| {
                                     file_path.* = Fs.Path.init(path);
                                     break :lookup_builtin;
@@ -4095,10 +4100,12 @@ pub const ParseTask = struct {
 
                     break :brk .{
                         .contents = NodeFallbackModules.contentsFromPath(file_path.text) orelse "",
+                        .fd = bun.invalid_fd,
                     };
                 }
 
                 break :brk resolver.caches.fs.readFileWithAllocator(
+                    // TODO: this allocator may be wrong for native plugins
                     if (loader.shouldCopyForBundling())
                         // The OutputFile will own the memory for the contents
                         bun.default_allocator
@@ -4309,6 +4316,7 @@ pub const ParseTask = struct {
         const OnBeforeParseResultWrapper = extern struct {
             original_source: ?[*]const u8 = null,
             original_source_len: usize = 0,
+            original_source_fd: bun.FileDescriptor = bun.invalid_fd,
             loader: Loader,
             check: if (bun.Environment.isDebug) u32 else u0 = if (bun.Environment.isDebug) 42069 else 0, // Value to ensure OnBeforeParseResult is wrapped in this struct
             result: OnBeforeParseResult,
@@ -4369,6 +4377,7 @@ pub const ParseTask = struct {
             const wrapper: *OnBeforeParseResultWrapper = result.getWrapper();
             wrapper.original_source = entry.contents.ptr;
             wrapper.original_source_len = entry.contents.len;
+            wrapper.original_source_fd = entry.fd;
             return 0;
         }
 
@@ -4467,19 +4476,20 @@ pub const ParseTask = struct {
 
                 if (wrapper.result.source_ptr) |ptr| {
                     if (wrapper.result.free_user_context != null) {
-                        this.task.external = CacheEntry.External{
+                        this.task.external_free_function = .{
                             .ctx = wrapper.result.user_context,
                             .function = wrapper.result.free_user_context,
                         };
                     }
                     from_plugin.* = true;
                     this.loader.* = wrapper.result.loader;
-                    return CacheEntry{
+                    return .{
                         .contents = ptr[0..wrapper.result.source_len],
-                        .external = .{
+                        .external_free_function = .{
                             .ctx = wrapper.result.user_context,
                             .function = wrapper.result.free_user_context,
                         },
+                        .fd = wrapper.original_source_fd,
                     };
                 }
             }
@@ -4526,11 +4536,8 @@ pub const ParseTask = struct {
         // Changing from `.contents` to `.fd` will cause a double free.
         // This was the case in the situation where the ParseTask receives its `.contents` from an onLoad plugin, which caused it to be
         // allocated by `bun.default_allocator` and then freed in `BundleV2.deinit` (and also by `entry.deinit(allocator)` below).
-        const debug_original_variant_check: if (bun.Environment.isDebug) ContentsOrFd.Tag else u0 =
-            if (bun.Environment.isDebug)
-            @as(ContentsOrFd.Tag, task.contents_or_fd)
-        else
-            0;
+        const debug_original_variant_check: if (bun.Environment.isDebug) ContentsOrFd.Tag else void =
+            if (bun.Environment.isDebug) @as(ContentsOrFd.Tag, task.contents_or_fd);
         errdefer {
             if (comptime bun.Environment.isDebug) {
                 if (@as(ContentsOrFd.Tag, task.contents_or_fd) != debug_original_variant_check) {
@@ -4548,7 +4555,10 @@ pub const ParseTask = struct {
             this.ctx.bun_watcher == null;
         if (will_close_file_descriptor) {
             _ = entry.closeFD();
-            task.contents_or_fd = .{ .fd = .{ .file = bun.invalid_fd, .dir = bun.invalid_fd } };
+            task.contents_or_fd = .{ .fd = .{
+                .file = bun.invalid_fd,
+                .dir = bun.invalid_fd,
+            } };
         } else if (task.contents_or_fd == .fd) {
             task.contents_or_fd = .{ .fd = .{
                 .file = entry.fd,
@@ -4746,10 +4756,10 @@ pub const ParseTask = struct {
             .ctx = this.ctx,
             .task = undefined,
             .value = value,
-            .external = this.external,
-            .watcher_data = .{
-                .fd = if (this.contents_or_fd == .fd) this.contents_or_fd.fd.file else bun.invalid_fd,
-                .dir_fd = if (this.contents_or_fd == .fd) this.contents_or_fd.fd.dir else bun.invalid_fd,
+            .external = this.external_free_function,
+            .watcher_data = switch (this.contents_or_fd) {
+                .fd => |fd| .{ .fd = fd.file, .dir_fd = fd.dir },
+                .contents => .none,
             },
         };
 
@@ -4821,7 +4831,7 @@ pub const ServerComponentParseTask = struct {
                 error.OutOfMemory => bun.outOfMemory(),
             },
 
-            .watcher_data = ParseTask.Result.WatcherData.none,
+            .watcher_data = .none,
         };
 
         switch (worker.ctx.loop().*) {

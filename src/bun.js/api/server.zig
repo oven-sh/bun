@@ -7461,6 +7461,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
 
         fn setRoutes(this: *ThisServer) void {
+            // TODO: move devserver and plugin logic away
             const app = this.app.?;
             const any_server = AnyServer.from(this);
             const dev_server = this.dev_server;
@@ -7497,7 +7498,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             // an unqueued state. The first thing (HTML Bundle, DevServer)
             // that needs plugins will cause the load to happen.
             if (needs_plugins and this.plugins == null) if (this.vm.transpiler.options.serve_plugins) |serve_plugins| {
-                this.plugins = ServePlugins.init(serve_plugins);
+                if (serve_plugins.len > 0) {
+                    this.plugins = ServePlugins.init(serve_plugins);
+                }
             };
 
             // Setup user websocket routes.

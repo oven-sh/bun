@@ -583,7 +583,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
             return ActiveSocket.init(&dead_socket);
         }
 
-        pending_sockets: HiveArray(PooledSocket, pool_size) = HiveArray(PooledSocket, pool_size).init(),
+        pending_sockets: HiveArray(PooledSocket, pool_size) = .empty,
         us_socket_context: *uws.SocketContext,
 
         const Context = @This();

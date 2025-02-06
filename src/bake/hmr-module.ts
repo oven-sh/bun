@@ -99,6 +99,16 @@ if (side === "server") {
   };
 }
 
+const enumerableEntries = ["id", "exports", "require"];
+for (const k in HotModule.prototype) {
+  if (!enumerableEntries.includes(k)) {
+    const descriptor = Object.getOwnPropertyDescriptor(HotModule.prototype, k);
+    if (descriptor) {
+      Object.defineProperty(HotModule.prototype, k, { ...descriptor, enumerable: false });
+    }
+  }
+}
+
 function initImportMeta(m: HotModule): ImportMeta {
   return {
     url: `bun://${m.id}`,
@@ -118,25 +128,25 @@ type HotDisposeFunction = (data: any) => void;
 type HotEventHandler = (data: any) => void;
 
 class Hot {
-  private _module: HotModule;
+  #module: HotModule;
 
   data = {};
 
   constructor(module: HotModule) {
-    this._module = module;
+    this.#module = module;
   }
 
   accept(
     arg1: string | readonly string[] | HotAcceptFunction,
     arg2: HotAcceptFunction | HotArrayAcceptFunction | undefined,
   ) {
-    console.warn("TODO: implement ImportMetaHot.accept (called from " + JSON.stringify(this._module.id) + ")");
+    console.warn("TODO: implement ImportMetaHot.accept (called from " + JSON.stringify(this.#module.id) + ")");
   }
 
   decline() {} // Vite: "This is currently a noop and is there for backward compatibility"
 
   dispose(cb: HotDisposeFunction) {
-    (this._module._onDispose ??= []).push(cb);
+    (this.#module._onDispose ??= []).push(cb);
   }
 
   prune(cb: HotDisposeFunction) {

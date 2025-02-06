@@ -3161,41 +3161,8 @@ pub fn faccessat(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
 
 pub fn directoryExistsAt(dir: anytype, subpath: anytype) JSC.Maybe(bool) {
     const dir_fd = bun.toFD(dir);
-    if (comptime Environment.isWindows) {
-        return switch (existsAtType(dir_fd, subpath)) {
-            .err => |err| .{ .err = err },
-            .result => |result| switch (result) {
-                .file => .{ .result = false },
-                .directory => .{ .result = true },
-            },
-        };
-    }
-
-    // TODO: use statx to query less information. this path is currently broken
-    // const have_statx = Environment.isLinux;
-    // if (have_statx) brk: {
-    //     var statx: std.os.linux.Statx = undefined;
-    //     if (Maybe(bool).errnoSys(bun.C.linux.statx(
-    //         dir_fd.cast(),
-    //         subpath,
-    //         // Don't follow symlinks, don't automount, minimize permissions needed
-    //         std.os.linux.AT.SYMLINK_NOFOLLOW | std.os.linux.AT.NO_AUTOMOUNT,
-    //         // We only need the file type to check if it's a directory
-    //         std.os.linux.STATX_TYPE,
-    //         &statx,
-    //     ), .statx)) |err| {
-    //         switch (err.err.getErrno()) {
-    //             .OPNOTSUPP, .NOSYS => break :brk, // Linux < 4.11
-    //             // truly doesn't exist.
-    //             .NOENT => return .{ .result = false },
-    //             else => return err,
-    //         }
-    //         return err;
-    //     }
-    //     return .{ .result = S.ISDIR(statx.mode) };
-    // }
     return switch (existsAtType(dir_fd, subpath)) {
-        .err => |err| .{ .err = err },
+        .err => |err| .{ .err = if (err.getErrno() == .NOENT) .{ .errno = @intFromEnum(bun.C.E.UNKNOWN), .syscall = .access } else err },
         .result => |result| .{ .result = result == .directory },
     };
 }

@@ -87,12 +87,23 @@ set(WEBKIT_NAME bun-webkit-${WEBKIT_OS}-${WEBKIT_ARCH}${WEBKIT_SUFFIX})
 set(WEBKIT_FILENAME ${WEBKIT_NAME}.tar.gz)
 setx(WEBKIT_DOWNLOAD_URL https://github.com/oven-sh/WebKit/releases/download/autobuild-${WEBKIT_VERSION}/${WEBKIT_FILENAME})
 
-file(DOWNLOAD ${WEBKIT_DOWNLOAD_URL} ${CACHE_PATH}/${WEBKIT_FILENAME} SHOW_PROGRESS)
-file(ARCHIVE_EXTRACT INPUT ${CACHE_PATH}/${WEBKIT_FILENAME} DESTINATION ${CACHE_PATH} TOUCH)
-file(REMOVE ${CACHE_PATH}/${WEBKIT_FILENAME})
-file(REMOVE_RECURSE ${WEBKIT_PATH})
-file(RENAME ${CACHE_PATH}/bun-webkit ${WEBKIT_PATH})
-
-if(APPLE)
-  file(REMOVE_RECURSE ${WEBKIT_INCLUDE_PATH}/unicode)
-endif()
+register_command(
+  TARGET
+    WebKit
+  COMMENT
+    "Downloading WebKit"
+  COMMAND
+    ${CMAKE_COMMAND}
+      -DCACHE_PATH=${CACHE_PATH}
+      -DWEBKIT_DOWNLOAD_URL=${WEBKIT_DOWNLOAD_URL}
+      -DWEBKIT_FILENAME=${WEBKIT_FILENAME}
+      -DWEBKIT_PATH=${WEBKIT_PATH}
+      -P ${CWD}/cmake/scripts/DownloadWebKit.cmake
+  SOURCES
+    ${CWD}/cmake/scripts/DownloadWebKit.cmake
+  OUTPUTS
+    ${WEBKIT_LIB_PATH}/libWTF.a
+    ${WEBKIT_LIB_PATH}/libJavaScriptCore.a
+    ${WEBKIT_LIB_PATH}/libbmalloc.a
+  ALWAYS_RUN
+)

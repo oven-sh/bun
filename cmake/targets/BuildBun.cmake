@@ -1060,6 +1060,7 @@ foreach(dependency ${BUN_DEPENDENCIES})
 endforeach()
 
 list(TRANSFORM BUN_DEPENDENCIES TOLOWER OUTPUT_VARIABLE BUN_TARGETS)
+list(APPEND BUN_DEPENDENCIES WebKit)
 add_custom_target(dependencies DEPENDS ${BUN_TARGETS})
 
 if(APPLE)

@@ -28,7 +28,12 @@ else()
   message(FATAL_ERROR "Unsupported architecture: ${CMAKE_HOST_SYSTEM_PROCESSOR}")
 endif()
 
-set(ZIG_NAME zig-${ZIG_OS}-${ZIG_ARCH}-${ZIG_VERSION})
+set(ZIG_ASAN "")
+if(ENABLE_ASAN)
+  set(ZIG_ASAN "+asan")
+endif()
+
+set(ZIG_NAME zig-${ZIG_OS}-${ZIG_ARCH}-${ZIG_VERSION}${ZIG_ASAN})
 
 if(CMAKE_HOST_WIN32)
   set(ZIG_EXE "zig.exe")

@@ -553,6 +553,7 @@ pub const Transpiler = struct {
                 const has_production_env = this.env.isProduction();
                 if (!was_production and has_production_env) {
                     this.options.setProduction(true);
+                    this.resolver.opts.setProduction(true);
                 }
 
                 if (this.options.isTest() or this.env.isTest()) {
@@ -567,6 +568,7 @@ pub const Transpiler = struct {
                 this.env.loadProcess();
                 if (this.env.isProduction()) {
                     this.options.setProduction(true);
+                    this.resolver.opts.setProduction(true);
                 }
             },
             else => {},
@@ -590,7 +592,7 @@ pub const Transpiler = struct {
 
         try this.runEnvLoader(false);
 
-        this.options.jsx.setProduction(this.env.isProduction());
+        var is_production = this.env.isProduction();
 
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();
@@ -600,10 +602,25 @@ pub const Transpiler = struct {
 
         try this.options.loadDefines(this.allocator, this.env, &this.options.env);
 
+        var is_development = false;
         if (this.options.define.dots.get("NODE_ENV")) |NODE_ENV| {
-            if (NODE_ENV.len > 0 and NODE_ENV[0].data.value == .e_string and NODE_ENV[0].data.value.e_string.eqlComptime("production")) {
-                this.options.production = true;
+            if (NODE_ENV.len > 0 and NODE_ENV[0].data.value == .e_string) {
+                if (NODE_ENV[0].data.value.e_string.eqlComptime("production")) {
+                    is_production = true;
+                } else if (NODE_ENV[0].data.value.e_string.eqlComptime("development")) {
+                    is_development = true;
+                }
             }
+        }
+
+        if (is_development) {
+            this.options.setProduction(false);
+            this.resolver.opts.setProduction(false);
+            this.options.force_node_env = .development;
+            this.resolver.opts.force_node_env = .development;
+        } else if (is_production) {
+            this.options.setProduction(true);
+            this.resolver.opts.setProduction(true);
         }
     }
 

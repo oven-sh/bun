@@ -3789,10 +3789,18 @@ pub const NodeFS = struct {
     pub fn exists(this: *NodeFS, args: Arguments.Exists, _: Flavor) Maybe(Return.Exists) {
         // NOTE: exists cannot return an error
         const path: PathLike = args.path orelse return .{ .result = false };
+
+        if (bun.StandaloneModuleGraph.get()) |graph| {
+            if (graph.find(path.slice()) != null) {
+                return .{ .result = true };
+            }
+        }
+
         const slice = if (path.slice().len == 0)
             comptime bun.OSPathLiteral("")
         else
             path.osPathKernel32(&this.sync_error_buf);
+
         return .{ .result = bun.sys.existsOSPath(slice, false) };
     }
 
@@ -4968,32 +4976,31 @@ pub const NodeFS = struct {
         const fd_maybe_windows: FileDescriptor = switch (args.path) {
             .path => brk: {
                 path = args.path.path.sliceZ(&this.sync_error_buf);
-                if (this.vm) |vm| {
-                    if (vm.standalone_module_graph) |graph| {
-                        if (graph.find(path)) |file| {
-                            if (args.encoding == .buffer) {
-                                return .{
-                                    .result = .{
-                                        .buffer = Buffer.fromBytes(
-                                            bun.default_allocator.dupe(u8, file.contents) catch bun.outOfMemory(),
-                                            bun.default_allocator,
-                                            .Uint8Array,
-                                        ),
-                                    },
-                                };
-                            } else if (comptime string_type == .default)
-                                return .{
-                                    .result = .{
-                                        .string = bun.default_allocator.dupe(u8, file.contents) catch bun.outOfMemory(),
-                                    },
-                                }
-                            else
-                                return .{
-                                    .result = .{
-                                        .null_terminated = bun.default_allocator.dupeZ(u8, file.contents) catch bun.outOfMemory(),
-                                    },
-                                };
-                        }
+
+                if (bun.StandaloneModuleGraph.get()) |graph| {
+                    if (graph.find(path)) |file| {
+                        if (args.encoding == .buffer) {
+                            return .{
+                                .result = .{
+                                    .buffer = Buffer.fromBytes(
+                                        bun.default_allocator.dupe(u8, file.contents) catch bun.outOfMemory(),
+                                        bun.default_allocator,
+                                        .Uint8Array,
+                                    ),
+                                },
+                            };
+                        } else if (comptime string_type == .default)
+                            return .{
+                                .result = .{
+                                    .string = bun.default_allocator.dupe(u8, file.contents) catch bun.outOfMemory(),
+                                },
+                            }
+                        else
+                            return .{
+                                .result = .{
+                                    .null_terminated = bun.default_allocator.dupeZ(u8, file.contents) catch bun.outOfMemory(),
+                                },
+                            };
                     }
                 }
 
@@ -5748,6 +5755,12 @@ pub const NodeFS = struct {
 
     pub fn stat(this: *NodeFS, args: Arguments.Stat, _: Flavor) Maybe(Return.Stat) {
         const path = args.path.sliceZ(&this.sync_error_buf);
+        if (bun.StandaloneModuleGraph.get()) |graph| {
+            if (graph.stat(path)) |result| {
+                return .{ .result = .{ .stats = .init(result, args.big_int) } };
+            }
+        }
+
         return switch (Syscall.stat(path)) {
             .result => |result| .{
                 .result = .{ .stats = .init(result, args.big_int) },

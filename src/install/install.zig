@@ -2844,12 +2844,12 @@ pub const PackageManager = struct {
                 const package_name = active_lifecycle_script_running_for_the_longest_amount_of_time.package_name;
 
                 if (!(package_name.len > 1 and package_name[package_name.len - 1] == 's')) {
-                    Output.warn("{s}'s postinstall has costed you {}\n", .{
+                    Output.warn("{s}'s postinstall cost you {}\n", .{
                         package_name,
                         bun.fmt.fmtDurationOneDecimal(time_running),
                     });
                 } else {
-                    Output.warn("{s}' postinstall has costed you {}\n", .{
+                    Output.warn("{s}' postinstall cost you {}\n", .{
                         package_name,
                         bun.fmt.fmtDurationOneDecimal(time_running),
                     });

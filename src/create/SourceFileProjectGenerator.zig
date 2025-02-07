@@ -32,17 +32,17 @@ pub fn generate(_: Command.Context, example_tag: Example.Tag, entry_point: strin
 
     const uses_tailwind = has_tailwind_in_dependencies or needs_to_inject_tailwind;
 
-    if (result.dependencies.contains("react")) {
-        if (needs_to_inject_shadcn_ui) {
-            // Use react 18 instead of 19 if shadcn is in use.
-            _ = result.dependencies.swapRemove("react");
-            _ = result.dependencies.swapRemove("react-dom");
-            try result.dependencies.insert("react@^18");
-            try result.dependencies.insert("react-dom@^18");
-        } else {
-            // Add react-dom if react is used
-            try result.dependencies.insert("react-dom");
-        }
+    // We are JSX-only for now..
+    if (needs_to_inject_shadcn_ui) {
+        // Use react 18 instead of 19 if shadcn is in use.
+        _ = result.dependencies.swapRemove("react");
+        _ = result.dependencies.swapRemove("react-dom");
+        try result.dependencies.insert("react@^18");
+        try result.dependencies.insert("react-dom@^18");
+    } else {
+        // Add react-dom if react is used
+        try result.dependencies.insert("react-dom");
+        try result.dependencies.insert("react");
     }
 
     // Choose template based on dependencies and example type

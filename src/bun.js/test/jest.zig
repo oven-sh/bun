@@ -63,7 +63,7 @@ pub const TestRunner = struct {
     files: File.List = .{},
     index: File.Map = File.Map{},
     only: bool = false,
-    run_todo: bool = false,
+    default_run_todo: bool = false,
     last_file: u64 = 0,
     bail: u32 = 0,
 
@@ -229,7 +229,7 @@ pub const TestRunner = struct {
         return start;
     }
 
-    pub fn getOrPutFile(this: *TestRunner, file_path: string) *DescribeScope {
+    pub fn getOrPutFile(this: *TestRunner, file_path: string, override_run_todo: bool) *DescribeScope {
         const entry = this.index.getOrPut(this.allocator, @as(u32, @truncate(bun.hash(file_path)))) catch unreachable;
         if (entry.found_existing) {
             return this.files.items(.module_scope)[entry.value_ptr.*];
@@ -239,6 +239,7 @@ pub const TestRunner = struct {
         scope.* = DescribeScope{
             .file_id = file_id,
             .test_id_start = @as(Test.ID, @truncate(this.tests.len)),
+            .run_todo = override_run_todo or this.default_run_todo,
         };
         this.files.append(this.allocator, .{ .module_scope = scope, .source = logger.Source.initEmptyFile(file_path) }) catch unreachable;
         entry.value_ptr.* = file_id;
@@ -530,6 +531,9 @@ pub const Jest = struct {
         }
         var str = try arguments[0].toSlice(globalObject, bun.default_allocator);
         defer str.deinit();
+
+        const todo = if (arguments.len >= 2) arguments[1].asBoolean() else false;
+
         const slice = str.slice();
 
         if (!std.fs.path.isAbsolute(slice)) {
@@ -537,7 +541,7 @@ pub const Jest = struct {
         }
 
         const filepath = Fs.FileSystem.instance.filename_store.append([]const u8, slice) catch unreachable;
-        var scope = runner.?.getOrPutFile(filepath);
+        var scope = runner.?.getOrPutFile(filepath, todo);
         scope.push();
 
         return Bun__Jest__testModuleObject(globalObject);
@@ -834,6 +838,7 @@ pub const DescribeScope = struct {
     done: bool = false,
     skip_count: u32 = 0,
     tag: Tag = .pass,
+    run_todo: bool,
 
     fn isWithinOnlyScope(this: *const DescribeScope) bool {
         if (this.tag == .only) return true;
@@ -1643,7 +1648,7 @@ pub const TestRunnerTask = struct {
             }
         }
 
-        describe.onTestComplete(globalThis, test_id, result == .skip or (!Jest.runner.?.test_options.run_todo and result == .todo));
+        describe.onTestComplete(globalThis, test_id, result == .skip or (!describe.run_todo and result == .todo));
 
         Jest.runner.?.runNextTest();
     }
@@ -1783,7 +1788,7 @@ inline fn createScope(
     }
 
     var is_skip = tag == .skip or
-        (tag == .todo and (function == .zero or !Jest.runner.?.run_todo)) or
+        (tag == .todo and (function == .zero or !parent.run_todo)) or
         (tag != .only and Jest.runner.?.only and parent.tag != .only);
 
     if (is_test) {
@@ -1848,6 +1853,7 @@ inline fn createScope(
             .parent = parent,
             .file_id = parent.file_id,
             .tag = tag_to_use,
+            .run_todo = parent.run_todo,
         };
 
         return scope.run(globalThis, function, &.{});
@@ -2095,7 +2101,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
             }
 
             var is_skip = tag == .skip or
-                (tag == .todo and (function == .zero or !Jest.runner.?.run_todo)) or
+                (tag == .todo and (function == .zero or !parent.run_todo)) or
                 (tag != .only and Jest.runner.?.only and parent.tag != .only);
 
             if (Jest.runner.?.filter_regex) |regex| {
@@ -2134,6 +2140,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                     .parent = parent,
                     .file_id = parent.file_id,
                     .tag = tag,
+                    .run_todo = parent.run_todo,
                 };
 
                 const ret = scope.run(globalThis, function, function_args);

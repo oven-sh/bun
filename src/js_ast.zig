@@ -7592,6 +7592,7 @@ pub const Part = struct {
         react_fast_refresh,
         dirname_filename,
         bun_test,
+        bun_test_todo,
         dead_due_to_inlining,
         commonjs_named_export,
         import_to_convert_from_require,

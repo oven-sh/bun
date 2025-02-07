@@ -1480,7 +1480,7 @@ pub const BundleV2 = struct {
             for (records) |record| {
                 if (!record.source_index.isValid() and record.tag == .none) {
                     // External dependency
-                    if (record.path.text.len > 0) {
+                    if (record.path.text.len > 0 and !JSC.HardcodedModule.Aliases.has(record.path.text, .bun)) {
                         if (strings.isNPMPackageNameIgnoreLength(record.path.text)) {
                             try external_deps.insert(record.path.text);
                         }

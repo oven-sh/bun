@@ -1058,10 +1058,9 @@ class SQLArrayParameter {
   }
 }
 
-function getDBFromURL(url) {
-  const name = (url?.pathname ?? "").slice(1);
-  if (name) {
-    return decodeURIComponent(name);
+function decodeIfValid(value) {
+  if (value) {
+    return decodeURIComponent(value);
   }
   return null;
 }
@@ -1123,8 +1122,8 @@ function loadOptions(o) {
     // object overrides url
     hostname ||= url.hostname;
     port ||= url.port;
-    username ||= url.username;
-    password ||= url.password;
+    username ||= decodeIfValid(url.username);
+    password ||= decodeIfValid(url.password);
     adapter ||= url.protocol;
 
     if (adapter[adapter.length - 1] === ":") {
@@ -1141,18 +1140,11 @@ function loadOptions(o) {
       }
     }
     query = query.trim();
-    // handle special characters in username, password, and database
-    if (username) {
-      username = decodeURIComponent(username);
-    }
-    if (password) {
-      password = decodeURIComponent(password);
-    }
   }
   hostname ||= o.hostname || o.host || env.PGHOST || "localhost";
   port ||= Number(o.port || env.PGPORT || 5432);
   username ||= o.username || o.user || env.PGUSERNAME || env.PGUSER || env.USER || env.USERNAME || "postgres";
-  database ||= o.database || o.db || getDBFromURL(url) || env.PGDATABASE || username;
+  database ||= o.database || o.db || decodeIfValid((url?.pathname ?? "").slice(1)) || env.PGDATABASE || username;
   password ||= o.password || o.pass || env.PGPASSWORD || "";
 
   tls ||= o.tls || o.ssl;

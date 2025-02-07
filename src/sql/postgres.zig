@@ -1586,37 +1586,37 @@ pub const PostgresSQLConnection = struct {
 
     pub fn onHandshake(this: *PostgresSQLConnection, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
         debug("onHandshake: {d} {d}", .{ success, ssl_error.error_no });
+        const handshake_success = if (success == 1) true else false;
+        if (handshake_success) {
+            if (this.tls_config.reject_unauthorized != 0) {
+                // only reject the connection if reject_unauthorized == true
+                switch (this.ssl_mode) {
+                    // https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
 
-        if (this.tls_config.reject_unauthorized == 0) {
-            return;
-        }
+                    .verify_ca, .verify_full => {
+                        if (ssl_error.error_no != 0) {
+                            this.failWithJSValue(ssl_error.toJS(this.globalObject));
+                            return;
+                        }
 
-        const do_tls_verification = switch (this.ssl_mode) {
-            // https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
-            .verify_ca, .verify_full => true,
-            else => false,
-        };
-
-        if (!do_tls_verification) {
-            return;
-        }
-
-        if (success != 1) {
-            this.failWithJSValue(ssl_error.toJS(this.globalObject));
-            return;
-        }
-
-        if (ssl_error.error_no != 0) {
-            this.failWithJSValue(ssl_error.toJS(this.globalObject));
-            return;
-        }
-
-        const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(this.socket.getNativeHandle()));
-        if (BoringSSL.SSL_get_servername(ssl_ptr, 0)) |servername| {
-            const hostname = servername[0..bun.len(servername)];
-            if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
-                this.failWithJSValue(ssl_error.toJS(this.globalObject));
+                        const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(this.socket.getNativeHandle()));
+                        if (BoringSSL.SSL_get_servername(ssl_ptr, 0)) |servername| {
+                            const hostname = servername[0..bun.len(servername)];
+                            if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
+                                this.failWithJSValue(ssl_error.toJS(this.globalObject));
+                            }
+                        }
+                        this.failWithJSValue(ssl_error.toJS(this.globalObject));
+                    },
+                    else => {
+                        return;
+                    },
+                }
             }
+        } else {
+            // if we are here is because server rejected us, and the error_no is the cause of this
+            // no matter if reject_unauthorized is false because we are disconnected by the server
+            this.failWithJSValue(ssl_error.toJS(this.globalObject));
         }
     }
 
@@ -1772,9 +1772,10 @@ pub const PostgresSQLConnection = struct {
                 return .zero;
             }
 
-            if (tls_config.reject_unauthorized != 0)
-                tls_config.request_cert = 1;
-
+            // we always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
+            const original_reject_unauthorized = tls_config.reject_unauthorized;
+            tls_config.reject_unauthorized = 0;
+            tls_config.request_cert = 1;
             // We create it right here so we can throw errors early.
             const context_options = tls_config.asUSockets();
             var err: uws.create_bun_socket_error_t = .none;
@@ -1785,7 +1786,8 @@ pub const PostgresSQLConnection = struct {
                     return globalObject.throwValue(err.toJS(globalObject));
                 }
             };
-
+            // restore the original reject_unauthorized
+            tls_config.reject_unauthorized = original_reject_unauthorized;
             if (err != .none) {
                 tls_config.deinit();
                 if (tls_ctx) |ctx| {

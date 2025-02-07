@@ -921,7 +921,7 @@ describe("files", () => {
       write(
         join(packageDir, "package.json"),
         JSON.stringify({
-          name: "pack-files-3",
+          name: "pack-files-2",
           version: "1.2.3",
           files: ["index.js"],
         }),
@@ -932,8 +932,26 @@ describe("files", () => {
     ]);
 
     await pack(packageDir, bunEnv);
-    const tarball = readTarball(join(packageDir, "pack-files-3-1.2.3.tgz"));
+    const tarball = readTarball(join(packageDir, "pack-files-2-1.2.3.tgz"));
     expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }, { "pathname": "package/index.js" }]);
+  });
+
+  test("matches './' as the root", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-files-3",
+          version: "1.2.3",
+          files: ["./dist"],
+        }),
+      ),
+      write(join(packageDir, "dist", "index.js"), "console.log('hello ./dist/index.js')"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+    const tarball = readTarball(join(packageDir, "pack-files-3-1.2.3.tgz"));
+    expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }, { "pathname": "package/dist/index.js" }]);
   });
 
   test("recursive only if leading **/", async () => {
@@ -941,7 +959,7 @@ describe("files", () => {
       write(
         join(packageDir, "package.json"),
         JSON.stringify({
-          name: "pack-files-2",
+          name: "pack-files-4",
           version: "1.2.123",
           files: ["**/index.js"],
         }),
@@ -953,7 +971,7 @@ describe("files", () => {
     ]);
 
     await pack(packageDir, bunEnv);
-    const tarball = readTarball(join(packageDir, "pack-files-2-1.2.123.tgz"));
+    const tarball = readTarball(join(packageDir, "pack-files-4-1.2.123.tgz"));
     expect(tarball.entries).toMatchObject([
       { "pathname": "package/package.json" },
       { "pathname": "package/index.js" },

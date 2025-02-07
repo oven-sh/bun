@@ -2129,6 +2129,12 @@ pub const PackCommand = struct {
                     @"has leading **/, (could start with '!')" = true;
                 }
 
+                // `./foo` matches the same as `foo`
+                if (strings.hasPrefixComptime(remain, "./")) {
+                    remain = remain["./".len..];
+                    if (remain.len == 0) return null;
+                }
+
                 const trailing_slash = remain[remain.len - 1] == '/';
                 if (trailing_slash) {
                     // trim trailing slash

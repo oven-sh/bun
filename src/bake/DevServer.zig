@@ -1075,7 +1075,7 @@ fn getJavaScriptCodeForHTMLFile(
     try bun.js_printer.writeJSONString(input_file_sources[index.get()].path.pretty, @TypeOf(w), w, .utf8);
     try w.writeAll("(m) {\n  ");
     for (import_records[index.get()].slice()) |import| {
-        if (loaders[index.get()] == .css) continue;
+        if (import.source_index.isValid() and loaders[import.source_index.get()] == .css) continue;
         try w.writeAll("  m.dynamicImport(");
         try bun.js_printer.writeJSONString(import.path.pretty, @TypeOf(w), w, .utf8);
         try w.writeAll(");\n  ");
@@ -1632,12 +1632,15 @@ pub fn finalizeBundle(
 
         // Create an entry for this file.
         const key = ctx.sources[index.get()].path.keyForIncrementalGraph();
-        const hash = brk: {
-            var hash: ContentHasher.Hash = .init(0x9a4e); // arbitrary seed
-            hash.update(key);
-            hash.update(code.buffer);
-            break :brk hash.final();
-        };
+        // const hash = brk: {
+        //     var hash: ContentHasher.Hash = .init(0x9a4e); // arbitrary seed
+        //     hash.update(key);
+        //     hash.update(code.buffer);
+        //     break :brk hash.final();
+        // };
+        // TODO: use a hash mix with the first half being a path hash (to identify files) and
+        // the second half to be the content hash (to know if the file has changed)
+        const hash = bun.hash(key);
         const asset_index = (try dev.assets.replacePath(
             key,
             .fromOwnedSlice(dev.allocator, code.buffer),
@@ -3291,8 +3294,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         const source_map = &g.source_maps.items[file_index.get()];
                         switch (gop.value_ptr.flags.kind) {
                             .js => g.owner().allocator.free(gop.value_ptr.jsCode()),
-                            // TODO: fix this please
-                            .css => g.owner().assets.unrefByHash(gop.value_ptr.cssAssetId(), 1),
+                            .css => g.owner().assets.unrefByPath(gop.key_ptr.*),
                             .unknown => {},
                         }
                         g.owner().allocator.free(source_map.vlq_chunk.slice());
@@ -3439,8 +3441,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         const source_map = &g.source_maps.items[file_index.get()];
                         switch (gop.value_ptr.flags.kind) {
                             .js => g.owner().allocator.free(gop.value_ptr.jsCode()),
-                            // TODO: fix this please
-                            .css => g.owner().assets.unrefByHash(gop.value_ptr.cssAssetId(), 1),
+                            .css => g.owner().assets.unrefByPath(gop.key_ptr.*),
                             .unknown => {},
                         }
                         g.owner().allocator.free(source_map.vlq_chunk.slice());
@@ -5592,6 +5593,11 @@ pub const Assets = struct {
             assets.files.swapRemoveAt(index);
             _ = assets.refs.swapRemove(index);
         }
+    }
+
+    pub fn unrefByPath(assets: *Assets, path: []const u8) void {
+        const entry = assets.path_map.fetchSwapRemove(path) orelse return;
+        assets.unrefByHash(entry.value, 1);
     }
 
     pub fn reindexIfNeeded(assets: *Assets, alloc: Allocator) !void {

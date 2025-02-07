@@ -110,7 +110,7 @@ function maybeAddCssLink(link: HTMLLinkElement) {
   const pathname = new URL(link.href).pathname;
   if (pathname.startsWith("/_bun/css/")) {
     const id = pathname.slice("/_bun/css/".length).slice(0, 16);
-    if ( !/^[a-f0-9]{16}$/.test(id)) {
+    if (!/^[a-f0-9]{16}$/.test(id)) {
       return;
     }
     const existing = cssStore.get(id);

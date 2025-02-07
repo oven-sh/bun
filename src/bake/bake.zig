@@ -232,16 +232,14 @@ pub const Framework = struct {
         var fw: Framework = Framework.none;
 
         if (resolveOrNull(resolver, "react-refresh/runtime")) |rfr| {
-            fw.react_fast_refresh = .{
-                .import_source = rfr,
-            };
+            fw.react_fast_refresh = .{ .import_source = rfr };
         } else if (resolveOrNull(resolver, "react")) |_| {
             fw.react_fast_refresh = .{
-                .import_source = "react-refresh/runtime",
+                .import_source = "react-refresh/runtime/index.js",
             };
             try fw.built_in_modules.put(
                 arena,
-                "react-refresh/runtime",
+                "react-refresh/runtime/index.js",
                 if (Environment.codegen_embed)
                     .{ .code = @embedFile("bake.react-refresh-prebuilt.js") }
                 else

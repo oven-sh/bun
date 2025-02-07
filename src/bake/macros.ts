@@ -7,7 +7,7 @@ export async function css(file: string, is_development: boolean): string {
   {
     const { success, stdout, stderr } = await Bun.spawnSync({
       // TODO: remove the --experimental-css flag here once CI is upgraded to a post-#16561 bun
-      cmd: [process.execPath, "esbuild", file, ...(is_development ? [] : ["--minify"])],
+      cmd: [process.execPath, "x", "esbuild", file, ...(is_development ? [] : ["--minify"])],
       cwd: import.meta.dir,
       stdio: ["ignore", "pipe", "pipe"],
     });

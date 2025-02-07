@@ -32,17 +32,27 @@ async function run() {
 
   const results = await Promise.allSettled(
     ["client", "server", "error", "react-refresh"].map(async file => {
+      // An embedded copy of react-refresh is used when the user forgets to install it.
+      // The library is not versioned alongside React.
       if (file === "react-refresh") {
+        const reactRefresh = require.resolve(
+          "../../node_modules/react-refresh/cjs/react-refresh-runtime.development.js",
+        );
         let result = await Bun.build({
-          entrypoints: [require.resolve("react-refresh")],
+          entrypoints: [reactRefresh],
           minify: true,
           target: "browser",
           external: ["*"],
+          format: "cjs",
+          define: {
+            "process.env.NODE_ENV": JSON.stringify("development"),
+          },
         });
         if (!result.success) throw new AggregateError(result.logs);
         assert(result.outputs.length === 1, "must bundle to a single file");
         // @ts-ignore
         let code = await result.outputs[0].text();
+        assert(code.trim().length > 0, "react-refresh-prebuilt is empty, built from " + reactRefresh);
         writeIfNotChanged(join(codegenRoot, `bake.react-refresh-prebuilt.js`), code);
         return;
       }
@@ -152,6 +162,7 @@ async function run() {
     { kind: ["client"], result: results[0] },
     { kind: ["server"], result: results[1] },
     { kind: ["error"], result: results[2] },
+    { kind: ["react-refresh"], result: results[3] },
   ]
     .filter(x => x.result.status === "rejected")
     .map(x => ({ kind: x.kind, err: x.result.reason })) as Err[];

@@ -2542,6 +2542,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 }
             },
             .client => struct {
+                /// Content depends on `flags.kind`
                 /// See function wrappers to safely read into this data
                 content: extern union {
                     /// Allocated by default_allocator. Access with `.jsCode()`
@@ -2551,6 +2552,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     js_code_ptr: [*]const u8,
                     /// Access with `.cssAssetId()`
                     css_asset_id: u64,
+
+                    unknown: enum(u32) { unknown = 0 },
                 },
                 /// Separated from the pointer to reduce struct size.
                 /// Parser does not support files >4gb anyways.
@@ -2593,7 +2596,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     assert(flags.kind == .css);
                     return .{
                         .content = .{ .css_asset_id = asset_id },
-                        .code_len = 0,
+                        .code_len = 0, // unused
                         .flags = flags,
                     };
                 }
@@ -2601,8 +2604,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 fn initUnknown(flags: Flags) @This() {
                     assert(flags.kind == .unknown);
                     return .{
-                        .content = .{ .css_asset_id = 0 },
-                        .code_len = 0,
+                        .content = .{ .unknown = .unknown }, // unused
+                        .code_len = 0, // unused
                         .flags = flags,
                     };
                 }
@@ -2818,7 +2821,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                                     source_map orelse unreachable, // JS needs a source map (can be empty, but not null)
                                 );
                             },
-                            .css => g.owner().assets.unrefByHash(gop.value_ptr.cssAssetId(), 1),
+                            .css => {}, // do not need to unref css as it has been replaced already
                             .unknown => {},
                         }
 
@@ -3288,6 +3291,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         const source_map = &g.source_maps.items[file_index.get()];
                         switch (gop.value_ptr.flags.kind) {
                             .js => g.owner().allocator.free(gop.value_ptr.jsCode()),
+                            // TODO: fix this please
                             .css => g.owner().assets.unrefByHash(gop.value_ptr.cssAssetId(), 1),
                             .unknown => {},
                         }
@@ -3435,6 +3439,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         const source_map = &g.source_maps.items[file_index.get()];
                         switch (gop.value_ptr.flags.kind) {
                             .js => g.owner().allocator.free(gop.value_ptr.jsCode()),
+                            // TODO: fix this please
                             .css => g.owner().assets.unrefByHash(gop.value_ptr.cssAssetId(), 1),
                             .unknown => {},
                         }
@@ -5511,6 +5516,7 @@ pub const Assets = struct {
         /// content hash of the asset
         content_hash: u64,
     ) !struct { index: u30 } {
+        defer assert(assets.files.count() == assets.refs.items.len);
         const alloc = assets.owner().allocator;
         debug.log("replacePath {} {} - {s}/{s}", .{
             bun.fmt.quote(abs_path),
@@ -5540,6 +5546,7 @@ pub const Assets = struct {
                 return .{ .index = @intCast(i) };
             } else {
                 assets.refs.items[i] -= 1;
+                assert(assets.refs.items[i] > 0);
             }
         }
 
@@ -5564,6 +5571,7 @@ pub const Assets = struct {
     /// Returns a pointer to insert the *StaticRoute. If `null` is returned, then it
     /// means there is already data here.
     pub fn putOrIncrementRefCount(assets: *Assets, content_hash: u64, ref_count: u32) !?**StaticRoute {
+        defer assert(assets.files.count() == assets.refs.items.len);
         const file_index_gop = try assets.files.getOrPut(assets.owner().allocator, content_hash);
         if (!file_index_gop.found_existing) {
             try assets.refs.append(assets.owner().allocator, ref_count);
@@ -5575,18 +5583,14 @@ pub const Assets = struct {
     }
 
     pub fn unrefByHash(assets: *Assets, content_hash: u64, dec_count: u32) void {
+        defer assert(assets.files.count() == assets.refs.items.len);
         assert(dec_count > 0);
         const index = assets.files.getIndex(content_hash) orelse
             Output.panic("Asset double unref: {s}", .{std.fmt.fmtSliceHexLower(std.mem.asBytes(&content_hash))});
         assets.refs.items[index] -= dec_count;
         if (assets.refs.items[index] == 0) {
-            defer assert(assets.files.count() == assets.refs.items.len);
             assets.files.swapRemoveAt(index);
-            if (index == assets.refs.items.len) {
-                assets.refs.items.len -= 1;
-            } else if (index > 0) {
-                assets.refs.items[index] = assets.refs.pop();
-            }
+            _ = assets.refs.swapRemove(index);
         }
     }
 
@@ -5598,6 +5602,7 @@ pub const Assets = struct {
     }
 
     pub fn get(assets: *Assets, content_hash: u64) ?*StaticRoute {
+        assert(assets.files.count() == assets.refs.items.len);
         return assets.files.get(content_hash);
     }
 

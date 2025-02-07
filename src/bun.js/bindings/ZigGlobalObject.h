@@ -497,6 +497,9 @@ public:
 
     void finishCreation(JSC::VM&);
 
+    JSC::Structure* NodeVMModuleStructure() { return m_NodeVMModuleStructure.get(this); }
+    JSC::JSObject* NodeVMModuleConstructor() { return m_NodeVMModuleStructure.constructor(this); }
+
 private:
     void addBuiltinGlobals(JSC::VM&);
 
@@ -622,6 +625,7 @@ private:
 
     WTF::Vector<JSC::Strong<JSC::JSPromise>> m_aboutToBeNotifiedRejectedPromises;
     WTF::Vector<JSC::Strong<JSC::JSFunction>> m_ffiFunctions;
+    JSC::LazyClassStructure m_NodeVMModuleStructure;
 };
 
 class EvalGlobalObject : public GlobalObject {

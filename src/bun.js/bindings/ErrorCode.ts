@@ -89,6 +89,14 @@ const errors: ErrorCodeMapping = [
   ["ERR_STREAM_WRAP", Error],
   ["ERR_BORINGSSL", Error],
 
+  // VM Module errors
+  ["ERR_VM_MODULE_NOT_MODULE", TypeError],
+  ["ERR_VM_MODULE_STATUS", Error],
+  ["ERR_VM_MODULE_ALREADY_LINKED", Error],
+  ["ERR_VM_MODULE_DIFFERENT_CONTEXT", Error],
+  ["ERR_VM_MODULE_CANNOT_CREATE_CACHED_DATA", Error],
+  ["ERR_VM_MODULE_LINK_FAILURE", Error],
+
   // Console
   ["ERR_CONSOLE_WRITABLE_STREAM", TypeError, "TypeError"],
 

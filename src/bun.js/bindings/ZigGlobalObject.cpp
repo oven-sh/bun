@@ -182,6 +182,8 @@
 #include <unistd.h>
 #endif
 
+#include "NodeVMModule.h"
+
 using namespace Bun;
 
 BUN_DECLARE_HOST_FUNCTION(Bun__NodeUtil__jsParseArgs);
@@ -3376,6 +3378,11 @@ void GlobalObject::finishCreation(VM& vm)
     addBuiltinGlobals(vm);
 
     ASSERT(classInfo());
+
+    m_NodeVMModuleStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::setupNodeVMModuleClassStructure(init);
+        });
 }
 
 JSC_DEFINE_CUSTOM_GETTER(JSDOMFileConstructor_getter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName))

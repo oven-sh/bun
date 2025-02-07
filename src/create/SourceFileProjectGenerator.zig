@@ -33,7 +33,8 @@ pub fn generate(_: Command.Context, _: Example.Tag, entry_point: string, result:
     const uses_tailwind = has_tailwind_in_dependencies or needs_to_inject_tailwind;
 
     // We are JSX-only for now.
-    // The versions of react & react-dom need to match up. So we have to be a little opinionated.
+    // The versions of react & react-dom need to match up, and it's SO easy to mess that up.
+    // So we have to be a little opinionated here.
     if (needs_to_inject_shadcn_ui) {
         // Use react 18 instead of 19 if shadcn is in use.
         _ = result.dependencies.swapRemove("react");

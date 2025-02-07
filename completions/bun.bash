@@ -43,22 +43,13 @@ _read_scripts_in_package_json() {
 
     [[ "${package_json}" =~ "\"scripts\""[[:space:]]*":"[[:space:]]*\{(.*)\} ]] && {
         local package_json_compreply;
-        local matched="${BASH_REMATCH[@]:1}";
-        local scripts="${matched%%\}*}";
-        scripts="${scripts//@(\"|\')/}";
-        readarray -td, scripts <<<"${scripts}";
-        for completion in "${scripts[@]}"; do
-            package_json_compreply+=( "${completion%:*}" );
-        done
+        readarray -t package_json_compreply < <(bun -e 'import("package.json").then(p=>Object.keys(p.scripts).forEach(k=>console.log(k)))')
         COMPREPLY+=( $(compgen -W "${package_json_compreply[*]}" -- "${cur_word}") );
     }
 
     # when a script is passed as an option, do not show other scripts as part of the completion anymore
     local re_prev_script="(^| )${prev}($| )";
-    [[
-        ( "${COMPREPLY[*]}" =~ ${re_prev_script} && -n "${COMP_WORDS[2]}" ) || \
-            ( "${COMPREPLY[*]}" =~ ${re_comp_word_script} )
-    ]] && {
+    [[ "${COMPREPLY[*]}" =~ ${re_prev_script} && -n "${COMP_WORDS[2]}" ]] && {
         local re_script=$(echo ${package_json_compreply[@]} | sed 's/[^ ]*/(&)/g');
         local new_reply=$(echo "${COMPREPLY[@]}" | sed -E "s/$re_script//");
         COMPREPLY=( $(compgen -W "${new_reply}" -- "${cur_word}") );

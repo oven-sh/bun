@@ -126,6 +126,10 @@ button + .message {
   color: var(--color);
 }
 
+.message-text:last-child {
+  margin-bottom: 0.5rem;
+}
+
 .log-error {
   --color: var(--log-error);
   font-weight: bold;

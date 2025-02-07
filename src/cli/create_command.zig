@@ -1931,7 +1931,7 @@ pub const Example = struct {
             ),
         );
 
-        var header_entries: Headers.Entries = .{};
+        var header_entries: Headers.Entry.List = .{};
         var headers_buf: string = "";
 
         if (env_loader.map.get("GITHUB_TOKEN") orelse env_loader.map.get("GITHUB_ACCESS_TOKEN")) |access_token| {
@@ -1939,14 +1939,14 @@ pub const Example = struct {
                 headers_buf = try std.fmt.allocPrint(ctx.allocator, "AuthorizationBearer {s}", .{access_token});
                 try header_entries.append(
                     ctx.allocator,
-                    Headers.Kv{
-                        .name = Api.StringPointer{
+                    .{
+                        .name = .{
                             .offset = 0,
-                            .length = @as(u32, @intCast("Authorization".len)),
+                            .length = @intCast("Authorization".len),
                         },
-                        .value = Api.StringPointer{
-                            .offset = @as(u32, @intCast("Authorization".len)),
-                            .length = @as(u32, @intCast(headers_buf.len - "Authorization".len)),
+                        .value = .{
+                            .offset = @intCast("Authorization".len),
+                            .length = @intCast(headers_buf.len - "Authorization".len),
                         },
                     },
                 );

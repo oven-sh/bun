@@ -2408,6 +2408,11 @@ pub const BundleV2 = struct {
 
         this.graph.heap.helpCatchMemoryIssues();
 
+        // Compute line offset tables, used in source maps.
+        this.linker.computeDataForSourceMap(@as([]Index.Int, @ptrCast(js_reachable_files)));
+
+        this.graph.heap.helpCatchMemoryIssues();
+
         // Generate chunks
         const js_part_ranges = try this.graph.allocator.alloc(PartRange, js_reachable_files.len);
         const parts = this.graph.ast.items(.parts);
@@ -3063,7 +3068,7 @@ pub const BundleV2 = struct {
                             result.source.path.text,
                             // SAFETY: when shouldCopyForBundling is true, the
                             // contents are allocated by bun.default_allocator
-                            @constCast(result.source.contents),
+                            .fromOwnedSlice(bun.default_allocator, @constCast(result.source.contents)),
                             result.content_hash_for_additional_file,
                         ) catch bun.outOfMemory();
                     }
@@ -6008,6 +6013,7 @@ pub const LinkerContext = struct {
         this: *LinkerContext,
         reachable: []const Index.Int,
     ) void {
+        bun.assert(this.options.source_maps != .none);
         this.source_maps.line_offset_wait_group.init();
         this.source_maps.quoted_contents_wait_group.init();
         this.source_maps.line_offset_wait_group.counter = @as(u32, @truncate(reachable.len));
@@ -10432,7 +10438,7 @@ pub const LinkerContext = struct {
             // Save the offset to the start of the stored JavaScript
             j.push(compile_result.code(), bun.default_allocator);
 
-            if (compile_result.source_map_chunk()) |source_map_chunk| {
+            if (compile_result.sourceMapChunk()) |source_map_chunk| {
                 if (c.options.source_maps != .none) {
                     try compile_results_for_source_map.append(worker.allocator, CompileResultForSourceMap{
                         .source_map_chunk = source_map_chunk,
@@ -10668,8 +10674,8 @@ pub const LinkerContext = struct {
         switch (c.options.output_format) {
             .internal_bake_dev => {
                 const start = bun.bake.getHmrRuntime(if (c.options.target.isServerSide()) .server else .client);
-                j.pushStatic(start);
-                line_offset.advance(start);
+                j.pushStatic(start.code);
+                line_offset.advance(start.code);
             },
             .iife => {
                 // Bun does not do arrow function lowering. So the wrapper can be an arrow.
@@ -10779,7 +10785,7 @@ pub const LinkerContext = struct {
             } else {
                 j.push(compile_result.code(), bun.default_allocator);
 
-                if (compile_result.source_map_chunk()) |source_map_chunk| {
+                if (compile_result.sourceMapChunk()) |source_map_chunk| {
                     if (c.options.source_maps != .none) {
                         try compile_results_for_source_map.append(worker.allocator, CompileResultForSourceMap{
                             .source_map_chunk = source_map_chunk,
@@ -13471,7 +13477,7 @@ pub const LinkerContext = struct {
                 c.source_maps.quoted_contents_tasks.len = 0;
             }
 
-            // For dev server, only post-process CSS chunks.
+            // For dev server, only post-process CSS + HTML chunks.
             const chunks_to_do = if (is_dev_server) chunks[1..] else chunks;
             if (!is_dev_server or chunks_to_do.len > 0) {
                 bun.assert(chunks_to_do.len > 0);
@@ -15715,7 +15721,7 @@ pub const Chunk = struct {
         }
 
         pub const CodeResult = struct {
-            buffer: string,
+            buffer: []u8,
             shifts: []sourcemap.SourceMapShifts,
         };
 
@@ -16292,7 +16298,7 @@ pub const CompileResult = union(enum) {
         };
     }
 
-    pub fn source_map_chunk(this: *const CompileResult) ?sourcemap.Chunk {
+    pub fn sourceMapChunk(this: *const CompileResult) ?sourcemap.Chunk {
         return switch (this.*) {
             .javascript => |r| switch (r.result) {
                 .result => |r2| r2.source_map,
@@ -16316,9 +16322,11 @@ const CompileResultForSourceMap = struct {
     source_index: u32,
 };
 
-const ContentHasher = struct {
+pub const ContentHasher = struct {
+    pub const Hash = std.hash.XxHash64;
+
     // xxhash64 outperforms Wyhash if the file is > 1KB or so
-    hasher: std.hash.XxHash64 = std.hash.XxHash64.init(0),
+    hasher: Hash = .init(0),
 
     const log = bun.Output.scoped(.ContentHasher, true);
 

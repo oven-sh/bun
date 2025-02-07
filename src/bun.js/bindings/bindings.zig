@@ -6634,8 +6634,8 @@ pub fn toJSHostFunction(comptime Function: JSHostZigFunction) JSC.JSHostFunction
                     if (value != .zero) {
                         if (globalThis.hasException()) {
                             var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
-                            bun.Output.prettyErrorln(
-                                \\<r><red>Assertion failed<r>: Native function returned a non-zero JSValue while an exception is pending
+                            bun.Output.err("Assertion failed",
+                                \\Native function returned a non-zero JSValue while an exception is pending
                                 \\
                                 \\    fn: {s}
                                 \\ value: {}
@@ -6670,8 +6670,8 @@ pub fn toJSHostFunctionWithContext(comptime ContextType: type, comptime Function
                     if (value != .zero) {
                         if (globalThis.hasException()) {
                             var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
-                            bun.Output.prettyErrorln(
-                                \\<r><red>Assertion failed<r>: Native function returned a non-zero JSValue while an exception is pending
+                            bun.Output.err("Assertion failed",
+                                \\Native function returned a non-zero JSValue while an exception is pending
                                 \\
                                 \\    fn: {s}
                                 \\ value: {}

@@ -1158,14 +1158,11 @@ const vlq_lookup_table: [256]VLQ = brk: {
     break :brk entries;
 };
 
-const vlq_max_in_bytes = 8;
+/// Source map VLQ values are limited to i32
+/// Encoding min and max ints are "//////D" and "+/////D", respectively.
+/// These are 7 bytes long. This makes the `VLQ` struct 8 bytes.
+const vlq_max_in_bytes = 7;
 pub const VLQ = struct {
-    // We only need to worry about i32
-    // That means the maximum VLQ-encoded value is 8 bytes
-    // because there are only 4 bits of number inside each VLQ value
-    // and it expects i32
-    // therefore, it can never be more than 32 bits long
-    // I believe the actual number is 7 bytes long, however we can add an extra byte to be more cautious
     bytes: [vlq_max_in_bytes]u8,
     len: u4 = 0,
 
@@ -1601,6 +1598,14 @@ pub const Chunk = struct {
 
     /// ignore empty chunks
     should_ignore: bool = true,
+
+    pub const empty: Chunk = .{
+        .buffer = MutableString.initEmpty(bun.default_allocator),
+        .mappings_count = 0,
+        .end_state = .{},
+        .final_generated_column = 0,
+        .should_ignore = true,
+    };
 
     pub fn printSourceMapContents(
         chunk: Chunk,

@@ -2,6 +2,8 @@
 //! Response object, or from globally allocated bytes.
 const StaticRoute = @This();
 
+// TODO: Remove optional. StaticRoute requires a server object or else it will
+// not ensure it is alive while sending a large blob.
 server: ?AnyServer = null,
 status_code: u16,
 blob: AnyBlob,
@@ -14,21 +16,39 @@ ref_count: u32 = 1,
 
 pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
-pub fn initFromBlob(blob: AnyBlob) *StaticRoute {
-    const headers = Headers.from(null, bun.default_allocator, .{ .body = &blob }) catch bun.outOfMemory();
+// pub fn initFromBlob(blob: AnyBlob) *StaticRoute {
+//     const headers = Headers.from(null, bun.default_allocator, .{ .body = &blob }) catch bun.outOfMemory();
+//     return StaticRoute.new(.{
+//         .blob = blob,
+//         .cached_blob_size = blob.size(),
+//         .has_content_disposition = false,
+//         .headers = headers,
+//         .server = null,
+//         .status_code = 200,
+//     });
+// }
+
+pub const InitFromBytesOptions = struct {
+    server: AnyServer,
+    mime_type: ?bun.http.MimeType = null,
+};
+
+pub fn initFromAnyBlob(blob: AnyBlob, options: InitFromBytesOptions) *StaticRoute {
+    var headers = Headers.from(null, bun.default_allocator, .{ .body = &blob }) catch bun.outOfMemory();
+    if (options.mime_type) |mime_type| {
+        if (headers.getContentType() == null) {
+            headers.append("Content-Type", mime_type.value) catch bun.outOfMemory();
+        }
+    }
     return StaticRoute.new(.{
         .blob = blob,
         .cached_blob_size = blob.size(),
         .has_content_disposition = false,
         .headers = headers,
-        .server = null,
+        .server = options.server,
         .status_code = 200,
     });
 }
-
-pub const InitFromBytesOptions = struct {
-    mime_type: ?bun.http.MimeType = null,
-};
 
 fn deinit(this: *StaticRoute) void {
     this.blob.detach();
@@ -161,6 +181,7 @@ pub fn onHEADRequest(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) v
 }
 
 pub fn onHEAD(this: *StaticRoute, resp: AnyResponse) void {
+    bun.debugAssert(this.server != null);
     this.ref();
     if (this.server) |server| {
         server.onPendingRequest();
@@ -182,6 +203,7 @@ pub fn onRequest(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) void 
 }
 
 pub fn on(this: *StaticRoute, resp: AnyResponse) void {
+    bun.debugAssert(this.server != null);
     this.ref();
     if (this.server) |server| {
         server.onPendingRequest();
@@ -303,6 +325,17 @@ fn renderMetadata(this: *StaticRoute, resp: AnyResponse) void {
 
     this.doWriteStatus(status, resp);
     this.doWriteHeaders(resp);
+}
+
+pub fn onWithMethod(this: *StaticRoute, method: bun.http.Method, resp: AnyResponse) void {
+    switch (method) {
+        .GET => this.on(resp),
+        .HEAD => this.onHEAD(resp),
+        else => {
+            this.doWriteStatus(405, resp); // Method not allowed
+            resp.endWithoutBody(resp.shouldCloseConnection());
+        },
+    }
 }
 
 const std = @import("std");

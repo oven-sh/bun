@@ -688,17 +688,34 @@ fn getOptionalString(
     return allocations.track(str.toUTF8(arena));
 }
 
-pub inline fn getHmrRuntime(side: Side) [:0]const u8 {
+pub const HmrRuntime = struct {
+    code: [:0]const u8,
+    /// The number of lines in the HMR runtime. This is used for sourcemap
+    /// generation, where the first n lines are skipped. In release, these
+    /// are always precalculated. u31 to allow coercion to i32 & usize.
+    line_count: u31,
+
+    pub fn init(code: [:0]const u8) HmrRuntime {
+        if (@inComptime()) @setEvalBranchQuota(@intCast(code.len));
+        return .{
+            .code = code,
+            .line_count = @intCast(std.mem.count(u8, code, "\n")),
+        };
+    }
+};
+
+pub fn getHmrRuntime(side: Side) callconv(bun.callconv_inline) HmrRuntime {
     return if (Environment.codegen_embed)
         switch (side) {
-            .client => @embedFile("bake-codegen/bake.client.js"),
-            .server => @embedFile("bake-codegen/bake.server.js"),
+            .client => comptime .init(@embedFile("bake-codegen/bake.client.js")),
+            .server => comptime .init(@embedFile("bake-codegen/bake.server.js")),
         }
-    else switch (side) {
-        .client => bun.runtimeEmbedFile(.codegen_eager, "bake.client.js"),
-        // server runtime is loaded once
-        .server => bun.runtimeEmbedFile(.codegen, "bake.server.js"),
-    };
+    else
+        .init(switch (side) {
+            .client => bun.runtimeEmbedFile(.codegen_eager, "bake.client.js"),
+            // server runtime is loaded once, so it is pointless to make this eager.
+            .server => bun.runtimeEmbedFile(.codegen, "bake.server.js"),
+        });
 }
 
 pub const Mode = enum {

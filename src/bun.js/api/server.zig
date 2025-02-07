@@ -3558,7 +3558,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 // If we've received the complete body by the time this function is called
                                 // we can avoid streaming it and just send it all at once.
                                 if (byte_stream.has_received_last_chunk) {
-                                    this.blob.from(byte_stream.drain().listManaged(bun.default_allocator));
+                                    this.blob = .fromArrayList(byte_stream.drain().listManaged(bun.default_allocator));
                                     this.readable_stream_ref.deinit();
                                     this.doRenderBlob();
                                     return;

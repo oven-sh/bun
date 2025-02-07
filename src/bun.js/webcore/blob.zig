@@ -5739,9 +5739,16 @@ pub const Blob = struct {
 
 pub const AnyBlob = union(enum) {
     Blob: Blob,
-    // InlineBlob: InlineBlob,
     InternalBlob: InternalBlob,
     WTFStringImpl: bun.WTF.StringImpl,
+
+    pub fn fromOwnedSlice(allocator: std.mem.Allocator, bytes: []u8) AnyBlob {
+        return .{ .InternalBlob = .{ .bytes = .fromOwnedSlice(allocator, bytes) } };
+    }
+
+    pub fn fromArrayList(list: std.ArrayList(u8)) AnyBlob {
+        return .{ .InternalBlob = .{ .bytes = list } };
+    }
 
     /// Assumed that AnyBlob itself is covered by the caller.
     pub fn memoryCost(this: *const AnyBlob) usize {
@@ -5771,8 +5778,16 @@ pub const AnyBlob = union(enum) {
     pub inline fn fastSize(this: *const AnyBlob) Blob.SizeType {
         return switch (this.*) {
             .Blob => this.Blob.size,
-            .WTFStringImpl => @as(Blob.SizeType, @truncate(this.WTFStringImpl.byteLength())),
-            else => @as(Blob.SizeType, @truncate(this.slice().len)),
+            .WTFStringImpl => @truncate(this.WTFStringImpl.byteLength()),
+            .InternalBlob => @truncate(this.slice().len),
+        };
+    }
+
+    pub inline fn size(this: *const AnyBlob) Blob.SizeType {
+        return switch (this.*) {
+            .Blob => this.Blob.size,
+            .WTFStringImpl => @truncate(this.WTFStringImpl.utf8ByteLength()),
+            else => @truncate(this.slice().len),
         };
     }
 
@@ -6004,22 +6019,6 @@ pub const AnyBlob = union(enum) {
                 return JSC.ArrayBuffer.create(global, out_bytes.slice(), TypedArrayView);
             },
         }
-    }
-
-    pub inline fn size(this: *const AnyBlob) Blob.SizeType {
-        return switch (this.*) {
-            .Blob => this.Blob.size,
-            .WTFStringImpl => @as(Blob.SizeType, @truncate(this.WTFStringImpl.utf8ByteLength())),
-            else => @as(Blob.SizeType, @truncate(this.slice().len)),
-        };
-    }
-
-    pub fn from(this: *AnyBlob, list: std.ArrayList(u8)) void {
-        this.* = .{
-            .InternalBlob = InternalBlob{
-                .bytes = list,
-            },
-        };
     }
 
     pub fn isDetached(this: *const AnyBlob) bool {

@@ -1154,7 +1154,7 @@ pub const ServerConfig = struct {
 
                     const value = iter.value;
 
-                    if (path.len == 0 or (path[0] != '/' and path[0] != '*')) {
+                    if (path.len == 0 or (path[0] != '/')) {
                         return global.throwInvalidArguments("Invalid static route \"{s}\". path must start with '/'", .{path});
                     }
 

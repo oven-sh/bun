@@ -28,6 +28,11 @@ export type Field =
     } & PropertyAttribute)
   | ({
       fn: string;
+      /**
+       * Number of parameters accepted by the function.
+       *
+       * Sets [`function.length`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Function/length).
+       */
       length?: number;
       passThis?: boolean;
       DOMJIT?: {
@@ -44,19 +49,43 @@ export type Field =
        * function: `camelCase(fileName + functionName + "CodeGenerator"`)
        */
       builtin: string;
+      /**
+       * Number of parameters accepted by the function.
+       *
+       * Sets [`function.length`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Function/length).
+       */
       length?: number;
     };
 
 export class ClassDefinition {
   name: string;
+  /**
+   * Class constructor is newable.
+   */
   construct?: boolean;
+  /**
+   * Class constructor is callable. In JS, ES6 class constructors are not
+   * callable.
+   */
   call?: boolean;
   finalize?: boolean;
   overridesToJS?: boolean;
+  /**
+   * Static properties and methods.
+   */
   klass: Record<string, Field>;
+  /**
+   * properties and methods on the prototype.
+   */
   proto: Record<string, Field>;
+  /**
+   * Properties and methods attached to the instance itself.
+   */
   own: Record<string, string>;
   values?: string[];
+  /**
+   * Set this to `"0b11101110"`.
+   */
   JSType?: string;
   noConstructor?: boolean;
 

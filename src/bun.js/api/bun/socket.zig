@@ -313,6 +313,24 @@ pub const SocketConfig = struct {
     reusePort: bool = false,
     ipv6Only: bool = false,
 
+    pub fn socketFlags(this: *const SocketConfig) i32 {
+        var flags: i32 = if (this.exclusive)
+            uws.LIBUS_LISTEN_EXCLUSIVE_PORT
+        else if (this.reusePort)
+            uws.LIBUS_LISTEN_REUSE_PORT | uws.LIBUS_LISTEN_REUSE_ADDR
+        else
+            uws.LIBUS_LISTEN_DEFAULT;
+
+        if (this.allowHalfOpen) {
+            flags |= uws.LIBUS_SOCKET_ALLOW_HALF_OPEN;
+        }
+        if (this.ipv6Only) {
+            flags |= uws.LIBUS_SOCKET_IPV6_ONLY;
+        }
+
+        return flags;
+    }
+
     pub fn fromJS(vm: *JSC.VirtualMachine, opts: JSC.JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!SocketConfig {
         var hostname_or_unix: JSC.ZigString.Slice = JSC.ZigString.Slice.empty;
         errdefer hostname_or_unix.deinit();
@@ -609,25 +627,12 @@ pub const Listener = struct {
         var ssl = socket_config.ssl;
         var handlers = socket_config.handlers;
         var protos: ?[]const u8 = null;
-        const exclusive = socket_config.exclusive;
         handlers.is_server = true;
 
         const ssl_enabled = ssl != null;
 
-        var socket_flags: i32 = if (exclusive)
-            uws.LIBUS_LISTEN_EXCLUSIVE_PORT
-        else if (socket_config.reusePort)
-            uws.LIBUS_LISTEN_REUSE_PORT | uws.LIBUS_LISTEN_REUSE_ADDR
-        else
-            uws.LIBUS_LISTEN_DEFAULT;
-
-        if (socket_config.allowHalfOpen) {
-            socket_flags |= uws.LIBUS_SOCKET_ALLOW_HALF_OPEN;
-        }
-        if (socket_config.ipv6Only) {
-            socket_flags |= uws.LIBUS_SOCKET_IPV6_ONLY;
-        }
-        defer if (ssl != null) ssl.?.deinit();
+        const socket_flags = socket_config.socketFlags();
+        defer if (ssl) |*_ssl| _ssl.deinit();
 
         if (Environment.isWindows) {
             if (port == null) {

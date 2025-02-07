@@ -7143,3 +7143,7 @@ pub const DeferredError = struct {
         return err;
     }
 };
+
+comptime {
+    _ = @import("../../analyze_transpiled_module.zig");
+}

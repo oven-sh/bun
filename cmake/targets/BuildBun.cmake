@@ -546,8 +546,9 @@ if(NOT "${REVISION}" STREQUAL "")
 endif()
 
 if(ENABLE_LTO)
-  set(ZIG_FLAGS_BUN ${ZIG_FLAGS_BUN} -flto)
+  set(ZIG_FLAGS_BUN ${ZIG_FLAGS_BUN} -Dlto=true)
 endif()
+
 
 register_command(
   TARGET

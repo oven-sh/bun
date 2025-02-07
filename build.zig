@@ -40,7 +40,7 @@ const BunBuildOptions = struct {
     optimize: OptimizeMode,
     os: OperatingSystem,
     arch: Arch,
-
+    lto: bool = false,
     version: Version,
     canary_revision: ?u32,
     sha: []const u8,
@@ -86,6 +86,7 @@ const BunBuildOptions = struct {
             b.build_root.path.?,
             this.codegen_path,
         }) catch @panic("OOM"));
+        opts.addOption(bool, "lto", this.lto);
 
         opts.addOption(bool, "codegen_embed", this.shouldEmbedCode());
         opts.addOption(u32, "canary_revision", this.canary_revision orelse 0);
@@ -215,6 +216,7 @@ pub fn build(b: *Build) !void {
     const obj_format = b.option(ObjectFormat, "obj_format", "Output file for object files") orelse .obj;
 
     const no_llvm = b.option(bool, "no_llvm", "Experiment with Zig self hosted backends. No stability guaranteed") orelse false;
+    b.verbose = true;
 
     var build_options = BunBuildOptions{
         .target = target,
@@ -283,8 +285,10 @@ pub fn build(b: *Build) !void {
     {
         var step = b.step("obj", "Build Bun's Zig code as a .o file");
         var bun_obj = addBunObject(b, &build_options);
+
         step.dependOn(&bun_obj.step);
         step.dependOn(addInstallObjectFile(b, bun_obj, "bun-zig", obj_format));
+        build_options.lto = false;
     }
 
     // zig build windows-shim
@@ -442,6 +446,7 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
 
         .omit_frame_pointer = false,
         .strip = false, // stripped at the end
+
     });
     if (opts.enable_asan) {
         if (@hasField(Build.Module, "sanitize_address")) {
@@ -452,6 +457,10 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
         }
     }
     obj.bundle_compiler_rt = false;
+    if (opts.lto) {
+        obj.want_lto = true;
+    }
+
     obj.root_module.omit_frame_pointer = false;
 
     // Link libc

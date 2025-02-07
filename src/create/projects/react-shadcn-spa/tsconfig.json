@@ -15,5 +15,5 @@
       "@/*": ["./*"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts", "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.client.tsx", "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts", "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.client.tsx"]
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
 }

@@ -56,9 +56,8 @@ fn createImportRecord(this: *HTMLScanner, input_path: []const u8, kind: ImportKi
 
 const debug = bun.Output.scoped(.HTMLScanner, true);
 
-pub fn onWriteHTML(this: *HTMLScanner, bytes: []const u8) void {
-    _ = this; // autofix
-    _ = bytes; // autofix
+pub fn onWriteHTML(_: *HTMLScanner, bytes: []const u8) void {
+    _ = bytes; // bytes are not written in scan phase
 }
 
 pub fn onHTMLParseError(this: *HTMLScanner, message: []const u8) void {
@@ -70,7 +69,7 @@ pub fn onHTMLParseError(this: *HTMLScanner, message: []const u8) void {
 }
 
 pub fn onTag(this: *HTMLScanner, _: *lol.Element, path: []const u8, url_attribute: []const u8, kind: ImportKind) void {
-    _ = url_attribute; // autofix
+    _ = url_attribute;
     this.createImportRecord(path, kind) catch {};
 }
 

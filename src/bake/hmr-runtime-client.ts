@@ -68,7 +68,7 @@ const ws = initWebSocket({
       return;
     }
 
-    ws.send("she"); // IncomingMessageId.subscribe with hot_update and route_update
+    ws.send("she"); // IncomingMessageId.subscribe with hot_update and errors
     ws.send("n" + location.pathname); // IncomingMessageId.set_url
   },
   [MessageId.hot_update](view) {

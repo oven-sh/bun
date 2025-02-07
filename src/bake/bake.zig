@@ -690,8 +690,8 @@ pub const HmrRuntime = struct {
     code: [:0]const u8,
     /// The number of lines in the HMR runtime. This is used for sourcemap
     /// generation, where the first n lines are skipped. In release, these
-    /// are always precalculated. u31 to allow coercion to i32 & usize.
-    line_count: u31,
+    /// are always precalculated.
+    line_count: u32,
 
     pub fn init(code: [:0]const u8) HmrRuntime {
         if (@inComptime()) @setEvalBranchQuota(@intCast(code.len));

@@ -597,7 +597,7 @@ pub const NumberRenamer = struct {
             std.sort.pdq(u32, sorted.items, {}, std.sort.asc(u32));
 
             for (sorted.items) |inner_index| {
-                r.assignName(s, Ref.init(@as(Ref.Int, @intCast(inner_index)), source_index, false));
+                r.assignName(s, Ref.init(@intCast(inner_index), source_index, false));
             }
         }
 

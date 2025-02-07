@@ -7832,6 +7832,18 @@ pub const AnyServer = union(enum) {
         };
     }
 
+    pub fn prepareAndSaveJsRequestContext(
+        server: AnyServer,
+        req: *uws.Request,
+        resp: uws.AnyResponse,
+        global: *JSC.JSGlobalObject,
+    ) ?SavedRequest {
+        return switch (server) {
+            inline .HTTPServer, .DebugHTTPServer => |s| (s.prepareJsRequestContext(req, resp.TCP, null) orelse return null).save(global, req, resp.TCP),
+            inline .HTTPSServer, .DebugHTTPSServer => |s| (s.prepareJsRequestContext(req, resp.SSL, null) orelse return null).save(global, req, resp.SSL),
+        };
+    }
+
     pub fn numSubscribers(this: AnyServer, topic: []const u8) u32 {
         return switch (this) {
             inline else => |server| server.app.?.numSubscribers(topic),

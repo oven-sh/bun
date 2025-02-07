@@ -1665,13 +1665,14 @@ pub const Chunk = struct {
         return output;
     }
 
+    // TODO: remove the indirection by having generic functions for SourceMapFormat and NewBuilder. Source maps are always VLQ
     pub fn SourceMapFormat(comptime Type: type) type {
         return struct {
             ctx: Type,
             const Format = @This();
 
             pub fn init(allocator: std.mem.Allocator, prepend_count: bool) Format {
-                return Format{ .ctx = Type.init(allocator, prepend_count) };
+                return .{ .ctx = Type.init(allocator, prepend_count) };
             }
 
             pub inline fn appendLineSeparator(this: *Format) anyerror!void {

@@ -377,9 +377,9 @@ pub const BundleV2 = struct {
     transpiler: *Transpiler,
     /// When Server Component is enabled, this is used for the client bundles
     /// and `transpiler` is used for the server bundles.
-    client_bundler: *Transpiler,
+    client_transpiler: *Transpiler,
     /// See bake.Framework.ServerComponents.separate_ssr_graph
-    ssr_bundler: *Transpiler,
+    ssr_transpiler: *Transpiler,
     /// When Bun Bake is used, the resolved framework is passed here
     framework: ?bake.Framework,
     graph: Graph,
@@ -412,8 +412,8 @@ pub const BundleV2 = struct {
 
     const BakeOptions = struct {
         framework: bake.Framework,
-        client_bundler: *Transpiler,
-        ssr_bundler: *Transpiler,
+        client_transpiler: *Transpiler,
+        ssr_transpiler: *Transpiler,
         plugins: ?*JSC.API.JSBundler.Plugin,
     };
 
@@ -448,8 +448,8 @@ pub const BundleV2 = struct {
             this.transpiler
         else switch (target) {
             else => this.transpiler,
-            .browser => this.client_bundler,
-            .bake_server_components_ssr => this.ssr_bundler,
+            .browser => this.client_transpiler,
+            .bake_server_components_ssr => this.ssr_transpiler,
         };
     }
 
@@ -937,7 +937,7 @@ pub const BundleV2 = struct {
                 this.graph.estimated_file_loader_count += 1;
             }
 
-            batch.push(ThreadPoolLib.Batch.from(&task.task));
+            batch.push(.from(&task.task));
         }
 
         try this.graph.entry_points.append(this.graph.allocator, source_index);
@@ -962,8 +962,8 @@ pub const BundleV2 = struct {
 
         this.* = .{
             .transpiler = transpiler,
-            .client_bundler = transpiler,
-            .ssr_bundler = transpiler,
+            .client_transpiler = transpiler,
+            .ssr_transpiler = transpiler,
             .framework = null,
             .graph = .{
                 .pool = undefined,
@@ -985,15 +985,15 @@ pub const BundleV2 = struct {
             .thread_lock = bun.DebugThreadLock.initLocked(),
         };
         if (bake_options) |bo| {
-            this.client_bundler = bo.client_bundler;
-            this.ssr_bundler = bo.ssr_bundler;
+            this.client_transpiler = bo.client_transpiler;
+            this.ssr_transpiler = bo.ssr_transpiler;
             this.framework = bo.framework;
             this.linker.framework = &this.framework.?;
             this.plugins = bo.plugins;
             if (transpiler.options.server_components) {
-                bun.assert(this.client_bundler.options.server_components);
+                bun.assert(this.client_transpiler.options.server_components);
                 if (bo.framework.server_components.?.separate_ssr_graph)
-                    bun.assert(this.ssr_bundler.options.server_components);
+                    bun.assert(this.ssr_transpiler.options.server_components);
             }
         }
         this.linker.graph.allocator = this.graph.heap.allocator();
@@ -1108,7 +1108,7 @@ pub const BundleV2 = struct {
             runtime_parse_task.tree_shaking = true;
             runtime_parse_task.loader = .js;
             this.incrementScanCounter();
-            batch.push(ThreadPoolLib.Batch.from(&runtime_parse_task.task));
+            batch.push(.from(&runtime_parse_task.task));
         }
 
         // Bake reserves two source indexes at the start of the file list, but
@@ -1512,12 +1512,12 @@ pub const BundleV2 = struct {
 
     pub fn generateFromBakeProductionCLI(
         entry_points: bake.production.EntryPointMap,
-        server_bundler: *Transpiler,
+        server_transpiler: *Transpiler,
         kit_options: BakeOptions,
         allocator: std.mem.Allocator,
         event_loop: EventLoop,
     ) !std.ArrayList(options.OutputFile) {
-        var this = try BundleV2.init(server_bundler, kit_options, allocator, event_loop, false, null, null);
+        var this = try BundleV2.init(server_transpiler, kit_options, allocator, event_loop, false, null, null);
         this.unique_key = generateUniqueKey();
 
         if (this.transpiler.log.hasErrors()) {
@@ -2757,7 +2757,7 @@ pub const BundleV2 = struct {
                 }
 
                 break :brk .{
-                    this.ssr_bundler,
+                    this.ssr_transpiler,
                     .ssr,
                     .bake_server_components_ssr,
                 };
@@ -4592,7 +4592,7 @@ pub const ParseTask = struct {
             // set the target to the client when bundling client-side files
             (task.known_target == .browser))
         {
-            transpiler = this.ctx.client_bundler;
+            transpiler = this.ctx.client_transpiler;
             resolver = &transpiler.resolver;
             bun.assert(transpiler.options.target == .browser);
         }
@@ -5379,8 +5379,8 @@ const LinkerGraph = struct {
         const source_symbols = &this.symbols.symbols_for_source.slice()[source_index];
 
         var ref = Ref.init(
-            @as(Ref.Int, @truncate(source_symbols.len)),
-            @as(Ref.Int, @truncate(source_index)),
+            @truncate(source_symbols.len),
+            @truncate(source_index),
             false,
         );
         ref.tag = .symbol;
@@ -5761,7 +5761,7 @@ const LinkerGraph = struct {
         /// a Source.Index to its output path inb reakOutputIntoPieces
         entry_point_chunk_index: u32 = std.math.maxInt(u32),
 
-        line_offset_table: bun.sourcemap.LineOffsetTable.List = .{},
+        line_offset_table: bun.sourcemap.LineOffsetTable.List = .empty,
         quoted_source_contents: string = "",
 
         pub fn isEntryPoint(this: *const File) bool {
@@ -6034,8 +6034,8 @@ pub const LinkerContext = struct {
                 .source_index = source_index,
                 .thread_task = .{ .callback = &SourceMapData.Task.runQuotedSourceContents },
             };
-            batch.push(ThreadPoolLib.Batch.from(&line_offset.thread_task));
-            second_batch.push(ThreadPoolLib.Batch.from(&quoted.thread_task));
+            batch.push(.from(&line_offset.thread_task));
+            second_batch.push(.from(&quoted.thread_task));
         }
 
         // line offsets block sooner and are faster to compute, so we should schedule those first
@@ -8937,7 +8937,8 @@ pub const LinkerContext = struct {
             ambiguous,
         };
     };
-    pub fn source_(c: *LinkerContext, index: anytype) *const Logger.Source {
+
+    pub fn getSource(c: *LinkerContext, index: usize) *const Logger.Source {
         return &c.parse_graph.input_files.items(.source)[index];
     }
 
@@ -10548,7 +10549,7 @@ pub const LinkerContext = struct {
                 worker.allocator,
                 c.resolver.opts.target,
                 ast.toAST(),
-                c.source_(chunk.entry_point.source_index),
+                c.getSource(chunk.entry_point.source_index),
                 print_options,
                 cross_chunk_import_records.slice(),
                 &[_]Part{
@@ -10561,7 +10562,7 @@ pub const LinkerContext = struct {
                 worker.allocator,
                 c.resolver.opts.target,
                 ast.toAST(),
-                c.source_(chunk.entry_point.source_index),
+                c.getSource(chunk.entry_point.source_index),
                 print_options,
                 &.{},
                 &[_]Part{
@@ -11675,7 +11676,7 @@ pub const LinkerContext = struct {
                     allocator,
                     c.resolver.opts.target,
                     ast.toAST(),
-                    c.source_(source_index),
+                    c.getSource(source_index),
                     print_options,
                     ast.import_records.slice(),
                     &[_]Part{
@@ -13182,7 +13183,7 @@ pub const LinkerContext = struct {
         source_index: Index,
     ) js_printer.PrintResult {
         const parts_to_print = &[_]Part{
-            Part{ .stmts = out_stmts },
+            .{ .stmts = out_stmts },
         };
 
         const print_options = js_printer.Options{
@@ -13207,13 +13208,14 @@ pub const LinkerContext = struct {
             .has_run_symbol_renamer = true,
 
             .allocator = allocator,
+            .source_map_allocator = writer.buffer.allocator,
             .to_esm_ref = to_esm_ref,
             .to_commonjs_ref = to_commonjs_ref,
             .require_ref = switch (c.options.output_format) {
-                .cjs => null,
+                .cjs => null, // use unbounded global
                 else => runtime_require_ref,
             },
-            .require_or_import_meta_for_source_callback = js_printer.RequireOrImportMeta.Callback.init(
+            .require_or_import_meta_for_source_callback = .init(
                 LinkerContext,
                 requireOrImportMetaForSource,
                 c,
@@ -13238,7 +13240,7 @@ pub const LinkerContext = struct {
                     &printer,
                     ast.target,
                     ast.toAST(),
-                    c.source_(source_index.get()),
+                    c.getSource(source_index.get()),
                     print_options,
                     ast.import_records.slice(),
                     parts_to_print,
@@ -13315,13 +13317,7 @@ pub const LinkerContext = struct {
             // Per CSS chunk:
             // Remove duplicate rules across files. This must be done in serial, not
             // in parallel, and must be done from the last rule to the first rule.
-            if (brk: {
-                // TODO: Have count of chunks with css on linker context?
-                for (chunks) |*chunk| {
-                    if (chunk.content == .css) break :brk true;
-                }
-                break :brk false;
-            }) {
+            if (c.parse_graph.css_file_count > 0) {
                 var wait_group = try c.allocator.create(sync.WaitGroup);
                 wait_group.init();
                 defer {
@@ -13352,13 +13348,17 @@ pub const LinkerContext = struct {
                             .linker = c,
                             .wg = wait_group,
                         };
-                        batch.push(ThreadPoolLib.Batch.from(&tasks[i].task));
+                        batch.push(.from(&tasks[i].task));
                         i += 1;
                     }
                 }
                 wait_group.counter = @as(u32, @truncate(total_count));
                 c.parse_graph.pool.pool.schedule(batch);
                 wait_group.wait();
+            } else if (Environment.isDebug) {
+                for (chunks) |*chunk| {
+                    bun.assert(chunk.content != .css);
+                }
             }
         }
 
@@ -13423,13 +13423,13 @@ pub const LinkerContext = struct {
 
                                 remaining_part_ranges[0] = .{
                                     .part_range = part_range,
-                                    .i = @truncate(i),
+                                    .i = @intCast(i),
                                     .task = .{
                                         .callback = &generateCompileResultForJSChunk,
                                     },
                                     .ctx = chunk_ctx,
                                 };
-                                batch.push(ThreadPoolLib.Batch.from(&remaining_part_ranges[0].task));
+                                batch.push(.from(&remaining_part_ranges[0].task));
 
                                 remaining_part_ranges = remaining_part_ranges[1..];
                             }
@@ -13438,13 +13438,13 @@ pub const LinkerContext = struct {
                             for (0..chunk.content.css.imports_in_chunk_in_order.len) |i| {
                                 remaining_part_ranges[0] = .{
                                     .part_range = .{},
-                                    .i = @as(u32, @truncate(i)),
-                                    .task = ThreadPoolLib.Task{
+                                    .i = @intCast(i),
+                                    .task = .{
                                         .callback = &generateCompileResultForCssChunk,
                                     },
                                     .ctx = chunk_ctx,
                                 };
-                                batch.push(ThreadPoolLib.Batch.from(&remaining_part_ranges[0].task));
+                                batch.push(.from(&remaining_part_ranges[0].task));
 
                                 remaining_part_ranges = remaining_part_ranges[1..];
                             }
@@ -13453,13 +13453,13 @@ pub const LinkerContext = struct {
                             remaining_part_ranges[0] = .{
                                 .part_range = .{},
                                 .i = 0,
-                                .task = ThreadPoolLib.Task{
+                                .task = .{
                                     .callback = &generateCompileResultForHtmlChunk,
                                 },
                                 .ctx = chunk_ctx,
                             };
 
-                            batch.push(ThreadPoolLib.Batch.from(&remaining_part_ranges[0].task));
+                            batch.push(.from(&remaining_part_ranges[0].task));
                             remaining_part_ranges = remaining_part_ranges[1..];
                         },
                     }
@@ -14675,7 +14675,7 @@ pub const LinkerContext = struct {
 
                     // Warn about importing from a file that is known to not have any exports
                     if (status == .cjs_without_exports) {
-                        const source = c.source_(tracker.source_index.get());
+                        const source = c.getSource(tracker.source_index.get());
                         c.log.addRangeWarningFmt(
                             source,
                             source.rangeOfIdentifier(named_import.alias_loc.?),
@@ -14726,9 +14726,9 @@ pub const LinkerContext = struct {
                     // Report mismatched imports and exports
                     const symbol = c.graph.symbols.get(tracker.import_ref).?;
                     const named_import: js_ast.NamedImport = named_imports[prev_source_index].get(tracker.import_ref).?;
-                    const source = c.source_(prev_source_index);
+                    const source = c.getSource(prev_source_index);
 
-                    const next_source = c.source_(next_tracker.source_index.get());
+                    const next_source = c.getSource(next_tracker.source_index.get());
                     const r = source.rangeOfIdentifier(named_import.alias_loc.?);
 
                     // Report mismatched imports and exports

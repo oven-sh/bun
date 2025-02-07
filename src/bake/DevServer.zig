@@ -6,8 +6,10 @@
 //! adjusting imports) must always rebundle only that one file.
 //!
 //! All work is held in-memory, using manually managed data-oriented design.
+//! For questions about DevServer, please consult the delusional @paperclover
 pub const DevServer = @This();
 pub const debug = bun.Output.Scoped(.DevServer, false);
+pub const memoryLog = bun.Output.Scoped(.DevServerMemory, true);
 pub const igLog = bun.Output.scoped(.IncrementalGraph, false);
 
 pub const Options = struct {
@@ -33,6 +35,7 @@ pub const Options = struct {
 
 /// Used for all server-wide allocations. In debug, this shows up in
 /// a separate named heap. Thread-safe.
+// TODO: make this an "AllocationScope" (debug memory tool i've yet to write)
 allocator: Allocator,
 /// Absolute path to project root directory. For the HMR
 /// runtime, its module IDs are strings relative to this.
@@ -43,7 +46,9 @@ root: []const u8,
 configuration_hash_key: [16]u8,
 /// The virtual machine (global object) to execute code in.
 vm: *VirtualMachine,
-/// May be `null` if not attached to an HTTP server yet.
+/// May be `null` if not attached to an HTTP server yet. When no server is
+/// available, functions taking in requests and responses are unavailable.
+/// However, a lot of testing in this mode is missing, so it may hit assertions.
 server: ?bun.JSC.API.AnyServer,
 /// Contains the tree of routes. This structure contains FileIndex
 router: FrameworkRouter,
@@ -61,9 +66,6 @@ incremental_result: IncrementalResult,
 /// are populated as the routes are discovered. The route may not be bundled OR
 /// navigatable, such as the case where a layout's index is looked up.
 route_lookup: AutoArrayHashMapUnmanaged(IncrementalGraph(.server).FileIndex, RouteIndexAndRecurseFlag),
-/// Quickly retrieve an HTML route's index from its incremental graph index.
-// TODO: store this in IncrementalGraph(.client).PackedMap (since HTML doesnt get source maps) instead of this hash map.
-html_route_lookup: AutoArrayHashMapUnmanaged(IncrementalGraph(.client).FileIndex, RouteBundle.Index),
 /// This acts as a duplicate of the lookup table in uws, but only for HTML routes
 /// Used to identify what route a connected WebSocket is on, so that only
 /// the active pages are notified of a hot updates.
@@ -104,16 +106,16 @@ bundles_since_last_error: usize = 0,
 framework: bake.Framework,
 bundler_options: bake.SplitBundlerOptions,
 // Each logical graph gets its own bundler configuration
-server_bundler: Transpiler,
-client_bundler: Transpiler,
-ssr_bundler: Transpiler,
-/// The log used by all `server_bundler`, `client_bundler` and `ssr_bundler`.
+server_transpiler: Transpiler,
+client_transpiler: Transpiler,
+ssr_transpiler: Transpiler,
+/// The log used by all `server_transpiler`, `client_transpiler` and `ssr_transpiler`.
 /// Note that it is rarely correct to write messages into it. Instead, associate
 /// messages with the IncrementalGraph file or Route using `SerializedFailure`
 log: Log,
 plugin_state: enum {
     /// Should ask server for plugins. Once plugins are loaded, the plugin
-    /// pointer is written into `server_bundler.options.plugin`
+    /// pointer is written into `server_transpiler.options.plugin`
     unknown,
     // These two states mean that `server.getOrLoadPlugins()` was called.
     pending,
@@ -137,6 +139,7 @@ current_bundle: ?struct {
     had_reload_event: bool,
     /// After a bundle finishes, these requests will be continued, either
     /// calling their handler on success or sending the error page on failure.
+    /// Owned by `deferred_request_pool` in DevServer.
     requests: DeferredRequest.List,
     /// Resolution failures are grouped by incremental graph file index.
     /// Unlike parse failures (`handleParseTaskFailure`), the resolution
@@ -283,6 +286,30 @@ pub const RouteBundle = struct {
             self.client_bundle = null;
         }
         self.client_script_generation = std.crypto.random.int(u32);
+        switch (self.data) {
+            .framework => |*fw| fw.cached_client_bundle_url.clear(),
+            .html => |*html| if (html.cached_response) |cached_response| {
+                cached_response.deref();
+                html.cached_response = null;
+            },
+        }
+    }
+
+    /// Does NOT count @sizeOf(RouteBundle)
+    pub fn memoryCost(self: *const RouteBundle) usize {
+        var cost: usize = 0;
+        if (self.client_bundle) |bundle| cost += bundle.memoryCost();
+        switch (self.data) {
+            .framework => {
+                // the JSC.Strong children do not support memoryCost. likely not needed
+                // .evaluate_failure is not owned
+            },
+            .html => |*html| {
+                if (html.bundled_html_text) |text| cost += text.len;
+                if (html.cached_response) |cached_response| cost += cached_response.memoryCost();
+            },
+        }
+        return cost;
     }
 };
 
@@ -328,7 +355,6 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .incremental_result = .empty,
         .route_lookup = .empty,
         .route_bundles = .empty,
-        .html_route_lookup = .empty,
         .html_router = .empty,
         .current_bundle = null,
         .next_bundle = .{
@@ -346,9 +372,9 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .bundling_failures = .{},
         .deferred_request_pool = .init(allocator),
 
-        .server_bundler = undefined,
-        .client_bundler = undefined,
-        .ssr_bundler = undefined,
+        .server_transpiler = undefined,
+        .client_transpiler = undefined,
+        .ssr_transpiler = undefined,
         .bun_watcher = undefined,
         .configuration_hash_key = undefined,
         .router = undefined,
@@ -375,25 +401,25 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     dev.bun_watcher.start() catch |err|
         return global.throwError(err, "while initializing file watcher thread for development server");
 
-    dev.server_bundler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
-    dev.client_bundler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
-    dev.ssr_bundler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
+    dev.server_transpiler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
+    dev.client_transpiler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
+    dev.ssr_transpiler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
 
     dev.watcher_atomics = WatcherAtomics.init(dev);
 
-    dev.framework.initBundler(allocator, &dev.log, .development, .server, &dev.server_bundler) catch |err|
+    dev.framework.initBundler(allocator, &dev.log, .development, .server, &dev.server_transpiler) catch |err|
         return global.throwError(err, generic_action);
-    dev.server_bundler.options.dev_server = dev;
-    dev.framework.initBundler(allocator, &dev.log, .development, .client, &dev.client_bundler) catch |err|
+    dev.server_transpiler.options.dev_server = dev;
+    dev.framework.initBundler(allocator, &dev.log, .development, .client, &dev.client_transpiler) catch |err|
         return global.throwError(err, generic_action);
-    dev.client_bundler.options.dev_server = dev;
+    dev.client_transpiler.options.dev_server = dev;
     if (separate_ssr_graph) {
-        dev.framework.initBundler(allocator, &dev.log, .development, .ssr, &dev.ssr_bundler) catch |err|
+        dev.framework.initBundler(allocator, &dev.log, .development, .ssr, &dev.ssr_transpiler) catch |err|
             return global.throwError(err, generic_action);
-        dev.ssr_bundler.options.dev_server = dev;
+        dev.ssr_transpiler.options.dev_server = dev;
     }
 
-    dev.framework = dev.framework.resolve(&dev.server_bundler.resolver, &dev.client_bundler.resolver, options.arena) catch {
+    dev.framework = dev.framework.resolve(&dev.server_transpiler.resolver, &dev.client_transpiler.resolver, options.arena) catch {
         if (dev.framework.is_built_in_react)
             try bake.Framework.addReactInstallCommandNote(&dev.log);
         return global.throwValue(dev.log.toJSAggregateError(global, bun.String.static("Framework is missing required files!")));
@@ -495,7 +521,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
 
         for (options.framework.file_system_router_types, 0..) |fsr, i| {
             const joined_root = bun.path.joinAbs(dev.root, .auto, fsr.root);
-            const entry = dev.server_bundler.resolver.readDirInfoIgnoreError(joined_root) orelse
+            const entry = dev.server_transpiler.resolver.readDirInfoIgnoreError(joined_root) orelse
                 continue;
 
             const server_file = try dev.server_graph.insertStaleExtra(fsr.entry_server, false, true);
@@ -538,6 +564,140 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     return dev;
 }
 
+pub fn deinit(dev: *DevServer) void {
+    // TODO: Currently deinit is not implemented, as it was assumed to be alive for
+    // the remainder of this process' lifespan. This isn't always true.
+    const allocator = dev.allocator;
+    if (dev.has_pre_crash_handler)
+        bun.crash_handler.removePreCrashHandler(dev);
+    allocator.destroy(dev);
+    // if (bun.Environment.isDebug)
+    //     bun.todoPanic(@src(), "bake.DevServer.deinit()", .{});
+}
+
+/// Returns an estimation for how many bytes DevServer is explicitly aware of.
+/// If this number stays constant but RSS grows, then there is a memory leak. If
+/// this number grows out of control, then incremental garbage collection is not
+/// good enough.
+///
+/// Memory measurements are important as DevServer has a long lifetime, but
+/// unlike the HTTP server, it controls a lot of objects that are frequently
+/// being added, removed, and changed (as the developer edits source files). It
+/// is exponentially easy to mess up memory management.
+pub fn memoryCost(dev: *DevServer) usize {
+    var cost: usize = @sizeOf(DevServer);
+    // See https://github.com/ziglang/zig/issues/21879
+    voidFieldTypes(DevServer).* = .{
+        // does not contain pointers
+        .allocator = {},
+        .configuration_hash_key = {},
+        .graph_safety_lock = {},
+        .bun_watcher = {},
+        .watcher_atomics = {},
+        .plugin_state = {},
+        .generation = {},
+        .bundles_since_last_error = {},
+        .emit_visualizer_events = {},
+        .dump_dir = {},
+        .has_pre_crash_handler = {},
+        .frontend_only = {},
+        .server_fetch_function_callback = {},
+        .server_register_update_callback = {},
+        .deferred_request_pool = {},
+
+        // pointers that are not considered a part of DevServer
+        .vm = {},
+        .server = {},
+        .server_transpiler = {},
+        .client_transpiler = {},
+        .ssr_transpiler = {},
+        .log = {},
+        .framework = {}, // TODO: maybe
+        .bundler_options = {}, // TODO: maybe
+
+        // to be counted.
+        .root = {
+            cost += dev.root.len;
+        },
+        .router = {
+            cost += dev.router.memoryCost();
+        },
+        .route_bundles = for (dev.route_bundles.items) |*bundle| {
+            cost += bundle.memoryCost();
+        },
+        .server_graph = {
+            cost += dev.server_graph.memoryCost();
+        },
+        .client_graph = {
+            cost += dev.client_graph.memoryCost();
+        },
+        .assets = {
+            cost += dev.assets.memoryCost();
+        },
+        .incremental_result = {
+            cost += memoryCostArrayList(dev.incremental_result.client_components_added);
+            cost += memoryCostArrayList(dev.incremental_result.html_routes_affected);
+            cost += memoryCostArrayList(dev.incremental_result.framework_routes_affected);
+            cost += memoryCostArrayList(dev.incremental_result.client_components_removed);
+            cost += memoryCostArrayList(dev.incremental_result.failures_removed);
+            cost += memoryCostArrayList(dev.incremental_result.client_components_affected);
+            cost += memoryCostArrayList(dev.incremental_result.failures_added);
+        },
+        .has_tailwind_plugin_hack = if (dev.has_tailwind_plugin_hack) |hack| {
+            cost += memoryCostArrayHashMap(hack);
+        },
+        .directory_watchers = {
+            cost += memoryCostArrayList(dev.directory_watchers.dependencies);
+            cost += memoryCostArrayList(dev.directory_watchers.dependencies_free_list);
+            cost += memoryCostArrayHashMap(dev.directory_watchers.watches);
+            for (dev.directory_watchers.dependencies.items) |dep| {
+                cost += dep.specifier.len;
+            }
+        },
+        .html_router = {
+            // std does not provide a way to measure exact allocation size of HashMapUnmanaged
+            cost += dev.html_router.map.capacity() * (@sizeOf(*HTMLBundle.HTMLBundleRoute) + @sizeOf([]const u8));
+            // DevServer does not count the referenced HTMLBundle.HTMLBundleRoutes
+        },
+        .bundling_failures = {
+            cost += memoryCostSlice(dev.bundling_failures.keys());
+            for (dev.bundling_failures.keys()) |failure| {
+                cost += failure.data.len;
+            }
+        },
+        .current_bundle = {
+            // All entries are owned by the bundler arena, not DevServer, except for `requests`
+            if (dev.current_bundle) |bundle| {
+                var r = bundle.requests.first;
+                while (r) |request| : (r = request.next) {
+                    cost += @sizeOf(DeferredRequest.Node);
+                }
+            }
+        },
+        .next_bundle = {
+            var r = dev.next_bundle.requests.first;
+            while (r) |request| : (r = request.next) {
+                cost += @sizeOf(DeferredRequest.Node);
+            }
+            cost += memoryCostArrayHashMap(dev.next_bundle.route_queue);
+        },
+        .route_lookup = {
+            cost += memoryCostArrayHashMap(dev.route_lookup);
+        },
+    };
+    return cost;
+}
+
+fn memoryCostArrayList(slice: anytype) usize {
+    return slice.capacity * @sizeOf(@typeInfo(@TypeOf(slice.items)).pointer.child);
+}
+fn memoryCostSlice(slice: anytype) usize {
+    return slice.len * @sizeOf(@typeInfo(@TypeOf(slice)).pointer.child);
+}
+fn memoryCostArrayHashMap(map: anytype) usize {
+    return @TypeOf(map.entries).capacityInBytes(map.entries.capacity);
+}
+
 fn initServerRuntime(dev: *DevServer) void {
     const runtime = bun.String.static(bun.bake.getHmrRuntime(.server).code);
 
@@ -567,7 +727,7 @@ fn initServerRuntime(dev: *DevServer) void {
 fn scanInitialRoutes(dev: *DevServer) !void {
     try dev.router.scanAll(
         dev.allocator,
-        &dev.server_bundler.resolver,
+        &dev.server_transpiler.resolver,
         FrameworkRouter.InsertionContext.wrap(DevServer, dev),
     );
 
@@ -609,17 +769,6 @@ pub fn attachRoutes(dev: *DevServer, server: anytype) !bool {
     } else {
         return false;
     }
-}
-
-pub fn deinit(dev: *DevServer) void {
-    // TODO: Currently deinit is not implemented, as it was assumed to be alive for
-    // the remainder of this process' lifespan. This isn't always true.
-    const allocator = dev.allocator;
-    if (dev.has_pre_crash_handler)
-        bun.crash_handler.removePreCrashHandler(dev);
-    allocator.destroy(dev);
-    // if (bun.Environment.isDebug)
-    //     bun.todoPanic(@src(), "bake.DevServer.deinit()", .{});
 }
 
 fn onJsRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
@@ -826,7 +975,6 @@ fn ensureRouteIsBundled(
         .loaded => switch (kind) {
             .server_handler => dev.onFrameworkRequestWithBundle(route_bundle_index, .{ .stack = req }, resp),
             .bundled_html_page => dev.onHtmlRequestWithBundle(route_bundle_index, resp, bun.http.Method.which(req.method()) orelse .POST),
-            .js_payload => dev.onJsRequestWithBundle(route_bundle_index, resp, bun.http.Method.which(req.method()) orelse .POST),
         },
     }
 }
@@ -843,13 +991,9 @@ fn deferRequest(
     deferred.data = .{
         .route_bundle_index = route_bundle_index,
         .handler = switch (kind) {
-            // POST is specified for unknown methods.
-            .js_payload => .{ .js_payload = .{ .response = resp, .method = bun.http.Method.which(req.method()) orelse .POST } },
             .bundled_html_page => .{ .bundled_html_page = .{ .response = resp, .method = bun.http.Method.which(req.method()) orelse .POST } },
             .server_handler => .{
-                // TODO: SSL by moving this to AnyServer.prepareAndSaveJsRequestContext
-                .server_handler = (dev.server.?.DebugHTTPServer.prepareJsRequestContext(req, resp.TCP, null) orelse return)
-                    .save(dev.vm.global, req, resp.TCP),
+                .server_handler = dev.server.?.prepareAndSaveJsRequestContext(req, resp, dev.vm.global) orelse return,
             },
         },
     };
@@ -937,22 +1081,16 @@ fn onFrameworkRequestWithBundle(
             },
             // clientId
             bundle.cached_client_bundle_url.get() orelse str: {
-                break :str {
-                    @panic("TODO");
-                };
-                // const id, const route_index: RouteBundle.Index.Optional = if (router_type.client_file != .none)
-                //     .{ std.crypto.random.int(u64), route_bundle_index.toOptional() }
-                // else
-                //     // When there is no framework-provided client code, generate
-                //     // a JS file so that the hot-reloading code can reload the
-                //     // page on server-side changes and show errors in-browser.
-                //     .{ 0, .none };
-                // dev.route_js_payloads.put(dev.allocator, id, route_index) catch bun.outOfMemory();
-                // const str = bun.String.createFormat(client_prefix ++ "/route.{}.js", .{std.fmt.fmtSliceHexLower(std.mem.asBytes(&id))}) catch bun.outOfMemory();
-                // defer str.deref();
-                // const js = str.toJS(dev.vm.global);
-                // bundle.cached_client_bundle_url = JSC.Strong.create(js, dev.vm.global);
-                // break :str js;
+                const bundle_index: u32 = route_bundle_index.get();
+                const generation: u32 = route_bundle.client_script_generation;
+                const str = bun.String.createFormat(client_prefix ++ "/route-{}{}.js", .{
+                    std.fmt.fmtSliceHexLower(std.mem.asBytes(&bundle_index)),
+                    std.fmt.fmtSliceHexLower(std.mem.asBytes(&generation)),
+                }) catch bun.outOfMemory();
+                defer str.deref();
+                const js = str.toJS(dev.vm.global);
+                bundle.cached_client_bundle_url = JSC.Strong.create(js, dev.vm.global);
+                break :str js;
             },
             // styles
             bundle.cached_css_file_array.get() orelse arr: {
@@ -1160,9 +1298,6 @@ const DeferredRequest = struct {
         server_handler: bun.JSC.API.SavedRequest,
         /// For a .html route. Serve the bundled HTML page.
         bundled_html_page: ResponseAndMethod,
-        /// Serve the JavaScript payload for this route.
-        /// TODO: remove this
-        js_payload: ResponseAndMethod,
         /// Do nothing and free this node. To simplify lifetimes,
         /// the `DeferredRequest` is not freed upon abortion. Which
         /// is okay since most requests do not abort.
@@ -1173,7 +1308,6 @@ const DeferredRequest = struct {
         const Kind = enum {
             server_handler,
             bundled_html_page,
-            js_payload,
         };
     };
 
@@ -1189,7 +1323,7 @@ const DeferredRequest = struct {
     fn deinit(this: *DeferredRequest) void {
         switch (this.handler) {
             .server_handler => |*saved| saved.deinit(),
-            .bundled_html_page, .js_payload, .aborted => {},
+            .bundled_html_page, .aborted => {},
         }
     }
 
@@ -1200,7 +1334,7 @@ const DeferredRequest = struct {
                 saved.response.endWithoutBody(true);
                 saved.deinit();
             },
-            .bundled_html_page, .js_payload => |r| {
+            .bundled_html_page => |r| {
                 r.response.endWithoutBody(true);
             },
             .aborted => return,
@@ -1235,11 +1369,11 @@ fn startAsyncBundle(
     ast_memory_allocator.push();
 
     const bv2 = try BundleV2.init(
-        &dev.server_bundler,
+        &dev.server_transpiler,
         .{
             .framework = dev.framework,
-            .client_bundler = &dev.client_bundler,
-            .ssr_bundler = &dev.ssr_bundler,
+            .client_transpiler = &dev.client_transpiler,
+            .ssr_transpiler = &dev.ssr_transpiler,
             .plugins = dev.bundler_options.plugin,
         },
         allocator,
@@ -1605,7 +1739,7 @@ pub fn finalizeBundle(
         const source_map: SourceMap.Chunk = compile_result.sourceMapChunk() orelse brk: {
             // The source map is `null` if empty
             bun.assert(compile_result.javascript.result == .result);
-            bun.assert(dev.server_bundler.options.source_map != .none);
+            bun.assert(dev.server_transpiler.options.source_map != .none);
             bun.assert(!part_range.source_index.isRuntime());
             break :brk .empty;
         };
@@ -1675,8 +1809,6 @@ pub fn finalizeBundle(
         }
     }
 
-    // TODO: consider storing something in `result.html_files.values()` as a
-    // means to removing the hashmap lookup in `dev.html_route_lookup`
     for (result.htmlChunks()) |*chunk| {
         const index = bun.JSAst.Index.init(chunk.entry_point.source_index);
         const compile_result = chunk.compile_results_for_chunk[0].html;
@@ -1690,12 +1822,11 @@ pub fn finalizeBundle(
             &ctx,
             index,
             .{ .js = generated_js },
-            .empty, // HTML chunk does not have a source map.
+            null, // HTML chunk does not have a source map.
             false,
         );
         const client_index = ctx.getCachedIndex(.client, index).*;
-        const route_bundle_index = dev.html_route_lookup.get(client_index) orelse
-            @panic("Route for HTML file was not registered");
+        const route_bundle_index = dev.client_graph.htmlRouteBundleIndex(client_index);
         const route_bundle = dev.routeBundlePtr(route_bundle_index);
         assert(route_bundle.data.html.bundled_file == client_index);
         const html = &route_bundle.data.html;
@@ -1710,8 +1841,8 @@ pub fn finalizeBundle(
         }
         html.bundled_html_text = compile_result.code;
 
-        html.head_end_tag_index = RouteBundle.HTML.ByteOffset.init(compile_result.offsets.head_end_tag).toOptional();
-        html.body_end_tag_index = RouteBundle.HTML.ByteOffset.init(compile_result.offsets.body_end_tag).toOptional();
+        html.head_end_tag_index = .init(compile_result.offsets.head_end_tag);
+        html.body_end_tag_index = .init(compile_result.offsets.body_end_tag);
 
         chunk.entry_point.entry_point_id = @intCast(route_bundle_index.get());
     }
@@ -2004,7 +2135,7 @@ pub fn finalizeBundle(
                     saved.deinit();
                     break :brk resp;
                 },
-                .js_payload, .bundled_html_page => |ram| ram.response,
+                .bundled_html_page => |ram| ram.response,
             };
 
             resp.corked(sendSerializedFailures, .{
@@ -2026,12 +2157,25 @@ pub fn finalizeBundle(
                 Output.enableBuffering();
             }
 
+            if (Environment.isDebug and memoryLog.isVisible()) {
+                Output.prettyErrorln("<d>DevServer: {}, RSS: {}", .{
+                    bun.fmt.size(dev.memoryCost(), .{}),
+                    bun.fmt.size(bun.sys.selfProcessMemoryUsage() orelse 0, .{}),
+                });
+            }
+
             dev.bundles_since_last_error += 1;
             if (dev.bundles_since_last_error > 1) {
                 Output.prettyError("<cyan>[x{d}]<r> ", .{dev.bundles_since_last_error});
             }
         } else {
             dev.bundles_since_last_error = 0;
+            if (Environment.isDebug and memoryLog.isVisible()) {
+                Output.prettyErrorln("<d>DevServer: {}, RSS: {}", .{
+                    bun.fmt.size(dev.memoryCost(), .{}),
+                    bun.fmt.size(bun.sys.selfProcessMemoryUsage() orelse 0, .{}),
+                });
+            }
         }
 
         Output.prettyError("<green>{s} in {d}ms<r>", .{
@@ -2085,7 +2229,6 @@ pub fn finalizeBundle(
             .aborted => continue,
             .server_handler => |saved| dev.onFrameworkRequestWithBundle(req.route_bundle_index, .{ .saved = saved }, saved.response),
             .bundled_html_page => |ram| dev.onHtmlRequestWithBundle(req.route_bundle_index, ram.response, ram.method),
-            .js_payload => |ram| dev.onJsRequestWithBundle(req.route_bundle_index, ram.response, ram.method),
         }
     }
 }
@@ -2301,11 +2444,7 @@ fn getOrPutRouteBundle(dev: *DevServer, route: RouteBundle.UnresolvedIndex) !Rou
             } },
             .html => |html| brk: {
                 const incremental_graph_index = try dev.client_graph.insertStaleExtra(html.html_bundle.path, false, true);
-                try dev.html_route_lookup.put(
-                    dev.allocator,
-                    incremental_graph_index,
-                    bundle_index,
-                );
+                dev.client_graph.source_maps.items[incremental_graph_index.get()].extra.empty.html_bundle_route_index = .init(bundle_index.get());
                 break :brk .{ .html = .{
                     .html_bundle = html,
                     .bundled_file = incremental_graph_index,
@@ -2431,7 +2570,7 @@ const FileKind = enum(u2) {
 ///
 /// Upon bundle completion, both `client_graph` and `server_graph` have their
 /// `receiveChunk` methods called with all new chunks, counting the total length
-/// needed. A call to `takeBundle` joins all of the chunks, resulting in the
+/// needed. A call to `takeJSBundle` joins all of the chunks, resulting in the
 /// code to send to client or evaluate on the server.
 ///
 /// Then, `processChunkDependencies` is called on each chunk to update the
@@ -2444,6 +2583,12 @@ const FileKind = enum(u2) {
 /// do not emit duplicate dependencies. By tracing `imports` on each file in
 /// the module graph recursively, the full bundle for any given route can
 /// be re-materialized (required when pressing Cmd+R after any client update)
+///
+/// Since source mappings are all relative to their previous mapping, each
+/// chunk's mappings can be stored in the graph, and very trivially built into
+/// JSON source map files (`takeSourceMap`), even after hot updates. The
+/// lifetime for these sourcemaps is a bit tricky and depend on the lifetime of
+/// of WebSocket connections; see comments in `Assets` for more details.
 pub fn IncrementalGraph(side: bake.Side) type {
     return struct {
         // Unless otherwise mentioned, all data structures use DevServer's allocator.
@@ -2507,7 +2652,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             .edges_free_list = .empty,
 
             .current_chunk_len = 0,
-            .current_chunk_parts = .{},
+            .current_chunk_parts = .empty,
 
             .current_css_files = if (side == .client) .empty,
         };
@@ -2573,7 +2718,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     /// This is a file is an entry point to the framework.
                     /// Changing this will always cause a full page reload.
                     is_special_framework_file: bool,
-                    /// If this file has a HTML RouteBundle and associated entry in `html_route_lookup`
+                    /// If this file has a HTML RouteBundle. The bundle index is tucked away in:
+                    /// `graph.source_maps.items[i].extra.empty.html_bundle_route_index`
                     is_html_route: bool,
                     /// CSS files get special handling
                     kind: FileKind,
@@ -2660,31 +2806,41 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     ))[0..chunk.len];
                 }
             },
-            /// Used to track the last state of the source map chunk. This
-            /// is used when concatenating chunks. The generated column
-            /// is not tracked because it is always zero (all chunks end
-            /// in a newline because minification is off), and the generated
-            /// line is recomputed on demand
-            end_state: struct {
-                /// This field is overloaded for an empty chunk's line count.
-                original_line: i32,
-                original_column: i32,
+            /// This field is overloaded depending on if the source map data is
+            /// present or not (.len != 0).
+            extra: extern union {
+                /// Used to track the last state of the source map chunk. This
+                /// is used when concatenating chunks. The generated column
+                /// is not tracked because it is always zero (all chunks end
+                /// in a newline because minification is off), and the generated
+                /// line is recomputed on demand
+                end_state: extern struct {
+                    original_line: i32,
+                    original_column: i32,
+                },
+                empty: extern struct {
+                    line_count: bun.GenericIndex(u32, u8).Optional,
+                    // Cannot use RouteBundle.Index because `extern union` above :(
+                    html_bundle_route_index: bun.GenericIndex(u32, u8).Optional,
+                },
             },
 
             pub const empty: PackedMap = .{
                 .vlq_chunk = .init(""),
-                .end_state = .{
-                    .original_line = 0,
-                    .original_column = 0,
-                },
+                .extra = .{ .empty = .{
+                    .line_count = .none,
+                    .html_bundle_route_index = .none,
+                } },
             };
 
             pub fn fromSourceMap(source_map: SourceMap.Chunk) PackedMap {
                 return if (source_map.buffer.list.items.len > 0) .{
                     .vlq_chunk = .init(source_map.buffer.list.items),
-                    .end_state = .{
-                        .original_line = source_map.end_state.original_line,
-                        .original_column = source_map.end_state.original_column,
+                    .extra = .{
+                        .end_state = .{
+                            .original_line = source_map.end_state.original_line,
+                            .original_column = source_map.end_state.original_column,
+                        },
                     },
                 } else .empty;
             }
@@ -2717,6 +2873,29 @@ pub fn IncrementalGraph(side: bake.Side) type {
         /// An index into `edges`
         const EdgeIndex = bun.GenericIndex(u32, Edge);
 
+        pub fn deinit() void {
+            @panic("TODO");
+        }
+
+        /// Does NOT count @sizeOf(@This())
+        pub fn memoryCost(g: *@This()) usize {
+            var cost: usize = 0;
+            cost += memoryCostArrayHashMap(g.bundled_files);
+            cost += g.stale_files.bytes().len;
+            cost += memoryCostArrayList(g.first_dep);
+            cost += memoryCostArrayList(g.first_import);
+            cost += memoryCostArrayList(g.edges);
+            cost += memoryCostArrayList(g.edges_free_list);
+            cost += memoryCostArrayList(g.current_chunk_parts);
+
+            if (side == .client) {
+                cost += memoryCostArrayList(g.source_maps);
+                cost += memoryCostArrayList(g.current_css_files);
+            }
+
+            return cost;
+        }
+
         fn getFileIndex(g: *@This(), path: []const u8) ?FileIndex {
             return if (g.bundled_files.getIndex(path)) |i| FileIndex.init(@intCast(i)) else null;
         }
@@ -2724,6 +2903,14 @@ pub fn IncrementalGraph(side: bake.Side) type {
         /// Prefer calling .values() and indexing manually if accessing more than one
         pub fn getFileByIndex(g: *@This(), index: FileIndex) File {
             return g.bundled_files.values()[index.get()];
+        }
+
+        pub fn htmlRouteBundleIndex(g: *@This(), index: FileIndex) RouteBundle.Index {
+            if (Environment.allow_assert) {
+                assert(g.bundled_files.values()[index.get()].flags.is_html_route);
+            }
+            return .init(@intCast((g.source_maps.items[index.get()].extra.empty.html_bundle_route_index.unwrap() orelse
+                @panic("Internal assertion failure: HTML bundle not registered correctly")).get()));
         }
 
         /// Tracks a bundled code chunk for cross-bundle chunks,
@@ -2820,9 +3007,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             .js => {
                                 bun.default_allocator.free(gop.value_ptr.jsCode());
                                 bun.default_allocator.free(g.source_maps.items[file_index.get()].vlq_chunk.slice());
-                                g.source_maps.items[file_index.get()] = .fromSourceMap(
-                                    source_map orelse unreachable, // JS needs a source map (can be empty, but not null)
-                                );
+                                if (source_map) |map| g.source_maps.items[file_index.get()] = .fromSourceMap(map);
                             },
                             .css => {}, // do not need to unref css as it has been replaced already
                             .unknown => {},
@@ -3161,12 +3346,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             Output.panic("Server Incremental Graph is missing component for {}", .{bun.fmt.quote(key)});
                         try dev.server_graph.traceDependencies(index, gts, trace_kind);
                     } else if (file.flags.is_html_route) {
-                        const route_bundle_index = dev.html_route_lookup.get(file_index) orelse {
-                            Output.panic("HTML route not in lookup index: {d} {}", .{
-                                file_index.get(),
-                                bun.fmt.quote(g.bundled_files.keys()[file_index.get()]),
-                            });
-                        };
+                        const route_bundle_index = dev.client_graph.htmlRouteBundleIndex(file_index);
                         try dev.incremental_result.html_routes_affected.append(dev.allocator, route_bundle_index);
                         if (trace_kind == .stop_at_boundary)
                             return;
@@ -3297,9 +3477,14 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             .css => g.owner().assets.unrefByPath(gop.key_ptr.*),
                             .unknown => {},
                         }
-                        g.owner().allocator.free(source_map.vlq_chunk.slice());
-                        source_map.* = .empty;
+                        if (source_map.vlq_chunk.len > 0) {
+                            g.owner().allocator.free(source_map.vlq_chunk.slice());
+                            source_map.* = .empty;
+                        }
                         flags.is_html_route = flags.is_html_route or gop.value_ptr.flags.is_html_route;
+                        flags.failed = gop.value_ptr.flags.failed;
+                        flags.is_special_framework_file = gop.value_ptr.flags.is_special_framework_file;
+                        flags.is_hmr_root = gop.value_ptr.flags.is_hmr_root;
                     }
                     gop.value_ptr.* = File.initUnknown(flags);
                 },
@@ -3431,7 +3616,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             switch (side) {
                 .client => {
                     var flags: File.Flags = .{
-                        .failed = false,
+                        .failed = true,
                         .is_hmr_root = false,
                         .is_special_framework_file = false,
                         .is_html_route = false,
@@ -3444,9 +3629,13 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             .css => g.owner().assets.unrefByPath(gop.key_ptr.*),
                             .unknown => {},
                         }
-                        g.owner().allocator.free(source_map.vlq_chunk.slice());
-                        source_map.* = .empty;
-                        flags.is_html_route = flags.is_html_route or gop.value_ptr.flags.is_html_route;
+                        if (source_map.vlq_chunk.len > 0) {
+                            g.owner().allocator.free(source_map.vlq_chunk.slice());
+                            source_map.* = .empty;
+                        }
+                        flags.is_html_route = gop.value_ptr.flags.is_html_route;
+                        flags.is_special_framework_file = gop.value_ptr.flags.is_special_framework_file;
+                        flags.is_hmr_root = gop.value_ptr.flags.is_hmr_root;
                     }
                     gop.value_ptr.* = File.initUnknown(flags);
                 },
@@ -3729,23 +3918,26 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 .original_column = 0,
             };
 
-            var lines_between: i32 = runtime.line_count + 2;
+            // +2 because the magic fairy in my dreams said it would align the source maps.
+            var lines_between: u32 = runtime.line_count + 2;
 
             var non_empty_source_index: i32 = 0;
             for (g.current_chunk_parts.items) |entry| {
                 const source_map = &source_maps[entry.get()];
                 if (source_map.vlq_chunk.len == 0) {
-                    if (source_map.end_state.original_line == 0) {
-                        const count = bun.strings.countChar(files[entry.get()].jsCode(), '\n');
-                        source_map.end_state.original_line = @intCast(count);
+                    if (source_map.extra.empty.line_count.unwrap()) |line_count| {
+                        lines_between += line_count.get();
+                    } else {
+                        const count: u32 = @intCast(bun.strings.countChar(files[entry.get()].jsCode(), '\n'));
+                        source_map.extra.empty.line_count = .init(count);
+                        lines_between += count;
                     }
-                    lines_between += source_map.end_state.original_line;
                     continue;
                 }
 
                 const start_state: SourceMap.SourceMapState = .{
                     .source_index = non_empty_source_index,
-                    .generated_line = lines_between,
+                    .generated_line = @intCast(lines_between),
                     .generated_column = 0,
                     .original_line = 0,
                     .original_column = 0,
@@ -3764,8 +3956,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     .source_index = non_empty_source_index,
                     .generated_line = 0,
                     .generated_column = 0,
-                    .original_line = source_map.end_state.original_line,
-                    .original_column = source_map.end_state.original_column,
+                    .original_line = source_map.extra.end_state.original_line,
+                    .original_column = source_map.extra.end_state.original_column,
                 };
 
                 non_empty_source_index += 1;
@@ -3788,7 +3980,6 @@ pub fn IncrementalGraph(side: bake.Side) type {
         }
 
         fn disconnectAndDeleteFile(g: *@This(), file_index: FileIndex) void {
-            bun.assert(g.bundled_files.count() > 1); // never remove all files
             bun.assert(g.first_dep.items[file_index.get()] == .none); // must have no dependencies
 
             // Disconnect all imports
@@ -3813,9 +4004,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
             g.owner().allocator.free(keys[file_index.get()]);
             keys[file_index.get()] = ""; // cannot be `undefined` as it may be read by hashmap logic
 
-            // TODO: it is infeasible to swapRemove a file since FrameworkRouter
-            // contains file indices to the server graph. Instead, `file_index`
-            // should go in a free-list for use by new files.
+            // TODO: it is infeasible to swapRemove a file since
+            // FrameworkRouter, SerializedFailure, and more structures contains
+            // file indices to the server graph.  Instead, `file_index` should
+            // go in a free-list for use by new files.
         }
 
         fn newEdge(g: *@This(), edge: Edge) !EdgeIndex {
@@ -4059,7 +4251,7 @@ const DirectoryWatchStore = struct {
         errdefer store.watches.swapRemoveAt(gop.index);
 
         // Try to use an existing open directory handle
-        const cache_fd = if (dev.server_bundler.resolver.readDirInfo(dir_name_to_watch) catch null) |cache| fd: {
+        const cache_fd = if (dev.server_transpiler.resolver.readDirInfo(dir_name_to_watch) catch null) |cache| fd: {
             const fd = cache.getFileDescriptor();
             break :fd if (fd == .zero) null else fd;
         } else null;
@@ -5204,7 +5396,7 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
             },
             .directory => {
                 // bust the directory cache since this directory has changed
-                _ = dev.server_bundler.resolver.bustDirCache(bun.strings.withoutTrailingSlashWindowsPath(file_path));
+                _ = dev.server_transpiler.resolver.bustDirCache(bun.strings.withoutTrailingSlashWindowsPath(file_path));
 
                 // if a directory watch exists for resolution
                 // failures, check those now.
@@ -5218,7 +5410,7 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
                     while (it) |index| {
                         const dep = &dev.directory_watchers.dependencies.items[index.get()];
                         it = dep.next.unwrap();
-                        if ((dev.server_bundler.resolver.resolve(
+                        if ((dev.server_transpiler.resolver.resolve(
                             bun.path.dirname(dep.source_file_path, .auto),
                             dep.specifier,
                             .stmt,
@@ -5613,8 +5805,19 @@ pub const Assets = struct {
     }
 
     pub fn deinit(assets: *Assets, alloc: Allocator) void {
-        assets.map.deinit(alloc);
-        assets.hash_lookups.deinit(alloc);
+        assets.path_map.deinit(alloc);
+        for (assets.files.values()) |blob| blob.deref();
+        assets.files.deinit(alloc);
+        assets.refs.deinit(alloc);
+    }
+
+    pub fn memoryCost(assets: *Assets) usize {
+        var cost: usize = 0;
+        cost += memoryCostArrayHashMap(assets.path_map);
+        for (assets.files.values()) |blob| cost += blob.memoryCost();
+        cost += memoryCostArrayHashMap(assets.files);
+        cost += memoryCostArrayList(assets.refs);
+        return cost;
     }
 };
 
@@ -5632,6 +5835,24 @@ pub fn onPluginsRejected(dev: *DevServer) !void {
     }
     dev.next_bundle.route_queue.clearRetainingCapacity();
     // TODO: allow recovery from this state
+}
+
+/// userland implementation of https://github.com/ziglang/zig/issues/21879
+fn voidFieldTypes(comptime T: type) *brk: {
+    const fields = @typeInfo(T).@"struct".fields;
+    var new_fields = fields[0..fields.len].*;
+    for (&new_fields) |*field| {
+        field.type = void;
+        field.default_value_ptr = null;
+    }
+    break :brk @Type(.{ .@"struct" = .{
+        .layout = .auto,
+        .fields = &new_fields,
+        .decls = &.{},
+        .is_tuple = false,
+    } });
+} {
+    return undefined;
 }
 
 const std = @import("std");

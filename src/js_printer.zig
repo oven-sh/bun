@@ -450,6 +450,7 @@ pub const Options = struct {
     module_hash: u32 = 0,
     source_path: ?fs.Path = null,
     allocator: std.mem.Allocator = default_allocator,
+    source_map_allocator: ?std.mem.Allocator = null,
     source_map_handler: ?SourceMapHandler = null,
     source_map_builder: ?*bun.sourcemap.Chunk.Builder = null,
     css_import_behavior: Api.CssInJsBehavior = Api.CssInJsBehavior.facade,
@@ -5670,8 +5671,8 @@ pub fn getSourceMapBuilder(
         return undefined;
 
     return .{
-        .source_map = SourceMap.Chunk.Builder.SourceMapper.init(
-            opts.allocator,
+        .source_map = .init(
+            opts.source_map_allocator orelse opts.allocator,
             is_bun_platform and generate_source_map == .lazy,
         ),
         .cover_lines_without_mappings = true,
@@ -5679,15 +5680,14 @@ pub fn getSourceMapBuilder(
         .prepend_count = is_bun_platform and generate_source_map == .lazy,
         .line_offset_tables = opts.line_offset_tables orelse brk: {
             if (generate_source_map == .lazy) break :brk SourceMap.LineOffsetTable.generate(
-                opts.allocator,
+                opts.source_map_allocator orelse opts.allocator,
                 source.contents,
                 @as(
                     i32,
                     @intCast(tree.approximate_newline_count),
                 ),
             );
-
-            break :brk SourceMap.LineOffsetTable.List{};
+            break :brk .empty;
         },
     };
 }
@@ -5932,7 +5932,7 @@ pub fn print(
 
 pub fn printWithWriter(
     comptime Writer: type,
-    _writer: Writer,
+    writer: Writer,
     target: options.Target,
     ast: Ast,
     source: *const logger.Source,
@@ -5945,7 +5945,7 @@ pub fn printWithWriter(
     return switch (target.isBun()) {
         inline else => |is_bun| printWithWriterAndPlatform(
             Writer,
-            _writer,
+            writer,
             is_bun,
             ast,
             source,
@@ -5961,7 +5961,7 @@ pub fn printWithWriter(
 /// The real one
 pub fn printWithWriterAndPlatform(
     comptime Writer: type,
-    _writer: Writer,
+    writer: Writer,
     comptime is_bun_platform: bool,
     ast: Ast,
     source: *const logger.Source,
@@ -5984,7 +5984,6 @@ pub fn printWithWriterAndPlatform(
         false,
         generate_source_maps,
     );
-    const writer = _writer;
     var printer = PrinterType.init(
         writer,
         import_records,
@@ -5997,7 +5996,7 @@ pub fn printWithWriterAndPlatform(
     defer printer.binary_expression_stack.clearAndFree();
 
     defer printer.temporary_bindings.deinit(bun.default_allocator);
-    defer _writer.* = printer.writer.*;
+    defer writer.* = printer.writer.*;
     defer {
         imported_module_ids_list = printer.imported_module_ids;
     }

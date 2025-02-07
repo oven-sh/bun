@@ -4050,8 +4050,15 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
             none = std.math.maxInt(backing_int),
             _,
 
-            pub inline fn init(maybe: ?Index) Optional {
-                return if (maybe) |i| i.toOptional() else .none;
+            /// Signatures:
+            /// - `init(maybe: ?Index) Optional`
+            /// - `init(maybe: ?backing_int) Optional`
+            pub inline fn init(maybe: anytype) Optional {
+                comptime var t = @typeInfo(@TypeOf(maybe));
+                if (t == .optional) t = @typeInfo(t.optional.child);
+                if (t == .int or t == .comptime_int)
+                    return if (@as(?backing_int, maybe)) |i| Index.init(i).toOptional() else .none;
+                return if (@as(?Index, maybe)) |i| i.toOptional() else .none;
             }
 
             pub inline fn unwrap(oi: Optional) ?Index {

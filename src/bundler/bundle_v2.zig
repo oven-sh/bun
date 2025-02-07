@@ -1480,7 +1480,14 @@ pub const BundleV2 = struct {
             for (records) |record| {
                 if (!record.source_index.isValid() and record.tag == .none) {
                     // External dependency
-                    if (record.path.text.len > 0 and !JSC.HardcodedModule.Aliases.has(record.path.text, .bun)) {
+                    if (record.path.text.len > 0 and
+
+                        // Check for either node or bun builtins
+                        // We don't use the list from .bun because that includes third-party packages in some cases.
+                        !JSC.HardcodedModule.Aliases.has(record.path.text, .node) and
+                        !strings.hasPrefixComptime(record.path.text, "bun:") and
+                        !strings.eqlComptime(record.path.text, "bun"))
+                    {
                         if (strings.isNPMPackageNameIgnoreLength(record.path.text)) {
                             try external_deps.insert(record.path.text);
                         }

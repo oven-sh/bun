@@ -1477,19 +1477,20 @@ pub const BundleV2 = struct {
 
         for (reachable_files) |source_index| {
             const records: []const ImportRecord = import_records[source_index.get()].slice();
-            for (records) |record| {
+            for (records) |*record| {
                 if (!record.source_index.isValid() and record.tag == .none) {
+                    const path = record.path.text;
                     // External dependency
-                    if (record.path.text.len > 0 and
+                    if (path.len > 0 and
 
                         // Check for either node or bun builtins
                         // We don't use the list from .bun because that includes third-party packages in some cases.
-                        !JSC.HardcodedModule.Aliases.has(record.path.text, .node) and
-                        !strings.hasPrefixComptime(record.path.text, "bun:") and
-                        !strings.eqlComptime(record.path.text, "bun"))
+                        !JSC.HardcodedModule.Aliases.has(path, .node) and
+                        !strings.hasPrefixComptime(path, "bun:") and
+                        !strings.eqlComptime(path, "bun"))
                     {
-                        if (strings.isNPMPackageNameIgnoreLength(record.path.text)) {
-                            try external_deps.insert(record.path.text);
+                        if (strings.isNPMPackageNameIgnoreLength(path)) {
+                            try external_deps.insert(path);
                         }
                     }
                 }

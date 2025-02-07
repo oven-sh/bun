@@ -943,15 +943,20 @@ describe("files", () => {
         JSON.stringify({
           name: "pack-files-3",
           version: "1.2.3",
-          files: ["./dist"],
+          files: ["./dist", "!./subdir", "!./dist/index.js"],
         }),
       ),
       write(join(packageDir, "dist", "index.js"), "console.log('hello ./dist/index.js')"),
+      write(join(packageDir, "subdir", "index.js"), "console.log('hello ./subdir/index.js')"),
+      write(join(packageDir, "src", "dist", "index.js"), "console.log('hello ./src/dist/index.js')"),
     ]);
 
     await pack(packageDir, bunEnv);
     const tarball = readTarball(join(packageDir, "pack-files-3-1.2.3.tgz"));
-    expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }, { "pathname": "package/dist/index.js" }]);
+    expect(tarball.entries).toMatchObject([
+      { "pathname": "package/package.json" },
+      { "pathname": "package/dist/index.js" },
+    ]);
   });
 
   test("recursive only if leading **/", async () => {

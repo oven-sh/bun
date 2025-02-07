@@ -31,9 +31,18 @@ pub fn generate(_: Command.Context, example_tag: Example.Tag, entry_point: strin
     }
 
     const uses_tailwind = has_tailwind_in_dependencies or needs_to_inject_tailwind;
-    // Add react-dom if react is used
+
     if (result.dependencies.contains("react")) {
-        try result.dependencies.insert("react-dom");
+        if (needs_to_inject_shadcn_ui) {
+            // Use react 18 instead of 19 if shadcn is in use.
+            _ = result.dependencies.swapRemove("react");
+            _ = result.dependencies.swapRemove("react-dom");
+            try result.dependencies.insert("react@^18");
+            try result.dependencies.insert("react-dom@^18");
+        } else {
+            // Add react-dom if react is used
+            try result.dependencies.insert("react-dom");
+        }
     }
 
     // Choose template based on dependencies and example type
@@ -166,7 +175,6 @@ fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *Bun
                             }
                         },
                         .err => |err| {
-                            log.writeInitialMessage();
                             Output.err(err, "failed to create components.json", .{});
                             Global.crash();
                         },
@@ -183,7 +191,6 @@ fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *Bun
                         }
                     },
                     .err => |err| {
-                        log.writeInitialMessage();
                         Output.err(err, "failed to create package.json", .{});
                         Global.crash();
                     },
@@ -199,7 +206,6 @@ fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *Bun
                         }
                     },
                     .err => |err| {
-                        log.writeInitialMessage();
                         Output.err(err, "failed to create tsconfig.json", .{});
                         Global.crash();
                     },
@@ -215,7 +221,6 @@ fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *Bun
                         }
                     },
                     .err => |err| {
-                        log.writeInitialMessage();
                         Output.err(err, "failed to create bunfig.toml", .{});
                         Global.crash();
                     },
@@ -232,7 +237,6 @@ fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *Bun
                         }
                     },
                     .err => |err| {
-                        log.writeInitialMessage();
                         Output.err(err, "failed to create {s}", .{file_name});
                         Global.crash();
                     },
@@ -588,15 +592,8 @@ const Template = union(Tag) {
         template: Tag,
 
         pub fn file(this: *Logger, name: []const u8) void {
-            this.writeInitialMessage();
-
-            Output.prettyln("<r><d>+<r> {s}\n", .{name});
-        }
-
-        pub fn writeInitialMessage(this: *Logger) void {
-            if (this.has_written_initial_message) return;
             this.has_written_initial_message = true;
-            Output.prettyln("\n<r>✨ <b><cyan>{s}<r>\n", .{this.template.label()});
+            Output.prettyln("<r><green>create<r> {s}\n", .{name});
         }
 
         pub fn ifNew(this: *Logger) void {
@@ -605,13 +602,13 @@ const Template = union(Tag) {
             Output.prettyln(
                 \\✨ <b>{s}<r> project configured
                 \\
-                \\<b><cyan>Development<r> - <d>frontend dev server with hot reload<r>
+                \\<b><cyan>Development<r><d> - frontend dev server with hot reload<r>
                 \\
-                \\<b><d><cyan>$<r> <cyan><b>bun dev<r>
+                \\  <cyan><b>bun dev<r>
                 \\
-                \\<b><green>Production - <d>build optimized assets<r>
+                \\<b><green>Production<r><d> - build optimized assets<r>
                 \\
-                \\<b><d><green>$<r> <green><b>bun run build<r>
+                \\  <green><b>bun run build<r>
                 \\
                 \\<blue>Happy bunning! 🐇<r>
                 \\

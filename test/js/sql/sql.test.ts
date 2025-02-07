@@ -159,6 +159,12 @@ if (isDockerEnabled()) {
     max: 1,
   };
 
+  test("should handle encoded chars in password and username when using url #17155", () => {
+    const sql = new Bun.SQL("postgres://bun%40bunbun:bunbun%40bun@127.0.0.1:5432/bun%40bun");
+    expect(sql.options.username).toBe("bun@bunbun");
+    expect(sql.options.password).toBe("bunbun@bun");
+    expect(sql.options.database).toBe("bun@bun");
+  });
   test("Connects with no options", async () => {
     // we need at least the usename and port
     await using sql = postgres({ max: 1, port: container.port, username: login.username });

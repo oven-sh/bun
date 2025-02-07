@@ -1058,6 +1058,13 @@ class SQLArrayParameter {
   }
 }
 
+function getDBFromURL(url) {
+  const name = (url?.pathname ?? "").slice(1);
+  if (name) {
+    return decodeURIComponent(name);
+  }
+  return null;
+}
 function loadOptions(o) {
   var hostname,
     port,
@@ -1110,7 +1117,7 @@ function loadOptions(o) {
   } else if (typeof o === "string") {
     url = new URL(o);
   }
-
+  o ||= {};
   if (url) {
     ({ hostname, port, username, password, adapter } = o);
     // object overrides url
@@ -1134,13 +1141,20 @@ function loadOptions(o) {
       }
     }
     query = query.trim();
+    // handle special characters in username, password, and database
+    if (username) {
+      username = decodeURIComponent(username);
+    }
+    if (password) {
+      password = decodeURIComponent(password);
+    }
   }
-  o ||= {};
   hostname ||= o.hostname || o.host || env.PGHOST || "localhost";
   port ||= Number(o.port || env.PGPORT || 5432);
   username ||= o.username || o.user || env.PGUSERNAME || env.PGUSER || env.USER || env.USERNAME || "postgres";
-  database ||= o.database || o.db || (url?.pathname ?? "").slice(1) || env.PGDATABASE || username;
+  database ||= o.database || o.db || getDBFromURL(url) || env.PGDATABASE || username;
   password ||= o.password || o.pass || env.PGPASSWORD || "";
+
   tls ||= o.tls || o.ssl;
   adapter ||= o.adapter || "postgres";
   max = o.max;

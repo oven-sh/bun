@@ -280,6 +280,7 @@ pub extern fn JSC__JSValue__toBoolean(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__toError_(JSValue0: JSC__JSValue) JSC__JSValue;
 pub extern fn JSC__JSValue__toInt32(JSValue0: JSC__JSValue) i32;
 pub extern fn JSC__JSValue__toInt64(JSValue0: JSC__JSValue) i64;
+pub extern fn JSC__JSValue__toUInt32(JSValue0: JSC__JSValue) u32;
 pub extern fn JSC__JSValue__toMatch(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__toObject(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) [*c]bindings.JSObject;
 pub extern fn JSC__JSValue__toString(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) [*c]bindings.JSString;

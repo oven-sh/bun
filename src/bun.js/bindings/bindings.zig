@@ -1974,7 +1974,7 @@ pub const JSString = extern struct {
 
     pub const view = getZigString;
 
-    // doesn't always allocate
+    /// doesn't always allocate
     pub fn toSlice(
         this: *JSString,
         global: *JSGlobalObject,
@@ -2967,6 +2967,7 @@ pub const JSGlobalObject = opaque {
         };
     }
 
+    /// "Expected {field} to be a {typename} for '{name}'."
     pub fn createInvalidArgumentType(
         this: *JSGlobalObject,
         comptime name_: []const u8,
@@ -2980,6 +2981,7 @@ pub const JSGlobalObject = opaque {
         return JSC.toJS(this, @TypeOf(value), value, lifetime);
     }
 
+    /// "Expected {field} to be a {typename} for '{name}'."
     pub fn throwInvalidArgumentType(
         this: *JSGlobalObject,
         comptime name_: []const u8,
@@ -2989,6 +2991,7 @@ pub const JSGlobalObject = opaque {
         return this.throwValue(this.createInvalidArgumentType(name_, field, typename));
     }
 
+    /// "The {argname} argument is invalid. Received {value}"
     pub fn throwInvalidArgumentValue(
         this: *JSGlobalObject,
         argname: []const u8,
@@ -3010,7 +3013,7 @@ pub const JSGlobalObject = opaque {
         return str;
     }
 
-    /// "The <argname> argument must be of type <typename>. Received <value>"
+    /// "The {argname} argument must be of type {typename}. Received {value}"
     pub fn throwInvalidArgumentTypeValue(
         this: *JSGlobalObject,
         argname: []const u8,
@@ -5866,6 +5869,9 @@ pub const JSValue = enum(i64) {
             bun.assert(this.isInt32());
         }
         return FFI.JSVALUE_TO_INT32(.{ .asJSValue = this });
+    }
+    pub fn asUInt32(this: JSValue) ?u32 {
+        return if (this.isInt32()) cppFn("toUInt32", .{this}) else null;
     }
 
     pub fn asFileDescriptor(this: JSValue) bun.FileDescriptor {

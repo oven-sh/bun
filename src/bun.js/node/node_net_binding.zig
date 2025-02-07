@@ -9,7 +9,6 @@ const Output = bun.Output;
 const ZigString = JSC.ZigString;
 
 const socklen = ares.socklen_t;
-const JSGlobalObject = JSC.JSGlobalObject;
 const CallFrame = JSC.CallFrame;
 const JSValue = JSC.JSValue;
 
@@ -79,35 +78,130 @@ pub fn setDefaultAutoSelectFamilyAttemptTimeout(global: *JSC.JSGlobalObject) JSC
     }).setter, 1, .{});
 }
 
-/// see: https://man7.org/linux/man-pages/man0/netinet_in.h.0p.html
-const AddressFamily = enum(c_int) {
-    /// AF_INET
-    ipv4 = C.AF_INET,
-    /// AF_INET6
-    ipv6 = C.AF_INET6,
-
-    pub inline fn addrlen(self: AddressFamily) ares.socklen_t {
-        return switch (self) {
-            .ipv4 => @intCast(C.INET_ADDRSTRLEN),
-            .ipv6 => @intCast(C.INET6_ADDRSTRLEN),
-        };
-    }
-    // pub inline fn getSocklen(self: AddressFamily) ares.socklen_t {
-    //     return switch (self) {
-    //         .ipv4 => @sizeOf(std.posix.sockaddr.in),
-    //         .ipv6 => @sizeOf(std.posix.sockaddr.in6),
-    //     };
-    // }
-};
-
 pub const SocketAddressNew = struct {
     // NOTE: not std.net.Address b/c .un is huge and we don't use it.
     addr: C.sockaddr_in,
 
+    const Options = struct {
+        family: c_int = C.AF_INET,
+        address: ?bun.String = null,
+        port: u16 = 0,
+        flowlabel: ?u32 = null,
+
+        /// NOTE: assumes options object has been normalized and validated by JS code.
+        pub fn fromJS(global: *JSC.JSGlobalObject, obj: JSValue) bun.JSError!Options {
+            bun.assert(obj.isObject());
+
+            const address_str = if (try obj.get(global, "address")) |a|
+                bun.String.fromJS(a, global)
+            else
+                null;
+
+            const _family: c_int = if (try obj.get(global, "family")) |fam| blk: {
+                if (comptime bun.Environment.isDebug) bun.assert(fam.isString());
+                const slice = fam.asString().toSlice(global, bun.default_allocator);
+                if (bun.strings.eqlComptime(slice, "ipv4")) {
+                    break :blk C.AF_INET;
+                } else if (bun.strings.eqlComptime(slice, "ipv6")) {
+                    break :blk C.AF_INET6;
+                } else {
+                    return global.throwInvalidArgumentValue("options.family", "ipv4 or ipv6", fam);
+                }
+            } else C.AF_INET;
+
+            // required. Validated by `validatePort`.
+            const _port: u16 = if (try obj.get(global, "port")) |p|
+                @truncate(p.asUInt32(global) orelse unreachable)
+            else
+                unreachable;
+
+            const _flowlabel = if (try obj.get(global, "flowlabel")) |fl|
+                fl.asUInt32() orelse unreachable
+            else
+                null;
+
+            return .{
+                .family = _family,
+                .address = if (address_str) |a| try bun.String.fromJS2(a) else null,
+                .port = _port,
+                .flowlabel = _flowlabel,
+            };
+        }
+    };
+
+    const @"127.0.0.1": SocketAddressNew = .{ .addr = .{
+        .sin_family = C.AF_INET,
+        .sin_port = C.htons(0),
+        .sin_addr = .{ .s_addr = C.INADDR_LOOPBACK },
+    } };
+    pub usingnamespace JSC.Codegen.JSSocketAddressNew;
+    pub usingnamespace bun.New(SocketAddressNew);
+
+    /// `new SocketAddress([options])`
+    ///
+    /// ## Safety
+    /// Constructor assumes that options object has already been sanitized and validated
+    /// by JS wrapper.
+    ///
+    /// ## References
+    /// - [Node docs](https://nodejs.org/api/net.html#new-netsocketaddressoptions)
     pub fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSError!*SocketAddressNew {
-        _ = global;
-        _ = frame;
-        return bun.JSError.OutOfMemory; // tood
+        const options_obj = frame.argument(0);
+        if (options_obj.isUndefined()) {
+            const sa = SocketAddressNew.new();
+            sa.* = @"127.0.0.1";
+            return sa;
+        }
+        if (!options_obj.isObject()) return global.throwInvalidArgumentTypeValue("options", "object", options_obj);
+        const options = try Options.fromJS(global, options_obj);
+        var addr: C.sockaddr_in = .{
+            .sin_family = options.family,
+            .sin_port = C.htons(options.port),
+            .sin_addr = undefined,
+            .sin_zero = undefined,
+        };
+        switch (options.family) {
+            C.AF_INET => {
+                addr.sin_zero = std.mem.zeroes(@TypeOf([8]u8));
+                if (options.address) |address_str| {
+                    defer address_str.deref();
+                    // NOTE: should never allocate
+                    var slice = address_str.toSlice(bun.default_allocator);
+                    defer slice.deinit();
+                    try pton(global, C.AF_INET, slice.slice(), &addr.sin_addr);
+                }
+            },
+            C.AF_INET6 => {
+                if (options.address) |address_str| {
+                    defer address_str.deref();
+                    var slice = address_str.toSlice(bun.default_allocator);
+                    defer slice.deinit();
+                    var sin6: *C.sockaddr_in6 = &@bitCast(addr);
+                    sin6.sin6_flowinfo = options.flowlabel orelse 0;
+                    sin6.sin6_scope_id = 0;
+                    try pton(global, C.AF_INET6, slice.slice(), &addr.sin6_addr);
+                }
+            },
+            else => unreachable //return global.throwInvalidArgumentValue("family", "ipv4 or ipv6", options_obj),
+        }
+
+        return SocketAddressNew.new(.{ .addr = addr });
+    }
+
+    fn pton(global: *JSC.JSGlobalObject, comptime af: c_int, addr: []const u8, dst: *anyopaque) bun.JSError!void {
+        switch (ares.ares_inet_pton(af, addr, &dst)) {
+            // 0 => return global.throw("address", "valid IPv4 address", options.address.toJS(global)),
+            0 => {
+                global.throw(global.createError(JSC.Node.ErrorCode.ERR_INVALID_ADDRESS, "Error", "Invalid socket address"));
+            },
+            -1 => {
+                // TODO: figure out proper wayto convert a c errno into a js exception
+                const err = bun.errnoToZigErr(bun.C.getErrno(-1));
+                return global.throwError(err, "Invalid socket address");
+            },
+            1 => return,
+            else => unreachable,
+        }
     }
 
     pub fn parse(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -169,7 +263,7 @@ pub const SocketAddressNew = struct {
         return bun.JSC.WebCore.Encoder.toBunStringComptime(formatted, .latin1);
     }
 
-    pub fn getFamily(this: *SocketAddressNew, _: *JSGlobalObject) JSValue {
+    pub fn getFamily(this: *SocketAddressNew, _: *JSC.JSGlobalObject) JSValue {
         return JSValue.jsNumber(this.family());
     }
 
@@ -179,7 +273,7 @@ pub const SocketAddressNew = struct {
         return this.addr.sin_family;
     }
 
-    pub fn getPort(this: *SocketAddressNew, _: *JSGlobalObject) JSValue {
+    pub fn getPort(this: *SocketAddressNew, _: *JSC.JSGlobalObject) JSValue {
         return JSValue.jsNumber(this.port());
     }
 
@@ -188,7 +282,7 @@ pub const SocketAddressNew = struct {
         return C.ntohs(this.addr.sin_port);
     }
 
-    pub fn getFlowLabel(this: *SocketAddressNew, _: *JSGlobalObject) JSValue {
+    pub fn getFlowLabel(this: *SocketAddressNew, _: *JSC.JSGlobalObject) JSValue {
         return if (this.flowLabel()) |flow_label|
             JSValue.jsNumber(flow_label)
         else
@@ -201,7 +295,7 @@ pub const SocketAddressNew = struct {
     /// - [RFC 6437](https://tools.ietf.org/html/rfc6437)
     pub fn flowLabel(this: *const SocketAddressNew) ?u32 {
         if (this.addr.sin_family == C.AF_INET6) {
-            const in6: C.sockaddr_in6 = @bitCast(C.sockaddr_in6, this.addr);
+            const in6: C.sockaddr_in6 = @bitCast(this.addr);
             return in6.sin6_flowinfo;
         } else {
             return null;

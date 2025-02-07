@@ -4,15 +4,19 @@ export default [
   define({
     name: "SocketAddressNew",
     construct: true,
-    finalize: true,
+    finalize: false,
     klass: {
       isSocketAddress: {
         fn: "isSocketAddress",
         length: 1,
+        enumerable: false,
+        configurable: true,
       },
       parse: {
         fn: "parse",
         length: 1,
+        enumerable: false,
+        configurable: true,
       },
     },
     proto: {

@@ -4180,11 +4180,6 @@ int32_t JSC__JSValue__toInt32(JSC__JSValue JSValue0)
     return JSC::JSValue::decode(JSValue0).asInt32();
 }
 
-uint32_t JSC__JSValue__toUInt32(JSC__JSValue value)
-{
-    return JSC::JSValue::decode(value).asUInt32();
-}
-
 CPP_DECL double JSC__JSValue__coerceToDouble(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
 {
     ASSERT_NO_PENDING_EXCEPTION(arg1);

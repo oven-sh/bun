@@ -3176,17 +3176,22 @@ pub const JSGlobalObject = opaque {
         return JSC.Error.ERR_INVALID_ARG_TYPE.fmt(this, fmt, args);
     }
 
-    pub fn createError(
-        this: *JSGlobalObject,
+    pub const SysErrOptions = struct {
         code: JSC.Node.ErrorCode,
-        error_name: string,
-        comptime message: string,
+        errno: ?i32 = null,
+        name: ?string = null,
+    };
+    pub fn throwSysError(
+        this: *JSGlobalObject,
+        opts: SysErrOptions,
+        comptime message: bun.stringZ,
         args: anytype,
-    ) JSValue {
+    ) JSError {
         const err = createErrorInstance(this, message, args);
-        err.put(this, ZigString.static("code"), ZigString.init(@tagName(code)).toJS(this));
-        err.put(this, ZigString.static("name"), ZigString.init(error_name).toJS(this));
-        return err;
+        err.put(this, ZigString.static("code"), ZigString.init(@tagName(opts.code)).toJS(this));
+        if (opts.name) |name| err.put(this, ZigString.static("name"), ZigString.init(name).toJS(this));
+        if (opts.errno) |errno| err.put(this, ZigString.static("errno"), JSC.toJS(this, i32, errno, .temporary));
+        return this.throwValue(err);
     }
 
     pub fn throw(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSError {
@@ -5870,9 +5875,6 @@ pub const JSValue = enum(i64) {
         }
         return FFI.JSVALUE_TO_INT32(.{ .asJSValue = this });
     }
-    pub fn asUInt32(this: JSValue) ?u32 {
-        return if (this.isInt32()) cppFn("toUInt32", .{this}) else null;
-    }
 
     pub fn asFileDescriptor(this: JSValue) bun.FileDescriptor {
         bun.assert(this.isNumber());
@@ -6129,6 +6131,7 @@ pub const JSValue = enum(i64) {
         "toError_",
         "toInt32",
         "toInt64",
+        "toUInt32",
         "toObject",
         "toPropertyKeyValue",
         "toString",

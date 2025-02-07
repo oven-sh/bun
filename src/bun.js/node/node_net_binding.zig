@@ -78,12 +78,45 @@ pub fn setDefaultAutoSelectFamilyAttemptTimeout(global: *JSC.JSGlobalObject) JSC
     }).setter, 1, .{});
 }
 
+// FIXME: c-headers-for-zig casts AF_* and PF_* to `c_int` when it should be `comptime_int`
+const AF = struct {
+    pub const INET: C.sa_family_t = @intCast(C.AF_INET);
+    pub const INET6: C.sa_family_t = @intCast(C.AF_INET6);
+};
+
+/// ## Notes
+/// - Linux broke compat between `sockaddr_in` and `sockaddr_in6` in v2.4.
+///   They're no longer the same size.
+/// - This replaces `sockaddr_storage` because it's huge. This is 28 bytes,
+///   while `sockaddr_storage` is 128 bytes.
+const sockaddr_in = extern union {
+    sin: C.sockaddr_in,
+    sin6: C.sockaddr_in6,
+
+    pub const @"127.0.0.1": sockaddr_in = .{
+        .sin = .{
+            .sin_family = AF.INET,
+            .sin_port = 0,
+            .sin_addr = .{ .s_addr = C.INADDR_LOOPBACK },
+        },
+    };
+    pub const @"::1": sockaddr_in = .{ .sin6 = .{
+        .sin6_family = AF.INET6,
+        .sin6_port = 0,
+        .sin6_flowinfo = 0,
+        .sin6_addr = C.inaddr6_loopback,
+    } };
+};
+
+// TODO: replace JSSocketAddress with this. May need to move native portion elsewhere.
 pub const SocketAddressNew = struct {
     // NOTE: not std.net.Address b/c .un is huge and we don't use it.
-    addr: C.sockaddr_in,
+    // NOTE: not C.sockaddr_storage b/c it's _huge_. we need >= 28 bytes for sockaddr_in6,
+    // but sockaddr_storage is 128 bytes.
+    addr: sockaddr_in,
 
     const Options = struct {
-        family: c_int = C.AF_INET,
+        family: C.sa_family_t = AF.INET,
         address: ?bun.String = null,
         port: u16 = 0,
         flowlabel: ?u32 = null,
@@ -92,48 +125,43 @@ pub const SocketAddressNew = struct {
         pub fn fromJS(global: *JSC.JSGlobalObject, obj: JSValue) bun.JSError!Options {
             bun.assert(obj.isObject());
 
-            const address_str = if (try obj.get(global, "address")) |a|
-                bun.String.fromJS(a, global)
+            const address_str: ?bun.String = if (try obj.get(global, "address")) |a|
+                try bun.String.fromJS2(a, global)
             else
                 null;
 
-            const _family: c_int = if (try obj.get(global, "family")) |fam| blk: {
+            const _family: C.sa_family_t = if (try obj.get(global, "family")) |fam| blk: {
                 if (comptime bun.Environment.isDebug) bun.assert(fam.isString());
                 const slice = fam.asString().toSlice(global, bun.default_allocator);
-                if (bun.strings.eqlComptime(slice, "ipv4")) {
-                    break :blk C.AF_INET;
-                } else if (bun.strings.eqlComptime(slice, "ipv6")) {
-                    break :blk C.AF_INET6;
+                if (bun.strings.eqlComptime(slice.slice(), "ipv4")) {
+                    break :blk AF.INET;
+                } else if (bun.strings.eqlComptime(slice.slice(), "ipv6")) {
+                    break :blk AF.INET6;
                 } else {
-                    return global.throwInvalidArgumentValue("options.family", "ipv4 or ipv6", fam);
+                    return global.throwInvalidArgumentTypeValue("options.family", "ipv4 or ipv6", fam);
                 }
-            } else C.AF_INET;
+            } else AF.INET;
 
             // required. Validated by `validatePort`.
-            const _port: u16 = if (try obj.get(global, "port")) |p|
-                @truncate(p.asUInt32(global) orelse unreachable)
-            else
-                unreachable;
+            const _port: u16 = if (try obj.get(global, "port")) |p| blk: {
+                if (!p.isUInt32AsAnyInt()) return global.throwInvalidArgumentTypeValue("options.port", "number", p);
+                break :blk @truncate(p.toU32());
+            } else return global.throwMissingArgumentsValue(&.{"options.port"});
 
-            const _flowlabel = if (try obj.get(global, "flowlabel")) |fl|
-                fl.asUInt32() orelse unreachable
-            else
-                null;
+            const _flowlabel = if (try obj.get(global, "flowlabel")) |fl| blk: {
+                if (!fl.isUInt32AsAnyInt()) return global.throwInvalidArgumentTypeValue("options.flowlabel", "number", fl);
+                break :blk fl.toU32();
+            } else null;
 
             return .{
                 .family = _family,
-                .address = if (address_str) |a| try bun.String.fromJS2(a) else null,
+                .address = address_str,
                 .port = _port,
                 .flowlabel = _flowlabel,
             };
         }
     };
 
-    const @"127.0.0.1": SocketAddressNew = .{ .addr = .{
-        .sin_family = C.AF_INET,
-        .sin_port = C.htons(0),
-        .sin_addr = .{ .s_addr = C.INADDR_LOOPBACK },
-    } };
     pub usingnamespace JSC.Codegen.JSSocketAddressNew;
     pub usingnamespace bun.New(SocketAddressNew);
 
@@ -148,56 +176,68 @@ pub const SocketAddressNew = struct {
     pub fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSError!*SocketAddressNew {
         const options_obj = frame.argument(0);
         if (options_obj.isUndefined()) {
-            const sa = SocketAddressNew.new();
-            sa.* = @"127.0.0.1";
-            return sa;
+            return SocketAddressNew.new(.{ .addr = sockaddr_in.@"127.0.0.1" });
         }
+
         if (!options_obj.isObject()) return global.throwInvalidArgumentTypeValue("options", "object", options_obj);
         const options = try Options.fromJS(global, options_obj);
-        var addr: C.sockaddr_in = .{
-            .sin_family = options.family,
-            .sin_port = C.htons(options.port),
-            .sin_addr = undefined,
-            .sin_zero = undefined,
-        };
-        switch (options.family) {
-            C.AF_INET => {
-                addr.sin_zero = std.mem.zeroes(@TypeOf([8]u8));
+
+        // NOTE: `zig translate-c` creates semantically invalid code for `C.ntohs`.
+        // Switch back to `htons(options.port)` when this issue gets resolved:
+        // https://github.com/ziglang/zig/issues/22804
+        const addr: sockaddr_in = switch (options.family) {
+            AF.INET => v4: {
+                var sin: C.sockaddr_in = .{
+                    .sin_family = options.family,
+                    .sin_port = std.mem.nativeToBig(u16, options.port),
+                    .sin_addr = undefined,
+                };
                 if (options.address) |address_str| {
                     defer address_str.deref();
                     // NOTE: should never allocate
                     var slice = address_str.toSlice(bun.default_allocator);
                     defer slice.deinit();
-                    try pton(global, C.AF_INET, slice.slice(), &addr.sin_addr);
+                    try pton(global, C.AF_INET, slice.slice(), &sin.sin_addr);
+                } else {
+                    sin.sin_addr = .{ .s_addr = C.INADDR_LOOPBACK };
                 }
+                break :v4 .{ .sin = sin };
             },
-            C.AF_INET6 => {
+            AF.INET6 => v6: {
+                var sin6: C.sockaddr_in6 = .{
+                    .sin6_family = options.family,
+                    .sin6_port = std.mem.nativeToBig(u16, options.port),
+                    .sin6_flowinfo = options.flowlabel orelse 0,
+                    .sin6_addr = undefined,
+                };
                 if (options.address) |address_str| {
                     defer address_str.deref();
                     var slice = address_str.toSlice(bun.default_allocator);
                     defer slice.deinit();
-                    var sin6: *C.sockaddr_in6 = &@bitCast(addr);
-                    sin6.sin6_flowinfo = options.flowlabel orelse 0;
-                    sin6.sin6_scope_id = 0;
-                    try pton(global, C.AF_INET6, slice.slice(), &addr.sin6_addr);
+                    try pton(global, C.AF_INET6, slice.slice(), &sin6.sin6_addr);
+                } else {
+                    sin6.sin6_addr = C.in6addr_loopback;
                 }
+                break :v6 .{ .sin6 = sin6 };
             },
-            else => unreachable //return global.throwInvalidArgumentValue("family", "ipv4 or ipv6", options_obj),
-        }
+            else => unreachable, //return global.throwInvalidArgumentValue("family", "ipv4 or ipv6", options_obj),
+        };
 
         return SocketAddressNew.new(.{ .addr = addr });
     }
 
     fn pton(global: *JSC.JSGlobalObject, comptime af: c_int, addr: []const u8, dst: *anyopaque) bun.JSError!void {
-        switch (ares.ares_inet_pton(af, addr, &dst)) {
-            // 0 => return global.throw("address", "valid IPv4 address", options.address.toJS(global)),
+        switch (ares.ares_inet_pton(af, addr.ptr, dst)) {
             0 => {
-                global.throw(global.createError(JSC.Node.ErrorCode.ERR_INVALID_ADDRESS, "Error", "Invalid socket address"));
+                return global.throwSysError(.{ .code = .ERR_INVALID_IP_ADDRESS }, "Invalid socket address", .{});
             },
             -1 => {
                 // TODO: figure out proper wayto convert a c errno into a js exception
-                const err = bun.errnoToZigErr(bun.C.getErrno(-1));
-                return global.throwError(err, "Invalid socket address");
+                return global.throwSysError(
+                    .{ .code = .ERR_INVALID_IP_ADDRESS, .errno = std.c._errno().* },
+                    "Invalid socket address",
+                    .{},
+                );
             },
             1 => return,
             else => unreachable,
@@ -215,48 +255,21 @@ pub const SocketAddressNew = struct {
         return JSC.JSValue.jsBoolean(false); // TODO;
     }
 
-    pub fn getAddress(this: *SocketAddressNew, global: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
+    pub fn getAddress(this: *SocketAddressNew, global: *JSC.JSGlobalObject) JSC.JSValue {
         return this.address().toJS(global);
     }
 
     /// TODO: replace `addressToString` in `dns.zig` w this
     pub fn address(this: *const SocketAddressNew) bun.String {
-        // switch (this.addr) {
-        //     .in => |ipv4| {
-        //         const bytes = @as(*const [4]u8, @ptrCast(&ipv4.sa.addr));
-        //         return bun.String.createFormat("{}.{}.{}.{}", .{
-        //             bytes[0],
-        //             bytes[1],
-        //             bytes[2],
-        //             bytes[3],
-        //         });
-        //     },
-        //     .in6 => |ipv6| {
-        //         // TODO: add 1 for sentinel?
-        //         var sockaddr: [AddressFamily.ipv6.addrlen()]u8 = undefined;
-        //         // SAFETY: SocketAddress should only ever be created via
-        //         // initializer or via parse(), both of which fail on invalid
-        //         // addresses.
-        //         const formatted = ares.ares_inet_ntop(AddressFamily.ipv6, &ipv6.sa.addr, &sockaddr, AddressFamily.ipv6.addrlen()) orelse {
-        //             std.debug.panic("Invariant violation: SocketAddress created with invalid IPv6 address ({any})", .{this.addr});
-        //         };
-        //         if (comptime bun.Environment.isDebug) {
-        //             bun.assertWithLocation(bun.strings.isAllASCII(formatted), @src());
-        //         }
-        //         // TODO: is passing a stack reference to BunString.createLatin1 safe?
-        //         return bun.JSC.WebCore.Encoder.toBunStringComptime(formatted, .latin1);
-        //     },
-        //     else => unreachable,
-        // }
         var buf: [C.INET6_ADDRSTRLEN]u8 = undefined;
-        const af: c_int = switch (this.family()) {
-            std.posix.AF.INET => C.AF_INET,
-            std.posix.AF.INET6 => C.AF_INET6,
-            else => unreachable,
-        };
-        const formatted = std.mem.span(ares.ares_inet_ntop(af, &this.addr.any.data, &buf, buf.len)) orelse {
+        const addr_src: *const anyopaque = if (this.family() == AF.INET)
+            @ptrCast(&this.asV4().sin_addr)
+        else
+            @ptrCast(&this.asV6().sin6_addr);
+
+        const formatted = std.mem.span(ares.ares_inet_ntop(this.family(), addr_src, &buf, buf.len) orelse {
             std.debug.panic("Invariant violation: SocketAddress created with invalid IPv6 address ({any})", .{this.addr});
-        };
+        });
         if (comptime bun.Environment.isDebug) {
             bun.assertWithLocation(bun.strings.isAllASCII(formatted), @src());
         }
@@ -270,16 +283,20 @@ pub const SocketAddressNew = struct {
     /// NOTE: zig std uses posix values only, while this returns whatever the
     /// system uses. Do not compare to `std.posix.AF`.
     pub fn family(this: *const SocketAddressNew) C.sa_family_t {
-        return this.addr.sin_family;
+        // NOTE: sockaddr_in and sockaddr_in6 have the same layout for family.
+        return this.addr.sin.sin_family;
     }
 
     pub fn getPort(this: *SocketAddressNew, _: *JSC.JSGlobalObject) JSValue {
         return JSValue.jsNumber(this.port());
     }
 
-    /// Get the port number in native byte order.
+    /// Get the port number in host byte order.
     pub fn port(this: *const SocketAddressNew) u16 {
-        return C.ntohs(this.addr.sin_port);
+        // NOTE: sockaddr_in and sockaddr_in6 have the same layout for port.
+        // NOTE: `zig translate-c` creates semantically invalid code for `C.ntohs`.
+        // Switch back to `ntohs` when this issue gets resolved: https://github.com/ziglang/zig/issues/22804
+        return std.mem.bigToNative(u16, this.addr.sin.sin_port);
     }
 
     pub fn getFlowLabel(this: *SocketAddressNew, _: *JSC.JSGlobalObject) JSValue {
@@ -294,7 +311,7 @@ pub const SocketAddressNew = struct {
     /// ## References
     /// - [RFC 6437](https://tools.ietf.org/html/rfc6437)
     pub fn flowLabel(this: *const SocketAddressNew) ?u32 {
-        if (this.addr.sin_family == C.AF_INET6) {
+        if (this.family() == C.AF_INET6) {
             const in6: C.sockaddr_in6 = @bitCast(this.addr);
             return in6.sin6_flowinfo;
         } else {
@@ -309,22 +326,29 @@ pub const SocketAddressNew = struct {
             else => std.debug.panic("Invalid address family: {}", .{this.addr.sin_family}),
         }
     }
-};
 
-const CommonAddresses = struct {
-    @"127.0.0.1": bun.String = bun.String.createAtomASCII("127.0.0.1"),
-    @"::1": bun.String = bun.String.createAtomASCII("::1"),
+    inline fn asV4(this: *const SocketAddressNew) *const C.sockaddr_in {
+        bun.debugAssert(this.addr.sin.sin_family == C.AF_INET);
+        return &this.addr.sin;
+    }
+
+    inline fn asV6(this: *const SocketAddressNew) *const C.sockaddr_in6 {
+        bun.debugAssert(this.addr.sin6.sin6_family == C.AF_INET6);
+        return &this.addr.sin6;
+    }
 };
-const common_addresses: CommonAddresses = .{};
 
 // The same types are defined in a bunch of different places. We should probably unify them.
 comptime {
-    // const AF = std.os.linux.AF;
-    // if (@intFromEnum(AddressFamily.ipv4) != AF.INET) @compileError(std.fmt.comptimePrint("AddressFamily.ipv4 ({d}) != AF.INET ({d})", .{ @intFromEnum(AddressFamily.ipv4), AF.INET }));
-    // if (@intFromEnum(AddressFamily.ipv6) != AF.INET6) @compileError(std.fmt.comptimePrint("AddressFamily.ipv6 ({d}) != AF.INET6 ({d})", .{ @intFromEnum(AddressFamily.ipv6), AF.INET6 }));
-
     for (.{ std.posix.socklen_t, C.socklen_t }) |other_socklen| {
         if (@sizeOf(socklen) != @sizeOf(other_socklen)) @compileError("socklen_t size mismatch");
         if (@alignOf(socklen) != @alignOf(other_socklen)) @compileError("socklen_t alignment mismatch");
     }
+}
+
+pub fn createBinding(global: *JSC.JSGlobalObject) JSC.JSValue {
+    const net = JSC.JSValue.createEmptyObjectWithNullPrototype(global);
+    net.put(global, "SocketAddressNew", SocketAddressNew.getConstructor(global));
+
+    return net;
 }

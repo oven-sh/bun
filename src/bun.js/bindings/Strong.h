@@ -8,12 +8,14 @@ namespace Bun {
 
 // We tried to pool these
 // But it was very complicated
+#if ENABLE(MALLOC_BREAKDOWN)
+DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(StrongRef);
+#endif
 class StrongRef {
 #if ENABLE(MALLOC_BREAKDOWN)
-    DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(StrongRef);
     WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(StrongRef);
 #else
-    WTF_MAKE_FAST_ALLOCATED(StrongRef);
+    WTF_MAKE_TZONE_ALLOCATED(StrongRef);
 #endif
 
 public:

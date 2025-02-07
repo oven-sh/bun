@@ -71,7 +71,7 @@ static JSC::WeakHandleOwner* getWeakRefOwner(WeakRefType type)
 }
 
 class WeakRef {
-    WTF_MAKE_FAST_ALLOCATED(WeakRef);
+    WTF_MAKE_TZONE_ALLOCATED(WeakRef);
 
 public:
     WeakRef(JSC::VM& vm, JSC::JSValue value, WeakRefType kind, void* ctx = nullptr)

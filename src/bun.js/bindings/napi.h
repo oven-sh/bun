@@ -140,7 +140,7 @@ private:
 };
 
 class NapiRef {
-    WTF_MAKE_FAST_ALLOCATED(NapiRef);
+    WTF_MAKE_TZONE_ALLOCATED(NapiRef);
 
 public:
     void ref();

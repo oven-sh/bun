@@ -24,7 +24,7 @@ class JSEventListener;
 
 struct EventEmitterData {
     WTF_MAKE_NONCOPYABLE(EventEmitterData);
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(EventEmitterData);
 
 public:
     EventEmitterData() = default;

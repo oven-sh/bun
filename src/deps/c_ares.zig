@@ -1617,7 +1617,7 @@ pub extern fn ares_get_servers_ports(channel: *Channel, servers: *?*struct_ares_
 /// https://c-ares.org/docs/ares_inet_ntop.html
 pub extern fn ares_inet_ntop(af: c_int, src: ?*const anyopaque, dst: [*c]u8, size: ares_socklen_t) ?[*:0]const u8;
 /// https://c-ares.org/docs/ares_inet_pton.html
-/// 
+///
 /// ## Returns
 /// - `1` if `src` was valid for the specified address family
 /// - `0` if `src` was not parseable in the specified address family

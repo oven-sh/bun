@@ -13,8 +13,7 @@ export function from(value, encodingOrOffset, length) {
       return Buffer.from(valueOf, encodingOrOffset, length);
     }
 
-    // if (value.length !== undefined || $inheritsArrayBuffer(value.buffer)) { // XXX: this may be obsoleted by $isTypedArrayView check above, delete this if so once the rest of the buffer tests are confirmed passing
-    if (value.length !== undefined) {
+    if (value.length !== undefined || $inheritsArrayBuffer(value.buffer)) {
       if (typeof value.length !== "number") return new $Buffer(0);
       if (value.length <= 0) return new $Buffer(0);
       return new $Buffer(value);

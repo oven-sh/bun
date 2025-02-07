@@ -102,40 +102,28 @@ for (let credentials of allCredentials) {
     // less than 5 MiB
     const bigishPayload = makePayLoadFrom("Bun is the best runtime ever", 1 * 1024 * 1024);
     describe.skipIf(!s3Options.accessKeyId)("s3", () => {
-      it(
-        "should be able to override sessionToken",
-        async () => {
-          const dir = tempDirWithFiles("s3-sessionToken-fixture", {
-            "s3-sessionToken-fixture.js": await Bun.file(
-              path.join(import.meta.dir, "s3-sessionToken-fixture.js"),
-            ).text(),
-            "out.bin": "here",
-          });
+      it("should be able to override sessionToken", async () => {
+        const dir = tempDirWithFiles("s3-sessionToken-fixture", {
+          "s3-sessionToken-fixture.js": await Bun.file(path.join(import.meta.dir, "s3-sessionToken-fixture.js")).text(),
+        });
 
-          const dest = path.join(dir, "out.bin");
-
-          const { exitCode, stderr } = Bun.spawnSync(
-            [bunExe(), "--smol", path.join(dir, "s3-sessionToken-fixture.js"), dest],
-            {
-              env: {
-                ...bunEnv,
-                AWS_ACCESS_KEY_ID: s3Options.accessKeyId,
-                AWS_SECRET_ACCESS_KEY: s3Options.secretAccessKey,
-                AWS_ENDPOINT: s3Options.endpoint,
-                AWS_BUCKET: S3Bucket,
-                // invalid session token
-                AWS_SESSION_TOKEN: "1234567890",
-              },
-              stderr: "pipe",
-              stdout: "inherit",
-              stdin: "ignore",
-            },
-          );
-          expect(exitCode).toBe(0);
-          expect(stderr.toString()).toBe("");
-        },
-        30 * 1000,
-      );
+        const { exitCode, stderr } = Bun.spawnSync([bunExe(), "--smol", path.join(dir, "s3-sessionToken-fixture.js")], {
+          env: {
+            ...bunEnv,
+            AWS_ACCESS_KEY_ID: s3Options.accessKeyId,
+            AWS_SECRET_ACCESS_KEY: s3Options.secretAccessKey,
+            AWS_ENDPOINT: s3Options.endpoint,
+            AWS_BUCKET: S3Bucket,
+            // invalid session token
+            AWS_SESSION_TOKEN: "1234567890",
+          },
+          stderr: "pipe",
+          stdout: "inherit",
+          stdin: "ignore",
+        });
+        expect(exitCode).toBe(0);
+        expect(stderr.toString()).toBe("");
+      });
       for (let bucketInName of [true, false]) {
         describe("fetch", () => {
           describe(bucketInName ? "bucket in path" : "bucket in options", () => {

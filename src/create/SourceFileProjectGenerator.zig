@@ -1,5 +1,5 @@
 // Generate project files based on the entry point and dependencies
-pub fn generate(_: Command.Context, example_tag: Example.Tag, entry_point: string, result: *BundleV2.DependenciesScanner.Result) !void {
+pub fn generate(_: Command.Context, _: Example.Tag, entry_point: string, result: *BundleV2.DependenciesScanner.Result) !void {
     // Check if Tailwind is already in dependencies
     const has_tailwind_in_dependencies = result.dependencies.contains("tailwindcss") or result.dependencies.contains("bun-plugin-tailwind");
     var needs_to_inject_tailwind = false;
@@ -41,18 +41,18 @@ pub fn generate(_: Command.Context, example_tag: Example.Tag, entry_point: strin
         try result.dependencies.insert("react-dom@^18");
     } else {
         // Add react-dom if react is used
-        try result.dependencies.insert("react-dom");
-        try result.dependencies.insert("react");
+        try result.dependencies.insert("react-dom@19");
+        try result.dependencies.insert("react@19");
     }
 
     // Choose template based on dependencies and example type
     const template: Template = brk: {
-        if (needs_to_inject_shadcn_ui and example_tag == .jslike_file) {
+        if (needs_to_inject_shadcn_ui) {
             break :brk .{ .ReactShadcnSpa = .{ .components = shadcn } };
-        } else if (uses_tailwind and example_tag == .jslike_file) {
+        } else if (uses_tailwind) {
             break :brk .ReactTailwindSpa;
         } else {
-            Global.exit(0);
+            break :brk .ReactSpa;
         }
     };
 
@@ -318,7 +318,7 @@ fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *Bun
                 log.ifNew();
             }
         },
-        .ReactTailwindSpa => {
+        .ReactSpa, .ReactTailwindSpa => {
             log.ifNew();
         },
     }
@@ -508,6 +508,83 @@ const Reason = enum {
     npm,
 };
 
+// Template for React + Tailwind project
+const ReactTailwindSpa = struct {
+    pub const files = &[_]TemplateFile{
+        .{
+            .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts",
+            .content = shared_build_ts,
+            .reason = .build,
+        },
+        .{
+            .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css",
+            .content = @embedFile("projects/react-tailwind-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css"),
+            .reason = .css,
+        },
+        .{
+            .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.html",
+            .content = shared_html,
+            .reason = .html,
+        },
+        .{
+            .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.client.tsx",
+            .content = shared_client_tsx,
+            .reason = .bun,
+        },
+        .{
+            .name = "bunfig.toml",
+            .content = shared_bunfig_toml,
+            .reason = .bun,
+            .overwrite = false,
+        },
+        .{
+            .name = "package.json",
+            .content = shared_package_json,
+            .reason = .npm,
+            .overwrite = false,
+        },
+    };
+};
+
+const shared_build_ts = @embedFile("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts");
+const shared_client_tsx = @embedFile("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.client.tsx");
+const shared_html = @embedFile("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.html");
+const shared_package_json = @embedFile("projects/react-shadcn-spa/package.json");
+const shared_bunfig_toml = @embedFile("projects/react-shadcn-spa/bunfig.toml");
+
+// Template for basic React project
+const ReactSpa = struct {
+    pub const files = &[_]TemplateFile{
+        .{
+            .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts",
+            .content = shared_build_ts,
+            .reason = .build,
+        },
+        .{
+            .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css",
+            .content = @embedFile("projects/react-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css"),
+            .reason = .css,
+        },
+        .{
+            .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.html",
+            .content = shared_html,
+            .reason = .html,
+        },
+        .{
+            .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.client.tsx",
+            .content = shared_client_tsx,
+            .reason = .bun,
+        },
+
+        .{
+            .name = "package.json",
+            .content = shared_package_json,
+            .reason = .npm,
+            .overwrite = false,
+        },
+    };
+};
+
 // Template for React + Shadcn project
 const ReactShadcnSpa = struct {
     pub const files = &[_]TemplateFile{
@@ -523,12 +600,12 @@ const ReactShadcnSpa = struct {
         },
         .{
             .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts",
-            .content = @embedFile("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts"),
+            .content = shared_build_ts,
             .reason = .bun,
         },
         .{
             .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.client.tsx",
-            .content = @embedFile("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.client.tsx"),
+            .content = shared_client_tsx,
             .reason = .bun,
         },
         .{
@@ -538,7 +615,7 @@ const ReactShadcnSpa = struct {
         },
         .{
             .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.html",
-            .content = @embedFile("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.html"),
+            .content = shared_html,
             .reason = .html,
         },
         .{
@@ -548,13 +625,13 @@ const ReactShadcnSpa = struct {
         },
         .{
             .name = "bunfig.toml",
-            .content = @embedFile("projects/react-shadcn-spa/bunfig.toml"),
+            .content = shared_bunfig_toml,
             .reason = .bun,
             .overwrite = false,
         },
         .{
             .name = "package.json",
-            .content = @embedFile("projects/react-shadcn-spa/package.json"),
+            .content = shared_package_json,
             .reason = .npm,
             .overwrite = false,
         },
@@ -573,53 +650,17 @@ const ReactShadcnSpa = struct {
     };
 };
 
-// Template for React + Tailwind project
-const ReactTailwindSpa = struct {
-    pub const files = &[_]TemplateFile{
-        .{
-            .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts",
-            .content = @embedFile("projects/react-tailwind-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts"),
-            .reason = .build,
-        },
-        .{
-            .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css",
-            .content = @embedFile("projects/react-tailwind-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css"),
-            .reason = .css,
-        },
-        .{
-            .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.html",
-            .content = @embedFile("projects/react-tailwind-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.html"),
-            .reason = .html,
-        },
-        .{
-            .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.client.tsx",
-            .content = @embedFile("projects/react-tailwind-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.client.tsx"),
-            .reason = .bun,
-        },
-        .{
-            .name = "bunfig.toml",
-            .content = @embedFile("projects/react-tailwind-spa/bunfig.toml"),
-            .reason = .bun,
-            .overwrite = false,
-        },
-        .{
-            .name = "package.json",
-            .content = @embedFile("projects/react-tailwind-spa/package.json"),
-            .reason = .npm,
-            .overwrite = false,
-        },
-    };
-};
-
 // Template type to handle different project types
 const Template = union(Tag) {
     ReactTailwindSpa: void,
+    ReactSpa: void,
     ReactShadcnSpa: struct {
         components: bun.StringSet,
     },
 
     pub const Tag = enum {
         ReactTailwindSpa,
+        ReactSpa,
         ReactShadcnSpa,
 
         pub fn logger(self: Tag) Logger {
@@ -629,6 +670,7 @@ const Template = union(Tag) {
         pub fn label(self: Tag) []const u8 {
             return switch (self) {
                 .ReactTailwindSpa => "React + Tailwind",
+                .ReactSpa => "React",
                 .ReactShadcnSpa => "React + shadcn/ui + Tailwind",
             };
         }

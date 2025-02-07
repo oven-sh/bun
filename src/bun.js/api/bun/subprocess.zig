@@ -2439,12 +2439,12 @@ pub const Subprocess = struct {
     }
 
     fn throwCommandNotFound(globalThis: *JSC.JSGlobalObject, command: []const u8) bun.JSError {
-        const message = bun.String.createFormat("Executable not found in $PATH: \"{s}\"", .{command}) catch bun.outOfMemory();
-        defer message.deref();
-        const err = message.toZigString().toErrorInstance(globalThis);
-        err.putZigString(globalThis, JSC.ZigString.static("code"), JSC.ZigString.init("ENOENT").toJS(globalThis));
-        err.putZigString(globalThis, JSC.ZigString.static("path"), JSC.ZigString.init(command).toJS(globalThis));
-        return globalThis.throwValue(err);
+        const err = JSC.SystemError{
+            .message = bun.String.createFormat("Executable not found in $PATH: \"{s}\"", .{command}) catch bun.outOfMemory(),
+            .code = bun.String.static("ENOENT"),
+            .path = bun.String.createUTF8(command),
+        };
+        return globalThis.throwValue(err.toErrorInstance(globalThis));
     }
 
     const node_cluster_binding = @import("./../../node/node_cluster_binding.zig");

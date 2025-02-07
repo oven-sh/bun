@@ -1301,6 +1301,7 @@ jsc-build-mac-compile-lto:
 .PHONY: jsc-build-mac-compile-debug
 jsc-build-mac-compile-debug:
 	mkdir -p $(WEBKIT_DEBUG_DIR) $(WEBKIT_DIR);
+	# to disable asan, remove -DENABLE_SANITIZERS=address and add -DENABLE_MALLOC_HEAP_BREAKDOWN=ON
 	cd $(WEBKIT_DEBUG_DIR) && \
 		ICU_INCLUDE_DIRS="$(HOMEBREW_PREFIX)opt/icu4c/include" \
 		cmake \
@@ -1309,7 +1310,6 @@ jsc-build-mac-compile-debug:
 			-DCMAKE_BUILD_TYPE=Debug \
 			-DUSE_THIN_ARCHIVES=OFF \
 			-DENABLE_FTL_JIT=ON \
-			-DENABLE_MALLOC_HEAP_BREAKDOWN=ON \
 			-DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
 			-DUSE_BUN_JSC_ADDITIONS=ON \
 			-DUSE_BUN_EVENT_LOOP=ON \
@@ -1321,6 +1321,7 @@ jsc-build-mac-compile-debug:
 			-DUSE_PTHREAD_JIT_PERMISSIONS_API=ON \
 			-DENABLE_REMOTE_INSPECTOR=ON \
 			-DUSE_VISIBILITY_ATTRIBUTE=1 \
+			-DENABLE_SANITIZERS=address \
 			$(WEBKIT_DIR) \
 			$(WEBKIT_DEBUG_DIR) && \
 	CFLAGS="$(CFLAGS) -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -ffat-lto-objects" \

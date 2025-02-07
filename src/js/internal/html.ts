@@ -75,10 +75,17 @@ yourself with Bun.serve().
 
       for (const file of glob.scanSync(cwd)) {
         let resolved = path.resolve(cwd, file);
+        if (resolved.includes(path.sep + "node_modules" + path.sep)) {
+          continue;
+        }
         try {
           resolved = Bun.resolveSync(resolved, cwd);
         } catch {
           resolved = Bun.resolveSync("./" + resolved, cwd);
+        }
+
+        if (resolved.includes(path.sep + "node_modules" + path.sep)) {
+          continue;
         }
 
         args.push(resolved);
@@ -89,6 +96,10 @@ yourself with Bun.serve().
         resolved = Bun.resolveSync(arg, cwd);
       } catch {
         resolved = Bun.resolveSync("./" + arg, cwd);
+      }
+
+      if (resolved.includes(path.sep + "node_modules" + path.sep)) {
+        continue;
       }
 
       args.push(resolved);

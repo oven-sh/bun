@@ -999,20 +999,22 @@ pub fn prettyErrorln(comptime fmt: string, args: anytype) void {
 
 /// Pretty-print a command that will be run.
 /// $ bun run foo
-pub fn command(argv: anytype) void {
+fn printCommand(argv: anytype, comptime destination: Destination) void {
+    const prettyFn = if (destination == .stdout) pretty else prettyError;
+    const printFn = if (destination == .stdout) print else printError;
     switch (@TypeOf(argv)) {
         [][:0]const u8, []const []const u8, []const []u8, [][]const u8 => {
-            prettyError("<r><d><magenta>$<r> <d><b>", .{});
-            printError("{s}", .{argv[0]});
+            prettyFn("<r><d><magenta>$<r> <d><b>", .{});
+            printFn("{s}", .{argv[0]});
             if (argv.len > 1) {
                 for (argv[1..]) |arg| {
-                    printError(" {s}", .{arg});
+                    printFn(" {s}", .{arg});
                 }
             }
-            prettyErrorln("<r>\n", .{});
+            prettyFn("<r>\n", .{});
         },
         []const u8, []u8, [:0]const u8, [:0]u8 => {
-            prettyErrorln("<r><d><magenta>$<r> <d><b>{s}<r>", .{argv});
+            prettyFn("<r><d><magenta>$<r> <d><b>{s}<r>\n", .{argv});
         },
         else => {
             @compileLog(argv);
@@ -1020,6 +1022,14 @@ pub fn command(argv: anytype) void {
         },
     }
     flush();
+}
+
+pub fn commandOut(argv: anytype) void {
+    printCommand(argv, .stdout);
+}
+
+pub fn command(argv: anytype) void {
+    printCommand(argv, .stderr);
 }
 
 pub const Destination = enum(u8) {

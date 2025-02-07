@@ -272,7 +272,7 @@ pub const CreateCommand = struct {
         var progress = Progress{};
         progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
         var node = switch (example_tag) {
-            .jslike_file, .html_file => progress.start(try ProgressBuf.print("Analyzing {s}", .{template}), 0),
+            .jslike_file => progress.start(try ProgressBuf.print("Analyzing {s}", .{template}), 0),
             else => progress.start(try ProgressBuf.print("Loading {s}", .{template}), 0),
         };
 
@@ -293,7 +293,7 @@ pub const CreateCommand = struct {
         }
 
         switch (example_tag) {
-            .jslike_file, .html_file => {
+            .jslike_file => {
                 const Analyzer = struct {
                     ctx: Command.Context,
                     example_tag: Example.Tag,
@@ -1849,12 +1849,8 @@ pub const Example = struct {
         official,
         local_folder,
         jslike_file,
-        html_file,
 
         const ExtensionTagMap = bun.ComptimeStringMap(Tag, .{
-            .{ ".html", .html_file },
-            .{ ".js", .jslike_file },
-            .{ ".ts", .jslike_file },
             .{ ".tsx", .jslike_file },
             .{ ".jsx", .jslike_file },
         });

@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "scripts": {
-    "dev": "bun './src/**/*.html'",
-    "build": "bun src/*.build.ts"
+    "dev": "bun './**/*.html'",
+    "build": "bun ./**/*.build.ts"
   }
 }

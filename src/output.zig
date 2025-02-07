@@ -1000,17 +1000,24 @@ pub fn prettyErrorln(comptime fmt: string, args: anytype) void {
 /// Pretty-print a command that will be run.
 /// $ bun run foo
 pub fn command(argv: anytype) void {
-    if (@TypeOf(argv) == []const []const u8) {
-        prettyError("<r><d><magenta>$<r> <d><b>", .{});
-        printError("{s}", .{argv[0]});
-        if (argv.len > 1) {
-            for (argv[1..]) |arg| {
-                printError(" {s}", .{arg});
+    switch (@TypeOf(argv)) {
+        [][:0]const u8, []const []const u8, []const []u8, [][]const u8 => {
+            prettyError("<r><d><magenta>$<r> <d><b>", .{});
+            printError("{s}", .{argv[0]});
+            if (argv.len > 1) {
+                for (argv[1..]) |arg| {
+                    printError(" {s}", .{arg});
+                }
             }
-        }
-        prettyErrorln("<r>\n", .{});
-    } else {
-        prettyErrorln("<r><d><magenta>$<r> <d><b>{s}<r>", .{argv});
+            prettyErrorln("<r>\n", .{});
+        },
+        []const u8, []u8, [:0]const u8, [:0]u8 => {
+            prettyErrorln("<r><d><magenta>$<r> <d><b>{s}<r>", .{argv});
+        },
+        else => {
+            @compileLog(argv);
+            @compileError("command() was given unsupported type: " ++ @typeName(@TypeOf(argv)));
+        },
     }
     flush();
 }

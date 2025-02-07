@@ -262,6 +262,10 @@ yourself with Bun.serve().
     }
 
     pathnameToPrint ||= "/";
+    if (pathnameToPrint === "*") {
+      pathnameToPrint = "/";
+    }
+
     if (enableANSIColors) {
       let topLine = `${server.development ? "\x1b[34;7m DEV \x1b[0m " : ""}\x1b[1;34m\x1b[5mBun\x1b[0m \x1b[1;34mv${Bun.version}\x1b[0m`;
       if (isFirst) {

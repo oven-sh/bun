@@ -86,7 +86,6 @@ const BunBuildOptions = struct {
             b.build_root.path.?,
             this.codegen_path,
         }) catch @panic("OOM"));
-        opts.addOption(bool, "lto", this.lto);
 
         opts.addOption(bool, "codegen_embed", this.shouldEmbedCode());
         opts.addOption(u32, "canary_revision", this.canary_revision orelse 0);
@@ -239,6 +238,8 @@ pub fn build(b: *Build) !void {
             b.option([]const u8, "reported_nodejs_version", "Reported Node.js version") orelse
                 "0.0.0-unset",
         ),
+
+        .lto = b.option(bool, "lto", "Enable LTO") orelse false,
 
         .sha = sha: {
             const sha_buildoption = b.option([]const u8, "sha", "Force the git sha");

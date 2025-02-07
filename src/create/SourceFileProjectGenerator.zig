@@ -140,7 +140,6 @@ const ReactShadcnSpa = struct {
 
     pub const bunfig = @embedFile("projects/react-shadcn-spa/bunfig.toml");
     pub const package_json = @embedFile("projects/react-shadcn-spa/package.json");
-    pub const tailwind_config = @embedFile("projects/react-shadcn-spa/tailwind.config.js");
     pub const tsconfig = @embedFile("projects/react-shadcn-spa/tsconfig.json");
     pub const components_json = @embedFile("projects/react-shadcn-spa/components.json");
 };
@@ -156,7 +155,6 @@ const ReactTailwindSpa = struct {
 
     pub const bunfig = @embedFile("projects/react-tailwind-spa/bunfig.toml");
     pub const package_json = @embedFile("projects/react-tailwind-spa/package.json");
-    pub const tailwind_config = "";
     pub const tsconfig = "";
     pub const components_json = "";
 };
@@ -200,24 +198,6 @@ fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *Bun
     switch (@as(Template.Tag, template)) {
         inline else => |active| {
             const current = @field(SourceFileProjectGenerator, @tagName(active));
-
-            // Create tailwind config if needed
-            if (current.tailwind_config.len > 0) {
-                if (!bun.sys.exists("tailwind.config.js")) {
-                    switch (createFile("tailwind.config.js", current.tailwind_config)) {
-                        .result => |new| {
-                            if (new) {
-                                is_new = true;
-                                Output.prettyln("<r> <green>✓<r> tailwind.config.js created\n", .{});
-                            }
-                        },
-                        .err => |err| {
-                            Output.err(err, "failed to create tailwind.config.js", .{});
-                            Global.crash();
-                        },
-                    }
-                }
-            }
 
             // Create components.json if needed
             if (current.components_json.len > 0) {
@@ -312,6 +292,7 @@ fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *Bun
     try argv.append("--only-missing");
     try argv.append("install");
     try argv.appendSlice(result.dependencies.keys());
+    Output.command(argv.items);
 
     const process = bun.spawnSync(&.{
         .argv = argv.items,
@@ -367,6 +348,7 @@ fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *Bun
                     }
                     try shadcn_argv.append("-y");
                     try shadcn_argv.appendSlice(shadcn.components.keys());
+                    Output.command(shadcn_argv.items);
                     // Now we need to run shadcn to add the components to the project
                     const shadcn_process = bun.spawnSync(&.{
                         .argv = shadcn_argv.items,

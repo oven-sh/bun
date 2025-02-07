@@ -1,3 +1,5 @@
+import vm from "node:vm";
+
 describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
   const deepEquals = (a: unknown, b: unknown) => Bun.deepEquals(a, b, strict);
   it.each([
@@ -54,5 +56,24 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
     expect(deepEquals(foo, foo)).toBe(true);
     expect(deepEquals(foo, bar)).toBe(false);
     expect(deepEquals(foo, baz)).toBe(false);
+  });
+
+  describe("global object", () => {
+    let contexts: [vm.Context, vm.Context];
+
+    beforeEach(() => {
+      contexts = [vm.createContext(), vm.createContext()];
+    });
+    afterEach(() => {});
+
+    // TODO: re-enable when https://github.com/oven-sh/bun/issues/17080 is resolved
+    it.skip("main global object is not equal to vm global objects", () => {
+      const [ctx] = contexts;
+      expect(deepEquals(global, ctx)).toBe(false);
+
+      ctx.mainGlobal = global;
+      const areEqual = vm.runInContext("Bun.deepEquals(globalThis, mainGlobal)", ctx);
+      expect(areEqual).toBe(false);
+    });
   });
 });

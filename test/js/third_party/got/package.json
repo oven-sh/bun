@@ -1,0 +1,8 @@
+{
+  "name": "got",
+  "version": "1.0.0",
+  "dependencies": {
+    "got": "^14.4.5",
+    "http2-wrapper": "2.2.1"
+  }
+}

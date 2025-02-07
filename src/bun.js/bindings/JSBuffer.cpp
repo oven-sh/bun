@@ -1411,8 +1411,8 @@ static int64_t indexOfNumber(JSC::JSGlobalObject* lexicalGlobalObject, bool last
     if (last) {
 #if OS(LINUX)
 #ifdef __GNU_LIBRARY__
-        const void* offset = memrchr(reinterpret_cast<const void*>(typedVector + byteOffset), byteValue, byteLength - byteOffset);
-        if (offset != NULL) return static_cast<const uint8_t*>(offset) - typedVector;
+        const void* offset = memrchr(reinterpret_cast<const void*>(typedVector), byteValue, byteOffset + 1);
+        if (offset != NULL) return static_cast<const uint8_t*>(offset) - (typedVector);
         return -1;
 #endif
 #endif

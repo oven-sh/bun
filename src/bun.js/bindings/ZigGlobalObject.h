@@ -538,6 +538,7 @@ public:
     LazyClassStructure m_JSBufferClassStructure;
     LazyClassStructure m_NodeVMScriptClassStructure;
     LazyClassStructure m_JSX509CertificateClassStructure;
+    LazyClassStructure m_JSSignClassStructure;
 
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.

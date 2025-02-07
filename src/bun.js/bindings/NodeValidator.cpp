@@ -376,6 +376,19 @@ JSC::EncodedJSValue V::validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject
     return JSValue::encode(jsUndefined());
 }
 
+JSC::EncodedJSValue V::validateArrayBufferView(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value,
+    ASCIILiteral name)
+{
+    if (value.isCell()) {
+        auto type = value.asCell()->type();
+        if (type >= Int8ArrayType && type <= DataViewType) {
+            return JSValue::encode(jsUndefined());
+        }
+    }
+
+    return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Buffer, TypedArray, or DataView"_s, value);
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateInt32, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);

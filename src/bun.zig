@@ -792,7 +792,6 @@ pub const invalid_fd: FileDescriptor = FDImpl.invalid.encode();
 pub const simdutf = @import("./bun.js/bindings/bun-simdutf.zig");
 
 pub const JSC = @import("root").JavaScriptCore;
-pub const AsyncIO = @import("async_io");
 
 pub const logger = @import("./logger.zig");
 pub const ThreadPool = @import("./thread_pool.zig");
@@ -1466,7 +1465,7 @@ pub fn getFdPathW(fd_: anytype, buf: *WPathBuffer) ![]u16 {
     @panic("TODO unsupported platform for getFdPathW");
 }
 
-fn lenSliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) usize {
+fn lenSliceTo(ptr: anytype, comptime end: std.meta.Elem(@TypeOf(ptr))) usize {
     switch (@typeInfo(@TypeOf(ptr))) {
         .pointer => |ptr_info| switch (ptr_info.size) {
             .one => switch (@typeInfo(ptr_info.child)) {
@@ -1510,7 +1509,7 @@ fn lenSliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) usize {
 }
 
 /// Helper for the return type of sliceTo()
-fn SliceTo(comptime T: type, comptime end: meta.Elem(T)) type {
+fn SliceTo(comptime T: type, comptime end: std.meta.Elem(T)) type {
     switch (@typeInfo(T)) {
         .optional => |optional_info| {
             return ?SliceTo(optional_info.child, end);
@@ -1570,7 +1569,7 @@ fn SliceTo(comptime T: type, comptime end: meta.Elem(T)) type {
 /// resulting slice is also sentinel terminated.
 /// Pointer properties such as mutability and alignment are preserved.
 /// C pointers are assumed to be non-null.
-pub fn sliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) SliceTo(@TypeOf(ptr), end) {
+pub fn sliceTo(ptr: anytype, comptime end: std.meta.Elem(@TypeOf(ptr))) SliceTo(@TypeOf(ptr), end) {
     if (@typeInfo(@TypeOf(ptr)) == .optional) {
         const non_null = ptr orelse return null;
         return sliceTo(non_null, end);

@@ -508,16 +508,6 @@ fn exists(path: []const u8) bool {
 fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
     const os = opts.os;
 
-    const io_path = switch (os) {
-        .mac => "src/io/io_darwin.zig",
-        .linux => "src/io/io_linux.zig",
-        .windows => "src/io/io_windows.zig",
-        else => "src/io/io_stub.zig",
-    };
-    obj.root_module.addAnonymousImport("async_io", .{
-        .root_source_file = b.path(io_path),
-    });
-
     const zlib_internal_path = switch (os) {
         .windows => "src/deps/zlib.win32.zig",
         .linux, .mac => "src/deps/zlib.posix.zig",

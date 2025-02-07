@@ -2319,14 +2319,14 @@ pub const PostgresSQLConnection = struct {
                     if (binary) {
                         return DataCell{ .tag = .int4, .value = .{ .int4 = try parseBinary(.int4, i32, bytes) } };
                     } else {
-                        return DataCell{ .tag = .int4, .value = .{ .int4 = bun.fmt.parseInt(i32, bytes, 0) catch 0 } };
+                        return DataCell{ .tag = .int4, .value = .{ .int4 = std.fmt.parseInt(i32, bytes, 0) catch 0 } };
                     }
                 },
                 // postgres when reading bigint as int8 it returns a string unless type: { bigint: postgres.BigInt is set
                 .int8 => {
                     if (bigint) {
                         // .int8 is a 64-bit integer always string
-                        return DataCell{ .tag = .int8, .value = .{ .int8 = bun.fmt.parseInt(i64, bytes, 0) catch 0 } };
+                        return DataCell{ .tag = .int8, .value = .{ .int8 = std.fmt.parseInt(i64, bytes, 0) catch 0 } };
                     } else {
                         return DataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) bun.String.createUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
                     }
@@ -3461,7 +3461,7 @@ const Signature = struct {
             return error.InvalidQueryBinding;
         }
         // max u64 length is 20, max prepared_statement_name length is 63
-        const prepared_statement_name = try bun.fmt.allocPrint(bun.default_allocator, "P{s}${d}", .{ name.items[0..@min(40, name.items.len)], prepared_statement_id });
+        const prepared_statement_name = try std.fmt.allocPrint(bun.default_allocator, "P{s}${d}", .{ name.items[0..@min(40, name.items.len)], prepared_statement_id });
 
         return Signature{
             .prepared_statement_name = prepared_statement_name,

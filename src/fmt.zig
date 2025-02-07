@@ -9,8 +9,6 @@ const fmt = std.fmt;
 const Environment = bun.Environment;
 const sha = bun.sha;
 
-pub usingnamespace std.fmt;
-
 pub const TableSymbols = struct {
     enable_ansi_colors: bool,
 

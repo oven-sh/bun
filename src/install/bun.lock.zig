@@ -295,7 +295,7 @@ pub const Stringifier = struct {
                     const dep = deps_buf[dep_id];
 
                     // clobber, there isn't data
-                    try pkg_map.put(try bun.fmt.allocPrint(allocator, "{s}{s}{s}", .{
+                    try pkg_map.put(try std.fmt.allocPrint(allocator, "{s}{s}{s}", .{
                         node.relative_path,
                         if (node.depth == 0) "" else "/",
                         dep.name.slice(buf),
@@ -1908,7 +1908,7 @@ pub fn parseIntoBinaryLockfile(
                     const dep = &lockfile.buffers.dependencies.items[dep_id];
                     const dep_name = dep.name.slice(lockfile.buffers.string_bytes.items);
 
-                    const workspace_node_modules = bun.fmt.bufPrint(&path_buf, "{s}/{s}", .{ workspace_name, dep_name }) catch {
+                    const workspace_node_modules = std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ workspace_name, dep_name }) catch {
                         try log.addErrorFmt(source, root_pkg_exr.loc, allocator, "Workspace and dependency name too long: '{s}/{s}'", .{ workspace_name, dep_name });
                         return error.InvalidPackageInfo;
                     };

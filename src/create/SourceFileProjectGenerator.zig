@@ -41,6 +41,8 @@ pub fn generate(_: Command.Context, _: Example.Tag, entry_point: string, result:
         try result.dependencies.insert("react-dom@^18");
     } else {
         // Add react-dom if react is used
+        _ = result.dependencies.swapRemove("react");
+        _ = result.dependencies.swapRemove("react-dom");
         try result.dependencies.insert("react-dom@19");
         try result.dependencies.insert("react@19");
     }

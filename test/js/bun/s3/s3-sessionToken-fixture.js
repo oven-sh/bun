@@ -45,3 +45,20 @@ import { expect } from "bun:test";
     sessionToken: null,
   });
 }
+
+{
+  // static methods
+  const filename = randomUUIDv7().replaceAll("-", "");
+
+  await S3Client.write(filename, "content", {
+    sessionToken: null,
+  });
+  expect(
+    await S3Client.file(filename, {
+      sessionToken: null,
+    }).text(),
+  ).toBe("content");
+  await S3Client.unlink(filename, {
+    sessionToken: null,
+  });
+}

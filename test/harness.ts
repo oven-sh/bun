@@ -1571,7 +1571,7 @@ export class VerdaccioRegistry {
     await rm(join(this.packagesPath, "private-pkg-dont-touch"), { force: true });
     const packageDir = tmpdirSync();
     const packageJson = join(packageDir, "package.json");
-    this.writeBunfig(packageDir, bunfigOpts);
+    await this.writeBunfig(packageDir, bunfigOpts);
     this.users = {};
     return { packageDir, packageJson };
   }

@@ -27,6 +27,8 @@ const FlexHandler = css.css_properties.flex.FlexHandler;
 const AlignHandler = css.css_properties.@"align".AlignHandler;
 const TransitionHandler = css.css_properties.transition.TransitionHandler;
 const TransformHandler = css.css_properties.transform.TransformHandler;
+const ColorSchemeHandler = css.css_properties.ui.ColorSchemeHandler;
+const BoxShadowHandler = css.css_properties.box_shadow.BoxShadowHandler;
 // const GridHandler = css.css_properties.g
 
 /// A CSS declaration block.
@@ -347,6 +349,8 @@ pub const DeclarationHandler = struct {
     font: FontHandler = .{},
     inset: InsetHandler = .{},
     transform: TransformHandler = .{},
+    box_shadow: BoxShadowHandler = .{},
+    color_scheme: ColorSchemeHandler = .{},
     fallback: FallbackHandler = .{},
     direction: ?css.css_properties.text.Direction,
     decls: DeclarationList,
@@ -375,6 +379,8 @@ pub const DeclarationHandler = struct {
         this.font.finalize(&this.decls, context);
         this.inset.finalize(&this.decls, context);
         this.transform.finalize(&this.decls, context);
+        this.box_shadow.finalize(&this.decls, context);
+        this.color_scheme.finalize(&this.decls, context);
         this.fallback.finalize(&this.decls, context);
     }
 
@@ -392,6 +398,8 @@ pub const DeclarationHandler = struct {
             this.font.handleProperty(property, &this.decls, context) or
             this.inset.handleProperty(property, &this.decls, context) or
             this.transform.handleProperty(property, &this.decls, context) or
+            this.box_shadow.handleProperty(property, &this.decls, context) or
+            this.color_scheme.handleProperty(property, &this.decls, context) or
             this.fallback.handleProperty(property, &this.decls, context);
     }
 

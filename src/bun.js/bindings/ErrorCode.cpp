@@ -1,3 +1,4 @@
+
 #include "root.h"
 
 #include "ZigGlobalObject.h"
@@ -27,6 +28,23 @@
 #include "ErrorCode.h"
 #include "ErrorStackTrace.h"
 
+namespace WTF {
+template<> class StringTypeAdapter<GCOwnedDataScope<StringView>&, void> {
+public:
+    StringTypeAdapter(GCOwnedDataScope<StringView>& string)
+        : m_string { string }
+    {
+    }
+
+    unsigned length() const { return m_string.length(); }
+    bool is8Bit() const { return m_string.is8Bit(); }
+    template<typename CharacterType> void writeTo(std::span<CharacterType> destination) { m_string.getCharacters(destination); }
+
+private:
+    GCOwnedDataScope<StringView> m_string;
+};
+}
+
 JSC_DEFINE_HOST_FUNCTION(NodeError_proto_toString, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -42,9 +60,9 @@ JSC_DEFINE_HOST_FUNCTION(NodeError_proto_toString, (JSC::JSGlobalObject * global
 
     auto* name_s = name.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    auto code_s = code.toString(globalObject);
+    auto* code_s = code.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    auto message_s = message.toString(globalObject);
+    auto* message_s = message.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
     auto nameView = name_s->view(globalObject);
@@ -54,8 +72,31 @@ JSC_DEFINE_HOST_FUNCTION(NodeError_proto_toString, (JSC::JSGlobalObject * global
     auto messageView = message_s->view(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    return JSC::JSValue::encode(JSC::jsString(vm, makeString(nameView, " ["_s, codeView, "]: "_s, messageView)));
+    WTF::StringBuilder builder;
+    builder.append(nameView);
+    builder.append(" ["_s);
+    builder.append(codeView);
+    builder.append("]: "_s);
+    builder.append(messageView);
+
+    return JSC::JSValue::encode(JSC::jsString(vm, builder.toString()));
 }
+
+// clang-format on
+
+#define EXPECT_ARG_COUNT(count__)                                                          \
+    do {                                                                                   \
+        auto argCount = callFrame->argumentCount();                                        \
+        if (argCount < count__) {                                                          \
+            JSC::throwTypeError(globalObject, scope, "requires " #count__ " arguments"_s); \
+            return {};                                                                     \
+        }                                                                                  \
+    } while (false)
+
+namespace Bun {
+
+using namespace JSC;
+using namespace WTF;
 
 static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name, WTF::ASCIILiteral code, bool isDOMExceptionPrototype)
 {
@@ -96,21 +137,6 @@ static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* glo
 
     return prototype;
 }
-
-// clang-format on
-
-#define EXPECT_ARG_COUNT(count__)                                                          \
-    do {                                                                                   \
-        auto argCount = callFrame->argumentCount();                                        \
-        if (argCount < count__) {                                                          \
-            JSC::throwTypeError(globalObject, scope, "requires " #count__ " arguments"_s); \
-            return {};                                                                     \
-        }                                                                                  \
-    } while (false)
-
-namespace Bun {
-
-using namespace JSC;
 
 #include "ErrorCode+Data.h"
 
@@ -223,10 +249,10 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
     auto cell = arg.asCell();
     switch (cell->type()) {
     case JSC::JSType::StringType: {
-
-        auto view = jsCast<JSString*>(cell)->view(globalObject);
+        auto* jsString = jsCast<JSString*>(cell);
+        auto view = jsString->view(globalObject);
         if (!view->isEmpty()) {
-            builder.append(view);
+            builder.append(view.data);
         }
         return;
     }
@@ -927,7 +953,7 @@ void throwCryptoOperationFailed(JSGlobalObject* globalObject, JSC::ThrowScope& s
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionMakeAbortError, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto message = callFrame->argument(0);
@@ -935,27 +961,28 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionMakeAbortError, (JSC::JSGlobalObject * lexica
     if (!options.isUndefined() && options.isCell() && !options.asCell()->isObject()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, options);
 
     if (message.isUndefined() && options.isUndefined()) {
-        return JSValue::encode(Bun::createError(globalObject, Bun::ErrorCode::ABORT_ERR, "The operation was aborted"_s, false));
+        return JSValue::encode(Bun::createError(globalObject, Bun::ErrorCode::ABORT_ERR, globalObject->commonStrings().OperationFailedString(globalObject), false));
     }
 
-    if (message.isUndefined()) message = JSC::jsString(vm, String("The operation was aborted"_s));
+    if (message.isUndefined()) message = globalObject->commonStrings().OperationFailedString(globalObject);
     auto error = Bun::createError(vm, globalObject, Bun::ErrorCode::ABORT_ERR, message, options, false);
     return JSC::JSValue::encode(error);
 }
 
 JSC::JSValue WebCore::toJS(JSC::JSGlobalObject* globalObject, CommonAbortReason abortReason)
 {
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
     switch (abortReason) {
     case CommonAbortReason::Timeout: {
-        return createError(globalObject, Bun::ErrorCode::ABORT_ERR, "The operation timed out"_s, true);
+        return createError(globalObject, Bun::ErrorCode::ABORT_ERR, zigGlobalObject->commonStrings().OperationFailedString(globalObject), true);
     }
     case CommonAbortReason::UserAbort: {
         // This message is a standardized error message. We cannot change it.
         // https://webidl.spec.whatwg.org/#idl-DOMException:~:text=The%20operation%20was%20aborted.
-        return createError(globalObject, Bun::ErrorCode::ABORT_ERR, "The operation was aborted."_s, true);
+        return createError(globalObject, Bun::ErrorCode::ABORT_ERR, zigGlobalObject->commonStrings().OperationFailedString(globalObject), true);
     }
     case CommonAbortReason::ConnectionClosed: {
-        return createError(globalObject, Bun::ErrorCode::ABORT_ERR, "The connection was closed"_s, true);
+        return createError(globalObject, Bun::ErrorCode::ABORT_ERR, zigGlobalObject->commonStrings().ConnectionWasClosedString(globalObject), true);
     }
     default: {
         break;
@@ -1040,7 +1067,10 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         auto param = jsString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        return JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_IP_ADDRESS, makeString("Invalid IP address: "_s, param)));
+        WTF::StringBuilder builder;
+        builder.append("Invalid IP address: "_s);
+        builder.append(param);
+        return JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_IP_ADDRESS, builder.toString()));
     }
 
     case Bun::ErrorCode::ERR_INVALID_ARG_VALUE: {
@@ -1056,8 +1086,10 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         RETURN_IF_EXCEPTION(scope, {});
         auto param = jsString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        auto message = makeString("Unknown encoding: "_s, param);
-        return JSC::JSValue::encode(createError(globalObject, error, message));
+        WTF::StringBuilder builder;
+        builder.append("Unknown encoding: "_s);
+        builder.append(param);
+        return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
     }
 
     case Bun::ErrorCode::ERR_STREAM_DESTROYED: {
@@ -1066,8 +1098,11 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         RETURN_IF_EXCEPTION(scope, {});
         auto param = jsString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        auto message = makeString("Cannot call "_s, param, " after a stream was destroyed"_s);
-        return JSC::JSValue::encode(createError(globalObject, error, message));
+        WTF::StringBuilder builder;
+        builder.append("Cannot call "_s);
+        builder.append(param);
+        builder.append(" after a stream was destroyed"_s);
+        return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
     }
 
     case Bun::ErrorCode::ERR_METHOD_NOT_IMPLEMENTED: {
@@ -1076,8 +1111,11 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         RETURN_IF_EXCEPTION(scope, {});
         auto param = jsString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        auto message = makeString("The "_s, param, " method is not implemented"_s);
-        return JSC::JSValue::encode(createError(globalObject, error, message));
+        WTF::StringBuilder builder;
+        builder.append("The "_s);
+        builder.append(param);
+        builder.append(" method is not implemented"_s);
+        return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
     }
 
     case Bun::ErrorCode::ERR_STREAM_ALREADY_FINISHED: {
@@ -1086,8 +1124,11 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         RETURN_IF_EXCEPTION(scope, {});
         auto param = jsString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        auto message = makeString("Cannot call "_s, param, " after a stream was finished"_s);
-        return JSC::JSValue::encode(createError(globalObject, error, message));
+        WTF::StringBuilder builder;
+        builder.append("Cannot call "_s);
+        builder.append(param);
+        builder.append(" after a stream was finished"_s);
+        return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
     }
 
     case Bun::ErrorCode::ERR_MISSING_ARGS: {
@@ -1104,7 +1145,11 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
             RETURN_IF_EXCEPTION(scope, {});
             auto str0 = jsString->view(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            return JSC::JSValue::encode(createError(globalObject, error, makeString("The \""_s, str0, "\" argument must be specified"_s)));
+            WTF::StringBuilder builder;
+            builder.append("The \""_s);
+            builder.append(str0);
+            builder.append("\" argument must be specified"_s);
+            return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
         }
         case 3: {
             JSValue arg0 = callFrame->argument(1);
@@ -1117,7 +1162,13 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
             RETURN_IF_EXCEPTION(scope, {});
             auto str1 = jsString1->view(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            return JSC::JSValue::encode(createError(globalObject, error, makeString("The \""_s, str0, "\" and \""_s, str1, "\" arguments must be specified"_s)));
+            WTF::StringBuilder builder;
+            builder.append("The \""_s);
+            builder.append(str0);
+            builder.append("\" and \""_s);
+            builder.append(str1);
+            builder.append("\" arguments must be specified"_s);
+            return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
         }
         default: {
             WTF::StringBuilder result;
@@ -1183,8 +1234,10 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         RETURN_IF_EXCEPTION(scope, {});
         auto param = jsString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        auto&& message = makeString("Invalid state: "_s, param);
-        return JSC::JSValue::encode(createError(globalObject, error, message));
+        WTF::StringBuilder builder;
+        builder.append("Invalid state: "_s);
+        builder.append(param);
+        return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
     }
 
     case Bun::ErrorCode::ERR_INVALID_PROTOCOL: {
@@ -1198,8 +1251,13 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         RETURN_IF_EXCEPTION(scope, {});
         auto param1 = jsString1->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        auto&& message = makeString("Protocol \""_s, param0, "\" not supported. Expected \""_s, param1, "\""_s);
-        return JSC::JSValue::encode(createError(globalObject, error, message));
+        WTF::StringBuilder builder;
+        builder.append("Protocol \""_s);
+        builder.append(param0);
+        builder.append("\" not supported. Expected \""_s);
+        builder.append(param1);
+        builder.append("\""_s);
+        return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
     }
 
     case Bun::ErrorCode::ERR_BROTLI_INVALID_PARAM: {
@@ -1208,8 +1266,10 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         RETURN_IF_EXCEPTION(scope, {});
         auto param = jsString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        auto&& message = makeString(param, " is not a valid Brotli parameter"_s);
-        return JSC::JSValue::encode(createError(globalObject, error, message));
+        WTF::StringBuilder builder;
+        builder.append(param);
+        builder.append(" is not a valid Brotli parameter"_s);
+        return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
     }
 
     case Bun::ErrorCode::ERR_BUFFER_TOO_LARGE: {
@@ -1218,8 +1278,11 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         RETURN_IF_EXCEPTION(scope, {});
         auto param = jsString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        auto&& message = makeString("Cannot create a Buffer larger than "_s, param, " bytes"_s);
-        return JSC::JSValue::encode(createError(globalObject, error, message));
+        WTF::StringBuilder builder;
+        builder.append("Cannot create a Buffer larger than "_s);
+        builder.append(param);
+        builder.append(" bytes"_s);
+        return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
     }
 
     case Bun::ErrorCode::ERR_UNHANDLED_ERROR: {

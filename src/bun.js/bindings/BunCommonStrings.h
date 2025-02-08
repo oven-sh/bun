@@ -26,7 +26,11 @@
     macro(rsaPss, "rsa-pss") \
     macro(ec, "ec") \
     macro(x25519, "x25519") \
-    macro(ed25519, "ed25519")
+    macro(ed25519, "ed25519") \
+    macro(OperationWasAborted, "The operation was aborted") \
+    macro(OperationTimedOut, "The operation timed out") \
+    macro(ConnectionWasClosed, "The connection was closed") \
+    macro(OperationFailed, "The operation failed")
 
 // clang-format on
 

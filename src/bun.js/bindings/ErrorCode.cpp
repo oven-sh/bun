@@ -429,19 +429,29 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
 
     unsigned length = expected_types.size();
     if (length == 1) {
-        result.append(expected_types.at(0).toWTFString(globalObject));
+        auto* str = expected_types.at(0).toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        result.append(str->view(globalObject));
     } else if (length == 2) {
-        result.append(expected_types.at(0).toWTFString(globalObject));
+        auto* str1 = expected_types.at(0).toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        result.append(str1->view(globalObject));
         result.append(" or "_s);
-        result.append(expected_types.at(1).toWTFString(globalObject));
+        auto* str2 = expected_types.at(1).toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        result.append(str2->view(globalObject));
     } else {
         for (unsigned i = 0; i < length - 1; i++) {
             JSValue expected_type = expected_types.at(i);
-            result.append(expected_type.toWTFString(globalObject));
+            auto* str = expected_type.toString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            result.append(str->view(globalObject));
             result.append(", "_s);
         }
         result.append("or "_s);
-        result.append(expected_types.at(length - 1).toWTFString(globalObject));
+        auto* str = expected_types.at(length - 1).toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        result.append(str->view(globalObject));
     }
 
     result.append(". Received "_s);

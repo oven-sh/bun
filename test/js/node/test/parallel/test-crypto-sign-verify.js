@@ -68,7 +68,7 @@ const keySize = 2048;
       });
   }, { message: hasOpenSSL3 ?
     'error:1C8000A5:Provider routines::illegal or unsupported padding mode' :
-    'bye, bye, error stack' });
+    'error:0600006d:public key routines:OPENSSL_internal:ILLEGAL_OR_UNSUPPORTED_PADDING_MODE' });
 
   delete Object.prototype.opensslErrorStack;
 }
@@ -337,24 +337,26 @@ assert.throws(
       });
     });
 
-  assert.throws(() => {
-    crypto.createSign('SHA1')
-      .update('Test123')
-      .sign({
-        key: keyPem,
-        padding: crypto.constants.RSA_PKCS1_OAEP_PADDING
-      });
-  }, hasOpenSSL3 ? {
-    code: 'ERR_OSSL_ILLEGAL_OR_UNSUPPORTED_PADDING_MODE',
-    message: /illegal or unsupported padding mode/,
-  } : {
-    code: 'ERR_OSSL_RSA_ILLEGAL_OR_UNSUPPORTED_PADDING_MODE',
-    message: /illegal or unsupported padding mode/,
-    opensslErrorStack: [
-      'error:06089093:digital envelope routines:EVP_PKEY_CTX_ctrl:' +
-      'command not supported',
-    ],
-  });
+  if (!common.openSSLIsBoringSSL) {
+    assert.throws(() => {
+      crypto.createSign('SHA1')
+        .update('Test123')
+        .sign({
+          key: keyPem,
+          padding: crypto.constants.RSA_PKCS1_OAEP_PADDING
+        });
+    }, hasOpenSSL3 ? {
+      code: 'ERR_OSSL_ILLEGAL_OR_UNSUPPORTED_PADDING_MODE',
+      message: /illegal or unsupported padding mode/,
+    } : {
+      code: 'ERR_OSSL_RSA_ILLEGAL_OR_UNSUPPORTED_PADDING_MODE',
+      message: /illegal or unsupported padding mode/,
+      opensslErrorStack: [
+        'error:06089093:digital envelope routines:EVP_PKEY_CTX_ctrl:' +
+        'command not supported',
+      ],
+    });
+  }
 }
 
 // Test throws exception when key options is null
@@ -497,7 +499,10 @@ assert.throws(
 
 {
   const data = Buffer.from('Hello world');
-  const keys = [['ec-key.pem', 64], ['dsa_private_1025.pem', 40]];
+  // Unabled to sign or verify with DSA keys
+  // https://boringssl.googlesource.com/boringssl/+/HEAD/PORTING.md#dsa-s
+  // const keys = [['ec-key.pem', 64], ['dsa_private_1025.pem', 40]];
+  const keys = [['ec-key.pem', 64]];
 
   for (const [file, length] of keys) {
     const privKey = fixtures.readKey(file);
@@ -779,15 +784,18 @@ assert.throws(
 
 {
   // Ed25519 and Ed448 must use the one-shot methods
+  // const keys = [{ privateKey: fixtures.readKey('ed25519_private.pem', 'ascii'),
+  //                 publicKey: fixtures.readKey('ed25519_public.pem', 'ascii') },
+  //               { privateKey: fixtures.readKey('ed448_private.pem', 'ascii'),
+  //                 publicKey: fixtures.readKey('ed448_public.pem', 'ascii') }];
+
   const keys = [{ privateKey: fixtures.readKey('ed25519_private.pem', 'ascii'),
-                  publicKey: fixtures.readKey('ed25519_public.pem', 'ascii') },
-                { privateKey: fixtures.readKey('ed448_private.pem', 'ascii'),
-                  publicKey: fixtures.readKey('ed448_public.pem', 'ascii') }];
+                  publicKey: fixtures.readKey('ed25519_public.pem', 'ascii') }];
 
   for (const { publicKey, privateKey } of keys) {
     assert.throws(() => {
       crypto.createSign('SHA256').update('Test123').sign(privateKey);
-    }, { code: 'ERR_CRYPTO_UNSUPPORTED_OPERATION', message: 'Unsupported crypto operation' });
+    }, { code: common.openSSLIsBoringSSL ? 'ERR_OSSL_COMMAND_NOT_SUPPORTED' : 'ERR_CRYPTO_UNSUPPORTED_OPERATION', message: common.openSSLIsBoringSSL ? 'error:06000065:public key routines:OPENSSL_internal:COMMAND_NOT_SUPPORTED' : 'Unsupported crypto operation' });
     assert.throws(() => {
       crypto.createVerify('SHA256').update('Test123').verify(privateKey, 'sig');
     }, { code: 'ERR_CRYPTO_UNSUPPORTED_OPERATION', message: 'Unsupported crypto operation' });
@@ -805,7 +813,7 @@ assert.throws(
     const publicKey = fixtures.readKey(`${algo}_public.pem`, 'ascii');
     assert.throws(() => {
       crypto.createSign('SHA256').update('Test123').sign(privateKey);
-    }, { code: 'ERR_OSSL_EVP_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE', message: /operation not supported for this keytype/ });
+    }, { code: common.openSSLIsBoringSSL ? 'ERR_OSSL_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE' : 'ERR_OSSL_EVP_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE', message: /operation not supported for this keytype/ });
     assert.throws(() => {
       crypto.createVerify('SHA256').update('Test123').verify(privateKey, 'sig');
     }, { code: 'ERR_OSSL_EVP_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE', message: /operation not supported for this keytype/ });

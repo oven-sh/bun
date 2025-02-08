@@ -147,6 +147,7 @@ If the command executes successfully but `bun --version` is not recognized, it m
     [System.EnvironmentVariableTarget]::Machine
 )
 ```
+After running the command, restart your terminal and test with `bun --version`
 
 {% /details %}
 

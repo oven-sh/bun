@@ -164,7 +164,7 @@ pub const FilterSet = struct {
             while (codepointer_iter.next(&cursor)) {
                 if (bun.Environment.isWindows and cursor.c == @as(u32, '\\')) dont_forward_slash: {
                     const prev = cursor;
-                    const is_separator = if (codepointer_iter.next(&cursor)) |next| switch (next) {
+                    const is_separator = if (codepointer_iter.next(&cursor)) switch (cursor.c) {
                         '[', '{', '!', '*', '?' => false,
                         else => true,
                     } else true;

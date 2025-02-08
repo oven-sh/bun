@@ -113,7 +113,7 @@ pub const S3Credentials = struct {
                                 new_credentials._endpointSlice = str.toUTF8(bun.default_allocator);
                                 const endpoint = new_credentials._endpointSlice.?.slice();
                                 const url = bun.URL.parse(endpoint);
-                                const normalized_endpoint = url.host;
+                                const normalized_endpoint = url.hostWithPath();
                                 if (normalized_endpoint.len > 0) {
                                     new_credentials.credentials.endpoint = normalized_endpoint;
 
@@ -524,7 +524,29 @@ pub const S3Credentials = struct {
         var bucket_buffer: [63]u8 = undefined;
         bucket = encodeURIComponent(bucket, &bucket_buffer, false) catch return error.InvalidPath;
         path = encodeURIComponent(path, &path_buffer, false) catch return error.InvalidPath;
-        const normalizedPath = std.fmt.bufPrint(&normalized_path_buffer, "/{s}/{s}", .{ bucket, path }) catch return error.InvalidPath;
+        // Default to https. Only use http if they explicit pass "http://" as the endpoint.
+        const protocol = if (this.insecure_http) "http" else "https";
+
+        // detect service name and host from region or endpoint
+        var endpoint = this.endpoint;
+        var extra_path: []const u8 = "";
+        const host = brk_host: {
+            if (this.endpoint.len > 0) {
+                if (this.endpoint.len >= 2048) return error.InvalidEndpoint;
+                var host = this.endpoint;
+                if (bun.strings.indexOf(this.endpoint, "/")) |index| {
+                    host = this.endpoint[0..index];
+                    extra_path = this.endpoint[index..];
+                }
+                // only the host part is needed here
+                break :brk_host try bun.default_allocator.dupe(u8, host);
+            } else {
+                endpoint = try std.fmt.allocPrint(bun.default_allocator, "s3.{s}.amazonaws.com", .{region});
+                break :brk_host endpoint;
+            }
+        };
+        errdefer bun.default_allocator.free(host);
+        const normalizedPath = std.fmt.bufPrint(&normalized_path_buffer, "{s}/{s}/{s}", .{ extra_path, bucket, path }) catch return error.InvalidPath;
 
         const date_result = getAMZDate(bun.default_allocator);
         const amz_date = date_result.date;
@@ -595,21 +617,7 @@ pub const S3Credentials = struct {
             }
         };
 
-        // Default to https. Only use http if they explicit pass "http://" as the endpoint.
-        const protocol = if (this.insecure_http) "http" else "https";
-
-        // detect service name and host from region or endpoint
-        const host = brk_host: {
-            if (this.endpoint.len > 0) {
-                if (this.endpoint.len >= 512) return error.InvalidEndpoint;
-                break :brk_host try bun.default_allocator.dupe(u8, this.endpoint);
-            } else {
-                break :brk_host try std.fmt.allocPrint(bun.default_allocator, "s3.{s}.amazonaws.com", .{region});
-            }
-        };
         const service_name = "s3";
-
-        errdefer bun.default_allocator.free(host);
 
         const aws_content_hash = if (content_hash) |hash| hash else ("UNSIGNED-PAYLOAD");
         var tmp_buffer: [4096]u8 = undefined;

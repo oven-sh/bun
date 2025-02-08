@@ -120,6 +120,7 @@ pub fn match(alloc: Allocator, glob: []const u8, path: []const u8) MatchResult {
 }
 
 inline fn globMatchImpl(state: *State, glob: []const u8, path: []const u8) bool {
+    debugDisallowWindowsBackslashPatterns(glob);
     while (state.glob_index < glob.len or state.path_index < path.len) {
         if (state.glob_index < glob.len) {
             switch (glob[state.glob_index]) {
@@ -268,6 +269,20 @@ inline fn globMatchImpl(state: *State, glob: []const u8, path: []const u8) bool 
     }
 
     return true;
+}
+
+fn debugDisallowWindowsBackslashPatterns(glob: []const u8) void {
+    if (comptime bun.Environment.isWindows) {
+        var i: usize = 0;
+        while (i < glob.len) : (i += 1) {
+            if (glob[i] == '\\' and i + 1 < glob.len and switch (glob[i + 1]) {
+                '[', '{', '!', '*', '?' => false,
+                else => true,
+            }) {
+                @panic("Please do not use Windows backslashes in glob patterns.");
+            }
+        }
+    }
 }
 
 fn matchBrace(state: *State, glob: []const u8, path: []const u8) bool {
@@ -479,29 +494,3 @@ const BraceIndex = struct {
     start: u32 = 0,
     end: u32 = 0,
 };
-
-// TODO: Seems like this is unused, consider removing
-pub fn preprocess_glob(glob: []const u8, brace_indices: *[10]BraceIndex, brace_indices_len: *u8, search_count: *u8, i: *u32) ?u32 {
-    while (i.* < glob.len) {
-        const c = glob[i];
-        switch (c) {
-            '{' => {
-                if (brace_indices_len.* == brace_indices.len) continue;
-                const stack_idx = brace_indices_len.*;
-                if (i == glob.len - 1) continue;
-                const matching_idx = preprocess_glob(glob[i + 1 ..], brace_indices, brace_indices_len, search_count + 1);
-                if (matching_idx) |idx| {
-                    if (brace_indices_len.* == brace_indices.len) continue;
-                    brace_indices[stack_idx].start = @intCast(i);
-                    brace_indices[stack_idx].end = @as(u32, @intCast(i)) + idx + 1;
-                    brace_indices_len.* += 1;
-                }
-            },
-            '}' => {
-                if (search_count > 0) return @intCast(i);
-            },
-            else => {},
-        }
-    }
-    return null;
-}

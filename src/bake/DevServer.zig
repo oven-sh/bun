@@ -9,6 +9,7 @@
 pub const DevServer = @This();
 pub const debug = bun.Output.Scoped(.Bake, false);
 pub const igLog = bun.Output.scoped(.IncrementalGraph, false);
+const DebugHTTPServer = @import("../bun.js/api/server.zig").DebugHTTPServer;
 
 pub const Options = struct {
     /// Arena must live until DevServer.deinit()
@@ -623,7 +624,7 @@ fn ensureRouteIsBundled(
                     .data = switch (kind) {
                         .js_payload => .{ .js_payload = resp },
                         .server_handler => .{
-                            .server_handler = (dev.server.?.DebugHTTPServer.prepareJsRequestContext(req, resp, null) orelse return)
+                            .server_handler = (dev.server.?.ptr.as(DebugHTTPServer).prepareJsRequestContext(req, resp, null) orelse return)
                                 .save(dev.vm.global, req, resp),
                         },
                     },
@@ -676,7 +677,7 @@ fn ensureRouteIsBundled(
                     .data = switch (kind) {
                         .js_payload => .{ .js_payload = resp },
                         .server_handler => .{
-                            .server_handler = (dev.server.?.DebugHTTPServer.prepareJsRequestContext(req, resp, null) orelse return)
+                            .server_handler = (dev.server.?.ptr.as(DebugHTTPServer).prepareJsRequestContext(req, resp, null) orelse return)
                                 .save(dev.vm.global, req, resp),
                         },
                     },
@@ -1685,21 +1686,14 @@ pub fn routeBundlePtr(dev: *DevServer, idx: RouteBundle.Index) *RouteBundle {
     return &dev.route_bundles.items[idx.get()];
 }
 
-fn onRequest(dev: *DevServer, req: *Request, resp: *Response) void {
+fn onRequest(dev: *DevServer, req: *uws.Request, resp: *Response) void {
     var params: FrameworkRouter.MatchedParams = undefined;
     if (dev.router.matchSlow(req.url(), &params)) |route_index| {
         dev.ensureRouteIsBundled(route_index, .server_handler, req, resp) catch bun.outOfMemory();
         return;
     }
 
-    switch (dev.server.?) {
-        inline .DebugHTTPServer, .HTTPServer => |s| if (s.config.onRequest != .zero) {
-            s.onRequest(req, resp);
-            return;
-        },
-        else => @panic("TODO: HTTPS"),
-    }
-
+    dev.server.?.onRequest(req, resp);
     sendBuiltInNotFound(resp);
 }
 

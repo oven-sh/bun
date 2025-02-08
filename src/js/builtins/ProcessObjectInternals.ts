@@ -324,7 +324,7 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
     setup = undefined;
   };
 
-  function nextTick(cb, args) {
+  function nextTick(cb, ...args) {
     validateFunction(cb, "callback");
     if (setup) {
       setup();
@@ -334,7 +334,9 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
 
     queue.push({
       callback: cb,
-      args: $argumentCount() > 1 ? Array.prototype.slice.$call(arguments, 1) : undefined,
+      // We want to avoid materializing the args if there are none because it's
+      // a waste of memory and Array.prototype.slice shows up in profiling.
+      args: $argumentCount() > 1 ? args : undefined,
       frame: $getInternalField($asyncContext, 0),
     });
     $putInternalField(nextTickQueue, 0, 1);

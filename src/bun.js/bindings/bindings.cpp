@@ -2362,7 +2362,7 @@ void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__
 
     auto* cell = JSC::JSValue::decode(JSValue0).asCell();
 
-    if (JSC::jsDynamicCast<JSC::JSPromise*>(cell)) {
+    if (JSC::JSPromise* promise = JSC::jsDynamicCast<JSC::JSPromise*>(cell)) {
         handlePromise<JSC::JSPromise, false>(promise, arg1, arg2, ArgFn3, ArgFn4);
     } else if (JSC::jsDynamicCast<JSC::JSInternalPromise*>(cell)) {
         RELEASE_ASSERT(false);

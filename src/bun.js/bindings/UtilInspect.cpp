@@ -58,7 +58,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     arguments.append(options);
     arguments.append(inspectFn);
 
-    JSC::profiledCall(globalObject, ProfilingReason::API, functionToCall, callData, thisValue, arguments);
+    auto inspectRet = JSC::profiledCall(globalObject, ProfilingReason::API, functionToCall, callData, thisValue, arguments);
     if (scope.exception()) {
         *is_exception = true;
         return {};

@@ -410,7 +410,7 @@ const ProxyTunnel = struct {
             };
             const pending = encoded_data[@intCast(written)..];
             if (pending.len > 0) {
-                // lets flush when we are trully writable
+                // lets flush when we are truly writable
                 proxy.write_buffer.write(pending) catch bun.outOfMemory();
             }
         }

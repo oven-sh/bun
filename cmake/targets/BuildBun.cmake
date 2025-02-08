@@ -179,6 +179,33 @@ register_command(
     ${BUN_NODE_FALLBACKS_OUTPUTS}
 )
 
+# An embedded copy of react-refresh is used when the user forgets to install it.
+# The library is not versioned alongside React.
+set(BUN_REACT_REFRESH_OUTPUT ${BUN_NODE_FALLBACKS_OUTPUT}/react-refresh.js)
+register_command(
+  TARGET
+    bun-node-fallbacks-react-refresh
+  COMMENT
+    "Building node-fallbacks/react-refresh.js"
+  CWD
+    ${BUN_NODE_FALLBACKS_SOURCE}
+  COMMAND
+    ${BUN_EXECUTABLE} build
+      ${BUN_NODE_FALLBACKS_SOURCE}/node_modules/react-refresh/cjs/react-refresh-runtime.development.js
+      --outfile=${BUN_REACT_REFRESH_OUTPUT}
+      --target=browser
+      --format=cjs
+      --minify
+      --define:process.env.NODE_ENV=\"'development'\"
+  SOURCES
+    ${BUN_NODE_FALLBACKS_SOURCE}/node_modules/react-refresh/cjs/react-refresh-runtime.development.js
+    ${BUN_NODE_FALLBACKS_SOURCE}/package.json
+    ${BUN_NODE_FALLBACKS_SOURCE}/bun.lock
+    ${BUN_NODE_FALLBACKS_NODE_MODULES}
+  OUTPUTS
+    ${BUN_REACT_REFRESH_OUTPUT}
+)
+
 set(BUN_ERROR_CODE_SCRIPT ${CWD}/src/codegen/generate-node-errors.ts)
 
 set(BUN_ERROR_CODE_SOURCES
@@ -510,6 +537,7 @@ set(BUN_ZIG_GENERATED_SOURCES
   ${BUN_FALLBACK_DECODER_OUTPUT}
   ${BUN_RUNTIME_JS_OUTPUT}
   ${BUN_NODE_FALLBACKS_OUTPUTS}
+  ${BUN_REACT_REFRESH_OUTPUT}
   ${BUN_ERROR_CODE_OUTPUTS}
   ${BUN_ZIG_GENERATED_CLASSES_OUTPUTS}
   ${BUN_JAVASCRIPT_OUTPUTS}

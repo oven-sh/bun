@@ -2779,6 +2779,7 @@ pub const BundleV2 = struct {
                 if (err == error.ModuleNotFound) {
                     if (this.bun_watcher != null) {
                         if (!had_busted_dir_cache) {
+                            bun.Output.scoped(.watcher, false)("busting dir cache {s} -> {s}", .{ source.path.text, import_record.path.text });
                             // Only re-query if we previously had something cached.
                             if (transpiler.resolver.bustDirCacheFromSpecifier(
                                 source.path.text,
@@ -9767,8 +9768,7 @@ pub const LinkerContext = struct {
         const css: *const bun.css.BundlerStyleSheet = &chunk.content.css.asts[imports_in_chunk_index];
 
         switch (css_import.kind) {
-            .layers => |layers| {
-                _ = layers; // autofix
+            .layers => {
                 const printer_options = bun.css.PrinterOptions{
                     // TODO: make this more configurable
                     .minify = c.options.minify_whitespace,
@@ -9947,8 +9947,6 @@ pub const LinkerContext = struct {
     }
 
     fn prepareCssAstsForChunkImpl(c: *LinkerContext, chunk: *Chunk, allocator: std.mem.Allocator) void {
-        const import_records: []const BabyList(ImportRecord) = c.graph.ast.items(.import_records);
-        _ = import_records; // autofix
         const asts: []const ?*bun.css.BundlerStyleSheet = c.graph.ast.items(.css);
 
         // Prepare CSS asts
@@ -10105,13 +10103,10 @@ pub const LinkerContext = struct {
         ast: *bun.css.BundlerStyleSheet,
         temp_allocator: std.mem.Allocator,
         conditions: *const BabyList(bun.css.ImportConditions),
-        condition_import_records: *const BabyList(ImportRecord),
+        _: *const BabyList(ImportRecord),
     ) void {
-        _ = condition_import_records; // autofix
         var dummy_import_records = bun.BabyList(bun.ImportRecord){};
-        defer {
-            bun.debugAssert(dummy_import_records.len == 0);
-        }
+        defer bun.debugAssert(dummy_import_records.len == 0);
 
         var i: usize = conditions.len;
         while (i > 0) {

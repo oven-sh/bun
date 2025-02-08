@@ -23,7 +23,6 @@ declare const error: Uint8Array<ArrayBuffer>;
 }
 
 let firstVersionPacket = true;
-let currentRouteIndex = -1;
 
 const ws = initWebSocket({
   [MessageId.version](dv) {
@@ -39,22 +38,4 @@ const ws = initWebSocket({
   },
 
   [MessageId.errors]: onErrorMessage,
-
-  [MessageId.hot_update](view) {
-    const reader = new DataViewReader(view, 1);
-    const serverSideRoutesUpdated = new Set();
-    do {
-      const routeId = reader.i32();
-      if (routeId === -1 || routeId == undefined) break;
-      if (routeId === currentRouteIndex) {
-        location.reload();
-        break;
-      }
-    } while (true);
-  },
-
-  [MessageId.set_url_response](view) {
-    const reader = new DataViewReader(view, 1);
-    currentRouteIndex = reader.u32();
-  },
 });

@@ -212,7 +212,7 @@ pub const RuntimeTranspilerStore = struct {
         };
     }
 
-    // Thsi is run at the top of the event loop on the JS thread.
+    // This is run at the top of the event loop on the JS thread.
     pub fn drain(this: *RuntimeTranspilerStore) void {
         var batch = this.queue.popBatch();
         var iter = batch.iterator();

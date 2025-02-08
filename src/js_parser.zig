@@ -3273,7 +3273,7 @@ pub const Parser = struct {
                 // The lexer location won't be totally accurate, but it's kind of helpful.
                 try p.log.addError(p.source, p.lexer.loc(), "Maximum call stack size exceeded");
 
-                // Return a SyntaxError so that we reuse existing code for handling erorrs.
+                // Return a SyntaxError so that we reuse existing code for handling errors.
                 return error.SyntaxError;
             }
 

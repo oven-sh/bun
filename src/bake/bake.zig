@@ -241,9 +241,9 @@ pub const Framework = struct {
                 arena,
                 "react-refresh/runtime/index.js",
                 if (Environment.codegen_embed)
-                    .{ .code = @embedFile("bake.react-refresh-prebuilt.js") }
+                    .{ .code = @embedFile("node-fallbacks/react-refresh-prebuilt.js") }
                 else
-                    .{ .code = bun.runtimeEmbedFile(.codegen, "bake.react-refresh-prebuilt.js") },
+                    .{ .code = bun.runtimeEmbedFile(.codegen, "node-fallbacks/react-refresh-prebuilt.js") },
             );
         }
 
@@ -694,7 +694,6 @@ pub const HmrRuntime = struct {
     line_count: u32,
 
     pub fn init(code: [:0]const u8) HmrRuntime {
-        if (@inComptime()) @setEvalBranchQuota(@intCast(code.len));
         return .{
             .code = code,
             .line_count = @intCast(std.mem.count(u8, code, "\n")),
@@ -705,8 +704,8 @@ pub const HmrRuntime = struct {
 pub fn getHmrRuntime(side: Side) callconv(bun.callconv_inline) HmrRuntime {
     return if (Environment.codegen_embed)
         switch (side) {
-            .client => comptime .init(@embedFile("bake-codegen/bake.client.js")),
-            .server => comptime .init(@embedFile("bake-codegen/bake.server.js")),
+            .client => .init(@embedFile("bake-codegen/bake.client.js")),
+            .server => .init(@embedFile("bake-codegen/bake.server.js")),
         }
     else
         .init(switch (side) {

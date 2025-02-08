@@ -16,18 +16,6 @@ ref_count: u32 = 1,
 
 pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
-// pub fn initFromBlob(blob: AnyBlob) *StaticRoute {
-//     const headers = Headers.from(null, bun.default_allocator, .{ .body = &blob }) catch bun.outOfMemory();
-//     return StaticRoute.new(.{
-//         .blob = blob,
-//         .cached_blob_size = blob.size(),
-//         .has_content_disposition = false,
-//         .headers = headers,
-//         .server = null,
-//         .status_code = 200,
-//     });
-// }
-
 pub const InitFromBytesOptions = struct {
     server: AnyServer,
     mime_type: ?bun.http.MimeType = null,

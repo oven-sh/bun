@@ -182,8 +182,7 @@ pub const HTMLBundleRoute = struct {
             .err => |log| {
                 if (bun.Environment.enable_logs)
                     debug("onRequest: {s} - err", .{req.url()});
-                _ = log; // autofix
-                // TODO: use the code from DevServer.zig to render the error
+                _ = log; // TODO: use the code from DevServer.zig to render the error
                 resp.endWithoutBody(true);
             },
             .html => |html| {

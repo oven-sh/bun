@@ -5,14 +5,7 @@ import { resolve } from "node:path";
 export async function css(file: string, is_development: boolean): string {
   // TODO: CSS does not process the error modal correctly.
   {
-    const { success, stdout, stderr } = await Bun.spawnSync({
-      // TODO: remove the --experimental-css flag here once CI is upgraded to a post-#16561 bun
-      cmd: [process.execPath, "x", "esbuild", file, ...(is_development ? [] : ["--minify"])],
-      cwd: import.meta.dir,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    if (!success) throw new Error(stderr.toString("utf-8"));
-    return stdout.toString("utf-8");
+    return readFileSync(resolve(import.meta.dir, file), "utf-8");
   }
 
   // const { success, stdout, stderr } = await Bun.spawnSync({

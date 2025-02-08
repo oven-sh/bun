@@ -3,6 +3,7 @@
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
 #include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include "JSBufferEncodingType.h"
 #include "KeyObject.h"
 #include "JSCryptoKey.h"
@@ -22,6 +23,77 @@ enum class DSASigEnc {
 namespace Bun {
 
 using namespace JSC;
+
+// Throws a crypto error with optional OpenSSL error details
+void throwCryptoError(JSC::JSGlobalObject* globalObject, unsigned long err, const char* message = nullptr)
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Format OpenSSL error message if err is provided
+    char message_buffer[128] = { 0 };
+    if (err != 0 || message == nullptr) {
+        ERR_error_string_n(err, message_buffer, sizeof(message_buffer));
+        message = message_buffer;
+    }
+
+    WTF::String errorMessage = WTF::String::fromUTF8(message);
+    RETURN_IF_EXCEPTION(scope, void());
+
+    // Create error object with the message
+    JSC::JSObject* errorObject = JSC::constructEmptyObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, void());
+
+    PutPropertySlot messageSlot(errorObject, false);
+    errorObject->put(errorObject, globalObject, Identifier::fromString(vm, "message"_s), jsString(vm, errorMessage), messageSlot);
+    RETURN_IF_EXCEPTION(scope, void());
+
+    // If there's an OpenSSL error code, decorate the error object with additional info
+    if (err != 0) {
+        // Get library, function and reason strings from OpenSSL
+        const char* lib = ERR_lib_error_string(err);
+        const char* func = ERR_func_error_string(err);
+        const char* reason = ERR_reason_error_string(err);
+
+        // Add library info if available
+        if (lib) {
+
+            WTF::String libString = WTF::String::fromUTF8(lib);
+            PutPropertySlot slot(errorObject, false);
+            errorObject->put(errorObject, globalObject, Identifier::fromString(vm, "library"_s), jsString(vm, libString), slot);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+
+        // Add function info if available
+        if (func) {
+            WTF::String funcString = WTF::String::fromUTF8(func);
+            PutPropertySlot slot(errorObject, false);
+
+            errorObject->put(errorObject, globalObject, Identifier::fromString(vm, "function"_s), jsString(vm, funcString), slot);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+
+        // Add reason info if available
+        if (reason) {
+            WTF::String reasonString = WTF::String::fromUTF8(reason);
+            PutPropertySlot reasonSlot(errorObject, false);
+
+            errorObject->put(errorObject, globalObject, Identifier::fromString(vm, "reason"_s), jsString(vm, reasonString), reasonSlot);
+            RETURN_IF_EXCEPTION(scope, void());
+
+            // Convert reason to error code (e.g. "this error" -> "ERR_OSSL_THIS_ERROR")
+            String upperReason = reasonString.convertToASCIIUppercase();
+            String code = makeString("ERR_OSSL_"_s, upperReason);
+
+            PutPropertySlot codeSlot(errorObject, false);
+            errorObject->put(errorObject, globalObject, Identifier::fromString(vm, "code"_s), jsString(vm, code), codeSlot);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+    }
+
+    // Throw the decorated error
+    throwException(globalObject, scope, errorObject);
+}
 
 // Forward declarations for prototype functions
 JSC_DECLARE_HOST_FUNCTION(jsSignProtoFuncInit);
@@ -472,7 +544,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
 
     // This function receives two arguments: options and encoding
     JSValue options = callFrame->argument(0);
-    JSValue encoding = callFrame->argument(1);
+    JSValue encodingValue = callFrame->argument(1);
 
     if (!options.isCell()) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key"_s, "ArrayBuffer, Buffer, TypedArray, DataView, string, KeyObject, or CryptoKey"_s, options);
@@ -523,15 +595,12 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
 
                 return JSValue::encode(resBuf);
             }
-
-            // TODO(dylan-conway): ThrowCryptoError
-            return JSValue::encode(jsUndefined());
         }
 
         auto key = optionsObj->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "key"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        auto encoding = optionsObj->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "encoding"_s));
-        (void)encoding;
+        auto encodingValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "encoding"_s));
+        (void)encodingValue;
         RETURN_IF_EXCEPTION(scope, {});
         auto format = optionsObj->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "format"_s));
         RETURN_IF_EXCEPTION(scope, {});
@@ -620,8 +689,12 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
 
             JSC::JSArrayBufferView* view = resBuf;
 
-            if (!JSValue::equal(lexicalGlobalObject, encoding, jsString(vm, makeString("buffer"_s)))) {
-                return jsBufferToString(vm, lexicalGlobalObject, view, 0, view->byteLength(), )
+            if (!JSValue::equal(lexicalGlobalObject, encodingValue, jsString(vm, makeString("buffer"_s)))) {
+                auto encoding = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, encodingValue);
+                if (!encoding) {
+                    return Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "encoding"_s, encodingValue);
+                }
+                return jsBufferToString(vm, lexicalGlobalObject, view, 0, view->byteLength(), encoding.value());
             }
 
             return JSValue::encode(resBuf);
@@ -631,8 +704,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
             return Bun::ERR::MISSING_PASSPHRASE(scope, lexicalGlobalObject, "Passphrase required for encrypted key"_s);
         }
 
-        // TODO(dylan-conway): ThrowCryptoError
-        return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key"_s, "ArrayBuffer, Buffer, TypedArray, DataView, string, KeyObject, or CryptoKey"_s, options);
+        throwCryptoError(lexicalGlobalObject, res.openssl_error.value_or(0), "Failed to read private key"_s);
+        return JSValue::encode({});
     } else if (optionsType >= Int8ArrayType && optionsType <= DataViewType) {
         auto dataBuf = KeyObject__GetBuffer(options);
         if (dataBuf.hasException()) {
@@ -665,12 +738,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
             return Bun::ERR::MISSING_PASSPHRASE(scope, lexicalGlobalObject, "Passphrase required for encrypted key"_s);
         }
 
-        // TODO(dylan-conway): ThrowCryptoError
-        return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key"_s, "ArrayBuffer, Buffer, TypedArray, DataView, string, KeyObject, or CryptoKey"_s, options);
+        throwCryptoError(lexicalGlobalObject, res.openssl_error.value_or(0), "Failed to read private key"_s);
+        return JSValue::encode({});
     }
 
-    // TODO(dylan-conway): ThrowCryptoError
-    return JSValue::encode(jsUndefined());
+    return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key"_s, "ArrayBuffer, Buffer, TypedArray, DataView, string, KeyObject, or CryptoKey"_s, options);
 }
 
 // Constructor function implementations

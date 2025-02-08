@@ -416,36 +416,6 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
     return JSValue::encode(info);
 }
 
-// namespace NodeCryptoSig {
-
-// // static const unsigned int kNoDsaSignature = static_cast<unsigned int>(-1);
-
-// enum class DSASigEnc {
-//     DER,
-//     P1363,
-//     Invalid
-// };
-// }
-
-// namespace NodeCryptoKeys {
-// enum KeyType {
-//     kKeyTypeSecret,
-//     kKeyTypePublic,
-//     kKeyTypePrivate
-// };
-// enum KeyEncodingContext {
-//     kKeyContextInput,
-//     kKeyContextExport,
-//     kKeyContextGenerate
-// };
-// enum WebCryptoKeyFormat {
-//     kWebCryptoKeyFormatRaw,
-//     kWebCryptoKeyFormatPKCS8,
-//     kWebCryptoKeyFormatSPKI,
-//     kWebCryptoKeyFormatJWK
-// };
-// }
-
 JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -472,54 +442,6 @@ JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "Sign"_s)),
         globalObject->m_JSSignClassStructure.constructor(globalObject));
-
-    // Key encoding formats
-    // obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "kKeyEncodingPKCS1"_s)),
-    //     jsNumber(static_cast<int>(ncrypto::EVPKeyPointer::PKEncodingType::PKCS1)));
-    // obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "kKeyEncodingPKCS8"_s)),
-    //     jsNumber(static_cast<int>(ncrypto::EVPKeyPointer::PKEncodingType::PKCS8)));
-    // obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "kKeyEncodingSPKI"_s)),
-    //     jsNumber(static_cast<int>(ncrypto::EVPKeyPointer::PKEncodingType::SPKI)));
-    // obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "kKeyEncodingSEC1"_s)),
-    //     jsNumber(static_cast<int>(ncrypto::EVPKeyPointer::PKEncodingType::SEC1)));
-
-    // // Key format types
-    // obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "kKeyFormatDER"_s)),
-    //     jsNumber(static_cast<int>(ncrypto::EVPKeyPointer::PKFormatType::DER)));
-    // obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "kKeyFormatPEM"_s)),
-    //     jsNumber(static_cast<int>(ncrypto::EVPKeyPointer::PKFormatType::PEM)));
-    // obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "kKeyFormatJWK"_s)),
-    //     jsNumber(static_cast<int>(ncrypto::EVPKeyPointer::PKFormatType::JWK)));
-
-    // // Key types
-    // obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "kKeyTypeSecret"_s)),
-    //     jsNumber(static_cast<int>(NodeCryptoKeys::kKeyTypeSecret)));
-    // obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "kKeyTypePublic"_s)),
-    //     jsNumber(static_cast<int>(NodeCryptoKeys::kKeyTypePublic)));
-    // obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "kKeyTypePrivate"_s)),
-    //     jsNumber(static_cast<int>(NodeCryptoKeys::kKeyTypePrivate)));
-
-    // // Signature encoding types
-    // obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "kSigEncDER"_s)),
-    //     jsNumber(static_cast<int>(NodeCryptoSig::DSASigEnc::DER)));
-    // obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "kSigEncP1363"_s)),
-    //     jsNumber(static_cast<int>(NodeCryptoSig::DSASigEnc::P1363)));
-
-    // // Web Crypto key formats
-    // obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "kWebCryptoKeyFormatRaw"_s)),
-    //     jsNumber(static_cast<int>(NodeCryptoKeys::kWebCryptoKeyFormatRaw)));
-    // obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "kWebCryptoKeyFormatPKCS8"_s)),
-    //     jsNumber(static_cast<int>(NodeCryptoKeys::kWebCryptoKeyFormatPKCS8)));
-    // obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "kWebCryptoKeyFormatSPKI"_s)),
-    //     jsNumber(static_cast<int>(NodeCryptoKeys::kWebCryptoKeyFormatSPKI)));
-    // obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "kWebCryptoKeyFormatJWK"_s)),
-    //     jsNumber(static_cast<int>(NodeCryptoKeys::kWebCryptoKeyFormatJWK)));
-
-    // // OpenSSL key types
-    // obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "EVP_PKEY_ED25519"_s)), jsNumber(EVP_PKEY_ED25519));
-    // obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "EVP_PKEY_ED448"_s)), jsNumber(EVP_PKEY_ED448));
-    // obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "EVP_PKEY_X25519"_s)), jsNumber(EVP_PKEY_X25519));
-    // obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "EVP_PKEY_X448"_s)), jsNumber(EVP_PKEY_X448));
 
     return obj;
 }

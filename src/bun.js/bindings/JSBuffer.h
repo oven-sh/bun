@@ -39,7 +39,6 @@ extern "C" bool JSBuffer__isBuffer(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 namespace Bun {
 
 std::optional<double> byteLength(JSC::JSString* str, WebCore::BufferEncodingType encoding);
-inline JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSArrayBufferView* castedThis, size_t offset, size_t length, WebCore::BufferEncodingType encoding);
 
 namespace Buffer {
 
@@ -66,5 +65,6 @@ JSC_DECLARE_HOST_FUNCTION(constructSlowBuffer);
 JSC::JSObject* createBufferPrototype(JSC::VM&, JSC::JSGlobalObject*);
 JSC::Structure* createBufferStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 JSC::JSObject* createBufferConstructor(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject* bufferPrototype);
+JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSArrayBufferView* castedThis, size_t offset, size_t length, WebCore::BufferEncodingType encoding);
 
 }

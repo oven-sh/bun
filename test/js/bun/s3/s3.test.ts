@@ -30,6 +30,13 @@ const allCredentials = [
     bucket: getSecret("S3_R2_BUCKET"),
     service: "R2" as string,
   },
+  {
+    accessKeyId: getSecret("SUPABASE_ACCESS_KEY"),
+    secretAccessKey: getSecret("SUPABASE_SECRET_KEY"),
+    endpoint: getSecret("SUPABASE_ENDPOINT"),
+    bucket: getSecret("SUPABASE_BUCKET"),
+    service: "supabase" as string,
+  },
 ];
 
 if (isDockerEnabled()) {

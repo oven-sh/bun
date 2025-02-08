@@ -76,7 +76,7 @@ pub const HTMLBundleRoute = struct {
 
     pub const State = union(enum) {
         pending,
-        building: *bun.BundleV2.JSBundleCompletionTask,
+        building: ?*bun.BundleV2.JSBundleCompletionTask,
         err: bun.logger.Log,
         html: *StaticRoute,
 
@@ -85,9 +85,9 @@ pub const HTMLBundleRoute = struct {
                 .err => |*log| {
                     log.deinit();
                 },
-                .building => |completion| {
-                    completion.cancelled = true;
-                    completion.deref();
+                .building => |completion| if (completion) |c| {
+                    c.cancelled = true;
+                    c.deref();
                 },
                 .html => {
                     this.html.deref();
@@ -203,7 +203,7 @@ pub const HTMLBundleRoute = struct {
         switch (server.getOrLoadPlugins(.{ .html_bundle_route = this })) {
             .err => this.state = .{ .err = bun.logger.Log.init(bun.default_allocator) },
             .ready => |plugins| try onPluginsResolved(this, plugins),
-            .pending => {},
+            .pending => this.state = .{ .building = null },
         }
     }
 

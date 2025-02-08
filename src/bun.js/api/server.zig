@@ -5803,7 +5803,7 @@ pub const ServerWebSocket = struct {
     }
 };
 
-/// State machine to handle loading plugins asyncronously. This structure is not thread-safe.
+/// State machine to handle loading plugins asynchronously. This structure is not thread-safe.
 const ServePlugins = struct {
     state: State,
     ref_count: u32 = 1,
@@ -5855,7 +5855,7 @@ const ServePlugins = struct {
         sw: switch (this.state) {
             .unqueued => {
                 this.loadAndResolvePlugins(global);
-                continue :sw this.state; // could jump to any branch if syncronously resolved
+                continue :sw this.state; // could jump to any branch if synchronously resolved
             },
             .pending => |*pending| {
                 switch (cb) {
@@ -5954,7 +5954,7 @@ const ServePlugins = struct {
     pub fn onResolveImpl(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         ctxLog("onResolve", .{});
 
-        const plugins_js, const plugins_result = callframe.argumentsAsArray(2);
+        const plugins_result, const plugins_js = callframe.argumentsAsArray(2);
         var plugins = plugins_js.asPromisePtr(ServePlugins);
         defer plugins.deref();
         plugins_result.ensureStillAlive();

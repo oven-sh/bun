@@ -594,7 +594,6 @@ register_command(
       -Dcanary=${CANARY_REVISION}
       -Dcodegen_path=${CODEGEN_PATH}
       -Dcodegen_embed=$<IF:$<BOOL:${CODEGEN_EMBED}>,true,false>
-      -Denable_asan=$<IF:$<BOOL:${ENABLE_ASAN}>,true,false>
       --prominent-compile-errors
       ${ZIG_FLAGS_BUN}
   ARTIFACTS

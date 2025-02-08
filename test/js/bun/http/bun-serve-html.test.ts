@@ -199,21 +199,21 @@ console.log("How...dashing?");
     const sourceMap = await (await fetch(new URL(sourceMapURL, "http://" + hostname + ":" + port))).json();
     sourceMap.sourcesContent = sourceMap.sourcesContent.map(a => a.trim());
     expect(JSON.stringify(sourceMap, null, 2)).toMatchInlineSnapshot(`
-"{
-  "version": 3,
-  "sources": [
-    "script.js",
-    "dashboard.js"
-  ],
-  "sourcesContent": [
-    "let count = 0;\\n      const button = document.getElementById('counter');\\n      button.addEventListener('click', () => {\\n        count++;\\n        button.textContent = \`Click me: \${count}\`;\\n      });",
-    "import './script.js';\\n      // Additional dashboard-specific code could go here\\n      console.log(\\"How...dashing?\\")"
-  ],
-  "mappings": ";AACM,IAAI,QAAQ;AACZ,IAAM,SAAS,SAAS,eAAe,SAAS;AAChD,OAAO,iBAAiB,SAAS,MAAM;AACrC;AACA,SAAO,cAAc,aAAa;AAAA,CACnC;;;ACHD,QAAQ,IAAI,gBAAgB;",
-  "debugId": "0B3DD451DC3D66B564756E2164756E21",
-  "names": []
-}"
-`);
+      "{
+        "version": 3,
+        "sources": [
+          "script.js",
+          "dashboard.js"
+        ],
+        "sourcesContent": [
+          "let count = 0;\\n      const button = document.getElementById('counter');\\n      button.addEventListener('click', () => {\\n        count++;\\n        button.textContent = \`Click me: \${count}\`;\\n      });",
+          "import './script.js';\\n      // Additional dashboard-specific code could go here\\n      console.log(\\"How...dashing?\\")"
+        ],
+        "mappings": ";AACM,IAAI,QAAQ;AACZ,IAAM,SAAS,SAAS,eAAe,SAAS;AAChD,OAAO,iBAAiB,SAAS,MAAM;AAAA,EACrC;AAAA,EACA,OAAO,cAAc,aAAa;AAAA,CACnC;;;ACHD,QAAQ,IAAI,gBAAgB;",
+        "debugId": "0B3DD451DC3D66B564756E2164756E21",
+        "names": []
+      }"
+    `);
     const headers = response.headers.toJSON();
     headers.date = "<date>";
     headers.sourcemap = headers.sourcemap.replace(/chunk-[a-z0-9]+\.js.map/g, "chunk-HASH.js.map");
@@ -593,18 +593,20 @@ async function waitForServer(
   port: number;
   hostname: string;
 }> {
+  console.log("waitForServer", dir, entryPoints);
   let defer = Promise.withResolvers<{
     subprocess: Subprocess;
     port: number;
     hostname: string;
   }>();
   const process = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "bun-serve-static-fixture.js")],
+    cmd: [bunExe(), "--no-hmr", join(import.meta.dir, "bun-serve-static-fixture.js")],
     env: {
       ...bunEnv,
       NODE_ENV: undefined,
     },
     cwd: dir,
+    stdio: ["inherit", "inherit", "inherit"],
     ipc(message, subprocess) {
       subprocess.send({
         files: entryPoints,

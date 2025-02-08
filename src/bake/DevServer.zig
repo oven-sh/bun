@@ -1291,7 +1291,7 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
 
     const payload_size = bundled_html.len +
         ("<link rel=\"stylesheet\" href=\"" ++ asset_prefix ++ "/0000000000000000.css\">").len * css_ids.len +
-        "<script type=\"module\" src=\"\"></script>".len +
+        "<script type=\"module\" crossorigin src=\"\"></script>".len +
         client_prefix.len + "/".len +
         display_name.len +
         "-0000000000000000.js".len;
@@ -1307,7 +1307,7 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
     }
     array.appendSliceAssumeCapacity(before_body_end);
     // Insert the client script tag before "</body>"
-    array.appendSliceAssumeCapacity("<script type=\"module\" src=\"");
+    array.appendSliceAssumeCapacity("<script type=\"module\" crossorigin src=\"");
     array.appendSliceAssumeCapacity(client_prefix);
     array.appendSliceAssumeCapacity("/");
     array.appendSliceAssumeCapacity(display_name);

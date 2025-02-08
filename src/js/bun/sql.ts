@@ -1108,7 +1108,6 @@ function loadOptions(o) {
         url = _url;
       }
     }
-
     if (o?.tls) {
       sslMode = SSLMode.require;
       tls = o.tls;
@@ -1218,15 +1217,13 @@ function loadOptions(o) {
 
   if (sslMode !== SSLMode.disable && !tls?.serverName) {
     if (hostname) {
-      tls = {
-        serverName: hostname,
-      };
-    } else {
+      tls = { ...tls, serverName: hostname };
+    } else if (!!tls) {
       tls = true;
     }
   }
 
-  if (!!tls) {
+  if (!!tls && sslMode === SSLMode.disable) {
     sslMode = SSLMode.prefer;
   }
   port = Number(port);

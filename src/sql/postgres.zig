@@ -1606,7 +1606,6 @@ pub const PostgresSQLConnection = struct {
                                 this.failWithJSValue(ssl_error.toJS(this.globalObject));
                             }
                         }
-                        this.failWithJSValue(ssl_error.toJS(this.globalObject));
                     },
                     else => {
                         return;

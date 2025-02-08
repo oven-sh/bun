@@ -209,6 +209,11 @@ JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, c
     return errorCache(globalObject)->createError(vm, globalObject, code, jsString(vm, message), jsUndefined(), isDOMExceptionPrototype);
 }
 
+JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, const String& message, bool isDOMExceptionPrototype)
+{
+    return createError(globalObject->vm(), globalObject, code, message, isDOMExceptionPrototype);
+}
+
 JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code, const String& message, bool isDOMExceptionPrototype)
 {
     return createError(vm, defaultGlobalObject(globalObject), code, message, isDOMExceptionPrototype);

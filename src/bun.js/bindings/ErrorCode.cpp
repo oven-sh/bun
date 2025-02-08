@@ -29,16 +29,16 @@
 #include "ErrorStackTrace.h"
 
 namespace WTF {
-template<> class StringTypeAdapter<GCOwnedDataScope<StringView>&, void> {
+template<> class StringTypeAdapter<GCOwnedDataScope<StringView>, void> {
 public:
-    StringTypeAdapter(GCOwnedDataScope<StringView>& string)
+    StringTypeAdapter(GCOwnedDataScope<StringView> string)
         : m_string { string }
     {
     }
 
-    unsigned length() const { return m_string.length(); }
-    bool is8Bit() const { return m_string.is8Bit(); }
-    template<typename CharacterType> void writeTo(std::span<CharacterType> destination) { m_string.getCharacters(destination); }
+    unsigned length() const { return m_string->length(); }
+    bool is8Bit() const { return m_string->is8Bit(); }
+    template<typename CharacterType> void writeTo(std::span<CharacterType> destination) { m_string->getCharacters(destination); }
 
 private:
     GCOwnedDataScope<StringView> m_string;

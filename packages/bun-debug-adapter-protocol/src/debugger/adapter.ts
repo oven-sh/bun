@@ -1226,10 +1226,10 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
   }
 
   async ["Debugger.scriptParsed"](event: JSC.Debugger.ScriptParsedEvent): Promise<void> {
-    const { url, scriptId, sourceMapURL } = event;
+    let { url, scriptId, sourceMapURL } = event;
 
     // If no url is present, the script is from a `evaluate` request.
-    if (!url) {
+    if (!url && !sourceMapURL) {
       return;
     }
 
@@ -1237,9 +1237,9 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
     // 1. If it has a `path`, the client retrieves the source from the file system.
     // 2. If it has a `sourceReference`, the client sends a `source` request.
     //    Moreover, the code is usually shown in a read-only editor.
-    const isUserCode = path.isAbsolute(url);
+    const isUserCode = url && path.isAbsolute(url);
     const sourceMap = SourceMap(sourceMapURL);
-    const name = sourceName(url);
+    const name = url ? sourceName(url) : sourceName(sourceMapURL);
     const presentationHint = sourcePresentationHint(url);
 
     if (isUserCode) {

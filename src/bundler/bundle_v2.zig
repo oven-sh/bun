@@ -3507,18 +3507,23 @@ pub const DeferredBatchTask = struct {
     pub fn runOnJSThread(this: *DeferredBatchTask) void {
         defer this.deinit();
         var bv2 = this.getBundleV2();
-        bv2.plugins.?.drainDeferred(bv2.transpiler.log.hasErrors());
+        bv2.plugins.?.drainDeferred(
+            if (bv2.completion) |completion|
+                completion.result == .err
+            else
+                false,
+        );
     }
 };
 
-const ContentsOrFd = union(Tag) {
+const ContentsOrFd = union(enum) {
     fd: struct {
         dir: StoredFileDescriptorType,
         file: StoredFileDescriptorType,
     },
     contents: string,
 
-    const Tag = enum { fd, contents };
+    const Tag = @typeInfo(ContentsOrFd).@"union".tag_type.?;
 };
 
 pub const ParseTask = struct {

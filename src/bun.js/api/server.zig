@@ -1162,12 +1162,7 @@ pub const ServerConfig = struct {
 
                 // When HTML bundles are provided, ensure DevServer options are ready
                 // The presence of these options causes Bun.serve to initialize things.
-                //
-                // TODO: remove canary gate once the following things are fixed:
-                // - more extensive hmr reliability testing
-                if (!bun.CLI.Command.get().args.disable_hmr and
-                    dedupe_html_bundle_map.count() > 0)
-                {
+                if (bun.bake.DevServer.enabled and dedupe_html_bundle_map.count() > 0) {
                     // TODO: this should be the dir with bunfig??
                     const root = bun.fs.FileSystem.instance.top_level_dir;
                     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);

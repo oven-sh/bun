@@ -819,6 +819,10 @@ pub const Arguments = struct {
             if (args.flag("--zero-fill-buffers")) {
                 Bun__Node__ZeroFillBuffers = true;
             }
+
+            if (args.flag("--no-hmr")) {
+                bun.bake.DevServer.enabled = false;
+            }
         }
 
         if (opts.port != null and opts.origin == null) {

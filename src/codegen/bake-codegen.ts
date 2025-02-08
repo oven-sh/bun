@@ -168,7 +168,7 @@ async function run() {
       console.error(err);
     }
   } else {
-    console.log("-> bake.client.js, bake.server.js, bake.error.js, bake.react-refresh-prebuilt.js");
+    console.log("-> bake.client.js, bake.server.js, bake.error.js");
 
     const empty_file = join(codegenRoot, "bake_empty_file");
     if (!existsSync(empty_file)) writeIfNotChanged(empty_file, "this is used to fulfill a cmake dependency");

@@ -217,6 +217,7 @@ pub const HTMLBundleRoute = struct {
         errdefer config.deinit(bun.default_allocator);
         try config.entry_points.insert(this.html_bundle.path);
         try config.public_path.appendChar('/');
+        config.target = .browser;
 
         if (bun.CLI.Command.get().args.serve_minify_identifiers) |minify_identifiers| {
             config.minify.identifiers = minify_identifiers;

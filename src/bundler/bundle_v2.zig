@@ -4591,7 +4591,8 @@ pub const ParseTask = struct {
             task.known_target != .bake_server_components_ssr and
             this.ctx.framework.?.server_components.?.separate_ssr_graph) or
             // set the target to the client when bundling client-side files
-            (task.known_target == .browser))
+            ((transpiler.options.server_components or transpiler.options.dev_server != null) and
+            task.known_target == .browser))
         {
             transpiler = this.ctx.client_transpiler;
             resolver = &transpiler.resolver;
@@ -4695,7 +4696,7 @@ pub const ParseTask = struct {
             task.side_effects = .no_side_effects__empty_ast;
         }
 
-        bun.debugAssert(ast.parts.len > 0); // when parts.len == 0, it is assumed to be pending/failed. empty ast has at least 1 part.
+        // bun.debugAssert(ast.parts.len > 0); // when parts.len == 0, it is assumed to be pending/failed. empty ast has at least 1 part.
 
         step.* = .resolve;
 

@@ -943,12 +943,13 @@ describe("files", () => {
         JSON.stringify({
           name: "pack-files-3",
           version: "1.2.3",
-          files: ["./dist", "!./subdir", "!./dist/index.js"],
+          files: ["./dist", "!./subdir", "!./dist/index.js", "./////src//index.ts"],
         }),
       ),
       write(join(packageDir, "dist", "index.js"), "console.log('hello ./dist/index.js')"),
       write(join(packageDir, "subdir", "index.js"), "console.log('hello ./subdir/index.js')"),
       write(join(packageDir, "src", "dist", "index.js"), "console.log('hello ./src/dist/index.js')"),
+      write(join(packageDir, "src", "index.ts"), "console.log('hello ./src/index.ts')"),
     ]);
 
     await pack(packageDir, bunEnv);
@@ -956,6 +957,7 @@ describe("files", () => {
     expect(tarball.entries).toMatchObject([
       { "pathname": "package/package.json" },
       { "pathname": "package/dist/index.js" },
+      { "pathname": "package/src/index.ts" },
     ]);
   });
 

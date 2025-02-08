@@ -1359,7 +1359,9 @@ pub const PackCommand = struct {
                         var files_array = _files_array;
                         while (files_array.next()) |files_entry| {
                             if (files_entry.asString(ctx.allocator)) |file_entry_str| {
-                                const parsed = try Pattern.fromUTF8(ctx.allocator, file_entry_str) orelse continue;
+                                var path_buf: PathBuffer = undefined;
+                                const normalized = bun.path.normalizeBuf(file_entry_str, &path_buf, .posix);
+                                const parsed = try Pattern.fromUTF8(ctx.allocator, try ctx.allocator.dupe(u8, normalized)) orelse continue;
                                 try includes.append(ctx.allocator, parsed);
                                 continue;
                             }
@@ -2127,12 +2129,6 @@ pub const PackCommand = struct {
                     remain = remain["**/".len..];
                     if (remain.len == 0) return null;
                     @"has leading **/, (could start with '!')" = true;
-                }
-
-                // `./foo` matches the same as `foo`
-                if (strings.hasPrefixComptime(remain, "./")) {
-                    remain = remain["./".len..];
-                    if (remain.len == 0) return null;
                 }
 
                 const trailing_slash = remain[remain.len - 1] == '/';

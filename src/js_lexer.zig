@@ -798,6 +798,9 @@ fn NewLexer_(
         }
 
         inline fn nextCodepointSlice(it: *LexerType) []const u8 {
+            if (it.current >= it.source.contents.len) {
+                return "";
+            }
             const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(it.source.contents.ptr[it.current]);
             return if (!(cp_len + it.current > it.source.contents.len)) it.source.contents[it.current .. cp_len + it.current] else "";
         }

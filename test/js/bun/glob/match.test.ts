@@ -24,8 +24,14 @@
 
 import { Glob } from "bun";
 import { describe, expect, test } from "bun:test";
+import { isWindows } from "harness";
 
 describe("Glob.match", () => {
+  test("WTF", () => {
+    // let glob = new Glob("C:\\Users\\window\\AppData\\Local\\Temp\\testworkspace_V7osKW\\**");
+    // expect(glob.match("C:\\Users\\window\\AppData\\Local\\Temp\\testworkspace_V7osKW\\packages\\malfored1")).toBeTrue();
+  });
+
   test("single wildcard", () => {
     let glob: Glob;
 
@@ -239,7 +245,7 @@ describe("Glob.match", () => {
     expect(glob.match("ae")).toBeTrue();
     expect(glob.match("bce")).toBeTrue();
     expect(glob.match("bde")).toBeTrue();
-    });
+  });
 
   // Most of the potential bugs when dealing with non-ASCII patterns is when the
   // pattern matching algorithm wants to deal with single chars, for example
@@ -1673,6 +1679,117 @@ describe("Glob.match", () => {
         ),
       ),
     ).toBeDefined();
+  });
+
+  test("trailing globstar patterns", () => {
+    let glob = new Glob("C:/Users/window/AppData/Local/Temp/testworkspace_V7osKW**");
+    expect(glob.match("C:/Users/window/AppData/Local/Temp/testworkspace_V7osKW/packages/malfored1")).toBeFalse();
+
+    // Trailing globstar with no slash won't match subdirectories
+    // expect(new Glob("foo**").match("foo/bar/hi")).toBeFalse();
+    expect(new Glob("foo**").match("foobar")).toBeTrue();
+    expect(new Glob("foo**").match("foo")).toBeTrue();
+
+    // Basic trailing globstar
+    expect(new Glob("foo/**").match("foo")).toBeFalse();
+    expect(new Glob("foo/**").match("foo/")).toBeTrue();
+    expect(new Glob("foo/**").match("foo/bar")).toBeTrue();
+    expect(new Glob("foo/**").match("foo/bar/baz")).toBeTrue();
+    expect(new Glob("foo/**").match("foo/bar/baz/")).toBeTrue();
+    expect(new Glob("foo/**").match("food/bar")).toBeFalse();
+
+    // Multiple trailing globstars (should behave the same as one)
+    expect(new Glob("foo/**/**").match("foo")).toBeFalse();
+    expect(new Glob("foo/**/**").match("foo/")).toBeTrue();
+    expect(new Glob("foo/**/**").match("foo/bar")).toBeTrue();
+    expect(new Glob("foo/**/**").match("foo/bar/baz")).toBeTrue();
+    expect(new Glob("foo/**/**/**").match("foo/bar/baz")).toBeTrue();
+
+    // Trailing globstar with file extension
+    expect(new Glob("foo/**/*.js").match("foo/bar.js")).toBeTrue();
+    expect(new Glob("foo/**/*.js").match("foo/bar/baz.js")).toBeTrue();
+    expect(new Glob("foo/**/*.js").match("foo/bar/baz/qux.js")).toBeTrue();
+    expect(new Glob("foo/**/*.js").match("foo/bar.txt")).toBeFalse();
+    expect(new Glob("foo/**/*.js").match("foo/bar/baz.txt")).toBeFalse();
+
+    // Complex patterns with trailing globstars
+    expect(new Glob("**/foo/**").match("foo/")).toBeTrue();
+    expect(new Glob("**/foo/**").match("a/foo/")).toBeTrue();
+    expect(new Glob("**/foo/**").match("a/b/foo/")).toBeTrue();
+    expect(new Glob("**/foo/**").match("foo/bar")).toBeTrue();
+    expect(new Glob("**/foo/**").match("a/foo/bar")).toBeTrue();
+    expect(new Glob("**/foo/**").match("a/b/foo/bar/baz")).toBeTrue();
+
+    // Edge cases
+    expect(new Glob("/**").match("/")).toBeTrue();
+    expect(new Glob("/**").match("/foo")).toBeTrue();
+    expect(new Glob("/**").match("/foo/bar")).toBeTrue();
+
+    // Empty segments
+    expect(new Glob("foo///**").match("foo///bar")).toBeTrue();
+    expect(new Glob("foo///**").match("foo/bar")).toBeFalse();
+
+    // Dots and special characters
+    expect(new Glob("./**").match(".")).toBeFalse();
+    expect(new Glob("./**").match("./")).toBeTrue();
+    expect(new Glob("./**").match("./foo")).toBeTrue();
+    expect(new Glob("./**").match("./foo/bar")).toBeTrue();
+    expect(new Glob("./**").match("../foo")).toBeFalse();
+
+    // Unicode characters
+    expect(new Glob("🎉/**").match("🎉/")).toBeTrue();
+    expect(new Glob("🎉/**").match("🎉/🌟")).toBeTrue();
+    expect(new Glob("🎉/**").match("🎉/🌟/✨")).toBeTrue();
+
+    // Mixing with other glob features
+    expect(new Glob("foo/{bar,baz}/**").match("foo/bar/")).toBeTrue();
+    expect(new Glob("foo/{bar,baz}/**").match("foo/baz/qux")).toBeTrue();
+    expect(new Glob("foo/{bar,baz}/**").match("foo/qux/")).toBeFalse();
+
+    expect(new Glob("foo/[a-z]/**").match("foo/a/")).toBeTrue();
+    expect(new Glob("foo/[a-z]/**").match("foo/z/bar")).toBeTrue();
+    expect(new Glob("foo/[a-z]/**").match("foo/1/")).toBeFalse();
+
+    // Escaped characters
+    expect(new Glob("foo\\*/**").match("foo*/")).toBeTrue();
+    expect(new Glob("foo\\*/**").match("foo*/bar")).toBeTrue();
+    expect(new Glob("foo\\*/**").match("foobar/")).toBeFalse();
+
+    // Very long paths
+    const longPath = "a/".repeat(100);
+    expect(new Glob("a/**").match(longPath)).toBeTrue();
+
+    // Mixed case
+    expect(new Glob("FoO/**").match("FoO/BaR")).toBeTrue();
+    expect(new Glob("FoO/**").match("foo/bar")).toBeFalse();
+
+    // Partial segment matches should fail
+    expect(new Glob("foo/**").match("foobar/")).toBeFalse();
+    expect(new Glob("foo/**").match("foobar/baz")).toBeFalse();
+
+    // Missing slashes
+    expect(new Glob("foo**").match("foo/bar")).toBeFalse();
+    expect(new Glob("foo**").match("foobar")).toBeTrue();
+    if (isWindows) {
+      expect(new Glob("foo/**").match("foo\\bar")).toBeTrue();
+    } else {
+      expect(new Glob("foo/**").match("foo\\bar")).toBeFalse();
+    }
+
+    // Path traversal
+    expect(new Glob("foo/**").match("foo/../bar")).toBeTrue();
+    expect(new Glob("foo/**").match("foo/bar/../../baz")).toBeTrue();
+    expect(new Glob("foo/**").match("foo/bar/../..")).toBeTrue();
+
+    // Empty path segments
+    expect(new Glob("foo/**//").match("foo///bar")).toBeFalse();
+    expect(new Glob("foo/**").match("foo//bar")).toBeTrue();
+    expect(new Glob("a/**/").match("a/b//")).toBeTrue();
+    expect(new Glob("foo/**/").match("foo/bar//")).toBeTrue();
+
+    // Unicode normalization
+    expect(new Glob("foo/**").match("foo/\u0041\u030A")).toBeTrue(); // "A" with ring
+    expect(new Glob("foo/**").match("foo/\u00C5")).toBeTrue(); // "Å" single character
   });
 });
 

@@ -141,7 +141,14 @@ pub const FilterSet = struct {
         // negate: bool = false,
     };
 
-    pub fn init(allocator: std.mem.Allocator, filters: []const []const u8, cwd: []const u8) !FilterSet {
+    pub fn init(allocator: std.mem.Allocator, filters: []const []const u8, cwd_: []const u8) !FilterSet {
+        const cwd: []const u8 = if (comptime bun.Environment.isWindows) brk: {
+            const c = try allocator.dupe(u8, cwd_);
+            std.mem.replaceScalar(u8, c, "\\", "/");
+            break :brk c;
+        } else cwd_;
+        defer if (comptime bun.Environment.isWindows) allocator.free(cwd);
+
         var buf: bun.PathBuffer = undefined;
         // TODO fixed buffer allocator with fallback?
         var list = try std.ArrayList(Pattern).initCapacity(allocator, filters.len);
@@ -156,29 +163,13 @@ pub const FilterSet = struct {
             const is_path = filter_utf8.len > 0 and filter_utf8[0] == '.';
             if (is_path) {
                 const parts = [_]string{filter_utf8};
-                filter_utf8 = bun.path.joinAbsStringBuf(cwd, &buf, &parts, .auto);
+                filter_utf8 = bun.path.joinAbsStringBuf(cwd, &buf, &parts, .loose);
             }
             var filter_utf32 = try std.ArrayListUnmanaged(u32).initCapacity(allocator, filter_utf8.len + 1);
             var codepointer_iter = strings.UnsignedCodepointIterator.init(filter_utf8);
             var cursor = strings.UnsignedCodepointIterator.Cursor{};
             while (codepointer_iter.next(&cursor)) {
-                if (bun.Environment.isWindows and cursor.c == @as(u32, '\\')) dont_forward_slash: {
-                    const prev = cursor;
-                    const is_separator = if (codepointer_iter.next(&cursor)) switch (cursor.c) {
-                        '[', '{', '!', '*', '?' => false,
-                        else => true,
-                    } else true;
-                    cursor = prev;
-
-                    if (!is_separator) {
-                        break :dont_forward_slash;
-                    }
-
-                    try filter_utf32.append(self.allocator, '/');
-                    continue;
-                } else {
-                    try filter_utf32.append(self.allocator, cursor.c);
-                }
+                try filter_utf32.append(self.allocator, cursor.c);
             }
             self.has_name_filters = self.has_name_filters or !is_path;
             try list.append(.{

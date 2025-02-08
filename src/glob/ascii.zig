@@ -62,6 +62,25 @@ const State = struct {
         self.path_index = self.wildcard.path_index;
         self.glob_index = self.wildcard.glob_index;
     }
+
+    inline fn skipToSeparator(self: *State, path: []const u8, is_end_invalid: bool) void {
+        if (self.path_index == path.len) {
+            self.wildcard.path_index += 1;
+            return;
+        }
+
+        var path_index = self.path_index;
+        while (path_index < path.len and !isSeparator(path[path_index])) {
+            path_index += 1;
+        }
+
+        if (is_end_invalid or path_index != path.len) {
+            path_index += 1;
+        }
+
+        self.wildcard.path_index = path_index;
+        self.globstar = self.wildcard;
+    }
 };
 
 const Wildcard = struct {
@@ -150,21 +169,7 @@ inline fn globMatchImpl(state: *State, glob: []const u8, path: []const u8) bool 
                             }
 
                             // skip to separator
-                            if (state.path_index == path.len) {
-                                state.wildcard.path_index += 1;
-                            } else {
-                                var path_index = state.path_index;
-                                while (path_index < path.len and !isSeparator(path[path_index])) {
-                                    path_index += 1;
-                                }
-
-                                if (is_end_invalid or path_index != path.len) {
-                                    path_index += 1;
-                                }
-
-                                state.wildcard.path_index = path_index;
-                                state.globstar = state.wildcard;
-                            }
+                            state.skipToSeparator(path, is_end_invalid);
                             in_globstar = true;
                         }
                     } else {

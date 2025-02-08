@@ -1361,7 +1361,7 @@ pub const PackCommand = struct {
                         while (files_array.next()) |files_entry| {
                             if (files_entry.asString(ctx.allocator)) |file_entry_str| {
                                 const normalized = bun.path.normalizeBuf(file_entry_str, &path_buf, .posix);
-                                const parsed = try Pattern.fromUTF8(ctx.allocator, try ctx.allocator.dupe(u8, normalized)) orelse continue;
+                                const parsed = try Pattern.fromUTF8(ctx.allocator, normalized) orelse continue;
                                 try includes.append(ctx.allocator, parsed);
                                 continue;
                             }

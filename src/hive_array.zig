@@ -10,9 +10,15 @@ const testing = std.testing;
 pub fn HiveArray(comptime T: type, comptime capacity: u16) type {
     return struct {
         const Self = @This();
-        buffer: [capacity]T = undefined,
-        available: bun.bit_set.IntegerBitSet(capacity) = bun.bit_set.IntegerBitSet(capacity).initFull(),
+
+        buffer: [capacity]T,
+        available: bun.bit_set.IntegerBitSet(capacity),
+
         pub const size = capacity;
+        pub const empty: Self = .{
+            .buffer = undefined,
+            .available = .initFull(),
+        };
 
         pub fn init() Self {
             return .{};
@@ -75,7 +81,7 @@ pub fn HiveArray(comptime T: type, comptime capacity: u16) type {
             pub fn init(allocator: std.mem.Allocator) This {
                 return .{
                     .allocator = allocator,
-                    .hive = if (capacity > 0) HiveArray(T, capacity).init(),
+                    .hive = if (capacity > 0) .empty,
                 };
             }
 
@@ -86,7 +92,7 @@ pub fn HiveArray(comptime T: type, comptime capacity: u16) type {
                     }
                 }
 
-                return self.allocator.create(T) catch unreachable;
+                return self.allocator.create(T) catch bun.outOfMemory();
             }
 
             pub fn getAndSeeIfNew(self: *This, new: *bool) *T {
@@ -97,7 +103,7 @@ pub fn HiveArray(comptime T: type, comptime capacity: u16) type {
                     }
                 }
 
-                return self.allocator.create(T) catch unreachable;
+                return self.allocator.create(T) catch bun.outOfMemory();
             }
 
             pub fn tryGet(self: *This) !*T {

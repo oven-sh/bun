@@ -243,6 +243,7 @@ pub const Arguments = struct {
         clap.parseParam("--throw-deprecation               Determine whether or not deprecation warnings result in errors.") catch unreachable,
         clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
         clap.parseParam("--zero-fill-buffers               Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
+        clap.parseParam("--no-hmr                          Disable Hot-module-replacement when using HTML imports with Bun.serve") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -817,6 +818,10 @@ pub const Arguments = struct {
             }
             if (args.flag("--zero-fill-buffers")) {
                 Bun__Node__ZeroFillBuffers = true;
+            }
+
+            if (args.flag("--no-hmr")) {
+                bun.bake.DevServer.enabled = false;
             }
         }
 

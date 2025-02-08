@@ -1,39 +1,20 @@
-// This is a description of what the build will be.
-// It doesn't do the build.
+//! This object is a description of an HTML bundle. It is created by importing an
+//! HTML file, and can be passed to the `static` option in `Bun.serve`. The build
+//! is done lazily (state held in HTMLBundle.Route or DevServer.RouteBundle.HTML).
+pub const HTMLBundle = @This();
+pub usingnamespace JSC.Codegen.JSHTMLBundle;
+// HTMLBundle can be owned by JavaScript as well as any number of Server instances.
+pub usingnamespace bun.NewRefCounted(HTMLBundle, deinit, null);
 
 ref_count: u32 = 1,
-globalObject: *JSGlobalObject,
+global: *JSGlobalObject,
 path: []const u8,
-config: bun.JSC.API.JSBundler.Config,
-plugins: union(enum) {
-    pending: ?[]const []const u8,
-    result: ?*bun.JSC.API.JSBundler.Plugin,
-},
-bunfig_dir: []const u8,
 
-/// Initialize an HTMLBundle.a
-///
-/// `plugins` is array of serve plugins defined in the bunfig.toml file. They will be resolved and loaded.
-/// `bunfig_path` is the path to the bunfig.toml configuration file. It used to resolve the plugins relative
-/// to the bunfig.toml file.
-pub fn init(
-    globalObject: *JSGlobalObject,
-    path: []const u8,
-    bunfig_path: []const u8,
-    plugins: ?[]const []const u8,
-) !*HTMLBundle {
-    var config = bun.JSC.API.JSBundler.Config{};
-    try config.entry_points.insert(path);
-    config.target = .browser;
-    try config.public_path.appendChar('/');
+/// Initialize an HTMLBundle given a path.
+pub fn init(global: *JSGlobalObject, path: []const u8) !*HTMLBundle {
     return HTMLBundle.new(.{
-        .globalObject = globalObject,
+        .global = global,
         .path = try bun.default_allocator.dupe(u8, path),
-        .config = config,
-        .plugins = .{
-            .pending = plugins,
-        },
-        .bunfig_dir = bun.path.dirname(bunfig_path, .auto),
     });
 }
 
@@ -43,7 +24,6 @@ pub fn finalize(this: *HTMLBundle) void {
 
 pub fn deinit(this: *HTMLBundle) void {
     bun.default_allocator.free(this.path);
-    this.config.deinit(bun.default_allocator);
     this.destroy();
 }
 
@@ -52,18 +32,34 @@ pub fn getIndex(this: *HTMLBundle, globalObject: *JSGlobalObject) JSValue {
     return str.transferToJS(globalObject);
 }
 
+// TODO: Rename to `Route`
+/// An HTMLBundle can be used across multiple server instances, an
+/// HTMLBundle.Route can only be used on one server, but is also
+/// reference-counted because a server can have multiple instances of the same
+/// html file on multiple endpoints.
 pub const HTMLBundleRoute = struct {
+    /// Rename to `bundle`
     html_bundle: *HTMLBundle,
-    pending_responses: std.ArrayListUnmanaged(*PendingResponse) = .{},
     ref_count: u32 = 1,
+    // TODO: attempt to remove the null case. null is only present during server
+    // initialization as only a ServerConfig object is present.
     server: ?AnyServer = null,
-    value: Value = .pending_plugins,
+    /// When using DevServer, this value is never read or written to.
+    state: State,
+    /// Written and read by DevServer to identify if this route has been
+    /// registered with the bundler.
+    dev_server_id: bun.bake.DevServer.RouteBundle.Index.Optional = .none,
+    /// When state == .pending, incomplete responses are stored here.
+    pending_responses: std.ArrayListUnmanaged(*PendingResponse) = .{},
+
+    /// One HTMLBundle.Route can be specified multiple times
+    pub usingnamespace bun.NewRefCounted(@This(), _deinit, null);
 
     pub fn memoryCost(this: *const HTMLBundleRoute) usize {
         var cost: usize = 0;
         cost += @sizeOf(HTMLBundleRoute);
         cost += this.pending_responses.items.len * @sizeOf(PendingResponse);
-        cost += this.value.memoryCost();
+        cost += this.state.memoryCost();
         return cost;
     }
 
@@ -74,28 +70,24 @@ pub const HTMLBundleRoute = struct {
             .pending_responses = .{},
             .ref_count = 1,
             .server = null,
-            .value = .pending_plugins,
+            .state = .pending,
         });
     }
 
-    pub usingnamespace bun.NewRefCounted(@This(), _deinit, null);
-
-    pub const Value = union(enum) {
-        pending_plugins,
-        pending: void,
-        building: *bun.BundleV2.JSBundleCompletionTask,
+    pub const State = union(enum) {
+        pending,
+        building: ?*bun.BundleV2.JSBundleCompletionTask,
         err: bun.logger.Log,
         html: *StaticRoute,
 
-        pub fn deinit(this: *Value) void {
+        pub fn deinit(this: *State) void {
             switch (this.*) {
                 .err => |*log| {
                     log.deinit();
                 },
-                .pending_plugins => {},
-                .building => |completion| {
-                    completion.cancelled = true;
-                    completion.deref();
+                .building => |completion| if (completion) |c| {
+                    c.cancelled = true;
+                    c.deref();
                 },
                 .html => {
                     this.html.deref();
@@ -104,9 +96,8 @@ pub const HTMLBundleRoute = struct {
             }
         }
 
-        pub fn memoryCost(this: *const Value) usize {
+        pub fn memoryCost(this: *const State) usize {
             return switch (this.*) {
-                .pending_plugins => 0,
                 .pending => 0,
                 .building => 0,
                 .err => |log| log.memoryCost(),
@@ -121,7 +112,7 @@ pub const HTMLBundleRoute = struct {
         }
         this.pending_responses.deinit(bun.default_allocator);
         this.html_bundle.deref();
-        this.value.deinit();
+        this.state.deinit();
         this.destroy();
     }
 
@@ -142,66 +133,32 @@ pub const HTMLBundleRoute = struct {
         };
 
         if (server.config().development) {
-            // TODO: actually implement proper watch mode instead of "rebuild on every request"
-            if (this.value == .html) {
-                this.value.html.deref();
-                this.value = .pending_plugins;
-            } else if (this.value == .err) {
-                this.value.err.deinit();
-                this.value = .pending_plugins;
-            }
-        }
-
-        if (this.value == .pending_plugins) out_of_pending_plugins: {
-            var plugins: ?*bun.JSC.API.JSBundler.Plugin = null;
-            switch (this.html_bundle.plugins) {
-                .pending => |raw_plugins| have_plugins: {
-                    if (raw_plugins == null or raw_plugins.?.len == 0) {
-                        break :have_plugins;
-                    }
-
-                    switch (server.getPlugins()) {
-                        .pending => {},
-                        .err => {
-                            this.value = .{ .err = bun.logger.Log.init(bun.default_allocator) };
-                            break :out_of_pending_plugins;
-                        },
-                        .found => |result| {
-                            plugins = result;
-                            break :have_plugins;
-                        },
-                    }
-
-                    this.value = .pending_plugins;
-                    break :out_of_pending_plugins;
-                },
-                .result => |existing_plugins| {
-                    plugins = existing_plugins;
-                },
-            }
-            debug("HTMLBundleRoute(0x{x}) plugins resolved", .{@intFromPtr(this)});
-            this.html_bundle.plugins = .{ .result = plugins };
-            this.value = .pending;
-        }
-
-        if (this.value == .pending) {
-            if (bun.Environment.enable_logs)
-                debug("onRequest: {s} - pending", .{req.url()});
-
-            const success = this.scheduleBundle(server);
-            if (!success) {
-                resp.endWithoutBody(true);
-                bun.outOfMemory();
+            if (server.devServer()) |dev| {
+                dev.respondForHTMLBundle(this, req, resp) catch bun.outOfMemory();
                 return;
             }
+
+            // Simpler development workflow which rebundles on every request.
+            if (this.state == .html) {
+                this.state.html.deref();
+                this.state = .pending;
+            } else if (this.state == .err) {
+                this.state.err.deinit();
+                this.state = .pending;
+            }
         }
 
-        switch (this.value) {
-            .pending => unreachable,
-
-            .building, .pending_plugins => {
+        state: switch (this.state) {
+            .pending => {
+                if (bun.Environment.enable_logs)
+                    debug("onRequest: {s} - pending", .{req.url()});
+                this.scheduleBundle(server) catch bun.outOfMemory();
+                continue :state this.state;
+            },
+            .building => {
                 if (bun.Environment.enable_logs)
                     debug("onRequest: {s} - building", .{req.url()});
+
                 // create the PendingResponse, add it to the list
                 var pending = PendingResponse.new(.{
                     .method = bun.http.Method.which(req.method()) orelse {
@@ -215,37 +172,22 @@ pub const HTMLBundleRoute = struct {
                     .ref_count = 1,
                 });
 
-                this.pending_responses.append(bun.default_allocator, pending) catch {
-                    pending.deref();
-                    resp.endWithoutBody(true);
-                    bun.outOfMemory();
-                    return;
-                };
+                this.pending_responses.append(bun.default_allocator, pending) catch bun.outOfMemory();
 
                 this.ref();
                 pending.ref();
                 resp.onAborted(*PendingResponse, PendingResponse.onAborted, pending);
                 req.setYield(false);
-
-                if (this.value == .pending_plugins) {
-                    const raw_plugins = this.html_bundle.plugins.pending.?;
-                    const bunfig_folder = this.html_bundle.bunfig_dir;
-                    this.ref();
-                    debug("HTMLBundleRoute(0x{x}) resolving plugins...", .{@intFromPtr(this)});
-                    server.loadAndResolvePlugins(this, raw_plugins, bunfig_folder);
-                }
             },
             .err => |log| {
                 if (bun.Environment.enable_logs)
                     debug("onRequest: {s} - err", .{req.url()});
-                _ = log; // autofix
-                // use the code from server.zig to render the error
+                _ = log; // TODO: use the code from DevServer.zig to render the error
                 resp.endWithoutBody(true);
             },
             .html => |html| {
                 if (bun.Environment.enable_logs)
                     debug("onRequest: {s} - html", .{req.url()});
-                // we already have the html, so we can just serve it
                 if (is_head) {
                     html.onHEADRequest(req, resp);
                 } else {
@@ -257,98 +199,75 @@ pub const HTMLBundleRoute = struct {
 
     /// Schedule a bundle to be built.
     /// If success, bumps the ref count and returns true;
-    /// Returns false if the bundle task could not be scheduled.
-    fn scheduleBundle(this: *HTMLBundleRoute, server: AnyServer) bool {
-        const globalThis = server.globalThis();
-        const vm = globalThis.bunVM();
-        const plugins = this.html_bundle.plugins.result;
+    fn scheduleBundle(this: *HTMLBundleRoute, server: AnyServer) !void {
+        switch (server.getOrLoadPlugins(.{ .html_bundle_route = this })) {
+            .err => this.state = .{ .err = bun.logger.Log.init(bun.default_allocator) },
+            .ready => |plugins| try onPluginsResolved(this, plugins),
+            .pending => this.state = .{ .building = null },
+        }
+    }
 
-        var config = this.html_bundle.config;
-        config.entry_points = config.entry_points.clone() catch bun.outOfMemory();
-        config.public_path = config.public_path.clone() catch bun.outOfMemory();
-        config.define = config.define.clone() catch bun.outOfMemory();
+    pub fn onPluginsResolved(this: *HTMLBundleRoute, plugins: ?*bun.JSC.API.JSBundler.Plugin) !void {
+        const global = this.html_bundle.global;
+        const server = this.server.?;
+        const development = server.config().development;
+        const vm = global.bunVM();
+
+        var config: JSBundler.Config = .{};
+        errdefer config.deinit(bun.default_allocator);
+        try config.entry_points.insert(this.html_bundle.path);
+        try config.public_path.appendChar('/');
+        config.target = .browser;
 
         if (bun.CLI.Command.get().args.serve_minify_identifiers) |minify_identifiers| {
             config.minify.identifiers = minify_identifiers;
-        } else if (!server.config().development) {
+        } else if (!development) {
             config.minify.identifiers = true;
         }
 
         if (bun.CLI.Command.get().args.serve_minify_whitespace) |minify_whitespace| {
             config.minify.whitespace = minify_whitespace;
-        } else if (!server.config().development) {
+        } else if (!development) {
             config.minify.whitespace = true;
         }
 
         if (bun.CLI.Command.get().args.serve_minify_syntax) |minify_syntax| {
             config.minify.syntax = minify_syntax;
-        } else if (!server.config().development) {
+        } else if (!development) {
             config.minify.syntax = true;
         }
 
-        if (!server.config().development) {
+        if (!development) {
             config.define.put("process.env.NODE_ENV", "\"production\"") catch bun.outOfMemory();
             config.jsx.development = false;
         } else {
             config.force_node_env = .development;
             config.jsx.development = true;
         }
-
         config.source_map = .linked;
 
-        const completion_task = bun.BundleV2.createAndScheduleCompletionTask(
+        const completion_task = try bun.BundleV2.createAndScheduleCompletionTask(
             config,
             plugins,
-            globalThis,
+            global,
             vm.eventLoop(),
             bun.default_allocator,
-        ) catch {
-            return false;
-        };
+        );
         completion_task.started_at_ns = bun.getRoughTickCount().ns();
         completion_task.html_build_task = this;
-        this.value = .{ .building = completion_task };
+        this.state = .{ .building = completion_task };
 
         // While we're building, ensure this doesn't get freed.
         this.ref();
-        return true;
     }
 
-    pub fn onPluginsResolved(this: *HTMLBundleRoute, plugins: ?*bun.JSC.API.JSBundler.Plugin) void {
-        debug("HTMLBundleRoute(0x{x}) plugins resolved", .{@intFromPtr(this)});
-        this.html_bundle.plugins = .{ .result = plugins };
-        // TODO: is this even possible?
-        if (this.value != .pending_plugins) {
-            return;
-        }
-
-        const server: AnyServer = this.server orelse return;
-        const success = this.scheduleBundle(server);
-
-        if (!success) {
-            var pending = this.pending_responses;
-            defer pending.deinit(bun.default_allocator);
-            this.pending_responses = .{};
-            for (pending.items) |pending_response| {
-                // for the list of pending responses
-                defer pending_response.deref();
-                pending_response.resp.endWithoutBody(true);
-            }
-        }
-    }
-
-    pub fn onPluginsRejected(this: *HTMLBundleRoute) void {
+    pub fn onPluginsRejected(this: *HTMLBundleRoute) !void {
         debug("HTMLBundleRoute(0x{x}) plugins rejected", .{@intFromPtr(this)});
-        this.value = .{ .err = bun.logger.Log.init(bun.default_allocator) };
-
+        this.state = .{ .err = bun.logger.Log.init(bun.default_allocator) };
         this.resumePendingResponses();
     }
 
     pub fn onComplete(this: *HTMLBundleRoute, completion_task: *bun.BundleV2.JSBundleCompletionTask) void {
-        // To ensure it stays alive for the deuration of this function.
-        this.ref();
-        defer this.deref();
-
         // For the build task.
         defer this.deref();
 
@@ -356,15 +275,15 @@ pub const HTMLBundleRoute = struct {
             .err => |err| {
                 if (bun.Environment.enable_logs)
                     debug("onComplete: err - {s}", .{@errorName(err)});
-                this.value = .{ .err = bun.logger.Log.init(bun.default_allocator) };
-                completion_task.log.cloneToWithRecycled(&this.value.err, true) catch bun.outOfMemory();
+                this.state = .{ .err = bun.logger.Log.init(bun.default_allocator) };
+                completion_task.log.cloneToWithRecycled(&this.state.err, true) catch bun.outOfMemory();
 
                 if (this.server) |server| {
                     if (server.config().development) {
                         switch (bun.Output.enable_ansi_colors_stderr) {
                             inline else => |enable_ansi_colors| {
                                 var writer = bun.Output.errorWriterBuffered();
-                                this.value.err.printWithEnableAnsiColors(&writer, enable_ansi_colors) catch {};
+                                this.state.err.printWithEnableAnsiColors(&writer, enable_ansi_colors) catch {};
                                 writer.context.flush() catch {};
                             },
                         }
@@ -449,7 +368,7 @@ pub const HTMLBundleRoute = struct {
 
                 const html_route: *StaticRoute = this_html_route orelse @panic("Internal assertion failure: HTML entry point not found in HTMLBundle.");
                 const html_route_clone = html_route.clone(globalThis) catch bun.outOfMemory();
-                this.value = .{ .html = html_route_clone };
+                this.state = .{ .html = html_route_clone };
 
                 if (!(server.reloadStaticRoutes() catch bun.outOfMemory())) {
                     // Server has shutdown, so it won't receive any new requests
@@ -468,24 +387,21 @@ pub const HTMLBundleRoute = struct {
         defer pending.deinit(bun.default_allocator);
         this.pending_responses = .{};
         for (pending.items) |pending_response| {
-            // for the list of pending responses
-            defer pending_response.deref();
+            defer pending_response.deref(); // First ref for being in the pending items array.
 
             const resp = pending_response.resp;
             const method = pending_response.method;
-
             if (!pending_response.is_response_pending) {
-                // request already aborted
+                // Aborted
                 continue;
             }
+            // Second ref for UWS abort callback.
+            defer pending_response.deref();
 
             pending_response.is_response_pending = false;
             resp.clearAborted();
 
-            switch (this.value) {
-                .pending_plugins => {
-                    // this.onAnyRequest(req: *uws.Request, resp: HTTPResponse, is_head: bool)
-                },
+            switch (this.state) {
                 .html => |html| {
                     if (method == .HEAD) {
                         html.onHEAD(resp);
@@ -494,7 +410,12 @@ pub const HTMLBundleRoute = struct {
                     }
                 },
                 .err => |log| {
-                    _ = log; // autofix
+                    if (this.server.?.config().development) {
+                        _ = log; // TODO: use the code from DevServer.zig to render the error
+                    } else {
+                        // To protect privacy, do not show errors to end users in production.
+                        // TODO: Show a generic error page.
+                    }
                     resp.writeStatus("500 Build Failed");
                     resp.endWithoutBody(false);
                 },
@@ -502,13 +423,10 @@ pub const HTMLBundleRoute = struct {
                     resp.endWithoutBody(false);
                 },
             }
-
-            // for the HTTP response.
-            pending_response.deref();
         }
     }
 
-    // Represents an in-flight response before the bundle has finished building.
+    /// Represents an in-flight response before the bundle has finished building.
     pub const PendingResponse = struct {
         method: bun.http.Method,
         resp: HTTPResponse,
@@ -517,9 +435,9 @@ pub const HTMLBundleRoute = struct {
         server: ?AnyServer = null,
         route: *HTMLBundleRoute,
 
-        pub usingnamespace bun.NewRefCounted(@This(), __deinit, null);
+        pub usingnamespace bun.NewRefCounted(@This(), destroyInternal, null);
 
-        fn __deinit(this: *PendingResponse) void {
+        fn destroyInternal(this: *PendingResponse) void {
             if (this.is_response_pending) {
                 this.resp.clearAborted();
                 this.resp.clearOnWritable();
@@ -548,8 +466,6 @@ pub const HTMLBundleRoute = struct {
     };
 };
 
-pub usingnamespace JSC.Codegen.JSHTMLBundle;
-pub usingnamespace bun.NewRefCounted(HTMLBundle, deinit, null);
 const bun = @import("root").bun;
 const std = @import("std");
 const JSC = bun.JSC;
@@ -557,7 +473,6 @@ const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSString = JSC.JSString;
 const JSValueRef = JSC.JSValueRef;
-const HTMLBundle = @This();
 const JSBundler = JSC.API.JSBundler;
 const HTTPResponse = bun.uws.AnyResponse;
 const uws = bun.uws;

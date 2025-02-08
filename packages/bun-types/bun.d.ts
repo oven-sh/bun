@@ -5325,7 +5325,10 @@ declare module "bun" {
 
   interface PluginBuilder {
     /**
-     * Register a callback which will be invoked when bundling starts.
+     * Register a callback which will be invoked when bundling starts. When
+     * using hot module reloading, this is called at the start of each
+     * incremental rebuild.
+     *
      * @example
      * ```ts
      * Bun.plugin({
@@ -5422,9 +5425,9 @@ declare module "bun" {
      * - `browser`: The plugin will be applied to browser builds
      * - `node`: The plugin will be applied to Node.js builds
      *
-     * If in Bun's runtime, the default target is `bun`.
+     * If unspecified, it is assumed that the plugin is compatible with all targets.
      *
-     * If unspecified, it is assumed that the plugin is compatible with the default target.
+     * This field is not read by Bun.plugin
      */
     target?: Target;
     /**

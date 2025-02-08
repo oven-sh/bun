@@ -209,6 +209,11 @@ JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, c
     return errorCache(globalObject)->createError(vm, globalObject, code, jsString(vm, message), jsUndefined(), isDOMExceptionPrototype);
 }
 
+JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code, const String& message, bool isDOMExceptionPrototype)
+{
+    return createError(vm, defaultGlobalObject(globalObject), code, message, isDOMExceptionPrototype);
+}
+
 JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code, JSValue message, bool isDOMExceptionPrototype)
 {
     if (auto* zigGlobalObject = jsDynamicCast<Zig::GlobalObject*>(globalObject))
@@ -225,8 +230,7 @@ JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode co
 
 JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, const String& message, bool isDOMExceptionPrototype)
 {
-    auto& vm = JSC::getVM(globalObject);
-    return createError(vm, globalObject, code, jsString(vm, message), isDOMExceptionPrototype);
+    return createError(globalObject->vm(), globalObject, code, message, isDOMExceptionPrototype);
 }
 
 JSObject* createError(Zig::JSGlobalObject* globalObject, ErrorCode code, JSC::JSValue message, bool isDOMExceptionPrototype)
@@ -252,7 +256,7 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
         auto* jsString = jsCast<JSString*>(cell);
         auto view = jsString->view(globalObject);
         if (!view->isEmpty()) {
-            builder.append(view.data);
+            builder.append(view);
         }
         return;
     }
@@ -370,7 +374,7 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
         if (UNLIKELY(needsEscape)) {
             if (view.is8Bit()) {
                 const auto span = view.span<LChar>();
-                for (auto c : span) {
+                for (const auto c : span) {
                     if (c == '\'') {
                         builder.append("\\'"_s);
                     } else {
@@ -379,7 +383,7 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
                 }
             } else {
                 const auto span = view.span<UChar>();
-                for (auto c : span) {
+                for (const auto c : span) {
                     if (c == '\'') {
                         builder.append("\\'"_s);
                     } else {
@@ -467,7 +471,7 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
         RETURN_IF_EXCEPTION(scope, {});
         result.append(str2->view(globalObject));
     } else {
-        for (unsigned i = 0; i < length - 1; i++) {
+        for (unsigned i = 0, end = length - 1; i < end; i++) {
             JSValue expected_type = expected_types.at(i);
             auto* str = expected_type.toString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});

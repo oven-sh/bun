@@ -13,7 +13,7 @@ function mount(root: HTMLElement) {
 }
 
 let root = document.getElementById("root");
-if (root) {
+if (document.readyState === "complete") {
   mount(root);
 } else {
   document.addEventListener("DOMContentLoaded", () => {

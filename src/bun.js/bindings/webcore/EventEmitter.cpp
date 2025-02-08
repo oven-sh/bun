@@ -147,8 +147,7 @@ int EventEmitter::listenerCount(const Identifier& eventType)
             if (UNLIKELY(registeredListener->wasRemoved()))
                 continue;
 
-            if (JSC::JSObject* jsFunction = registeredListener->callback().jsFunction()) {
-                (void)jsFunction;
+            if (registeredListener->callback().jsFunction()) {
                 result++;
             }
         }

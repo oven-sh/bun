@@ -405,8 +405,7 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__createPrivateKey, (JSC::JSGlobalObject * glo
         break;
     }
     default: {
-        if (auto* keyObj = jsDynamicCast<JSC::JSObject*>(keyJSValue)) {
-            (void)keyObj;
+        if (jsDynamicCast<JSC::JSObject*>(keyJSValue)) {
             if (format != "jwk"_s) {
                 JSC::throwTypeError(globalObject, scope, "format should be 'jwk' when key type is 'object'"_s);
                 return {};
@@ -970,8 +969,7 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__createPublicKey, (JSC::JSGlobalObject * glob
         break;
     }
     default: {
-        if (auto* keyObj = jsDynamicCast<JSC::JSObject*>(keyJSValue)) {
-            (void)keyObj;
+        if (jsDynamicCast<JSC::JSObject*>(keyJSValue)) {
             if (format != "jwk"_s) {
                 JSC::throwTypeError(globalObject, scope, "format should be 'jwk' when key type is 'object'"_s);
                 return {};

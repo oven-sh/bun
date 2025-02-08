@@ -241,9 +241,9 @@ pub const Framework = struct {
                 arena,
                 "react-refresh/runtime/index.js",
                 if (Environment.codegen_embed)
-                    .{ .code = @embedFile("node-fallbacks/react-refresh-prebuilt.js") }
+                    .{ .code = @embedFile("node-fallbacks/react-refresh.js") }
                 else
-                    .{ .code = bun.runtimeEmbedFile(.codegen, "node-fallbacks/react-refresh-prebuilt.js") },
+                    .{ .code = bun.runtimeEmbedFile(.codegen, "node-fallbacks/react-refresh.js") },
             );
         }
 

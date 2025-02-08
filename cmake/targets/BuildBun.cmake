@@ -198,7 +198,6 @@ register_command(
       --minify
       --define:process.env.NODE_ENV=\"'development'\"
   SOURCES
-    ${BUN_NODE_FALLBACKS_SOURCE}/node_modules/react-refresh/cjs/react-refresh-runtime.development.js
     ${BUN_NODE_FALLBACKS_SOURCE}/package.json
     ${BUN_NODE_FALLBACKS_SOURCE}/bun.lock
     ${BUN_NODE_FALLBACKS_NODE_MODULES}

@@ -1208,10 +1208,10 @@ pub const BundleV2 = struct {
         const scbs = this.graph.server_component_boundaries.list.slice();
         const named_exports_array = this.graph.ast.items(.named_exports);
 
-        const id_string = server.newExpr(E.String{ .data = "id" });
-        const name_string = server.newExpr(E.String{ .data = "name" });
-        const chunks_string = server.newExpr(E.String{ .data = "chunks" });
-        const specifier_string = server.newExpr(E.String{ .data = "specifier" });
+        const id_string = server.newExpr(E.String.init("id"));
+        const name_string = server.newExpr(E.String.init("name"));
+        const chunks_string = server.newExpr(E.String.init("chunks"));
+        const specifier_string = server.newExpr(E.String.init("specifier"));
         const empty_array = server.newExpr(E.Array{});
 
         for (
@@ -1238,18 +1238,18 @@ pub const BundleV2 = struct {
 
                 if (!sc.separate_ssr_graph) bun.todoPanic(@src(), "separate_ssr_graph=false", .{});
 
-                const client_path = server.newExpr(E.String{
-                    .data = try std.fmt.allocPrint(alloc, "{}S{d:0>8}", .{
+                const client_path = server.newExpr(E.String.init(
+                    try std.fmt.allocPrint(alloc, "{}S{d:0>8}", .{
                         bun.fmt.hexIntLower(this.unique_key),
                         source_id,
                     }),
-                });
-                const ssr_path = server.newExpr(E.String{
-                    .data = try std.fmt.allocPrint(alloc, "{}S{d:0>8}", .{
+                ));
+                const ssr_path = server.newExpr(E.String.init(
+                    try std.fmt.allocPrint(alloc, "{}S{d:0>8}", .{
                         bun.fmt.hexIntLower(this.unique_key),
                         ssr_index,
                     }),
-                });
+                ));
 
                 for (keys, client_manifest_items) |export_name_string, *client_item| {
                     const server_key_string = try std.fmt.allocPrint(alloc, "{}S{d:0>8}#{s}", .{
@@ -1257,11 +1257,11 @@ pub const BundleV2 = struct {
                         source_id,
                         export_name_string,
                     });
-                    const export_name = server.newExpr(E.String{ .data = export_name_string });
+                    const export_name = server.newExpr(E.String.init(export_name_string));
 
                     // write dependencies on the underlying module, not the proxy
                     try server_manifest_props.append(alloc, .{
-                        .key = server.newExpr(E.String{ .data = server_key_string }),
+                        .key = server.newExpr(E.String.init(server_key_string)),
                         .value = server.newExpr(E.Object{
                             .properties = try G.Property.List.fromSlice(alloc, &.{
                                 .{ .key = id_string, .value = client_path },
@@ -3784,7 +3784,7 @@ pub const ParseTask = struct {
             .json => {
                 const trace = tracer(@src(), "ParseJSON");
                 defer trace.end();
-                const root = (try resolver.caches.json.parsePackageJSON(log, source, allocator, false)) orelse Expr.init(E.Object, E.Object{}, Logger.Loc.Empty);
+                const root = (try resolver.caches.json.parsePackageJSON(log, source, allocator)) orelse Expr.init(E.Object, E.Object{}, Logger.Loc.Empty);
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
             },
             .toml => {
@@ -3794,9 +3794,9 @@ pub const ParseTask = struct {
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
             },
             .text => {
-                const root = Expr.init(E.String, E.String{
-                    .data = source.contents,
-                }, Logger.Loc{ .start = 0 });
+                const root = Expr.init(E.String, E.String.init(
+                    source.contents,
+                ), Logger.Loc{ .start = 0 });
                 var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
                 ast.addUrlForCss(allocator, &source, "text/plain", null);
                 return ast;
@@ -3827,9 +3827,9 @@ pub const ParseTask = struct {
                 //
                 // import.meta.require(unique_key).db
                 //
-                const import_path = Expr.init(E.String, E.String{
-                    .data = path_to_use,
-                }, Logger.Loc{ .start = 0 });
+                const import_path = Expr.init(E.String, E.String.init(
+                    path_to_use,
+                ), Logger.Loc{ .start = 0 });
 
                 const import_meta = Expr.init(E.ImportMeta, E.ImportMeta{}, Logger.Loc{ .start = 0 });
                 const require_property = Expr.init(E.Dot, E.Dot{
@@ -3841,12 +3841,12 @@ pub const ParseTask = struct {
                 require_args[0] = import_path;
                 const object_properties = allocator.alloc(G.Property, 1) catch unreachable;
                 object_properties[0] = G.Property{
-                    .key = Expr.init(E.String, E.String{
-                        .data = "type",
-                    }, Logger.Loc{ .start = 0 }),
-                    .value = Expr.init(E.String, E.String{
-                        .data = "sqlite",
-                    }, Logger.Loc{ .start = 0 }),
+                    .key = Expr.init(E.String, E.String.init(
+                        "type",
+                    ), Logger.Loc{ .start = 0 }),
+                    .value = Expr.init(E.String, E.String.init(
+                        "sqlite",
+                    ), Logger.Loc{ .start = 0 }),
                 };
                 require_args[1] = Expr.init(E.Object, E.Object{
                     .properties = G.Property.List.init(object_properties),
@@ -3881,9 +3881,9 @@ pub const ParseTask = struct {
                 //
                 // require(unique_key)
                 //
-                const import_path = Expr.init(E.String, E.String{
-                    .data = unique_key,
-                }, Logger.Loc{ .start = 0 });
+                const import_path = Expr.init(E.String, E.String.init(
+                    unique_key,
+                ), Logger.Loc{ .start = 0 });
 
                 const require_args = allocator.alloc(Expr, 1) catch unreachable;
                 require_args[0] = import_path;
@@ -3978,9 +3978,9 @@ pub const ParseTask = struct {
             else => {},
         }
         const unique_key = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
-        const root = Expr.init(E.String, E.String{
-            .data = unique_key,
-        }, Logger.Loc{ .start = 0 });
+        const root = Expr.init(E.String, E.String.init(
+            unique_key,
+        ), Logger.Loc{ .start = 0 });
         unique_key_for_additional_file.* = unique_key;
         var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
         ast.addUrlForCss(allocator, &source, null, unique_key);
@@ -4806,20 +4806,20 @@ pub const ServerComponentParseTask = struct {
             &.{server_components.server_register_client_reference},
         ))[0];
 
-        const module_path = b.newExpr(E.String{
+        const module_path = b.newExpr(E.String.init(
             // In development, the path loaded is the source file: Easy!
             //
             // In production, the path here must be the final chunk path, but
             // that information is not yet available since chunks are not
             // computed. The unique_key replacement system is used here.
-            .data = if (task.ctx.transpiler.options.dev_server != null)
+            if (task.ctx.transpiler.options.dev_server != null)
                 data.other_source.path.pretty
             else
                 try std.fmt.allocPrint(b.allocator, "{}S{d:0>8}", .{
                     bun.fmt.hexIntLower(task.ctx.unique_key),
                     data.other_source.index.get(),
                 }),
-        });
+        ));
 
         for (client_named_exports.keys()) |key| {
             const is_default = bun.strings.eqlComptime(key, "default");
@@ -4851,7 +4851,7 @@ pub const ServerComponentParseTask = struct {
                     .ref = try b.newExternalSymbol("Error"),
                 }),
                 .args = try BabyList(Expr).fromSlice(b.allocator, &.{
-                    b.newExpr(E.String{ .data = err_msg_string }),
+                    b.newExpr(E.String.init(err_msg_string)),
                 }),
                 .close_parens_loc = Logger.Loc.Empty,
             });
@@ -4871,7 +4871,7 @@ pub const ServerComponentParseTask = struct {
                         .loc = Logger.Loc.Empty,
                     } }),
                     module_path,
-                    b.newExpr(E.String{ .data = key }),
+                    b.newExpr(E.String.init(key)),
                 }),
             });
 
@@ -7395,7 +7395,7 @@ pub const LinkerContext = struct {
                             continue;
                         }
 
-                        const name = property.key.?.data.e_string.slice(this.allocator);
+                        const name = try property.key.?.data.e_string.toWtf8MayAlloc(this.allocator);
 
                         // TODO: support non-identifier names
                         if (!bun.js_lexer.isIdentifier(name))
@@ -8435,11 +8435,11 @@ pub const LinkerContext = struct {
                 .key = js_ast.Expr.allocate(
                     allocator,
                     js_ast.E.String,
-                    .{
+                    js_ast.E.String.init(
                         // TODO: test emoji work as expected
                         // relevant for WASM exports
-                        .data = alias,
-                    },
+                        alias,
+                    ),
                     loc,
                 ),
                 .value = js_ast.Expr.allocate(
@@ -11404,10 +11404,9 @@ pub const LinkerContext = struct {
                                         G.Property{
                                             .key = Expr.init(
                                                 E.String,
-                                                E.String{
-                                                    .data = export_item.alias,
-                                                    .is_utf16 = false,
-                                                },
+                                                E.String.init(
+                                                    export_item.alias,
+                                                ),
                                                 export_item.alias_loc,
                                             ),
                                             .value = Expr.init(
@@ -12366,13 +12365,13 @@ pub const LinkerContext = struct {
 
                         const is_builtin = record.tag == .builtin or record.tag == .bun_test or record.tag == .bun;
 
-                        const key_expr = Expr.init(E.String, .{
-                            .data = path.pretty,
-                        }, stmt.loc);
+                        const key_expr = Expr.init(E.String, E.String.init(
+                            path.pretty,
+                        ), stmt.loc);
 
                         const items = try allocator.alloc(Expr, st.items.len);
                         for (st.items, items) |item, *str| {
-                            str.* = Expr.init(E.String, .{ .data = item.alias }, item.name.loc);
+                            str.* = Expr.init(E.String, E.String.init(item.alias), item.name.loc);
                         }
 
                         break :call Expr.init(E.Call, .{
@@ -12645,7 +12644,7 @@ pub const LinkerContext = struct {
                     // the property to just reference the corresponding variable instead
                     for (new_properties.slice()) |*prop| {
                         if (prop.key == null or prop.key.?.data != .e_string or prop.value == null) continue;
-                        const name = prop.key.?.data.e_string.slice(temp_allocator);
+                        const name = prop.key.?.data.e_string.toWtf8MayAlloc(temp_allocator) catch bun.outOfMemory();
                         if (strings.eqlComptime(name, "default") or
                             strings.eqlComptime(name, "__esModule") or
                             !bun.js_lexer.isIdentifier(name)) continue;

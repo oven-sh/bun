@@ -1,0 +1,127 @@
+/*= basic strings */
+print("abc def");
+print('abc def');
+print(`abc def`);
+/*= basic escapes */
+print(btoa("\a\b\c\d\e\f\g\h\i\j\k\l\m\n\o\p\q\r\s\t  \v\w  \y\z\'\"\\\
+\u{0}\u{1}\u{2}\u0000\u0001\u0002\0"));
+/*=[c] newline escape forms 1 */ `
+print(">\\\r< >\\\n< >\\\r\n< >\\\u{2028}< >\\\u{2029}<");
+`
+/*=[c] template literal newlines*/ `
+print(\`line 1\rline 2\nline 3\r\nline 4\u{2028}line 5\u{2029}\`);
+`
+/*=[c] long string using vector path of indexOfCharactersInString */ `
+// double quote ascii
+print("${"a".repeat(10000)}");
+// double quote utf-8
+print("${"æ".repeat(10000)}");
+// template string ascii
+print(\`${"a".repeat(10000)}\`);
+// template string utf-8
+print(\`${"æ".repeat(10000)}\`);
+`
+/*=[c] invalid utf-8 */ new Uint8Array([
+  ...new TextEncoder().encode(`print("`),
+  0xFF, 0xFE, 0xFD, 0xFC, 0xFB, 0xFA,
+  ...new TextEncoder().encode(`");`),
+])
+/*= escape sequence error 1 :-: malformed Unicode character escape sequence */ print("\u");
+/*= escape sequence error 2 :-: malformed Unicode character escape sequence */ print("\u1");
+/*= escape sequence error 3 :-: malformed Unicode character escape sequence */ print("\u12");
+/*= escape sequence error 4 :-: malformed Unicode character escape sequence */ print("\u123");
+/*= escape sequence success */ print("\u1234")
+/*= tagged template literal raw 1 */ print(String.raw`\u`)
+/*= tagged template literal raw 2 */ print(String.raw`\u{`)
+/*= tagged template literal raw 3 */ print(String.raw`\u{12345678}`)
+/*= tagged template literal raw 4 */ print(String.raw`\x`)
+/*= tagged template literal raw 5 */ print(String.raw`\0`)
+/*= tagged template literal raw 6 */ print(String.raw`\9`)
+/*= tagged template literal raw 7 */ print(String.raw`\
+`)
+/*= tagged template literal raw 8 */ print(String.raw`abc`)
+/*= tagged template literal raw 9 */ print(String.raw``)
+/*=[todo] tagged template literal raw 10 */ print(String.raw`æ™`)
+/*= template literal regular */ print(`æ™`)
+/*= tagged template literal raw 11 */; function a(){return b => print(""+b)}; new a()``/*=
+/*= escaped identifier */ let \u0070 = "escaped identifier"; print(p);
+/*= escaped identifier 2 */ let abc\u0070 = "escaped identifier"; print(abcp);
+/*= escaped identifier unicode */ let \u{10334} = "unicode!"; print(𐌴);
+/*= escaped identifier unicode 2 */ let abc\u{10334} = "unicode!"; print(abc𐌴);
+/*= escaped identifier unicode from surrogate halves :-: Unicode codepoint must not be a surrogate half in identifier */ let \uD800\uDF34 = "unicode!"; print(𐌴);
+/*= escaped identifier other :-: Escape sequence in identifier must be unicode */ let \x70 = "escaped identifier!"; print(p);
+/*= syntax error :-: error: Unexpected end of file */!!!
+/*= syntax error :-: error: Unterminated string literal */"abc
+/*= syntax error :-: error: Unterminated string literal */"abc
+def"
+/*= syntax error :-: error: Unterminated string literal */`abc
+def
+/*= syntax error :-: error: Unterminated string literal */`abc
+de\u{2
+/*= octal escape 1 */print("\44")
+/*= octal escape 2 */print('\44')
+/*= octal escape 3 :-: error: octal escape not allowed in untagged template literals */print(`\44`)
+/*= octal escape 4 */print(String.raw`\44`)
+/*= null escape 1 */print("\0")
+/*= null escape 2 */print('\0')
+/*= null escape 3 */print(`\0`)
+/*= null escape 4 */print(String.raw`\0`)
+/*= null escape 4 */print("\00")
+/*= null escape 5 */print('\00')
+/*= null escape 6 :-: error: octal escape not allowed in untagged template literals */print(`\00`)
+/*= null escape 7 */print(String.raw`\00`)
+/*= numeric escape 1 */print("\8")
+/*= numeric escape 2 */print('\8')
+/*= numeric escape 3 :-: error: numeric escape not allowed in untagged template literals */print(`\8`)
+/*= numeric escape 4 */print(String.raw`\8`)
+/*= unicode identifier 1 */var _𐒦 = "1"; print(_𐒦);
+/*= unicode identifier 2 :-: error: Expected identifier but found */var 𐒦 = "1"; print(𐒦);
+/*= unicode identifier 3 */var _\u{104A6} = "1"; print(_𐒦);
+/*= unicode identifier 4 :-: error: Invalid identifier */var \u{104A6} = "1"; print(𐒦);
+/*=[c] allowed to have as many zeroes as you want */`print("\\u{${"0".repeat(1000)}64}")`
+/*= identifier with null byte 1 :-: error: Invalid identifier */var \u{0} = "1"; print(\u{0});
+/*= identifier with null byte 2 :-: error: Invalid identifier */print(\u{0});
+/*= identifier with null byte 3 :-: error: Invalid identifier */var \u0000 = "1"; print(\u0000);
+/*= identifier with null byte 4 :-: error: Invalid identifier */print(\u0000);
+/*= identifier with null byte 1+ :-: error: Invalid identifier */var abc\u{0} = "1"; print(abc\u{0});
+/*= identifier with null byte 2+ :-: error: Invalid identifier */print(abc\u{0});
+/*= identifier with null byte 3+ :-: error: Invalid identifier */var abc\u0000 = "1"; print(abc\u0000);
+/*= identifier with null byte 4+ :-: error: Invalid identifier */print(abc\u0000);
+/*= identifier with null byte 1* :-: error: Invalid identifier */var \u{1} = "1"; print(\u{1});
+/*= identifier with null byte 2* :-: error: Invalid identifier */print(\u{1});
+/*= identifier with null byte 3* :-: error: Invalid identifier */var \u0001 = "1"; print(\u0001);
+/*= identifier with null byte 4* :-: error: Invalid identifier */print(\u0001);
+/*= identifier with null byte 1*+ :-: error: Invalid identifier */var abc\u{1} = "1"; print(abc\u{1});
+/*= identifier with null byte 2*+ :-: error: Invalid identifier */print(abc\u{1});
+/*= identifier with null byte 3*+ :-: error: Invalid identifier */var abc\u0001 = "1"; print(abc\u0001);
+/*= identifier with null byte 4*+ :-: error: Invalid identifier */print(abc\u0001);
+/*=[c] identifier with null byte 3c :-: error: Expected " */`var \u{0} = "1"; print(\u{0});`
+/*=[c] identifier with null byte 4c :-: error: Unexpected */`print(\u{0});`
+/*=[c] identifier with null byte 3c+ :-: error: Expected " */`var abc\u{0} = "1"; print(abc\u{0});`
+/*=[c] identifier with null byte 4c+ :-: error: Expected " */`print(abc\u{0});`
+/*=[c] identifier with null byte 3c* :-: error: Expected " */`var \u{1} = "1"; print(\u{1});`
+/*=[c] identifier with null byte 4c* :-: error: Unexpected */`print(\u{1});`
+/*=[c] identifier with null byte 3c*+ :-: error: Expected " */`var abc\u{1} = "1"; print(abc\u{1});`
+/*=[c] identifier with null byte 4c*+ :-: error: Expected " */`print(abc\u{1});`
+/*= empty escape :-: malformed Unicode character escape sequence */print("\u{})
+/*=[no-eval] 1st valid 2nd invalid */print("\uD888\u1234")
+/*=[c] no unterminated string literal error */new Uint8Array([...new TextEncoder().encode('print("'), 0xE9, ...new TextEncoder().encode('")')])
+/*=[c] bad unicode replaced properly 1 */new Uint8Array([...new TextEncoder().encode('print("'), 0xF4, 0xBF, 0xBF, 0xBF, ...new TextEncoder().encode('")')])
+/*=[c] bad unicode replaced properly 2 */new Uint8Array([...new TextEncoder().encode('print("'), 0xC0, 0xAF, ...new TextEncoder().encode('")')])
+/*=[c] source code is utf-8, not wtf-8 1 */new Uint8Array([...new TextEncoder().encode('print(JSON.stringify("'), 0xED, 0xA0, 0x80, ...new TextEncoder().encode('"))')])
+/*=[c] source code is utf-8, not wtf-8 2 */new Uint8Array([...new TextEncoder().encode('print(JSON.stringify("'), 0xED, 0xA0, 0x80, 0xED, 0xA0, 0x80, ...new TextEncoder().encode('"))')])
+/*=[c] source code is utf-8, not wtf-8 3 */new Uint8Array([...new TextEncoder().encode('print(JSON.stringify(`'), 0xED, 0xA0, 0x80, 0xED, 0xA0, 0x80, 0xED, 0xA0, 0x80, ...new TextEncoder().encode('`))')])
+/*=[no-node][no-eval] html comments are not implemented :-: Unsupported syntax: Legacy HTML comments not implemented yet! */<!-- hello
+/*= indexOfNeedsEscape 1 */print(JSON.stringify("abc\uD801efghi"))
+/*=[c] utf-8 quesiton mark count */new Uint8Array([...new TextEncoder().encode('print(JSON.stringify(`'), 
+  0b11110010,
+  0b10101100,
+  0b10110111,
+  0b10110111,
+  0b10110111,
+  0b10110111,
+  0b10110111,
+  0b10110111,
+  0b00101011,
+...new TextEncoder().encode('`))')])
+/*= x7F */ print([...new TextEncoder().encode("\u3a28\u3a71\u3ae0\u3b2e\u0800EMabcfglmnoprstu\\bfms\x7f\x84\x8b\x90\x95\x98\xa6\xb3\xb9\xc8\xcflig\u803b\xc6\u40c6P\u803b&\u4026cute\u803b\xc1\u40c1reve;\u4102\u0100iyx}rc\u803b\xc2\u40c2;\u4410r;\uc000\ud835\udd04rave\u803b\xc0\u40c0pha;\u4391acr;")].map(c => c.toString(16)).join(" "))

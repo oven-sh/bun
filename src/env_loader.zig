@@ -11,7 +11,6 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const CodePoint = bun.CodePoint;
 const C = bun.C;
-const CodepointIterator = @import("./string_immutable.zig").CodepointIterator;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const Fs = @import("./fs.zig");
 const URL = @import("./url.zig").URL;
@@ -427,12 +426,7 @@ pub const Loader = struct {
                         if (strings.startsWith(entry.key_ptr.*, prefix)) {
                             const key_str = std.fmt.allocPrint(key_allocator, "process.env.{s}", .{entry.key_ptr.*}) catch unreachable;
 
-                            e_strings[0] = js_ast.E.String{
-                                .data = if (value.len > 0)
-                                    @as([*]u8, @ptrFromInt(@intFromPtr(value.ptr)))[0..value.len]
-                                else
-                                    &[_]u8{},
-                            };
+                            e_strings[0] = js_ast.E.String.init(value);
                             const expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
 
                             _ = try to_string.getOrPutValue(
@@ -450,12 +444,7 @@ pub const Loader = struct {
                             bun.assert(hash != invalid_hash);
 
                             if (std.mem.indexOfScalar(u64, string_map_hashes, hash)) |key_i| {
-                                e_strings[0] = js_ast.E.String{
-                                    .data = if (value.len > 0)
-                                        @as([*]u8, @ptrFromInt(@intFromPtr(value.ptr)))[0..value.len]
-                                    else
-                                        &[_]u8{},
-                                };
+                                e_strings[0] = js_ast.E.String.init(value);
 
                                 const expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
 
@@ -476,12 +465,7 @@ pub const Loader = struct {
                         const value: string = entry.value_ptr.value;
                         const key = std.fmt.allocPrint(key_allocator, "process.env.{s}", .{entry.key_ptr.*}) catch unreachable;
 
-                        e_strings[0] = js_ast.E.String{
-                            .data = if (entry.value_ptr.value.len > 0)
-                                @as([*]u8, @ptrFromInt(@intFromPtr(entry.value_ptr.value.ptr)))[0..value.len]
-                            else
-                                &[_]u8{},
-                        };
+                        e_strings[0] = js_ast.E.String.init(value);
 
                         const expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
 

@@ -243,11 +243,11 @@ pub const Bin = extern struct {
                 }
             },
             .e_string => |str| {
-                if (str.data.len > 0) {
+                if (!str.isEmpty()) {
                     return .{
                         .tag = .file,
                         .value = .{
-                            .file = try buf.append(str.data),
+                            .file = try buf.append(str.asWtf8AssertNotRope()),
                         },
                     };
                 }

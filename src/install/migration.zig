@@ -161,7 +161,7 @@ pub fn migrateNPMLockfile(
         if (prop1.key) |k| {
             if (k.data != .e_string) return error.InvalidNPMLockfile;
             // first key must be the "", self reference
-            if (k.data.e_string.data.len != 0) return error.InvalidNPMLockfile;
+            if (!k.data.e_string.isEmpty()) return error.InvalidNPMLockfile;
             if (prop1.value.?.data != .e_object) return error.InvalidNPMLockfile;
             root_package = prop1.value.?.data.e_object;
         } else return error.InvalidNPMLockfile;
@@ -462,7 +462,7 @@ pub fn migrateNPMLockfile(
 
                     for (cpu_array.data.e_array.items.slice()) |item| {
                         if (item.data != .e_string) return error.InvalidNPMLockfile;
-                        arch.apply(item.data.e_string.data);
+                        arch.apply(item.data.e_string.asWtf8AssertNotRope());
                     }
                     break :arch arch.combine();
                 } else .all,
@@ -476,7 +476,7 @@ pub fn migrateNPMLockfile(
 
                     for (cpu_array.data.e_array.items.slice()) |item| {
                         if (item.data != .e_string) return error.InvalidNPMLockfile;
-                        os.apply(item.data.e_string.data);
+                        os.apply(item.data.e_string.asWtf8AssertNotRope());
                     }
                     break :arch os.combine();
                 } else .all,

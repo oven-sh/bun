@@ -114,25 +114,21 @@ pub const TOML = struct {
                 return str;
             },
             .t_identifier => {
-                const str = E.String{ .data = p.lexer.identifier };
+                const str = E.String.init(p.lexer.identifier);
                 try p.lexer.next();
                 return p.e(str, loc);
             },
             .t_false => {
                 try p.lexer.next();
                 return p.e(
-                    E.String{
-                        .data = "false",
-                    },
+                    E.String.init("false"),
                     loc,
                 );
             },
             .t_true => {
                 try p.lexer.next();
                 return p.e(
-                    E.String{
-                        .data = "true",
-                    },
+                    E.String.init("true"),
                     loc,
                 );
             },
@@ -140,7 +136,7 @@ pub const TOML = struct {
             .t_numeric_literal => {
                 const literal = p.lexer.raw();
                 try p.lexer.next();
-                return p.e(E.String{ .data = literal }, loc);
+                return p.e(E.String.init(literal), loc);
             },
 
             else => return null,
@@ -302,7 +298,7 @@ pub const TOML = struct {
                 return result;
             },
             .t_identifier => {
-                const str: E.String = E.String{ .data = p.lexer.identifier };
+                const str: E.String = E.String.init(p.lexer.identifier);
 
                 try p.lexer.next();
                 return p.e(str, loc);

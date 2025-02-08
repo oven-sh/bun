@@ -485,12 +485,13 @@ describe("bundler", () => {
         capture(+'\\u0030\\u002e\\u0031');
         capture(+'\\x30\\x2e\\x31');
         capture(+'NotANumber');
-        // not supported
         capture(+'æ');
+        capture(+('1' + '2'));
       `,
     },
     minifySyntax: true,
     capture: [
+      // supported
       "1",
       "-123.567",
       "8.325",
@@ -498,8 +499,8 @@ describe("bundler", () => {
       "0.1",
       "0.1",
       "NaN",
-      // untouched
-      '+"æ"',
+      "NaN",
+      "12",
     ],
   });
 });

@@ -344,14 +344,8 @@ pub const MutableString = struct {
         const E = bun.JSAst.E;
 
         /// Write a E.String to the buffer.
-        /// This automatically encodes UTF-16 into UTF-8 using
-        /// the same code path as TextEncoder
         pub fn writeString(this: *BufferedWriter, bytes: *E.String) OOM!usize {
-            if (bytes.isUTF8()) {
-                return try this.writeAll(bytes.slice(this.context.allocator));
-            }
-
-            return try this.writeAll16(bytes.slice16());
+            return try this.writeAll(try bytes.toWtf8MayAlloc(this.context.allocator));
         }
 
         /// Write a UTF-16 string to the (UTF-8) buffer

@@ -2758,10 +2758,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         const fw = g.owner().framework;
                         try w.writeAll("}, {\n  main: ");
                         try bun.js_printer.writeJSONString(
+                            .wtf8_replace_invalid,
                             g.owner().relativePath(initial_response_entry_point),
                             @TypeOf(w),
                             w,
-                            .utf8,
                         );
                         switch (side) {
                             .client => {
@@ -2771,10 +2771,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
                                 if (fw.react_fast_refresh) |rfr| {
                                     try w.writeAll(",\n  refresh: ");
                                     try bun.js_printer.writeJSONString(
+                                        .wtf8_replace_invalid,
                                         g.owner().relativePath(rfr.import_source),
                                         @TypeOf(w),
                                         w,
-                                        .utf8,
                                     );
                                 }
                             },

@@ -288,41 +288,15 @@ pub const CreateCommand = struct {
         var package_json_contents: MutableString = undefined;
         var package_json_file: ?std.fs.File = null;
 
-        if (create_options.verbose) {
-            Output.prettyErrorln("Downloading as {s}\n", .{@tagName(example_tag)});
+        if (example_tag != .local_folder) {
+            if (create_options.verbose) {
+                Output.prettyErrorln("Downloading as {s}\n", .{@tagName(example_tag)});
+            }
         }
 
         switch (example_tag) {
             .jslike_file => {
-                const Analyzer = struct {
-                    ctx: Command.Context,
-                    example_tag: Example.Tag,
-                    entry_point: []const u8,
-                    node: *Progress.Node,
-                    progress: *Progress,
-                    pub fn onAnalyze(this: *@This(), result: *bun.bundle_v2.BundleV2.DependenciesScanner.Result) anyerror!void {
-                        this.node.end();
-
-                        try SourceFileProjectGenerator.generate(this.ctx, this.example_tag, this.entry_point, result);
-                    }
-                };
-
-                var analyzer = Analyzer{
-                    .ctx = ctx,
-                    .example_tag = example_tag,
-                    .entry_point = template,
-                    .progress = &progress,
-                    .node = node,
-                };
-
-                var fetcher = bun.bundle_v2.BundleV2.DependenciesScanner{
-                    .ctx = &analyzer,
-                    .entry_points = &[_]string{analyzer.entry_point},
-                    .onFetch = @ptrCast(&Analyzer.onAnalyze),
-                };
-                try bun.CLI.BuildCommand.exec(bun.CLI.Command.get(), &fetcher);
-
-                return;
+                return try runOnEntryPoint(ctx, example_tag, template, &progress, node);
             },
             Example.Tag.github_repository, Example.Tag.official => {
                 const tarball_bytes: MutableString = switch (example_tag) {
@@ -1694,6 +1668,36 @@ pub const CreateCommand = struct {
             }
         }
     }
+
+    fn runOnEntryPoint(ctx: Command.Context, example_tag: Example.Tag, entry_point: []const u8, progress: *Progress, node: *Progress.Node) !void {
+        const Analyzer = struct {
+            ctx: Command.Context,
+            example_tag: Example.Tag,
+            entry_point: []const u8,
+            node: *Progress.Node,
+            progress: *Progress,
+            pub fn onAnalyze(this: *@This(), result: *bun.bundle_v2.BundleV2.DependenciesScanner.Result) anyerror!void {
+                this.node.end();
+
+                try SourceFileProjectGenerator.generate(this.ctx, this.example_tag, this.entry_point, result);
+            }
+        };
+
+        var analyzer = Analyzer{
+            .ctx = ctx,
+            .example_tag = example_tag,
+            .entry_point = entry_point,
+            .progress = progress,
+            .node = node,
+        };
+
+        var fetcher = bun.bundle_v2.BundleV2.DependenciesScanner{
+            .ctx = &analyzer,
+            .entry_points = &[_]string{analyzer.entry_point},
+            .onFetch = @ptrCast(&Analyzer.onAnalyze),
+        };
+        try bun.CLI.BuildCommand.exec(bun.CLI.Command.get(), &fetcher);
+    }
     pub fn extractInfo(ctx: Command.Context) !struct { example_tag: Example.Tag, template: []const u8 } {
         var example_tag = Example.Tag.unknown;
         var filesystem = try fs.FileSystem.init(null);
@@ -1718,18 +1722,24 @@ pub const CreateCommand = struct {
         const template = brk: {
             var positional = positionals[0];
 
-            if (Example.Tag.fromFileExtension(std.fs.path.extension(positional))) |tag| {
-                outer: {
-                    var parts = [_]string{ filesystem.top_level_dir, positional };
-                    const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                    home_dir_buf[outdir_path.len] = 0;
-                    const outdir_path_ = home_dir_buf[0..outdir_path.len :0];
-                    if (bun.path.hasAnyIllegalChars(outdir_path_)) break :outer;
+            outer: {
+                var parts = [_]string{ filesystem.top_level_dir, positional };
+                const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
+                home_dir_buf[outdir_path.len] = 0;
+                const outdir_path_ = home_dir_buf[0..outdir_path.len :0];
+                if (bun.path.hasAnyIllegalChars(outdir_path_)) break :outer;
 
-                    if (bun.sys.existsAtType(bun.toFD(std.fs.cwd()), outdir_path_).asValue()) |exists_at_type| {
-                        if (exists_at_type == .file) {
+                if (bun.sys.existsAtType(bun.toFD(std.fs.cwd()), outdir_path_).asValue()) |exists_at_type| {
+                    if (exists_at_type == .file) {
+                        const extension = std.fs.path.extension(positional);
+                        if (Example.Tag.fromFileExtension(extension)) |tag| {
                             example_tag = tag;
                             break :brk bun.default_allocator.dupe(u8, outdir_path) catch bun.outOfMemory();
+                        }
+                        // Show a warning when the local file exists and it's not a .js file
+                        // A lot of create-* npm packages have .js in the name, so you could end up with that warning.
+                        else if (extension.len > 0 and !strings.eqlComptime(extension, ".js")) {
+                            Output.warn("bun create [local file] only supports .jsx and .tsx files currently", .{});
                         }
                     }
                 }

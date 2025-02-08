@@ -568,6 +568,7 @@ const ReactSpa = struct {
             .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css",
             .content = @embedFile("projects/react-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css"),
             .reason = .css,
+            .overwrite = false,
         },
         .{
             .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.html",

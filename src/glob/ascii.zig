@@ -120,7 +120,6 @@ pub fn match(alloc: Allocator, glob: []const u8, path: []const u8) MatchResult {
 }
 
 inline fn globMatchImpl(state: *State, glob: []const u8, path: []const u8) bool {
-    debugDisallowWindowsBackslashPatterns(glob);
     while (state.glob_index < glob.len or state.path_index < path.len) {
         if (state.glob_index < glob.len) {
             switch (glob[state.glob_index]) {
@@ -269,20 +268,6 @@ inline fn globMatchImpl(state: *State, glob: []const u8, path: []const u8) bool 
     }
 
     return true;
-}
-
-fn debugDisallowWindowsBackslashPatterns(glob: []const u8) void {
-    if (comptime bun.Environment.isWindows) {
-        var i: usize = 0;
-        while (i < glob.len) : (i += 1) {
-            if (glob[i] == '\\' and i + 1 < glob.len and switch (glob[i + 1]) {
-                '[', '{', '!', '*', '?' => false,
-                else => true,
-            }) {
-                @panic("Please do not use Windows backslashes in glob patterns.");
-            }
-        }
-    }
 }
 
 fn matchBrace(state: *State, glob: []const u8, path: []const u8) bool {

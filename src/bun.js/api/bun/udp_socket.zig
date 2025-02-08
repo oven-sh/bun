@@ -10,6 +10,7 @@ const JSC = bun.JSC;
 const CallFrame = JSC.CallFrame;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
+const SocketAddress = JSC.API.SocketAddress;
 
 const log = Output.scoped(.UdpSocket, false);
 
@@ -20,7 +21,6 @@ extern fn htonl(hlong: u32) u32;
 extern fn htons(hshort: u16) u16;
 extern fn inet_ntop(af: c_int, src: ?*const anyopaque, dst: [*c]u8, size: c_int) ?[*:0]const u8;
 extern fn inet_pton(af: c_int, src: [*c]const u8, dst: ?*anyopaque) c_int;
-extern fn JSSocketAddress__create(global: *JSGlobalObject, address: JSValue, port: i32, v6: bool) JSValue;
 
 fn onClose(socket: *uws.udp.Socket) callconv(.C) void {
     JSC.markBinding(@src());
@@ -867,6 +867,15 @@ pub const UDPSocket = struct {
         return bun.String.createUTF8ForJS(globalThis, slice);
     }
 
+    fn createSockAddr(globalThis: *JSGlobalObject, address_bytes: []const u8, port: u16) JSValue {
+        const sockaddr = switch (address_bytes.len) {
+            4 => SocketAddress.newIPv4(address_bytes[0..4].*, port),
+            16 => SocketAddress.newIPv6(address_bytes[0..16].*, port, 0, 0),
+            else => return .undefined,
+        };
+        return SocketAddress.new(sockaddr).toJS(globalThis);
+    }
+
     pub fn getAddress(this: *This, globalThis: *JSGlobalObject) JSValue {
         if (this.closed) return .undefined;
         var buf: [64]u8 = [_]u8{0} ** 64;
@@ -875,12 +884,7 @@ pub const UDPSocket = struct {
 
         const address_bytes = buf[0..@as(usize, @intCast(length))];
         const port = this.socket.boundPort();
-        return JSSocketAddress__create(
-            globalThis,
-            addressToString(globalThis, address_bytes),
-            @intCast(port),
-            length == 16,
-        );
+        return createSockAddr(globalThis, address_bytes, @intCast(port));
     }
 
     pub fn getRemoteAddress(this: *This, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
@@ -891,12 +895,7 @@ pub const UDPSocket = struct {
         this.socket.remoteIp(&buf, &length);
 
         const address_bytes = buf[0..@as(usize, @intCast(length))];
-        return JSSocketAddress__create(
-            globalThis,
-            addressToString(globalThis, address_bytes),
-            connect_info.port,
-            length == 16,
-        );
+        return createSockAddr(globalThis, address_bytes, connect_info.port);
     }
 
     pub fn getBinaryType(

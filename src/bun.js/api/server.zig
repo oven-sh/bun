@@ -89,6 +89,8 @@ const Async = bun.Async;
 const httplog = Output.scoped(.Server, false);
 const ctxLog = Output.scoped(.RequestContext, false);
 const S3 = bun.S3;
+const SocketAddress = @import("bun/socket.zig").SocketAddress;
+
 const BlobFileContentResult = struct {
     data: [:0]const u8,
 
@@ -6086,19 +6088,24 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             return globalThis.throw("Server() is not a constructor", .{});
         }
 
-        extern fn JSSocketAddress__create(global: *JSC.JSGlobalObject, ip: JSValue, port: i32, is_ipv6: bool) JSValue;
-
         pub fn requestIP(this: *ThisServer, request: *JSC.WebCore.Request) JSC.JSValue {
             if (this.config.address == .unix) {
                 return JSValue.jsNull();
             }
+            // FIXME: us_get_remote_address_info (used by getRemoteSocketInfo)
+            // convertes a sockaddr_storage into presentation format, then
+            // SocketAddress converts presentation back to a
+            // sockaddr_storage-like format. presentation string is preserved,
+            // but inet_pton could be avoided.
             return if (request.request_context.getRemoteSocketInfo()) |info|
-                JSSocketAddress__create(
-                    this.globalThis,
-                    bun.String.createUTF8ForJS(this.globalThis, info.ip),
-                    info.port,
-                    info.is_ipv6,
-                )
+                // NOTE: misleading. .create can throw if address is invalid,
+                // however since we're already listening on it it's safe to assume
+                // it's valid.
+                (SocketAddress.create(this.globalThis, .{
+                    .address = bun.String.createUTF8(info.ip),
+                    .family = if (info.is_ipv6) .INET6 else .INET,
+                    .port = @intCast(info.port),
+                }) catch bun.outOfMemory()).toJS(this.globalThis)
             else
                 JSValue.jsNull();
         }
@@ -6627,12 +6634,14 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         if (listener.socket().localAddressText(&buf, &is_ipv6)) |slice| {
                             var ip = bun.String.createUTF8(slice);
                             defer ip.deref();
-                            return JSSocketAddress__create(
-                                this.globalThis,
-                                ip.toJS(this.globalThis),
-                                port,
-                                is_ipv6,
-                            );
+                            // FIXME: this can error on invalid addresses. Unfortunately,
+                            // I don't see a way to make a falliable native getter.
+                            const addr = SocketAddress.create(this.globalThis, .{
+                                .address = ip,
+                                .port = port,
+                                .family = if (is_ipv6) .INET6 else .INET,
+                            }) catch bun.outOfMemory();
+                            return addr.toJS(this.globalThis);
                         }
                     }
                     return JSValue.jsNull();

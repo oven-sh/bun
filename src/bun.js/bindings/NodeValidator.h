@@ -2,6 +2,7 @@
 
 #include "ZigGlobalObject.h"
 #include "ErrorCode.h"
+#include "BufferEncodingType.h"
 #include "JavaScriptCore/JSCJSValue.h"
 
 namespace Bun {
@@ -38,6 +39,7 @@ JSC::EncodedJSValue validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject* g
 JSC::EncodedJSValue validateArrayBufferView(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name);
 JSC::EncodedJSValue validateUint32(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, JSValue name, JSValue positive);
 JSC::EncodedJSValue validateUint32(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name, JSValue positive);
+JSC::EncodedJSValue validateFunction(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name);
 
 }
 

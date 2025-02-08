@@ -22,6 +22,7 @@ const {
   generateKeyPairSync,
   sign: nativeSign,
   verify: nativeVerify,
+  // signOneShot,
   publicEncrypt,
   privateDecrypt,
   privateEncrypt,
@@ -11520,16 +11521,11 @@ var require_browser8 = __commonJS({
       var hash = this._hash.digest();
       return verify(sig, hash, key, this._signType, this._tag);
     };
-    function createSign(algorithm) {
-      return new Sign(algorithm);
-    }
     function createVerify(algorithm) {
       return new Verify(algorithm);
     }
     module.exports = {
-      Sign: createSign,
       Verify: createVerify,
-      createSign,
       createVerify,
     };
   },
@@ -11741,7 +11737,6 @@ var require_crypto_browserify2 = __commonJS({
     exports.DiffieHellman = dh.DiffieHellman;
     exports.diffieHellman = dh.diffieHellman;
     var sign = require_browser8();
-    exports.createSign = sign.createSign;
     exports.Sign = sign.Sign;
     exports.createVerify = sign.createVerify;
     exports.Verify = sign.Verify;
@@ -12077,7 +12072,7 @@ crypto_exports.createPublicKey = _createPublicKey;
 crypto_exports.KeyObject = KeyObject;
 var webcrypto = crypto;
 var _subtle = webcrypto.subtle;
-const _createSign = crypto_exports.createSign;
+const _createSign = createSign;
 
 crypto_exports.sign = function (algorithm, data, key, callback) {
   // TODO: move this to native
@@ -12524,6 +12519,8 @@ function Sign(algorithm, options): void {
   validateString(algorithm, "algorithm");
   this[kHandle] = new _Sign();
   this[kHandle].init(algorithm);
+
+  StreamModule.Writable.$apply(this, [options]);
 }
 
 $toClass(Sign, "Sign", StreamModule.Writable);
@@ -12537,57 +12534,7 @@ Sign.prototype.update = function update(data, encoding) {
   return this[kHandle].update(data, encoding);
 };
 
-function getIntOption(name, options) {
-  const value = options[name];
-  if (value !== undefined) {
-    if (value === value >> 0) {
-      return value;
-    }
-    throw $ERR_INVALID_ARG_VALUE(`options.${name}`, value);
-  }
-  return undefined;
-}
-
-function getPadding(options) {
-  return getIntOption("padding", options);
-}
-
-function getSaltLength(options) {
-  return getIntOption("saltLength", options);
-}
-
-function getDSASignatureEncoding(options) {
-  if (typeof options === "object") {
-    const { dsaEncoding = "der" } = options;
-    if (dsaEncoding === "der") return kSigEncDER;
-    else if (dsaEncoding === "ieee-p1363") return kSigEncP1363;
-    throw $ERR_INVALID_ARG_VALUE("options.dsaEncoding", dsaEncoding);
-  }
-
-  return kSigEncDER;
-}
-
 Sign.prototype.sign = function sign(options, encoding) {
-  // if (!options) {
-  //   throw $ERR_CRYPTO_SIGN_KEY_REQUIRED();
-  // }
-
-  // const { data, format, type, passphrase } = preparePrivateKey(options);
-
-  // // Options specific to RSA
-  // const rsaPadding = getPadding(options);
-  // const pssSaltLength = getSaltLength(options);
-
-  // // Options specific to (EC)DSA
-  // const dsaSigEnc = getDSASignatureEncoding(options);
-
-  // const ret = this[kHandle].sign(data, format, type, passphrase, rsaPadding, pssSaltLength, dsaSigEnc);
-
-  // if (encoding && encoding !== "buffer") {
-  //   return ret.toString(encoding);
-  // }
-
-  // return ret;
   return this[kHandle].sign(options, encoding);
 };
 

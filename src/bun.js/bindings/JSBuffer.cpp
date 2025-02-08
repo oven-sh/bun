@@ -469,7 +469,7 @@ static inline JSC::EncodedJSValue constructBufferEmpty(JSGlobalObject* lexicalGl
     return JSBuffer__bufferFromLength(lexicalGlobalObject, 0);
 }
 
-static JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject, JSString* str, WebCore::BufferEncodingType encoding)
+JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject, JSString* str, WebCore::BufferEncodingType encoding)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);

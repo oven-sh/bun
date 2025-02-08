@@ -210,6 +210,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_checkRangesOrGetDefault, (JSC::JSGlobalObjec
     return JSValue::encode(number);
 }
 
+JSC::EncodedJSValue V::validateFunction(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name)
+{
+    if (JSC::getCallData(value).type == JSC::CallData::Type::None) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "function"_s, value);
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateFunction, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);

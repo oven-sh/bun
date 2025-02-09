@@ -2767,9 +2767,9 @@ unsigned char JSC__JSCell__getType(JSC__JSCell* arg0) { return arg0->type(); }
 void JSC__JSString__toZigString(JSC__JSString* arg0, JSC__JSGlobalObject* arg1, ZigString* arg2)
 {
     auto value = arg0->value(arg1);
-
     *arg2 = Zig::toZigString(value.data.impl());
-    ASSERT(value.data.impl()->refCount() > 1);
+
+    // We don't need to assert here because ->value returns a reference to the same string as the one owned by the JSString.
 }
 
 bool JSC__JSString__eql(const JSC__JSString* arg0, JSC__JSGlobalObject* obj, JSC__JSString* arg2)

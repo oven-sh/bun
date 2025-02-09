@@ -3302,14 +3302,21 @@ pub fn existsAtType(fd: bun.FileDescriptor, path: anytype) Maybe(ExistsAtType) {
             // https://github.com/libuv/libuv/blob/eb5af8e3c0ea19a6b0196d5db3212dae1785739b/src/win/fs.c#L2144-L2146
             (basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_DIRECTORY == 0 or
             basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_READONLY == 0);
-        syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = {d}", .{ bun.fmt.fmtOSPath(path, .{}), @intFromBool(is_regular_file) });
 
-        return if (is_regular_file)
-            .{ .result = .file }
-        else if (basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_DIRECTORY != 0)
-            .{ .result = .directory }
-        else
-            .{ .err = bun.sys.Error.fromCode(.UNKNOWN, .access) };
+        const is_dir = basic_info.FileAttributes != kernel32.INVALID_FILE_ATTRIBUTES and
+            basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_DIRECTORY != 0 and
+            basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_READONLY == 0;
+
+        return if (is_regular_file) {
+            syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = file", .{bun.fmt.fmtOSPath(path, .{})});
+            return .{ .result = .file };
+        } else if (is_dir) {
+            syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = directory", .{bun.fmt.fmtOSPath(path, .{})});
+            return .{ .result = .directory };
+        } else {
+            syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = {d}", .{ bun.fmt.fmtOSPath(path, .{}), basic_info.FileAttributes });
+            return .{ .err = bun.sys.Error.fromCode(.UNKNOWN, .access) };
+        };
     }
 
     if (std.meta.sentinel(@TypeOf(path)) == null) {

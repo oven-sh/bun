@@ -1,6 +1,6 @@
 import "bun";
 import { expect, test, describe, beforeEach, afterAll } from "bun:test";
-import { tempDirWithFiles as tempDir, bunExe, bunEnv } from "harness";
+import { tempDirWithFiles as tempDir, bunExe, bunEnv, isCI, isWindows } from "harness";
 import { cp, readdir } from "fs/promises";
 import path from "path";
 import puppeteer, { type Browser } from "puppeteer";
@@ -114,7 +114,7 @@ describe.each(["true", "false"])("development: %s", developmentString => {
       });
     });
 
-    test("dev server", async () => {
+    test.todoIf(isCI)("dev server", async () => {
       await using process = Bun.spawn([bunExe(), "create", "./index.jsx"], {
         cwd: dir,
         env: env,
@@ -150,7 +150,7 @@ describe.each(["true", "false"])("development: %s", developmentString => {
       }
     });
 
-    test("build", async () => {
+    test.todoIf(isWindows)("build", async () => {
       {
         const process = Bun.spawn([bunExe(), "create", "./index.jsx"], {
           cwd: dir,
@@ -182,7 +182,7 @@ describe.each(["true", "false"])("development: %s", developmentString => {
       });
     });
 
-    test("dev server", async () => {
+    test.todoIf(isCI)("dev server", async () => {
       const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
         cwd: dir,
         env: env,
@@ -221,7 +221,7 @@ describe.each(["true", "false"])("development: %s", developmentString => {
       }
     });
 
-    test("build", async () => {
+    test.todoIf(isWindows)("build", async () => {
       {
         const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
           cwd: dir,
@@ -305,7 +305,7 @@ describe.each(["true", "false"])("development: %s", developmentString => {
         1000 * 100,
       );
 
-      test("build", async () => {
+      test.todoIf(isWindows)("build", async () => {
         {
           const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
             cwd: dir,

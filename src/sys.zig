@@ -3267,14 +3267,14 @@ pub const ExistsAtType = enum {
     file,
     directory,
 };
-pub fn existsAtType(fd: bun.FileDescriptor, path: anytype) Maybe(ExistsAtType) {
+pub fn existsAtType(fd: bun.FileDescriptor, subpath: anytype) Maybe(ExistsAtType) {
     if (comptime Environment.isWindows) {
-        if (std.meta.Elem(@TypeOf(path)) == u8) {
-            // Convert to NT path
-            const wbuf = bun.WPathBufferPool.get();
-            defer bun.WPathBufferPool.put(wbuf);
-            return existsAtType(fd, bun.strings.toNTPath(wbuf, path));
-        }
+        const wbuf = bun.WPathBufferPool.get();
+        defer bun.WPathBufferPool.put(wbuf);
+        const path = if (std.meta.Child(@TypeOf(subpath)) == u16)
+            bun.strings.toNTPath16(wbuf, subpath)
+        else
+            bun.strings.toNTPath(wbuf, subpath);
 
         const path_len_bytes: u16 = @truncate(path.len * 2);
         var nt_name = w.UNICODE_STRING{
@@ -3324,16 +3324,16 @@ pub fn existsAtType(fd: bun.FileDescriptor, path: anytype) Maybe(ExistsAtType) {
         };
     }
 
-    if (std.meta.sentinel(@TypeOf(path)) == null) {
+    if (std.meta.sentinel(@TypeOf(subpath)) == null) {
         const path_buf = bun.PathBufferPool.get();
         defer bun.PathBufferPool.put(path_buf);
-        @memcpy(path_buf, path);
-        path_buf[path.len] = 0;
+        @memcpy(path_buf, subpath);
+        path_buf[subpath.len] = 0;
         const slice: [:0]const u8 = @ptrCast(path_buf);
         return existsAtType(fd, slice);
     }
 
-    return switch (fstatat(fd, path)) {
+    return switch (fstatat(fd, subpath)) {
         .err => |err| .{ .err = err },
         .result => |result| if (S.ISDIR(result.mode)) .{ .result = .directory } else .{ .result = .file },
     };

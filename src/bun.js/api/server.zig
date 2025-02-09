@@ -6023,14 +6023,10 @@ const ServePlugins = struct {
         var html_bundle_routes = pending.html_bundle_routes;
         pending.html_bundle_routes = .empty;
         defer html_bundle_routes.deinit(bun.default_allocator);
-
         pending.plugin.deinit();
         pending.promise.deinit();
 
         this.state = .err;
-
-        Output.errGeneric("Failed to load plugins for Bun.serve:", .{});
-        global.bunVM().runErrorHandler(err, null);
 
         for (html_bundle_routes.items) |route| {
             route.onPluginsRejected() catch bun.outOfMemory();
@@ -6039,6 +6035,9 @@ const ServePlugins = struct {
         if (pending.dev_server) |server| {
             server.onPluginsRejected() catch bun.outOfMemory();
         }
+
+        Output.errGeneric("Failed to load plugins for Bun.serve:", .{});
+        global.bunVM().runErrorHandler(err, null);
     }
 
     comptime {

@@ -179,14 +179,16 @@ pub const StaticRoute = @import("./server/StaticRoute.zig");
 
 const HTMLBundle = JSC.API.HTMLBundle;
 const HTMLBundleRoute = HTMLBundle.HTMLBundleRoute;
+const PageBundle = JSC.API.PageBundle;
+const PageBundleRoute = PageBundle.PageBundleRoute;
+
 pub const AnyStaticRoute = union(enum) {
     StaticRoute: *StaticRoute,
     HTMLBundleRoute: *HTMLBundleRoute,
-
+    PageBundleRoute: *PageBundleRoute,
     pub fn memoryCost(this: AnyStaticRoute) usize {
         return switch (this) {
-            .StaticRoute => |static_route| static_route.memoryCost(),
-            .HTMLBundleRoute => |html_bundle_route| html_bundle_route.memoryCost(),
+            inline else => |route| route.memoryCost(),
         };
     }
 
@@ -194,6 +196,7 @@ pub const AnyStaticRoute = union(enum) {
         switch (this) {
             .StaticRoute => |static_route| static_route.server = server,
             .HTMLBundleRoute => |html_bundle_route| html_bundle_route.server = server,
+            .PageBundleRoute => |page_bundle_route| page_bundle_route.server = server,
         }
     }
 
@@ -201,6 +204,7 @@ pub const AnyStaticRoute = union(enum) {
         switch (this) {
             .StaticRoute => |static_route| static_route.deref(),
             .HTMLBundleRoute => |html_bundle_route| html_bundle_route.deref(),
+            .PageBundleRoute => |page_bundle_route| page_bundle_route.deref(),
         }
     }
 
@@ -208,10 +212,16 @@ pub const AnyStaticRoute = union(enum) {
         switch (this) {
             .StaticRoute => |static_route| static_route.ref(),
             .HTMLBundleRoute => |html_bundle_route| html_bundle_route.ref(),
+            .PageBundleRoute => |page_bundle_route| page_bundle_route.ref(),
         }
     }
 
-    pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue, dedupe_html_bundle_map: *std.AutoHashMap(*HTMLBundle, *HTMLBundleRoute)) bun.JSError!AnyStaticRoute {
+    pub fn fromJS(
+        globalThis: *JSC.JSGlobalObject,
+        argument: JSC.JSValue,
+        dedupe_html_bundle_map: *std.AutoHashMap(*HTMLBundle, *HTMLBundleRoute),
+        dedupe_page_bundle_map: *std.AutoHashMap(*PageBundle, *PageBundleRoute),
+    ) bun.JSError!AnyStaticRoute {
         if (argument.as(HTMLBundle)) |html_bundle| {
             const entry = try dedupe_html_bundle_map.getOrPut(html_bundle);
             if (!entry.found_existing) {
@@ -221,6 +231,17 @@ pub const AnyStaticRoute = union(enum) {
             }
 
             return .{ .HTMLBundleRoute = entry.value_ptr.* };
+        }
+
+        if (argument.as(PageBundle)) |page_bundle| {
+            const entry = try dedupe_page_bundle_map.getOrPut(page_bundle);
+            if (!entry.found_existing) {
+                entry.value_ptr.* = PageBundleRoute.init(page_bundle);
+            } else {
+                entry.value_ptr.*.ref();
+            }
+
+            return .{ .PageBundleRoute = entry.value_ptr.* };
         }
 
         return .{ .StaticRoute = try StaticRoute.fromJS(globalThis, argument) };
@@ -1118,6 +1139,12 @@ pub const ServerConfig = struct {
                 return global.throwInvalidArguments("Bun.serve expects an object", .{});
             }
 
+            if (try arg.get(global, "development")) |dev| {
+                args.development = dev.coerce(bool, global);
+                args.reuse_port = !args.development;
+            }
+            if (global.hasException()) return error.JSError;
+
             if (try arg.get(global, "static")) |static| {
                 if (!static.isObject()) {
                     return global.throwInvalidArguments("Bun.serve expects 'static' to be an object shaped like { [pathname: string]: Response }", .{});
@@ -1131,6 +1158,8 @@ pub const ServerConfig = struct {
 
                 var dedupe_html_bundle_map = std.AutoHashMap(*HTMLBundle, *HTMLBundleRoute).init(bun.default_allocator);
                 defer dedupe_html_bundle_map.deinit();
+                var dedupe_page_bundle_map = std.AutoHashMap(*PageBundle, *PageBundleRoute).init(bun.default_allocator);
+                defer dedupe_page_bundle_map.deinit();
 
                 errdefer {
                     for (args.static_routes.items) |*static_route| {
@@ -1153,7 +1182,7 @@ pub const ServerConfig = struct {
                         return global.throwInvalidArguments("Invalid static route \"{s}\". Please encode all non-ASCII characters in the path.", .{path});
                     }
 
-                    const route = try AnyStaticRoute.fromJS(global, value, &dedupe_html_bundle_map);
+                    const route = try AnyStaticRoute.fromJS(global, value, &dedupe_html_bundle_map, &dedupe_page_bundle_map);
                     args.static_routes.append(.{
                         .path = path,
                         .route = route,
@@ -1162,10 +1191,11 @@ pub const ServerConfig = struct {
 
                 // When HTML bundles are provided, ensure DevServer options are ready
                 // The presence of these options causes Bun.serve to initialize things.
-                if (bun.bake.DevServer.enabled and dedupe_html_bundle_map.count() > 0) {
+                if (!args.development and bun.bake.DevServer.enabled and dedupe_html_bundle_map.count() > 0) {
                     // TODO: this should be the dir with bunfig??
                     const root = bun.fs.FileSystem.instance.top_level_dir;
                     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+                    errdefer arena.deinit();
                     const framework = try bun.bake.Framework.auto(arena.allocator(), &global.bunVM().transpiler.resolver);
                     args.bake = .{
                         .arena = arena,
@@ -1275,12 +1305,6 @@ pub const ServerConfig = struct {
                         args.allow_hot = false;
                     }
                 }
-            }
-            if (global.hasException()) return error.JSError;
-
-            if (try arg.get(global, "development")) |dev| {
-                args.development = dev.coerce(bool, global);
-                args.reuse_port = !args.development;
             }
             if (global.hasException()) return error.JSError;
 
@@ -5818,6 +5842,7 @@ const ServePlugins = struct {
             plugin: *bun.JSC.API.JSBundler.Plugin,
             promise: JSC.JSPromise.Strong,
             html_bundle_routes: std.ArrayListUnmanaged(*HTMLBundleRoute),
+            page_bundle_routes: std.ArrayListUnmanaged(*PageBundleRoute),
             dev_server: ?*bun.bake.DevServer,
         },
         loaded: *bun.JSC.API.JSBundler.Plugin,
@@ -5834,6 +5859,7 @@ const ServePlugins = struct {
 
     pub const Callback = union(enum) {
         html_bundle_route: *HTMLBundleRoute,
+        page_bundle_route: *PageBundleRoute,
         dev_server: *bun.bake.DevServer,
     };
 
@@ -5862,6 +5888,10 @@ const ServePlugins = struct {
                     .html_bundle_route => |route| {
                         route.ref();
                         try pending.html_bundle_routes.append(bun.default_allocator, route);
+                    },
+                    .page_bundle_route => |route| {
+                        route.ref();
+                        try pending.page_bundle_routes.append(bun.default_allocator, route);
                     },
                     .dev_server => |server| {
                         assert(pending.dev_server == null or pending.dev_server == server); // one dev server per server
@@ -5903,7 +5933,8 @@ const ServePlugins = struct {
         this.state = .{ .pending = .{
             .promise = JSC.JSPromise.Strong.init(global),
             .plugin = plugin,
-            .html_bundle_routes = .empty,
+            .html_bundle_routes = .{},
+            .page_bundle_routes = .{},
             .dev_server = null,
         } };
 
@@ -5969,11 +6000,20 @@ const ServePlugins = struct {
         const pending = &this.state.pending;
         const plugin = pending.plugin;
         pending.promise.deinit();
-        defer pending.html_bundle_routes.deinit(bun.default_allocator);
+        var html_bundle_routes = pending.html_bundle_routes;
+        var page_bundle_routes = pending.page_bundle_routes;
+        pending.html_bundle_routes = .{};
+        pending.page_bundle_routes = .{};
+        defer html_bundle_routes.deinit(bun.default_allocator);
+        defer page_bundle_routes.deinit(bun.default_allocator);
 
         this.state = .{ .loaded = plugin };
 
-        for (pending.html_bundle_routes.items) |route| {
+        for (html_bundle_routes.items) |route| {
+            route.onPluginsResolved(plugin) catch bun.outOfMemory();
+            route.deref();
+        }
+        for (page_bundle_routes.items) |route| {
             route.onPluginsResolved(plugin) catch bun.outOfMemory();
             route.deref();
         }
@@ -5997,14 +6037,23 @@ const ServePlugins = struct {
         const pending = &this.state.pending;
         pending.plugin.deinit();
         pending.promise.deinit();
-        defer pending.html_bundle_routes.deinit(bun.default_allocator);
+        var html_bundle_routes = pending.html_bundle_routes;
+        var page_bundle_routes = pending.page_bundle_routes;
+        pending.html_bundle_routes = .{};
+        pending.page_bundle_routes = .{};
+        defer html_bundle_routes.deinit(bun.default_allocator);
+        defer page_bundle_routes.deinit(bun.default_allocator);
 
         this.state = .err;
 
         Output.errGeneric("Failed to load plugins for Bun.serve:", .{});
         global.bunVM().runErrorHandler(err, null);
 
-        for (pending.html_bundle_routes.items) |route| {
+        for (html_bundle_routes.items) |route| {
+            route.onPluginsRejected() catch bun.outOfMemory();
+            route.deref();
+        }
+        for (page_bundle_routes.items) |route| {
             route.onPluginsRejected() catch bun.outOfMemory();
             route.deref();
         }
@@ -7471,10 +7520,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         .StaticRoute => |static_route| {
                             ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *StaticRoute, static_route, entry.path);
                         },
-                        .HTMLBundleRoute => |html_bundle_route| {
-                            ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *HTMLBundleRoute, html_bundle_route, entry.path);
+                        inline .PageBundleRoute, .HTMLBundleRoute => |route| {
+                            ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, @TypeOf(route), route, entry.path);
                             if (dev_server) |dev| {
-                                dev.html_router.put(dev.allocator, entry.path, html_bundle_route) catch bun.outOfMemory();
+                                dev.html_router.put(dev.allocator, entry.path, route) catch bun.outOfMemory();
                             }
                             needs_plugins = true;
                         },

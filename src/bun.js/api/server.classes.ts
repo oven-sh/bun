@@ -219,4 +219,16 @@ export default [
     },
     klass: {},
   }),
+  define({
+    name: "PageBundle",
+    noConstructor: true,
+    finalize: true,
+    proto: {
+      src: {
+        getter: "getSrc",
+        cache: true,
+      },
+    },
+    klass: {},
+  }),
 ];

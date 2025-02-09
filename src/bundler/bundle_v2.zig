@@ -1556,6 +1556,52 @@ pub const BundleV2 = struct {
         return try this.linker.generateChunksInParallel(chunks, false);
     }
 
+    pub fn generateFromPageBundle(
+        entry_points: bake.production.EntryPointMap,
+        server_transpiler: *Transpiler,
+        kit_options: BakeOptions,
+        allocator: std.mem.Allocator,
+        event_loop: EventLoop,
+    ) !std.ArrayList(options.OutputFile) {
+        var this = try BundleV2.init(server_transpiler, kit_options, allocator, event_loop, false, null, null);
+        this.unique_key = generateUniqueKey();
+
+        if (this.transpiler.log.hasErrors()) {
+            return error.BuildFailed;
+        }
+
+        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(.bake_production, entry_points));
+
+        if (this.transpiler.log.hasErrors()) {
+            return error.BuildFailed;
+        }
+
+        this.waitForParse();
+
+        if (this.transpiler.log.hasErrors()) {
+            return error.BuildFailed;
+        }
+
+        try this.processServerComponentManifestFiles();
+
+        const reachable_files = try this.findReachableFiles();
+
+        try this.processFilesToCopy(reachable_files);
+
+        try this.addServerComponentBoundariesAsExtraEntryPoints();
+
+        try this.cloneAST();
+
+        const chunks = try this.linker.link(
+            this,
+            this.graph.entry_points.items,
+            this.graph.server_component_boundaries,
+            reachable_files,
+        );
+
+        return try this.linker.generateChunksInParallel(chunks, false);
+    }
+
     pub fn addServerComponentBoundariesAsExtraEntryPoints(this: *BundleV2) !void {
         // Prepare server component boundaries. Each boundary turns into two
         // entry points, a client entrypoint and a server entrypoint.
@@ -4043,7 +4089,7 @@ pub const ParseTask = struct {
             .dataurl, .base64, .bunsh => {
                 return try getEmptyAST(log, transpiler, opts, allocator, source, E.String);
             },
-            .file, .wasm => {
+            .file, .wasm, .page_reference => {
                 bun.assert(loader.shouldCopyForBundling());
 
                 // Put a unique key in the AST to implement the URL loader. At the end
@@ -7634,13 +7680,13 @@ pub const LinkerContext = struct {
                                             .{@tagName(loader)},
                                         ) catch bun.outOfMemory();
                                     },
-                                    .sqlite_embedded => {
+                                    .sqlite_embedded, .page_reference => {
                                         this.log.addErrorFmt(
                                             source,
                                             record.range.loc,
                                             this.allocator,
-                                            "Cannot import a \"sqlite_embedded\" file into a CSS file",
-                                            .{},
+                                            "Cannot import a \"{s}\" file into a CSS file",
+                                            .{@tagName(loader)},
                                         ) catch bun.outOfMemory();
                                     },
                                     .css, .file, .toml, .wasm, .base64, .dataurl, .text, .bunsh => {},

@@ -2102,6 +2102,33 @@ pub const ModuleLoader = struct {
                 };
             },
 
+            .page_reference => {
+                if (flags.disableTranspiling()) {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = bun.String.empty,
+                        .specifier = input_specifier,
+                        .source_url = input_specifier.createIfDifferent(path.text),
+                        .hash = 0,
+                        .tag = .esm,
+                    };
+                }
+
+                if (globalObject == null) {
+                    return error.NotSupported;
+                }
+
+                const bundle = try JSC.API.PageBundle.init(globalObject.?, path.text);
+                return ResolvedSource{
+                    .allocator = &jsc_vm.allocator,
+                    .jsvalue_for_export = bundle.toJS(globalObject.?),
+                    .specifier = input_specifier,
+                    .source_url = input_specifier.createIfDifferent(path.text),
+                    .hash = 0,
+                    .tag = .export_default_object,
+                };
+            },
+
             else => {
                 if (flags.disableTranspiling()) {
                     return ResolvedSource{
@@ -2343,6 +2370,8 @@ pub const ModuleLoader = struct {
                 loader = .tsx;
             } else if (attribute.eqlComptime("html")) {
                 loader = .html;
+            } else if (attribute.eqlComptime("page")) {
+                loader = .page_reference;
             }
         }
 

@@ -645,6 +645,8 @@ pub const Loader = enum(u8) {
     sqlite,
     sqlite_embedded,
     html,
+    /// Returns
+    page_reference,
 
     pub fn disableHTML(this: Loader) Loader {
         return switch (this) {
@@ -825,6 +827,7 @@ pub const Loader = enum(u8) {
             .dataurl => .dataurl,
             .text => .text,
             .sqlite_embedded, .sqlite => .sqlite,
+            .page_reference => .file,
         };
     }
 

@@ -1,18 +1,10 @@
 'use strict';
-// JSStream is disabled because it is a node internal
-// vm tests are skipped because node:vm Module is not yet implemented
-// // Flags: --experimental-vm-modules --expose-internals
 const common = require('../common');
 const assert = require('assert');
 const { types, inspect } = require('util');
 const vm = require('vm');
-// const { internalBinding } = require('internal/test/binding');
-// const { JSStream } = internalBinding('js_stream');
-
-// const external = (new JSStream())._externalStream;
 
 for (const [ value, _method ] of [
-  // [ external, 'isExternal' ],
   [ new Date() ],
   [ (function() { return arguments; })(), 'isArgumentsObject' ],
   [ new Boolean(), 'isBooleanObject' ],
@@ -276,14 +268,6 @@ for (const [ value, _method ] of [
     assert.deepStrictEqual(yup, expected[testedFunc]);
   }
 }
-
-// (skipped)
-// (async () => {
-//   const m = new vm.SourceTextModule('');
-//   await m.link(() => 0);
-//   await m.evaluate();
-//   assert.ok(types.isModuleNamespaceObject(m.namespace));
-// })().then(common.mustCall());
 
 {
   // eslint-disable-next-line node-core/crypto-check

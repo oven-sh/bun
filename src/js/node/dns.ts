@@ -8,6 +8,7 @@ const {
   validateString,
   validateBoolean,
   validateNumber,
+  validateInt32,
 } = require("internal/validators");
 
 const errorCodes = {
@@ -346,19 +347,14 @@ function validateResolverOptions(options) {
     return;
   }
 
-  for (const key of ["timeout", "tries"]) {
-    if (key in options) {
-      if (typeof options[key] !== "number") {
-        throw $ERR_INVALID_ARG_TYPE(key, "number", options[key]);
-      }
-    }
+  {
+    const { timeout = -1 } = options;
+    validateInt32(timeout, "options.timeout", -1);
   }
 
-  if ("timeout" in options) {
-    const timeout = options.timeout;
-    if ((timeout < 0 && timeout != -1) || Math.floor(timeout) != timeout || timeout >= 2 ** 31) {
-      throw $ERR_OUT_OF_RANGE("Invalid timeout", timeout);
-    }
+  {
+    const { tries = 4 } = { ...options };
+    validateInt32(tries, "options.tries", 1);
   }
 }
 

@@ -17,13 +17,23 @@ for (const ctor of [dns.Resolver, dns.promises.Resolver]) {
     assert.throws(() => new ctor({ timeout }), {
       code: 'ERR_INVALID_ARG_TYPE',
       name: 'TypeError',
+      message: `The "options.timeout" property must be of type number.` + common.invalidArgTypeHelper(timeout),
     });
   }
 
-  for (const timeout of [-2, 4.2, 2 ** 31]) {
+  for (const timeout of [4.2]) {
     assert.throws(() => new ctor({ timeout }), {
       code: 'ERR_OUT_OF_RANGE',
       name: 'RangeError',
+      message: `The value of "options.timeout" is out of range. It must be an integer. Received ${timeout}`,
+    });
+  }
+
+  for (const timeout of [-2, 2 ** 31]) {
+    assert.throws(() => new ctor({ timeout }), {
+      code: 'ERR_OUT_OF_RANGE',
+      name: 'RangeError',
+      message: `The value of "options.timeout" is out of range. It must be >= -1 and <= 2147483647. Received ${timeout}`,
     });
   }
 

@@ -6444,11 +6444,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     this.config.websocket = ws.*;
                 } // we don't remove it
             }
-
-            for (this.config.static_routes.items) |*route| {
+            var static_routes = this.config.static_routes;
+            this.config.static_routes = .init(bun.default_allocator);
+            for (static_routes.items) |*route| {
                 route.deinit();
             }
-            this.config.static_routes.deinit();
+            static_routes.deinit();
             this.config.static_routes = new_config.static_routes;
 
             this.setRoutes();
@@ -7507,7 +7508,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                             needs_plugins = true;
                         },
                     }
-                    if (strings.eqlComptime(entry.path, "/*")) {
+                    if (!has_html_catch_all and strings.eqlComptime(entry.path, "/*")) {
                         has_html_catch_all = true;
                     }
                 }

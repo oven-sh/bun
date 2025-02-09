@@ -5990,12 +5990,15 @@ const ServePlugins = struct {
         bun.assert(this.state == .pending);
         const pending = &this.state.pending;
         const plugin = pending.plugin;
+        var html_bundle_routes = pending.html_bundle_routes;
+        pending.html_bundle_routes = .empty;
+        defer html_bundle_routes.deinit(bun.default_allocator);
+
         pending.promise.deinit();
-        defer pending.html_bundle_routes.deinit(bun.default_allocator);
 
         this.state = .{ .loaded = plugin };
 
-        for (pending.html_bundle_routes.items) |route| {
+        for (html_bundle_routes.items) |route| {
             route.onPluginsResolved(plugin) catch bun.outOfMemory();
             route.deref();
         }
@@ -6017,16 +6020,19 @@ const ServePlugins = struct {
     pub fn handleOnReject(this: *ServePlugins, global: *JSC.JSGlobalObject, err: JSValue) void {
         bun.assert(this.state == .pending);
         const pending = &this.state.pending;
+        var html_bundle_routes = pending.html_bundle_routes;
+        pending.html_bundle_routes = .empty;
+        defer html_bundle_routes.deinit(bun.default_allocator);
+
         pending.plugin.deinit();
         pending.promise.deinit();
-        defer pending.html_bundle_routes.deinit(bun.default_allocator);
 
         this.state = .err;
 
         Output.errGeneric("Failed to load plugins for Bun.serve:", .{});
         global.bunVM().runErrorHandler(err, null);
 
-        for (pending.html_bundle_routes.items) |route| {
+        for (html_bundle_routes.items) |route| {
             route.onPluginsRejected() catch bun.outOfMemory();
             route.deref();
         }

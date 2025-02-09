@@ -9,13 +9,26 @@ import * as vm from "vm";
 const env = {
   ...bunEnv,
 };
+const baseOptions = {
+  dumpio: !!process.env.CI_DEBUG,
 
+  args: [
+    "--disable-gpu",
+    "--disable-dev-shm-usage",
+    "--disable-setuid-sandbox",
+    "--no-sandbox",
+    "--ignore-certificate-errors",
+    "--use-fake-ui-for-media-stream",
+    "--use-fake-device-for-media-stream",
+    "--disable-sync",
+  ],
+  executablePath: process.env.BROWSER_EXECUTABLE,
+  headless: true,
+};
 let puppeteerBrowser: Browser | null = null;
 async function getPuppeteerBrowser() {
   if (!puppeteerBrowser) {
-    puppeteerBrowser = await puppeteer.launch({
-      headless: true,
-    });
+    puppeteerBrowser = await puppeteer.launch(baseOptions);
   }
   return puppeteerBrowser;
 }
@@ -232,83 +245,91 @@ describe.each(["true", "false"])("development: %s", developmentString => {
     });
   });
 
-  describe("shadcn/ui", async () => {
-    let dir: string;
-    beforeEach(async () => {
-      dir = tempDirWithFiles("shadcn-ui", {
-        "index.tsx": await Bun.file(path.join(__dirname, "shadcn.tsx")).text(),
+  describe(
+    "shadcn/ui",
+    async () => {
+      let dir: string;
+      beforeEach(async () => {
+        dir = tempDirWithFiles("shadcn-ui", {
+          "index.tsx": await Bun.file(path.join(__dirname, "shadcn.tsx")).text(),
+        });
       });
-    });
 
-    test("dev server", async () => {
-      const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
-        cwd: dir,
-        env: env,
-        stdout: "pipe",
-        stdin: "ignore",
-      });
-      const all = { text: "" };
-      const serverUrl = await getServerUrl(process, all);
-      console.log(serverUrl);
-      console.log(dir);
-      try {
-        var page = await (await getPuppeteerBrowser()).newPage();
-        await page.goto(serverUrl, { waitUntil: "networkidle0" });
+      test(
+        "dev server",
+        async () => {
+          const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
+            cwd: dir,
+            env: env,
+            stdout: "pipe",
+            stdin: "ignore",
+          });
+          const all = { text: "" };
+          const serverUrl = await getServerUrl(process, all);
+          console.log(serverUrl);
+          console.log(dir);
+          try {
+            var page = await (await getPuppeteerBrowser()).newPage();
+            await page.goto(serverUrl, { waitUntil: "networkidle0" });
 
-        // Check that React root exists and has Shadcn components
-        const root = await page.$("#root");
-        expect(root).toBeTruthy();
+            // Check that React root exists and has Shadcn components
+            const root = await page.$("#root");
+            expect(root).toBeTruthy();
 
-        const content = await page.evaluate(() => document.documentElement.innerHTML);
-        expect(content).toContain("shadcn"); // Basic check for Shadcn classes
+            const content = await page.evaluate(() => document.documentElement.innerHTML);
+            expect(content).toContain("shadcn"); // Basic check for Shadcn classes
 
-        // Check for components.json
-        const componentsJson = await Bun.file(path.join(dir, "components.json")).exists();
-        expect(componentsJson).toBe(true);
+            // Check for components.json
+            const componentsJson = await Bun.file(path.join(dir, "components.json")).exists();
+            expect(componentsJson).toBe(true);
 
-        expect(
-          all.text
-            .replace(/v\d+\.\d+\.\d+(?:\s*\([a-f0-9]+\))?/g, "v*.*.*")
-            .replace(/\[\d+\.?\d*m?s\]/g, "[*ms]")
-            .replace(/@\d+\.\d+\.\d+/g, "@*.*.*")
-            .replace(/\d+\.\d+\s*ms/g, "*.** ms")
-            .replace(/^\s+/gm, "")
-            .replace(
-              /installed (react(-dom)?|@radix-ui\/.*|tailwindcss|class-variance-authority|clsx|lucide-react|tailwind-merge)@\d+\.\d+\.\d+/g,
-              "installed $1@*.*.*",
-            )
-            .trim()
-            .replaceAll(serverUrl, "http://[SERVER_URL]"),
-        ).toMatchSnapshot();
-      } finally {
-        process.kill();
-        await Promise.resolve(page!?.close?.({ runBeforeUnload: false }));
-      }
-    });
+            expect(
+              all.text
+                .replace(/v\d+\.\d+\.\d+(?:\s*\([a-f0-9]+\))?/g, "v*.*.*")
+                .replace(/\[\d+\.?\d*m?s\]/g, "[*ms]")
+                .replace(/@\d+\.\d+\.\d+/g, "@*.*.*")
+                .replace(/\d+\.\d+\s*ms/g, "*.** ms")
+                .replace(/^\s+/gm, "")
+                .replace(
+                  /installed (react(-dom)?|@radix-ui\/.*|tailwindcss|class-variance-authority|clsx|lucide-react|tailwind-merge)@\d+\.\d+\.\d+/g,
+                  "installed $1@*.*.*",
+                )
+                .trim()
+                .replaceAll(serverUrl, "http://[SERVER_URL]"),
+            ).toMatchSnapshot();
+          } finally {
+            process.kill();
+            await Promise.resolve(page!?.close?.({ runBeforeUnload: false }));
+          }
+        },
+        1000 * 100,
+      );
 
-    test("build", async () => {
-      {
-        const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
+      test("build", async () => {
+        {
+          const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
+            cwd: dir,
+            env: env,
+            stdout: "pipe",
+            stdin: "ignore",
+          });
+          const all = { text: "" };
+          const serverUrl = await getServerUrl(process, all);
+          process.kill();
+        }
+
+        const process = Bun.spawn([bunExe(), "run", "build"], {
           cwd: dir,
           env: env,
           stdout: "pipe",
-          stdin: "ignore",
         });
-        const all = { text: "" };
-        const serverUrl = await getServerUrl(process, all);
-        process.kill();
-      }
 
-      const process = Bun.spawn([bunExe(), "run", "build"], {
-        cwd: dir,
-        env: env,
-        stdout: "pipe",
+        await process.exited;
+        await checkBuildOutput(dir);
       });
-
-      await process.exited;
-      await checkBuildOutput(dir);
-    });
-  });
+    },
+    1000 * 100,
+  );
 });
 
 function normalizeHTMLFn(development: boolean = true) {

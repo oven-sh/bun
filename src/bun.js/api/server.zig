@@ -1293,14 +1293,14 @@ pub const ServerConfig = struct {
             if (global.hasException()) return error.JSError;
 
             if (try arg.get(global, "development")) |dev| {
-                if (dev.isBoolean() or dev.isNumber()) {
-                    args.development = if (dev.coerce(bool, global)) .development else .production;
-                } else if (dev.isObject()) {
+                if (dev.isObject()) {
                     if (try dev.getBooleanStrict(global, "hmr")) |hmr| {
                         args.development = if (!hmr) .development_without_hmr else .development;
                     } else {
                         args.development = .development;
                     }
+                } else {
+                    args.development = if (dev.toBoolean()) .development else .production;
                 }
                 args.reuse_port = args.development == .production;
             }

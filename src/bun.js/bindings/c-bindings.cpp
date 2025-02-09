@@ -880,3 +880,22 @@ extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = "C:\\Windows\\System32;C:\\W
 #else
 extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = "/usr/bin:/bin";
 #endif
+
+#if OS(DARWIN)
+
+#define BLOB_HEADER_ALIGNMENT 16 * 1024
+
+extern "C" {
+struct BlobHeader {
+    uint32_t size;
+    uint8_t data[];
+} __attribute__((aligned(BLOB_HEADER_ALIGNMENT)));
+}
+
+extern "C" BlobHeader __attribute__((section("__BUN,__bun"))) BUN_COMPILED = { 0, 0 };
+
+extern "C" uint32_t* Bun__getStandaloneModuleGraphMachoLength()
+{
+    return &BUN_COMPILED.size;
+}
+#endif

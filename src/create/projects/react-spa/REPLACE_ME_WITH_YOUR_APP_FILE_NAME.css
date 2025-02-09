@@ -23,13 +23,3 @@ code,
 pre {
   font-family: var(--mono-font-family);
 }
-
-/** Poor man's dark mode */
-@media (prefers-color-scheme: dark) {
-  html,
-  img,
-  video,
-  iframe {
-    filter: invert(1);
-  }
-}

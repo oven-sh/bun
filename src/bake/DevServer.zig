@@ -12,9 +12,6 @@ pub const debug = bun.Output.Scoped(.DevServer, false);
 pub const memoryLog = bun.Output.Scoped(.DevServerMemory, true);
 pub const igLog = bun.Output.scoped(.IncrementalGraph, false);
 
-/// --no-hmr sets this to false
-pub var enabled = true;
-
 pub const Options = struct {
     /// Arena must live until DevServer.deinit()
     arena: Allocator,

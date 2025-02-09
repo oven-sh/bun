@@ -260,7 +260,7 @@ pub const ServerConfig = struct {
     ssl_config: ?SSLConfig = null,
     sni: ?bun.BabyList(SSLConfig) = null,
     max_request_body_size: usize = 1024 * 1024 * 128,
-    development: bool = false,
+    development: DevelopmentOption = .development,
 
     onError: JSC.JSValue = JSC.JSValue.zero,
     onRequest: JSC.JSValue = JSC.JSValue.zero,
@@ -276,6 +276,20 @@ pub const ServerConfig = struct {
     static_routes: std.ArrayList(StaticRouteEntry) = std.ArrayList(StaticRouteEntry).init(bun.default_allocator),
 
     bake: ?bun.bake.UserOptions = null,
+
+    pub const DevelopmentOption = enum {
+        development,
+        production,
+        development_without_hmr,
+
+        pub fn isDevelopment(this: DevelopmentOption) bool {
+            return this == .development or this == .development_without_hmr;
+        }
+    };
+
+    pub fn isDevelopment(this: *const ServerConfig) bool {
+        return this.development.isDevelopment();
+    }
 
     pub fn memoryCost(this: *const ServerConfig) usize {
         // ignore @sizeOf(ServerConfig), assume already included.
@@ -1065,7 +1079,7 @@ pub const ServerConfig = struct {
                     .hostname = null,
                 },
             },
-            .development = true,
+            .development = .production,
 
             // If this is a node:cluster child, let's default to SO_REUSEPORT.
             // That way you don't have to remember to set reusePort: true in Bun.serve() when using node:cluster.
@@ -1074,11 +1088,11 @@ pub const ServerConfig = struct {
         var has_hostname = false;
 
         if (strings.eqlComptime(env.get("NODE_ENV") orelse "", "production")) {
-            args.development = false;
+            args.development = .production;
         }
 
         if (arguments.vm.transpiler.options.production) {
-            args.development = false;
+            args.development = .production;
         }
 
         args.address.tcp.port = brk: {
@@ -1162,7 +1176,7 @@ pub const ServerConfig = struct {
 
                 // When HTML bundles are provided, ensure DevServer options are ready
                 // The presence of these options causes Bun.serve to initialize things.
-                if (bun.bake.DevServer.enabled and dedupe_html_bundle_map.count() > 0) {
+                if (args.development == .development and dedupe_html_bundle_map.count() > 0) {
                     // TODO: this should be the dir with bunfig??
                     const root = bun.fs.FileSystem.instance.top_level_dir;
                     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
@@ -1279,8 +1293,16 @@ pub const ServerConfig = struct {
             if (global.hasException()) return error.JSError;
 
             if (try arg.get(global, "development")) |dev| {
-                args.development = dev.coerce(bool, global);
-                args.reuse_port = !args.development;
+                if (dev.isBoolean() or dev.isNumber()) {
+                    args.development = if (dev.coerce(bool, global)) .development else .production;
+                } else if (dev.isObject()) {
+                    if (try dev.getBooleanStrict(global, "hmr")) |hmr| {
+                        args.development = if (!hmr) .development_without_hmr else .development;
+                    } else {
+                        args.development = .development;
+                    }
+                }
+                args.reuse_port = args.development == .production;
             }
             if (global.hasException()) return error.JSError;
 
@@ -1295,7 +1317,7 @@ pub const ServerConfig = struct {
                 if (!allow_bake_config) {
                     return global.throwInvalidArguments("To use the \"app\" option, change from calling \"Bun.serve({ app })\" to \"export default { app: ... }\"", .{});
                 }
-                if (!args.development) {
+                if (args.development == .production) {
                     return global.throwInvalidArguments("TODO: 'development: false' in serve options with 'app'. For now, use `bun build --app` or set 'development: true'", .{});
                 }
 
@@ -1315,7 +1337,7 @@ pub const ServerConfig = struct {
             if (try arg.get(global, "inspector")) |inspector| {
                 args.inspector = inspector.coerce(bool, global);
 
-                if (args.inspector and !args.development) {
+                if (args.inspector and args.development == .production) {
                     return global.throwInvalidArguments("Cannot enable inspector in production. Please set development: true in Bun.serve()", .{});
                 }
             }

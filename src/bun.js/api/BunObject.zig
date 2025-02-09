@@ -3104,7 +3104,7 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
 
     switch (config.ssl_config != null) {
         inline else => |has_ssl_config| {
-            switch (config.development) {
+            switch (config.isDevelopment()) {
                 inline else => |development| {
                     const ServerType = comptime switch (development) {
                         true => switch (has_ssl_config) {

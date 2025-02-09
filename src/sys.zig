@@ -3163,7 +3163,10 @@ pub fn directoryExistsAt(dir: anytype, subpath: anytype) JSC.Maybe(bool) {
     const dir_fd = bun.toFD(dir);
     return switch (existsAtType(dir_fd, subpath)) {
         //
-        .err => |err| .{ .err = err },
+        .err => |err| if (err.getErrno() == .NOENT)
+            .{ .result = false }
+        else
+            .{ .err = err },
         .result => |result| .{ .result = result == .directory },
     };
 }

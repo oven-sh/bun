@@ -503,7 +503,7 @@ pub const MachoFile = struct {
 
             // Ensure space for signature
             try self.data.resize(aligned_sig_off + total_sig_size);
-            self.data.items.len = aligned_sig_off;
+            self.data.items.len = self.sig_off;
             @memset(self.data.unusedCapacitySlice(), 0);
 
             // Position writer at signature offset
@@ -516,7 +516,7 @@ pub const MachoFile = struct {
             try sig_writer.writeAll(id);
 
             // Hash and write pages
-            var remaining = self.data.items[0..aligned_sig_off];
+            var remaining = self.data.items[0..self.sig_off];
             while (remaining.len >= PAGE_SIZE) {
                 const page = remaining[0..PAGE_SIZE];
                 var digest: bun.sha.SHA256.Digest = undefined;

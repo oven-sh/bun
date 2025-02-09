@@ -1,14 +1,30 @@
 import "bun";
-import { expect, test, describe, beforeEach } from "bun:test";
+import { expect, test, describe, beforeEach, afterAll } from "bun:test";
 import { tempDirWithFiles as tempDir, bunExe, bunEnv } from "harness";
 import { cp, readdir } from "fs/promises";
 import path from "path";
-import puppeteer from "puppeteer";
+import puppeteer, { type Browser } from "puppeteer";
 import type { Subprocess } from "bun";
 import * as vm from "vm";
 const env = {
   ...bunEnv,
 };
+
+let puppeteerBrowser: Browser | null = null;
+async function getPuppeteerBrowser() {
+  if (!puppeteerBrowser) {
+    puppeteerBrowser = await puppeteer.launch({
+      headless: true,
+    });
+  }
+  return puppeteerBrowser;
+}
+
+afterAll(async () => {
+  if (puppeteerBrowser) {
+    await puppeteerBrowser.close();
+  }
+});
 
 async function getServerUrl(process: Subprocess<any, "pipe", any>, all = { text: "" }) {
   // Read the port number from stdout
@@ -67,8 +83,10 @@ describe.each(["true", "false"])("development: %s", developmentString => {
   const normalizeHTML = normalizeHTMLFn(development);
   const env = {
     ...bunEnv,
+    NODE_PORT: "0",
     NODE_ENV: development ? undefined : "production",
   };
+
   const devServerLabel = development ? " dev server" : "";
   describe("react spa (no tailwind)", async () => {
     let dir: string;
@@ -93,11 +111,9 @@ describe.each(["true", "false"])("development: %s", developmentString => {
       const all = { text: "" };
       const serverUrl = await getServerUrl(process, all);
 
-      const browser = await puppeteer.launch({
-        headless: true,
-      });
       try {
-        const page = await browser.newPage();
+        const browser = await getPuppeteerBrowser();
+        var page = await browser.newPage();
         await page.goto(serverUrl, { waitUntil: "networkidle0" });
 
         const content = await page.evaluate(() => document.documentElement.innerHTML);
@@ -116,8 +132,8 @@ describe.each(["true", "false"])("development: %s", developmentString => {
             .replaceAll(serverUrl, "http://[SERVER_URL]"),
         ).toMatchSnapshot();
       } finally {
-        await browser.close();
         process.kill();
+        await Promise.resolve(page!?.close?.({ runBeforeUnload: false }));
       }
     });
 
@@ -164,11 +180,8 @@ describe.each(["true", "false"])("development: %s", developmentString => {
       const serverUrl = await getServerUrl(process, all);
       console.log(serverUrl);
 
-      const browser = await puppeteer.launch({
-        headless: true,
-      });
       try {
-        const page = await browser.newPage();
+        var page = await (await getPuppeteerBrowser()).newPage();
         await page.goto(serverUrl, { waitUntil: "networkidle0" });
 
         // Check that React root exists and has Tailwind classes
@@ -190,8 +203,8 @@ describe.each(["true", "false"])("development: %s", developmentString => {
             .replaceAll(serverUrl, "http://[SERVER_URL]"),
         ).toMatchSnapshot();
       } finally {
-        await browser.close();
         process.kill();
+        await Promise.resolve(page!?.close?.({ runBeforeUnload: false }));
       }
     });
 
@@ -237,12 +250,9 @@ describe.each(["true", "false"])("development: %s", developmentString => {
       const all = { text: "" };
       const serverUrl = await getServerUrl(process, all);
       console.log(serverUrl);
-
-      const browser = await puppeteer.launch({
-        headless: true,
-      });
+      console.log(dir);
       try {
-        const page = await browser.newPage();
+        var page = await (await getPuppeteerBrowser()).newPage();
         await page.goto(serverUrl, { waitUntil: "networkidle0" });
 
         // Check that React root exists and has Shadcn components
@@ -271,8 +281,8 @@ describe.each(["true", "false"])("development: %s", developmentString => {
             .replaceAll(serverUrl, "http://[SERVER_URL]"),
         ).toMatchSnapshot();
       } finally {
-        await browser.close();
         process.kill();
+        await Promise.resolve(page!?.close?.({ runBeforeUnload: false }));
       }
     });
 

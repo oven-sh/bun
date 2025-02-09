@@ -3196,7 +3196,6 @@ fn NewPrinter(
                                         item.key.?.data = .{ .e_number = .{ .value = num } };
                                         item.flags.setPresent(.is_computed, false);
                                     }
-                                   
                                 },
                             }
                         }

@@ -1,14 +1,12 @@
 import { createRoot } from "react-dom/client";
-import * as App from "./REPLACE_ME_WITH_YOUR_APP_BASE_NAME";
-import React from "react";
-
-const Component = App.default || App["REPLACE_ME_WITH_YOUR_APP_BASE_NAME"];
+import { REPLACE_ME_WITH_YOUR_REACT_COMPONENT_EXPORT as Component } from "./REPLACE_ME_WITH_YOUR_APP_BASE_NAME";
+import { StrictMode } from "react";
 
 function mount(root: HTMLElement) {
   createRoot(root).render(
-    <React.StrictMode>
+    <StrictMode>
       <Component />
-    </React.StrictMode>,
+    </StrictMode>,
   );
 }
 

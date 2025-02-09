@@ -1,5 +1,23 @@
 // Generate project files based on the entry point and dependencies
 pub fn generate(_: Command.Context, _: Example.Tag, entry_point: string, result: *BundleV2.DependenciesScanner.Result) !void {
+    const react_component_export = findReactComponentExport(result.bundle_v2) orelse {
+        Output.errGeneric("No component export found in <b>{s}<r>", .{bun.fmt.quote(entry_point)});
+        Output.flush();
+        const writer = Output.errorWriterBuffered();
+        try writer.writeAll(
+            \\
+            \\Please add an export to your file. For example:
+            \\
+            \\   export default function MyApp() {{
+            \\     return <div>Hello World</div>;
+            \\   }};
+            \\
+        );
+
+        Output.flush();
+        Global.crash();
+    };
+
     // Check if Tailwind is already in dependencies
     const has_tailwind_in_dependencies = result.dependencies.contains("tailwindcss") or result.dependencies.contains("bun-plugin-tailwind");
     var needs_to_inject_tailwind = false;
@@ -61,7 +79,7 @@ pub fn generate(_: Command.Context, _: Example.Tag, entry_point: string, result:
     };
 
     // Generate project files from template
-    try generateFiles(default_allocator, entry_point, result, template);
+    try generateFiles(default_allocator, entry_point, result, template, react_component_export);
 
     Global.exit(0);
 }
@@ -131,8 +149,13 @@ fn replaceAllOccurrencesOfString(allocator: std.mem.Allocator, input: []const u8
 }
 
 // Replace template placeholders with actual values
-fn stringWithReplacements(original_input: []const u8, basename: []const u8, relative_name: []const u8, allocator: std.mem.Allocator) ![]const u8 {
+fn stringWithReplacements(original_input: []const u8, basename: []const u8, relative_name: []const u8, react_component_export: []const u8, allocator: std.mem.Allocator) ![]const u8 {
     var input = original_input;
+
+    if (strings.contains(input, "REPLACE_ME_WITH_YOUR_REACT_COMPONENT_EXPORT")) {
+        input = try replaceAllOccurrencesOfString(allocator, input, "REPLACE_ME_WITH_YOUR_REACT_COMPONENT_EXPORT", react_component_export);
+    }
+
     if (strings.contains(input, "REPLACE_ME_WITH_YOUR_APP_BASE_NAME")) {
         input = try replaceAllOccurrencesOfString(allocator, input, "REPLACE_ME_WITH_YOUR_APP_BASE_NAME", basename);
     }
@@ -145,7 +168,7 @@ fn stringWithReplacements(original_input: []const u8, basename: []const u8, rela
 }
 
 // Generate all project files from template
-fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *BundleV2.DependenciesScanner.Result, template: Template) !void {
+fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *BundleV2.DependenciesScanner.Result, template: Template, react_component_export: []const u8) !void {
     var log = template.logger();
     var basename = std.fs.path.basename(entry_point);
     const extension = std.fs.path.extension(basename);
@@ -177,9 +200,9 @@ fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *Bun
             // Create all template files
             inline for (0..files.len) |index| {
                 const file = &files[index];
-                const file_name = try stringWithReplacements(file.name, basename, normalized_name, allocator);
+                const file_name = try stringWithReplacements(file.name, basename, normalized_name, react_component_export, allocator);
                 if (file.overwrite or !bun.sys.exists(file_name)) {
-                    switch (createFile(file_name, try stringWithReplacements(file.content, basename, normalized_name, default_allocator))) {
+                    switch (createFile(file_name, try stringWithReplacements(file.content, basename, normalized_name, react_component_export, default_allocator))) {
                         .result => |new| {
                             if (new) {
                                 created_files[index] = true;
@@ -466,6 +489,139 @@ fn getShadcnComponents(bundler: *BundleV2, reachable_files: []const js_ast.Index
     return icons;
 }
 
+fn findReactComponentExport(bundler: *BundleV2) ?[]const u8 {
+    const input_files = bundler.graph.input_files.slice();
+    const loaders = input_files.items(.loader);
+    const resolved_exports: []const bun.bundle_v2.ResolvedExports = bundler.linker.graph.meta.items(.resolved_exports);
+    const sources = input_files.items(.source);
+
+    const entry_point_ids = bundler.graph.entry_points.items;
+    for (entry_point_ids) |entry_point_id| {
+        const loader = loaders[entry_point_id.get()];
+        if (loader == .jsx or loader == .tsx) {
+            const source: *const bun.logger.Source = &sources[entry_point_id.get()];
+            const exports = &resolved_exports[entry_point_id.get()];
+
+            // 1. Prioritize the default export
+            if (exports.contains("default")) {
+                return "default";
+            }
+
+            const export_names = exports.keys();
+            if (export_names.len == 1) {
+                // If there's only one export it can only be this.
+                return export_names[0];
+            }
+
+            if (export_names.len == 0) {
+                // If there are no exports, we can't determine the component name.
+                continue;
+            }
+
+            const filename = source.path.name.nonUniqueNameStringBase();
+            if (filename.len == 0) {
+                @branchHint(.unlikely);
+                continue;
+            }
+
+            // 2. Prioritize the export matching the filename with an uppercase first letter
+            // such as export const App = () => { ... }
+            if (filename[0] >= 'A' and filename[0] <= 'Z') {
+                if (bun.js_lexer.isIdentifier(filename)) {
+                    if (exports.contains(filename)) {
+                        return filename;
+                    }
+                }
+            }
+
+            if (filename[0] >= 'a' and filename[0] <= 'z') {
+                const duped = default_allocator.dupe(u8, filename) catch bun.outOfMemory();
+                duped[0] = duped[0] - 32;
+                if (bun.js_lexer.isIdentifier(duped)) {
+                    if (exports.contains(duped)) {
+                        return duped;
+                    }
+                }
+
+                {
+                    // Extremely naive pascal case conversion
+                    // - Does not handle unicode.
+                    var input_index: usize = 0;
+                    var output_index: usize = 0;
+                    var capitalize_next = false;
+                    while (input_index < duped.len) : (input_index += 1) {
+                        if (duped[input_index] == ' ' or duped[input_index] == '-' or duped[input_index] == '_' or (output_index == 0 and !bun.js_lexer.isIdentifierStart(duped[input_index]))) {
+                            capitalize_next = true;
+                            continue;
+                        }
+                        if (output_index == 0 or capitalize_next) {
+                            if (duped[input_index] >= 'a' and duped[input_index] <= 'z') {
+                                duped[output_index] = duped[input_index] - 32;
+                            } else {
+                                duped[output_index] = duped[input_index];
+                            }
+                            capitalize_next = false;
+                            output_index += 1;
+                        } else {
+                            duped[output_index] = duped[input_index];
+                            output_index += 1;
+                        }
+                    }
+
+                    // Try the pascal case version
+                    // - "my-app" -> "MyApp"
+                    // - "my_app" -> "MyApp"
+                    // - "My-App" -> "MyApp"
+                    if (exports.contains(duped[0..output_index])) {
+                        return duped[0..output_index];
+                    }
+
+                    // Okay that didn't work. Try the version that's the current
+                    // filename with the first letter capitalized
+                    // - "my-app" -> "Myapp"
+                    // - "My-App" -> "Myapp"
+                    if (output_index > 1) {
+                        for (duped[1..output_index]) |*c| {
+                            switch (c.*) {
+                                'A'...'Z' => {
+                                    c.* = c.* + 32;
+                                },
+                                else => {},
+                            }
+                        }
+                    }
+
+                    if (exports.contains(duped[0..output_index])) {
+                        return duped[0..output_index];
+                    }
+                }
+
+                default_allocator.free(duped);
+            }
+
+            const name_to_try = MutableString.ensureValidIdentifier(filename, default_allocator) catch return null;
+            if (exports.contains(name_to_try)) {
+                return name_to_try;
+            }
+
+            // Okay we really have no idea now.
+            // Let's just pick one that looks like a react component I guess.
+            for (export_names) |export_name| {
+                if (export_name.len > 0 and export_name[0] >= 'A' and export_name[0] <= 'Z') {
+                    return export_name;
+                }
+            }
+
+            // Okay now we just have to pick one.
+            if (export_names.len > 0) {
+                return export_names[0];
+            }
+        }
+    }
+
+    return null;
+}
+
 const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
@@ -583,7 +739,7 @@ const ReactSpa = struct {
 
         .{
             .name = "package.json",
-            .content = shared_package_json,
+            .content = @embedFile("projects/react-spa/package.json"),
             .reason = .npm,
             .overwrite = false,
         },

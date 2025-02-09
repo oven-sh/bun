@@ -1768,7 +1768,7 @@ pub const BundleV2 = struct {
         log: Logger.Log,
         cancelled: bool = false,
 
-        html_build_task: ?*JSC.API.HTMLBundle.HTMLBundleRoute = null,
+        build_task: BuildTask = .none,
 
         result: Result = .{ .pending = {} },
 
@@ -1779,6 +1779,20 @@ pub const BundleV2 = struct {
         started_at_ns: u64 = 0,
 
         pub usingnamespace bun.NewThreadSafeRefCounted(JSBundleCompletionTask, _deinit, null);
+
+        pub const BuildTask = union(enum) {
+            none: void,
+            html: *JSC.API.HTMLBundle.HTMLBundleRoute,
+            page: *bun.JSC.API.Server.PageBundleRoute,
+
+            pub fn onComplete(this: BuildTask, completion: *JSBundleCompletionTask) void {
+                switch (this) {
+                    .none => unreachable,
+                    .html => |html| html.onComplete(completion),
+                    .page => |page| page.onComplete(completion),
+                }
+            }
+        };
 
         pub fn configureBundler(
             completion: *JSBundleCompletionTask,
@@ -1880,9 +1894,9 @@ pub const BundleV2 = struct {
                 return;
             }
 
-            if (this.html_build_task) |html_build_task| {
+            if (this.build_task != .none) {
                 this.plugins = null;
-                html_build_task.onComplete(this);
+                this.build_task.onComplete(this);
                 return;
             }
 

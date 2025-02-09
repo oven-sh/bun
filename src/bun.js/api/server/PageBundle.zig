@@ -77,7 +77,7 @@ pub const PageBundleRoute = struct {
     pub const State = union(enum) {
         pending,
         building: ?*bun.BundleV2.JSBundleCompletionTask,
-        rendering
+        rendering,
         err: bun.logger.Log,
         html: *StaticRoute,
 
@@ -250,7 +250,7 @@ pub const PageBundleRoute = struct {
             bun.default_allocator,
         );
         completion_task.started_at_ns = bun.getRoughTickCount().ns();
-        completion_task.html_build_task = this;
+        completion_task.build_task = .{ .page = this };
         this.state = .{ .building = completion_task };
 
         // While we're building, ensure this doesn't get freed.
@@ -473,7 +473,7 @@ const JSBundler = JSC.API.JSBundler;
 const HTTPResponse = bun.uws.AnyResponse;
 const uws = bun.uws;
 const AnyServer = JSC.API.AnyServer;
-const StaticRoute = @import("./StaticRoute.zig");
+const StaticRoute = bun.server.StaticRoute;
 
 const debug = bun.Output.scoped(.PageBundle, true);
 const strings = bun.strings;

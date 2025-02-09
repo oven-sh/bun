@@ -1,5 +1,5 @@
 import "bun";
-import { expect, test, describe } from "bun:test";
+import { expect, test, describe, beforeEach } from "bun:test";
 import { tempDirWithFiles as tempDir, bunExe, bunEnv } from "harness";
 import { cp, readdir } from "fs/promises";
 import path from "path";
@@ -71,13 +71,16 @@ describe.each(["true", "false"])("development: %s", developmentString => {
   };
   const devServerLabel = development ? " dev server" : "";
   describe("react spa (no tailwind)", async () => {
-    const dir = tempDirWithFiles("react-spa-no-tailwind", {
-      "README.md": "Hello, world!",
-    });
+    let dir: string;
+    beforeEach(async () => {
+      dir = tempDirWithFiles("react-spa-no-tailwind", {
+        "README.md": "Hello, world!",
+      });
 
-    await cp(path.join(__dirname, "react-spa-no-tailwind"), dir, {
-      recursive: true,
-      force: true,
+      await cp(path.join(__dirname, "react-spa-no-tailwind"), dir, {
+        recursive: true,
+        force: true,
+      });
     });
 
     test("dev server", async () => {
@@ -89,7 +92,6 @@ describe.each(["true", "false"])("development: %s", developmentString => {
       });
       const all = { text: "" };
       const serverUrl = await getServerUrl(process, all);
-      console.log(serverUrl);
 
       const browser = await puppeteer.launch({
         headless: true,
@@ -110,30 +112,9 @@ describe.each(["true", "false"])("development: %s", developmentString => {
             .replace(/\d+\.\d+\s*ms/g, "*.** ms")
             .replace(/^\s+/gm, "") // Remove leading spaces
             .replace(/installed react(-dom)?@\d+\.\d+\.\d+/g, "installed react$1@*.*.*") // Handle react versions
-            .trim(),
-        ).toMatchInlineSnapshot(`
-"create  index.build.ts     build
-create  index.css          css
-create  index.html         html
-create  index.client.tsx   bun
-create  package.json       npm
-📦 Auto-installing 3 detected dependencies
-$ bun --only-missing install classnames react-dom@19 react@19
-bun add v*.*.*
-installed classnames@*.*.*
-installed react-dom@*.*.*
-installed react@*.*.*
-4 packages installed [*ms]
---------------------------------
-✨ React project configured
-Development - frontend dev server with hot reload
-bun dev
-Production - build optimized assets
-bun run build
-Happy bunning! 🐇
-Bun v*.*.*${devServerLabel} ready in *.** ms
-url: ${serverUrl}/"
-`);
+            .trim()
+            .replaceAll(serverUrl, "http://[SERVER_URL]"),
+        ).toMatchSnapshot();
       } finally {
         await browser.close();
         process.kill();
@@ -141,6 +122,18 @@ url: ${serverUrl}/"
     });
 
     test("build", async () => {
+      {
+        const process = Bun.spawn([bunExe(), "create", "./index.jsx"], {
+          cwd: dir,
+          env: env,
+          stdout: "pipe",
+          stdin: "ignore",
+        });
+        const all = { text: "" };
+        const serverUrl = await getServerUrl(process, all);
+        process.kill();
+      }
+
       const process = Bun.spawn([bunExe(), "run", "build"], {
         cwd: dir,
         env: env,
@@ -153,8 +146,11 @@ url: ${serverUrl}/"
   });
 
   describe("react spa (tailwind)", async () => {
-    const dir = tempDirWithFiles("react-spa-tailwind", {
-      "index.tsx": await Bun.file(path.join(__dirname, "tailwind.tsx")).text(),
+    let dir: string;
+    beforeEach(async () => {
+      dir = tempDirWithFiles("react-spa-tailwind", {
+        "index.tsx": await Bun.file(path.join(__dirname, "tailwind.tsx")).text(),
+      });
     });
 
     test("dev server", async () => {
@@ -190,32 +186,9 @@ url: ${serverUrl}/"
             .replace(/\d+\.\d+\s*ms/g, "*.** ms")
             .replace(/^\s+/gm, "")
             .replace(/installed (react(-dom)?|tailwindcss)@\d+\.\d+\.\d+/g, "installed $1@*.*.*")
-            .trim(),
-        ).toMatchInlineSnapshot(`
-        "create  index.build.ts     build
-        create  index.css          css
-        create  index.html         html
-        create  index.client.tsx   bun
-        create  bunfig.toml        bun
-        create  package.json       npm
-        📦 Auto-installing 4 detected dependencies
-        $ bun --only-missing install tailwindcss bun-plugin-tailwind react-dom@19 react@19
-        bun add v*.*.*
-        installed tailwindcss@*.*.*
-        installed bun-plugin-tailwind@*.*.*
-        installed react-dom@*.*.*
-        installed react@*.*.*
-        7 packages installed [*ms]
-        --------------------------------
-        ✨ React + Tailwind project configured
-        Development - frontend dev server with hot reload
-        bun dev
-        Production - build optimized assets
-        bun run build
-        Happy bunning! 🐇
-        Bun v*.*.*${devServerLabel} ready in *.** ms
-        url: ${serverUrl}/"
-      `);
+            .trim()
+            .replaceAll(serverUrl, "http://[SERVER_URL]"),
+        ).toMatchSnapshot();
       } finally {
         await browser.close();
         process.kill();
@@ -223,6 +196,18 @@ url: ${serverUrl}/"
     });
 
     test("build", async () => {
+      {
+        const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
+          cwd: dir,
+          env: env,
+          stdout: "pipe",
+          stdin: "ignore",
+        });
+        const all = { text: "" };
+        const serverUrl = await getServerUrl(process, all);
+        process.kill();
+      }
+
       const process = Bun.spawn([bunExe(), "run", "build"], {
         cwd: dir,
         env: env,
@@ -234,9 +219,12 @@ url: ${serverUrl}/"
     });
   });
 
-  test("shadcn/ui", async () => {
-    const dir = tempDirWithFiles("shadcn-ui", {
-      "index.tsx": await Bun.file(path.join(__dirname, "shadcn.tsx")).text(),
+  describe("shadcn/ui", async () => {
+    let dir: string;
+    beforeEach(async () => {
+      dir = tempDirWithFiles("shadcn-ui", {
+        "index.tsx": await Bun.file(path.join(__dirname, "shadcn.tsx")).text(),
+      });
     });
 
     test("dev server", async () => {
@@ -279,8 +267,9 @@ url: ${serverUrl}/"
               /installed (react(-dom)?|@radix-ui\/.*|tailwindcss|class-variance-authority|clsx|lucide-react|tailwind-merge)@\d+\.\d+\.\d+/g,
               "installed $1@*.*.*",
             )
-            .trim(),
-        ).toMatchInlineSnapshot();
+            .trim()
+            .replaceAll(serverUrl, "http://[SERVER_URL]"),
+        ).toMatchSnapshot();
       } finally {
         await browser.close();
         process.kill();
@@ -288,6 +277,18 @@ url: ${serverUrl}/"
     });
 
     test("build", async () => {
+      {
+        const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
+          cwd: dir,
+          env: env,
+          stdout: "pipe",
+          stdin: "ignore",
+        });
+        const all = { text: "" };
+        const serverUrl = await getServerUrl(process, all);
+        process.kill();
+      }
+
       const process = Bun.spawn([bunExe(), "run", "build"], {
         cwd: dir,
         env: env,

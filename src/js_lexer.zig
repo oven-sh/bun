@@ -797,29 +797,34 @@ fn NewLexer_(
             }
         }
 
-        inline fn nextCodepointSlice(it: *LexerType) []const u8 {
-            if (it.current >= it.source.contents.len) {
+        fn nextCodepointSlice(it: *const LexerType) []const u8 {
+            const contents = it.source.contents;
+            const current = it.current;
+            if (current >= contents.len) {
                 return "";
             }
-            const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(it.source.contents.ptr[it.current]);
-            return if (!(cp_len + it.current > it.source.contents.len)) it.source.contents[it.current .. cp_len + it.current] else "";
+            const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(contents[current]);
+            return if (!(cp_len + current > contents.len)) contents[current .. cp_len + current] else "";
         }
 
-        inline fn nextCodepoint(it: *LexerType) CodePoint {
-            if (it.current >= it.source.contents.len) {
-                it.end = it.source.contents.len;
+        fn nextCodepoint(it: *LexerType) CodePoint {
+            const contents = it.source.contents;
+            const current = it.current;
+
+            if (current >= contents.len) {
+                it.end = contents.len;
                 return -1;
             }
-            const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(it.source.contents.ptr[it.current]);
-            const slice = if (!(cp_len + it.current > it.source.contents.len)) it.source.contents[it.current .. cp_len + it.current] else "";
+            const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(contents[current]);
+            const slice = if (!(cp_len + current > contents.len)) contents[current .. cp_len + current] else "";
 
             const code_point = switch (slice.len) {
                 0 => -1,
                 1 => @as(CodePoint, slice[0]),
-                else => strings.decodeWTF8RuneTMultibyte(slice.ptr[0..4], @as(u3, @intCast(slice.len)), CodePoint, strings.unicode_replacement),
+                else => strings.decodeWTF8RuneTMultibyte(slice.ptr[0..4], slice.len, CodePoint, strings.unicode_replacement),
             };
 
-            it.end = it.current;
+            it.end = current;
 
             it.current += if (code_point != strings.unicode_replacement)
                 cp_len

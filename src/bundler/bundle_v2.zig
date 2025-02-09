@@ -4073,15 +4073,20 @@ pub const ParseTask = struct {
             .css => {
                 var import_records = BabyList(ImportRecord){};
                 const source_code = source.contents;
+                var temp_log = bun.logger.Log.init(allocator);
+                defer {
+                    temp_log.appendToMaybeRecycled(log, &source) catch bun.outOfMemory();
+                }
+
                 var css_ast = switch (bun.css.BundlerStyleSheet.parseBundler(
                     allocator,
                     source_code,
-                    bun.css.ParserOptions.default(allocator, transpiler.log),
+                    bun.css.ParserOptions.default(allocator, &temp_log),
                     &import_records,
                 )) {
                     .result => |v| v,
                     .err => |e| {
-                        try e.addToLogger(log, &source);
+                        try e.addToLogger(&temp_log, &source, allocator);
                         return error.SyntaxError;
                     },
                 };
@@ -4089,12 +4094,12 @@ pub const ParseTask = struct {
                     .targets = bun.css.Targets.forBundlerTarget(transpiler.options.target),
                     .unused_symbols = .{},
                 }).asErr()) |e| {
-                    try e.addToLogger(log, &source);
+                    try e.addToLogger(&temp_log, &source, allocator);
                     return error.MinifyError;
                 }
                 const root = Expr.init(E.Object, E.Object{}, Logger.Loc{ .start = 0 });
                 const css_ast_heap = bun.create(allocator, bun.css.BundlerStyleSheet, css_ast);
-                var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
+                var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, &source, "")).?);
                 ast.css = css_ast_heap;
                 ast.import_records = import_records;
                 return ast;

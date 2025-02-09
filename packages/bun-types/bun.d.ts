@@ -3702,7 +3702,17 @@ declare module "bun" {
      * Render contextual errors? This enables bun's error page
      * @default process.env.NODE_ENV !== 'production'
      */
-    development?: boolean;
+    development?:
+      | boolean
+      | {
+          /**
+           * Enable Hot Module Replacement for routes (including React Fast Refresh, if React is in use)
+           *
+           * @default true if process.env.NODE_ENV !== 'production'
+           *
+           */
+          hmr?: boolean;
+        };
 
     error?: (this: Server, error: ErrorLike) => Response | Promise<Response> | undefined | Promise<undefined>;
 

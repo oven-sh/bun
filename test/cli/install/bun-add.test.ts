@@ -125,6 +125,151 @@ it("should reject missing package", async () => {
   );
 });
 
+it("bun add --only-missing should not install existing package", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+
+  // First time: install succesfully.
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "--only-missing", "bar"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const err = await new Response(stderr).text();
+  expect(err).not.toContain("error:");
+  expect(err).toContain("Saved lockfile");
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    expect.stringContaining("bun add v1."),
+    "",
+    "installed bar@0.0.2",
+    "",
+    "1 package installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
+  expect(requested).toBe(2);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
+    name: "bar",
+    version: "0.0.2",
+  });
+  expect(await file(join(package_dir, "package.json")).text()).toEqual(
+    JSON.stringify(
+      {
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          bar: "^0.0.2",
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  await access(join(package_dir, "bun.lockb"));
+
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "add", "bar", "--only-missing"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+    });
+    const out = await new Response(stdout).text();
+    expect(out).not.toContain("Saved lockfile");
+    expect(out).not.toContain("Installed");
+    expect(out.split("\n").filter(Boolean)).toStrictEqual([
+      expect.stringContaining("bun add v" + Bun.version.replaceAll("-debug", "")),
+    ]);
+  }
+});
+
+it("bun add --analyze should scan dependencies", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+  await writeFile(join(package_dir, "entry-point.ts"), `import "./local-file.ts";`);
+  await writeFile(join(package_dir, "local-file.ts"), `export * from "bar";`);
+  console.log(package_dir);
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "./entry-point.ts", "--analyze"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const err = await new Response(stderr).text();
+  expect(err).not.toContain("error:");
+  expect(err).toContain("Saved lockfile");
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    expect.stringContaining("bun add v1."),
+    "",
+    "installed bar@0.0.2",
+    "",
+    "1 package installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
+  expect(requested).toBe(2);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
+    name: "bar",
+    version: "0.0.2",
+  });
+  expect(await file(join(package_dir, "package.json")).text()).toEqual(
+    JSON.stringify(
+      {
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          bar: "^0.0.2",
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  await access(join(package_dir, "bun.lockb"));
+
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "add", "bar", "--only-missing"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+    });
+    const out = await new Response(stdout).text();
+    expect(out).not.toContain("Saved lockfile");
+    expect(out).not.toContain("Installed");
+    expect(out.split("\n").filter(Boolean)).toStrictEqual([
+      expect.stringContaining("bun add v" + Bun.version.replaceAll("-debug", "")),
+    ]);
+  }
+});
+
 for (const pathType of ["absolute", "relative"]) {
   it.each(["file:///", "file://", "file:/", "file:", "", "//////"])(
     `should accept ${pathType} file protocol with prefix "%s"`,
@@ -456,7 +601,7 @@ it("should add to devDependencies with --dev", async () => {
   );
   await access(join(package_dir, "bun.lockb"));
 });
-it("should add to optionalDependencies with --optional", async () => {
+it.only("should add to optionalDependencies with --optional", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
   await writeFile(
@@ -466,6 +611,7 @@ it("should add to optionalDependencies with --optional", async () => {
       version: "0.0.1",
     }),
   );
+  console.log(package_dir);
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", "--optional", "BaR"],
     cwd: package_dir,

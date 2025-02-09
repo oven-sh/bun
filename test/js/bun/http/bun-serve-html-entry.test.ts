@@ -1,7 +1,6 @@
-import type { Subprocess, Server } from "bun";
-import { describe, test, expect } from "bun:test";
+import type { Subprocess } from "bun";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
-import { join } from "path";
 
 async function getServerUrl(process: Subprocess) {
   // Read the port number from stdout

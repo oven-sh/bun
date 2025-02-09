@@ -1079,7 +1079,7 @@ pub const ServerConfig = struct {
                     .hostname = null,
                 },
             },
-            .development = .production,
+            .development = .development,
 
             // If this is a node:cluster child, let's default to SO_REUSEPORT.
             // That way you don't have to remember to set reusePort: true in Bun.serve() when using node:cluster.

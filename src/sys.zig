@@ -4507,3 +4507,12 @@ pub const coreutils_error_map = brk: {
 
     break :brk map;
 };
+
+extern fn getRSS(rss: *usize) c_int;
+pub fn selfProcessMemoryUsage() ?usize {
+    var rss: usize = undefined;
+    if (getRSS(&rss) != 0) {
+        return null;
+    }
+    return rss;
+}

@@ -58,17 +58,18 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
     auto& vm = JSC::getVM(global);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    ASSERT(referrer.isString());
-    WTF::String refererString = jsCast<JSC::JSString*>(referrer)->getString(global);
+    if (auto string = jsDynamicCast<JSC::JSString*>(referrer)) {
+        WTF::String refererString = string->getString(global);
 
-    WTF::String keyString = key.toWTFString(global);
-    RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
-
-    if (refererString.startsWith("bake:/"_s) || (refererString == "."_s && keyString.startsWith("bake:/"_s))) {
-        BunString result = BakeProdResolve(global, Bun::toString(referrer.getString(global)), Bun::toString(keyString));
+        WTF::String keyString = key.toWTFString(global);
         RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
 
-        return JSC::Identifier::fromString(vm, result.toWTFString(BunString::ZeroCopy));
+        if (refererString.startsWith("bake:/"_s) || (refererString == "."_s && keyString.startsWith("bake:/"_s))) {
+            BunString result = BakeProdResolve(global, Bun::toString(referrer.getString(global)), Bun::toString(keyString));
+            RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
+
+            return JSC::Identifier::fromString(vm, result.toWTFString(BunString::ZeroCopy));
+        }
     }
 
     // Use Zig::GlobalObject's function

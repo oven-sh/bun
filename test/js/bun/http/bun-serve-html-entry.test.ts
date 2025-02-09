@@ -94,7 +94,7 @@ test("bun ./index.html", async () => {
     cmd: [bunExe(), "index.html", "--port=0"],
     env: {
       ...bunEnv,
-      NODE_ENV: undefined,
+      NODE_ENV: "production",
     },
     cwd: dir,
     stdout: "pipe",
@@ -126,7 +126,7 @@ test("bun ./index.html", async () => {
       expect(cssResponse.headers.get("content-type")).toContain("text/css");
       const css = await cssResponse.text();
       expect(css).toContain(".container");
-      expect(css).toContain("max-width: 800px");
+      expect(css).toContain("max-width:800px");
     }
 
     // Get and verify the bundled JS
@@ -212,7 +212,7 @@ test("bun ./index.html ./about.html", async () => {
     cmd: [bunExe(), "index.html", "about.html", "--port=0"],
     env: {
       ...bunEnv,
-      NODE_ENV: undefined,
+      NODE_ENV: "production",
     },
     cwd: dir,
     stdout: "pipe",
@@ -257,7 +257,7 @@ test("bun ./index.html ./about.html", async () => {
       expect(cssResponse.status).toBe(200);
       const css = await cssResponse.text();
       expect(css).toContain(".container");
-      expect(css).toContain("max-width: 800px");
+      expect(css).toContain("max-width:800px");
     }
 
     // Verify both JS bundles work
@@ -407,7 +407,7 @@ test("bun *.html", async () => {
     cmd: [bunExe(), "*.html", "--port=0"],
     env: {
       ...bunEnv,
-      NODE_ENV: undefined,
+      NODE_ENV: "production",
     },
     cwd: dir,
     stdout: "pipe",
@@ -449,9 +449,9 @@ test("bun *.html", async () => {
     const cssResponse = await fetch(new URL(cssMatches[0]!, serverUrl).href);
     expect(cssResponse.status).toBe(200);
     const css = await cssResponse.text();
-    expect(css).toContain("nav {");
-    expect(css).toContain(".container {");
-    expect(css).toContain("form {");
+    expect(css).toContain("nav{");
+    expect(css).toContain(".container{");
+    expect(css).toContain("form{");
 
     // Verify each page has its own JS functionality
     const jsMatches = responses.map(html => html.match(/src="(\/chunk-[a-z0-9]+\.js)"/)?.[1]!);

@@ -3267,6 +3267,7 @@ pub const ExistsAtType = enum {
 pub fn existsAtType(fd: bun.FileDescriptor, path: anytype) Maybe(ExistsAtType) {
     if (comptime Environment.isWindows) {
         if (std.meta.Elem(@TypeOf(path)) == u8) {
+            // Convert to NT path
             const wbuf = bun.WPathBufferPool.get();
             defer bun.WPathBufferPool.put(wbuf);
             return existsAtType(fd, bun.strings.toNTPath(wbuf, path));
@@ -3308,12 +3309,12 @@ pub fn existsAtType(fd: bun.FileDescriptor, path: anytype) Maybe(ExistsAtType) {
             basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_DIRECTORY != 0 and
             basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_READONLY == 0;
 
-        return if (is_regular_file) {
-            syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = file", .{bun.fmt.fmtOSPath(path, .{})});
-            return .{ .result = .file };
-        } else if (is_dir) {
+        return if (is_dir) {
             syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = directory", .{bun.fmt.fmtOSPath(path, .{})});
             return .{ .result = .directory };
+        } else if (is_regular_file) {
+            syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = file", .{bun.fmt.fmtOSPath(path, .{})});
+            return .{ .result = .file };
         } else {
             syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = {d}", .{ bun.fmt.fmtOSPath(path, .{}), basic_info.FileAttributes });
             return .{ .err = bun.sys.Error.fromCode(.UNKNOWN, .access) };

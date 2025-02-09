@@ -682,10 +682,18 @@ describe("'bun run' priority", async () => {
       },
       main: "main.js",
     }),
+    "nx.json": JSON.stringify({}),
     "§'.js": 'console.log("§\'.js")',
-    "node_modules": { ".bin": { "confabulate": `#!${bunExe()}\nconsole.log("node_modules/.bin/confabulate")` } },
+    "node_modules": {
+      ".bin": {
+        "confabulate": `#!${bunExe()}\nconsole.log("node_modules/.bin/confabulate")`,
+        "nx": `#!${bunExe()}\nconsole.log("node_modules/.bin/nx")`,
+      },
+    },
+    "no_run_json.json": JSON.stringify({}),
   });
   chmodSync(dir + "/node_modules/.bin/confabulate", 0o755);
+  chmodSync(dir + "/node_modules/.bin/nx", 0o755);
 
   const commands: {
     command: string[];
@@ -766,6 +774,25 @@ describe("'bun run' priority", async () => {
     { command: [dir + "/.secretscript"], stdout: ".secretscript.js", stderr: "" },
 
     {
+      command: ["no_run_json"],
+      stdout: "",
+      stderr: /error: Script not found "no_run_json"|EACCES/,
+      exitCode: 1,
+    },
+    {
+      command: ["no_run_json.json"],
+      stdout: "",
+      stderr: /error: Module not found "no_run_json\.json"|EACCES/,
+      exitCode: 1,
+    },
+    {
+      command: ["./no_run_json"],
+      stdout: "",
+      stderr: /error: Module not found "\.(\/|\\|\\\\)no_run_json"|EACCES/,
+      exitCode: 1,
+    },
+
+    {
       command: ["/absolute"],
       stdout: "",
       stderr: /error: Module not found "(\/|\\|\\\\)absolute"|EACCES/,
@@ -786,6 +813,7 @@ describe("'bun run' priority", async () => {
       : [
           // node_modules command
           { command: ["confabulate"], stdout: "node_modules/.bin/confabulate", stderr: "" },
+          { command: ["nx"], stdout: "node_modules/.bin/nx", stderr: "" },
 
           // system command
           { command: ["echo", "abc"], stdout: "abc", stderr: "", req_run: true },

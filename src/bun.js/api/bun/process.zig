@@ -11,12 +11,12 @@ const Maybe = JSC.Maybe;
 
 const win_rusage = struct {
     utime: struct {
-        tv_sec: i64 = 0,
-        tv_usec: i64 = 0,
+        sec: i64 = 0,
+        usec: i64 = 0,
     },
     stime: struct {
-        tv_sec: i64 = 0,
-        tv_usec: i64 = 0,
+        sec: i64 = 0,
+        usec: i64 = 0,
     },
     maxrss: u64 = 0,
     ixrss: u0 = 0,
@@ -54,16 +54,16 @@ pub fn uv_getrusage(process: *uv.uv_process_t) win_rusage {
     var kerneltime: WinTime = undefined;
     var usertime: WinTime = undefined;
     // We at least get process times
-    if (std.os.windows.kernel32.GetProcessTimes(process_pid, &starttime, &exittime, &kerneltime, &usertime) == 1) {
+    if (bun.windows.GetProcessTimes(process_pid, &starttime, &exittime, &kerneltime, &usertime) == 1) {
         var temp: u64 = (@as(u64, kerneltime.dwHighDateTime) << 32) | kerneltime.dwLowDateTime;
         if (temp > 0) {
-            usage_info.stime.tv_sec = @intCast(temp / 10000000);
-            usage_info.stime.tv_usec = @intCast(temp % 1000000);
+            usage_info.stime.sec = @intCast(temp / 10000000);
+            usage_info.stime.usec = @intCast(temp % 1000000);
         }
         temp = (@as(u64, usertime.dwHighDateTime) << 32) | usertime.dwLowDateTime;
         if (temp > 0) {
-            usage_info.utime.tv_sec = @intCast(temp / 10000000);
-            usage_info.utime.tv_usec = @intCast(temp % 1000000);
+            usage_info.utime.sec = @intCast(temp / 10000000);
+            usage_info.utime.usec = @intCast(temp % 1000000);
         }
     }
     var counters: IO_COUNTERS = .{};
@@ -110,23 +110,23 @@ pub const ProcessExitHandler = struct {
         }
 
         switch (this.ptr.tag()) {
-            .Subprocess => {
+            @field(TaggedPointer.Tag, @typeName(Subprocess)) => {
                 const subprocess = this.ptr.as(Subprocess);
                 subprocess.onProcessExit(process, status, rusage);
             },
-            .LifecycleScriptSubprocess => {
+            @field(TaggedPointer.Tag, @typeName(LifecycleScriptSubprocess)) => {
                 const subprocess = this.ptr.as(LifecycleScriptSubprocess);
                 subprocess.onProcessExit(process, status, rusage);
             },
-            .ProcessHandle => {
+            @field(TaggedPointer.Tag, @typeName(ProcessHandle)) => {
                 const subprocess = this.ptr.as(ProcessHandle);
                 subprocess.onProcessExit(process, status, rusage);
             },
-            @field(TaggedPointer.Tag, bun.meta.typeBaseName(@typeName(ShellSubprocess))) => {
+            @field(TaggedPointer.Tag, @typeName(ShellSubprocess)) => {
                 const subprocess = this.ptr.as(ShellSubprocess);
                 subprocess.onProcessExit(process, status, rusage);
             },
-            @field(TaggedPointer.Tag, bun.meta.typeBaseName(@typeName(SyncProcess))) => {
+            @field(TaggedPointer.Tag, @typeName(SyncProcess)) => {
                 const subprocess = this.ptr.as(SyncProcess);
                 if (comptime Environment.isPosix) {
                     @panic("This code should not reached");
@@ -157,7 +157,7 @@ pub const Process = struct {
         return @sizeOf(@This());
     }
 
-    pub usingnamespace bun.NewRefCounted(Process, deinit);
+    pub usingnamespace bun.NewRefCounted(Process, deinit, null);
 
     pub fn setExitHandler(this: *Process, handler: anytype) void {
         this.exit_handler.init(handler);
@@ -924,7 +924,7 @@ const WaiterThreadPosix = struct {
                 .mask = current_mask,
                 .flags = std.posix.SA.NOCLDSTOP,
             };
-            std.posix.sigaction(std.posix.SIG.CHLD, &act, null) catch {};
+            std.posix.sigaction(std.posix.SIG.CHLD, &act, null);
         }
     }
 
@@ -2018,7 +2018,9 @@ pub const sync = struct {
     pub fn spawn(
         options: *const Options,
     ) !Maybe(Result) {
-        const envp = options.envp orelse std.c.environ;
+        // [*:null]?[*:0]const u8
+        // [*:null]?[*:0]u8
+        const envp = options.envp orelse @as([*:null]?[*:0]const u8, @ptrCast(std.c.environ));
         const argv = options.argv;
         var string_builder = bun.StringBuilder{};
         defer string_builder.deinit(bun.default_allocator);
@@ -2040,16 +2042,16 @@ pub const sync = struct {
     }
 
     // Forward signals from parent to the child process.
-    extern "C" fn Bun__registerSignalsForForwarding() void;
-    extern "C" fn Bun__unregisterSignalsForForwarding() void;
+    extern "c" fn Bun__registerSignalsForForwarding() void;
+    extern "c" fn Bun__unregisterSignalsForForwarding() void;
 
     // The PID to forward signals to.
     // Set to 0 when unregistering.
-    extern "C" var Bun__currentSyncPID: i64;
+    extern "c" var Bun__currentSyncPID: i64;
 
     // Race condition: a signal could be sent before spawnProcessPosix returns.
     // We need to make sure to send it after the process is spawned.
-    extern "C" fn Bun__sendPendingSignalIfNecessary() void;
+    extern "c" fn Bun__sendPendingSignalIfNecessary() void;
 
     fn spawnPosix(
         options: *const Options,

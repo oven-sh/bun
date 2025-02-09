@@ -1,6 +1,7 @@
 import { Buffer, SlowBuffer, isAscii, isUtf8, kMaxLength } from "buffer";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { gc } from "harness";
+import vm from "node:vm";
 
 const BufferModule = await import("buffer");
 
@@ -1205,7 +1206,7 @@ for (let withOverridenBufferWrite of [false, true]) {
       it("toLocaleString()", () => {
         const buf = Buffer.from("test");
         expect(buf.toLocaleString()).toBe(buf.toString());
-        // expect(Buffer.prototype.toLocaleString).toBe(Buffer.prototype.toString);
+        expect(Buffer.prototype.toLocaleString).toBe(Buffer.prototype.toString);
       });
 
       it("alloc() should throw on invalid data", () => {
@@ -2116,7 +2117,7 @@ for (let withOverridenBufferWrite of [false, true]) {
         const buf = Buffer.from(ab);
 
         expect(buf instanceof Buffer).toBe(true);
-        // expect(buf.parent, buf.buffer);
+        expect(buf.parent, buf.buffer);
         expect(buf.buffer).toBe(ab);
         expect(buf.length).toBe(ab.byteLength);
 
@@ -2136,13 +2137,12 @@ for (let withOverridenBufferWrite of [false, true]) {
 
         // Now test protecting users from doing stupid things
 
-        // expect(function () {
-        //   function AB() {}
-        //   Object.setPrototypeOf(AB, ArrayBuffer);
-        //   Object.setPrototypeOf(AB.prototype, ArrayBuffer.prototype);
-        //   // Buffer.from(new AB());
-        // }).toThrow();
-        // console.log(origAB !== ab);
+        expect(function () {
+          function AB() {}
+          Object.setPrototypeOf(AB, ArrayBuffer);
+          Object.setPrototypeOf(AB.prototype, ArrayBuffer.prototype);
+          Buffer.from(new AB());
+        }).toThrow();
 
         // Test the byteOffset and length arguments
         {
@@ -2670,8 +2670,8 @@ for (let withOverridenBufferWrite of [false, true]) {
           });
 
         // Test that ArrayBuffer from a different context is detected correctly
-        // const arrayBuf = vm.runInNewContext("new ArrayBuffer()");
-        // expect(Buffer.byteLength(arrayBuf)).toBe(0);
+        const arrayBuf = vm.runInNewContext("new ArrayBuffer()");
+        expect(Buffer.byteLength(arrayBuf)).toBe(0);
 
         // Verify that invalid encodings are treated as utf8
         for (let i = 1; i < 10; i++) {

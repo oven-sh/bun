@@ -110,7 +110,7 @@ static JSC_DECLARE_CUSTOM_GETTER(jsDOMFormDataConstructor);
 
 JSC_DEFINE_CUSTOM_GETTER(jsDOMFormDataPrototype_getLength, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto* thisObject = jsDynamicCast<JSDOMFormData*>(JSValue::decode(thisValue));
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     if (UNLIKELY(!thisObject))
@@ -156,7 +156,7 @@ using JSDOMFormDataDOMConstructor = JSDOMConstructor<JSDOMFormData>;
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMFormDataDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = jsCast<JSDOMFormDataDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
@@ -264,7 +264,7 @@ void JSDOMFormData::destroy(JSC::JSCell* cell)
 
 JSC_DEFINE_CUSTOM_GETTER(jsDOMFormDataConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSDOMFormDataPrototype*>(JSValue::decode(thisValue));
     if (UNLIKELY(!prototype))

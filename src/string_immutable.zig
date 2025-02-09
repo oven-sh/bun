@@ -190,8 +190,12 @@ pub inline fn containsAny(in: anytype, target: string) bool {
 ///   a folder name. Therefore, the name can't contain any non-URL-safe
 ///   characters.
 pub fn isNPMPackageName(target: string) bool {
-    if (target.len == 0) return false;
     if (target.len > 214) return false;
+    return isNPMPackageNameIgnoreLength(target);
+}
+
+pub fn isNPMPackageNameIgnoreLength(target: string) bool {
+    if (target.len == 0) return false;
 
     const scoped = switch (target[0]) {
         // Old packages may have capital letters
@@ -1091,7 +1095,7 @@ fn eqlComptimeCheckLenWithKnownType(comptime Type: type, a: []const Type, compti
 ///   strings.eqlComptime(input, "hello world");
 ///   strings.eqlComptime(input, "hai");
 pub fn eqlComptimeCheckLenWithType(comptime Type: type, a: []const Type, comptime b: anytype, comptime check_len: bool) bool {
-    return eqlComptimeCheckLenWithKnownType(comptime Type, a, if (@typeInfo(@TypeOf(b)) != .Pointer) &b else b, comptime check_len);
+    return eqlComptimeCheckLenWithKnownType(comptime Type, a, if (@typeInfo(@TypeOf(b)) != .pointer) &b else b, comptime check_len);
 }
 
 pub fn eqlCaseInsensitiveASCIIIgnoreLength(
@@ -2311,9 +2315,6 @@ pub fn toUTF8AppendToList(list: *std.ArrayList(u8), utf16: []const u16) !void {
 }
 
 pub fn toUTF8FromLatin1(allocator: std.mem.Allocator, latin1: []const u8) !?std.ArrayList(u8) {
-    if (bun.JSC.is_bindgen)
-        unreachable;
-
     if (isAllASCII(latin1))
         return null;
 
@@ -2322,9 +2323,6 @@ pub fn toUTF8FromLatin1(allocator: std.mem.Allocator, latin1: []const u8) !?std.
 }
 
 pub fn toUTF8FromLatin1Z(allocator: std.mem.Allocator, latin1: []const u8) !?std.ArrayList(u8) {
-    if (bun.JSC.is_bindgen)
-        unreachable;
-
     if (isAllASCII(latin1))
         return null;
 
@@ -2404,7 +2402,7 @@ pub fn allocateLatin1IntoUTF8(allocator: std.mem.Allocator, comptime Type: type,
     return try foo.toOwnedSlice();
 }
 
-pub fn allocateLatin1IntoUTF8WithList(list_: std.ArrayList(u8), offset_into_list: usize, comptime Type: type, latin1_: Type) !std.ArrayList(u8) {
+pub fn allocateLatin1IntoUTF8WithList(list_: std.ArrayList(u8), offset_into_list: usize, comptime Type: type, latin1_: Type) OOM!std.ArrayList(u8) {
     var latin1 = latin1_;
     var i: usize = offset_into_list;
     var list = list_;
@@ -4648,11 +4646,10 @@ pub fn trimLeadingChar(slice: []const u8, char: u8) []const u8 {
 /// e.g.
 /// `trimLeadingPattern2("abcdef", 'a', 'b') == "cdef"`
 pub fn trimLeadingPattern2(slice_: []const u8, comptime byte1: u8, comptime byte2: u8) []const u8 {
-    const pattern: u16 = comptime @as(u16, byte2) << 8 | @as(u16, byte1);
+    // const pattern: u16 = comptime @as(u16, byte2) << 8 | @as(u16, byte1);
     var slice = slice_;
     while (slice.len >= 2) {
-        const sliceu16: [*]const u16 = @ptrCast(@alignCast(slice.ptr));
-        if (sliceu16[0] == pattern) {
+        if (slice[0] == byte1 and slice[1] == byte2) {
             slice = slice[2..];
         } else {
             break;
@@ -4769,6 +4766,7 @@ pub fn indexOfLineRanges(text: []const u8, target_line: u32, comptime line_range
                     else => continue,
                 }
             }
+            @panic("unreachable");
         };
 
         if (ranges.len == line_range_count and current_line <= target_line) {
@@ -5560,7 +5558,7 @@ pub fn cloneNormalizingSeparators(
 ) ![]u8 {
     // remove duplicate slashes in the file path
     const base = withoutTrailingSlash(input);
-    var tokenized = std.mem.tokenize(u8, base, std.fs.path.sep_str);
+    var tokenized = std.mem.tokenizeScalar(u8, base, std.fs.path.sep);
     var buf = try allocator.alloc(u8, base.len + 2);
     if (comptime Environment.allow_assert) assert(base.len > 0);
     if (base[0] == std.fs.path.sep) {

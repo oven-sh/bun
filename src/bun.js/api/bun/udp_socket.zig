@@ -282,7 +282,7 @@ pub const UDPSocket = struct {
     globalThis: *JSGlobalObject,
     thisValue: JSValue = .zero,
 
-    ref: JSC.Ref = JSC.Ref.init(),
+    jsc_ref: JSC.Ref = JSC.Ref.init(),
     poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
     // if marked as closed the socket pointer may be stale
     closed: bool = false,
@@ -864,8 +864,7 @@ pub const UDPSocket = struct {
         };
 
         const slice = bun.fmt.formatIp(address, &text_buf) catch unreachable;
-        var str = bun.String.createLatin1(slice);
-        return str.transferToJS(globalThis);
+        return bun.String.createUTF8ForJS(globalThis, slice);
     }
 
     pub fn getAddress(this: *This, globalThis: *JSGlobalObject) JSValue {

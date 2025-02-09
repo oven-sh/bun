@@ -251,7 +251,7 @@ pub fn constructS3FileWithS3CredentialsAndOptions(
                 inner: {
                     if (file_type.isString()) {
                         var allocator = bun.default_allocator;
-                        var str = file_type.toSlice(globalObject, bun.default_allocator);
+                        var str = try file_type.toSlice(globalObject, bun.default_allocator);
                         defer str.deinit();
                         const slice = str.slice();
                         if (!strings.isAllASCII(slice)) {
@@ -294,7 +294,7 @@ pub fn constructS3FileWithS3Credentials(
                 inner: {
                     if (file_type.isString()) {
                         var allocator = bun.default_allocator;
-                        var str = file_type.toSlice(globalObject, bun.default_allocator);
+                        var str = try file_type.toSlice(globalObject, bun.default_allocator);
                         defer str.deinit();
                         const slice = str.slice();
                         if (!strings.isAllASCII(slice)) {
@@ -475,8 +475,7 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *JSC.JSGlobalObject, extra_opt
         return S3.throwSignError(sign_err, globalThis);
     };
     defer result.deinit();
-    var str = bun.String.fromUTF8(result.url);
-    return str.transferToJS(this.globalThis);
+    return bun.String.createUTF8ForJS(this.globalThis, result.url);
 }
 pub fn getBucketName(
     this: *const Blob,
@@ -604,11 +603,11 @@ pub fn hasInstance(_: JSC.JSValue, _: *JSC.JSGlobalObject, value: JSC.JSValue) c
 }
 
 comptime {
-    @export(exports.JSS3File__presign, .{ .name = "JSS3File__presign" });
-    @export(construct, .{ .name = "JSS3File__construct" });
-    @export(hasInstance, .{ .name = "JSS3File__hasInstance" });
-    @export(getBucket, .{ .name = "JSS3File__bucket" });
-    @export(getStat, .{ .name = "JSS3File__stat" });
+    @export(&exports.JSS3File__presign, .{ .name = "JSS3File__presign" });
+    @export(&construct, .{ .name = "JSS3File__construct" });
+    @export(&hasInstance, .{ .name = "JSS3File__hasInstance" });
+    @export(&getBucket, .{ .name = "JSS3File__bucket" });
+    @export(&getStat, .{ .name = "JSS3File__stat" });
 }
 
 pub const exports = struct {

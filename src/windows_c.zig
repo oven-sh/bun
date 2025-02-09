@@ -27,7 +27,7 @@ pub export fn memmem(haystack: ?[*]const u8, haystacklen: usize, needle: ?[*]con
 }
 
 comptime {
-    @export(memmem, .{ .name = "zig_memmem" });
+    @export(&memmem, .{ .name = "zig_memmem" });
 }
 
 pub const lstat = blk: {
@@ -57,7 +57,7 @@ pub fn getSystemLoadavg() [3]f32 {
     return .{ 0, 0, 0 };
 }
 
-pub const Mode = i32;
+pub const Mode = u16;
 const Win32Error = bun.windows.Win32Error;
 
 // The way we do errors in Bun needs to get cleaned up.

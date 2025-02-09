@@ -407,6 +407,28 @@ pub fn stdin(rare: *RareData) *Blob.Store {
     };
 }
 
+const StdinFdType = enum(i32) {
+    file = 0,
+    pipe = 1,
+    socket = 2,
+};
+
+pub export fn Bun__Process__getStdinFdType(vm: *JSC.VirtualMachine, fd: i32) StdinFdType {
+    const mode = switch (fd) {
+        0 => vm.rareData().stdin().data.file.mode,
+        1 => vm.rareData().stdout().data.file.mode,
+        2 => vm.rareData().stderr().data.file.mode,
+        else => unreachable,
+    };
+    if (bun.S.ISFIFO(mode)) {
+        return .pipe;
+    } else if (bun.S.ISSOCK(mode)) {
+        return .socket;
+    } else {
+        return .file;
+    }
+}
+
 const Subprocess = @import("./api/bun/subprocess.zig").Subprocess;
 
 pub fn spawnIPCContext(rare: *RareData, vm: *JSC.VirtualMachine) *uws.SocketContext {

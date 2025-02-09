@@ -69,6 +69,8 @@ typedef struct BunString {
     // It's only truly zero-copy if it was already a WTFStringImpl (which it is if it came from JS and we didn't use ZigString)
     WTF::String toWTFString(ZeroCopyTag) const;
 
+    WTF::String transferToWTFString();
+
     // This one usually will clone the raw bytes.
     WTF::String toWTFString() const;
 
@@ -383,6 +385,7 @@ extern "C" size_t Bun__encoding__byteLengthUTF16(const UChar* ptr, size_t len, E
 extern "C" int64_t Bun__encoding__constructFromLatin1(void*, const unsigned char* ptr, size_t len, Encoding encoding);
 extern "C" int64_t Bun__encoding__constructFromUTF16(void*, const UChar* ptr, size_t len, Encoding encoding);
 
+/// @note throws a JS exception and returns false if a stack overflow occurs
 template<bool isStrict, bool enableAsymmetricMatchers>
 bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, JSC::MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSC::ThrowScope* scope, bool addToStack);
 
@@ -430,7 +433,7 @@ bool Bun__deepMatch(
     bool replacePropsWithAsymmetricMatchers,
     bool isMatchingObjectContaining);
 
-extern "C" void Bun__remapStackFramePositions(JSC::JSGlobalObject*, ZigStackFrame*, size_t);
+extern "C" void Bun__remapStackFramePositions(void*, ZigStackFrame*, size_t);
 
 namespace Inspector {
 class ScriptArguments;

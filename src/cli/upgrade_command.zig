@@ -186,10 +186,10 @@ pub const UpgradeCommand = struct {
             }
         }
 
-        var header_entries: Headers.Entries = .{};
-        const accept = Headers.Kv{
-            .name = Api.StringPointer{ .offset = 0, .length = @as(u32, @intCast("Accept".len)) },
-            .value = Api.StringPointer{ .offset = @as(u32, @intCast("Accept".len)), .length = @as(u32, @intCast("application/vnd.github.v3+json".len)) },
+        var header_entries: Headers.Entry.List = .empty;
+        const accept = Headers.Entry{
+            .name = .{ .offset = 0, .length = @intCast("Accept".len) },
+            .value = .{ .offset = @intCast("Accept".len), .length = @intCast("application/vnd.github.v3+json".len) },
         };
         try header_entries.append(allocator, accept);
         defer if (comptime silent) header_entries.deinit(allocator);
@@ -217,14 +217,14 @@ pub const UpgradeCommand = struct {
                 headers_buf = try std.fmt.allocPrint(allocator, default_github_headers ++ "AuthorizationBearer {s}", .{access_token});
                 try header_entries.append(
                     allocator,
-                    Headers.Kv{
-                        .name = Api.StringPointer{
+                    .{
+                        .name = .{
                             .offset = accept.value.offset + accept.value.length,
-                            .length = @as(u32, @intCast("Authorization".len)),
+                            .length = @intCast("Authorization".len),
                         },
-                        .value = Api.StringPointer{
-                            .offset = @as(u32, @intCast(accept.value.offset + accept.value.length + "Authorization".len)),
-                            .length = @as(u32, @intCast("Bearer ".len + access_token.len)),
+                        .value = .{
+                            .offset = @intCast(accept.value.offset + accept.value.length + "Authorization".len),
+                            .length = @intCast("Bearer ".len + access_token.len),
                         },
                     },
                 );
@@ -400,7 +400,7 @@ pub const UpgradeCommand = struct {
     };
 
     pub fn exec(ctx: Command.Context) !void {
-        @setCold(true);
+        @branchHint(.cold);
 
         const args = bun.argv;
         if (args.len > 2) {

@@ -34,7 +34,6 @@ const escapeIdentifier = function escape(str) {
 class SQLResultArray extends PublicArray {
   static [Symbol.toStringTag] = "SQLResults";
 
-  statement;
   command;
   count;
 }
@@ -92,6 +91,7 @@ enum SQLQueryFlags {
   unsafe = 1 << 1,
   bigint = 1 << 2,
 }
+
 function getQueryHandle(query) {
   let handle = query[_handle];
   if (!handle) {
@@ -134,6 +134,7 @@ class Query extends PublicPromise {
       resolve_ = resolve;
       reject_ = reject;
     });
+
     this[_resolve] = resolve_;
     this[_reject] = reject_;
     this[_handle] = null;
@@ -145,21 +146,27 @@ class Query extends PublicPromise {
     this[_flags] = allowUnsafeTransaction;
   }
 
-  async [_run]() {
+  async [_run](async: boolean) {
     const { [_handler]: handler, [_queryStatus]: status } = this;
 
     if (status & (QueryStatus.executed | QueryStatus.error | QueryStatus.cancelled | QueryStatus.invalidHandle)) {
       return;
     }
+    this[_queryStatus] |= QueryStatus.executed;
 
     const handle = getQueryHandle(this);
     if (!handle) return this;
 
-    this[_queryStatus] |= QueryStatus.executed;
-    // this avoids a infinite loop
-    await 1;
+    if (async) {
+      await 1;
+    }
 
-    return handler(this, handle);
+    try {
+      return handler(this, handle);
+    } catch (err) {
+      this[_queryStatus] |= QueryStatus.error;
+      this.reject(err);
+    }
   }
 
   get active() {
@@ -219,7 +226,7 @@ class Query extends PublicPromise {
   }
 
   execute() {
-    this[_run]();
+    this[_run](false);
     return this;
   }
 
@@ -238,21 +245,21 @@ class Query extends PublicPromise {
   }
 
   then() {
-    this[_run]();
+    this[_run](true);
     const result = super.$then.$apply(this, arguments);
     $markPromiseAsHandled(result);
     return result;
   }
 
   catch() {
-    this[_run]();
+    this[_run](true);
     const result = super.catch.$apply(this, arguments);
     $markPromiseAsHandled(result);
     return result;
   }
 
   finally() {
-    this[_run]();
+    this[_run](true);
     return super.finally.$apply(this, arguments);
   }
 }
@@ -402,11 +409,7 @@ class PooledConnection {
     this.storedError = null;
     this.state = PooledConnectionState.pending;
     // retry connection
-    this.connection = createConnection(
-      this.connectionInfo,
-      this.#onConnected.bind(this, this.connectionInfo),
-      this.#onClose.bind(this, this.connectionInfo),
-    );
+    this.connection = createConnection(this.connectionInfo, this.#onConnected.bind(this), this.#onClose.bind(this));
   }
   close() {
     try {
@@ -444,9 +447,9 @@ class PooledConnection {
         default:
           // we can retry
           this.#doRetry();
-          return true;
       }
     }
+    return true;
   }
 }
 class ConnectionPool {
@@ -783,9 +786,9 @@ class ConnectionPool {
           } else {
             this.waitingQueue.push(onConnected);
           }
-        } else {
+        } else if (!retry_in_progress) {
           // impossible to connect or retry
-          onConnected(storedError, null);
+          onConnected(storedError ?? connectionClosedError(), null);
         }
         return;
       }
@@ -1055,6 +1058,12 @@ class SQLArrayParameter {
   }
 }
 
+function decodeIfValid(value) {
+  if (value) {
+    return decodeURIComponent(value);
+  }
+  return null;
+}
 function loadOptions(o) {
   var hostname,
     port,
@@ -1099,7 +1108,6 @@ function loadOptions(o) {
         url = _url;
       }
     }
-
     if (o?.tls) {
       sslMode = SSLMode.require;
       tls = o.tls;
@@ -1107,14 +1115,14 @@ function loadOptions(o) {
   } else if (typeof o === "string") {
     url = new URL(o);
   }
-
+  o ||= {};
   if (url) {
     ({ hostname, port, username, password, adapter } = o);
     // object overrides url
     hostname ||= url.hostname;
     port ||= url.port;
-    username ||= url.username;
-    password ||= url.password;
+    username ||= decodeIfValid(url.username);
+    password ||= decodeIfValid(url.password);
     adapter ||= url.protocol;
 
     if (adapter[adapter.length - 1] === ":") {
@@ -1132,12 +1140,12 @@ function loadOptions(o) {
     }
     query = query.trim();
   }
-  o ||= {};
   hostname ||= o.hostname || o.host || env.PGHOST || "localhost";
   port ||= Number(o.port || env.PGPORT || 5432);
   username ||= o.username || o.user || env.PGUSERNAME || env.PGUSER || env.USER || env.USERNAME || "postgres";
-  database ||= o.database || o.db || (url?.pathname ?? "").slice(1) || env.PGDATABASE || username;
+  database ||= o.database || o.db || decodeIfValid((url?.pathname ?? "").slice(1)) || env.PGDATABASE || username;
   password ||= o.password || o.pass || env.PGPASSWORD || "";
+
   tls ||= o.tls || o.ssl;
   adapter ||= o.adapter || "postgres";
   max = o.max;
@@ -1209,15 +1217,13 @@ function loadOptions(o) {
 
   if (sslMode !== SSLMode.disable && !tls?.serverName) {
     if (hostname) {
-      tls = {
-        serverName: hostname,
-      };
-    } else {
+      tls = { ...tls, serverName: hostname };
+    } else if (!!tls) {
       tls = true;
     }
   }
 
-  if (!!tls) {
+  if (!!tls && sslMode === SSLMode.disable) {
     sslMode = SSLMode.prefer;
   }
   port = Number(port);
@@ -1298,6 +1304,7 @@ function SQL(o, e = {}) {
       pool.release(pooledConnection); // release the connection back to the pool
       return query.reject($ERR_POSTGRES_QUERY_CANCELLED("Query cancelled"));
     }
+
     // bind close event to the query (will unbind and auto release the connection when the query is finished)
     pooledConnection.bindQuery(query, onQueryDisconnected.bind(query));
     handle.run(pooledConnection.connection, query);
@@ -1906,7 +1913,7 @@ function SQL(o, e = {}) {
           // mssql dont have release savepoint
           await run_internal_transaction_sql(`${RELEASE_SAVEPOINT_COMMAND} ${save_point_name}`);
         }
-        if (Array.isArray(result)) {
+        if ($isArray(result)) {
           result = await Promise.all(result);
         }
         return result;
@@ -1952,7 +1959,7 @@ function SQL(o, e = {}) {
       await run_internal_transaction_sql(BEGIN_COMMAND);
       needs_rollback = true;
       let transaction_result = await callback(transaction_sql);
-      if (Array.isArray(transaction_result)) {
+      if ($isArray(transaction_result)) {
         transaction_result = await Promise.all(transaction_result);
       }
       // at this point we dont need to rollback anymore

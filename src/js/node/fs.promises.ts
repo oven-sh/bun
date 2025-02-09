@@ -1,8 +1,8 @@
 // Hardcoded module "node:fs/promises"
-import type { Dirent } from "fs";
 const types = require("node:util/types");
 const EventEmitter = require("node:events");
 const fs = $zig("node_fs_binding.zig", "createBinding");
+const { glob } = require("internal/fs/glob");
 const constants = $processBindingConstants.fs;
 
 var PromisePrototypeFinally = Promise.prototype.finally; //TODO
@@ -22,7 +22,7 @@ const kDeserialize = Symbol("kDeserialize");
 const kEmptyObject = ObjectFreeze({ __proto__: null });
 const kFlag = Symbol("kFlag");
 
-const { validateObject, validateInteger } = require("internal/validators");
+const { validateInteger } = require("internal/validators");
 
 function watch(
   filename: string | Buffer | URL,
@@ -112,7 +112,7 @@ function cp(src, dest, options) {
 }
 
 async function opendir(dir: string, options) {
-  return new (require('node:fs').Dir)(1, dir, options);
+  return new (require("node:fs").Dir)(1, dir, options);
 }
 
 const private_symbols = {
@@ -152,6 +152,7 @@ const exports = {
   fdatasync: asyncWrap(fs.fdatasync, "fdatasync"),
   ftruncate: asyncWrap(fs.ftruncate, "ftruncate"),
   futimes: asyncWrap(fs.futimes, "futimes"),
+  glob,
   lchmod: asyncWrap(fs.lchmod, "lchmod"),
   lchown: asyncWrap(fs.lchown, "lchown"),
   link: asyncWrap(fs.link, "link"),

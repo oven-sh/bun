@@ -133,7 +133,17 @@ pub fn initEmpty(root: []const u8, types: []Type, allocator: Allocator) !Framewo
 
 pub fn deinit(fr: *FrameworkRouter, allocator: Allocator) void {
     fr.routes.deinit(allocator);
+    fr.static_routes.deinit(allocator);
+    fr.dynamic_routes.deinit(allocator);
     allocator.free(fr.types);
+}
+
+pub fn memoryCost(fr: *FrameworkRouter) usize {
+    var cost: usize = @sizeOf(FrameworkRouter);
+    cost += fr.routes.capacity * @sizeOf(Route);
+    cost += StaticRouteMap.DataList.capacityInBytes(fr.static_routes.entries.capacity);
+    cost += DynamicRouteMap.DataList.capacityInBytes(fr.dynamic_routes.entries.capacity);
+    return cost;
 }
 
 pub fn scanAll(fr: *FrameworkRouter, allocator: Allocator, r: *Resolver, ctx: anytype) !void {
@@ -331,7 +341,7 @@ pub const Part = union(enum(u3)) {
     group: []const u8,
 
     const SerializedHeader = packed struct(u32) {
-        tag: @typeInfo(Part).Union.tag_type.?,
+        tag: @typeInfo(Part).@"union".tag_type.?,
         len: u29,
     };
 
@@ -691,7 +701,7 @@ pub fn insert(
                 .type = ty,
                 .parent = route_index.toOptional(),
                 .first_child = .none,
-                .prev_sibling = Route.Index.Optional.init(next),
+                .prev_sibling = .init(next),
                 .next_sibling = .none,
             });
 
@@ -709,7 +719,7 @@ pub fn insert(
                     .type = ty,
                     .parent = new_route_index.toOptional(),
                     .first_child = .none,
-                    .prev_sibling = Route.Index.Optional.init(next),
+                    .prev_sibling = .init(next),
                     .next_sibling = .none,
                 });
                 fr.routePtr(new_route_index).first_child = newer_route_index.toOptional();
@@ -1246,7 +1256,7 @@ pub const JSFrameworkRouter = struct {
             return global.throwInvalidArguments("parseRoutePattern takes two arguments", .{});
 
         const style_js, const filepath_js = frame.argumentsAsArray(2);
-        const filepath = try filepath_js.toSlice2(global, alloc);
+        const filepath = try filepath_js.toSlice(global, alloc);
         defer filepath.deinit();
         var style = try Style.fromJS(style_js, global);
         errdefer style.deinit();

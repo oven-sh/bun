@@ -1678,7 +1678,7 @@ pub const Api = struct {
         no_summary: ?bool = null,
 
         /// disable_hmr
-        disable_hmr: ?bool = null,
+        disable_hmr: bool = false,
 
         /// port
         port: ?u16 = null,
@@ -1702,6 +1702,9 @@ pub const Api = struct {
         /// [serve.static]
         /// plugins = ["tailwindcss"]
         serve_plugins: ?[]const []const u8 = null,
+        serve_minify_syntax: ?bool = null,
+        serve_minify_whitespace: ?bool = null,
+        serve_minify_identifiers: ?bool = null,
         bunfig_path: []const u8,
 
         pub fn decode(reader: anytype) anyerror!TransformOptions {

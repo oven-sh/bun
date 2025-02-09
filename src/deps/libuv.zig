@@ -2023,20 +2023,20 @@ pub const UV_CLOCK_MONOTONIC: c_int = 0;
 pub const UV_CLOCK_REALTIME: c_int = 1;
 pub const uv_clock_id = c_uint;
 pub const uv_timespec_t = extern struct {
-    tv_sec: c_long,
-    tv_nsec: c_long,
+    sec: c_long,
+    nsec: c_long,
 };
 pub const uv_timespec64_t = extern struct {
-    tv_sec: i64,
-    tv_nsec: i32,
+    sec: i64,
+    nsec: i32,
 };
 pub const uv_timeval_t = extern struct {
-    tv_sec: c_long,
-    tv_usec: c_long,
+    sec: c_long,
+    usec: c_long,
 };
 pub const uv_timeval64_t = extern struct {
-    tv_sec: i64,
-    tv_usec: i32,
+    sec: i64,
+    usec: i32,
 };
 pub const uv_stat_t = extern struct {
     dev: u64,
@@ -2274,8 +2274,7 @@ pub const uv_stdio_container_t = struct_uv_stdio_container_s;
 pub const uv_process_options_t = extern struct {
     exit_cb: uv_exit_cb,
     file: [*:0]const u8,
-    // TODO(@paperdave): upstream changing libuv's args to const
-    // it is not mutated in any of their code
+    // In libuv, this is not 'const', but they never mutate it.
     args: [*:null]?[*:0]const u8,
     env: [*:null]?[*:0]const u8,
     cwd: [*:0]const u8,

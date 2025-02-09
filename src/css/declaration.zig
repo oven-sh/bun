@@ -24,6 +24,12 @@ const FontHandler = css.css_properties.font.FontHandler;
 const InsetHandler = css.css_properties.margin_padding.InsetHandler;
 const SizeHandler = css.css_properties.size.SizeHandler;
 const FlexHandler = css.css_properties.flex.FlexHandler;
+const AlignHandler = css.css_properties.@"align".AlignHandler;
+const TransitionHandler = css.css_properties.transition.TransitionHandler;
+const TransformHandler = css.css_properties.transform.TransformHandler;
+const ColorSchemeHandler = css.css_properties.ui.ColorSchemeHandler;
+const BoxShadowHandler = css.css_properties.box_shadow.BoxShadowHandler;
+// const GridHandler = css.css_properties.g
 
 /// A CSS declaration block.
 ///
@@ -334,12 +340,17 @@ pub const DeclarationHandler = struct {
     background: BackgroundHandler = .{},
     border: BorderHandler = .{},
     flex: FlexHandler = .{},
+    @"align": AlignHandler = .{},
     size: SizeHandler = .{},
     margin: MarginHandler = .{},
     padding: PaddingHandler = .{},
     scroll_margin: ScrollMarginHandler = .{},
+    transition: TransitionHandler = .{},
     font: FontHandler = .{},
     inset: InsetHandler = .{},
+    transform: TransformHandler = .{},
+    box_shadow: BoxShadowHandler = .{},
+    color_scheme: ColorSchemeHandler = .{},
     fallback: FallbackHandler = .{},
     direction: ?css.css_properties.text.Direction,
     decls: DeclarationList,
@@ -359,12 +370,17 @@ pub const DeclarationHandler = struct {
         this.background.finalize(&this.decls, context);
         this.border.finalize(&this.decls, context);
         this.flex.finalize(&this.decls, context);
+        this.@"align".finalize(&this.decls, context);
         this.size.finalize(&this.decls, context);
         this.margin.finalize(&this.decls, context);
         this.padding.finalize(&this.decls, context);
         this.scroll_margin.finalize(&this.decls, context);
+        this.transition.finalize(&this.decls, context);
         this.font.finalize(&this.decls, context);
         this.inset.finalize(&this.decls, context);
+        this.transform.finalize(&this.decls, context);
+        this.box_shadow.finalize(&this.decls, context);
+        this.color_scheme.finalize(&this.decls, context);
         this.fallback.finalize(&this.decls, context);
     }
 
@@ -373,12 +389,17 @@ pub const DeclarationHandler = struct {
         return this.background.handleProperty(property, &this.decls, context) or
             this.border.handleProperty(property, &this.decls, context) or
             this.flex.handleProperty(property, &this.decls, context) or
+            this.@"align".handleProperty(property, &this.decls, context) or
             this.size.handleProperty(property, &this.decls, context) or
             this.margin.handleProperty(property, &this.decls, context) or
             this.padding.handleProperty(property, &this.decls, context) or
             this.scroll_margin.handleProperty(property, &this.decls, context) or
+            this.transition.handleProperty(property, &this.decls, context) or
             this.font.handleProperty(property, &this.decls, context) or
             this.inset.handleProperty(property, &this.decls, context) or
+            this.transform.handleProperty(property, &this.decls, context) or
+            this.box_shadow.handleProperty(property, &this.decls, context) or
+            this.color_scheme.handleProperty(property, &this.decls, context) or
             this.fallback.handleProperty(property, &this.decls, context);
     }
 

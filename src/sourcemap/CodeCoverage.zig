@@ -692,8 +692,7 @@ pub const ByteRangeMapping = struct {
             return globalThis.throwOutOfMemoryValue();
         };
 
-        var str = bun.String.createUTF8(mutable_str.slice());
-        return str.transferToJS(globalThis);
+        return bun.String.createUTF8ForJS(globalThis, mutable_str.slice());
     }
 
     pub fn compute(source_contents: []const u8, source_id: i32, source_url: bun.JSC.ZigString.Slice) ByteRangeMapping {
@@ -707,10 +706,10 @@ pub const ByteRangeMapping = struct {
 
 comptime {
     if (bun.Environment.isNative) {
-        @export(ByteRangeMapping.generate, .{ .name = "ByteRangeMapping__generate" });
-        @export(ByteRangeMapping.findExecutedLines, .{ .name = "ByteRangeMapping__findExecutedLines" });
-        @export(ByteRangeMapping.find, .{ .name = "ByteRangeMapping__find" });
-        @export(ByteRangeMapping.getSourceID, .{ .name = "ByteRangeMapping__getSourceID" });
+        @export(&ByteRangeMapping.generate, .{ .name = "ByteRangeMapping__generate" });
+        @export(&ByteRangeMapping.findExecutedLines, .{ .name = "ByteRangeMapping__findExecutedLines" });
+        @export(&ByteRangeMapping.find, .{ .name = "ByteRangeMapping__find" });
+        @export(&ByteRangeMapping.getSourceID, .{ .name = "ByteRangeMapping__getSourceID" });
     }
 }
 

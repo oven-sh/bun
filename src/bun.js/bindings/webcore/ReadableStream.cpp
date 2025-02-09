@@ -242,7 +242,7 @@ bool ReadableStream::isDisturbed() const
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionTransferToNativeReadableStream, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    auto& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     auto* readableStream = jsDynamicCast<JSReadableStream*>(callFrame->argument(0));

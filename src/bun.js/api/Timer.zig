@@ -10,6 +10,7 @@ const Async = @import("async");
 const uv = bun.windows.libuv;
 const StatWatcherScheduler = @import("../node/node_fs_stat_watcher.zig").StatWatcherScheduler;
 const Timer = @This();
+const DNSResolver = @import("./bun/dns_resolver.zig").DNSResolver;
 
 /// TimeoutMap is map of i32 to nullable Timeout structs
 /// i32 is exposed to JavaScript and can be used with clearTimeout, clearInterval, etc.
@@ -27,12 +28,13 @@ const TimerHeap = heap.Intrusive(EventLoopTimer, void, EventLoopTimer.less);
 
 pub const All = struct {
     last_id: i32 = 1,
+    lock: bun.Mutex = .{},
+    thread_id: std.Thread.Id,
     timers: TimerHeap = .{
         .context = {},
     },
     active_timer_count: i32 = 0,
-    uv_timer: if (Environment.isWindows) uv.Timer else void =
-        if (Environment.isWindows) std.mem.zeroes(uv.Timer) else {},
+    uv_timer: if (Environment.isWindows) uv.Timer else void = if (Environment.isWindows) std.mem.zeroes(uv.Timer),
 
     // We split up the map here to avoid storing an extra "repeat" boolean
     maps: struct {
@@ -49,7 +51,15 @@ pub const All = struct {
         }
     } = .{},
 
+    pub fn init() @This() {
+        return .{
+            .thread_id = std.Thread.getCurrentId(),
+        };
+    }
+
     pub fn insert(this: *All, timer: *EventLoopTimer) void {
+        this.lock.lock();
+        defer this.lock.unlock();
         this.timers.insert(timer);
         timer.state = .ACTIVE;
 
@@ -59,10 +69,34 @@ pub const All = struct {
     }
 
     pub fn remove(this: *All, timer: *EventLoopTimer) void {
+        this.lock.lock();
+        defer this.lock.unlock();
         this.timers.remove(timer);
 
         timer.state = .CANCELLED;
         timer.heap = .{};
+    }
+
+    /// Remove the EventLoopTimer if necessary.
+    pub fn update(this: *All, timer: *EventLoopTimer, time: *const timespec) void {
+        this.lock.lock();
+        defer this.lock.unlock();
+        if (timer.state == .ACTIVE) {
+            this.timers.remove(timer);
+        }
+
+        timer.state = .ACTIVE;
+        if (comptime Environment.isDebug) {
+            if (&timer.next == time) {
+                @panic("timer.next == time. For threadsafety reasons, time and timer.next must always be a different pointer.");
+            }
+        }
+        timer.next = time.*;
+
+        this.timers.insert(timer);
+        if (Environment.isWindows) {
+            this.ensureUVTimer(@alignCast(@fieldParentPtr("timer", this)));
+        }
     }
 
     fn ensureUVTimer(this: *All, vm: *VirtualMachine) void {
@@ -80,7 +114,7 @@ pub const All = struct {
             else
                 timespec{ .nsec = 0, .sec = 0 };
 
-            this.uv_timer.start(wait.ms(), 0, &onUVTimer);
+            this.uv_timer.start(wait.msUnsigned(), 0, &onUVTimer);
 
             if (this.active_timer_count > 0) {
                 this.uv_timer.ref();
@@ -129,15 +163,28 @@ pub const All = struct {
         return VirtualMachine.get().timer.last_id;
     }
 
-    pub fn getTimeout(this: *const All, spec: *timespec) bool {
+    pub fn getTimeout(this: *All, spec: *timespec, vm: *VirtualMachine) bool {
         if (this.active_timer_count == 0) {
             return false;
         }
 
-        if (this.timers.peek()) |min| {
-            const now = timespec.now();
+        var now: timespec = undefined;
+        var has_set_now: bool = false;
+        while (this.timers.peek()) |min| {
+            if (!has_set_now) {
+                now = timespec.now();
+                has_set_now = true;
+            }
+
             switch (now.order(&min.next)) {
                 .gt, .eq => {
+                    // Side-effect: potentially call the StopIfNecessary timer.
+                    if (min.tag == .WTFTimer) {
+                        _ = this.timers.deleteMin();
+                        _ = min.fire(&now, vm);
+                        continue;
+                    }
+
                     spec.* = .{ .nsec = 0, .sec = 0 };
                     return true;
                 },
@@ -146,6 +193,8 @@ pub const All = struct {
                     return true;
                 },
             }
+
+            unreachable;
         }
 
         return false;
@@ -159,22 +208,40 @@ pub const All = struct {
         _ = &Bun__internal_drainTimers;
     }
 
-    pub fn drainTimers(this: *All, vm: *VirtualMachine) void {
-        if (this.timers.peek() == null) {
-            return;
-        }
+    // Getting the current time is expensive on certain platforms.
+    // We don't want to call it when there are no timers.
+    // And when we do call it, we want to be sure we only call it once.
+    // and we do NOT want to hold the lock while the timer is running it's code.
+    // This function has to be thread-safe.
+    fn next(this: *All, has_set_now: *bool, now: *timespec) ?*EventLoopTimer {
+        this.lock.lock();
+        defer this.lock.unlock();
 
-        const now = &timespec.now();
-
-        while (this.timers.peek()) |t| {
-            if (t.next.greater(now)) {
-                break;
+        if (this.timers.peek()) |timer| {
+            if (!has_set_now.*) {
+                now.* = timespec.now();
+                has_set_now.* = true;
+            }
+            if (timer.next.greater(now)) {
+                return null;
             }
 
-            assert(this.timers.deleteMin().? == t);
+            assert(this.timers.deleteMin().? == timer);
 
+            return timer;
+        }
+        return null;
+    }
+
+    pub fn drainTimers(this: *All, vm: *VirtualMachine) void {
+        // Set in next().
+        var now: timespec = undefined;
+        // Split into a separate variable to avoid increasing the size of the timespec type.
+        var has_set_now: bool = false;
+
+        while (this.next(&has_set_now, &now)) |t| {
             switch (t.fire(
-                now,
+                &now,
                 vm,
             )) {
                 .disarm => {},
@@ -235,9 +302,7 @@ pub const All = struct {
     }
 
     comptime {
-        if (!JSC.is_bindgen) {
-            @export(setImmediate, .{ .name = "Bun__Timer__setImmediate" });
-        }
+        @export(&setImmediate, .{ .name = "Bun__Timer__setImmediate" });
     }
 
     pub fn setTimeout(
@@ -347,13 +412,11 @@ pub const All = struct {
     });
 
     comptime {
-        if (!JSC.is_bindgen) {
-            @export(setTimeout, .{ .name = Export[0].symbol_name });
-            @export(setInterval, .{ .name = Export[1].symbol_name });
-            @export(clearTimeout, .{ .name = Export[2].symbol_name });
-            @export(clearInterval, .{ .name = Export[3].symbol_name });
-            @export(getNextID, .{ .name = Export[4].symbol_name });
-        }
+        @export(&setTimeout, .{ .name = Export[0].symbol_name });
+        @export(&setInterval, .{ .name = Export[1].symbol_name });
+        @export(&clearTimeout, .{ .name = Export[2].symbol_name });
+        @export(&clearInterval, .{ .name = Export[3].symbol_name });
+        @export(&getNextID, .{ .name = Export[4].symbol_name });
     }
 };
 
@@ -381,9 +444,9 @@ pub const TimerObject = struct {
     },
 
     pub usingnamespace JSC.Codegen.JSTimeout;
-    pub usingnamespace bun.NewRefCounted(@This(), deinit);
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
-    extern "C" fn Bun__JSTimeout__call(encodedTimeoutValue: JSValue, globalObject: *JSC.JSGlobalObject) void;
+    extern "c" fn Bun__JSTimeout__call(encodedTimeoutValue: JSValue, globalObject: *JSC.JSGlobalObject) void;
 
     pub fn runImmediateTask(this: *TimerObject, vm: *VirtualMachine) void {
         if (this.has_cleared_timer) {
@@ -467,8 +530,7 @@ pub const TimerObject = struct {
                 switch (this.event_loop_timer.state) {
                     .FIRED => {
                         // If we didn't clear the setInterval, reschedule it starting from
-                        this.event_loop_timer.next = time_before_call;
-                        vm.timer.insert(&this.event_loop_timer);
+                        vm.timer.update(&this.event_loop_timer, &time_before_call);
 
                         if (this.has_js_ref) {
                             this.setEnableKeepingEventLoopAlive(vm, true);
@@ -478,10 +540,7 @@ pub const TimerObject = struct {
                     },
                     .ACTIVE => {
                         // The developer called timer.refresh() synchronously in the callback.
-                        vm.timer.remove(&this.event_loop_timer);
-
-                        this.event_loop_timer.next = time_before_call;
-                        vm.timer.insert(&this.event_loop_timer);
+                        vm.timer.update(&this.event_loop_timer, &time_before_call);
 
                         // Balance out the ref count.
                         // the transition from "FIRED" -> "ACTIVE" caused it to increment.
@@ -550,7 +609,7 @@ pub const TimerObject = struct {
         return .{ timer, timer_js };
     }
 
-    pub fn doRef(this: *TimerObject, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn doRef(this: *TimerObject, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const this_value = callframe.this();
         this_value.ensureStillAlive();
 
@@ -564,7 +623,7 @@ pub const TimerObject = struct {
         return this_value;
     }
 
-    pub fn doRefresh(this: *TimerObject, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn doRefresh(this: *TimerObject, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const this_value = callframe.this();
 
         // setImmediate does not support refreshing and we do not support refreshing after cleanup
@@ -578,7 +637,7 @@ pub const TimerObject = struct {
         return this_value;
     }
 
-    pub fn doUnref(this: *TimerObject, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn doUnref(this: *TimerObject, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const this_value = callframe.this();
         this_value.ensureStillAlive();
 
@@ -620,8 +679,7 @@ pub const TimerObject = struct {
             this.ref();
         }
 
-        this.event_loop_timer.next = now;
-        vm.timer.insert(&this.event_loop_timer);
+        vm.timer.update(&this.event_loop_timer, &now);
         this.has_cleared_timer = false;
 
         if (this.has_js_ref) {
@@ -643,10 +701,10 @@ pub const TimerObject = struct {
         }
     }
 
-    pub fn hasRef(this: *TimerObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+    pub fn hasRef(this: *TimerObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         return JSValue.jsBoolean(this.is_keeping_event_loop_alive);
     }
-    pub fn toPrimitive(this: *TimerObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+    pub fn toPrimitive(this: *TimerObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         if (!this.has_accessed_primitive) {
             this.has_accessed_primitive = true;
             const vm = VirtualMachine.get();
@@ -722,7 +780,7 @@ pub const EventLoopTimer = struct {
 
     state: State = .PENDING,
 
-    tag: Tag = .TimerCallback,
+    tag: Tag,
 
     pub const Tag = if (Environment.isWindows) enum {
         TimerCallback,
@@ -730,7 +788,11 @@ pub const EventLoopTimer = struct {
         TestRunner,
         StatWatcherScheduler,
         UpgradedDuplex,
+        DNSResolver,
         WindowsNamedPipe,
+        WTFTimer,
+        PostgresSQLConnectionTimeout,
+        PostgresSQLConnectionMaxLifetime,
 
         pub fn Type(comptime T: Tag) type {
             return switch (T) {
@@ -739,7 +801,11 @@ pub const EventLoopTimer = struct {
                 .TestRunner => JSC.Jest.TestRunner,
                 .StatWatcherScheduler => StatWatcherScheduler,
                 .UpgradedDuplex => uws.UpgradedDuplex,
+                .DNSResolver => DNSResolver,
                 .WindowsNamedPipe => uws.WindowsNamedPipe,
+                .WTFTimer => WTFTimer,
+                .PostgresSQLConnectionTimeout => JSC.Postgres.PostgresSQLConnection,
+                .PostgresSQLConnectionMaxLifetime => JSC.Postgres.PostgresSQLConnection,
             };
         }
     } else enum {
@@ -748,6 +814,10 @@ pub const EventLoopTimer = struct {
         TestRunner,
         StatWatcherScheduler,
         UpgradedDuplex,
+        WTFTimer,
+        DNSResolver,
+        PostgresSQLConnectionTimeout,
+        PostgresSQLConnectionMaxLifetime,
 
         pub fn Type(comptime T: Tag) type {
             return switch (T) {
@@ -756,6 +826,10 @@ pub const EventLoopTimer = struct {
                 .TestRunner => JSC.Jest.TestRunner,
                 .StatWatcherScheduler => StatWatcherScheduler,
                 .UpgradedDuplex => uws.UpgradedDuplex,
+                .WTFTimer => WTFTimer,
+                .DNSResolver => DNSResolver,
+                .PostgresSQLConnectionTimeout => JSC.Postgres.PostgresSQLConnection,
+                .PostgresSQLConnectionMaxLifetime => JSC.Postgres.PostgresSQLConnection,
             };
         }
     };
@@ -808,11 +882,18 @@ pub const EventLoopTimer = struct {
 
     pub fn fire(this: *EventLoopTimer, now: *const timespec, vm: *VirtualMachine) Arm {
         switch (this.tag) {
+            .PostgresSQLConnectionTimeout => return @as(*JSC.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("timer", this))).onConnectionTimeout(),
+            .PostgresSQLConnectionMaxLifetime => return @as(*JSC.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("max_lifetime_timer", this))).onMaxLifetimeTimeout(),
             inline else => |t| {
                 var container: *t.Type() = @alignCast(@fieldParentPtr("event_loop_timer", this));
+                if (comptime t.Type() == WTFTimer) {
+                    return container.fire(now, vm);
+                }
+
                 if (comptime t.Type() == TimerObject) {
                     return container.fire(now, vm);
                 }
+
                 if (comptime t.Type() == StatWatcherScheduler) {
                     return container.timerCallback();
                 }
@@ -830,6 +911,10 @@ pub const EventLoopTimer = struct {
                     return .disarm;
                 }
 
+                if (comptime t.Type() == DNSResolver) {
+                    return container.checkTimeouts(now, vm);
+                }
+
                 return container.callback(container);
             },
         }
@@ -839,3 +924,134 @@ pub const EventLoopTimer = struct {
 };
 
 const timespec = bun.timespec;
+
+/// A timer created by WTF code and invoked by Bun's event loop
+pub const WTFTimer = struct {
+    /// This is WTF::RunLoop::TimerBase from WebKit
+    const RunLoopTimer = opaque {};
+
+    vm: *VirtualMachine,
+    run_loop_timer: *RunLoopTimer,
+    event_loop_timer: EventLoopTimer,
+    imminent: *std.atomic.Value(?*WTFTimer),
+    repeat: bool,
+    lock: bun.Mutex = .{},
+
+    pub usingnamespace bun.New(@This());
+
+    pub fn init(run_loop_timer: *RunLoopTimer, js_vm: *VirtualMachine) *WTFTimer {
+        const this = WTFTimer.new(.{
+            .vm = js_vm,
+            .imminent = &js_vm.eventLoop().imminent_gc_timer,
+            .event_loop_timer = .{
+                .next = .{
+                    .sec = std.math.maxInt(i64),
+                    .nsec = 0,
+                },
+                .tag = .WTFTimer,
+                .state = .CANCELLED,
+            },
+            .run_loop_timer = run_loop_timer,
+            .repeat = false,
+        });
+
+        return this;
+    }
+
+    pub export fn WTFTimer__runIfImminent(vm: *VirtualMachine) void {
+        vm.eventLoop().runImminentGCTimer();
+    }
+
+    pub fn run(this: *WTFTimer, vm: *VirtualMachine) void {
+        if (this.event_loop_timer.state == .ACTIVE) {
+            vm.timer.remove(&this.event_loop_timer);
+        }
+        this.runWithoutRemoving();
+    }
+
+    inline fn runWithoutRemoving(this: *const WTFTimer) void {
+        WTFTimer__fire(this.run_loop_timer);
+    }
+
+    pub fn update(this: *WTFTimer, seconds: f64, repeat: bool) void {
+        // There's only one of these per VM, and each VM has its own imminent_gc_timer
+        this.imminent.store(if (seconds == 0) this else null, .seq_cst);
+
+        if (seconds == 0.0) {
+            return;
+        }
+
+        const modf = std.math.modf(seconds);
+        var interval = bun.timespec.now();
+        interval.sec += @intFromFloat(modf.ipart);
+        interval.nsec += @intFromFloat(modf.fpart * std.time.ns_per_s);
+        if (interval.nsec >= std.time.ns_per_s) {
+            interval.sec += 1;
+            interval.nsec -= std.time.ns_per_s;
+        }
+
+        this.vm.timer.update(&this.event_loop_timer, &interval);
+        this.repeat = repeat;
+    }
+
+    pub fn cancel(this: *WTFTimer) void {
+        this.lock.lock();
+        defer this.lock.unlock();
+        this.imminent.store(null, .monotonic);
+        if (this.event_loop_timer.state == .ACTIVE) {
+            this.vm.timer.remove(&this.event_loop_timer);
+        }
+    }
+
+    pub fn fire(this: *WTFTimer, _: *const bun.timespec, _: *VirtualMachine) EventLoopTimer.Arm {
+        this.event_loop_timer.state = .FIRED;
+        this.imminent.store(null, .monotonic);
+        this.runWithoutRemoving();
+        return if (this.repeat)
+            .{ .rearm = this.event_loop_timer.next }
+        else
+            .disarm;
+    }
+
+    pub fn deinit(this: *WTFTimer) void {
+        this.cancel();
+        this.destroy();
+    }
+
+    export fn WTFTimer__create(run_loop_timer: *RunLoopTimer) ?*anyopaque {
+        if (VirtualMachine.is_bundler_thread_for_bytecode_cache) {
+            return null;
+        }
+
+        return init(run_loop_timer, VirtualMachine.get());
+    }
+
+    export fn WTFTimer__update(this: *WTFTimer, seconds: f64, repeat: bool) void {
+        this.update(seconds, repeat);
+    }
+
+    export fn WTFTimer__deinit(this: *WTFTimer) void {
+        this.deinit();
+    }
+
+    export fn WTFTimer__isActive(this: *const WTFTimer) bool {
+        return this.event_loop_timer.state == .ACTIVE or (this.imminent.load(.monotonic) orelse return false) == this;
+    }
+
+    export fn WTFTimer__cancel(this: *WTFTimer) void {
+        this.cancel();
+    }
+
+    export fn WTFTimer__secondsUntilTimer(this: *WTFTimer) f64 {
+        this.lock.lock();
+        defer this.lock.unlock();
+        if (this.event_loop_timer.state == .ACTIVE) {
+            const until = this.event_loop_timer.next.duration(&bun.timespec.now());
+            const sec: f64, const nsec: f64 = .{ @floatFromInt(until.sec), @floatFromInt(until.nsec) };
+            return sec + nsec / std.time.ns_per_s;
+        }
+        return std.math.inf(f64);
+    }
+
+    extern fn WTFTimer__fire(this: *RunLoopTimer) void;
+};

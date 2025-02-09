@@ -1,4 +1,4 @@
-import { bench, run } from "./runner.mjs";
+import { bench, run } from "../runner.mjs";
 
 const blob = new Blob(["<p id='foo'>Hello</p>"]);
 bench("prepend", async () => {

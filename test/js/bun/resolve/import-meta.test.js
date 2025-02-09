@@ -1,5 +1,5 @@
 import { spawnSync } from "bun";
-import { expect, it } from "bun:test";
+import { expect, it, mock } from "bun:test";
 import { bunEnv, bunExe, ospath } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import Module from "node:module";
@@ -11,6 +11,15 @@ import { isModuleResolveFilenameSlowPathEnabled } from "bun:internal-for-testing
 const { path, dir, dirname, filename } = import.meta;
 
 const tmpbase = tmpdir() + sep;
+
+it("import.meta.require is settable", () => {
+  const old = import.meta.require;
+  const fn = mock(() => "hello");
+  import.meta.require = fn;
+  expect(import.meta.require("hello")).toBe("hello");
+  import.meta.require = old;
+  expect(fn).toHaveBeenCalledTimes(1);
+});
 
 it("import.meta.main", () => {
   const { exitCode } = spawnSync({

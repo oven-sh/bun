@@ -10,11 +10,9 @@ const ErrorableZigString = Exports.ErrorableZigString;
 const ErrorableResolvedSource = Exports.ErrorableResolvedSource;
 const ZigException = Exports.ZigException;
 const ZigStackTrace = Exports.ZigStackTrace;
-const is_bindgen: bool = false;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const JSC = bun.JSC;
 const Shimmer = JSC.Shimmer;
-const ConsoleObject = JSC.ConsoleObject;
 const FFI = @import("./FFI.zig");
 const NullableAllocator = bun.NullableAllocator;
 const MutableString = bun.MutableString;
@@ -26,42 +24,111 @@ const OOM = bun.OOM;
 
 pub const JSObject = extern struct {
     pub const shim = Shimmer("JSC", "JSObject", @This());
-    bytes: shim.Bytes,
     const cppFn = shim.cppFn;
-    pub const include = "JavaScriptCore/JSObject.h";
-    pub const name = "JSC::JSObject";
-    pub const namespace = "JSC";
 
-    pub fn getArrayLength(this: *JSObject) usize {
-        return cppFn("getArrayLength", .{
-            this,
-        });
+    pub fn toJS(obj: *JSObject) JSValue {
+        return JSValue.fromCell(obj);
+    }
+
+    /// Marshall a struct instance into a JSObject, copying its properties.
+    ///
+    /// Each field will be encoded with `JSC.toJS`. Fields whose types have a
+    /// `toJS` method will have it called to encode.
+    ///
+    /// This method is equivalent to `Object.create(...)` + setting properties,
+    /// and is only intended for creating POJOs.
+    pub fn create(pojo: anytype, global: *JSGlobalObject) *JSObject {
+        return createFromStructWithPrototype(@TypeOf(pojo), pojo, global, false);
+    }
+    /// Marshall a struct into a JSObject, copying its properties. It's
+    /// `__proto__` will be `null`.
+    ///
+    /// Each field will be encoded with `JSC.toJS`. Fields whose types have a
+    /// `toJS` method will have it called to encode.
+    ///
+    /// This is roughly equivalent to creating an object with
+    /// `Object.create(null)` and adding properties to it.
+    pub fn createNullProto(pojo: anytype, global: *JSGlobalObject) *JSObject {
+        return createFromStructWithPrototype(@TypeOf(pojo), pojo, global, true);
+    }
+
+    /// Marshall a struct instance into a JSObject. `pojo` is borrowed.
+    ///
+    /// Each field will be encoded with `JSC.toJS`. Fields whose types have a
+    /// `toJS` method will have it called to encode.
+    ///
+    /// This method is equivalent to `Object.create(...)` + setting properties,
+    /// and is only intended for creating POJOs.
+    ///
+    /// The object's prototype with either be `null` or `ObjectPrototype`
+    /// depending on whether `null_prototype` is set. Prefer using the object
+    /// prototype (`null_prototype = false`) unless you have a good reason not
+    /// to.
+    fn createFromStructWithPrototype(comptime T: type, pojo: T, global: *JSGlobalObject, comptime null_prototype: bool) *JSObject {
+        const info: std.builtin.Type.Struct = @typeInfo(T).@"struct";
+
+        const obj = obj: {
+            const val = if (comptime null_prototype)
+                JSValue.createEmptyObjectWithNullPrototype(global)
+            else
+                JSValue.createEmptyObject(global, comptime info.fields.len);
+            if (bun.Environment.isDebug)
+                bun.assert(val.isObject());
+            break :obj val.uncheckedPtrCast(JSObject);
+        };
+
+        const cell = toJS(obj);
+        inline for (info.fields) |field| {
+            const property = @field(pojo, field.name);
+            cell.put(
+                global,
+                field.name,
+                JSC.toJS(global, @TypeOf(property), property, .temporary),
+            );
+        }
+
+        return obj;
+    }
+
+    pub inline fn put(obj: *JSObject, global: *JSGlobalObject, key: anytype, value: JSValue) !void {
+        obj.toJS().put(global, key, value);
+    }
+
+    pub inline fn putAllFromStruct(obj: *JSObject, global: *JSGlobalObject, properties: anytype) !void {
+        inline for (comptime std.meta.fieldNames(@TypeOf(properties))) |field| {
+            try obj.put(global, field, @field(properties, field));
+        }
+    }
+
+    extern fn JSC__createStructure(*JSC.JSGlobalObject, *JSC.JSCell, u32, names: [*]ExternColumnIdentifier, flags: u32) JSC.JSValue;
+
+    pub const ExternColumnIdentifier = extern struct {
+        tag: u8 = 0,
+        value: extern union {
+            index: u32,
+            name: bun.String,
+        },
+
+        pub fn string(this: *ExternColumnIdentifier) ?*bun.String {
+            return switch (this.tag) {
+                2 => &this.value.name,
+                else => null,
+            };
+        }
+
+        pub fn deinit(this: *ExternColumnIdentifier) void {
+            if (this.string()) |str| {
+                str.deref();
+            }
+        }
+    };
+    pub fn createStructure(global: *JSGlobalObject, owner: JSC.JSValue, length: u32, names: [*]ExternColumnIdentifier, flags: u32) JSValue {
+        JSC.markBinding(@src());
+        return JSC__createStructure(global, owner.asCell(), length, names, flags);
     }
 
     const InitializeCallback = *const fn (ctx: *anyopaque, obj: *JSObject, global: *JSGlobalObject) callconv(.C) void;
     extern fn JSC__JSObject__create(global_object: *JSGlobalObject, length: usize, ctx: *anyopaque, initializer: InitializeCallback) JSValue;
-    pub fn create(global_object: *JSGlobalObject, length: usize, ctx: *anyopaque, initializer: InitializeCallback) JSValue {
-        return JSC__JSObject__create(global_object, length, ctx, initializer);
-    }
-
-    extern fn JSC__createStructure(*JSC.JSGlobalObject, *JSC.JSCell, u32, names: [*]bun.String) JSC.JSValue;
-    extern fn JSC__createEmptyObjectWithStructure(*JSC.JSGlobalObject, *anyopaque) JSC.JSValue;
-    extern fn JSC__putDirectOffset(*JSC.VM, JSC.JSValue, offset: u32, JSC.JSValue) void;
-
-    pub fn createStructure(global: *JSGlobalObject, owner: JSC.JSValue, length: u32, names: [*]bun.String) JSValue {
-        JSC.markBinding(@src());
-        return JSC__createStructure(global, owner.asCell(), length, names);
-    }
-
-    pub fn uninitialized(global: *JSGlobalObject, structure: JSC.JSValue) JSValue {
-        JSC.markBinding(@src());
-        return JSC__createEmptyObjectWithStructure(global, structure.asCell());
-    }
-
-    pub fn putDirectOffset(this: JSValue, vm: *VM, offset: u32, value: JSValue) void {
-        JSC.markBinding(@src());
-        return JSC__putDirectOffset(vm, this, offset, value);
-    }
 
     pub fn Initializer(comptime Ctx: type, comptime func: fn (*Ctx, obj: *JSObject, global: *JSGlobalObject) void) type {
         return struct {
@@ -73,7 +140,7 @@ pub const JSObject = extern struct {
 
     pub fn createWithInitializer(comptime Ctx: type, creator: *Ctx, global: *JSGlobalObject, length: usize) JSValue {
         const Type = Initializer(Ctx, Ctx.create);
-        return create(global, length, creator, Type.call);
+        return JSC__JSObject__create(global, length, creator, Type.call);
     }
 
     pub fn getIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSValue {
@@ -84,25 +151,18 @@ pub const JSObject = extern struct {
         });
     }
 
-    pub fn putRecord(this: *JSObject, global: *JSGlobalObject, key: *ZigString, values: [*]ZigString, values_len: usize) void {
-        return cppFn("putRecord", .{ this, global, key, values, values_len });
+    pub fn putRecord(this: *JSObject, global: *JSGlobalObject, key: *ZigString, values: []ZigString) void {
+        return cppFn("putRecord", .{ this, global, key, values.ptr, values.len });
     }
 
-    pub fn getDirect(this: *JSObject, globalThis: *JSGlobalObject, str: *const ZigString) JSValue {
-        return cppFn("getDirect", .{
-            this,
-            globalThis,
-            str,
-        });
-    }
+    extern fn Bun__JSObject__getCodePropertyVMInquiry(*JSGlobalObject, *JSObject) JSValue;
 
-    pub const Extern = [_][]const u8{
-        "putRecord",
-        "getArrayLength",
-        "getIndex",
-        "putAtIndex",
-        "getDirect",
-    };
+    /// This will not call getters or be observable from JavaScript.
+    pub fn getCodePropertyVMInquiry(obj: *JSObject, global: *JSGlobalObject) ?JSValue {
+        const v = Bun__JSObject__getCodePropertyVMInquiry(global, obj);
+        if (v == .zero) return null;
+        return v;
+    }
 };
 
 pub const CachedBytecode = opaque {
@@ -132,7 +192,7 @@ pub const CachedBytecode = opaque {
         return null;
     }
 
-    extern "C" fn CachedBytecode__deref(this: *CachedBytecode) void;
+    extern "c" fn CachedBytecode__deref(this: *CachedBytecode) void;
     pub fn deref(this: *CachedBytecode) void {
         return CachedBytecode__deref(this);
     }
@@ -208,9 +268,13 @@ pub const ZigString = extern struct {
     }
 
     pub fn encode(this: ZigString, encoding: JSC.Node.Encoding) []u8 {
+        return this.encodeWithAllocator(bun.default_allocator, encoding);
+    }
+
+    pub fn encodeWithAllocator(this: ZigString, allocator: std.mem.Allocator, encoding: JSC.Node.Encoding) []u8 {
         return switch (this.as()) {
             inline else => |repr| switch (encoding) {
-                inline else => |enc| JSC.WebCore.Encoder.constructFrom(std.meta.Child(@TypeOf(repr)), repr, enc),
+                inline else => |enc| JSC.WebCore.Encoder.constructFrom(std.meta.Child(@TypeOf(repr)), repr, allocator, enc),
             },
         };
     }
@@ -508,6 +572,10 @@ pub const ZigString = extern struct {
             }
         }
 
+        pub fn isWTFAllocated(this: *const Slice) bool {
+            return bun.String.isWTFAllocator(this.allocator.get() orelse return false);
+        }
+
         pub fn init(allocator: std.mem.Allocator, input: []const u8) Slice {
             return .{
                 .ptr = input.ptr,
@@ -542,7 +610,13 @@ pub const ZigString = extern struct {
             return !this.allocator.isNull();
         }
 
-        pub fn clone(this: Slice, allocator: std.mem.Allocator) !Slice {
+        pub fn toOwned(this: Slice, allocator: std.mem.Allocator) OOM!Slice {
+            const duped = try allocator.dupe(u8, this.ptr[0..this.len]);
+            return .{ .allocator = .init(allocator), .ptr = duped.ptr, .len = this.len };
+        }
+
+        // TODO: this is identical to `cloneIfNeeded`
+        pub fn clone(this: Slice, allocator: std.mem.Allocator) OOM!Slice {
             if (this.isAllocated()) {
                 return Slice{ .allocator = this.allocator, .ptr = this.ptr, .len = this.len };
             }
@@ -759,8 +833,8 @@ pub const ZigString = extern struct {
     pub fn toExternalU16(ptr: [*]const u16, len: usize, global: *JSGlobalObject) JSValue {
         if (len > String.max_length()) {
             bun.default_allocator.free(ptr[0..len]);
-            global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw();
-            return JSValue.zero;
+            global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
+            return .zero;
         }
         return shim.cppFn("toExternalU16", .{ ptr, len, global });
     }
@@ -883,10 +957,10 @@ pub const ZigString = extern struct {
         };
     }
 
-    pub fn toSliceClone(this: ZigString, allocator: std.mem.Allocator) Slice {
+    pub fn toSliceClone(this: ZigString, allocator: std.mem.Allocator) OOM!Slice {
         if (this.len == 0)
             return Slice.empty;
-        const buffer = this.toOwnedSlice(allocator) catch unreachable;
+        const buffer = try this.toOwnedSlice(allocator);
         return Slice{
             .allocator = NullableAllocator.init(allocator),
             .ptr = buffer.ptr,
@@ -945,7 +1019,7 @@ pub const ZigString = extern struct {
         this.assertGlobal();
         if (this.len > String.max_length()) {
             bun.default_allocator.free(@constCast(this.byteSlice()));
-            global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw();
+            global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
             return .zero;
         }
         return shim.cppFn("toExternalValue", .{ this, global });
@@ -967,7 +1041,7 @@ pub const ZigString = extern struct {
     ) JSValue {
         if (this.len > String.max_length()) {
             callback(ctx, @constCast(@ptrCast(this.byteSlice().ptr)), this.len);
-            global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw();
+            global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
             return .zero;
         }
 
@@ -1050,8 +1124,23 @@ pub const DOMURL = opaque {
         return out;
     }
 
-    pub fn fileSystemPath(this: *DOMURL) bun.String {
-        return shim.cppFn("fileSystemPath", .{this});
+    extern fn WebCore__DOMURL__fileSystemPath(arg0: *DOMURL, error_code: *c_int) bun.String;
+    pub const ToFileSystemPathError = error{
+        NotFileUrl,
+        InvalidPath,
+        InvalidHost,
+    };
+    pub fn fileSystemPath(this: *DOMURL) ToFileSystemPathError!bun.String {
+        var error_code: c_int = 0;
+        const path = WebCore__DOMURL__fileSystemPath(this, &error_code);
+        switch (error_code) {
+            1 => return ToFileSystemPathError.InvalidHost,
+            2 => return ToFileSystemPathError.InvalidPath,
+            3 => return ToFileSystemPathError.NotFileUrl,
+            else => {},
+        }
+        bun.assert(path.tag != .Dead);
+        return path;
     }
 
     pub fn pathname_(this: *DOMURL, out: *ZigString) void {
@@ -1123,9 +1212,7 @@ pub const DOMFormData = opaque {
         DOMFormData__toQueryString(this, ctx, &Wrapper.run);
     }
 
-    pub fn fromJS(
-        value: JSValue,
-    ) ?*DOMFormData {
+    pub fn fromJS(value: JSValue) ?*DOMFormData {
         return shim.cppFn("fromJS", .{
             value,
         });
@@ -1251,7 +1338,7 @@ pub const FetchHeaders = opaque {
         });
     }
 
-    extern "C" fn WebCore__FetchHeaders__createFromJS(*JSC.JSGlobalObject, JSValue) ?*FetchHeaders;
+    extern "c" fn WebCore__FetchHeaders__createFromJS(*JSC.JSGlobalObject, JSValue) ?*FetchHeaders;
     /// Construct a `Headers` object from a JSValue.
     ///
     /// This can be:
@@ -1676,7 +1763,9 @@ pub const SystemError = extern struct {
     message: String = String.empty,
     path: String = String.empty,
     syscall: String = String.empty,
+    hostname: String = String.empty,
     fd: bun.FileDescriptor = bun.toFD(-1),
+    dest: String = String.empty,
 
     pub fn Maybe(comptime Result: type) type {
         return union(enum) {
@@ -1695,15 +1784,13 @@ pub const SystemError = extern struct {
         return @enumFromInt(this.errno * -1);
     }
 
-    pub fn toAnyhowError(this: SystemError) bun.anyhow.Error {
-        return bun.anyhow.Error.newSys(this);
-    }
-
     pub fn deref(this: *const SystemError) void {
         this.path.deref();
         this.code.deref();
         this.message.deref();
         this.syscall.deref();
+        this.hostname.deref();
+        this.dest.deref();
     }
 
     pub fn ref(this: *SystemError) void {
@@ -1711,18 +1798,41 @@ pub const SystemError = extern struct {
         this.code.ref();
         this.message.ref();
         this.syscall.ref();
+        this.hostname.ref();
+        this.dest.ref();
     }
 
     pub fn toErrorInstance(this: *const SystemError, global: *JSGlobalObject) JSValue {
-        defer {
-            this.path.deref();
-            this.code.deref();
-            this.message.deref();
-            this.syscall.deref();
-        }
+        defer this.deref();
 
         return shim.cppFn("toErrorInstance", .{ this, global });
     }
+
+    /// This constructs the ERR_SYSTEM_ERROR error object, which has an `info`
+    /// property containing the details of the system error:
+    ///
+    /// SystemError [ERR_SYSTEM_ERROR]: A system error occurred: {syscall} returned {errno} ({message})
+    /// {
+    ///     name: "ERR_SYSTEM_ERROR",
+    ///     info: {
+    ///         errno: -{errno},
+    ///         code: {code},        // string
+    ///         message: {message},  // string
+    ///         syscall: {syscall},  // string
+    ///     },
+    ///     errno: -{errno},
+    ///     syscall: {syscall},
+    /// }
+    ///
+    /// Before using this function, consider if the Node.js API it is
+    /// implementing follows this convention. It is exclusively used
+    /// to match the error code that `node:os` throws.
+    pub fn toErrorInstanceWithInfoObject(this: *const SystemError, global: *JSGlobalObject) JSValue {
+        defer this.deref();
+
+        return SystemError__toErrorInstanceWithInfoObject(this, global);
+    }
+    extern fn SystemError__toErrorInstanceWithInfoObject(*const SystemError, *JSC.JSGlobalObject) JSValue;
 
     pub fn format(self: SystemError, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         if (!self.path.isEmpty()) {
@@ -1763,7 +1873,6 @@ pub const SystemError = extern struct {
     };
 };
 
-pub const ReturnableException = *?*Exception;
 pub const Sizes = @import("../bindings/sizes.zig");
 
 pub const JSUint8Array = opaque {
@@ -1853,11 +1962,17 @@ pub const JSString = extern struct {
         return shim.cppFn("toZigString", .{ this, global, zig_str });
     }
 
+    pub fn ensureStillAlive(this: *JSString) void {
+        std.mem.doNotOptimizeAway(this);
+    }
+
     pub fn getZigString(this: *JSString, global: *JSGlobalObject) JSC.ZigString {
         var out = JSC.ZigString.init("");
         this.toZigString(global, &out);
         return out;
     }
+
+    pub const view = getZigString;
 
     // doesn't always allocate
     pub fn toSlice(
@@ -1874,7 +1989,7 @@ pub const JSString = extern struct {
         this: *JSString,
         global: *JSGlobalObject,
         allocator: std.mem.Allocator,
-    ) ZigString.Slice {
+    ) JSError!ZigString.Slice {
         var str = ZigString.init("");
         this.toZigString(global, &str);
         return str.toSliceClone(allocator);
@@ -1965,6 +2080,7 @@ pub const JSPromiseRejectionOperation = enum(u32) {
     Handle = 1,
 };
 
+// TODO(@paperdave): delete and inline these functions
 pub fn NewGlobalObject(comptime Type: type) type {
     return struct {
         const importNotImpl = "Import not implemented";
@@ -2003,7 +2119,7 @@ pub fn NewGlobalObject(comptime Type: type) type {
             return JSValue.jsUndefined();
         }
 
-        pub fn reportUncaughtException(global: *JSGlobalObject, exception: *Exception) callconv(.C) JSValue {
+        pub fn reportUncaughtException(global: *JSGlobalObject, exception: *JSC.Exception) callconv(.C) JSValue {
             if (comptime @hasDecl(Type, "reportUncaughtException")) {
                 return @call(bun.callmod_inline, Type.reportUncaughtException, .{ global, exception });
             }
@@ -2179,13 +2295,20 @@ pub const AbortSignal = extern opaque {
     extern fn WebCore__AbortSignal__reasonIfAborted(*AbortSignal, *JSC.JSGlobalObject, *u8) JSValue;
 
     pub const AbortReason = union(enum) {
-        CommonAbortReason: CommonAbortReason,
-        JSValue: JSValue,
+        common: CommonAbortReason,
+        js: JSValue,
 
         pub fn toBodyValueError(this: AbortReason, globalObject: *JSC.JSGlobalObject) JSC.WebCore.Body.Value.ValueError {
             return switch (this) {
-                .CommonAbortReason => |reason| .{ .AbortReason = reason },
-                .JSValue => |value| .{ .JSValue = JSC.Strong.create(value, globalObject) },
+                .common => |reason| .{ .AbortReason = reason },
+                .js => |value| .{ .JSValue = JSC.Strong.create(value, globalObject) },
+            };
+        }
+
+        pub fn toJS(this: AbortReason, global: *JSC.JSGlobalObject) JSValue {
+            return switch (this) {
+                .common => |reason| reason.toJS(global),
+                .js => |value| value,
             };
         }
     };
@@ -2195,25 +2318,19 @@ pub const AbortSignal = extern opaque {
         const js_reason = WebCore__AbortSignal__reasonIfAborted(this, global, &reason);
         if (reason > 0) {
             bun.debugAssert(js_reason == .undefined);
-            return AbortReason{ .CommonAbortReason = @enumFromInt(reason) };
+            return .{ .common = @enumFromInt(reason) };
         }
-
         if (js_reason == .zero) {
-            return null;
+            return null; // not aborted
         }
-
-        return AbortReason{ .JSValue = js_reason };
+        return .{ .js = js_reason };
     }
 
-    pub fn ref(
-        this: *AbortSignal,
-    ) *AbortSignal {
+    pub fn ref(this: *AbortSignal) *AbortSignal {
         return cppFn("ref", .{this});
     }
 
-    pub fn unref(
-        this: *AbortSignal,
-    ) void {
+    pub fn unref(this: *AbortSignal) void {
         cppFn("unref", .{this});
     }
 
@@ -2273,10 +2390,6 @@ pub const JSPromise = extern struct {
                 defer loop.exit();
 
                 this.reject(globalThis, val);
-            }
-
-            pub fn rejectOnNextTick(this: *WeakType, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
-                this.swap().rejectOnNextTick(globalThis, val);
             }
 
             pub fn resolve(this: *WeakType, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
@@ -2356,9 +2469,7 @@ pub const JSPromise = extern struct {
             this.reject(globalThis, val);
         }
 
-        pub fn rejectOnNextTick(this: *Strong, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
-            this.swap().rejectOnNextTick(globalThis, val);
-        }
+        pub const rejectOnNextTick = @compileError("Either use an event loop task, or you're draining microtasks when you shouldn't be.");
 
         pub fn resolve(this: *Strong, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
             this.swap().resolve(globalThis, val);
@@ -2397,6 +2508,14 @@ pub const JSPromise = extern struct {
             return this.strong.get() orelse .zero;
         }
 
+        pub fn hasValue(this: *const Strong) bool {
+            return this.strong.has();
+        }
+
+        pub fn globalObject(this: *const Strong) ?*JSC.JSGlobalObject {
+            return this.strong.globalThis;
+        }
+
         pub fn swap(this: *Strong) *JSC.JSPromise {
             const prom = this.strong.swap().asPromise().?;
             this.strong.deinit();
@@ -2420,8 +2539,8 @@ pub const JSPromise = extern struct {
         const Wrapper = struct {
             args: Args,
 
-            pub fn call(this: *@This(), _: *JSC.JSGlobalObject) JSC.JSValue {
-                return @call(.auto, Fn, this.args);
+            pub fn call(this: *@This(), g: *JSC.JSGlobalObject) callconv(.c) JSC.JSValue {
+                return toJSHostValue(g, @call(.auto, Fn, this.args));
             }
         };
 
@@ -2430,7 +2549,7 @@ pub const JSPromise = extern struct {
     }
 
     pub fn wrapValue(globalObject: *JSGlobalObject, value: JSValue) JSValue {
-        if (value.isEmpty()) {
+        if (value == .zero) {
             return resolvedPromiseValue(globalObject, JSValue.jsUndefined());
         } else if (value.isEmptyOrUndefinedOrNull() or !value.isCell()) {
             return resolvedPromiseValue(globalObject, value);
@@ -2465,18 +2584,6 @@ pub const JSPromise = extern struct {
 
     pub fn resolveOnNextTick(promise: *JSC.JSPromise, globalThis: *JSGlobalObject, value: JSC.JSValue) void {
         return cppFn("resolveOnNextTick", .{ promise, globalThis, value });
-    }
-
-    pub fn rejectOnNextTick(promise: *JSC.JSPromise, globalThis: *JSGlobalObject, value: JSC.JSValue) void {
-        return rejectOnNextTickWithHandled(promise, globalThis, value, false);
-    }
-
-    pub fn rejectOnNextTickAsHandled(promise: *JSC.JSPromise, globalThis: *JSGlobalObject, value: JSC.JSValue) void {
-        return rejectOnNextTickWithHandled(promise, globalThis, value, true);
-    }
-
-    pub fn rejectOnNextTickWithHandled(promise: *JSC.JSPromise, globalThis: *JSGlobalObject, value: JSC.JSValue, handled: bool) void {
-        return cppFn("rejectOnNextTickWithHandled", .{ promise, globalThis, value, handled });
     }
 
     /// Create a new promise with an already fulfilled value
@@ -2521,12 +2628,6 @@ pub const JSPromise = extern struct {
     pub fn rejectAsHandled(this: *JSPromise, globalThis: *JSGlobalObject, value: JSValue) void {
         cppFn("rejectAsHandled", .{ this, globalThis, value });
     }
-    // pub fn rejectException(this: *JSPromise, globalThis: *JSGlobalObject, value: *Exception) void {
-    //     cppFn("rejectException", .{ this, globalThis, value });
-    // }
-    pub fn rejectAsHandledException(this: *JSPromise, globalThis: *JSGlobalObject, value: *Exception) void {
-        cppFn("rejectAsHandledException", .{ this, globalThis, value });
-    }
 
     pub fn create(globalThis: *JSGlobalObject) *JSPromise {
         return cppFn("create", .{globalThis});
@@ -2544,7 +2645,6 @@ pub const JSPromise = extern struct {
         "reject",
         "rejectAsHandled",
         "rejectAsHandledException",
-        "rejectOnNextTickWithHandled",
         "rejectedPromise",
         "rejectedPromiseValue",
         "resolve",
@@ -2624,156 +2724,6 @@ pub const JSInternalPromise = extern struct {
     pub fn rejectAsHandled(this: *JSInternalPromise, globalThis: *JSGlobalObject, value: JSValue) void {
         cppFn("rejectAsHandled", .{ this, globalThis, value });
     }
-    // pub fn rejectException(this: *JSInternalPromise, globalThis: *JSGlobalObject, value: *Exception) void {
-    //     cppFn("rejectException", .{ this, globalThis, value });
-    // }
-    pub fn rejectAsHandledException(this: *JSInternalPromise, globalThis: *JSGlobalObject, value: *Exception) void {
-        cppFn("rejectAsHandledException", .{ this, globalThis, value });
-    }
-    // pub const PromiseCallbackPrimitive = *const fn (
-    //     ctx: ?*anyopaque,
-    //     globalThis: *JSGlobalObject,
-    //     arguments: [*]const JSValue,
-    //     arguments_len: usize,
-    // ) callconv(.C) JSValue;
-    // pub fn then_(
-    //     this: *JSInternalPromise,
-    //     globalThis: *JSGlobalObject,
-    //     resolve_ctx: ?*anyopaque,
-    //     onResolve: PromiseCallbackPrimitive,
-    //     reject_ctx: ?*anyopaque,
-    //     onReject: PromiseCallbackPrimitive,
-    // ) *JSInternalPromise {
-    //     return cppFn("then_", .{ this, globalThis, resolve_ctx, onResolve, reject_ctx, onReject });
-    // }
-
-    // pub const Completion = struct {
-    //     result: []const JSValue,
-    //     global: *JSGlobalObject,
-    //     resolved: bool = false,
-
-    //     pub const PromiseTask = struct {
-    //         frame: @Frame(JSInternalPromise._wait),
-    //         completion: Completion,
-
-    //         pub fn onResolve(this: *PromiseTask, global: *JSGlobalObject, arguments: []const JSValue) anyerror!JSValue {
-    //             this.completion.global = global;
-    //             this.completion.resolved = true;
-    //             this.completion.result = arguments;
-
-    //             return resume this.frame;
-    //         }
-
-    //         pub fn onReject(this: *PromiseTask, global: *JSGlobalObject, arguments: []const JSValue) anyerror!JSValue {
-    //             this.completion.global = global;
-    //             this.completion.resolved = false;
-    //             this.completion.result = arguments;
-    //             return resume this.frame;
-    //         }
-    //     };
-    // };
-
-    // pub fn _wait(
-    //     this: *JSInternalPromise,
-    //     globalThis: *JSGlobalObject,
-    //     internal: *Completion.PromiseTask,
-    // ) void {
-    //     this.then(
-    //         globalThis,
-    //         Completion.PromiseTask,
-    //         internal,
-    //         Completion.PromiseTask.onResolve,
-    //         Completion.PromiseTask,
-    //         internal,
-    //         Completion.PromiseTask.onReject,
-    //     );
-
-    //     suspend {
-    //         internal.frame = @frame().*;
-    //     }
-    // }
-
-    // pub fn wait(
-    //     this: *JSInternalPromise,
-    //     globalThis: *JSGlobalObject,
-    //     allocator: std.mem.Allocator,
-    // ) callconv(.Async) anyerror!Completion {
-    //     var internal = try allocator.create(Completion.PromiseTask);
-    //     defer allocator.destroy(internal);
-    //     internal.* = Completion.Internal{
-    //         .frame = undefined,
-    //         .completion = Completion{
-    //             .global = globalThis,
-    //             .resolved = false,
-    //             .result = &[_]JSValue{},
-    //         },
-    //     };
-
-    //     this._wait(globalThis, internal);
-
-    //     return internal.completion;
-    // }
-
-    // pub fn then(
-    //     this: *JSInternalPromise,
-    //     globalThis: *JSGlobalObject,
-    //     comptime Resolve: type,
-    //     resolver: *Resolve,
-    //     comptime onResolve: fn (*Resolve, *JSGlobalObject, []const JSValue) anyerror!JSValue,
-    //     comptime Reject: type,
-    //     rejecter: *Reject,
-    //     comptime onReject: fn (*Reject, *JSGlobalObject, []const JSValue) anyerror!JSValue,
-    // ) *JSInternalPromise {
-    //     return then_(this, globalThis, resolver, PromiseCallback(Resolve, onResolve), Reject, rejecter, PromiseCallback(Reject, onReject));
-    // }
-
-    // pub fn thenResolve(
-    //     this: *JSInternalPromise,
-    //     globalThis: *JSGlobalObject,
-    //     comptime Resolve: type,
-    //     resolver: *Resolve,
-    //     comptime onResolve: fn (*Resolve, *JSGlobalObject, []const JSValue) anyerror!JSValue,
-    // ) *JSInternalPromise {
-    //     return thenResolve_(this, globalThis, resolver, PromiseCallback(Resolve, onResolve));
-    // }
-
-    // pub fn thenResolve_(
-    //     this: *JSInternalPromise,
-    //     globalThis: *JSGlobalObject,
-    //     resolve_ctx: ?*anyopaque,
-    //     onResolve: PromiseCallbackPrimitive,
-    // ) *JSInternalPromise {
-    //     return cppFn("thenResolve_", .{
-    //         this,
-    //         globalThis,
-    //         resolve_ctx,
-    //         onResolve,
-    //     });
-    // }
-
-    // pub fn thenReject_(
-    //     this: *JSInternalPromise,
-    //     globalThis: *JSGlobalObject,
-    //     resolve_ctx: ?*anyopaque,
-    //     onResolve: PromiseCallbackPrimitive,
-    // ) *JSInternalPromise {
-    //     return cppFn("thenReject_", .{
-    //         this,
-    //         globalThis,
-    //         resolve_ctx,
-    //         onResolve,
-    //     });
-    // }
-
-    // pub fn thenReject(
-    //     this: *JSInternalPromise,
-    //     globalThis: *JSGlobalObject,
-    //     comptime Resolve: type,
-    //     resolver: *Resolve,
-    //     comptime onResolve: fn (*Resolve, *JSGlobalObject, []const JSValue) anyerror!JSValue,
-    // ) *JSInternalPromise {
-    //     return thenReject_(this, globalThis, resolver, PromiseCallback(Resolve, onResolve));
-    // }
 
     pub fn create(globalThis: *JSGlobalObject) *JSInternalPromise {
         return cppFn("create", .{globalThis});
@@ -2850,12 +2800,6 @@ pub const AnyPromise = union(enum) {
         }
     }
 
-    pub fn rejectAsHandledException(this: AnyPromise, globalThis: *JSGlobalObject, value: *Exception) void {
-        switch (this) {
-            inline else => |promise| promise.rejectAsHandledException(globalThis, value),
-        }
-    }
-
     pub fn asValue(this: AnyPromise, globalThis: *JSGlobalObject) JSValue {
         return switch (this) {
             .normal => |promise| promise.asValue(globalThis),
@@ -2876,8 +2820,8 @@ pub const AnyPromise = union(enum) {
         const Wrapper = struct {
             args: Args,
 
-            pub fn call(wrap_: *@This(), _: *JSC.JSGlobalObject) JSC.JSValue {
-                return @call(.auto, Fn, wrap_.args);
+            pub fn call(wrap_: *@This(), global: *JSC.JSGlobalObject) callconv(.c) JSC.JSValue {
+                return toJSHostValue(global, @call(.auto, Fn, wrap_.args));
             }
         };
 
@@ -2934,7 +2878,7 @@ pub const JSFunction = extern struct {
     pub fn create(
         global: *JSGlobalObject,
         fn_name: anytype,
-        comptime implementation: JSHostFunctionType,
+        comptime implementation: JSHostZigFunction,
         function_length: u32,
         options: CreateJSFunctionOptions,
     ) JSValue {
@@ -2944,7 +2888,7 @@ pub const JSFunction = extern struct {
                 bun.String => fn_name,
                 else => bun.String.init(fn_name),
             },
-            implementation,
+            toJSHostFunction(implementation),
             function_length,
             options.implementation_visibility,
             options.intrinsic,
@@ -2976,16 +2920,25 @@ pub const JSGlobalObject = opaque {
     pub fn allocator(this: *JSGlobalObject) std.mem.Allocator {
         return this.bunVM().allocator;
     }
-
+    extern fn JSGlobalObject__throwStackOverflow(this: *JSGlobalObject) void;
+    pub fn throwStackOverflow(this: *JSGlobalObject) void {
+        JSGlobalObject__throwStackOverflow(this);
+    }
     extern fn JSGlobalObject__throwOutOfMemoryError(this: *JSGlobalObject) void;
-    pub fn throwOutOfMemory(this: *JSGlobalObject) void {
+    pub fn throwOutOfMemory(this: *JSGlobalObject) bun.JSError {
         JSGlobalObject__throwOutOfMemoryError(this);
+        return error.JSError;
     }
 
-    pub fn throwTODO(this: *JSGlobalObject, msg: []const u8) void {
+    pub fn throwOutOfMemoryValue(this: *JSGlobalObject) JSValue {
+        JSGlobalObject__throwOutOfMemoryError(this);
+        return .zero;
+    }
+
+    pub fn throwTODO(this: *JSGlobalObject, msg: []const u8) bun.JSError {
         const err = this.createErrorInstance("{s}", .{msg});
         err.put(this, ZigString.static("name"), bun.String.static("TODOError").toJS(this));
-        this.throwValue(err);
+        return this.throwValue(err);
     }
 
     pub const throwTerminationException = JSGlobalObject__throwTerminationException;
@@ -2996,27 +2949,22 @@ pub const JSGlobalObject = opaque {
     }
 
     pub inline fn toJSValue(globalThis: *JSGlobalObject) JSValue {
-        return @enumFromInt(@as(JSValue.Type, @bitCast(@intFromPtr(globalThis))));
+        return @enumFromInt(@intFromPtr(globalThis));
     }
 
-    pub fn throwInvalidArguments(
-        this: *JSGlobalObject,
-        comptime fmt: [:0]const u8,
-        args: anytype,
-    ) void {
+    pub fn throwInvalidArguments(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) bun.JSError {
         const err = JSC.toInvalidArguments(fmt, args, this);
-        this.vm().throwError(this, err);
+        return this.throwValue(err);
     }
 
-    pub inline fn throwMissingArgumentsValue(this: *JSGlobalObject, comptime arg_names: []const []const u8) JSValue {
-        switch (arg_names.len) {
+    pub inline fn throwMissingArgumentsValue(this: *JSGlobalObject, comptime arg_names: []const []const u8) bun.JSError {
+        return switch (arg_names.len) {
             0 => @compileError("requires at least one argument"),
             1 => this.ERR_MISSING_ARGS("The \"{s}\" argument must be specified", .{arg_names[0]}).throw(),
             2 => this.ERR_MISSING_ARGS("The \"{s}\" and \"{s}\" arguments must be specified", .{ arg_names[0], arg_names[1] }).throw(),
             3 => this.ERR_MISSING_ARGS("The \"{s}\", \"{s}\", and \"{s}\" arguments must be specified", .{ arg_names[0], arg_names[1], arg_names[2] }).throw(),
             else => @compileError("implement this message"),
-        }
-        return .zero;
+        };
     }
 
     pub fn createInvalidArgumentType(
@@ -3037,29 +2985,50 @@ pub const JSGlobalObject = opaque {
         comptime name_: []const u8,
         comptime field: []const u8,
         comptime typename: []const u8,
-    ) void {
-        this.throwValue(this.createInvalidArgumentType(name_, field, typename));
+    ) bun.JSError {
+        return this.throwValue(this.createInvalidArgumentType(name_, field, typename));
     }
 
+    pub fn throwInvalidArgumentValue(
+        this: *JSGlobalObject,
+        argname: []const u8,
+        value: JSValue,
+    ) bun.JSError {
+        const actual_string_value = try determineSpecificType(this, value);
+        defer actual_string_value.deref();
+        return this.ERR_INVALID_ARG_VALUE("The \"{s}\" argument is invalid. Received {}", .{ argname, actual_string_value }).throw();
+    }
+
+    extern "c" fn Bun__ErrorCode__determineSpecificType(*JSGlobalObject, JSValue) String;
+
+    pub fn determineSpecificType(global: *JSGlobalObject, value: JSValue) JSError!String {
+        const str = Bun__ErrorCode__determineSpecificType(global, value);
+        errdefer str.deref();
+        if (global.hasException()) {
+            return error.JSError;
+        }
+        return str;
+    }
+
+    /// "The <argname> argument must be of type <typename>. Received <value>"
     pub fn throwInvalidArgumentTypeValue(
         this: *JSGlobalObject,
         argname: []const u8,
         typename: []const u8,
         value: JSValue,
-    ) JSValue {
-        const ty_str = value.jsTypeString(this).toSlice(this, bun.default_allocator);
-        defer ty_str.deinit();
-        this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be of type {s}. Received {}", .{ argname, typename, bun.fmt.quote(ty_str.slice()) }).throw();
-        return .zero;
+    ) bun.JSError {
+        const actual_string_value = try determineSpecificType(this, value);
+        defer actual_string_value.deref();
+        return this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be of type {s}. Received {}", .{ argname, typename, actual_string_value }).throw();
     }
+
     pub fn throwInvalidArgumentRangeValue(
         this: *JSGlobalObject,
         argname: []const u8,
         typename: []const u8,
         value: i64,
-    ) JSValue {
-        this.ERR_OUT_OF_RANGE("The \"{s}\" is out of range. {s}. Received {}", .{ argname, typename, value }).throw();
-        return .zero;
+    ) bun.JSError {
+        return this.ERR_OUT_OF_RANGE("The \"{s}\" is out of range. {s}. Received {}", .{ argname, typename, value }).throw();
     }
 
     pub fn throwInvalidPropertyTypeValue(
@@ -3067,11 +3036,10 @@ pub const JSGlobalObject = opaque {
         field: []const u8,
         typename: []const u8,
         value: JSValue,
-    ) JSValue {
+    ) bun.JSError {
         const ty_str = value.jsTypeString(this).toSlice(this, bun.default_allocator);
         defer ty_str.deinit();
-        this.ERR_INVALID_ARG_TYPE("The \"{s}\" property must be of type {s}. Received {s}", .{ field, typename, ty_str.slice() }).throw();
-        return .zero;
+        return this.ERR_INVALID_ARG_TYPE("The \"{s}\" property must be of type {s}. Received {s}", .{ field, typename, ty_str.slice() }).throw();
     }
 
     pub fn createNotEnoughArguments(
@@ -3083,13 +3051,14 @@ pub const JSGlobalObject = opaque {
         return JSC.toTypeError(.ERR_MISSING_ARGS, "Not enough arguments to '" ++ name_ ++ "'. Expected {d}, got {d}.", .{ expected, got }, this);
     }
 
+    /// Not enough arguments passed to function named `name_`
     pub fn throwNotEnoughArguments(
         this: *JSGlobalObject,
         comptime name_: []const u8,
         comptime expected: usize,
         got: usize,
-    ) void {
-        this.throwValue(this.createNotEnoughArguments(name_, expected, got));
+    ) bun.JSError {
+        return this.throwValue(this.createNotEnoughArguments(name_, expected, got));
     }
 
     extern fn JSC__JSGlobalObject__reload(JSC__JSGlobalObject__ptr: *JSGlobalObject) void;
@@ -3217,28 +3186,20 @@ pub const JSGlobalObject = opaque {
         return err;
     }
 
-    pub fn throw(
-        this: *JSGlobalObject,
-        comptime fmt: [:0]const u8,
-        args: anytype,
-    ) void {
+    pub fn throw(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSError {
         const instance = this.createErrorInstance(fmt, args);
-        if (instance != .zero)
-            this.vm().throwError(this, instance);
+        bun.assert(instance != .zero);
+        return this.throwValue(instance);
     }
 
-    pub fn throwPretty(
-        this: *JSGlobalObject,
-        comptime fmt: [:0]const u8,
-        args: anytype,
-    ) void {
+    pub fn throwPretty(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) bun.JSError {
         const instance = switch (Output.enable_ansi_colors) {
             inline else => |enabled| this.createErrorInstance(Output.prettyFmt(fmt, enabled), args),
         };
-
-        if (instance != .zero)
-            this.vm().throwError(this, instance);
+        bun.assert(instance != .zero);
+        return this.throwValue(instance);
     }
+
     extern fn JSC__JSGlobalObject__queueMicrotaskCallback(*JSGlobalObject, *anyopaque, Function: *const (fn (*anyopaque) callconv(.C) void)) void;
     pub fn queueMicrotaskCallback(
         this: *JSGlobalObject,
@@ -3257,11 +3218,7 @@ pub const JSGlobalObject = opaque {
         JSC__JSGlobalObject__queueMicrotaskCallback(this, ctx_val, &Wrapper.call);
     }
 
-    pub fn queueMicrotask(
-        this: *JSGlobalObject,
-        function: JSValue,
-        args: []const JSC.JSValue,
-    ) void {
+    pub fn queueMicrotask(this: *JSGlobalObject, function: JSValue, args: []const JSC.JSValue) void {
         this.queueMicrotaskJob(
             function,
             if (args.len > 0) args[0] else .zero,
@@ -3270,50 +3227,34 @@ pub const JSGlobalObject = opaque {
     }
 
     extern fn JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject__ptr: *JSGlobalObject, JSValue, JSValue, JSValue) void;
-    pub fn queueMicrotaskJob(
-        this: *JSGlobalObject,
-        function: JSValue,
-        first: JSValue,
-        second: JSValue,
-    ) void {
+    pub fn queueMicrotaskJob(this: *JSGlobalObject, function: JSValue, first: JSValue, second: JSValue) void {
         JSC__JSGlobalObject__queueMicrotaskJob(this, function, first, second);
     }
 
-    pub fn throwValue(
-        this: *JSGlobalObject,
-        value: JSC.JSValue,
-    ) void {
+    pub fn throwValue(this: *JSGlobalObject, value: JSC.JSValue) JSError {
         this.vm().throwError(this, value);
+        return error.JSError;
     }
 
-    // eventually merge this with throwValue, but that's a big diff
-    pub fn throwValueRet(
-        this: *JSGlobalObject,
-        value: JSC.JSValue,
-    ) JSValue {
-        this.vm().throwError(this, value);
-        return .zero;
-    }
+    pub fn throwError(this: *JSGlobalObject, err: anyerror, comptime fmt: [:0]const u8) bun.JSError {
+        if (err == error.OutOfMemory) {
+            return this.throwOutOfMemory();
+        }
 
-    pub fn throwError(
-        this: *JSGlobalObject,
-        err: anyerror,
-        comptime fmt: [:0]const u8,
-    ) void {
-        var str = ZigString.init(std.fmt.allocPrint(this.bunVM().allocator, "{s} " ++ fmt, .{@errorName(err)}) catch return);
-        str.markUTF8();
+        // If we're throwing JSError, that means either:
+        // - We're throwing an exception while another exception is already active
+        // - We're incorrectly returning JSError from a function that did not throw.
+        bun.debugAssert(err != error.JSError);
+
+        // Avoid tiny extra allocation
+        var stack = std.heap.stackFallback(128, bun.default_allocator);
+        const allocator_ = stack.get();
+        const buffer = try std.fmt.allocPrint(allocator_, comptime "{s} " ++ fmt, .{@errorName(err)});
+        defer allocator_.free(buffer);
+        const str = ZigString.initUTF8(buffer);
         const err_value = str.toErrorInstance(this);
         this.vm().throwError(this, err_value);
-        this.bunVM().allocator.free(ZigString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
-    }
-
-    pub fn handleError(
-        this: *JSGlobalObject,
-        err: anyerror,
-        comptime fmt: [:0]const u8,
-    ) JSValue {
-        this.throwError(err, fmt);
-        return JSValue.jsUndefined();
+        return error.JSError;
     }
 
     pub fn ref(this: *JSGlobalObject) C_API.JSContextRef {
@@ -3321,13 +3262,20 @@ pub const JSGlobalObject = opaque {
     }
     pub const ctx = ref;
 
-    pub inline fn ptr(this: *JSGlobalObject) *JSGlobalObject {
-        return this;
-    }
-
     extern fn JSC__JSGlobalObject__createAggregateError(*JSGlobalObject, [*]const JSValue, usize, *const ZigString) JSValue;
     pub fn createAggregateError(globalObject: *JSGlobalObject, errors: []const JSValue, message: *const ZigString) JSValue {
         return JSC__JSGlobalObject__createAggregateError(globalObject, errors.ptr, errors.len, message);
+    }
+
+    extern fn JSC__JSGlobalObject__createAggregateErrorWithArray(*JSGlobalObject, JSValue, bun.String, JSValue) JSValue;
+    pub fn createAggregateErrorWithArray(
+        globalObject: *JSGlobalObject,
+        message: bun.String,
+        error_array: JSValue,
+    ) JSValue {
+        if (bun.Environment.allow_assert)
+            bun.assert(error_array.isArray());
+        return JSC__JSGlobalObject__createAggregateErrorWithArray(globalObject, error_array, message, .undefined);
     }
 
     extern fn JSC__JSGlobalObject__generateHeapSnapshot(*JSGlobalObject) JSValue;
@@ -3348,14 +3296,11 @@ pub const JSGlobalObject = opaque {
     pub fn takeException(this: *JSGlobalObject, proof: bun.JSError) JSValue {
         switch (proof) {
             error.JSError => {},
+            error.OutOfMemory => this.throwOutOfMemory() catch {},
         }
 
-        if (bun.Environment.allow_assert)
-            bun.assert(this.hasException());
-
         return this.tryTakeException() orelse {
-            bun.assert(false);
-            return .zero;
+            @panic("A JavaScript exception was thrown, however it was cleared before it could be read.");
         };
     }
 
@@ -3456,21 +3401,20 @@ pub const JSGlobalObject = opaque {
             allowFunction: bool = false,
             nullable: bool = false,
         },
-    ) bool {
+    ) bun.JSError!void {
         if ((!opts.nullable and value.isNull()) or
             (!opts.allowArray and value.isArray()) or
             (!value.isObject() and (!opts.allowFunction or !value.isFunction())))
         {
-            _ = this.throwInvalidArgumentTypeValue(arg_name, "object", value);
-            return false;
+            return this.throwInvalidArgumentTypeValue(arg_name, "object", value);
         }
-        return true;
     }
 
-    pub fn throwRangeError(this: *JSGlobalObject, value: anytype, options: bun.fmt.OutOfRangeOptions) void {
+    pub fn throwRangeError(this: *JSGlobalObject, value: anytype, options: bun.fmt.OutOfRangeOptions) bun.JSError {
+        // TODO:
         // This works around a Zig compiler bug
         // when using this.ERR_OUT_OF_RANGE.
-        JSC.Error.ERR_OUT_OF_RANGE.throw(this, "{}", .{bun.fmt.outOfRange(value, options)});
+        return JSC.Error.ERR_OUT_OF_RANGE.throw(this, "{}", .{bun.fmt.outOfRange(value, options)});
     }
 
     pub const IntegerRange = struct {
@@ -3480,7 +3424,7 @@ pub const JSGlobalObject = opaque {
         always_allow_zero: bool = false,
     };
 
-    pub fn validateIntegerRange(this: *JSGlobalObject, value: JSValue, comptime T: type, default: T, comptime range: IntegerRange) ?T {
+    pub fn validateIntegerRange(this: *JSGlobalObject, value: JSValue, comptime T: type, default: T, comptime range: IntegerRange) bun.JSError!T {
         if (value == .undefined or value == .zero) {
             return default;
         }
@@ -3508,15 +3452,13 @@ pub const JSGlobalObject = opaque {
                 return 0;
             }
             if (int < min_t or int > max_t) {
-                this.throwRangeError(int, .{ .field_name = field_name, .min = min, .max = max });
-                return null;
+                return this.throwRangeError(int, .{ .field_name = field_name, .min = min, .max = max });
             }
             return @intCast(int);
         }
 
         if (!value.isNumber()) {
-            _ = this.throwInvalidPropertyTypeValue(field_name, "number", value);
-            return null;
+            return this.throwInvalidPropertyTypeValue(field_name, "number", value);
         }
         const f64_val = value.asNumber();
         if (always_allow_zero and f64_val == 0) {
@@ -3528,12 +3470,10 @@ pub const JSGlobalObject = opaque {
             return default;
         }
         if (@floor(f64_val) != f64_val) {
-            _ = this.throwInvalidPropertyTypeValue(field_name, "integer", value);
-            return null;
+            return this.throwInvalidPropertyTypeValue(field_name, "integer", value);
         }
         if (f64_val < min_t or f64_val > max_t) {
-            this.throwRangeError(f64_val, .{ .field_name = comptime field_name, .min = min, .max = max });
-            return null;
+            return this.throwRangeError(f64_val, .{ .field_name = comptime field_name, .min = min, .max = max });
         }
 
         return @intFromFloat(f64_val);
@@ -3545,6 +3485,17 @@ pub const JSGlobalObject = opaque {
         }
         if (this.hasException()) return null;
         return default;
+    }
+
+    pub inline fn createHostFunction(
+        global: *JSGlobalObject,
+        comptime display_name: [:0]const u8,
+        // when querying from JavaScript, 'func.name'
+        comptime function: anytype,
+        // when querying from JavaScript, 'func.len'
+        comptime argument_count: u32,
+    ) JSValue {
+        return NewRuntimeFunction(global, ZigString.static(display_name), argument_count, toJSHostFunction(function), false, false, null);
     }
 
     pub usingnamespace @import("ErrorCode").JSGlobalObjectExtensions;
@@ -3560,7 +3511,7 @@ pub const JSGlobalObject = opaque {
     extern fn JSGlobalObject__throwTerminationException(this: *JSGlobalObject) void;
 };
 
-pub const JSNativeFn = JSHostFunctionPtr;
+pub const JSNativeFn = JSHostZigFunction;
 
 pub const JSArrayIterator = struct {
     i: u32 = 0,
@@ -3576,6 +3527,7 @@ pub const JSArrayIterator = struct {
         };
     }
 
+    // TODO: this can throw
     pub fn next(this: *JSArrayIterator) ?JSValue {
         if (!(this.i < this.len)) {
             return null;
@@ -3640,17 +3592,43 @@ pub const JSMap = opaque {
     };
 };
 
+// TODO: this should not need to be `pub`
 pub const JSValueReprInt = i64;
 
-pub const JSValue = enum(JSValueReprInt) {
-    zero = 0,
+/// ABI-compatible with EncodedJSValue
+/// In the future, this type will exclude `zero`, encoding it as `error.JSError` instead.
+pub const JSValue = enum(i64) {
     undefined = 0xa,
     null = 0x2,
     true = FFI.TrueI64,
     false = 0x6,
+
+    /// Typically means an exception was thrown.
+    zero = 0,
+
+    /// JSValue::ValueDeleted
+    ///
+    /// Deleted is a special encoding used in JSC hash map internals used for
+    /// the null state. It is re-used here for encoding the "not present" state.
+    property_does_not_exist_on_object = 0x4,
     _,
 
-    pub const Type = JSValueReprInt;
+    /// When JavaScriptCore throws something, it returns a null cell (0). The
+    /// exception is set on the global object. ABI-compatible with EncodedJSValue.
+    pub const MaybeException = enum(i64) {
+        zero = 0,
+        _,
+
+        pub fn unwrap(val: JSValue.MaybeException) JSError!JSValue {
+            return if (val != .zero) @enumFromInt(@intFromEnum(val)) else JSError.JSError;
+        }
+    };
+
+    /// This function is a migration stepping stone to JSError
+    /// Prefer annotating the type as `JSValue.MaybeException`
+    pub fn unwrapZeroToJSError(val: JSValue) JSError!JSValue {
+        return if (val != .zero) val else JSError.JSError;
+    }
 
     pub const shim = Shimmer("JSC", "JSValue", @This());
     pub const is_pointer = false;
@@ -3750,7 +3728,6 @@ pub const JSValue = enum(JSValueReprInt) {
         MaxJS = 0b11111111,
         Event = 0b11101111,
         DOMWrapper = 0b11101110,
-        Blob = 0b11111100,
 
         /// This means that we don't have Zig bindings for the type yet, but it
         /// implements .toJSON()
@@ -3828,8 +3805,29 @@ pub const JSValue = enum(JSValueReprInt) {
             };
         }
 
-        pub fn isTypedArray(this: JSType) bool {
+        pub fn isTypedArrayOrArrayBuffer(this: JSType) bool {
             return switch (this) {
+                .ArrayBuffer,
+                .BigInt64Array,
+                .BigUint64Array,
+                .Float32Array,
+                .Float16Array,
+                .Float64Array,
+                .Int16Array,
+                .Int32Array,
+                .Int8Array,
+                .Uint16Array,
+                .Uint32Array,
+                .Uint8Array,
+                .Uint8ClampedArray,
+                => true,
+                else => false,
+            };
+        }
+
+        pub fn isArrayBufferLike(this: JSType) bool {
+            return switch (this) {
+                .DataView,
                 .ArrayBuffer,
                 .BigInt64Array,
                 .BigUint64Array,
@@ -3985,6 +3983,13 @@ pub const JSValue = enum(JSValueReprInt) {
                 else => false,
             };
         }
+
+        pub inline fn isArguments(this: JSType) bool {
+            return switch (this) {
+                .DirectArguments, .ClonedArguments, .ScopedArguments => true,
+                else => false,
+            };
+        }
     };
 
     pub inline fn cast(ptr: anytype) JSValue {
@@ -4007,6 +4012,12 @@ pub const JSValue = enum(JSValueReprInt) {
     pub fn getDirectIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSValue {
         return JSC__JSValue__getDirectIndex(this, globalThis, i);
     }
+
+    pub fn isFalsey(this: JSValue) bool {
+        return !this.toBoolean();
+    }
+
+    pub const isTruthy = toBoolean;
 
     const PropertyIteratorFn = *const fn (
         globalObject_: *JSGlobalObject,
@@ -4048,22 +4059,36 @@ pub const JSValue = enum(JSValueReprInt) {
         JSC__JSValue__forEachPropertyOrdered(this, globalObject, ctx, callback);
     }
 
-    pub fn coerceToDouble(
-        this: JSValue,
-        globalObject: *JSC.JSGlobalObject,
-    ) f64 {
+    /// Prefer toNumber over this function to
+    /// - Match the underlying JSC api name
+    /// - Match the underlying specification
+    /// - Catch exceptions
+    pub fn coerceToDouble(this: JSValue, globalObject: *JSC.JSGlobalObject) f64 {
         return cppFn("coerceToDouble", .{ this, globalObject });
+    }
+
+    pub extern fn Bun__JSValue__toNumber(value: JSValue, global: *JSGlobalObject, had_error: *bool) f64;
+
+    /// Perform the ToNumber abstract operation, coercing a value to a number.
+    /// Equivalent to `+value`
+    /// https://tc39.es/ecma262/#sec-tonumber
+    pub fn toNumber(this: JSValue, global: *JSGlobalObject) bun.JSError!f64 {
+        var had_error: bool = false;
+        const result = Bun__JSValue__toNumber(this, global, &had_error);
+        if (had_error) {
+            return error.JSError;
+        }
+        return result;
     }
 
     pub fn coerce(this: JSValue, comptime T: type, globalThis: *JSC.JSGlobalObject) T {
         return switch (T) {
             ZigString => this.getZigString(globalThis),
-            bool => this.toBooleanSlow(globalThis),
+            bool => this.toBoolean(),
             f64 => {
                 if (this.isDouble()) {
                     return this.asDouble();
                 }
-
                 return this.coerceToDouble(globalThis);
             },
             i64 => {
@@ -4073,12 +4098,20 @@ pub const JSValue = enum(JSValueReprInt) {
                 if (this.isInt32()) {
                     return this.asInt32();
                 }
-
                 if (this.getNumber()) |num| {
                     return coerceJSValueDoubleTruncatingT(i32, num);
                 }
-
                 return this.coerceToInt32(globalThis);
+            },
+            std.c.AI,
+            => {
+                if (this.isInt32()) {
+                    return @bitCast(this.asInt32());
+                }
+                if (this.getNumber()) |num| {
+                    return @bitCast(coerceJSValueDoubleTruncatingT(i32, num));
+                }
+                return @bitCast(this.coerceToInt32(globalThis));
             },
             else => @compileError("Unsupported coercion type"),
         };
@@ -4087,8 +4120,8 @@ pub const JSValue = enum(JSValueReprInt) {
     /// This does not call [Symbol.toPrimitive] or [Symbol.toStringTag].
     /// This is only safe when you don't want to do conversions across non-primitive types.
     pub fn to(this: JSValue, comptime T: type) T {
-        if (@typeInfo(T) == .Enum) {
-            const Int = @typeInfo(T).Enum.tag_type;
+        if (@typeInfo(T) == .@"enum") {
+            const Int = @typeInfo(T).@"enum".tag_type;
             return @enumFromInt(this.to(Int));
         }
         return switch (comptime T) {
@@ -4110,6 +4143,25 @@ pub const JSValue = enum(JSValueReprInt) {
         };
     }
 
+    pub fn toPortNumber(this: JSValue, global: *JSGlobalObject) bun.JSError!u16 {
+        if (this.isNumber()) {
+            // const double = try this.toNumber(global);
+            const double = this.coerceToDouble(global);
+            if (std.math.isNan(double)) {
+                return JSC.Error.ERR_SOCKET_BAD_PORT.throw(global, "Invalid port number", .{});
+            }
+
+            const port = this.to(i64);
+            if (0 <= port and port <= 65535) {
+                return @as(u16, @truncate(@max(0, port)));
+            } else {
+                return JSC.Error.ERR_SOCKET_BAD_PORT.throw(global, "Port number out of range: {d}", .{port});
+            }
+        }
+
+        return JSC.Error.ERR_SOCKET_BAD_PORT.throw(global, "Invalid port number", .{});
+    }
+
     pub fn isInstanceOf(this: JSValue, global: *JSGlobalObject, constructor: JSValue) bool {
         if (!this.isCell())
             return false;
@@ -4127,7 +4179,7 @@ pub const JSValue = enum(JSValueReprInt) {
         thisObject: JSValue,
         argumentCount: usize,
         arguments: [*]const JSValue,
-    ) JSValue;
+    ) JSValue.MaybeException;
 
     pub fn call(function: JSValue, global: *JSGlobalObject, thisValue: JSC.JSValue, args: []const JSC.JSValue) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
@@ -4138,26 +4190,25 @@ pub const JSValue = enum(JSValueReprInt) {
                 loop.debug.last_fn_name.deref();
                 loop.debug.last_fn_name = function.getName(global);
             }
+            // Do not assert that the function is callable here.
+            // The Bun__JSValue__call function will already assert that, and
+            // this can be an async context so it's fine if it's not callable.
         }
 
-        const value = Bun__JSValue__call(
+        return Bun__JSValue__call(
             global,
             function,
             thisValue,
             args.len,
             args.ptr,
-        );
-        if (value == .zero) return error.JSError;
-        return value;
+        ).unwrap();
     }
 
     /// The value cannot be empty. Check `!this.isEmpty()` before calling this function
     pub fn jsType(
         this: JSValue,
     ) JSType {
-        if (comptime bun.Environment.allow_assert) {
-            bun.assert(!this.isEmpty());
-        }
+        bun.assert(this != .zero);
         return cppFn("jsType", .{this});
     }
 
@@ -4196,11 +4247,11 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("putRecord", .{ value, global, key, values_array, values_len });
     }
 
-    fn putZigString(value: JSValue, global: *JSGlobalObject, key: *const ZigString, result: JSC.JSValue) void {
+    pub fn putZigString(value: JSValue, global: *JSGlobalObject, key: *const ZigString, result: JSC.JSValue) void {
         @import("./headers.zig").JSC__JSValue__put(value, global, key, result);
     }
 
-    extern "C" fn JSC__JSValue__putBunString(value: JSValue, global: *JSGlobalObject, key: *const bun.String, result: JSC.JSValue) void;
+    extern "c" fn JSC__JSValue__putBunString(value: JSValue, global: *JSGlobalObject, key: *const bun.String, result: JSC.JSValue) void;
     fn putBunString(value: JSValue, global: *JSGlobalObject, key: *const bun.String, result: JSC.JSValue) void {
         if (comptime bun.Environment.isDebug)
             JSC.markBinding(@src());
@@ -4209,8 +4260,8 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn put(value: JSValue, global: *JSGlobalObject, key: anytype, result: JSC.JSValue) void {
         const Key = @TypeOf(key);
-        if (comptime @typeInfo(Key) == .Pointer) {
-            const Elem = @typeInfo(Key).Pointer.child;
+        if (comptime @typeInfo(Key) == .pointer) {
+            const Elem = @typeInfo(Key).pointer.child;
             if (Elem == ZigString) {
                 putZigString(value, global, key, result);
             } else if (Elem == bun.String) {
@@ -4249,6 +4300,15 @@ pub const JSValue = enum(JSValueReprInt) {
     extern fn JSC__JSValue__toISOString(*JSC.JSGlobalObject, JSC.JSValue, *[28]u8) c_int;
     pub fn toISOString(this: JSValue, globalObject: *JSC.JSGlobalObject, buf: *[28]u8) []const u8 {
         const count = JSC__JSValue__toISOString(globalObject, this, buf);
+        if (count < 0) {
+            return "";
+        }
+
+        return buf[0..@as(usize, @intCast(count))];
+    }
+    extern fn JSC__JSValue__DateNowISOString(*JSGlobalObject, f64) JSValue;
+    pub fn getDateNowISOString(globalObject: *JSC.JSGlobalObject, buf: *[28]u8) []const u8 {
+        const count = JSC__JSValue__DateNowISOString(globalObject, buf);
         if (count < 0) {
             return "";
         }
@@ -4305,14 +4365,19 @@ pub const JSValue = enum(JSValueReprInt) {
 
             return ZigType.fromJS(value);
         }
-
-        return JSC.GetJSPrivateData(ZigType, value.asObjectRef());
     }
 
     extern fn JSC__JSValue__dateInstanceFromNullTerminatedString(*JSGlobalObject, [*:0]const u8) JSValue;
     pub fn fromDateString(globalObject: *JSGlobalObject, str: [*:0]const u8) JSValue {
         JSC.markBinding(@src());
         return JSC__JSValue__dateInstanceFromNullTerminatedString(globalObject, str);
+    }
+
+    extern fn JSC__JSValue__dateInstanceFromNumber(*JSGlobalObject, f64) JSValue;
+
+    pub fn fromDateNumber(globalObject: *JSGlobalObject, value: f64) JSValue {
+        JSC.markBinding(@src());
+        return JSC__JSValue__dateInstanceFromNumber(globalObject, value);
     }
 
     extern fn JSBuffer__isBuffer(*JSGlobalObject, JSValue) bool;
@@ -4329,20 +4394,13 @@ pub const JSValue = enum(JSValueReprInt) {
         return this.jsType() == .JSDate;
     }
 
-    pub fn asCheckLoaded(value: JSValue, comptime ZigType: type) ?*ZigType {
-        if (!ZigType.Class.isLoaded() or value.isUndefinedOrNull())
-            return null;
-
-        return JSC.GetJSPrivateData(ZigType, value.asObjectRef());
-    }
-
     pub fn protect(this: JSValue) void {
-        if (this.isEmptyOrUndefinedOrNull() or this.isNumber()) return;
+        if (!this.isCell()) return;
         JSC.C.JSValueProtect(JSC.VirtualMachine.get().global, this.asObjectRef());
     }
 
     pub fn unprotect(this: JSValue) void {
-        if (this.isEmptyOrUndefinedOrNull() or this.isNumber()) return;
+        if (!this.isCell()) return;
         JSC.C.JSValueUnprotect(JSC.VirtualMachine.get().global, this.asObjectRef());
     }
 
@@ -4389,68 +4447,7 @@ pub const JSValue = enum(JSValueReprInt) {
             .quote_strings = true,
         };
 
-        JestPrettyFormat.format(
-            .Debug,
-            globalObject,
-            @as([*]const JSValue, @ptrCast(&this)),
-            1,
-            Writer,
-            Writer,
-            writer,
-            fmt_options,
-        );
-
-        try buffered_writer.flush();
-
-        const count: usize = brk: {
-            var total: usize = 0;
-            var remain = out.list.items;
-            while (strings.indexOfChar(remain, '`')) |i| {
-                total += 1;
-                remain = remain[i + 1 ..];
-            }
-            break :brk total;
-        };
-
-        if (count > 0) {
-            var result = try out.allocator.alloc(u8, count + out.list.items.len);
-            var input = out.list.items;
-
-            var input_i: usize = 0;
-            var result_i: usize = 0;
-            while (strings.indexOfChar(input[input_i..], '`')) |i| {
-                bun.copy(u8, result[result_i..], input[input_i .. input_i + i]);
-                result_i += i;
-                result[result_i] = '\\';
-                result[result_i + 1] = '`';
-                result_i += 2;
-                input_i += i + 1;
-            }
-
-            if (result_i != result.len) {
-                bun.copy(u8, result[result_i..], input[input_i..]);
-            }
-
-            out.deinit();
-            out.list.items = result;
-            out.list.capacity = result.len;
-        }
-    }
-
-    pub fn jestPrettyFormat(this: JSValue, out: *MutableString, globalObject: *JSGlobalObject) !void {
-        var buffered_writer = MutableString.BufferedWriter{ .context = out };
-        const writer = buffered_writer.writer();
-        const Writer = @TypeOf(writer);
-
-        const fmt_options = JSC.ConsoleObject.FormatOptions{
-            .enable_colors = false,
-            .add_newline = false,
-            .flush = false,
-            .ordered_properties = true,
-            .quote_strings = true,
-        };
-
-        JSC.ConsoleObject.format2(
+        try JestPrettyFormat.format(
             .Debug,
             globalObject,
             @as([*]const JSValue, @ptrCast(&this)),
@@ -4491,8 +4488,8 @@ pub const JSValue = enum(JSValueReprInt) {
     extern fn JSBuffer__bufferFromPointerAndLengthAndDeinit(*JSGlobalObject, [*]u8, usize, ?*anyopaque, JSC.C.JSTypedArrayBytesDeallocator) JSValue;
 
     pub fn jsNumberWithType(comptime Number: type, number: Number) JSValue {
-        if (@typeInfo(Number) == .Enum) {
-            return jsNumberWithType(@typeInfo(Number).Enum.tag_type, @intFromEnum(number));
+        if (@typeInfo(Number) == .@"enum") {
+            return jsNumberWithType(@typeInfo(Number).@"enum".tag_type, @intFromEnum(number));
         }
         return switch (comptime Number) {
             JSValue => number,
@@ -4582,20 +4579,11 @@ pub const JSValue = enum(JSValueReprInt) {
         return str;
     }
 
-    pub fn createStringArray(globalThis: *JSGlobalObject, str: [*c]const ZigString, strings_count: usize, clone: bool) JSValue {
-        return cppFn("createStringArray", .{
-            globalThis,
-            str,
-            strings_count,
-            clone,
-        });
-    }
-
     pub fn print(
         this: JSValue,
         globalObject: *JSGlobalObject,
-        message_type: ConsoleObject.MessageType,
-        message_level: ConsoleObject.MessageLevel,
+        message_type: JSC.ConsoleObject.MessageType,
+        message_level: JSC.ConsoleObject.MessageLevel,
     ) void {
         JSC.ConsoleObject.messageWithTypeAndLevel(
             undefined,
@@ -4662,7 +4650,7 @@ pub const JSValue = enum(JSValueReprInt) {
         });
     }
 
-    extern "C" fn JSC__JSValue__hasOwnPropertyValue(JSValue, *JSGlobalObject, JSValue) bool;
+    extern "c" fn JSC__JSValue__hasOwnPropertyValue(JSValue, *JSGlobalObject, JSValue) bool;
     /// Calls `Object.hasOwnProperty(value)`.
     /// Returns true if the object has the property, false otherwise
     ///
@@ -4782,15 +4770,8 @@ pub const JSValue = enum(JSValueReprInt) {
             else => false,
         };
     }
-    /// Empty as in "JSValue {}" rather than an empty string
-    pub inline fn isEmpty(this: JSValue) bool {
-        return switch (@intFromEnum(this)) {
-            0 => true,
-            else => false,
-        };
-    }
     pub fn isBoolean(this: JSValue) bool {
-        return cppFn("isBoolean", .{this});
+        return this == .true or this == .false;
     }
     pub fn isAnyInt(this: JSValue) bool {
         return cppFn("isAnyInt", .{this});
@@ -4984,11 +4965,15 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("toZigString", .{ this, out, global });
     }
 
-    /// Increments the reference count
-    ///
-    /// **You must call `.deref()` or it will leak memory**
+    /// Increments the reference count, you must call `.deref()` or it will leak memory.
+    /// Returns String.Dead on error. Deprecated in favor of `toBunString2`
     pub fn toBunString(this: JSValue, globalObject: *JSC.JSGlobalObject) bun.String {
         return bun.String.fromJS(this, globalObject);
+    }
+
+    /// Increments the reference count, you must call `.deref()` or it will leak memory.
+    pub fn toBunString2(this: JSValue, globalObject: *JSC.JSGlobalObject) JSError!bun.String {
+        return bun.String.fromJS2(this, globalObject);
     }
 
     /// this: RegExp value
@@ -5043,6 +5028,7 @@ pub const JSValue = enum(JSValueReprInt) {
         });
     }
 
+    /// Deprecated: replace with 'toBunString2'
     pub inline fn getZigString(this: JSValue, global: *JSGlobalObject) ZigString {
         var str = ZigString.init("");
         this.toZigString(&str, global);
@@ -5050,14 +5036,9 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     /// Convert a JSValue to a string, potentially calling `toString` on the
-    /// JSValue in JavaScript.
-    ///
-    /// This function can throw an exception in the `JSC::VM`. **If
-    /// the exception is not handled correctly, Bun will segfault**
-    ///
-    /// To handle exceptions, use `JSValue.toSliceOrNull`.
-    pub inline fn toSlice(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) ZigString.Slice {
-        const str = bun.String.fromJS(this, global);
+    /// JSValue in JavaScript. Can throw an error.
+    pub fn toSlice(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) JSError!ZigString.Slice {
+        const str = try bun.String.fromJS2(this, global);
         defer str.deref();
 
         // This keeps the WTF::StringImpl alive if it was originally a latin1
@@ -5086,17 +5067,15 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     /// Call `toString()` on the JSValue and clone the result.
-    /// On exception, this returns null.
-    pub fn toSliceOrNull(this: JSValue, globalThis: *JSGlobalObject) ?ZigString.Slice {
-        const str = bun.String.tryFromJS(this, globalThis) orelse return null;
+    pub fn toSliceOrNull(this: JSValue, globalThis: *JSGlobalObject) bun.JSError!ZigString.Slice {
+        const str = try bun.String.fromJS2(this, globalThis);
         defer str.deref();
         return str.toUTF8(bun.default_allocator);
     }
 
     /// Call `toString()` on the JSValue and clone the result.
-    /// On exception, this returns null.
-    pub fn toSliceOrNullWithAllocator(this: JSValue, globalThis: *JSGlobalObject, allocator: std.mem.Allocator) ?ZigString.Slice {
-        const str = bun.String.tryFromJS(this, globalThis) orelse return null;
+    pub fn toSliceOrNullWithAllocator(this: JSValue, globalThis: *JSGlobalObject, allocator: std.mem.Allocator) bun.JSError!ZigString.Slice {
+        const str = try bun.String.fromJS2(this, globalThis);
         defer str.deref();
         return str.toUTF8(allocator);
     }
@@ -5126,7 +5105,7 @@ pub const JSValue = enum(JSValueReprInt) {
     ) ?ZigString.Slice {
         var str = this.toStringOrNull(globalThis) orelse return null;
         return str.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch {
-            globalThis.throwOutOfMemory();
+            globalThis.throwOutOfMemory() catch {}; // TODO: properly propagate exception upwards
             return null;
         };
     }
@@ -5166,9 +5145,14 @@ pub const JSValue = enum(JSValueReprInt) {
         message,
         @"error",
         default,
+        encoding,
 
         pub fn has(property: []const u8) bool {
             return bun.ComptimeEnumMap(BuiltinName).has(property);
+        }
+
+        pub fn get(property: []const u8) ?BuiltinName {
+            return bun.ComptimeEnumMap(BuiltinName).get(property);
         }
     };
 
@@ -5183,17 +5167,25 @@ pub const JSValue = enum(JSValueReprInt) {
     // `this` must be known to be an object
     // intended to be more lightweight than ZigString.
     pub fn fastGet(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) ?JSValue {
-        if (bun.Environment.allow_assert)
+        if (bun.Environment.isDebug)
             bun.assert(this.isObject());
-        const result = fastGet_(this, global, @intFromEnum(builtin_name));
-        if (result == .zero or
-            // JS APIs treat {}.a as mostly the same as though it was not defined
-            result == .undefined)
-        {
-            return null;
-        }
 
-        return result;
+        return switch (JSC__JSValue__fastGet(this, global, @intFromEnum(builtin_name))) {
+            .zero, .undefined, .property_does_not_exist_on_object => null,
+            else => |val| val,
+        };
+    }
+
+    pub fn fastGetWithError(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) JSError!?JSValue {
+        if (bun.Environment.isDebug)
+            bun.assert(this.isObject());
+
+        return switch (JSC__JSValue__fastGet(this, global, @intFromEnum(builtin_name))) {
+            .zero => error.JSError,
+            .undefined => null,
+            .property_does_not_exist_on_object => null,
+            else => |val| val,
+        };
     }
 
     pub fn fastGetDirect(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) ?JSValue {
@@ -5205,10 +5197,7 @@ pub const JSValue = enum(JSValueReprInt) {
         return result;
     }
 
-    pub fn fastGet_(this: JSValue, global: *JSGlobalObject, builtin_name: u8) JSValue {
-        return cppFn("fastGet_", .{ this, global, builtin_name });
-    }
-
+    extern fn JSC__JSValue__fastGet(value: JSValue, global: *JSGlobalObject, builtin_id: u8) JSValue;
     extern fn JSC__JSValue__fastGetOwn(value: JSValue, globalObject: *JSGlobalObject, property: BuiltinName) JSValue;
     pub fn fastGetOwn(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) ?JSValue {
         const result = JSC__JSValue__fastGetOwn(this, global, builtin_name);
@@ -5223,10 +5212,7 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("fastGetDirect_", .{ this, global, builtin_name });
     }
 
-    /// Do not use this directly! Use `get` instead.
-    pub fn getIfPropertyExistsImpl(this: JSValue, global: *JSGlobalObject, ptr: [*]const u8, len: u32) JSValue {
-        return cppFn("getIfPropertyExistsImpl", .{ this, global, ptr, len });
-    }
+    extern fn JSC__JSValue__getIfPropertyExistsImpl(target: JSValue, global: *JSGlobalObject, ptr: [*]const u8, len: u32) JSValue;
 
     pub fn getIfPropertyExistsFromPath(this: JSValue, global: *JSGlobalObject, path: JSValue) JSValue {
         return cppFn("getIfPropertyExistsFromPath", .{ this, global, path });
@@ -5245,6 +5231,10 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn _then(this: JSValue, global: *JSGlobalObject, ctx: JSValue, resolve: JSNativeFn, reject: JSNativeFn) void {
+        return cppFn("_then", .{ this, global, ctx, toJSHostFunction(resolve), toJSHostFunction(reject) });
+    }
+
+    pub fn _then2(this: JSValue, global: *JSGlobalObject, ctx: JSValue, resolve: JSHostFunctionType, reject: JSHostFunctionType) void {
         return cppFn("_then", .{ this, global, ctx, resolve, reject });
     }
 
@@ -5262,23 +5252,67 @@ pub const JSValue = enum(JSValueReprInt) {
 
     /// Equivalent to `obj.property` in JavaScript.
     /// Reminder: `undefined` is a value!
-    pub fn get(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
+    ///
+    /// Prefer `get` in new code, as this function is incapable of returning an exception
+    pub fn get_unsafe(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
         if (comptime bun.Environment.isDebug) {
             if (BuiltinName.has(property)) {
                 Output.debugWarn("get(\"{s}\") called. Please use fastGet(.{s}) instead!", .{ property, property });
             }
         }
 
-        const value = getIfPropertyExistsImpl(this, global, property.ptr, @as(u32, @intCast(property.len)));
-        return if (value.isEmpty()) null else value;
+        return switch (JSC__JSValue__getIfPropertyExistsImpl(this, global, property.ptr, @intCast(property.len))) {
+            .undefined, .zero, .property_does_not_exist_on_object => null,
+            else => |val| val,
+        };
     }
 
-    extern fn JSC__JSValue__getOwn(value: JSValue, globalObject: *JSGlobalObject, propertyName: [*c]const bun.String) JSValue;
+    /// Equivalent to `target[property]`. Calls userland getters/proxies.  Can
+    /// throw. Null indicates the property does not exist. JavaScript undefined
+    /// and JavaScript null can exist as a property and is different than zig
+    /// `null` (property does not exist).
+    ///
+    /// `property` must be either `[]const u8`. A comptime slice may defer to
+    /// calling `fastGet`, which use a more optimal code path. This function is
+    /// marked `inline` to allow Zig to determine if `fastGet` should be used
+    /// per invocation.
+    pub inline fn get(target: JSValue, global: *JSGlobalObject, property: anytype) JSError!?JSValue {
+        if (bun.Environment.isDebug) bun.assert(target.isObject());
+        const property_slice: []const u8 = property; // must be a slice!
+
+        // This call requires `get` to be `inline`
+        if (bun.isComptimeKnown(property_slice)) {
+            if (comptime BuiltinName.get(property_slice)) |builtin_name| {
+                return target.fastGetWithError(global, builtin_name);
+            }
+        }
+
+        return switch (JSC__JSValue__getIfPropertyExistsImpl(target, global, property_slice.ptr, @intCast(property_slice.len))) {
+            .zero => error.JSError,
+            .property_does_not_exist_on_object => null,
+
+            // TODO: see bug described in ObjectBindings.cpp
+            // since there are false positives, the better path is to make them
+            // negatives, as the number of places that desire throwing on
+            // existing undefined is extremely small, but non-zero.
+            .undefined => null,
+            else => |val| val,
+        };
+    }
+
+    extern fn JSC__JSValue__getOwn(value: JSValue, globalObject: *JSGlobalObject, propertyName: *const bun.String) JSValue;
 
     /// Get *own* property value (i.e. does not resolve property in the prototype chain)
     pub fn getOwn(this: JSValue, global: *JSGlobalObject, property_name: anytype) ?JSValue {
         var property_name_str = bun.String.init(property_name);
         const value = JSC__JSValue__getOwn(this, global, &property_name_str);
+        return if (@intFromEnum(value) != 0) value else return null;
+    }
+
+    extern fn JSC__JSValue__getOwnByValue(value: JSValue, globalObject: *JSGlobalObject, propertyValue: JSValue) JSValue;
+
+    pub fn getOwnByValue(this: JSValue, global: *JSGlobalObject, property_value: JSValue) ?JSValue {
+        const value = JSC__JSValue__getOwnByValue(this, global, property_value);
         return if (@intFromEnum(value) != 0) value else return null;
     }
 
@@ -5291,7 +5325,7 @@ pub const JSValue = enum(JSValueReprInt) {
         return null;
     }
 
-    /// safe to use on any JSValue
+    /// Safe to use on any JSValue
     pub fn implementsToString(this: JSValue, global: *JSGlobalObject) bool {
         if (!this.isObject())
             return false;
@@ -5300,6 +5334,7 @@ pub const JSValue = enum(JSValueReprInt) {
         return function.isCell() and function.isCallable(global.vm());
     }
 
+    // TODO: replace calls to this function with `getOptional`
     pub fn getOwnTruthyComptime(this: JSValue, global: *JSGlobalObject, comptime property: []const u8) ?JSValue {
         if (comptime bun.ComptimeEnumMap(BuiltinName).has(property)) {
             return fastGetOwn(this, global, @field(BuiltinName, property));
@@ -5308,26 +5343,72 @@ pub const JSValue = enum(JSValueReprInt) {
         return getOwnTruthy(this, global, property);
     }
 
-    pub fn getTruthyComptime(this: JSValue, global: *JSGlobalObject, comptime property: []const u8) ?JSValue {
-        if (comptime bun.ComptimeEnumMap(BuiltinName).has(property)) {
-            if (fastGet(this, global, @field(BuiltinName, property))) |prop| {
-                if (prop.isEmptyOrUndefinedOrNull()) return null;
-                return prop;
-            }
+    fn truthyPropertyValue(prop: JSValue) ?JSValue {
+        return switch (prop) {
+            .zero => unreachable,
 
-            return null;
+            // Treat undefined and null as unspecified
+            .null, .undefined => null,
+
+            // false, 0, are deliberately not included in this list.
+            // That would prevent you from passing `0` or `false` to various Bun APIs.
+
+            else => {
+                // Ignore empty string.
+                if (prop.isString()) {
+                    if (!prop.toBoolean()) {
+                        return null;
+                    }
+                }
+
+                return prop;
+            },
+        };
+    }
+
+    // TODO: replace calls to this function with `getOptional`
+    pub fn getTruthyComptime(this: JSValue, global: *JSGlobalObject, comptime property: []const u8) bun.JSError!?JSValue {
+        if (comptime BuiltinName.has(property)) {
+            return truthyPropertyValue(fastGet(this, global, @field(BuiltinName, property)) orelse return null);
         }
 
         return getTruthy(this, global, property);
     }
 
-    pub fn getTruthy(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
-        if (get(this, global, property)) |prop| {
-            if (prop.isEmptyOrUndefinedOrNull()) return null;
-            return prop;
+    // TODO: replace calls to this function with `getOptional`
+    pub fn getTruthy(this: JSValue, global: *JSGlobalObject, property: []const u8) bun.JSError!?JSValue {
+        if (try get(this, global, property)) |prop| {
+            return truthyPropertyValue(prop);
         }
 
         return null;
+    }
+
+    /// Get a value that can be coerced to a string.
+    ///
+    /// Returns null when the value is:
+    /// - JSValue.null
+    /// - JSValue.false
+    /// - JSValue.undefined
+    /// - an empty string
+    pub fn getStringish(this: JSValue, global: *JSGlobalObject, property: []const u8) bun.JSError!?bun.String {
+        const prop = try get(this, global, property) orelse return null;
+        if (prop.isNull() or prop == .false) {
+            return null;
+        }
+        if (prop.isSymbol()) {
+            return global.throwInvalidPropertyTypeValue(property, "string", prop);
+        }
+
+        const str = prop.toBunString(global);
+        if (global.hasException()) {
+            str.deref();
+            return error.JSError;
+        }
+        if (str.isEmpty()) {
+            return null;
+        }
+        return str;
     }
 
     pub fn toEnumFromMap(
@@ -5338,8 +5419,7 @@ pub const JSValue = enum(JSValueReprInt) {
         comptime StringMap: anytype,
     ) JSError!Enum {
         if (!this.isString()) {
-            globalThis.throwInvalidArguments(property_name ++ " must be a string", .{});
-            return error.JSError;
+            return globalThis.throwInvalidArguments(property_name ++ " must be a string", .{});
         }
 
         return StringMap.fromJS(globalThis, this) orelse {
@@ -5361,7 +5441,7 @@ pub const JSValue = enum(JSValueReprInt) {
                 pub const label = property_name ++ " must be one of " ++ list;
             }.label;
             if (!globalThis.hasException())
-                globalThis.throwInvalidArguments(one_of, .{});
+                return globalThis.throwInvalidArguments(one_of, .{});
             return error.JSError;
         };
     }
@@ -5387,7 +5467,7 @@ pub const JSValue = enum(JSValueReprInt) {
             return null;
         }
 
-        if (get(this, globalThis, property_name)) |prop| {
+        if (try get(this, globalThis, property_name)) |prop| {
             if (prop.isEmptyOrUndefinedOrNull())
                 return null;
             return try toEnum(prop, globalThis, property_name, Enum);
@@ -5415,8 +5495,7 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn coerceToArray(prop: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) JSError!?JSValue {
         if (!prop.jsTypeLoose().isArray()) {
-            globalThis.throwInvalidArguments(property_name ++ " must be an array", .{});
-            return error.JSError;
+            return globalThis.throwInvalidArguments(property_name ++ " must be an array", .{});
         }
 
         if (prop.getLength(globalThis) == 0) {
@@ -5427,7 +5506,7 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn getArray(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) JSError!?JSValue {
-        if (getTruthy(this, globalThis, property_name)) |prop| {
+        if (try this.getOptional(globalThis, property_name, JSValue)) |prop| {
             return coerceToArray(prop, globalThis, property_name);
         }
 
@@ -5443,10 +5522,9 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn getObject(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) JSError!?JSValue {
-        if (getTruthy(this, globalThis, property_name)) |prop| {
+        if (try this.getOptional(globalThis, property_name, JSValue)) |prop| {
             if (!prop.jsTypeLoose().isObject()) {
-                globalThis.throwInvalidArguments(property_name ++ " must be an object", .{});
-                return error.JSError;
+                return globalThis.throwInvalidArguments(property_name ++ " must be an object", .{});
             }
 
             return prop;
@@ -5458,8 +5536,7 @@ pub const JSValue = enum(JSValueReprInt) {
     pub fn getOwnObject(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) JSError!?JSValue {
         if (getOwnTruthy(this, globalThis, property_name)) |prop| {
             if (!prop.jsTypeLoose().isObject()) {
-                globalThis.throwInvalidArguments(property_name ++ " must be an object", .{});
-                return error.JSError;
+                return globalThis.throwInvalidArguments(property_name ++ " must be an object", .{});
             }
 
             return prop;
@@ -5469,10 +5546,9 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn getFunction(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) JSError!?JSValue {
-        if (getTruthy(this, globalThis, property_name)) |prop| {
+        if (try this.getOptional(globalThis, property_name, JSValue)) |prop| {
             if (!prop.isCell() or !prop.isCallable(globalThis.vm())) {
-                globalThis.throwInvalidArguments(property_name ++ " must be a function", .{});
-                return error.JSError;
+                return globalThis.throwInvalidArguments(property_name ++ " must be a function", .{});
             }
 
             return prop;
@@ -5484,8 +5560,7 @@ pub const JSValue = enum(JSValueReprInt) {
     pub fn getOwnFunction(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) JSError!?JSValue {
         if (getOwnTruthy(this, globalThis, property_name)) |prop| {
             if (!prop.isCell() or !prop.isCallable(globalThis.vm())) {
-                globalThis.throwInvalidArguments(property_name ++ " must be a function", .{});
-                return error.JSError;
+                return globalThis.throwInvalidArguments(property_name ++ " must be a function", .{});
             }
 
             return prop;
@@ -5493,42 +5568,50 @@ pub const JSValue = enum(JSValueReprInt) {
 
         return null;
     }
-    fn coerceOptional(prop: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime T: type) JSError!?T {
+
+    fn coerceOptional(prop: JSValue, global: *JSGlobalObject, comptime property_name: []const u8, comptime T: type) JSError!T {
         switch (comptime T) {
-            bool => {
-                if (prop.isBoolean()) {
-                    return prop.toBoolean();
-                }
-
-                if (prop.isNumber()) {
-                    return prop.coerce(f64, globalThis) != 0;
-                }
-
-                globalThis.throwInvalidArguments(property_name ++ " must be a boolean", .{});
-                return error.JSError;
-            },
+            JSValue => return prop,
+            bool => @compileError("ambiguous coercion: use getBooleanStrict (throw error if not boolean) or getBooleanLoose (truthy check, never throws)"),
             ZigString.Slice => {
                 if (prop.isString()) {
-                    if (return prop.toSliceOrNull(globalThis)) |str| {
-                        return str;
-                    }
+                    return try prop.toSliceOrNull(global);
                 }
-
-                globalThis.throwInvalidArguments(property_name ++ " must be a string", .{});
-                return error.JSError;
+                return JSC.Node.validators.throwErrInvalidArgType(global, property_name, .{}, "string", prop);
             },
+            i32 => return prop.coerce(i32, global),
+            i64 => return prop.coerce(i64, global),
             else => @compileError("TODO:" ++ @typeName(T)),
         }
     }
 
-    pub fn getOptional(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime T: type) JSError!?T {
-        const prop = (if (comptime BuiltinName.has(property_name))
-            fastGet(this, globalThis, @field(BuiltinName, property_name))
-        else
-            get(this, globalThis, property_name)) orelse return null;
+    /// Many Bun API are loose and simply want to check if a value is truthy
+    /// Missing value, null, and undefined return `null`
+    pub inline fn getBooleanLoose(this: JSValue, global: *JSGlobalObject, comptime property_name: []const u8) JSError!?bool {
+        const prop = try this.get(global, property_name) orelse return null;
+        return prop.toBoolean();
+    }
 
-        if (!prop.isEmptyOrUndefinedOrNull()) {
-            return coerceOptional(prop, globalThis, property_name, T);
+    /// Many Node.js APIs use `validateBoolean`
+    /// Missing value and undefined return `null`
+    pub inline fn getBooleanStrict(this: JSValue, global: *JSGlobalObject, comptime property_name: []const u8) JSError!?bool {
+        const prop = try this.get(global, property_name) orelse return null;
+
+        return switch (prop) {
+            .undefined => null,
+            .false, .true => prop == .true,
+            else => {
+                return JSC.Node.validators.throwErrInvalidArgType(global, property_name, .{}, "boolean", prop);
+            },
+        };
+    }
+
+    pub inline fn getOptional(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime T: type) JSError!?T {
+        const prop = try this.get(globalThis, property_name) orelse return null;
+        bun.assert(prop != .zero);
+
+        if (!prop.isUndefinedOrNull()) {
+            return try coerceOptional(prop, globalThis, property_name, T);
         }
 
         return null;
@@ -5559,36 +5642,51 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     /// Object.is()
+    ///
     /// This algorithm differs from the IsStrictlyEqual Algorithm by treating all NaN values as equivalent and by differentiating +0𝔽 from -0𝔽.
     /// https://tc39.es/ecma262/#sec-samevalue
     pub fn isSameValue(this: JSValue, other: JSValue, global: *JSGlobalObject) bool {
         return @intFromEnum(this) == @intFromEnum(other) or cppFn("isSameValue", .{ this, other, global });
     }
 
-    pub fn deepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool {
-        return cppFn("deepEquals", .{ this, other, global });
+    pub fn deepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) JSError!bool {
+        // JSC__JSValue__deepEquals
+        const result = cppFn("deepEquals", .{ this, other, global });
+        if (global.hasException()) return error.JSError;
+        return result;
     }
 
     /// same as `JSValue.deepEquals`, but with jest asymmetric matchers enabled
-    pub fn jestDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool {
-        return cppFn("jestDeepEquals", .{ this, other, global });
+    pub fn jestDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) JSError!bool {
+        const result = cppFn("jestDeepEquals", .{ this, other, global });
+        if (global.hasException()) return error.JSError;
+        return result;
     }
 
-    pub fn strictDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool {
-        return cppFn("strictDeepEquals", .{ this, other, global });
+    pub fn strictDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) JSError!bool {
+        // JSC__JSValue__strictDeepEquals
+        const result = cppFn("strictDeepEquals", .{ this, other, global });
+        if (global.hasException()) return error.JSError;
+        return result;
     }
 
     /// same as `JSValue.strictDeepEquals`, but with jest asymmetric matchers enabled
-    pub fn jestStrictDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool {
-        return cppFn("jestStrictDeepEquals", .{ this, other, global });
+    pub fn jestStrictDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) JSError!bool {
+        // JSC__JSValue__jestStrictDeepEquals
+        const result = cppFn("jestStrictDeepEquals", .{ this, other, global });
+        if (global.hasException()) return error.JSError;
+        return result;
     }
 
+    /// NOTE: can throw. Check for exceptions.
     pub fn deepMatch(this: JSValue, subset: JSValue, global: *JSGlobalObject, replace_props_with_asymmetric_matchers: bool) bool {
+        // JSC__JSValue__deepMatch
         return cppFn("deepMatch", .{ this, subset, global, replace_props_with_asymmetric_matchers });
     }
 
     /// same as `JSValue.deepMatch`, but with jest asymmetric matchers enabled
     pub fn jestDeepMatch(this: JSValue, subset: JSValue, global: *JSGlobalObject, replace_props_with_asymmetric_matchers: bool) bool {
+        // JSC__JSValue__jestDeepMatch
         return cppFn("jestDeepMatch", .{ this, subset, global, replace_props_with_asymmetric_matchers });
     }
 
@@ -5621,6 +5719,12 @@ pub const JSValue = enum(JSValueReprInt) {
         });
     }
 
+    extern fn JSC__JSValue__getUTCTimestamp(globalObject: *JSC.JSGlobalObject, this: JSValue) f64;
+    /// Calls getTime() - getUTCT
+    pub fn getUTCTimestamp(this: JSValue, globalObject: *JSC.JSGlobalObject) f64 {
+        return JSC__JSValue__getUTCTimestamp(globalObject, this);
+    }
+
     pub const StringFormatter = struct {
         value: JSC.JSValue,
         globalObject: *JSC.JSGlobalObject,
@@ -5644,10 +5748,10 @@ pub const JSValue = enum(JSValueReprInt) {
         formatter: *Exports.ConsoleObject.Formatter,
     ) Exports.ConsoleObject.Formatter.ZigFormatter {
         formatter.remaining_values = &[_]JSValue{};
-        if (formatter.map_node) |node| {
-            node.release();
-            formatter.map_node = null;
+        if (formatter.map_node != null) {
+            formatter.deinit();
         }
+        formatter.stack_check.update();
 
         return Exports.ConsoleObject.Formatter.ZigFormatter{
             .formatter = formatter,
@@ -5714,16 +5818,9 @@ pub const JSValue = enum(JSValueReprInt) {
         return fromPtrAddress(@intFromPtr(addr));
     }
 
-    pub fn toBooleanSlow(this: JSValue, global: *JSGlobalObject) bool {
-        return cppFn("toBooleanSlow", .{ this, global });
-    }
-
+    /// Equivalent to the `!!` operator
     pub fn toBoolean(this: JSValue) bool {
-        if (isEmptyOrUndefinedOrNull(this)) {
-            return false;
-        }
-
-        return asBoolean(this);
+        return this != .zero and cppFn("toBoolean", .{this});
     }
 
     pub fn asBoolean(this: JSValue) bool {
@@ -5763,14 +5860,11 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn asInt32(this: JSValue) i32 {
-        // TODO: add this assertion. currently, there is a mistake in
-        // argumentCount that mistakenly uses a JSValue instead of a c_int. This
-        // mistake performs the correct conversion instructions for it's use
-        // case but is bad code practice to misuse JSValue casts.
-        //
-        // if (bun.Environment.allow_assert) {
-        //     bun.assert(this.isInt32());
-        // }
+        // TODO: promote assertion to allow_assert. That has not been done because
+        // the assertion was commented out until 2024-12-12
+        if (bun.Environment.isDebug) {
+            bun.assert(this.isInt32());
+        }
         return FFI.JSVALUE_TO_INT32(.{ .asJSValue = this });
     }
 
@@ -5881,25 +5975,28 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("stringIncludes", .{ this, globalObject, other });
     }
 
+    // TODO: remove this (no replacement)
     pub inline fn asRef(this: JSValue) C_API.JSValueRef {
         return @as(C_API.JSValueRef, @ptrFromInt(@as(usize, @bitCast(@intFromEnum(this)))));
     }
 
+    // TODO: remove this (no replacement)
     pub inline fn c(this: C_API.JSValueRef) JSValue {
-        return @as(JSValue, @enumFromInt(@as(JSValue.Type, @bitCast(@intFromPtr(this)))));
+        return @as(JSValue, @enumFromInt(@as(JSValueReprInt, @bitCast(@intFromPtr(this)))));
     }
 
+    // TODO: remove this (no replacement)
     pub inline fn fromRef(this: C_API.JSValueRef) JSValue {
-        return @as(JSValue, @enumFromInt(@as(JSValue.Type, @bitCast(@intFromPtr(this)))));
+        return @as(JSValue, @enumFromInt(@as(JSValueReprInt, @bitCast(@intFromPtr(this)))));
     }
 
+    // TODO: remove this (no replacement)
     pub inline fn asObjectRef(this: JSValue) C_API.JSObjectRef {
         return @as(C_API.JSObjectRef, @ptrCast(this.asVoid()));
     }
 
-    /// When the GC sees a JSValue referenced in the stack
-    /// It knows not to free it
-    /// This mimicks the implementation in JavaScriptCore's C++
+    /// When the GC sees a JSValue referenced in the stack, it knows not to free it
+    /// This mimics the implementation in JavaScriptCore's C++
     pub inline fn ensureStillAlive(this: JSValue) void {
         if (!this.isCell()) return;
         std.mem.doNotOptimizeAway(this.asEncoded().asPtr);
@@ -5916,6 +6013,16 @@ pub const JSValue = enum(JSValueReprInt) {
             }
         }
         return this.asNullableVoid().?;
+    }
+
+    /// Returns null if not an object.
+    // TODO: replace "getObject" to this, which would match JSC::JSValue in C++
+    pub inline fn getObject2(value: JSValue) ?*JSObject {
+        return if (value.isObject()) value.uncheckedPtrCast(JSObject) else null;
+    }
+
+    pub fn uncheckedPtrCast(value: JSValue, comptime T: type) *T {
+        return @alignCast(@ptrCast(value.asEncoded().asPtr));
     }
 
     pub const Extern = [_][]const u8{
@@ -6013,7 +6120,6 @@ pub const JSValue = enum(JSValueReprInt) {
         "symbolFor",
         "symbolKeyFor",
         "toBoolean",
-        "toBooleanSlow",
         "toError_",
         "toInt32",
         "toInt64",
@@ -6045,6 +6151,10 @@ pub const JSValue = enum(JSValueReprInt) {
     pub inline fn withAsyncContextIfNeeded(this: JSValue, global: *JSGlobalObject) JSValue {
         JSC.markBinding(@src());
         return AsyncContextFrame__withAsyncContextIfNeeded(global, this);
+    }
+
+    pub fn isAsyncContextFrame(this: JSValue) bool {
+        return Bun__JSValue__isAsyncContextFrame(this);
     }
 
     extern "c" fn Bun__JSValue__deserialize(global: *JSGlobalObject, data: [*]const u8, len: usize) JSValue;
@@ -6094,57 +6204,20 @@ pub const JSValue = enum(JSValueReprInt) {
         return Bun__ProxyObject__getInternalField(this, field);
     }
 
-    extern fn JSC__JSValue__getClassInfoName(value: JSValue, out: *bun.String) bool;
+    extern fn JSC__JSValue__getClassInfoName(value: JSValue, out: *[*:0]const u8, len: *usize) bool;
 
     /// For native C++ classes extending JSCell, this retrieves s_info's name
-    pub fn getClassInfoName(this: JSValue) ?bun.String {
+    /// This is a readonly ASCII string.
+    pub fn getClassInfoName(this: JSValue) ?[:0]const u8 {
         if (!this.isCell()) return null;
-        var out: bun.String = bun.String.empty;
-        if (!JSC__JSValue__getClassInfoName(this, &out)) return null;
+        var out: [:0]const u8 = "";
+        if (!JSC__JSValue__getClassInfoName(this, &out.ptr, &out.len)) return null;
         return out;
     }
 };
 
 extern "c" fn AsyncContextFrame__withAsyncContextIfNeeded(global: *JSGlobalObject, callback: JSValue) JSValue;
-
-pub const Exception = extern struct {
-    pub const shim = Shimmer("JSC", "Exception", @This());
-    bytes: shim.Bytes,
-    pub const Type = JSObject;
-    const cppFn = shim.cppFn;
-
-    pub const include = "JavaScriptCore/Exception.h";
-    pub const name = "JSC::Exception";
-    pub const namespace = "JSC";
-
-    pub const StackCaptureAction = enum(u8) {
-        CaptureStack = 0,
-        DoNotCaptureStack = 1,
-    };
-
-    pub fn create(globalObject: *JSGlobalObject, object: *JSObject, stack_capture: StackCaptureAction) *Exception {
-        return cppFn(
-            "create",
-            .{ globalObject, object, @intFromEnum(stack_capture) },
-        );
-    }
-
-    pub fn value(this: *Exception) JSValue {
-        return cppFn(
-            "value",
-            .{this},
-        );
-    }
-
-    pub fn getStackTrace(this: *Exception, trace: *ZigStackTrace) void {
-        return cppFn(
-            "getStackTrace",
-            .{ this, trace },
-        );
-    }
-
-    pub const Extern = [_][]const u8{ "create", "value", "getStackTrace" };
-};
+extern "c" fn Bun__JSValue__isAsyncContextFrame(value: JSValue) bool;
 
 pub const VM = extern struct {
     pub const shim = Shimmer("JSC", "VM", @This());
@@ -6160,22 +6233,6 @@ pub const VM = extern struct {
         SmallHeap = 0,
         LargeHeap = 1,
     };
-
-    extern fn Bun__JSC_onBeforeWait(vm: *VM) i32;
-    extern fn Bun__JSC_onAfterWait(vm: *VM) void;
-    pub const ReleaseHeapAccess = struct {
-        vm: *VM,
-        needs_to_release: bool,
-        pub fn acquire(this: *const ReleaseHeapAccess) void {
-            if (this.needs_to_release) {
-                Bun__JSC_onAfterWait(this.vm);
-            }
-        }
-    };
-
-    pub fn releaseHeapAccess(vm: *VM) ReleaseHeapAccess {
-        return .{ .vm = vm, .needs_to_release = Bun__JSC_onBeforeWait(vm) != 0 };
-    }
 
     pub fn create(heap_type: HeapType) *VM {
         return cppFn("create", .{@intFromEnum(heap_type)});
@@ -6245,7 +6302,7 @@ pub const VM = extern struct {
         });
     }
 
-    pub fn runGC(vm: *VM, sync: bool) JSValue {
+    pub fn runGC(vm: *VM, sync: bool) usize {
         return cppFn("runGC", .{
             vm,
             sync,
@@ -6308,12 +6365,11 @@ pub const VM = extern struct {
         });
     }
 
-    pub fn throwError(vm: *VM, global_object: *JSGlobalObject, value: JSValue) void {
-        return cppFn("throwError", .{
-            vm,
-            global_object,
-            value,
-        });
+    // manual extern to workaround shimmer limitation
+    // shimmer doesnt let you change the return type or make it non-pub
+    extern fn JSC__VM__throwError(*VM, *JSGlobalObject, JSValue) void;
+    fn throwError(vm: *VM, global_object: *JSGlobalObject, value: JSValue) void {
+        JSC__VM__throwError(vm, global_object, value);
     }
 
     pub fn releaseWeakRefs(vm: *VM) void {
@@ -6336,6 +6392,10 @@ pub const VM = extern struct {
     /// This is faster than checking the heap size
     pub fn blockBytesAllocated(vm: *VM) usize {
         return cppFn("blockBytesAllocated", .{vm});
+    }
+
+    pub fn performOpportunisticallyScheduledTasks(vm: *VM, until: f64) void {
+        cppFn("performOpportunisticallyScheduledTasks", .{ vm, until });
     }
 
     pub const Extern = [_][]const u8{
@@ -6370,126 +6430,112 @@ pub const VM = extern struct {
     };
 };
 
-pub const ThrowScope = extern struct {
-    pub const shim = Shimmer("JSC", "ThrowScope", @This());
-    bytes: shim.Bytes,
-
-    const cppFn = shim.cppFn;
-
-    pub const include = "JavaScriptCore/ThrowScope.h";
-    pub const name = "JSC::ThrowScope";
-    pub const namespace = "JSC";
-
-    pub fn declare(
-        vm: *VM,
-        _: [*]u8,
-        file: [*]u8,
-        line: usize,
-    ) ThrowScope {
-        return cppFn("declare", .{ vm, file, line });
-    }
-
-    pub fn release(this: *ThrowScope) void {
-        return cppFn("release", .{this});
-    }
-
-    pub fn exception(this: *ThrowScope) ?*Exception {
-        return cppFn("exception", .{this});
-    }
-
-    pub fn clearException(this: *ThrowScope) void {
-        return cppFn("clearException", .{this});
-    }
-
-    pub const Extern = [_][]const u8{
-        "declare",
-        "release",
-        "exception",
-        "clearException",
-    };
-};
-
-pub const CatchScope = extern struct {
-    pub const shim = Shimmer("JSC", "CatchScope", @This());
-    bytes: shim.Bytes,
-
-    const cppFn = shim.cppFn;
-
-    pub const include = "JavaScriptCore/CatchScope.h";
-    pub const name = "JSC::CatchScope";
-    pub const namespace = "JSC";
-
-    pub fn declare(
-        vm: *VM,
-        function_name: [*]u8,
-        file: [*]u8,
-        line: usize,
-    ) CatchScope {
-        return cppFn("declare", .{ vm, function_name, file, line });
-    }
-
-    pub fn exception(this: *CatchScope) ?*Exception {
-        return cppFn("exception", .{this});
-    }
-
-    pub fn clearException(this: *CatchScope) void {
-        return cppFn("clearException", .{this});
-    }
-
-    pub const Extern = [_][]const u8{
-        "declare",
-        "exception",
-        "clearException",
-    };
-};
-
+/// Call Frame for JavaScript -> Native function calls. In Bun, it is
+/// preferred to use the bindings generator instead of directly decoding
+/// arguments. See `docs/project/bindgen.md`
 pub const CallFrame = opaque {
-    /// The value is generated in `make sizegen`
-    /// The value is 6.
-    /// On ARM64_32, the value is something else but it really doesn't matter for our case
-    /// However, I don't want this to subtly break amidst future upgrades to JavaScriptCore
-    const alignment = Sizes.Bun_CallFrame__align;
-
-    pub const name = "JSC::CallFrame";
-
-    inline fn asUnsafeJSValueArray(self: *const CallFrame) [*]const JSC.JSValue {
-        return @as([*]align(alignment) const JSC.JSValue, @ptrCast(@alignCast(self)));
+    /// A slice of all passed arguments to this function call.
+    pub fn arguments(self: *const CallFrame) []const JSValue {
+        return self.asUnsafeJSValueArray()[offset_first_argument..][0..self.argumentsCount()];
     }
 
-    pub fn format(frame: *CallFrame, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        const args = frame.argumentsPtr()[0..frame.argumentsCount()];
-
-        for (args[0..@min(args.len, 4)], 0..) |arg, i| {
-            if (i != 0) {
-                try writer.writeAll(", ");
-            }
-            switch (arg) {
-                .zero => try writer.writeAll("<empty>"),
-                .undefined => try writer.writeAll("undefined"),
-                .null => try writer.writeAll("null"),
-                .true => try writer.writeAll("true"),
-                .false => try writer.writeAll("false"),
-                else => {
-                    if (arg.isNumber()) {
-                        try writer.writeAll("number");
-                    } else {
-                        try writer.writeAll(@tagName(arg.jsType()));
-                    }
-                },
-            }
-        }
-
-        if (args.len > 4) {
-            try writer.print(", ... {d} more", .{args.len - 4});
-        }
+    /// Usage: `const arg1, const arg2 = call_frame.argumentsAsArray(2);`
+    pub fn argumentsAsArray(call_frame: *const CallFrame, comptime count: usize) [count]JSValue {
+        const slice = call_frame.arguments();
+        var value: [count]JSValue = .{.undefined} ** count;
+        const n = @min(call_frame.argumentsCount(), count);
+        @memcpy(value[0..n], slice[0..n]);
+        return value;
     }
 
-    pub fn argumentsPtr(self: *const CallFrame) [*]const JSC.JSValue {
-        return self.asUnsafeJSValueArray()[Sizes.Bun_CallFrame__firstArgument..];
+    /// This function protects out-of-bounds access by returning `JSValue.undefined`
+    pub fn argument(self: *const CallFrame, i: usize) JSC.JSValue {
+        return if (self.argumentsCount() > i) self.arguments()[i] else .undefined;
     }
 
+    pub fn argumentsCount(self: *const CallFrame) u32 {
+        return self.argumentCountIncludingThis() - 1;
+    }
+
+    /// When this CallFrame belongs to a constructor, this value is not the `this`
+    /// value, but instead the value of `new.target`.
+    pub fn this(self: *const CallFrame) JSC.JSValue {
+        return self.asUnsafeJSValueArray()[offset_this_argument];
+    }
+
+    /// `JSValue` for the current function being called.
     pub fn callee(self: *const CallFrame) JSC.JSValue {
-        return self.asUnsafeJSValueArray()[Sizes.Bun_CallFrame__callee];
+        return self.asUnsafeJSValueArray()[offset_callee];
+    }
+
+    /// From JavaScriptCore/interpreter/CallFrame.h
+    ///
+    ///   |          ......            |   |
+    ///   +----------------------------+   |
+    ///   |           argN             |   v  lower address
+    ///   +----------------------------+
+    ///   |           arg1             |
+    ///   +----------------------------+
+    ///   |           arg0             |
+    ///   +----------------------------+
+    ///   |           this             |
+    ///   +----------------------------+
+    ///   | argumentCountIncludingThis |
+    ///   +----------------------------+
+    ///   |          callee            |
+    ///   +----------------------------+
+    ///   |        codeBlock           |
+    ///   +----------------------------+
+    ///   |      return-address        |
+    ///   +----------------------------+
+    ///   |       callerFrame          |
+    ///   +----------------------------+  <- callee's cfr is pointing this address
+    ///   |          local0            |
+    ///   +----------------------------+
+    ///   |          local1            |
+    ///   +----------------------------+
+    ///   |          localN            |
+    ///   +----------------------------+
+    ///   |          ......            |
+    ///
+    /// The proper return type of this should be []Register, but
+    inline fn asUnsafeJSValueArray(self: *const CallFrame) [*]const JSC.JSValue {
+        return @ptrCast(@alignCast(self));
+    }
+
+    // These constants are from JSC::CallFrameSlot in JavaScriptCore/interpreter/CallFrame.h
+    const offset_code_block = 2;
+    const offset_callee = offset_code_block + 1;
+    const offset_argument_count_including_this = offset_callee + 1;
+    const offset_this_argument = offset_argument_count_including_this + 1;
+    const offset_first_argument = offset_this_argument + 1;
+
+    /// This function is manually ported from JSC's equivalent function in C++
+    /// See JavaScriptCore/interpreter/CallFrame.h
+    fn argumentCountIncludingThis(self: *const CallFrame) u32 {
+        // Register defined in JavaScriptCore/interpreter/Register.h
+        const Register = extern union {
+            value: JSValue, // EncodedJSValue
+            call_frame: *CallFrame,
+            code_block: *anyopaque, // CodeBlock*
+            /// EncodedValueDescriptor defined in JavaScriptCore/runtime/JSCJSValue.h
+            encoded_value: extern union {
+                ptr: JSValue, // JSCell*
+                as_bits: extern struct {
+                    payload: i32,
+                    tag: i32,
+                },
+            },
+            number: f64, // double
+            integer: i64, // integer
+        };
+        const registers: [*]const Register = @alignCast(@ptrCast(self));
+        // argumentCountIncludingThis takes the register at the defined offset, then
+        // calls 'ALWAYS_INLINE int32_t Register::unboxedInt32() const',
+        // which in turn calls 'ALWAYS_INLINE int32_t Register::payload() const'
+        // which accesses `.encodedValue.asBits.payload`
+        // JSC stores and works with value as signed, but it is always 1 or more.
+        return @intCast(registers[offset_argument_count_including_this].encoded_value.as_bits.payload);
     }
 
     fn Arguments(comptime max: usize) type {
@@ -6517,74 +6563,59 @@ pub const CallFrame = opaque {
                 return self.ptr[0..self.len];
             }
 
-            pub inline fn all(self: *const @This()) []const JSValue {
-                return self.ptr[0..];
-            }
-
             pub inline fn mut(self: *@This()) []JSValue {
                 return self.ptr[0..];
             }
         };
     }
 
-    pub fn arguments(self: *const CallFrame, comptime max: usize) Arguments(max) {
-        const len = self.argumentsCount();
-        const ptr = self.argumentsPtr();
-        return switch (@as(u4, @min(len, max))) {
+    /// Do not use this function. Migration path:
+    /// arguments(n).ptr[k] -> argumentsAsArray(n)[k]
+    /// arguments(n).slice() -> arguments()
+    /// arguments(n).mut() -> `var args = argumentsAsArray(n); &args`
+    pub fn arguments_old(self: *const CallFrame, comptime max: usize) Arguments(max) {
+        const slice = self.arguments();
+        comptime bun.assert(max <= 13);
+        return switch (@as(u4, @min(slice.len, max))) {
             0 => .{ .ptr = undefined, .len = 0 },
-            inline 1...9 => |count| Arguments(max).init(comptime @min(count, max), ptr),
+            inline 1...13 => |count| Arguments(max).init(comptime @min(count, max), slice.ptr),
             else => unreachable,
         };
     }
 
+    /// Do not use this function. Migration path:
+    /// argumentsAsArray(n)
     pub fn argumentsUndef(self: *const CallFrame, comptime max: usize) Arguments(max) {
-        const len = self.argumentsCount();
-        const ptr = self.argumentsPtr();
-        return switch (@as(u4, @min(len, max))) {
+        const slice = self.arguments();
+        comptime bun.assert(max <= 9);
+        return switch (@as(u4, @min(slice.len, max))) {
             0 => .{ .ptr = .{.undefined} ** max, .len = 0 },
-            inline 1...9 => |count| Arguments(max).initUndef(@min(count, max), ptr),
+            inline 1...9 => |count| Arguments(max).initUndef(@min(count, max), slice.ptr),
             else => unreachable,
         };
     }
 
-    pub fn argument(self: *const CallFrame, comptime i: comptime_int) JSC.JSValue {
-        return self.argumentsPtr()[i];
-    }
+    extern fn Bun__CallFrame__isFromBunMain(*const CallFrame, *const VM) bool;
+    pub const isFromBunMain = Bun__CallFrame__isFromBunMain;
 
-    pub fn this(self: *const CallFrame) JSC.JSValue {
-        return self.asUnsafeJSValueArray()[Sizes.Bun_CallFrame__thisArgument];
-    }
-
-    pub fn argumentsCount(self: *const CallFrame) usize {
-        return @as(usize, @intCast(self.asUnsafeJSValueArray()[Sizes.Bun_CallFrame__argumentCountIncludingThis].asInt32() - 1));
+    extern fn Bun__CallFrame__getCallerSrcLoc(*const CallFrame, *JSGlobalObject, *bun.String, *c_uint, *c_uint) void;
+    pub const CallerSrcLoc = struct {
+        str: bun.String,
+        line: c_uint,
+        column: c_uint,
+    };
+    pub fn getCallerSrcLoc(call_frame: *const CallFrame, globalThis: *JSGlobalObject) CallerSrcLoc {
+        var str: bun.String = undefined;
+        var line: c_uint = undefined;
+        var column: c_uint = undefined;
+        Bun__CallFrame__getCallerSrcLoc(call_frame, globalThis, &str, &line, &column);
+        return .{
+            .str = str,
+            .line = line,
+            .column = column,
+        };
     }
 };
-
-// pub const WellKnownSymbols = extern struct {
-//     pub const shim = Shimmer("JSC", "CommonIdentifiers", @This());
-
-//
-//
-
-//     pub const include = "JavaScriptCore/CommonIdentifiers.h";
-//     pub const name = "JSC::CommonIdentifiers";
-//     pub const namespace = "JSC";
-
-//     pub var hasthis: *const Identifier = shim.cppConst(Identifier, "hasInstance");
-//     pub var isConcatSpreadable: Identifier = shim.cppConst(Identifier, "isConcatSpreadable");
-//     pub var asyncIterator: Identifier = shim.cppConst(Identifier, "asyncIterator");
-//     pub var iterator: Identifier = shim.cppConst(Identifier, "iterator");
-//     pub var match: Identifier = shim.cppConst(Identifier, "match");
-//     pub var matchAll: Identifier = shim.cppConst(Identifier, "matchAll");
-//     pub var replace: Identifier = shim.cppConst(Identifier, "replace");
-//     pub var search: Identifier = shim.cppConst(Identifier, "search");
-//     pub var species: Identifier = shim.cppConst(Identifier, "species");
-//     pub var split: Identifier = shim.cppConst(Identifier, "split");
-//     pub var toPrimitive: Identifier = shim.cppConst(Identifier, "toPrimitive");
-//     pub var toStringTag: Identifier = shim.cppConst(Identifier, "toStringTag");
-//     pub var unscopable: Identifier = shim.cppConst(Identifier, "unscopabl");
-
-// };
 
 pub const EncodedJSValue = extern union {
     asInt64: i64,
@@ -6596,39 +6627,118 @@ pub const EncodedJSValue = extern union {
 pub const JSHostFunctionType = fn (*JSGlobalObject, *CallFrame) callconv(JSC.conv) JSValue;
 pub const JSHostFunctionTypeWithCCallConvForAssertions = fn (*JSGlobalObject, *CallFrame) callconv(.C) JSValue;
 pub const JSHostFunctionPtr = *const JSHostFunctionType;
-pub fn toJSHostFunction(comptime Function: anytype) JSC.JSHostFunctionType {
-    if (comptime @TypeOf(Function) == JSHostFunctionType) {
-        return Function;
-    }
+pub const JSHostZigFunction = fn (*JSGlobalObject, *CallFrame) bun.JSError!JSValue;
+pub fn JSHostZigFunctionWithContext(comptime ContextType: type) type {
+    return fn (*ContextType, *JSGlobalObject, *CallFrame) bun.JSError!JSValue;
+}
+pub fn JSHostFunctionTypeWithContext(comptime ContextType: type) type {
+    return fn (*ContextType, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue;
+}
 
-    if (@TypeOf(Function) == fn (*JSGlobalObject, *CallFrame) JSValue) {
-        // These may coerce to both, but we want to force it to be this kind.
-    } else if (@TypeOf(Function) == *const fn (*JSGlobalObject, *CallFrame) JSValue) {
-        @compileLog(Function, "use JSC.toJSHostFunction(Function) instead of JSC.toJSHostFunction(&Function)");
-    }
-
+pub fn toJSHostFunction(comptime Function: JSHostZigFunction) JSC.JSHostFunctionType {
     return struct {
-        pub fn function(
-            globalThis: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) callconv(JSC.conv) JSC.JSValue {
-            comptime {
-                const Fn = @TypeOf(Function);
-                var FnTypeInfo = @typeInfo(Fn);
-                if (FnTypeInfo == .Pointer) {
-                    FnTypeInfo = @typeInfo(std.meta.Child(Fn));
-                }
-
-                if (bun.Environment.isWindows) {
-                    if (FnTypeInfo.Fn.calling_convention == .C) {
-                        @compileLog(Function, "use callconv(JSC.conv) instead of callconv(.C), or don't set a callconv on the function.");
+        pub fn function(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+            if (bun.Environment.allow_assert and bun.Environment.is_canary) {
+                const value = Function(globalThis, callframe) catch |err| switch (err) {
+                    error.JSError => .zero,
+                    error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
+                };
+                if (comptime bun.Environment.isDebug) {
+                    if (value != .zero) {
+                        if (globalThis.hasException()) {
+                            var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+                            bun.Output.err("Assertion failed",
+                                \\Native function returned a non-zero JSValue while an exception is pending
+                                \\
+                                \\    fn: {s}
+                                \\ value: {}
+                                \\
+                            , .{
+                                &Function, // use `(lldb) image lookup --address 0x1ec4` to discover what function failed
+                                value.toFmt(&formatter),
+                            });
+                            Output.flush();
+                        }
                     }
                 }
+                bun.assert((value == .zero) == globalThis.hasException());
+                return value;
             }
-
-            return @call(.always_inline, Function, .{ globalThis, callframe });
+            return @call(.always_inline, Function, .{ globalThis, callframe }) catch |err| switch (err) {
+                error.JSError => .zero,
+                error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
+            };
         }
     }.function;
+}
+pub fn toJSHostFunctionWithContext(comptime ContextType: type, comptime Function: JSHostZigFunctionWithContext(ContextType)) JSHostFunctionTypeWithContext(ContextType) {
+    return struct {
+        pub fn function(ctx: *ContextType, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+            if (bun.Environment.allow_assert and bun.Environment.is_canary) {
+                const value = Function(ctx, globalThis, callframe) catch |err| switch (err) {
+                    error.JSError => .zero,
+                    error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
+                };
+                if (comptime bun.Environment.isDebug) {
+                    if (value != .zero) {
+                        if (globalThis.hasException()) {
+                            var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+                            bun.Output.err("Assertion failed",
+                                \\Native function returned a non-zero JSValue while an exception is pending
+                                \\
+                                \\    fn: {s}
+                                \\ value: {}
+                                \\
+                            , .{
+                                &Function, // use `(lldb) image lookup --address 0x1ec4` to discover what function failed
+                                value.toFmt(&formatter),
+                            });
+                            Output.flush();
+                        }
+                    }
+                }
+                bun.assert((value == .zero) == globalThis.hasException());
+                return value;
+            }
+            return @call(.always_inline, Function, .{ ctx, globalThis, callframe }) catch |err| switch (err) {
+                error.JSError => .zero,
+                error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
+            };
+        }
+    }.function;
+}
+
+pub fn toJSHostValue(globalThis: *JSGlobalObject, value: error{ OutOfMemory, JSError }!JSValue) JSValue {
+    if (bun.Environment.allow_assert and bun.Environment.is_canary) {
+        const normal = value catch |err| switch (err) {
+            error.JSError => .zero,
+            error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
+        };
+        bun.assert((normal == .zero) == globalThis.hasException());
+        return normal;
+    }
+    return value catch |err| switch (err) {
+        error.JSError => .zero,
+        error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
+    };
+}
+
+const ParsedHostFunctionErrorSet = struct {
+    OutOfMemory: bool = false,
+    JSError: bool = false,
+};
+
+inline fn parseErrorSet(T: type, errors: []const std.builtin.Type.Error) ParsedHostFunctionErrorSet {
+    return comptime brk: {
+        var errs: ParsedHostFunctionErrorSet = .{};
+        for (errors) |err| {
+            if (!@hasField(ParsedHostFunctionErrorSet, err.name)) {
+                @compileError("Return value from host function '" ++ @typeInfo(T) ++ "' can not contain error '" ++ err.name ++ "'");
+            }
+            @field(errs, err.name) = true;
+        }
+        break :brk errs;
+    };
 }
 
 const DeinitFunction = *const fn (ctx: *anyopaque, buffer: [*]u8, len: usize) callconv(.C) void;
@@ -6676,6 +6786,7 @@ const private = struct {
         functionPointer: JSHostFunctionPtr,
         strong: bool,
         add_ptr_field: bool,
+        inputFunctionPtr: ?*anyopaque,
     ) JSValue;
 
     pub extern fn Bun__untrackFFIFunction(
@@ -6694,7 +6805,10 @@ pub fn NewFunction(
     comptime functionPointer: anytype,
     strong: bool,
 ) JSValue {
-    return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFunction(functionPointer), strong, false);
+    if (@TypeOf(functionPointer) == JSC.JSHostFunctionType) {
+        return NewRuntimeFunction(globalObject, symbolName, argCount, functionPointer, strong, false, null);
+    }
+    return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFunction(functionPointer), strong, false, null);
 }
 
 pub fn createCallback(
@@ -6703,7 +6817,10 @@ pub fn createCallback(
     argCount: u32,
     comptime functionPointer: anytype,
 ) JSValue {
-    return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFunction(functionPointer), false, false);
+    if (@TypeOf(functionPointer) == JSC.JSHostFunctionType) {
+        return NewRuntimeFunction(globalObject, symbolName, argCount, functionPointer, false, false);
+    }
+    return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFunction(functionPointer), false, false, null);
 }
 
 pub fn NewRuntimeFunction(
@@ -6713,9 +6830,10 @@ pub fn NewRuntimeFunction(
     functionPointer: JSHostFunctionPtr,
     strong: bool,
     add_ptr_property: bool,
+    inputFunctionPtr: ?*anyopaque,
 ) JSValue {
     JSC.markBinding(@src());
-    return private.Bun__CreateFFIFunctionValue(globalObject, symbolName, argCount, functionPointer, strong, add_ptr_property);
+    return private.Bun__CreateFFIFunctionValue(globalObject, symbolName, argCount, functionPointer, strong, add_ptr_property, inputFunctionPtr);
 }
 
 pub fn getFunctionData(function: JSValue) ?*anyopaque {
@@ -6732,7 +6850,7 @@ pub fn NewFunctionWithData(
     globalObject: *JSGlobalObject,
     symbolName: ?*const ZigString,
     argCount: u32,
-    comptime functionPointer: anytype,
+    comptime functionPointer: JSC.JSHostZigFunction,
     strong: bool,
     data: *anyopaque,
 ) JSValue {
@@ -6801,14 +6919,18 @@ pub const URL = opaque {
 
     /// This percent-encodes the URL, punycode-encodes the hostname, and returns the result
     /// If it fails, the tag is marked Dead
-    pub fn hrefFromJS(value: JSValue, globalObject: *JSC.JSGlobalObject) String {
+    pub fn hrefFromJS(value: JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!String {
         JSC.markBinding(@src());
-        return URL__getHrefFromJS(value, globalObject);
+        const result = URL__getHrefFromJS(value, globalObject);
+        if (globalObject.hasException()) return error.JSError;
+        return result;
     }
 
-    pub fn fromJS(value: JSValue, globalObject: *JSC.JSGlobalObject) ?*URL {
+    pub fn fromJS(value: JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!?*URL {
         JSC.markBinding(@src());
-        return URL__fromJS(value, globalObject);
+        const result = URL__fromJS(value, globalObject);
+        if (globalObject.hasException()) return error.JSError;
+        return result;
     }
 
     pub fn fromUTF8(input: []const u8) ?*URL {

@@ -1,7 +1,7 @@
 const bun = @import("root").bun;
 const std = @import("std");
 const builtin = @import("builtin");
-const Arena = @import("../mimalloc_arena.zig").Arena;
+const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 const JSC = bun.JSC;
@@ -17,34 +17,55 @@ const TestKind = enum {
     prefix,
 };
 
-pub fn minifyTestWithOptions(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
-    return testingImpl(globalThis, callframe, .minify);
+const TestCategory = enum {
+    /// arg is browsers
+    normal,
+    /// arg is parser options
+    parser_options,
+};
+
+pub fn minifyErrorTestWithOptions(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    return testingImpl(globalThis, callframe, .minify, .parser_options);
 }
 
-pub fn prefixTestWithOptions(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
-    return testingImpl(globalThis, callframe, .prefix);
+pub fn minifyTestWithOptions(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    return testingImpl(globalThis, callframe, .minify, .parser_options);
 }
 
-pub fn testWithOptions(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
-    return testingImpl(globalThis, callframe, .normal);
+pub fn prefixTestWithOptions(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    return testingImpl(globalThis, callframe, .prefix, .parser_options);
 }
 
-pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, comptime test_kind: TestKind) JSC.JSValue {
+pub fn testWithOptions(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    return testingImpl(globalThis, callframe, .normal, .parser_options);
+}
+
+pub fn minifyTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    return testingImpl(globalThis, callframe, .minify, .normal);
+}
+
+pub fn prefixTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    return testingImpl(globalThis, callframe, .prefix, .normal);
+}
+
+pub fn _test(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    return testingImpl(globalThis, callframe, .normal, .normal);
+}
+
+pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, comptime test_kind: TestKind, comptime test_category: TestCategory) bun.JSError!JSC.JSValue {
     var arena = arena_ orelse brk: {
         break :brk Arena.init() catch @panic("oopsie arena no good");
     };
     defer arena.reset();
     const alloc = arena.allocator();
 
-    const arguments_ = callframe.arguments(3);
+    const arguments_ = callframe.arguments_old(3);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     const source_arg: JSC.JSValue = arguments.nextEat() orelse {
-        globalThis.throw("minifyTestWithOptions: expected 2 arguments, got 0", .{});
-        return .undefined;
+        return globalThis.throw("minifyTestWithOptions: expected 2 arguments, got 0", .{});
     };
     if (!source_arg.isString()) {
-        globalThis.throw("minifyTestWithOptions: expected source to be a string", .{});
-        return .undefined;
+        return globalThis.throw("minifyTestWithOptions: expected source to be a string", .{});
     }
     const source_bunstr = source_arg.toBunString(globalThis);
     defer source_bunstr.deref();
@@ -52,31 +73,41 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
     defer source.deinit();
 
     const expected_arg = arguments.nextEat() orelse {
-        globalThis.throw("minifyTestWithOptions: expected 2 arguments, got 1", .{});
-        return .undefined;
+        return globalThis.throw("minifyTestWithOptions: expected 2 arguments, got 1", .{});
     };
     if (!expected_arg.isString()) {
-        globalThis.throw("minifyTestWithOptions: expected `expected` arg to be a string", .{});
-        return .undefined;
+        return globalThis.throw("minifyTestWithOptions: expected `expected` arg to be a string", .{});
     }
     const expected_bunstr = expected_arg.toBunString(globalThis);
     defer expected_bunstr.deref();
     const expected = expected_bunstr.toUTF8(bun.default_allocator);
     defer expected.deinit();
 
-    const options_arg = arguments.nextEat();
+    const browser_options_arg = arguments.nextEat();
 
     var log = bun.logger.Log.init(alloc);
     defer log.deinit();
 
+    var browsers: ?bun.css.targets.Browsers = null;
     const parser_options = parser_options: {
-        const opts = bun.css.ParserOptions.default(alloc, &log);
+        var opts = bun.css.ParserOptions.default(alloc, &log);
         // if (test_kind == .prefix) break :parser_options opts;
 
-        if (options_arg) |optargs| {
-            if (optargs.isObject()) {
-                // minify_options.targets.browsers = targetsFromJS(globalThis, optarg);
-            }
+        switch (test_category) {
+            .normal => {
+                if (browser_options_arg) |optargs| {
+                    if (optargs.isObject()) {
+                        browsers = try targetsFromJS(globalThis, optargs);
+                    }
+                }
+            },
+            .parser_options => {
+                if (browser_options_arg) |optargs| {
+                    if (optargs.isObject()) {
+                        try parserOptionsFromJS(globalThis, alloc, &opts, optargs);
+                    }
+                }
+            },
         }
 
         break :parser_options opts;
@@ -92,14 +123,10 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
         .result => |stylesheet_| {
             var stylesheet = stylesheet_;
             var minify_options: bun.css.MinifyOptions = bun.css.MinifyOptions.default();
-            if (options_arg) |optarg| {
-                if (optarg.isObject()) {
-                    minify_options.targets.browsers = targetsFromJS(globalThis, optarg);
-                }
-            }
+            minify_options.targets.browsers = browsers;
             _ = stylesheet.minify(alloc, minify_options).assert();
 
-            const result = stylesheet.toCss(alloc, bun.css.PrinterOptions{
+            const result = switch (stylesheet.toCss(alloc, bun.css.PrinterOptions{
                 .minify = switch (test_kind) {
                     .minify => true,
                     .normal => false,
@@ -108,83 +135,119 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
                 .targets = .{
                     .browsers = minify_options.targets.browsers,
                 },
-            }, &import_records) catch |e| {
-                bun.handleErrorReturnTrace(e, @errorReturnTrace());
-                return .undefined;
+            }, &import_records)) {
+                .result => |result| result,
+                .err => |err| {
+                    return err.toJSString(alloc, globalThis);
+                },
             };
 
             return bun.String.fromBytes(result.code).toJS(globalThis);
         },
         .err => |err| {
-            if (log.hasAny()) {
+            if (log.hasErrors()) {
                 return log.toJS(globalThis, bun.default_allocator, "parsing failed:");
             }
-            globalThis.throw("parsing failed: {}", .{err.kind});
-            return .undefined;
+            return globalThis.throw("parsing failed: {}", .{err.kind});
         },
     }
 }
 
-fn targetsFromJS(globalThis: *JSC.JSGlobalObject, jsobj: JSValue) bun.css.targets.Browsers {
+fn parserOptionsFromJS(globalThis: *JSC.JSGlobalObject, allocator: Allocator, opts: *bun.css.ParserOptions, jsobj: JSValue) bun.JSError!void {
+    _ = allocator; // autofix
+    if (try jsobj.getTruthy(globalThis, "flags")) |val| {
+        if (val.isArray()) {
+            var iter = val.arrayIterator(globalThis);
+            while (iter.next()) |item| {
+                const bunstr = item.toBunString(globalThis);
+                defer bunstr.deref();
+                const str = bunstr.toUTF8(bun.default_allocator);
+                defer str.deinit();
+                if (std.mem.eql(u8, str.slice(), "DEEP_SELECTOR_COMBINATOR")) {
+                    opts.flags.insert(bun.css.ParserFlags{
+                        .deep_selector_combinator = true,
+                    });
+                } else {
+                    return globalThis.throw("invalid flag: {s}", .{str.slice()});
+                }
+            }
+        } else {
+            return globalThis.throw("flags must be an array", .{});
+        }
+    }
+
+    // if (try jsobj.getTruthy(globalThis, "css_modules")) |val| {
+    //     opts.css_modules = bun.css.css_modules.Config{
+
+    //     };
+    //     if (val.isObject()) {
+    //         if (try val.getTruthy(globalThis, "pure")) |pure_val| {
+    //             opts.css_modules.pure = pure_val.toBoolean();
+    //         }
+    //     }
+    // }
+}
+
+fn targetsFromJS(globalThis: *JSC.JSGlobalObject, jsobj: JSValue) bun.JSError!bun.css.targets.Browsers {
     var targets = bun.css.targets.Browsers{};
 
-    if (jsobj.getTruthy(globalThis, "android")) |val| {
+    if (try jsobj.getTruthy(globalThis, "android")) |val| {
         if (val.isInt32()) {
             if (val.getNumber()) |value| {
                 targets.android = @intFromFloat(value);
             }
         }
     }
-    if (jsobj.getTruthy(globalThis, "chrome")) |val| {
+    if (try jsobj.getTruthy(globalThis, "chrome")) |val| {
         if (val.isInt32()) {
             if (val.getNumber()) |value| {
                 targets.chrome = @intFromFloat(value);
             }
         }
     }
-    if (jsobj.getTruthy(globalThis, "edge")) |val| {
+    if (try jsobj.getTruthy(globalThis, "edge")) |val| {
         if (val.isInt32()) {
             if (val.getNumber()) |value| {
                 targets.edge = @intFromFloat(value);
             }
         }
     }
-    if (jsobj.getTruthy(globalThis, "firefox")) |val| {
+    if (try jsobj.getTruthy(globalThis, "firefox")) |val| {
         if (val.isInt32()) {
             if (val.getNumber()) |value| {
                 targets.firefox = @intFromFloat(value);
             }
         }
     }
-    if (jsobj.getTruthy(globalThis, "ie")) |val| {
+    if (try jsobj.getTruthy(globalThis, "ie")) |val| {
         if (val.isInt32()) {
             if (val.getNumber()) |value| {
                 targets.ie = @intFromFloat(value);
             }
         }
     }
-    if (jsobj.getTruthy(globalThis, "ios_saf")) |val| {
+    if (try jsobj.getTruthy(globalThis, "ios_saf")) |val| {
         if (val.isInt32()) {
             if (val.getNumber()) |value| {
                 targets.ios_saf = @intFromFloat(value);
             }
         }
     }
-    if (jsobj.getTruthy(globalThis, "opera")) |val| {
+    if (try jsobj.getTruthy(globalThis, "opera")) |val| {
         if (val.isInt32()) {
             if (val.getNumber()) |value| {
                 targets.opera = @intFromFloat(value);
             }
         }
     }
-    if (jsobj.getTruthy(globalThis, "safari")) |val| {
+    if (try jsobj.getTruthy(globalThis, "safari")) |val| {
         if (val.isInt32()) {
             if (val.getNumber()) |value| {
                 targets.safari = @intFromFloat(value);
             }
         }
     }
-    if (jsobj.getTruthy(globalThis, "samsung")) |val| {
+    if (try jsobj.getTruthy(globalThis, "samsung")) |val| {
         if (val.isInt32()) {
             if (val.getNumber()) |value| {
                 targets.samsung = @intFromFloat(value);
@@ -195,22 +258,20 @@ fn targetsFromJS(globalThis: *JSC.JSGlobalObject, jsobj: JSValue) bun.css.target
     return targets;
 }
 
-pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     var arena = arena_ orelse brk: {
         break :brk Arena.init() catch @panic("oopsie arena no good");
     };
     defer arena.reset();
     const alloc = arena.allocator();
 
-    const arguments_ = callframe.arguments(4);
+    const arguments_ = callframe.arguments_old(4);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     const source_arg: JSC.JSValue = arguments.nextEat() orelse {
-        globalThis.throw("attrTest: expected 3 arguments, got 0", .{});
-        return .undefined;
+        return globalThis.throw("attrTest: expected 3 arguments, got 0", .{});
     };
     if (!source_arg.isString()) {
-        globalThis.throw("attrTest: expected source to be a string", .{});
-        return .undefined;
+        return globalThis.throw("attrTest: expected source to be a string", .{});
     }
     const source_bunstr = source_arg.toBunString(globalThis);
     defer source_bunstr.deref();
@@ -218,12 +279,10 @@ pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.
     defer source.deinit();
 
     const expected_arg = arguments.nextEat() orelse {
-        globalThis.throw("attrTest: expected 3 arguments, got 1", .{});
-        return .undefined;
+        return globalThis.throw("attrTest: expected 3 arguments, got 1", .{});
     };
     if (!expected_arg.isString()) {
-        globalThis.throw("attrTest: expected `expected` arg to be a string", .{});
-        return .undefined;
+        return globalThis.throw("attrTest: expected `expected` arg to be a string", .{});
     }
     const expected_bunstr = expected_arg.toBunString(globalThis);
     defer expected_bunstr.deref();
@@ -231,15 +290,14 @@ pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.
     defer expected.deinit();
 
     const minify_arg: JSC.JSValue = arguments.nextEat() orelse {
-        globalThis.throw("attrTest: expected 3 arguments, got 2", .{});
-        return .undefined;
+        return globalThis.throw("attrTest: expected 3 arguments, got 2", .{});
     };
     const minify = minify_arg.isBoolean() and minify_arg.toBoolean();
 
     var targets: bun.css.targets.Targets = .{};
     if (arguments.nextEat()) |arg| {
         if (arg.isObject()) {
-            targets.browsers = targetsFromJS(globalThis, arg);
+            targets.browsers = try targetsFromJS(globalThis, arg);
         }
     }
 
@@ -270,8 +328,7 @@ pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.
             if (log.hasAny()) {
                 return log.toJS(globalThis, bun.default_allocator, "parsing failed:");
             }
-            globalThis.throw("parsing failed: {}", .{err.kind});
-            return .undefined;
+            return globalThis.throw("parsing failed: {}", .{err.kind});
         },
     }
 }

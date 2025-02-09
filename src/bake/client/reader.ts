@@ -1,16 +1,22 @@
 import { td } from "../shared";
 
 export class DataViewReader {
-  view: DataView;
+  view: DataView<ArrayBuffer>;
   cursor: number;
 
-  constructor(view: DataView, cursor: number = 0) {
+  constructor(view: DataView<ArrayBuffer>, cursor: number = 0) {
     this.view = view;
     this.cursor = cursor;
   }
 
   u32() {
     const value = this.view.getUint32(this.cursor, true);
+    this.cursor += 4;
+    return value;
+  }
+
+  i32() {
+    const value = this.view.getInt32(this.cursor, true);
     this.cursor += 4;
     return value;
   }

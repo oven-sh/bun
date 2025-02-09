@@ -237,54 +237,60 @@ EventPath::EventPath(Node& originalTarget, Event& event)
 
 // #endif
 
-// // https://dom.spec.whatwg.org/#dom-event-composedpath
-// // Any node whose depth computed in EventPath::buildPath is greater than the context object is excluded.
-// // Because we can exit out of a closed shadow tree and re-enter another closed shadow tree via a slot,
-// // we decrease the *allowed depth* whenever we moved to a "shallower" (closer-to-document) tree.
-// Vector<EventTarget*> EventPath::computePathUnclosedToTarget(const EventTarget& target) const
-// {
-//     Vector<EventTarget*> path;
-//     auto pathSize = m_path.size();
-//     RELEASE_ASSERT(pathSize);
-//     path.reserveInitialCapacity(pathSize);
+// https://dom.spec.whatwg.org/#dom-event-composedpath
+// Any node whose depth computed in EventPath::buildPath is greater than the context object is excluded.
+// Because we can exit out of a closed shadow tree and re-enter another closed shadow tree via a slot,
+// we decrease the *allowed depth* whenever we moved to a "shallower" (closer-to-document) tree.
+Vector<Ref<EventTarget>> EventPath::computePathUnclosedToTarget(const EventTarget& target) const
+{
+    Vector<Ref<EventTarget>> path;
+    auto pathSize = m_path.size();
+    RELEASE_ASSERT(pathSize);
+    path.reserveInitialCapacity(pathSize);
 
-//     auto currentTargetIndex = m_path.findIf([&target](auto& context) {
-//         return context.currentTarget() == &target;
-//     });
-//     RELEASE_ASSERT(currentTargetIndex != notFound);
-//     auto currentTargetDepth = m_path[currentTargetIndex].closedShadowDepth();
+    auto currentTargetIndex = m_path.findIf([&target](auto& context) {
+        return context.currentTarget() == &target;
+    });
+    RELEASE_ASSERT(currentTargetIndex != notFound);
+    auto currentTargetDepth = m_path[currentTargetIndex].closedShadowDepth();
 
-//     auto appendTargetWithLesserDepth = [&path](const EventContext& currentContext, int& currentDepthAllowed) {
-//         auto depth = currentContext.closedShadowDepth();
-//         bool contextIsInsideInnerShadowTree = depth > currentDepthAllowed;
-//         if (contextIsInsideInnerShadowTree)
-//             return;
-//         bool movedOutOfShadowTree = depth < currentDepthAllowed;
-//         if (movedOutOfShadowTree)
-//             currentDepthAllowed = depth;
-//         path.unsafeAppendWithoutCapacityCheck(currentContext.currentTarget());
-//     };
+    auto appendTargetWithLesserDepth = [&path](const EventContext& currentContext, int& currentDepthAllowed) {
+        auto depth = currentContext.closedShadowDepth();
+        bool contextIsInsideInnerShadowTree = depth > currentDepthAllowed;
+        if (contextIsInsideInnerShadowTree)
+            return;
+        bool movedOutOfShadowTree = depth < currentDepthAllowed;
+        if (movedOutOfShadowTree)
+            currentDepthAllowed = depth;
+        path.append(*currentContext.currentTarget());
+    };
 
-//     auto currentDepthAllowed = currentTargetDepth;
-//     auto i = currentTargetIndex;
-//     do {
-//         appendTargetWithLesserDepth(m_path[i], currentDepthAllowed);
-//     } while (i--);
-//     path.reverse();
+    auto currentDepthAllowed = currentTargetDepth;
+    auto i = currentTargetIndex;
+    do {
+        appendTargetWithLesserDepth(m_path[i], currentDepthAllowed);
+    } while (i--);
+    path.reverse();
 
-//     currentDepthAllowed = currentTargetDepth;
-//     for (auto i = currentTargetIndex + 1; i < pathSize; ++i)
-//         appendTargetWithLesserDepth(m_path[i], currentDepthAllowed);
+    currentDepthAllowed = currentTargetDepth;
+    for (auto i = currentTargetIndex + 1; i < pathSize; ++i)
+        appendTargetWithLesserDepth(m_path[i], currentDepthAllowed);
 
-//     return path;
-// }
+    return path;
+}
 
-EventPath::EventPath(const WTF::Vector<EventTarget*>& targets)
+EventPath::EventPath(const Vector<EventTarget*>& targets)
 {
     m_path = targets.map([&](auto* target) {
         ASSERT(target);
+        // ASSERT(!is<Node>(target));
         return EventContext { EventContext::Type::Normal, nullptr, target, *targets.begin(), 0 };
     });
+}
+
+EventPath::EventPath(EventTarget& target)
+{
+    m_path = { EventContext { EventContext::Type::Normal, nullptr, &target, &target, 0 } };
 }
 
 // static Node* moveOutOfAllShadowRoots(Node& startingNode)

@@ -44,6 +44,13 @@ if(WIN32)
   )
 endif()
 
+if(ENABLE_ASAN)
+  register_compiler_flags(
+    DESCRIPTION "Enable AddressSanitizer"
+    -fsanitize=address
+  )
+endif()
+
 # --- Optimization level ---
 if(DEBUG)
   register_compiler_flags(
@@ -176,6 +183,10 @@ if(LINUX)
     DESCRIPTION "Disable relocation read-only (RELRO)"
     -Wl,-z,norelro
   )
+  register_compiler_flags(
+    DESCRIPTION "Disable semantic interposition"
+    -fno-semantic-interposition
+  )
 endif()
 
 # --- Assertions ---
@@ -265,7 +276,7 @@ if(ENABLE_LTO)
 endif()
 
 # --- Remapping ---
-if(UNIX)
+if(UNIX AND CI)
   register_compiler_flags(
     DESCRIPTION "Remap source files"
     -ffile-prefix-map=${CWD}=.

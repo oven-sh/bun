@@ -2,17 +2,25 @@ import { define } from "../../codegen/class-definitions";
 
 function generate(ssl) {
   return define({
-    name: ssl ? "TCPSocket" : "TLSSocket",
+    name: !ssl ? "TCPSocket" : "TLSSocket",
     JSType: "0b11101110",
     hasPendingActivity: true,
     noConstructor: true,
     configurable: false,
+    memoryCost: true,
     proto: {
       getAuthorizationError: {
         fn: "getAuthorizationError",
         length: 0,
       },
-
+      resume: {
+        fn: "resumeFromJS",
+        length: 0,
+      },
+      pause: {
+        fn: "pauseFromJS",
+        length: 0,
+      },
       getTLSFinishedMessage: {
         fn: "getTLSFinishedMessage",
         length: 0,
@@ -73,10 +81,7 @@ function generate(ssl) {
         fn: "getPeerCertificate",
         length: 1,
       },
-      getCertificate: {
-        fn: "getCertificate",
-        length: 0,
-      },
+
       authorized: {
         getter: "getAuthorized",
       },
@@ -85,6 +90,14 @@ function generate(ssl) {
       },
       bytesWritten: {
         getter: "getBytesWritten",
+      },
+      setNoDelay: {
+        fn: "setNoDelay",
+        length: 1,
+      },
+      setKeepAlive: {
+        fn: "setKeepAlive",
+        length: 2,
       },
       write: {
         fn: "write",
@@ -166,7 +179,6 @@ function generate(ssl) {
         fn: "reload",
         length: 1,
       },
-
       setServername: {
         fn: "setServername",
         length: 1,
@@ -175,12 +187,37 @@ function generate(ssl) {
         fn: "getServername",
         length: 0,
       },
+      "writeBuffered": {
+        fn: "writeBuffered",
+        length: 2,
+        privateSymbol: "write",
+      },
+      "endBuffered": {
+        fn: "endBuffered",
+        length: 2,
+        privateSymbol: "end",
+      },
+      getCertificate: {
+        fn: "getCertificate",
+        length: 0,
+      },
+      ...(ssl ? sslOnly : {}),
     },
     finalize: true,
     construct: true,
     klass: {},
   });
 }
+const sslOnly = {
+  getPeerX509Certificate: {
+    fn: "getPeerX509Certificate",
+    length: 0,
+  },
+  getX509Certificate: {
+    fn: "getX509Certificate",
+    length: 0,
+  },
+} as const;
 export default [
   generate(true),
   generate(false),
@@ -293,6 +330,42 @@ export default [
       },
       closed: {
         getter: "getClosed",
+      },
+      setBroadcast: {
+        fn: "setBroadcast",
+        length: 1,
+      },
+      setTTL: {
+        fn: "setTTL",
+        length: 1,
+      },
+      setMulticastTTL: {
+        fn: "setMulticastTTL",
+        length: 1,
+      },
+      setMulticastLoopback: {
+        fn: "setMulticastLoopback",
+        length: 1,
+      },
+      setMulticastInterface: {
+        fn: "setMulticastInterface",
+        length: 1,
+      },
+      addMembership: {
+        fn: "addMembership",
+        length: 2,
+      },
+      dropMembership: {
+        fn: "dropMembership",
+        length: 2,
+      },
+      addSourceSpecificMembership: {
+        fn: "addSourceSpecificMembership",
+        length: 3,
+      },
+      dropSourceSpecificMembership: {
+        fn: "dropSourceSpecificMembership",
+        length: 3,
       },
     },
     klass: {},

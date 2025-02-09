@@ -25,7 +25,6 @@ const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
-const bundler = bun.bundler;
 
 const fs = @import("../fs.zig");
 const URL = @import("../url.zig").URL;
@@ -39,7 +38,7 @@ const DotEnv = @import("../env_loader.zig");
 const NPMClient = @import("../which_npm_client.zig").NPMClient;
 const which = @import("../which.zig").which;
 const clap = bun.clap;
-const Lock = @import("../lock.zig").Lock;
+const Lock = bun.Mutex;
 const Headers = bun.http.Headers;
 const CopyFile = @import("../copy_file.zig");
 var bun_path_buf: bun.PathBuffer = undefined;
@@ -100,7 +99,7 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
     const task = std.mem.trim(u8, task_, " \n\r\t");
     if (task.len == 0) return;
 
-    var splitter = std.mem.split(u8, task, " ");
+    var splitter = std.mem.splitScalar(u8, task, ' ');
     var count: usize = 0;
     while (splitter.next() != null) {
         count += 1;
@@ -118,7 +117,7 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
     {
         var i: usize = npm_args;
 
-        splitter = std.mem.split(u8, task, " ");
+        splitter = std.mem.splitScalar(u8, task, ' ');
         while (splitter.next()) |split| {
             argv[i] = split;
             i += 1;
@@ -155,7 +154,7 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
 
         .windows = if (Environment.isWindows) .{
             .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
-        } else {},
+        },
     }) catch return;
 }
 
@@ -238,7 +237,7 @@ const BUN_CREATE_DIR = ".bun-create";
 var home_dir_buf: bun.PathBuffer = undefined;
 pub const CreateCommand = struct {
     pub fn exec(ctx: Command.Context, example_tag: Example.Tag, template: []const u8) !void {
-        @setCold(true);
+        @branchHint(.cold);
 
         Global.configureAllocator(.{ .long_running = false });
         HTTP.HTTPThread.init(&.{});
@@ -476,18 +475,14 @@ pub const CreateCommand = struct {
                 };
 
                 var destination_buf: if (Environment.isWindows) bun.WPathBuffer else void = undefined;
-                const dst_without_trailing_slash: if (Environment.isWindows) string else void = if (comptime Environment.isWindows)
-                    strings.withoutTrailingSlash(destination)
-                else {};
+                const dst_without_trailing_slash: if (Environment.isWindows) string else void = if (comptime Environment.isWindows) strings.withoutTrailingSlash(destination);
                 if (comptime Environment.isWindows) {
                     strings.copyU8IntoU16(&destination_buf, dst_without_trailing_slash);
                     destination_buf[dst_without_trailing_slash.len] = std.fs.path.sep;
                 }
 
                 var template_path_buf: if (Environment.isWindows) bun.WPathBuffer else void = undefined;
-                const src_without_trailing_slash: if (Environment.isWindows) string else void = if (comptime Environment.isWindows)
-                    strings.withoutTrailingSlash(abs_template_path)
-                else {};
+                const src_without_trailing_slash: if (Environment.isWindows) string else void = if (comptime Environment.isWindows) strings.withoutTrailingSlash(abs_template_path);
                 if (comptime Environment.isWindows) {
                     strings.copyU8IntoU16(&template_path_buf, src_without_trailing_slash);
                     template_path_buf[src_without_trailing_slash.len] = std.fs.path.sep;
@@ -598,10 +593,10 @@ pub const CreateCommand = struct {
                     &walker_,
                     node,
                     &progress,
-                    if (comptime Environment.isWindows) dst_without_trailing_slash.len + 1 else {},
-                    if (comptime Environment.isWindows) &destination_buf else {},
-                    if (comptime Environment.isWindows) src_without_trailing_slash.len + 1 else {},
-                    if (comptime Environment.isWindows) &template_path_buf else {},
+                    if (comptime Environment.isWindows) dst_without_trailing_slash.len + 1,
+                    if (comptime Environment.isWindows) &destination_buf,
+                    if (comptime Environment.isWindows) src_without_trailing_slash.len + 1,
+                    if (comptime Environment.isWindows) &template_path_buf,
                 );
 
                 package_json_file = destination_dir.openFile("package.json", .{ .mode = .read_write }) catch null;
@@ -714,11 +709,7 @@ pub const CreateCommand = struct {
                 const properties_list = std.ArrayList(js_ast.G.Property).fromOwnedSlice(default_allocator, package_json_expr.data.e_object.properties.slice());
 
                 if (ctx.log.errors > 0) {
-                    if (Output.enable_ansi_colors) {
-                        try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
-                    } else {
-                        try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
-                    }
+                    try ctx.log.print(Output.errorWriter());
 
                     package_json_file = null;
                     break :process_package_json;
@@ -1376,7 +1367,7 @@ pub const CreateCommand = struct {
                                     for (items) |task| {
                                         if (task.asString(ctx.allocator)) |task_entry| {
                                             // if (needs.bun_bun_for_nextjs or bun_bun_for_react_scripts) {
-                                            //     var iter = std.mem.split(u8, task_entry, " ");
+                                            //     var iter = std.mem.splitScalar(u8, task_entry, ' ');
                                             //     var last_was_bun = false;
                                             //     while (iter.next()) |current| {
                                             //         if (strings.eqlComptime(current, "bun")) {
@@ -1522,7 +1513,7 @@ pub const CreateCommand = struct {
 
                 .windows = if (Environment.isWindows) .{
                     .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
-                } else {},
+                },
             });
             _ = try process.unwrap();
         }
@@ -1940,7 +1931,7 @@ pub const Example = struct {
             ),
         );
 
-        var header_entries: Headers.Entries = .{};
+        var header_entries: Headers.Entry.List = .{};
         var headers_buf: string = "";
 
         if (env_loader.map.get("GITHUB_TOKEN") orelse env_loader.map.get("GITHUB_ACCESS_TOKEN")) |access_token| {
@@ -1948,21 +1939,21 @@ pub const Example = struct {
                 headers_buf = try std.fmt.allocPrint(ctx.allocator, "AuthorizationBearer {s}", .{access_token});
                 try header_entries.append(
                     ctx.allocator,
-                    Headers.Kv{
-                        .name = Api.StringPointer{
+                    .{
+                        .name = .{
                             .offset = 0,
-                            .length = @as(u32, @intCast("Authorization".len)),
+                            .length = @intCast("Authorization".len),
                         },
-                        .value = Api.StringPointer{
-                            .offset = @as(u32, @intCast("Authorization".len)),
-                            .length = @as(u32, @intCast(headers_buf.len - "Authorization".len)),
+                        .value = .{
+                            .offset = @intCast("Authorization".len),
+                            .length = @intCast(headers_buf.len - "Authorization".len),
                         },
                     },
                 );
             }
         }
 
-        const http_proxy: ?URL = env_loader.getHttpProxy(api_url);
+        const http_proxy: ?URL = env_loader.getHttpProxyFor(api_url);
         const mutable = try ctx.allocator.create(MutableString);
         mutable.* = try MutableString.init(ctx.allocator, 8192);
 
@@ -2041,7 +2032,7 @@ pub const Example = struct {
 
         url = URL.parse(try std.fmt.bufPrint(&url_buf, "https://registry.npmjs.org/@bun-examples/{s}/latest", .{name}));
 
-        var http_proxy: ?URL = env_loader.getHttpProxy(url);
+        var http_proxy: ?URL = env_loader.getHttpProxyFor(url);
 
         // ensure very stable memory address
         var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
@@ -2080,11 +2071,7 @@ pub const Example = struct {
             refresher.refresh();
 
             if (ctx.log.errors > 0) {
-                if (Output.enable_ansi_colors) {
-                    try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
-                } else {
-                    try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
-                }
+                try ctx.log.print(Output.errorWriter());
                 Global.exit(1);
             } else {
                 Output.prettyErrorln("Error parsing package: <r><red>{s}<r>", .{@errorName(err)});
@@ -2096,11 +2083,7 @@ pub const Example = struct {
             progress.end();
             refresher.refresh();
 
-            if (Output.enable_ansi_colors) {
-                try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
-            } else {
-                try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
-            }
+            try ctx.log.print(Output.errorWriter());
             Global.exit(1);
         }
 
@@ -2132,7 +2115,7 @@ pub const Example = struct {
         // ensure very stable memory address
         const parsed_tarball_url = URL.parse(tarball_url);
 
-        http_proxy = env_loader.getHttpProxy(parsed_tarball_url);
+        http_proxy = env_loader.getHttpProxyFor(parsed_tarball_url);
 
         async_http.* = HTTP.AsyncHTTP.initSync(
             ctx.allocator,
@@ -2170,7 +2153,7 @@ pub const Example = struct {
     pub fn fetchAll(ctx: Command.Context, env_loader: *DotEnv.Loader, progress_node: ?*Progress.Node) ![]Example {
         url = URL.parse(examples_url);
 
-        const http_proxy: ?URL = env_loader.getHttpProxy(url);
+        const http_proxy: ?URL = env_loader.getHttpProxyFor(url);
 
         var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
         const mutable = try ctx.allocator.create(MutableString);
@@ -2216,11 +2199,7 @@ pub const Example = struct {
         var source = logger.Source.initPathString("examples.json", mutable.list.items);
         const examples_object = JSON.parseUTF8(&source, ctx.log, ctx.allocator) catch |err| {
             if (ctx.log.errors > 0) {
-                if (Output.enable_ansi_colors) {
-                    try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
-                } else {
-                    try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
-                }
+                try ctx.log.print(Output.errorWriter());
                 Global.exit(1);
             } else {
                 Output.prettyErrorln("Error parsing examples: <r><red>{s}<r>", .{@errorName(err)});
@@ -2229,11 +2208,7 @@ pub const Example = struct {
         };
 
         if (ctx.log.errors > 0) {
-            if (Output.enable_ansi_colors) {
-                try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
-            } else {
-                try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
-            }
+            try ctx.log.print(Output.errorWriter());
             Global.exit(1);
         }
 
@@ -2331,7 +2306,6 @@ const GitHandler = struct {
         else
             run(destination, PATH, false) catch false;
 
-        @fence(.acquire);
         success.store(
             if (outcome)
                 1
@@ -2343,8 +2317,6 @@ const GitHandler = struct {
     }
 
     pub fn wait() bool {
-        @fence(.release);
-
         while (success.load(.acquire) == 0) {
             Futex.wait(&success, 0, 1000) catch continue;
         }

@@ -306,7 +306,7 @@ pub const KeyframesRule = struct {
     pub fn getFallbacks(this: *This, comptime T: type, targets: *const css.targets.Targets) []css.CssRule(T) {
         _ = this; // autofix
         _ = targets; // autofix
-        @panic(css.todo_stuff.depth);
+        @compileError(css.todo_stuff.depth);
     }
 
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {

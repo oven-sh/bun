@@ -123,7 +123,7 @@ pub const PropertyRule = struct {
 
         dest.dedent();
         try dest.newline();
-        try dest.writeChar(';');
+        try dest.writeChar('}');
     }
 
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {

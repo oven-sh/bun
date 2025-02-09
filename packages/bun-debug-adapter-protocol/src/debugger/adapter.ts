@@ -1,19 +1,19 @@
-import type { InspectorEventMap } from "../../../bun-inspector-protocol/src/inspector";
-import type { JSC } from "../../../bun-inspector-protocol/src/protocol";
-import type { DAP } from "../protocol";
-// @ts-ignore
 import { ChildProcess, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { AddressInfo, createServer } from "node:net";
+import { AddressInfo, createServer, Socket } from "node:net";
 import * as path from "node:path";
-import { remoteObjectToString, WebSocketInspector } from "../../../bun-inspector-protocol/index";
-import { randomUnixPath, TCPSocketSignal, UnixSignal } from "./signal";
-import { Location, SourceMap } from "./sourcemap";
+import { remoteObjectToString, WebSocketInspector } from "../../../bun-inspector-protocol/index.ts";
+import type { Inspector, InspectorEventMap } from "../../../bun-inspector-protocol/src/inspector/index.d.ts";
+import { NodeSocketInspector } from "../../../bun-inspector-protocol/src/inspector/node-socket.ts";
+import type { JSC } from "../../../bun-inspector-protocol/src/protocol/index.d.ts";
+import type { DAP } from "../protocol/index.d.ts";
+import { randomUnixPath, TCPSocketSignal, UnixSignal } from "./signal.ts";
+import { Location, SourceMap } from "./sourcemap.ts";
 
 export async function getAvailablePort(): Promise<number> {
   const server = createServer();
   server.listen(0);
-  return new Promise((resolve, reject) => {
+  return new Promise(resolve => {
     server.on("listening", () => {
       const { port } = server.address() as AddressInfo;
       server.close(() => {
@@ -105,7 +105,18 @@ const capabilities: DAP.Capabilities = {
 
 type InitializeRequest = DAP.InitializeRequest & {
   supportsConfigurationDoneRequest?: boolean;
-};
+  enableControlFlowProfiler?: boolean;
+  enableDebugger?: boolean;
+} & (
+    | {
+        enableLifecycleAgentReporter?: false;
+        sendImmediatePreventExit?: false;
+      }
+    | {
+        enableLifecycleAgentReporter: true;
+        sendImmediatePreventExit?: boolean;
+      }
+  );
 
 type LaunchRequest = DAP.LaunchRequest & {
   runtime?: string;
@@ -118,6 +129,8 @@ type LaunchRequest = DAP.LaunchRequest & {
   stopOnEntry?: boolean;
   noDebug?: boolean;
   watchMode?: boolean | "hot";
+  __skipValidation?: boolean;
+  stdin?: string;
 };
 
 type AttachRequest = DAP.AttachRequest & {
@@ -211,10 +224,32 @@ const debugSilentEvents = new Set(["Adapter.event", "Inspector.event"]);
 
 let threadId = 1;
 
-export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements IDebugAdapter {
+// Add these helper functions at the top level
+function normalizeSourcePath(sourcePath: string, untitledDocPath?: string, bunEvalPath?: string): string {
+  if (!sourcePath) return sourcePath;
+
+  // Handle eval source paths
+  if (sourcePath === bunEvalPath) {
+    return bunEvalPath!;
+  }
+
+  // Handle untitled documents
+  if (sourcePath === untitledDocPath) {
+    return bunEvalPath!;
+  }
+
+  // Handle normal file paths
+  return path.normalize(sourcePath);
+}
+
+export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
+  extends EventEmitter<DebugAdapterEventMap>
+  implements IDebugAdapter
+{
+  protected readonly inspector: T;
+  protected options?: DebuggerOptions;
+
   #threadId: number;
-  #inspector: WebSocketInspector;
-  #process?: ChildProcess;
   #sourceId: number;
   #pendingSources: Map<string, ((source: Source) => void)[]>;
   #sources: Map<string | number, Source>;
@@ -227,18 +262,21 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   #targets: Map<number, Target>;
   #variableId: number;
   #variables: Map<number, Variable>;
+  #untitledDocPath?: string;
+  #bunEvalPath?: string;
   #initialized?: InitializeRequest;
-  #options?: DebuggerOptions;
 
-  constructor(url?: string | URL) {
+  protected constructor(inspector: T, untitledDocPath?: string, bunEvalPath?: string) {
     super();
+    this.#untitledDocPath = untitledDocPath;
+    this.#bunEvalPath = bunEvalPath;
     this.#threadId = threadId++;
-    this.#inspector = new WebSocketInspector(url);
-    const emit = this.#inspector.emit.bind(this.#inspector);
-    this.#inspector.emit = (event, ...args) => {
+    this.inspector = inspector;
+    const emit = this.inspector.emit.bind(this.inspector);
+    this.inspector.emit = (event, ...args) => {
       let sent = false;
       sent ||= emit(event, ...args);
-      sent ||= this.emit(event, ...(args as any));
+      sent ||= this.emit(event as keyof JSC.EventMap, ...(args as any));
       return sent;
     };
     this.#sourceId = 1;
@@ -255,20 +293,23 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   }
 
   /**
-   * Gets the inspector url.
+   * Gets the inspector url. This is deprecated and exists for compat.
+   * @deprecated You should get the inspector directly (with .getInspector()), and if it's a WebSocketInspector you can access `.url` direclty.
    */
   get url(): string {
-    return this.#inspector.url;
+    // This code has been migrated from a time when the inspector was always a WebSocketInspector.
+    if (this.inspector instanceof WebSocketInspector) {
+      return this.inspector.url;
+    }
+
+    throw new Error("Inspector does not offer a URL");
   }
 
-  /**
-   * Starts the inspector.
-   * @param url the inspector url
-   * @returns if the inspector was able to connect
-   */
-  start(url?: string): Promise<boolean> {
-    return this.#attach({ url });
+  public getInspector() {
+    return this.inspector;
   }
+
+  abstract start(...args: unknown[]): Promise<boolean>;
 
   /**
    * Sends a request to the JavaScript inspector.
@@ -282,7 +323,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
    * console.log(result.value); // 2
    */
   async send<M extends keyof JSC.ResponseMap>(method: M, params?: JSC.RequestMap[M]): Promise<JSC.ResponseMap[M]> {
-    return this.#inspector.send(method, params);
+    return this.inspector.send(method, params);
   }
 
   /**
@@ -323,7 +364,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     return sent;
   }
 
-  #emit<E extends keyof DAP.EventMap>(event: E, body?: DAP.EventMap[E]): void {
+  protected emitAdapterEvent<E extends keyof DAP.EventMap>(event: E, body?: DAP.EventMap[E]): void {
     this.emit("Adapter.event", {
       type: "event",
       seq: 0,
@@ -335,7 +376,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   #emitAfterResponse<E extends keyof DAP.EventMap>(event: E, body?: DAP.EventMap[E]): void {
     this.once("Adapter.response", () => {
       process.nextTick(() => {
-        this.#emit(event, body);
+        this.emitAdapterEvent(event, body);
       });
     });
   }
@@ -413,19 +454,37 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     this.emit(`Adapter.${name}` as keyof DebugAdapterEventMap, body);
   }
 
-  initialize(request: InitializeRequest): DAP.InitializeResponse {
+  public initialize(request: InitializeRequest): DAP.InitializeResponse {
     this.#initialized = request;
 
     this.send("Inspector.enable");
     this.send("Runtime.enable");
     this.send("Console.enable");
-    this.send("Debugger.enable").catch(error => {
-      const { message } = unknownToError(error);
-      if (message !== "Debugger domain already enabled") {
-        throw error;
+
+    if (request.enableControlFlowProfiler) {
+      this.send("Runtime.enableControlFlowProfiler");
+    }
+
+    if (request.enableLifecycleAgentReporter) {
+      this.send("LifecycleReporter.enable");
+
+      if (request.sendImmediatePreventExit) {
+        this.send("LifecycleReporter.preventExit");
       }
-    });
-    this.send("Debugger.setAsyncStackTraceDepth", { depth: 200 });
+    }
+
+    // use !== false because by default if unspecified we want to enable the debugger
+    // and this option didn't exist beforehand, so we can't make it non-optional
+    if (request.enableDebugger !== false) {
+      this.send("Debugger.enable").catch(error => {
+        const { message } = unknownToError(error);
+        if (message !== "Debugger domain already enabled") {
+          throw error;
+        }
+      });
+
+      this.send("Debugger.setAsyncStackTraceDepth", { depth: 200 });
+    }
 
     const { clientID, supportsConfigurationDoneRequest } = request;
     if (!supportsConfigurationDoneRequest && clientID !== "vscode") {
@@ -439,242 +498,20 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   configurationDone(): void {
     // If the client requested that `noDebug` mode be enabled,
     // then we need to disable all breakpoints and pause on statements.
-    const active = !this.#options?.noDebug;
+    const active = !this.options?.noDebug;
     this.send("Debugger.setBreakpointsActive", { active });
 
     // Tell the debugger that its ready to start execution.
     this.send("Inspector.initialized");
   }
 
-  async launch(request: DAP.LaunchRequest): Promise<void> {
-    this.#options = { ...request, type: "launch" };
-
-    try {
-      await this.#launch(request);
-    } catch (error) {
-      // Some clients, like VSCode, will show a system-level popup when a `launch` request fails.
-      // Instead, we want to show the error as a sidebar notification.
-      const { message } = unknownToError(error);
-      this.#emit("output", {
-        category: "stderr",
-        output: `Failed to start debugger.\n${message}`,
-      });
-      this.terminate();
-    }
-  }
-
-  async #launch(request: LaunchRequest): Promise<void> {
-    const {
-      runtime = "bun",
-      runtimeArgs = [],
-      program,
-      args = [],
-      cwd,
-      env = {},
-      strictEnv = false,
-      watchMode = false,
-      stopOnEntry = false,
-    } = request;
-
-    if (!program) {
-      throw new Error("No program specified. Did you set the 'program' property in your launch.json?");
-    }
-
-    if (!isJavaScript(program)) {
-      throw new Error("Program must be a JavaScript or TypeScript file.");
-    }
-
-    const processArgs = [...runtimeArgs, program, ...args];
-
-    if (isTestJavaScript(program) && !runtimeArgs.includes("test")) {
-      processArgs.unshift("test");
-    }
-
-    if (watchMode && !runtimeArgs.includes("--watch") && !runtimeArgs.includes("--hot")) {
-      processArgs.unshift(watchMode === "hot" ? "--hot" : "--watch");
-    }
-
-    const processEnv = strictEnv
-      ? {
-          ...env,
-        }
-      : {
-          ...process.env,
-          ...env,
-        };
-
-    if (process.platform !== "win32") {
-      // we're on unix
-      const url = `ws+unix://${randomUnixPath()}`;
-      const signal = new UnixSignal();
-
-      signal.on("Signal.received", () => {
-        this.#attach({ url });
-      });
-
-      this.once("Adapter.terminated", () => {
-        signal.close();
-      });
-
-      const query = stopOnEntry ? "break=1" : "wait=1";
-      processEnv["BUN_INSPECT"] = `${url}?${query}`;
-      processEnv["BUN_INSPECT_NOTIFY"] = signal.url;
-
-      // This is probably not correct, but it's the best we can do for now.
-      processEnv["FORCE_COLOR"] = "1";
-      processEnv["BUN_QUIET_DEBUG_LOGS"] = "1";
-      processEnv["BUN_DEBUG_QUIET_LOGS"] = "1";
-
-      const started = await this.#spawn({
-        command: runtime,
-        args: processArgs,
-        env: processEnv,
-        cwd,
-        isDebugee: true,
-      });
-
-      if (!started) {
-        throw new Error("Program could not be started.");
-      }
-    } else {
-      // we're on windows
-      // Create TCPSocketSignal
-      const url = `ws://127.0.0.1:${await getAvailablePort()}/${getRandomId()}`; // 127.0.0.1 so it resolves correctly on windows
-      const signal = new TCPSocketSignal(await getAvailablePort());
-
-      signal.on("Signal.received", async () => {
-        this.#attach({ url });
-      });
-
-      this.once("Adapter.terminated", () => {
-        signal.close();
-      });
-
-      const query = stopOnEntry ? "break=1" : "wait=1";
-      processEnv["BUN_INSPECT"] = `${url}?${query}`;
-      processEnv["BUN_INSPECT_NOTIFY"] = signal.url; // 127.0.0.1 so it resolves correctly on windows
-
-      // This is probably not correct, but it's the best we can do for now.
-      processEnv["FORCE_COLOR"] = "1";
-      processEnv["BUN_QUIET_DEBUG_LOGS"] = "1";
-      processEnv["BUN_DEBUG_QUIET_LOGS"] = "1";
-
-      const started = await this.#spawn({
-        command: runtime,
-        args: processArgs,
-        env: processEnv,
-        cwd,
-        isDebugee: true,
-      });
-
-      if (!started) {
-        throw new Error("Program could not be started.");
-      }
-    }
-  }
-
-  async #spawn(options: {
-    command: string;
-    args?: string[];
-    cwd?: string;
-    env?: Record<string, string | undefined>;
-    isDebugee?: boolean;
-  }): Promise<boolean> {
-    const { command, args = [], cwd, env, isDebugee } = options;
-    const request = { command, args, cwd, env };
-    this.emit("Process.requested", request);
-
-    let subprocess: ChildProcess;
-    try {
-      subprocess = spawn(command, args, {
-        ...request,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-    } catch (cause) {
-      this.emit("Process.exited", new Error("Failed to spawn process", { cause }), null);
-      return false;
-    }
-
-    subprocess.on("spawn", () => {
-      this.emit("Process.spawned", subprocess);
-
-      if (isDebugee) {
-        this.#process = subprocess;
-        this.#emit("process", {
-          name: `${command} ${args.join(" ")}`,
-          systemProcessId: subprocess.pid,
-          isLocalProcess: true,
-          startMethod: "launch",
-        });
-      }
-    });
-
-    subprocess.on("exit", (code, signal) => {
-      this.emit("Process.exited", code, signal);
-
-      if (isDebugee) {
-        this.#process = undefined;
-        this.#emit("exited", {
-          exitCode: code ?? -1,
-        });
-        this.#emit("terminated");
-      }
-    });
-
-    subprocess.stdout?.on("data", data => {
-      this.emit("Process.stdout", data.toString());
-    });
-
-    subprocess.stderr?.on("data", data => {
-      this.emit("Process.stderr", data.toString());
-    });
-
-    return new Promise(resolve => {
-      subprocess.on("spawn", () => resolve(true));
-      subprocess.on("exit", () => resolve(false));
-      subprocess.on("error", () => resolve(false));
-    });
-  }
-
-  async attach(request: AttachRequest): Promise<void> {
-    this.#options = { ...request, type: "attach" };
-
-    try {
-      await this.#attach(request);
-    } catch (error) {
-      // Some clients, like VSCode, will show a system-level popup when a `launch` request fails.
-      // Instead, we want to show the error as a sidebar notification.
-      const { message } = unknownToError(error);
-      this.#emit("output", {
-        category: "stderr",
-        output: `Failed to start debugger.\n${message}`,
-      });
-      this.terminate();
-    }
-  }
-
-  async #attach(request: AttachRequest): Promise<boolean> {
-    const { url } = request;
-
-    for (let i = 0; i < 3; i++) {
-      const ok = await this.#inspector.start(url);
-      if (ok) {
-        return true;
-      }
-      await new Promise(resolve => setTimeout(resolve, 100 * i));
-    }
-
-    return false;
-  }
+  // Required so all implementations have a method that .terminate() always calls.
+  // This is useful because we don't want any implementors to forget
+  protected abstract exitJSProcess(): void;
 
   terminate(): void {
-    if (!this.#process?.kill()) {
-      this.#evaluate({
-        expression: "process.exit(0)",
-      });
-    }
-
-    this.#emit("terminated");
+    this.exitJSProcess();
+    this.emitAdapterEvent("terminated");
   }
 
   disconnect(request: DAP.DisconnectRequest): void {
@@ -1047,7 +884,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     }
 
     for (const breakpoint of breakpoints) {
-      this.#emit("breakpoint", {
+      this.emitAdapterEvent("breakpoint", {
         reason: "removed",
         breakpoint,
       });
@@ -1073,15 +910,21 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   }
 
   #getBreakpointByLocation(source: Source, location: DAP.SourceBreakpoint): Breakpoint | undefined {
-    console.log("getBreakpointByLocation", {
-      source: sourceToId(source),
-      location,
-      ids: this.#getBreakpoints(sourceToId(source)).map(({ id }) => id),
-      breakpointIds: this.#getBreakpoints(sourceToId(source)).map(({ breakpointId }) => breakpointId),
-      lines: this.#getBreakpoints(sourceToId(source)).map(({ line }) => line),
-      columns: this.#getBreakpoints(sourceToId(source)).map(({ column }) => column),
-    });
-    const sourceId = sourceToId(source);
+    if (isDebug) {
+      console.log("getBreakpointByLocation", {
+        source: sourceToId(source),
+        location,
+        ids: this.#getBreakpoints(sourceToId(source)).map(({ id }) => id),
+        breakpointIds: this.#getBreakpoints(sourceToId(source)).map(({ breakpointId }) => breakpointId),
+        lines: this.#getBreakpoints(sourceToId(source)).map(({ line }) => line),
+        columns: this.#getBreakpoints(sourceToId(source)).map(({ column }) => column),
+      });
+    }
+    let sourceId = sourceToId(source);
+    const untitledDocPath = this.#untitledDocPath;
+    if (sourceId === untitledDocPath && this.#bunEvalPath) {
+      sourceId = this.#bunEvalPath;
+    }
     const [breakpoint] = this.#getBreakpoints(sourceId).filter(
       ({ source, request }) => source && sourceToId(source) === sourceId && request?.line === location.line,
     );
@@ -1089,7 +932,18 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   }
 
   #getBreakpoints(sourceId: string | number): Breakpoint[] {
-    return [...this.#breakpoints.values()].flat().filter(({ source }) => source && sourceToId(source) === sourceId);
+    let output = [];
+    let all = this.#breakpoints;
+    for (const breakpoints of all.values()) {
+      for (const breakpoint of breakpoints) {
+        const source = breakpoint.source;
+        if (source && sourceToId(source) === sourceId) {
+          output.push(breakpoint);
+        }
+      }
+    }
+
+    return output;
   }
 
   #getFutureBreakpoints(breakpointId: string): FutureBreakpoint[] {
@@ -1269,7 +1123,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     const callFrameId = this.#getCallFrameId(frameId);
     const objectGroup = callFrameId ? "debugger" : context;
 
-    const { result, wasThrown } = await this.#evaluate({
+    const { result, wasThrown } = await this.evaluateInternal({
       expression,
       objectGroup,
       callFrameId,
@@ -1290,7 +1144,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     };
   }
 
-  async #evaluate(options: {
+  protected async evaluateInternal(options: {
     expression: string;
     objectGroup?: string;
     callFrameId?: string;
@@ -1314,7 +1168,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     const callFrameId = this.#getCallFrameId(frameId);
 
     const { expression, hint } = completionToExpression(text);
-    const { result, wasThrown } = await this.#evaluate({
+    const { result, wasThrown } = await this.evaluateInternal({
       expression: expression || "this",
       callFrameId,
       objectGroup: "repl",
@@ -1346,33 +1200,29 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   }
 
   ["Inspector.connected"](): void {
-    this.#emit("output", {
+    this.emitAdapterEvent("output", {
       category: "debug console",
       output: "Debugger attached.\n",
     });
 
-    this.#emit("initialized");
+    this.emitAdapterEvent("initialized");
   }
 
   async ["Inspector.disconnected"](error?: Error): Promise<void> {
-    this.#emit("output", {
+    this.emitAdapterEvent("output", {
       category: "debug console",
       output: "Debugger detached.\n",
     });
 
     if (error) {
       const { message } = error;
-      this.#emit("output", {
+      this.emitAdapterEvent("output", {
         category: "stderr",
         output: `${message}\n`,
       });
     }
 
-    this.#reset();
-
-    if (this.#process?.exitCode !== null) {
-      this.#emit("terminated");
-    }
+    this.resetInternal();
   }
 
   async ["Debugger.scriptParsed"](event: JSC.Debugger.ScriptParsedEvent): Promise<void> {
@@ -1423,7 +1273,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       return;
     }
 
-    this.#emit("output", {
+    this.emitAdapterEvent("output", {
       category: "stderr",
       output: errorMessage,
       line: this.#lineFrom0BasedLine(errorLine),
@@ -1451,7 +1301,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
         const breakpoint = breakpoints[i];
         const oldBreakpoint = oldBreakpoints[i];
 
-        this.#emit("breakpoint", {
+        this.emitAdapterEvent("breakpoint", {
           reason: "changed",
           breakpoint: {
             ...breakpoint,
@@ -1534,7 +1384,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       }
     }
 
-    this.#emit("stopped", {
+    this.emitAdapterEvent("stopped", {
       threadId: this.#threadId,
       reason: this.#stopped,
       hitBreakpointIds,
@@ -1551,20 +1401,20 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       }
     }
 
-    this.#emit("continued", {
+    this.emitAdapterEvent("continued", {
       threadId: this.#threadId,
     });
   }
 
   ["Process.stdout"](output: string): void {
-    this.#emit("output", {
+    this.emitAdapterEvent("output", {
       category: "debug console",
       output,
     });
   }
 
   ["Process.stderr"](output: string): void {
-    this.#emit("output", {
+    this.emitAdapterEvent("output", {
       category: "debug console",
       output,
     });
@@ -1632,7 +1482,12 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   }
 
   #addSource(source: Source): Source {
-    const { sourceId, scriptId, path, sourceReference } = source;
+    let { sourceId, scriptId, path } = source;
+
+    // Normalize the source path
+    if (path) {
+      path = source.path = normalizeSourcePath(path, this.#untitledDocPath, this.#bunEvalPath);
+    }
 
     const oldSource = this.#getSourceIfPresent(sourceId);
     if (oldSource) {
@@ -1643,8 +1498,8 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
       // If the path changed or the source has a source reference,
       // the old source should be marked as removed.
-      if (path !== oldPath || sourceReference) {
-        this.#emit("loadedSource", {
+      if (path !== oldPath /*|| sourceReference*/) {
+        this.emitAdapterEvent("loadedSource", {
           reason: "removed",
           source: oldSource,
         });
@@ -1654,7 +1509,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     this.#sources.set(sourceId, source);
     this.#sources.set(scriptId, source);
 
-    this.#emit("loadedSource", {
+    this.emitAdapterEvent("loadedSource", {
       // If the reason is "changed", the source will be retrieved using
       // the `source` command, which is why it cannot be set when `path` is present.
       reason: oldSource && !path ? "changed" : "new",
@@ -1704,16 +1559,15 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       return source;
     }
 
-    // If the source does not have a path or is a builtin module,
-    // it cannot be retrieved from the file system.
-    if (typeof sourceId === "number" || !path.isAbsolute(sourceId)) {
-      throw new Error(`Source not found: ${sourceId}`);
+    // Normalize the source path before lookup
+    if (typeof sourceId === "string") {
+      sourceId = normalizeSourcePath(sourceId, this.#untitledDocPath, this.#bunEvalPath);
     }
 
     // If the source is not present, it may not have been loaded yet.
-    let resolves = this.#pendingSources.get(sourceId);
+    let resolves = this.#pendingSources.get(sourceId.toString());
     if (!resolves) {
-      this.#pendingSources.set(sourceId, (resolves = []));
+      this.#pendingSources.set(sourceId.toString(), (resolves = []));
     }
 
     return new Promise(resolve => {
@@ -1965,7 +1819,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     const callFrameId = this.#getCallFrameId(frameId);
     const objectGroup = callFrameId ? "debugger" : "repl";
 
-    const { result, wasThrown } = await this.#evaluate({
+    const { result, wasThrown } = await this.evaluateInternal({
       expression: `${expression} = (${value});`,
       objectGroup: "repl",
       callFrameId,
@@ -2165,12 +2019,11 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   }
 
   close(): void {
-    this.#process?.kill();
-    this.#inspector.close();
-    this.#reset();
+    this.inspector.close();
+    this.resetInternal();
   }
 
-  #reset(): void {
+  protected resetInternal(): void {
     this.#pendingSources.clear();
     this.#sources.clear();
     this.#stackFrames.length = 0;
@@ -2181,9 +2034,308 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     this.#functionBreakpoints.clear();
     this.#targets.clear();
     this.#variables.clear();
-    this.#options = undefined;
+    this.options = undefined;
   }
 }
+
+/**
+ * Create a debug adapter that connects over a unix/tcp socket. Usually
+ * in the case of a reverse connection. This is used by the vscode extension.
+ *
+ * @warning This will gracefully handle socket closure, you don't need to add extra handling.
+ */
+export class NodeSocketDebugAdapter extends BaseDebugAdapter<NodeSocketInspector> {
+  public constructor(socket: Socket, untitledDocPath?: string, bunEvalPath?: string) {
+    super(new NodeSocketInspector(socket), untitledDocPath, bunEvalPath);
+
+    socket.once("close", () => {
+      this.resetInternal();
+    });
+  }
+
+  protected exitJSProcess(): void {
+    this.evaluateInternal({
+      expression: "process.exit(0)",
+    });
+  }
+
+  public async start() {
+    const ok = await this.inspector.start();
+    return ok;
+  }
+}
+
+/**
+ * The default debug adapter. Connects via WebSocket
+ */
+export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> {
+  #process?: ChildProcess;
+
+  public constructor(url?: string | URL, untitledDocPath?: string, bunEvalPath?: string) {
+    super(new WebSocketInspector(url), untitledDocPath, bunEvalPath);
+  }
+
+  async ["Inspector.disconnected"](error?: Error): Promise<void> {
+    await super["Inspector.disconnected"](error);
+
+    if (this.#process?.exitCode !== null) {
+      this.emitAdapterEvent("terminated");
+    }
+  }
+
+  protected exitJSProcess() {
+    if (!this.#process?.kill()) {
+      this.evaluateInternal({
+        expression: "process.exit(0)",
+      });
+    }
+  }
+
+  /**
+   * Starts the inspector.
+   * @param url the inspector url, will default to the one provided in the constructor (if any). If none
+   * @returns if the inspector was able to connect
+   */
+  start(url?: string): Promise<boolean> {
+    return this.#attach({ url });
+  }
+
+  close() {
+    this.#process?.kill();
+    super.close();
+  }
+
+  async launch(request: DAP.LaunchRequest): Promise<void> {
+    this.options = { ...request, type: "launch" };
+
+    try {
+      await this.#launch(request);
+    } catch (error) {
+      // Some clients, like VSCode, will show a system-level popup when a `launch` request fails.
+      // Instead, we want to show the error as a sidebar notification.
+      const { message } = unknownToError(error);
+
+      this.emitAdapterEvent("output", {
+        category: "stderr",
+        output: `Failed to start debugger.\n${message}`,
+      });
+
+      this.terminate();
+    }
+  }
+
+  async #launch(request: LaunchRequest): Promise<void> {
+    const {
+      runtime = "bun",
+      runtimeArgs = [],
+      program,
+      args = [],
+      cwd,
+      env = {},
+      strictEnv = false,
+      watchMode = false,
+      stopOnEntry = false,
+      __skipValidation = false,
+      stdin,
+    } = request;
+
+    if (!__skipValidation && !program) {
+      throw new Error("No program specified");
+    }
+
+    const processArgs = [...runtimeArgs];
+
+    if (program === "-" && stdin) {
+      processArgs.push("--eval", stdin);
+    } else if (program) {
+      processArgs.push(program);
+    }
+
+    processArgs.push(...args);
+
+    if (program && isTestJavaScript(program) && !runtimeArgs.includes("test")) {
+      processArgs.unshift("test");
+    }
+
+    if (watchMode && !runtimeArgs.includes("--watch") && !runtimeArgs.includes("--hot")) {
+      processArgs.unshift(watchMode === "hot" ? "--hot" : "--watch");
+    }
+
+    const processEnv = strictEnv
+      ? {
+          ...env,
+        }
+      : {
+          ...process.env,
+          ...env,
+        };
+
+    if (process.platform !== "win32") {
+      // we're on unix
+      const url = `ws+unix://${randomUnixPath()}`;
+      const signal = new UnixSignal();
+
+      signal.on("Signal.received", () => {
+        this.#attach({ url });
+      });
+
+      this.once("Adapter.terminated", () => {
+        signal.close();
+      });
+
+      const query = stopOnEntry ? "break=1" : "wait=1";
+      processEnv["BUN_INSPECT"] = `${url}?${query}`;
+      processEnv["BUN_INSPECT_NOTIFY"] = signal.url;
+
+      // This is probably not correct, but it's the best we can do for now.
+      processEnv["FORCE_COLOR"] = "1";
+      processEnv["BUN_QUIET_DEBUG_LOGS"] = "1";
+      processEnv["BUN_DEBUG_QUIET_LOGS"] = "1";
+
+      const started = await this.#spawn({
+        command: runtime,
+        args: processArgs,
+        env: processEnv,
+        cwd,
+        isDebugee: true,
+      });
+
+      if (!started) {
+        throw new Error("Program could not be started.");
+      }
+    } else {
+      // we're on windows
+      // Create TCPSocketSignal
+      const url = `ws://127.0.0.1:${await getAvailablePort()}/${getRandomId()}`; // 127.0.0.1 so it resolves correctly on windows
+      const signal = new TCPSocketSignal(await getAvailablePort());
+
+      signal.on("Signal.received", async () => {
+        this.#attach({ url });
+      });
+
+      this.once("Adapter.terminated", () => {
+        signal.close();
+      });
+
+      const query = stopOnEntry ? "break=1" : "wait=1";
+      processEnv["BUN_INSPECT"] = `${url}?${query}`;
+      processEnv["BUN_INSPECT_NOTIFY"] = signal.url; // 127.0.0.1 so it resolves correctly on windows
+
+      // This is probably not correct, but it's the best we can do for now.
+      processEnv["FORCE_COLOR"] = "1";
+      processEnv["BUN_QUIET_DEBUG_LOGS"] = "1";
+      processEnv["BUN_DEBUG_QUIET_LOGS"] = "1";
+
+      const started = await this.#spawn({
+        command: runtime,
+        args: processArgs,
+        env: processEnv,
+        cwd,
+        isDebugee: true,
+      });
+
+      if (!started) {
+        throw new Error("Program could not be started.");
+      }
+    }
+  }
+
+  async #spawn(options: {
+    command: string;
+    args?: string[];
+    cwd?: string;
+    env?: Record<string, string | undefined>;
+    isDebugee?: boolean;
+  }): Promise<boolean> {
+    const { command, args = [], cwd, env, isDebugee } = options;
+    const request = { command, args, cwd, env };
+    this.emit("Process.requested", request);
+
+    let subprocess: ChildProcess;
+    try {
+      subprocess = spawn(command, args, {
+        ...request,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (cause) {
+      this.emit("Process.exited", new Error("Failed to spawn process", { cause }), null);
+      return false;
+    }
+
+    subprocess.on("spawn", () => {
+      this.emit("Process.spawned", subprocess);
+
+      if (isDebugee) {
+        this.#process = subprocess;
+        this.emitAdapterEvent("process", {
+          name: `${command} ${args.join(" ")}`,
+          systemProcessId: subprocess.pid,
+          isLocalProcess: true,
+          startMethod: "launch",
+        });
+      }
+    });
+
+    subprocess.on("exit", (code, signal) => {
+      this.emit("Process.exited", code, signal);
+
+      if (isDebugee) {
+        this.#process = undefined;
+        this.emitAdapterEvent("exited", {
+          exitCode: code ?? -1,
+        });
+        this.emitAdapterEvent("terminated");
+      }
+    });
+
+    subprocess.stdout?.on("data", data => {
+      this.emit("Process.stdout", data.toString());
+    });
+
+    subprocess.stderr?.on("data", data => {
+      this.emit("Process.stderr", data.toString());
+    });
+
+    return new Promise(resolve => {
+      subprocess.on("spawn", () => resolve(true));
+      subprocess.on("exit", () => resolve(false));
+      subprocess.on("error", () => resolve(false));
+    });
+  }
+
+  async attach(request: AttachRequest): Promise<void> {
+    this.options = { ...request, type: "attach" };
+
+    try {
+      await this.#attach(request);
+    } catch (error) {
+      // Some clients, like VSCode, will show a system-level popup when a `launch` request fails.
+      // Instead, we want to show the error as a sidebar notification.
+      const { message } = unknownToError(error);
+      this.emitAdapterEvent("output", {
+        category: "stderr",
+        output: `Failed to start debugger.\n${message}`,
+      });
+      this.terminate();
+    }
+  }
+
+  async #attach(request: AttachRequest): Promise<boolean> {
+    const { url } = request;
+
+    for (let i = 0; i < 3; i++) {
+      const ok = await this.inspector.start(url);
+      if (ok) {
+        return true;
+      }
+      await new Promise(resolve => setTimeout(resolve, 100 * i));
+    }
+
+    return false;
+  }
+}
+
+export const DebugAdapter = WebSocketDebugAdapter;
 
 function stoppedReason(reason: JSC.Debugger.PausedEvent["reason"]): DAP.StoppedEvent["reason"] {
   switch (reason) {

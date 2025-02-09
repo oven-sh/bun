@@ -927,7 +927,7 @@ pub const PseudoClass = union(enum) {
         const writer = s.writer(dest.allocator);
         const W2 = @TypeOf(writer);
         const scratchbuf = std.ArrayList(u8).init(dest.allocator);
-        var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions{}, dest.import_records);
+        var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions.default(), dest.import_records);
         try serialize.serializePseudoClass(this, W2, &printer, null);
         return dest.writeStr(s.items);
     }
@@ -1049,10 +1049,58 @@ pub const SelectorParser = struct {
     }
 
     pub fn parseFunctionalPseudoElement(this: *SelectorParser, name: []const u8, input: *css.Parser) Result(Impl.SelectorImpl.PseudoElement) {
-        _ = this; // autofix
-        _ = name; // autofix
-        _ = input; // autofix
-        @panic(css.todo_stuff.depth);
+        const Enum = enum {
+            cue,
+            @"cue-region",
+            @"view-transition-group",
+            @"view-transition-image-pair",
+            @"view-transition-old",
+            @"view-transition-new",
+        };
+
+        const Map = bun.ComptimeEnumMap(Enum);
+        if (Map.get(name)) |v| {
+            return switch (v) {
+                .cue => .{ .result = .{ .cue_function = .{ .selector = switch (Selector.parse(this, input)) {
+                    .result => |a| bun.create(input.allocator(), Selector, a),
+                    .err => |e| return .{ .err = e },
+                } } } },
+                .@"cue-region" => .{ .result = .{ .cue_region_function = .{ .selector = switch (Selector.parse(this, input)) {
+                    .result => |a| bun.create(input.allocator(), Selector, a),
+                    .err => |e| return .{ .err = e },
+                } } } },
+                .@"view-transition-group" => .{ .result = .{ .view_transition_group = .{ .part_name = switch (ViewTransitionPartName.parse(input)) {
+                    .result => |a| a,
+                    .err => |e| return .{ .err = e },
+                } } } },
+                .@"view-transition-image-pair" => .{ .result = .{ .view_transition_image_pair = .{ .part_name = switch (ViewTransitionPartName.parse(input)) {
+                    .result => |a| a,
+                    .err => |e| return .{ .err = e },
+                } } } },
+                .@"view-transition-old" => .{ .result = .{ .view_transition_old = .{ .part_name = switch (ViewTransitionPartName.parse(input)) {
+                    .result => |a| a,
+                    .err => |e| return .{ .err = e },
+                } } } },
+                .@"view-transition-new" => .{ .result = .{ .view_transition_new = .{ .part_name = switch (ViewTransitionPartName.parse(input)) {
+                    .result => |a| a,
+                    .err => |e| return .{ .err = e },
+                } } } },
+            };
+        } else {
+            if (!bun.strings.startsWith(name, "-")) {
+                this.options.warn(input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{
+                    .unsupported_pseudo_class_or_element = name,
+                })));
+            }
+
+            var args = std.ArrayListUnmanaged(css.css_properties.custom.TokenOrValue){};
+            if (css.TokenList.parseRaw(input, &args, this.options, 0).asErr()) |e| return .{ .err = e };
+
+            return .{ .result = .{ .custom_function = .{
+                .name = name,
+                .arguments = css.TokenList{ .v = args },
+            } } };
+        }
     }
 
     fn parseIsAndWhere(this: *const SelectorParser) bool {
@@ -1061,10 +1109,13 @@ pub const SelectorParser = struct {
     }
 
     /// Whether the given function name is an alias for the `:is()` function.
-    fn parseAnyPrefix(this: *const SelectorParser, name: []const u8) ?css.VendorPrefix {
-        _ = this; // autofix
-        _ = name; // autofix
-        return null;
+    fn parseAnyPrefix(_: *const SelectorParser, name: []const u8) ?css.VendorPrefix {
+        const Map = comptime bun.ComptimeStringMap(css.VendorPrefix, .{
+            .{ "-webkit-any", css.VendorPrefix{ .webkit = true } },
+            .{ "-moz-any", css.VendorPrefix{ .moz = true } },
+        });
+
+        return Map.getAnyCase(name);
     }
 
     pub fn parseNonTsPseudoClass(
@@ -1287,6 +1338,10 @@ pub const SelectorParser = struct {
         };
 
         return .{ .result = pseudo_class };
+    }
+
+    pub fn parseHost(_: *SelectorParser) bool {
+        return true;
     }
 
     pub fn parseNonTsFunctionalPseudoClass(
@@ -1691,7 +1746,7 @@ pub fn GenericSelector(comptime Impl: type) type {
                 var arraylist = ArrayList(u8){};
                 const w = arraylist.writer(bun.default_allocator);
                 defer arraylist.deinit(bun.default_allocator);
-                var printer = css.Printer(@TypeOf(w)).new(bun.default_allocator, std.ArrayList(u8).init(bun.default_allocator), w, .{}, null);
+                var printer = css.Printer(@TypeOf(w)).new(bun.default_allocator, std.ArrayList(u8).init(bun.default_allocator), w, css.PrinterOptions.default(), null);
                 defer printer.deinit();
                 css.selector.tocss_servo.toCss_Selector(this.this, @TypeOf(w), &printer) catch |e| return try writer.print("<error writing selector: {s}>\n", .{@errorName(e)});
                 try writer.writeAll(arraylist.items);
@@ -1935,8 +1990,9 @@ pub fn GenericComponent(comptime Impl: type) type {
         pub fn format(this: *const This, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             switch (this.*) {
                 .local_name => return try writer.print("local_name={s}", .{this.local_name.name.v}),
-                .combinator => return try writer.print("combinator={}", .{this.combinator}),
+                .combinator => return try writer.print("combinator='{}'", .{this.combinator}),
                 .pseudo_element => return try writer.print("pseudo_element={}", .{this.pseudo_element}),
+                .class => return try writer.print("class={s}", .{this.class.v}),
                 else => {},
             }
             return writer.print("{s}", .{@tagName(this.*)});
@@ -2026,7 +2082,7 @@ pub const NthSelectorData = struct {
             .last_child => if (is_function) ":nth-last-child(" else ":last-child",
             .of_type => if (is_function) ":nth-of-type(" else ":first-of-type",
             .last_of_type => if (is_function) ":nth-last-of-type(" else ":last-of-type",
-            .only_child => if (is_function) ":nth-only-child(" else ":only-of-type",
+            .only_child => ":only-child",
             .only_of_type => ":only-of-type",
             .col => ":nth-col(",
             .last_col => ":nth-last-col(",
@@ -2039,7 +2095,7 @@ pub const NthSelectorData = struct {
 
     fn numberSign(num: i32) []const u8 {
         if (num >= 0) return "+";
-        return "-";
+        return "";
     }
 
     pub fn writeAffine(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -2096,10 +2152,6 @@ pub fn NthOfSelectorData(comptime Impl: type) type {
 
         pub fn nthData(this: *const @This()) NthSelectorData {
             return this.data;
-        }
-
-        pub fn selectors(this: *const @This()) []GenericSelector(Impl) {
-            return this.selectors;
         }
     };
 }
@@ -2194,7 +2246,7 @@ pub const SpecifityAndFlags = struct {
     flags: SelectorFlags,
 
     pub fn eql(this: *const SpecifityAndFlags, other: *const SpecifityAndFlags) bool {
-        return this.specificity == other.specificity and this.flags.eql(other.flags);
+        return css.implementEql(@This(), this, other);
     }
 
     pub fn hasPseudoElement(this: *const SpecifityAndFlags) bool {
@@ -2546,7 +2598,7 @@ pub const PseudoElement = union(enum) {
         const writer = s.writer(dest.allocator);
         const W2 = @TypeOf(writer);
         const scratchbuf = std.ArrayList(u8).init(dest.allocator);
-        var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions{}, dest.import_records);
+        var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions.default(), dest.import_records);
         try serialize.serializePseudoElement(this, W2, &printer, null);
         return dest.writeStr(s.items);
     }
@@ -2691,6 +2743,7 @@ pub fn parse_one_simple_selector(
     const S = SimpleSelectorParseResult(Impl);
 
     const start = input.state();
+    const token_location = input.currentSourceLocation();
     const token = switch (input.nextIncludingWhitespace()) {
         .result => |v| v.*,
         .err => {
@@ -2702,7 +2755,7 @@ pub fn parse_one_simple_selector(
     switch (token) {
         .idhash => |id| {
             if (state.intersects(SelectorParsingState.AFTER_PSEUDO)) {
-                return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_state)) };
+                return .{ .err = token_location.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{ .unexpected_selector_after_pseudo_element = .{ .idhash = id } })) };
             }
             const component: GenericComponent(Impl) = .{ .id = .{ .v = id } };
             return .{ .result = S{
@@ -2711,18 +2764,20 @@ pub fn parse_one_simple_selector(
         },
         .open_square => {
             if (state.intersects(SelectorParsingState.AFTER_PSEUDO)) {
-                return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_state)) };
+                return .{ .err = token_location.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{ .unexpected_selector_after_pseudo_element = .open_square })) };
             }
             const Closure = struct {
                 parser: *SelectorParser,
-                pub fn parsefn(this: *@This(), input2: *css.Parser) Result(GenericComponent(Impl)) {
-                    return parse_attribute_selector(Impl, this.parser, input2);
-                }
             };
             var closure = Closure{
                 .parser = parser,
             };
-            const attr = switch (input.parseNestedBlock(GenericComponent(Impl), &closure, Closure.parsefn)) {
+            const attr = switch (input.parseNestedBlock(GenericComponent(Impl), &closure, struct {
+                pub fn parsefn(this: *Closure, input2: *css.Parser) Result(GenericComponent(Impl)) {
+                    return parse_attribute_selector(Impl, this.parser, input2);
+                }
+            }
+                .parsefn)) {
                 .err => |e| return .{ .err = e },
                 .result => |v| v,
             };
@@ -2880,7 +2935,7 @@ pub fn parse_one_simple_selector(
             switch (d) {
                 '.' => {
                     if (state.intersects(SelectorParsingState.AFTER_PSEUDO)) {
-                        return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_state)) };
+                        return .{ .err = token_location.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{ .unexpected_selector_after_pseudo_element = .{ .delim = '.' } })) };
                     }
                     const location = input.currentSourceLocation();
                     const class = switch ((switch (input.nextIncludingWhitespace()) {
@@ -3169,6 +3224,9 @@ pub fn parse_functional_pseudo_class(
     return .{ .result = .{ .non_ts_pseudo_class = result } };
 }
 
+const TreeStructuralPseudoClass = enum { @"first-child", @"last-child", @"only-child", root, empty, scope, host, @"first-of-type", @"last-of-type", @"only-of-type" };
+const TreeStructuralPseudoClassMap = bun.ComptimeEnumMap(TreeStructuralPseudoClass);
+
 pub fn parse_simple_pseudo_class(
     comptime Impl: type,
     parser: *SelectorParser,
@@ -3181,28 +3239,20 @@ pub fn parse_simple_pseudo_class(
     }
 
     if (state.allowsTreeStructuralPseudoClasses()) {
-        // css.todo_stuff.match_ignore_ascii_case
-        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "first-child")) {
-            return .{ .result = .{ .nth = NthSelectorData.first(false) } };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "last-child")) {
-            return .{ .result = .{ .nth = NthSelectorData.last(false) } };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "only-child")) {
-            return .{ .result = .{ .nth = NthSelectorData.only(false) } };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "root")) {
-            return .{ .result = .root };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "empty")) {
-            return .{ .result = .empty };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "scope")) {
-            return .{ .result = .scope };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "host")) {
-            return .{ .result = .{ .host = null } };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "first-of-type")) {
-            return .{ .result = .{ .nth = NthSelectorData.first(true) } };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "last-of-type")) {
-            return .{ .result = .{ .nth = NthSelectorData.last(true) } };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "only-of-type")) {
-            return .{ .result = .{ .nth = NthSelectorData.only(true) } };
-        } else {}
+        if (TreeStructuralPseudoClassMap.getAnyCase(name)) |pseudo_class| {
+            switch (pseudo_class) {
+                .@"first-child" => return .{ .result = .{ .nth = NthSelectorData.first(false) } },
+                .@"last-child" => return .{ .result = .{ .nth = NthSelectorData.last(false) } },
+                .@"only-child" => return .{ .result = .{ .nth = NthSelectorData.only(false) } },
+                .root => return .{ .result = .root },
+                .empty => return .{ .result = .empty },
+                .scope => return .{ .result = .scope },
+                .host => if (parser.parseHost()) return .{ .result = .{ .host = null } },
+                .@"first-of-type" => return .{ .result = .{ .nth = NthSelectorData.first(true) } },
+                .@"last-of-type" => return .{ .result = .{ .nth = NthSelectorData.last(true) } },
+                .@"only-of-type" => return .{ .result = .{ .nth = NthSelectorData.only(true) } },
+            }
+        }
     }
 
     // The view-transition pseudo elements accept the :only-child pseudo class.
@@ -3626,6 +3676,17 @@ pub const ViewTransitionPartName = union(enum) {
             .all => try dest.writeStr("*"),
             .name => |name| try css.CustomIdentFns.toCss(&name, W, dest),
         };
+    }
+
+    pub fn parse(input: *css.Parser) Result(ViewTransitionPartName) {
+        if (input.tryParse(css.Parser.expectDelim, .{'*'}).isOk()) {
+            return .{ .result = .all };
+        }
+
+        return .{ .result = .{ .name = switch (css.css_values.ident.CustomIdent.parse(input)) {
+            .result => |v| v,
+            .err => |e| return .{ .err = e },
+        } } };
     }
 
     pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {

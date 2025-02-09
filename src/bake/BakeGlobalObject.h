@@ -4,16 +4,14 @@
 
 namespace Bake {
 
-struct DevServer; // DevServer.zig
-struct Route; // DevServer.zig
-struct BunVirtualMachine;
+struct ProductionPerThread;
 
 class GlobalObject : public Zig::GlobalObject {
 public:
     using Base = Zig::GlobalObject;
 
-    /// Null if in production
-    DevServer* m_devServer;
+    ProductionPerThread* m_perThreadData = nullptr;
+    DECLARE_INFO;
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
@@ -25,22 +23,20 @@ public:
             [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForBakeGlobalScope = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForBakeGlobalScope.get(); },
             [](auto& spaces, auto&& space) { spaces.m_subspaceForBakeGlobalScope = std::forward<decltype(space)>(space); },
-            [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForJSWorkerGlobalScope; });
+            [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForBakeGlobalObject; });
     }
 
     static const JSC::GlobalObjectMethodTable s_globalObjectMethodTable;
     static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, const JSC::GlobalObjectMethodTable* methodTable);
 
-    ALWAYS_INLINE bool isProduction() const { return !m_devServer; }
+    static JSC::Structure* createStructure(JSC::VM& vm);
 
     void finishCreation(JSC::VM& vm);
 
-    GlobalObject(JSC::VM& vm, JSC::Structure* structure, const JSC::GlobalObjectMethodTable* methodTable) 
-        : Zig::GlobalObject(vm, structure, methodTable) { }
+    GlobalObject(JSC::VM& vm, JSC::Structure* structure, const JSC::GlobalObjectMethodTable* methodTable)
+        : Zig::GlobalObject(vm, structure, methodTable)
+    {
+    }
 };
-
-// Zig API
-extern "C" void KitInitProcessIdentifier();
-extern "C" GlobalObject* KitCreateDevGlobal(DevServer* owner, void* console);
 
 }; // namespace Kit

@@ -1,4 +1,4 @@
-import { bench, run } from "./runner.mjs";
+import { bench, run } from "../runner.mjs";
 
 var myArray = new Array(5);
 bench("[1, 2, 3, 4, 5].shift()", () => {

@@ -44,6 +44,10 @@ on:
         description: Should types be released to npm?
         type: boolean
         default: false
+      use-definitelytyped:
+        description: "Should types be PR'd to DefinitelyTyped?"
+        type: boolean
+        default: false
 
 jobs:
   sign:
@@ -66,7 +70,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.1.20"
+          bun-version: "1.2.0"
       - name: Install Dependencies
         run: bun install
       - name: Sign Release
@@ -94,7 +98,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.1.20"
+          bun-version: "1.2.0"
       - name: Install Dependencies
         run: bun install
       - name: Release
@@ -123,7 +127,7 @@ jobs:
         if: ${{ env.BUN_VERSION != 'canary' }}
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.1.20"
+          bun-version: "1.2.0"
       - name: Setup Bun
         if: ${{ env.BUN_VERSION == 'canary' }}
         uses: ./.github/actions/setup-bun
@@ -155,6 +159,48 @@ jobs:
         with:
           package: packages/bun-types/package.json
           token: ${{ secrets.NPM_TOKEN }}
+  definitelytyped:
+    name: Make pr to DefinitelyTyped to update `bun-types` version
+    runs-on: ubuntu-latest
+    needs: npm-types
+    if: ${{ github.event_name == 'release' || github.event.inputs.use-definitelytyped == 'true' }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repository: DefinitelyTyped/DefinitelyTyped
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: "1.2.0"
+      - id: bun-version
+        run: echo "BUN_VERSION=${BUN_VERSION#bun-v}" >> "$GITHUB_OUTPUT"
+      - name: Update bun-types version in package.json
+        run: |
+          bun -e '
+          const file = Bun.file("./types/bun/package.json");
+          const json = await file.json();
+          const version = "${{ steps.bun-version.outputs.BUN_VERSION }}"; 
+          json.dependencies["bun-types"] = version;
+          json.version = version.slice(0, version.lastIndexOf(".")) + ".9999";
+          await file.write(JSON.stringify(json, null, 4) + "\n");
+          '
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v7
+        if: ${{ env.BUN_LATEST == 'true' && env.BUN_VERSION != 'canary'}}
+        with:
+          token: ${{ secrets.ROBOBUN_TOKEN }}
+          add-paths: ./types/bun/package.json
+          title: "[bun] update to ${{ steps.bun-version.outputs.BUN_VERSION }}"
+          commit-message: "[bun] update to ${{ steps.bun-version.outputs.BUN_VERSION }}"
+          body: |
+            Update `bun-types` version to ${{ steps.bun-version.outputs.BUN_VERSION }}
+
+            https://bun.sh/blog/${{ env.BUN_VERSION }}
+          push-to-fork: oven-sh/DefinitelyTyped
+          branch: ${{env.BUN_VERSION}}
   docker:
     name: Release to Dockerhub
     runs-on: ubuntu-latest
@@ -265,7 +311,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.1.20"
+          bun-version: "1.2.0"
       - name: Install Dependencies
         run: bun install
       - name: Release
@@ -309,7 +355,7 @@ jobs:
         uses: ./.github/actions/setup-bun
         if: ${{ env.BUN_LATEST == 'true' }}
         with:
-          bun-version: "1.1.12"
+          bun-version: "1.2.0"
       - name: Bump version
         uses: ./.github/actions/bump
         if: ${{ env.BUN_LATEST == 'true' }}

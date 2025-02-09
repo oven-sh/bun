@@ -1,5 +1,5 @@
 import { spawn } from "./spawn";
-import { read } from "./fs";
+import { exists, read } from "./fs";
 import { debug } from "./console";
 
 export const os = process.platform;
@@ -10,9 +10,12 @@ export const avx2 =
   arch === "x64" &&
   ((os === "linux" && isLinuxAVX2()) || (os === "darwin" && isDarwinAVX2()) || (os === "win32" && isWindowsAVX2()));
 
+export const abi = os === "linux" && isLinuxMusl() ? "musl" : undefined;
+
 export type Platform = {
   os: string;
   arch: string;
+  abi?: "musl";
   avx2?: boolean;
   bin: string;
   exe: string;
@@ -58,6 +61,28 @@ export const platforms: Platform[] = [
     exe: "bin/bun",
   },
   {
+    os: "linux",
+    arch: "aarch64",
+    abi: "musl",
+    bin: "bun-linux-aarch64-musl",
+    exe: "bin/bun",
+  },
+  {
+    os: "linux",
+    arch: "x64",
+    abi: "musl",
+    avx2: true,
+    bin: "bun-linux-x64-musl",
+    exe: "bin/bun",
+  },
+  {
+    os: "linux",
+    arch: "x64",
+    abi: "musl",
+    bin: "bun-linux-x64-musl-baseline",
+    exe: "bin/bun",
+  },
+  {
     os: "win32",
     arch: "x64",
     avx2: true,
@@ -73,8 +98,23 @@ export const platforms: Platform[] = [
 ];
 
 export const supportedPlatforms: Platform[] = platforms
-  .filter(platform => platform.os === os && platform.arch === arch && (!platform.avx2 || avx2))
+  .filter(
+    platform =>
+      platform.os === os &&
+      platform.arch === arch &&
+      (!platform.avx2 || avx2) &&
+      (!platform.abi || abi === platform.abi),
+  )
   .sort((a, b) => (a.avx2 === b.avx2 ? 0 : a.avx2 ? -1 : 1));
+
+function isLinuxMusl(): boolean {
+  try {
+    return exists("/etc/alpine-release");
+  } catch (error) {
+    debug("isLinuxMusl failed", error);
+    return false;
+  }
+}
 
 function isLinuxAVX2(): boolean {
   try {

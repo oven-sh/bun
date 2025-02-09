@@ -8,6 +8,51 @@ import * as stream from "node:stream";
 import * as util from "node:util";
 import * as zlib from "node:zlib";
 
+describe("prototype and name and constructor", () => {
+  for (let [name, Class] of [
+    ["Gzip", zlib.Gzip],
+    ["Gunzip", zlib.Gunzip],
+    ["Deflate", zlib.Deflate],
+    ["Inflate", zlib.Inflate],
+    ["DeflateRaw", zlib.DeflateRaw],
+  ]) {
+    describe(`${name}`, () => {
+      it(`${name}.prototype should be instanceof ${name}.__proto__`, () => {
+        expect(Class.prototype).toBeInstanceOf(Class.__proto__);
+      });
+      it(`${name}.prototype.constructor should be ${name}`, () => {
+        expect(Class.prototype.constructor).toBe(Class);
+      });
+      it(`${name}.name should be ${name}`, () => {
+        expect(Class.name).toBe(name);
+      });
+      it(`${name}.prototype.__proto__.constructor.name should be Zlib`, () => {
+        expect(Class.prototype.__proto__.constructor.name).toBe("Zlib");
+      });
+    });
+  }
+
+  for (let [name, Class] of [
+    ["BrotliCompress", zlib.BrotliCompress],
+    ["BrotliDecompress", zlib.BrotliDecompress],
+  ]) {
+    describe(`${name}`, () => {
+      it(`${name}.prototype should be instanceof ${name}.__proto__`, () => {
+        expect(Class.prototype).toBeInstanceOf(Class.__proto__);
+      });
+      it(`${name}.prototype.constructor should be ${name}`, () => {
+        expect(Class.prototype.constructor).toBe(Class);
+      });
+      it(`${name}.name should be ${name}`, () => {
+        expect(Class.name).toBe(name);
+      });
+      it(`${name}.prototype.__proto__.constructor.name should be Brotli`, () => {
+        expect(Class.prototype.__proto__.constructor.name).toBe("Brotli");
+      });
+    });
+  }
+});
+
 describe("zlib", () => {
   for (let library of ["zlib", "libdeflate"]) {
     for (let outputLibrary of ["zlib", "libdeflate"]) {

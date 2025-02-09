@@ -73,14 +73,9 @@ After Visual Studio, you need the following:
 **Note** – The Zig compiler is automatically downloaded, installed, and updated by the building process.
 {% /callout %}
 
-[WinGet](https://learn.microsoft.com/windows/package-manager/winget) or [Scoop](https://scoop.sh) can be used to install these remaining tools easily:
+[Scoop](https://scoop.sh) can be used to install these remaining tools easily.
 
 {% codetabs group="a" %}
-
-```ps1#WinGet
-## Select "Add LLVM to the system PATH for all users" in the LLVM installer
-> winget install -i LLVM.LLVM -v 18.1.8 && winget install GoLang.Go Rustlang.Rustup NASM.NASM StrawberryPerl.StrawberryPerl RubyInstallerTeam.Ruby.3.2 OpenJS.NodeJS.LTS Ccache.Ccache
-```
 
 ```ps1#Scoop
 > irm https://get.scoop.sh | iex
@@ -91,19 +86,15 @@ After Visual Studio, you need the following:
 
 {% /codetabs %}
 
+{% callout %}
+Please do not use WinGet/other package manager for these, as you will likely install Strawberry Perl instead of a more minimal installation of Perl. Strawberry Perl includes many other utilities that get installed into `$Env:PATH` that will conflict with MSVC and break the build.
+{% /callout %}
+
 If you intend on building WebKit locally (optional), you should install these packages:
-
-{% codetabs group="a" %}
-
-```ps1#WinGet
-> winget install ezwinports.make Cygwin.Cygwin Python.Python.3.12
-```
 
 ```ps1#Scoop
 > scoop install make cygwin python
 ```
-
-{% /codetabs %}
 
 From here on out, it is **expected you use a PowerShell Terminal with `.\scripts\vs-shell.ps1` sourced**. This script is available in the Bun repository and can be loaded by executing it:
 

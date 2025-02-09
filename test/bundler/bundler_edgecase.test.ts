@@ -186,18 +186,7 @@ describe("bundler", () => {
       NODE_ENV: "development",
     },
   });
-  itBundled("edgecase/ProcessEnvArbitrary", {
-    files: {
-      "/entry.js": /* js */ `
-        capture(process.env.ARBITRARY);
-      `,
-    },
-    target: "browser",
-    capture: ["process.env.ARBITRARY"],
-    env: {
-      ARBITRARY: "secret environment stuff!",
-    },
-  });
+
   itBundled("edgecase/StarExternal", {
     files: {
       "/entry.js": /* js */ `
@@ -485,6 +474,7 @@ describe("bundler", () => {
       stdout: "success",
     },
   });
+
   itBundled("edgecase/StaticClassNameIssue2806", {
     files: {
       "/entry.ts": /* ts */ `
@@ -1346,7 +1336,7 @@ describe("bundler", () => {
     target: "bun",
     run: true,
     todo: isBroken && isWindows,
-    debugTimeoutScale: 5,
+    timeoutScale: 5,
   });
   itBundled("edgecase/PackageExternalDoNotBundleNodeModules", {
     files: {
@@ -1913,7 +1903,7 @@ describe("bundler", () => {
       `,
       "/module.ts": `
         using a = {
-          [Symbol.dispose]: () => { 
+          [Symbol.dispose]: () => {
             console.log("Disposing");
           }
         };
@@ -2083,5 +2073,212 @@ describe("bundler", () => {
     ["typeof require", "import.meta.require", "typeof __require"],
   ];
 
-  // itBundled('edgecase/RequireTranspilation')
+  // // itBundled('edgecase/RequireTranspilation')
+
+  itBundled("edgecase/TSConfigPathsConfigDir", {
+    files: {
+      "/src/entry.ts": /* ts */ `
+        import { value } from "alias/foo";
+        import { other } from "@scope/bar";
+        import { nested } from "deep/path";
+        import { absolute } from "abs/path";
+        console.log(value, other, nested, absolute);
+      `,
+      "/src/actual/foo.ts": `export const value = "foo";`,
+      "/src/lib/bar.ts": `export const other = "bar";`,
+      "/src/nested/deep/file.ts": `export const nested = "nested";`,
+      "/src/absolute.ts": `export const absolute = "absolute";`,
+      "/src/tsconfig.json": /* json */ `{
+        "compilerOptions": {
+          "baseUrl": "\${configDir}",
+          "paths": {
+            "alias/*": ["actual/*"],
+            "@scope/*": ["lib/*"],
+            "deep/path": ["nested/deep/file.ts"],
+            "abs/*": ["\${configDir}/absolute.ts"]
+          }
+        }
+      }`,
+    },
+    run: {
+      stdout: "foo bar nested absolute",
+    },
+  });
+
+  itBundled("edgecase/TSConfigBaseUrlConfigDir", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { value } from "./src/subdir/module";
+        console.log(value);
+      `,
+      "/src/lib/module.ts": `export const value = "found";`,
+      "/src/subdir/module.ts": `
+        import { value } from "absolute";
+        export { value };
+      `,
+      "tsconfig.json": /* json */ `{
+        "compilerOptions": {
+          "baseUrl": "\${configDir}/src/lib",
+          "paths": {
+            "absolute": ["./module.ts"]
+          }
+        }
+      }`,
+    },
+    run: {
+      stdout: "found",
+    },
+  });
+
+  itBundled("edgecase/TSConfigPathsConfigDirWildcard", {
+    files: {
+      "/src/entry.ts": /* ts */ `
+        import { one } from "prefix/one";
+        import { two } from "prefix/two";
+        import { three } from "other/three";
+        console.log(one, two, three);
+      `,
+      "/src/modules/one.ts": `export const one = "one";`,
+      "/src/modules/two.ts": `export const two = "two";`,
+      "/src/alternate/three.ts": `export const three = "three";`,
+      "/src/tsconfig.json": /* json */ `{
+        "compilerOptions": {
+          "baseUrl": "\${configDir}",
+          "paths": {
+            "prefix/*": ["modules/*"],
+            "other/*": ["\${configDir}/alternate/*"]
+          }
+        }
+      }`,
+    },
+    run: {
+      stdout: "one two three",
+    },
+  });
+
+  itBundled("edgecase/TSConfigPathsConfigDirNested", {
+    files: {
+      "/deeply/nested/src/entry.ts": /* ts */ `
+        import { value } from "alias/module";
+        console.log(value);
+      `,
+      "/deeply/nested/src/actual/module.ts": `export const value = "nested";`,
+      "/deeply/nested/src/tsconfig.json": /* json */ `{
+        "compilerOptions": {
+          "baseUrl": "\${configDir}",
+          "paths": {
+            "alias/*": ["actual/*"]
+          }
+        }
+      }`,
+    },
+    run: {
+      stdout: "nested",
+    },
+  });
+
+  itBundled("edgecase/TSConfigPathsConfigDirMultiple", {
+    files: {
+      "/src/entry.ts": /* ts */ `
+        import { value } from "multi/module";
+        console.log(value);
+      `,
+      "/src/fallback/module.ts": `export const value = "fallback";`,
+      "/src/primary/module.ts": `export const value = "primary";`,
+      "/src/tsconfig.json": /* json */ `{
+        "compilerOptions": {
+          "baseUrl": "\${configDir}",
+          "paths": {
+            "multi/*": [
+              "\${configDir}/primary/*",
+              "\${configDir}/fallback/*"
+            ]
+          }
+        }
+      }`,
+    },
+    run: {
+      stdout: "primary",
+    },
+  });
+
+  itBundled("edgecase/TSConfigPathsConfigDirInvalid", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { value } from "invalid/module";
+        console.log(value);
+      `,
+      "/tsconfig.json": /* json */ `{
+        "compilerOptions": {
+          "baseUrl": "\${configDir}",
+          "paths": {
+            "invalid/*": ["\${configDir}/\${configDir}/*"]
+          }
+        }
+      }`,
+    },
+    bundleErrors: {
+      "/entry.ts": ['Could not resolve: "invalid/module". Maybe you need to "bun install"?'],
+    },
+  });
+
+  itBundled("edgecase/TSConfigPathsConfigDirBackslash", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { value } from "windows/style";
+        console.log(value);
+      `,
+      "/win/style.ts": `export const value = "windows";`,
+      "/tsconfig.json": /* json */ `{
+        "compilerOptions": {
+          "baseUrl": "\${configDir}",
+          "paths": {
+            "windows/*": ["win\\\\*"]
+          }
+        }
+      }`,
+    },
+    run: {
+      stdout: "windows",
+    },
+  });
+
+  itBundled("edgecase/TSPublicFieldMinification", {
+    files: {
+      "/entry.ts": /* ts */ `
+        export class Foo {
+          constructor(public name: string) {}
+        }
+
+        const keys = Object.keys(new Foo('test'))
+        if (keys.length !== 1) throw new Error('Keys length is not 1')
+        if (keys[0] !== 'name') throw new Error('keys[0] is not "name"')
+        console.log('success')
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    target: "bun",
+    run: {
+      stdout: "success",
+    },
+  });
 });
+
+for (const backend of ["api", "cli"] as const) {
+  describe(`bundler_edgecase/${backend}`, () => {
+    itBundled("edgecase/ProcessEnvArbitrary", {
+      files: {
+        "/entry.js": /* js */ `
+        capture(process.env.ARBITRARY);
+      `,
+      },
+      target: "browser",
+      backend,
+      capture: ["process.env.ARBITRARY"],
+      env: {
+        ARBITRARY: "secret environment stuff!",
+      },
+    });
+  });
+}

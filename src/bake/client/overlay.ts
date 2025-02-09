@@ -22,6 +22,8 @@ import { DataViewReader } from "./reader";
 
 if (side !== "client") throw new Error("Not client side!");
 
+export let hasFatalError = false;
+
 // I would have used JSX, but TypeScript types interfere in odd ways.
 function elem(tagName: string, props?: null | Record<string, string>, children?: (HTMLElement | Text)[]) {
   const node = document.createElement(tagName);
@@ -111,7 +113,7 @@ function setModalVisible(visible: boolean) {
 }
 
 /** Handler for `MessageId.errors` websocket packet */
-export function onErrorMessage(view: DataView) {
+export function onErrorMessage(view: DataView<ArrayBuffer>) {
   const reader = new DataViewReader(view, 1);
   const removedCount = reader.u32();
 
@@ -128,10 +130,18 @@ export function onErrorMessage(view: DataView) {
   updateErrorOverlay();
 }
 
-export function onErrorClearedMessage() {
-  errors.keys().forEach(key => updatedErrorOwners.add(key));
-  errors.clear();
-  updateErrorOverlay();
+export const enum RuntimeErrorType {
+  recoverable,
+  /** Requires that clearances perform a full page reload */
+  fatal,
+}
+
+export function onRuntimeError(err: any, type: RuntimeErrorType) {
+  if (type === RuntimeErrorType.fatal) {
+    hasFatalError = true;
+  }
+
+  console.error(err);
 }
 
 /**
@@ -154,7 +164,11 @@ export function updateErrorOverlay() {
   console.log(errors, updatedErrorOwners);
 
   if (errors.size === 0) {
-    setModalVisible(false);
+    if (IS_ERROR_RUNTIME) {
+      location.reload();
+    } else {
+      setModalVisible(false);
+    }
     return;
   }
 
@@ -180,20 +194,21 @@ export function updateErrorOverlay() {
       let title;
       let btn;
       const root = elem("div", { class: "message-group" }, [
-        (btn = elem("button", { class: "file-name" }, [(title = textNode())])),
+        // (btn = elem("button", { class: "file-name" }, [(title = textNode())])),
+        elem("div", { class: "file-name" }, [(title = textNode())]),
       ]);
-      btn.addEventListener("click", () => {
-        const firstLocation = errors.get(owner)?.messages[0]?.location;
-        if (!firstLocation) return;
-        let fileName = title.textContent.replace(/^\//, "");
-        fetch("/_bun/src/" + fileName, {
-          headers: {
-            "Open-In-Editor": "1",
-            "Editor-Line": firstLocation.line.toString(),
-            "Editor-Column": firstLocation.column.toString(),
-          },
-        });
-      });
+      // btn.addEventListener("click", () => {
+      //   const firstLocation = errors.get(owner)?.messages[0]?.location;
+      //   if (!firstLocation) return;
+      //   let fileName = title.textContent.replace(/^\//, "");
+      //   fetch("/_bun/src/" + fileName, {
+      //     headers: {
+      //       "Open-In-Editor": "1",
+      //       "Editor-Line": firstLocation.line.toString(),
+      //       "Editor-Column": firstLocation.column.toString(),
+      //     },
+      //   });
+      // });
       dom = { root, title, messages: [] };
       // TODO: sorted insert?
       domErrorList.appendChild(root);

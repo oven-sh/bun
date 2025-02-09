@@ -40,8 +40,7 @@ pub const InitCommand = struct {
         // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
         // deleting the entire line
         const original_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (comptime Environment.isWindows)
-            bun.win32.unsetStdioModeFlags(0, bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT) catch null
-        else {};
+            bun.win32.unsetStdioModeFlags(0, bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT) catch null;
 
         defer if (comptime Environment.isWindows) {
             if (original_mode) |mode| {
@@ -60,9 +59,57 @@ pub const InitCommand = struct {
         }
     }
 
-    const default_gitignore = @embedFile("gitignore-for-init");
-    const default_tsconfig = @embedFile("tsconfig-for-init.json");
-    const README = @embedFile("README-for-init.md");
+    const Assets = struct {
+        // "known" assets
+        const @".gitignore" = @embedFile("init/gitignore.default");
+        const @"tsconfig.json" = @embedFile("init/tsconfig.default.json");
+        const @"README.md" = @embedFile("init/README.default.md");
+
+        /// Create a new asset file, overriding anything that already exists. Known
+        /// assets will have their contents pre-populated; otherwise the file will be empty.
+        fn create(comptime asset_name: []const u8, args: anytype) !void {
+            const is_template = comptime (@TypeOf(args) != @TypeOf(null)) and @typeInfo(@TypeOf(args)).@"struct".fields.len > 0;
+            return createFull(asset_name, asset_name, "", is_template, args);
+        }
+
+        fn createNew(filename: []const u8, contents: []const u8) !void {
+            var file = try std.fs.cwd().createFile(filename, .{ .truncate = true });
+            defer file.close();
+            try file.writeAll(contents);
+
+            Output.prettyln(" + <r><d>{s}<r>", .{filename});
+            Output.flush();
+        }
+
+        fn createFull(
+            /// name of possibly-existing asset
+            comptime asset_name: []const u8,
+            /// name of asset file to create
+            filename: []const u8,
+            /// optionally add a suffix to the end of the `+ filename` message. Must have a leading space.
+            comptime message_suffix: []const u8,
+            /// Treat the asset as a format string, using `args` to populate it. Only applies to known assets.
+            comptime is_template: bool,
+            /// Format arguments
+            args: anytype,
+        ) !void {
+            var file = try std.fs.cwd().createFile(filename, .{ .truncate = true });
+            defer file.close();
+
+            // Write contents of known assets to the new file. Template assets get formatted.
+            if (comptime @hasDecl(Assets, asset_name)) {
+                const asset = @field(Assets, asset_name);
+                if (comptime is_template) {
+                    try file.writer().print(asset, args);
+                } else {
+                    try file.writeAll(asset);
+                }
+            }
+
+            Output.prettyln(" + <r><d>{s}{s}<r>", .{ filename, message_suffix });
+            Output.flush();
+        }
+    };
 
     // TODO: unicode case folding
     fn normalizePackageName(allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
@@ -102,7 +149,7 @@ pub const InitCommand = struct {
     pub fn exec(alloc: std.mem.Allocator, argv: [][:0]const u8) !void {
         const print_help = brk: {
             for (argv) |arg| {
-                if (strings.eqlComptime(arg, "--help")) {
+                if (strings.eqlComptime(arg, "--help") or strings.eqlComptime(arg, "-h")) {
                     break :brk true;
                 }
             }
@@ -381,21 +428,15 @@ pub const InitCommand = struct {
                 }
             }
 
-            var entry = try cwd.createFile(fields.entry_point, .{ .truncate = true });
-            entry.writeAll("console.log(\"Hello via Bun!\");") catch {};
-            entry.close();
-            Output.prettyln(" + <r><d>{s}<r>", .{fields.entry_point});
-            Output.flush();
+            Assets.createNew(fields.entry_point, "console.log(\"Hello via Bun!\");") catch {
+                // suppress
+            };
         }
 
         if (steps.write_gitignore) {
-            brk: {
-                var file = std.fs.cwd().createFileZ(".gitignore", .{ .truncate = true }) catch break :brk;
-                defer file.close();
-                file.writeAll(default_gitignore) catch break :brk;
-                Output.prettyln(" + <r><d>.gitignore<r>", .{});
-                Output.flush();
-            }
+            Assets.create(".gitignore", .{}) catch {
+                // suppressed
+            };
         }
 
         if (steps.write_tsconfig) {
@@ -406,27 +447,18 @@ pub const InitCommand = struct {
                     "tsconfig.json"
                 else
                     "jsconfig.json";
-                var file = std.fs.cwd().createFileZ(filename, .{ .truncate = true }) catch break :brk;
-                defer file.close();
-                file.writeAll(default_tsconfig) catch break :brk;
-                Output.prettyln(" + <r><d>{s}<r><d> (for editor auto-complete)<r>", .{filename});
-                Output.flush();
+                Assets.createFull("tsconfig.json", filename, " (for editor autocomplete)", false, .{}) catch break :brk;
             }
         }
 
         if (steps.write_readme) {
-            brk: {
-                const filename = "README.md";
-                var file = std.fs.cwd().createFileZ(filename, .{ .truncate = true }) catch break :brk;
-                defer file.close();
-                file.writer().print(README, .{
-                    .name = fields.name,
-                    .bunVersion = Environment.version_string,
-                    .entryPoint = fields.entry_point,
-                }) catch break :brk;
-                Output.prettyln(" + <r><d>{s}<r>", .{filename});
-                Output.flush();
-            }
+            Assets.create("README.md", .{
+                .name = fields.name,
+                .bunVersion = Environment.version_string,
+                .entryPoint = fields.entry_point,
+            }) catch {
+                // suppressed
+            };
         }
 
         if (fields.entry_point.len > 0) {
@@ -435,7 +467,7 @@ pub const InitCommand = struct {
                 " \"'",
                 fields.entry_point,
             )) {
-                Output.prettyln("  <r><cyan>bun run {any}<r>", .{bun.fmt.formatJSONString(fields.entry_point)});
+                Output.prettyln("  <r><cyan>bun run {any}<r>", .{bun.fmt.formatJSONStringLatin1(fields.entry_point)});
             } else {
                 Output.prettyln("  <r><cyan>bun run {s}<r>", .{fields.entry_point});
             }

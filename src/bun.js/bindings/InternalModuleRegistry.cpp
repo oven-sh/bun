@@ -6,7 +6,7 @@
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/JSModuleLoader.h>
-
+#include <JavaScriptCore/Debugger.h>
 #include <utility>
 
 #include "InternalModuleRegistryConstants.h"
@@ -54,6 +54,9 @@ JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, cons
             static_cast<JSC::JSGlobalObject*>(globalObject));
 
     RETURN_IF_EXCEPTION(throwScope, {});
+    if (UNLIKELY(globalObject->hasDebugger() && globalObject->debugger()->isInteractivelyDebugging())) {
+        globalObject->debugger()->sourceParsed(globalObject, source.provider(), -1, ""_s);
+    }
 
     JSC::MarkedArgumentBuffer argList;
     JSValue result = JSC::profiledCall(
@@ -71,7 +74,7 @@ JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, cons
     return result;
 }
 
-#if BUN_DEBUG
+#ifdef BUN_DYNAMIC_JS_LOAD_PATH
 JSValue initializeInternalModuleFromDisk(
     JSGlobalObject* globalObject,
     VM& vm,
@@ -153,7 +156,7 @@ JSValue InternalModuleRegistry::requireId(JSGlobalObject* globalObject, VM& vm, 
 // so we want to write it to the internal field when loaded.
 JSC_DEFINE_HOST_FUNCTION(InternalModuleRegistry::jsCreateInternalModuleById, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
 {
-    auto& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto id = callframe->argument(0).toUInt32(lexicalGlobalObject);
 

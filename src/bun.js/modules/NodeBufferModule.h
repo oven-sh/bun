@@ -146,7 +146,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetter_INSPECT_MAX_BYTES, (JSGlobalObject * lexicalGl
 JSC_DEFINE_CUSTOM_SETTER(jsSetter_INSPECT_MAX_BYTES, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
 {
     auto globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto val = JSValue::decode(value);
     Bun::V::validateNumber(scope, globalObject, val, jsString(vm, String("INSPECT_MAX_BYTES"_s)), jsNumber(0), jsUndefined());
@@ -211,8 +211,10 @@ DEFINE_NATIVE_MODULE(NodeBuffer)
 
     put(JSC::Identifier::fromString(vm, "transcode"_s), transcode);
 
-    auto* resolveObjectURL = InternalFunction::createFunctionThatMasqueradesAsUndefined(
+    auto* resolveObjectURL = JSC::JSFunction::create(
         vm, globalObject, 1, "resolveObjectURL"_s,
+        jsFunctionResolveObjectURL,
+        ImplementationVisibility::Public, NoIntrinsic,
         jsFunctionResolveObjectURL);
 
     put(JSC::Identifier::fromString(vm, "resolveObjectURL"_s), resolveObjectURL);

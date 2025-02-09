@@ -1,4 +1,4 @@
-import { bench, run } from "mitata";
+import { bench, run } from "../runner.mjs";
 import { groupForEmitter } from "./implementations.mjs";
 
 // Pseudo RNG is derived from https://stackoverflow.com/a/424445

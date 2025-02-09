@@ -1,6 +1,7 @@
 import { Buffer, SlowBuffer, isAscii, isUtf8, kMaxLength } from "buffer";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { gc } from "harness";
+import vm from "node:vm";
 
 const BufferModule = await import("buffer");
 
@@ -633,6 +634,37 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(dot.toString("base64url")).toBe("__4uAA");
       });
 
+      describe("writing with offset undefined", () => {
+        [
+          ["writeUInt8", "readUInt8", 8, 1],
+          ["writeInt8", "readInt8", 8, 1],
+          ["writeUInt16LE", "readUInt16LE", 8, 2],
+          ["writeInt16LE", "readInt16LE", 8, 2],
+          ["writeUInt16BE", "readUInt16BE", 8, 2],
+          ["writeInt16BE", "readInt16BE", 8, 2],
+          ["writeUInt32LE", "readUInt32LE", 8, 4],
+          ["writeInt32LE", "readInt32LE", 8, 4],
+          ["writeUInt32BE", "readUInt32BE", 8, 4],
+          ["writeInt32BE", "readInt32BE", 8, 4],
+          ["writeFloatLE", "readFloatLE", 8, 4],
+          ["writeFloatBE", "readFloatBE", 8, 4],
+          ["writeDoubleLE", "readDoubleLE", 8, 8],
+          ["writeDoubleBE", "readDoubleBE", 8, 8],
+        ].forEach(([method, read, value, size]) => {
+          it(`${method} (implicit offset)`, () => {
+            const b = Buffer.alloc(10, 42);
+            expect(b[method](value)).toBe(size);
+            expect(b[read]()).toBe(value);
+          });
+
+          it(`${method} (explicit offset)`, () => {
+            const b = Buffer.alloc(10, 42);
+            expect(b[method](value, 0)).toBe(size);
+            expect(b[read]()).toBe(value);
+          });
+        });
+      });
+
       // https://github.com/joyent/node/issues/402
       it("writing base64 at a position > 0 should not mangle the result", () => {
         const segments = ["TWFkbmVzcz8h", "IFRoaXM=", "IGlz", "IG5vZGUuanMh"];
@@ -1174,7 +1206,7 @@ for (let withOverridenBufferWrite of [false, true]) {
       it("toLocaleString()", () => {
         const buf = Buffer.from("test");
         expect(buf.toLocaleString()).toBe(buf.toString());
-        // expect(Buffer.prototype.toLocaleString).toBe(Buffer.prototype.toString);
+        expect(Buffer.prototype.toLocaleString).toBe(Buffer.prototype.toString);
       });
 
       it("alloc() should throw on invalid data", () => {
@@ -2085,7 +2117,7 @@ for (let withOverridenBufferWrite of [false, true]) {
         const buf = Buffer.from(ab);
 
         expect(buf instanceof Buffer).toBe(true);
-        // expect(buf.parent, buf.buffer);
+        expect(buf.parent, buf.buffer);
         expect(buf.buffer).toBe(ab);
         expect(buf.length).toBe(ab.byteLength);
 
@@ -2105,13 +2137,12 @@ for (let withOverridenBufferWrite of [false, true]) {
 
         // Now test protecting users from doing stupid things
 
-        // expect(function () {
-        //   function AB() {}
-        //   Object.setPrototypeOf(AB, ArrayBuffer);
-        //   Object.setPrototypeOf(AB.prototype, ArrayBuffer.prototype);
-        //   // Buffer.from(new AB());
-        // }).toThrow();
-        // console.log(origAB !== ab);
+        expect(function () {
+          function AB() {}
+          Object.setPrototypeOf(AB, ArrayBuffer);
+          Object.setPrototypeOf(AB.prototype, ArrayBuffer.prototype);
+          Buffer.from(new AB());
+        }).toThrow();
 
         // Test the byteOffset and length arguments
         {
@@ -2639,8 +2670,8 @@ for (let withOverridenBufferWrite of [false, true]) {
           });
 
         // Test that ArrayBuffer from a different context is detected correctly
-        // const arrayBuf = vm.runInNewContext("new ArrayBuffer()");
-        // expect(Buffer.byteLength(arrayBuf)).toBe(0);
+        const arrayBuf = vm.runInNewContext("new ArrayBuffer()");
+        expect(Buffer.byteLength(arrayBuf)).toBe(0);
 
         // Verify that invalid encodings are treated as utf8
         for (let i = 1; i < 10; i++) {
@@ -2939,4 +2970,13 @@ describe("serialization", () => {
     const receiver = (key, value) => (value && value.type === "Buffer" ? Buffer.from(value.data) : value);
     expect(JSON.parse(string, receiver)).toEqual(buffer);
   });
+});
+
+it("should not trim utf-8 start bytes at end of string", () => {
+  // always worked
+  const buf1 = Buffer.from("e136e1", "hex");
+  expect(buf1.toString("utf-8")).toEqual("\uFFFD6\uFFFD");
+  // bugged
+  const buf2 = Buffer.from("36e1", "hex");
+  expect(buf2.toString("utf-8")).toEqual("6\uFFFD");
 });

@@ -42,7 +42,7 @@ using namespace JSC;
 
 void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* exception, CachedScript* cachedScript, bool fromModule, ExceptionDetails* exceptionDetails)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     RELEASE_ASSERT(vm.currentThreadIsHoldingAPILock());
     if (vm.isTerminationException(exception))
         return;
@@ -86,7 +86,7 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* except
 
 void reportException(JSGlobalObject* lexicalGlobalObject, JSValue exceptionValue, CachedScript* cachedScript, bool fromModule)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     RELEASE_ASSERT(vm.currentThreadIsHoldingAPILock());
     auto* exception = jsDynamicCast<JSC::Exception*>(exceptionValue);
     if (!exception) {
@@ -136,7 +136,7 @@ String retrieveErrorMessage(JSGlobalObject& lexicalGlobalObject, VM& vm, JSValue
 
 void reportCurrentException(JSGlobalObject* lexicalGlobalObject)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_CATCH_SCOPE(vm);
     auto* exception = scope.exception();
     scope.clearException();
@@ -145,7 +145,7 @@ void reportCurrentException(JSGlobalObject* lexicalGlobalObject)
 
 JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec, const String& message)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     if (UNLIKELY(vm.hasPendingTerminationException()))
         return jsUndefined();
 
@@ -164,6 +164,7 @@ JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec
             return createRangeError(lexicalGlobalObject, "Bad value"_s);
         return createRangeError(lexicalGlobalObject, message);
 
+    case ExceptionCode::SyntaxError:
     case ExceptionCode::JSSyntaxError:
         if (message.isEmpty())
             return createSyntaxError(lexicalGlobalObject);
@@ -295,6 +296,11 @@ String makeThisTypeErrorMessage(const char* interfaceName, const char* functionN
     return makeString("Can only call "_s, interfaceNameSpan, '.', span(functionName), " on instances of "_s, interfaceNameSpan);
 }
 
+String makeThisTypeErrorMessage(ASCIILiteral interfaceName, ASCIILiteral functionName)
+{
+    return makeString("Can only call "_s, interfaceName, '.', functionName, " on instances of "_s, interfaceName);
+}
+
 String makeUnsupportedIndexedSetterErrorMessage(ASCIILiteral interfaceName)
 {
     return makeString("Failed to set an indexed property on "_s, interfaceName, ": Indexed property setter is not supported."_s);
@@ -302,7 +308,14 @@ String makeUnsupportedIndexedSetterErrorMessage(ASCIILiteral interfaceName)
 
 EncodedJSValue throwThisTypeError(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, const char* interfaceName, const char* functionName)
 {
-    return JSValue::encode(scope.throwException(&lexicalGlobalObject, Bun::createInvalidThisError(&lexicalGlobalObject, makeThisTypeErrorMessage(interfaceName, functionName))));
+    scope.throwException(&lexicalGlobalObject, Bun::createInvalidThisError(&lexicalGlobalObject, makeThisTypeErrorMessage(interfaceName, functionName)));
+    return {};
+}
+
+EncodedJSValue throwThisTypeError(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, ASCIILiteral interfaceName, ASCIILiteral attributeName)
+{
+    scope.throwException(&lexicalGlobalObject, Bun::createInvalidThisError(&lexicalGlobalObject, makeThisTypeErrorMessage(interfaceName, attributeName)));
+    return {};
 }
 
 JSC::EncodedJSValue rejectPromiseWithThisTypeError(DeferredPromise& promise, const char* interfaceName, const char* methodName)

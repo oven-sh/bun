@@ -2,7 +2,7 @@
   "private": true,
   "scripts": {
     "bootstrap": "brew install gh jq cirruslabs/cli/tart cirruslabs/cli/sshpass hashicorp/tap/packer && packer init darwin",
-    "login": "gh auth token | tart login ghcr.io --username $(gh api user --jq .login) --password-stdin",
+    "login": "token=$(gh auth token); username=$(gh api user --jq .login); echo \"Login as $username...\"; echo \"$token\" | tart login ghcr.io --username \"$username\" --password-stdin; echo \"$token\" | docker login ghcr.io --username \"$username\" --password-stdin",
     "fetch:image-name": "echo ghcr.io/oven-sh/bun-vm",
     "fetch:darwin-version": "echo 1",
     "fetch:macos-version": "sw_vers -productVersion | cut -d. -f1",

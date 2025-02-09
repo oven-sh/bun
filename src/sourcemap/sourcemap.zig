@@ -179,10 +179,7 @@ pub fn parseJSON(
         if (item.data != .e_string)
             return error.InvalidSourceMap;
 
-        const utf16_decode = try bun.js_lexer.decodeStringLiteralEscapeSequencesToUTF16(item.data.e_string.string(arena) catch bun.outOfMemory(), arena);
-        defer arena.free(utf16_decode);
-        source_paths_slice.?[i] = bun.strings.toUTF8Alloc(alloc, utf16_decode) catch
-            return error.InvalidSourceMap;
+        source_paths_slice.?[i] = try alloc.dupe(u8, try item.data.e_string.string(alloc));
 
         i += 1;
     };
@@ -229,11 +226,7 @@ pub fn parseJSON(
             break :content null;
         }
 
-        const utf16_decode = try bun.js_lexer.decodeStringLiteralEscapeSequencesToUTF16(str, arena);
-        defer arena.free(utf16_decode);
-
-        break :content bun.strings.toUTF8Alloc(alloc, utf16_decode) catch
-            return error.InvalidSourceMap;
+        break :content try alloc.dupe(u8, str);
     } else null;
 
     return .{
@@ -614,6 +607,9 @@ pub const ParseResult = union(enum) {
                 .location = Logger.Location{
                     .file = path,
                     .offset = this.loc.toUsize(),
+                    // TODO: populate correct line and column information
+                    .line = -1,
+                    .column = -1,
                 },
                 .text = this.msg,
             };
@@ -644,7 +640,7 @@ pub const ParsedSourceMap = struct {
 
     is_standalone_module_graph: bool = false,
 
-    pub usingnamespace bun.NewThreadSafeRefCounted(ParsedSourceMap, deinitFn);
+    pub usingnamespace bun.NewThreadSafeRefCounted(ParsedSourceMap, deinitFn, null);
 
     const SourceContentPtr = packed struct(u64) {
         load_hint: SourceMapLoadHint = .none,
@@ -1162,14 +1158,11 @@ const vlq_lookup_table: [256]VLQ = brk: {
     break :brk entries;
 };
 
-const vlq_max_in_bytes = 8;
+/// Source map VLQ values are limited to i32
+/// Encoding min and max ints are "//////D" and "+/////D", respectively.
+/// These are 7 bytes long. This makes the `VLQ` struct 8 bytes.
+const vlq_max_in_bytes = 7;
 pub const VLQ = struct {
-    // We only need to worry about i32
-    // That means the maximum VLQ-encoded value is 8 bytes
-    // because there are only 4 bits of number inside each VLQ value
-    // and it expects i32
-    // therefore, it can never be more than 32 bits long
-    // I believe the actual number is 7 bytes long, however we can add an extra byte to be more cautious
     bytes: [vlq_max_in_bytes]u8,
     len: u4 = 0,
 
@@ -1606,6 +1599,14 @@ pub const Chunk = struct {
     /// ignore empty chunks
     should_ignore: bool = true,
 
+    pub const empty: Chunk = .{
+        .buffer = MutableString.initEmpty(bun.default_allocator),
+        .mappings_count = 0,
+        .end_state = .{},
+        .final_generated_column = 0,
+        .should_ignore = true,
+    };
+
     pub fn printSourceMapContents(
         chunk: Chunk,
         source: Logger.Source,
@@ -1664,13 +1665,14 @@ pub const Chunk = struct {
         return output;
     }
 
+    // TODO: remove the indirection by having generic functions for SourceMapFormat and NewBuilder. Source maps are always VLQ
     pub fn SourceMapFormat(comptime Type: type) type {
         return struct {
             ctx: Type,
             const Format = @This();
 
             pub fn init(allocator: std.mem.Allocator, prepend_count: bool) Format {
-                return Format{ .ctx = Type.init(allocator, prepend_count) };
+                return .{ .ctx = Type.init(allocator, prepend_count) };
             }
 
             pub inline fn appendLineSeparator(this: *Format) anyerror!void {

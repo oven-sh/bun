@@ -2,8 +2,16 @@ import { udpSocket } from "bun";
 import { describe, expect, test } from "bun:test";
 import { disableAggressiveGCScope, randomPort } from "harness";
 import { dataCases, dataTypes } from "./testdata";
+import { heapStats } from "bun:jsc";
 
 describe("udpSocket()", () => {
+  test("connect with invalid hostname rejects", async () => {
+    expect(async () =>
+      udpSocket({
+        connect: { hostname: "example!!!!!.com", port: 443 },
+      }),
+    ).toThrow();
+  });
   test("can create a socket", async () => {
     const socket = await udpSocket({});
     expect(socket).toBeInstanceOf(Object);

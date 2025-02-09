@@ -4955,15 +4955,8 @@ pub const ServerWebSocket = struct {
         }
 
         {
-            var js_string = message_value.toString(globalThis);
-            if (globalThis.hasException()) {
-                return .zero;
-            }
-            const view = js_string.view(globalThis);
-            const slice = view.toSlice(bun.default_allocator);
+            const slice = try message_value.toSlice(globalThis, bun.default_allocator);
             defer slice.deinit();
-
-            defer js_string.ensureStillAlive();
 
             const buffer = slice.slice();
 
@@ -5024,15 +5017,8 @@ pub const ServerWebSocket = struct {
             return globalThis.throw("publishText requires a non-empty message", .{});
         }
 
-        var js_string = message_value.toString(globalThis);
-        if (globalThis.hasException()) {
-            return .zero;
-        }
-        const view = js_string.view(globalThis);
-        const slice = view.toSlice(bun.default_allocator);
+        const slice = try message_value.toSlice(globalThis, bun.default_allocator);
         defer slice.deinit();
-
-        defer js_string.ensureStillAlive();
 
         const buffer = slice.slice();
 
@@ -5278,15 +5264,8 @@ pub const ServerWebSocket = struct {
         }
 
         {
-            var js_string = message_value.toString(globalThis);
-            if (globalThis.hasException()) {
-                return .zero;
-            }
-            const view = js_string.view(globalThis);
-            const slice = view.toSlice(bun.default_allocator);
+            const slice = try message_value.toSlice(globalThis, bun.default_allocator);
             defer slice.deinit();
-
-            defer js_string.ensureStillAlive();
 
             const buffer = slice.slice();
             switch (this.websocket().send(buffer, .text, compress, true)) {
@@ -5338,15 +5317,8 @@ pub const ServerWebSocket = struct {
             return globalThis.throw("sendText expects a string", .{});
         }
 
-        var js_string = message_value.toString(globalThis);
-        if (globalThis.hasException()) {
-            return .zero;
-        }
-        const view = js_string.view(globalThis);
-        const slice = view.toSlice(bun.default_allocator);
+        const slice = try message_value.toSlice(globalThis, bun.default_allocator);
         defer slice.deinit();
-
-        defer js_string.ensureStillAlive();
 
         const buffer = slice.slice();
         switch (this.websocket().send(buffer, .text, compress, true)) {
@@ -6184,15 +6156,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             {
-                var js_string = message_value.toString(globalThis);
-                if (globalThis.hasException()) {
-                    return .zero;
-                }
-                const view = js_string.view(globalThis);
-                const slice = view.toSlice(bun.default_allocator);
+                const slice = try message_value.toSlice(globalThis, bun.default_allocator);
                 defer slice.deinit();
-
-                defer js_string.ensureStillAlive();
 
                 const buffer = slice.slice();
                 return JSValue.jsNumber(

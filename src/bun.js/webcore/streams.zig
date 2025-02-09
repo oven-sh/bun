@@ -1788,23 +1788,18 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                 return globalThis.throwValue(JSC.toTypeError(.ERR_INVALID_ARG_TYPE, "write() expects a string, ArrayBufferView, or ArrayBuffer", .{}, globalThis));
             }
 
-            const str = arg.toString(globalThis);
-            if (globalThis.hasException()) {
-                return .zero;
-            }
+            const str = try arg.toBunString2(globalThis);
 
-            const view = str.view(globalThis);
-
-            if (view.isEmpty()) {
+            if (str.isEmpty()) {
                 return JSC.JSValue.jsNumber(0);
             }
 
-            defer str.ensureStillAlive();
-            if (view.is16Bit()) {
-                return this.sink.writeUTF16(.{ .temporary = bun.ByteList.initConst(std.mem.sliceAsBytes(view.utf16SliceAligned())) }).toJS(globalThis);
+            defer str.deref();
+            if (!str.is8Bit()) {
+                return this.sink.writeUTF16(.{ .temporary = bun.ByteList.initConst(std.mem.sliceAsBytes(str.utf16())) }).toJS(globalThis);
             }
 
-            return this.sink.writeLatin1(.{ .temporary = bun.ByteList.initConst(view.slice()) }).toJS(globalThis);
+            return this.sink.writeLatin1(.{ .temporary = bun.ByteList.initConst(str.latin1()) }).toJS(globalThis);
         }
 
         pub fn writeUTF8(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -1832,22 +1827,14 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 
             const arg = args[0];
 
-            const str = arg.toString(globalThis);
-            if (globalThis.hasException()) {
-                return .zero;
+            const str = try arg.toBunString2(globalThis);
+            defer str.deref();
+
+            if (!str.is8Bit()) {
+                return this.sink.writeUTF16(.{ .temporary = bun.ByteList.initConst(std.mem.sliceAsBytes(str.utf16())) }).toJS(globalThis);
             }
 
-            const view = str.view(globalThis);
-            if (view.isEmpty()) {
-                return JSC.JSValue.jsNumber(0);
-            }
-
-            defer str.ensureStillAlive();
-            if (str.is16Bit()) {
-                return this.sink.writeUTF16(.{ .temporary = view.utf16SliceAligned() }).toJS(globalThis);
-            }
-
-            return this.sink.writeLatin1(.{ .temporary = view.slice() }).toJS(globalThis);
+            return this.sink.writeLatin1(.{ .temporary = str.latin1() }).toJS(globalThis);
         }
 
         pub fn close(globalThis: *JSGlobalObject, sink_ptr: ?*anyopaque) callconv(.C) JSValue {

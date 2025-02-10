@@ -386,18 +386,24 @@ export default [
       address: {
         getter: "getAddress",
         // setter: "setAddress",
-        enumerable: false,
+        enumerable: true,
         configurable: true,
+        cache: true,
       },
       port: {
         getter: "getPort",
-        enumerable: false,
+        enumerable: true,
         configurable: true,
       },
       family: {
         getter: "getFamily",
-        enumerable: false,
+        enumerable: true,
         configurable: true,
+      },
+      addrfamily: {
+        getter: "getAddrFamily",
+        enumerable: false,
+        configurable: false,
       },
       flowlabel: {
         getter: "getFlowLabel",

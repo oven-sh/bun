@@ -34,14 +34,23 @@ pub const Options = struct {
             null;
 
         const _family: AF = if (try obj.get(global, "family")) |fam| blk: {
-            if (comptime bun.Environment.isDebug) bun.assert(fam.isString());
-            const slice = fam.asString().toSlice(global, bun.default_allocator);
-            if (bun.strings.eqlComptime(slice.slice(), "ipv4")) {
-                break :blk AF.INET;
-            } else if (bun.strings.eqlComptime(slice.slice(), "ipv6")) {
-                break :blk AF.INET6;
+            if (fam.isString()) {
+                const slice = fam.asString().toSlice(global, bun.default_allocator);
+                if (bun.strings.eqlComptime(slice.slice(), "ipv4")) {
+                    break :blk AF.INET;
+                } else if (bun.strings.eqlComptime(slice.slice(), "ipv6")) {
+                    break :blk AF.INET6;
+                } else {
+                    return global.throwInvalidArgumentTypeValue("options.family", "ipv4 or ipv6", fam);
+                }
+            } else if (fam.isUInt32AsAnyInt()) {
+                break :blk switch (fam.toU32()) {
+                    AF.INET.int() => AF.INET,
+                    AF.INET6.int() => AF.INET6,
+                    else => return global.throwInvalidArgumentTypeValue("options.family", "AF_INET or AF_INET6", fam),
+                };
             } else {
-                return global.throwInvalidArgumentTypeValue("options.family", "ipv4 or ipv6", fam);
+                return global.throwInvalidArgumentTypeValue("options.family", "string or number", fam);
             }
         } else AF.INET;
 
@@ -49,7 +58,7 @@ pub const Options = struct {
         const _port: u16 = if (try obj.get(global, "port")) |p| blk: {
             if (!p.isUInt32AsAnyInt()) return global.throwInvalidArgumentTypeValue("options.port", "number", p);
             break :blk @truncate(p.toU32());
-        } else return global.throwMissingArgumentsValue(&.{"options.port"});
+        } else 0;
 
         const _flowlabel = if (try obj.get(global, "flowlabel")) |fl| blk: {
             if (!fl.isUInt32AsAnyInt()) return global.throwInvalidArgumentTypeValue("options.flowlabel", "number", fl);
@@ -221,7 +230,22 @@ pub fn address(this: *SocketAddress) bun.String {
     return presentation;
 }
 
-pub fn getFamily(this: *SocketAddress, _: *JSC.JSGlobalObject) JSValue {
+/// `sockaddr.family`
+///
+/// Returns a string representation of this address' family. Use `getAddrFamily`
+/// for the numeric value.
+///
+/// NOTE: node's `net.SocketAddress` wants `"ipv4"` and `"ipv6"` while Bun's APIs
+/// use `"IPv4"` and `"IPv6"`. This is annoying.
+pub fn getFamily(this: *SocketAddress, global: *JSC.JSGlobalObject) JSValue {
+    return switch (this.family()) {
+        AF.INET => IPv4.toJS(global),
+        AF.INET6 => IPv6.toJS(global),
+    };
+}
+
+/// `sockaddr.addrfamily`
+pub fn getAddrFamily(this: *SocketAddress, _: *JSC.JSGlobalObject) JSValue {
     return JSValue.jsNumber(this.family().int());
 }
 
@@ -297,6 +321,9 @@ inline fn asV6(this: *const SocketAddress) *const sockaddr_in6 {
 }
 
 // =============================================================================
+
+const IPv6 = bun.String.static("IPv6");
+const IPv4 = bun.String.static("IPv4");
 
 // FIXME: c-headers-for-zig casts AF_* and PF_* to `c_int` when it should be `comptime_int`
 pub const AF = enum(C.sa_family_t) {

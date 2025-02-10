@@ -117,8 +117,12 @@ comptime {
 }
 
 pub fn createBinding(global: *JSC.JSGlobalObject) JSC.JSValue {
+    const SocketAddress = bun.JSC.GeneratedClassesList.SocketAddress;
     const net = JSC.JSValue.createEmptyObjectWithNullPrototype(global);
-    net.put(global, "SocketAddress", bun.JSC.GeneratedClassesList.SocketAddress.getConstructor(global));
+
+    net.put(global, "SocketAddressNative", SocketAddress.getConstructor(global));
+    net.put(global, "AF_INET", JSC.jsNumber(@intFromEnum(SocketAddress.AF.INET)));
+    net.put(global, "AF_INET6", JSC.jsNumber(@intFromEnum(SocketAddress.AF.INET6)));
 
     return net;
 }

@@ -22,7 +22,8 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 const { Duplex } = require("node:stream");
 const EventEmitter = require("node:events");
-const { addServerName, upgradeDuplexToTLS, isNamedPipeSocket, SocketAddress } = require("../internal/net");
+const { addServerName, upgradeDuplexToTLS, isNamedPipeSocket } = require("../internal/net");
+const { SocketAddress } = require("internal/net/socket_address");
 const { ExceptionWithHostPort } = require("internal/shared");
 
 // IPv4 Segment

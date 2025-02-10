@@ -17,25 +17,42 @@ describe("SocketAddress", () => {
     // @ts-expect-error -- types are wrong.
     expect(() => SocketAddress()).toThrow(TypeError);
   });
-  describe("new SocketAddress()", () => {
+  describe.each([new SocketAddress(), new SocketAddress(undefined), new SocketAddress({})])(
+    "new SocketAddress()",
+    address => {
+      it("creates an ipv4 address", () => {
+        expect(address.family).toBe("ipv4");
+      });
+
+      it("address is 127.0.0.1", () => {
+        expect(address.address).toBe("127.0.0.1");
+      });
+
+      it("port is 0", () => {
+        expect(address.port).toBe(0);
+      });
+
+      it("flowlabel is 0", () => {
+        expect(address.flowlabel).toBe(0);
+      });
+    },
+  ); // </new SocketAddress()>
+
+  describe("new SocketAddress({ family: 'ipv6' })", () => {
     let address: SocketAddress;
-    beforeEach(() => {
-      address = new SocketAddress();
+    beforeAll(() => {
+      address = new SocketAddress({ family: "ipv6" });
     });
-    it("creates an ipv4 address", () => {
-      expect(address.family).toBe("ipv4");
+    it("creates a new ipv6 loopback address", () => {
+      expect(address).toMatchObject({
+        address: "::1",
+        port: 0,
+        family: "ipv6",
+        flowlabel: 0,
+      });
     });
-    it("address is 127.0.0.1", () => {
-      expect(address.address).toBe("127.0.0.1");
-    });
-    it("port is 0", () => {
-      expect(address.port).toBe(0);
-    });
-    it("flowlabel is 0", () => {
-      expect(address.flowlabel).toBe(0);
-    });
-  });
-});
+  }); // </new SocketAddress({ family: 'ipv6' })>
+}); // </SocketAddress>
 
 describe("SocketAddress.isSocketAddress", () => {
   it("is a function that takes 1 argument", () => {
@@ -137,4 +154,29 @@ describe("SocketAddress.prototype.toJSON", () => {
       configurable: true,
     });
   });
-});
+
+  describe("When called on a default SocketAddress", () => {
+    let address: Record<string, any>;
+    beforeEach(() => {
+      address = new SocketAddress().toJSON();
+    });
+
+    it("returns an object with an address, port, family, and flowlabel", () => {
+      expect(address).toEqual({
+        address: "127.0.0.1",
+        port: 0,
+        family: "ipv4",
+        flowlabel: 0,
+      });
+    });
+
+    it("SocketAddress.isSocketAddress() returns false", () => {
+      expect(SocketAddress.isSocketAddress(address)).toBeFalse();
+    });
+
+    it("does not have SocketAddress as its prototype", () => {
+      expect(Object.getPrototypeOf(address)).not.toBe(SocketAddress.prototype);
+      expect(address instanceof SocketAddress).toBeFalse();
+    });
+  }); // </When called on a default SocketAddress>
+}); // </SocketAddress.prototype.toJSON>

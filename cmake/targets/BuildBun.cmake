@@ -572,6 +572,11 @@ if(NOT "${REVISION}" STREQUAL "")
   set(ZIG_FLAGS_BUN ${ZIG_FLAGS_BUN} -Dsha=${REVISION})
 endif()
 
+if(ENABLE_LTO)
+  set(ZIG_FLAGS_BUN ${ZIG_FLAGS_BUN} -Dlto=true)
+endif()
+
+
 register_command(
   TARGET
     bun-zig

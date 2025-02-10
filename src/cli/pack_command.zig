@@ -218,7 +218,7 @@ pub const PackCommand = struct {
 
     const package_prefix = "package/";
 
-    const root_default_ignore_patterns = [_][]const u32{
+    const root_default_ignore_patterns = [_][]const u8{
         &.{ 112, 97, 99, 107, 97, 103, 101, 45, 108, 111, 99, 107, 46, 106, 115, 111, 110 }, // package-lock.json
         &.{ 121, 97, 114, 110, 46, 108, 111, 99, 107 }, // yarn.lock
         &.{ 112, 110, 112, 109, 45, 108, 111, 99, 107, 46, 121, 97, 109, 108 }, // pnpm-lock.yaml
@@ -432,9 +432,9 @@ pub const PackCommand = struct {
                 if (isExcluded(entry, entry_subpath, dir_depth, ignores.items)) |used_pattern_info| {
                     if (comptime log_level.isVerbose()) {
                         const pattern, const kind = used_pattern_info;
-                        Output.prettyln("<r><blue>ignore<r> <d>[{s}:{}]<r> {s}{s}", .{
+                        Output.prettyln("<r><blue>ignore<r> <d>[{s}:{s}]<r> {s}{s}", .{
                             @tagName(kind),
-                            bun.fmt.debugUtf32PathFormatter(pattern),
+                            pattern,
                             entry_subpath,
                             if (entry.kind == .directory) "/" else "",
                         });
@@ -739,9 +739,9 @@ pub const PackCommand = struct {
                 if (isExcluded(entry, entry_subpath, dir_depth, &.{})) |used_pattern_info| {
                     if (comptime log_level.isVerbose()) {
                         const pattern, const kind = used_pattern_info;
-                        Output.prettyln("<r><blue>ignore<r> <d>[{s}:{}]<r> {s}{s}", .{
+                        Output.prettyln("<r><blue>ignore<r> <d>[{s}:{s}]<r> {s}{s}", .{
                             @tagName(kind),
-                            bun.fmt.debugUtf32PathFormatter(pattern),
+                            pattern,
                             entry_subpath,
                             if (entry.kind == .directory) "/" else "",
                         });
@@ -1021,7 +1021,7 @@ pub const PackCommand = struct {
         entry_subpath: stringZ,
         dir_depth: usize,
         ignores: []const IgnorePatterns,
-    ) ?struct { []const u32, IgnorePatterns.Kind } {
+    ) ?struct { []const u8, IgnorePatterns.Kind } {
         const entry_name = entry.name.slice();
 
         if (dir_depth == 1) {
@@ -2101,7 +2101,7 @@ pub const PackCommand = struct {
     /// from .npmignore, .gitignore, or `files`
     /// in package.json
     const Pattern = struct {
-        glob: []const u32,
+        glob: []const u8,
         /// beginning or middle slash (leading slash was trimmed)
         rel_path: bool,
         // can only match directories (had an ending slash, also trimmed)
@@ -2151,20 +2151,17 @@ pub const PackCommand = struct {
                 break :check_slashes .{ leading_or_middle_slash, trailing_slash, skipped_negate };
             };
 
-            const length = bun.simdutf.length.utf32.from.utf8.le(remain) + @intFromBool(add_negate);
-            const buf = try allocator.alloc(u32, length);
-            const result = bun.simdutf.convert.utf8.to.utf32.with_errors.le(remain, buf[@intFromBool(add_negate)..]);
-            if (!result.isSuccessful()) {
-                allocator.free(buf);
-                return null;
-            }
-
+            const length = remain.len + @intFromBool(add_negate);
+            const buf = try allocator.alloc(u8, length);
+            const start_index = @intFromBool(add_negate);
+            const end = start_index + remain.len;
+            @memcpy(buf[start_index..end], remain);
             if (add_negate) {
                 buf[0] = '!';
             }
 
             return .{
-                .glob = buf[0 .. result.count + @intFromBool(add_negate)],
+                .glob = buf[0..end],
                 .rel_path = has_leading_or_middle_slash,
                 .@"leading **/" = @"has leading **/, (could start with '!')",
                 .dirs_only = has_trailing_slash,

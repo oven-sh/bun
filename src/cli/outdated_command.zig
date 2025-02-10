@@ -116,10 +116,10 @@ pub const OutdatedCommand = struct {
     // TODO: use in `bun pack, publish, run, ...`
     const FilterType = union(enum) {
         all,
-        name: []const u32,
-        path: []const u32,
+        name: []const u8,
+        path: []const u8,
 
-        pub fn init(pattern: []const u32, is_path: bool) @This() {
+        pub fn init(pattern: []const u8, is_path: bool) @This() {
             return if (is_path) .{
                 .path = pattern,
             } else .{
@@ -127,11 +127,11 @@ pub const OutdatedCommand = struct {
             };
         }
 
-        pub fn deinit(this: @This(), allocator: std.mem.Allocator) void {
-            switch (this) {
-                .path, .name => |pattern| allocator.free(pattern),
-                else => {},
-            }
+        pub fn deinit(_: @This(), _: std.mem.Allocator) void {
+            // switch (this) {
+            //     .path, .name => |pattern| allocator.free(pattern),
+            //     else => {},
+            // }
         }
     };
 
@@ -241,17 +241,8 @@ pub const OutdatedCommand = struct {
                     continue;
                 }
 
-                const length = bun.simdutf.length.utf32.from.utf8.le(arg);
-                const convert_buf = bun.default_allocator.alloc(u32, length) catch bun.outOfMemory();
-
-                const convert_result = bun.simdutf.convert.utf8.to.utf32.with_errors.le(arg, convert_buf);
-                if (!convert_result.isSuccessful()) {
-                    converted.* = FilterType.init(&.{}, false);
-                    continue;
-                }
-
-                converted.* = FilterType.init(convert_buf[0..convert_result.count], false);
-                at_least_one_greater_than_zero = at_least_one_greater_than_zero or convert_result.count > 0;
+                converted.* = FilterType.init(arg, false);
+                at_least_one_greater_than_zero = at_least_one_greater_than_zero or arg.len > 0;
             }
 
             // nothing will match

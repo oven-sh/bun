@@ -2766,8 +2766,8 @@ pub const PackageManager = struct {
 
     pub const WorkspaceFilter = union(enum) {
         all,
-        name: []const u32,
-        path: []const u32,
+        name: []const u8,
+        path: []const u8,
 
         pub fn init(allocator: std.mem.Allocator, input: string, cwd: string, path_buf: []u8) OOM!WorkspaceFilter {
             if ((input.len == 1 and input[0] == '*') or strings.eqlComptime(input, "**")) {
@@ -2793,23 +2793,17 @@ pub const PackageManager = struct {
                 // won't match anything
                 return .{ .path = &.{} };
             }
+            const copy_start = @intFromBool(prepend_negate);
+            const copy_end = copy_start + filter.len;
 
-            // TODO(dylan-conway): finish encoding agnostic glob matcher so we don't
-            // need to convert
-            const len = bun.simdutf.length.utf32.from.utf8.le(filter) + @intFromBool(prepend_negate);
-            const buf = try allocator.alloc(u32, len);
-
-            const result = bun.simdutf.convert.utf8.to.utf32.with_errors.le(filter, buf[@intFromBool(prepend_negate)..]);
-            if (!result.isSuccessful()) {
-                // won't match anything
-                return .{ .path = &.{} };
-            }
+            const buf = try allocator.alloc(u8, copy_end);
+            @memcpy(buf[copy_start..copy_end], filter);
 
             if (prepend_negate) {
                 buf[0] = '!';
             }
 
-            const pattern = buf[0..len];
+            const pattern = buf[0..copy_end];
 
             return if (is_path)
                 .{ .path = pattern }
@@ -2819,7 +2813,9 @@ pub const PackageManager = struct {
 
         pub fn deinit(this: WorkspaceFilter, allocator: std.mem.Allocator) void {
             switch (this) {
-                .path, .name => |pattern| allocator.free(pattern),
+                .name,
+                .path,
+                => |pattern| allocator.free(pattern),
                 .all => {},
             }
         }

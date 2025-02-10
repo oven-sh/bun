@@ -337,7 +337,6 @@ pub fn GlobWalker_(
         /// not owned by this struct
         pattern: []const u8 = "",
 
-        pattern_codepoints: []u32 = &[_]u32{},
         cp_len: u32 = 0,
 
         /// If the pattern contains "./" or "../"
@@ -978,15 +977,9 @@ pub fn GlobWalker_(
 
             /// Only used when component is not ascii
             unicode_set: bool = false,
-            start_cp: u32 = 0,
-            end_cp: u32 = 0,
 
             pub fn patternSlice(this: *const Component, pattern: []const u8) []const u8 {
                 return pattern[this.start .. this.start + this.len - @as(u1, @bitCast(this.trailing_sep))];
-            }
-
-            pub fn patternSliceCp(this: *const Component, pattern: []u32) []u32 {
-                return pattern[this.start_cp .. this.end_cp - @as(u1, @bitCast(this.trailing_sep))];
             }
 
             const SyntaxHint = enum {
@@ -1036,10 +1029,6 @@ pub fn GlobWalker_(
             );
         }
 
-        pub fn convertUtf8ToCodepoints(codepoints: []u32, pattern: []const u8) void {
-            _ = bun.simdutf.convert.utf8.to.utf32.le(pattern, codepoints);
-        }
-
         pub fn debugPatternComopnents(this: *GlobWalker) void {
             const pattern = this.pattern;
             const components = &this.patternComponents;
@@ -1086,8 +1075,6 @@ pub fn GlobWalker_(
                 arena,
                 &this.patternComponents,
                 pattern,
-                &this.cp_len,
-                &this.pattern_codepoints,
                 &this.has_relative_components,
                 &this.end_byte_of_basename_excluding_special_syntax,
                 &this.basename_excluding_special_syntax_component_idx,
@@ -1339,58 +1326,18 @@ pub fn GlobWalker_(
 
             return switch (pattern_component.syntax_hint) {
                 .Double, .Single => true,
-                .WildcardFilepath => if (comptime !isWindows)
-                    matchWildcardFilepath(pattern_component.patternSlice(this.pattern), filepath)
-                else
-                    this.matchPatternSlow(pattern_component, filepath),
-                .Literal => if (comptime !isWindows)
-                    matchWildcardLiteral(pattern_component.patternSlice(this.pattern), filepath)
-                else
-                    this.matchPatternSlow(pattern_component, filepath),
+                .WildcardFilepath => matchWildcardFilepath(pattern_component.patternSlice(this.pattern), filepath),
+                .Literal => matchWildcardLiteral(pattern_component.patternSlice(this.pattern), filepath),
                 else => this.matchPatternSlow(pattern_component, filepath),
             };
         }
 
         fn matchPatternSlow(this: *GlobWalker, pattern_component: *Component, filepath: []const u8) bool {
-            // windows filepaths are utf-16 so GlobAscii.match will never work
-            if (comptime !isWindows) {
-                if (pattern_component.is_ascii and isAllAscii(filepath))
-                    return GlobAscii.match(
-                        this.arena.allocator(),
-                        pattern_component.patternSlice(this.pattern),
-                        filepath,
-                    ).matches();
-            }
-            const codepoints = this.componentStringUnicode(pattern_component);
-            return matchImpl(
+            return GlobAscii.match(
                 this.arena.allocator(),
-                codepoints,
+                pattern_component.patternSlice(this.pattern),
                 filepath,
             ).matches();
-        }
-
-        fn componentStringUnicode(this: *GlobWalker, pattern_component: *Component) []const u32 {
-            if (comptime isWindows) {
-                return this.componentStringUnicodeWindows(pattern_component);
-            } else {
-                return this.componentStringUnicodePosix(pattern_component);
-            }
-        }
-
-        fn componentStringUnicodeWindows(this: *GlobWalker, pattern_component: *Component) []const u32 {
-            return pattern_component.patternSliceCp(this.pattern_codepoints);
-        }
-
-        fn componentStringUnicodePosix(this: *GlobWalker, pattern_component: *Component) []const u32 {
-            if (pattern_component.unicode_set) return pattern_component.patternSliceCp(this.pattern_codepoints);
-
-            const codepoints = pattern_component.patternSliceCp(this.pattern_codepoints);
-            GlobWalker.convertUtf8ToCodepoints(
-                codepoints,
-                pattern_component.patternSlice(this.pattern),
-            );
-            pattern_component.unicode_set = true;
-            return codepoints;
         }
 
         inline fn matchedPathToBunString(matched_path: MatchedPath) BunString {
@@ -1518,8 +1465,6 @@ pub fn GlobWalker_(
 
         fn makeComponent(
             pattern: []const u8,
-            start_cp: u32,
-            end_cp: u32,
             start_byte: u32,
             end_byte: u32,
             has_relative_patterns: *bool,
@@ -1527,8 +1472,6 @@ pub fn GlobWalker_(
             var component: Component = .{
                 .start = start_byte,
                 .len = end_byte - start_byte,
-                .start_cp = start_cp,
-                .end_cp = end_cp,
             };
             if (component.len == 0) return null;
 
@@ -1619,8 +1562,6 @@ pub fn GlobWalker_(
             arena: *Arena,
             patternComponents: *ArrayList(Component),
             pattern: []const u8,
-            out_cp_len: ?*u32,
-            out_pattern_cp: *[]u32,
             has_relative_patterns: *bool,
             end_byte_of_basename_excluding_special_syntax: ?*u32,
             basename_excluding_special_syntax_component_idx: ?*u32,
@@ -1631,8 +1572,6 @@ pub fn GlobWalker_(
                 arena,
                 patternComponents,
                 pattern,
-                out_cp_len orelse &scratchpad[0],
-                out_pattern_cp,
                 has_relative_patterns,
                 end_byte_of_basename_excluding_special_syntax orelse scratchpad[1],
                 basename_excluding_special_syntax_component_idx orelse scratchpad[2],
@@ -1643,38 +1582,30 @@ pub fn GlobWalker_(
             arena: *Arena,
             patternComponents: *ArrayList(Component),
             pattern: []const u8,
-            out_cp_len: *u32,
-            out_pattern_cp: *[]u32,
             has_relative_patterns: *bool,
             end_byte_of_basename_excluding_special_syntax: *u32,
             basename_excluding_special_syntax_component_idx: *u32,
         ) !void {
-            var start_cp: u32 = 0;
             var start_byte: u32 = 0;
 
-            const iter = CodepointIterator.init(pattern);
-            var cursor = CodepointIterator.Cursor{};
-
-            var cp_len: u32 = 0;
             var prevIsBackslash = false;
             var saw_special = false;
-            while (iter.next(&cursor)) : (cp_len += 1) {
-                const c = cursor.c;
+            var i: u32 = 0;
+            var width: u32 = 0;
+            while (i < pattern.len) : (i += 1) {
+                const c = pattern[i];
+                width = bun.strings.utf8ByteSequenceLength(c);
 
                 switch (c) {
                     '\\' => {
                         if (comptime isWindows) {
-                            var end_cp = cp_len;
-                            var end_byte = cursor.i;
+                            var end_byte = i;
                             // is last char
-                            if (cursor.i + cursor.width == pattern.len) {
-                                end_cp += 1;
-                                end_byte += cursor.width;
+                            if (i + width == pattern.len) {
+                                end_byte += width;
                             }
                             if (makeComponent(
                                 pattern,
-                                start_cp,
-                                end_cp,
                                 start_byte,
                                 end_byte,
                                 has_relative_patterns,
@@ -1682,12 +1613,11 @@ pub fn GlobWalker_(
                                 saw_special = saw_special or component.syntax_hint.isSpecialSyntax();
                                 if (!saw_special) {
                                     basename_excluding_special_syntax_component_idx.* = @intCast(patternComponents.items.len);
-                                    end_byte_of_basename_excluding_special_syntax.* = cursor.i + cursor.width;
+                                    end_byte_of_basename_excluding_special_syntax.* = i + width;
                                 }
                                 try patternComponents.append(arena.allocator(), component);
                             }
-                            start_cp = cp_len + 1;
-                            start_byte = cursor.i + cursor.width;
+                            start_byte = i + width;
                             continue;
                         }
 
@@ -1699,17 +1629,13 @@ pub fn GlobWalker_(
                         prevIsBackslash = true;
                     },
                     '/' => {
-                        var end_cp = cp_len;
-                        var end_byte = cursor.i;
+                        var end_byte = i;
                         // is last char
-                        if (cursor.i + cursor.width == pattern.len) {
-                            end_cp += 1;
-                            end_byte += cursor.width;
+                        if (i + width == pattern.len) {
+                            end_byte += width;
                         }
                         if (makeComponent(
                             pattern,
-                            start_cp,
-                            end_cp,
                             start_byte,
                             end_byte,
                             has_relative_patterns,
@@ -1717,32 +1643,19 @@ pub fn GlobWalker_(
                             saw_special = saw_special or component.syntax_hint.isSpecialSyntax();
                             if (!saw_special) {
                                 basename_excluding_special_syntax_component_idx.* = @intCast(patternComponents.items.len);
-                                end_byte_of_basename_excluding_special_syntax.* = cursor.i + cursor.width;
+                                end_byte_of_basename_excluding_special_syntax.* = i + width;
                             }
                             try patternComponents.append(arena.allocator(), component);
                         }
-                        start_cp = cp_len + 1;
-                        start_byte = cursor.i + cursor.width;
+                        start_byte = i + width;
                     },
                     // TODO: Support other escaping glob syntax
                     else => {},
                 }
             }
 
-            out_cp_len.* = cp_len;
-
-            const codepoints = try arena.allocator().alloc(u32, cp_len);
-            // On Windows filepaths are UTF-16 so its better to fill the codepoints buffer upfront
-            if (comptime isWindows) {
-                GlobWalker.convertUtf8ToCodepoints(codepoints, pattern);
-            }
-            out_pattern_cp.* = codepoints;
-
-            const end_cp = cp_len;
             if (makeComponent(
                 pattern,
-                start_cp,
-                end_cp,
                 start_byte,
                 @intCast(pattern.len),
                 has_relative_patterns,
@@ -1750,409 +1663,15 @@ pub fn GlobWalker_(
                 saw_special = saw_special or component.syntax_hint.isSpecialSyntax();
                 if (!saw_special) {
                     basename_excluding_special_syntax_component_idx.* = @intCast(patternComponents.items.len);
-                    end_byte_of_basename_excluding_special_syntax.* = cursor.i + cursor.width;
+                    end_byte_of_basename_excluding_special_syntax.* = i + width;
                 }
                 try patternComponents.append(arena.allocator(), component);
             } else if (!saw_special) {
                 basename_excluding_special_syntax_component_idx.* = @intCast(patternComponents.items.len);
-                end_byte_of_basename_excluding_special_syntax.* = cursor.i + cursor.width;
+                end_byte_of_basename_excluding_special_syntax.* = i + width;
             }
         }
     };
-}
-
-/// used in matchBrace to determine the size of the stack buffer used in the stack fallback allocator
-/// that is created for handling braces
-/// One such stack buffer is created recursively for each pair of braces
-/// therefore this value should be tuned to use a sane amount of memory even at the highest allowed brace depth
-/// and for arbitrarily many non-nested braces (i.e. `{a,b}{c,d}`) while reducing the number of allocations.
-/// NOTE: actual stack allocated size will be 4x this value as it is used to store u32 codepoints rather than u8 bytes
-const GLOB_STACK_BUF_SIZE = 64;
-const BRACE_DEPTH_MAX = 10;
-
-// From: https://github.com/The-King-of-Toasters/globlin
-/// State for matching a glob against a string
-pub const GlobState = struct {
-    // These store character indices into the glob and path strings.
-    path_index: CursorState = .{},
-    glob_index: u32 = 0,
-    // When we hit a * or **, we store the state for backtracking.
-    wildcard: Wildcard = .{},
-    globstar: Wildcard = .{},
-
-    depth: u8 = 0,
-
-    allocator: std.mem.Allocator,
-
-    fn init(path_iter: *const CodepointIterator, allocator: std.mem.Allocator) GlobState {
-        var this = GlobState{.allocator = allocator};
-        // this.glob_index = CursorState.init(glob_iter);
-        this.path_index = CursorState.init(path_iter);
-        return this;
-    }
-
-    inline fn backtrack(self: *GlobState) void {
-        self.glob_index = self.wildcard.glob_index;
-        self.path_index = self.wildcard.path_index;
-    }
-};
-
-const Wildcard = struct {
-    // Using u32 rather than usize for these results in 10% faster performance.
-    // glob_index: CursorState = .{},
-    glob_index: u32 = 0,
-    path_index: CursorState = .{},
-};
-
-pub const MatchResult = enum {
-    no_match,
-    match,
-
-    negate_no_match,
-    negate_match,
-
-    pub fn matches(this: MatchResult) bool {
-        return this == .match or this == .negate_match;
-    }
-};
-
-/// This function checks returns a boolean value if the pathname `path` matches
-/// the pattern `glob`.
-///
-/// The supported pattern syntax for `glob` is:
-///
-/// "?"
-///     Matches any single character.
-/// "*"
-///     Matches zero or more characters, except for path separators ('/' or '\').
-/// "**"
-///     Matches zero or more characters, including path separators.
-///     Must match a complete path segment, i.e. followed by a path separator or
-///     at the end of the pattern.
-/// "[ab]"
-///     Matches one of the characters contained in the brackets.
-///     Character ranges (e.g. "[a-z]") are also supported.
-///     Use "[!ab]" or "[^ab]" to match any character *except* those contained
-///     in the brackets.
-/// "{a,b}"
-///     Match one of the patterns contained in the braces.
-///     Any of the wildcards listed above can be used in the sub patterns.
-///     Braces may be nested up to 10 levels deep.
-/// "!"
-///     Negates the result when at the start of the pattern.
-///     Multiple "!" characters negate the pattern multiple times.
-/// "\"
-///     Used to escape any of the special characters above.
-// TODO: consider renaming to just match
-pub fn matchImpl(alloc: Allocator, glob: []const u32, path: []const u8) MatchResult {
-    const path_iter = CodepointIterator.init(path);
-    var state = GlobState.init(&path_iter,  alloc);
-
-    var negated = false;
-    while (state.glob_index < glob.len and glob[state.glob_index] == '!') {
-        negated = !negated;
-        state.glob_index += 1;
-    }
-
-    const matched = globMatchImpl(&state, glob, &path_iter, @intCast(path.len));
-
-    // TODO: consider just returning a bool
-    // return matched != negated;
-    if (negated) {
-        return if (matched) .negate_no_match else .negate_match;
-    } else {
-        return if (matched) .match else .no_match;
-    }
-}
-
-inline fn globMatchImpl(state: *GlobState, glob: []const u32, path_iter: *const CodepointIterator, path_len: u32) bool {
-    while (state.glob_index < glob.len or state.path_index.cursor.i < path_len) {
-        if (state.glob_index < glob.len) {
-            switch (glob[state.glob_index]) {
-                '*' => {
-                    const is_globstar =
-                        state.glob_index + 1 < glob.len and glob[state.glob_index + 1] == '*';
-                    if (is_globstar) {
-                        skipGlobstars(glob, &state.glob_index);
-                    }
-
-                    state.wildcard.glob_index = @intCast(state.glob_index);
-                    state.wildcard.path_index = state.path_index.peek(path_iter);
-
-                    var in_globstar = false;
-                    if (is_globstar) {
-                        state.glob_index += 2;
-
-                        const is_end_invalid = state.glob_index < glob.len;
-
-                        // FIXME: explain this bug fix
-                        if (is_end_invalid and state.path_index.cursor.i == path_len and glob.len - state.glob_index == 2 and glob[state.glob_index] == '/' and glob[state.glob_index + 1] == '*') {
-                            continue;
-                        }
-
-                        if ((state.glob_index < 3 or glob[state.glob_index - 3] == '/') and (!is_end_invalid or glob[state.glob_index] == '/')) {
-                            if (is_end_invalid) {
-                                state.glob_index += 1;
-                            }
-
-                            // skip to separator
-                            if (state.path_index.cursor.i == path_len) {
-                                state.wildcard.path_index.bump(path_iter);
-                            } else {
-                                var path_index = state.path_index;
-                                while (path_index.cursor.i < path_len and !isSeparator(path_index.cursor.c)) {
-                                    path_index.bump(path_iter);
-                                }
-
-                                if (is_end_invalid or path_index.cursor.i != path_len) {
-                                    path_index.bump(path_iter);
-                                }
-
-                                state.wildcard.path_index = path_index;
-                                state.globstar = state.wildcard;
-                            }
-                            in_globstar = true;
-                        }
-                    } else {
-                        state.glob_index += 1;
-                    }
-
-                    if (!in_globstar and state.path_index.cursor.i < path_len and isSeparator(state.path_index.cursor.c)) {
-                        state.wildcard = state.globstar;
-                    }
-
-                    continue;
-                },
-                '?' => if (state.path_index.cursor.i < path_len) {
-                    if (!isSeparator(state.path_index.cursor.c)) {
-                        state.glob_index += 1;
-                        state.path_index.bump(path_iter);
-                        continue;
-                    }
-                },
-                '[' => if (state.path_index.cursor.i < path_len) {
-                    state.glob_index += 1;
-
-                    var negated = false;
-                    if (state.glob_index < glob.len and (glob[state.glob_index] == '^' or glob[state.glob_index] == '!')) {
-                        negated = true;
-                        state.glob_index += 1;
-                    }
-
-                    var first = true;
-                    var is_match = false;
-                    const c = state.path_index.cursor.c;
-                    while (state.glob_index < glob.len and (first or glob[state.glob_index] != ']')) {
-                        var low = glob[state.glob_index];
-                        if (!unescape(&low, glob, &state.glob_index)) {
-                            return false; // Invalid pattern!
-                        }
-
-                        state.glob_index += 1;
-
-                        const high = if (state.glob_index + 1 < glob.len and glob[state.glob_index] == '-' and glob[state.glob_index + 1] != ']') blk: {
-                            state.glob_index += 1;
-
-                            var high = glob[state.glob_index];
-                            if (!unescape(&high, glob, &state.glob_index)) {
-                                return false; // Invalid pattern!
-                            }
-
-                            state.glob_index += 1;
-                            break :blk high;
-                        } else low;
-
-                        if (low <= c and c <= high) {
-                            is_match = true;
-                        }
-
-                        first = false;
-                    }
-
-                    if (state.glob_index >= glob.len) {
-                        return false; // Invalid pattern!
-                    }
-
-                    state.glob_index += 1;
-                    if (is_match != negated) {
-                        state.path_index.bump(path_iter);
-                        continue;
-                    }
-                },
-                '{' => return matchBrace(state, glob, path_iter, path_len),
-                else => |c| if (state.path_index.cursor.i < path_len) {
-                    var cc = c;
-                    if (!unescape(&cc, glob, &state.glob_index)) {
-                        return false; // Invalid pattern!
-                    }
-
-                    const is_match = if (cc == '/')
-                        isSeparator(state.path_index.cursor.c)
-                    else
-                        state.path_index.cursor.c == cc;
-
-                    if (is_match) {
-                        state.glob_index += 1;
-                        state.path_index.bump(path_iter);
-
-                        if (cc == '/') {
-                            state.wildcard = state.globstar;
-                        }
-
-                        continue;
-                    }
-                },
-            }
-        }
-
-        if (state.wildcard.path_index.cursor.i > 0 and state.wildcard.path_index.cursor.i <= path_len) {
-            state.backtrack();
-            continue;
-        }
-
-        return false;
-    }
-
-    return true;
-}
-
-fn matchBrace(state: *GlobState, glob: []const u32, path_iter: *const CodepointIterator, path_len: u32) bool {
-    if (state.depth + 1 > BRACE_DEPTH_MAX) {
-        return false; // Invalid pattern! Too many nested braces
-    }
-    var brace_depth: u32 = 0;
-    var in_brackets = false;
-    var is_empty = true;
-
-    const open_brace_index = state.glob_index;
-    var close_brace_index: u32 = 0;
-    var glob_index: u32 = state.glob_index;
-
-    var max_branch_len: u32 = 0;
-    var last_branch_start_index = open_brace_index + 1;
-
-    // TODO: track depth & max depth
-    while (glob_index < glob.len) : (glob_index += 1) {
-        is_empty = is_empty and (glob[glob_index] == '{' or glob[glob_index] == '}');
-        switch (glob[glob_index]) {
-            '{' => if (!in_brackets) {
-                brace_depth += 1;
-            },
-            '}' => if (!in_brackets) {
-                brace_depth -= 1;
-                if (brace_depth == 0) {
-                    max_branch_len = @max(max_branch_len, glob_index - last_branch_start_index);
-                    close_brace_index = glob_index;
-                    break;
-                }
-            },
-            '[' => if (!in_brackets) {
-                in_brackets = true;
-            },
-            ']' => in_brackets = false,
-            '\\' => glob_index += 1,
-            ',' => if (brace_depth == 1) {
-                max_branch_len = @max(max_branch_len, glob_index - last_branch_start_index);
-                last_branch_start_index = glob_index + 1;
-            },
-            else => {},
-        }
-    }
-
-    if (brace_depth != 0) {
-        // Invalid pattern!
-        // std.debug.print("Invalid Pattern - Braces Mismatched! (by {d})", .{brace_depth});
-        return false;
-    }
-
-    // the maximum length of the options described by the braces.
-    // eg. for `{1,23,456}` the max_sub_len is 3
-    const max_sub_len = open_brace_index + max_branch_len + (glob.len - (close_brace_index + 1));
-
-    // PERF: doing the following results in a large performance improvement over using std.heap.stackFallback
-    var buffer = if (max_sub_len <= GLOB_STACK_BUF_SIZE) blk: {
-        var buf: [GLOB_STACK_BUF_SIZE * @divExact(@sizeOf(u32), @sizeOf(u8))]u8 = undefined; // x4 because buf is used to hold u32 codepoints rather than u8 bytes
-        var fixed_buf_alloc = std.heap.FixedBufferAllocator.init(&buf);
-        const buf_alloc = fixed_buf_alloc.allocator();
-        break :blk std.ArrayList(u32).initCapacity(buf_alloc, GLOB_STACK_BUF_SIZE) catch unreachable;
-    } else blk: {
-        break :blk std.ArrayList(u32).initCapacity(state.allocator, max_sub_len) catch bun.outOfMemory();
-    };
-    defer buffer.deinit();
-
-    // prefix is common among all branches
-    // if checking a branch fails to match, buffer is truncated to include only the prefix
-    buffer.appendSliceAssumeCapacity(glob[0..open_brace_index]);
-
-    if (is_empty) {
-        // add tail to buffer
-        // e.g. for glob `b{{}}m` match `bm` against path instead of `b{}m`
-        buffer.appendSliceAssumeCapacity(glob[close_brace_index + 1..]);
-        var branch_state = state.*;
-        branch_state.glob_index = open_brace_index;
-        branch_state.depth += 1;
-
-        return globMatchImpl(&branch_state, buffer.items, path_iter, path_len);
-    }
-
-    var branch_index: u32 = 0;
-
-    while (state.glob_index < glob.len) : (state.glob_index += 1) {
-        switch (glob[state.glob_index]) {
-            '{' => if (!in_brackets) {
-                brace_depth += 1;
-                if (brace_depth == 1) {
-                    branch_index = state.glob_index + 1;
-                }
-            },
-            '}' => if (!in_brackets) {
-                brace_depth -= 1;
-                if (brace_depth == 0) {
-                    // add branch to buffer
-                    buffer.appendSliceAssumeCapacity(glob[branch_index..state.glob_index]);
-                    // add tail to buffer
-                    buffer.appendSliceAssumeCapacity(glob[close_brace_index + 1 ..]);
-
-                    var branch_state = state.*;
-                    branch_state.glob_index = open_brace_index;
-                    branch_state.depth += 1;
-
-                    const matched = globMatchImpl(&branch_state, buffer.items, path_iter, path_len);
-                    if (matched) {
-                        return true;
-                    }
-
-                    break;
-                }
-            },
-            ',' => if (brace_depth == 1) {
-                // add branch to buffer
-                buffer.appendSliceAssumeCapacity(glob[branch_index..state.glob_index]);
-                // add tail to buffer
-                buffer.appendSliceAssumeCapacity(glob[close_brace_index + 1 ..]);
-
-                var branch_state = state.*;
-                branch_state.glob_index = open_brace_index;
-                branch_state.depth += 1;
-
-                const matched = globMatchImpl(&branch_state, buffer.items, path_iter, path_len);
-                if (matched) {
-                    return true;
-                }
-
-                buffer.shrinkRetainingCapacity(open_brace_index); // clear items past prefix, without decreasing allocated capacity
-                branch_index = state.glob_index + 1;
-            },
-            '[' => if (!in_brackets) {
-                in_brackets = true;
-            },
-            ']' => in_brackets = false,
-            '\\' => state.glob_index += 1,
-            else => {},
-        }
-    }
-
-    return false;
 }
 
 pub inline fn isSeparator(c: Codepoint) bool {
@@ -2208,3 +1727,5 @@ pub fn matchWildcardFilepath(glob: []const u8, path: []const u8) bool {
 pub fn matchWildcardLiteral(literal: []const u8, path: []const u8) bool {
     return std.mem.eql(u8, literal, path);
 }
+
+pub const matchImpl = GlobAscii.match;

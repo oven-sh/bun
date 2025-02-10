@@ -3855,11 +3855,15 @@ pub fn OrdinalT(comptime Int: type) type {
 pub const Ordinal = OrdinalT(c_int);
 
 pub fn memmove(output: []u8, input: []const u8) void {
-    if (comptime Environment.allow_assert) {
-        assert(output.len >= input.len and output.len > 0);
+    if (output.len == 0) {
+        return;
     }
 
-    if (comptime Environment.isNative) {
+    if (comptime Environment.allow_assert) {
+        assert(output.len >= input.len);
+    }
+
+    if (Environment.isNative and !@inComptime()) {
         C.memmove(output.ptr, input.ptr, input.len);
     } else {
         for (input, output) |input_byte, *out| {

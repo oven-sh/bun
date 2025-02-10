@@ -561,12 +561,10 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         break :router try FrameworkRouter.initEmpty(dev.root, types.items, allocator);
     };
 
-    if (options.frontend_only) {
-        // TODO: move scanning to be one tick after server startup. this way the
-        // line saying the server is ready shows quicker, and route errors show up
-        // after that line.
-        try dev.scanInitialRoutes();
-    }
+    // TODO: move scanning to be one tick after server startup. this way the
+    // line saying the server is ready shows quicker, and route errors show up
+    // after that line.
+    try dev.scanInitialRoutes();
 
     if (bun.FeatureFlags.bake_debugging_features and dev.has_pre_crash_handler)
         try bun.crash_handler.appendPreCrashHandler(DevServer, dev, dumpStateDueToCrash);

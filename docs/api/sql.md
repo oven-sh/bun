@@ -185,7 +185,7 @@ Bun's SQL is lazy that means its will only start executing when awaited or execu
 You can cancel a query that is currently executing by calling the `cancel()` method on the query object.
 
 ```ts
-const query = await sql`SELECT * FROM users`.execute();
+const query = sql`SELECT * FROM users`.execute();
 setTimeout(() => query.cancel(), 100);
 await query;
 ```

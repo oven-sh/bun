@@ -144,6 +144,20 @@ if(UNIX)
   )
 endif()
 
+if (LINUX)
+  register_compiler_flags(
+    DESCRIPTION "Define _GNU_SOURCE"
+    -D_GNU_SOURCE=1
+  )
+endif()
+
+if (APPLE)
+  register_compiler_flags(
+    DESCRIPTION "Define _DARWIN_C_SOURCE"
+    -D_DARWIN_C_SOURCE=1
+  )
+endif()
+
 register_compiler_flags(
   DESCRIPTION "Place each function in its own section"
   -ffunction-sections ${UNIX}

@@ -1725,7 +1725,7 @@ inline fn createScope(
     var function = if (args.len > 1) args[1] else .zero;
     var options = if (args.len > 2) args[2] else .zero;
 
-    if (!description.isFunction() and (description.isEmptyOrUndefinedOrNull() or !description.isString())) {
+    if (description.isEmptyOrUndefinedOrNull() or (description.isFunction() and description.getName(globalThis).isEmpty())) {
         function = description;
         description = .zero;
     }

@@ -95,6 +95,7 @@ pub fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSErr
         ._addr = sockaddr.@"127.0.0.1",
         ._presentation = WellKnownAddress.@"127.0.0.1",
     });
+    options_obj.ensureStillAlive();
 
     if (!options_obj.isObject()) return global.throwInvalidArgumentTypeValue("options", "object", options_obj);
     const options = try Options.fromJS(global, options_obj);
@@ -107,6 +108,10 @@ pub fn create(global: *JSC.JSGlobalObject, options: Options) bun.JSError!*Socket
         AF.INET => WellKnownAddress.@"127.0.0.1",
         AF.INET6 => WellKnownAddress.@"::1",
     };
+    // We need a zero-terminated cstring for `ares_inet_pton`, which forces us to
+    // copy the string.
+    var stackfb = std.heap.stackFallback(64, bun.default_allocator);
+    const alloc = stackfb.get();
 
     // NOTE: `zig translate-c` creates semantically invalid code for `C.ntohs`.
     // Switch back to `htons(options.port)` when this issue gets resolved:
@@ -120,10 +125,9 @@ pub fn create(global: *JSC.JSGlobalObject, options: Options) bun.JSError!*Socket
             };
             if (options.address) |address_str| {
                 defer address_str.deref();
-                // NOTE: should never allocate
-                var slice = address_str.toSlice(bun.default_allocator);
-                defer slice.deinit();
-                try pton(global, C.AF_INET, slice.slice(), &sin.sin_addr);
+                const slice = address_str.toOwnedSliceZ(alloc) catch bun.outOfMemory();
+                defer alloc.free(slice);
+                try pton(global, C.AF_INET, slice, &sin.sin_addr);
             } else {
                 sin.sin_addr = .{ .s_addr = C.INADDR_LOOPBACK };
             }
@@ -138,9 +142,9 @@ pub fn create(global: *JSC.JSGlobalObject, options: Options) bun.JSError!*Socket
             };
             if (options.address) |address_str| {
                 defer address_str.deref();
-                var slice = address_str.toSlice(bun.default_allocator);
-                defer slice.deinit();
-                try pton(global, C.AF_INET6, slice.slice(), &sin6.sin6_addr);
+                const slice = address_str.toOwnedSliceZ(alloc) catch bun.outOfMemory();
+                defer alloc.free(slice);
+                try pton(global, C.AF_INET6, slice, &sin6.sin6_addr);
             } else {
                 sin6.sin6_addr = C.in6addr_loopback;
             }
@@ -292,7 +296,7 @@ pub fn socklen(this: *const SocketAddress) socklen_t {
     }
 }
 
-fn pton(global: *JSC.JSGlobalObject, comptime af: c_int, addr: []const u8, dst: *anyopaque) bun.JSError!void {
+fn pton(global: *JSC.JSGlobalObject, comptime af: c_int, addr: [:0]const u8, dst: *anyopaque) bun.JSError!void {
     switch (ares.ares_inet_pton(af, addr.ptr, dst)) {
         0 => {
             return global.throwSysError(.{ .code = .ERR_INVALID_IP_ADDRESS }, "Invalid socket address", .{});
@@ -381,7 +385,12 @@ const WellKnownAddress = struct {
 
 // The same types are defined in a bunch of different places. We should probably unify them.
 comptime {
-    for (.{ std.posix.socklen_t, C.socklen_t }) |other_socklen| {
+    // Windows doesn't have c.socklen_t. because of course it doesn't.
+    const other_socklens = if (@hasDecl(C, "socklen_t"))
+        .{ std.posix.socklen_t, C.socklen_t }
+    else
+        .{std.posix.socklen_t};
+    for (other_socklens) |other_socklen| {
         if (@sizeOf(socklen_t) != @sizeOf(other_socklen)) @compileError("socklen_t size mismatch");
         if (@alignOf(socklen_t) != @alignOf(other_socklen)) @compileError("socklen_t alignment mismatch");
     }

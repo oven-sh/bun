@@ -162,10 +162,23 @@ pub const FilterSet = struct {
             var codepointer_iter = strings.UnsignedCodepointIterator.init(filter_utf8);
             var cursor = strings.UnsignedCodepointIterator.Cursor{};
             while (codepointer_iter.next(&cursor)) {
-                if (cursor.c == @as(u32, '\\')) {
+                if (bun.Environment.isWindows and cursor.c == @as(u32, '\\')) dont_forward_slash: {
+                    const prev = cursor;
+                    const is_separator = if (codepointer_iter.next(&cursor)) switch (cursor.c) {
+                        '[', '{', '!', '*', '?' => false,
+                        else => true,
+                    } else true;
+                    cursor = prev;
+
+                    if (!is_separator) {
+                        break :dont_forward_slash;
+                    }
+
+                    try filter_utf32.append(self.allocator, '/');
+                    continue;
+                } else {
                     try filter_utf32.append(self.allocator, cursor.c);
                 }
-                try filter_utf32.append(self.allocator, cursor.c);
             }
             self.has_name_filters = self.has_name_filters or !is_path;
             try list.append(.{
@@ -187,7 +200,7 @@ pub const FilterSet = struct {
 
     pub fn matchesPath(self: *const FilterSet, path: []const u8) bool {
         for (self.filters) |filter| {
-            if (Glob.walk.matchImpl(filter.codepoints, path).matches()) {
+            if (Glob.walk.matchImpl(self.allocator, filter.codepoints, path).matches()) {
                 return true;
             }
         }
@@ -200,7 +213,7 @@ pub const FilterSet = struct {
                 .name => name,
                 .path => path,
             };
-            if (Glob.walk.matchImpl(filter.codepoints, target).matches()) {
+            if (Glob.walk.matchImpl(self.allocator, filter.codepoints, target).matches()) {
                 return true;
             }
         }

@@ -403,7 +403,7 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame
     var str = try str_arg.toSlice(globalThis, arena.allocator());
     defer str.deinit();
 
-    if (this.is_ascii and isAllAscii(str.slice())) return JSC.JSValue.jsBoolean(globImpl.Ascii.match(this.pattern, str.slice()).matches());
+    if (this.is_ascii and isAllAscii(str.slice())) return JSC.JSValue.jsBoolean(globImpl.Ascii.match(arena.allocator(), this.pattern, str.slice()).matches());
 
     const codepoints = codepoints: {
         if (this.pattern_codepoints) |cp| break :codepoints cp.items[0..];
@@ -418,7 +418,7 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame
         break :codepoints codepoints.items[0..codepoints.items.len];
     };
 
-    return if (globImpl.walk.matchImpl(codepoints, str.slice()).matches()) .true else .false;
+    return if (globImpl.walk.matchImpl(arena.allocator(), codepoints, str.slice()).matches()) .true else .false;
 }
 
 pub fn convertUtf8(codepoints: *std.ArrayList(u32), pattern: []const u8) !void {

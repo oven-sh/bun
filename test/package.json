@@ -60,6 +60,8 @@
     "postgres": "3.3.5",
     "prisma": "5.1.1",
     "prompts": "2.4.2",
+    "react": "19",
+    "react-dom": "19",
     "reflect-metadata": "0.2.2",
     "rollup": "4.4.1",
     "sass": "1.79.4",
@@ -88,8 +90,5 @@
   "private": true,
   "scripts": {
     "typecheck": "tsc --noEmit"
-  },
-  "resolutions": {
-    "react": "../node_modules/react"
   }
 }

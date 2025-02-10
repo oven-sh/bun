@@ -138,13 +138,13 @@ First, determine if the bun binary is properly installed on your system:
 & "$env:USERPROFILE\.bun\bin\bun" --version
 ```
 
-If the command executes successfully but `bun --version` is not recognized, it means bun is not in your system's `PATH`. To add it, open an elevated (as administrator) Powershell and paste the following command:
+If the command runs successfully but `bun --version` is not recognized, it means that bun is not in your system's `PATH`. To fix this, open a Powershell terminal and run the following command:
 
 ```pwsh
 [System.Environment]::SetEnvironmentVariable(
     "Path",
-    [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";$env:USERPROFILE\.bun\bin",
-    [System.EnvironmentVariableTarget]::Machine
+    [System.Environment]::GetEnvironmentVariable("Path", "User") + ";$env:USERPROFILE\.bun\bin",
+    [System.EnvironmentVariableTarget]::User
 )
 ```
 After running the command, restart your terminal and test with `bun --version`

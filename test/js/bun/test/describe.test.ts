@@ -11,20 +11,19 @@ describe("blocks should handle both a string or function for the first arg", () 
   describe(add, () => {
     test("should pass", () => {
       functionBlockRan = true;
-      expect(true).toBe(true);
+      expect(true).toBeTrue();
     });
   });
 
   describe("also here", () => {
     test("Should also pass", () => {
       stringBlockRan = true;
-      expect(true).toBe(true);
+      expect(true).toBeTrue();
     });
   });
 
-  // Add a final test to verify both blocks ran
   test("both blocks should have run", () => {
-    expect(functionBlockRan).toBe(true);
-    expect(stringBlockRan).toBe(true);
+    expect(functionBlockRan).toBeTrue();
+    expect(stringBlockRan).toBeTrue();
   });
 });

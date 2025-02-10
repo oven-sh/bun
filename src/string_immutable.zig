@@ -832,7 +832,7 @@ pub fn isOnCharBoundary(self: string, idx: usize) bool {
 
 pub fn isUtf8CharBoundary(c: u8) bool {
     // This is bit magic equivalent to: b < 128 || b >= 192
-    return @as(i8, @intCast(c)) >= -0x40;
+    return @as(i8, @bitCast(c)) >= -0x40;
 }
 
 pub fn startsWithCaseInsensitiveAscii(self: string, prefix: string) bool {

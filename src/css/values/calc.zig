@@ -934,8 +934,10 @@ pub fn Calc(comptime V: type) type {
                     };
                     if (rhs == .number) {
                         const val = rhs.number;
-                        node = node.mulF32(input.allocator(), 1.0 / val);
-                        continue;
+                        if (val != 0.0) {
+                            node = node.mulF32(input.allocator(), 1.0 / val);
+                            continue;
+                        }
                     }
                     return .{ .err = input.newCustomError(css.ParserError{ .invalid_value = {} }) };
                 } else {

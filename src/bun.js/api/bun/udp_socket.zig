@@ -855,18 +855,6 @@ pub const UDPSocket = struct {
         return JSValue.jsNumber(this.socket.boundPort());
     }
 
-    fn addressToString(globalThis: *JSGlobalObject, address_bytes: []const u8) JSValue {
-        var text_buf: [512]u8 = undefined;
-        const address: std.net.Address = switch (address_bytes.len) {
-            4 => std.net.Address.initIp4(address_bytes[0..4].*, 0),
-            16 => std.net.Address.initIp6(address_bytes[0..16].*, 0, 0, 0),
-            else => return .undefined,
-        };
-
-        const slice = bun.fmt.formatIp(address, &text_buf) catch unreachable;
-        return bun.String.createUTF8ForJS(globalThis, slice);
-    }
-
     fn createSockAddr(globalThis: *JSGlobalObject, address_bytes: []const u8, port: u16) JSValue {
         const sockaddr = switch (address_bytes.len) {
             4 => SocketAddress.newIPv4(address_bytes[0..4].*, port),

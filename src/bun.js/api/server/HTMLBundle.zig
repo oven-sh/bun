@@ -207,7 +207,7 @@ pub const HTMLBundleRoute = struct {
         }
     }
 
-    pub fn onPluginsResolved(this: *HTMLBundleRoute, plugins: ?*bun.JSC.API.JSBundler.Plugin) !void {
+    pub fn onPluginsResolved(this: *HTMLBundleRoute, plugins: ?*JSC.API.JSBundler.Plugin) !void {
         const global = this.html_bundle.global;
         const server = this.server.?;
         const development = server.config().development;
@@ -216,7 +216,28 @@ pub const HTMLBundleRoute = struct {
         var config: JSBundler.Config = .{};
         errdefer config.deinit(bun.default_allocator);
         try config.entry_points.insert(this.html_bundle.path);
-        try config.public_path.appendChar('/');
+        if (vm.transpiler.options.transform_options.serve_public_path) |public_path| {
+            if (public_path.len > 0) {
+                try config.public_path.appendSlice(public_path);
+            } else {
+                try config.public_path.appendChar('/');
+            }
+        } else {
+            try config.public_path.appendChar('/');
+        }
+
+        if (vm.transpiler.options.transform_options.serve_env_behavior != ._none) {
+            config.env_behavior = vm.transpiler.options.transform_options.serve_env_behavior;
+
+            if (config.env_behavior == .prefix) {
+                try config.env_prefix.appendSlice(vm.transpiler.options.transform_options.serve_env_prefix orelse "");
+            }
+        }
+
+        if (vm.transpiler.options.transform_options.serve_splitting) {
+            config.code_splitting = vm.transpiler.options.transform_options.serve_splitting;
+        }
+
         config.target = .browser;
         const is_development = development.isDevelopment();
 

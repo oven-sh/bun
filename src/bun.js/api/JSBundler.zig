@@ -372,7 +372,7 @@ pub const JSBundler = struct {
             }
 
             // if (try config.getOptional(globalThis, "dir", ZigString.Slice)) |slice| {
-            //     defer slice.deinit();
+        //     defer slice.deinit();
             //     this.appendSliceExact(slice.slice()) catch unreachable;
             // } else {
             //     this.appendSliceExact(globalThis.bunVM().transpiler.fs.top_level_dir) catch unreachable;

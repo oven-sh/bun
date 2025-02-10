@@ -407,14 +407,22 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
 
     dev.watcher_atomics = WatcherAtomics.init(dev);
 
-    dev.framework.initBundler(allocator, &dev.log, .development, .server, &dev.server_transpiler) catch |err|
+    dev.framework.initBundler(allocator, &dev.log, .development, .server, &dev.server_transpiler, &dev.bundler_options.server) catch |err|
         return global.throwError(err, generic_action);
     dev.server_transpiler.options.dev_server = dev;
-    dev.framework.initBundler(allocator, &dev.log, .development, .client, &dev.client_transpiler) catch |err|
+    dev.framework.initBundler(
+        allocator,
+        &dev.log,
+        .development,
+        .client,
+        &dev.client_transpiler,
+        &dev.bundler_options.client,
+    ) catch |err|
         return global.throwError(err, generic_action);
     dev.client_transpiler.options.dev_server = dev;
+
     if (separate_ssr_graph) {
-        dev.framework.initBundler(allocator, &dev.log, .development, .ssr, &dev.ssr_transpiler) catch |err|
+        dev.framework.initBundler(allocator, &dev.log, .development, .ssr, &dev.ssr_transpiler, &dev.bundler_options.ssr) catch |err|
             return global.throwError(err, generic_action);
         dev.ssr_transpiler.options.dev_server = dev;
     }

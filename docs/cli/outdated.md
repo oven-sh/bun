@@ -43,3 +43,5 @@ You can pass multiple `--filter` flags to check multiple workspaces:
 You can also pass glob patterns to filter by workspace names:
 
 {% bunOutdatedTerminal  glob="{e,t}*" displayGlob="--filter='@monorepo/{types,cli}'" /%}
+
+{% bunCLIUsage command="outdated" /%}

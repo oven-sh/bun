@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { spawnSync } from "bun";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { rm, writeFile } from "fs/promises";
-import { dirname, join } from "path";
+import { join } from "path";
 
 function add(a: number, b: number) {
   return a + b;
@@ -36,7 +36,6 @@ describe("shows function name correctly in test output", () => {
   test("describe block shows function name correctly in test output", async () => {
     const test_dir = tmpdirSync();
     try {
-      // Create a temporary test file
       await writeFile(
         join(test_dir, "describe-test.test.js"),
         `
@@ -67,7 +66,6 @@ describe("shows function name correctly in test output", () => {
       expect(fullOutput).toInclude("add > should pass");
       expect(fullOutput).not.toInclude("[object Object] > should pass");
     } finally {
-      // Clean up
       await rm(test_dir, { force: true, recursive: true });
     }
   });

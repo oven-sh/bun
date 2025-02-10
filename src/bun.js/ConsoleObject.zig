@@ -784,7 +784,6 @@ pub const FormatOptions = struct {
             if (try arg1.getBooleanLoose(globalThis, "sorted")) |opt| {
                 formatOptions.ordered_properties = opt;
             }
-
             if (try arg1.getBooleanLoose(globalThis, "compact")) |opt| {
                 formatOptions.single_line = opt;
             }

@@ -511,7 +511,3 @@ $getter;
 export function offset(this: BufferExt) {
   return $isObject(this) && this instanceof $Buffer ? this.byteOffset : undefined;
 }
-
-export function inspect(this: BufferExt, recurseTimes, ctx) {
-  return Bun.inspect(this);
-}

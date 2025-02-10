@@ -197,11 +197,11 @@ function snapshotCallerLocation(): string {
   let i = 1;
   for (; i < lines.length; i++) {
     const line = lines[i].replaceAll("\\", "/");
-    if (line.includes(import.meta.path.replaceAll("\\", "/"))) {
+    if (line.includes(import.meta.dir.replaceAll("\\", "/")) && !line.includes("dev-server-harness.ts")) {
       return line;
     }
   }
-  throw new Error("Couldn't find caller location in stack trace");
+  throw new Error("Couldn't find caller location in stack trace:\n" + stack);
 }
 function stackTraceFileName(line: string): string {
   let result = line.trim();
@@ -333,7 +333,9 @@ class OutputLineStream extends EventEmitter {
         let match;
         if ((match = line.match(regex))) {
           reset();
-          resolve(match);
+          setTimeout(() => {
+            resolve(match);
+          }, 50);
         }
       };
       const onClose = () => {
@@ -369,11 +371,11 @@ export function devTest<T extends DevServerTest>(description: string, options: T
   const basename = path.basename(caller, ".test" + path.extname(caller));
   const count = (counts[basename] = (counts[basename] ?? 0) + 1);
 
-  // TODO: Tests are flaky on all platforms. Disable
-  if (isCI) {
-    jest.test.todo(`DevServer > ${basename}.${count}: ${description}`);
-    return options;
-  }
+  // // TODO: Tests are flaky on all platforms. Disable
+  // if (isWindows) {
+  //   jest.test.todo(`DevServer > ${basename}.${count}: ${description}`);
+  //   return options;
+  // }
 
   jest.test(`DevServer > ${basename}.${count}: ${description}`, async () => {
     const root = path.join(tempDir, basename + count);

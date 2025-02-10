@@ -7571,7 +7571,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     bun.assert(this.config.onRequest != .zero);
                     app.any("/*", *ThisServer, this, onRequest);
                 } else if (this.config.onRequest != .zero) {
-                    // The HTML catch all recieves GET, HEAD, and OPTIONS
+                    // The HTML catch-all receives GET, HEAD, and OPTIONS
                     app.post("/*", *ThisServer, this, onRequest);
                     app.put("/*", *ThisServer, this, onRequest);
                     app.patch("/*", *ThisServer, this, onRequest);

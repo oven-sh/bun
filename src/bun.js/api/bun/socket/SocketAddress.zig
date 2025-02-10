@@ -3,13 +3,11 @@
 //! JS getters are named `getFoo`, while native getters are named `foo`.
 const SocketAddress = @This();
 
-// TODO: replace JSSocketAddress with this. May need to move native portion elsewhere.
-
 // NOTE: not std.net.Address b/c .un is huge and we don't use it.
 // NOTE: not C.sockaddr_storage b/c it's _huge_. we need >= 28 bytes for sockaddr_in6,
 // but sockaddr_storage is 128 bytes.
 /// @internal
-_addr: sockaddr_in,
+_addr: sockaddr,
 /// Cached address in presentation format. Prevents repeated conversion between
 /// strings and bytes.
 ///
@@ -85,7 +83,7 @@ pub usingnamespace bun.New(SocketAddress);
 pub fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSError!*SocketAddress {
     const options_obj = frame.argument(0);
     if (options_obj.isUndefined()) return SocketAddress.new(.{
-        ._addr = sockaddr_in.@"127.0.0.1",
+        ._addr = sockaddr.@"127.0.0.1",
         ._presentation = WellKnownAddress.@"127.0.0.1",
     });
 
@@ -104,9 +102,9 @@ pub fn create(global: *JSC.JSGlobalObject, options: Options) bun.JSError!*Socket
     // NOTE: `zig translate-c` creates semantically invalid code for `C.ntohs`.
     // Switch back to `htons(options.port)` when this issue gets resolved:
     // https://github.com/ziglang/zig/issues/22804
-    const addr: sockaddr_in = switch (options.family) {
+    const addr: sockaddr = switch (options.family) {
         AF.INET => v4: {
-            var sin: C.sockaddr_in = .{
+            var sin: sockaddr_in = .{
                 .sin_family = options.family.int(),
                 .sin_port = std.mem.nativeToBig(u16, options.port),
                 .sin_addr = undefined,
@@ -123,7 +121,7 @@ pub fn create(global: *JSC.JSGlobalObject, options: Options) bun.JSError!*Socket
             break :v4 .{ .sin = sin };
         },
         AF.INET6 => v6: {
-            var sin6: C.sockaddr_in6 = .{
+            var sin6: sockaddr_in6 = .{
                 .sin6_family = options.family.int(),
                 .sin6_port = std.mem.nativeToBig(u16, options.port),
                 .sin6_flowinfo = options.flowlabel orelse 0,
@@ -156,7 +154,7 @@ pub fn parse(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
 /// Create an IPv4 socket address. `addr` is assumed to be valid. Port is in host byte order.
 pub fn newIPv4(addr: [4]u8, port_: u16) SocketAddress {
     // TODO: make sure casting doesn't swap byte order on us.
-    return .{ ._addr = sockaddr_in.v4(std.mem.nativeToBig(u16, port_), .{ .s_addr = @bitCast(addr) }) };
+    return .{ ._addr = sockaddr.v4(std.mem.nativeToBig(u16, port_), .{ .s_addr = @bitCast(addr) }) };
 }
 
 /// Create an IPv6 socket address. `addr` is assumed to be valid. Port is in
@@ -166,7 +164,7 @@ pub fn newIPv4(addr: [4]u8, port_: u16) SocketAddress {
 /// values.
 pub fn newIPv6(addr: [16]u8, port_: u16, flowinfo: u32, scope_id: u32) SocketAddress {
     const addr_: C.struct_in6_addr = @bitCast(addr);
-    return .{ ._addr = sockaddr_in.v6(
+    return .{ ._addr = sockaddr.v6(
         std.mem.nativeToBig(u16, port_),
         addr_,
         flowinfo,
@@ -269,10 +267,10 @@ pub fn flowLabel(this: *const SocketAddress) ?u32 {
     }
 }
 
-pub fn socklen(this: *const SocketAddress) C.socklen_t {
+pub fn socklen(this: *const SocketAddress) socklen_t {
     switch (this._addr.sin_family) {
-        AF.INET => return @sizeOf(C.sockaddr_in),
-        AF.INET6 => return @sizeOf(C.sockaddr_in6),
+        AF.INET => return @sizeOf(sockaddr_in),
+        AF.INET6 => return @sizeOf(sockaddr_in6),
     }
 }
 
@@ -294,12 +292,12 @@ fn pton(global: *JSC.JSGlobalObject, comptime af: c_int, addr: []const u8, dst: 
     }
 }
 
-inline fn asV4(this: *const SocketAddress) *const C.sockaddr_in {
+inline fn asV4(this: *const SocketAddress) *const sockaddr_in {
     bun.debugAssert(this.family() == AF.INET);
     return &this._addr.sin;
 }
 
-inline fn asV6(this: *const SocketAddress) *const C.sockaddr_in6 {
+inline fn asV6(this: *const SocketAddress) *const sockaddr_in6 {
     bun.debugAssert(this.family() == AF.INET6);
     return &this._addr.sin6;
 }
@@ -320,11 +318,11 @@ pub const AF = enum(C.sa_family_t) {
 ///   They're no longer the same size.
 /// - This replaces `sockaddr_storage` because it's huge. This is 28 bytes,
 ///   while `sockaddr_storage` is 128 bytes.
-const sockaddr_in = extern union {
+const sockaddr = extern union {
     sin: C.sockaddr_in,
     sin6: C.sockaddr_in6,
 
-    pub fn v4(port_: C.in_port_t, addr: C.struct_in_addr) sockaddr_in {
+    pub fn v4(port_: C.in_port_t, addr: C.struct_in_addr) sockaddr {
         return .{ .sin = .{
             .sin_family = AF.INET.int(),
             .sin_port = port_,
@@ -339,7 +337,7 @@ const sockaddr_in = extern union {
         flowinfo: u32,
         /// set to 0 if you don't care
         scope_id: u32,
-    ) sockaddr_in {
+    ) sockaddr {
         return .{ .sin6 = .{
             .sin6_family = AF.INET6.int(),
             .sin6_port = port_,
@@ -349,8 +347,8 @@ const sockaddr_in = extern union {
         } };
     }
 
-    pub const @"127.0.0.1": sockaddr_in = sockaddr_in.v4(0, .{ .s_addr = C.INADDR_LOOPBACK });
-    pub const @"::1": sockaddr_in = sockaddr_in.v6(0, C.in6addr_loopback);
+    pub const @"127.0.0.1": sockaddr = sockaddr.v4(0, .{ .s_addr = C.INADDR_LOOPBACK });
+    pub const @"::1": sockaddr = sockaddr.v6(0, C.in6addr_loopback);
 };
 
 const WellKnownAddress = struct {
@@ -363,8 +361,8 @@ const WellKnownAddress = struct {
 // The same types are defined in a bunch of different places. We should probably unify them.
 comptime {
     for (.{ std.posix.socklen_t, C.socklen_t }) |other_socklen| {
-        if (@sizeOf(ares.socklen_t) != @sizeOf(other_socklen)) @compileError("socklen_t size mismatch");
-        if (@alignOf(ares.socklen_t) != @alignOf(other_socklen)) @compileError("socklen_t alignment mismatch");
+        if (@sizeOf(socklen_t) != @sizeOf(other_socklen)) @compileError("socklen_t size mismatch");
+        if (@alignOf(socklen_t) != @alignOf(other_socklen)) @compileError("socklen_t alignment mismatch");
     }
 }
 
@@ -373,10 +371,14 @@ const bun = @import("root").bun;
 const ares = bun.c_ares;
 const C = bun.C.translated;
 const Environment = bun.Environment;
-const JSC = bun.JSC;
 const string = bun.string;
 const Output = bun.Output;
-const ZigString = JSC.ZigString;
 
+const JSC = bun.JSC;
+const ZigString = JSC.ZigString;
 const CallFrame = JSC.CallFrame;
 const JSValue = JSC.JSValue;
+
+const sockaddr_in = C.sockaddr_in;
+const sockaddr_in6 = C.sockaddr_in6;
+const socklen_t = ares.socklen_t;

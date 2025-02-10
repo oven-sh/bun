@@ -679,6 +679,11 @@ pub const Bunfig = struct {
                                 try this.addError(minify.loc, "Expected minify to be boolean or object");
                             }
                         }
+
+                        // Here! The type is ?[]const u8, not ![]const u8
+                        const slice = try serve_obj.asString(allocator);
+                        _ = strings.indexOfChar(slice, '*');
+
                         this.bunfig.bunfig_path = bun.default_allocator.dupe(u8, this.source.path.text) catch bun.outOfMemory();
                     }
                 }

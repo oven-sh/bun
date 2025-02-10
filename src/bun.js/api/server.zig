@@ -1641,6 +1641,7 @@ fn NewFlags(comptime debug_mode: bool) type {
         has_written_status: bool = false,
         response_protected: bool = false,
         aborted: bool = false,
+        user_called_abort: bool = false,
         has_finalized: bun.DebugOnly(bool) = bun.DebugOnlyDefault(false),
 
         is_error_promise_pending: bool = false,
@@ -1689,6 +1690,28 @@ pub const AnyRequestContext = struct {
 
     pub fn get(self: AnyRequestContext, comptime T: type) ?*T {
         return self.tagged_pointer.get(T);
+    }
+
+    pub fn abort(self: AnyRequestContext) bool {
+        if (self.tagged_pointer.isNull()) {
+            return false;
+        }
+
+        switch (self.tagged_pointer.tag()) {
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
+                return self.tagged_pointer.as(HTTPServer.RequestContext).abort();
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
+                return self.tagged_pointer.as(HTTPSServer.RequestContext).abort();
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
+                return self.tagged_pointer.as(DebugHTTPServer.RequestContext).abort();
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
+                return self.tagged_pointer.as(DebugHTTPSServer.RequestContext).abort();
+            },
+            else => @panic("Unexpected AnyRequestContext tag"),
+        }
     }
 
     pub fn setTimeout(self: AnyRequestContext, seconds: c_uint) bool {
@@ -1985,7 +2008,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         fn handleResolve(ctx: *RequestContext, value: JSC.JSValue) void {
-            if (ctx.isAbortedOrEnded() or ctx.didUpgradeWebSocket()) {
+            if (ctx.isAbortedOrEnded() or ctx.didUpgradeWebSocket() or ctx.flags.user_called_abort) {
                 return;
             }
 
@@ -2005,7 +2028,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             ctx.response_jsvalue = value;
             assert(!ctx.flags.response_protected);
             ctx.flags.response_protected = true;
-            JSC.C.JSValueProtect(ctx.server.?.globalThis, value.asObjectRef());
+            value.protect();
 
             if (ctx.method == .HEAD) {
                 if (ctx.resp) |resp| {
@@ -2042,6 +2065,16 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             return true;
+        }
+
+        pub fn abort(this: *RequestContext) bool {
+            if (this.isAbortedOrEnded() or this.flags.user_called_abort) return false;
+            if (this.resp) |resp| {
+                this.flags.user_called_abort = true;
+                resp.abort();
+                return true;
+            }
+            return false;
         }
 
         /// destroy RequestContext, should be only called by deref or if defer_deinit_until_callback_completes is ref is set to true
@@ -2104,7 +2137,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         fn handleReject(ctx: *RequestContext, value: JSC.JSValue) void {
-            if (ctx.isAbortedOrEnded()) {
+            if (ctx.isAbortedOrEnded() or ctx.flags.user_called_abort) {
                 return;
             }
 
@@ -2125,7 +2158,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
             }
             // check again in case it get aborted after runErrorHandler
-            if (ctx.isAbortedOrEnded()) {
+            if (ctx.isAbortedOrEnded() or ctx.flags.user_called_abort) {
                 return;
             }
 
@@ -2373,21 +2406,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             assert(this.resp == resp);
             assert(this.server != null);
 
-            var any_js_calls = false;
-            var vm = this.server.?.vm;
-            const globalThis = this.server.?.globalThis;
-            defer {
-                // This is a task in the event loop.
-                // If we called into JavaScript, we must drain the microtask queue
-                if (any_js_calls) {
-                    vm.drainMicrotasks();
-                }
-            }
-
             if (this.request_weakref.get()) |request| {
-                if (request.internal_event_callback.trigger(Request.InternalJSEventCallback.EventType.timeout, globalThis)) {
-                    any_js_calls = true;
-                }
+                const globalThis = this.server.?.globalThis;
+                request.internal_event_callback.triggerAtTopOfEventLoop(Request.InternalJSEventCallback.EventType.timeout, globalThis);
             }
         }
 
@@ -2400,19 +2421,19 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             this.detachResponse();
             var any_js_calls = false;
-            var vm = this.server.?.vm;
+            const vm: *JSC.VirtualMachine = this.server.?.vm;
             const globalThis = this.server.?.globalThis;
+            const loop = vm.eventLoop();
             defer {
-                // This is a task in the event loop.
-                // If we called into JavaScript, we must drain the microtask queue
                 if (any_js_calls) {
-                    vm.drainMicrotasks();
+                    loop.exit();
                 }
                 this.deref();
             }
 
             if (this.request_weakref.get()) |request| {
                 request.request_context = AnyRequestContext.Null;
+                loop.enter();
                 if (request.internal_event_callback.trigger(Request.InternalJSEventCallback.EventType.abort, globalThis)) {
                     any_js_calls = true;
                 }
@@ -2428,6 +2449,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     signal.unref();
                 }
                 if (!signal.aborted()) {
+                    if (!any_js_calls) {
+                        loop.enter();
+                    }
                     signal.signal(globalThis, .ConnectionClosed);
                     any_js_calls = true;
                 }
@@ -2435,6 +2459,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             //if have sink, call onAborted on sink
             if (this.sink) |wrapper| {
+                if (!any_js_calls) {
+                    loop.enter();
+                }
                 wrapper.sink.abort();
                 return;
             }
@@ -2443,6 +2470,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (this.isDeadRequest()) {
                 this.finalizeWithoutDeinit();
             } else {
+                if (!any_js_calls) {
+                    loop.enter();
+                }
+
                 if (this.endRequestStreaming()) {
                     any_js_calls = true;
                 }
@@ -2453,6 +2484,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         response.body.value.Locked.readable = .{};
                         defer strong_readable.deinit();
                         if (strong_readable.get()) |readable| {
+                            if (!any_js_calls) {
+                                loop.enter();
+                            }
                             readable.abort(globalThis);
                             any_js_calls = true;
                         }
@@ -3296,6 +3330,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // just ignore the Response object. It doesn't do anything.
             // it's better to do that than to throw an error
             if (ctx.didUpgradeWebSocket()) {
+                return;
+            }
+
+            // if the user called server.abort(request), we don't mind if they don't return a Response.
+            if (ctx.flags.user_called_abort) {
                 return;
             }
 
@@ -6113,6 +6152,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub const doFetch = onFetch;
         pub const doRequestIP = JSC.wrapInstanceMethod(ThisServer, "requestIP", false);
         pub const doTimeout = JSC.wrapInstanceMethod(ThisServer, "timeout", false);
+        pub const doAbort = JSC.wrapInstanceMethod(ThisServer, "abort", false);
 
         /// Returns:
         /// - .ready if no plugin has to be loaded
@@ -6172,6 +6212,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 )
             else
                 JSValue.jsNull();
+        }
+
+        pub fn abort(_: *ThisServer, request: *JSC.WebCore.Request) JSC.JSValue {
+            return JSValue.jsBoolean(request.request_context.abort());
         }
 
         pub fn memoryCost(this: *ThisServer) usize {

@@ -25,6 +25,10 @@ function generate(name) {
         fn: "doReload",
         length: 2,
       },
+      abort: {
+        fn: "doAbort",
+        length: 1,
+      },
       "@@dispose": {
         fn: "dispose",
         length: 0,

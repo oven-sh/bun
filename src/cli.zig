@@ -2462,7 +2462,7 @@ pub const Command = struct {
                         \\  <b><green>bun create<r> <magenta>\<template\><r> <cyan>[...flags]<r> <blue>dest<r> 
                         \\  <b><green>bun create<r> <magenta>\<github-org/repo\><r> <cyan>[...flags]<r> <blue>dest<r>
                         \\
-                        \\<b>Environment variables<r>:
+                        \\<b>Environment variables<r><d>:<r>
                         \\  <cyan>GITHUB_TOKEN<r>         <d>Supply a token to download code from GitHub with a higher rate limit<r>
                         \\  <cyan>GITHUB_API_DOMAIN<r>    <d>Configure custom/enterprise GitHub domain. Default "api.github.com"<r>
                         \\  <cyan>NPM_CLIENT<r>           <d>Absolute path to the npm client executable<r>
@@ -2471,7 +2471,7 @@ pub const Command = struct {
 
                     const outro_text =
                         \\<b>React Component Projects<r><d>:<r>
-                        \\  • Sets up a complete frontend dev environment from an existing React component
+                        \\  • Turn an existing React component into a complete frontend dev environment
                         \\  • Automatically starts a hot-reloading dev server
                         \\  • Auto-detects & configures TailwindCSS and shadcn/ui
                         \\

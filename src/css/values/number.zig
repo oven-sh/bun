@@ -10,13 +10,21 @@ const Calc = css.css_values.calc.Calc;
 pub const CSSNumber = f32;
 pub const CSSNumberFns = struct {
     pub fn parse(input: *css.Parser) Result(CSSNumber) {
-        if (input.tryParse(Calc(f32).parse, .{}).asValue()) |calc_value| {
-            switch (calc_value) {
+        return parseImpl(input, false);
+    }
+
+    pub fn parseImpl(input: *css.Parser, return_on_nan: bool) Result(CSSNumber) {
+        switch (input.tryParse(Calc(f32).parse, .{})) {
+            .result => |calc_value| switch (calc_value) {
                 .value => |v| return .{ .result = v.* },
                 .number => |n| return .{ .result = n },
-                // Numbers are always compatible, so they will always compute to a value.
                 else => return .{ .err = input.newCustomError(css.ParserError.invalid_value) },
-            }
+            },
+            .err => |e| {
+                if (return_on_nan and e.kind == .custom and e.kind.custom == .invalid_calc_nan) {
+                    return .{ .err = e };
+                }
+            },
         }
 
         return input.expectNumber();

@@ -652,8 +652,10 @@ pub const Framework = struct {
             // TODO: follow user configuration
             else => .none,
         };
-        out.options.env.behavior = bundler_options.env;
-        out.options.env.prefix = bundler_options.env_prefix orelse "";
+        if (bundler_options.env != ._none) {
+            out.options.env.behavior = bundler_options.env;
+            out.options.env.prefix = bundler_options.env_prefix orelse "";
+        }
         out.resolver.opts = out.options;
 
         out.configureLinker();

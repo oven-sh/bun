@@ -4506,6 +4506,7 @@ pub const udp = struct {
             return us_udp_socket_bind(this, hostname, port);
         }
 
+        /// Get the bound port in host byte order
         pub fn boundPort(this: *This) c_int {
             return us_udp_socket_bound_port(this);
         }

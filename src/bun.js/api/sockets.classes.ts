@@ -370,4 +370,46 @@ export default [
     },
     klass: {},
   }),
+  define({
+    name: "SocketAddress",
+    construct: true,
+    finalize: true,
+    klass: {
+      parse: {
+        fn: "parse",
+        length: 1,
+        enumerable: false,
+        configurable: true,
+      },
+    },
+    proto: {
+      address: {
+        getter: "getAddress",
+        // setter: "setAddress",
+        enumerable: true,
+        configurable: true,
+        cache: true,
+      },
+      port: {
+        getter: "getPort",
+        enumerable: true,
+        configurable: true,
+      },
+      family: {
+        getter: "getFamily",
+        enumerable: true,
+        configurable: true,
+      },
+      addrfamily: {
+        getter: "getAddrFamily",
+        enumerable: false,
+        configurable: false,
+      },
+      flowlabel: {
+        getter: "getFlowLabel",
+        enumerable: false,
+        configurable: true,
+      },
+    },
+  }),
 ];

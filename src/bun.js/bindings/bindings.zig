@@ -1974,7 +1974,7 @@ pub const JSString = extern struct {
 
     pub const view = getZigString;
 
-    // doesn't always allocate
+    /// doesn't always allocate
     pub fn toSlice(
         this: *JSString,
         global: *JSGlobalObject,
@@ -2967,6 +2967,7 @@ pub const JSGlobalObject = opaque {
         };
     }
 
+    /// "Expected {field} to be a {typename} for '{name}'."
     pub fn createInvalidArgumentType(
         this: *JSGlobalObject,
         comptime name_: []const u8,
@@ -2980,6 +2981,7 @@ pub const JSGlobalObject = opaque {
         return JSC.toJS(this, @TypeOf(value), value, lifetime);
     }
 
+    /// "Expected {field} to be a {typename} for '{name}'."
     pub fn throwInvalidArgumentType(
         this: *JSGlobalObject,
         comptime name_: []const u8,
@@ -2989,6 +2991,7 @@ pub const JSGlobalObject = opaque {
         return this.throwValue(this.createInvalidArgumentType(name_, field, typename));
     }
 
+    /// "The {argname} argument is invalid. Received {value}"
     pub fn throwInvalidArgumentValue(
         this: *JSGlobalObject,
         argname: []const u8,
@@ -3010,7 +3013,7 @@ pub const JSGlobalObject = opaque {
         return str;
     }
 
-    /// "The <argname> argument must be of type <typename>. Received <value>"
+    /// "The {argname} argument must be of type {typename}. Received {value}"
     pub fn throwInvalidArgumentTypeValue(
         this: *JSGlobalObject,
         argname: []const u8,
@@ -3173,17 +3176,22 @@ pub const JSGlobalObject = opaque {
         return JSC.Error.ERR_INVALID_ARG_TYPE.fmt(this, fmt, args);
     }
 
-    pub fn createError(
-        this: *JSGlobalObject,
+    pub const SysErrOptions = struct {
         code: JSC.Node.ErrorCode,
-        error_name: string,
-        comptime message: string,
+        errno: ?i32 = null,
+        name: ?string = null,
+    };
+    pub fn throwSysError(
+        this: *JSGlobalObject,
+        opts: SysErrOptions,
+        comptime message: bun.stringZ,
         args: anytype,
-    ) JSValue {
+    ) JSError {
         const err = createErrorInstance(this, message, args);
-        err.put(this, ZigString.static("code"), ZigString.init(@tagName(code)).toJS(this));
-        err.put(this, ZigString.static("name"), ZigString.init(error_name).toJS(this));
-        return err;
+        err.put(this, ZigString.static("code"), ZigString.init(@tagName(opts.code)).toJS(this));
+        if (opts.name) |name| err.put(this, ZigString.static("name"), ZigString.init(name).toJS(this));
+        if (opts.errno) |errno| err.put(this, ZigString.static("errno"), JSC.toJS(this, i32, errno, .temporary));
+        return this.throwValue(err);
     }
 
     pub fn throw(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSError {
@@ -6123,6 +6131,7 @@ pub const JSValue = enum(i64) {
         "toError_",
         "toInt32",
         "toInt64",
+        "toUInt32",
         "toObject",
         "toPropertyKeyValue",
         "toString",

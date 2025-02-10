@@ -58,6 +58,12 @@ export type Field =
     };
 
 export class ClassDefinition {
+  /**
+   * Class name.
+   *
+   * Used to find the proper struct and as the `.name` of the JS constructor
+   * function.
+   */
   name: string;
   /**
    * Class constructor is newable.

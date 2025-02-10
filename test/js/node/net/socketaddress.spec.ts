@@ -9,13 +9,31 @@ describe("SocketAddress", () => {
   });
 
   it("is newable", () => {
-    // @ts-ignore -- types are wrong. default is kEmptyObject.
+    // @ts-expect-error -- types are wrong. default is kEmptyObject.
     expect(new SocketAddress()).toBeInstanceOf(SocketAddress);
   });
 
   it("is not callable", () => {
-    // @ts-ignore -- types are wrong.
+    // @ts-expect-error -- types are wrong.
     expect(() => SocketAddress()).toThrow(TypeError);
+  });
+  describe("new SocketAddress()", () => {
+    let address: SocketAddress;
+    beforeEach(() => {
+      address = new SocketAddress();
+    });
+    it("creates an ipv4 address", () => {
+      expect(address.family).toBe("ipv4");
+    });
+    it("address is 127.0.0.1", () => {
+      expect(address.address).toBe("127.0.0.1");
+    });
+    it("port is 0", () => {
+      expect(address.port).toBe(0);
+    });
+    it("flowlabel is 0", () => {
+      expect(address.flowlabel).toBe(0);
+    });
   });
 });
 

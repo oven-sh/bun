@@ -186,12 +186,6 @@ pub fn finalize(this: *SocketAddress) void {
 
 // =============================================================================
 
-pub fn isSocketAddress(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    _ = globalObject;
-    _ = callframe;
-    return JSC.JSValue.jsBoolean(false); // TODO;
-}
-
 pub fn getAddress(this: *SocketAddress, global: *JSC.JSGlobalObject) JSC.JSValue {
     // TODO: check that this doesn't ref() again.
     return this.address().toJS(global);

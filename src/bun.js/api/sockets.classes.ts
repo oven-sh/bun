@@ -375,12 +375,6 @@ export default [
     construct: true,
     finalize: true,
     klass: {
-      isSocketAddress: {
-        fn: "isSocketAddress",
-        length: 1,
-        enumerable: false,
-        configurable: true,
-      },
       parse: {
         fn: "parse",
         length: 1,

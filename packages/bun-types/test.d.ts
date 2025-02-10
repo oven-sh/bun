@@ -166,7 +166,7 @@ declare module "bun:test" {
    * @param fn the function that defines the tests
    */
   export interface Describe {
-    (label: string | Function, fn: () => void): void;
+    (label: string | Function, fn?: () => void): void;
     /**
      * Skips all other tests, except this group of tests.
      *

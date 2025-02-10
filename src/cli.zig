@@ -2471,8 +2471,9 @@ pub const Command = struct {
 
                     const outro_text =
                         \\<b>React Component Projects<r><d>:<r>
-                        \\  Creates a complete frontend dev environment that starts a hot-reloading dev server
-                        \\  automatically. Supports TailwindCSS and shadcn/ui with zero configuration.
+                        \\  • Sets up a complete frontend dev environment from an existing React component
+                        \\  • Automatically starts a hot-reloading dev server
+                        \\  • Auto-detects & configures TailwindCSS and shadcn/ui
                         \\
                         \\  <b><magenta>bun create \<MyReactComponent.(jsx|tsx)\><r>
                         \\

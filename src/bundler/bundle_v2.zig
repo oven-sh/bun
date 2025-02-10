@@ -154,20 +154,8 @@ pub const ThreadPool = struct {
 
     pub fn start(this: *ThreadPool, v2: *BundleV2, existing_thread_pool: ?*ThreadPoolLib) !void {
         this.v2 = v2;
-
-        if (existing_thread_pool) |pool| {
-            this.pool = pool;
-        } else {
-            const cpu_count = bun.getThreadCount();
-            this.pool = try v2.graph.allocator.create(ThreadPoolLib);
-            this.pool.* = ThreadPoolLib.init(.{
-                .max_threads = cpu_count,
-            });
-            debug("{d} workers", .{cpu_count});
-        }
-
+        this.pool = existing_thread_pool orelse JSC.WorkPool.get();
         this.pool.warm(8);
-
         this.pool.setThreadContext(this);
     }
 

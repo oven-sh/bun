@@ -166,7 +166,7 @@ declare module "bun:test" {
    * @param fn the function that defines the tests
    */
   export interface Describe {
-    (label: string, fn: () => void): void;
+    (label: string | Function, fn: () => void): void;
     /**
      * Skips all other tests, except this group of tests.
      *
@@ -1060,7 +1060,7 @@ declare module "bun:test" {
 
     /**
      * Asserts that an `object` contains all the provided keys.
-     * 
+     *
      * @example
      * expect({ a: 'foo', b: 'bar', c: 'baz' }).toContainKeys(['a', 'b']);
      * expect({ a: 'foo', b: 'bar', c: 'baz' }).toContainKeys(['a', 'b', 'c']);

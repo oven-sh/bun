@@ -1725,7 +1725,7 @@ inline fn createScope(
     var function = if (args.len > 1) args[1] else .zero;
     var options = if (args.len > 2) args[2] else .zero;
 
-    if (description.isEmptyOrUndefinedOrNull() or !description.isString()) {
+    if (!description.isFunction() and (description.isEmptyOrUndefinedOrNull() or !description.isString())) {
         function = description;
         description = .zero;
     }
@@ -1767,11 +1767,15 @@ inline fn createScope(
     const label = brk: {
         if (description == .zero) {
             break :brk "";
-        } else {
-            var slice = try description.toSlice(globalThis, allocator);
+        }
+        if (description.isFunction()) {
+            var slice = description.getName(globalThis).toSlice(allocator);
             defer slice.deinit();
             break :brk try allocator.dupe(u8, slice.slice());
         }
+        var slice = try description.toSlice(globalThis, allocator);
+        defer slice.deinit();
+        break :brk try allocator.dupe(u8, slice.slice());
     };
     var tag_to_use = tag;
 

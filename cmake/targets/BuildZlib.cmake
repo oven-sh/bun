@@ -4,7 +4,7 @@ register_repository(
   REPOSITORY
     zlib-ng/zlib-ng
   COMMIT
-    cbb6ec1d74e8061efdf7251f8c2dae778bed14fd
+    860e4cff7917d93f54f5d7f0bc1d0e8b1a3cb988
 )
 
 if(WIN32)

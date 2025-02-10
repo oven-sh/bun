@@ -205,3 +205,5 @@ When there is a package.json script and a file with the same name, `bun run` pri
 2. Source files, eg `bun run src/main.js`
 3. Binaries from project packages, eg `bun add eslint && bun run eslint`
 4. (`bun run` only) System commands, eg `bun run ls`
+
+{% bunCLIUsage command="run" /%}

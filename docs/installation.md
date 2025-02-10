@@ -94,7 +94,9 @@ $ bun --revision
 
 If you've installed Bun but are seeing a `command not found` error, you may have to manually add the installation directory (`~/.bun/bin`) to your `PATH`.
 
-{% details summary="How to add to your `PATH`" %}
+### How to add your `PATH`
+
+{% details summary="Linux / Mac" %}
 First, determine what shell you're using:
 
 ```sh
@@ -126,6 +128,26 @@ export PATH="$BUN_INSTALL/bin:$PATH"
 
 {% /codetabs %}
 Save the file. You'll need to open a new shell/terminal window for the changes to take effect.
+
+{% /details %}
+
+{% details summary="Windows" %}
+First, determine if the bun binary is properly installed on your system:
+
+```pwsh
+& "$env:USERPROFILE\.bun\bin\bun" --version
+```
+
+If the command runs successfully but `bun --version` is not recognized, it means that bun is not in your system's `PATH`. To fix this, open a Powershell terminal and run the following command:
+
+```pwsh
+[System.Environment]::SetEnvironmentVariable(
+    "Path",
+    [System.Environment]::GetEnvironmentVariable("Path", "User") + ";$env:USERPROFILE\.bun\bin",
+    [System.EnvironmentVariableTarget]::User
+)
+```
+After running the command, restart your terminal and test with `bun --version`
 
 {% /details %}
 

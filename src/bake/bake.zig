@@ -156,6 +156,9 @@ const BuildConfigSubset = struct {
     ignoreDCEAnnotations: ?bool = null,
     conditions: bun.StringArrayHashMapUnmanaged(void) = .{},
     drop: bun.StringArrayHashMapUnmanaged(void) = .{},
+    env: bun.Schema.Api.DotEnvBehavior = ._none,
+    env_prefix: ?[]const u8 = null,
+
     // TODO: plugins
 
     pub fn loadFromJs(config: *BuildConfigSubset, value: JSValue, arena: Allocator) !void {
@@ -588,8 +591,9 @@ pub const Framework = struct {
         allocator: std.mem.Allocator,
         log: *bun.logger.Log,
         mode: Mode,
-        comptime renderer: Graph,
+        renderer: Graph,
         out: *bun.transpiler.Transpiler,
+        bundler_options: *const BuildConfigSubset,
     ) !void {
         out.* = try bun.Transpiler.init(
             allocator, // TODO: this is likely a memory leak
@@ -648,6 +652,11 @@ pub const Framework = struct {
             // TODO: follow user configuration
             else => .none,
         };
+        if (bundler_options.env != ._none) {
+            out.options.env.behavior = bundler_options.env;
+            out.options.env.prefix = bundler_options.env_prefix orelse "";
+        }
+        out.resolver.opts = out.options;
 
         out.configureLinker();
         try out.configureDefines();

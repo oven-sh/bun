@@ -2766,7 +2766,10 @@ unsigned char JSC__JSCell__getType(JSC__JSCell* arg0) { return arg0->type(); }
 
 void JSC__JSString__toZigString(JSC__JSString* arg0, JSC__JSGlobalObject* arg1, ZigString* arg2)
 {
-    *arg2 = Zig::toZigString(arg0->value(arg1));
+    auto value = arg0->value(arg1);
+    *arg2 = Zig::toZigString(value.data.impl());
+
+    // We don't need to assert here because ->value returns a reference to the same string as the one owned by the JSString.
 }
 
 bool JSC__JSString__eql(const JSC__JSString* arg0, JSC__JSGlobalObject* obj, JSC__JSString* arg2)
@@ -6443,7 +6446,7 @@ CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JS
         remappedFrame.position.column_zero_based = originalColumn.zeroBasedInt();
         remappedFrame.source_url = Bun::toStringRef(sourceURL);
 
-        Bun__remapStackFramePositions(globalObject, &remappedFrame, 1);
+        Bun__remapStackFramePositions(Bun::vm(globalObject), &remappedFrame, 1);
 
         sourceURL = remappedFrame.source_url.toWTFString();
         lineColumn.line = OrdinalNumber::fromZeroBasedInt(remappedFrame.position.line_zero_based).oneBasedInt();

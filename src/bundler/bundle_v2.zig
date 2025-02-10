@@ -744,7 +744,7 @@ pub const BundleV2 = struct {
 
                     const path_to_use = import_record.specifier;
 
-                    if (!handles_import_errors) {
+                    if (!handles_import_errors and !this.transpiler.options.ignore_module_resolution_errors) {
                         if (isPackagePath(import_record.specifier)) {
                             if (target == .browser and options.ExternalModules.isNodeBuiltin(path_to_use)) {
                                 addError(
@@ -1458,6 +1458,59 @@ pub const BundleV2 = struct {
         return @intCast(source_index);
     }
 
+    pub const DependenciesScanner = struct {
+        ctx: *anyopaque,
+        entry_points: []const []const u8,
+
+        onFetch: *const fn (
+            ctx: *anyopaque,
+            result: *DependenciesScanner.Result,
+        ) anyerror!void,
+
+        pub const Result = struct {
+            dependencies: bun.StringSet,
+            reachable_files: []const Index,
+            bundle_v2: *BundleV2,
+        };
+    };
+
+    pub fn getAllDependencies(this: *BundleV2, reachable_files: []const Index, fetcher: *const DependenciesScanner) !void {
+
+        // Find all external dependencies from reachable files
+        var external_deps = bun.StringSet.init(bun.default_allocator);
+        defer external_deps.deinit();
+
+        const import_records = this.graph.ast.items(.import_records);
+
+        for (reachable_files) |source_index| {
+            const records: []const ImportRecord = import_records[source_index.get()].slice();
+            for (records) |*record| {
+                if (!record.source_index.isValid() and record.tag == .none) {
+                    const path = record.path.text;
+                    // External dependency
+                    if (path.len > 0 and
+
+                        // Check for either node or bun builtins
+                        // We don't use the list from .bun because that includes third-party packages in some cases.
+                        !JSC.HardcodedModule.Aliases.has(path, .node) and
+                        !strings.hasPrefixComptime(path, "bun:") and
+                        !strings.eqlComptime(path, "bun"))
+                    {
+                        if (strings.isNPMPackageNameIgnoreLength(path)) {
+                            try external_deps.insert(path);
+                        }
+                    }
+                }
+            }
+        }
+        var result = DependenciesScanner.Result{
+            .dependencies = external_deps,
+            .bundle_v2 = this,
+            .reachable_files = reachable_files,
+        };
+        try fetcher.onFetch(fetcher.ctx, &result);
+    }
+
     pub fn generateFromCLI(
         transpiler: *Transpiler,
         allocator: std.mem.Allocator,
@@ -1466,6 +1519,7 @@ pub const BundleV2 = struct {
         reachable_files_count: *usize,
         minify_duration: *u64,
         source_code_size: *u64,
+        fetcher: ?*DependenciesScanner,
     ) !std.ArrayList(options.OutputFile) {
         var this = try BundleV2.init(transpiler, null, allocator, event_loop, enable_reloading, null, null);
         this.unique_key = generateUniqueKey();
@@ -1506,6 +1560,12 @@ pub const BundleV2 = struct {
             this.graph.server_component_boundaries,
             reachable_files,
         );
+
+        // Do this at the very end, after processing all the imports/exports so that we can follow exports as needed.
+        if (fetcher) |fetch| {
+            try this.getAllDependencies(reachable_files, fetch);
+            return std.ArrayList(options.OutputFile).init(allocator);
+        }
 
         return try this.linker.generateChunksInParallel(chunks, false);
     }
@@ -2810,7 +2870,7 @@ pub const BundleV2 = struct {
                     error.ModuleNotFound => {
                         const addError = Logger.Log.addResolveErrorWithTextDupe;
 
-                        if (!import_record.handles_import_errors) {
+                        if (!import_record.handles_import_errors and !this.transpiler.options.ignore_module_resolution_errors) {
                             last_error = err;
                             if (isPackagePath(import_record.path.text)) {
                                 if (ast.target == .browser and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
@@ -4013,15 +4073,20 @@ pub const ParseTask = struct {
             .css => {
                 var import_records = BabyList(ImportRecord){};
                 const source_code = source.contents;
+                var temp_log = bun.logger.Log.init(allocator);
+                defer {
+                    temp_log.appendToMaybeRecycled(log, &source) catch bun.outOfMemory();
+                }
+
                 var css_ast = switch (bun.css.BundlerStyleSheet.parseBundler(
                     allocator,
                     source_code,
-                    bun.css.ParserOptions.default(allocator, transpiler.log),
+                    bun.css.ParserOptions.default(allocator, &temp_log),
                     &import_records,
                 )) {
                     .result => |v| v,
                     .err => |e| {
-                        try e.addToLogger(log, &source);
+                        try e.addToLogger(&temp_log, &source, allocator);
                         return error.SyntaxError;
                     },
                 };
@@ -4029,12 +4094,12 @@ pub const ParseTask = struct {
                     .targets = bun.css.Targets.forBundlerTarget(transpiler.options.target),
                     .unused_symbols = .{},
                 }).asErr()) |e| {
-                    try e.addToLogger(log, &source);
+                    try e.addToLogger(&temp_log, &source, allocator);
                     return error.MinifyError;
                 }
                 const root = Expr.init(E.Object, E.Object{}, Logger.Loc{ .start = 0 });
                 const css_ast_heap = bun.create(allocator, bun.css.BundlerStyleSheet, css_ast);
-                var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
+                var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, &source, "")).?);
                 ast.css = css_ast_heap;
                 ast.import_records = import_records;
                 return ast;
@@ -5006,7 +5071,7 @@ const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const RefVoidMap = std.ArrayHashMapUnmanaged(Ref, void, Ref.ArrayHashCtx, false);
 const RefVoidMapManaged = std.ArrayHashMap(Ref, void, Ref.ArrayHashCtx, false);
 const RefImportData = std.ArrayHashMapUnmanaged(Ref, ImportData, Ref.ArrayHashCtx, false);
-const ResolvedExports = bun.StringArrayHashMapUnmanaged(ExportData);
+pub const ResolvedExports = bun.StringArrayHashMapUnmanaged(ExportData);
 const TopLevelSymbolToParts = js_ast.Ast.TopLevelSymbolToParts;
 
 pub const WrapKind = enum(u2) {
@@ -14742,6 +14807,7 @@ pub const LinkerContext = struct {
                         // time, so we emit a debug message and rewrite the value to the literal
                         // "undefined" instead of emitting an error.
                         symbol.import_item_status = .missing;
+
                         if (c.resolver.opts.target == .browser and JSC.HardcodedModule.Aliases.has(next_source.path.pretty, .bun)) {
                             c.log.addRangeWarningFmtWithNote(
                                 source,

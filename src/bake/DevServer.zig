@@ -12,9 +12,6 @@ pub const debug = bun.Output.Scoped(.DevServer, false);
 pub const memoryLog = bun.Output.Scoped(.DevServerMemory, true);
 pub const igLog = bun.Output.scoped(.IncrementalGraph, false);
 
-/// --no-hmr sets this to false
-pub var enabled = true;
-
 pub const Options = struct {
     /// Arena must live until DevServer.deinit()
     arena: Allocator,
@@ -410,14 +407,22 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
 
     dev.watcher_atomics = WatcherAtomics.init(dev);
 
-    dev.framework.initBundler(allocator, &dev.log, .development, .server, &dev.server_transpiler) catch |err|
+    dev.framework.initBundler(allocator, &dev.log, .development, .server, &dev.server_transpiler, &dev.bundler_options.server) catch |err|
         return global.throwError(err, generic_action);
     dev.server_transpiler.options.dev_server = dev;
-    dev.framework.initBundler(allocator, &dev.log, .development, .client, &dev.client_transpiler) catch |err|
+    dev.framework.initBundler(
+        allocator,
+        &dev.log,
+        .development,
+        .client,
+        &dev.client_transpiler,
+        &dev.bundler_options.client,
+    ) catch |err|
         return global.throwError(err, generic_action);
     dev.client_transpiler.options.dev_server = dev;
+
     if (separate_ssr_graph) {
-        dev.framework.initBundler(allocator, &dev.log, .development, .ssr, &dev.ssr_transpiler) catch |err|
+        dev.framework.initBundler(allocator, &dev.log, .development, .ssr, &dev.ssr_transpiler, &dev.bundler_options.ssr) catch |err|
             return global.throwError(err, generic_action);
         dev.ssr_transpiler.options.dev_server = dev;
     }
@@ -523,7 +528,9 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         errdefer types.deinit(allocator);
 
         for (options.framework.file_system_router_types, 0..) |fsr, i| {
-            const joined_root = bun.path.joinAbs(dev.root, .auto, fsr.root);
+            const buf = bun.PathBufferPool.get();
+            defer bun.PathBufferPool.put(buf);
+            const joined_root = bun.path.joinAbsStringBuf(dev.root, buf, &.{fsr.root}, .auto);
             const entry = dev.server_transpiler.resolver.readDirInfoIgnoreError(joined_root) orelse
                 continue;
 
@@ -3119,20 +3126,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             // Dump to filesystem if enabled
             if (bun.FeatureFlags.bake_debugging_features and content == .js) if (dev.dump_dir) |dump_dir| {
-                const cwd = dev.root;
-                var a: bun.PathBuffer = undefined;
-                var b: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
-                const rel_path = bun.path.relativeBufZ(&a, cwd, key);
-                const size = std.mem.replacementSize(u8, rel_path, "../", "_.._/");
-                _ = std.mem.replace(u8, rel_path, "../", "_.._/", &b);
-                const rel_path_escaped = b[0..size];
-                dumpBundle(dump_dir, switch (side) {
-                    .client => .client,
-                    .server => if (is_ssr_graph) .ssr else .server,
-                }, rel_path_escaped, content.js, true) catch |err| {
-                    bun.handleErrorReturnTrace(err, @errorReturnTrace());
-                    Output.warn("Could not dump bundle: {}", .{err});
-                };
+                dumpBundleForChunk(dev, dump_dir, side, key, content.js, true, is_ssr_graph);
             };
 
             const gop = try g.bundled_files.getOrPut(dev.allocator, key);
@@ -4370,7 +4364,9 @@ const DirectoryWatchStore = struct {
             bun.strings.startsWith(specifier, "../"))) return;
         if (!std.fs.path.isAbsolute(import_source)) return;
 
-        const joined = bun.path.joinAbs(bun.path.dirname(import_source, .auto), .auto, specifier);
+        const buf = bun.PathBufferPool.get();
+        defer bun.PathBufferPool.put(buf);
+        const joined = bun.path.joinAbsStringBuf(bun.path.dirname(import_source, .auto), buf, &.{specifier}, .auto);
         const dir = bun.path.dirname(joined, .auto);
 
         // `import_source` is not a stable string. let's share memory with the file graph.
@@ -4802,7 +4798,9 @@ pub const SerializedFailure = struct {
 
 // For debugging, it is helpful to be able to see bundles.
 fn dumpBundle(dump_dir: std.fs.Dir, graph: bake.Graph, rel_path: []const u8, chunk: []const u8, wrap: bool) !void {
-    const name = bun.path.joinAbsString("/", &.{
+    const buf = bun.PathBufferPool.get();
+    defer bun.PathBufferPool.put(buf);
+    const name = bun.path.joinAbsStringBuf("/", buf, &.{
         @tagName(graph),
         rel_path,
     }, .auto)[1..];
@@ -4838,6 +4836,22 @@ fn dumpBundle(dump_dir: std.fs.Dir, graph: bake.Graph, rel_path: []const u8, chu
     try bufw.flush();
 }
 
+noinline fn dumpBundleForChunk(dev: *DevServer, dump_dir: std.fs.Dir, side: bake.Side, key: []const u8, code: []const u8, wrap: bool, is_ssr_graph: bool) void {
+    const cwd = dev.root;
+    var a: bun.PathBuffer = undefined;
+    var b: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
+    const rel_path = bun.path.relativeBufZ(&a, cwd, key);
+    const size = std.mem.replacementSize(u8, rel_path, "../", "_.._/");
+    _ = std.mem.replace(u8, rel_path, "../", "_.._/", &b);
+    const rel_path_escaped = b[0..size];
+    dumpBundle(dump_dir, switch (side) {
+        .client => .client,
+        .server => if (is_ssr_graph) .ssr else .server,
+    }, rel_path_escaped, code, wrap) catch |err| {
+        bun.handleErrorReturnTrace(err, @errorReturnTrace());
+        Output.warn("Could not dump bundle: {}", .{err});
+    };
+}
 fn emitVisualizerMessageIfNeeded(dev: *DevServer) void {
     if (!bun.FeatureFlags.bake_debugging_features) return;
     if (dev.emit_visualizer_events == 0) return;
@@ -5712,7 +5726,10 @@ fn relativePath(dev: *const DevServer, path: []const u8) []const u8 {
     {
         return path[dev.root.len + 1 ..];
     }
-    const rel = bun.path.relative(dev.root, path);
+    const relative_path_buf = &struct {
+        threadlocal var buf: bun.PathBuffer = undefined;
+    }.buf;
+    const rel = bun.path.relativePlatformBuf(relative_path_buf, dev.root, path, .auto, true);
     // @constCast: `rel` is owned by a mutable threadlocal buffer in the path code.
     bun.path.platformToPosixInPlace(u8, @constCast(rel));
     return rel;

@@ -132,7 +132,7 @@ pub const HTMLBundleRoute = struct {
             return;
         };
 
-        if (server.config().development) {
+        if (server.config().isDevelopment()) {
             if (server.devServer()) |dev| {
                 dev.respondForHTMLBundle(this, req, resp) catch bun.outOfMemory();
                 return;
@@ -207,7 +207,7 @@ pub const HTMLBundleRoute = struct {
         }
     }
 
-    pub fn onPluginsResolved(this: *HTMLBundleRoute, plugins: ?*bun.JSC.API.JSBundler.Plugin) !void {
+    pub fn onPluginsResolved(this: *HTMLBundleRoute, plugins: ?*JSC.API.JSBundler.Plugin) !void {
         const global = this.html_bundle.global;
         const server = this.server.?;
         const development = server.config().development;
@@ -216,28 +216,50 @@ pub const HTMLBundleRoute = struct {
         var config: JSBundler.Config = .{};
         errdefer config.deinit(bun.default_allocator);
         try config.entry_points.insert(this.html_bundle.path);
-        try config.public_path.appendChar('/');
+        if (vm.transpiler.options.transform_options.serve_public_path) |public_path| {
+            if (public_path.len > 0) {
+                try config.public_path.appendSlice(public_path);
+            } else {
+                try config.public_path.appendChar('/');
+            }
+        } else {
+            try config.public_path.appendChar('/');
+        }
+
+        if (vm.transpiler.options.transform_options.serve_env_behavior != ._none) {
+            config.env_behavior = vm.transpiler.options.transform_options.serve_env_behavior;
+
+            if (config.env_behavior == .prefix) {
+                try config.env_prefix.appendSlice(vm.transpiler.options.transform_options.serve_env_prefix orelse "");
+            }
+        }
+
+        if (vm.transpiler.options.transform_options.serve_splitting) {
+            config.code_splitting = vm.transpiler.options.transform_options.serve_splitting;
+        }
+
         config.target = .browser;
+        const is_development = development.isDevelopment();
 
         if (bun.CLI.Command.get().args.serve_minify_identifiers) |minify_identifiers| {
             config.minify.identifiers = minify_identifiers;
-        } else if (!development) {
+        } else if (!is_development) {
             config.minify.identifiers = true;
         }
 
         if (bun.CLI.Command.get().args.serve_minify_whitespace) |minify_whitespace| {
             config.minify.whitespace = minify_whitespace;
-        } else if (!development) {
+        } else if (!is_development) {
             config.minify.whitespace = true;
         }
 
         if (bun.CLI.Command.get().args.serve_minify_syntax) |minify_syntax| {
             config.minify.syntax = minify_syntax;
-        } else if (!development) {
+        } else if (!is_development) {
             config.minify.syntax = true;
         }
 
-        if (!development) {
+        if (!is_development) {
             config.define.put("process.env.NODE_ENV", "\"production\"") catch bun.outOfMemory();
             config.jsx.development = false;
         } else {
@@ -279,7 +301,7 @@ pub const HTMLBundleRoute = struct {
                 completion_task.log.cloneToWithRecycled(&this.state.err, true) catch bun.outOfMemory();
 
                 if (this.server) |server| {
-                    if (server.config().development) {
+                    if (server.config().isDevelopment()) {
                         switch (bun.Output.enable_ansi_colors_stderr) {
                             inline else => |enable_ansi_colors| {
                                 var writer = bun.Output.errorWriterBuffered();
@@ -298,7 +320,7 @@ pub const HTMLBundleRoute = struct {
                 const globalThis = server.globalThis();
                 const output_files = bundle.output_files.items;
 
-                if (server.config().development) {
+                if (server.config().isDevelopment()) {
                     const now = bun.getRoughTickCount().ns();
                     const duration = now - completion_task.started_at_ns;
                     var duration_f64: f64 = @floatFromInt(duration);
@@ -326,13 +348,13 @@ pub const HTMLBundleRoute = struct {
                         var hashbuf: [64]u8 = undefined;
                         const etag_str = std.fmt.bufPrint(&hashbuf, "{}", .{bun.fmt.hexIntLower(output_file.hash)}) catch bun.outOfMemory();
                         headers.append("ETag", etag_str) catch bun.outOfMemory();
-                        if (!server.config().development and (output_file.output_kind == .chunk))
+                        if (!server.config().isDevelopment() and (output_file.output_kind == .chunk))
                             headers.append("Cache-Control", "public, max-age=31536000") catch bun.outOfMemory();
                     }
 
                     // Add a SourceMap header if we have a source map index
                     // and it's in development mode.
-                    if (server.config().development) {
+                    if (server.config().isDevelopment()) {
                         if (output_file.source_map_index != std.math.maxInt(u32)) {
                             var route_path = output_files[output_file.source_map_index].dest_path;
                             if (strings.hasPrefixComptime(route_path, "./") or strings.hasPrefixComptime(route_path, ".\\")) {
@@ -410,7 +432,7 @@ pub const HTMLBundleRoute = struct {
                     }
                 },
                 .err => |log| {
-                    if (this.server.?.config().development) {
+                    if (this.server.?.config().isDevelopment()) {
                         _ = log; // TODO: use the code from DevServer.zig to render the error
                     } else {
                         // To protect privacy, do not show errors to end users in production.

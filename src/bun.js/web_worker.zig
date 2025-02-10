@@ -47,7 +47,7 @@ pub const WebWorker = struct {
 
     extern fn WebWorker__dispatchExit(?*JSC.JSGlobalObject, *anyopaque, i32) void;
     extern fn WebWorker__dispatchOnline(this: *anyopaque, *JSC.JSGlobalObject) void;
-    extern fn WebWorker__dispatchError(*JSC.JSGlobalObject, *anyopaque, bun.String, JSValue) void;
+    extern fn WebWorker__dispatchError(*JSC.JSGlobalObject, *anyopaque, bun.String, JSValue) bool;
 
     export fn WebWorker__getParentWorker(vm: *JSC.VirtualMachine) ?*anyopaque {
         const worker = vm.worker orelse return null;
@@ -330,7 +330,7 @@ pub const WebWorker = struct {
         const err = vm.log.toJS(vm.global, bun.default_allocator, "Error in worker");
         const str = err.toBunString(vm.global);
         defer str.deref();
-        WebWorker__dispatchError(vm.global, this.cpp_worker, str, err);
+        _ = WebWorker__dispatchError(vm.global, this.cpp_worker, str, err);
     }
 
     fn onUnhandledRejection(vm: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, error_instance_or_exception: JSC.JSValue) void {
@@ -375,7 +375,11 @@ pub const WebWorker = struct {
             bun.outOfMemory();
         };
         JSC.markBinding(@src());
-        WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.createUTF8(array.slice()), error_instance);
+        const handled = WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.createUTF8(array.slice()), error_instance);
+        if (handled) {
+            vm.unhandled_error_counter -= 1;
+            return;
+        }
         if (vm.worker) |worker_| {
             _ = worker.setRequestedTerminate();
             worker.parent_poll_ref.unrefConcurrently(worker.parent);

@@ -8,7 +8,7 @@ If you're looking to create a brand new empty project, use [`bun init`](https://
 
 ## From a React component
 
-`bun create ./MyComponent.tsx` turns a React component into a complete dev environment with hot reload and production builds in one command.
+`bun create ./MyComponent.tsx` turns an existing React component into a complete dev environment with hot reload and production builds in one command.
 
 ```bash
 $ bun create ./MyComponent.jsx # .tsx also supported

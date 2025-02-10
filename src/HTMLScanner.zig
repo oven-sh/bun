@@ -56,9 +56,8 @@ fn createImportRecord(this: *HTMLScanner, input_path: []const u8, kind: ImportKi
 
 const debug = bun.Output.scoped(.HTMLScanner, true);
 
-pub fn onWriteHTML(this: *HTMLScanner, bytes: []const u8) void {
-    _ = this; // autofix
-    _ = bytes; // autofix
+pub fn onWriteHTML(_: *HTMLScanner, bytes: []const u8) void {
+    _ = bytes; // bytes are not written in scan phase
 }
 
 pub fn onHTMLParseError(this: *HTMLScanner, message: []const u8) void {
@@ -70,7 +69,7 @@ pub fn onHTMLParseError(this: *HTMLScanner, message: []const u8) void {
 }
 
 pub fn onTag(this: *HTMLScanner, _: *lol.Element, path: []const u8, url_attribute: []const u8, kind: ImportKind) void {
-    _ = url_attribute; // autofix
+    _ = url_attribute;
     this.createImportRecord(path, kind) catch {};
 }
 
@@ -80,7 +79,7 @@ pub fn scan(this: *HTMLScanner, input: []const u8) !void {
     try processor.run(this, input);
 }
 
-pub fn HTMLProcessor(comptime T: type, comptime add_head_or_html_tag: bool) type {
+pub fn HTMLProcessor(comptime T: type, comptime visit_head_and_body: bool) type {
     return struct {
         const TagHandler = struct {
             /// CSS selector to match elements
@@ -95,7 +94,7 @@ pub fn HTMLProcessor(comptime T: type, comptime add_head_or_html_tag: bool) type
             is_head_or_html: bool = false,
         };
 
-        const tag_handlers_ = [_]TagHandler{
+        const tag_handlers = [_]TagHandler{
             // Module scripts with src
             .{
                 .selector = "script[src]",
@@ -208,16 +207,6 @@ pub fn HTMLProcessor(comptime T: type, comptime add_head_or_html_tag: bool) type
             //     },
         };
 
-        const html_head_tag_handler: TagHandler = .{
-            .selector = "head",
-            .has_content = false,
-            .url_attribute = "",
-            .kind = .stmt,
-            .is_head_or_html = true,
-        };
-
-        const tag_handlers = if (add_head_or_html_tag) tag_handlers_ ++ [_]TagHandler{html_head_tag_handler} else tag_handlers_;
-
         fn generateHandlerForTag(comptime tag_info: TagHandler) fn (*T, *lol.Element) bool {
             const Handler = struct {
                 pub fn handle(this: *T, element: *lol.Element) bool {
@@ -232,13 +221,6 @@ pub fn HTMLProcessor(comptime T: type, comptime add_head_or_html_tag: bool) type
                             }
                         }
                     }
-
-                    if (comptime add_head_or_html_tag) {
-                        if (tag_info.is_head_or_html) {
-                            T.onHEADTag(this, element);
-                        }
-                    }
-
                     return false;
                 }
             };
@@ -248,22 +230,52 @@ pub fn HTMLProcessor(comptime T: type, comptime add_head_or_html_tag: bool) type
         pub fn run(this: *T, input: []const u8) !void {
             var builder = lol.HTMLRewriter.Builder.init();
             defer builder.deinit();
-            var selectors = try std.ArrayList(*lol.HTMLSelector).initCapacity(this.allocator, tag_handlers.len);
-            defer {
-                for (selectors.items) |selector| {
-                    selector.deinit();
-                }
-                selectors.deinit();
-            }
+
+            var selectors: std.BoundedArray(*lol.HTMLSelector, tag_handlers.len + if (visit_head_and_body) 2 else 0) = .{};
+            defer for (selectors.slice()) |selector| {
+                selector.deinit();
+            };
+
             // Add handlers for each tag type
             inline for (tag_handlers) |tag_info| {
                 const selector = try lol.HTMLSelector.parse(tag_info.selector);
-                try selectors.append(selector);
-
+                selectors.appendAssumeCapacity(selector);
                 try builder.addElementContentHandlers(
                     selector,
                     T,
                     comptime generateHandlerForTag(tag_info),
+                    this,
+                    void,
+                    null,
+                    null,
+                    void,
+                    null,
+                    null,
+                );
+            }
+
+            if (visit_head_and_body) {
+                const head_selector = try lol.HTMLSelector.parse("head");
+                selectors.appendAssumeCapacity(head_selector);
+                try builder.addElementContentHandlers(
+                    head_selector,
+                    T,
+                    T.onHeadTag,
+                    this,
+                    void,
+                    null,
+                    null,
+                    void,
+                    null,
+                    null,
+                );
+
+                const body_selector = try lol.HTMLSelector.parse("body");
+                selectors.appendAssumeCapacity(body_selector);
+                try builder.addElementContentHandlers(
+                    body_selector,
+                    T,
+                    T.onBodyTag,
                     this,
                     void,
                     null,
@@ -294,11 +306,7 @@ pub fn HTMLProcessor(comptime T: type, comptime add_head_or_html_tag: bool) type
                 false,
                 T,
                 this,
-                struct {
-                    fn write(self: *T, bytes: []const u8) void {
-                        self.onWriteHTML(bytes);
-                    }
-                }.write,
+                T.onWriteHTML,
                 struct {
                     fn done(_: *T) void {}
                 }.done,

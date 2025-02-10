@@ -190,8 +190,12 @@ pub inline fn containsAny(in: anytype, target: string) bool {
 ///   a folder name. Therefore, the name can't contain any non-URL-safe
 ///   characters.
 pub fn isNPMPackageName(target: string) bool {
-    if (target.len == 0) return false;
     if (target.len > 214) return false;
+    return isNPMPackageNameIgnoreLength(target);
+}
+
+pub fn isNPMPackageNameIgnoreLength(target: string) bool {
+    if (target.len == 0) return false;
 
     const scoped = switch (target[0]) {
         // Old packages may have capital letters

@@ -561,6 +561,7 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
         .{ .file = "bun-error/index.js", .enable = opts.shouldEmbedCode() },
         .{ .file = "bun-error/bun-error.css", .enable = opts.shouldEmbedCode() },
         .{ .file = "fallback-decoder.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/react-refresh.js", .enable = opts.shouldEmbedCode() },
         .{ .file = "node-fallbacks/assert.js", .enable = opts.shouldEmbedCode() },
         .{ .file = "node-fallbacks/buffer.js", .enable = opts.shouldEmbedCode() },
         .{ .file = "node-fallbacks/console.js", .enable = opts.shouldEmbedCode() },

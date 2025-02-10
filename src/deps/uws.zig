@@ -4604,3 +4604,7 @@ pub fn onThreadExit() void {
 extern fn uws_app_clear_routes(ssl_flag: c_int, app: *uws_app_t) void;
 
 pub extern fn us_socket_upgrade_to_tls(s: *Socket, new_context: *SocketContext, sni: ?[*:0]const u8) ?*Socket;
+
+pub export fn bun_log_warn(message: [*c]const u8) void {
+    bun.Output.warn("{s}", .{message});
+}

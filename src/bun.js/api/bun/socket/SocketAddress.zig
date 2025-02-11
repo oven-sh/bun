@@ -128,34 +128,35 @@ pub fn create(global: *JSC.JSGlobalObject, options: Options) bun.JSError!*Socket
     const addr: sockaddr = switch (options.family) {
         AF.INET => v4: {
             var sin: sockaddr_in = .{
-                .sin_family = options.family.int(),
-                .sin_port = std.mem.nativeToBig(u16, options.port),
-                .sin_addr = undefined,
+                .family = options.family.int(),
+                .port = std.mem.nativeToBig(u16, options.port),
+                .addr = undefined,
             };
             if (options.address) |address_str| {
                 defer address_str.deref();
                 const slice = address_str.toOwnedSliceZ(alloc) catch bun.outOfMemory();
                 defer alloc.free(slice);
-                try pton(global, C.AF_INET, slice, &sin.sin_addr);
+                try pton(global, C.AF_INET, slice, &sin.addr);
             } else {
-                sin.sin_addr = .{ .s_addr = C.INADDR_LOOPBACK };
+                sin.addr = sockaddr.@"127.0.0.1".sin.addr;
             }
             break :v4 .{ .sin = sin };
         },
         AF.INET6 => v6: {
             var sin6: sockaddr_in6 = .{
-                .sin6_family = options.family.int(),
-                .sin6_port = std.mem.nativeToBig(u16, options.port),
-                .sin6_flowinfo = options.flowlabel orelse 0,
-                .sin6_addr = undefined,
+                .family = options.family.int(),
+                .port = std.mem.nativeToBig(u16, options.port),
+                .flowinfo = options.flowlabel orelse 0,
+                .addr = undefined,
+                .scope_id = 0,
             };
             if (options.address) |address_str| {
                 defer address_str.deref();
                 const slice = address_str.toOwnedSliceZ(alloc) catch bun.outOfMemory();
                 defer alloc.free(slice);
-                try pton(global, C.AF_INET6, slice, &sin6.sin6_addr);
+                try pton(global, C.AF_INET6, slice, &sin6.addr);
             } else {
-                sin6.sin6_addr = C.in6addr_any;
+                sin6.addr = @bitCast(C.in6addr_any);
             }
             break :v6 .{ .sin6 = sin6 };
         },
@@ -176,7 +177,7 @@ pub fn parse(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
 /// Create an IPv4 socket address. `addr` is assumed to be valid. Port is in host byte order.
 pub fn newIPv4(addr: [4]u8, port_: u16) SocketAddress {
     // TODO: make sure casting doesn't swap byte order on us.
-    return .{ ._addr = sockaddr.v4(std.mem.nativeToBig(u16, port_), .{ .s_addr = @bitCast(addr) }) };
+    return .{ ._addr = sockaddr.v4(std.mem.nativeToBig(u16, port_), @bitCast(addr)) };
 }
 
 /// Create an IPv6 socket address. `addr` is assumed to be valid. Port is in
@@ -227,9 +228,9 @@ pub fn address(this: *SocketAddress) bun.String {
     }
     var buf: [C.INET6_ADDRSTRLEN]u8 = undefined;
     const addr_src: *const anyopaque = if (this.family() == AF.INET)
-        @ptrCast(&this.asV4().sin_addr)
+        @ptrCast(&this.asV4().addr)
     else
-        @ptrCast(&this.asV6().sin6_addr);
+        @ptrCast(&this.asV6().addr);
 
     const formatted = std.mem.span(ares.ares_inet_ntop(this.family().int(), addr_src, &buf, buf.len) orelse {
         std.debug.panic("Invariant violation: SocketAddress created with invalid IPv6 address ({any})", .{this._addr});
@@ -266,7 +267,7 @@ pub fn getAddrFamily(this: *SocketAddress, _: *JSC.JSGlobalObject) JSValue {
 /// system uses. Do not compare to `std.posix.AF`.
 pub fn family(this: *const SocketAddress) AF {
     // NOTE: sockaddr_in and sockaddr_in6 have the same layout for family.
-    return @enumFromInt(this._addr.sin.sin_family);
+    return @enumFromInt(this._addr.sin.family);
 }
 
 pub fn getPort(this: *SocketAddress, _: *JSC.JSGlobalObject) JSValue {
@@ -278,7 +279,7 @@ pub fn port(this: *const SocketAddress) u16 {
     // NOTE: sockaddr_in and sockaddr_in6 have the same layout for port.
     // NOTE: `zig translate-c` creates semantically invalid code for `C.ntohs`.
     // Switch back to `ntohs` when this issue gets resolved: https://github.com/ziglang/zig/issues/22804
-    return std.mem.bigToNative(u16, this._addr.sin.sin_port);
+    return std.mem.bigToNative(u16, this._addr.sin.port);
 }
 
 pub fn getFlowLabel(this: *SocketAddress, _: *JSC.JSGlobalObject) JSValue {
@@ -291,15 +292,15 @@ pub fn getFlowLabel(this: *SocketAddress, _: *JSC.JSGlobalObject) JSValue {
 /// - [RFC 6437](https://tools.ietf.org/html/rfc6437)
 pub fn flowLabel(this: *const SocketAddress) ?u32 {
     if (this.family() == AF.INET6) {
-        const in6: C.sockaddr_in6 = @bitCast(this._addr);
-        return in6.sin6_flowinfo;
+        const in6: sockaddr_in6 = @bitCast(this._addr);
+        return in6.flowinfo;
     } else {
         return null;
     }
 }
 
 pub fn socklen(this: *const SocketAddress) socklen_t {
-    switch (this._addr.sin_family) {
+    switch (this._addr.family) {
         AF.INET => return @sizeOf(sockaddr_in),
         AF.INET6 => return @sizeOf(sockaddr_in6),
     }
@@ -353,14 +354,16 @@ pub const AF = enum(C.sa_family_t) {
 /// - This replaces `sockaddr_storage` because it's huge. This is 28 bytes,
 ///   while `sockaddr_storage` is 128 bytes.
 const sockaddr = extern union {
-    sin: C.sockaddr_in,
-    sin6: C.sockaddr_in6,
+    // sin: C.sockaddr_in,
+    // sin6: C.sockaddr_in6,
+    sin: sockaddr_in,
+    sin6: sockaddr_in6,
 
-    pub fn v4(port_: C.in_port_t, addr: C.struct_in_addr) sockaddr {
+    pub fn v4(port_: C.in_port_t, addr: u32) sockaddr {
         return .{ .sin = .{
-            .sin_family = AF.INET.int(),
-            .sin_port = port_,
-            .sin_addr = addr,
+            .family = AF.INET.int(),
+            .port = port_,
+            .addr = addr,
         } };
     }
 
@@ -373,15 +376,16 @@ const sockaddr = extern union {
         scope_id: u32,
     ) sockaddr {
         return .{ .sin6 = .{
-            .sin6_family = AF.INET6.int(),
-            .sin6_port = port_,
-            .sin6_flowinfo = flowinfo,
-            .sin6_scope_id = scope_id,
-            .sin6_addr = addr,
+            .family = AF.INET6.int(),
+            .port = port_,
+            .flowinfo = flowinfo,
+            .scope_id = scope_id,
+            .addr = @bitCast(addr),
         } };
     }
 
-    pub const @"127.0.0.1": sockaddr = sockaddr.v4(0, .{ .s_addr = C.INADDR_LOOPBACK });
+    // I'd be money endianess is going to screw us here.
+    pub const @"127.0.0.1": sockaddr = sockaddr.v4(0, @bitCast([_]u8{127, 0, 0, 1}));
     pub const @"::1": sockaddr = sockaddr.v6(0, C.in6addr_loopback);
     // TODO: check that `::` is all zeroes on all platforms. Should correspond
     // to `IN6ADDR_ANY_INIT`.
@@ -422,6 +426,6 @@ const ZigString = JSC.ZigString;
 const CallFrame = JSC.CallFrame;
 const JSValue = JSC.JSValue;
 
-const sockaddr_in = C.sockaddr_in;
-const sockaddr_in6 = C.sockaddr_in6;
+const sockaddr_in = std.posix.sockaddr.in;
+const sockaddr_in6 = std.posix.sockaddr.in6;
 const socklen_t = ares.socklen_t;

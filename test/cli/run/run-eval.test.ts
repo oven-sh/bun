@@ -137,7 +137,7 @@ function group(run: (code: string) => SyncSubprocess<"pipe", "inherit">) {
 
   test("process.argv", async () => {
     const { stdout } = run("console.log(process.argv)");
-    const exe = isWindows ? bunExe().replace("/", "\\") : bunExe();
+    const exe = isWindows ? bunExe().replaceAll("/", "\\") : bunExe();
     expect(JSON.parse(stdout.toString("utf8"))).toEqual([exe, "-"]);
   });
 }

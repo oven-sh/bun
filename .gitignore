@@ -16,6 +16,7 @@
 .vscode/clang*
 .vscode/cpp*
 .zig-cache
+.bake-debug
 *.a
 *.bc
 *.big

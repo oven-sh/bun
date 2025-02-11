@@ -1689,6 +1689,12 @@ pub const StoredTrace = struct {
         var frame = stored.trace();
         std.debug.captureStackTrace(begin orelse @returnAddress(), &frame);
         stored.index = frame.index;
+        for (frame.instruction_addresses[0..frame.index], 0..) |addr, i| {
+            if (addr == 0) {
+                stored.index = i;
+                break;
+            }
+        }
         return stored;
     }
 

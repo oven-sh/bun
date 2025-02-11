@@ -295,7 +295,7 @@ pub const RunCommand = struct {
         log("Script: \"{s}\"", .{copy_script.items});
 
         if (!silent) {
-            Output.prettyErrorln("<r><d><magenta>$<r> <d><b>{s}<r>", .{copy_script.items});
+            Output.command(copy_script.items);
             Output.flush();
         }
 

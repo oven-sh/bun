@@ -161,7 +161,9 @@
 #include "JSX509Certificate.h"
 #include "JSS3File.h"
 #include "S3Error.h"
+#include "ProcessBindingBuffer.h"
 #include <JavaScriptCore/JSBasePrivate.h>
+
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
 #endif
@@ -447,6 +449,13 @@ WTF::String Bun::formatStackTrace(
     size_t framesCount = stackTrace.size();
 
     bool hasSet = false;
+    void* bunVM = nullptr;
+    const auto getBunVM = [&]() -> void* {
+        if (!bunVM) {
+            bunVM = clientData(vm)->bunVM;
+        }
+        return bunVM;
+    };
 
     if (errorInstance) {
         if (JSC::ErrorInstance* err = jsDynamicCast<JSC::ErrorInstance*>(errorInstance)) {
@@ -470,9 +479,8 @@ WTF::String Bun::formatStackTrace(
                     // https://github.com/oven-sh/bun/issues/3595
                     if (!sourceURLForFrame.isEmpty()) {
                         remappedFrame.source_url = Bun::toStringRef(sourceURLForFrame);
-
                         // This ensures the lifetime of the sourceURL is accounted for correctly
-                        Bun__remapStackFramePositions(globalObject, &remappedFrame, 1);
+                        Bun__remapStackFramePositions(getBunVM(), &remappedFrame, 1);
 
                         sourceURLForFrame = remappedFrame.source_url.toWTFString();
                     }
@@ -556,7 +564,7 @@ WTF::String Bun::formatStackTrace(
                     remappedFrame.source_url = Bun::toStringRef(sourceURLForFrame);
 
                     // This ensures the lifetime of the sourceURL is accounted for correctly
-                    Bun__remapStackFramePositions(globalObject, &remappedFrame, 1);
+                    Bun__remapStackFramePositions(getBunVM(), &remappedFrame, 1);
 
                     sourceURLForFrame = remappedFrame.source_url.toWTFString();
                 }
@@ -705,7 +713,7 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
                 frame.source_url = Bun::toStringRef(sourceURLForFrame);
 
                 // This ensures the lifetime of the sourceURL is accounted for correctly
-                Bun__remapStackFramePositions(globalObject, &frame, 1);
+                Bun__remapStackFramePositions(globalObject->bunVM(), &frame, 1);
 
                 sourceURLForFrame = frame.source_url.toWTFString();
             }
@@ -3211,6 +3219,14 @@ void GlobalObject::finishCreation(VM& vm)
                 InternalModuleRegistry::create(
                     init.vm,
                     InternalModuleRegistry::createStructure(init.vm, init.owner)));
+        });
+
+    m_processBindingBuffer.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+            init.set(
+                ProcessBindingBuffer::create(
+                    init.vm,
+                    ProcessBindingBuffer::createStructure(init.vm, init.owner)));
         });
 
     m_processBindingConstants.initLater(

@@ -2652,10 +2652,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
     auto globalObject = jsCast<Zig::GlobalObject*>(jsGlobalObject);
     auto process = jsCast<Process*>(globalObject->processObject());
     auto moduleName = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     // clang-format off
     if (moduleName == "async_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("async_wrap");
-    if (moduleName == "buffer"_s) PROCESS_BINDING_NOT_IMPLEMENTED_ISSUE("buffer", "2020");
+    if (moduleName == "buffer"_s) return JSValue::encode(globalObject->processBindingBuffer());
     if (moduleName == "cares_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("cares_wrap");
     if (moduleName == "config"_s) return JSValue::encode(processBindingConfig(globalObject, vm));
     if (moduleName == "constants"_s) return JSValue::encode(globalObject->processBindingConstants());
@@ -2856,7 +2857,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage, (JSC::JSGlobalObject * global
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(result));
 }
 
-int getRSS(size_t* rss)
+extern "C" int getRSS(size_t* rss)
 {
 #if defined(__APPLE__)
     mach_msg_type_number_t count;

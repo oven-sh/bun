@@ -1,7 +1,7 @@
 //! Bun's filesystem watcher implementation for linux using inotify
 //! https://man7.org/linux/man-pages/man7/inotify.7.html
 const INotifyWatcher = @This();
-const log = Output.scoped(.inotify, false);
+const log = Output.scoped(.watcher, false);
 
 // inotify events are variable-sized, so a byte buffer is used (also needed
 // since communication is done via the `read` syscall). what is notable about

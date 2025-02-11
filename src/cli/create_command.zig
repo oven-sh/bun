@@ -1679,7 +1679,7 @@ pub const CreateCommand = struct {
             pub fn onAnalyze(this: *@This(), result: *bun.bundle_v2.BundleV2.DependenciesScanner.Result) anyerror!void {
                 this.node.end();
 
-                try SourceFileProjectGenerator.generate(this.ctx, this.example_tag, this.entry_point, result);
+                try SourceFileProjectGenerator.generate(this.entry_point, result);
             }
         };
 

@@ -230,7 +230,7 @@ pub const InitCommand = struct {
         }
         Output.pretty(label, .{});
         Output.prettyln(" {s}", .{opts[val]});
-        Output.prettyln("\x1B[J", .{});
+        Output.prettyln("\x1B[J\x1B[A", .{});
         Output.flush();
 
         return val;
@@ -477,37 +477,31 @@ pub const InitCommand = struct {
 
                 fields.name = try normalizePackageName(alloc, name);
 
-                const is_fullstack = promptBool(alloc, "<r><cyan>do you want to create a fullstack app?<r>", false) catch |err| {
+                const template_options = [_][]const u8{
+                    "TypeScript (default)",
+                    "React + TypeScript",
+                    "React + TypeScript + Tailwind + shadcn/ui",
+                };
+
+                const selected = promptSelect("<r><cyan>template:<r>", &template_options, 0) catch |err| {
                     if (err == error.EndOfStream) return;
                     return err;
                 };
 
-                if (is_fullstack) {
-                    const template_options = [_][]const u8{
-                        "TypeScript (default)",
-                        "React + TypeScript",
-                        "React + TypeScript + Tailwind + shadcn/ui",
-                    };
+                const FullstackTemplate = enum {
+                    base_typescript,
+                    react_typescript,
+                    react_typescript_tailwind_shadcn,
+                };
+                // // Set appropriate entry point based on selection
+                const fullstack_template: FullstackTemplate = switch (selected) {
+                    0 => .base_typescript,
+                    1 => .react_typescript,
+                    2 => .react_typescript_tailwind_shadcn,
+                    else => unreachable,
+                };
 
-                    const selected = promptSelect("<r><cyan>select fullstack template:<r>", &template_options, 0) catch |err| {
-                        if (err == error.EndOfStream) return;
-                        return err;
-                    };
-
-                    // // Set appropriate entry point based on selection
-                    // const fullstack_template = switch (selected) {
-                    //     0 => .base_typescript,
-                    //     1 => .react_typescript,
-                    //     2 => .react_typescript_tailwind_shadcn,
-                    //     else => unreachable,
-                    // };
-
-                    // todo:
-                    Output.prettyln("Setting up project with {s} template...", .{template_options[selected]});
-                    Output.flush();
-
-                    // try SourceFileProjectGenerator.generate();
-                } else {
+                if (fullstack_template == .base_typescript) {
                     fields.entry_point = prompt(
                         alloc,
                         "<r><cyan>entry point<r> ",
@@ -516,6 +510,14 @@ pub const InitCommand = struct {
                         if (err == error.EndOfStream) return;
                         return err;
                     };
+                } else {
+                    fields.entry_point = "src/index.tsx";
+
+                    // todo:
+                    Output.prettyln("Setting up project with {s} template...", .{template_options[selected]});
+                    Output.flush();
+
+                    // try SourceFileProjectGenerator.generate();
                 }
 
                 try Output.writer().writeAll("\n");

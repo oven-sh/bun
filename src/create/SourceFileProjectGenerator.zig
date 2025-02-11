@@ -1,5 +1,5 @@
 // Generate project files based on the entry point and dependencies
-pub fn generate(_: Command.Context, _: Example.Tag, entry_point: string, result: *BundleV2.DependenciesScanner.Result) !void {
+pub fn generate(entry_point: string, result: *BundleV2.DependenciesScanner.Result) !void {
     const react_component_export = findReactComponentExport(result.bundle_v2) orelse {
         Output.errGeneric("No component export found in <b>{s}<r>", .{bun.fmt.quote(entry_point)});
         Output.flush();

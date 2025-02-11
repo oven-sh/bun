@@ -101,6 +101,19 @@ describe("SocketAddress.parse", () => {
   ])("(%s) == %o", (input, expected) => {
     expect(SocketAddress.parse(input)).toMatchObject(expected);
   });
+
+  it.each([
+    "",
+    "invalid",
+    "1.2.3.4.5.6",
+    "0.0.0.9999",
+    "1.2.3.4:-1",
+    "1.2.3.4:null",
+    "1.2.3.4:65536",
+    "[1:0:::::::]", // line break
+  ])("(%s) == undefined", invalidInput => {
+    expect(SocketAddress.parse(invalidInput)).toBeUndefined();
+  });
 });
 
 describe("SocketAddress.prototype.address", () => {

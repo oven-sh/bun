@@ -78,44 +78,6 @@ pub fn setDefaultAutoSelectFamilyAttemptTimeout(global: *JSC.JSGlobalObject) JSC
     }).setter, 1, .{});
 }
 
-// FIXME: c-headers-for-zig casts AF_* and PF_* to `c_int` when it should be `comptime_int`
-const AF = struct {
-    pub const INET: C.sa_family_t = @intCast(C.AF_INET);
-    pub const INET6: C.sa_family_t = @intCast(C.AF_INET6);
-};
-
-/// ## Notes
-/// - Linux broke compat between `sockaddr_in` and `sockaddr_in6` in v2.4.
-///   They're no longer the same size.
-/// - This replaces `sockaddr_storage` because it's huge. This is 28 bytes,
-///   while `sockaddr_storage` is 128 bytes.
-const sockaddr_in = extern union {
-    sin: C.sockaddr_in,
-    sin6: C.sockaddr_in6,
-
-    pub const @"127.0.0.1": sockaddr_in = .{
-        .sin = .{
-            .sin_family = AF.INET,
-            .sin_port = 0,
-            .sin_addr = .{ .s_addr = C.INADDR_LOOPBACK },
-        },
-    };
-    pub const @"::1": sockaddr_in = .{ .sin6 = .{
-        .sin6_family = AF.INET6,
-        .sin6_port = 0,
-        .sin6_flowinfo = 0,
-        .sin6_addr = C.inaddr6_loopback,
-    } };
-};
-
-// The same types are defined in a bunch of different places. We should probably unify them.
-comptime {
-    for (.{ std.posix.socklen_t, C.socklen_t }) |other_socklen| {
-        if (@sizeOf(socklen) != @sizeOf(other_socklen)) @compileError("socklen_t size mismatch");
-        if (@alignOf(socklen) != @alignOf(other_socklen)) @compileError("socklen_t alignment mismatch");
-    }
-}
-
 pub fn createBinding(global: *JSC.JSGlobalObject) JSC.JSValue {
     const SocketAddress = bun.JSC.GeneratedClassesList.SocketAddress;
     const net = JSC.JSValue.createEmptyObjectWithNullPrototype(global);

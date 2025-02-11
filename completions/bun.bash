@@ -149,7 +149,6 @@ _bun_completions() {
                 "${GLOBAL_OPTIONS[*]}" \
                 "${GLOBAL_OPTIONS[SHORT_OPTIONS]}"
 
-            _read_scripts_in_package_json;
             _subcommand_comp_reply "${cur_word}" "${SUBCOMMANDS}";
 
             # determine if completion should be continued

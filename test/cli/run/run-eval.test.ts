@@ -1,7 +1,7 @@
 import { SyncSubprocess } from "bun";
 import { describe, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { join, sep } from "path";
 
@@ -57,9 +57,11 @@ for (const flag of ["-e", "--print"]) {
         expect(exitCode).toBe(0);
       }
 
-      testProcessArgv([], [JSON.stringify(bunExe())]);
-      testProcessArgv(["abc", "def"], [JSON.stringify(bunExe()), "abc", "def"]);
-      testProcessArgv(["--", "abc", "def"], [JSON.stringify(bunExe()), "abc", "def"]);
+      // replace the trailin
+      const exe = isWindows ? bunExe().replace("/", "\\") : bunExe();
+      testProcessArgv([], [exe]);
+      testProcessArgv(["abc", "def"], [exe, "abc", "def"]);
+      testProcessArgv(["--", "abc", "def"], [exe, "abc", "def"]);
       // testProcessArgv(["--", "abc", "--", "def"], [JSON.stringify(bunExe()), "abc", "--", "def"]);
     });
   });
@@ -135,7 +137,8 @@ function group(run: (code: string) => SyncSubprocess<"pipe", "inherit">) {
 
   test("process.argv", async () => {
     const { stdout } = run("console.log(process.argv)");
-    expect(JSON.parse(stdout.toString("utf8"))).toEqual([JSON.stringify(bunExe()), "-"]);
+    const exe = isWindows ? bunExe().replace("/", "\\") : bunExe();
+    expect(JSON.parse(stdout.toString("utf8"))).toEqual([exe, "-"]);
   });
 }
 

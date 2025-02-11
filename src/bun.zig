@@ -3585,7 +3585,7 @@ pub inline fn assert_eql(a: anytype, b: anytype) void {
     }
     if (!Environment.allow_assert) return;
     if (a != b) {
-        Output.panic("Assertion failure: {} != {}", .{ a, b });
+        Output.panic("Assertion failure: {any} != {any}", .{ a, b });
     }
 }
 
@@ -4026,7 +4026,8 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
         }
 
         pub fn format(this: @This(), comptime f: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-            comptime bun.assert(strings.eql(f, "d"));
+            comptime if (strings.eql(f, "d") or strings.eql(f, "any"))
+                @compileError("Invalid format specifier: " ++ f);
             try std.fmt.formatInt(@intFromEnum(this), 10, .lower, opts, writer);
         }
 

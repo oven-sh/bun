@@ -64,14 +64,13 @@ server_exports = {
 
     return response;
   },
-  registerUpdate(modules, componentManifestAdd, componentManifestDelete) {
+  async registerUpdate(modules, componentManifestAdd, componentManifestDelete) {
     replaceModules(modules);
 
     if (componentManifestAdd) {
       for (const uid of componentManifestAdd) {
         try {
-          // TODO: async
-          const mod = loadModule(uid, LoadModuleType.SyncUserDynamic) as HotModule;
+          const mod = await (loadModule(uid, LoadModuleType.AsyncAssertPresent) as Promise<HotModule>);
           const { exports, __esModule } = mod;
           const exp = __esModule ? exports : (mod._ext_exports ??= { ...exports, default: exports });
 

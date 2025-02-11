@@ -10311,21 +10311,27 @@ pub const LinkerContext = struct {
                     Output.panic("Assertion failure in HTMLLoader.onTag: current_import_record_index ({d}) >= import_records.len ({d})", .{ this.current_import_record_index, this.import_records.len });
                 }
 
+                const import_record: *const ImportRecord = &this.import_records[this.current_import_record_index];
+                this.current_import_record_index += 1;
+                const unique_key_for_additional_files = this.linker.parse_graph.input_files.items(.unique_key_for_additional_file)[import_record.source_index.get()];
+
                 if (this.linker.dev_server != null) {
-                    // TODO: Dev server does not support setting "external" since it bundles everything.
-                    element.remove();
+                    if (unique_key_for_additional_files.len > 0) {
+                        // Replace the external href/src with the unique key so that we later will rewrite it to the final URL or pathname
+                        element.setAttribute(url_attribute, unique_key_for_additional_files) catch bun.outOfMemory();
+                    } else {
+                        // TODO: Dev server does not support setting "external" since it bundles everything.
+                        element.remove();
+                    }
                     return;
                 }
 
-                const import_record: *const ImportRecord = &this.import_records[this.current_import_record_index];
-                this.current_import_record_index += 1;
                 if (import_record.is_external_without_side_effects or import_record.source_index.isInvalid()) {
                     debug("Leaving external import {s}", .{import_record.path.text});
                     return;
                 }
 
                 const loader: Loader = this.linker.parse_graph.input_files.items(.loader)[import_record.source_index.get()];
-                const unique_key_for_additional_files = this.linker.parse_graph.input_files.items(.unique_key_for_additional_file)[import_record.source_index.get()];
                 if (loader.isJavaScriptLike() or loader == .css) {
                     // Remove the original non-external tags
                     element.remove();

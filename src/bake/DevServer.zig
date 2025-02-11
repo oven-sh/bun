@@ -18,9 +18,6 @@ pub const Options = struct {
     vm: *VirtualMachine,
     framework: bake.Framework,
     bundler_options: bake.SplitBundlerOptions,
-    /// When set, nothing is ever bundled for the server-side,
-    /// and DevSever acts purely as a frontend bundler.
-    frontend_only: bool = false,
 
     // Debugging features
     dump_sources: ?[]const u8 = if (Environment.isDebug) ".bake-debug" else null,
@@ -80,6 +77,8 @@ bundling_failures: std.ArrayHashMapUnmanaged(
     SerializedFailure.ArrayHashContextViaOwner,
     false,
 ) = .{},
+/// When set, nothing is ever bundled for the server-side,
+/// and DevSever acts purely as a frontend bundler.
 frontend_only: bool,
 /// The Plugin API is missing a way to attach filesystem watchers (addWatchFile)
 /// This special case makes `bun-plugin-tailwind` work, which is a requirement
@@ -348,7 +347,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .has_pre_crash_handler = bun.FeatureFlags.bake_debugging_features and
             options.dump_state_on_crash orelse
             bun.getRuntimeFeatureFlag("BUN_DUMP_STATE_ON_CRASH"),
-        .frontend_only = options.frontend_only,
+        .frontend_only = options.framework.file_system_router_types.len == 0,
         .client_graph = .empty,
         .server_graph = .empty,
         .incremental_result = .empty,
@@ -509,8 +508,6 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         }
         hash.update(&.{0});
 
-        bun.writeAnyToHasher(&hash, options.frontend_only);
-
         break :hash_key std.fmt.bytesToHex(std.mem.asBytes(&hash.final()), .lower);
     };
 
@@ -520,7 +517,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         assert(try dev.client_graph.insertStale(rfr.import_source, false) == IncrementalGraph(.client).react_refresh_index);
     }
 
-    if (!options.frontend_only) {
+    if (!dev.frontend_only) {
         dev.initServerRuntime();
     }
 
@@ -3384,7 +3381,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 const prev_dependency = &g.edges.items[prev.get()];
                 prev_dependency.next_dependency = edge.next_dependency;
             } else {
-                assert(g.first_dep.items[edge.imported.get()].unwrap() == edge_index);
+                assert_eql(g.first_dep.items[edge.imported.get()].unwrap(), edge_index);
                 g.first_dep.items[edge.imported.get()] = .none;
             }
             if (edge.next_dependency.unwrap()) |next| {
@@ -4222,6 +4219,9 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             g.owner().allocator.free(keys[file_index.get()]);
             keys[file_index.get()] = ""; // cannot be `undefined` as it may be read by hashmap logic
+
+            assert_eql(g.first_dep.items[file_index.get()], .none);
+            assert_eql(g.first_import.items[file_index.get()], .none);
 
             // TODO: it is infeasible to swapRemove a file since
             // FrameworkRouter, SerializedFailure, and more structures contains
@@ -6113,6 +6113,7 @@ const AutoArrayHashMapUnmanaged = std.AutoArrayHashMapUnmanaged;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 const assert = bun.assert;
+const assert_eql = bun.assert_eql;
 const DynamicBitSetUnmanaged = bun.bit_set.DynamicBitSetUnmanaged;
 
 const bake = bun.bake;

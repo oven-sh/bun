@@ -1584,18 +1584,6 @@ pub fn sliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) SliceTo(@Typ
     }
 }
 
-pub fn cstring(input: []const u8) [:0]const u8 {
-    if (input.len == 0)
-        return "";
-
-    if (comptime Environment.allow_assert) {
-        assert(
-            input.ptr[input.len] == 0,
-        );
-    }
-    return @as([*:0]const u8, @ptrCast(input.ptr))[0..input.len :0];
-}
-
 pub const Semver = @import("./semver.zig");
 pub const ImportRecord = @import("./import_record.zig").ImportRecord;
 pub const ImportKind = @import("./import_record.zig").ImportKind;

@@ -318,7 +318,7 @@ class OutputLineStream extends EventEmitter {
     }
   }
 
-  waitForLine(regex: RegExp, timeout = 1000): Promise<RegExpMatchArray> {
+  waitForLine(regex: RegExp, timeout = isWindows ? 5000 : 1000): Promise<RegExpMatchArray> {
     return new Promise((resolve, reject) => {
       let ran = false;
       let timer: any;
@@ -342,12 +342,20 @@ class OutputLineStream extends EventEmitter {
         reset();
         reject(new Error("Process exited before line " + JSON.stringify(regex.toString()) + " was found"));
       };
+      let panicked = false;
       this.on("line", onLine);
       this.on("close", onClose);
+      this.on("panic", () => (panicked = true));
       timer = setTimeout(() => {
         if (!ran) {
           reset();
-          reject(new Error("Timeout waiting for line " + JSON.stringify(regex.toString())));
+          if (panicked) {
+            this.on("close", () => {
+              reject(new Error("Panicked while waiting for line " + JSON.stringify(regex.toString())));
+            });
+          } else {
+            reject(new Error("Timeout waiting for line " + JSON.stringify(regex.toString())));
+          }
         }
       }, timeout);
     });
@@ -377,20 +385,22 @@ export function devTest<T extends DevServerTest>(description: string, options: T
   //   return options;
   // }
 
-  jest.test(`DevServer > ${basename}.${count}: ${description}`, async () => {
-    const root = path.join(tempDir, basename + count);
-    if ("files" in options) {
-      writeAll(root, options.files);
-      if (options.files["bun.app.ts"] == undefined) {
-        if (!options.framework) {
-          throw new Error("Must specify a options.framework or provide a bun.app.ts file");
-        }
-        if (options.pluginFile) {
-          fs.writeFileSync(path.join(root, "pluginFile.ts"), dedent(options.pluginFile));
-        }
-        fs.writeFileSync(
-          path.join(root, "bun.app.ts"),
-          dedent`
+  jest.test(
+    `DevServer > ${basename}.${count}: ${description}`,
+    async () => {
+      const root = path.join(tempDir, basename + count);
+      if ("files" in options) {
+        writeAll(root, options.files);
+        if (options.files["bun.app.ts"] == undefined) {
+          if (!options.framework) {
+            throw new Error("Must specify a options.framework or provide a bun.app.ts file");
+          }
+          if (options.pluginFile) {
+            fs.writeFileSync(path.join(root, "pluginFile.ts"), dedent(options.pluginFile));
+          }
+          fs.writeFileSync(
+            path.join(root, "bun.app.ts"),
+            dedent`
             ${options.pluginFile ? `import plugins from './pluginFile.ts';` : "let plugins = undefined;"}
             export default {
               app: {
@@ -399,67 +409,69 @@ export function devTest<T extends DevServerTest>(description: string, options: T
               },
             };
           `,
-        );
+          );
+        } else {
+          if (options.pluginFile) {
+            throw new Error("Cannot provide both bun.app.ts and pluginFile");
+          }
+        }
       } else {
-        if (options.pluginFile) {
-          throw new Error("Cannot provide both bun.app.ts and pluginFile");
+        if (!options.fixture) {
+          throw new Error("Must provide either `fixture` or `files`");
+        }
+        const fixture = path.join(devTestRoot, "../fixtures", options.fixture);
+        fs.cpSync(fixture, root, { recursive: true });
+
+        if (!fs.existsSync(path.join(root, "bun.app.ts"))) {
+          throw new Error(`Fixture ${fixture} must contain a bun.app.ts file.`);
+        }
+        if (!fs.existsSync(path.join(root, "node_modules"))) {
+          // link the node_modules directory from test/node_modules to the temp directory
+          fs.symlinkSync(path.join(devTestRoot, "../../node_modules"), path.join(root, "node_modules"), "junction");
         }
       }
-    } else {
-      if (!options.fixture) {
-        throw new Error("Must provide either `fixture` or `files`");
-      }
-      const fixture = path.join(devTestRoot, "../fixtures", options.fixture);
-      fs.cpSync(fixture, root, { recursive: true });
-
-      if (!fs.existsSync(path.join(root, "bun.app.ts"))) {
-        throw new Error(`Fixture ${fixture} must contain a bun.app.ts file.`);
-      }
-      if (!fs.existsSync(path.join(root, "node_modules"))) {
-        // link the node_modules directory from test/node_modules to the temp directory
-        fs.symlinkSync(path.join(devTestRoot, "../../node_modules"), path.join(root, "node_modules"), "junction");
-      }
-    }
-    fs.writeFileSync(
-      path.join(root, "harness_start.ts"),
-      dedent`
+      fs.writeFileSync(
+        path.join(root, "harness_start.ts"),
+        dedent`
         import appConfig from "./bun.app.ts";
         export default {
           ...appConfig,
           port: 0,
         };
       `,
-    );
+      );
 
-    await using devProcess = Bun.spawn({
-      cwd: root,
-      cmd: [process.execPath, "./harness_start.ts"],
-      env: mergeWindowEnvs([
-        bunEnv,
-        {
-          FORCE_COLOR: "1",
-          BUN_DEV_SERVER_TEST_RUNNER: "1",
-          BUN_DUMP_STATE_ON_CRASH: "1",
-        },
-      ]),
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    using stream = new OutputLineStream(devProcess.stdout, devProcess.stderr);
-    const port = parseInt((await stream.waitForLine(/localhost:(\d+)/))[1], 10);
-    await using dev = new Dev(root, port, devProcess, stream);
+      await using devProcess = Bun.spawn({
+        cwd: root,
+        cmd: [process.execPath, "./harness_start.ts"],
+        env: mergeWindowEnvs([
+          bunEnv,
+          {
+            FORCE_COLOR: "1",
+            BUN_DEV_SERVER_TEST_RUNNER: "1",
+            BUN_DUMP_STATE_ON_CRASH: "1",
+          },
+        ]),
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      using stream = new OutputLineStream(devProcess.stdout, devProcess.stderr);
+      const port = parseInt((await stream.waitForLine(/localhost:(\d+)/))[1], 10);
+      await using dev = new Dev(root, port, devProcess, stream);
 
-    try {
-      await options.test(dev);
-    } catch (err: any) {
-      // const oldStack = err.stack;
-      // const editedCallerStep = callerLocation.replace(/\w*at.*?\(/, "at test defined at (");
-      // const main = dev.panicked
-      // ? `caused a DevServer crash`
-      // : `failed: ${oldStack.slice(0, oldStack.indexOf("\n    at "))}`;
-      // const newError = new Error(`Step ${n} ${main}`);
-      // newError.stack = `${newError.message}\n${editedCallerStep}\n    at \x1b[1moriginal stack:\x1b[0m ()\n${oldStack}`;
-      throw err;
-    }
-  });
+      try {
+        await options.test(dev);
+      } catch (err: any) {
+        // const oldStack = err.stack;
+        // const editedCallerStep = callerLocation.replace(/\w*at.*?\(/, "at test defined at (");
+        // const main = dev.panicked
+        // ? `caused a DevServer crash`
+        // : `failed: ${oldStack.slice(0, oldStack.indexOf("\n    at "))}`;
+        // const newError = new Error(`Step ${n} ${main}`);
+        // newError.stack = `${newError.message}\n${editedCallerStep}\n    at \x1b[1moriginal stack:\x1b[0m ()\n${oldStack}`;
+        throw err;
+      }
+    },
+    (isWindows ? 10_000 : 5_000) * (Bun.version.includes("debug") ? 3 : 1),
+  );
   return options;
 }

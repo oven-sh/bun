@@ -69,7 +69,7 @@ pub const UserOptions = struct {
         return .{
             .arena = arena,
             .allocations = allocations,
-            .root = root,
+            .root = try alloc.dupeZ(u8, root),
             .framework = framework,
             .bundler_options = bundler_options,
         };
@@ -82,9 +82,9 @@ pub const StringRefList = struct {
 
     pub const empty: StringRefList = .{ .strings = .{} };
 
-    pub fn track(al: *StringRefList, str: ZigString.Slice) [:0]const u8 {
+    pub fn track(al: *StringRefList, str: ZigString.Slice) []const u8 {
         al.strings.append(bun.default_allocator, str) catch bun.outOfMemory();
-        return str.sliceZ();
+        return str.slice();
     }
 
     pub fn free(al: *StringRefList) void {

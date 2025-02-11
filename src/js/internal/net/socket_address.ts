@@ -3,14 +3,31 @@ import type { SocketAddressInitOptions } from "node:net";
 const { validateObject, validatePort, validateString, validateUint32 } = require("internal/validators");
 
 const kHandle = Symbol("kHandle");
+const kInspect = Symbol.for("nodejs.util.inspect.custom");
+
+var _lazyInspect = null;
+function lazyInspect() {
+  return (_lazyInspect ??= require("node:util").inspect);
+}
 
 class SocketAddress {
   [kHandle]: SocketAddressNative;
 
+  /**
+   * @returns `true` if `value` is a {@link SocketAddress} instance.
+   */
   static isSocketAddress(value: unknown): value is SocketAddress {
-    return $isObject(value) && kHandle in value;
+    // NOTE: some bun-specific APIs return `SocketAddressNative` instances.
+    return $isObject(value) && (kHandle in value || value instanceof SocketAddressNative);
   }
 
+  /**
+   * Parse an address string with an optional port number.
+   *
+   * @param input the address string to parse, e.g. `1.2.3.4:1234` or `[::1]:0`
+   * @returns a new {@link SocketAddress} instance or `undefined` if the input
+   * is invalid.
+   */
   static parse(input: string): SocketAddress | undefined {
     validateString(input, "input");
 
@@ -19,11 +36,16 @@ class SocketAddress {
       if (address.startsWith("[") && address.endsWith("]")) {
         return new SocketAddress({
           address: address.slice(1, -1),
+          // @ts-ignore -- JSValue | 0 casts to number
           port: port | 0,
           family: "ipv6",
         });
       }
-      return new SocketAddress({ address, port: port | 0 });
+      return new SocketAddress({
+        address,
+        // @ts-ignore -- JSValue | 0 casts to number
+        port: port | 0,
+      });
     } catch {
       // node swallows this error, returning undefined for invalid addresses.
     }
@@ -71,6 +93,13 @@ class SocketAddress {
 
   get flowlabel() {
     return this[kHandle].flowlabel;
+  }
+
+  [kInspect](depth: number, options: NodeJS.InspectOptions) {
+    if (depth < 0) return this;
+    const opts = options.depth == null ? options : { ...options, depth: options.depth - 1 };
+    // return `SocketAddress { address: '${this.address}', port: ${this.port}, family: '${this.family}' }`;
+    return `SocketAddress ${lazyInspect(this.toJSON(), opts)}`;
   }
 
   // TODO: kInspect

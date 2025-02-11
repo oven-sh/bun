@@ -30,6 +30,7 @@ describe("SocketAddress constructor", () => {
     new SocketAddress(),
     new SocketAddress(undefined),
     new SocketAddress({}),
+    new SocketAddress({ family: undefined }),
     new SocketAddress({ family: "ipv4" }),
   ])("new SocketAddress()", address => {
     it("creates an ipv4 address", () => {
@@ -75,6 +76,59 @@ describe("SocketAddress constructor", () => {
       expect(address).toMatchObject(expected);
     },
   );
+
+  // ===========================================================================
+  // ============================ INVALID ARGUMENTS ============================
+  // ===========================================================================
+
+  it.each([Symbol.for("ipv4"), function ipv4() {}, { family: "ipv4" }, "ipv1", "ip"])(
+    "given an invalid family, throws ERR_INVALID_ARG_VALUE",
+    (family: any) => {
+      expect(() => new SocketAddress({ family })).toThrowWithCode(Error, "ERR_INVALID_ARG_VALUE");
+    },
+  );
+
+  // ===========================================================================
+  // ============================= LEAK DETECTION ==============================
+  // ===========================================================================
+
+  it.only("does not leak memory", () => {
+    const growthFactor = 1.1; // allowed growth factor for memory usage
+    const warmup = 500; // # of warmup iterations
+    const iters = 5_000; // # of iterations
+    const debug = false;
+
+    // we want to hit both cached and uncached code paths
+    const options = [
+      undefined,
+      { family: "ipv6" },
+      { family: "ipv4", address: "1.2.3.4", port: 3000 },
+      { family: "ipv6", address: "::3", port: 9 },
+    ] as SocketAddressInitOptions[];
+
+    // warmup
+    for (let i = 0; i < warmup; i++) {
+      const sa = new SocketAddress(options[i % 2]);
+      const a = sa.address; //
+      expect(a).not.toBeEmpty(); // ensure transpiler doesn't strip away getter call
+    }
+    Bun.gc(true);
+    const before = process.memoryUsage();
+    if (debug) console.log("before", before);
+
+    // actual test
+    for (let i = 0; i < iters; i++) {
+      const sa = new SocketAddress(options[i % 2]);
+      const a = sa.address; //
+      expect(a).not.toBeEmpty(); // ensure transpiler doesn't strip away getter call
+    }
+    Bun.gc(true);
+    const after = process.memoryUsage();
+    if (debug) console.log("after", after);
+
+    expect(after.heapUsed).toBeLessThanOrEqual(before.heapUsed * growthFactor);
+    expect(after.rss).toBeLessThanOrEqual(before.rss * growthFactor);
+  });
 }); // </SocketAddress constructor>
 
 describe("SocketAddress.isSocketAddress", () => {
@@ -95,7 +149,8 @@ describe("SocketAddress.isSocketAddress", () => {
   });
 
   it("returns true for a SocketAddress instance", () => {
-    expect(SocketAddress.isSocketAddress(new SocketAddress())).toBeTrue();
+    expect(SocketAddress.isSocketAddress(v4)).toBeTrue();
+    expect(SocketAddress.isSocketAddress(v6)).toBeTrue();
   });
 
   it("returns false for POJOs that look like a SocketAddress", () => {

@@ -374,6 +374,7 @@ export default [
     name: "SocketAddress",
     construct: true,
     finalize: true,
+    estimatedSize: true,
     klass: {
       parse: {
         fn: "parse",

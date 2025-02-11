@@ -326,6 +326,11 @@ pub fn socklen(this: *const SocketAddress) inet.socklen_t {
     }
 }
 
+pub fn estimatedSize(this: *SocketAddress) usize {
+    const presentation_size = if (this._presentation) |p| p.estimatedSize() else 0;
+    return @sizeOf(SocketAddress) + presentation_size;
+}
+
 fn pton(global: *JSC.JSGlobalObject, comptime af: c_int, addr: [:0]const u8, dst: *anyopaque) bun.JSError!void {
     switch (ares.ares_inet_pton(af, addr.ptr, dst)) {
         0 => {

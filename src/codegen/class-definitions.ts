@@ -102,9 +102,15 @@ export class ClassDefinition {
   wantsThis?: never;
 
   /**
+   * Class has an `estimatedSize` function that reports external allocations to GC.
    * Called from any thread.
    *
-   * Used for GC.
+   * When `true`, classes should have a method with this signature:
+   * ```zig
+   * pub fn estimatedSize(this: *@This()) usize;
+   * ```
+   *
+   * Report `@sizeOf(@this())` as well as any external allocations.
    */
   estimatedSize?: boolean;
   /**

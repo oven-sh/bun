@@ -1382,6 +1382,16 @@ pub const String = extern struct {
         return JSC.jsNumber(width);
     }
 
+    /// Reports owned allocation size, not the actual size of the string.
+    pub fn estimatedSize(this: *const String) usize {
+        return switch (this.tag) {
+            .Dead => if (comptime bun.Environment.isDebug) std.debug.panic(".estimatedSize called on dead BunString", .{}) else 0,
+            .Empty, .StaticZigString => 0,
+            .ZigString => this.value.ZigString.len,
+            .WTFStringImpl => this.value.WTFStringImpl.byteLength(),
+        };
+    }
+
     // TODO: move ZigString.Slice here
     /// A UTF-8 encoded slice tied to the lifetime of a `bun.String`
     /// Must call `.deinit` to release memory

@@ -1196,7 +1196,23 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockResolvedValueOnce, (JSC::JSGlobalObje
 
     RELEASE_AND_RETURN(scope, JSValue::encode(thisObject));
 }
-JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockRejectedValue, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+
+JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockResolvedValue_rejected, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* function = jsDynamicCast<JSC::JSFunction*>(callframe->jsCallee());
+
+    // Retrieve the stored rejection reason
+    JSValue rejectionReason = function->getDirect(vm, JSC::Identifier::fromString(vm, "rejectionReason"_s));
+    // Create the rejected promise
+    JSC::JSPromise* promise = JSC::JSPromise::rejectedPromise(globalObject, rejectionReason);
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(promise));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockRejectedValue, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe))
 {
     JSValue thisValue = callframe->thisValue();
     JSMockFunction* thisObject = jsDynamicCast<JSMockFunction*>(thisValue);
@@ -1205,10 +1221,27 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockRejectedValue, (JSC::JSGlobalObject *
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_IS_MOCK_FUNCTION(thisValue);
 
-    pushImpl(thisObject, globalObject, JSMockImplementation::Kind::ReturnValue, JSC::JSPromise::rejectedPromise(globalObject, callframe->argument(0)));
+    JSValue rejectionReason = callframe->argument(0);
+
+    // Create the function that returns a rejected Promise when called
+    auto* function = JSC::JSFunction::create(
+        vm,
+        globalObject,
+        0,
+        "mockRejectedValue"_s,
+        jsMockFunctionMockResolvedValue_rejected,
+        ImplementationVisibility::Public
+    );
+
+    // Store the rejection reason inside the function object
+    function->putDirect(vm, JSC::Identifier::fromString(vm, "rejectionReason"_s), rejectionReason, 0);
+
+    // Push the function as a mock implementation
+    pushImpl(thisObject, globalObject, JSMockImplementation::Kind::Call, function);
 
     RELEASE_AND_RETURN(scope, JSValue::encode(thisObject));
 }
+
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockRejectedValueOnce, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     JSValue thisValue = callframe->thisValue();
@@ -1218,7 +1251,23 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockRejectedValueOnce, (JSC::JSGlobalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_IS_MOCK_FUNCTION(thisValue);
 
-    pushImplOnce(thisObject, globalObject, JSMockImplementation::Kind::ReturnValue, JSC::JSPromise::rejectedPromise(globalObject, callframe->argument(0)));
+    JSValue rejectionReason = callframe->argument(0);
+
+    // Create the function that returns a rejected Promise when called
+    auto* function = JSC::JSFunction::create(
+        vm,
+        globalObject,
+        0,
+        "mockRejectedValue"_s,
+        jsMockFunctionMockResolvedValue_rejected,
+        ImplementationVisibility::Public
+    );
+
+    // Store the rejection reason inside the function object
+    function->putDirect(vm, JSC::Identifier::fromString(vm, "rejectionReason"_s), rejectionReason, 0);
+
+    // Push the function as a mock implementation
+    pushImplOnce(thisObject, globalObject, JSMockImplementation::Kind::Call, function);
 
     RELEASE_AND_RETURN(scope, JSValue::encode(thisObject));
 }

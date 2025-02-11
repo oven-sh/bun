@@ -9,7 +9,6 @@
 //! For questions about DevServer, please consult the delusional @paperclover
 pub const DevServer = @This();
 pub const debug = bun.Output.Scoped(.DevServer, false);
-pub const memoryLog = bun.Output.Scoped(.DevServerMemory, true);
 pub const igLog = bun.Output.scoped(.IncrementalGraph, false);
 
 pub const Options = struct {
@@ -2336,7 +2335,7 @@ pub fn finalizeBundle(
                 Output.enableBuffering();
             }
 
-            if (Environment.isDebug and memoryLog.isVisible()) {
+            if (Environment.isDebug) {
                 Output.prettyErrorln("<d>DevServer: {}, RSS: {}", .{
                     bun.fmt.size(dev.memoryCost(), .{}),
                     bun.fmt.size(bun.sys.selfProcessMemoryUsage() orelse 0, .{}),
@@ -2349,7 +2348,7 @@ pub fn finalizeBundle(
             }
         } else {
             dev.bundles_since_last_error = 0;
-            if (Environment.isDebug and memoryLog.isVisible()) {
+            if (Environment.isDebug) {
                 Output.prettyErrorln("<d>DevServer: {}, RSS: {}", .{
                     bun.fmt.size(dev.memoryCost(), .{}),
                     bun.fmt.size(bun.sys.selfProcessMemoryUsage() orelse 0, .{}),

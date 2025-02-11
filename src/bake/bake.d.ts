@@ -604,6 +604,4 @@ declare module "bun:bake/client" {
 }
 
 /** Available during development */
-declare module "bun:bake/dev" {
-  
-};
+declare module "bun:bake/dev" {}

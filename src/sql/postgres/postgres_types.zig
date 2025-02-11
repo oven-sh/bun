@@ -82,10 +82,10 @@ pub const Tag = enum(short) {
     int4 = 23,
     // regproc = 24,
     text = 25,
-    // oid = 26,
+    oid = 26,
     // tid = 27,
-    // xid = 28,
-    // cid = 29,
+    xid = 28,
+    cid = 29,
     // oidvector = 30,
     // pg_type = 71,
     // pg_attribute = 75,
@@ -175,9 +175,11 @@ pub const Tag = enum(short) {
     // Not really sure what this is.
     jsonpath = 4072,
     jsonpath_array = 4073,
+    // another oid for pg_database
+    pg_database_array2 = 10052,
     _,
 
-    pub fn name(this: Tag) ?[]const u8 {
+    pub fn tagName(this: Tag) ?[]const u8 {
         return std.enums.tagName(Tag, this);
     }
 
@@ -345,7 +347,7 @@ pub const Tag = enum(short) {
                 return .timestamptz;
             }
 
-            if (tag.isTypedArray()) {
+            if (tag.isTypedArrayOrArrayBuffer()) {
                 if (tag == .Int32Array)
                     return .int4_array;
 

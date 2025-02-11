@@ -1,0 +1,147 @@
+/* Dracula Syntax Highlighting Theme */
+:root {
+  --dracula-background: #282a36;
+  --dracula-foreground: #f8f8f2;
+  --dracula-comment: #6272a4;
+  --dracula-cyan: #8be9fd;
+  --dracula-green: #50fa7b;
+  --dracula-orange: #ffb86c;
+  --dracula-pink: #ff79c6;
+  --dracula-purple: #bd93f9;
+  --dracula-red: #ff5555;
+  --dracula-yellow: #f1fa8c;
+  --dracula-selection: #44475a;
+  --dracula-current-line: #44475a20;
+  --gutter-width: 2rem;
+  --gutter-padding: 0.5rem;
+}
+
+pre,
+code {
+  background-color: var(--dracula-background);
+  color: var(--dracula-foreground);
+  margin: 0;
+  padding: 1rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 14px;
+  line-height: 1.4;
+  tab-size: 2;
+  white-space: pre;
+}
+
+pre {
+  overflow-x: auto;
+  position: relative;
+}
+
+/* Line number support */
+.dracula-theme.with-line-numbers {
+  counter-reset: line;
+  padding-left: var(--gutter-width);
+}
+
+.dracula-theme.with-line-numbers .line {
+  counter-increment: line;
+  position: relative;
+  vertical-align: bottom;
+  padding-left: var(--gutter-padding);
+  white-space: pre;
+}
+
+.dracula-theme.with-line-numbers .line::before {
+  content: counter(line);
+  position: absolute;
+  left: calc(-1 * var(--gutter-width));
+  width: var(--gutter-width);
+  height: 100%;
+  border-right: 1px solid var(--dracula-selection);
+  padding-right: var(--gutter-padding);
+  color: var(--dracula-comment);
+  text-align: right;
+  font-size: 12px;
+  user-select: none;
+  background-color: var(--dracula-background);
+  font-variant-numeric: tabular-nums;
+}
+
+.dracula-theme.with-line-numbers .line:hover {
+  background-color: var(--dracula-current-line);
+}
+
+/* Token classes mapped to Dracula spec */
+.syntax-pink {
+  color: var(--dracula-pink);
+}
+
+.syntax-cyan {
+  color: var(--dracula-cyan);
+}
+
+.syntax-orange {
+  color: var(--dracula-orange);
+}
+
+.syntax-red {
+  color: var(--dracula-red);
+}
+
+.syntax-green {
+  color: var(--dracula-green);
+}
+
+.syntax-yellow {
+  color: var(--dracula-yellow);
+}
+
+.syntax-gray {
+  color: var(--dracula-comment);
+}
+
+.syntax-purple {
+  color: var(--dracula-purple);
+}
+
+.syntax-fg {
+  color: var(--dracula-foreground);
+}
+
+/* Style modifiers */
+.italic {
+  font-style: italic;
+}
+
+.bold {
+  font-weight: bold;
+}
+
+/* Combined token classes */
+.syntax-cyan.italic {
+  color: var(--dracula-cyan);
+  font-style: italic;
+}
+
+.syntax-orange.italic {
+  color: var(--dracula-orange);
+  font-style: italic;
+}
+
+.syntax-green.italic {
+  color: var(--dracula-green);
+  font-style: italic;
+}
+
+.syntax-pink.bold {
+  color: var(--dracula-pink);
+  font-weight: bold;
+}
+
+/* Template literals and interpolation */
+.syntax-yellow .interpolation {
+  color: var(--dracula-pink);
+}
+
+/* Ensure proper contrast on selection */
+::selection {
+  background-color: var(--dracula-selection);
+  color: var(--dracula-foreground);
+}

@@ -313,7 +313,7 @@ pub extern fn JSC__VM__setExecutionTimeLimit(arg0: *bindings.VM, arg1: f64) void
 pub extern fn JSC__VM__shrinkFootprint(arg0: *bindings.VM) void;
 pub extern fn JSC__VM__throwError(arg0: *bindings.VM, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) void;
 pub extern fn JSC__VM__whenIdle(arg0: *bindings.VM, ArgFn1: ?*const fn (...) callconv(.C) void) void;
-
+pub extern fn JSC__VM__performOpportunisticallyScheduledTasks(arg0: *bindings.VM, arg1: f64) void;
 pub extern fn FFI__ptr__put(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) void;
 pub extern fn Reader__u8__put(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) void;
 pub extern fn Reader__u16__put(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) void;

@@ -39,22 +39,22 @@ bench("Buffer.from(ArrayBuffer(100))", () => {
   return Buffer.from(hundred);
 });
 
-bench("new Buffer(ArrayBuffer(100))", () => {
-  return new Buffer(hundred);
-});
-
 var hundredArray = new Uint8Array(100);
 bench("Buffer.from(Uint8Array(100))", () => {
   return Buffer.from(hundredArray);
 });
 
-bench("new Buffer(Uint8Array(100))", () => {
-  return new Buffer(hundredArray);
-});
-
 var empty = new Uint8Array(0);
 bench("Buffer.from(Uint8Array(0))", () => {
   return Buffer.from(empty);
+});
+
+bench("new Buffer(ArrayBuffer(100))", () => {
+  return new Buffer(hundred);
+});
+
+bench("new Buffer(Uint8Array(100))", () => {
+  return new Buffer(hundredArray);
 });
 
 bench("new Buffer(Uint8Array(0))", () => {

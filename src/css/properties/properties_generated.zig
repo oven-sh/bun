@@ -14,6 +14,19 @@ const PropertyIdImpl = @import("./properties_impl.zig").PropertyIdImpl;
 const CSSWideKeyword = css.css_properties.CSSWideKeyword;
 const UnparsedProperty = css.css_properties.custom.UnparsedProperty;
 const CustomProperty = css.css_properties.custom.CustomProperty;
+const Targets = css.targets.Targets;
+const Feature = css.prefixes.Feature;
+
+const ColorScheme = css.css_properties.ui.ColorScheme;
+
+const TransformList = css.css_properties.transform.TransformList;
+const TransformStyle = css.css_properties.transform.TransformStyle;
+const TransformBox = css.css_properties.transform.TransformBox;
+const BackfaceVisibility = css.css_properties.transform.BackfaceVisibility;
+const Perspective = css.css_properties.transform.Perspective;
+const Translate = css.css_properties.transform.Translate;
+const Rotate = css.css_properties.transform.Rotate;
+const Scale = css.css_properties.transform.Scale;
 
 const css_values = css.css_values;
 const CssColor = css.css_values.color.CssColor;
@@ -146,7 +159,7 @@ const FontVariantCaps = font.FontVariantCaps;
 const LineHeight = font.LineHeight;
 const Font = font.Font;
 // const VerticalAlign = font.VerticalAlign;
-// const Transition = transition.Transition;
+const Transition = transition.Transition;
 // const AnimationNameList = animation.AnimationNameList;
 // const AnimationList = animation.AnimationList;
 // const AnimationIterationCount = animation.AnimationIterationCount;
@@ -443,6 +456,21 @@ pub const Property = union(PropertyIdTag) {
     @"font-variant-caps": FontVariantCaps,
     @"line-height": LineHeight,
     font: Font,
+    @"transition-property": struct { SmallList(PropertyId, 1), VendorPrefix },
+    @"transition-duration": struct { SmallList(Time, 1), VendorPrefix },
+    @"transition-delay": struct { SmallList(Time, 1), VendorPrefix },
+    @"transition-timing-function": struct { SmallList(EasingFunction, 1), VendorPrefix },
+    transition: struct { SmallList(Transition, 1), VendorPrefix },
+    transform: struct { TransformList, VendorPrefix },
+    @"transform-origin": struct { Position, VendorPrefix },
+    @"transform-style": struct { TransformStyle, VendorPrefix },
+    @"transform-box": TransformBox,
+    @"backface-visibility": struct { BackfaceVisibility, VendorPrefix },
+    perspective: struct { Perspective, VendorPrefix },
+    @"perspective-origin": struct { Position, VendorPrefix },
+    translate: Translate,
+    rotate: Rotate,
+    scale: Scale,
     @"text-decoration-color": struct { CssColor, VendorPrefix },
     @"text-emphasis-color": struct { CssColor, VendorPrefix },
     @"text-shadow": SmallList(TextShadow, 1),
@@ -475,6 +503,7 @@ pub const Property = union(PropertyIdTag) {
     @"mask-box-image-width": struct { Rect(BorderImageSideWidth), VendorPrefix },
     @"mask-box-image-outset": struct { Rect(LengthOrNumber), VendorPrefix },
     @"mask-box-image-repeat": struct { BorderImageRepeat, VendorPrefix },
+    @"color-scheme": ColorScheme,
     all: CSSWideKeyword,
     unparsed: UnparsedProperty,
     custom: CustomProperty,
@@ -3517,6 +3546,246 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(Font) ++ ": does not have a eql() function.\n";
             }
 
+            if (!@hasDecl(SmallList(PropertyId, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(PropertyId, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(PropertyId, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(PropertyId, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(PropertyId, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(PropertyId, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(PropertyId, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(PropertyId, 1)) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(Time, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(Time, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(Time, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(Time, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(Time, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(Time, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(Time, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(Time, 1)) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(Time, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(Time, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(Time, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(Time, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(Time, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(Time, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(Time, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(Time, 1)) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(EasingFunction, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(EasingFunction, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(EasingFunction, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(EasingFunction, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(EasingFunction, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(EasingFunction, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(EasingFunction, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(EasingFunction, 1)) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(Transition, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(Transition, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(Transition, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(Transition, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(Transition, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(Transition, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(Transition, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(Transition, 1)) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(TransformList, "deepClone")) {
+                compile_error = compile_error ++ @typeName(TransformList) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(TransformList, "parse")) {
+                compile_error = compile_error ++ @typeName(TransformList) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(TransformList, "toCss")) {
+                compile_error = compile_error ++ @typeName(TransformList) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(TransformList, "eql")) {
+                compile_error = compile_error ++ @typeName(TransformList) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(Position, "deepClone")) {
+                compile_error = compile_error ++ @typeName(Position) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Position, "parse")) {
+                compile_error = compile_error ++ @typeName(Position) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Position, "toCss")) {
+                compile_error = compile_error ++ @typeName(Position) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Position, "eql")) {
+                compile_error = compile_error ++ @typeName(Position) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(TransformStyle, "deepClone")) {
+                compile_error = compile_error ++ @typeName(TransformStyle) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(TransformStyle, "parse")) {
+                compile_error = compile_error ++ @typeName(TransformStyle) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(TransformStyle, "toCss")) {
+                compile_error = compile_error ++ @typeName(TransformStyle) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(TransformStyle, "eql")) {
+                compile_error = compile_error ++ @typeName(TransformStyle) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(TransformBox, "deepClone")) {
+                compile_error = compile_error ++ @typeName(TransformBox) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(TransformBox, "parse")) {
+                compile_error = compile_error ++ @typeName(TransformBox) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(TransformBox, "toCss")) {
+                compile_error = compile_error ++ @typeName(TransformBox) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(TransformBox, "eql")) {
+                compile_error = compile_error ++ @typeName(TransformBox) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(BackfaceVisibility, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BackfaceVisibility) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BackfaceVisibility, "parse")) {
+                compile_error = compile_error ++ @typeName(BackfaceVisibility) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BackfaceVisibility, "toCss")) {
+                compile_error = compile_error ++ @typeName(BackfaceVisibility) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BackfaceVisibility, "eql")) {
+                compile_error = compile_error ++ @typeName(BackfaceVisibility) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(Perspective, "deepClone")) {
+                compile_error = compile_error ++ @typeName(Perspective) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Perspective, "parse")) {
+                compile_error = compile_error ++ @typeName(Perspective) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Perspective, "toCss")) {
+                compile_error = compile_error ++ @typeName(Perspective) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Perspective, "eql")) {
+                compile_error = compile_error ++ @typeName(Perspective) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(Position, "deepClone")) {
+                compile_error = compile_error ++ @typeName(Position) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Position, "parse")) {
+                compile_error = compile_error ++ @typeName(Position) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Position, "toCss")) {
+                compile_error = compile_error ++ @typeName(Position) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Position, "eql")) {
+                compile_error = compile_error ++ @typeName(Position) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(Translate, "deepClone")) {
+                compile_error = compile_error ++ @typeName(Translate) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Translate, "parse")) {
+                compile_error = compile_error ++ @typeName(Translate) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Translate, "toCss")) {
+                compile_error = compile_error ++ @typeName(Translate) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Translate, "eql")) {
+                compile_error = compile_error ++ @typeName(Translate) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(Rotate, "deepClone")) {
+                compile_error = compile_error ++ @typeName(Rotate) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Rotate, "parse")) {
+                compile_error = compile_error ++ @typeName(Rotate) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Rotate, "toCss")) {
+                compile_error = compile_error ++ @typeName(Rotate) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Rotate, "eql")) {
+                compile_error = compile_error ++ @typeName(Rotate) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(Scale, "deepClone")) {
+                compile_error = compile_error ++ @typeName(Scale) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Scale, "parse")) {
+                compile_error = compile_error ++ @typeName(Scale) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Scale, "toCss")) {
+                compile_error = compile_error ++ @typeName(Scale) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Scale, "eql")) {
+                compile_error = compile_error ++ @typeName(Scale) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(CssColor, "deepClone")) {
                 compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a deepClone() function.\n";
             }
@@ -4027,6 +4296,22 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(BorderImageRepeat, "eql")) {
                 compile_error = compile_error ++ @typeName(BorderImageRepeat) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(ColorScheme, "deepClone")) {
+                compile_error = compile_error ++ @typeName(ColorScheme) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(ColorScheme, "parse")) {
+                compile_error = compile_error ++ @typeName(ColorScheme) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(ColorScheme, "toCss")) {
+                compile_error = compile_error ++ @typeName(ColorScheme) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(ColorScheme, "eql")) {
+                compile_error = compile_error ++ @typeName(ColorScheme) ++ ": does not have a eql() function.\n";
             }
 
             const final_compile_error = compile_error;
@@ -5431,6 +5716,111 @@ pub const Property = union(PropertyIdTag) {
                     }
                 }
             },
+            .@"transition-property" => |pre| {
+                if (css.generic.parseWithOptions(SmallList(PropertyId, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"transition-property" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"transition-duration" => |pre| {
+                if (css.generic.parseWithOptions(SmallList(Time, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"transition-duration" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"transition-delay" => |pre| {
+                if (css.generic.parseWithOptions(SmallList(Time, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"transition-delay" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"transition-timing-function" => |pre| {
+                if (css.generic.parseWithOptions(SmallList(EasingFunction, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"transition-timing-function" = .{ c, pre } } };
+                    }
+                }
+            },
+            .transition => |pre| {
+                if (css.generic.parseWithOptions(SmallList(Transition, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .transition = .{ c, pre } } };
+                    }
+                }
+            },
+            .transform => |pre| {
+                if (css.generic.parseWithOptions(TransformList, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .transform = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"transform-origin" => |pre| {
+                if (css.generic.parseWithOptions(Position, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"transform-origin" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"transform-style" => |pre| {
+                if (css.generic.parseWithOptions(TransformStyle, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"transform-style" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"transform-box" => {
+                if (css.generic.parseWithOptions(TransformBox, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"transform-box" = c } };
+                    }
+                }
+            },
+            .@"backface-visibility" => |pre| {
+                if (css.generic.parseWithOptions(BackfaceVisibility, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"backface-visibility" = .{ c, pre } } };
+                    }
+                }
+            },
+            .perspective => |pre| {
+                if (css.generic.parseWithOptions(Perspective, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .perspective = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"perspective-origin" => |pre| {
+                if (css.generic.parseWithOptions(Position, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"perspective-origin" = .{ c, pre } } };
+                    }
+                }
+            },
+            .translate => {
+                if (css.generic.parseWithOptions(Translate, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .translate = c } };
+                    }
+                }
+            },
+            .rotate => {
+                if (css.generic.parseWithOptions(Rotate, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .rotate = c } };
+                    }
+                }
+            },
+            .scale => {
+                if (css.generic.parseWithOptions(Scale, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .scale = c } };
+                    }
+                }
+            },
             .@"text-decoration-color" => |pre| {
                 if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
@@ -5656,6 +6046,13 @@ pub const Property = union(PropertyIdTag) {
                     }
                 }
             },
+            .@"color-scheme" => {
+                if (css.generic.parseWithOptions(ColorScheme, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"color-scheme" = c } };
+                    }
+                }
+            },
             .all => return .{ .result = .{ .all = switch (CSSWideKeyword.parse(input)) {
                 .result => |v| v,
                 .err => |e| return .{ .err = e },
@@ -5878,6 +6275,21 @@ pub const Property = union(PropertyIdTag) {
             .@"font-variant-caps" => .@"font-variant-caps",
             .@"line-height" => .@"line-height",
             .font => .font,
+            .@"transition-property" => |*v| PropertyId{ .@"transition-property" = v[1] },
+            .@"transition-duration" => |*v| PropertyId{ .@"transition-duration" = v[1] },
+            .@"transition-delay" => |*v| PropertyId{ .@"transition-delay" = v[1] },
+            .@"transition-timing-function" => |*v| PropertyId{ .@"transition-timing-function" = v[1] },
+            .transition => |*v| PropertyId{ .transition = v[1] },
+            .transform => |*v| PropertyId{ .transform = v[1] },
+            .@"transform-origin" => |*v| PropertyId{ .@"transform-origin" = v[1] },
+            .@"transform-style" => |*v| PropertyId{ .@"transform-style" = v[1] },
+            .@"transform-box" => .@"transform-box",
+            .@"backface-visibility" => |*v| PropertyId{ .@"backface-visibility" = v[1] },
+            .perspective => |*v| PropertyId{ .perspective = v[1] },
+            .@"perspective-origin" => |*v| PropertyId{ .@"perspective-origin" = v[1] },
+            .translate => .translate,
+            .rotate => .rotate,
+            .scale => .scale,
             .@"text-decoration-color" => |*v| PropertyId{ .@"text-decoration-color" = v[1] },
             .@"text-emphasis-color" => |*v| PropertyId{ .@"text-emphasis-color" = v[1] },
             .@"text-shadow" => .@"text-shadow",
@@ -5910,6 +6322,7 @@ pub const Property = union(PropertyIdTag) {
             .@"mask-box-image-width" => |*v| PropertyId{ .@"mask-box-image-width" = v[1] },
             .@"mask-box-image-outset" => |*v| PropertyId{ .@"mask-box-image-outset" = v[1] },
             .@"mask-box-image-repeat" => |*v| PropertyId{ .@"mask-box-image-repeat" = v[1] },
+            .@"color-scheme" => .@"color-scheme",
             .all => PropertyId.all,
             .unparsed => |unparsed| unparsed.property_id,
             .custom => |c| .{ .custom = c.name },
@@ -6116,6 +6529,21 @@ pub const Property = union(PropertyIdTag) {
             .@"font-variant-caps" => |*v| .{ .@"font-variant-caps" = v.deepClone(allocator) },
             .@"line-height" => |*v| .{ .@"line-height" = v.deepClone(allocator) },
             .font => |*v| .{ .font = v.deepClone(allocator) },
+            .@"transition-property" => |*v| .{ .@"transition-property" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"transition-duration" => |*v| .{ .@"transition-duration" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"transition-delay" => |*v| .{ .@"transition-delay" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"transition-timing-function" => |*v| .{ .@"transition-timing-function" = .{ v[0].deepClone(allocator), v[1] } },
+            .transition => |*v| .{ .transition = .{ v[0].deepClone(allocator), v[1] } },
+            .transform => |*v| .{ .transform = .{ v[0].deepClone(allocator), v[1] } },
+            .@"transform-origin" => |*v| .{ .@"transform-origin" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"transform-style" => |*v| .{ .@"transform-style" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"transform-box" => |*v| .{ .@"transform-box" = v.deepClone(allocator) },
+            .@"backface-visibility" => |*v| .{ .@"backface-visibility" = .{ v[0].deepClone(allocator), v[1] } },
+            .perspective => |*v| .{ .perspective = .{ v[0].deepClone(allocator), v[1] } },
+            .@"perspective-origin" => |*v| .{ .@"perspective-origin" = .{ v[0].deepClone(allocator), v[1] } },
+            .translate => |*v| .{ .translate = v.deepClone(allocator) },
+            .rotate => |*v| .{ .rotate = v.deepClone(allocator) },
+            .scale => |*v| .{ .scale = v.deepClone(allocator) },
             .@"text-decoration-color" => |*v| .{ .@"text-decoration-color" = .{ v[0].deepClone(allocator), v[1] } },
             .@"text-emphasis-color" => |*v| .{ .@"text-emphasis-color" = .{ v[0].deepClone(allocator), v[1] } },
             .@"text-shadow" => |*v| .{ .@"text-shadow" = v.deepClone(allocator) },
@@ -6148,6 +6576,7 @@ pub const Property = union(PropertyIdTag) {
             .@"mask-box-image-width" => |*v| .{ .@"mask-box-image-width" = .{ v[0].deepClone(allocator), v[1] } },
             .@"mask-box-image-outset" => |*v| .{ .@"mask-box-image-outset" = .{ v[0].deepClone(allocator), v[1] } },
             .@"mask-box-image-repeat" => |*v| .{ .@"mask-box-image-repeat" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"color-scheme" => |*v| .{ .@"color-scheme" = v.deepClone(allocator) },
             .all => |*a| return .{ .all = a.deepClone(allocator) },
             .unparsed => |*u| return .{ .unparsed = u.deepClone(allocator) },
             .custom => |*c| return .{ .custom = c.deepClone(allocator) },
@@ -6364,6 +6793,21 @@ pub const Property = union(PropertyIdTag) {
             .@"font-variant-caps" => .{ "font-variant-caps", VendorPrefix{ .none = true } },
             .@"line-height" => .{ "line-height", VendorPrefix{ .none = true } },
             .font => .{ "font", VendorPrefix{ .none = true } },
+            .@"transition-property" => |*x| .{ "transition-property", x.@"1" },
+            .@"transition-duration" => |*x| .{ "transition-duration", x.@"1" },
+            .@"transition-delay" => |*x| .{ "transition-delay", x.@"1" },
+            .@"transition-timing-function" => |*x| .{ "transition-timing-function", x.@"1" },
+            .transition => |*x| .{ "transition", x.@"1" },
+            .transform => |*x| .{ "transform", x.@"1" },
+            .@"transform-origin" => |*x| .{ "transform-origin", x.@"1" },
+            .@"transform-style" => |*x| .{ "transform-style", x.@"1" },
+            .@"transform-box" => .{ "transform-box", VendorPrefix{ .none = true } },
+            .@"backface-visibility" => |*x| .{ "backface-visibility", x.@"1" },
+            .perspective => |*x| .{ "perspective", x.@"1" },
+            .@"perspective-origin" => |*x| .{ "perspective-origin", x.@"1" },
+            .translate => .{ "translate", VendorPrefix{ .none = true } },
+            .rotate => .{ "rotate", VendorPrefix{ .none = true } },
+            .scale => .{ "scale", VendorPrefix{ .none = true } },
             .@"text-decoration-color" => |*x| .{ "text-decoration-color", x.@"1" },
             .@"text-emphasis-color" => |*x| .{ "text-emphasis-color", x.@"1" },
             .@"text-shadow" => .{ "text-shadow", VendorPrefix{ .none = true } },
@@ -6396,6 +6840,7 @@ pub const Property = union(PropertyIdTag) {
             .@"mask-box-image-width" => |*x| .{ "mask-box-image-width", x.@"1" },
             .@"mask-box-image-outset" => |*x| .{ "mask-box-image-outset", x.@"1" },
             .@"mask-box-image-repeat" => |*x| .{ "mask-box-image-repeat", x.@"1" },
+            .@"color-scheme" => .{ "color-scheme", VendorPrefix{ .none = true } },
             .all => .{ "all", VendorPrefix{ .none = true } },
             .unparsed => |*unparsed| brk: {
                 var prefix = unparsed.property_id.prefix();
@@ -6609,6 +7054,21 @@ pub const Property = union(PropertyIdTag) {
             .@"font-variant-caps" => |*value| value.toCss(W, dest),
             .@"line-height" => |*value| value.toCss(W, dest),
             .font => |*value| value.toCss(W, dest),
+            .@"transition-property" => |*value| value[0].toCss(W, dest),
+            .@"transition-duration" => |*value| value[0].toCss(W, dest),
+            .@"transition-delay" => |*value| value[0].toCss(W, dest),
+            .@"transition-timing-function" => |*value| value[0].toCss(W, dest),
+            .transition => |*value| value[0].toCss(W, dest),
+            .transform => |*value| value[0].toCss(W, dest),
+            .@"transform-origin" => |*value| value[0].toCss(W, dest),
+            .@"transform-style" => |*value| value[0].toCss(W, dest),
+            .@"transform-box" => |*value| value.toCss(W, dest),
+            .@"backface-visibility" => |*value| value[0].toCss(W, dest),
+            .perspective => |*value| value[0].toCss(W, dest),
+            .@"perspective-origin" => |*value| value[0].toCss(W, dest),
+            .translate => |*value| value.toCss(W, dest),
+            .rotate => |*value| value.toCss(W, dest),
+            .scale => |*value| value.toCss(W, dest),
             .@"text-decoration-color" => |*value| value[0].toCss(W, dest),
             .@"text-emphasis-color" => |*value| value[0].toCss(W, dest),
             .@"text-shadow" => |*value| value.toCss(W, dest),
@@ -6641,6 +7101,7 @@ pub const Property = union(PropertyIdTag) {
             .@"mask-box-image-width" => |*value| value[0].toCss(W, dest),
             .@"mask-box-image-outset" => |*value| value[0].toCss(W, dest),
             .@"mask-box-image-repeat" => |*value| value[0].toCss(W, dest),
+            .@"color-scheme" => |*value| value.toCss(W, dest),
             .all => |*keyword| keyword.toCss(W, dest),
             .unparsed => |*unparsed| unparsed.value.toCss(W, dest, false),
             .custom => |*c| c.value.toCss(W, dest, c.name == .custom),
@@ -6709,6 +7170,10 @@ pub const Property = union(PropertyIdTag) {
             .@"scroll-padding-inline" => |*v| return v.longhand(property_id),
             .@"scroll-padding" => |*v| return v.longhand(property_id),
             .font => |*v| return v.longhand(property_id),
+            .transition => |*v| {
+                if (!v[1].eq(property_id.prefix())) return null;
+                return v[0].longhand(property_id);
+            },
             .mask => |*v| {
                 if (!v[1].eq(property_id.prefix())) return null;
                 return v[0].longhand(property_id);
@@ -6920,6 +7385,21 @@ pub const Property = union(PropertyIdTag) {
             .@"font-variant-caps" => |*v| css.generic.eql(FontVariantCaps, v, &rhs.@"font-variant-caps"),
             .@"line-height" => |*v| css.generic.eql(LineHeight, v, &rhs.@"line-height"),
             .font => |*v| css.generic.eql(Font, v, &rhs.font),
+            .@"transition-property" => |*v| css.generic.eql(SmallList(PropertyId, 1), &v[0], &rhs.@"transition-property"[0]) and v[1].eq(rhs.@"transition-property"[1]),
+            .@"transition-duration" => |*v| css.generic.eql(SmallList(Time, 1), &v[0], &rhs.@"transition-duration"[0]) and v[1].eq(rhs.@"transition-duration"[1]),
+            .@"transition-delay" => |*v| css.generic.eql(SmallList(Time, 1), &v[0], &rhs.@"transition-delay"[0]) and v[1].eq(rhs.@"transition-delay"[1]),
+            .@"transition-timing-function" => |*v| css.generic.eql(SmallList(EasingFunction, 1), &v[0], &rhs.@"transition-timing-function"[0]) and v[1].eq(rhs.@"transition-timing-function"[1]),
+            .transition => |*v| css.generic.eql(SmallList(Transition, 1), &v[0], &rhs.transition[0]) and v[1].eq(rhs.transition[1]),
+            .transform => |*v| css.generic.eql(TransformList, &v[0], &rhs.transform[0]) and v[1].eq(rhs.transform[1]),
+            .@"transform-origin" => |*v| css.generic.eql(Position, &v[0], &rhs.@"transform-origin"[0]) and v[1].eq(rhs.@"transform-origin"[1]),
+            .@"transform-style" => |*v| css.generic.eql(TransformStyle, &v[0], &rhs.@"transform-style"[0]) and v[1].eq(rhs.@"transform-style"[1]),
+            .@"transform-box" => |*v| css.generic.eql(TransformBox, v, &rhs.@"transform-box"),
+            .@"backface-visibility" => |*v| css.generic.eql(BackfaceVisibility, &v[0], &rhs.@"backface-visibility"[0]) and v[1].eq(rhs.@"backface-visibility"[1]),
+            .perspective => |*v| css.generic.eql(Perspective, &v[0], &rhs.perspective[0]) and v[1].eq(rhs.perspective[1]),
+            .@"perspective-origin" => |*v| css.generic.eql(Position, &v[0], &rhs.@"perspective-origin"[0]) and v[1].eq(rhs.@"perspective-origin"[1]),
+            .translate => |*v| css.generic.eql(Translate, v, &rhs.translate),
+            .rotate => |*v| css.generic.eql(Rotate, v, &rhs.rotate),
+            .scale => |*v| css.generic.eql(Scale, v, &rhs.scale),
             .@"text-decoration-color" => |*v| css.generic.eql(CssColor, &v[0], &rhs.@"text-decoration-color"[0]) and v[1].eq(rhs.@"text-decoration-color"[1]),
             .@"text-emphasis-color" => |*v| css.generic.eql(CssColor, &v[0], &rhs.@"text-emphasis-color"[0]) and v[1].eq(rhs.@"text-emphasis-color"[1]),
             .@"text-shadow" => |*v| css.generic.eql(SmallList(TextShadow, 1), v, &rhs.@"text-shadow"),
@@ -6952,6 +7432,7 @@ pub const Property = union(PropertyIdTag) {
             .@"mask-box-image-width" => |*v| css.generic.eql(Rect(BorderImageSideWidth), &v[0], &rhs.@"mask-box-image-width"[0]) and v[1].eq(rhs.@"mask-box-image-width"[1]),
             .@"mask-box-image-outset" => |*v| css.generic.eql(Rect(LengthOrNumber), &v[0], &rhs.@"mask-box-image-outset"[0]) and v[1].eq(rhs.@"mask-box-image-outset"[1]),
             .@"mask-box-image-repeat" => |*v| css.generic.eql(BorderImageRepeat, &v[0], &rhs.@"mask-box-image-repeat"[0]) and v[1].eq(rhs.@"mask-box-image-repeat"[1]),
+            .@"color-scheme" => |*v| css.generic.eql(ColorScheme, v, &rhs.@"color-scheme"),
             .unparsed => |*u| u.eql(&rhs.unparsed),
             .all => true,
             .custom => |*c| c.eql(&rhs.custom),
@@ -7157,6 +7638,21 @@ pub const PropertyId = union(PropertyIdTag) {
     @"font-variant-caps",
     @"line-height",
     font,
+    @"transition-property": VendorPrefix,
+    @"transition-duration": VendorPrefix,
+    @"transition-delay": VendorPrefix,
+    @"transition-timing-function": VendorPrefix,
+    transition: VendorPrefix,
+    transform: VendorPrefix,
+    @"transform-origin": VendorPrefix,
+    @"transform-style": VendorPrefix,
+    @"transform-box",
+    @"backface-visibility": VendorPrefix,
+    perspective: VendorPrefix,
+    @"perspective-origin": VendorPrefix,
+    translate,
+    rotate,
+    scale,
     @"text-decoration-color": VendorPrefix,
     @"text-emphasis-color": VendorPrefix,
     @"text-shadow",
@@ -7189,6 +7685,7 @@ pub const PropertyId = union(PropertyIdTag) {
     @"mask-box-image-width": VendorPrefix,
     @"mask-box-image-outset": VendorPrefix,
     @"mask-box-image-repeat": VendorPrefix,
+    @"color-scheme",
     all,
     unparsed,
     custom: CustomPropertyName,
@@ -7402,6 +7899,21 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"font-variant-caps" => VendorPrefix.empty(),
             .@"line-height" => VendorPrefix.empty(),
             .font => VendorPrefix.empty(),
+            .@"transition-property" => |p| p,
+            .@"transition-duration" => |p| p,
+            .@"transition-delay" => |p| p,
+            .@"transition-timing-function" => |p| p,
+            .transition => |p| p,
+            .transform => |p| p,
+            .@"transform-origin" => |p| p,
+            .@"transform-style" => |p| p,
+            .@"transform-box" => VendorPrefix.empty(),
+            .@"backface-visibility" => |p| p,
+            .perspective => |p| p,
+            .@"perspective-origin" => |p| p,
+            .translate => VendorPrefix.empty(),
+            .rotate => VendorPrefix.empty(),
+            .scale => VendorPrefix.empty(),
             .@"text-decoration-color" => |p| p,
             .@"text-emphasis-color" => |p| p,
             .@"text-shadow" => VendorPrefix.empty(),
@@ -7434,12 +7946,13 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"mask-box-image-width" => |p| p,
             .@"mask-box-image-outset" => |p| p,
             .@"mask-box-image-repeat" => |p| p,
+            .@"color-scheme" => VendorPrefix.empty(),
             .all, .custom, .unparsed => VendorPrefix.empty(),
         };
     }
 
     pub fn fromNameAndPrefix(name1: []const u8, pre: VendorPrefix) ?PropertyId {
-        const Enum = enum { @"background-color", @"background-image", @"background-position-x", @"background-position-y", @"background-position", @"background-size", @"background-repeat", @"background-attachment", @"background-clip", @"background-origin", background, @"box-shadow", opacity, color, display, visibility, width, height, @"min-width", @"min-height", @"max-width", @"max-height", @"block-size", @"inline-size", @"min-block-size", @"min-inline-size", @"max-block-size", @"max-inline-size", @"box-sizing", @"aspect-ratio", overflow, @"overflow-x", @"overflow-y", @"text-overflow", position, top, bottom, left, right, @"inset-block-start", @"inset-block-end", @"inset-inline-start", @"inset-inline-end", @"inset-block", @"inset-inline", inset, @"border-spacing", @"border-top-color", @"border-bottom-color", @"border-left-color", @"border-right-color", @"border-block-start-color", @"border-block-end-color", @"border-inline-start-color", @"border-inline-end-color", @"border-top-style", @"border-bottom-style", @"border-left-style", @"border-right-style", @"border-block-start-style", @"border-block-end-style", @"border-inline-start-style", @"border-inline-end-style", @"border-top-width", @"border-bottom-width", @"border-left-width", @"border-right-width", @"border-block-start-width", @"border-block-end-width", @"border-inline-start-width", @"border-inline-end-width", @"border-top-left-radius", @"border-top-right-radius", @"border-bottom-left-radius", @"border-bottom-right-radius", @"border-start-start-radius", @"border-start-end-radius", @"border-end-start-radius", @"border-end-end-radius", @"border-radius", @"border-image-source", @"border-image-outset", @"border-image-repeat", @"border-image-width", @"border-image-slice", @"border-image", @"border-color", @"border-style", @"border-width", @"border-block-color", @"border-block-style", @"border-block-width", @"border-inline-color", @"border-inline-style", @"border-inline-width", border, @"border-top", @"border-bottom", @"border-left", @"border-right", @"border-block", @"border-block-start", @"border-block-end", @"border-inline", @"border-inline-start", @"border-inline-end", outline, @"outline-color", @"outline-style", @"outline-width", @"flex-direction", @"flex-wrap", @"flex-flow", @"flex-grow", @"flex-shrink", @"flex-basis", flex, order, @"align-content", @"justify-content", @"place-content", @"align-self", @"justify-self", @"place-self", @"align-items", @"justify-items", @"place-items", @"row-gap", @"column-gap", gap, @"box-orient", @"box-direction", @"box-ordinal-group", @"box-align", @"box-flex", @"box-flex-group", @"box-pack", @"box-lines", @"flex-pack", @"flex-order", @"flex-align", @"flex-item-align", @"flex-line-pack", @"flex-positive", @"flex-negative", @"flex-preferred-size", @"margin-top", @"margin-bottom", @"margin-left", @"margin-right", @"margin-block-start", @"margin-block-end", @"margin-inline-start", @"margin-inline-end", @"margin-block", @"margin-inline", margin, @"padding-top", @"padding-bottom", @"padding-left", @"padding-right", @"padding-block-start", @"padding-block-end", @"padding-inline-start", @"padding-inline-end", @"padding-block", @"padding-inline", padding, @"scroll-margin-top", @"scroll-margin-bottom", @"scroll-margin-left", @"scroll-margin-right", @"scroll-margin-block-start", @"scroll-margin-block-end", @"scroll-margin-inline-start", @"scroll-margin-inline-end", @"scroll-margin-block", @"scroll-margin-inline", @"scroll-margin", @"scroll-padding-top", @"scroll-padding-bottom", @"scroll-padding-left", @"scroll-padding-right", @"scroll-padding-block-start", @"scroll-padding-block-end", @"scroll-padding-inline-start", @"scroll-padding-inline-end", @"scroll-padding-block", @"scroll-padding-inline", @"scroll-padding", @"font-weight", @"font-size", @"font-stretch", @"font-family", @"font-style", @"font-variant-caps", @"line-height", font, @"text-decoration-color", @"text-emphasis-color", @"text-shadow", direction, composes, @"mask-image", @"mask-mode", @"mask-repeat", @"mask-position-x", @"mask-position-y", @"mask-position", @"mask-clip", @"mask-origin", @"mask-size", @"mask-composite", @"mask-type", mask, @"mask-border-source", @"mask-border-mode", @"mask-border-slice", @"mask-border-width", @"mask-border-outset", @"mask-border-repeat", @"mask-border", @"-webkit-mask-composite", @"mask-source-type", @"mask-box-image", @"mask-box-image-source", @"mask-box-image-slice", @"mask-box-image-width", @"mask-box-image-outset", @"mask-box-image-repeat" };
+        const Enum = enum { @"background-color", @"background-image", @"background-position-x", @"background-position-y", @"background-position", @"background-size", @"background-repeat", @"background-attachment", @"background-clip", @"background-origin", background, @"box-shadow", opacity, color, display, visibility, width, height, @"min-width", @"min-height", @"max-width", @"max-height", @"block-size", @"inline-size", @"min-block-size", @"min-inline-size", @"max-block-size", @"max-inline-size", @"box-sizing", @"aspect-ratio", overflow, @"overflow-x", @"overflow-y", @"text-overflow", position, top, bottom, left, right, @"inset-block-start", @"inset-block-end", @"inset-inline-start", @"inset-inline-end", @"inset-block", @"inset-inline", inset, @"border-spacing", @"border-top-color", @"border-bottom-color", @"border-left-color", @"border-right-color", @"border-block-start-color", @"border-block-end-color", @"border-inline-start-color", @"border-inline-end-color", @"border-top-style", @"border-bottom-style", @"border-left-style", @"border-right-style", @"border-block-start-style", @"border-block-end-style", @"border-inline-start-style", @"border-inline-end-style", @"border-top-width", @"border-bottom-width", @"border-left-width", @"border-right-width", @"border-block-start-width", @"border-block-end-width", @"border-inline-start-width", @"border-inline-end-width", @"border-top-left-radius", @"border-top-right-radius", @"border-bottom-left-radius", @"border-bottom-right-radius", @"border-start-start-radius", @"border-start-end-radius", @"border-end-start-radius", @"border-end-end-radius", @"border-radius", @"border-image-source", @"border-image-outset", @"border-image-repeat", @"border-image-width", @"border-image-slice", @"border-image", @"border-color", @"border-style", @"border-width", @"border-block-color", @"border-block-style", @"border-block-width", @"border-inline-color", @"border-inline-style", @"border-inline-width", border, @"border-top", @"border-bottom", @"border-left", @"border-right", @"border-block", @"border-block-start", @"border-block-end", @"border-inline", @"border-inline-start", @"border-inline-end", outline, @"outline-color", @"outline-style", @"outline-width", @"flex-direction", @"flex-wrap", @"flex-flow", @"flex-grow", @"flex-shrink", @"flex-basis", flex, order, @"align-content", @"justify-content", @"place-content", @"align-self", @"justify-self", @"place-self", @"align-items", @"justify-items", @"place-items", @"row-gap", @"column-gap", gap, @"box-orient", @"box-direction", @"box-ordinal-group", @"box-align", @"box-flex", @"box-flex-group", @"box-pack", @"box-lines", @"flex-pack", @"flex-order", @"flex-align", @"flex-item-align", @"flex-line-pack", @"flex-positive", @"flex-negative", @"flex-preferred-size", @"margin-top", @"margin-bottom", @"margin-left", @"margin-right", @"margin-block-start", @"margin-block-end", @"margin-inline-start", @"margin-inline-end", @"margin-block", @"margin-inline", margin, @"padding-top", @"padding-bottom", @"padding-left", @"padding-right", @"padding-block-start", @"padding-block-end", @"padding-inline-start", @"padding-inline-end", @"padding-block", @"padding-inline", padding, @"scroll-margin-top", @"scroll-margin-bottom", @"scroll-margin-left", @"scroll-margin-right", @"scroll-margin-block-start", @"scroll-margin-block-end", @"scroll-margin-inline-start", @"scroll-margin-inline-end", @"scroll-margin-block", @"scroll-margin-inline", @"scroll-margin", @"scroll-padding-top", @"scroll-padding-bottom", @"scroll-padding-left", @"scroll-padding-right", @"scroll-padding-block-start", @"scroll-padding-block-end", @"scroll-padding-inline-start", @"scroll-padding-inline-end", @"scroll-padding-block", @"scroll-padding-inline", @"scroll-padding", @"font-weight", @"font-size", @"font-stretch", @"font-family", @"font-style", @"font-variant-caps", @"line-height", font, @"transition-property", @"transition-duration", @"transition-delay", @"transition-timing-function", transition, transform, @"transform-origin", @"transform-style", @"transform-box", @"backface-visibility", perspective, @"perspective-origin", translate, rotate, scale, @"text-decoration-color", @"text-emphasis-color", @"text-shadow", direction, composes, @"mask-image", @"mask-mode", @"mask-repeat", @"mask-position-x", @"mask-position-y", @"mask-position", @"mask-clip", @"mask-origin", @"mask-size", @"mask-composite", @"mask-type", mask, @"mask-border-source", @"mask-border-mode", @"mask-border-slice", @"mask-border-width", @"mask-border-outset", @"mask-border-repeat", @"mask-border", @"-webkit-mask-composite", @"mask-source-type", @"mask-box-image", @"mask-box-image-source", @"mask-box-image-slice", @"mask-box-image-width", @"mask-box-image-outset", @"mask-box-image-repeat", @"color-scheme" };
         const Map = comptime bun.ComptimeEnumMap(Enum);
         if (Map.getASCIIICaseInsensitive(name1)) |prop| {
             switch (prop) {
@@ -8235,6 +8748,66 @@ pub const PropertyId = union(PropertyIdTag) {
                     const allowed_prefixes = VendorPrefix{ .none = true };
                     if (allowed_prefixes.contains(pre)) return .font;
                 },
+                .@"transition-property" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true, .ms = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"transition-property" = pre };
+                },
+                .@"transition-duration" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true, .ms = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"transition-duration" = pre };
+                },
+                .@"transition-delay" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true, .ms = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"transition-delay" = pre };
+                },
+                .@"transition-timing-function" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true, .ms = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"transition-timing-function" = pre };
+                },
+                .transition => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true, .ms = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .transition = pre };
+                },
+                .transform => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true, .ms = true, .o = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .transform = pre };
+                },
+                .@"transform-origin" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true, .ms = true, .o = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"transform-origin" = pre };
+                },
+                .@"transform-style" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"transform-style" = pre };
+                },
+                .@"transform-box" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"transform-box";
+                },
+                .@"backface-visibility" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"backface-visibility" = pre };
+                },
+                .perspective => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .perspective = pre };
+                },
+                .@"perspective-origin" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"perspective-origin" = pre };
+                },
+                .translate => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .translate;
+                },
+                .rotate => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .rotate;
+                },
+                .scale => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .scale;
+                },
                 .@"text-decoration-color" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
                     if (allowed_prefixes.contains(pre)) return .{ .@"text-decoration-color" = pre };
@@ -8362,6 +8935,10 @@ pub const PropertyId = union(PropertyIdTag) {
                 .@"mask-box-image-repeat" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
                     if (allowed_prefixes.contains(pre)) return .{ .@"mask-box-image-repeat" = pre };
+                },
+                .@"color-scheme" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"color-scheme";
                 },
             }
         }
@@ -8569,6 +9146,21 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"font-variant-caps" => .@"font-variant-caps",
             .@"line-height" => .@"line-height",
             .font => .font,
+            .@"transition-property" => .{ .@"transition-property" = pre },
+            .@"transition-duration" => .{ .@"transition-duration" = pre },
+            .@"transition-delay" => .{ .@"transition-delay" = pre },
+            .@"transition-timing-function" => .{ .@"transition-timing-function" = pre },
+            .transition => .{ .transition = pre },
+            .transform => .{ .transform = pre },
+            .@"transform-origin" => .{ .@"transform-origin" = pre },
+            .@"transform-style" => .{ .@"transform-style" = pre },
+            .@"transform-box" => .@"transform-box",
+            .@"backface-visibility" => .{ .@"backface-visibility" = pre },
+            .perspective => .{ .perspective = pre },
+            .@"perspective-origin" => .{ .@"perspective-origin" = pre },
+            .translate => .translate,
+            .rotate => .rotate,
+            .scale => .scale,
             .@"text-decoration-color" => .{ .@"text-decoration-color" = pre },
             .@"text-emphasis-color" => .{ .@"text-emphasis-color" = pre },
             .@"text-shadow" => .@"text-shadow",
@@ -8601,6 +9193,7 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"mask-box-image-width" => .{ .@"mask-box-image-width" = pre },
             .@"mask-box-image-outset" => .{ .@"mask-box-image-outset" = pre },
             .@"mask-box-image-repeat" => .{ .@"mask-box-image-repeat" = pre },
+            .@"color-scheme" => .@"color-scheme",
             else => this.*,
         };
     }
@@ -8881,6 +9474,43 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"font-variant-caps" => {},
             .@"line-height" => {},
             .font => {},
+            .@"transition-property" => |*p| {
+                p.insert(pre);
+            },
+            .@"transition-duration" => |*p| {
+                p.insert(pre);
+            },
+            .@"transition-delay" => |*p| {
+                p.insert(pre);
+            },
+            .@"transition-timing-function" => |*p| {
+                p.insert(pre);
+            },
+            .transition => |*p| {
+                p.insert(pre);
+            },
+            .transform => |*p| {
+                p.insert(pre);
+            },
+            .@"transform-origin" => |*p| {
+                p.insert(pre);
+            },
+            .@"transform-style" => |*p| {
+                p.insert(pre);
+            },
+            .@"transform-box" => {},
+            .@"backface-visibility" => |*p| {
+                p.insert(pre);
+            },
+            .perspective => |*p| {
+                p.insert(pre);
+            },
+            .@"perspective-origin" => |*p| {
+                p.insert(pre);
+            },
+            .translate => {},
+            .rotate => {},
+            .scale => {},
             .@"text-decoration-color" => |*p| {
                 p.insert(pre);
             },
@@ -8945,6 +9575,7 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"mask-box-image-repeat" => |*p| {
                 p.insert(pre);
             },
+            .@"color-scheme" => {},
             else => {},
         };
     }
@@ -8970,6 +9601,384 @@ pub const PropertyId = union(PropertyIdTag) {
     pub fn hash(this: *const PropertyId, hasher: *std.hash.Wyhash) void {
         const tag = @intFromEnum(this.*);
         hasher.update(std.mem.asBytes(&tag));
+    }
+
+    pub fn setPrefixesForTargets(this: *PropertyId, targets: Targets) void {
+        switch (this.*) {
+            .@"background-color" => {},
+            .@"background-image" => {},
+            .@"background-position-x" => {},
+            .@"background-position-y" => {},
+            .@"background-position" => {},
+            .@"background-size" => {},
+            .@"background-repeat" => {},
+            .@"background-attachment" => {},
+            .@"background-clip" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.background_clip);
+            },
+
+            .@"background-origin" => {},
+            .background => {},
+            .@"box-shadow" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.box_shadow);
+            },
+
+            .opacity => {},
+            .color => {},
+            .display => {},
+            .visibility => {},
+            .width => {},
+            .height => {},
+            .@"min-width" => {},
+            .@"min-height" => {},
+            .@"max-width" => {},
+            .@"max-height" => {},
+            .@"block-size" => {},
+            .@"inline-size" => {},
+            .@"min-block-size" => {},
+            .@"min-inline-size" => {},
+            .@"max-block-size" => {},
+            .@"max-inline-size" => {},
+            .@"box-sizing" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.box_sizing);
+            },
+
+            .@"aspect-ratio" => {},
+            .overflow => {},
+            .@"overflow-x" => {},
+            .@"overflow-y" => {},
+            .@"text-overflow" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.text_overflow);
+            },
+
+            .position => {},
+            .top => {},
+            .bottom => {},
+            .left => {},
+            .right => {},
+            .@"inset-block-start" => {},
+            .@"inset-block-end" => {},
+            .@"inset-inline-start" => {},
+            .@"inset-inline-end" => {},
+            .@"inset-block" => {},
+            .@"inset-inline" => {},
+            .inset => {},
+            .@"border-spacing" => {},
+            .@"border-top-color" => {},
+            .@"border-bottom-color" => {},
+            .@"border-left-color" => {},
+            .@"border-right-color" => {},
+            .@"border-block-start-color" => {},
+            .@"border-block-end-color" => {},
+            .@"border-inline-start-color" => {},
+            .@"border-inline-end-color" => {},
+            .@"border-top-style" => {},
+            .@"border-bottom-style" => {},
+            .@"border-left-style" => {},
+            .@"border-right-style" => {},
+            .@"border-block-start-style" => {},
+            .@"border-block-end-style" => {},
+            .@"border-inline-start-style" => {},
+            .@"border-inline-end-style" => {},
+            .@"border-top-width" => {},
+            .@"border-bottom-width" => {},
+            .@"border-left-width" => {},
+            .@"border-right-width" => {},
+            .@"border-block-start-width" => {},
+            .@"border-block-end-width" => {},
+            .@"border-inline-start-width" => {},
+            .@"border-inline-end-width" => {},
+            .@"border-top-left-radius" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.border_top_left_radius);
+            },
+
+            .@"border-top-right-radius" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.border_top_right_radius);
+            },
+
+            .@"border-bottom-left-radius" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.border_bottom_left_radius);
+            },
+
+            .@"border-bottom-right-radius" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.border_bottom_right_radius);
+            },
+
+            .@"border-start-start-radius" => {},
+            .@"border-start-end-radius" => {},
+            .@"border-end-start-radius" => {},
+            .@"border-end-end-radius" => {},
+            .@"border-radius" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.border_radius);
+            },
+
+            .@"border-image-source" => {},
+            .@"border-image-outset" => {},
+            .@"border-image-repeat" => {},
+            .@"border-image-width" => {},
+            .@"border-image-slice" => {},
+            .@"border-image" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.border_image);
+            },
+
+            .@"border-color" => {},
+            .@"border-style" => {},
+            .@"border-width" => {},
+            .@"border-block-color" => {},
+            .@"border-block-style" => {},
+            .@"border-block-width" => {},
+            .@"border-inline-color" => {},
+            .@"border-inline-style" => {},
+            .@"border-inline-width" => {},
+            .border => {},
+            .@"border-top" => {},
+            .@"border-bottom" => {},
+            .@"border-left" => {},
+            .@"border-right" => {},
+            .@"border-block" => {},
+            .@"border-block-start" => {},
+            .@"border-block-end" => {},
+            .@"border-inline" => {},
+            .@"border-inline-start" => {},
+            .@"border-inline-end" => {},
+            .outline => {},
+            .@"outline-color" => {},
+            .@"outline-style" => {},
+            .@"outline-width" => {},
+            .@"flex-direction" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.flex_direction);
+            },
+
+            .@"flex-wrap" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.flex_wrap);
+            },
+
+            .@"flex-flow" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.flex_flow);
+            },
+
+            .@"flex-grow" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.flex_grow);
+            },
+
+            .@"flex-shrink" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.flex_shrink);
+            },
+
+            .@"flex-basis" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.flex_basis);
+            },
+
+            .flex => |*x| {
+                x.* = targets.prefixes(x.*, Feature.flex);
+            },
+
+            .order => |*x| {
+                x.* = targets.prefixes(x.*, Feature.order);
+            },
+
+            .@"align-content" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.align_content);
+            },
+
+            .@"justify-content" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.justify_content);
+            },
+
+            .@"place-content" => {},
+            .@"align-self" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.align_self);
+            },
+
+            .@"justify-self" => {},
+            .@"place-self" => {},
+            .@"align-items" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.align_items);
+            },
+
+            .@"justify-items" => {},
+            .@"place-items" => {},
+            .@"row-gap" => {},
+            .@"column-gap" => {},
+            .gap => {},
+            .@"box-orient" => {},
+            .@"box-direction" => {},
+            .@"box-ordinal-group" => {},
+            .@"box-align" => {},
+            .@"box-flex" => {},
+            .@"box-flex-group" => {},
+            .@"box-pack" => {},
+            .@"box-lines" => {},
+            .@"flex-pack" => {},
+            .@"flex-order" => {},
+            .@"flex-align" => {},
+            .@"flex-item-align" => {},
+            .@"flex-line-pack" => {},
+            .@"flex-positive" => {},
+            .@"flex-negative" => {},
+            .@"flex-preferred-size" => {},
+            .@"margin-top" => {},
+            .@"margin-bottom" => {},
+            .@"margin-left" => {},
+            .@"margin-right" => {},
+            .@"margin-block-start" => {},
+            .@"margin-block-end" => {},
+            .@"margin-inline-start" => {},
+            .@"margin-inline-end" => {},
+            .@"margin-block" => {},
+            .@"margin-inline" => {},
+            .margin => {},
+            .@"padding-top" => {},
+            .@"padding-bottom" => {},
+            .@"padding-left" => {},
+            .@"padding-right" => {},
+            .@"padding-block-start" => {},
+            .@"padding-block-end" => {},
+            .@"padding-inline-start" => {},
+            .@"padding-inline-end" => {},
+            .@"padding-block" => {},
+            .@"padding-inline" => {},
+            .padding => {},
+            .@"scroll-margin-top" => {},
+            .@"scroll-margin-bottom" => {},
+            .@"scroll-margin-left" => {},
+            .@"scroll-margin-right" => {},
+            .@"scroll-margin-block-start" => {},
+            .@"scroll-margin-block-end" => {},
+            .@"scroll-margin-inline-start" => {},
+            .@"scroll-margin-inline-end" => {},
+            .@"scroll-margin-block" => {},
+            .@"scroll-margin-inline" => {},
+            .@"scroll-margin" => {},
+            .@"scroll-padding-top" => {},
+            .@"scroll-padding-bottom" => {},
+            .@"scroll-padding-left" => {},
+            .@"scroll-padding-right" => {},
+            .@"scroll-padding-block-start" => {},
+            .@"scroll-padding-block-end" => {},
+            .@"scroll-padding-inline-start" => {},
+            .@"scroll-padding-inline-end" => {},
+            .@"scroll-padding-block" => {},
+            .@"scroll-padding-inline" => {},
+            .@"scroll-padding" => {},
+            .@"font-weight" => {},
+            .@"font-size" => {},
+            .@"font-stretch" => {},
+            .@"font-family" => {},
+            .@"font-style" => {},
+            .@"font-variant-caps" => {},
+            .@"line-height" => {},
+            .font => {},
+            .@"transition-property" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.transition_property);
+            },
+
+            .@"transition-duration" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.transition_duration);
+            },
+
+            .@"transition-delay" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.transition_delay);
+            },
+
+            .@"transition-timing-function" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.transition_timing_function);
+            },
+
+            .transition => |*x| {
+                x.* = targets.prefixes(x.*, Feature.transition);
+            },
+
+            .transform => |*x| {
+                x.* = targets.prefixes(x.*, Feature.transform);
+            },
+
+            .@"transform-origin" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.transform_origin);
+            },
+
+            .@"transform-style" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.transform_style);
+            },
+
+            .@"transform-box" => {},
+            .@"backface-visibility" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.backface_visibility);
+            },
+
+            .perspective => |*x| {
+                x.* = targets.prefixes(x.*, Feature.perspective);
+            },
+
+            .@"perspective-origin" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.perspective_origin);
+            },
+
+            .translate => {},
+            .rotate => {},
+            .scale => {},
+            .@"text-decoration-color" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.text_decoration_color);
+            },
+
+            .@"text-emphasis-color" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.text_emphasis_color);
+            },
+
+            .@"text-shadow" => {},
+            .direction => {},
+            .composes => {},
+            .@"mask-image" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.mask_image);
+            },
+
+            .@"mask-mode" => {},
+            .@"mask-repeat" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.mask_repeat);
+            },
+
+            .@"mask-position-x" => {},
+            .@"mask-position-y" => {},
+            .@"mask-position" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.mask_position);
+            },
+
+            .@"mask-clip" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.mask_clip);
+            },
+
+            .@"mask-origin" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.mask_origin);
+            },
+
+            .@"mask-size" => |*x| {
+                x.* = targets.prefixes(x.*, Feature.mask_size);
+            },
+
+            .@"mask-composite" => {},
+            .@"mask-type" => {},
+            .mask => |*x| {
+                x.* = targets.prefixes(x.*, Feature.mask);
+            },
+
+            .@"mask-border-source" => {},
+            .@"mask-border-mode" => {},
+            .@"mask-border-slice" => {},
+            .@"mask-border-width" => {},
+            .@"mask-border-outset" => {},
+            .@"mask-border-repeat" => {},
+            .@"mask-border" => {},
+            .@"-webkit-mask-composite" => {},
+            .@"mask-source-type" => {},
+            .@"mask-box-image" => {},
+            .@"mask-box-image-source" => {},
+            .@"mask-box-image-slice" => {},
+            .@"mask-box-image-width" => {},
+            .@"mask-box-image-outset" => {},
+            .@"mask-box-image-repeat" => {},
+            .@"color-scheme" => {},
+            else => {},
+        }
     }
 };
 pub const PropertyIdTag = enum(u16) {
@@ -9171,6 +10180,21 @@ pub const PropertyIdTag = enum(u16) {
     @"font-variant-caps",
     @"line-height",
     font,
+    @"transition-property",
+    @"transition-duration",
+    @"transition-delay",
+    @"transition-timing-function",
+    transition,
+    transform,
+    @"transform-origin",
+    @"transform-style",
+    @"transform-box",
+    @"backface-visibility",
+    perspective,
+    @"perspective-origin",
+    translate,
+    rotate,
+    scale,
     @"text-decoration-color",
     @"text-emphasis-color",
     @"text-shadow",
@@ -9203,6 +10227,7 @@ pub const PropertyIdTag = enum(u16) {
     @"mask-box-image-width",
     @"mask-box-image-outset",
     @"mask-box-image-repeat",
+    @"color-scheme",
     all,
     unparsed,
     custom,
@@ -9409,6 +10434,21 @@ pub const PropertyIdTag = enum(u16) {
             .@"font-variant-caps" => false,
             .@"line-height" => false,
             .font => false,
+            .@"transition-property" => true,
+            .@"transition-duration" => true,
+            .@"transition-delay" => true,
+            .@"transition-timing-function" => true,
+            .transition => true,
+            .transform => true,
+            .@"transform-origin" => true,
+            .@"transform-style" => true,
+            .@"transform-box" => false,
+            .@"backface-visibility" => true,
+            .perspective => true,
+            .@"perspective-origin" => true,
+            .translate => false,
+            .rotate => false,
+            .scale => false,
             .@"text-decoration-color" => true,
             .@"text-emphasis-color" => true,
             .@"text-shadow" => false,
@@ -9441,6 +10481,7 @@ pub const PropertyIdTag = enum(u16) {
             .@"mask-box-image-width" => true,
             .@"mask-box-image-outset" => true,
             .@"mask-box-image-repeat" => true,
+            .@"color-scheme" => false,
             .unparsed => false,
             .custom => false,
             .all => false,
@@ -9649,6 +10690,21 @@ pub const PropertyIdTag = enum(u16) {
             .@"font-variant-caps" => FontVariantCaps,
             .@"line-height" => LineHeight,
             .font => Font,
+            .@"transition-property" => SmallList(PropertyId, 1),
+            .@"transition-duration" => SmallList(Time, 1),
+            .@"transition-delay" => SmallList(Time, 1),
+            .@"transition-timing-function" => SmallList(EasingFunction, 1),
+            .transition => SmallList(Transition, 1),
+            .transform => TransformList,
+            .@"transform-origin" => Position,
+            .@"transform-style" => TransformStyle,
+            .@"transform-box" => TransformBox,
+            .@"backface-visibility" => BackfaceVisibility,
+            .perspective => Perspective,
+            .@"perspective-origin" => Position,
+            .translate => Translate,
+            .rotate => Rotate,
+            .scale => Scale,
             .@"text-decoration-color" => CssColor,
             .@"text-emphasis-color" => CssColor,
             .@"text-shadow" => SmallList(TextShadow, 1),
@@ -9681,6 +10737,7 @@ pub const PropertyIdTag = enum(u16) {
             .@"mask-box-image-width" => Rect(BorderImageSideWidth),
             .@"mask-box-image-outset" => Rect(LengthOrNumber),
             .@"mask-box-image-repeat" => BorderImageRepeat,
+            .@"color-scheme" => ColorScheme,
             .all => CSSWideKeyword,
             .unparsed => UnparsedProperty,
             .custom => CustomProperty,

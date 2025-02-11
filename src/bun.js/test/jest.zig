@@ -45,7 +45,6 @@ const CallFrame = JSC.CallFrame;
 
 const VirtualMachine = JSC.VirtualMachine;
 const Fs = bun.fs;
-const is_bindgen: bool = false;
 
 const ArrayIdentityContext = bun.ArrayIdentityContext;
 
@@ -132,12 +131,13 @@ pub const TestRunner = struct {
     pub fn scheduleTimeout(this: *TestRunner, milliseconds: u32) void {
         const then = bun.timespec.msFromNow(@intCast(milliseconds));
         const vm = JSC.VirtualMachine.get();
+
+        this.event_loop_timer.tag = .TestRunner;
         if (this.event_loop_timer.state == .ACTIVE) {
             vm.timer.remove(&this.event_loop_timer);
         }
 
         this.event_loop_timer.next = then;
-        this.event_loop_timer.tag = .TestRunner;
         vm.timer.insert(&this.event_loop_timer);
     }
 
@@ -559,10 +559,8 @@ pub const Jest = struct {
     }
 
     comptime {
-        if (!JSC.is_bindgen) {
-            @export(Bun__Jest__createTestModuleObject, .{ .name = "Bun__Jest__createTestModuleObject" });
-            @export(Bun__Jest__createTestPreloadObject, .{ .name = "Bun__Jest__createTestPreloadObject" });
-        }
+        @export(&Bun__Jest__createTestModuleObject, .{ .name = "Bun__Jest__createTestModuleObject" });
+        @export(&Bun__Jest__createTestPreloadObject, .{ .name = "Bun__Jest__createTestPreloadObject" });
     }
 };
 
@@ -689,8 +687,6 @@ pub const TestScope = struct {
         this: *TestScope,
         task: *TestRunnerTask,
     ) Result {
-        if (comptime is_bindgen) return undefined;
-
         var vm = VirtualMachine.get();
         const func = this.func;
         defer {
@@ -812,10 +808,10 @@ pub const TestScope = struct {
     pub const name = "TestScope";
     pub const shim = JSC.Shimmer("Bun", name, @This());
     comptime {
-        @export(jsOnResolve, .{
+        @export(&jsOnResolve, .{
             .name = shim.symbolName("onResolve"),
         });
-        @export(jsOnReject, .{
+        @export(&jsOnReject, .{
             .name = shim.symbolName("onReject"),
         });
     }
@@ -824,10 +820,10 @@ pub const TestScope = struct {
 pub const DescribeScope = struct {
     label: string = "",
     parent: ?*DescribeScope = null,
-    beforeAll: std.ArrayListUnmanaged(JSValue) = .{},
-    beforeEach: std.ArrayListUnmanaged(JSValue) = .{},
-    afterEach: std.ArrayListUnmanaged(JSValue) = .{},
-    afterAll: std.ArrayListUnmanaged(JSValue) = .{},
+    beforeAlls: std.ArrayListUnmanaged(JSValue) = .{},
+    beforeEachs: std.ArrayListUnmanaged(JSValue) = .{},
+    afterEachs: std.ArrayListUnmanaged(JSValue) = .{},
+    afterAlls: std.ArrayListUnmanaged(JSValue) = .{},
     test_id_start: TestRunner.Test.ID = 0,
     test_id_len: TestRunner.Test.ID = 0,
     tests: std.ArrayListUnmanaged(TestScope) = .{},
@@ -866,7 +862,6 @@ pub const DescribeScope = struct {
     }
 
     pub fn push(new: *DescribeScope) void {
-        if (comptime is_bindgen) return;
         if (new.parent) |scope| {
             if (comptime Environment.allow_assert) {
                 assert(DescribeScope.active != new);
@@ -880,7 +875,6 @@ pub const DescribeScope = struct {
     }
 
     pub fn pop(this: *DescribeScope) void {
-        if (comptime is_bindgen) return;
         if (comptime Environment.allow_assert) assert(DescribeScope.active == this);
         DescribeScope.active = this.parent;
     }
@@ -910,7 +904,7 @@ pub const DescribeScope = struct {
                 }
 
                 cb.protect();
-                @field(DescribeScope.active.?, @tagName(hook)).append(getAllocator(globalThis), cb) catch unreachable;
+                @field(DescribeScope.active.?, @tagName(hook) ++ "s").append(getAllocator(globalThis), cb) catch unreachable;
                 return JSValue.jsBoolean(true);
             }
         }.run;
@@ -945,7 +939,7 @@ pub const DescribeScope = struct {
     pub const beforeEach = createCallback(.beforeEach);
 
     pub fn execCallback(this: *DescribeScope, globalObject: *JSGlobalObject, comptime hook: LifecycleHook) ?JSValue {
-        var hooks = &@field(this, @tagName(hook));
+        var hooks = &@field(this, @tagName(hook) ++ "s");
         defer {
             if (comptime hook == .beforeAll or hook == .afterAll) {
                 hooks.clearAndFree(getAllocator(globalObject));
@@ -1106,7 +1100,6 @@ pub const DescribeScope = struct {
     }
 
     pub fn run(this: *DescribeScope, globalObject: *JSGlobalObject, callback: JSValue, args: []const JSValue) JSValue {
-        if (comptime is_bindgen) return undefined;
         callback.protect();
         defer callback.unprotect();
         this.push();
@@ -1951,10 +1944,8 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
                     args_idx += 1;
                 },
                 'p' => {
-                    var formatter = JSC.ConsoleObject.Formatter{
-                        .globalThis = globalThis,
-                        .quote_strings = true,
-                    };
+                    var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                    defer formatter.deinit();
                     const value_fmt = current_arg.toFmt(&formatter);
                     const test_index_str = std.fmt.allocPrint(allocator, "{}", .{value_fmt}) catch bun.outOfMemory();
                     defer allocator.free(test_index_str);

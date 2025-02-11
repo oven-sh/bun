@@ -38,7 +38,7 @@ pub const BorderRadius = struct {
     /// The x and y radius values for the bottom left corner.
     bottom_left: Size2D(LengthPercentage),
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-radius");
+    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-radius", PropertyFieldMap);
 
     pub const PropertyFieldMap = .{
         .top_left = "border-top-left-radius",

@@ -180,6 +180,25 @@ Whether to skip test files when computing coverage statistics. Default `false`.
 coverageSkipTestFiles = false
 ```
 
+### `test.coverageReporter`
+
+By default, coverage reports will be printed to the console. For persistent code coverage reports in CI environments and for other tools use `lcov`.
+
+```toml
+[test]
+coverageReporter  = ["text", "lcov"]  # default ["text"]
+```
+
+### `test.coverageDir`
+
+Set path where coverage reports will be saved. Please notice, that it works only for persistent `coverageReporter` like `lcov`.
+
+```toml
+[test]
+coverageDir = "path/to/somewhere"  # default "coverage"
+```
+
+
 ## Package manager
 
 Package management is a complex issue; to support a range of use cases, the behavior of `bun install` can be configured under the `[install]` section.

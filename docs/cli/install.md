@@ -235,3 +235,5 @@ jobs:
       - name: Build app
         run: bun run build
 ```
+
+{% bunCLIUsage command="install" /%}

@@ -63,6 +63,7 @@
     "editor.tabSize": 4,
     "editor.defaultFormatter": "xaver.clang-format",
   },
+  "clangd.arguments": ["--header-insertion=never"],
 
   // JavaScript
   "prettier.enable": true,
@@ -140,6 +141,7 @@
   },
   "files.associations": {
     "*.idl": "cpp",
+    "*.mdc": "markdown",
     "array": "cpp",
   },
   "C_Cpp.files.exclude": {

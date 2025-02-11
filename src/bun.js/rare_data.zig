@@ -413,11 +413,16 @@ const StdinFdType = enum(i32) {
     socket = 2,
 };
 
-pub export fn Bun__Process__getStdinFdType(vm: *JSC.VirtualMachine) StdinFdType {
-    const mode = vm.rareData().stdin().data.file.mode;
+pub export fn Bun__Process__getStdinFdType(vm: *JSC.VirtualMachine, fd: i32) StdinFdType {
+    const mode = switch (fd) {
+        0 => vm.rareData().stdin().data.file.mode,
+        1 => vm.rareData().stdout().data.file.mode,
+        2 => vm.rareData().stderr().data.file.mode,
+        else => unreachable,
+    };
     if (bun.S.ISFIFO(mode)) {
         return .pipe;
-    } else if (bun.S.ISSOCK(mode) or bun.S.ISCHR(mode)) {
+    } else if (bun.S.ISSOCK(mode)) {
         return .socket;
     } else {
         return .file;

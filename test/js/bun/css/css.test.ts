@@ -15,6 +15,11 @@ import {
   ParserFlags,
   ParserOptions,
 } from "./util";
+import { join } from "path";
+
+function Some(n: number): number {
+  return n;
+}
 
 function error_test(css: string, error: unknown) {
   // going to ignore this test for now
@@ -1296,19 +1301,19 @@ describe("css tests", () => {
       `
       .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
         border-left-color: #b32323;
-        border-left-color: color(display-p3 .6433075 .19245467 .1677117);
+        border-left-color: color(display-p3 .643308 .192455 .167712);
         border-left-color: lab(40% 56.6 39);
         border-right-color: #ee00be;
-        border-right-color: color(display-p3 .9729615 -.36207756 .80420625);
+        border-right-color: color(display-p3 .972961 -.362078 .804206);
         border-right-color: lch(50.998% 135.363 338);
       }
 
       .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
         border-left-color: #ee00be;
-        border-left-color: color(display-p3 .9729615 -.36207756 .80420625);
+        border-left-color: color(display-p3 .972961 -.362078 .804206);
         border-left-color: lch(50.998% 135.363 338);
         border-right-color: #b32323;
-        border-right-color: color(display-p3 .6433075 .19245467 .1677117);
+        border-right-color: color(display-p3 .643308 .192455 .167712);
         border-right-color: lab(40% 56.6 39);
       }
     `,
@@ -1573,6 +1578,175 @@ describe("css tests", () => {
       {
         chrome: 99 << 16,
       },
+    );
+  });
+
+  describe("box-shadow", () => {
+    minify_test(
+      ".foo { box-shadow: 64px 64px 12px 40px rgba(0,0,0,0.4) }",
+      ".foo{box-shadow:64px 64px 12px 40px #0006}",
+    );
+    minify_test(
+      ".foo { box-shadow: 12px 12px 0px 8px rgba(0,0,0,0.4) inset }",
+      ".foo{box-shadow:inset 12px 12px 0 8px #0006}",
+    );
+    minify_test(
+      ".foo { box-shadow: inset 12px 12px 0px 8px rgba(0,0,0,0.4) }",
+      ".foo{box-shadow:inset 12px 12px 0 8px #0006}",
+    );
+    minify_test(".foo { box-shadow: 12px 12px 8px 0px rgba(0,0,0,0.4) }", ".foo{box-shadow:12px 12px 8px #0006}");
+    minify_test(".foo { box-shadow: 12px 12px 0px 0px rgba(0,0,0,0.4) }", ".foo{box-shadow:12px 12px #0006}");
+    minify_test(
+      ".foo { box-shadow: 64px 64px 12px 40px rgba(0,0,0,0.4), 12px 12px 0px 8px rgba(0,0,0,0.4) inset }",
+      ".foo{box-shadow:64px 64px 12px 40px #0006,inset 12px 12px 0 8px #0006}",
+    );
+
+    prefix_test(
+      ".foo { box-shadow: 12px 12px lab(40% 56.6 39) }",
+      `.foo {
+          box-shadow: 12px 12px #b32323;
+          box-shadow: 12px 12px lab(40% 56.6 39);
+        }
+              `,
+      { chrome: Some(90 << 16) },
+    );
+
+    prefix_test(
+      ".foo { box-shadow: 12px 12px lab(40% 56.6 39) }",
+      `.foo {
+          -webkit-box-shadow: 12px 12px #b32323;
+          box-shadow: 12px 12px #b32323;
+          box-shadow: 12px 12px lab(40% 56.6 39);
+        }
+              `,
+      { chrome: Some(4 << 16) },
+    );
+
+    prefix_test(
+      ".foo { box-shadow: 12px 12px lab(40% 56.6 39), 12px 12px yellow }",
+      `.foo {
+          -webkit-box-shadow: 12px 12px #b32323, 12px 12px #ff0;
+          box-shadow: 12px 12px #b32323, 12px 12px #ff0;
+          box-shadow: 12px 12px lab(40% 56.6 39), 12px 12px #ff0;
+        }
+              `,
+      { chrome: Some(4 << 16) },
+    );
+
+    prefix_test(
+      ".foo { -webkit-box-shadow: 12px 12px #0006 }",
+      `.foo {
+          -webkit-box-shadow: 12px 12px rgba(0, 0, 0, .4);
+        }
+              `,
+      { chrome: Some(4 << 16) },
+    );
+
+    prefix_test(
+      `.foo {
+        -webkit-box-shadow: 12px 12px #0006;
+        -moz-box-shadow: 12px 12px #0009;
+      }`,
+      `.foo {
+          -webkit-box-shadow: 12px 12px rgba(0, 0, 0, .4);
+          -moz-box-shadow: 12px 12px rgba(0, 0, 0, .6);
+        }
+              `,
+      { chrome: Some(4 << 16) },
+    );
+
+    prefix_test(
+      `.foo {
+        -webkit-box-shadow: 12px 12px #0006;
+        -moz-box-shadow: 12px 12px #0006;
+        box-shadow: 12px 12px #0006;
+      }`,
+      `.foo {
+          box-shadow: 12px 12px #0006;
+        }
+              `,
+      { chrome: Some(95 << 16) },
+    );
+
+    prefix_test(
+      ".foo { box-shadow: var(--foo) 12px lab(40% 56.6 39) }",
+      `.foo {
+          box-shadow: var(--foo) 12px #b32323;
+        }
+        
+        @supports (color: lab(0% 0 0)) {
+          .foo {
+            box-shadow: var(--foo) 12px lab(40% 56.6 39);
+          }
+        }
+              `,
+      { chrome: Some(90 << 16) },
+    );
+
+    prefix_test(
+      `.foo {
+        box-shadow: 0px 0px 22px red;
+        box-shadow: 0px 0px max(2cqw, 22px) red;
+      }
+    `,
+      `.foo {
+          box-shadow: 0 0 22px red;
+          box-shadow: 0 0 max(2cqw, 22px) red;
+        }
+            `,
+      { safari: Some(14 << 16) },
+    );
+    prefix_test(
+      `.foo {
+        box-shadow: 0px 0px 22px red;
+        box-shadow: 0px 0px max(2cqw, 22px) red;
+      }
+    `,
+      `.foo {
+          box-shadow: 0 0 max(2cqw, 22px) red;
+        }
+            `,
+      { safari: Some(16 << 16) },
+    );
+
+    prefix_test(
+      `.foo {
+        box-shadow: 0px 0px 22px red;
+        box-shadow: 0px 0px 22px lab(40% 56.6 39);
+      }
+    `,
+      `.foo {
+          box-shadow: 0 0 22px red;
+          box-shadow: 0 0 22px lab(40% 56.6 39);
+        }
+            `,
+      { safari: Some(14 << 16) },
+    );
+    prefix_test(
+      `.foo {
+        box-shadow: 0px 0px 22px red;
+        box-shadow: 0px 0px 22px lab(40% 56.6 39);
+      }
+    `,
+      `.foo {
+          box-shadow: 0 0 22px lab(40% 56.6 39);
+        }
+            `,
+      { safari: Some(16 << 16) },
+    );
+
+    prefix_test(
+      `.foo {
+        box-shadow: var(--fallback);
+        box-shadow: 0px 0px 22px lab(40% 56.6 39);
+      }
+    `,
+      `.foo {
+          box-shadow: var(--fallback);
+          box-shadow: 0 0 22px lab(40% 56.6 39);
+        }
+            `,
+      { safari: Some(16 << 16) },
     );
   });
 
@@ -3258,270 +3432,270 @@ describe("css tests", () => {
      `,
     );
 
-    // cssTest(
-    //   `
-    //    .foo {
-    //      align-content: center;
-    //      justify-content: center;
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      place-content: center;
-    //    }
-    //  `,
-    // );
-
-    // cssTest(
-    //   `
-    //    .foo {
-    //      align-content: first baseline;
-    //      justify-content: safe right;
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      place-content: baseline safe right;
-    //    }
-    //  `,
-    // );
-
-    // cssTest(
-    //   `
-    //    .foo {
-    //      place-content: first baseline unsafe left;
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      place-content: baseline unsafe left;
-    //    }
-    //  `,
-    // );
-
-    // cssTest(
-    //   `
-    //    .foo {
-    //      place-content: center center;
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      place-content: center;
-    //    }
-    //  `,
-    // );
-
-    // cssTest(
-    //   `
-    //    .foo {
-    //      align-self: center;
-    //      justify-self: center;
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      place-self: center;
-    //    }
-    //  `,
-    // );
-
-    // cssTest(
-    //   `
-    //    .foo {
-    //      align-self: center;
-    //      justify-self: unsafe left;
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      place-self: center unsafe left;
-    //    }
-    //  `,
-    // );
-
-    // cssTest(
-    //   `
-    //    .foo {
-    //      align-items: center;
-    //      justify-items: center;
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      place-items: center;
-    //    }
-    //  `,
-    // );
-
-    // cssTest(
-    //   `
-    //    .foo {
-    //      align-items: center;
-    //      justify-items: legacy left;
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      place-items: center legacy left;
-    //    }
-    //  `,
-    // );
-
-    // cssTest(
-    //   `
-    //    .foo {
-    //      place-items: center;
-    //      justify-items: var(--justify);
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      place-items: center;
-    //      justify-items: var(--justify);
-    //    }
-    //  `,
-    // );
-
-    // cssTest(
-    //   `
-    //    .foo {
-    //      row-gap: 10px;
-    //      column-gap: 20px;
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      gap: 10px 20px;
-    //    }
-    //  `,
-    // );
-
-    // cssTest(
-    //   `
-    //    .foo {
-    //      row-gap: 10px;
-    //      column-gap: 10px;
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      gap: 10px;
-    //    }
-    //  `,
-    // );
-
-    // cssTest(
-    //   `
-    //    .foo {
-    //      gap: 10px;
-    //      column-gap: 20px;
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      gap: 10px 20px;
-    //    }
-    //  `,
-    // );
-
-    // cssTest(
-    //   `
-    //    .foo {
-    //      column-gap: 20px;
-    //      gap: 10px;
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      gap: 10px;
-    //    }
-    //  `,
-    // );
-
-    // cssTest(
-    //   `
-    //    .foo {
-    //      row-gap: normal;
-    //      column-gap: 20px;
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      gap: normal 20px;
-    //    }
-    //  `,
-    // );
-
     cssTest(
       `
        .foo {
-         -webkit-flex-grow: 1;
-         -webkit-flex-shrink: 1;
-         -webkit-flex-basis: auto;
+         align-content: center;
+         justify-content: center;
        }
      `,
       `
        .foo {
-         -webkit-flex: auto;
+         place-content: center;
        }
      `,
     );
+
     cssTest(
       `
-       .foo {
-         -webkit-flex-grow: 1;
-         -webkit-flex-shrink: 1;
-         -webkit-flex-basis: auto;
-         flex-grow: 1;
-         flex-shrink: 1;
-         flex-basis: auto;
-       }
-     `,
+         .foo {
+           align-content: first baseline;
+           justify-content: safe right;
+         }
+       `,
       `
-       .foo {
-         -webkit-flex: auto;
-         flex: auto;
-       }
-     `,
+         .foo {
+           place-content: baseline safe right;
+         }
+       `,
+    );
+
+    cssTest(
+      `
+         .foo {
+           place-content: first baseline unsafe left;
+         }
+       `,
+      `
+         .foo {
+           place-content: baseline unsafe left;
+         }
+       `,
+    );
+
+    cssTest(
+      `
+         .foo {
+           place-content: center center;
+         }
+       `,
+      `
+         .foo {
+           place-content: center;
+         }
+       `,
+    );
+
+    cssTest(
+      `
+         .foo {
+           align-self: center;
+           justify-self: center;
+         }
+       `,
+      `
+         .foo {
+           place-self: center;
+         }
+       `,
+    );
+
+    cssTest(
+      `
+         .foo {
+           align-self: center;
+           justify-self: unsafe left;
+         }
+       `,
+      `
+         .foo {
+           place-self: center unsafe left;
+         }
+       `,
+    );
+
+    cssTest(
+      `
+         .foo {
+           align-items: center;
+           justify-items: center;
+         }
+       `,
+      `
+         .foo {
+           place-items: center;
+         }
+       `,
+    );
+
+    cssTest(
+      `
+         .foo {
+           align-items: center;
+           justify-items: legacy left;
+         }
+       `,
+      `
+         .foo {
+           place-items: center legacy left;
+         }
+       `,
+    );
+
+    cssTest(
+      `
+         .foo {
+           place-items: center;
+           justify-items: var(--justify);
+         }
+       `,
+      `
+         .foo {
+           place-items: center;
+           justify-items: var(--justify);
+         }
+       `,
+    );
+
+    cssTest(
+      `
+         .foo {
+           row-gap: 10px;
+           column-gap: 20px;
+         }
+       `,
+      `
+         .foo {
+           gap: 10px 20px;
+         }
+       `,
+    );
+
+    cssTest(
+      `
+         .foo {
+           row-gap: 10px;
+           column-gap: 10px;
+         }
+       `,
+      `
+         .foo {
+           gap: 10px;
+         }
+       `,
+    );
+
+    cssTest(
+      `
+         .foo {
+           gap: 10px;
+           column-gap: 20px;
+         }
+       `,
+      `
+         .foo {
+           gap: 10px 20px;
+         }
+       `,
+    );
+
+    cssTest(
+      `
+         .foo {
+           column-gap: 20px;
+           gap: 10px;
+         }
+       `,
+      `
+         .foo {
+           gap: 10px;
+         }
+       `,
+    );
+
+    cssTest(
+      `
+         .foo {
+           row-gap: normal;
+           column-gap: 20px;
+         }
+       `,
+      `
+         .foo {
+           gap: normal 20px;
+         }
+       `,
+    );
+
+    cssTest(
+      `
+         .foo {
+           -webkit-flex-grow: 1;
+           -webkit-flex-shrink: 1;
+           -webkit-flex-basis: auto;
+         }
+       `,
+      `
+         .foo {
+           -webkit-flex: auto;
+         }
+       `,
+    );
+    cssTest(
+      `
+         .foo {
+           -webkit-flex-grow: 1;
+           -webkit-flex-shrink: 1;
+           -webkit-flex-basis: auto;
+           flex-grow: 1;
+           flex-shrink: 1;
+           flex-basis: auto;
+         }
+       `,
+      `
+         .foo {
+           -webkit-flex: auto;
+           flex: auto;
+         }
+       `,
     );
     prefix_test(
       `
-       .foo {
-         -webkit-box-orient: horizontal;
-         -webkit-box-direction: normal;
-         flex-direction: row;
-       }
-     `,
+         .foo {
+           -webkit-box-orient: horizontal;
+           -webkit-box-direction: normal;
+           flex-direction: row;
+         }
+       `,
       `
-       .foo {
-         -webkit-box-orient: horizontal;
-         -webkit-box-direction: normal;
-         -webkit-flex-direction: row;
-         flex-direction: row;
-       }
-     `,
+         .foo {
+           -webkit-box-orient: horizontal;
+           -webkit-box-direction: normal;
+           -webkit-flex-direction: row;
+           flex-direction: row;
+         }
+       `,
       {
         safari: 4 << 16,
       },
     );
     prefix_test(
       `
-       .foo {
-         flex-direction: row;
-       }
-     `,
+         .foo {
+           flex-direction: row;
+         }
+       `,
       `
-       .foo {
-         -webkit-box-orient: horizontal;
-         -moz-box-orient: horizontal;
-         -webkit-box-direction: normal;
-         -moz-box-direction: normal;
-         -webkit-flex-direction: row;
-         -ms-flex-direction: row;
-         flex-direction: row;
-       }
-     `,
+         .foo {
+           -webkit-box-orient: horizontal;
+           -moz-box-orient: horizontal;
+           -webkit-box-direction: normal;
+           -moz-box-direction: normal;
+           -webkit-flex-direction: row;
+           -ms-flex-direction: row;
+           flex-direction: row;
+         }
+       `,
       {
         safari: 4 << 16,
         firefox: 4 << 16,
@@ -3530,40 +3704,40 @@ describe("css tests", () => {
     );
     prefix_test(
       `
-       .foo {
-         -webkit-box-orient: horizontal;
-         -webkit-box-direction: normal;
-         -moz-box-orient: horizontal;
-         -moz-box-direction: normal;
-         -webkit-flex-direction: row;
-         -ms-flex-direction: row;
-         flex-direction: row;
-       }
-     `,
+         .foo {
+           -webkit-box-orient: horizontal;
+           -webkit-box-direction: normal;
+           -moz-box-orient: horizontal;
+           -moz-box-direction: normal;
+           -webkit-flex-direction: row;
+           -ms-flex-direction: row;
+           flex-direction: row;
+         }
+       `,
       `
-       .foo {
-         flex-direction: row;
-       }
-     `,
+         .foo {
+           flex-direction: row;
+         }
+       `,
       {
         safari: 14 << 16,
       },
     );
     prefix_test(
       `
-       .foo {
-         flex-wrap: wrap;
-       }
-     `,
+         .foo {
+           flex-wrap: wrap;
+         }
+       `,
       `
-       .foo {
-         -webkit-box-lines: multiple;
-         -moz-box-lines: multiple;
-         -webkit-flex-wrap: wrap;
-         -ms-flex-wrap: wrap;
-         flex-wrap: wrap;
-       }
-     `,
+         .foo {
+           -webkit-box-lines: multiple;
+           -moz-box-lines: multiple;
+           -webkit-flex-wrap: wrap;
+           -ms-flex-wrap: wrap;
+           flex-wrap: wrap;
+         }
+       `,
       {
         safari: 4 << 16,
         firefox: 4 << 16,
@@ -3572,40 +3746,40 @@ describe("css tests", () => {
     );
     prefix_test(
       `
-       .foo {
-         -webkit-box-lines: multiple;
-         -moz-box-lines: multiple;
-         -webkit-flex-wrap: wrap;
-         -ms-flex-wrap: wrap;
-         flex-wrap: wrap;
-       }
-     `,
+         .foo {
+           -webkit-box-lines: multiple;
+           -moz-box-lines: multiple;
+           -webkit-flex-wrap: wrap;
+           -ms-flex-wrap: wrap;
+           flex-wrap: wrap;
+         }
+       `,
       `
-       .foo {
-         flex-wrap: wrap;
-       }
-     `,
+         .foo {
+           flex-wrap: wrap;
+         }
+       `,
       {
         safari: 11 << 16,
       },
     );
     prefix_test(
       `
-       .foo {
-         flex-flow: row wrap;
-       }
-     `,
+         .foo {
+           flex-flow: row wrap;
+         }
+       `,
       `
-       .foo {
-         -webkit-box-orient: horizontal;
-         -moz-box-orient: horizontal;
-         -webkit-box-direction: normal;
-         -moz-box-direction: normal;
-         -webkit-flex-flow: wrap;
-         -ms-flex-flow: wrap;
-         flex-flow: wrap;
-       }
-     `,
+         .foo {
+           -webkit-box-orient: horizontal;
+           -moz-box-orient: horizontal;
+           -webkit-box-direction: normal;
+           -moz-box-direction: normal;
+           -webkit-flex-flow: wrap;
+           -ms-flex-flow: wrap;
+           flex-flow: wrap;
+         }
+       `,
       {
         safari: 4 << 16,
         firefox: 4 << 16,
@@ -3614,40 +3788,40 @@ describe("css tests", () => {
     );
     prefix_test(
       `
-       .foo {
-         -webkit-box-orient: horizontal;
-         -moz-box-orient: horizontal;
-         -webkit-box-direction: normal;
-         -moz-box-direction: normal;
-         -webkit-flex-flow: wrap;
-         -ms-flex-flow: wrap;
-         flex-flow: wrap;
-       }
-     `,
+         .foo {
+           -webkit-box-orient: horizontal;
+           -moz-box-orient: horizontal;
+           -webkit-box-direction: normal;
+           -moz-box-direction: normal;
+           -webkit-flex-flow: wrap;
+           -ms-flex-flow: wrap;
+           flex-flow: wrap;
+         }
+       `,
       `
-       .foo {
-         flex-flow: wrap;
-       }
-     `,
+         .foo {
+           flex-flow: wrap;
+         }
+       `,
       {
         safari: 11 << 16,
       },
     );
     prefix_test(
       `
-       .foo {
-         flex-grow: 1;
-       }
-     `,
+         .foo {
+           flex-grow: 1;
+         }
+       `,
       `
-       .foo {
-         -webkit-box-flex: 1;
-         -moz-box-flex: 1;
-         -ms-flex-positive: 1;
-         -webkit-flex-grow: 1;
-         flex-grow: 1;
-       }
-     `,
+         .foo {
+           -webkit-box-flex: 1;
+           -moz-box-flex: 1;
+           -ms-flex-positive: 1;
+           -webkit-flex-grow: 1;
+           flex-grow: 1;
+         }
+       `,
       {
         safari: 4 << 16,
         firefox: 4 << 16,
@@ -3656,36 +3830,36 @@ describe("css tests", () => {
     );
     prefix_test(
       `
-       .foo {
-         -webkit-box-flex: 1;
-         -moz-box-flex: 1;
-         -ms-flex-positive: 1;
-         -webkit-flex-grow: 1;
-         flex-grow: 1;
-       }
-     `,
+         .foo {
+           -webkit-box-flex: 1;
+           -moz-box-flex: 1;
+           -ms-flex-positive: 1;
+           -webkit-flex-grow: 1;
+           flex-grow: 1;
+         }
+       `,
       `
-       .foo {
-         flex-grow: 1;
-       }
-     `,
+         .foo {
+           flex-grow: 1;
+         }
+       `,
       {
         safari: 11 << 16,
       },
     );
     prefix_test(
       `
-       .foo {
-         flex-shrink: 1;
-       }
-     `,
+         .foo {
+           flex-shrink: 1;
+         }
+       `,
       `
-       .foo {
-         -ms-flex-negative: 1;
-         -webkit-flex-shrink: 1;
-         flex-shrink: 1;
-       }
-     `,
+         .foo {
+           -ms-flex-negative: 1;
+           -webkit-flex-shrink: 1;
+           flex-shrink: 1;
+         }
+       `,
       {
         safari: 4 << 16,
         firefox: 4 << 16,
@@ -3694,34 +3868,34 @@ describe("css tests", () => {
     );
     prefix_test(
       `
-       .foo {
-         -ms-flex-negative: 1;
-         -webkit-flex-shrink: 1;
-         flex-shrink: 1;
-       }
-     `,
+         .foo {
+           -ms-flex-negative: 1;
+           -webkit-flex-shrink: 1;
+           flex-shrink: 1;
+         }
+       `,
       `
-       .foo {
-         flex-shrink: 1;
-       }
-     `,
+         .foo {
+           flex-shrink: 1;
+         }
+       `,
       {
         safari: 11 << 16,
       },
     );
     prefix_test(
       `
-       .foo {
-         flex-basis: 1px;
-       }
-     `,
+         .foo {
+           flex-basis: 1px;
+         }
+       `,
       `
-       .foo {
-         -ms-flex-preferred-size: 1px;
-         -webkit-flex-basis: 1px;
-         flex-basis: 1px;
-       }
-     `,
+         .foo {
+           -ms-flex-preferred-size: 1px;
+           -webkit-flex-basis: 1px;
+           flex-basis: 1px;
+         }
+       `,
       {
         safari: 4 << 16,
         firefox: 4 << 16,
@@ -3730,36 +3904,36 @@ describe("css tests", () => {
     );
     prefix_test(
       `
-       .foo {
-         -ms-flex-preferred-size: 1px;
-         -webkit-flex-basis: 1px;
-         flex-basis: 1px;
-       }
-     `,
+         .foo {
+           -ms-flex-preferred-size: 1px;
+           -webkit-flex-basis: 1px;
+           flex-basis: 1px;
+         }
+       `,
       `
-       .foo {
-         flex-basis: 1px;
-       }
-     `,
+         .foo {
+           flex-basis: 1px;
+         }
+       `,
       {
         safari: 11 << 16,
       },
     );
     prefix_test(
       `
-       .foo {
-         flex: 1;
-       }
-     `,
+         .foo {
+           flex: 1;
+         }
+       `,
       `
-       .foo {
-         -webkit-box-flex: 1;
-         -moz-box-flex: 1;
-         -webkit-flex: 1;
-         -ms-flex: 1;
-         flex: 1;
-       }
-     `,
+         .foo {
+           -webkit-box-flex: 1;
+           -moz-box-flex: 1;
+           -webkit-flex: 1;
+           -ms-flex: 1;
+           flex: 1;
+         }
+       `,
       {
         safari: 4 << 16,
         firefox: 4 << 16,
@@ -3768,391 +3942,36 @@ describe("css tests", () => {
     );
     prefix_test(
       `
-       .foo {
-         -webkit-box-flex: 1;
-         -moz-box-flex: 1;
-         -webkit-flex: 1;
-         -ms-flex: 1;
-         flex: 1;
-       }
-     `,
+         .foo {
+           -webkit-box-flex: 1;
+           -moz-box-flex: 1;
+           -webkit-flex: 1;
+           -ms-flex: 1;
+           flex: 1;
+         }
+       `,
       `
-       .foo {
-         flex: 1;
-       }
-     `,
+         .foo {
+           flex: 1;
+         }
+       `,
       {
         safari: 11 << 16,
       },
     );
-    // prefix_test(
-    //   `
-    //    .foo {
-    //      align-content: space-between;
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      -ms-flex-line-pack: justify;
-    //      -webkit-align-content: space-between;
-    //      align-content: space-between;
-    //    }
-    //  `,
-    //   {
-    //     safari: 4 << 16,
-    //     firefox: 4 << 16,
-    //     ie: 10 << 16,
-    //   },
-    // );
-    // prefix_test(
-    //   `
-    //    .foo {
-    //      -ms-flex-line-pack: justify;
-    //      -webkit-align-content: space-between;
-    //      align-content: space-between;
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      align-content: space-between;
-    //    }
-    //  `,
-    //   {
-    //     safari: 11 << 16,
-    //   },
-    // );
-    // prefix_test(
-    //   `
-    //    .foo {
-    //      justify-content: space-between;
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      -webkit-box-pack: justify;
-    //      -moz-box-pack: justify;
-    //      -ms-flex-pack: justify;
-    //      -webkit-justify-content: space-between;
-    //      justify-content: space-between;
-    //    }
-    //  `,
-    //   {
-    //     safari: 4 << 16,
-    //     firefox: 4 << 16,
-    //     ie: 10 << 16,
-    //   },
-    // );
-    // prefix_test(
-    //   `
-    //    .foo {
-    //      -webkit-box-pack: justify;
-    //      -moz-box-pack: justify;
-    //      -ms-flex-pack: justify;
-    //      -webkit-justify-content: space-between;
-    //      justify-content: space-between;
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      justify-content: space-between;
-    //    }
-    //  `,
-    //   {
-    //     safari: 11 << 16,
-    //   },
-    // );
-    // prefix_test(
-    //   `
-    //    .foo {
-    //      place-content: space-between flex-end;
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      -ms-flex-line-pack: justify;
-    //      -webkit-box-pack: end;
-    //      -moz-box-pack: end;
-    //      -ms-flex-pack: end;
-    //      -webkit-align-content: space-between;
-    //      align-content: space-between;
-    //      -webkit-justify-content: flex-end;
-    //      justify-content: flex-end;
-    //    }
-    //  `,
-    //   {
-    //     safari: 4 << 16,
-    //     firefox: 4 << 16,
-    //     ie: 10 << 16,
-    //   },
-    // );
-    // prefix_test(
-    //   `
-    //    .foo {
-    //      -ms-flex-line-pack: justify;
-    //      -webkit-box-pack: end;
-    //      -moz-box-pack: end;
-    //      -ms-flex-pack: end;
-    //      -webkit-align-content: space-between;
-    //      -webkit-justify-content: flex-end;
-    //      place-content: space-between flex-end;
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      place-content: space-between flex-end;
-    //    }
-    //  `,
-    //   {
-    //     safari: 11 << 16,
-    //   },
-    // );
-    // prefix_test(
-    //   `
-    //    .foo {
-    //      place-content: space-between flex-end;
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      align-content: space-between;
-    //      justify-content: flex-end;
-    //    }
-    //  `,
-    //   {
-    //     chrome: 30 << 16,
-    //   },
-    // );
-    // prefix_test(
-    //   `
-    //    .foo {
-    //      place-content: space-between flex-end;
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      place-content: space-between flex-end;
-    //    }
-    //  `,
-    //   {
-    //     chrome: 60 << 16,
-    //   },
-    // );
-    // prefix_test(
-    //   `
-    //    .foo {
-    //      align-self: flex-end;
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      -ms-flex-item-align: end;
-    //      -webkit-align-self: flex-end;
-    //      align-self: flex-end;
-    //    }
-    //  `,
-    //   {
-    //     safari: 4 << 16,
-    //     firefox: 4 << 16,
-    //     ie: 10 << 16,
-    //   },
-    // );
-    // prefix_test(
-    //   `
-    //    .foo {
-    //      -ms-flex-item-align: end;
-    //      -webkit-align-self: flex-end;
-    //      align-self: flex-end;
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      align-self: flex-end;
-    //    }
-    //  `,
-    //   {
-    //     safari: 11 << 16,
-    //   },
-    // );
-    // prefix_test(
-    //   `
-    //    .foo {
-    //      place-self: center flex-end;
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      -ms-flex-item-align: center;
-    //      -webkit-align-self: center;
-    //      align-self: center;
-    //      justify-self: flex-end;
-    //    }
-    //  `,
-    //   {
-    //     safari: 4 << 16,
-    //     firefox: 4 << 16,
-    //     ie: 10 << 16,
-    //   },
-    // );
-    // prefix_test(
-    //   `
-    //    .foo {
-    //      -ms-flex-item-align: center;
-    //      -webkit-align-self: center;
-    //      place-self: center flex-end;
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      place-self: center flex-end;
-    //    }
-    //  `,
-    //   {
-    //     safari: 11 << 16,
-    //   },
-    // );
-    // prefix_test(
-    //   `
-    //    .foo {
-    //      place-self: center flex-end;
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      align-self: center;
-    //      justify-self: flex-end;
-    //    }
-    //  `,
-    //   {
-    //     chrome: 57 << 16,
-    //   },
-    // );
-    // prefix_test(
-    //   `
-    //    .foo {
-    //      place-self: center flex-end;
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      place-self: center flex-end;
-    //    }
-    //  `,
-    //   {
-    //     chrome: 59 << 16,
-    //   },
-    // );
-    // prefix_test(
-    //   `
-    //    .foo {
-    //      align-items: flex-end;
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      -webkit-box-align: end;
-    //      -moz-box-align: end;
-    //      -ms-flex-align: end;
-    //      -webkit-align-items: flex-end;
-    //      align-items: flex-end;
-    //    }
-    //  `,
-    //   {
-    //     safari: 4 << 16,
-    //     firefox: 4 << 16,
-    //     ie: 10 << 16,
-    //   },
-    // );
-    // prefix_test(
-    //   `
-    //    .foo {
-    //      -webkit-box-align: end;
-    //      -moz-box-align: end;
-    //      -ms-flex-align: end;
-    //      -webkit-align-items: flex-end;
-    //      align-items: flex-end;
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      align-items: flex-end;
-    //    }
-    //  `,
-    //   {
-    //     safari: 11 << 16,
-    //   },
-    // );
-    // prefix_test(
-    //   `
-    //    .foo {
-    //      place-items: flex-end center;
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      -webkit-box-align: end;
-    //      -moz-box-align: end;
-    //      -ms-flex-align: end;
-    //      -webkit-align-items: flex-end;
-    //      align-items: flex-end;
-    //      justify-items: center;
-    //    }
-    //  `,
-    //   {
-    //     safari: 4 << 16,
-    //     firefox: 4 << 16,
-    //     ie: 10 << 16,
-    //   },
-    // );
-    // prefix_test(
-    //   `
-    //    .foo {
-    //      -webkit-box-align: end;
-    //      -moz-box-align: end;
-    //      -ms-flex-align: end;
-    //      -webkit-align-items: flex-end;
-    //      place-items: flex-end center;
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      place-items: flex-end center;
-    //    }
-    //  `,
-    //   {
-    //     safari: 11 << 16,
-    //   },
-    // );
-    // prefix_test(
-    //   `
-    //    .foo {
-    //      place-items: flex-end center;
-    //    }
-    //  `,
-    //   `
-    //    .foo {
-    //      align-items: flex-end;
-    //      justify-items: center;
-    //    }
-    //  `,
-    //   {
-    //     safari: 10 << 16,
-    //   },
-    // );
     prefix_test(
       `
-       .foo {
-         order: 1;
-       }
-     `,
+         .foo {
+           align-content: space-between;
+         }
+       `,
       `
-       .foo {
-         -webkit-box-ordinal-group: 1;
-         -moz-box-ordinal-group: 1;
-         -ms-flex-order: 1;
-         -webkit-order: 1;
-         order: 1;
-       }
-     `,
+         .foo {
+           -ms-flex-line-pack: justify;
+           -webkit-align-content: space-between;
+           align-content: space-between;
+         }
+       `,
       {
         safari: 4 << 16,
         firefox: 4 << 16,
@@ -4161,36 +3980,391 @@ describe("css tests", () => {
     );
     prefix_test(
       `
-       .foo {
-         -webkit-box-ordinal-group: 1;
-         -moz-box-ordinal-group: 1;
-         -ms-flex-order: 1;
-         -webkit-order: 1;
-         order: 1;
-       }
-     `,
+         .foo {
+           -ms-flex-line-pack: justify;
+           -webkit-align-content: space-between;
+           align-content: space-between;
+         }
+       `,
       `
-       .foo {
-         order: 1;
-       }
-     `,
+         .foo {
+           align-content: space-between;
+         }
+       `,
       {
         safari: 11 << 16,
       },
     );
     prefix_test(
       `
-       .foo {
-         -ms-flex: 0 0 8%;
-         flex: 0 0 5%;
-       }
-     `,
+         .foo {
+           justify-content: space-between;
+         }
+       `,
       `
-       .foo {
-         -ms-flex: 0 0 8%;
-         flex: 0 0 5%;
-       }
-     `,
+         .foo {
+           -webkit-box-pack: justify;
+           -moz-box-pack: justify;
+           -ms-flex-pack: justify;
+           -webkit-justify-content: space-between;
+           justify-content: space-between;
+         }
+       `,
+      {
+        safari: 4 << 16,
+        firefox: 4 << 16,
+        ie: 10 << 16,
+      },
+    );
+    prefix_test(
+      `
+         .foo {
+           -webkit-box-pack: justify;
+           -moz-box-pack: justify;
+           -ms-flex-pack: justify;
+           -webkit-justify-content: space-between;
+           justify-content: space-between;
+         }
+       `,
+      `
+         .foo {
+           justify-content: space-between;
+         }
+       `,
+      {
+        safari: 11 << 16,
+      },
+    );
+    prefix_test(
+      `
+         .foo {
+           place-content: space-between flex-end;
+         }
+       `,
+      `
+         .foo {
+           -ms-flex-line-pack: justify;
+           -webkit-box-pack: end;
+           -moz-box-pack: end;
+           -ms-flex-pack: end;
+           -webkit-align-content: space-between;
+           align-content: space-between;
+           -webkit-justify-content: flex-end;
+           justify-content: flex-end;
+         }
+       `,
+      {
+        safari: 4 << 16,
+        firefox: 4 << 16,
+        ie: 10 << 16,
+      },
+    );
+    prefix_test(
+      `
+         .foo {
+           -ms-flex-line-pack: justify;
+           -webkit-box-pack: end;
+           -moz-box-pack: end;
+           -ms-flex-pack: end;
+           -webkit-align-content: space-between;
+           -webkit-justify-content: flex-end;
+           place-content: space-between flex-end;
+         }
+       `,
+      `
+         .foo {
+           place-content: space-between flex-end;
+         }
+       `,
+      {
+        safari: 11 << 16,
+      },
+    );
+    prefix_test(
+      `
+         .foo {
+           place-content: space-between flex-end;
+         }
+       `,
+      `
+         .foo {
+           align-content: space-between;
+           justify-content: flex-end;
+         }
+       `,
+      {
+        chrome: 30 << 16,
+      },
+    );
+    prefix_test(
+      `
+         .foo {
+           place-content: space-between flex-end;
+         }
+       `,
+      `
+         .foo {
+           place-content: space-between flex-end;
+         }
+       `,
+      {
+        chrome: 60 << 16,
+      },
+    );
+    prefix_test(
+      `
+         .foo {
+           align-self: flex-end;
+         }
+       `,
+      `
+         .foo {
+           -ms-flex-item-align: end;
+           -webkit-align-self: flex-end;
+           align-self: flex-end;
+         }
+       `,
+      {
+        safari: 4 << 16,
+        firefox: 4 << 16,
+        ie: 10 << 16,
+      },
+    );
+    prefix_test(
+      `
+         .foo {
+           -ms-flex-item-align: end;
+           -webkit-align-self: flex-end;
+           align-self: flex-end;
+         }
+       `,
+      `
+         .foo {
+           align-self: flex-end;
+         }
+       `,
+      {
+        safari: 11 << 16,
+      },
+    );
+    prefix_test(
+      `
+         .foo {
+           place-self: center flex-end;
+         }
+       `,
+      `
+         .foo {
+           -ms-flex-item-align: center;
+           -webkit-align-self: center;
+           align-self: center;
+           justify-self: flex-end;
+         }
+       `,
+      {
+        safari: 4 << 16,
+        firefox: 4 << 16,
+        ie: 10 << 16,
+      },
+    );
+    prefix_test(
+      `
+         .foo {
+           -ms-flex-item-align: center;
+           -webkit-align-self: center;
+           place-self: center flex-end;
+         }
+       `,
+      `
+         .foo {
+           place-self: center flex-end;
+         }
+       `,
+      {
+        safari: 11 << 16,
+      },
+    );
+    prefix_test(
+      `
+         .foo {
+           place-self: center flex-end;
+         }
+       `,
+      `
+         .foo {
+           align-self: center;
+           justify-self: flex-end;
+         }
+       `,
+      {
+        chrome: 57 << 16,
+      },
+    );
+    prefix_test(
+      `
+         .foo {
+           place-self: center flex-end;
+         }
+       `,
+      `
+         .foo {
+           place-self: center flex-end;
+         }
+       `,
+      {
+        chrome: 59 << 16,
+      },
+    );
+    prefix_test(
+      `
+         .foo {
+           align-items: flex-end;
+         }
+       `,
+      `
+         .foo {
+           -webkit-box-align: end;
+           -moz-box-align: end;
+           -ms-flex-align: end;
+           -webkit-align-items: flex-end;
+           align-items: flex-end;
+         }
+       `,
+      {
+        safari: 4 << 16,
+        firefox: 4 << 16,
+        ie: 10 << 16,
+      },
+    );
+    prefix_test(
+      `
+         .foo {
+           -webkit-box-align: end;
+           -moz-box-align: end;
+           -ms-flex-align: end;
+           -webkit-align-items: flex-end;
+           align-items: flex-end;
+         }
+       `,
+      `
+         .foo {
+           align-items: flex-end;
+         }
+       `,
+      {
+        safari: 11 << 16,
+      },
+    );
+    prefix_test(
+      `
+         .foo {
+           place-items: flex-end center;
+         }
+       `,
+      `
+         .foo {
+           -webkit-box-align: end;
+           -moz-box-align: end;
+           -ms-flex-align: end;
+           -webkit-align-items: flex-end;
+           align-items: flex-end;
+           justify-items: center;
+         }
+       `,
+      {
+        safari: 4 << 16,
+        firefox: 4 << 16,
+        ie: 10 << 16,
+      },
+    );
+    prefix_test(
+      `
+         .foo {
+           -webkit-box-align: end;
+           -moz-box-align: end;
+           -ms-flex-align: end;
+           -webkit-align-items: flex-end;
+           place-items: flex-end center;
+         }
+       `,
+      `
+         .foo {
+           place-items: flex-end center;
+         }
+       `,
+      {
+        safari: 11 << 16,
+      },
+    );
+    prefix_test(
+      `
+         .foo {
+           place-items: flex-end center;
+         }
+       `,
+      `
+         .foo {
+           align-items: flex-end;
+           justify-items: center;
+         }
+       `,
+      {
+        safari: 10 << 16,
+      },
+    );
+    prefix_test(
+      `
+         .foo {
+           order: 1;
+         }
+       `,
+      `
+         .foo {
+           -webkit-box-ordinal-group: 1;
+           -moz-box-ordinal-group: 1;
+           -ms-flex-order: 1;
+           -webkit-order: 1;
+           order: 1;
+         }
+       `,
+      {
+        safari: 4 << 16,
+        firefox: 4 << 16,
+        ie: 10 << 16,
+      },
+    );
+    prefix_test(
+      `
+         .foo {
+           -webkit-box-ordinal-group: 1;
+           -moz-box-ordinal-group: 1;
+           -ms-flex-order: 1;
+           -webkit-order: 1;
+           order: 1;
+         }
+       `,
+      `
+         .foo {
+           order: 1;
+         }
+       `,
+      {
+        safari: 11 << 16,
+      },
+    );
+    prefix_test(
+      `
+         .foo {
+           -ms-flex: 0 0 8%;
+           flex: 0 0 5%;
+         }
+       `,
+      `
+         .foo {
+           -ms-flex: 0 0 8%;
+           flex: 0 0 5%;
+         }
+       `,
       {
         safari: 11 << 16,
       },
@@ -6082,5 +6256,1058 @@ describe("css tests", () => {
     error_test("@media (1px <= scan <= 2px) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");
     error_test("@media (grid: 10) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");
     error_test("@media (prefers-color-scheme = dark) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");
+  });
+
+  describe("transition", () => {
+    minify_test(".foo { transition-duration: 500ms }", ".foo{transition-duration:.5s}");
+    minify_test(".foo { transition-duration: .5s }", ".foo{transition-duration:.5s}");
+    minify_test(".foo { transition-duration: 99ms }", ".foo{transition-duration:99ms}");
+    minify_test(".foo { transition-duration: .099s }", ".foo{transition-duration:99ms}");
+    minify_test(".foo { transition-duration: 2000ms }", ".foo{transition-duration:2s}");
+    minify_test(".foo { transition-duration: 2s }", ".foo{transition-duration:2s}");
+    minify_test(".foo { transition-duration: calc(1s - 50ms) }", ".foo{transition-duration:.95s}");
+    minify_test(".foo { transition-duration: calc(1s - 50ms + 2s) }", ".foo{transition-duration:2.95s}");
+    minify_test(".foo { transition-duration: calc((1s - 50ms) * 2) }", ".foo{transition-duration:1.9s}");
+    minify_test(".foo { transition-duration: calc(2 * (1s - 50ms)) }", ".foo{transition-duration:1.9s}");
+    minify_test(".foo { transition-duration: calc((2s + 50ms) - (1s - 50ms)) }", ".foo{transition-duration:1.1s}");
+    minify_test(".foo { transition-duration: 500ms, 50ms }", ".foo{transition-duration:.5s,50ms}");
+    minify_test(".foo { transition-delay: 500ms }", ".foo{transition-delay:.5s}");
+    minify_test(".foo { transition-property: background }", ".foo{transition-property:background}");
+    minify_test(".foo { transition-property: background, opacity }", ".foo{transition-property:background,opacity}");
+    minify_test(".foo { transition-timing-function: linear }", ".foo{transition-timing-function:linear}");
+    minify_test(".foo { transition-timing-function: ease }", ".foo{transition-timing-function:ease}");
+    minify_test(".foo { transition-timing-function: ease-in }", ".foo{transition-timing-function:ease-in}");
+    minify_test(".foo { transition-timing-function: ease-out }", ".foo{transition-timing-function:ease-out}");
+    minify_test(".foo { transition-timing-function: ease-in-out }", ".foo{transition-timing-function:ease-in-out}");
+    minify_test(
+      ".foo { transition-timing-function: cubic-bezier(0.25, 0.1, 0.25, 1) }",
+      ".foo{transition-timing-function:ease}",
+    );
+    minify_test(
+      ".foo { transition-timing-function: cubic-bezier(0.42, 0, 1, 1) }",
+      ".foo{transition-timing-function:ease-in}",
+    );
+    minify_test(
+      ".foo { transition-timing-function: cubic-bezier(0, 0, 0.58, 1) }",
+      ".foo{transition-timing-function:ease-out}",
+    );
+    minify_test(
+      ".foo { transition-timing-function: cubic-bezier(0.42, 0, 0.58, 1) }",
+      ".foo{transition-timing-function:ease-in-out}",
+    );
+    minify_test(
+      ".foo { transition-timing-function: cubic-bezier(0.58, 0.2, 0.11, 1.2) }",
+      ".foo{transition-timing-function:cubic-bezier(.58,.2,.11,1.2)}",
+    );
+    minify_test(".foo { transition-timing-function: step-start }", ".foo{transition-timing-function:step-start}");
+    minify_test(".foo { transition-timing-function: step-end }", ".foo{transition-timing-function:step-end}");
+    minify_test(".foo { transition-timing-function: steps(1, start) }", ".foo{transition-timing-function:step-start}");
+    minify_test(
+      ".foo { transition-timing-function: steps(1, jump-start) }",
+      ".foo{transition-timing-function:step-start}",
+    );
+    minify_test(".foo { transition-timing-function: steps(1, end) }", ".foo{transition-timing-function:step-end}");
+    minify_test(".foo { transition-timing-function: steps(1, jump-end) }", ".foo{transition-timing-function:step-end}");
+    minify_test(
+      ".foo { transition-timing-function: steps(5, jump-start) }",
+      ".foo{transition-timing-function:steps(5,start)}",
+    );
+    minify_test(
+      ".foo { transition-timing-function: steps(5, jump-end) }",
+      ".foo{transition-timing-function:steps(5,end)}",
+    );
+    minify_test(
+      ".foo { transition-timing-function: steps(5, jump-both) }",
+      ".foo{transition-timing-function:steps(5,jump-both)}",
+    );
+    minify_test(
+      ".foo { transition-timing-function: ease-in-out, cubic-bezier(0.42, 0, 1, 1) }",
+      ".foo{transition-timing-function:ease-in-out,ease-in}",
+    );
+    minify_test(
+      ".foo { transition-timing-function: cubic-bezier(0.42, 0, 1, 1), cubic-bezier(0.58, 0.2, 0.11, 1.2) }",
+      ".foo{transition-timing-function:ease-in,cubic-bezier(.58,.2,.11,1.2)}",
+    );
+    minify_test(
+      ".foo { transition-timing-function: step-start, steps(5, jump-start) }",
+      ".foo{transition-timing-function:step-start,steps(5,start)}",
+    );
+    minify_test(".foo { transition: width 2s ease }", ".foo{transition:width 2s}");
+    minify_test(
+      ".foo { transition: width 2s ease, height 1000ms cubic-bezier(0.25, 0.1, 0.25, 1) }",
+      ".foo{transition:width 2s,height 1s}",
+    );
+    minify_test(".foo { transition: width 2s 1s }", ".foo{transition:width 2s 1s}");
+    minify_test(".foo { transition: width 2s ease 1s }", ".foo{transition:width 2s 1s}");
+    minify_test(".foo { transition: ease-in 1s width 4s }", ".foo{transition:width 1s ease-in 4s}");
+    minify_test(".foo { transition: opacity 0s .6s }", ".foo{transition:opacity 0s .6s}");
+    cssTest(
+      `
+      .foo {
+        transition-property: opacity;
+        transition-duration: 0.09s;
+        transition-timing-function: ease-in-out;
+        transition-delay: 500ms;
+      }
+    `,
+      `
+      .foo {
+        transition: opacity 90ms ease-in-out .5s;
+      }
+    `,
+    );
+    cssTest(
+      `
+      .foo {
+        transition: opacity 2s;
+        transition-timing-function: ease;
+        transition-delay: 500ms;
+      }
+    `,
+      `
+      .foo {
+        transition: opacity 2s .5s;
+      }
+    `,
+    );
+    cssTest(
+      `
+      .foo {
+        transition: opacity 500ms;
+        transition-timing-function: var(--ease);
+      }
+    `,
+      `
+      .foo {
+        transition: opacity .5s;
+        transition-timing-function: var(--ease);
+      }
+    `,
+    );
+    cssTest(
+      `
+      .foo {
+        transition-property: opacity;
+        transition-duration: 0.09s;
+        transition-timing-function: ease-in-out;
+        transition-delay: 500ms;
+        transition: color 2s;
+      }
+    `,
+      `
+      .foo {
+        transition: color 2s;
+      }
+    `,
+    );
+    cssTest(
+      `
+      .foo {
+        transition-property: opacity, color;
+        transition-duration: 2s, 4s;
+        transition-timing-function: ease-in-out, ease-in;
+        transition-delay: 500ms, 0s;
+      }
+    `,
+      `
+      .foo {
+        transition: opacity 2s ease-in-out .5s, color 4s ease-in;
+      }
+    `,
+    );
+    cssTest(
+      `
+      .foo {
+        transition-property: opacity, color;
+        transition-duration: 2s;
+        transition-timing-function: ease-in-out;
+        transition-delay: 500ms;
+      }
+    `,
+      `
+      .foo {
+        transition: opacity 2s ease-in-out .5s, color 2s ease-in-out .5s;
+      }
+    `,
+    );
+    cssTest(
+      `
+      .foo {
+        transition-property: opacity, color, width, height;
+        transition-duration: 2s, 4s;
+        transition-timing-function: ease;
+        transition-delay: 0s;
+      }
+    `,
+      `
+      .foo {
+        transition: opacity 2s, color 4s, width 2s, height 4s;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        -webkit-transition-property: opacity, color;
+        -webkit-transition-duration: 2s, 4s;
+        -webkit-transition-timing-function: ease-in-out, ease-in;
+        -webkit-transition-delay: 500ms, 0s;
+      }
+    `,
+      `
+      .foo {
+        -webkit-transition: opacity 2s ease-in-out .5s, color 4s ease-in;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        -webkit-transition-property: opacity, color;
+        -webkit-transition-duration: 2s, 4s;
+        -webkit-transition-timing-function: ease-in-out, ease-in;
+        -webkit-transition-delay: 500ms, 0s;
+        -moz-transition-property: opacity, color;
+        -moz-transition-duration: 2s, 4s;
+        -moz-transition-timing-function: ease-in-out, ease-in;
+        -moz-transition-delay: 500ms, 0s;
+        transition-property: opacity, color;
+        transition-duration: 2s, 4s;
+        transition-timing-function: ease-in-out, ease-in;
+        transition-delay: 500ms, 0s;
+      }
+    `,
+      `
+      .foo {
+        -webkit-transition: opacity 2s ease-in-out .5s, color 4s ease-in;
+        -moz-transition: opacity 2s ease-in-out .5s, color 4s ease-in;
+        transition: opacity 2s ease-in-out .5s, color 4s ease-in;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        -webkit-transition-property: opacity, color;
+        -moz-transition-property: opacity, color;
+        transition-property: opacity, color;
+        -webkit-transition-duration: 2s, 4s;
+        -moz-transition-duration: 2s, 4s;
+        transition-duration: 2s, 4s;
+        -webkit-transition-timing-function: ease-in-out, ease-in;
+        transition-timing-function: ease-in-out, ease-in;
+        -moz-transition-timing-function: ease-in-out, ease-in;
+        -webkit-transition-delay: 500ms, 0s;
+        -moz-transition-delay: 500ms, 0s;
+        transition-delay: 500ms, 0s;
+      }
+    `,
+      `
+      .foo {
+        -webkit-transition: opacity 2s ease-in-out .5s, color 4s ease-in;
+        -moz-transition: opacity 2s ease-in-out .5s, color 4s ease-in;
+        transition: opacity 2s ease-in-out .5s, color 4s ease-in;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        -webkit-transition-property: opacity;
+        -moz-transition-property: color;
+        transition-property: opacity, color;
+        -webkit-transition-duration: 2s;
+        -moz-transition-duration: 4s;
+        transition-duration: 2s, 4s;
+        -webkit-transition-timing-function: ease-in-out;
+        -moz-transition-timing-function: ease-in-out;
+        transition-timing-function: ease-in-out, ease-in;
+        -webkit-transition-delay: 500ms;
+        -moz-transition-delay: 0s;
+        transition-delay: 500ms, 0s;
+      }
+    `,
+      `
+      .foo {
+        -webkit-transition-property: opacity;
+        -moz-transition-property: color;
+        transition-property: opacity, color;
+        -webkit-transition-duration: 2s;
+        -moz-transition-duration: 4s;
+        transition-duration: 2s, 4s;
+        -webkit-transition-timing-function: ease-in-out;
+        -moz-transition-timing-function: ease-in-out;
+        -webkit-transition-delay: .5s;
+        transition-timing-function: ease-in-out, ease-in;
+        -moz-transition-delay: 0s;
+        transition-delay: .5s, 0s;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        -webkit-transition-property: opacity;
+        transition-property: opacity, color;
+        -moz-transition-property: color;
+        -webkit-transition-duration: 2s;
+        transition-duration: 2s, 4s;
+        -moz-transition-duration: 4s;
+        -webkit-transition-timing-function: ease-in-out;
+        transition-timing-function: ease-in-out, ease-in;
+        -moz-transition-timing-function: ease-in-out;
+        -webkit-transition-delay: 500ms;
+        transition-delay: 500ms, 0s;
+        -moz-transition-delay: 0s;
+      }
+    `,
+      `
+      .foo {
+        -webkit-transition-property: opacity;
+        transition-property: opacity, color;
+        -moz-transition-property: color;
+        -webkit-transition-duration: 2s;
+        transition-duration: 2s, 4s;
+        -moz-transition-duration: 4s;
+        -webkit-transition-timing-function: ease-in-out;
+        transition-timing-function: ease-in-out, ease-in;
+        -webkit-transition-delay: .5s;
+        -moz-transition-timing-function: ease-in-out;
+        transition-delay: .5s, 0s;
+        -moz-transition-delay: 0s;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        transition: opacity 2s;
+        -webkit-transition-duration: 2s;
+      }
+    `,
+      `
+      .foo {
+        transition: opacity 2s;
+        -webkit-transition-duration: 2s;
+      }
+    `,
+    );
+
+    prefix_test(
+      `
+      .foo {
+        transition-property: margin-inline-start;
+      }
+    `,
+      `
+      .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        transition-property: margin-left;
+      }
+
+      .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        transition-property: margin-left;
+      }
+
+      .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        transition-property: margin-right;
+      }
+
+      .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        transition-property: margin-right;
+      }
+    `,
+      {
+        safari: Some(8 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        transition-property: margin-inline-start, padding-inline-start;
+      }
+    `,
+      `
+      .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        transition-property: margin-left, padding-left;
+      }
+
+      .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        transition-property: margin-left, padding-left;
+      }
+
+      .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        transition-property: margin-right, padding-right;
+      }
+
+      .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        transition-property: margin-right, padding-right;
+      }
+    `,
+      {
+        safari: Some(8 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        transition-property: margin-inline-start, opacity, padding-inline-start, color;
+      }
+    `,
+      `
+      .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        transition-property: margin-left, opacity, padding-left, color;
+      }
+
+      .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        transition-property: margin-left, opacity, padding-left, color;
+      }
+
+      .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        transition-property: margin-right, opacity, padding-right, color;
+      }
+
+      .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        transition-property: margin-right, opacity, padding-right, color;
+      }
+    `,
+      {
+        safari: Some(8 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        transition-property: margin-block;
+      }
+    `,
+      `
+      .foo {
+        transition-property: margin-top, margin-bottom;
+      }
+    `,
+      {
+        safari: Some(8 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        transition: margin-inline-start 2s;
+      }
+    `,
+      `
+      .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        transition: margin-left 2s;
+      }
+
+      .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        transition: margin-left 2s;
+      }
+
+      .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        transition: margin-right 2s;
+      }
+
+      .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        transition: margin-right 2s;
+      }
+    `,
+      {
+        safari: Some(8 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        transition: margin-inline-start 2s, padding-inline-start 2s;
+      }
+    `,
+      `
+      .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        transition: margin-left 2s, padding-left 2s;
+      }
+
+      .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        transition: margin-left 2s, padding-left 2s;
+      }
+
+      .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        transition: margin-right 2s, padding-right 2s;
+      }
+
+      .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        transition: margin-right 2s, padding-right 2s;
+      }
+    `,
+      {
+        safari: Some(8 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        transition: margin-block-start 2s;
+      }
+    `,
+      `
+      .foo {
+        transition: margin-top 2s;
+      }
+    `,
+      {
+        safari: Some(8 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        transition: transform;
+      }
+    `,
+      `
+      .foo {
+        -webkit-transition: -webkit-transform, transform;
+        transition: -webkit-transform, transform;
+      }
+    `,
+      {
+        safari: Some(6 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        transition: border-start-start-radius;
+      }
+    `,
+      `
+      .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        -webkit-transition: -webkit-border-top-left-radius, border-top-left-radius;
+        transition: -webkit-border-top-left-radius, border-top-left-radius;
+      }
+
+      .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        -webkit-transition: -webkit-border-top-right-radius, border-top-right-radius;
+        transition: -webkit-border-top-right-radius, border-top-right-radius;
+      }
+    `,
+      {
+        safari: Some(4 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        transition: border-start-start-radius;
+      }
+    `,
+      `
+      .foo:not(:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi)) {
+        transition: border-top-left-radius;
+      }
+
+      .foo:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi) {
+        transition: border-top-right-radius;
+      }
+    `,
+      {
+        safari: Some(12 << 16),
+      },
+    );
+
+    cssTest(
+      `
+      .foo {
+        -webkit-transition: background 200ms;
+        -moz-transition: background 200ms;
+        transition: background 230ms;
+      }
+    `,
+      `
+      .foo {
+        -webkit-transition: background .2s;
+        -moz-transition: background .2s;
+        transition: background .23s;
+      }
+    `,
+    );
+
+    prefix_test(
+      `
+      .foo {
+        -webkit-transition: background 200ms;
+        -moz-transition: background 200ms;
+        transition: background 230ms;
+      }
+    `,
+      `
+      .foo {
+        -webkit-transition: background .2s;
+        -moz-transition: background .2s;
+        transition: background .23s;
+      }
+    `,
+      {
+        chrome: Some(95 << 16),
+      },
+    );
+  });
+
+  describe("transform", () => {
+    minify_test(".foo { transform: translate(2px, 3px)", ".foo{transform:translate(2px,3px)}");
+    minify_test(".foo { transform: translate(2px, 0px)", ".foo{transform:translate(2px)}");
+    minify_test(".foo { transform: translate(0px, 2px)", ".foo{transform:translateY(2px)}");
+    minify_test(".foo { transform: translateX(2px)", ".foo{transform:translate(2px)}");
+    minify_test(".foo { transform: translateY(2px)", ".foo{transform:translateY(2px)}");
+    minify_test(".foo { transform: translateZ(2px)", ".foo{transform:translateZ(2px)}");
+    minify_test(".foo { transform: translate3d(2px, 3px, 4px)", ".foo{transform:translate3d(2px,3px,4px)}");
+    minify_test(".foo { transform: translate3d(10%, 20%, 4px)", ".foo{transform:translate3d(10%,20%,4px)}");
+    minify_test(".foo { transform: translate3d(2px, 0px, 0px)", ".foo{transform:translate(2px)}");
+    minify_test(".foo { transform: translate3d(0px, 2px, 0px)", ".foo{transform:translateY(2px)}");
+    minify_test(".foo { transform: translate3d(0px, 0px, 2px)", ".foo{transform:translateZ(2px)}");
+    minify_test(".foo { transform: translate3d(2px, 3px, 0px)", ".foo{transform:translate(2px,3px)}");
+    minify_test(".foo { transform: scale(2, 3)", ".foo{transform:scale(2,3)}");
+    minify_test(".foo { transform: scale(10%, 20%)", ".foo{transform:scale(.1,.2)}");
+    minify_test(".foo { transform: scale(2, 2)", ".foo{transform:scale(2)}");
+    minify_test(".foo { transform: scale(2, 1)", ".foo{transform:scaleX(2)}");
+    minify_test(".foo { transform: scale(1, 2)", ".foo{transform:scaleY(2)}");
+    minify_test(".foo { transform: scaleX(2)", ".foo{transform:scaleX(2)}");
+    minify_test(".foo { transform: scaleY(2)", ".foo{transform:scaleY(2)}");
+    minify_test(".foo { transform: scaleZ(2)", ".foo{transform:scaleZ(2)}");
+    minify_test(".foo { transform: scale3d(2, 3, 4)", ".foo{transform:scale3d(2,3,4)}");
+    minify_test(".foo { transform: scale3d(2, 1, 1)", ".foo{transform:scaleX(2)}");
+    minify_test(".foo { transform: scale3d(1, 2, 1)", ".foo{transform:scaleY(2)}");
+    minify_test(".foo { transform: scale3d(1, 1, 2)", ".foo{transform:scaleZ(2)}");
+    minify_test(".foo { transform: scale3d(2, 2, 1)", ".foo{transform:scale(2)}");
+    minify_test(".foo { transform: rotate(20deg)", ".foo{transform:rotate(20deg)}");
+    minify_test(".foo { transform: rotateX(20deg)", ".foo{transform:rotateX(20deg)}");
+    minify_test(".foo { transform: rotateY(20deg)", ".foo{transform:rotateY(20deg)}");
+    minify_test(".foo { transform: rotateZ(20deg)", ".foo{transform:rotate(20deg)}");
+    minify_test(".foo { transform: rotate(360deg)", ".foo{transform:rotate(360deg)}");
+    minify_test(".foo { transform: rotate3d(2, 3, 4, 20deg)", ".foo{transform:rotate3d(2,3,4,20deg)}");
+    minify_test(".foo { transform: rotate3d(1, 0, 0, 20deg)", ".foo{transform:rotateX(20deg)}");
+    minify_test(".foo { transform: rotate3d(0, 1, 0, 20deg)", ".foo{transform:rotateY(20deg)}");
+    minify_test(".foo { transform: rotate3d(0, 0, 1, 20deg)", ".foo{transform:rotate(20deg)}");
+    minify_test(".foo { transform: rotate(405deg)}", ".foo{transform:rotate(405deg)}");
+    minify_test(".foo { transform: rotateX(405deg)}", ".foo{transform:rotateX(405deg)}");
+    minify_test(".foo { transform: rotateY(405deg)}", ".foo{transform:rotateY(405deg)}");
+    minify_test(".foo { transform: rotate(-200deg)}", ".foo{transform:rotate(-200deg)}");
+    minify_test(".foo { transform: rotate(0)", ".foo{transform:rotate(0)}");
+    minify_test(".foo { transform: rotate(0deg)", ".foo{transform:rotate(0)}");
+    minify_test(".foo { transform: rotateX(-200deg)}", ".foo{transform:rotateX(-200deg)}");
+    minify_test(".foo { transform: rotateY(-200deg)}", ".foo{transform:rotateY(-200deg)}");
+    minify_test(".foo { transform: rotate3d(1, 1, 0, -200deg)", ".foo{transform:rotate3d(1,1,0,-200deg)}");
+    minify_test(".foo { transform: skew(20deg)", ".foo{transform:skew(20deg)}");
+    minify_test(".foo { transform: skew(20deg, 0deg)", ".foo{transform:skew(20deg)}");
+    minify_test(".foo { transform: skew(0deg, 20deg)", ".foo{transform:skewY(20deg)}");
+    minify_test(".foo { transform: skewX(20deg)", ".foo{transform:skew(20deg)}");
+    minify_test(".foo { transform: skewY(20deg)", ".foo{transform:skewY(20deg)}");
+    minify_test(".foo { transform: perspective(10px)", ".foo{transform:perspective(10px)}");
+    minify_test(".foo { transform: matrix(1, 2, -1, 1, 80, 80)", ".foo{transform:matrix(1,2,-1,1,80,80)}");
+    minify_test(
+      ".foo { transform: matrix3d(1, 0, 0, 0, 0, 1, 6, 0, 0, 0, 1, 0, 50, 100, 0, 1.1)",
+      ".foo{transform:matrix3d(1,0,0,0,0,1,6,0,0,0,1,0,50,100,0,1.1)}",
+    );
+    // TODO: Re-enable with a better solution
+    //       See: https://github.com/parcel-bundler/buncss/issues/288
+    // minify_test(
+    //   ".foo{transform:translate(100px,200px) rotate(45deg) skew(10deg) scale(2)}",
+    //   ".foo{transform:matrix(1.41421,1.41421,-1.16485,1.66358,100,200)}",
+    // );
+    // minify_test(
+    //   ".foo{transform:translate(200px,300px) translate(100px,200px) scale(2)}",
+    //   ".foo{transform:matrix(2,0,0,2,300,500)}",
+    // );
+    minify_test(
+      ".foo{transform:translate(100px,200px) rotate(45deg)}",
+      ".foo{transform:translate(100px,200px)rotate(45deg)}",
+    );
+    minify_test(
+      ".foo{transform:rotate3d(1, 1, 1, 45deg) translate3d(100px, 100px, 10px)}",
+      ".foo{transform:rotate3d(1,1,1,45deg)translate3d(100px,100px,10px)}",
+    );
+    // TODO: Re-enable with a better solution
+    //       See: https://github.com/parcel-bundler/buncss/issues/288
+    // minify_test(
+    //   ".foo{transform:translate3d(100px, 100px, 10px) skew(10deg) scale3d(2, 3, 4)}",
+    //   ".foo{transform:matrix3d(2,0,0,0,.528981,3,0,0,0,0,4,0,100,100,10,1)}",
+    // );
+    // minify_test(
+    //   ".foo{transform:matrix3d(0.804737854124365, 0.5058793634016805, -0.31061721752604554, 0, -0.31061721752604554, 0.804737854124365, 0.5058793634016805, 0, 0.5058793634016805, -0.31061721752604554, 0.804737854124365, 0, 100, 100, 10, 1)}",
+    //   ".foo{transform:translate3d(100px,100px,10px)rotate3d(1,1,1,45deg)}"
+    // );
+    // minify_test(
+    //   ".foo{transform:matrix3d(1, 0, 0, 0, 0, 0.7071067811865476, 0.7071067811865475, 0, 0, -0.7071067811865475, 0.7071067811865476, 0, 100, 100, 10, 1)}",
+    //   ".foo{transform:translate3d(100px,100px,10px)rotateX(45deg)}"
+    // );
+    // minify_test(
+    //   ".foo{transform:translate3d(100px, 200px, 10px) translate(100px, 100px)}",
+    //   ".foo{transform:translate3d(200px,300px,10px)}",
+    // );
+    // minify_test(
+    //   ".foo{transform:rotate(45deg) rotate(45deg)}",
+    //   ".foo{transform:rotate(90deg)}",
+    // );
+    // minify_test(
+    //   ".foo{transform:matrix(0.7071067811865476, 0.7071067811865475, -0.7071067811865475, 0.7071067811865476, 100, 100)}",
+    //   ".foo{transform:translate(100px,100px)rotate(45deg)}"
+    // );
+    // minify_test(
+    //   ".foo{transform:translateX(2in) translateX(50px)}",
+    //   ".foo{transform:translate(242px)}",
+    // );
+    minify_test(".foo{transform:translateX(calc(2in + 50px))}", ".foo{transform:translate(242px)}");
+    minify_test(".foo{transform:translateX(50%)}", ".foo{transform:translate(50%)}");
+    minify_test(".foo{transform:translateX(calc(50% - 100px + 20px))}", ".foo{transform:translate(calc(50% - 80px))}");
+    minify_test(".foo{transform:rotate(calc(10deg + 20deg))}", ".foo{transform:rotate(30deg)}");
+    minify_test(".foo{transform:rotate(calc(10deg + 0.349066rad))}", ".foo{transform:rotate(30deg)}");
+    minify_test(".foo{transform:rotate(calc(10deg + 1.5turn))}", ".foo{transform:rotate(550deg)}");
+    minify_test(".foo{transform:rotate(calc(10deg * 2))}", ".foo{transform:rotate(20deg)}");
+    minify_test(".foo{transform:rotate(calc(-10deg * 2))}", ".foo{transform:rotate(-20deg)}");
+    minify_test(
+      ".foo{transform:rotate(calc(10deg + var(--test)))}",
+      ".foo{transform:rotate(calc(10deg + var(--test)))}",
+    );
+    minify_test(".foo { transform: scale(calc(10% + 20%))", ".foo{transform:scale(.3)}");
+    minify_test(".foo { transform: scale(calc(.1 + .2))", ".foo{transform:scale(.3)}");
+
+    minify_test(".foo { -webkit-transform: scale(calc(10% + 20%))", ".foo{-webkit-transform:scale(.3)}");
+
+    minify_test(".foo { translate: 1px 2px 3px }", ".foo{translate:1px 2px 3px}");
+    minify_test(".foo { translate: 1px 0px 0px }", ".foo{translate:1px}");
+    minify_test(".foo { translate: 1px 2px 0px }", ".foo{translate:1px 2px}");
+    minify_test(".foo { translate: 1px 0px 2px }", ".foo{translate:1px 0 2px}");
+    minify_test(".foo { translate: none }", ".foo{translate:none}");
+    minify_test(".foo { rotate: 10deg }", ".foo{rotate:10deg}");
+    minify_test(".foo { rotate: z 10deg }", ".foo{rotate:10deg}");
+    minify_test(".foo { rotate: 0 0 1 10deg }", ".foo{rotate:10deg}");
+    minify_test(".foo { rotate: x 10deg }", ".foo{rotate:x 10deg}");
+    minify_test(".foo { rotate: 1 0 0 10deg }", ".foo{rotate:x 10deg}");
+    minify_test(".foo { rotate: y 10deg }", ".foo{rotate:y 10deg}");
+    minify_test(".foo { rotate: 0 1 0 10deg }", ".foo{rotate:y 10deg}");
+    minify_test(".foo { rotate: 1 1 1 10deg }", ".foo{rotate:1 1 1 10deg}");
+    minify_test(".foo { rotate: 0 0 1 0deg }", ".foo{rotate:none}");
+    minify_test(".foo { rotate: none }", ".foo{rotate:none}");
+    minify_test(".foo { scale: 1 }", ".foo{scale:1}");
+    minify_test(".foo { scale: 1 1 }", ".foo{scale:1}");
+    minify_test(".foo { scale: 1 1 1 }", ".foo{scale:1}");
+    minify_test(".foo { scale: none }", ".foo{scale:none}");
+    minify_test(".foo { scale: 1 0 }", ".foo{scale:1 0}");
+    minify_test(".foo { scale: 1 0 1 }", ".foo{scale:1 0}");
+    minify_test(".foo { scale: 1 0 0 }", ".foo{scale:1 0 0}");
+
+    // TODO: Re-enable with a better solution
+    //       See: https://github.com/parcel-bundler/buncss/issues/288
+    // minify_test(".foo { transform: scale(3); scale: 0.5 }", ".foo{transform:scale(1.5)}");
+    minify_test(".foo { scale: 0.5; transform: scale(3); }", ".foo{transform:scale(3)}");
+
+    prefix_test(
+      `
+      .foo {
+        transform: scale(0.5);
+      }
+    `,
+      `
+      .foo {
+        -webkit-transform: scale(.5);
+        -moz-transform: scale(.5);
+        transform: scale(.5);
+      }
+    `,
+      {
+        firefox: Some(6 << 16),
+        safari: Some(6 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        transform: var(--transform);
+      }
+    `,
+      `
+      .foo {
+        -webkit-transform: var(--transform);
+        -moz-transform: var(--transform);
+        transform: var(--transform);
+      }
+    `,
+      {
+        firefox: Some(6 << 16),
+        safari: Some(6 << 16),
+      },
+    );
+
+    cssTest(
+      `
+      .foo {
+        transform: translateX(-50%);
+        transform: translateX(20px);
+      }
+      `,
+      `
+      .foo {
+        transform: translateX(20px);
+      }
+      `,
+    );
+  });
+
+  describe("color-scheme", () => {
+    minify_test(".foo { color-scheme: normal; }", ".foo{color-scheme:normal}");
+    minify_test(".foo { color-scheme: light; }", ".foo{color-scheme:light}");
+    minify_test(".foo { color-scheme: dark; }", ".foo{color-scheme:dark}");
+    minify_test(".foo { color-scheme: light dark; }", ".foo{color-scheme:light dark}");
+    minify_test(".foo { color-scheme: dark light; }", ".foo{color-scheme:light dark}");
+    minify_test(".foo { color-scheme: only light; }", ".foo{color-scheme:light only}");
+    minify_test(".foo { color-scheme: only dark; }", ".foo{color-scheme:dark only}");
+    minify_test(".foo { color-scheme: dark light only; }", ".foo{color-scheme:light dark only}");
+    minify_test(".foo { color-scheme: foo bar light; }", ".foo{color-scheme:light}");
+    minify_test(".foo { color-scheme: only foo dark bar; }", ".foo{color-scheme:dark only}");
+    prefix_test(
+      ".foo { color-scheme: dark; }",
+      `.foo {
+          --buncss-light: ;
+          --buncss-dark: initial;
+          color-scheme: dark;
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      ".foo { color-scheme: light; }",
+      `.foo {
+          --buncss-light: initial;
+          --buncss-dark: ;
+          color-scheme: light;
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      ".foo { color-scheme: light dark; }",
+      `.foo {
+          --buncss-light: initial;
+          --buncss-dark: ;
+          color-scheme: light dark;
+        }
+        
+        @media (prefers-color-scheme: dark) {
+          .foo {
+            --buncss-light: ;
+            --buncss-dark: initial;
+          }
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      ".foo { color-scheme: light dark; }",
+      `.foo {
+          color-scheme: light dark;
+        }
+        `,
+      { firefox: Some(120 << 16) },
+    );
+
+    minify_test(".foo { color: light-dark(yellow, red); }", ".foo{color:light-dark(#ff0,red)}");
+    minify_test(
+      ".foo { color: light-dark(light-dark(yellow, red), light-dark(yellow, red)); }",
+      ".foo{color:light-dark(#ff0,red)}",
+    );
+    minify_test(
+      ".foo { color: light-dark(rgb(0, 0, 255), hsl(120deg, 50%, 50%)); }",
+      ".foo{color:light-dark(#00f,#40bf40)}",
+    );
+    prefix_test(
+      ".foo { color: light-dark(oklch(40% 0.1268735435 34.568626), oklab(59.686% 0.1009 0.1192)); }",
+      `.foo {
+        color: var(--buncss-light, #7e250f) var(--buncss-dark, #c65d07);
+        color: var(--buncss-light, lab(29.2661% 38.2437 35.3889)) var(--buncss-dark, lab(52.2319% 40.1449 59.9171));
+      }
+      `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      ".foo { color: light-dark(oklch(40% 0.1268735435 34.568626), oklab(59.686% 0.1009 0.1192)); }",
+      `.foo {
+        color: light-dark(oklch(40% .126874 34.5686), oklab(59.686% .1009 .1192));
+      }
+      `,
+      { firefox: Some(120 << 16) },
+    );
+    prefix_test(
+      `
+      .foo {
+        box-shadow:
+            oklch(100% 0 0deg / 50%) 0 0.63rem 0.94rem -0.19rem,
+            currentColor 0 0.44rem 0.8rem -0.58rem;
+      }
+    `,
+      `.foo {
+          box-shadow: 0 .63rem .94rem -.19rem #ffffff80, 0 .44rem .8rem -.58rem;
+          box-shadow: 0 .63rem .94rem -.19rem lab(100% 0 0 / .5), 0 .44rem .8rem -.58rem;
+        }
+        `,
+      { chrome: Some(95 << 16) },
+    );
+    prefix_test(
+      `
+      .foo {
+        box-shadow:
+            oklch(100% 0 0deg / 50%) 0 0.63rem 0.94rem -0.19rem,
+            currentColor 0 0.44rem 0.8rem -0.58rem;
+      }
+    `,
+      `.foo {
+          box-shadow: 0 .63rem .94rem -.19rem color(display-p3 1 1 1 / .5), 0 .44rem .8rem -.58rem;
+          box-shadow: 0 .63rem .94rem -.19rem lab(100% 0 0 / .5), 0 .44rem .8rem -.58rem;
+        }
+        `,
+      { safari: Some(14 << 16) },
+    );
+
+    prefix_test(
+      ".foo { color: light-dark(var(--light), var(--dark)); }",
+      `.foo {
+          color: var(--buncss-light, var(--light)) var(--buncss-dark, var(--dark));
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      ".foo { color: rgb(from light-dark(yellow, red) r g b / 10%); }",
+      `.foo {
+          color: var(--buncss-light, #ffff001a) var(--buncss-dark, #ff00001a);
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      ".foo { color: rgb(from light-dark(yellow, red) r g b / var(--alpha)); }",
+      `.foo {
+          color: var(--buncss-light, rgb(255 255 0 / var(--alpha))) var(--buncss-dark, rgb(255 0 0 / var(--alpha)));
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      ".foo { color: color(from light-dark(yellow, red) srgb r g b / 10%); }",
+      `.foo {
+          color: var(--buncss-light, #ffff001a) var(--buncss-dark, #ff00001a);
+          color: var(--buncss-light, color(srgb 1 1 0 / .1)) var(--buncss-dark, color(srgb 1 0 0 / .1));
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      ".foo { color: color-mix(in srgb, light-dark(yellow, red), light-dark(red, pink)); }",
+      `.foo {
+          color: var(--buncss-light, #ff8000) var(--buncss-dark, #ff6066);
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+  });
+
+  describe("edge cases", () => {
+    describe("invalid gradient", () => {
+      cssTest(
+        `
+      .test3 {
+        background: linear-gradient(calc(0deg + calc(0 / 0)), red, blue);
+      }
+      `,
+        `
+      .test3 {
+        background: linear-gradient(calc(0deg + calc(0 / 0)), red, blue);
+      }
+      `,
+      );
+
+      cssTest(
+        `
+.test22 {
+  background: conic-gradient(from calc(1turn / 0) at calc(0 / 0), red, blue);
+}`,
+        `
+      .test22 {
+        background: conic-gradient(from calc(1turn / 0) at calc(0 / 0), red, blue);
+      }
+      `,
+      );
+    });
+
+    // Deeply nested @keyframes with invalid percentages
+    describe("nested keyframes", () => {
+      cssTest(
+        `@keyframes outer {
+        @keyframes inner1 {
+          @keyframes inner2 {
+            9999999999999999999999999999999.99999999999999% {
+              color: rgb(calc(1/0), 0, 0);
+            }
+          }
+        }
+      }`,
+        `
+@keyframes outer{
+
+}
+`,
+      );
+    });
+
+    cssTest(
+      `@keyframes 👨‍👩‍👧‍👦 {
+  0% {
+    color: red;
+  }
+  50% {
+    color: green;
+  }
+  100% {
+    color: blue;
+  }
+}`,
+      `
+      @keyframes 👨‍👩‍👧‍👦 {
+  0% {
+    color: red;
+  }
+
+  50% {
+    color: green;
+  }
+
+  100% {
+    color: #00f;
+  }
+}
+      `,
+    );
+
+    // Unicode and escape sequence edge cases
+    describe("unicode edge cases", async () => {
+      const input = await Bun.file(join(__dirname, "unicode.css")).text();
+      const output = await Bun.file(join(__dirname, "unicode_expected.css")).text();
+      cssTest(input, output);
+    });
   });
 });

@@ -21,7 +21,7 @@ category: Category,
 pub const Map = bun.StringHashMap(MimeType);
 
 pub fn createHashTable(allocator: std.mem.Allocator) !Map {
-    @setCold(true);
+    @branchHint(.cold);
 
     const decls = comptime std.meta.declarations(all);
 
@@ -237,6 +237,11 @@ pub fn byExtension(ext: string) MimeType {
 
 pub fn byExtensionNoDefault(ext: string) ?MimeType {
     return extensions.get(ext);
+}
+
+pub fn detectFromPath(path: string) MimeType {
+    const ext = std.fs.path.extension(path);
+    return byExtension(ext);
 }
 
 // this is partially auto-generated

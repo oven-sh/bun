@@ -706,10 +706,10 @@ pub const ByteRangeMapping = struct {
 
 comptime {
     if (bun.Environment.isNative) {
-        @export(ByteRangeMapping.generate, .{ .name = "ByteRangeMapping__generate" });
-        @export(ByteRangeMapping.findExecutedLines, .{ .name = "ByteRangeMapping__findExecutedLines" });
-        @export(ByteRangeMapping.find, .{ .name = "ByteRangeMapping__find" });
-        @export(ByteRangeMapping.getSourceID, .{ .name = "ByteRangeMapping__getSourceID" });
+        @export(&ByteRangeMapping.generate, .{ .name = "ByteRangeMapping__generate" });
+        @export(&ByteRangeMapping.findExecutedLines, .{ .name = "ByteRangeMapping__findExecutedLines" });
+        @export(&ByteRangeMapping.find, .{ .name = "ByteRangeMapping__find" });
+        @export(&ByteRangeMapping.getSourceID, .{ .name = "ByteRangeMapping__getSourceID" });
     }
 }
 

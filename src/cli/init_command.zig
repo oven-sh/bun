@@ -91,8 +91,6 @@ pub const InitCommand = struct {
         default: bool,
     ) !bool {
         Output.prettyln(label, .{});
-        // Output.pretty("\n", .{});
-        // Output.pretty(" <d>(y/n):<r> \n", .{});
         Output.flush();
 
         const original_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (comptime Environment.isWindows)
@@ -216,11 +214,12 @@ pub const InitCommand = struct {
         };
         setRawInput(false) catch unreachable;
 
-        for (0..opts.len + 2) |_| {
+        for (0..opts.len + 1) |_| {
             Output.pretty("\x1B[A", .{});
         }
         Output.pretty(label, .{});
         Output.prettyln(" {s}", .{opts[val]});
+        Output.prettyln("\x1B[J\x1B[A", .{});
         Output.prettyln("\x1B[J\x1B[A", .{});
         Output.flush();
 

@@ -2196,6 +2196,7 @@ pub const Command = struct {
                     var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
                     const cwd = try std.posix.getcwd(&entry_point_buf);
                     @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
+                    ctx.passthrough = try std.mem.concat(ctx.allocator, []const u8, &.{ ctx.positionals, ctx.passthrough });
                     try BunJS.Run.boot(ctx, entry_point_buf[0 .. cwd.len + trigger.len], null);
                     return;
                 }

@@ -43,6 +43,17 @@ for (const flag of ["-e", "--print"]) {
       expect(stderr.toString("utf8")).toInclude('"hi" as 2');
       expect(stderr.toString("utf8")).toInclude("Unexpected throw");
     });
+
+    test("process.argv", async () => {
+      let { stdout, stderr, exitCode } = Bun.spawnSync({
+        cmd: [bunExe(), flag, flag === "--print" ? "process.argv" : "console.log(process.argv)", "abc", "def"],
+        env: bunEnv,
+      });
+
+      expect(stderr.toString("utf8")).toBe("");
+      expect(stdout.toString("utf8")).toEqual(`[ "${bunExe()}", "abc", "def" ]\n`);
+      expect(exitCode).toBe(0);
+    });
   });
 }
 
@@ -112,6 +123,11 @@ function group(run: (code: string) => SyncSubprocess<"pipe", "inherit">) {
         console.log(process.platform);
       `);
     expect(stdout.toString("utf8")).toEqual(process.platform + "\n");
+  });
+
+  test("process.argv", async () => {
+    const { stdout } = run("console.log(process.argv)");
+    expect(stdout.toString("utf8")).toEqual(`[ "${bunExe()}" ]\n`);
   });
 }
 

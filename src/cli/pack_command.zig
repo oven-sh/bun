@@ -227,7 +227,7 @@ pub const PackCommand = struct {
     };
 
     // pattern, can override
-    const default_ignore_patterns = [_]struct { []const u32, bool }{
+    const default_ignore_patterns = [_]struct { []const u8, bool }{
         .{ &.{ '.', '*', '.', 's', 'w', 'p' }, true },
         .{ &.{ 46, 95, 42 }, true }, // "._*",
         .{ &.{ 46, 68, 83, 95, 83, 116, 111, 114, 101 }, true }, // ".DS_Store",
@@ -837,9 +837,9 @@ pub const PackCommand = struct {
                 if (isExcluded(entry, entry_subpath, dir_depth, ignores.items)) |used_pattern_info| {
                     if (comptime log_level.isVerbose()) {
                         const pattern, const kind = used_pattern_info;
-                        Output.prettyln("<r><blue>ignore<r> <d>[{s}:{}]<r> {s}{s}", .{
+                        Output.prettyln("<r><blue>ignore<r> <d>[{s}:{s}]<r> {s}{s}", .{
                             @tagName(kind),
-                            bun.fmt.debugUtf32PathFormatter(pattern),
+                            pattern,
                             entry_subpath,
                             if (entry.kind == .directory) "/" else "",
                         });
@@ -1063,7 +1063,7 @@ pub const PackCommand = struct {
             }
         }
 
-        var ignore_pattern: []const u32 = &.{};
+        var ignore_pattern: []const u8 = &.{};
         var ignore_kind: IgnorePatterns.Kind = .@".npmignore";
 
         // then check default ignore list. None of the defaults contain slashes

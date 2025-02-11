@@ -261,19 +261,45 @@ describe("Glob.match", () => {
     expect(glob.match("😎/¢£.jsx")).toBeTrue();
     expect(glob.match("😎/¢£.jsxxxxxxxx")).toBeFalse();
 
+    // wildcard before and after non-ascii
     glob = new Glob("*é*");
     expect(glob.match("café noir")).toBeTrue();
     expect(glob.match("café noir")).toBeTrue();
+    expect(glob.match("é")).toBeTrue();
+    glob = new Glob("*😎");
+    expect(glob.match("😎")).toBeTrue();
+    expect(glob.match("ëëëëëë😎")).toBeTrue();
 
+    // wildcard matches non-ascii
     glob = new Glob("caf*noir");
     expect(glob.match("café noir")).toBeTrue();
     expect(glob.match("café noir")).toBeTrue();
     expect(glob.match("cafeenoir")).toBeTrue();
 
+    // character class match non-ascii
     glob = new Glob("F[ë£a]");
     expect(glob.match("Fë")).toBeTrue();
     expect(glob.match("F£")).toBeTrue();
     expect(glob.match("Fa")).toBeTrue();
+
+    // ? matches any single character
+    glob = new Glob("?ëlmao");
+    expect(glob.match("ëlmao")).toBeFalse();
+    expect(glob.match("ëëlmao")).toBeTrue();
+    expect(glob.match("fëlmao")).toBeTrue();
+    expect(glob.match("lmao")).toBeFalse();
+
+    // braces match non-ascii
+    glob = new Glob("F{ë,£,a}");
+    expect(glob.match("Fë")).toBeTrue();
+    expect(glob.match("F£")).toBeTrue();
+    expect(glob.match("Fa")).toBeTrue();
+    expect(glob.match("Fb")).toBeFalse();
+    expect(glob.match("F😎")).toBeFalse();
+
+    // escape matches non-ascii
+    glob = new Glob("\\😎");
+    expect(glob.match("😎")).toBeTrue();
 
     // invalid surrogate pairs
     glob = new Glob("\uD83D\u0027");

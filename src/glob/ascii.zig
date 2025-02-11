@@ -150,7 +150,7 @@ inline fn globMatchImpl(state: *State, glob: []const u8, path: []const u8) bool 
                     }
 
                     state.wildcard.glob_index = state.glob_index;
-                    state.wildcard.path_index = state.path_index + 1;
+                    state.wildcard.path_index = state.path_index + if (state.path_index < path.len) bun.strings.wtf8ByteSequenceLength(path[state.path_index]) else 1;
 
                     var in_globstar = false;
                     if (is_globstar) {
@@ -185,7 +185,7 @@ inline fn globMatchImpl(state: *State, glob: []const u8, path: []const u8) bool 
                 '?' => if (state.path_index < path.len) {
                     if (!isSeparator(path[state.path_index])) {
                         state.glob_index += 1;
-                        state.path_index += 1;
+                        state.path_index += bun.strings.wtf8ByteSequenceLength(path[state.path_index]);
                         continue;
                     }
                 },
@@ -200,24 +200,33 @@ inline fn globMatchImpl(state: *State, glob: []const u8, path: []const u8) bool 
 
                     var first = true;
                     var is_match = false;
-                    const c = path[state.path_index];
+
+                    // length of the unicode char in the path
+                    const len = bun.strings.wtf8ByteSequenceLength(path[state.path_index]);
+                    // source unicode char to match against the target
+                    const c = bun.strings.decodeWTF8RuneT(path[state.path_index..].ptr[0..4], len, u32, 0xFFFD);
+
                     while (state.glob_index < glob.len and (first or glob[state.glob_index] != ']')) {
-                        var low = glob[state.glob_index];
-                        if (!unescape(&low, glob, &state.glob_index)) {
+                        // Get low ( ͡° ͜ʖ ͡°), and unescape it
+                        var low: u32 = glob[state.glob_index];
+                        var low_len: u8 = 1;
+                        if (!getUnicode(&low, &low_len, glob, &state.glob_index)) {
                             return false; // Invalid pattern!
                         }
 
-                        state.glob_index += 1;
+                        // skip past the target char
+                        state.glob_index += low_len;
 
                         const high = if (state.glob_index + 1 < glob.len and glob[state.glob_index] == '-' and glob[state.glob_index + 1] != ']') blk: {
                             state.glob_index += 1;
 
-                            var high = glob[state.glob_index];
-                            if (!unescape(&high, glob, &state.glob_index)) {
+                            var high: u32 = glob[state.glob_index];
+                            var high_len: u8 = 1;
+                            if (!getUnicode(&high, &high_len, glob, &state.glob_index)) {
                                 return false; // Invalid pattern!
                             }
 
-                            state.glob_index += 1;
+                            state.glob_index += high_len;
                             break :blk high;
                         } else low;
 
@@ -234,25 +243,28 @@ inline fn globMatchImpl(state: *State, glob: []const u8, path: []const u8) bool 
 
                     state.glob_index += 1;
                     if (is_match != negated) {
-                        state.path_index += 1;
+                        state.path_index += len;
                         continue;
                     }
                 },
                 '{' => return matchBrace(state, glob, path),
                 else => |c| if (state.path_index < path.len) {
-                    var cc = c;
+                    var cc: u8 = c;
                     if (!unescape(&cc, glob, &state.glob_index)) {
                         return false; // Invalid pattern!
                     }
+                    const cc_len = bun.strings.wtf8ByteSequenceLength(cc);
 
                     const is_match = if (cc == '/')
                         isSeparator(path[state.path_index])
+                    else if (cc_len > 1)
+                        state.path_index + cc_len <= path.len and std.mem.eql(u8, path[state.path_index..][0..cc_len], glob[state.glob_index..][0..cc_len])
                     else
                         path[state.path_index] == cc;
 
                     if (is_match) {
-                        state.glob_index += 1;
-                        state.path_index += 1;
+                        state.glob_index += cc_len;
+                        state.path_index += cc_len;
 
                         if (cc == '/') {
                             state.wildcard = state.globstar;
@@ -428,6 +440,53 @@ inline fn unescape(c: *u8, glob: []const u8, glob_index: *u32) bool {
             't' => '\t',
             else => |cc| cc,
         };
+    }
+
+    return true;
+}
+
+/// Unescapes the character if needed
+///
+/// Then decodes and returns the character
+///
+/// `c` must point to a u32 initialized to `glob[glob_index]`
+/// `clen` must point to a u8 initialized to 1
+inline fn getUnicode(c: *u32, clen: *u8, glob: []const u8, glob_index: *u32) bool {
+    bun.debugAssert(clen.* == 1);
+    switch (c.*) {
+        // ascii range excluding backslash
+        0x0...('\\' - 1), '\\' + 1...0x7F => {
+            return true;
+        },
+        '\\' => {
+            glob_index.* += 1;
+            if (glob_index.* >= glob.len)
+                return false; // Invalid pattern!
+
+            c.* = switch (glob[glob_index.*]) {
+                'a' => '\x61',
+                'b' => '\x08',
+                'n' => '\n',
+                'r' => '\r',
+                't' => '\t',
+                else => |cc| brk: {
+                    const len = bun.strings.wtf8ByteSequenceLength(cc);
+                    clen.* = len;
+                    if (len == 1) {
+                        break :brk cc;
+                    }
+
+                    break :brk bun.strings.decodeWTF8RuneT(glob[glob_index.*..].ptr[0..4], len, u32, 0xFFFD);
+                },
+            };
+        },
+        // multi-byte sequences
+        else => {
+            const len = bun.strings.wtf8ByteSequenceLength(@truncate(c.*));
+            clen.* = len;
+
+            c.* = bun.strings.decodeWTF8RuneT(glob[glob_index.*..].ptr[0..4], len, u32, 0xFFFD);
+        },
     }
 
     return true;

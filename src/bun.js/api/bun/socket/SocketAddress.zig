@@ -132,7 +132,7 @@ pub fn create(global: *JSC.JSGlobalObject, options: Options) bun.JSError!*Socket
     // https://github.com/ziglang/zig/issues/22804
     const addr: sockaddr = switch (options.family) {
         AF.INET => v4: {
-            var sin: sockaddr_in = .{
+            var sin: inet.sockaddr_in = .{
                 .family = options.family.int(),
                 .port = std.mem.nativeToBig(u16, options.port),
                 .addr = undefined,
@@ -140,14 +140,14 @@ pub fn create(global: *JSC.JSGlobalObject, options: Options) bun.JSError!*Socket
             if (options.address) |address_str| {
                 const slice = address_str.toOwnedSliceZ(alloc) catch bun.outOfMemory();
                 defer alloc.free(slice);
-                try pton(global, C.AF_INET, slice, &sin.addr);
+                try pton(global, inet.AF_INET, slice, &sin.addr);
             } else {
                 sin.addr = sockaddr.@"127.0.0.1".sin.addr;
             }
             break :v4 .{ .sin = sin };
         },
         AF.INET6 => v6: {
-            var sin6: sockaddr_in6 = .{
+            var sin6: inet.sockaddr_in6 = .{
                 .family = options.family.int(),
                 .port = std.mem.nativeToBig(u16, options.port),
                 .flowinfo = options.flowlabel orelse 0,
@@ -157,9 +157,9 @@ pub fn create(global: *JSC.JSGlobalObject, options: Options) bun.JSError!*Socket
             if (options.address) |address_str| {
                 const slice = address_str.toOwnedSliceZ(alloc) catch bun.outOfMemory();
                 defer alloc.free(slice);
-                try pton(global, C.AF_INET6, slice, &sin6.addr);
+                try pton(global, inet.AF_INET6, slice, &sin6.addr);
             } else {
-                sin6.addr = @bitCast(C.in6addr_any);
+                sin6.addr = inet.IN6ADDR_ANY_INIT;
             }
             break :v6 .{ .sin6 = sin6 };
         },
@@ -207,10 +207,9 @@ pub fn initIPv4(addr: [4]u8, port_: u16) SocketAddress {
 /// Use `0` for `flowinfo` and `scope_id` if you don't know or care about their
 /// values.
 pub fn initIPv6(addr: [16]u8, port_: u16, flowinfo: u32, scope_id: u32) SocketAddress {
-    const addr_: C.struct_in6_addr = @bitCast(addr);
     return .{ ._addr = sockaddr.v6(
         std.mem.nativeToBig(u16, port_),
-        addr_,
+        addr,
         flowinfo,
         scope_id,
     ) };
@@ -247,7 +246,7 @@ pub fn address(this: *SocketAddress) bun.String {
         p.ref();
         return p;
     }
-    var buf: [INET6_ADDRSTRLEN]u8 = undefined;
+    var buf: [inet.INET6_ADDRSTRLEN]u8 = undefined;
     const addr_src: *const anyopaque = if (this.family() == AF.INET)
         @ptrCast(&this.asV4().addr)
     else
@@ -313,17 +312,17 @@ pub fn getFlowLabel(this: *SocketAddress, _: *JSC.JSGlobalObject) JSValue {
 /// - [RFC 6437](https://tools.ietf.org/html/rfc6437)
 pub fn flowLabel(this: *const SocketAddress) ?u32 {
     if (this.family() == AF.INET6) {
-        const in6: sockaddr_in6 = @bitCast(this._addr);
+        const in6: inet.sockaddr_in6 = @bitCast(this._addr);
         return in6.flowinfo;
     } else {
         return null;
     }
 }
 
-pub fn socklen(this: *const SocketAddress) socklen_t {
+pub fn socklen(this: *const SocketAddress) inet.socklen_t {
     switch (this._addr.family) {
-        AF.INET => return @sizeOf(sockaddr_in),
-        AF.INET6 => return @sizeOf(sockaddr_in6),
+        AF.INET => return @sizeOf(inet.sockaddr_in),
+        AF.INET6 => return @sizeOf(inet.sockaddr_in6),
     }
 }
 
@@ -345,12 +344,12 @@ fn pton(global: *JSC.JSGlobalObject, comptime af: c_int, addr: [:0]const u8, dst
     }
 }
 
-inline fn asV4(this: *const SocketAddress) *const sockaddr_in {
+inline fn asV4(this: *const SocketAddress) *const inet.sockaddr_in {
     bun.debugAssert(this.family() == AF.INET);
     return &this._addr.sin;
 }
 
-inline fn asV6(this: *const SocketAddress) *const sockaddr_in6 {
+inline fn asV6(this: *const SocketAddress) *const inet.sockaddr_in6 {
     bun.debugAssert(this.family() == AF.INET6);
     return &this._addr.sin6;
 }
@@ -361,10 +360,10 @@ const IPv6 = bun.String.static("IPv6");
 const IPv4 = bun.String.static("IPv4");
 
 // FIXME: c-headers-for-zig casts AF_* and PF_* to `c_int` when it should be `comptime_int`
-pub const AF = enum(C.sa_family_t) {
-    INET = @intCast(C.AF_INET),
-    INET6 = @intCast(C.AF_INET6),
-    pub inline fn int(this: AF) C.sa_family_t {
+pub const AF = enum(inet.sa_family_t) {
+    INET = @intCast(inet.AF_INET),
+    INET6 = @intCast(inet.AF_INET6),
+    pub inline fn int(this: AF) inet.sa_family_t {
         return @intFromEnum(this);
     }
 };
@@ -377,10 +376,10 @@ pub const AF = enum(C.sa_family_t) {
 const sockaddr = extern union {
     // sin: C.sockaddr_in,
     // sin6: C.sockaddr_in6,
-    sin: sockaddr_in,
-    sin6: sockaddr_in6,
+    sin: inet.sockaddr_in,
+    sin6: inet.sockaddr_in6,
 
-    pub fn v4(port_: C.in_port_t, addr: u32) sockaddr {
+    pub fn v4(port_: inet.in_port_t, addr: u32) sockaddr {
         return .{ .sin = .{
             .family = AF.INET.int(),
             .port = port_,
@@ -389,8 +388,8 @@ const sockaddr = extern union {
     }
 
     pub fn v6(
-        port_: C.in_port_t,
-        addr: C.struct_in6_addr,
+        port_: inet.in_port_t,
+        addr: [16]u8,
         /// set to 0 if you don't care
         flowinfo: u32,
         /// set to 0 if you don't care
@@ -401,16 +400,15 @@ const sockaddr = extern union {
             .port = port_,
             .flowinfo = flowinfo,
             .scope_id = scope_id,
-            .addr = @bitCast(addr),
+            .addr = addr,
         } };
     }
 
     // I'd be money endianess is going to screw us here.
     pub const @"127.0.0.1": sockaddr = sockaddr.v4(0, @bitCast([_]u8{ 127, 0, 0, 1 }));
-    pub const @"::1": sockaddr = sockaddr.v6(0, C.in6addr_loopback);
     // TODO: check that `::` is all zeroes on all platforms. Should correspond
     // to `IN6ADDR_ANY_INIT`.
-    pub const @"::": sockaddr = sockaddr.v6(0, std.mem.zeroes(C.struct_in6_addr), 0, 0);
+    pub const @"::": sockaddr = sockaddr.v6(0, inet.IN6ADDR_ANY_INIT, 0, 0);
 };
 
 const WellKnownAddress = struct {
@@ -424,20 +422,19 @@ const WellKnownAddress = struct {
 // The same types are defined in a bunch of different places. We should probably unify them.
 comptime {
     // Windows doesn't have c.socklen_t. because of course it doesn't.
-    const other_socklens = if (@hasDecl(C, "socklen_t"))
-        .{ std.posix.socklen_t, C.socklen_t }
+    const other_socklens = if (@hasDecl(bun.C.translated, "socklen_t"))
+        .{ std.posix.socklen_t, bun.C.translated.socklen_t }
     else
         .{std.posix.socklen_t};
     for (other_socklens) |other_socklen| {
-        if (@sizeOf(socklen_t) != @sizeOf(other_socklen)) @compileError("socklen_t size mismatch");
-        if (@alignOf(socklen_t) != @alignOf(other_socklen)) @compileError("socklen_t alignment mismatch");
+        if (@sizeOf(inet.socklen_t) != @sizeOf(other_socklen)) @compileError("socklen_t size mismatch");
+        if (@alignOf(inet.socklen_t) != @alignOf(other_socklen)) @compileError("socklen_t alignment mismatch");
     }
 }
 
 const std = @import("std");
 const bun = @import("root").bun;
 const ares = bun.c_ares;
-const C = bun.C.translated;
 const Environment = bun.Environment;
 const string = bun.string;
 const Output = bun.Output;
@@ -447,10 +444,34 @@ const ZigString = JSC.ZigString;
 const CallFrame = JSC.CallFrame;
 const JSValue = JSC.JSValue;
 
-const sockaddr_in = std.posix.sockaddr.in;
-const sockaddr_in6 = std.posix.sockaddr.in6;
-const socklen_t = ares.socklen_t;
-const INET6_ADDRSTRLEN = if (bun.Environment.isWindows)
-    std.os.windows.ws2_32.INET6_ADDRSTRLEN
-else
-    C.INET6_ADDRSTRLEN;
+const inet = if (bun.Environment.isWindows)
+win: {
+    const ws2 = std.os.windows.ws2_32;
+    const C = bun.C.translated;
+    break :win struct {
+        pub const IN4ADDR_LOOPBACK: u32 = ws2.IN4ADDR_LOOPBACK;
+        pub const INET6_ADDRSTRLEN = ws2.INET6_ADDRSTRLEN;
+        pub const IN6ADDR_ANY_INIT: [16]u8 = .{0} ** 16;
+        pub const AF_INET = C.AF_INET;
+        pub const AF_INET6 = C.AF_INET6;
+        pub const sa_family_t = ws2.ADDRESS_FAMILY;
+        pub const in_port_t = std.os.windows.USHORT;
+        pub const socklen_t = ares.socklen_t;
+        pub const sockaddr_in = std.posix.sockaddr.in;
+        pub const sockaddr_in6 = std.posix.sockaddr.in6;
+    };
+} else posix: {
+    const C = bun.C.translated;
+    break :posix struct {
+        pub const IN4ADDR_LOOPBACK = C.IN4ADDR_LOOPBACK;
+        pub const INET6_ADDRSTRLEN = C.INET6_ADDRSTRLEN;
+        pub const IN6ADDR_ANY_INIT: [16]u8 = .{0} ** 16;
+        pub const AF_INET = C.AF_INET;
+        pub const AF_INET6 = C.AF_INET6;
+        pub const sa_family_t = C.sa_family_t;
+        pub const in_port_t = C.in_port_t;
+        pub const socklen_t = ares.socklen_t;
+        pub const sockaddr_in = std.posix.sockaddr.in;
+        pub const sockaddr_in6 = std.posix.sockaddr.in6;
+    };
+};

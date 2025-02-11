@@ -104,7 +104,7 @@ pub const InitCommand = struct {
 
         Output.flush();
         try setRawInput(true);
-
+        defer setRawInput(false) catch unreachable;
         const reader = std.io.getStdIn().reader();
         const val: bool = brk: {
             var selected = default;
@@ -138,10 +138,8 @@ pub const InitCommand = struct {
 
                     else => continue,
                 }
-                Output.flush();
             }
         };
-        setRawInput(false) catch unreachable;
 
         Output.pretty("\r\x1B[A\r\x1B[K", .{});
         Output.pretty(label, .{});
@@ -157,6 +155,9 @@ pub const InitCommand = struct {
         default: usize,
     ) !usize {
         Output.prettyln(label, .{});
+        for (0..opts.len) |_| {
+            Output.prettyln("", .{});
+        }
         Output.flush();
 
         const original_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (comptime Environment.isWindows)
@@ -170,12 +171,17 @@ pub const InitCommand = struct {
 
         Output.flush();
         try setRawInput(true);
+        defer setRawInput(false) catch unreachable;
 
         const reader = std.io.getStdIn().reader();
         const val: usize = brk: {
             var selected = default;
 
             while (true) {
+                for (0..opts.len) |_| {
+                    Output.pretty("\x1B[A", .{});
+                }
+
                 for (opts, 0..) |option, i| {
                     if (i == selected) {
                         Output.prettyln("<r><green>●<r> {s}", .{option});
@@ -206,13 +212,8 @@ pub const InitCommand = struct {
                     },
                     else => continue,
                 }
-
-                for (0..opts.len) |_| {
-                    Output.pretty("\x1B[A", .{});
-                }
             }
         };
-        setRawInput(false) catch unreachable;
 
         for (0..opts.len + 1) |_| {
             Output.pretty("\x1B[A", .{});

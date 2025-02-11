@@ -385,7 +385,7 @@ const sockaddr = extern union {
     }
 
     // I'd be money endianess is going to screw us here.
-    pub const @"127.0.0.1": sockaddr = sockaddr.v4(0, @bitCast([_]u8{127, 0, 0, 1}));
+    pub const @"127.0.0.1": sockaddr = sockaddr.v4(0, @bitCast([_]u8{ 127, 0, 0, 1 }));
     pub const @"::1": sockaddr = sockaddr.v6(0, C.in6addr_loopback);
     // TODO: check that `::` is all zeroes on all platforms. Should correspond
     // to `IN6ADDR_ANY_INIT`.

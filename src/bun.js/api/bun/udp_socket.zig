@@ -856,11 +856,7 @@ pub const UDPSocket = struct {
     }
 
     fn createSockAddr(globalThis: *JSGlobalObject, address_bytes: []const u8, port: u16) JSValue {
-        const sockaddr = switch (address_bytes.len) {
-            4 => SocketAddress.newIPv4(address_bytes[0..4].*, port),
-            16 => SocketAddress.newIPv6(address_bytes[0..16].*, port, 0, 0),
-            else => return .undefined,
-        };
+        const sockaddr = SocketAddress.init(address_bytes, port) catch return .undefined;
         return SocketAddress.new(sockaddr).toJS(globalThis);
     }
 

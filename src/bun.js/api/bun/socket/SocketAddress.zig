@@ -177,8 +177,26 @@ pub fn parse(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
     return JSC.JSValue.jsUndefined(); // TODO;
 }
 
+pub const AddressError = error{
+    /// Too long or short to be an IPv4 or IPv6 address.
+    InvalidLength,
+};
+
+/// Create a new IP socket address. `addr` is assumed to be a valid ipv4 or ipv6
+/// address. Port is in host byte order.
+///
+/// ## Errors
+/// - If `addr` is not 4 or 16 bytes long.
+pub fn init(addr: []const u8, port_: u16) AddressError!SocketAddress {
+    return switch (addr.len) {
+        4 => initIPv4(addr[0..4].*, port_),
+        16 => initIPv6(addr[0..16].*, port_, 0, 0),
+        else => AddressError.InvalidLength,
+    };
+}
+
 /// Create an IPv4 socket address. `addr` is assumed to be valid. Port is in host byte order.
-pub fn newIPv4(addr: [4]u8, port_: u16) SocketAddress {
+pub fn initIPv4(addr: [4]u8, port_: u16) SocketAddress {
     // TODO: make sure casting doesn't swap byte order on us.
     return .{ ._addr = sockaddr.v4(std.mem.nativeToBig(u16, port_), @bitCast(addr)) };
 }
@@ -188,7 +206,7 @@ pub fn newIPv4(addr: [4]u8, port_: u16) SocketAddress {
 ///
 /// Use `0` for `flowinfo` and `scope_id` if you don't know or care about their
 /// values.
-pub fn newIPv6(addr: [16]u8, port_: u16, flowinfo: u32, scope_id: u32) SocketAddress {
+pub fn initIPv6(addr: [16]u8, port_: u16, flowinfo: u32, scope_id: u32) SocketAddress {
     const addr_: C.struct_in6_addr = @bitCast(addr);
     return .{ ._addr = sockaddr.v6(
         std.mem.nativeToBig(u16, port_),

@@ -6702,19 +6702,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         port = @intCast(listener.getLocalPort());
 
                         var buf: [64]u8 = [_]u8{0} ** 64;
-                        var is_ipv6: bool = false;
-
-                        if (listener.socket().localAddressText(&buf, &is_ipv6)) |slice| {
-                            const ip = bun.String.createUTF8(slice);
-                            // FIXME: this can error on invalid addresses. Unfortunately,
-                            // I don't see a way to make a falliable native getter.
-                            const addr = SocketAddress.create(this.globalThis, .{
-                                .address = ip,
-                                .port = port,
-                                .family = if (is_ipv6) .INET6 else .INET,
-                            }) catch bun.outOfMemory();
-                            return addr.toJS(this.globalThis);
-                        }
+                        const address_bytes = listener.socket().localAddress(&buf) orelse return JSValue.jsNull();
+                        const addr = SocketAddress.init(address_bytes, port) catch return JSValue.jsNull();
+                        return SocketAddress.new(addr).toJS(this.globalThis);
                     }
                     return JSValue.jsNull();
                 },

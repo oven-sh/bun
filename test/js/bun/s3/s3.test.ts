@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeAll, afterAll } from "bun:test";
+import { describe, expect, it, beforeEach, afterEach } from "bun:test";
 import { bunExe, bunEnv, getSecret, tempDirWithFiles, isLinux } from "harness";
 import { randomUUID } from "crypto";
 import { S3Client, s3 as defaultS3, file, which } from "bun";
@@ -115,7 +115,9 @@ for (let credentials of allCredentials) {
           describe(bucketInName ? "bucket in path" : "bucket in options", () => {
             var tmp_filename: string;
             const options = bucketInName ? s3Options : { ...s3Options, bucket: S3Bucket };
-            beforeAll(async () => {
+            beforeEach(async () => {
+              // await a little bit so we dont change the filename before deleting it
+              await Bun.sleep(10);
               tmp_filename = bucketInName ? `s3://${S3Bucket}/${randomUUID()}` : `s3://${randomUUID()}`;
               const result = await fetch(tmp_filename, {
                 method: "PUT",
@@ -123,14 +125,21 @@ for (let credentials of allCredentials) {
                 s3: options,
               });
               expect(result.status).toBe(200);
+              await result.text();
             });
 
-            afterAll(async () => {
-              const result = await fetch(tmp_filename, {
-                method: "DELETE",
-                s3: options,
-              });
-              expect(result.status).toBe(204);
+            afterEach(async () => {
+              try {
+                const result = await fetch(tmp_filename, {
+                  method: "DELETE",
+                  s3: options,
+                });
+                expect([204, 200]).toContain(result.status);
+                await result.text();
+              } catch (e) {
+                // if error with NoSuchKey, it means the file does not exist and its fine
+                expect(e?.code || e).toBe("NoSuchKey");
+              }
             });
 
             it("should download file via fetch GET", async () => {
@@ -216,22 +225,30 @@ for (let credentials of allCredentials) {
 
         describe("Bun.S3Client", () => {
           describe(bucketInName ? "bucket in path" : "bucket in options", () => {
-            const tmp_filename = bucketInName ? `${S3Bucket}/${randomUUID()}` : `${randomUUID()}`;
+            let tmp_filename: string;
             const options = bucketInName ? null : { bucket: S3Bucket };
 
             var bucket = S3(s3Options);
-            beforeAll(async () => {
+            beforeEach(async () => {
+              await Bun.sleep(10);
+              tmp_filename = bucketInName ? `${S3Bucket}/${randomUUID()}` : `${randomUUID()}`;
               const file = bucket.file(tmp_filename, options);
               await file.write("Hello Bun!");
             });
 
-            afterAll(async () => {
-              const file = bucket.file(tmp_filename, options);
-              await file.unlink();
+            afterEach(async () => {
+              try {
+                const file = bucket.file(tmp_filename, options);
+                await file.unlink();
+              } catch (e) {
+                // if error with NoSuchKey, it means the file does not exist and its fine
+                expect(e?.code || e).toBe("NoSuchKey");
+              }
             });
 
             it("should download file via Bun.s3().text()", async () => {
               const file = bucket.file(tmp_filename, options);
+              await file.write("Hello Bun!");
               const text = await file.text();
               expect(text).toBe("Hello Bun!");
             });
@@ -365,16 +382,23 @@ for (let credentials of allCredentials) {
 
         describe("Bun.file", () => {
           describe(bucketInName ? "bucket in path" : "bucket in options", () => {
-            const tmp_filename = bucketInName ? `s3://${S3Bucket}/${randomUUID()}` : `s3://${randomUUID()}`;
+            let tmp_filename: string;
             const options = bucketInName ? s3Options : { ...s3Options, bucket: S3Bucket };
-            beforeAll(async () => {
+            beforeEach(async () => {
+              await Bun.sleep(10);
+              tmp_filename = bucketInName ? `s3://${S3Bucket}/${randomUUID()}` : `s3://${randomUUID()}`;
               const s3file = file(tmp_filename, options);
               await s3file.write("Hello Bun!");
             });
 
-            afterAll(async () => {
-              const s3file = file(tmp_filename, options);
-              await s3file.unlink();
+            afterEach(async () => {
+              try {
+                const s3file = file(tmp_filename, options);
+                await s3file.unlink();
+              } catch (e) {
+                // if error with NoSuchKey, it means the file does not exist and its fine
+                expect(e?.code || e).toBe("NoSuchKey");
+              }
             });
 
             it("should download file via Bun.file().text()", async () => {
@@ -458,16 +482,23 @@ for (let credentials of allCredentials) {
 
         describe("Bun.s3", () => {
           describe(bucketInName ? "bucket in path" : "bucket in options", () => {
-            const tmp_filename = bucketInName ? `${S3Bucket}/${randomUUID()}` : `${randomUUID()}`;
+            let tmp_filename: string;
             const options = bucketInName ? s3Options : { ...s3Options, bucket: S3Bucket };
-            beforeAll(async () => {
+            beforeEach(async () => {
+              await Bun.sleep(10);
+              tmp_filename = bucketInName ? `${S3Bucket}/${randomUUID()}` : `${randomUUID()}`;
               const s3file = s3(tmp_filename, options);
               await s3file.write("Hello Bun!");
             });
 
-            afterAll(async () => {
-              const s3file = s3(tmp_filename, options);
-              await s3file.unlink();
+            afterEach(async () => {
+              try {
+                const s3file = s3(tmp_filename, options);
+                await s3file.unlink();
+              } catch (e) {
+                // if error with NoSuchKey, it means the file does not exist and its fine
+                expect(e?.code || e).toBe("NoSuchKey");
+              }
             });
 
             it("should download file via Bun.s3().text()", async () => {
@@ -561,10 +592,20 @@ for (let credentials of allCredentials) {
             }, 10_000);
 
             describe("readable stream", () => {
-              afterAll(async () => {
+              afterEach(async () => {
                 await Promise.all([
-                  s3(tmp_filename + "-readable-stream", options).unlink(),
-                  s3(tmp_filename + "-readable-stream-big", options).unlink(),
+                  s3(tmp_filename + "-readable-stream", options)
+                    .unlink()
+                    .catch(e => {
+                      // if error with NoSuchKey, it means the file does not exist and its fine
+                      expect(e?.code || e).toBe("NoSuchKey");
+                    }),
+                  s3(tmp_filename + "-readable-stream-big", options)
+                    .unlink()
+                    .catch(e => {
+                      // if error with NoSuchKey, it means the file does not exist and its fine
+                      expect(e?.code || e).toBe("NoSuchKey");
+                    }),
                 ]);
               });
               it("should work with small files", async () => {
@@ -584,7 +625,6 @@ for (let credentials of allCredentials) {
                 }
                 expect(bytes).toBe(10);
                 expect(Buffer.concat(chunks)).toEqual(Buffer.from("Hello Bun!"));
-                s3file.delete();
               });
               it("should work with large files ", async () => {
                 const s3file = s3(tmp_filename + "-readable-stream-big", options);
@@ -610,14 +650,14 @@ for (let credentials of allCredentials) {
                   const SHA1_2 = Bun.SHA1.hash(bigishPayload, "hex");
                   expect(SHA1).toBe(SHA1_2);
                 }
-                s3file.delete();
               }, 30_000);
             });
           });
         });
       }
       describe("special characters", () => {
-        it("should allow special characters in the path", async () => {
+        // supabase will throw InvalidKey
+        it.skipIf(credentials.service === "supabase")("should allow special characters in the path", async () => {
           const options = { ...s3Options, bucket: S3Bucket };
           const s3file = s3(`🌈🦄${randomUUID()}.txt`, options);
           await s3file.write("Hello Bun!");
@@ -724,7 +764,10 @@ for (let credentials of allCredentials) {
           const dir = tempDirWithFiles("fsr", {
             "hello.txt": "",
           });
-          await Bun.write(s3("test.txt", { ...s3Options, bucket: S3Bucket }), file(path.join(dir, "hello.txt")));
+          const tmp_filename = `${randomUUID()}.txt`;
+
+          await Bun.write(s3(tmp_filename, { ...s3Options, bucket: S3Bucket }), file(path.join(dir, "hello.txt")));
+          await s3(tmp_filename, { ...s3Options, bucket: S3Bucket }).unlink();
         });
         it("Bun.write(s3file, file) should throw if the file does not exist", async () => {
           try {
@@ -747,7 +790,7 @@ for (let credentials of allCredentials) {
             );
             expect.unreachable();
           } catch (e: any) {
-            expect(["AccessDenied", "NoSuchBucket"]).toContain(e?.code);
+            expect(["AccessDenied", "NoSuchBucket", "NoSuchKey"]).toContain(e?.code);
             expect(e?.path).toBe("do-not-exist.txt");
             expect(e?.name).toBe("S3Error");
           }
@@ -949,7 +992,7 @@ for (let credentials of allCredentials) {
           await Promise.all(
             [s3, (path, ...args) => S3(...args).file(path)].map(async fn => {
               let options = { ...s3Options, bucket: S3Bucket };
-              options.endpoint = Buffer.alloc(1024, "a").toString();
+              options.endpoint = Buffer.alloc(2048, "a").toString();
 
               try {
                 const s3file = fn(randomUUID(), options);

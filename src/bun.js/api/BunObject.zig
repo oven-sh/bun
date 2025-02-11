@@ -541,6 +541,7 @@ export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) bun.String {
     const writer = buffered_writer.writer();
 
     var formatter = ConsoleObject.Formatter{ .globalThis = globalThis };
+    defer formatter.deinit();
     writer.print("{}", .{value.toFmt(&formatter)}) catch return .empty;
     buffered_writer.flush() catch return .empty;
     return bun.String.createUTF8(array.slice());

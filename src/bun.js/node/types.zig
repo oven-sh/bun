@@ -1366,6 +1366,7 @@ pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue) bun.JSError!?Mode
 
         break :brk std.fmt.parseInt(Mode, slice, 8) catch {
             var formatter = bun.JSC.ConsoleObject.Formatter{ .globalThis = ctx };
+            defer formatter.deinit();
             return ctx.throwValue(ctx.ERR_INVALID_ARG_VALUE("The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received {}", .{value.toFmt(&formatter)}).toJS());
         };
     };

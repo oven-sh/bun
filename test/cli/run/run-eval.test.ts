@@ -58,7 +58,7 @@ for (const flag of ["-e", "--print"]) {
       }
 
       // replace the trailin
-      const exe = isWindows ? bunExe().replace("/", "\\") : bunExe();
+      const exe = isWindows ? bunExe().replaceAll("/", "\\") : bunExe();
       testProcessArgv([], [exe]);
       testProcessArgv(["abc", "def"], [exe, "abc", "def"]);
       testProcessArgv(["--", "abc", "def"], [exe, "abc", "def"]);

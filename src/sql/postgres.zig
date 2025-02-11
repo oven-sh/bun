@@ -44,6 +44,7 @@ pub const AnyPostgresError = error{
     UnsupportedByteaFormat,
     UnsupportedIntegerSize,
     UnsupportedArrayFormat,
+    UnsupportedNumericFormat,
 };
 
 pub fn postgresErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8, err: AnyPostgresError) JSValue {
@@ -75,6 +76,7 @@ pub fn postgresErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8
         error.UnsupportedByteaFormat => JSC.Error.ERR_POSTGRES_UNSUPPORTED_BYTEA_FORMAT,
         error.UnsupportedArrayFormat => JSC.Error.ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT,
         error.UnsupportedIntegerSize => JSC.Error.ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE,
+        error.UnsupportedNumericFormat => JSC.Error.ERR_POSTGRES_UNSUPPORTED_NUMERIC_FORMAT,
         error.JSError => {
             return globalObject.takeException(error.JSError);
         },
@@ -2522,9 +2524,9 @@ pub const PostgresSQLConnection = struct {
                                 } else {
                                     // the only escape sequency possible here is \b
                                     if (bun.strings.eqlComptime(element, "\\b")) {
-                                        try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = bun.String.static("\x08").value.WTFStringImpl }, .free_value = 1 });
+                                        try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = bun.String.createUTF8("\x08").value.WTFStringImpl }, .free_value = 1 });
                                     } else {
-                                        try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (element.len > 0) bun.String.createUTF8(element).value.WTFStringImpl else null }, .free_value = 1 });
+                                        try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (element.len > 0) bun.String.createUTF8(element).value.WTFStringImpl else null }, .free_value = 0 });
                                     }
                                 }
                                 slice = trySlice(slice, current_idx);
@@ -2834,6 +2836,23 @@ pub const PostgresSQLConnection = struct {
                         return DataCell{ .tag = .float8, .value = .{ .float8 = float4 } };
                     }
                 },
+                .numeric => {
+                    if (binary) {
+                        // this is probrably good enough for most cases
+                        var stack_buffer = std.heap.stackFallback(1024, bun.default_allocator);
+                        const allocator = stack_buffer.get();
+                        var numeric_buffer = std.ArrayList(u8).fromOwnedSlice(allocator, &stack_buffer.buffer);
+                        numeric_buffer.items.len = 0;
+                        defer numeric_buffer.deinit();
+
+                        // if is binary format lets display as a string because JS cant handle it in a safe way
+                        const result = parseBinaryNumeric(bytes, &numeric_buffer) catch return error.UnsupportedNumericFormat;
+                        return DataCell{ .tag = .string, .value = .{ .string = bun.String.createUTF8(result.slice()).value.WTFStringImpl }, .free_value = 1 };
+                    } else {
+                        // nice text is actually what we want here
+                        return DataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) String.createUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
+                    }
+                },
                 .jsonb, .json => {
                     return DataCell{ .tag = .json, .value = .{ .json = if (bytes.len > 0) String.createUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
                 },
@@ -2950,6 +2969,104 @@ pub const PostgresSQLConnection = struct {
 
         fn pg_ntoh32(x: anytype) u32 {
             return pg_ntoT(32, x);
+        }
+        const PGNummericString = union(enum) {
+            static: [:0]const u8,
+            dynamic: []const u8,
+
+            pub fn slice(this: PGNummericString) []const u8 {
+                return switch (this) {
+                    .static => |value| value,
+                    .dynamic => |value| value,
+                };
+            }
+        };
+
+        fn parseBinaryNumeric(input: []const u8, result: *std.ArrayList(u8)) !PGNummericString {
+            // Reference: https://github.com/postgres/postgres/blob/50e6eb731d98ab6d0e625a0b87fb327b172bbebd/src/backend/utils/adt/numeric.c#L7612-L7740
+            if (input.len < 8) return error.InvalidBuffer;
+            var fixed_buffer = std.io.fixedBufferStream(input);
+            var reader = fixed_buffer.reader();
+
+            // Read header values using big-endian
+            const ndigits = try reader.readInt(i16, .big);
+            const weight = try reader.readInt(i16, .big);
+            const sign = try reader.readInt(u16, .big);
+            const dscale = try reader.readInt(i16, .big);
+
+            // Handle special cases
+            switch (sign) {
+                0xC000 => return PGNummericString{ .static = "NaN" },
+                0xD000 => return PGNummericString{ .static = "Infinity" },
+                0xF000 => return PGNummericString{ .static = "-Infinity" },
+                0x4000, 0x0000 => {},
+                else => return error.InvalidSign,
+            }
+
+            if (ndigits == 0) {
+                return PGNummericString{ .static = "0" };
+            }
+
+            // Add negative sign if needed
+            if (sign == 0x4000) {
+                try result.append('-');
+            }
+
+            // Calculate decimal point position
+            var decimal_pos: i32 = @as(i32, weight + 1) * 4;
+            if (decimal_pos <= 0) {
+                decimal_pos = 1;
+            }
+            // Output all digits before the decimal point
+
+            var scale_start: i32 = 0;
+            if (weight < 0) {
+                try result.append('0');
+                scale_start = @as(i32, @intCast(weight)) + 1;
+            } else {
+                var idx: usize = 0;
+                var first_non_zero = false;
+
+                while (idx <= weight) : (idx += 1) {
+                    const digit = if (idx < ndigits) try reader.readInt(u16, .big) else 0;
+                    var digit_str: [4]u8 = undefined;
+                    const digit_len = std.fmt.formatIntBuf(&digit_str, digit, 10, .lower, .{ .width = 4, .fill = '0' });
+                    if (!first_non_zero) {
+                        //In the first digit, suppress extra leading decimal zeroes
+                        var start_idx: usize = 0;
+                        while (start_idx < digit_len and digit_str[start_idx] == '0') : (start_idx += 1) {}
+                        if (start_idx == digit_len) continue;
+                        const digit_slice = digit_str[start_idx..digit_len];
+                        try result.appendSlice(digit_slice);
+                        first_non_zero = true;
+                    } else {
+                        try result.appendSlice(digit_str[0..digit_len]);
+                    }
+                }
+            }
+            // If requested, output a decimal point and all the digits that follow it.
+            // We initially put out a multiple of 4 digits, then truncate if needed.
+            if (dscale > 0) {
+                try result.append('.');
+                // negative scale means we need to add zeros before the decimal point
+                // greater than ndigits means we need to add zeros after the decimal point
+                var idx: isize = scale_start;
+                const end: usize = result.items.len + @as(usize, @intCast(dscale));
+                while (idx < dscale) : (idx += 4) {
+                    if (idx >= 0 and idx < ndigits) {
+                        const digit = reader.readInt(u16, .big) catch 0;
+                        var digit_str: [4]u8 = undefined;
+                        const digit_len = std.fmt.formatIntBuf(&digit_str, digit, 10, .lower, .{ .width = 4, .fill = '0' });
+                        try result.appendSlice(digit_str[0..digit_len]);
+                    } else {
+                        try result.appendSlice("0000");
+                    }
+                }
+                if (result.items.len > end) {
+                    result.items.len = end;
+                }
+            }
+            return PGNummericString{ .dynamic = result.items };
         }
 
         pub fn parseBinary(comptime tag: types.Tag, comptime ReturnType: type, bytes: []const u8) AnyPostgresError!ReturnType {

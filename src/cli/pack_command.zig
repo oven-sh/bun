@@ -1356,10 +1356,12 @@ pub const PackCommand = struct {
                         var includes: std.ArrayListUnmanaged(Pattern) = .{};
                         defer includes.deinit(ctx.allocator);
 
+                        var path_buf: PathBuffer = undefined;
                         var files_array = _files_array;
                         while (files_array.next()) |files_entry| {
                             if (files_entry.asString(ctx.allocator)) |file_entry_str| {
-                                const parsed = try Pattern.fromUTF8(ctx.allocator, file_entry_str) orelse continue;
+                                const normalized = bun.path.normalizeBuf(file_entry_str, &path_buf, .posix);
+                                const parsed = try Pattern.fromUTF8(ctx.allocator, normalized) orelse continue;
                                 try includes.append(ctx.allocator, parsed);
                                 continue;
                             }

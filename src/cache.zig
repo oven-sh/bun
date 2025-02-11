@@ -45,12 +45,16 @@ const debug = Output.scoped(.fs, false);
 pub const Fs = struct {
     pub const Entry = struct {
         contents: string,
-        fd: StoredFileDescriptorType = bun.invalid_fd,
-        external: External = .{},
+        fd: StoredFileDescriptorType,
+        /// When `contents` comes from a native plugin, this field is populated
+        /// with information on how to free it.
+        external_free_function: ExternalFreeFunction = .none,
 
-        pub const External = struct {
-            ctx: ?*anyopaque = null,
-            function: ?*const fn (?*anyopaque) callconv(.C) void = null,
+        pub const ExternalFreeFunction = struct {
+            ctx: ?*anyopaque,
+            function: ?*const fn (?*anyopaque) callconv(.C) void,
+
+            pub const none: ExternalFreeFunction = .{ .ctx = null, .function = null };
 
             pub fn call(this: *const @This()) void {
                 if (this.function) |func| {
@@ -60,8 +64,8 @@ pub const Fs = struct {
         };
 
         pub fn deinit(entry: *Entry, allocator: std.mem.Allocator) void {
-            if (entry.external.function) |func| {
-                func(entry.external.ctx);
+            if (entry.external_free_function.function) |func| {
+                func(entry.external_free_function.ctx);
             } else if (entry.contents.len > 0) {
                 allocator.free(entry.contents);
                 entry.contents = "";

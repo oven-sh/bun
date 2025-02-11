@@ -138,6 +138,7 @@ pub fn create(global: *JSC.JSGlobalObject, options: Options) bun.JSError!*Socket
                 .addr = undefined,
             };
             if (options.address) |address_str| {
+                defer address_str.deref();
                 const slice = address_str.toOwnedSliceZ(alloc) catch bun.outOfMemory();
                 defer alloc.free(slice);
                 try pton(global, inet.AF_INET, slice, &sin.addr);
@@ -155,6 +156,7 @@ pub fn create(global: *JSC.JSGlobalObject, options: Options) bun.JSError!*Socket
                 .scope_id = 0,
             };
             if (options.address) |address_str| {
+                defer address_str.deref();
                 const slice = address_str.toOwnedSliceZ(alloc) catch bun.outOfMemory();
                 defer alloc.free(slice);
                 try pton(global, inet.AF_INET6, slice, &sin6.addr);

@@ -6161,25 +6161,23 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
 
         pub fn requestIP(this: *ThisServer, request: *JSC.WebCore.Request) JSC.JSValue {
-            if (this.config.address == .unix) {
-                return JSValue.jsNull();
-            }
+            if (this.config.address == .unix) return JSValue.jsNull();
             // FIXME: us_get_remote_address_info (used by getRemoteSocketInfo)
             // converts a sockaddr_storage into presentation format, then
             // SocketAddress converts presentation back to a
             // sockaddr_storage-like format. presentation string is preserved,
             // but inet_pton could be avoided.
-            return if (request.request_context.getRemoteSocketInfo()) |info|
-                // NOTE: misleading. .create can throw if address is invalid,
-                // however since we're already listening on it it's safe to assume
-                // it's valid.
-                (SocketAddress.create(this.globalThis, .{
-                    .address = bun.String.createUTF8(info.ip),
-                    .family = if (info.is_ipv6) .INET6 else .INET,
-                    .port = @intCast(info.port),
-                }) catch bun.outOfMemory()).toJS(this.globalThis)
-            else
-                JSValue.jsNull();
+            const info = request.request_context.getRemoteSocketInfo() orelse return JSValue.jsNull();
+
+            // NOTE: misleading. .create can throw if address is invalid,
+            // however since we're already listening on it it's safe to assume
+            // it's valid.
+            var addr = SocketAddress.create(this.globalThis, .{
+                .address = bun.String.createUTF8(info.ip),
+                .family = if (info.is_ipv6) .INET6 else .INET,
+                .port = @intCast(info.port),
+            }) catch bun.outOfMemory();
+            return addr.toJS(this.globalThis);
         }
 
         pub fn memoryCost(this: *ThisServer) usize {

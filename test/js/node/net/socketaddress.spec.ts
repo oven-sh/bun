@@ -92,10 +92,10 @@ describe("SocketAddress constructor", () => {
   // ============================= LEAK DETECTION ==============================
   // ===========================================================================
 
-  it.only("does not leak memory", () => {
+  it("does not leak memory", () => {
     const growthFactor = 1.1; // allowed growth factor for memory usage
-    const warmup = 500; // # of warmup iterations
-    const iters = 5_000; // # of iterations
+    const warmup = 1_000; // # of warmup iterations
+    const iters = 25_000; // # of iterations
     const debug = false;
 
     // we want to hit both cached and uncached code paths
@@ -108,7 +108,7 @@ describe("SocketAddress constructor", () => {
 
     // warmup
     for (let i = 0; i < warmup; i++) {
-      const sa = new SocketAddress(options[i % 2]);
+      const sa = new SocketAddress(options[i % options.length]);
       const a = sa.address; //
       expect(a).not.toBeEmpty(); // ensure transpiler doesn't strip away getter call
     }

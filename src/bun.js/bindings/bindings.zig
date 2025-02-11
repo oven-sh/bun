@@ -3002,6 +3002,25 @@ pub const JSGlobalObject = opaque {
         return this.ERR_INVALID_ARG_VALUE("The \"{s}\" argument is invalid. Received {}", .{ argname, actual_string_value }).throw();
     }
 
+    /// Throw an `ERR_INVALID_ARG_VALUE` when the invalid value is a property of an object.
+    /// Message depends on whether `expected` is present.
+    /// - "The property "{argname}" is invalid. Received {value}"
+    /// - "The property "{argname}" is invalid. Expected {expected}, received {value}"
+    pub fn throwInvalidArgumentPropertyValue(
+        this: *JSGlobalObject,
+        argname: []const u8,
+        comptime expected: ?[]const u8,
+        value: JSValue,
+    ) bun.JSError {
+        const actual_string_value = try determineSpecificType(this, value);
+        defer actual_string_value.deref();
+        if (comptime expected) |_expected| {
+            return this.ERR_INVALID_ARG_VALUE("The property \"{s}\" is invalid. Expected {s}, received {}", .{ argname, _expected, actual_string_value }).throw();
+        } else {
+            return this.ERR_INVALID_ARG_VALUE("The property \"{s}\" is invalid. Received {}", .{ argname, actual_string_value }).throw();
+        }
+    }
+
     extern "c" fn Bun__ErrorCode__determineSpecificType(*JSGlobalObject, JSValue) String;
 
     pub fn determineSpecificType(global: *JSGlobalObject, value: JSValue) JSError!String {

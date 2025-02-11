@@ -1,6 +1,6 @@
 const { SocketAddressNative, AF_INET } = require("../net");
 import type { SocketAddressInitOptions } from "node:net";
-const { validateObject, validatePort, validateString } = require("internal/validators");
+const { validateObject, validatePort, validateString, validateUint32 } = require("internal/validators");
 
 const kHandle = Symbol("kHandle");
 
@@ -35,7 +35,24 @@ class SocketAddress {
       this[kHandle] = new SocketAddressNative();
     } else {
       validateObject(options, "options");
-      if (options.port !== undefined) validatePort(options.port, "options.port");
+      let { address, port, flowlabel, family = "ipv4" } = options;
+      if (port !== undefined) validatePort(port, "options.port");
+      if (address !== undefined) validateString(address, "options.address");
+      if (flowlabel !== undefined) validateUint32(flowlabel, "options.flowlabel");
+      // Bun's native SocketAddress allows `family` to be `AF_INET` or `AF_INET6`,
+      // but since we're aiming for nodejs compat in node:net this is not allowed.
+      if (typeof family?.toLowerCase === "function") {
+        options.family = family = family.toLowerCase();
+      }
+
+      switch (family) {
+        case "ipv4":
+        case "ipv6":
+          break;
+        default:
+          throw $ERR_INVALID_ARG_VALUE("options.family", options.family);
+      }
+
       this[kHandle] = new SocketAddressNative(options);
     }
   }

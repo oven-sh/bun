@@ -41,16 +41,16 @@ pub const Options = struct {
                 } else if (bun.strings.eqlComptime(slice.slice(), "ipv6")) {
                     break :blk AF.INET6;
                 } else {
-                    return global.throwInvalidArgumentTypeValue("options.family", "ipv4 or ipv6", fam);
+                    return global.throwInvalidArgumentPropertyValue("options.family", "'ipv4' or 'ipv6'", fam);
                 }
             } else if (fam.isUInt32AsAnyInt()) {
                 break :blk switch (fam.toU32()) {
                     AF.INET.int() => AF.INET,
                     AF.INET6.int() => AF.INET6,
-                    else => return global.throwInvalidArgumentTypeValue("options.family", "AF_INET or AF_INET6", fam),
+                    else => return global.throwInvalidArgumentPropertyValue("options.family", "AF_INET or AF_INET6", fam),
                 };
             } else {
-                return global.throwInvalidArgumentTypeValue("options.family", "string or number", fam);
+                return global.throwInvalidArgumentTypeValue("options.family", "a string or number", fam);
             }
         } else AF.INET;
 
@@ -99,6 +99,15 @@ pub fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSErr
 
     if (!options_obj.isObject()) return global.throwInvalidArgumentTypeValue("options", "object", options_obj);
     const options = try Options.fromJS(global, options_obj);
+
+    // fast path for { family: 'ipv6' }
+    if (options.family == AF.INET6 and options.address == null and options.flowlabel == null and options.port == 0) {
+        return SocketAddress.new(.{
+            ._addr = sockaddr.@"::",
+            ._presentation = WellKnownAddress.@"::",
+        });
+    }
+
     return SocketAddress.create(global, options);
 }
 
@@ -106,7 +115,7 @@ pub fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSErr
 pub fn create(global: *JSC.JSGlobalObject, options: Options) bun.JSError!*SocketAddress {
     const presentation: bun.String = options.address orelse switch (options.family) {
         AF.INET => WellKnownAddress.@"127.0.0.1",
-        AF.INET6 => WellKnownAddress.@"::1",
+        AF.INET6 => WellKnownAddress.@"::",
     };
     // We need a zero-terminated cstring for `ares_inet_pton`, which forces us to
     // copy the string.
@@ -146,7 +155,7 @@ pub fn create(global: *JSC.JSGlobalObject, options: Options) bun.JSError!*Socket
                 defer alloc.free(slice);
                 try pton(global, C.AF_INET6, slice, &sin6.sin6_addr);
             } else {
-                sin6.sin6_addr = C.in6addr_loopback;
+                sin6.sin6_addr = C.in6addr_any;
             }
             break :v6 .{ .sin6 = sin6 };
         },
@@ -374,10 +383,14 @@ const sockaddr = extern union {
 
     pub const @"127.0.0.1": sockaddr = sockaddr.v4(0, .{ .s_addr = C.INADDR_LOOPBACK });
     pub const @"::1": sockaddr = sockaddr.v6(0, C.in6addr_loopback);
+    // TODO: check that `::` is all zeroes on all platforms. Should correspond
+    // to `IN6ADDR_ANY_INIT`.
+    pub const @"::": sockaddr = sockaddr.v6(0, std.mem.zeroes(C.struct_in6_addr), 0, 0);
 };
 
 const WellKnownAddress = struct {
     const @"127.0.0.1": bun.String = bun.String.static("127.0.0.1");
+    const @"::": bun.String = bun.String.static("::");
     const @"::1": bun.String = bun.String.static("::1");
 };
 

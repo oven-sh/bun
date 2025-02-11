@@ -17,6 +17,7 @@ describe("SocketAddress", () => {
     // @ts-expect-error -- types are wrong.
     expect(() => SocketAddress()).toThrow(TypeError);
   });
+
   describe.each([new SocketAddress(), new SocketAddress(undefined), new SocketAddress({})])(
     "new SocketAddress()",
     address => {
@@ -43,9 +44,9 @@ describe("SocketAddress", () => {
     beforeAll(() => {
       address = new SocketAddress({ family: "ipv6" });
     });
-    it("creates a new ipv6 loopback address", () => {
+    it("creates a new ipv6 any address", () => {
       expect(address).toMatchObject({
-        address: "::1",
+        address: "::",
         port: 0,
         family: "ipv6",
         flowlabel: 0,
@@ -70,7 +71,7 @@ describe("SocketAddress.isSocketAddress", () => {
       configurable: true,
     });
   });
-});
+}); // </SocketAddress.isSocketAddress>
 
 describe("SocketAddress.parse", () => {
   it("is a function that takes 1 argument", () => {
@@ -114,7 +115,7 @@ describe("SocketAddress.parse", () => {
   ])("(%s) == undefined", invalidInput => {
     expect(SocketAddress.parse(invalidInput)).toBeUndefined();
   });
-});
+}); // </SocketAddress.parse>
 
 describe("SocketAddress.prototype.address", () => {
   it("has the correct property descriptor", () => {
@@ -126,7 +127,7 @@ describe("SocketAddress.prototype.address", () => {
       configurable: true,
     });
   });
-});
+}); // </SocketAddress.prototype.address>
 
 describe("SocketAddress.prototype.port", () => {
   it("has the correct property descriptor", () => {
@@ -138,7 +139,7 @@ describe("SocketAddress.prototype.port", () => {
       configurable: true,
     });
   });
-});
+}); // </SocketAddress.prototype.port>
 
 describe("SocketAddress.prototype.family", () => {
   it("has the correct property descriptor", () => {
@@ -150,7 +151,7 @@ describe("SocketAddress.prototype.family", () => {
       configurable: true,
     });
   });
-});
+}); // </SocketAddress.prototype.family>
 
 describe("SocketAddress.prototype.flowlabel", () => {
   it("has the correct property descriptor", () => {
@@ -162,7 +163,7 @@ describe("SocketAddress.prototype.flowlabel", () => {
       configurable: true,
     });
   });
-});
+}); // </SocketAddress.prototype.flowlabel>
 
 describe("SocketAddress.prototype.toJSON", () => {
   it("is a function that takes 0 arguments", () => {

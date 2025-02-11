@@ -2980,3 +2980,25 @@ it("should not trim utf-8 start bytes at end of string", () => {
   const buf2 = Buffer.from("36e1", "hex");
   expect(buf2.toString("utf-8")).toEqual("6\uFFFD");
 });
+
+it("Buffer.from(arrayBuffer)", () => {
+  const ab = Buffer.from([10, 11, 12, 13, 14, 15, 16, 17, 18, 19]).buffer;
+  const buf = Buffer.from(ab);
+  expect(buf.length).toBe(10);
+  expect(buf.buffer).toBe(ab);
+  expect(buf[Symbol.iterator]().toArray()).toEqual([10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
+});
+it("Buffer.from(arrayBuffer, byteOffset)", () => {
+  const ab = Buffer.from([10, 11, 12, 13, 14, 15, 16, 17, 18, 19]).buffer;
+  const buf = Buffer.from(ab, 2);
+  expect(buf.length).toBe(8);
+  expect(buf.buffer).toBe(ab);
+  expect(buf[Symbol.iterator]().toArray()).toEqual([12, 13, 14, 15, 16, 17, 18, 19]);
+});
+it("Buffer.from(arrayBuffer, byteOffset, length)", () => {
+  const ab = Buffer.from([10, 11, 12, 13, 14, 15, 16, 17, 18, 19]).buffer;
+  const buf = Buffer.from(ab, 3, 5);
+  expect(buf.length).toBe(5);
+  expect(buf.buffer).toBe(ab);
+  expect(buf[Symbol.iterator]().toArray()).toEqual([13, 14, 15, 16, 17, 18]);
+});

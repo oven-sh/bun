@@ -9,7 +9,7 @@
         "@electric-sql/pglite": "0.2.16",
         "@grpc/grpc-js": "1.12.0",
         "@grpc/proto-loader": "0.7.10",
-        "@happy-dom/global-registrator": "^17.0.3",
+        "@happy-dom/global-registrator": "17.0.3",
         "@napi-rs/canvas": "0.1.65",
         "@nestjs/common": "11.0.3",
         "@nestjs/core": "11.0.3",

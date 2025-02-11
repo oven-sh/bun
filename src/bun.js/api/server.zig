@@ -6704,8 +6704,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         var is_ipv6: bool = false;
 
                         if (listener.socket().localAddressText(&buf, &is_ipv6)) |slice| {
-                            var ip = bun.String.createUTF8(slice);
-                            defer ip.deref();
+                            const ip = bun.String.createUTF8(slice);
                             // FIXME: this can error on invalid addresses. Unfortunately,
                             // I don't see a way to make a falliable native getter.
                             const addr = SocketAddress.create(this.globalThis, .{

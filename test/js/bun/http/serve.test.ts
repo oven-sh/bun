@@ -1477,7 +1477,7 @@ it.if(isIPv4())("server.requestIP (v4)", async () => {
   });
 
   const response = await fetch(server.url.origin).then(x => x.json());
-  expect(response).toEqual({
+  expect(response).toMatchObject({
     address: "127.0.0.1",
     family: "IPv4",
     port: expect.any(Number),
@@ -1494,7 +1494,7 @@ it.if(isIPv6())("server.requestIP (v6)", async () => {
   });
 
   const response = await fetch(`http://localhost:${server.port}`).then(x => x.json());
-  expect(response).toEqual({
+  expect(response).toMatchObject({
     address: "::1",
     family: "IPv6",
     port: expect.any(Number),

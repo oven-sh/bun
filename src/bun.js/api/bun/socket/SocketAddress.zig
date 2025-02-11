@@ -111,7 +111,12 @@ pub fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSErr
     return SocketAddress.create(global, options);
 }
 
-/// If you have raw socket address data, prefer `SocketAddress.new`.
+/// Semi-structured JS api for creating a `SocketAddress`. If you have raw
+/// socket address data, prefer `SocketAddress.new`.
+/// 
+/// ## Safety
+/// - If provided, `options.address` must be ref-ed before being passed in. That
+///   is, the ref gets moved.
 pub fn create(global: *JSC.JSGlobalObject, options: Options) bun.JSError!*SocketAddress {
     const presentation: bun.String = options.address orelse switch (options.family) {
         AF.INET => WellKnownAddress.@"127.0.0.1",
@@ -133,7 +138,6 @@ pub fn create(global: *JSC.JSGlobalObject, options: Options) bun.JSError!*Socket
                 .addr = undefined,
             };
             if (options.address) |address_str| {
-                defer address_str.deref();
                 const slice = address_str.toOwnedSliceZ(alloc) catch bun.outOfMemory();
                 defer alloc.free(slice);
                 try pton(global, C.AF_INET, slice, &sin.addr);
@@ -151,7 +155,6 @@ pub fn create(global: *JSC.JSGlobalObject, options: Options) bun.JSError!*Socket
                 .scope_id = 0,
             };
             if (options.address) |address_str| {
-                defer address_str.deref();
                 const slice = address_str.toOwnedSliceZ(alloc) catch bun.outOfMemory();
                 defer alloc.free(slice);
                 try pton(global, C.AF_INET6, slice, &sin6.addr);
@@ -226,7 +229,7 @@ pub fn address(this: *SocketAddress) bun.String {
         p.ref();
         return p;
     }
-    var buf: [C.INET6_ADDRSTRLEN]u8 = undefined;
+    var buf: [INET6_ADDRSTRLEN]u8 = undefined;
     const addr_src: *const anyopaque = if (this.family() == AF.INET)
         @ptrCast(&this.asV4().addr)
     else
@@ -429,3 +432,7 @@ const JSValue = JSC.JSValue;
 const sockaddr_in = std.posix.sockaddr.in;
 const sockaddr_in6 = std.posix.sockaddr.in6;
 const socklen_t = ares.socklen_t;
+const INET6_ADDRSTRLEN = if (bun.Environment.isWindows)
+    std.os.windows.ws2_32.INET6_ADDRSTRLEN
+else
+    C.INET6_ADDRSTRLEN;

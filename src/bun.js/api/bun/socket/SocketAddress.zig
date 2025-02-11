@@ -113,7 +113,7 @@ pub fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSErr
 
 /// Semi-structured JS api for creating a `SocketAddress`. If you have raw
 /// socket address data, prefer `SocketAddress.new`.
-/// 
+///
 /// ## Safety
 /// - If provided, `options.address` must be ref-ed before being passed in. That
 ///   is, the ref gets moved.

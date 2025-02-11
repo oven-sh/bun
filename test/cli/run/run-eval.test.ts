@@ -62,7 +62,7 @@ for (const flag of ["-e", "--print"]) {
       testProcessArgv([], [exe]);
       testProcessArgv(["abc", "def"], [exe, "abc", "def"]);
       testProcessArgv(["--", "abc", "def"], [exe, "abc", "def"]);
-      // testProcessArgv(["--", "abc", "--", "def"], [JSON.stringify(bunExe()), "abc", "--", "def"]);
+      // testProcessArgv(["--", "abc", "--", "def"], [exe, "abc", "--", "def"]);
     });
   });
 }

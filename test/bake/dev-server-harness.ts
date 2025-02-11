@@ -1,14 +1,14 @@
 /// <reference path="../../src/bake/bake.d.ts" />
 import { Bake, Subprocess } from "bun";
 import fs from "node:fs";
-import path, { resolve } from "node:path";
+import path from "node:path";
 import os from "node:os";
 import assert from "node:assert";
-import { test } from "bun:test";
+import { Matchers } from "bun:test";
 import { EventEmitter } from "node:events";
 // @ts-ignore
 import { dedent } from "../bundler/expectBundled.ts";
-import { bunEnv, isCI, isWindows, mergeWindowEnvs } from "harness";
+import { bunEnv, mergeWindowEnvs } from "harness";
 import { expect } from "bun:test";
 
 /** For testing bundler related bugs in the DevServer */
@@ -152,7 +152,7 @@ class DevFetchPromise extends Promise<Response> {
     this.dev = dev;
   }
 
-  expect(result: any) {
+  equals(result: any) {
     if (typeof result !== "string") {
       result = JSON.stringify(result);
     }
@@ -172,7 +172,8 @@ class DevFetchPromise extends Promise<Response> {
       }
     });
   }
-  expectNoSpaces(result: string) {
+
+  equalsNoSpaces(result: string) {
     expect(result).not.toMatch(/\s/);
     return withAnnotatedStack(snapshotCallerLocation(), async () => {
       const res = await this;
@@ -183,13 +184,57 @@ class DevFetchPromise extends Promise<Response> {
       expect(text).toBe(result.trim());
     });
   }
+
   async text() {
     return (await this).text();
   }
+
   async json() {
     return (await this).json();
   }
+
+  /// Usage: await dev.fetch("/").expect.toInclude("Hello");
+  get expect(): Matchers<string> {
+    return expectProxy(this.text(), [], expect(""));
+  }
 }
+
+function expectProxy(text: Promise<string>, chain: string[], expect: any): any {
+  function fn() {
+    throw new TypeError();
+  }
+  fn.text = text;
+  fn.chain = chain;
+  fn.expect = expect;
+  return new Proxy(fn, fetchExpectProxyHandler);
+}
+
+const fetchExpectProxyHandler: ProxyHandler<any> = {
+  get(target, prop, receiver) {
+    if (Reflect.has(target.expect, prop)) {
+      return expectProxy(target.text, target.chain.concat(prop), Reflect.get(target.expect, prop, receiver));
+    }
+    return undefined;
+  },
+  has(target, p) {
+    return Reflect.has(target.expect, p);
+  },
+  set() {
+    throw new Error("Cannot set properties");
+  },
+  apply(target, thisArg, argArray) {
+    if (typeof target.expect !== "function") {
+      throw new Error(`expect.${target.chain.join(".")} is not a function`);
+    }
+    return withAnnotatedStack(snapshotCallerLocation(), async () => {
+      var m: any = expect(await target.text);
+      for (const part of target.chain.slice(0, -1)) {
+        m = m[part];
+      }
+      return m[target.chain[target.chain.length - 1]].apply(m, argArray);
+    });
+  },
+};
 
 function snapshotCallerLocation(): string {
   const stack = new Error().stack!;
@@ -296,7 +341,7 @@ class OutputLineStream extends EventEmitter {
           const { done, value } = (await reader.read()) as { done: boolean; value: Uint8Array };
           if (done) break;
           const clearScreenCode = "\x1B[2J\x1B[3J\x1B[H";
-          const text = last + td.decode(value, { stream: true }).replace(clearScreenCode, "");
+          const text = last + td.decode(value, { stream: true }).replace(clearScreenCode, "").replaceAll("\r", "");
           const lines = text.split("\n");
           last = lines.pop()!;
           for (const line of lines) {
@@ -379,21 +424,15 @@ export function devTest<T extends DevServerTest>(description: string, options: T
   const basename = path.basename(caller, ".test" + path.extname(caller));
   const count = (counts[basename] = (counts[basename] ?? 0) + 1);
 
-  // // TODO: Tests are flaky on all platforms. Disable
-  // if (isWindows) {
-  //   jest.test.todo(`DevServer > ${basename}.${count}: ${description}`);
-  //   return options;
-  // }
-
   jest.test(
     `DevServer > ${basename}.${count}: ${description}`,
     async () => {
       const root = path.join(tempDir, basename + count);
       if ("files" in options) {
         writeAll(root, options.files);
-        if (options.files["bun.app.ts"] == undefined) {
+        if (options.files["bun.app.ts"] == undefined && options.files["index.html"] == undefined) {
           if (!options.framework) {
-            throw new Error("Must specify a options.framework or provide a bun.app.ts file");
+            throw new Error("Must specify one of: `options.framework`, `index.html`, or `bun.app.ts`");
           }
           if (options.pluginFile) {
             fs.writeFileSync(path.join(root, "pluginFile.ts"), dedent(options.pluginFile));
@@ -401,19 +440,33 @@ export function devTest<T extends DevServerTest>(description: string, options: T
           fs.writeFileSync(
             path.join(root, "bun.app.ts"),
             dedent`
-            ${options.pluginFile ? `import plugins from './pluginFile.ts';` : "let plugins = undefined;"}
-            export default {
-              app: {
-                framework: ${JSON.stringify(options.framework)},
-                plugins,
-              },
-            };
-          `,
+              ${options.pluginFile ? `import plugins from './pluginFile.ts';` : "let plugins = undefined;"}
+              export default {
+                app: {
+                  framework: ${JSON.stringify(options.framework)},
+                  plugins,
+                },
+              };
+            `,
           );
-        } else {
-          if (options.pluginFile) {
-            throw new Error("Cannot provide both bun.app.ts and pluginFile");
+        } else if (options.files["index.html"]) {
+          if (options.files["bun.app.ts"]) {
+            throw new Error("Cannot provide both bun.app.ts and index.html");
           }
+          fs.writeFileSync(
+            path.join(root, "bun.app.ts"),
+            dedent`
+              import html from "./index.html";
+              export default {
+                static: {
+                  '/*': html,
+                },
+                fetch(req) {
+                  return new Response("Not Found", { status: 404 });
+                },
+              };
+            `,
+          );
         }
       } else {
         if (!options.fixture) {
@@ -433,12 +486,12 @@ export function devTest<T extends DevServerTest>(description: string, options: T
       fs.writeFileSync(
         path.join(root, "harness_start.ts"),
         dedent`
-        import appConfig from "./bun.app.ts";
-        export default {
-          ...appConfig,
-          port: 0,
-        };
-      `,
+          import appConfig from "./bun.app.ts";
+          export default {
+            ...appConfig,
+            port: 0,
+          };
+        `,
       );
 
       await using devProcess = Bun.spawn({

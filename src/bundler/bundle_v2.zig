@@ -443,8 +443,8 @@ pub const BundleV2 = struct {
     ///
     /// Note that .log, .allocator, and other things are shared
     /// between the three transpiler configurations
-    pub inline fn bundlerForTarget(this: *BundleV2, target: options.Target) *Transpiler {
-        return if (!this.transpiler.options.server_components)
+    pub inline fn transpilerForTarget(this: *BundleV2, target: options.Target) *Transpiler {
+        return if (!this.transpiler.options.server_components and this.linker.dev_server == null)
             this.transpiler
         else switch (target) {
             else => this.transpiler,
@@ -695,7 +695,7 @@ pub const BundleV2 = struct {
         import_record: bun.JSC.API.JSBundler.Resolve.MiniImportRecord,
         target: options.Target,
     ) void {
-        const transpiler = this.bundlerForTarget(target);
+        const transpiler = this.transpilerForTarget(target);
         var had_busted_dir_cache: bool = false;
         var resolve_result = while (true) break transpiler.resolver.resolve(
             Fs.PathName.init(import_record.source_file).dirWithTrailingSlash(),
@@ -920,7 +920,7 @@ pub const BundleV2 = struct {
         task.is_entry_point = is_entry_point;
         task.known_target = target;
         {
-            const bundler = this.bundlerForTarget(target);
+            const bundler = this.transpilerForTarget(target);
             task.jsx.development = switch (bundler.options.force_node_env) {
                 .development => true,
                 .production => false,
@@ -1351,7 +1351,7 @@ pub const BundleV2 = struct {
         var task = this.graph.allocator.create(ParseTask) catch bun.outOfMemory();
         task.* = ParseTask.init(resolve_result, source_index, this);
         task.loader = loader;
-        task.jsx = this.bundlerForTarget(known_target).options.jsx;
+        task.jsx = this.transpilerForTarget(known_target).options.jsx;
         task.task.node.next = null;
         task.tree_shaking = this.linker.options.tree_shaking;
         task.known_target = known_target;
@@ -1401,7 +1401,7 @@ pub const BundleV2 = struct {
             .jsx = if (known_target == .bake_server_components_ssr and !this.framework.?.server_components.?.separate_ssr_graph)
                 this.transpiler.options.jsx
             else
-                this.bundlerForTarget(known_target).options.jsx,
+                this.transpilerForTarget(known_target).options.jsx,
             .source_index = source_index,
             .module_type = .unknown,
             .emit_decorator_metadata = false, // TODO
@@ -2209,7 +2209,7 @@ pub const BundleV2 = struct {
                                 },
                             },
                             .side_effects = .has_side_effects,
-                            .jsx = this.bundlerForTarget(resolve.import_record.original_target).options.jsx,
+                            .jsx = this.transpilerForTarget(resolve.import_record.original_target).options.jsx,
                             .source_index = source_index,
                             .module_type = .unknown,
                             .loader = loader,
@@ -2822,7 +2822,7 @@ pub const BundleV2 = struct {
                     .bake_server_components_ssr,
                 };
             } else .{
-                this.bundlerForTarget(ast.target),
+                this.transpilerForTarget(ast.target),
                 ast.target.bakeGraph(),
                 ast.target,
             };
@@ -4729,7 +4729,7 @@ pub const ParseTask = struct {
         // in which we inline `true`.
         if (transpiler.options.inline_entrypoint_import_meta_main or !task.is_entry_point) {
             opts.import_meta_main_value = task.is_entry_point;
-        } else if (transpiler.options.target == .node) {
+        } else if (target == .node) {
             opts.lower_import_meta_main_for_node_js = true;
         }
 
@@ -12599,9 +12599,9 @@ pub const LinkerContext = struct {
                         // the import value is never read
                         try stmts.inside_wrapper_prefix.append(Stmt.alloc(S.SExpr, .{ .value = call }, stmt.loc));
                     } else {
-                        // 'let namespace = module.importSync(...)'
+                        // 'var namespace = module.importSync(...)'
                         try stmts.inside_wrapper_prefix.append(Stmt.alloc(S.Local, .{
-                            .kind = .k_let,
+                            .kind = .k_var, // remove a tdz
                             .decls = try G.Decl.List.fromSlice(allocator, &.{.{
                                 .binding = Binding.alloc(
                                     allocator,

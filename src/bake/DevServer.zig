@@ -401,16 +401,12 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     dev.bun_watcher.start() catch |err|
         return global.throwError(err, "while initializing file watcher thread for development server");
 
-    dev.server_transpiler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
-    dev.client_transpiler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
-    dev.ssr_transpiler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
-
     dev.watcher_atomics = WatcherAtomics.init(dev);
 
-    dev.framework.initBundler(allocator, &dev.log, .development, .server, &dev.server_transpiler, &dev.bundler_options.server) catch |err|
+    dev.framework.initTranspiler(allocator, &dev.log, .development, .server, &dev.server_transpiler, &dev.bundler_options.server) catch |err|
         return global.throwError(err, generic_action);
     dev.server_transpiler.options.dev_server = dev;
-    dev.framework.initBundler(
+    dev.framework.initTranspiler(
         allocator,
         &dev.log,
         .development,
@@ -421,11 +417,18 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         return global.throwError(err, generic_action);
     dev.client_transpiler.options.dev_server = dev;
 
+    dev.server_transpiler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
+    dev.client_transpiler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
+
     if (separate_ssr_graph) {
-        dev.framework.initBundler(allocator, &dev.log, .development, .ssr, &dev.ssr_transpiler, &dev.bundler_options.ssr) catch |err|
+        dev.framework.initTranspiler(allocator, &dev.log, .development, .ssr, &dev.ssr_transpiler, &dev.bundler_options.ssr) catch |err|
             return global.throwError(err, generic_action);
         dev.ssr_transpiler.options.dev_server = dev;
+        dev.ssr_transpiler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
     }
+
+    assert(dev.server_transpiler.resolver.opts.target != .browser);
+    assert(dev.client_transpiler.resolver.opts.target == .browser);
 
     dev.framework = dev.framework.resolve(&dev.server_transpiler.resolver, &dev.client_transpiler.resolver, options.arena) catch {
         if (dev.framework.is_built_in_react)
@@ -744,7 +747,8 @@ pub fn memoryCost(dev: *DevServer) usize {
         },
         .incremental_result = {
             cost += memoryCostArrayList(dev.incremental_result.client_components_added);
-            cost += memoryCostArrayList(dev.incremental_result.html_routes_affected);
+            cost += memoryCostArrayList(dev.incremental_result.html_routes_soft_affected);
+            cost += memoryCostArrayList(dev.incremental_result.html_routes_hard_affected);
             cost += memoryCostArrayList(dev.incremental_result.framework_routes_affected);
             cost += memoryCostArrayList(dev.incremental_result.client_components_removed);
             cost += memoryCostArrayList(dev.incremental_result.failures_removed);
@@ -845,6 +849,7 @@ fn scanInitialRoutes(dev: *DevServer) !void {
 
 /// Returns true if a catch-all handler was attached.
 pub fn attachRoutes(dev: *DevServer, server: anytype) !bool {
+    // TODO: all paths here must be prefixed with publicPath if set.
     dev.server = bun.JSC.API.AnyServer.from(server);
     const app = server.app.?;
     const is_ssl = @typeInfo(@TypeOf(app)).pointer.child.is_ssl;
@@ -1342,7 +1347,10 @@ fn getJavaScriptCodeForHTMLFile(
     try bun.js_printer.writeJSONString(input_file_sources[index.get()].path.pretty, @TypeOf(w), w, .utf8);
     try w.writeAll("(m) {\n  ");
     for (import_records[index.get()].slice()) |import| {
-        if (import.source_index.isValid() and loaders[import.source_index.get()] == .css) continue;
+        if (import.source_index.isValid() and
+            !loaders[import.source_index.get()].isJavaScriptLike())
+            continue; // ignore non-JavaScript imports
+
         try w.writeAll("  m.dynamicImport(");
         try bun.js_printer.writeJSONString(import.path.pretty, @TypeOf(w), w, .utf8);
         try w.writeAll(");\n  ");
@@ -1596,8 +1604,8 @@ fn indexFailures(dev: *DevServer) !void {
 
             switch (added.getOwner()) {
                 .none, .route => unreachable,
-                .server => |index| try dev.server_graph.traceDependencies(index, &gts, .no_stop),
-                .client => |index| try dev.client_graph.traceDependencies(index, &gts, .no_stop),
+                .server => |index| try dev.server_graph.traceDependencies(index, &gts, .no_stop, {}),
+                .client => |index| try dev.client_graph.traceDependencies(index, &gts, .no_stop, {}),
             }
         }
 
@@ -1609,7 +1617,11 @@ fn indexFailures(dev: *DevServer) !void {
                 dev.markAllRouteChildrenFailed(entry.route_index);
         }
 
-        for (dev.incremental_result.html_routes_affected.items) |index| {
+        for (dev.incremental_result.html_routes_soft_affected.items) |index| {
+            dev.routeBundlePtr(index).server_state = .possible_bundling_failures;
+        }
+
+        for (dev.incremental_result.html_routes_hard_affected.items) |index| {
             dev.routeBundlePtr(index).server_state = .possible_bundling_failures;
         }
 
@@ -2115,7 +2127,7 @@ pub fn finalizeBundle(
     if (will_hear_hot_update and
         current_bundle.had_reload_event and
         (dev.incremental_result.framework_routes_affected.items.len +
-        dev.incremental_result.html_routes_affected.items.len) > 0 and
+        dev.incremental_result.html_routes_hard_affected.items.len) > 0 and
         dev.bundling_failures.count() == 0)
     {
         has_route_bits_set = true;
@@ -2129,7 +2141,7 @@ pub fn finalizeBundle(
                 markAllRouteChildren(&dev.router, 1, .{&route_bits}, request.route_index);
             }
         }
-        for (dev.incremental_result.html_routes_affected.items) |route_bundle_index| {
+        for (dev.incremental_result.html_routes_hard_affected.items) |route_bundle_index| {
             route_bits.set(route_bundle_index.get());
             route_bits_client.set(route_bundle_index.get());
         }
@@ -2155,7 +2167,7 @@ pub fn finalizeBundle(
         gts.clear();
 
         for (dev.incremental_result.client_components_affected.items) |index| {
-            try dev.server_graph.traceDependencies(index, &gts, .no_stop);
+            try dev.server_graph.traceDependencies(index, &gts, .no_stop, {});
         }
 
         // A bit-set is used to avoid duplicate entries. This is not a problem
@@ -2177,7 +2189,7 @@ pub fn finalizeBundle(
             const bundle = &dev.route_bundles.items[bundled_route_index];
             bundle.invalidateClientBundle();
         }
-    } else if (dev.incremental_result.html_routes_affected.items.len > 0) {
+    } else if (dev.incremental_result.html_routes_hard_affected.items.len > 0) {
         // When only HTML routes were affected, there may not be any client
         // components that got affected, but the bundles for these HTML routes
         // are invalid now. That is why HTML routes above writes into
@@ -2189,6 +2201,12 @@ pub fn finalizeBundle(
             const bundle = &dev.route_bundles.items[bundled_route_index];
             bundle.invalidateClientBundle();
         }
+    }
+
+    // Softly affected HTML routes only need the bundle invalidated. WebSocket
+    // connections don't have to be told anything.
+    for (dev.incremental_result.html_routes_soft_affected.items) |index| {
+        dev.routeBundlePtr(index).invalidateClientBundle();
     }
 
     // `route_bits` will have all of the routes that were modified. If any of
@@ -2623,7 +2641,7 @@ fn getOrPutRouteBundle(dev: *DevServer, route: RouteBundle.UnresolvedIndex) !Rou
                 } };
             },
         },
-        .client_script_generation = 0,
+        .client_script_generation = std.crypto.random.int(u32),
         .server_state = .unqueued,
         .client_bundle = null,
         .active_viewers = 0,
@@ -2727,6 +2745,9 @@ const FileKind = enum(u2) {
     /// `code` is JavaScript code. This field is also used for HTML files, where
     /// the associated JS just calls `require` to emulate the script tags.
     js,
+    /// `code` is JavaScript code of a module exporting a single file path.
+    /// This is used when the loader is not `css` nor `isJavaScriptLike()`
+    asset,
     /// `code` is the URL where the CSS file is to be fetched from, ex.
     /// '/_bun/css/0000000000000000.css'
     css,
@@ -2928,7 +2949,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 }
 
                 fn jsCode(file: @This()) []const u8 {
-                    assert(file.flags.kind == .js);
+                    assert(file.flags.kind == .js or file.flags.kind == .asset);
                     return file.content.js_code_ptr[0..file.code_len];
                 }
 
@@ -3159,7 +3180,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     if (gop.found_existing) {
                         // Free the original content
                         switch (gop.value_ptr.flags.kind) {
-                            .js => {
+                            .js, .asset => {
                                 bun.default_allocator.free(gop.value_ptr.jsCode());
                                 bun.default_allocator.free(g.source_maps.items[file_index.get()].vlq_chunk.slice());
                                 if (source_map) |map| g.source_maps.items[file_index.get()] = .fromSourceMap(map);
@@ -3344,10 +3365,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             if (side == .server) {
                 // Follow this file to the route to mark it as stale.
-                try g.traceDependencies(file_index, ctx.gts, .stop_at_boundary);
+                try g.traceDependencies(file_index, ctx.gts, .stop_at_boundary, file_index);
             } else {
                 // Follow this file to the HTML route or HMR root to mark the client bundle as stale.
-                try g.traceDependencies(file_index, ctx.gts, .stop_at_boundary);
+                try g.traceDependencies(file_index, ctx.gts, .stop_at_boundary, file_index);
             }
         }
 
@@ -3462,7 +3483,13 @@ pub fn IncrementalGraph(side: bake.Side) type {
             css_to_route,
         };
 
-        fn traceDependencies(g: *@This(), file_index: FileIndex, gts: *GraphTraceState, comptime goal: TraceDependencyGoal) !void {
+        fn traceDependencies(
+            g: *@This(),
+            file_index: FileIndex,
+            gts: *GraphTraceState,
+            comptime goal: TraceDependencyGoal,
+            from_file_index: if (goal == .stop_at_boundary) FileIndex else void,
+        ) !void {
             g.owner().graph_safety_lock.assertLocked();
 
             if (Environment.enable_logs) {
@@ -3499,10 +3526,21 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         const key = g.bundled_files.keys()[file_index.get()];
                         const index = dev.server_graph.getFileIndex(key) orelse
                             Output.panic("Server Incremental Graph is missing component for {}", .{bun.fmt.quote(key)});
-                        try dev.server_graph.traceDependencies(index, gts, goal);
-                    } else if (file.flags.is_html_route) {
+                        try dev.server_graph.traceDependencies(index, gts, goal, if (goal == .stop_at_boundary) index else {});
+                    } else if (goal == .stop_at_boundary and file.flags.is_html_route) {
                         const route_bundle_index = dev.client_graph.htmlRouteBundleIndex(file_index);
-                        try dev.incremental_result.html_routes_affected.append(dev.allocator, route_bundle_index);
+
+                        // If the HTML file itself was modified, or an asset was
+                        // modified, this must be a hard reload. Otherwise just
+                        // invalidate the script tag.
+                        const list = if (from_file_index == file_index or
+                            g.bundled_files.values()[from_file_index.get()].flags.kind == .asset)
+                            &dev.incremental_result.html_routes_hard_affected
+                        else
+                            &dev.incremental_result.html_routes_soft_affected;
+
+                        try list.append(dev.allocator, route_bundle_index);
+
                         if (goal == .stop_at_boundary)
                             return;
                     }
@@ -3524,7 +3562,12 @@ pub fn IncrementalGraph(side: bake.Side) type {
             while (it) |dep_index| {
                 const edge = g.edges.items[dep_index.get()];
                 it = edge.next_dependency.unwrap();
-                try g.traceDependencies(edge.dependency, gts, goal);
+                try g.traceDependencies(
+                    edge.dependency,
+                    gts,
+                    goal,
+                    if (goal == .stop_at_boundary) file_index,
+                );
             }
         }
 
@@ -3565,7 +3608,6 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     }
                 },
                 .client => {
-                    assert(!g.stale_files.isSet(file_index.get())); // should not be left stale
                     if (file.flags.kind == .css) {
                         if (goal == .find_css) {
                             try g.current_css_files.append(g.owner().allocator, file.cssAssetId());
@@ -3592,7 +3634,11 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         ) orelse
                             @panic("Failed to get bundling failure");
                         try g.owner().incremental_result.failures_added.append(g.owner().allocator, fail);
+                        return;
                     }
+
+                    if (Environment.isDebug)
+                        assert(!g.stale_files.isSet(file_index.get())); // should not be left stale
                 },
             }
 
@@ -3646,7 +3692,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     if (gop.found_existing) {
                         const source_map = &g.source_maps.items[file_index.get()];
                         switch (gop.value_ptr.flags.kind) {
-                            .js => g.owner().allocator.free(gop.value_ptr.jsCode()),
+                            .js, .asset => g.owner().allocator.free(gop.value_ptr.jsCode()),
                             .css => g.owner().assets.unrefByPath(gop.key_ptr.*),
                             .unknown => {},
                         }
@@ -3798,7 +3844,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     if (found_existing) {
                         const source_map = &g.source_maps.items[file_index.get()];
                         switch (gop.value_ptr.flags.kind) {
-                            .js => g.owner().allocator.free(gop.value_ptr.jsCode()),
+                            .js, .asset => g.owner().allocator.free(gop.value_ptr.jsCode()),
                             .css => g.owner().assets.unrefByPath(gop.key_ptr.*),
                             .unknown => {},
                         }
@@ -4226,7 +4272,12 @@ const IncrementalResult = struct {
     framework_routes_affected: ArrayListUnmanaged(RouteIndexAndRecurseFlag),
     /// HTML routes have slightly different anatomy than their
     /// framework-provided counterparts, and get a separate list.
-    html_routes_affected: ArrayListUnmanaged(RouteBundle.Index),
+    /// This list is just for when a script/style URL needs to be rewritten.
+    html_routes_soft_affected: ArrayListUnmanaged(RouteBundle.Index),
+    /// Requires a hard reload of active viewers.
+    /// - Changed HTML File
+    /// - Non-JS/CSS link between HTML file and import, such as image.
+    html_routes_hard_affected: ArrayListUnmanaged(RouteBundle.Index),
     /// Set to true if any IncrementalGraph edges were added or removed.
     had_adjusted_edges: bool,
 
@@ -4261,7 +4312,8 @@ const IncrementalResult = struct {
 
     const empty: IncrementalResult = .{
         .framework_routes_affected = .{},
-        .html_routes_affected = .{},
+        .html_routes_soft_affected = .{},
+        .html_routes_hard_affected = .{},
         .had_adjusted_edges = false,
         .failures_removed = .{},
         .failures_added = .{},
@@ -4272,7 +4324,8 @@ const IncrementalResult = struct {
 
     fn reset(result: *IncrementalResult) void {
         result.framework_routes_affected.clearRetainingCapacity();
-        result.html_routes_affected.clearRetainingCapacity();
+        result.html_routes_soft_affected.clearRetainingCapacity();
+        result.html_routes_hard_affected.clearRetainingCapacity();
         assert(result.failures_removed.items.len == 0);
         result.failures_added.clearRetainingCapacity();
         result.client_components_added.clearRetainingCapacity();

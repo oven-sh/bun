@@ -164,14 +164,15 @@ register_command(
   CWD
     ${BUN_NODE_FALLBACKS_SOURCE}
   COMMAND
-    ${BUN_EXECUTABLE} x
-      esbuild ${ESBUILD_ARGS}
+    ${BUN_EXECUTABLE} build
       ${BUN_NODE_FALLBACKS_SOURCES}
       --outdir=${BUN_NODE_FALLBACKS_OUTPUT}
       --format=esm
       --minify
-      --bundle
-      --platform=browser
+      --target=browser
+      --emit-dce-annotations
+      --define=process.env.NODE_DEBUG=false
+      --define=global=globalThis
   SOURCES
     ${BUN_NODE_FALLBACKS_SOURCES}
     ${BUN_NODE_FALLBACKS_NODE_MODULES}

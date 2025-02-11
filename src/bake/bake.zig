@@ -159,8 +159,6 @@ const BuildConfigSubset = struct {
     env: bun.Schema.Api.DotEnvBehavior = ._none,
     env_prefix: ?[]const u8 = null,
 
-    // TODO: plugins
-
     pub fn loadFromJs(config: *BuildConfigSubset, value: JSValue, arena: Allocator) !void {
         _ = config; // autofix
         _ = value; // autofix
@@ -586,7 +584,7 @@ pub const Framework = struct {
         return framework;
     }
 
-    pub fn initBundler(
+    pub fn initTranspiler(
         framework: *Framework,
         allocator: std.mem.Allocator,
         log: *bun.logger.Log,

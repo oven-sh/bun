@@ -9,6 +9,7 @@
         "@electric-sql/pglite": "0.2.16",
         "@grpc/grpc-js": "1.12.0",
         "@grpc/proto-loader": "0.7.10",
+        "@happy-dom/global-registrator": "^17.0.3",
         "@napi-rs/canvas": "0.1.65",
         "@nestjs/common": "11.0.3",
         "@nestjs/core": "11.0.3",
@@ -31,7 +32,7 @@
         "express": "4.18.2",
         "fast-glob": "3.3.1",
         "filenamify": "6.0.0",
-        "happy-dom": "16.5.3",
+        "happy-dom": "17.0.3",
         "http2-wrapper": "2.2.1",
         "https-proxy-agent": "7.0.5",
         "iconv-lite": "0.6.3",
@@ -213,6 +214,8 @@
     "@grpc/grpc-js": ["@grpc/grpc-js@1.12.0", "", { "dependencies": { "@grpc/proto-loader": "^0.7.13", "@js-sdsl/ordered-map": "^4.4.2" } }, "sha512-eWdP97A6xKtZXVP/ze9y8zYRB2t6ugQAuLXFuZXAsyqmyltaAjl4yPkmIfc0wuTFJMOUF1AdvIFQCL7fMtaX6g=="],
 
     "@grpc/proto-loader": ["@grpc/proto-loader@0.7.10", "", { "dependencies": { "lodash.camelcase": "^4.3.0", "long": "^5.0.0", "protobufjs": "^7.2.4", "yargs": "^17.7.2" }, "bin": { "proto-loader-gen-types": "build/bin/proto-loader-gen-types.js" } }, "sha512-CAqDfoaQ8ykFd9zqBDn4k6iWT9loLAlc2ETmDFS9JCD70gDcnA4L3AFEo2iV7KyAtAAHFW9ftq1Fz+Vsgq80RQ=="],
+
+    "@happy-dom/global-registrator": ["@happy-dom/global-registrator@17.0.3", "", { "dependencies": { "happy-dom": "^17.0.3" } }, "sha512-isCCWywZq8XPE3A5y7pRyFIsAgij+3eVXgQNCbexGRP00/+nctmf4SfQxC3vV3MmEaOXaNj7IiiSC0BtSHQZgg=="],
 
     "@img/sharp-darwin-arm64": ["@img/sharp-darwin-arm64@0.33.0", "", { "optionalDependencies": { "@img/sharp-libvips-darwin-arm64": "1.0.0" }, "os": "darwin", "cpu": "arm64" }, "sha512-070tEheekI1LJWTGPC9WlQEa5UoKTXzzlORBHMX4TbfUxMiL336YHR8vBEUNsjse0RJCX8dZ4ZXwT595aEF1ug=="],
 
@@ -1206,7 +1209,7 @@
 
     "handlebars": ["handlebars@4.7.8", "", { "dependencies": { "minimist": "^1.2.5", "neo-async": "^2.6.2", "source-map": "^0.6.1", "wordwrap": "^1.0.0" }, "optionalDependencies": { "uglify-js": "^3.1.4" }, "bin": { "handlebars": "bin/handlebars" } }, "sha512-vafaFqs8MZkRrSX7sFVUdo3ap/eNiLnb4IakshzvP56X5Nr1iGKAIqdX6tMlm6HcNRIkr6AxO5jFEoJzzpT8aQ=="],
 
-    "happy-dom": ["happy-dom@16.5.3", "", { "dependencies": { "webidl-conversions": "^7.0.0", "whatwg-mimetype": "^3.0.0" } }, "sha512-7zGnyROZuntn+5X84MQ535qiQ3ccm45uHl+Q7EFAcPP0NhkbrfPitqprz0GgszX91/QqsZKQ7nTYkyObCTDUjg=="],
+    "happy-dom": ["happy-dom@17.0.3", "", { "dependencies": { "webidl-conversions": "^7.0.0", "whatwg-mimetype": "^3.0.0" } }, "sha512-1vWCwpeguN02wQF8kGeaj69FDX19bXKQXmyUKcE+O0WLY0uhS0RPTLCJR8Omy8hrjMHwV3dUJ24JUrK07aOA9Q=="],
 
     "has-flag": ["has-flag@3.0.0", "", {}, "sha512-sKJf1+ceQBr4SMkvQnBDNDtf4TXpVhVGateu0t918bl30FnbE2m4vNLX+VWe/dpjlb+HugGYzW7uQXH98HPEYw=="],
 

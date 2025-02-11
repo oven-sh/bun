@@ -80,7 +80,7 @@ export function initWebSocket(
     if (typeof data === "object") {
       const view = new DataView(data);
       if (IS_BUN_DEVELOPMENT) {
-        console.info("[WS] recieve message '" + String.fromCharCode(view.getUint8(0)) + "',", new Uint8Array(data));
+        console.info("[WS] receive message '" + String.fromCharCode(view.getUint8(0)) + "',", new Uint8Array(data));
       }
       handlers[view.getUint8(0)]?.(view, ws);
     }

@@ -6150,7 +6150,6 @@ pub const JSValue = enum(i64) {
         "toError_",
         "toInt32",
         "toInt64",
-        "toUInt32",
         "toObject",
         "toPropertyKeyValue",
         "toString",

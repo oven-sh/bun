@@ -6164,7 +6164,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 return JSValue.jsNull();
             }
             // FIXME: us_get_remote_address_info (used by getRemoteSocketInfo)
-            // convertes a sockaddr_storage into presentation format, then
+            // converts a sockaddr_storage into presentation format, then
             // SocketAddress converts presentation back to a
             // sockaddr_storage-like format. presentation string is preserved,
             // but inet_pton could be avoided.
@@ -7580,7 +7580,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     bun.assert(this.config.onRequest != .zero);
                     app.any("/*", *ThisServer, this, onRequest);
                 } else if (this.config.onRequest != .zero) {
-                    // The HTML catch all recieves GET, HEAD, and OPTIONS
+                    // The HTML catch all receives GET, HEAD, and OPTIONS
                     app.post("/*", *ThisServer, this, onRequest);
                     app.put("/*", *ThisServer, this, onRequest);
                     app.patch("/*", *ThisServer, this, onRequest);

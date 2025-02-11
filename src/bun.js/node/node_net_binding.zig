@@ -1,16 +1,11 @@
 const std = @import("std");
 const bun = @import("root").bun;
-const ares = bun.c_ares;
 const C = bun.C.translated;
 const Environment = bun.Environment;
 const JSC = bun.JSC;
 const string = bun.string;
 const Output = bun.Output;
 const ZigString = JSC.ZigString;
-
-const socklen = ares.socklen_t;
-const CallFrame = JSC.CallFrame;
-const JSValue = JSC.JSValue;
 
 //
 //

@@ -374,8 +374,6 @@ pub const AF = enum(inet.sa_family_t) {
 /// - This replaces `sockaddr_storage` because it's huge. This is 28 bytes,
 ///   while `sockaddr_storage` is 128 bytes.
 const sockaddr = extern union {
-    // sin: C.sockaddr_in,
-    // sin6: C.sockaddr_in6,
     sin: inet.sockaddr_in,
     sin6: inet.sockaddr_in6,
 
@@ -447,13 +445,12 @@ const JSValue = JSC.JSValue;
 const inet = if (bun.Environment.isWindows)
 win: {
     const ws2 = std.os.windows.ws2_32;
-    const C = bun.C.translated;
     break :win struct {
         pub const IN4ADDR_LOOPBACK: u32 = ws2.IN4ADDR_LOOPBACK;
         pub const INET6_ADDRSTRLEN = ws2.INET6_ADDRSTRLEN;
         pub const IN6ADDR_ANY_INIT: [16]u8 = .{0} ** 16;
-        pub const AF_INET = C.AF_INET;
-        pub const AF_INET6 = C.AF_INET6;
+        pub const AF_INET = ws2.AF.INET;
+        pub const AF_INET6 = ws2.AF.INET6;
         pub const sa_family_t = ws2.ADDRESS_FAMILY;
         pub const in_port_t = std.os.windows.USHORT;
         pub const socklen_t = ares.socklen_t;
@@ -465,6 +462,7 @@ win: {
     break :posix struct {
         pub const IN4ADDR_LOOPBACK = C.IN4ADDR_LOOPBACK;
         pub const INET6_ADDRSTRLEN = C.INET6_ADDRSTRLEN;
+        // Make sure this is in line with IN6ADDR_ANY_INIT in `netinet/in.h` on all platforms.
         pub const IN6ADDR_ANY_INIT: [16]u8 = .{0} ** 16;
         pub const AF_INET = C.AF_INET;
         pub const AF_INET6 = C.AF_INET6;

@@ -3,6 +3,14 @@
  */
 import { SocketAddress, SocketAddressInitOptions } from "node:net";
 
+let v4: SocketAddress;
+let v6: SocketAddress;
+
+beforeEach(() => {
+  v4 = new SocketAddress({ family: "ipv4" });
+  v6 = new SocketAddress({ family: "ipv6" });
+});
+
 describe("SocketAddress constructor", () => {
   it("is named SocketAddress", () => {
     expect(SocketAddress.name).toBe("SocketAddress");
@@ -18,36 +26,32 @@ describe("SocketAddress constructor", () => {
     expect(() => SocketAddress()).toThrow(TypeError);
   });
 
-  describe.each([new SocketAddress(), new SocketAddress(undefined), new SocketAddress({})])(
-    "new SocketAddress()",
-    address => {
-      it("creates an ipv4 address", () => {
-        expect(address.family).toBe("ipv4");
-      });
-
-      it("address is 127.0.0.1", () => {
-        expect(address.address).toBe("127.0.0.1");
-      });
-
-      it("port is 0", () => {
-        expect(address.port).toBe(0);
-      });
-
-      it("flowlabel is 0", () => {
-        expect(address.flowlabel).toBe(0);
-      });
-    },
-  ); // </new SocketAddress()>
-
-  describe("new SocketAddress({ family: 'ipv6' })", () => {
-    let address: SocketAddress;
-
-    beforeAll(() => {
-      address = new SocketAddress({ family: "ipv6" });
+  describe.each([
+    new SocketAddress(),
+    new SocketAddress(undefined),
+    new SocketAddress({}),
+    new SocketAddress({ family: "ipv4" }),
+  ])("new SocketAddress()", address => {
+    it("creates an ipv4 address", () => {
+      expect(address.family).toBe("ipv4");
     });
 
+    it("address is 127.0.0.1", () => {
+      expect(address.address).toBe("127.0.0.1");
+    });
+
+    it("port is 0", () => {
+      expect(address.port).toBe(0);
+    });
+
+    it("flowlabel is 0", () => {
+      expect(address.flowlabel).toBe(0);
+    });
+  }); // </new SocketAddress()>
+
+  describe("new SocketAddress({ family: 'ipv6' })", () => {
     it("creates a new ipv6 any address", () => {
-      expect(address).toMatchObject({
+      expect(v6).toMatchObject({
         address: "::",
         port: 0,
         family: "ipv6",
@@ -105,10 +109,9 @@ describe("SocketAddress.isSocketAddress", () => {
   });
 
   it("returns false for faked SocketAddresses", () => {
-    const sockaddr = new SocketAddress();
     const fake = Object.create(SocketAddress.prototype);
-    for (const key of Object.keys(sockaddr)) {
-      fake[key] = sockaddr[key];
+    for (const key of Object.keys(v4)) {
+      fake[key] = v4[key];
     }
     expect(fake instanceof SocketAddress).toBeTrue();
     expect(SocketAddress.isSocketAddress(fake)).toBeFalse();
@@ -169,6 +172,12 @@ describe("SocketAddress.prototype.address", () => {
       configurable: true,
     });
   });
+
+  it("is read-only", () => {
+    const addr = new SocketAddress();
+    // @ts-expect-error -- ofc it's read-only
+    expect(() => (addr.address = "1.2.3.4")).toThrow();
+  });
 }); // </SocketAddress.prototype.address>
 
 describe("SocketAddress.prototype.port", () => {
@@ -224,19 +233,26 @@ describe("SocketAddress.prototype.toJSON", () => {
     });
   });
 
+  it("returns an object with address, port, family, and flowlabel", () => {
+    expect(v4.toJSON()).toEqual({
+      address: "127.0.0.1",
+      port: 0,
+      family: "ipv4",
+      flowlabel: 0,
+    });
+    expect(v6.toJSON()).toEqual({
+      address: "::",
+      port: 0,
+      family: "ipv6",
+      flowlabel: 0,
+    });
+  });
+
   describe("When called on a default SocketAddress", () => {
     let address: Record<string, any>;
-    beforeEach(() => {
-      address = new SocketAddress().toJSON();
-    });
 
-    it("returns an object with an address, port, family, and flowlabel", () => {
-      expect(address).toEqual({
-        address: "127.0.0.1",
-        port: 0,
-        family: "ipv4",
-        flowlabel: 0,
-      });
+    beforeEach(() => {
+      address = v4.toJSON();
     });
 
     it("SocketAddress.isSocketAddress() returns false", () => {

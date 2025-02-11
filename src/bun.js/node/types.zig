@@ -2003,12 +2003,11 @@ pub const Process = struct {
             );
         }
 
-        if (vm.main.len > 0) {
-            if (!strings.endsWithComptime(vm.main, bun.pathLiteral("/[eval]")) and
-                !strings.endsWithComptime(vm.main, bun.pathLiteral("/[stdin]")))
-            {
-                args_list.appendAssumeCapacity(bun.String.fromUTF8(vm.main));
-            }
+        if (vm.main.len > 0 and
+            !strings.endsWithComptime(vm.main, bun.pathLiteral("/[eval]")) and
+            !strings.endsWithComptime(vm.main, bun.pathLiteral("/[stdin]")))
+        {
+            args_list.appendAssumeCapacity(bun.String.fromUTF8(vm.main));
         }
 
         defer allocator.free(args);

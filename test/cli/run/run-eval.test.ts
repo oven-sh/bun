@@ -45,14 +45,21 @@ for (const flag of ["-e", "--print"]) {
     });
 
     test("process.argv", async () => {
-      let { stdout, stderr, exitCode } = Bun.spawnSync({
-        cmd: [bunExe(), flag, flag === "--print" ? "process.argv" : "console.log(process.argv)", "abc", "def"],
-        env: bunEnv,
-      });
+      function testProcessArgv(args: string[], expected: string) {
+        const input = flag === "--print" ? "process.argv" : "console.log(process.argv)";
+        let { stdout, stderr, exitCode } = Bun.spawnSync({
+          cmd: [bunExe(), flag, input, ...args],
+          env: bunEnv,
+        });
 
-      expect(stderr.toString("utf8")).toBe("");
-      expect(stdout.toString("utf8")).toEqual(`[ "${bunExe()}", "abc", "def" ]\n`);
-      expect(exitCode).toBe(0);
+        expect(stderr.toString("utf8")).toBe("");
+        expect(stdout.toString("utf8")).toEqual(expected);
+        expect(exitCode).toBe(0);
+      }
+
+      testProcessArgv([], `[ "${bunExe()}" ]\n`);
+      testProcessArgv(["abc", "def"], `[ "${bunExe()}", "abc", "def" ]\n`);
+      testProcessArgv(["--", "abc", "--", "def"], `[ "${bunExe()}", "abc", "--", "def" ]\n`);
     });
   });
 }

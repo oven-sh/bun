@@ -104,7 +104,7 @@ pub const JSOOM = OOM || JSError;
 
 pub const detectCI = @import("./ci_info.zig").detectCI;
 
-pub const C = @import("root").C;
+pub const C = @import("c.zig");
 pub const sha = @import("./sha.zig");
 pub const FeatureFlags = @import("feature_flags.zig");
 pub const meta = @import("./meta.zig");
@@ -140,11 +140,7 @@ pub const Bitflags = @import("./bitflags.zig").Bitflags;
 pub const css = @import("./css/css_parser.zig");
 pub const validators = @import("./bun.js/node/util/validators.zig");
 
-pub const shell = struct {
-    pub usingnamespace @import("./shell/shell.zig");
-    pub const ShellSubprocess = @import("./shell/subproc.zig").ShellSubprocess;
-    // pub const ShellSubprocessMini = @import("./shell/subproc.zig").ShellSubprocessMini;
-};
+pub const shell = @import("./shell/shell.zig");
 
 pub const Output = @import("./output.zig");
 pub const Global = @import("./Global.zig");
@@ -730,7 +726,11 @@ pub const http = @import("./http.zig");
 
 pub const Analytics = @import("./analytics/analytics_thread.zig");
 
-pub usingnamespace @import("./tagged_pointer.zig");
+const tagged_pointer = @import("./tagged_pointer.zig");
+pub const TagTypeEnumWithTypeMap = tagged_pointer.TagTypeEnumWithTypeMap;
+pub const TaggedPointer = tagged_pointer.TaggedPointer;
+pub const TaggedPointerUnion = tagged_pointer.TaggedPointerUnion;
+pub const TypeMap = tagged_pointer.TypeMap;
 
 pub fn onceUnsafe(comptime function: anytype, comptime ReturnType: type) ReturnType {
     const Result = struct {
@@ -791,7 +791,7 @@ pub const invalid_fd: FileDescriptor = FDImpl.invalid.encode();
 
 pub const simdutf = @import("./bun.js/bindings/bun-simdutf.zig");
 
-pub const JSC = @import("root").JavaScriptCore;
+pub const JSC = @import("jsc.zig");
 
 pub const logger = @import("./logger.zig");
 pub const ThreadPool = @import("./thread_pool.zig");

@@ -2248,19 +2248,18 @@ pub fn socketpair(stdio_flag_1: uv_stdio_flags, stdio_flag_2: uv_stdio_flags) Ma
 
     return .{ .result = pair };
 }
-pub usingnamespace struct {
-    pub fn pipe(stdio_flag_1: uv_stdio_flags, stdio_flag_2: uv_stdio_flags) Maybe([2]*anyopaque) {
-        var pair: [2]uv_file = undefined;
-        // https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-socket
-        const SOCK_STREAM = 1;
 
-        if (uv_socketpair(0, SOCK_STREAM, &pair, stdio_flag_1, stdio_flag_2).toError(.open)) |err| {
-            return .{ .err = err };
-        }
+pub fn pipe(stdio_flag_1: uv_stdio_flags, stdio_flag_2: uv_stdio_flags) Maybe([2]*anyopaque) {
+    var pair: [2]uv_file = undefined;
+    // https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-socket
+    const SOCK_STREAM = 1;
 
-        return .{ .result = pair };
+    if (uv_socketpair(0, SOCK_STREAM, &pair, stdio_flag_1, stdio_flag_2).toError(.open)) |err| {
+        return .{ .err = err };
     }
-};
+
+    return .{ .result = pair };
+}
 
 const union_unnamed_463 = extern union {
     stream: *uv_stream_t,

@@ -42,7 +42,8 @@ const jest = JSC.Jest;
 const TestRunner = JSC.Jest.TestRunner;
 const Snapshots = JSC.Snapshot.Snapshots;
 const Test = TestRunner.Test;
-const CodeCoverageReport = bun.sourcemap.CodeCoverageReport;
+const coverage = bun.sourcemap.coverage;
+const CodeCoverageReport = coverage.Report;
 const uws = bun.uws;
 
 fn escapeXml(str: string, writer: anytype) !void {
@@ -721,9 +722,9 @@ pub const CommandLineReporter = struct {
             return;
         }
 
-        var map = bun.sourcemap.ByteRangeMapping.map orelse return;
+        var map = coverage.ByteRangeMapping.map orelse return;
         var iter = map.valueIterator();
-        var byte_ranges = try std.ArrayList(bun.sourcemap.ByteRangeMapping).initCapacity(bun.default_allocator, map.count());
+        var byte_ranges = try std.ArrayList(bun.sourcemap.coverage.ByteRangeMapping).initCapacity(bun.default_allocator, map.count());
 
         while (iter.next()) |entry| {
             byte_ranges.appendAssumeCapacity(entry.*);
@@ -733,13 +734,24 @@ pub const CommandLineReporter = struct {
             return;
         }
 
-        std.sort.pdq(bun.sourcemap.ByteRangeMapping, byte_ranges.items, void{}, bun.sourcemap.ByteRangeMapping.isLessThan);
+        std.sort.pdq(
+            bun.sourcemap.coverage.ByteRangeMapping,
+            byte_ranges.items,
+            {},
+            bun.sourcemap.coverage.ByteRangeMapping.isLessThan,
+        );
 
         try this.printCodeCoverage(vm, opts, byte_ranges.items, reporters, enable_ansi_colors);
     }
 
-    pub fn printCodeCoverage(this: *CommandLineReporter, vm: *JSC.VirtualMachine, opts: *TestCommand.CodeCoverageOptions, byte_ranges: []bun.sourcemap.ByteRangeMapping, comptime reporters: TestCommand.Reporters, comptime enable_ansi_colors: bool) !void {
-        _ = this; // autofix
+    pub fn printCodeCoverage(
+        _: *CommandLineReporter,
+        vm: *JSC.VirtualMachine,
+        opts: *TestCommand.CodeCoverageOptions,
+        byte_ranges: []bun.sourcemap.coverage.ByteRangeMapping,
+        comptime reporters: TestCommand.Reporters,
+        comptime enable_ansi_colors: bool,
+    ) !void {
         const trace = bun.tracy.traceNamed(@src(), comptime brk: {
             if (reporters.text and reporters.lcov) {
                 break :brk "TestCommand.printCodeCoverageLCovAndText";
@@ -795,7 +807,7 @@ pub const CommandLineReporter = struct {
         var console_buffer_buffer = console_buffer.bufferedWriter();
         var console_writer = console_buffer_buffer.writer();
 
-        var avg = bun.sourcemap.CoverageFraction{
+        var avg = bun.sourcemap.coverage.Fraction{
             .functions = 0.0,
             .lines = 0.0,
             .stmts = 0.0,
@@ -1155,7 +1167,7 @@ pub const TestCommand = struct {
         skip_test_files: bool = !Environment.allow_assert,
         reporters: Reporters = .{ .text = true, .lcov = false },
         reports_directory: string = "coverage",
-        fractions: bun.sourcemap.CoverageFraction = .{},
+        fractions: bun.sourcemap.coverage.Fraction = .{},
         ignore_sourcemap: bool = false,
         enabled: bool = false,
         fail_on_low_coverage: bool = false,
@@ -1380,8 +1392,7 @@ pub const TestCommand = struct {
 
         const write_snapshots_success = try jest.Jest.runner.?.snapshots.writeInlineSnapshots();
         try jest.Jest.runner.?.snapshots.writeSnapshotFile();
-        var coverage = ctx.test_options.coverage;
-
+        var coverage_options = ctx.test_options.coverage;
         if (reporter.summary.pass > 20) {
             if (reporter.summary.skip > 0) {
                 Output.prettyError("\n<r><d>{d} tests skipped:<r>\n", .{reporter.summary.skip});
@@ -1466,12 +1477,12 @@ pub const TestCommand = struct {
         } else {
             Output.prettyError("\n", .{});
 
-            if (coverage.enabled) {
+            if (coverage_options.enabled) {
                 switch (Output.enable_ansi_colors_stderr) {
-                    inline else => |colors| switch (coverage.reporters.text) {
-                        inline else => |console| switch (coverage.reporters.lcov) {
+                    inline else => |colors| switch (coverage_options.reporters.text) {
+                        inline else => |console| switch (coverage_options.reporters.lcov) {
                             inline else => |lcov| {
-                                try reporter.generateCodeCoverage(vm, &coverage, .{ .text = console, .lcov = lcov }, colors);
+                                try reporter.generateCodeCoverage(vm, &coverage_options, .{ .text = console, .lcov = lcov }, colors);
                             },
                         },
                     },
@@ -1568,7 +1579,7 @@ pub const TestCommand = struct {
             vm.runWithAPILock(JSC.VirtualMachine, vm, runEventLoopForWatch);
         }
 
-        if (reporter.summary.fail > 0 or (coverage.enabled and coverage.fractions.failing and coverage.fail_on_low_coverage) or !write_snapshots_success) {
+        if (reporter.summary.fail > 0 or (coverage_options.enabled and coverage_options.fractions.failing and coverage_options.fail_on_low_coverage) or !write_snapshots_success) {
             Global.exit(1);
         } else if (reporter.jest.unhandled_errors_between_tests > 0) {
             Global.exit(reporter.jest.unhandled_errors_between_tests);

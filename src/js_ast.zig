@@ -7896,7 +7896,7 @@ pub const Macro = struct {
     const js = @import("./bun.js/javascript_core_c_api.zig");
     const Zig = @import("./bun.js/bindings/exports.zig");
     const Transpiler = bun.Transpiler;
-    const MacroEntryPoint = bun.transpiler.MacroEntryPoint;
+    const MacroEntryPoint = bun.transpiler.EntryPoints.MacroEntryPoint;
     const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
     pub const MacroRemapEntry = @import("./resolver/package_json.zig").MacroImportReplacementMap;
 

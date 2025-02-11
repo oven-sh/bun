@@ -31,10 +31,11 @@ const allCredentials = [
     service: "R2" as string,
   },
   {
-    accessKeyId: getSecret("SUPABASE_ACCESS_KEY"),
-    secretAccessKey: getSecret("SUPABASE_SECRET_KEY"),
-    endpoint: getSecret("SUPABASE_ENDPOINT"),
-    bucket: getSecret("SUPABASE_BUCKET"),
+    accessKeyId: getSecret("S3_SUPABASE_ACCESS_KEY"),
+    secretAccessKey: getSecret("S3_SUPABASE_SECRET_KEY"),
+    endpoint: getSecret("S3_SUPABASE_ENDPOINT"),
+    bucket: getSecret("S3_SUPABASE_BUCKET"),
+    region: getSecret("S3_SUPABASE_REGION"),
     service: "supabase" as string,
   },
 ];

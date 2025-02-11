@@ -15,6 +15,7 @@ import {
   ParserFlags,
   ParserOptions,
 } from "./util";
+import { join } from "path";
 
 function Some(n: number): number {
   return n;
@@ -7223,5 +7224,90 @@ describe("css tests", () => {
         `,
       { chrome: Some(90 << 16) },
     );
+  });
+
+  describe("edge cases", () => {
+    describe("invalid gradient", () => {
+      cssTest(
+        `
+      .test3 {
+        background: linear-gradient(calc(0deg + calc(0 / 0)), red, blue);
+      }
+      `,
+        `
+      .test3 {
+        background: linear-gradient(calc(0deg + calc(0 / 0)), red, blue);
+      }
+      `,
+      );
+
+      cssTest(
+        `
+.test22 {
+  background: conic-gradient(from calc(1turn / 0) at calc(0 / 0), red, blue);
+}`,
+        `
+      .test22 {
+        background: conic-gradient(from calc(1turn / 0) at calc(0 / 0), red, blue);
+      }
+      `,
+      );
+    });
+
+    // Deeply nested @keyframes with invalid percentages
+    describe("nested keyframes", () => {
+      cssTest(
+        `@keyframes outer {
+        @keyframes inner1 {
+          @keyframes inner2 {
+            9999999999999999999999999999999.99999999999999% {
+              color: rgb(calc(1/0), 0, 0);
+            }
+          }
+        }
+      }`,
+        `
+@keyframes outer{
+
+}
+`,
+      );
+    });
+
+    cssTest(
+      `@keyframes 👨‍👩‍👧‍👦 {
+  0% {
+    color: red;
+  }
+  50% {
+    color: green;
+  }
+  100% {
+    color: blue;
+  }
+}`,
+      `
+      @keyframes 👨‍👩‍👧‍👦 {
+  0% {
+    color: red;
+  }
+
+  50% {
+    color: green;
+  }
+
+  100% {
+    color: #00f;
+  }
+}
+      `,
+    );
+
+    // Unicode and escape sequence edge cases
+    describe("unicode edge cases", async () => {
+      const input = await Bun.file(join(__dirname, "unicode.css")).text();
+      const output = await Bun.file(join(__dirname, "unicode_expected.css")).text();
+      cssTest(input, output);
+    });
   });
 });

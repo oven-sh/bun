@@ -2951,7 +2951,7 @@ pub const BundleV2 = struct {
                         import_record.path.text = path.text;
                         import_record.path.pretty = rel;
                         import_record.path = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
-                        if (entry.kind != .js or loader == .html) {
+                        if (entry.kind == .css or loader == .html) {
                             import_record.path.is_disabled = true;
                         }
                     }

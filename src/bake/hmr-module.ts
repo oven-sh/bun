@@ -15,6 +15,7 @@ export const enum State {
   Loading,
   Ready,
   Error,
+  Replacing,
 }
 
 // negative = sync, positive = async
@@ -196,10 +197,10 @@ export function loadModule<T = any>(key: Id, type: LoadModuleType): HotModule<T>
   if (mod) {
     // Preserve failures until they are re-saved.
     if (mod._state == State.Error) throw mod._cached_failure;
-
-    return mod;
+    if (mod._state != State.Replacing) return mod;
+  } else {
+    mod = new HotModule(key);
   }
-  mod = new HotModule(key);
   const load = input_graph[key];
   if (type < 0 && isAsyncFunction(load)) {
     // TODO: This is possible to implement, but requires some care.
@@ -261,9 +262,8 @@ export const getModule = registry.get.bind(registry);
 
 export function replaceModule(key: Id, load: ModuleLoadFunction): Promise<void> | void {
   const module = registry.get(key);
-  if (module) {
+  if (module && module._state == State.Replacing) {
     module._onDispose?.forEach(cb => cb(null));
-    module.exports = {};
     const promise = load(module) as Promise<void> | undefined;
     if (promise) {
       return promise.then(() => {
@@ -283,6 +283,13 @@ export function replaceModule(key: Id, load: ModuleLoadFunction): Promise<void> 
 export async function replaceModules(modules: any) {
   for (const k in modules) {
     input_graph[k] = modules[k];
+    const mod = registry.get(k);
+    if (mod) {
+      mod._onDispose?.forEach(cb => cb(null));
+      mod._state = State.Replacing;
+      mod.exports = {};
+      mod._ext_exports = undefined;
+    }
   }
   const promises: Promise<void>[] = [];
   for (const k in modules) {
@@ -297,7 +304,11 @@ export async function replaceModules(modules: any) {
     }
   }
   if (promises.length) {
-    await Promise.all(promises);
+    try {
+      await Promise.all(promises);
+    } catch (err) {
+      console.error(err);
+    }
   }
   if (side === "client" && refreshRuntime) {
     refreshRuntime.performReactRefresh(window);

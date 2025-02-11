@@ -4075,10 +4075,11 @@ pub fn IncrementalGraph(side: bake.Side) type {
                                 .utf8,
                             );
                         }
+                        try w.writeAll("\n");
                     },
                     .hmr_chunk => {},
                 }
-                try w.writeAll("\n})");
+                try w.writeAll("})");
                 if (side == .client) if (options.source_map_id) |source_map_id| {
                     try w.writeAll("\n//# sourceMappingURL=" ++ asset_prefix);
                     try w.writeAll(&std.fmt.bytesToHex(std.mem.asBytes(&source_map_id), .lower));

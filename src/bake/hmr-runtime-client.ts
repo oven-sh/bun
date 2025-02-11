@@ -131,6 +131,9 @@ const ws = initWebSocket({
       const code = td.decode(reader.rest());
       try {
         const modules = (0, eval)(code);
+        if (IS_BUN_DEVELOPMENT) {
+          console.info("Updated modules:\n" + Object.keys(modules).join("\n"));
+        }
         replaceModules(modules);
       } catch (e) {
         if (IS_BUN_DEVELOPMENT) {

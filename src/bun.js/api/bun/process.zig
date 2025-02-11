@@ -11,12 +11,12 @@ const Maybe = JSC.Maybe;
 
 const win_rusage = struct {
     utime: struct {
-        tv_sec: i64 = 0,
-        tv_usec: i64 = 0,
+        sec: i64 = 0,
+        usec: i64 = 0,
     },
     stime: struct {
-        tv_sec: i64 = 0,
-        tv_usec: i64 = 0,
+        sec: i64 = 0,
+        usec: i64 = 0,
     },
     maxrss: u64 = 0,
     ixrss: u0 = 0,
@@ -54,16 +54,16 @@ pub fn uv_getrusage(process: *uv.uv_process_t) win_rusage {
     var kerneltime: WinTime = undefined;
     var usertime: WinTime = undefined;
     // We at least get process times
-    if (std.os.windows.kernel32.GetProcessTimes(process_pid, &starttime, &exittime, &kerneltime, &usertime) == 1) {
+    if (bun.windows.GetProcessTimes(process_pid, &starttime, &exittime, &kerneltime, &usertime) == 1) {
         var temp: u64 = (@as(u64, kerneltime.dwHighDateTime) << 32) | kerneltime.dwLowDateTime;
         if (temp > 0) {
-            usage_info.stime.tv_sec = @intCast(temp / 10000000);
-            usage_info.stime.tv_usec = @intCast(temp % 1000000);
+            usage_info.stime.sec = @intCast(temp / 10000000);
+            usage_info.stime.usec = @intCast(temp % 1000000);
         }
         temp = (@as(u64, usertime.dwHighDateTime) << 32) | usertime.dwLowDateTime;
         if (temp > 0) {
-            usage_info.utime.tv_sec = @intCast(temp / 10000000);
-            usage_info.utime.tv_usec = @intCast(temp % 1000000);
+            usage_info.utime.sec = @intCast(temp / 10000000);
+            usage_info.utime.usec = @intCast(temp % 1000000);
         }
     }
     var counters: IO_COUNTERS = .{};
@@ -110,23 +110,23 @@ pub const ProcessExitHandler = struct {
         }
 
         switch (this.ptr.tag()) {
-            .Subprocess => {
+            @field(TaggedPointer.Tag, @typeName(Subprocess)) => {
                 const subprocess = this.ptr.as(Subprocess);
                 subprocess.onProcessExit(process, status, rusage);
             },
-            .LifecycleScriptSubprocess => {
+            @field(TaggedPointer.Tag, @typeName(LifecycleScriptSubprocess)) => {
                 const subprocess = this.ptr.as(LifecycleScriptSubprocess);
                 subprocess.onProcessExit(process, status, rusage);
             },
-            .ProcessHandle => {
+            @field(TaggedPointer.Tag, @typeName(ProcessHandle)) => {
                 const subprocess = this.ptr.as(ProcessHandle);
                 subprocess.onProcessExit(process, status, rusage);
             },
-            @field(TaggedPointer.Tag, bun.meta.typeBaseName(@typeName(ShellSubprocess))) => {
+            @field(TaggedPointer.Tag, @typeName(ShellSubprocess)) => {
                 const subprocess = this.ptr.as(ShellSubprocess);
                 subprocess.onProcessExit(process, status, rusage);
             },
-            @field(TaggedPointer.Tag, bun.meta.typeBaseName(@typeName(SyncProcess))) => {
+            @field(TaggedPointer.Tag, @typeName(SyncProcess)) => {
                 const subprocess = this.ptr.as(SyncProcess);
                 if (comptime Environment.isPosix) {
                     @panic("This code should not reached");
@@ -153,7 +153,11 @@ pub const Process = struct {
     sync: bool = false,
     event_loop: JSC.EventLoopHandle,
 
-    pub usingnamespace bun.NewRefCounted(Process, deinit);
+    pub fn memoryCost(_: *const Process) usize {
+        return @sizeOf(@This());
+    }
+
+    pub usingnamespace bun.NewRefCounted(Process, deinit, null);
 
     pub fn setExitHandler(this: *Process, handler: anytype) void {
         this.exit_handler.init(handler);
@@ -920,7 +924,7 @@ const WaiterThreadPosix = struct {
                 .mask = current_mask,
                 .flags = std.posix.SA.NOCLDSTOP,
             };
-            std.posix.sigaction(std.posix.SIG.CHLD, &act, null) catch {};
+            std.posix.sigaction(std.posix.SIG.CHLD, &act, null);
         }
     }
 
@@ -962,12 +966,14 @@ pub const PosixSpawnOptions = struct {
     stdin: Stdio = .ignore,
     stdout: Stdio = .ignore,
     stderr: Stdio = .ignore,
+    ipc: ?bun.FileDescriptor = null,
     extra_fds: []const Stdio = &.{},
     cwd: []const u8 = "",
     detached: bool = false,
     windows: void = {},
     argv0: ?[*:0]const u8 = null,
     stream: bool = true,
+    sync: bool = false,
 
     /// Apple Extension: If this bit is set, rather
     /// than returning to the caller, posix_spawn(2)
@@ -980,7 +986,9 @@ pub const PosixSpawnOptions = struct {
         inherit: void,
         ignore: void,
         buffer: void,
+        ipc: void,
         pipe: bun.FileDescriptor,
+        // TODO: remove this entry, it doesn't seem to be used
         dup2: struct { out: bun.JSC.Subprocess.StdioKind, to: bun.JSC.Subprocess.StdioKind },
     };
 
@@ -996,6 +1004,7 @@ pub const WindowsSpawnResult = struct {
     stderr: StdioResult = .unavailable,
     extra_pipes: std.ArrayList(StdioResult) = std.ArrayList(StdioResult).init(bun.default_allocator),
     stream: bool = true,
+    sync: bool = false,
 
     pub const StdioResult = union(enum) {
         /// inherit, ignore, path, pipe
@@ -1030,6 +1039,7 @@ pub const WindowsSpawnOptions = struct {
     stdin: Stdio = .ignore,
     stdout: Stdio = .ignore,
     stderr: Stdio = .ignore,
+    ipc: ?bun.FileDescriptor = null,
     extra_fds: []const Stdio = &.{},
     cwd: []const u8 = "",
     detached: bool = false,
@@ -1049,6 +1059,7 @@ pub const WindowsSpawnOptions = struct {
         inherit: void,
         ignore: void,
         buffer: *bun.windows.libuv.Pipe,
+        ipc: *bun.windows.libuv.Pipe,
         pipe: bun.FileDescriptor,
         dup2: struct { out: bun.JSC.Subprocess.StdioKind, to: bun.JSC.Subprocess.StdioKind },
 
@@ -1075,6 +1086,7 @@ pub const PosixSpawnResult = struct {
     stdin: ?bun.FileDescriptor = null,
     stdout: ?bun.FileDescriptor = null,
     stderr: ?bun.FileDescriptor = null,
+    ipc: ?bun.FileDescriptor = null,
     extra_pipes: std.ArrayList(bun.FileDescriptor) = std.ArrayList(bun.FileDescriptor).init(bun.default_allocator),
 
     memfds: [3]bool = .{ false, false, false },
@@ -1235,8 +1247,7 @@ pub fn spawnProcessPosix(
     var to_set_cloexec = std.ArrayList(bun.FileDescriptor).init(allocator);
     defer {
         for (to_set_cloexec.items) |fd| {
-            const fcntl_flags = bun.sys.fcntl(fd, std.posix.F.GETFD, 0).unwrap() catch continue;
-            _ = bun.sys.fcntl(fd, std.posix.F.SETFD, bun.C.FD_CLOEXEC | fcntl_flags);
+            _ = bun.sys.setCloseOnExec(fd);
         }
         to_set_cloexec.clearAndFree();
 
@@ -1257,6 +1268,11 @@ pub fn spawnProcessPosix(
 
     attr.set(@intCast(flags)) catch {};
     attr.resetSignals() catch {};
+
+    if (options.ipc) |ipc| {
+        try actions.inherit(ipc);
+        spawned.ipc = ipc;
+    }
 
     const stdio_options: [3]PosixSpawnOptions.Stdio = .{ options.stdin, options.stdout, options.stderr };
     const stdios: [3]*?bun.FileDescriptor = .{ &spawned.stdin, &spawned.stdout, &spawned.stderr };
@@ -1284,7 +1300,7 @@ pub fn spawnProcessPosix(
             .inherit => {
                 try actions.inherit(fileno);
             },
-            .ignore => {
+            .ipc, .ignore => {
                 try actions.openZ(fileno, "/dev/null", flag | bun.O.CREAT, 0o664);
             },
             .path => |path| {
@@ -1313,24 +1329,9 @@ pub fn spawnProcessPosix(
                 }
 
                 const fds: [2]bun.FileDescriptor = brk: {
-                    var fds_: [2]std.c.fd_t = undefined;
-                    const rc = std.c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &fds_);
-                    if (rc != 0) {
-                        return error.SystemResources;
-                    }
+                    const pair = try bun.sys.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, .blocking).unwrap();
 
-                    {
-                        const before = std.c.fcntl(fds_[if (i == 0) 1 else 0], std.posix.F.GETFD);
-                        _ = std.c.fcntl(fds_[if (i == 0) 1 else 0], std.posix.F.SETFD, before | std.posix.FD_CLOEXEC);
-                    }
-
-                    if (comptime Environment.isMac) {
-                        // SO_NOSIGPIPE
-                        const before: i32 = 1;
-                        _ = std.c.setsockopt(fds_[if (i == 0) 1 else 0], std.posix.SOL.SOCKET, std.posix.SO.NOSIGPIPE, &before, @sizeOf(c_int));
-                    }
-
-                    break :brk .{ bun.toFD(fds_[if (i == 0) 1 else 0]), bun.toFD(fds_[if (i == 0) 0 else 1]) };
+                    break :brk .{ bun.toFD(pair[if (i == 0) 1 else 0]), bun.toFD(pair[if (i == 0) 0 else 1]) };
                 };
 
                 if (i == 0) {
@@ -1371,6 +1372,10 @@ pub fn spawnProcessPosix(
                 try to_close_at_end.append(fds[1]);
                 try to_close_on_error.append(fds[0]);
 
+                if (!options.sync) {
+                    try bun.sys.setNonblocking(fds[0]).unwrap();
+                }
+
                 try actions.dup2(fds[1], fileno);
                 if (fds[1] != fileno)
                     try actions.close(fds[1]);
@@ -1403,26 +1408,16 @@ pub fn spawnProcessPosix(
             .path => |path| {
                 try actions.open(fileno, path, bun.O.RDWR | bun.O.CREAT, 0o664);
             },
-            .buffer => {
-                const fds: [2]bun.FileDescriptor = brk: {
-                    var fds_: [2]std.c.fd_t = undefined;
-                    const rc = std.c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &fds_);
-                    if (rc != 0) {
-                        return error.SystemResources;
-                    }
+            .ipc, .buffer => {
+                const fds: [2]bun.FileDescriptor = try bun.sys.socketpair(
+                    std.posix.AF.UNIX,
+                    std.posix.SOCK.STREAM,
+                    0,
+                    if (ipc == .ipc) .nonblocking else .blocking,
+                ).unwrap();
 
-                    // enable non-block
-                    var before = std.c.fcntl(fds_[0], std.posix.F.GETFD);
-
-                    _ = std.c.fcntl(fds_[0], std.posix.F.SETFD, before | bun.C.FD_CLOEXEC);
-
-                    if (comptime Environment.isMac) {
-                        // SO_NOSIGPIPE
-                        _ = std.c.setsockopt(fds_[if (i == 0) 1 else 0], std.posix.SOL.SOCKET, std.posix.SO.NOSIGPIPE, &before, @sizeOf(c_int));
-                    }
-
-                    break :brk .{ bun.toFD(fds_[0]), bun.toFD(fds_[1]) };
-                };
+                if (!options.sync and ipc == .buffer)
+                    try bun.sys.setNonblocking(fds[0]).unwrap();
 
                 try to_close_at_end.append(fds[1]);
                 try to_close_on_error.append(fds[0]);
@@ -1513,8 +1508,10 @@ pub fn spawnProcessWindows(
     const allocator = stack_allocator.get();
     const loop = options.windows.loop.platformEventLoop().uv_loop;
 
-    const cwd = try allocator.dupeZ(u8, options.cwd);
-    defer allocator.free(cwd);
+    var cwd_buf: bun.PathBuffer = undefined;
+    @memcpy(cwd_buf[0..options.cwd.len], options.cwd);
+    cwd_buf[options.cwd.len] = 0;
+    const cwd = cwd_buf[0..options.cwd.len :0];
 
     uv_process_options.cwd = cwd.ptr;
 
@@ -1581,6 +1578,11 @@ pub fn spawnProcessWindows(
             .inherit => {
                 stdio.flags = uv.UV_INHERIT_FD;
                 stdio.data.fd = fd_i;
+            },
+            .ipc => |my_pipe| {
+                // ipc option inside stdin, stderr or stdout are not supported
+                bun.default_allocator.destroy(my_pipe);
+                stdio.flags = uv.UV_IGNORE;
             },
             .ignore => {
                 stdio.flags = uv.UV_IGNORE;
@@ -1649,6 +1651,11 @@ pub fn spawnProcessWindows(
                 const fd = rc.int();
                 try uv_files_to_close.append(fd);
                 stdio.data.fd = fd;
+            },
+            .ipc => |my_pipe| {
+                try my_pipe.init(loop, true).unwrap();
+                stdio.flags = uv.UV_CREATE_PIPE | uv.UV_WRITABLE_PIPE | uv.UV_READABLE_PIPE | uv.UV_OVERLAPPED_PIPE;
+                stdio.data.stream = @ptrCast(my_pipe);
             },
             .buffer => |my_pipe| {
                 try my_pipe.init(loop, false).unwrap();
@@ -1734,7 +1741,7 @@ pub fn spawnProcessWindows(
 
     for (options.extra_fds, 0..) |*input, i| {
         switch (input.*) {
-            .buffer => {
+            .ipc, .buffer => {
                 result.extra_pipes.appendAssumeCapacity(.{ .buffer = @ptrCast(stdio_containers.items[3 + i].data.stream) });
             },
             else => {
@@ -1751,6 +1758,7 @@ pub const sync = struct {
         stdin: Stdio = .ignore,
         stdout: Stdio = .inherit,
         stderr: Stdio = .inherit,
+        ipc: ?bun.FileDescriptor = null,
         cwd: []const u8 = "",
         detached: bool = false,
 
@@ -1785,14 +1793,14 @@ pub const sync = struct {
                 .stdin = this.stdin.toStdio(),
                 .stdout = this.stdout.toStdio(),
                 .stderr = this.stderr.toStdio(),
+                .ipc = this.ipc,
+
                 .cwd = this.cwd,
                 .detached = this.detached,
                 .use_execve_on_macos = this.use_execve_on_macos,
                 .stream = false,
                 .argv0 = this.argv0,
-                .windows = if (Environment.isWindows)
-                    this.windows
-                else {},
+                .windows = if (Environment.isWindows) this.windows,
             };
         }
     };
@@ -2010,7 +2018,9 @@ pub const sync = struct {
     pub fn spawn(
         options: *const Options,
     ) !Maybe(Result) {
-        const envp = options.envp orelse std.c.environ;
+        // [*:null]?[*:0]const u8
+        // [*:null]?[*:0]u8
+        const envp = options.envp orelse @as([*:null]?[*:0]const u8, @ptrCast(std.c.environ));
         const argv = options.argv;
         var string_builder = bun.StringBuilder{};
         defer string_builder.deinit(bun.default_allocator);
@@ -2031,21 +2041,54 @@ pub const sync = struct {
         return spawnWithArgv(options, @ptrCast(args.items.ptr), @ptrCast(envp));
     }
 
+    // Forward signals from parent to the child process.
+    extern "c" fn Bun__registerSignalsForForwarding() void;
+    extern "c" fn Bun__unregisterSignalsForForwarding() void;
+
+    // The PID to forward signals to.
+    // Set to 0 when unregistering.
+    extern "c" var Bun__currentSyncPID: i64;
+
+    // Race condition: a signal could be sent before spawnProcessPosix returns.
+    // We need to make sure to send it after the process is spawned.
+    extern "c" fn Bun__sendPendingSignalIfNecessary() void;
+
     fn spawnPosix(
         options: *const Options,
         argv: [*:null]?[*:0]const u8,
         envp: [*:null]?[*:0]const u8,
     ) !Maybe(Result) {
+        Bun__currentSyncPID = 0;
+        Bun__registerSignalsForForwarding();
+        defer {
+            Bun__unregisterSignalsForForwarding();
+            bun.crash_handler.resetOnPosix();
+        }
         const process = switch (try spawnProcessPosix(&options.toSpawnOptions(), argv, envp)) {
             .err => |err| return .{ .err = err },
             .result => |proces| proces,
         };
+        Bun__currentSyncPID = @intCast(process.pid);
+
+        Bun__sendPendingSignalIfNecessary();
+
         var out = [2]std.ArrayList(u8){
             std.ArrayList(u8).init(bun.default_allocator),
             std.ArrayList(u8).init(bun.default_allocator),
         };
         var out_fds = [2]bun.FileDescriptor{ process.stdout orelse bun.invalid_fd, process.stderr orelse bun.invalid_fd };
+        var success = false;
         defer {
+            // If we're going to return an error,
+            // let's make sure to clean up the output buffers
+            // and kill the process
+            if (!success) {
+                for (&out) |*array_list| {
+                    array_list.clearAndFree();
+                }
+                _ = std.c.kill(process.pid, 1);
+            }
+
             for (out_fds) |fd| {
                 if (fd != bun.invalid_fd) {
                     _ = bun.sys.close(fd);
@@ -2076,13 +2119,14 @@ pub const sync = struct {
             for (&out_fds_to_wait_for, &out, &out_fds) |*fd, *bytes, *out_fd| {
                 if (fd.* == bun.invalid_fd) continue;
                 while (true) {
-                    bytes.ensureUnusedCapacity(16384) catch bun.outOfMemory();
+                    bytes.ensureUnusedCapacity(16384) catch {
+                        return .{ .err = bun.sys.Error.fromCode(.NOMEM, .recv) };
+                    };
                     switch (bun.sys.recvNonBlock(fd.*, bytes.unusedCapacitySlice())) {
                         .err => |err| {
                             if (err.isRetry() or err.getErrno() == .PIPE) {
                                 break;
                             }
-                            _ = std.c.kill(process.pid, 1);
                             return .{ .err = err };
                         },
                         .result => |bytes_read| {
@@ -2151,6 +2195,7 @@ pub const sync = struct {
             }
         }
 
+        success = true;
         return .{
             .result = Result{
                 .status = status,

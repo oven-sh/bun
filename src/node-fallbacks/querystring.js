@@ -1,2 +1,6 @@
-export { unescapeBuffer, unescape, escape, stringify, encode, parse, decode } from "querystring-es3";
-export { default } from "querystring-es3";
+/**
+ * Browser polyfill for the `"querystring"` module.
+ *
+ * Imported on usage in `bun build --target=browser`
+ */
+export { decode, default, encode, escape, parse, stringify, unescape, unescapeBuffer } from "querystring-es3";

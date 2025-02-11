@@ -33,7 +33,7 @@ namespace WebCore {
 
 class CryptoAlgorithmAesKeyParams final : public CryptoAlgorithmParameters {
 public:
-    unsigned short length;
+    unsigned short length = 0;
 
     Class parametersClass() const final { return Class::AesKeyParams; }
 };

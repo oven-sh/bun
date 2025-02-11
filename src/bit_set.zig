@@ -1,3 +1,8 @@
+//! This is a fork of Zig standard library bit_set.zig
+//! - https://github.com/ziglang/zig/pull/14129
+//! - AutoBitset which optimally chooses between a dynamic or static bitset.
+//! Prefer our fork over std.bit_set.zig.
+//!
 //! This file defines several variants of bit sets.  A bit set
 //! is a densely stored set of integers with a known maximum,
 //! in which each integer gets a single bit.  Bit sets have very
@@ -320,10 +325,10 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
     const mask_info: std.builtin.Type = @typeInfo(MaskIntType);
 
     // Make sure the mask int is indeed an int
-    if (mask_info != .Int) @compileError("ArrayBitSet can only operate on integer masks, but was passed " ++ @typeName(MaskIntType));
+    if (mask_info != .int) @compileError("ArrayBitSet can only operate on integer masks, but was passed " ++ @typeName(MaskIntType));
 
     // It must also be unsigned.
-    if (mask_info.Int.signedness != .unsigned) @compileError("ArrayBitSet requires an unsigned integer mask type, but was passed " ++ @typeName(MaskIntType));
+    if (mask_info.int.signedness != .unsigned) @compileError("ArrayBitSet requires an unsigned integer mask type, but was passed " ++ @typeName(MaskIntType));
 
     // And it must not be empty.
     if (MaskIntType == u0)
@@ -402,7 +407,7 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
 
         /// Returns true if the bit at the specified index
         /// is present in the set, false otherwise.
-        pub inline fn isSet(self: *const Self, index: usize) bool {
+        pub fn isSet(self: *const Self, index: usize) bool {
             if (comptime Environment.allow_assert) bun.assert(index < bit_length);
             if (num_masks == 0) return false; // doesn't compile in this case
             return (self.masks[maskIndex(index)] & maskBit(index)) != 0;
@@ -510,6 +515,16 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
             for (self.masks) |*mask| {
                 mask.* = ~mask.*;
             }
+
+            // Zero the padding bits
+            if (num_masks > 0) {
+                self.masks[num_masks - 1] &= last_item_mask;
+            }
+        }
+
+        /// Sets all bits
+        pub fn setAll(self: *Self, value: bool) void {
+            @memset(&self.masks, if (value) std.math.maxInt(MaskInt) else 0);
 
             // Zero the padding bits
             if (num_masks > 0) {
@@ -686,6 +701,11 @@ pub const DynamicBitSetUnmanaged = struct {
     // cannot currently round trip at comptime.
     var empty_masks_data = [_]MaskInt{ 0, undefined };
     const empty_masks_ptr = empty_masks_data[1..2];
+
+    pub const empty: Self = .{
+        .bit_length = 0,
+        .masks = empty_masks_ptr,
+    };
 
     /// Do not resize the bitsets!
     ///
@@ -1246,6 +1266,12 @@ pub const AutoBitSet = union(enum) {
         };
     }
 
+    pub fn setAll(this: *AutoBitSet, value: bool) void {
+        switch (this.*) {
+            inline else => |*bitset| bitset.setAll(value),
+        }
+    }
+
     pub fn deinit(this: *AutoBitSet, allocator: std.mem.Allocator) void {
         switch (std.meta.activeTag(this.*)) {
             .static => {},
@@ -1599,7 +1625,7 @@ fn testSupersetOf(empty: anytype, full: anytype, even: anytype, odd: anytype, le
 fn testBitSet(a: anytype, b: anytype, len: usize) !void {
     try testing.expectEqual(len, a.capacity());
     try testing.expectEqual(len, b.capacity());
-    const needs_ptr = @hasField(std.meta.Child(@TypeOf(a)), "masks") and @typeInfo(@TypeOf(@field(a, "masks"))) != .Pointer;
+    const needs_ptr = @hasField(std.meta.Child(@TypeOf(a)), "masks") and @typeInfo(@TypeOf(@field(a, "masks"))) != .pointer;
 
     {
         for (0..len) |i| {
@@ -1823,7 +1849,7 @@ fn fillOdd(set: anytype, len: usize) void {
 fn testPureBitSet(comptime Set: type) !void {
     var empty_ = Set.initEmpty();
     var full_ = Set.initFull();
-    const needs_ptr = @hasField(Set, "masks") and @typeInfo(@TypeOf(empty_.masks)) != .Pointer;
+    const needs_ptr = @hasField(Set, "masks") and @typeInfo(@TypeOf(empty_.masks)) != .pointer;
 
     var even_ = even: {
         var bit_set = Set.initEmpty();
@@ -1879,7 +1905,7 @@ fn testPureBitSet(comptime Set: type) !void {
     try testing.expect(full.differenceWith(even).eql(odd));
 }
 
-fn testStaticBitSet(comptime Set: type, comptime Container: @Type(.EnumLiteral)) !void {
+fn testStaticBitSet(comptime Set: type, comptime Container: @Type(.enum_literal)) !void {
     var a = Set.initEmpty();
     var b = Set.initFull();
     try testing.expectEqual(@as(usize, 0), a.count());

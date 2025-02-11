@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
 import { spawnSync } from "bun";
-import { bunExe, bunEnv } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 
 test("issue 8964", async () => {
@@ -10,7 +10,7 @@ test("issue 8964", async () => {
     stdio: ["ignore", "pipe", "inherit"],
   });
   const stdtext = stdout.toString();
-  const [actual, expected] = stdout.toString().split("\n");
+  const [, actual, expected] = stdout.toString().split("\n");
   expect(actual.replace("EXPECTED:", "ACTUAL:")).toBe(expected);
   expect(exitCode).toBe(0);
   expect(signalCode).toBeUndefined();

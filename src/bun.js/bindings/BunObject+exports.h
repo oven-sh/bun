@@ -30,6 +30,9 @@
     macro(stdout) \
     macro(unsafe) \
     macro(semver) \
+    macro(embeddedFiles) \
+    macro(S3Client) \
+    macro(s3) \
 
 // --- Callbacks ---
 #define FOR_EACH_CALLBACK(macro) \
@@ -37,6 +40,7 @@
     macro(braces) \
     macro(build) \
     macro(connect) \
+    macro(color) \
     macro(deflateSync) \
     macro(file) \
     macro(fs) \

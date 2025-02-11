@@ -1,6 +1,6 @@
 export {};
 
-import type { Env, PathLike, BunFile } from "bun";
+import type { BunFile, Env, PathLike } from "bun";
 
 declare global {
   namespace NodeJS {

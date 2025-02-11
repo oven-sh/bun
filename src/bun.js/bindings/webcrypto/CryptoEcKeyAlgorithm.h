@@ -35,4 +35,3 @@ struct CryptoEcKeyAlgorithm : CryptoKeyAlgorithm {
 };
 
 }
-

@@ -1,7 +1,7 @@
-import Image from "next/image";
+import { Counter } from "@/Counter";
 import { Inter } from "next/font/google";
 import Head from "next/head";
-import { Counter } from "@/Counter";
+import Image from "next/image";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -122,7 +122,7 @@ export async function getStaticProps() {
       bunVersion:
         process.env.NODE_ENV === "production"
           ? "[production needs a constant string]"
-          : process.versions.bun ?? "not in bun",
+          : (process.versions.bun ?? "not in bun"),
     },
   };
 }

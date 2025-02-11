@@ -40,19 +40,27 @@ namespace uWS {
 /* Some pre-defined status constants to use with writeStatus */
 static const char *HTTP_200_OK = "200 OK";
 
-/* The general timeout for HTTP sockets */
-static const int HTTP_TIMEOUT_S = 10;
-
 template <bool SSL>
 struct HttpResponse : public AsyncSocket<SSL> {
     /* Solely used for getHttpResponseData() */
     template <bool> friend struct TemplatedApp;
     typedef AsyncSocket<SSL> Super;
 public:
+
     HttpResponseData<SSL> *getHttpResponseData() {
         return (HttpResponseData<SSL> *) Super::getAsyncSocketData();
     }
+    void setTimeout(uint8_t seconds) {
+        auto* data = getHttpResponseData();
+        data->idleTimeout = seconds;
+        Super::timeout(data->idleTimeout);
+    }
 
+    void resetTimeout() {
+        auto* data = getHttpResponseData();
+
+        Super::timeout(data->idleTimeout);
+    }
     /* Write an unsigned 32-bit integer in hex */
     void writeUnsignedHex(unsigned int value) {
         char buf[10];
@@ -75,14 +83,6 @@ public:
     void writeMark() {
         /* Date is always written */
         writeHeader("Date", std::string_view(((LoopData *) us_loop_ext(us_socket_context_loop(SSL, (us_socket_context(SSL, (us_socket_t *) this)))))->date, 29));
-
-        /* You can disable this altogether */
-// #ifndef UWS_HTTPRESPONSE_NO_WRITEMARK
-//         if (!Super::getLoopData()->noMark) {
-//             /* We only expose major version */
-//             writeHeader("uWebSockets", "20");
-//         }
-// #endif
     }
 
     /* Returns true on success, indicating that it might be feasible to write more data.
@@ -148,7 +148,7 @@ public:
             }
 
             /* tryEnd can never fail when in chunked mode, since we do not have tryWrite (yet), only write */
-            Super::timeout(HTTP_TIMEOUT_S);
+            this->resetTimeout();
             return true;
         } else {
             /* Write content-length on first call */
@@ -188,11 +188,8 @@ public:
 
             /* Success is when we wrote the entire thing without any failures */
             bool success = written == data.length() && !failed;
-
-            /* If we are now at the end, start a timeout. Also start a timeout if we failed. */
-            if (!success || httpResponseData->offset == totalSize) {
-                Super::timeout(HTTP_TIMEOUT_S);
-            }
+            /* Reset the timeout on each tryEnd */
+            this->resetTimeout();
 
             /* Remove onAborted function if we reach the end */
             if (httpResponseData->offset == totalSize) {
@@ -366,7 +363,7 @@ public:
 
     HttpResponse *resume() {
         Super::resume();
-        Super::timeout(HTTP_TIMEOUT_S);
+        this->resetTimeout();
         return this;
     }
 
@@ -435,8 +432,9 @@ public:
 
     /* Try and end the response. Returns [true, true] on success.
      * Starts a timeout in some cases. Returns [ok, hasResponded] */
-    std::pair<bool, bool> tryEnd(std::string_view data, uint64_t totalSize = 0, bool closeConnection = false) {
-        return {internalEnd(data, totalSize, true, true, closeConnection), hasResponded()};
+    std::pair<bool, bool> tryEnd(std::string_view data, uintmax_t totalSize = 0, bool closeConnection = false) {
+        bool ok = internalEnd(data, totalSize, true, true, closeConnection);
+        return {ok, hasResponded()};
     }
 
     /* Write the end of chunked encoded stream */
@@ -482,9 +480,8 @@ public:
         Super::write("\r\n", 2);
 
         auto [written, failed] = Super::write(data.data(), (int) data.length());
-        if (failed) {
-            Super::timeout(HTTP_TIMEOUT_S);
-        }
+        /* Reset timeout on each sended chunk */
+        this->resetTimeout();
 
         /* If we did not fail the write, accept more */
         return !failed;
@@ -521,7 +518,7 @@ public:
             /* The only way we could possibly have changed the corked socket during handler call, would be if 
              * the HTTP socket was upgraded to WebSocket and caused a realloc. Because of this we cannot use "this"
              * from here downwards. The corking is done with corkUnchecked() in upgrade. It steals cork. */
-            auto *newCorkedSocket = loopData->corkedSocket;
+            auto *newCorkedSocket = loopData->getCorkedSocket();
 
             /* If nobody is corked, it means most probably that large amounts of data has
              * been written and the cork buffer has already been sent off and uncorked.
@@ -539,10 +536,10 @@ public:
                 return static_cast<HttpResponse *>(newCorkedSocket);
             }
 
-            if (failed) {
+            if (written > 0 || failed) {
                 /* For now we only have one single timeout so let's use it */
                 /* This behavior should equal the behavior in HttpContext when uncorking fails */
-                Super::timeout(HTTP_TIMEOUT_S);
+                this->resetTimeout();
             }
 
             /* If we have no backbuffer and we are connection close and we responded fully then close */
@@ -566,10 +563,11 @@ public:
     }
 
     /* Attach handler for writable HTTP response */
-    HttpResponse *onWritable(MoveOnlyFunction<bool(uint64_t)> &&handler) {
+    HttpResponse *onWritable(void* userData, HttpResponseData<SSL>::OnWritableCallback handler) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
-        httpResponseData->onWritable = std::move(handler);
+        httpResponseData->userData = userData;
+        httpResponseData->onWritable = handler;
         return this;
     }
 
@@ -582,17 +580,50 @@ public:
     }
 
     /* Attach handler for aborted HTTP request */
-    HttpResponse *onAborted(MoveOnlyFunction<void()> &&handler) {
+    HttpResponse *onAborted(void* userData,  HttpResponseData<SSL>::OnAbortedCallback handler) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-
-        httpResponseData->onAborted = std::move(handler);
+        
+        httpResponseData->userData = userData;
+        httpResponseData->onAborted = handler;
         return this;
     }
 
+    HttpResponse *onTimeout(void* userData,  HttpResponseData<SSL>::OnTimeoutCallback handler) {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        
+        httpResponseData->userData = userData;
+        httpResponseData->onTimeout = handler;
+        return this;
+    }
+
+    HttpResponse* clearOnWritableAndAborted() {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+
+        httpResponseData->onWritable = nullptr;
+        httpResponseData->onAborted = nullptr;
+        httpResponseData->onTimeout = nullptr;
+
+        return this;
+    }
+
+    HttpResponse* clearOnAborted() {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+
+        httpResponseData->onAborted = nullptr;
+        return this;
+    }
+
+    HttpResponse* clearOnTimeout() {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+
+        httpResponseData->onTimeout = nullptr;
+        return this;
+    }
     /* Attach a read handler for data sent. Will be called with FIN set true if last segment. */
-    void onData(MoveOnlyFunction<void(std::string_view, bool)> &&handler) {
+    void onData(void* userData, HttpResponseData<SSL>::OnDataCallback handler) { 
         HttpResponseData<SSL> *data = getHttpResponseData();
-        data->inStream = std::move(handler);
+        data->userData = userData;
+        data->inStream = handler;
 
         /* Always reset this counter here */
         data->received_bytes_per_timeout = 0;

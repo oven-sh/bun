@@ -1,8 +1,9 @@
+import { describe, expect, test } from "bun:test";
 import { createSocket } from "dgram";
-import { describe, test, expect, it } from "bun:test";
 
-import { nodeDataCases } from "./testdata";
 import { disableAggressiveGCScope } from "harness";
+import path from "path";
+import { nodeDataCases } from "./testdata";
 
 describe("createSocket()", () => {
   test("connect", done => {
@@ -187,4 +188,10 @@ describe("createSocket()", () => {
       server.bind();
     });
   }
+});
+
+describe("unref()", () => {
+  test("call before bind() does not hang", async () => {
+    expect([path.join(import.meta.dir, "dgram-unref-hang-fixture.ts")]).toRun();
+  });
 });

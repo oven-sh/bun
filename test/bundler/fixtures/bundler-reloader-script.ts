@@ -6,12 +6,11 @@
 //
 // 2. Checks the file descriptor count to make sure we're not leaking any files between re-builds.
 
+import { closeSync, openSync, realpathSync, unlinkSync } from "fs";
 import { tmpdir } from "os";
-import { realpathSync, unlinkSync } from "fs";
 import { join } from "path";
-import { openSync, closeSync } from "fs";
 
-const tmp = realpathSync(tmpdir());
+const tmp = realpathSync(process.env.BUNDLER_RELOADER_SCRIPT_TMP_DIR || tmpdir());
 const input = join(tmp, "input.js");
 const mutate = join(tmp, "mutate.js");
 try {
@@ -19,10 +18,18 @@ try {
 } catch (e) {}
 await Bun.write(input, "import value from './mutate.js';\n" + `export default value;` + "\n");
 
-await Bun.build({
-  entrypoints: [input],
-});
+await Bun.sleep(1000);
+
+try {
+  await Bun.build({
+    entrypoints: [input],
+  });
+  // If the build succeeded something is very wrong
+  process.exit(1);
+} catch {}
 await Bun.write(mutate, "export default 1;\n");
+
+await Bun.sleep(1000);
 
 const maxfd = openSync(process.execPath, 0);
 closeSync(maxfd);

@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { test } from "bun:test";
 import { createServer } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
 

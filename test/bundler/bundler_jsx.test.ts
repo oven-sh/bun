@@ -1,5 +1,5 @@
-import { BundlerTestInput, itBundled } from "./expectBundled";
 import { describe, expect } from "bun:test";
+import { BundlerTestInput, itBundled } from "./expectBundled";
 
 const helpers = {
   "/node_modules/bun-test-helpers/index.js": /* js */ `
@@ -158,8 +158,8 @@ describe("bundler", () => {
       {"$$typeof":"Symbol(jsxdev)","type":"div","props":{"className":"container","children":{"$$typeof":"Symbol(jsxdev)","type":"hello","props":{"prop":2,"children":{"$$typeof":"Symbol(jsxdev)","type":"h1","props":{"onClick":"Function:onClick","children":"hello"},"key":"undefined","source":false,"self":"undefined"}},"key":"undefined","source":false,"self":"undefined"}},"key":"undefined","source":false,"self":"undefined"}
     `,
     prodStdout: `
-      {"$$typeof":"Symbol(react.element)","type":"div","key":"null","ref":"null","props":{"children":"Hello World"},"_owner":"null"}
-      {"$$typeof":"Symbol(react.element)","type":"div","key":"null","ref":"null","props":{"className":"container","children":{"$$typeof":"Symbol(react.element)","type":"hello","key":"null","ref":"null","props":{"prop":2,"children":{"$$typeof":"Symbol(react.element)","type":"h1","key":"null","ref":"null","props":{"onClick":"Function:onClick","children":"hello"},"_owner":"null"}},"_owner":"null"}},"_owner":"null"}
+      {"$$typeof":"Symbol(jsx)","type":"div","props":{"children":"Hello World"},"key":"undefined"}
+      {"$$typeof":"Symbol(jsx)","type":"div","props":{"className":"container","children":{"$$typeof":"Symbol(jsx)","type":"hello","props":{"prop":2,"children":{"$$typeof":"Symbol(jsx)","type":"h1","props":{"onClick":"Function:onClick","children":"hello"},"key":"undefined"}},"key":"undefined"}},"key":"undefined"}
     `,
   });
   // bun does not do the production transform for fragments as good as it could be right now.
@@ -180,7 +180,7 @@ describe("bundler", () => {
       {"$$typeof":"Symbol(jsxdev)","type":"Symbol(jsxdev.fragment)","props":{"children":"Fragment"},"key":"undefined","source":false,"self":"undefined"}
     `,
     prodStdout: `
-      {"$$typeof":"Symbol(react.element)","type":"Symbol("jsx.fragment")","key":"null","ref":"null","props":{"children":"Fragment"},"_owner":"null"}
+      {"$$typeof":"Symbol(jsx)","type":"Symbol("jsx.fragment")","key":"null","ref":"null","props":{"children":"Fragment"},"_owner":"null"}
     `,
   });
   itBundledDevAndProd("jsx/ImportSource", {

@@ -74,7 +74,7 @@ void CryptoAlgorithmAES_CTR::encrypt(const CryptoAlgorithmParameters& parameters
 {
     auto& aesParameters = downcast<CryptoAlgorithmAesCtrParams>(parameters);
     if (!parametersAreValid(aesParameters)) {
-        exceptionCallback(OperationError);
+        exceptionCallback(OperationError, ""_s);
         return;
     }
 
@@ -88,7 +88,7 @@ void CryptoAlgorithmAES_CTR::decrypt(const CryptoAlgorithmParameters& parameters
 {
     auto& aesParameters = downcast<CryptoAlgorithmAesCtrParams>(parameters);
     if (!parametersAreValid(aesParameters)) {
-        exceptionCallback(OperationError);
+        exceptionCallback(OperationError, ""_s);
         return;
     }
 
@@ -103,13 +103,13 @@ void CryptoAlgorithmAES_CTR::generateKey(const CryptoAlgorithmParameters& parame
     const auto& aesParameters = downcast<CryptoAlgorithmAesKeyParams>(parameters);
 
     if (usagesAreInvalidForCryptoAlgorithmAES_CTR(usages)) {
-        exceptionCallback(SyntaxError);
+        exceptionCallback(SyntaxError, ""_s);
         return;
     }
 
     auto result = CryptoKeyAES::generate(CryptoAlgorithmIdentifier::AES_CTR, aesParameters.length, extractable, usages);
     if (!result) {
-        exceptionCallback(OperationError);
+        exceptionCallback(OperationError, ""_s);
         return;
     }
 
@@ -121,7 +121,7 @@ void CryptoAlgorithmAES_CTR::importKey(CryptoKeyFormat format, KeyData&& data, c
     using namespace CryptoAlgorithmAES_CTRInternal;
 
     if (usagesAreInvalidForCryptoAlgorithmAES_CTR(usages)) {
-        exceptionCallback(SyntaxError);
+        exceptionCallback(SyntaxError, ""_s);
         return;
     }
 
@@ -146,11 +146,11 @@ void CryptoAlgorithmAES_CTR::importKey(CryptoKeyFormat format, KeyData&& data, c
         break;
     }
     default:
-        exceptionCallback(NotSupportedError);
+        exceptionCallback(NotSupportedError, ""_s);
         return;
     }
     if (!result) {
-        exceptionCallback(DataError);
+        exceptionCallback(DataError, ""_s);
         return;
     }
 
@@ -163,7 +163,7 @@ void CryptoAlgorithmAES_CTR::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&& 
     const auto& aesKey = downcast<CryptoKeyAES>(key.get());
 
     if (aesKey.key().isEmpty()) {
-        exceptionCallback(OperationError);
+        exceptionCallback(OperationError, ""_s);
         return;
     }
 
@@ -191,7 +191,7 @@ void CryptoAlgorithmAES_CTR::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&& 
         break;
     }
     default:
-        exceptionCallback(NotSupportedError);
+        exceptionCallback(NotSupportedError, ""_s);
         return;
     }
 
@@ -292,7 +292,7 @@ auto CryptoAlgorithmAES_CTR::CounterBlockHelper::CounterBlockBits::operator~() c
     return { ~m_hi, ~m_lo };
 }
 
-auto CryptoAlgorithmAES_CTR::CounterBlockHelper::CounterBlockBits::operator <<=(unsigned shift) -> CounterBlockBits&
+auto CryptoAlgorithmAES_CTR::CounterBlockHelper::CounterBlockBits::operator<<=(unsigned shift) -> CounterBlockBits&
 {
     if (shift < 64) {
         m_hi = (m_hi << shift) | m_lo >> (64 - shift);
@@ -308,7 +308,7 @@ auto CryptoAlgorithmAES_CTR::CounterBlockHelper::CounterBlockBits::operator <<=(
     return *this;
 }
 
-auto CryptoAlgorithmAES_CTR::CounterBlockHelper::CounterBlockBits::operator &=(const CounterBlockBits& rhs) -> CounterBlockBits&
+auto CryptoAlgorithmAES_CTR::CounterBlockHelper::CounterBlockBits::operator&=(const CounterBlockBits& rhs) -> CounterBlockBits&
 {
     m_hi &= rhs.m_hi;
     m_lo &= rhs.m_lo;

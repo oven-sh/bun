@@ -1,7 +1,7 @@
-import { join } from "path";
+import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
-import { test, expect, beforeAll, setDefaultTimeout } from "bun:test";
+import { join } from "path";
 
 beforeAll(() => {
   setDefaultTimeout(1000 * 60 * 5);
@@ -45,10 +45,10 @@ function versionOf(cwd: string, path: string) {
 
 function ensureLockfileDoesntChangeOnBunI(cwd: string) {
   install(cwd, ["install"]);
-  const lockb1 = readFileSync(join(cwd, "bun.lockb"));
+  const lockb1 = readFileSync(join(cwd, "bun.lock"));
   install(cwd, ["install", "--frozen-lockfile"]);
   install(cwd, ["install", "--force"]);
-  const lockb2 = readFileSync(join(cwd, "bun.lockb"));
+  const lockb2 = readFileSync(join(cwd, "bun.lock"));
 
   expect(lockb1.toString("hex")).toEqual(lockb2.toString("hex"));
 }

@@ -1,7 +1,6 @@
 import { crash_handler } from "bun:internal-for-testing";
-import { test, expect, describe } from "bun:test";
-import { bunExe, bunEnv, tempDirWithFiles, mergeWindowEnvs } from "harness";
-import { existsSync } from "node:fs";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, mergeWindowEnvs } from "harness";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
 
@@ -11,58 +10,84 @@ test.if(process.platform === "darwin")("macOS has the assumed image offset", () 
   expect(getMachOImageZeroOffset()).toBe(0x100000000);
 });
 
+test("raise ignoring panic handler does not trigger the panic handler", async () => {
+  let sent = false;
+  const resolve_handler = Promise.withResolvers();
+
+  using server = Bun.serve({
+    port: 0,
+    fetch(request, server) {
+      sent = true;
+      resolve_handler.resolve();
+      return new Response("OK");
+    },
+  });
+
+  const proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "raiseIgnoringPanicHandler"],
+    env: mergeWindowEnvs([
+      bunEnv,
+      {
+        BUN_CRASH_REPORT_URL: server.url.toString(),
+        BUN_ENABLE_CRASH_REPORTING: "1",
+      },
+    ]),
+  });
+
+  await proc.exited;
+
+  /// Wait two seconds for a slow http request, or continue immediatly once the request is heard.
+  await Promise.race([resolve_handler.promise, Bun.sleep(2000)]);
+
+  expect(proc.exited).resolves.not.toBe(0);
+  expect(sent).toBe(false);
+});
+
 describe("automatic crash reporter", () => {
-  const has_reporting = process.platform !== "linux";
+  for (const approach of ["panic", "segfault", "outOfMemory"]) {
+    test(`${approach} should report`, async () => {
+      let sent = false;
+      const resolve_handler = Promise.withResolvers();
 
-  for (const should_report of has_reporting ? [true, false] : [false]) {
-    for (const approach of ["panic", "segfault"]) {
-      // TODO: this dependency injection no worky. fix later
-      test.todo(`${approach} ${should_report ? "should" : "should not"} report`, async () => {
-        const temp = tempDirWithFiles("crash-handler-path", {
-          "curl": ({ root }) => `#!/usr/bin/env bash
-echo $@ > ${root}/request.out
-`,
-          "powershell.cmd": ({ root }) => `echo true > ${root}\\request.out
-`,
-        });
+      // Self host the crash report backend.
+      using server = Bun.serve({
+        port: 0,
+        fetch(request, server) {
+          expect(request.url).toEndWith("/ack");
+          sent = true;
+          resolve_handler.resolve();
+          return new Response("OK");
+        },
+      });
 
-        const env: any = mergeWindowEnvs([
+      const proc = Bun.spawn({
+        cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), approach],
+        env: mergeWindowEnvs([
+          bunEnv,
           {
-            ...bunEnv,
+            BUN_CRASH_REPORT_URL: server.url.toString(),
+            BUN_ENABLE_CRASH_REPORTING: "1",
             GITHUB_ACTIONS: undefined,
             CI: undefined,
           },
-          {
-            PATH: temp + path.delimiter + process.env.PATH,
-          },
-        ]);
-
-        if (!should_report) {
-          env.DO_NOT_TRACK = "1";
-        }
-
-        const result = Bun.spawnSync(
-          [
-            bunExe(),
-            path.join(import.meta.dir, "fixture-crash.js"),
-            approach,
-            "--debug-crash-handler-use-trace-string",
-          ],
-          { env },
-        );
-
-        console.log(result.stderr.toString("utf-8"));
-        try {
-          expect(result.stderr.toString("utf-8")).toInclude("https://bun.report/");
-        } catch (e) {
-          throw e;
-        }
-
-        await Bun.sleep(1000);
-
-        const did_report = existsSync(path.join(temp, "request.out"));
-        expect(did_report).toBe(should_report);
+        ]),
+        stdio: ["ignore", "pipe", "pipe"],
       });
-    }
+      const exitCode = await proc.exited;
+      const stderr = await Bun.readableStreamToText(proc.stderr);
+      console.log(stderr);
+
+      await resolve_handler.promise;
+
+      expect(exitCode).not.toBe(0);
+      expect(stderr).toContain(server.url.toString());
+      if (approach !== "outOfMemory") {
+        expect(stderr).toContain("oh no: Bun has crashed. This indicates a bug in Bun, not your code");
+      } else {
+        expect(stderr.toLowerCase()).toContain("out of memory");
+        expect(stderr.toLowerCase()).not.toContain("panic");
+      }
+      expect(sent).toBe(true);
+    });
   }
 });

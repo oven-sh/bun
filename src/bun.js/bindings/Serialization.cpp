@@ -12,7 +12,7 @@ using namespace WebCore;
 struct SerializedValueSlice {
     const uint8_t* bytes;
     size_t size;
-    WebCore::SerializedScriptValue* value;
+    WebCore::SerializedScriptValue* value; // NOLINT
 };
 
 /// Returns a "slice" that also contains a pointer to the SerializedScriptValue. Must be freed by the caller
@@ -25,7 +25,7 @@ extern "C" SerializedValueSlice Bun__serializeJSValue(JSGlobalObject* globalObje
     ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList),
         dummyPorts);
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (serialized.hasException()) {

@@ -34,6 +34,16 @@ pub fn decode(destination: []u8, source: []const u8) bun.simdutf.SIMDUTFResult {
     return result;
 }
 
+pub fn decodeAlloc(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
+    var dest = try allocator.alloc(u8, decodeLen(input));
+    const result = decode(dest, input);
+    if (!result.isSuccessful()) {
+        allocator.free(dest);
+        return error.DecodingFailed;
+    }
+    return dest[0..result.count];
+}
+
 pub fn encode(destination: []u8, source: []const u8) usize {
     return bun.simdutf.base64.encode(source, destination, false);
 }
@@ -54,7 +64,11 @@ pub fn decodeLen(source: anytype) usize {
 }
 
 pub fn encodeLen(source: anytype) usize {
-    return zig_base64.standard.Encoder.calcSize(source.len);
+    return encodeLenFromSize(source.len);
+}
+
+pub fn encodeLenFromSize(source: usize) usize {
+    return zig_base64.standard.Encoder.calcSize(source);
 }
 
 pub fn urlSafeEncodeLen(source: anytype) usize {

@@ -1,11 +1,20 @@
-import { join, resolve, dirname } from "node:path";
-import { tmpdir } from "node:os";
-import { writeFileSync, rmSync, mkdirSync, realpathSync } from "node:fs";
 import { spawnSync } from "bun";
-import { describe, test, expect } from "bun:test";
-import { bunExe, bunEnv, tmpdirSync } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 
 describe("bun test", () => {
+  test("running a non-existent absolute file path is a 1 exit code", () => {
+    const spawn = Bun.spawnSync({
+      cmd: [bunExe(), "test", join(import.meta.dirname, "non-existent.test.ts")],
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    expect(spawn.exitCode).toBe(1);
+  });
   test("can provide no arguments", () => {
     const stderr = runTest({
       args: [],
@@ -568,7 +577,7 @@ describe("bun test", () => {
           GITHUB_ACTIONS: "true",
         },
       });
-      expect(stderr).toMatch(/::error title=error: Oops!::/);
+      expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+,title=error: Oops!::/m);
     });
     test("should annotate a test timeout", () => {
       const stderr = runTest({
@@ -891,7 +900,7 @@ function createTest(input?: string | (string | { filename: string; contents: str
   const inputs = Array.isArray(input) ? input : [input ?? ""];
   for (const input of inputs) {
     const contents = typeof input === "string" ? input : input.contents;
-    const name = typeof input === "string" ? filename ?? `bun-test-${Math.random()}.test.ts` : input.filename;
+    const name = typeof input === "string" ? (filename ?? `bun-test-${Math.random()}.test.ts`) : input.filename;
 
     const path = join(cwd, name);
     try {

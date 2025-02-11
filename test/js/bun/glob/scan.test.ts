@@ -23,11 +23,10 @@
 import { Glob, GlobScanOptions } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fg from "fast-glob";
-import * as path from "path";
-import { tempFixturesDir, createTempDirectoryWithBrokenSymlinks, prepareEntries } from "./util";
 import { tempDirWithFiles, tmpdirSync } from "harness";
-import * as os from "node:os";
 import * as fs from "node:fs";
+import * as path from "path";
+import { createTempDirectoryWithBrokenSymlinks, prepareEntries, tempFixturesDir } from "./util";
 
 let origAggressiveGC = Bun.unsafe.gcAggressionLevel();
 let tempBrokenSymlinksDir: string;

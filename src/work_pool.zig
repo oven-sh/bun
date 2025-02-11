@@ -11,16 +11,19 @@ pub fn NewWorkPool(comptime max_threads: ?usize) type {
         var loaded: bool = false;
 
         fn create() *ThreadPool {
-            @setCold(true);
+            @branchHint(.cold);
 
             pool = ThreadPool.init(.{
-                .max_threads = max_threads orelse @max(@as(u32, @truncate(std.Thread.getCpuCount() catch 0)), 2),
+                .max_threads = max_threads orelse bun.getThreadCount(),
                 .stack_size = ThreadPool.default_thread_stack_size,
             });
             return &pool;
         }
+
+        /// Initialization of WorkPool is not thread-safe, as it is
+        /// assumed a single main thread sets everything up. Calling
+        /// this afterwards is thread-safe.
         pub inline fn get() *ThreadPool {
-            // lil racy
             if (loaded) return &pool;
             loaded = true;
 

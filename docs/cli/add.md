@@ -33,7 +33,19 @@ To add a package as an optional dependency (`"optionalDependencies"`):
 $ bun add --optional lodash
 ```
 
+## `--peer`
+
+To add a package as a peer dependency (`"peerDependencies"`):
+
+```bash
+$ bun add --peer @types/bun
+```
+
 ## `--exact`
+
+{% callout %}
+**Alias** — `-E`
+{% /callout %}
 
 To add a package and pin to the resolved version, use `--exact`. This will resolve the version of the package and add it to your `package.json` with an exact version number instead of a version range.
 
@@ -157,3 +169,5 @@ This will add the following line to your `package.json`:
   }
 }
 ```
+
+{% bunCLIUsage command="add" /%}

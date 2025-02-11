@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { expect, it } from "bun:test";
-import { bunExe, bunEnv } from "harness";
+import { bunEnv, bunExe } from "harness";
 
 it("should not hang when logging to stdout recursively", async () => {
   const { exited } = spawn({

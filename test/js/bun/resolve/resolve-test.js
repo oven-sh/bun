@@ -1,5 +1,4 @@
-import { it, expect } from "bun:test";
-import { ospath } from "harness";
+import { expect, it } from "bun:test";
 import { join, resolve } from "path";
 
 function resolveFrom(from) {

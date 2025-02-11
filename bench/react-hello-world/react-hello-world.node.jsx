@@ -1,11 +1,12 @@
 // react-ssr.tsx
-import { renderToPipeableStream } from "react-dom/server.node";
 import React from "react";
+import { renderToPipeableStream } from "react-dom/server.node";
 const http = require("http");
 const App = () => (
   <html>
     <body>
       <h1>Hello World</h1>
+      <p>This is an example.</p>
     </body>
   </html>
 );

@@ -100,11 +100,54 @@ When deploying to production, we recommend the following:
 bun build --compile --minify --sourcemap ./path/to/my/app.ts --outfile myapp
 ```
 
-**What do these flags do?**
+### Bytecode compilation
+
+To improve startup time, enable bytecode compilation:
+
+```sh
+bun build --compile --minify --sourcemap --bytecode ./path/to/my/app.ts --outfile myapp
+```
+
+Using bytecode compilation, `tsc` starts 2x faster:
+
+{% image src="https://github.com/user-attachments/assets/dc8913db-01d2-48f8-a8ef-ac4e984f9763" width="689" /%}
+
+Bytecode compilation moves parsing overhead for large input files from runtime to bundle time. Your app starts faster, in exchange for making the `bun build` command a little slower. It doesn't obscure source code.
+
+**Experimental:** Bytecode compilation is an experimental feature introduced in Bun v1.1.30. Only `cjs` format is supported (which means no top-level-await). Let us know if you run into any issues!
+
+### What do these flags do?
 
 The `--minify` argument optimizes the size of the transpiled output code. If you have a large application, this can save megabytes of space. For smaller applications, it might still improve start time a little.
 
 The `--sourcemap` argument embeds a sourcemap compressed with zstd, so that errors & stacktraces point to their original locations instead of the transpiled location. Bun will automatically decompress & resolve the sourcemap when an error occurs.
+
+The `--bytecode` argument enables bytecode compilation. Every time you run JavaScript code in Bun, JavaScriptCore (the engine) will compile your source code into bytecode. We can move this parsing work from runtime to bundle time, saving you startup time.
+
+## Worker
+
+To use workers in a standalone executable, add the worker's entrypoint to the CLI arguments:
+
+```sh
+$ bun build --compile ./index.ts ./my-worker.ts --outfile myapp
+```
+
+Then, reference the worker in your code:
+
+```ts
+console.log("Hello from Bun!");
+
+// Any of these will work:
+new Worker("./my-worker.ts");
+new Worker(new URL("./my-worker.ts", import.meta.url));
+new Worker(new URL("./my-worker.ts", import.meta.url).href);
+```
+
+As of Bun v1.1.25, when you add multiple entrypoints to a standalone executable, they will be bundled separately into the executable.
+
+In the future, we may automatically detect usages of statically-known paths in `new Worker(path)` and then bundle those into the executable, but for now, you'll need to add it to the shell command manually like the above example.
+
+If you use a relative path to a file not included in the standalone executable, it will attempt to load that path from disk relative to the current working directory of the process (and then error if it doesn't exist).
 
 ## SQLite
 
@@ -153,6 +196,8 @@ import icon from "./icon.png" with { type: "file" };
 import { file } from "bun";
 
 const bytes = await file(icon).arrayBuffer();
+// await fs.promises.readFile(icon)
+// fs.readFileSync(icon)
 ```
 
 ### Embed SQLite databases
@@ -179,9 +224,75 @@ console.log(addon.hello());
 
 Unfortunately, if you're using `@mapbox/node-pre-gyp` or other similar tools, you'll need to make sure the `.node` file is directly required or it won't bundle correctly.
 
+### Embed directories
+
+To embed a directory with `bun build --compile`, use a shell glob in your `bun build` command:
+
+```sh
+$ bun build --compile ./index.ts ./public/**/*.png
+```
+
+Then, you can reference the files in your code:
+
+```ts
+import icon from "./public/assets/icon.png" with { type: "file" };
+import { file } from "bun";
+
+export default {
+  fetch(req) {
+    // Embedded files can be streamed from Response objects
+    return new Response(file(icon));
+  },
+};
+```
+
+This is honestly a workaround, and we expect to improve this in the future with a more direct API.
+
+### Listing embedded files
+
+To get a list of all embedded files, use `Bun.embeddedFiles`:
+
+```js
+import "./icon.png" with { type: "file" };
+import { embeddedFiles } from "bun";
+
+console.log(embeddedFiles[0].name); // `icon-${hash}.png`
+```
+
+`Bun.embeddedFiles` returns an array of `Blob` objects which you can use to get the size, contents, and other properties of the files.
+
+```ts
+embeddedFiles: Blob[]
+```
+
+The list of embedded files excludes bundled source code like `.ts` and `.js` files.
+
+#### Content hash
+
+By default, embedded files have a content hash appended to their name. This is useful for situations where you want to serve the file from a URL or CDN and have fewer cache invalidation issues. But sometimes, this is unexpected and you might want the original name instead:
+
+To disable the content hash, pass `--asset-naming` to `bun build --compile` like this:
+
+```sh
+$ bun build --compile --asset-naming="[name].[ext]" ./index.ts
+```
+
 ## Minification
 
 To trim down the size of the executable a little, pass `--minify` to `bun build --compile`. This uses Bun's minifier to reduce the code size. Overall though, Bun's binary is still way too big and we need to make it smaller.
+
+## Windows-specific flags
+
+When compiling a standalone executable on Windows, there are two platform-specific options that can be used to customize metadata on the generated `.exe` file:
+
+- `--windows-icon=path/to/icon.ico` to customize the executable file icon.
+- `--windows-hide-console` to disable the background terminal, which can be used for applications that do not need a TTY.
+
+{% callout %}
+
+These flags currently cannot be used when cross-compiling because they depend on Windows APIs.
+
+{% /callout %}
 
 ## Unsupported CLI arguments
 

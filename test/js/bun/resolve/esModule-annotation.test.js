@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import * as WithTypeModuleExportEsModuleAnnotationMissingDefault from "./with-type-module/export-esModule-annotation-empty.cjs";
 import * as WithTypeModuleExportEsModuleAnnotationNoDefault from "./with-type-module/export-esModule-annotation-no-default.cjs";
 import * as WithTypeModuleExportEsModuleAnnotation from "./with-type-module/export-esModule-annotation.cjs";
@@ -20,7 +20,7 @@ describe('without type: "module"', () => {
     });
 
     // The module namespace object will not have the __esModule property.
-    expect(WithoutTypeModuleExportEsModuleAnnotationNoDefault).not.toHaveProperty("__esModule");
+    expect(WithoutTypeModuleExportEsModuleAnnotationNoDefault.__esModule).toBeUndefined();
   });
 
   test("exports.default = true; exports.__esModule = true;", () => {
@@ -48,7 +48,7 @@ describe('with type: "module"', () => {
     });
 
     // The module namespace object WILL have the __esModule property.
-    expect(WithTypeModuleExportEsModuleAnnotationNoDefault).toHaveProperty("__esModule");
+    expect(WithTypeModuleExportEsModuleAnnotationNoDefault.__esModule).toBeTrue();
   });
 
   test("exports.default = true; exports.__esModule = true;", () => {

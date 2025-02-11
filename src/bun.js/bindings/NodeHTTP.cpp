@@ -1,4 +1,5 @@
 #include "root.h"
+#include "JSDOMGlobalObjectInlines.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/GlobalObjectMethodTable.h>
 #include "helpers.h"
@@ -21,7 +22,9 @@ using namespace JSC;
 using namespace WebCore;
 
 extern "C" uWS::HttpRequest* Request__getUWSRequest(void*);
-
+extern "C" void Request__setInternalEventCallback(void*, EncodedJSValue, JSC::JSGlobalObject*);
+extern "C" void Request__setTimeout(void*, EncodedJSValue, JSC::JSGlobalObject*);
+extern "C" void Server__setIdleTimeout(EncodedJSValue, EncodedJSValue, JSC::JSGlobalObject*);
 static EncodedJSValue assignHeadersFromFetchHeaders(FetchHeaders& impl, JSObject* prototype, JSObject* objectValue, JSC::InternalFieldTuple* tuple, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -209,10 +212,10 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
     for (auto it = request->begin(); it != request->end(); ++it) {
         auto pair = *it;
         StringView nameView = StringView(std::span { reinterpret_cast<const LChar*>(pair.first.data()), pair.first.length() });
-        LChar* data = nullptr;
+        std::span<LChar> data;
         auto value = String::createUninitialized(pair.second.length(), data);
         if (pair.second.length() > 0)
-            memcpy(data, pair.second.data(), pair.second.length());
+            memcpy(data.data(), pair.second.data(), pair.second.length());
 
         HTTPHeaderName name;
         WTF::String nameString;
@@ -256,13 +259,14 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
 
 JSC_DEFINE_HOST_FUNCTION(jsHTTPAssignHeaders, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSValue requestValue = callFrame->argument(0);
-    JSObject* objectValue = callFrame->argument(1).getObject();
-
-    JSC::InternalFieldTuple* tuple = JSC::InternalFieldTuple::create(vm, globalObject->m_internalFieldTupleStructure.get());
+    // This is an internal binding.
+    JSValue requestValue = callFrame->uncheckedArgument(0);
+    JSObject* objectValue = callFrame->uncheckedArgument(1).getObject();
+    JSC::InternalFieldTuple* tuple = jsCast<JSC::InternalFieldTuple*>(callFrame->uncheckedArgument(2));
+    ASSERT(callFrame->argumentCount() == 3);
 
     JSValue headersValue = JSValue();
     JSValue urlValue = JSValue();
@@ -320,9 +324,60 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPAssignHeaders, (JSGlobalObject * globalObject, Ca
     return JSValue::encode(jsNull());
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsHTTPAssignEventCallback, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // This is an internal binding.
+    JSValue requestValue = callFrame->uncheckedArgument(0);
+    JSValue callback = callFrame->uncheckedArgument(1);
+
+    ASSERT(callFrame->argumentCount() == 2);
+
+    if (auto* jsRequest = jsDynamicCast<WebCore::JSRequest*>(requestValue)) {
+        Request__setInternalEventCallback(jsRequest->wrapped(), JSValue::encode(callback), globalObject);
+    }
+
+    return JSValue::encode(jsNull());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsHTTPSetTimeout, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // This is an internal binding.
+    JSValue requestValue = callFrame->uncheckedArgument(0);
+    JSValue seconds = callFrame->uncheckedArgument(1);
+
+    ASSERT(callFrame->argumentCount() == 2);
+
+    if (auto* jsRequest = jsDynamicCast<WebCore::JSRequest*>(requestValue)) {
+        Request__setTimeout(jsRequest->wrapped(), JSValue::encode(seconds), globalObject);
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+JSC_DEFINE_HOST_FUNCTION(jsHTTPSetServerIdleTimeout, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // This is an internal binding.
+    JSValue serverValue = callFrame->uncheckedArgument(0);
+    JSValue seconds = callFrame->uncheckedArgument(1);
+
+    ASSERT(callFrame->argumentCount() == 2);
+
+    Server__setIdleTimeout(JSValue::encode(serverValue), JSValue::encode(seconds), globalObject);
+
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsHTTPGetHeader, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue headersValue = callFrame->argument(0);
@@ -331,7 +386,10 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPGetHeader, (JSGlobalObject * globalObject, CallFr
         JSValue nameValue = callFrame->argument(1);
         if (nameValue.isString()) {
             FetchHeaders* impl = &headers->wrapped();
-            String name = nameValue.toWTFString(globalObject);
+            JSString* nameString = nameValue.toString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            const auto name = nameString->view(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
             if (WTF::equalIgnoringASCIICase(name, "set-cookie"_s)) {
                 return fetchHeadersGetSetCookie(globalObject, vm, impl);
             }
@@ -356,7 +414,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPGetHeader, (JSGlobalObject * globalObject, CallFr
 
 JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue headersValue = callFrame->argument(0);
@@ -379,7 +437,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
                     if (UNLIKELY(scope.exception()))
                         return JSValue::encode(jsUndefined());
                     impl->set(name, item.getString(globalObject));
-                    RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
+                    RETURN_IF_EXCEPTION(scope, {});
                 }
                 for (unsigned i = 1; i < length; ++i) {
                     JSValue value = array->getIndex(globalObject, i);
@@ -388,14 +446,14 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
                     if (!value.isString())
                         continue;
                     impl->append(name, value.getString(globalObject));
-                    RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
+                    RETURN_IF_EXCEPTION(scope, {});
                 }
                 RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
                 return JSValue::encode(jsUndefined());
             }
 
             impl->set(name, valueValue.getString(globalObject));
-            RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
+            RETURN_IF_EXCEPTION(scope, {});
             return JSValue::encode(jsUndefined());
         }
     }
@@ -409,13 +467,39 @@ JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
     VM& vm = globalObject->vm();
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setHeader"_s)),
-        JSC::JSFunction::create(vm, globalObject, 3, "setHeader"_s, jsHTTPSetHeader, ImplementationVisibility::Public), NoIntrinsic);
+        JSC::JSFunction::create(vm, globalObject, 3, "setHeader"_s, jsHTTPSetHeader, ImplementationVisibility::Public), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "getHeader"_s)),
-        JSC::JSFunction::create(vm, globalObject, 2, "getHeader"_s, jsHTTPGetHeader, ImplementationVisibility::Public), NoIntrinsic);
+        JSC::JSFunction::create(vm, globalObject, 2, "getHeader"_s, jsHTTPGetHeader, ImplementationVisibility::Public), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "assignHeaders"_s)),
-        JSC::JSFunction::create(vm, globalObject, 2, "assignHeaders"_s, jsHTTPAssignHeaders, ImplementationVisibility::Public), NoIntrinsic);
+        JSC::JSFunction::create(vm, globalObject, 2, "assignHeaders"_s, jsHTTPAssignHeaders, ImplementationVisibility::Public), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "assignEventCallback"_s)),
+        JSC::JSFunction::create(vm, globalObject, 2, "assignEventCallback"_s, jsHTTPAssignEventCallback, ImplementationVisibility::Public), 0);
+
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setRequestTimeout"_s)),
+        JSC::JSFunction::create(vm, globalObject, 2, "setRequestTimeout"_s, jsHTTPSetTimeout, ImplementationVisibility::Public), 0);
+
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setServerIdleTimeout"_s)),
+        JSC::JSFunction::create(vm, globalObject, 2, "setServerIdleTimeout"_s, jsHTTPSetServerIdleTimeout, ImplementationVisibility::Public), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "Response"_s)),
+        globalObject->JSResponseConstructor(), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "Request"_s)),
+        globalObject->JSRequestConstructor(), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "Blob"_s)),
+        globalObject->JSBlobConstructor(), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "Headers"_s)),
+        WebCore::JSFetchHeaders::getConstructor(vm, globalObject), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "headersTuple"_s)),
+        JSC::InternalFieldTuple::create(vm, globalObject->m_internalFieldTupleStructure.get()), 0);
     return obj;
 }
 

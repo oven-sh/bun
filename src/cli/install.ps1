@@ -1,6 +1,5 @@
 #!/usr/bin/env pwsh
 param(
-  # TODO: change this to 'latest' when Bun for Windows is stable.
   [String]$Version = "latest",
   # Forces installing the baseline build regardless of what CPU you are actually using.
   [Switch]$ForceBaseline = $false,
@@ -24,7 +23,7 @@ if (-not ((Get-CimInstance Win32_ComputerSystem)).SystemType -match "x64-based")
 
 # This corresponds to .win10_rs5 in build.zig
 $MinBuild = 17763;
-$MinBuildName = "Windows 10 1809"
+$MinBuildName = "Windows 10 1809 / Windows Server 2019"
 
 $WinVer = [System.Environment]::OSVersion.Version
 if ($WinVer.Major -lt 10 -or ($WinVer.Major -eq 10 -and $WinVer.Build -lt $MinBuild)) {
@@ -216,8 +215,12 @@ function Install-Bun {
   # http://community.sqlbackupandftp.com/t/error-1073741515-solved/1305
   if (($LASTEXITCODE -eq 3221225781) -or ($LASTEXITCODE -eq -1073741515)) # STATUS_DLL_NOT_FOUND
   { 
+    # TODO: as of July 2024, Bun has no external dependencies.
+    # I want to keep this error message in for a few months to ensure that
+    # if someone somehow runs into this, it can be reported.
     Write-Output "Install Failed - You are missing a DLL required to run bun.exe"
     Write-Output "This can be solved by installing the Visual C++ Redistributable from Microsoft:`nSee https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist`nDirect Download -> https://aka.ms/vs/17/release/vc_redist.x64.exe`n`n"
+    Write-Output "The error above should be unreachable as Bun does not depend on this library. Please comment in https://github.com/oven-sh/bun/issues/8598 or open a new issue.`n`n"
     Write-Output "The command '${BunBin}\bun.exe --revision' exited with code ${LASTEXITCODE}`n"
     return 1
   }

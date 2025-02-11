@@ -1,7 +1,6 @@
 import assert from "assert";
-import { describe, test, expect } from "bun:test";
-import def from "util/types";
-import * as ns from "util/types";
+import { expect, test } from "bun:test";
+import def, * as ns from "util/types";
 const req = require("util/types");
 const types = def;
 
@@ -48,6 +47,7 @@ for (const [value, _method] of [
   [new DataView(new ArrayBuffer())],
   [new SharedArrayBuffer()],
   [new Proxy({}, {}), "isProxy"],
+  [new EventTarget()],
 ]) {
   const method = _method || `is${value.constructor.name}`;
   test(method, () => {
@@ -276,4 +276,30 @@ test("isKeyObject", () => {
   expect(types.isKeyObject({})).toBeFalse();
   expect(types.isKeyObject(null)).toBeFalse();
   expect(types.isKeyObject(undefined)).toBeFalse();
+});
+
+test("#11780", () => {
+  let resolveError;
+  try {
+    resolveError = require("OOGA_BOOGA");
+  } catch (e) {
+    resolveError = e;
+  }
+  expect(resolveError.constructor.name).toBe("ResolveMessage");
+  expect(types.isNativeError(resolveError)).toBeTrue();
+
+  const badCode = `
+export default /BADD~!!!!;
+
+  `;
+  const blob = new Blob([badCode], { type: "application/javascript" });
+  const url = URL.createObjectURL(blob);
+  let buildError;
+  try {
+    require(url);
+  } catch (e) {
+    buildError = e;
+  }
+  expect(types.isNativeError(buildError)).toBeTrue();
+  expect(buildError.constructor.name).toBe("BuildMessage");
 });

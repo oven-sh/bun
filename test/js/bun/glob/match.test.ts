@@ -22,8 +22,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-import { expect, test, describe } from "bun:test";
 import { Glob } from "bun";
+import { describe, expect, test } from "bun:test";
 
 describe("Glob.match", () => {
   test("single wildcard", () => {
@@ -632,6 +632,13 @@ describe("Glob.match", () => {
       expect(new Glob("[^a-c]*").match("BZZ")).toBeTrue();
       expect(new Glob("[^a-c]*").match("beware")).toBeFalse();
       expect(new Glob("[^a-c]*").match("BewAre")).toBeTrue();
+    });
+
+    test("square braces", () => {
+      expect(new Glob("src/*.[tj]s").match("src/foo.js")).toBeTrue();
+      expect(new Glob("src/*.[tj]s").match("src/foo.ts")).toBeTrue();
+      expect(new Glob("foo/ba[rz].md").match("foo/bar.md")).toBeTrue();
+      expect(new Glob("foo/ba[rz].md").match("foo/baz.md")).toBeTrue();
     });
 
     test("bash wildmatch", () => {

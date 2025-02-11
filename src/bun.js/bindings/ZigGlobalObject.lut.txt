@@ -11,7 +11,7 @@
   clearTimeout                    functionClearTimeout                                 Function 1
   confirm                         WebCore__confirm                                     Function 1
   dispatchEvent                   jsFunctionDispatchEvent                              Function 1
-  fetch                           Bun__fetch                                           Function 2
+  fetch                           constructBunFetchObject                              PropertyCallback
   postMessage                     jsFunctionPostMessage                                Function 1
   prompt                          WebCore__prompt                                      Function 1
   queueMicrotask                  functionQueueMicrotask                               Function 2
@@ -23,7 +23,6 @@
   structuredClone                 functionStructuredClone                              Function 2
   
   global                          GlobalObject_getGlobalThis                           PropertyCallback
-  EventSource                     getEventSourceConstructor                            PropertyCallback
   
   Bun                             GlobalObject::m_bunObject                            CellProperty|DontDelete|ReadOnly
   File                            GlobalObject::m_JSDOMFileConstructor                 CellProperty
@@ -67,6 +66,9 @@
   PerformanceMeasure              PerformanceMeasureConstructorCallback                PropertyCallback
   PerformanceObserver             PerformanceObserverConstructorCallback               PropertyCallback
   PerformanceObserverEntryList    PerformanceObserverEntryListConstructorCallback      PropertyCallback
+  PerformanceResourceTiming       PerformanceResourceTimingConstructorCallback         PropertyCallback
+  PerformanceServerTiming         PerformanceServerTimingConstructorCallback           PropertyCallback
+  PerformanceTiming               PerformanceTimingConstructorCallback                 PropertyCallback
   ReadableByteStreamController    ReadableByteStreamControllerConstructorCallback      PropertyCallback
   ReadableStream                  ReadableStreamConstructorCallback                    PropertyCallback
   ReadableStreamBYOBReader        ReadableStreamBYOBReaderConstructorCallback          PropertyCallback
@@ -74,7 +76,9 @@
   ReadableStreamDefaultController ReadableStreamDefaultControllerConstructorCallback   PropertyCallback
   ReadableStreamDefaultReader     ReadableStreamDefaultReaderConstructorCallback       PropertyCallback
   SubtleCrypto                    SubtleCryptoConstructorCallback                      PropertyCallback
+  TextDecoderStream               TextDecoderStreamConstructorCallback                 PropertyCallback
   TextEncoder                     TextEncoderConstructorCallback                       PropertyCallback
+  TextEncoderStream               TextEncoderStreamConstructorCallback                 PropertyCallback
   TransformStream                 TransformStreamConstructorCallback                   PropertyCallback
   TransformStreamDefaultController TransformStreamDefaultControllerConstructorCallback PropertyCallback
   URL                             DOMURLConstructorCallback                            PropertyCallback

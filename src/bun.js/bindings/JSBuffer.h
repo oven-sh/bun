@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include "JavaScriptCore/ArrayBuffer.h"
 #include "root.h"
 
 #include <JavaScriptCore/JSGlobalObject.h>
@@ -35,6 +36,21 @@ extern "C" JSC::EncodedJSValue Bun__encoding__toStringUTF8(const uint8_t* input,
 extern "C" bool Bun__Buffer_fill(ZigString*, void*, size_t, WebCore::BufferEncodingType);
 extern "C" bool JSBuffer__isBuffer(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 
+namespace Bun {
+
+std::optional<double> byteLength(JSC::JSString* str, WebCore::BufferEncodingType encoding);
+
+namespace Buffer {
+
+const size_t kMaxLength = MAX_ARRAY_BUFFER_SIZE;
+const size_t kStringMaxLength = WTF::String::MaxLength;
+const size_t MAX_LENGTH = MAX_ARRAY_BUFFER_SIZE;
+const size_t MAX_STRING_LENGTH = WTF::String::MaxLength;
+
+}
+
+}
+
 namespace WebCore {
 
 JSC::JSUint8Array* createUninitializedBuffer(JSC::JSGlobalObject* lexicalGlobalObject, size_t length);
@@ -42,6 +58,7 @@ JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const 
 JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const Vector<uint8_t>& data);
 JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const std::span<const uint8_t> data);
 JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const char* ptr, size_t length);
+JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, Ref<JSC::ArrayBuffer>&& backingStore);
 JSC::JSUint8Array* createEmptyBuffer(JSC::JSGlobalObject* lexicalGlobalObject);
 
 JSC_DECLARE_HOST_FUNCTION(constructSlowBuffer);

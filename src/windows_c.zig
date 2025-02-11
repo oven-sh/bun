@@ -8,6 +8,42 @@ const Stat = std.fs.File.Stat;
 const Kind = std.fs.File.Kind;
 const StatError = std.fs.File.StatError;
 
+// Windows doesn't have memmem, so we need to implement it
+pub export fn memmem(haystack: ?[*]const u8, haystacklen: usize, needle: ?[*]const u8, needlelen: usize) ?[*]const u8 {
+    // Handle null pointers
+    if (haystack == null or needle == null) return null;
+
+    // Handle empty needle case
+    if (needlelen == 0) return haystack;
+
+    // Handle case where needle is longer than haystack
+    if (needlelen > haystacklen) return null;
+
+    const hay = haystack.?[0..haystacklen];
+    const nee = needle.?[0..needlelen];
+
+    const i = std.mem.indexOf(u8, hay, nee) orelse return null;
+    return hay.ptr + i;
+}
+
+comptime {
+    @export(&memmem, .{ .name = "zig_memmem" });
+}
+
+pub const lstat = blk: {
+    const T = *const fn ([*c]const u8, [*c]std.c.Stat) callconv(.C) c_int;
+    break :blk @extern(T, .{ .name = "lstat64" });
+};
+
+pub const fstat = blk: {
+    const T = *const fn ([*c]const u8, [*c]std.c.Stat) callconv(.C) c_int;
+    break :blk @extern(T, .{ .name = "fstat64" });
+};
+pub const stat = blk: {
+    const T = *const fn ([*c]const u8, [*c]std.c.Stat) callconv(.C) c_int;
+    break :blk @extern(T, .{ .name = "stat64" });
+};
+
 pub fn getTotalMemory() usize {
     return uv.uv_get_total_memory();
 }
@@ -21,7 +57,7 @@ pub fn getSystemLoadavg() [3]f32 {
     return .{ 0, 0, 0 };
 }
 
-pub const Mode = i32;
+pub const Mode = u16;
 const Win32Error = bun.windows.Win32Error;
 
 // The way we do errors in Bun needs to get cleaned up.
@@ -690,8 +726,9 @@ pub const SystemErrno = enum(u16) {
     }
 
     pub fn init(code: anytype) ?SystemErrno {
-        if (comptime @TypeOf(code) == u16) {
-            if (code <= 3950) {
+        if (@TypeOf(code) == u16 or (@TypeOf(code) == c_int and code > 0)) {
+            // Win32Error and WSA Error codes
+            if (code <= @intFromEnum(Win32Error.IO_REISSUE_AS_CACHED) or (code >= @intFromEnum(Win32Error.WSAEINTR) and code <= @intFromEnum(Win32Error.WSA_QOS_RESERVED_PETYPE))) {
                 return init(@as(Win32Error, @enumFromInt(code)));
             } else {
                 if (comptime bun.Environment.allow_assert)
@@ -813,150 +850,76 @@ pub const SystemErrno = enum(u16) {
         if (code >= max) return null;
         return @as(SystemErrno, @enumFromInt(code));
     }
-
-    pub fn label(this: SystemErrno) ?[]const u8 {
-        return labels.get(this) orelse null;
-    }
-
-    const LabelMap = std.enums.EnumMap(SystemErrno, []const u8);
-    pub const labels: LabelMap = brk: {
-        var map: LabelMap = LabelMap.initFull("");
-
-        map.put(.EPERM, "Operation not permitted");
-        map.put(.ENOENT, "No such file or directory");
-        map.put(.ESRCH, "No such process");
-        map.put(.EINTR, "Interrupted system call");
-        map.put(.EIO, "I/O error");
-        map.put(.ENXIO, "No such device or address");
-        map.put(.E2BIG, "Argument list too long");
-        map.put(.ENOEXEC, "Exec format error");
-        map.put(.EBADF, "Bad file descriptor");
-        map.put(.ECHILD, "No child processes");
-        map.put(.EAGAIN, "Try again");
-        map.put(.EOF, "End of file");
-        map.put(.ENOMEM, "Out of memory");
-        map.put(.EACCES, "Permission denied");
-        map.put(.EFAULT, "Bad address");
-        map.put(.ENOTBLK, "Block device required");
-        map.put(.EBUSY, "Device or resource busy");
-        map.put(.EEXIST, "File or folder exists");
-        map.put(.EXDEV, "Cross-device link");
-        map.put(.ENODEV, "No such device");
-        map.put(.ENOTDIR, "Not a directory");
-        map.put(.EISDIR, "Is a directory");
-        map.put(.EINVAL, "Invalid argument");
-        map.put(.ENFILE, "File table overflow");
-        map.put(.EMFILE, "Too many open files");
-        map.put(.ECHARSET, "Invalid or incomplete multibyte or wide character");
-        map.put(.ENOTTY, "Not a typewriter");
-        map.put(.ETXTBSY, "Text file busy");
-        map.put(.EFBIG, "File too large");
-        map.put(.ENOSPC, "No space left on device");
-        map.put(.ESPIPE, "Illegal seek");
-        map.put(.EROFS, "Read-only file system");
-        map.put(.EMLINK, "Too many links");
-        map.put(.EPIPE, "Broken pipe");
-        map.put(.EDOM, "Math argument out of domain of func");
-        map.put(.ERANGE, "Math result not representable");
-        map.put(.EDEADLK, "Resource deadlock would occur");
-        map.put(.ENAMETOOLONG, "File name too long");
-        map.put(.ENOLCK, "No record locks available");
-        map.put(.EUNKNOWN, "An unknown error occurred");
-        map.put(.ENOSYS, "Function not implemented");
-        map.put(.ENOTEMPTY, "Directory not empty");
-        map.put(.ELOOP, "Too many symbolic links encountered");
-        map.put(.ENOMSG, "No message of desired type");
-        map.put(.EIDRM, "Identifier removed");
-        map.put(.ECHRNG, "Channel number out of range");
-        map.put(.EL2NSYNC, "Level 2 not synchronized");
-        map.put(.EL3HLT, "Level 3 halted");
-        map.put(.EL3RST, "Level 3 reset");
-        map.put(.ELNRNG, "Link number out of range");
-        map.put(.EUNATCH, "Protocol driver not attached");
-        map.put(.ENOCSI, "No CSI structure available");
-        map.put(.EL2HLT, "Level 2 halted");
-        map.put(.EBADE, "Invalid exchange");
-        map.put(.EBADR, "Invalid request descriptor");
-        map.put(.EXFULL, "Exchange full");
-        map.put(.ENOANO, "No anode");
-        map.put(.EBADRQC, "Invalid request code");
-        map.put(.EBADSLT, "Invalid slot");
-        map.put(.EBFONT, "Bad font file format");
-        map.put(.ENOSTR, "Device not a stream");
-        map.put(.ENODATA, "No data available");
-        map.put(.ETIME, "Timer expired");
-        map.put(.ENOSR, "Out of streams resources");
-        map.put(.ENONET, "Machine is not on the network");
-        map.put(.ENOPKG, "Package not installed");
-        map.put(.EREMOTE, "Object is remote");
-        map.put(.ENOLINK, "Link has been severed");
-        map.put(.EADV, "Advertise error");
-        map.put(.ESRMNT, "Srmount error");
-        map.put(.ECOMM, "Communication error on send");
-        map.put(.EPROTO, "Protocol error");
-        map.put(.EMULTIHOP, "Multihop attempted");
-        map.put(.EDOTDOT, "RFS specific error");
-        map.put(.EBADMSG, "Not a data message");
-        map.put(.EOVERFLOW, "Value too large for defined data type");
-        map.put(.ENOTUNIQ, "Name not unique on network");
-        map.put(.EBADFD, "File descriptor in bad state");
-        map.put(.EREMCHG, "Remote address changed");
-        map.put(.ELIBACC, "Can not access a needed shared library");
-        map.put(.ELIBBAD, "Accessing a corrupted shared library");
-        map.put(.ELIBSCN, "lib section in a.out corrupted");
-        map.put(.ELIBMAX, "Attempting to link in too many shared libraries");
-        map.put(.ELIBEXEC, "Cannot exec a shared library directly");
-        map.put(.EILSEQ, "Illegal byte sequence");
-        map.put(.ERESTART, "Interrupted system call should be restarted");
-        map.put(.ESTRPIPE, "Streams pipe error");
-        map.put(.EUSERS, "Too many users");
-        map.put(.ENOTSOCK, "Socket operation on non-socket");
-        map.put(.EDESTADDRREQ, "Destination address required");
-        map.put(.EMSGSIZE, "Message too long");
-        map.put(.EPROTOTYPE, "Protocol wrong type for socket");
-        map.put(.ENOPROTOOPT, "Protocol not available");
-        map.put(.EPROTONOSUPPORT, "Protocol not supported");
-        map.put(.ESOCKTNOSUPPORT, "Socket type not supported");
-        map.put(.ENOTSUP, "Operation not supported on transport endpoint");
-        map.put(.EPFNOSUPPORT, "Protocol family not supported");
-        map.put(.EAFNOSUPPORT, "Address family not supported by protocol");
-        map.put(.EADDRINUSE, "Address already in use");
-        map.put(.EADDRNOTAVAIL, "Cannot assign requested address");
-        map.put(.ENETDOWN, "Network is down");
-        map.put(.ENETUNREACH, "Network is unreachable");
-        map.put(.ENETRESET, "Network dropped connection because of reset");
-        map.put(.ECONNABORTED, "Software caused connection abort");
-        map.put(.ECONNRESET, "Connection reset by peer");
-        map.put(.ENOBUFS, "No buffer space available");
-        map.put(.EISCONN, "Transport endpoint is already connected");
-        map.put(.ENOTCONN, "Transport endpoint is not connected");
-        map.put(.ESHUTDOWN, "Cannot send after transport endpoint shutdown");
-        map.put(.ETOOMANYREFS, "Too many references: cannot splice");
-        map.put(.ETIMEDOUT, "Connection timed out");
-        map.put(.ECONNREFUSED, "Connection refused");
-        map.put(.EHOSTDOWN, "Host is down");
-        map.put(.EHOSTUNREACH, "No route to host");
-        map.put(.EALREADY, "Operation already in progress");
-        map.put(.EINPROGRESS, "Operation now in progress");
-        map.put(.ESTALE, "Stale NFS file handle");
-        map.put(.EUCLEAN, "Structure needs cleaning");
-        map.put(.ENOTNAM, "Not a XENIX named type file");
-        map.put(.ENAVAIL, "No XENIX semaphores available");
-        map.put(.EISNAM, "Is a named type file");
-        map.put(.EREMOTEIO, "Remote I/O error");
-        map.put(.EDQUOT, "Quota exceeded");
-        map.put(.ENOMEDIUM, "No medium found");
-        map.put(.EMEDIUMTYPE, "Wrong medium type");
-        map.put(.ECANCELED, "Operation Canceled");
-        map.put(.ENOKEY, "Required key not available");
-        map.put(.EKEYEXPIRED, "Key has expired");
-        map.put(.EKEYREVOKED, "Key has been revoked");
-        map.put(.EKEYREJECTED, "Key was rejected by service");
-        map.put(.EOWNERDEAD, "Owner died");
-        map.put(.ENOTRECOVERABLE, "State not recoverable");
-        break :brk map;
-    };
 };
+
+pub const UV_E2BIG = -uv.UV_E2BIG;
+pub const UV_EACCES = -uv.UV_EACCES;
+pub const UV_EADDRINUSE = -uv.UV_EADDRINUSE;
+pub const UV_EADDRNOTAVAIL = -uv.UV_EADDRNOTAVAIL;
+pub const UV_EAFNOSUPPORT = -uv.UV_EAFNOSUPPORT;
+pub const UV_EAGAIN = -uv.UV_EAGAIN;
+pub const UV_EALREADY = -uv.UV_EALREADY;
+pub const UV_EBADF = -uv.UV_EBADF;
+pub const UV_EBUSY = -uv.UV_EBUSY;
+pub const UV_ECANCELED = -uv.UV_ECANCELED;
+pub const UV_ECHARSET = -uv.UV_ECHARSET;
+pub const UV_ECONNABORTED = -uv.UV_ECONNABORTED;
+pub const UV_ECONNREFUSED = -uv.UV_ECONNREFUSED;
+pub const UV_ECONNRESET = -uv.UV_ECONNRESET;
+pub const UV_EDESTADDRREQ = -uv.UV_EDESTADDRREQ;
+pub const UV_EEXIST = -uv.UV_EEXIST;
+pub const UV_EFAULT = -uv.UV_EFAULT;
+pub const UV_EHOSTUNREACH = -uv.UV_EHOSTUNREACH;
+pub const UV_EINTR = -uv.UV_EINTR;
+pub const UV_EINVAL = -uv.UV_EINVAL;
+pub const UV_EIO = -uv.UV_EIO;
+pub const UV_EISCONN = -uv.UV_EISCONN;
+pub const UV_EISDIR = -uv.UV_EISDIR;
+pub const UV_ELOOP = -uv.UV_ELOOP;
+pub const UV_EMFILE = -uv.UV_EMFILE;
+pub const UV_EMSGSIZE = -uv.UV_EMSGSIZE;
+pub const UV_ENAMETOOLONG = -uv.UV_ENAMETOOLONG;
+pub const UV_ENETDOWN = -uv.UV_ENETDOWN;
+pub const UV_ENETUNREACH = -uv.UV_ENETUNREACH;
+pub const UV_ENFILE = -uv.UV_ENFILE;
+pub const UV_ENOBUFS = -uv.UV_ENOBUFS;
+pub const UV_ENODEV = -uv.UV_ENODEV;
+pub const UV_ENOENT = -uv.UV_ENOENT;
+pub const UV_ENOMEM = -uv.UV_ENOMEM;
+pub const UV_ENONET = -uv.UV_ENONET;
+pub const UV_ENOSPC = -uv.UV_ENOSPC;
+pub const UV_ENOSYS = -uv.UV_ENOSYS;
+pub const UV_ENOTCONN = -uv.UV_ENOTCONN;
+pub const UV_ENOTDIR = -uv.UV_ENOTDIR;
+pub const UV_ENOTEMPTY = -uv.UV_ENOTEMPTY;
+pub const UV_ENOTSOCK = -uv.UV_ENOTSOCK;
+pub const UV_ENOTSUP = -uv.UV_ENOTSUP;
+pub const UV_EPERM = -uv.UV_EPERM;
+pub const UV_EPIPE = -uv.UV_EPIPE;
+pub const UV_EPROTO = -uv.UV_EPROTO;
+pub const UV_EPROTONOSUPPORT = -uv.UV_EPROTONOSUPPORT;
+pub const UV_EPROTOTYPE = -uv.UV_EPROTOTYPE;
+pub const UV_EROFS = -uv.UV_EROFS;
+pub const UV_ESHUTDOWN = -uv.UV_ESHUTDOWN;
+pub const UV_ESPIPE = -uv.UV_ESPIPE;
+pub const UV_ESRCH = -uv.UV_ESRCH;
+pub const UV_ETIMEDOUT = -uv.UV_ETIMEDOUT;
+pub const UV_ETXTBSY = -uv.UV_ETXTBSY;
+pub const UV_EXDEV = -uv.UV_EXDEV;
+pub const UV_EFBIG = -uv.UV_EFBIG;
+pub const UV_ENOPROTOOPT = -uv.UV_ENOPROTOOPT;
+pub const UV_ERANGE = -uv.UV_ERANGE;
+pub const UV_ENXIO = -uv.UV_ENXIO;
+pub const UV_EMLINK = -uv.UV_EMLINK;
+pub const UV_EHOSTDOWN = -uv.UV_EHOSTDOWN;
+pub const UV_EREMOTEIO = -uv.UV_EREMOTEIO;
+pub const UV_ENOTTY = -uv.UV_ENOTTY;
+pub const UV_EFTYPE = -uv.UV_EFTYPE;
+pub const UV_EILSEQ = -uv.UV_EILSEQ;
+pub const UV_EOVERFLOW = -uv.UV_EOVERFLOW;
+pub const UV_ESOCKTNOSUPPORT = -uv.UV_ESOCKTNOSUPPORT;
+pub const UV_ENODATA = -uv.UV_ENODATA;
+pub const UV_EUNATCH = -uv.UV_EUNATCH;
 
 pub const off_t = i64;
 pub fn preallocate_file(_: posix.fd_t, _: off_t, _: off_t) !void {}
@@ -1100,7 +1063,7 @@ pub const E = enum(u16) {
     HWPOISON = 133,
     UNKNOWN = 134,
     CHARSET = 135,
-    OF = 136,
+    EOF = 136,
 
     UV_E2BIG = -uv.UV_E2BIG,
     UV_EACCES = -uv.UV_EACCES,
@@ -1250,6 +1213,9 @@ pub fn getErrno(_: anytype) E {
         return sys.toE();
     }
 
+    if (bun.windows.WSAGetLastError()) |wsa| {
+        return wsa.toE();
+    }
     return .SUCCESS;
 }
 
@@ -1273,18 +1239,22 @@ pub fn renameAtW(
         switch (bun.sys.openFileAtWindows(
             old_dir_fd,
             old_path_w,
-            w.SYNCHRONIZE | w.GENERIC_WRITE | w.DELETE | w.FILE_TRAVERSE,
-            w.FILE_OPEN,
-            w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+            .{
+                .access_mask = w.SYNCHRONIZE | w.GENERIC_WRITE | w.DELETE | w.FILE_TRAVERSE,
+                .disposition = w.FILE_OPEN,
+                .options = w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+            },
         )) {
             .err => {
                 // retry, wtihout FILE_TRAVERSE flag
                 switch (bun.sys.openFileAtWindows(
                     old_dir_fd,
                     old_path_w,
-                    w.SYNCHRONIZE | w.GENERIC_WRITE | w.DELETE,
-                    w.FILE_OPEN,
-                    w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+                    .{
+                        .access_mask = w.SYNCHRONIZE | w.GENERIC_WRITE | w.DELETE,
+                        .disposition = w.FILE_OPEN,
+                        .options = w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+                    },
                 )) {
                     .err => |err2| return .{ .err = err2 },
                     .result => |fd| break :brk fd,

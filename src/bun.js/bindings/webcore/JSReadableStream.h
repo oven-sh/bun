@@ -57,6 +57,11 @@ public:
 
     int nativeType() const { return this->m_nativeType; }
     bool disturbed() const { return this->m_disturbed; }
+    bool isNativeTypeTransferred() const { return this->m_transferred; }
+    void setTransferred()
+    {
+        this->m_transferred = true;
+    }
     JSC::JSValue nativePtr()
     {
         return this->m_nativePtr.get();
@@ -80,6 +85,7 @@ protected:
     mutable JSC::WriteBarrier<JSC::Unknown> m_nativePtr;
     int m_nativeType { 0 };
     bool m_disturbed = false;
+    bool m_transferred = false;
 
     JSReadableStream(JSC::Structure*, JSDOMGlobalObject&);
 

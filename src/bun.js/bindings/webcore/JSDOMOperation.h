@@ -79,4 +79,7 @@ JSC::JSObject* createNotEnoughArgumentsErrorBun(JSGlobalObject* globalObject);
 #define createNotEnoughArgumentsError WebCore::createNotEnoughArgumentsErrorBun
 #endif
 
+void throwNodeRangeError(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, ASCIILiteral message);
+void throwNodeRangeError(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, const String& message);
+
 } // namespace WebCore

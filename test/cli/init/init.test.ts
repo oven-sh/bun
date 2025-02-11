@@ -1,7 +1,7 @@
+import { expect, test } from "bun:test";
 import fs from "fs";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import path from "path";
-import { bunExe, bunEnv, tmpdirSync } from "harness";
-import { test, expect } from "bun:test";
 
 test("bun init works", () => {
   const temp = tmpdirSync();

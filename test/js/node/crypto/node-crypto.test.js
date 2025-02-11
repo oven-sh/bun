@@ -1,8 +1,8 @@
-import { it, expect, describe } from "bun:test";
+import { describe, expect, it } from "bun:test";
 
 import crypto from "node:crypto";
-import util from "node:util";
 import { PassThrough, Readable } from "node:stream";
+import util from "node:util";
 
 it("crypto.randomBytes should return a Buffer", () => {
   expect(crypto.randomBytes(1) instanceof Buffer).toBe(true);
@@ -439,7 +439,7 @@ describe("createHash", () => {
 
   it("repeated calls doesnt segfault", () => {
     function fn() {
-      crypto.createHash("sha1").update(Math.random(), "ascii").digest("base64");
+      crypto.createHash("sha1").update(Math.random().toString(), "ascii").digest("base64");
     }
 
     for (let i = 0; i < 10; i++) fn();
@@ -478,6 +478,27 @@ describe("createHash", () => {
     copy.update("world");
     expect(copy.digest("hex")).toBe(hash.digest("hex"));
   });
+
+  it("uses the Transform options object", () => {
+    const hasher = crypto.createHash("sha256", { defaultEncoding: "binary" });
+    hasher.on("readable", () => {
+      const data = hasher.read();
+      if (data) {
+        expect(data.toString("hex")).toBe("4d4d75d742863ab9656f3d5f76dff8589c3922e95a24ea6812157ffe4aaa3b6b");
+      }
+    });
+    const stream = Readable.from("ï");
+    stream.pipe(hasher);
+  });
+});
+
+describe("Hash", () => {
+  it("should have correct method names", () => {
+    const hash = crypto.createHash("sha256");
+    expect(hash.update.name).toBe("update");
+    expect(hash.digest.name).toBe("digest");
+    expect(hash.copy.name).toBe("copy");
+  });
 });
 
 it("crypto.createHmac", () => {
@@ -514,4 +535,107 @@ it("createDecipheriv should validate iv and password", () => {
   expect(() => crypto.createDecipheriv("aes-128-cbc", key, null).setAutoPadding(false)).toThrow();
   expect(() => crypto.createDecipheriv("aes-128-cbc", key).setAutoPadding(false)).toThrow();
   expect(() => crypto.createDecipheriv("aes-128-cbc", key, Buffer.alloc(16)).setAutoPadding(false)).not.toThrow();
+});
+
+it("x25519", () => {
+  // Generate Alice's keys
+  const alice = crypto.generateKeyPairSync("x25519", {
+    publicKeyEncoding: {
+      type: "spki",
+      format: "der",
+    },
+    privateKeyEncoding: {
+      type: "pkcs8",
+      format: "der",
+    },
+  });
+
+  // Generate Bob's keys
+  const bob = crypto.generateKeyPairSync("x25519", {
+    publicKeyEncoding: {
+      type: "spki",
+      format: "der",
+    },
+    privateKeyEncoding: {
+      type: "pkcs8",
+      format: "der",
+    },
+  });
+
+  // Convert keys to KeyObjects before DH computation
+  const alicePrivateKey = crypto.createPrivateKey({
+    key: alice.privateKey,
+    format: "der",
+    type: "pkcs8",
+  });
+
+  const bobPublicKey = crypto.createPublicKey({
+    key: bob.publicKey,
+    format: "der",
+    type: "spki",
+  });
+
+  const bobPrivateKey = crypto.createPrivateKey({
+    key: bob.privateKey,
+    format: "der",
+    type: "pkcs8",
+  });
+
+  const alicePublicKey = crypto.createPublicKey({
+    key: alice.publicKey,
+    format: "der",
+    type: "spki",
+  });
+
+  // Compute shared secrets using KeyObjects
+  const aliceSecret = crypto.diffieHellman({
+    privateKey: alicePrivateKey,
+    publicKey: bobPublicKey,
+  });
+
+  const bobSecret = crypto.diffieHellman({
+    privateKey: bobPrivateKey,
+    publicKey: alicePublicKey,
+  });
+
+  // Verify both parties computed the same secret
+  expect(aliceSecret).toEqual(bobSecret);
+  expect(aliceSecret.length).toBe(32);
+
+  // Verify valid key generation
+  expect(() => {
+    crypto.generateKeyPairSync("x25519", {
+      publicKeyEncoding: {
+        type: "spki",
+        format: "der",
+      },
+      privateKeyEncoding: {
+        type: "pkcs8",
+        format: "der",
+      },
+    });
+  }).not.toThrow();
+
+  // Test invalid keys - need to create proper KeyObjects even for invalid cases
+  expect(() => {
+    crypto.diffieHellman({
+      privateKey: crypto.createPrivateKey({
+        key: Buffer.from("invalid"),
+        format: "der",
+        type: "pkcs8",
+      }),
+      publicKey: bobPublicKey,
+    });
+  }).toThrow();
+
+  expect(() => {
+    crypto.diffieHellman({
+      privateKey: bobPrivateKey,
+      publicKey: crypto.createPublicKey({
+        key: Buffer.from("invalid"),
+        format: "der",
+        type: "spki",
+      }),
+    });
+  }).toThrow();
 });

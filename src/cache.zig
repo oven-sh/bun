@@ -20,7 +20,6 @@ const Define = @import("./defines.zig").Define;
 const std = @import("std");
 const fs = @import("./fs.zig");
 const sync = @import("sync.zig");
-const Mutex = @import("./lock.zig").Lock;
 
 const import_record = @import("./import_record.zig");
 
@@ -46,10 +45,28 @@ const debug = Output.scoped(.fs, false);
 pub const Fs = struct {
     pub const Entry = struct {
         contents: string,
-        fd: StoredFileDescriptorType = bun.invalid_fd,
+        fd: StoredFileDescriptorType,
+        /// When `contents` comes from a native plugin, this field is populated
+        /// with information on how to free it.
+        external_free_function: ExternalFreeFunction = .none,
+
+        pub const ExternalFreeFunction = struct {
+            ctx: ?*anyopaque,
+            function: ?*const fn (?*anyopaque) callconv(.C) void,
+
+            pub const none: ExternalFreeFunction = .{ .ctx = null, .function = null };
+
+            pub fn call(this: *const @This()) void {
+                if (this.function) |func| {
+                    func(this.ctx);
+                }
+            }
+        };
 
         pub fn deinit(entry: *Entry, allocator: std.mem.Allocator) void {
-            if (entry.contents.len > 0) {
+            if (entry.external_free_function.function) |func| {
+                func(entry.external_free_function.ctx);
+            } else if (entry.contents.len > 0) {
                 allocator.free(entry.contents);
                 entry.contents = "";
             }
@@ -294,12 +311,12 @@ pub const Json = struct {
     pub fn init(_: std.mem.Allocator) Json {
         return Json{};
     }
-    fn parse(_: *@This(), log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator, comptime func: anytype) anyerror!?js_ast.Expr {
+    fn parse(_: *@This(), log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator, comptime func: anytype, comptime force_utf8: bool) anyerror!?js_ast.Expr {
         var temp_log = logger.Log.init(allocator);
         defer {
             temp_log.appendToMaybeRecycled(log, &source) catch {};
         }
-        return func(&source, &temp_log, allocator) catch handler: {
+        return func(&source, &temp_log, allocator, force_utf8) catch handler: {
             break :handler null;
         };
     }
@@ -308,17 +325,17 @@ pub const Json = struct {
         // They are JSON files with comments and trailing commas.
         // Sometimes tooling expects this to work.
         if (source.path.isJSONCFile()) {
-            return try parse(cache, log, source, allocator, json_parser.ParseTSConfig);
+            return try parse(cache, log, source, allocator, json_parser.parseTSConfig, true);
         }
 
-        return try parse(cache, log, source, allocator, json_parser.ParseJSON);
+        return try parse(cache, log, source, allocator, json_parser.parse, false);
     }
 
-    pub fn parsePackageJSON(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) anyerror!?js_ast.Expr {
-        return try parse(cache, log, source, allocator, json_parser.ParseTSConfig);
+    pub fn parsePackageJSON(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator, comptime force_utf8: bool) anyerror!?js_ast.Expr {
+        return try parse(cache, log, source, allocator, json_parser.parseTSConfig, force_utf8);
     }
 
     pub fn parseTSConfig(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) anyerror!?js_ast.Expr {
-        return try parse(cache, log, source, allocator, json_parser.ParseTSConfig);
+        return try parse(cache, log, source, allocator, json_parser.parseTSConfig, true);
     }
 };

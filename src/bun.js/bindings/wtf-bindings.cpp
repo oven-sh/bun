@@ -1,11 +1,12 @@
 #include "root.h"
 #include "wtf-bindings.h"
-
+#include <wtf/StackBounds.h>
+#include <wtf/StackCheck.h>
 #include <wtf/StackTrace.h>
 #include <wtf/dtoa.h>
 #include <atomic>
 
-#include "simdutf.h"
+#include "wtf/SIMDUTF.h"
 #if OS(WINDOWS)
 #include <uv.h>
 #endif
@@ -195,13 +196,10 @@ String base64URLEncodeToString(Vector<uint8_t> data)
     if (!encodedLength)
         return String();
 
-    LChar* ptr;
+    std::span<LChar> ptr;
     auto result = String::createUninitialized(encodedLength, ptr);
-    if (UNLIKELY(!ptr)) {
-        RELEASE_ASSERT_NOT_REACHED();
-        return String();
-    }
-    encodedLength = WTF__base64URLEncode(reinterpret_cast<const char*>(data.data()), data.size(), reinterpret_cast<char*>(ptr), encodedLength);
+
+    encodedLength = WTF__base64URLEncode(reinterpret_cast<const char*>(data.data()), data.size(), reinterpret_cast<char*>(ptr.data()), encodedLength);
     if (result.length() != encodedLength) {
         return result.substringSharingImpl(0, encodedLength);
     }
@@ -217,9 +215,9 @@ size_t toISOString(JSC::VM& vm, double date, char in[64])
     GregorianDateTime gregorianDateTime;
     vm.dateCache.msToGregorianDateTime(date, WTF::TimeType::UTCTime, gregorianDateTime);
 
-    // Maximum amount of space we need in buffer: 7 (max. digits in year) + 2 * 5 (2 characters each for month, day, hour, minute, second) + 4 (. + 3 digits for milliseconds)
-    // 6 for formatting and one for null termination = 28. We add one extra character to allow us to force null termination.
-    char buffer[28];
+    // Maximum amount of space we need in buffer: 8 (max. digits in year) + 2 * 5 (2 characters each for month, day, hour, minute, second) + 4 (. + 3 digits for milliseconds)
+    // 6 for formatting and one for null termination = 29.
+    char buffer[29];
     // If the year is outside the bounds of 0 and 9999 inclusive we want to use the extended year format (ES 15.9.1.15.1).
     int ms = static_cast<int>(fmod(date, msPerSecond));
     if (ms < 0)
@@ -238,6 +236,18 @@ size_t toISOString(JSC::VM& vm, double date, char in[64])
         return 0;
 
     return charactersWritten;
+}
+
+static thread_local WTF::StackBounds stackBoundsForCurrentThread = WTF::StackBounds::emptyBounds();
+
+extern "C" void Bun__StackCheck__initialize()
+{
+    stackBoundsForCurrentThread = WTF::StackBounds::currentThreadStackBounds();
+}
+
+extern "C" void* Bun__StackCheck__getMaxStack()
+{
+    return stackBoundsForCurrentThread.end();
 }
 
 }

@@ -1,6 +1,10 @@
 #pragma once
 #include "wtf/Compiler.h"
 #include "wtf/text/OrdinalNumber.h"
+#include "JavaScriptCore/JSCJSValue.h"
+#include "JavaScriptCore/ArgList.h"
+#include <set>
+
 #ifndef HEADERS_HANDWRITTEN
 #define HEADERS_HANDWRITTEN
 typedef uint16_t ZigErrorCode;
@@ -65,6 +69,8 @@ typedef struct BunString {
     // It's only truly zero-copy if it was already a WTFStringImpl (which it is if it came from JS and we didn't use ZigString)
     WTF::String toWTFString(ZeroCopyTag) const;
 
+    WTF::String transferToWTFString();
+
     // This one usually will clone the raw bytes.
     WTF::String toWTFString() const;
 
@@ -94,14 +100,15 @@ typedef struct ResolvedSource {
     BunString specifier;
     BunString source_code;
     BunString source_url;
-    ZigString* commonJSExports;
-    uint32_t commonJSExportsLen;
+    bool isCommonJSModule;
     uint32_t hash;
     void* allocator;
     JSC::EncodedJSValue jsvalue_for_export;
     uint32_t tag;
     bool needsDeref;
     bool already_bundled;
+    uint8_t* bytecode_cache;
+    size_t bytecode_cache_size;
 } ResolvedSource;
 static const uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
@@ -119,7 +126,9 @@ typedef struct SystemError {
     BunString message;
     BunString path;
     BunString syscall;
+    BunString hostname;
     int fd;
+    BunString dest;
 } SystemError;
 
 typedef void* ArrayBufferSink;
@@ -138,6 +147,9 @@ const ZigStackFrameCode ZigStackFrameCodeFunction = 3;
 const ZigStackFrameCode ZigStackFrameCodeGlobal = 4;
 const ZigStackFrameCode ZigStackFrameCodeWasm = 5;
 const ZigStackFrameCode ZigStackFrameCodeConstructor = 6;
+
+extern "C" void __attribute((__noreturn__)) Bun__panic(const char* message, size_t length);
+#define BUN_PANIC(message) Bun__panic(message, sizeof(message) - 1)
 
 typedef struct ZigStackFramePosition {
     int32_t line_zero_based;
@@ -169,14 +181,15 @@ typedef struct ZigStackTrace {
     uint8_t source_lines_to_collect;
     ZigStackFrame* frames_ptr;
     uint8_t frames_len;
+    JSC::SourceProvider* referenced_source_provider;
 } ZigStackTrace;
 
 typedef struct ZigException {
-    unsigned char code;
+    unsigned char type;
     uint16_t runtime_type;
     int errno_;
     BunString syscall;
-    BunString code_;
+    BunString system_code;
     BunString path;
     BunString name;
     BunString message;
@@ -295,9 +308,9 @@ using Uint8Array_alias = JSC::JSUint8Array;
 
 typedef struct {
     char* ptr;
-    uint32_t offset;
-    uint32_t len;
-    uint32_t byte_len;
+    size_t offset;
+    size_t len;
+    size_t byte_len;
     uint8_t cell_type;
     int64_t _value;
     bool shared;
@@ -326,8 +339,8 @@ extern "C" JSC::EncodedJSValue Bun__runVirtualModule(
 extern "C" JSC::JSInternalPromise* Bun__transpileFile(
     void* bunVM,
     JSC::JSGlobalObject* global,
-    const BunString* specifier,
-    const BunString* referrer,
+    BunString* specifier,
+    BunString* referrer,
     const BunString* typeAttribute,
     ErrorableResolvedSource* result, bool allowPromise);
 
@@ -340,6 +353,7 @@ extern "C" bool Bun__fetchBuiltinModule(
 
 // Used in process.version
 extern "C" const char* Bun__version;
+extern "C" const char* Bun__version_with_sha;
 
 // Used in process.versions
 extern "C" const char* Bun__versions_boringssl;
@@ -348,6 +362,7 @@ extern "C" const char* Bun__versions_mimalloc;
 extern "C" const char* Bun__versions_picohttpparser;
 extern "C" const char* Bun__versions_uws;
 extern "C" const char* Bun__versions_webkit;
+extern "C" const char* Bun__versions_libdeflate;
 extern "C" const char* Bun__versions_zig;
 extern "C" const char* Bun__versions_zlib;
 extern "C" const char* Bun__versions_tinycc;
@@ -370,13 +385,55 @@ extern "C" size_t Bun__encoding__byteLengthUTF16(const UChar* ptr, size_t len, E
 extern "C" int64_t Bun__encoding__constructFromLatin1(void*, const unsigned char* ptr, size_t len, Encoding encoding);
 extern "C" int64_t Bun__encoding__constructFromUTF16(void*, const UChar* ptr, size_t len, Encoding encoding);
 
+/// @note throws a JS exception and returns false if a stack overflow occurs
 template<bool isStrict, bool enableAsymmetricMatchers>
 bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, JSC::MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSC::ThrowScope* scope, bool addToStack);
 
+/**
+ * @brief `Bun.deepMatch(a, b)`
+ *
+ * `object` and `subset` must be objects. In the future we should change the
+ * signature of this function to only take `JSC::JSCell`. For now, panics
+ * if either `object` or `subset` are not `JSCCell`.
+ *
+ * @note
+ * The sets recording already visited properties (`seenObjProperties` and
+ * `seenSubsetProperties`) aren not needed when both `enableAsymmetricMatchers`
+ * and `isMatchingObjectContaining` are true. In this case, it is safe to pass a
+ * `nullptr`.
+ *
+ * `gcBuffer` ensures JSC's stack scan does not come up empty-handed and free
+ * properties currently within those stacks. Likely unnecessary, but better to
+ * be safe tnan sorry
+ *
+ *
+ * @tparam enableAsymmetricMatchers
+ * @param objValue
+ * @param seenObjProperties already visited properties of `objValue`.
+ * @param subsetValue
+ * @param seenSubsetProperties already visited properties of `subsetValue`.
+ * @param globalObject
+ * @param Scope
+ * @param gcBuffer
+ * @param replacePropsWithAsymmetricMatchers
+ * @param isMatchingObjectContaining
+ *
+ * @return true
+ * @return false
+ */
 template<bool enableAsymmetricMatchers>
-bool Bun__deepMatch(JSC::JSValue object, JSC::JSValue subset, JSC::JSGlobalObject* globalObject, JSC::ThrowScope* throwScope, bool replacePropsWithAsymmetricMatchers, bool isMatchingObjectContaining);
+bool Bun__deepMatch(
+    JSC::JSValue object,
+    std::set<JSC::EncodedJSValue>* seenObjProperties,
+    JSC::JSValue subset,
+    std::set<JSC::EncodedJSValue>* seenSubsetProperties,
+    JSC::JSGlobalObject* globalObject,
+    JSC::ThrowScope* throwScope,
+    JSC::MarkedArgumentBuffer* gcBuffer,
+    bool replacePropsWithAsymmetricMatchers,
+    bool isMatchingObjectContaining);
 
-extern "C" void Bun__remapStackFramePositions(JSC::JSGlobalObject*, ZigStackFrame*, size_t);
+extern "C" void Bun__remapStackFramePositions(void*, ZigStackFrame*, size_t);
 
 namespace Inspector {
 class ScriptArguments;

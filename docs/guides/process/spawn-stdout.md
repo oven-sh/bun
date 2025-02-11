@@ -2,7 +2,7 @@
 name: Read stdout from a child process
 ---
 
-When using [`Bun.spawn()`](/docs/api/spawn), the `stdout` of the child process can be consumed as a `ReadableStream` via `proc.stdout`.
+When using [`Bun.spawn()`](https://bun.sh/docs/api/spawn), the `stdout` of the child process can be consumed as a `ReadableStream` via `proc.stdout`.
 
 ```ts
 const proc = Bun.spawn(["echo", "hello"]);
@@ -23,4 +23,4 @@ const proc = Bun.spawn(["echo", "hello"], {
 
 ---
 
-See [Docs > API > Child processes](/docs/api/spawn) for complete documentation.
+See [Docs > API > Child processes](https://bun.sh/docs/api/spawn) for complete documentation.

@@ -1,5 +1,5 @@
+import { bunEnv, bunExe } from "harness";
 import path from "path";
-import { bunExe, bunEnv } from "harness";
 
 test("works with prompts", async () => {
   var child = Bun.spawn({
@@ -9,7 +9,11 @@ test("works with prompts", async () => {
     stdin: "pipe",
   });
 
-  await Bun.sleep(100);
+  const reader = child.stdout.getReader();
+
+  await reader.read();
+  reader.releaseLock();
+
   child.stdin.write("dylan\n");
   await Bun.sleep(100);
   child.stdin.write("999\n");

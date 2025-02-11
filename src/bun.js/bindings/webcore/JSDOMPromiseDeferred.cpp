@@ -38,6 +38,8 @@
 #include <JavaScriptCore/JSONObject.h>
 #include <JavaScriptCore/JSPromiseConstructor.h>
 #include <JavaScriptCore/Strong.h>
+#include "ErrorCode.h"
+#include "JavaScriptCore/ErrorInstance.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -241,7 +243,7 @@ JSC::EncodedJSValue createRejectedPromiseWithTypeError(JSC::JSGlobalObject& lexi
     auto promiseConstructor = globalObject.promiseConstructor();
     auto rejectFunction = promiseConstructor->get(&lexicalGlobalObject, vm.propertyNames->builtinNames().rejectPrivateName());
     RETURN_IF_EXCEPTION(scope, {});
-    auto* rejectionValue = static_cast<ErrorInstance*>(createTypeError(&lexicalGlobalObject, errorMessage));
+    ErrorInstance* rejectionValue = static_cast<ErrorInstance*>(cause == RejectedPromiseWithTypeErrorCause::InvalidThis ? Bun::createInvalidThisError(&lexicalGlobalObject, errorMessage) : createTypeError(&lexicalGlobalObject, errorMessage));
     if (cause == RejectedPromiseWithTypeErrorCause::NativeGetter)
         rejectionValue->setNativeGetterTypeError();
 

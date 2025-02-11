@@ -25,19 +25,18 @@ const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
-const bundler = bun.bundler;
 
 const fs = @import("../fs.zig");
 const URL = @import("../url.zig").URL;
 const HTTP = bun.http;
-const ParseJSON = @import("../json_parser.zig").ParseJSONUTF8;
+const JSON = bun.JSON;
 const Archive = @import("../libarchive/libarchive.zig").Archive;
 const Zlib = @import("../zlib.zig");
 const JSPrinter = bun.js_printer;
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
 const clap = bun.clap;
-const Lock = @import("../lock.zig").Lock;
+const Lock = bun.Mutex;
 const Headers = bun.http.Headers;
 const CopyFile = @import("../copy_file.zig");
 
@@ -45,8 +44,8 @@ pub var initialized_store = false;
 pub fn initializeStore() void {
     if (initialized_store) return;
     initialized_store = true;
-    js_ast.Expr.Data.Store.create(default_allocator);
-    js_ast.Stmt.Data.Store.create(default_allocator);
+    js_ast.Expr.Data.Store.create();
+    js_ast.Stmt.Data.Store.create();
 }
 
 pub const Version = struct {
@@ -87,7 +86,9 @@ pub const Version = struct {
 
     pub const arch_label = if (Environment.isAarch64) "aarch64" else "x64";
     pub const triplet = platform_label ++ "-" ++ arch_label;
-    const suffix = if (Environment.baseline) "-baseline" else "";
+    const suffix_abi = if (Environment.isMusl) "-musl" else "";
+    const suffix_cpu = if (Environment.baseline) "-baseline" else "";
+    const suffix = suffix_abi ++ suffix_cpu;
     pub const folder_name = "bun-" ++ triplet ++ suffix;
     pub const baseline_folder_name = "bun-" ++ triplet ++ "-baseline";
     pub const zip_filename = folder_name ++ ".zip";
@@ -133,7 +134,7 @@ pub const UpgradeCheckerThread = struct {
         std.time.sleep(std.time.ns_per_ms * delay);
 
         Output.Source.configureThread();
-        HTTP.HTTPThread.init();
+        HTTP.HTTPThread.init(&.{});
 
         defer {
             js_ast.Expr.Data.Store.deinit();
@@ -163,7 +164,6 @@ pub const UpgradeCheckerThread = struct {
 };
 
 pub const UpgradeCommand = struct {
-    pub const timeout: u32 = 30000;
     const default_github_headers: string = "Acceptapplication/vnd.github.v3+json";
     var github_repository_url_buf: bun.PathBuffer = undefined;
     var current_executable_buf: bun.PathBuffer = undefined;
@@ -186,10 +186,10 @@ pub const UpgradeCommand = struct {
             }
         }
 
-        var header_entries: Headers.Entries = .{};
-        const accept = Headers.Kv{
-            .name = Api.StringPointer{ .offset = 0, .length = @as(u32, @intCast("Accept".len)) },
-            .value = Api.StringPointer{ .offset = @as(u32, @intCast("Accept".len)), .length = @as(u32, @intCast("application/vnd.github.v3+json".len)) },
+        var header_entries: Headers.Entry.List = .empty;
+        const accept = Headers.Entry{
+            .name = .{ .offset = 0, .length = @intCast("Accept".len) },
+            .value = .{ .offset = @intCast("Accept".len), .length = @intCast("application/vnd.github.v3+json".len) },
         };
         try header_entries.append(allocator, accept);
         defer if (comptime silent) header_entries.deinit(allocator);
@@ -217,21 +217,21 @@ pub const UpgradeCommand = struct {
                 headers_buf = try std.fmt.allocPrint(allocator, default_github_headers ++ "AuthorizationBearer {s}", .{access_token});
                 try header_entries.append(
                     allocator,
-                    Headers.Kv{
-                        .name = Api.StringPointer{
+                    .{
+                        .name = .{
                             .offset = accept.value.offset + accept.value.length,
-                            .length = @as(u32, @intCast("Authorization".len)),
+                            .length = @intCast("Authorization".len),
                         },
-                        .value = Api.StringPointer{
-                            .offset = @as(u32, @intCast(accept.value.offset + accept.value.length + "Authorization".len)),
-                            .length = @as(u32, @intCast("Bearer ".len + access_token.len)),
+                        .value = .{
+                            .offset = @intCast(accept.value.offset + accept.value.length + "Authorization".len),
+                            .length = @intCast("Bearer ".len + access_token.len),
                         },
                     },
                 );
             }
         }
 
-        const http_proxy: ?URL = env_loader.getHttpProxy(api_url);
+        const http_proxy: ?URL = env_loader.getHttpProxyFor(api_url);
 
         var metadata_body = try MutableString.init(allocator, 2048);
 
@@ -245,15 +245,14 @@ pub const UpgradeCommand = struct {
             headers_buf,
             &metadata_body,
             "",
-            60 * std.time.ns_per_min,
             http_proxy,
             null,
             HTTP.FetchRedirect.follow,
         );
-        async_http.client.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
+        async_http.client.flags.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
 
         if (!silent) async_http.client.progress_node = progress.?;
-        const response = try async_http.sendSync(true);
+        const response = try async_http.sendSync();
 
         switch (response.status_code) {
             404 => return error.HTTP404,
@@ -268,17 +267,13 @@ pub const UpgradeCommand = struct {
         defer if (comptime silent) log.deinit();
         var source = logger.Source.initPathString("releases.json", metadata_body.list.items);
         initializeStore();
-        var expr = ParseJSON(&source, &log, allocator) catch |err| {
+        var expr = JSON.parseUTF8(&source, &log, allocator) catch |err| {
             if (!silent) {
                 progress.?.end();
                 refresher.?.refresh();
 
                 if (log.errors > 0) {
-                    if (Output.enable_ansi_colors) {
-                        try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
-                    } else {
-                        try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
-                    }
+                    try log.print(Output.errorWriter());
 
                     Global.exit(1);
                 } else {
@@ -295,11 +290,7 @@ pub const UpgradeCommand = struct {
                 progress.?.end();
                 refresher.?.refresh();
 
-                if (Output.enable_ansi_colors) {
-                    try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
-                } else {
-                    try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
-                }
+                try log.print(Output.errorWriter());
                 Global.exit(1);
             }
 
@@ -409,7 +400,7 @@ pub const UpgradeCommand = struct {
     };
 
     pub fn exec(ctx: Command.Context) !void {
-        @setCold(true);
+        @branchHint(.cold);
 
         const args = bun.argv;
         if (args.len > 2) {
@@ -442,7 +433,7 @@ pub const UpgradeCommand = struct {
     }
 
     fn _exec(ctx: Command.Context) !void {
-        HTTP.HTTPThread.init();
+        HTTP.HTTPThread.init(&.{});
 
         var filesystem = try fs.FileSystem.init(null);
         var env_loader: DotEnv.Loader = brk: {
@@ -465,7 +456,7 @@ pub const UpgradeCommand = struct {
 
         const use_profile = strings.containsAny(bun.argv, "--profile");
 
-        const version: Version = if (!use_canary) v: {
+        var version: Version = if (!use_canary) v: {
             var refresher = Progress{};
             var progress = refresher.start("Fetching version tags", 0);
 
@@ -510,7 +501,7 @@ pub const UpgradeCommand = struct {
         };
 
         const zip_url = URL.parse(version.zip_url);
-        const http_proxy: ?URL = env_loader.getHttpProxy(zip_url);
+        const http_proxy: ?URL = env_loader.getHttpProxyFor(zip_url);
 
         {
             var refresher = Progress{};
@@ -528,16 +519,14 @@ pub const UpgradeCommand = struct {
                 "",
                 zip_file_buffer,
                 "",
-                timeout,
                 http_proxy,
                 null,
                 HTTP.FetchRedirect.follow,
             );
-            async_http.client.timeout = timeout;
             async_http.client.progress_node = progress;
-            async_http.client.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
+            async_http.client.flags.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
 
-            const response = try async_http.sendSync(true);
+            const response = try async_http.sendSync();
 
             switch (response.status_code) {
                 404 => {
@@ -563,7 +552,7 @@ pub const UpgradeCommand = struct {
                 else => return error.HTTPError,
             }
 
-            const bytes = zip_file_buffer.toOwnedSliceLeaky();
+            const bytes = zip_file_buffer.slice();
 
             progress.end();
             refresher.refresh();
@@ -592,7 +581,7 @@ pub const UpgradeCommand = struct {
 
             tmpdir_path_buf[tmpdir_path.len] = 0;
             const tmpdir_z = tmpdir_path_buf[0..tmpdir_path.len :0];
-            _ = bun.sys.chdir(tmpdir_z);
+            _ = bun.sys.chdir("", tmpdir_z);
 
             const tmpname = "bun.zip";
             const exe =
@@ -656,10 +645,10 @@ pub const UpgradeCommand = struct {
                     // Run a powershell script to unzip the file
                     const unzip_script = try std.fmt.allocPrint(
                         ctx.allocator,
-                        "$global:ProgressPreference='SilentlyContinue';Expand-Archive -Path {s} {s} -Force",
+                        "$global:ProgressPreference='SilentlyContinue';Expand-Archive -Path \"{}\" \"{}\" -Force",
                         .{
-                            tmpname,
-                            tmpdir_path,
+                            bun.fmt.escapePowershell(tmpname),
+                            bun.fmt.escapePowershell(tmpdir_path),
                         },
                     );
 
@@ -697,7 +686,7 @@ pub const UpgradeCommand = struct {
 
                         .windows = if (Environment.isWindows) .{
                             .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
-                        } else {},
+                        },
                     }) catch |err| {
                         Output.prettyErrorln("<r><red>error:<r> Failed to spawn Expand-Archive on {s} due to error {s}", .{ tmpname, @errorName(err) });
                         Global.exit(1);
@@ -710,7 +699,7 @@ pub const UpgradeCommand = struct {
             {
                 var verify_argv = [_]string{
                     exe,
-                    "--version",
+                    if (use_canary) "--revision" else "--version",
                 };
 
                 const result = std.process.Child.run(.{
@@ -756,7 +745,12 @@ pub const UpgradeCommand = struct {
 
                 // It should run successfully
                 // but we don't care about the version number if we're doing a canary build
-                if (!use_canary) {
+                if (use_canary) {
+                    var version_string = result.stdout;
+                    if (strings.indexOfChar(version_string, '+')) |i| {
+                        version.tag = version_string[i + 1 .. version_string.len];
+                    }
+                } else {
                     var version_string = result.stdout;
                     if (strings.indexOfChar(version_string, ' ')) |i| {
                         version_string = version_string[0..i];
@@ -936,10 +930,10 @@ pub const UpgradeCommand = struct {
                     \\
                     \\Changelog:
                     \\
-                    \\    https://github.com/oven-sh/bun/compare/{s}...main
+                    \\    https://github.com/oven-sh/bun/compare/{s}...{s}
                     \\
                 ,
-                    .{Environment.git_sha},
+                    .{ Environment.git_sha_short, version.tag },
                 );
             } else {
                 const bun_v = "bun-v" ++ Global.package_json_version;
@@ -1000,13 +994,13 @@ pub const upgrade_js_bindings = struct {
 
     /// For testing upgrades when the temp directory has an open handle without FILE_SHARE_DELETE.
     /// Windows only
-    pub fn jsOpenTempDirWithoutSharingDelete(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSC.JSValue {
+    pub fn jsOpenTempDirWithoutSharingDelete(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!bun.JSC.JSValue {
         if (comptime !Environment.isWindows) return .undefined;
         const w = std.os.windows;
 
         var buf: bun.WPathBuffer = undefined;
         const tmpdir_path = fs.FileSystem.RealFS.getDefaultTempDir();
-        const path = switch (bun.sys.normalizePathWindows(u8, bun.invalid_fd, tmpdir_path, &buf)) {
+        const path = switch (bun.sys.normalizePathWindows(u8, bun.invalid_fd, tmpdir_path, &buf, .{})) {
             .err => return .undefined,
             .result => |norm| norm,
         };
@@ -1054,7 +1048,7 @@ pub const upgrade_js_bindings = struct {
         return .undefined;
     }
 
-    pub fn jsCloseTempDirHandle(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+    pub fn jsCloseTempDirHandle(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         if (comptime !Environment.isWindows) return .undefined;
 
         if (tempdir_fd) |fd| {

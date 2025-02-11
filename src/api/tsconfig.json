@@ -1,6 +1,0 @@
-{
-  "compilerOptions": {
-    "moduleResolution": "node"
-  },
-  "include": ["./node_modules/peechy", "./schema.d.ts"]
-}

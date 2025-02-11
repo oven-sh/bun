@@ -1,5 +1,5 @@
 // This mostly exists to check for a memory leak in response.clone()
-import { bench, run } from "./runner.mjs";
+import { bench, run } from "../runner.mjs";
 
 const req = new Request("http://localhost:3000/");
 const resp = await fetch("http://example.com");

@@ -78,21 +78,7 @@ declare module "bun:jsc" {
    */
   function setTimeZone(timeZone: string): string;
 
-  /**
-   * Run JavaScriptCore's sampling profiler for a particular function
-   *
-   * This is pretty low-level.
-   *
-   * Things to know:
-   * - LLint means "Low Level Interpreter", which is the interpreter that runs before any JIT compilation
-   * - Baseline is the first JIT compilation tier. It's the least optimized, but the fastest to compile
-   * - DFG means "Data Flow Graph", which is the second JIT compilation tier. It has some optimizations, but is slower to compile
-   * - FTL means "Faster Than Light", which is the third JIT compilation tier. It has the most optimizations, but is the slowest to compile
-   */
-  function profile(
-    callback: CallableFunction,
-    sampleInterval?: number,
-  ): {
+  interface SamplingProfile {
     /**
      * A formatted summary of the top functions
      *
@@ -183,7 +169,24 @@ declare module "bun:jsc" {
      * Stack traces of the top functions
      */
     stackTraces: string[];
-  };
+  }
+
+  /**
+   * Run JavaScriptCore's sampling profiler for a particular function
+   *
+   * This is pretty low-level.
+   *
+   * Things to know:
+   * - LLint means "Low Level Interpreter", which is the interpreter that runs before any JIT compilation
+   * - Baseline is the first JIT compilation tier. It's the least optimized, but the fastest to compile
+   * - DFG means "Data Flow Graph", which is the second JIT compilation tier. It has some optimizations, but is slower to compile
+   * - FTL means "Faster Than Light", which is the third JIT compilation tier. It has the most optimizations, but is the slowest to compile
+   */
+  function profile<T extends (...args: any[]) => any>(
+    callback: T,
+    sampleInterval?: number,
+    ...args: Parameters<T>
+  ): ReturnType<T> extends Promise<infer U> ? Promise<SamplingProfile> : SamplingProfile;
 
   /**
    * This returns objects which native code has explicitly protected from being
@@ -211,4 +214,16 @@ declare module "bun:jsc" {
    * Run JavaScriptCore's sampling profiler
    */
   function startSamplingProfiler(optionalDirectory?: string): void;
+
+  /**
+   * Non-recursively estimate the memory usage of an object, excluding the memory usage of
+   * properties or other objects it references. For more accurate per-object
+   * memory usage, use {@link Bun.generateHeapSnapshot}.
+   *
+   * This is a best-effort estimate. It may not be 100% accurate. When it's
+   * wrong, it may mean the memory is non-contiguous (such as a large array).
+   *
+   * Passing a primitive type that isn't heap allocated returns 0.
+   */
+  function estimateShallowMemoryUsageOf(value: object | CallableFunction | bigint | symbol | string): number;
 }

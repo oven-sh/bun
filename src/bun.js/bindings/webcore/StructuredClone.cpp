@@ -41,7 +41,7 @@ enum class CloneMode {
 
 static JSC::EncodedJSValue cloneArrayBufferImpl(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, CloneMode mode)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
 
     ASSERT(lexicalGlobalObject);
     ASSERT(callFrame->argumentCount());
@@ -76,6 +76,10 @@ JSC_DEFINE_HOST_FUNCTION(structuredCloneForStream, (JSGlobalObject * globalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue value = callFrame->uncheckedArgument(0);
+
+    if (value.isPrimitive()) {
+        return JSValue::encode(value);
+    }
 
     if (value.inherits<JSArrayBuffer>())
         RELEASE_AND_RETURN(scope, cloneArrayBufferImpl(globalObject, callFrame, CloneMode::Full));

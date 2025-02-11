@@ -10,7 +10,7 @@ console.log("Lorem ipsum");
 
 ---
 
-For more advanced use cases, Bun exposes `stdout` as a `BunFile` via the `Bun.stdout` property. This can be used as a destination for [`Bun.write()`](/docs/api/file-io#writing-files-bun-write).
+For more advanced use cases, Bun exposes `stdout` as a `BunFile` via the `Bun.stdout` property. This can be used as a destination for [`Bun.write()`](https://bun.sh/docs/api/file-io#writing-files-bun-write).
 
 ```ts
 await Bun.write(Bun.stdout, "Lorem ipsum");
@@ -18,4 +18,4 @@ await Bun.write(Bun.stdout, "Lorem ipsum");
 
 ---
 
-See [Docs > API > File I/O](/docs/api/file-io#writing-files-bun-write) for complete documentation of `Bun.write()`.
+See [Docs > API > File I/O](https://bun.sh/docs/api/file-io#writing-files-bun-write) for complete documentation of `Bun.write()`.

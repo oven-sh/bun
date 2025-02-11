@@ -23,14 +23,15 @@ stderr_store: ?*Blob.Store = null,
 stdin_store: ?*Blob.Store = null,
 stdout_store: ?*Blob.Store = null,
 
+postgresql_context: JSC.Postgres.PostgresSQLContext = .{},
+
 entropy_cache: ?*EntropyCache = null,
 
 hot_map: ?HotMap = null,
 
 // TODO: make this per JSGlobalObject instead of global
 // This does not handle ShadowRealm correctly!
-tail_cleanup_hook: ?*CleanupHook = null,
-cleanup_hook: ?*CleanupHook = null,
+cleanup_hooks: std.ArrayListUnmanaged(CleanupHook) = .{},
 
 file_polls_: ?*Async.FilePoll.Store = null,
 
@@ -43,11 +44,64 @@ mime_types: ?bun.http.MimeType.Map = null,
 node_fs_stat_watcher_scheduler: ?*StatWatcherScheduler = null,
 
 listening_sockets_for_watch_mode: std.ArrayListUnmanaged(bun.FileDescriptor) = .{},
-listening_sockets_for_watch_mode_lock: bun.Lock = bun.Lock.init(),
+listening_sockets_for_watch_mode_lock: bun.Mutex = .{},
 
 temp_pipe_read_buffer: ?*PipeReadBuffer = null,
 
+aws_signature_cache: AWSSignatureCache = .{},
+
+s3_default_client: JSC.Strong = .{},
+
 const PipeReadBuffer = [256 * 1024]u8;
+const DIGESTED_HMAC_256_LEN = 32;
+pub const AWSSignatureCache = struct {
+    cache: bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8) = bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8).init(bun.default_allocator),
+    date: u64 = 0,
+    lock: bun.Mutex = .{},
+
+    pub fn clean(this: *@This()) void {
+        for (this.cache.keys()) |cached_key| {
+            bun.default_allocator.free(cached_key);
+        }
+        this.cache.clearRetainingCapacity();
+    }
+
+    pub fn get(this: *@This(), numeric_day: u64, key: []const u8) ?[]const u8 {
+        this.lock.lock();
+        defer this.lock.unlock();
+        if (this.date == 0) {
+            return null;
+        }
+        if (this.date == numeric_day) {
+            if (this.cache.getKey(key)) |cached| {
+                return cached;
+            }
+        }
+        return null;
+    }
+
+    pub fn set(this: *@This(), numeric_day: u64, key: []const u8, value: [DIGESTED_HMAC_256_LEN]u8) void {
+        this.lock.lock();
+        defer this.lock.unlock();
+        if (this.date == 0) {
+            this.cache = bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8).init(bun.default_allocator);
+        } else if (this.date != numeric_day) {
+            // day changed so we clean the old cache
+            this.clean();
+        }
+        this.date = numeric_day;
+        this.cache.put(bun.default_allocator.dupe(u8, key) catch bun.outOfMemory(), value) catch bun.outOfMemory();
+    }
+    pub fn deinit(this: *@This()) void {
+        this.date = 0;
+        this.clean();
+        this.cache.deinit();
+    }
+};
+
+pub fn awsCache(this: *RareData) *AWSSignatureCache {
+    return &this.aws_signature_cache;
+}
 
 pub fn pipeReadBuffer(this: *RareData) *PipeReadBuffer {
     return this.temp_pipe_read_buffer orelse {
@@ -154,7 +208,7 @@ pub const HotMap = struct {
 pub fn filePolls(this: *RareData, vm: *JSC.VirtualMachine) *Async.FilePoll.Store {
     return this.file_polls_ orelse {
         this.file_polls_ = vm.allocator.create(Async.FilePoll.Store) catch unreachable;
-        this.file_polls_.?.* = Async.FilePoll.Store.init(vm.allocator);
+        this.file_polls_.?.* = Async.FilePoll.Store.init();
         return this.file_polls_.?;
     };
 }
@@ -218,7 +272,6 @@ pub const EntropyCache = struct {
 };
 
 pub const CleanupHook = struct {
-    next: ?*CleanupHook = null,
     ctx: ?*anyopaque,
     func: Function,
     globalThis: *JSC.JSGlobalObject,
@@ -231,13 +284,12 @@ pub const CleanupHook = struct {
         self.func(self.ctx);
     }
 
-    pub fn from(
+    pub fn init(
         globalThis: *JSC.JSGlobalObject,
         ctx: ?*anyopaque,
         func: CleanupHook.Function,
     ) CleanupHook {
         return .{
-            .next = null,
             .ctx = ctx,
             .func = func,
             .globalThis = globalThis,
@@ -253,14 +305,7 @@ pub fn pushCleanupHook(
     ctx: ?*anyopaque,
     func: CleanupHook.Function,
 ) void {
-    const hook = JSC.VirtualMachine.get().allocator.create(CleanupHook) catch unreachable;
-    hook.* = CleanupHook.from(globalThis, ctx, func);
-    if (this.cleanup_hook == null) {
-        this.cleanup_hook = hook;
-        this.tail_cleanup_hook = hook;
-    } else {
-        this.cleanup_hook.?.next = hook;
-    }
+    this.cleanup_hooks.append(bun.default_allocator, CleanupHook.init(globalThis, ctx, func)) catch bun.outOfMemory();
 }
 
 pub fn boringEngine(rare: *RareData) *BoringSSL.ENGINE {
@@ -362,6 +407,28 @@ pub fn stdin(rare: *RareData) *Blob.Store {
     };
 }
 
+const StdinFdType = enum(i32) {
+    file = 0,
+    pipe = 1,
+    socket = 2,
+};
+
+pub export fn Bun__Process__getStdinFdType(vm: *JSC.VirtualMachine, fd: i32) StdinFdType {
+    const mode = switch (fd) {
+        0 => vm.rareData().stdin().data.file.mode,
+        1 => vm.rareData().stdout().data.file.mode,
+        2 => vm.rareData().stderr().data.file.mode,
+        else => unreachable,
+    };
+    if (bun.S.ISFIFO(mode)) {
+        return .pipe;
+    } else if (bun.S.ISSOCK(mode)) {
+        return .socket;
+    } else {
+        return .file;
+    }
+}
+
 const Subprocess = @import("./api/bun/subprocess.zig").Subprocess;
 
 pub fn spawnIPCContext(rare: *RareData, vm: *JSC.VirtualMachine) *uws.SocketContext {
@@ -379,6 +446,7 @@ pub fn spawnIPCContext(rare: *RareData, vm: *JSC.VirtualMachine) *uws.SocketCont
 pub fn globalDNSResolver(rare: *RareData, vm: *JSC.VirtualMachine) *JSC.DNS.DNSResolver {
     if (rare.global_dns_data == null) {
         rare.global_dns_data = JSC.DNS.GlobalData.init(vm.allocator, vm);
+        rare.global_dns_data.?.resolver.ref(); // live forever
     }
 
     return &rare.global_dns_data.?.resolver;
@@ -389,4 +457,38 @@ pub fn nodeFSStatWatcherScheduler(rare: *RareData, vm: *JSC.VirtualMachine) *Sta
         rare.node_fs_stat_watcher_scheduler = StatWatcherScheduler.init(vm.allocator, vm);
         return rare.node_fs_stat_watcher_scheduler.?;
     };
+}
+
+pub fn s3DefaultClient(rare: *RareData, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+    return rare.s3_default_client.get() orelse {
+        const vm = globalThis.bunVM();
+        var aws_options = bun.S3.S3Credentials.getCredentialsWithOptions(vm.transpiler.env.getS3Credentials(), .{}, null, null, null, globalThis) catch bun.outOfMemory();
+        defer aws_options.deinit();
+        const client = JSC.WebCore.S3Client.new(.{
+            .credentials = aws_options.credentials.dupe(),
+            .options = aws_options.options,
+            .acl = aws_options.acl,
+            .storage_class = aws_options.storage_class,
+        });
+        const js_client = client.toJS(globalThis);
+        js_client.ensureStillAlive();
+        rare.s3_default_client = JSC.Strong.create(js_client, globalThis);
+        return js_client;
+    };
+}
+
+pub fn deinit(this: *RareData) void {
+    if (this.temp_pipe_read_buffer) |pipe| {
+        this.temp_pipe_read_buffer = null;
+        bun.default_allocator.destroy(pipe);
+    }
+
+    this.aws_signature_cache.deinit();
+
+    this.s3_default_client.deinit();
+    if (this.boring_ssl_engine) |engine| {
+        _ = bun.BoringSSL.ENGINE_free(engine);
+    }
+
+    this.cleanup_hooks.clearAndFree(bun.default_allocator);
 }

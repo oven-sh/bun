@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeAll } from "bun:test";
-import { spawn, execSync } from "node:child_process";
-import { bunExe, bunEnv } from "harness";
+import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
+import { execSync, spawn } from "node:child_process";
 
 const CHILD_PROCESS_FILE = import.meta.dir + "/spawned-child.js";
 const OUT_FILE = import.meta.dir + "/stdio-test-out.txt";
@@ -25,7 +25,7 @@ describe("process.stdout", () => {
 
 describe("process.stdin", () => {
   it("should allow us to read from stdin in readable mode", done => {
-    const input = "hello\n";
+    const input = "hello there\n";
     // Child should read from stdin and write it back
     const child = spawn(bunExe(), [CHILD_PROCESS_FILE, "STDIN", "READABLE"], {
       env: bunEnv,

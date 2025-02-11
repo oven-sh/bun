@@ -43,8 +43,6 @@ else if (Environment.isDebug)
     std.fmt.comptimePrint(version_string ++ "-debug+{s}", .{Environment.git_sha_short})
 else if (Environment.is_canary)
     std.fmt.comptimePrint(version_string ++ "-canary.{d}+{s}", .{ Environment.canary_revision, Environment.git_sha_short })
-else if (Environment.isTest)
-    std.fmt.comptimePrint(version_string ++ "-test+{s}", .{Environment.git_sha_short})
 else
     std.fmt.comptimePrint(version_string ++ "+{s}", .{Environment.git_sha_short});
 
@@ -68,7 +66,6 @@ else
     "unknown";
 
 pub inline fn getStartTime() i128 {
-    if (Environment.isTest) return 0;
     return bun.start_time;
 }
 
@@ -101,11 +98,6 @@ pub fn runExitCallbacks() void {
     on_exit_callbacks.items.len = 0;
 }
 
-/// Flushes stdout and stderr and exits with the given code.
-pub fn exit(code: u8) noreturn {
-    exitWide(@as(u32, code));
-}
-
 var is_exiting = std.atomic.Value(bool).init(false);
 export fn bun_is_exiting() c_int {
     return @intFromBool(isExiting());
@@ -114,36 +106,42 @@ pub fn isExiting() bool {
     return is_exiting.load(.monotonic);
 }
 
-pub fn exitWide(code: u32) noreturn {
+/// Flushes stdout and stderr (in exit/quick_exit callback) and exits with the given code.
+pub fn exit(code: u32) noreturn {
     is_exiting.store(true, .monotonic);
 
-    if (comptime Environment.isMac) {
-        std.c.exit(@bitCast(code));
+    // If we are crashing, allow the crash handler to finish it's work.
+    bun.crash_handler.sleepForeverIfAnotherThreadIsCrashing();
+
+    switch (Environment.os) {
+        .mac => std.c.exit(@bitCast(code)),
+        .windows => {
+            Bun__onExit();
+            std.os.windows.kernel32.ExitProcess(code);
+        },
+        else => bun.C.quick_exit(@bitCast(code)),
     }
-    bun.C.quick_exit(@bitCast(code));
 }
 
-pub fn raiseIgnoringPanicHandler(sig: anytype) noreturn {
-    if (comptime @TypeOf(sig) == bun.SignalCode) {
-        return raiseIgnoringPanicHandler(@intFromEnum(sig));
-    }
-
+pub fn raiseIgnoringPanicHandler(sig: bun.SignalCode) noreturn {
     Output.flush();
-
-    if (!Environment.isWindows) {
-        if (sig >= 1 and sig != std.posix.SIG.STOP and sig != std.posix.SIG.KILL) {
-            const act = std.posix.Sigaction{
-                .handler = .{ .sigaction = @ptrCast(@alignCast(std.posix.SIG.DFL)) },
-                .mask = std.posix.empty_sigset,
-                .flags = 0,
-            };
-            std.posix.sigaction(@intCast(sig), &act, null) catch {};
-        }
-    }
-
     Output.Source.Stdio.restore();
 
-    _ = std.c.raise(sig);
+    // clear segfault handler
+    bun.crash_handler.resetSegfaultHandler();
+
+    // clear signal handler
+    if (bun.Environment.os != .windows) {
+        var sa: std.c.Sigaction = .{
+            .handler = .{ .handler = std.posix.SIG.DFL },
+            .mask = std.posix.empty_sigset,
+            .flags = std.posix.SA.RESETHAND,
+        };
+        _ = std.c.sigaction(@intFromEnum(sig), &sa, null);
+    }
+
+    // kill self
+    _ = std.c.raise(@intFromEnum(sig));
     std.c.abort();
 }
 
@@ -171,16 +169,14 @@ pub inline fn configureAllocator(_: AllocatorConfiguration) void {
     // if (!config.long_running) Mimalloc.mi_option_set(Mimalloc.mi_option_reset_delay, 0);
 }
 
-pub const panic = Output.panic; // deprecated
-
 pub fn notimpl() noreturn {
-    @setCold(true);
-    Global.panic("Not implemented yet!!!!!", .{});
+    @branchHint(.cold);
+    Output.panic("Not implemented yet!!!!!", .{});
 }
 
 // Make sure we always print any leftover
 pub fn crash() noreturn {
-    @setCold(true);
+    @branchHint(.cold);
     Global.exit(1);
 }
 
@@ -190,22 +186,15 @@ const string = bun.string;
 pub const BunInfo = struct {
     bun_version: string,
     platform: Analytics.GenerateHeader.GeneratePlatform.Platform,
-    framework: string = "",
-    framework_version: string = "",
 
     const Analytics = @import("./analytics/analytics_thread.zig");
     const JSON = bun.JSON;
     const JSAst = bun.JSAst;
-    pub fn generate(comptime Bundler: type, bundler: Bundler, allocator: std.mem.Allocator) !JSAst.Expr {
-        var info = BunInfo{
+    pub fn generate(comptime Bundler: type, _: Bundler, allocator: std.mem.Allocator) !JSAst.Expr {
+        const info = BunInfo{
             .bun_version = Global.package_json_version,
             .platform = Analytics.GenerateHeader.GeneratePlatform.forOS(),
         };
-
-        if (bundler.options.framework) |framework| {
-            info.framework = framework.package;
-            info.framework_version = framework.version;
-        }
 
         return try JSON.toAST(allocator, BunInfo, info);
     }

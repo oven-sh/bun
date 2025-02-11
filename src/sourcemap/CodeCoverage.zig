@@ -242,11 +242,11 @@ pub const CodeCoverageReport = struct {
             // FNH: functions hit
             try writer.print("FNH:{d}\n", .{report.functions_which_have_executed.count()});
 
-            var executable_lines_that_have_been_executed = report.lines_which_have_executed.clone(bun.default_allocator) catch bun.outOfMemory();
-            defer executable_lines_that_have_been_executed.deinit(bun.default_allocator);
-            // This sets statements in executed scopes
-            executable_lines_that_have_been_executed.setIntersection(report.executable_lines);
-            var iter = executable_lines_that_have_been_executed.iterator(.{});
+            // ** Track all executable lines **
+            // Executable lines that were not hit should be marked as 0
+            var executable_lines = report.executable_lines.clone(bun.default_allocator) catch bun.outOfMemory();
+            defer executable_lines.deinit(bun.default_allocator);
+            var iter = executable_lines.iterator(.{});
 
             // ** Branch coverage not supported yet, since JSC does not support those yet. ** //
             // BRDA: line, block, (expressions,count)+
@@ -262,7 +262,7 @@ pub const CodeCoverageReport = struct {
             try writer.print("LF:{d}\n", .{report.total_lines});
 
             // LH: lines hit
-            try writer.print("LH:{d}\n", .{executable_lines_that_have_been_executed.count()});
+            try writer.print("LH:{d}\n", .{report.lines_which_have_executed.count()});
 
             try writer.writeAll("end_of_record\n");
         }
@@ -673,8 +673,7 @@ pub const ByteRangeMapping = struct {
         var url_slice = source_url.toUTF8(bun.default_allocator);
         defer url_slice.deinit();
         var report = this.generateReportFromBlocks(bun.default_allocator, url_slice, blocks, function_blocks, ignore_sourcemap) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
+            return globalThis.throwOutOfMemoryValue();
         };
         defer report.deinit(bun.default_allocator);
 
@@ -686,18 +685,14 @@ pub const ByteRangeMapping = struct {
         var writer = buffered_writer.writer();
 
         CodeCoverageReport.Text.writeFormat(&report, source_url.utf8ByteLength(), &coverage_fraction, "", &writer, false) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
+            return globalThis.throwOutOfMemoryValue();
         };
 
         buffered_writer.flush() catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
+            return globalThis.throwOutOfMemoryValue();
         };
 
-        var str = bun.String.createUTF8(mutable_str.toOwnedSliceLeaky());
-        defer str.deref();
-        return str.toJS(globalThis);
+        return bun.String.createUTF8ForJS(globalThis, mutable_str.slice());
     }
 
     pub fn compute(source_contents: []const u8, source_id: i32, source_url: bun.JSC.ZigString.Slice) ByteRangeMapping {
@@ -711,10 +706,10 @@ pub const ByteRangeMapping = struct {
 
 comptime {
     if (bun.Environment.isNative) {
-        @export(ByteRangeMapping.generate, .{ .name = "ByteRangeMapping__generate" });
-        @export(ByteRangeMapping.findExecutedLines, .{ .name = "ByteRangeMapping__findExecutedLines" });
-        @export(ByteRangeMapping.find, .{ .name = "ByteRangeMapping__find" });
-        @export(ByteRangeMapping.getSourceID, .{ .name = "ByteRangeMapping__getSourceID" });
+        @export(&ByteRangeMapping.generate, .{ .name = "ByteRangeMapping__generate" });
+        @export(&ByteRangeMapping.findExecutedLines, .{ .name = "ByteRangeMapping__findExecutedLines" });
+        @export(&ByteRangeMapping.find, .{ .name = "ByteRangeMapping__find" });
+        @export(&ByteRangeMapping.getSourceID, .{ .name = "ByteRangeMapping__getSourceID" });
     }
 }
 

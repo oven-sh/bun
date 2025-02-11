@@ -1,4 +1,4 @@
-import { it, expect, describe } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { tmpdirSync } from "harness";
 import { join } from "path";
 import util from "util";
@@ -147,7 +147,6 @@ it("utf16 property name", () => {
         笑: "😀",
       },
     ],
-    null,
     2,
   );
   expect(Bun.inspect(db.prepare("select '😀' as 笑").all())).toBe(output);
@@ -226,7 +225,9 @@ it("TypedArray prints", () => {
     expect(input).toBe(`${TypedArray.name}(${buffer.length}) [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ]`);
     for (let i = 1; i < buffer.length + 1; i++) {
       expect(Bun.inspect(buffer.subarray(i))).toBe(
-        `${TypedArray.name}(${buffer.length - i}) [ ` + [...buffer.subarray(i)].join(", ") + " ]",
+        buffer.length - i === 0
+          ? `${TypedArray.name}(${buffer.length - i}) []`
+          : `${TypedArray.name}(${buffer.length - i}) [ ` + [...buffer.subarray(i)].join(", ") + " ]",
       );
     }
   }
@@ -240,9 +241,11 @@ it("BigIntArray", () => {
     expect(input).toBe(`${TypedArray.name}(${buffer.length}) [ 1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n, 10n ]`);
     for (let i = 1; i < buffer.length + 1; i++) {
       expect(Bun.inspect(buffer.subarray(i))).toBe(
-        `${TypedArray.name}(${buffer.length - i}) [ ` +
-          [...buffer.subarray(i)].map(a => a.toString(10) + "n").join(", ") +
-          " ]",
+        buffer.length - i === 0
+          ? `${TypedArray.name}(${buffer.length - i}) []`
+          : `${TypedArray.name}(${buffer.length - i}) [ ` +
+              [...buffer.subarray(i)].map(a => a.toString(10) + "n").join(", ") +
+              " ]",
       );
     }
   }
@@ -256,7 +259,9 @@ for (let TypedArray of [Float32Array, Float64Array]) {
     expect(input).toBe(`${TypedArray.name}(${buffer.length}) [ ${[Math.fround(42.68)].join(", ")} ]`);
     for (let i = 1; i < buffer.length + 1; i++) {
       expect(Bun.inspect(buffer.subarray(i))).toBe(
-        `${TypedArray.name}(${buffer.length - i}) [ ` + [...buffer.subarray(i)].join(", ") + " ]",
+        buffer.length - i === 0
+          ? `${TypedArray.name}(${buffer.length - i}) []`
+          : `${TypedArray.name}(${buffer.length - i}) [ ` + [...buffer.subarray(i)].join(", ") + " ]",
       );
     }
   });
@@ -270,7 +275,9 @@ for (let TypedArray of [Float32Array, Float64Array]) {
     );
     for (let i = 1; i < buffer.length + 1; i++) {
       expect(Bun.inspect(buffer.subarray(i))).toBe(
-        `${TypedArray.name}(${buffer.length - i}) [ ` + [...buffer.subarray(i)].join(", ") + " ]",
+        buffer.length - i === 0
+          ? `${TypedArray.name}(${buffer.length - i}) []`
+          : `${TypedArray.name}(${buffer.length - i}) [ ` + [...buffer.subarray(i)].join(", ") + " ]",
       );
     }
   });
@@ -526,13 +533,22 @@ it("Bun.inspect array with non-indexed properties", () => {
 });
 
 describe("console.logging function displays async and generator names", async () => {
-  const cases = [function a() {}, async function b() {}, function* c() {}, async function* d() {}];
+  const cases = [
+    function () {},
+    function a() {},
+    async function b() {},
+    function* c() {},
+    async function* d() {},
+    async function* () {},
+  ];
 
   const expected_logs = [
+    "[Function]",
     "[Function: a]",
     "[AsyncFunction: b]",
     "[GeneratorFunction: c]",
     "[AsyncGeneratorFunction: d]",
+    "[AsyncGeneratorFunction]",
   ];
 
   for (let i = 0; i < cases.length; i++) {
@@ -540,4 +556,54 @@ describe("console.logging function displays async and generator names", async ()
       expect(Bun.inspect(cases[i])).toBe(expected_logs[i]);
     });
   }
+});
+describe("console.logging class displays names and extends", async () => {
+  class A {}
+  const cases = [A, class B extends A {}, class extends A {}, class {}];
+
+  const expected_logs = ["[class A]", "[class B extends A]", "[class (anonymous) extends A]", "[class (anonymous)]"];
+
+  for (let i = 0; i < cases.length; i++) {
+    it(expected_logs[i], () => {
+      expect(Bun.inspect(cases[i])).toBe(expected_logs[i]);
+    });
+  }
+});
+
+it("console.log on a Blob shows name", () => {
+  const blob = new Blob(["foo"], { type: "text/plain" });
+  expect(Bun.inspect(blob)).toBe('Blob (3 bytes) {\n  type: "text/plain;charset=utf-8"\n}');
+  blob.name = "bar";
+  expect(Bun.inspect(blob)).toBe('Blob (3 bytes) {\n  name: "bar",\n  type: "text/plain;charset=utf-8"\n}');
+  blob.name = "foobar";
+  expect(Bun.inspect(blob)).toBe('Blob (3 bytes) {\n  name: "foobar",\n  type: "text/plain;charset=utf-8"\n}');
+
+  const file = new File(["foo"], "bar.txt", { type: "text/plain" });
+  expect(Bun.inspect(file)).toBe(
+    `File (3 bytes) {\n  name: "bar.txt",\n  type: "text/plain;charset=utf-8",\n  lastModified: ${file.lastModified}\n}`,
+  );
+  file.name = "foobar";
+  expect(Bun.inspect(file)).toBe(
+    `File (3 bytes) {\n  name: "foobar",\n  type: "text/plain;charset=utf-8",\n  lastModified: ${file.lastModified}\n}`,
+  );
+  file.name = "";
+  expect(Bun.inspect(file)).toBe(
+    `File (3 bytes) {\n  name: "",\n  type: "text/plain;charset=utf-8",\n  lastModified: ${file.lastModified}\n}`,
+  );
+});
+
+it("console.log on a arguments shows list", () => {
+  function fn() {
+    expect(Bun.inspect(arguments)).toBe(`[ 1, [ 1 ], [Function: fn] ]`);
+  }
+  fn(1, [1], fn);
+});
+
+it("console.log on null prototype", () => {
+  expect(Bun.inspect(Object.create(null))).toBe("[Object: null prototype] {}");
+});
+
+it("Symbol", () => {
+  expect(Bun.inspect(Symbol())).toBe("Symbol()");
+  expect(Bun.inspect(Symbol(""))).toBe("Symbol()");
 });

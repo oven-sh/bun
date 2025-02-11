@@ -38,7 +38,7 @@ using namespace JSC;
 
 template<> CryptoHmacKeyAlgorithm convertDictionary<CryptoHmacKeyAlgorithm>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
-    VM& vm = JSC::getVM(&lexicalGlobalObject);
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     bool isNullOrUndefined = value.isUndefinedOrNull();
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
@@ -51,7 +51,7 @@ template<> CryptoHmacKeyAlgorithm convertDictionary<CryptoHmacKeyAlgorithm>(JSGl
     if (isNullOrUndefined)
         nameValue = jsUndefined();
     else {
-        nameValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "name"_s));
+        nameValue = object->get(&lexicalGlobalObject, vm.propertyNames->name);
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!nameValue.isUndefined()) {
@@ -101,13 +101,13 @@ JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, J
 
     auto nameValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, dictionary.name);
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, JSC::Identifier::fromString(vm, "name"_s), nameValue);
+    result->putDirect(vm, vm.propertyNames->name, nameValue);
     auto hashValue = toJS<IDLDictionary<CryptoKeyAlgorithm>>(lexicalGlobalObject, globalObject, throwScope, dictionary.hash);
     RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, JSC::Identifier::fromString(vm, "hash"_s), hashValue);
     auto lengthValue = toJS<IDLUnsignedLong>(lexicalGlobalObject, throwScope, dictionary.length);
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, JSC::Identifier::fromString(vm, "length"_s), lengthValue);
+    result->putDirect(vm, vm.propertyNames->length, lengthValue);
     return result;
 }
 

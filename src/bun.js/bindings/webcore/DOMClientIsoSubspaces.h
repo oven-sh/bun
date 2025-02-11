@@ -44,10 +44,23 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMockWithImplementationCleanupData;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForProcessObject;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForInternalModuleRegistry;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForErrorCodeCache;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBunInspectorConnection;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSNextTickQueue;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNAPIFunction;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTTYWrapObject;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiHandleScopeImpl;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiTypeTag;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForObjectTemplate;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForInternalFieldObject;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForV8GlobalInternals;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForHandleScopeBuffer;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFunctionTemplate;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForV8Function;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeVMGlobalObject;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSS3Bucket;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSS3File;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSX509Certificate;
 #include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
     /* --- bun --- */
 
@@ -475,10 +488,10 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForStaticRange;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForText;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextDecoder;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextDecoderStream;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextDecoderStream;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextDecoderStreamDecoder;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextEncoder;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextEncoderStream;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextEncoderStream;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextEncoderStreamEncoder;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTransitionEvent;
@@ -689,9 +702,9 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceObserver;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceObserverEntryList;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformancePaintTiming;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceResourceTiming;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceServerTiming;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceTiming;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceResourceTiming;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceServerTiming;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForRemoteDOMWindow;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForResizeObserver;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForResizeObserverEntry;
@@ -897,6 +910,8 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForXPathNSResolver;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForXPathResult;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForXSLTProcessor;
+
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBakeGlobalScope;
 
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForAbortController;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForAbortSignal;

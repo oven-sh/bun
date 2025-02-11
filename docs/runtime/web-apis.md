@@ -7,22 +7,37 @@ The following Web APIs are partially or completely supported.
 ---
 
 - HTTP
-- [`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/fetch) [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response) [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request) [`Headers`](https://developer.mozilla.org/en-US/docs/Web/API/Headers) [`AbortController`](https://developer.mozilla.org/en-US/docs/Web/API/AbortController) [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal)
+- [`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/fetch)
+  [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response)
+  [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request)
+  [`Headers`](https://developer.mozilla.org/en-US/docs/Web/API/Headers)
+  [`AbortController`](https://developer.mozilla.org/en-US/docs/Web/API/AbortController)
+  [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal)
 
 ---
 
 - URLs
-- [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) [`URLSearchParams`](https://developer.mozilla.org/en-US/docs/Web/API/URLSearchParams)
+- [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL)
+  [`URLSearchParams`](https://developer.mozilla.org/en-US/docs/Web/API/URLSearchParams)
 
 ---
 
 - Web Workers
-- [`Worker`](https://developer.mozilla.org/en-US/docs/Web/API/Worker) [`self.postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/DedicatedWorkerGlobalScope/postMessage) [`structuredClone`](https://developer.mozilla.org/en-US/docs/Web/API/structuredClone) [`MessagePort`](https://developer.mozilla.org/en-US/docs/Web/API/MessagePort) [`MessageChannel`](https://developer.mozilla.org/en-US/docs/Web/API/MessageChannel), [`BroadcastChannel`](https://developer.mozilla.org/en-US/docs/Web/API/BroadcastChannel).
+- [`Worker`](https://developer.mozilla.org/en-US/docs/Web/API/Worker)
+  [`self.postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/DedicatedWorkerGlobalScope/postMessage)
+  [`structuredClone`](https://developer.mozilla.org/en-US/docs/Web/API/structuredClone)
+  [`MessagePort`](https://developer.mozilla.org/en-US/docs/Web/API/MessagePort)
+  [`MessageChannel`](https://developer.mozilla.org/en-US/docs/Web/API/MessageChannel)
+  [`BroadcastChannel`](https://developer.mozilla.org/en-US/docs/Web/API/BroadcastChannel).
 
 ---
 
 - Streams
-- [`ReadableStream`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream) [`WritableStream`](https://developer.mozilla.org/en-US/docs/Web/API/WritableStream) [`TransformStream`](https://developer.mozilla.org/en-US/docs/Web/API/TransformStream) [`ByteLengthQueuingStrategy`](https://developer.mozilla.org/en-US/docs/Web/API/ByteLengthQueuingStrategy) [`CountQueuingStrategy`](https://developer.mozilla.org/en-US/docs/Web/API/CountQueuingStrategy) and associated classes
+- [`ReadableStream`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream)
+  [`WritableStream`](https://developer.mozilla.org/en-US/docs/Web/API/WritableStream)
+  [`TransformStream`](https://developer.mozilla.org/en-US/docs/Web/API/TransformStream)
+  [`ByteLengthQueuingStrategy`](https://developer.mozilla.org/en-US/docs/Web/API/ByteLengthQueuingStrategy)
+  [`CountQueuingStrategy`](https://developer.mozilla.org/en-US/docs/Web/API/CountQueuingStrategy) and associated classes
 
 ---
 
@@ -37,7 +52,10 @@ The following Web APIs are partially or completely supported.
 ---
 
 - Encoding and decoding
-- [`atob`](https://developer.mozilla.org/en-US/docs/Web/API/atob) [`btoa`](https://developer.mozilla.org/en-US/docs/Web/API/btoa) [`TextEncoder`](https://developer.mozilla.org/en-US/docs/Web/API/TextEncoder) [`TextDecoder`](https://developer.mozilla.org/en-US/docs/Web/API/TextDecoder)
+- [`atob`](https://developer.mozilla.org/en-US/docs/Web/API/atob)
+  [`btoa`](https://developer.mozilla.org/en-US/docs/Web/API/btoa)
+  [`TextEncoder`](https://developer.mozilla.org/en-US/docs/Web/API/TextEncoder)
+  [`TextDecoder`](https://developer.mozilla.org/en-US/docs/Web/API/TextDecoder)
 
 ---
 
@@ -47,24 +65,28 @@ The following Web APIs are partially or completely supported.
 ---
 
 - Timeouts
-- [`setTimeout`](https://developer.mozilla.org/en-US/docs/Web/API/setTimeout) [`clearTimeout`](https://developer.mozilla.org/en-US/docs/Web/API/clearTimeout)
+- [`setTimeout`](https://developer.mozilla.org/en-US/docs/Web/API/setTimeout)
+  [`clearTimeout`](https://developer.mozilla.org/en-US/docs/Web/API/clearTimeout)
 
 ---
 
 - Intervals
-- [`setInterval`](https://developer.mozilla.org/en-US/docs/Web/API/setInterval)[`clearInterval`](https://developer.mozilla.org/en-US/docs/Web/API/clearInterval)
+- [`setInterval`](https://developer.mozilla.org/en-US/docs/Web/API/setInterval)
+  [`clearInterval`](https://developer.mozilla.org/en-US/docs/Web/API/clearInterval)
 
 ---
 
 - Crypto
-- [`crypto`](https://developer.mozilla.org/en-US/docs/Web/API/Crypto) [`SubtleCrypto`](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto)
+- [`crypto`](https://developer.mozilla.org/en-US/docs/Web/API/Crypto)
+  [`SubtleCrypto`](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto)
   [`CryptoKey`](https://developer.mozilla.org/en-US/docs/Web/API/CryptoKey)
 
 ---
 
 - Debugging
 
-- [`console`](https://developer.mozilla.org/en-US/docs/Web/API/console) [`performance`](https://developer.mozilla.org/en-US/docs/Web/API/Performance)
+- [`console`](https://developer.mozilla.org/en-US/docs/Web/API/console)
+  [`performance`](https://developer.mozilla.org/en-US/docs/Web/API/Performance)
 
 ---
 
@@ -79,7 +101,9 @@ The following Web APIs are partially or completely supported.
 ---
 
 - User interaction
-- [`alert`](https://developer.mozilla.org/en-US/docs/Web/API/Window/alert) [`confirm`](https://developer.mozilla.org/en-US/docs/Web/API/Window/confirm) [`prompt`](https://developer.mozilla.org/en-US/docs/Web/API/Window/prompt) (intended for interactive CLIs)
+- [`alert`](https://developer.mozilla.org/en-US/docs/Web/API/Window/alert)
+  [`confirm`](https://developer.mozilla.org/en-US/docs/Web/API/Window/confirm)
+  [`prompt`](https://developer.mozilla.org/en-US/docs/Web/API/Window/prompt) (intended for interactive CLIs)
 
 <!-- - Blocking. Prints the alert message to terminal and awaits `[ENTER]` before proceeding. -->
 <!-- - Blocking. Prints confirmation message and awaits `[y/N]` input from user. Returns `true` if user entered `y` or `Y`, `false` otherwise.
@@ -94,7 +118,10 @@ The following Web APIs are partially or completely supported.
 
 - Events
 - [`EventTarget`](https://developer.mozilla.org/en-US/docs/Web/API/EventTarget)
-  [`Event`](https://developer.mozilla.org/en-US/docs/Web/API/Event) [`ErrorEvent`](https://developer.mozilla.org/en-US/docs/Web/API/ErrorEvent) [`CloseEvent`](https://developer.mozilla.org/en-US/docs/Web/API/CloseEvent) [`MessageEvent`](https://developer.mozilla.org/en-US/docs/Web/API/MessageEvent)
+  [`Event`](https://developer.mozilla.org/en-US/docs/Web/API/Event)
+  [`ErrorEvent`](https://developer.mozilla.org/en-US/docs/Web/API/ErrorEvent)
+  [`CloseEvent`](https://developer.mozilla.org/en-US/docs/Web/API/CloseEvent)
+  [`MessageEvent`](https://developer.mozilla.org/en-US/docs/Web/API/MessageEvent)
 
 ---
 

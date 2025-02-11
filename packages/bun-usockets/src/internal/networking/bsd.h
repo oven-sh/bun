@@ -17,6 +17,7 @@
 
 #ifndef BSD_H
 #define BSD_H
+#pragma once
 
 // top-most wrapper of bsd-like syscalls
 
@@ -34,7 +35,7 @@
 #pragma comment(lib, "ws2_32.lib")
 #define SETSOCKOPT_PTR_TYPE const char *
 #define LIBUS_SOCKET_ERROR INVALID_SOCKET
-#else
+#else /* POSIX */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
@@ -64,14 +65,76 @@ struct bsd_addr_t {
 #endif
 
 #ifdef __APPLE__
-// a.k.a msghdr_x
-struct mmsghdr { 
+/*
+ * Extended version for sendmsg_x() and recvmsg_x() calls
+ */
+struct mmsghdr {
     struct msghdr msg_hdr;
     size_t msg_len;	/* byte length of buffer in msg_iov */
 };
+/*
+ * recvmsg_x() is a system call similar to recvmsg(2) to receive
+ * several datagrams at once in the array of message headers "msgp".
+ *
+ * recvmsg_x() can be used only with protocols handlers that have been specially
+ * modified to support sending and receiving several datagrams at once.
+ *
+ * The size of the array "msgp" is given by the argument "cnt".
+ *
+ * The "flags" arguments supports only the value MSG_DONTWAIT.
+ *
+ * Each member of "msgp" array is of type "struct msghdr_x".
+ *
+ * The "msg_iov" and "msg_iovlen" are input parameters that describe where to
+ * store a datagram in a scatter gather locations of buffers -- see recvmsg(2).
+ * On output the field "msg_datalen" gives the length of the received datagram.
+ *
+ * The field "msg_flags" must be set to zero on input. On output, "msg_flags"
+ * may have MSG_TRUNC set to indicate the trailing portion of the datagram was
+ * discarded because the datagram was larger than the buffer supplied.
+ * recvmsg_x() returns as soon as a datagram is truncated.
+ *
+ * recvmsg_x() may return with less than "cnt" datagrams received based on
+ * the low water mark and the amount of data pending in the socket buffer.
+ *
+ * recvmsg_x() returns the number of datagrams that have been received,
+ * or -1 if an error occurred.
+ *
+ * NOTE: This a private system call, the API is subject to change.
+ */
+ssize_t recvmsg_x(int s, const struct mmsghdr *msgp, u_int cnt, int flags);
 
-ssize_t sendmsg_x(int s, struct mmsghdr *msgp, u_int cnt, int flags);
-ssize_t recvmsg_x(int s, struct mmsghdr *msgp, u_int cnt, int flags);
+/*
+ * sendmsg_x() is a system call similar to send(2) to send
+ * several datagrams at once in the array of message headers "msgp".
+ *
+ * sendmsg_x() can be used only with protocols handlers that have been specially
+ * modified to support sending and receiving several datagrams at once.
+ *
+ * The size of the array "msgp" is given by the argument "cnt".
+ *
+ * The "flags" arguments supports only the value MSG_DONTWAIT.
+ *
+ * Each member of "msgp" array is of type "struct msghdr_x".
+ *
+ * The "msg_iov" and "msg_iovlen" are input parameters that specify the
+ * data to be sent in a scatter gather locations of buffers -- see sendmsg(2).
+ *
+ * sendmsg_x() fails with EMSGSIZE if the sum of the length of the datagrams
+ * is greater than the high water mark.
+ *
+ * Address and ancillary data are not supported so the following fields
+ * must be set to zero on input:
+ *   "msg_name", "msg_namelen", "msg_control" and "msg_controllen".
+ *
+ * The field "msg_flags" and "msg_datalen" must be set to zero on input.
+ *
+ * sendmsg_x() returns the number of datagrams that have been sent,
+ * or -1 if an error occurred.
+ *
+ * NOTE: This a private system call, the API is subject to change.
+ */
+ssize_t sendmsg_x(int s, const struct mmsghdr *msgp, u_int cnt, int flags);
 #endif
 
 struct udp_recvbuf {
@@ -95,8 +158,9 @@ struct udp_sendbuf {
     void **addresses;
     int num;
 #else
-    int num;
-    char has_empty;
+    unsigned int has_empty : 1;
+    unsigned int has_addresses : 1;
+    unsigned int num;
     struct mmsghdr msgvec[];
 #endif
 };
@@ -114,8 +178,16 @@ int bsd_udp_packet_buffer_local_ip(struct udp_recvbuf *msgvec, int index, char *
 LIBUS_SOCKET_DESCRIPTOR apple_no_sigpipe(LIBUS_SOCKET_DESCRIPTOR fd);
 LIBUS_SOCKET_DESCRIPTOR bsd_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd);
 void bsd_socket_nodelay(LIBUS_SOCKET_DESCRIPTOR fd, int enabled);
+int bsd_socket_broadcast(LIBUS_SOCKET_DESCRIPTOR fd, int enabled);
+int bsd_socket_ttl_unicast(LIBUS_SOCKET_DESCRIPTOR fd, int ttl);
+int bsd_socket_ttl_multicast(LIBUS_SOCKET_DESCRIPTOR fd, int ttl);
+int bsd_socket_multicast_loopback(LIBUS_SOCKET_DESCRIPTOR fd, int enabled);
+int bsd_socket_multicast_interface(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_storage *addr);
+int bsd_socket_set_membership(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_storage *addr, const struct sockaddr_storage *iface, int drop);
+int bsd_socket_set_source_specific_membership(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_storage *source, const struct sockaddr_storage *group, const struct sockaddr_storage *iface, int drop);
+int bsd_socket_keepalive(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay);
 void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd);
-LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol);
+LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, int *err);
 
 void bsd_close_socket(LIBUS_SOCKET_DESCRIPTOR fd);
 void bsd_shutdown_socket(LIBUS_SOCKET_DESCRIPTOR fd);
@@ -141,12 +213,12 @@ int bsd_would_block();
 
 // return LIBUS_SOCKET_ERROR or the fd that represents listen socket
 // listen both on ipv6 and ipv4
-LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options);
+LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options, int* error);
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t pathlen, int options);
+LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t pathlen, int options, int* error);
 
 /* Creates an UDP socket bound to the hostname and port */
-LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port);
+LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int options, int *err);
 int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int port);
 int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd);
 

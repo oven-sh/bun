@@ -1,6 +1,6 @@
 Bun is an all-in-one toolkit for JavaScript and TypeScript apps. It ships as a single executable called `bun`.
 
-At its core is the _Bun runtime_, a fast JavaScript runtime designed as a drop-in replacement for Node.js. It's written in Zig and powered by JavaScriptCore under the hood, dramatically reducing startup times and memory usage.
+At its core is the _Bun runtime_, a fast JavaScript runtime designed as **a drop-in replacement for Node.js**. It's written in Zig and powered by JavaScriptCore under the hood, dramatically reducing startup times and memory usage.
 
 ```bash
 $ bun run index.tsx  # TS and JSX supported out of the box
@@ -15,10 +15,6 @@ $ bun build ./index.tsx         # bundle a project for browsers
 $ bun test                      # run tests
 $ bunx cowsay 'Hello, world!'   # execute a package
 ```
-
-{% callout type="note" %}
-**Bun is still under development.** Use it to speed up your development workflows or run simpler production code in resource-constrained environments like serverless functions. We're working on more complete Node.js compatibility and integration with existing frameworks. Join the [Discord](https://bun.sh/discord) and watch the [GitHub repository](https://github.com/oven-sh/bun) to keep tabs on future releases.
-{% /callout %}
 
 Get started with one of the quick links below, or read on to learn more about Bun.
 

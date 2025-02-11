@@ -1,4 +1,4 @@
-import { bench, run } from "./runner.mjs";
+import { bench, run } from "../runner.mjs";
 
 function doIt(...args) {
   // we use .at() to prevent constant folding optimizations

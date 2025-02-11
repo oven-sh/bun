@@ -1,6 +1,6 @@
 import { $ } from "bun";
-import { createTestBuilder, redirect } from "./util";
 import { shellInternals } from "bun:internal-for-testing";
+import { createTestBuilder, redirect } from "./util";
 const { lex } = shellInternals;
 const TestBuilder = createTestBuilder(import.meta.path);
 

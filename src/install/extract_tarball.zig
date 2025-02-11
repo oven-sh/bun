@@ -11,13 +11,14 @@ const PackageManager = Install.PackageManager;
 const Integrity = @import("./integrity.zig").Integrity;
 const Npm = @import("./npm.zig");
 const Resolution = @import("./resolution.zig").Resolution;
-const Semver = @import("./semver.zig");
+const Semver = bun.Semver;
 const std = @import("std");
 const string = @import("../string_types.zig").string;
 const strings = @import("../string_immutable.zig");
 const Path = @import("../resolver/resolve_path.zig");
 const Environment = bun.Environment;
 const w = std.os.windows;
+const OOM = bun.OOM;
 
 const ExtractTarball = @This();
 
@@ -52,48 +53,17 @@ pub fn buildURL(
     full_name_: strings.StringOrTinyString,
     version: Semver.Version,
     string_buf: []const u8,
-) !string {
-    return try buildURLWithPrinter(
+) OOM!string {
+    return buildURLWithPrinter(
         registry_,
         full_name_,
         version,
         string_buf,
         @TypeOf(FileSystem.instance.dirname_store),
         string,
-        anyerror,
+        OOM,
         FileSystem.instance.dirname_store,
         FileSystem.DirnameStore.print,
-    );
-}
-
-pub fn buildURLWithWriter(
-    comptime Writer: type,
-    writer: Writer,
-    registry_: string,
-    full_name_: strings.StringOrTinyString,
-    version: Semver.Version,
-    string_buf: []const u8,
-) !void {
-    const Printer = struct {
-        writer: Writer,
-
-        pub fn print(this: @This(), comptime fmt: string, args: anytype) Writer.Error!void {
-            return try std.fmt.format(this.writer, fmt, args);
-        }
-    };
-
-    return try buildURLWithPrinter(
-        registry_,
-        full_name_,
-        version,
-        string_buf,
-        Printer,
-        void,
-        Writer.Error,
-        Printer{
-            .writer = writer,
-        },
-        Printer.print,
     );
 }
 
@@ -160,7 +130,13 @@ threadlocal var json_path_buf: bun.PathBuffer = undefined;
 fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractData {
     const tmpdir = this.temp_dir;
     var tmpname_buf: if (Environment.isWindows) bun.WPathBuffer else bun.PathBuffer = undefined;
-    const name = this.name.slice();
+    const name = if (this.name.slice().len > 0) this.name.slice() else brk: {
+        // Not sure where this case hits yet.
+        // BUN-2WQ
+        Output.warn("Extracting nameless packages is not supported yet. Please open an issue on GitHub with reproduction steps.", .{});
+        bun.debugAssert(false);
+        break :brk "unnamed-package";
+    };
     const basename = brk: {
         var tmp = name;
         if (tmp[0] == '@') {
@@ -173,10 +149,6 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
             if (strings.lastIndexOfChar(tmp, ':')) |i| {
                 tmp = tmp[i + 1 ..];
             }
-        }
-
-        if (comptime Environment.allow_assert) {
-            bun.assert(tmp.len > 0);
         }
 
         break :brk tmp;
@@ -198,28 +170,70 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
 
         defer extract_destination.close();
 
-        if (PackageManager.verbose_install) {
-            Output.prettyErrorln("[{s}] Start extracting {s}<r>", .{ name, tmpname });
-            Output.flush();
-        }
-
-        const Archive = @import("../libarchive/libarchive.zig").Archive;
+        const Archiver = bun.libarchive.Archiver;
         const Zlib = @import("../zlib.zig");
         var zlib_pool = Npm.Registry.BodyPool.get(default_allocator);
         zlib_pool.data.reset();
         defer Npm.Registry.BodyPool.release(zlib_pool);
 
-        var zlib_entry = try Zlib.ZlibReaderArrayList.init(tgz_bytes, &zlib_pool.data.list, default_allocator);
-        zlib_entry.readAll() catch |err| {
-            this.package_manager.log.addErrorFmt(
-                null,
-                logger.Loc.Empty,
-                this.package_manager.allocator,
-                "{s} decompressing \"{s}\" to \"{}\"",
-                .{ @errorName(err), name, bun.fmt.fmtPath(u8, std.mem.span(tmpname), .{}) },
-            ) catch unreachable;
-            return error.InstallFailed;
-        };
+        var esimated_output_size: usize = 0;
+
+        const time_started_for_verbose_logs: u64 = if (PackageManager.verbose_install) bun.getRoughTickCount().ns() else 0;
+
+        {
+            // Last 4 bytes of a gzip-compressed file are the uncompressed size.
+            if (tgz_bytes.len > 16) {
+                // If the file claims to be larger than 16 bytes and smaller than 64 MB, we'll preallocate the buffer.
+                // If it's larger than that, we'll do it incrementally. We want to avoid OOMing.
+                const last_4_bytes: u32 = @bitCast(tgz_bytes[tgz_bytes.len - 4 ..][0..4].*);
+                if (last_4_bytes > 16 and last_4_bytes < 64 * 1024 * 1024) {
+                    // It's okay if this fails. We will just allocate as we go and that will error if we run out of memory.
+                    esimated_output_size = last_4_bytes;
+                    if (zlib_pool.data.list.capacity == 0) {
+                        zlib_pool.data.list.ensureTotalCapacityPrecise(zlib_pool.data.allocator, last_4_bytes) catch {};
+                    } else {
+                        zlib_pool.data.ensureUnusedCapacity(last_4_bytes) catch {};
+                    }
+                }
+            }
+        }
+
+        var needs_to_decompress = true;
+        if (bun.FeatureFlags.isLibdeflateEnabled() and zlib_pool.data.list.capacity > 16 and esimated_output_size > 0) use_libdeflate: {
+            const decompressor = bun.libdeflate.Decompressor.alloc() orelse break :use_libdeflate;
+            defer decompressor.deinit();
+
+            const result = decompressor.gzip(tgz_bytes, zlib_pool.data.list.allocatedSlice());
+
+            if (result.status == .success) {
+                zlib_pool.data.list.items.len = result.written;
+                needs_to_decompress = false;
+            }
+
+            // If libdeflate fails for any reason, fallback to zlib.
+        }
+
+        if (needs_to_decompress) {
+            zlib_pool.data.list.clearRetainingCapacity();
+            var zlib_entry = try Zlib.ZlibReaderArrayList.init(tgz_bytes, &zlib_pool.data.list, default_allocator);
+            zlib_entry.readAll() catch |err| {
+                this.package_manager.log.addErrorFmt(
+                    null,
+                    logger.Loc.Empty,
+                    this.package_manager.allocator,
+                    "{s} decompressing \"{s}\" to \"{}\"",
+                    .{ @errorName(err), name, bun.fmt.fmtPath(u8, std.mem.span(tmpname), .{}) },
+                ) catch unreachable;
+                return error.InstallFailed;
+            };
+        }
+
+        if (PackageManager.verbose_install) {
+            const decompressing_ended_at: u64 = bun.getRoughTickCount().ns();
+            const elapsed = decompressing_ended_at - time_started_for_verbose_logs;
+            Output.prettyErrorln("[{s}] Extract {s}<r> (decompressed {} tgz file in {})", .{ name, tmpname, bun.fmt.size(tgz_bytes.len, .{}), bun.fmt.fmtDuration(elapsed) });
+        }
+
         switch (this.resolution.tag) {
             .github => {
                 const DirnameReader = struct {
@@ -234,7 +248,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                 var dirname_reader = DirnameReader{ .outdirname = &resolved };
 
                 switch (PackageManager.verbose_install) {
-                    inline else => |log| _ = try Archive.extractToDir(
+                    inline else => |log| _ = try Archiver.extractToDir(
                         zlib_pool.data.list.items,
                         extract_destination,
                         null,
@@ -260,7 +274,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                 }
             },
             else => switch (PackageManager.verbose_install) {
-                inline else => |log| _ = try Archive.extractToDir(
+                inline else => |log| _ = try Archiver.extractToDir(
                     zlib_pool.data.list.items,
                     extract_destination,
                     null,
@@ -278,7 +292,8 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         }
 
         if (PackageManager.verbose_install) {
-            Output.prettyErrorln("[{s}] Extracted<r>", .{name});
+            const elapsed = bun.getRoughTickCount().ns() - time_started_for_verbose_logs;
+            Output.prettyErrorln("[{s}] Extracted to {s} ({})<r>", .{ name, tmpname, bun.fmt.fmtDuration(elapsed) });
             Output.flush();
         }
     }
@@ -430,7 +445,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     };
     defer final_dir.close();
     // and get the fd path
-    const final_path = bun.getFdPath(
+    const final_path = bun.getFdPathZ(
         final_dir.fd,
         &final_path_buf,
     ) catch |err| {
@@ -493,18 +508,36 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
 
     // create an index storing each version of a package installed
     if (strings.indexOfChar(basename, '/') == null) create_index: {
-        var index_dir = bun.MakePath.makeOpenPath(cache_dir, name, .{}) catch break :create_index;
-        defer index_dir.close();
-        index_dir.symLink(
-            final_path,
-            switch (this.resolution.tag) {
-                .github => folder_name["@GH@".len..],
-                // trim "name@" from the prefix
-                .npm => folder_name[name.len + 1 ..],
-                else => folder_name,
-            },
-            .{ .is_directory = true },
-        ) catch break :create_index;
+        const dest_name = switch (this.resolution.tag) {
+            .github => folder_name["@GH@".len..],
+            // trim "name@" from the prefix
+            .npm => folder_name[name.len + 1 ..],
+            else => folder_name,
+        };
+
+        if (comptime Environment.isWindows) {
+            bun.MakePath.makePath(u8, cache_dir, name) catch {
+                break :create_index;
+            };
+
+            var dest_buf: bun.PathBuffer = undefined;
+            const dest_path = bun.path.joinAbsStringBufZ(
+                // only set once, should be fine to read not on main thread
+                this.package_manager.cache_directory_path,
+                &dest_buf,
+                &[_]string{ name, dest_name },
+                .windows,
+            );
+
+            bun.sys.sys_uv.symlinkUV(final_path, dest_path, bun.windows.libuv.UV_FS_SYMLINK_JUNCTION).unwrap() catch {
+                break :create_index;
+            };
+        } else {
+            var index_dir = bun.MakePath.makeOpenPath(cache_dir, name, .{}) catch break :create_index;
+            defer index_dir.close();
+
+            bun.sys.symlinkat(final_path, bun.toFD(index_dir), dest_name).unwrap() catch break :create_index;
+        }
     }
 
     const ret_json_path = try FileSystem.instance.dirname_store.append(@TypeOf(json_path), json_path);

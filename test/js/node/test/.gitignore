@@ -1,0 +1,10 @@
+fixtures/wpt
+fixtures/tools
+fixtures/v8-coverage
+fixtures/test-runner
+fixtures/source-map
+fixtures/snapshot
+fixtures/repl*
+.tmp.*
+*shadow-realm*
+**/fails.txt

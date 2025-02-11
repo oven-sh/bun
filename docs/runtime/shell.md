@@ -102,7 +102,7 @@ The default handling of non-zero exit codes can be configured by calling `.nothr
 import { $ } from "bun";
 // shell promises will not throw, meaning you will have to
 // check for `exitCode` manually on every shell command.
-$.nothrow(); // equivilent to $.throws(false)
+$.nothrow(); // equivalent to $.throws(false)
 
 // default behavior, non-zero exit codes will throw an error
 $.throws(true);
@@ -234,6 +234,55 @@ const result = await $`cat < ${response} | wc -w`.text();
 
 console.log(result); // 6\n
 ```
+
+## Command substitution (`$(...)`)
+
+Command substitution allows you to substitute the output of another script into the current script:
+
+```js
+import { $ } from "bun";
+
+// Prints out the hash of the current commit
+await $`echo Hash of current commit: $(git rev-parse HEAD)`;
+```
+
+This is a textual insertion of the command's output and can be used to, for example, declare a shell variable:
+
+```js
+import { $ } from "bun";
+
+await $`
+  REV=$(git rev-parse HEAD)
+  docker built -t myapp:$REV
+  echo Done building docker image "myapp:$REV"
+`;
+```
+
+{% callout %}
+
+**NOTE**: Because Bun internally uses the special [`raw`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Template_literals#raw_strings) property on the input template literal, using the backtick syntax for command substitution won't work:
+
+```js
+import { $ } from "bun";
+
+await $`echo \`echo hi\``;
+```
+
+Instead of printing:
+
+```
+hi
+```
+
+The above will print out:
+
+```
+echo hi
+```
+
+We instead recommend sticking to the `$(...)` syntax.
+
+{% /callout %}
 
 ## Environment variables
 

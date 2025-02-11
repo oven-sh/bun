@@ -5,7 +5,6 @@ pub usingnamespace @import("./bun.js/bindings/exports.zig");
 pub usingnamespace @import("./bun.js/event_loop.zig");
 pub usingnamespace @import("./bun.js/javascript.zig");
 pub usingnamespace @import("./bun.js/module_loader.zig");
-pub const is_bindgen = false;
 pub const Debugger = @import("./bun.js/bindings/Debugger.zig").Debugger;
 pub const napi = @import("./napi/napi.zig");
 pub const RareData = @import("./bun.js/rare_data.zig");
@@ -35,6 +34,8 @@ pub const API = struct {
     pub const BuildArtifact = @import("./bun.js/api/JSBundler.zig").BuildArtifact;
     pub const JSTranspiler = @import("./bun.js/api/JSTranspiler.zig");
     pub const HTTPServer = @import("./bun.js/api/server.zig").HTTPServer;
+    pub const AnyServer = @import("./bun.js/api/server.zig").AnyServer;
+    pub const SavedRequest = @import("./bun.js/api/server.zig").SavedRequest;
     pub const ServerConfig = @import("./bun.js/api/server.zig").ServerConfig;
     pub const ServerWebSocket = @import("./bun.js/api/server.zig").ServerWebSocket;
     pub const HTTPSServer = @import("./bun.js/api/server.zig").HTTPSServer;
@@ -49,9 +50,11 @@ pub const API = struct {
     pub const UDPSocket = @import("./bun.js/api/bun/udp_socket.zig").UDPSocket;
     pub const Listener = @import("./bun.js/api/bun/socket.zig").Listener;
     pub const H2FrameParser = @import("./bun.js/api/bun/h2_frame_parser.zig").H2FrameParser;
-    pub const BrotliEncoder = @import("./bun.js/api/js_brotli.zig").BrotliEncoder;
-    pub const BrotliDecoder = @import("./bun.js/api/js_brotli.zig").BrotliDecoder;
+    pub const NativeZlib = @import("./bun.js/node/node_zlib_binding.zig").SNativeZlib;
+    pub const NativeBrotli = @import("./bun.js/node/node_zlib_binding.zig").SNativeBrotli;
+    pub const HTMLBundle = @import("./bun.js/api/server/HTMLBundle.zig");
 };
+pub const Postgres = @import("./sql/postgres.zig");
 pub const DNS = @import("./bun.js/api/bun/dns_resolver.zig");
 pub const FFI = @import("./bun.js/api/ffi.zig").FFI;
 pub const Node = struct {
@@ -78,7 +81,6 @@ pub const jsNumber = @This().JSValue.jsNumber;
 
 const __jsc_log = Output.scoped(.JSC, true);
 pub inline fn markBinding(src: std.builtin.SourceLocation) void {
-    if (comptime is_bindgen) unreachable;
     __jsc_log("{s} ({s}:{d})", .{ src.fn_name, src.file, src.line });
 }
 pub const Subprocess = API.Bun.Subprocess;
@@ -111,3 +113,9 @@ pub const conv = if (bun.Environment.isWindows and bun.Environment.isX64)
     std.builtin.CallingConvention.SysV
 else
     std.builtin.CallingConvention.C;
+
+pub const Error = @import("ErrorCode").Error;
+
+pub const MAX_SAFE_INTEGER = 9007199254740991;
+
+pub const MIN_SAFE_INTEGER = -9007199254740991;

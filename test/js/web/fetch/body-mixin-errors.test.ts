@@ -1,4 +1,4 @@
-import { it, describe, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
 
 describe("body-mixin-errors", () => {
   it("should fail when bodyUsed", async () => {

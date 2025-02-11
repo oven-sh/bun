@@ -69,7 +69,7 @@ export const movies = sqliteTable("movies", {
 We can use the `drizzle-kit` CLI to generate an initial SQL migration.
 
 ```sh
-$ bunx drizzle-kit generate:sqlite --schema ./schema.ts
+$ bunx drizzle-kit generate --dialect sqlite --schema ./schema.ts
 ```
 
 ---
@@ -98,7 +98,7 @@ import { Database } from "bun:sqlite";
 
 const sqlite = new Database("sqlite.db");
 const db = drizzle(sqlite);
-await migrate(db, { migrationsFolder: "./drizzle" });
+migrate(db, { migrationsFolder: "./drizzle" });
 ```
 
 ---

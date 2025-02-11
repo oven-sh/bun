@@ -12,6 +12,11 @@ namespace Bun {
 using namespace JSC;
 using namespace WebCore;
 
+typedef struct {
+    /// The result of call to dlopen to load the module
+    void* dlopenHandle;
+} NapiModuleMeta;
+
 class NapiExternal : public JSC::JSDestructibleObject {
     using Base = JSC::JSDestructibleObject;
 
@@ -80,6 +85,7 @@ public:
         Base::finishCreation(vm);
         m_value = value;
         m_finalizerHint = finalizer_hint;
+        napi_env = this->globalObject();
         this->finalizer = finalizer;
     }
 
@@ -90,6 +96,7 @@ public:
     void* m_value;
     void* m_finalizerHint;
     void* finalizer;
+    JSGlobalObject* napi_env;
 
 #if BUN_DEBUG
     String sourceOriginURL = String();

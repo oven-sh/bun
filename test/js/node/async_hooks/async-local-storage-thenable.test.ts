@@ -1,5 +1,4 @@
 import { AsyncLocalStorage } from "async_hooks";
-import { hideFromStackTrace } from "harness";
 import { createTest } from "node-harness";
 const store = new AsyncLocalStorage();
 const data = Symbol("verifier");

@@ -1,6 +1,7 @@
-import { test, expect } from "bun:test";
-import type { BinaryLike } from "node:crypto";
+import { expect, test } from "bun:test";
 import type { BlobOptions } from "node:buffer";
+import type { BinaryLike } from "node:crypto";
+import path from "node:path";
 test("blob: imports have sourcemapped stacktraces", async () => {
   const blob = new Blob(
     [
@@ -20,60 +21,75 @@ test("blob: imports have sourcemapped stacktraces", async () => {
   URL.revokeObjectURL(url);
 });
 
-test("Blob.slice", async () => {
-  const blob = new Blob(["Bun", "Foo"]);
-  const b1 = blob.slice(0, 3, "Text/HTML");
-  expect(b1 instanceof Blob).toBeTruthy();
-  expect(b1.size).toBe(3);
-  expect(b1.type).toBe("text/html");
-  const b2 = blob.slice(-1, 3);
-  expect(b2.size).toBe(0);
-  const b3 = blob.slice(100, 3);
-  expect(b3.size).toBe(0);
-  const b4 = blob.slice(0, 10);
-  expect(b4.size).toBe(blob.size);
+for (const info of [
+  {
+    blob: new Blob(["Bun", "Foo"]),
+    name: "Blob.slice",
+    is_file: false,
+  },
+  {
+    blob: Bun.file(path.join(import.meta.dir, "fixtures", "slice.txt")),
+    name: "Bun.file().slice",
+    is_file: true,
+  },
+]) {
+  test(info.name, async () => {
+    const blob = info.blob;
+    const b1 = blob.slice(0, 3, "Text/HTML");
+    expect(b1 instanceof Blob).toBeTruthy();
+    expect(b1.size).toBe(3);
+    expect(b1.type).toBe("text/html");
+    const b2 = blob.slice(-1, 3);
+    expect(b2.size).toBe(0);
+    const b3 = blob.slice(100, 3);
+    expect(b3.size).toBe(0);
+    // file will lazy read until EOF if the size is wrong
+    if (!info.is_file) {
+      const b4 = blob.slice(0, 10);
+      expect(b4.size).toBe(blob.size);
+    }
+    expect(blob.slice().size).toBe(blob.size);
+    expect(blob.slice(0).size).toBe(blob.size);
+    expect(blob.slice(NaN).size).toBe(blob.size);
+    expect(blob.slice(0, Infinity).size).toBe(blob.size);
+    expect(blob.slice(-Infinity).size).toBe(blob.size);
+    expect(blob.slice(0, NaN).size).toBe(0);
+    // @ts-expect-error
+    expect(blob.slice(Symbol(), "-123").size).toBe(6);
+    expect(blob.slice(Object.create(null), "-123").size).toBe(6);
+    // @ts-expect-error
+    expect(blob.slice(null, "-123").size).toBe(6);
+    expect(blob.slice(0, 10).size).toBe(blob.size);
+    expect(blob.slice("text/plain;charset=utf-8").type).toBe("text/plain;charset=utf-8");
 
-  expect(blob.slice().size).toBe(blob.size);
-  expect(blob.slice(0).size).toBe(blob.size);
-  expect(blob.slice(NaN).size).toBe(blob.size);
-  expect(blob.slice(0, Infinity).size).toBe(blob.size);
-  expect(blob.slice(-Infinity).size).toBe(blob.size);
-  expect(blob.slice(0, NaN).size).toBe(0);
-  // @ts-expect-error
-  expect(blob.slice(Symbol(), "-123").size).toBe(6);
-  expect(blob.slice(Object.create(null), "-123").size).toBe(6);
-  // @ts-expect-error
-  expect(blob.slice(null, "-123").size).toBe(6);
-  expect(blob.slice(0, 10).size).toBe(blob.size);
-  expect(blob.slice("text/plain;charset=utf-8").type).toBe("text/plain;charset=utf-8");
-
-  // test Blob.slice().slice(), issue#6252
-  expect(await blob.slice(0, 4).slice(0, 3).text()).toBe("Bun");
-  expect(await blob.slice(0, 4).slice(1, 3).text()).toBe("un");
-  expect(await blob.slice(1, 4).slice(0, 3).text()).toBe("unF");
-  expect(await blob.slice(1, 4).slice(1, 3).text()).toBe("nF");
-  expect(await blob.slice(1, 4).slice(2, 3).text()).toBe("F");
-  expect(await blob.slice(1, 4).slice(3, 3).text()).toBe("");
-  expect(await blob.slice(1, 4).slice(4, 3).text()).toBe("");
-  // test negative start
-  expect(await blob.slice(1, 4).slice(-1, 3).text()).toBe("F");
-  expect(await blob.slice(1, 4).slice(-2, 3).text()).toBe("nF");
-  expect(await blob.slice(1, 4).slice(-3, 3).text()).toBe("unF");
-  expect(await blob.slice(1, 4).slice(-4, 3).text()).toBe("unF");
-  expect(await blob.slice(1, 4).slice(-5, 3).text()).toBe("unF");
-  expect(await blob.slice(-1, 4).slice(-1, 3).text()).toBe("");
-  expect(await blob.slice(-2, 4).slice(-1, 3).text()).toBe("");
-  expect(await blob.slice(-3, 4).slice(-1, 3).text()).toBe("F");
-  expect(await blob.slice(-4, 4).slice(-1, 3).text()).toBe("F");
-  expect(await blob.slice(-5, 4).slice(-1, 3).text()).toBe("F");
-  expect(await blob.slice(-5, 4).slice(-2, 3).text()).toBe("nF");
-  expect(await blob.slice(-5, 4).slice(-3, 3).text()).toBe("unF");
-  expect(await blob.slice(-5, 4).slice(-4, 3).text()).toBe("unF");
-  expect(await blob.slice(-4, 4).slice(-3, 3).text()).toBe("nF");
-  expect(await blob.slice(-5, 4).slice(-4, 3).text()).toBe("unF");
-  expect(await blob.slice(-3, 4).slice(-2, 3).text()).toBe("F");
-  expect(await blob.slice(-blob.size, 4).slice(-blob.size, 3).text()).toBe("Bun");
-});
+    // test Blob.slice().slice(), issue#6252
+    expect(await blob.slice(0, 4).slice(0, 3).text()).toBe("Bun");
+    expect(await blob.slice(0, 4).slice(1, 3).text()).toBe("un");
+    expect(await blob.slice(1, 4).slice(0, 3).text()).toBe("unF");
+    expect(await blob.slice(1, 4).slice(1, 3).text()).toBe("nF");
+    expect(await blob.slice(1, 4).slice(2, 3).text()).toBe("F");
+    expect(await blob.slice(1, 4).slice(3, 3).text()).toBe("");
+    expect(await blob.slice(1, 4).slice(4, 3).text()).toBe("");
+    // test negative start
+    expect(await blob.slice(1, 4).slice(-1, 3).text()).toBe("F");
+    expect(await blob.slice(1, 4).slice(-2, 3).text()).toBe("nF");
+    expect(await blob.slice(1, 4).slice(-3, 3).text()).toBe("unF");
+    expect(await blob.slice(1, 4).slice(-4, 3).text()).toBe("unF");
+    expect(await blob.slice(1, 4).slice(-5, 3).text()).toBe("unF");
+    expect(await blob.slice(-1, 4).slice(-1, 3).text()).toBe("");
+    expect(await blob.slice(-2, 4).slice(-1, 3).text()).toBe("");
+    expect(await blob.slice(-3, 4).slice(-1, 3).text()).toBe("F");
+    expect(await blob.slice(-4, 4).slice(-1, 3).text()).toBe("F");
+    expect(await blob.slice(-5, 4).slice(-1, 3).text()).toBe("F");
+    expect(await blob.slice(-5, 4).slice(-2, 3).text()).toBe("nF");
+    expect(await blob.slice(-5, 4).slice(-3, 3).text()).toBe("unF");
+    expect(await blob.slice(-5, 4).slice(-4, 3).text()).toBe("unF");
+    expect(await blob.slice(-4, 4).slice(-3, 3).text()).toBe("nF");
+    expect(await blob.slice(-5, 4).slice(-4, 3).text()).toBe("unF");
+    expect(await blob.slice(-3, 4).slice(-2, 3).text()).toBe("F");
+    expect(await blob.slice(-blob.size, 4).slice(-blob.size, 3).text()).toBe("Bun");
+  });
+}
 
 test("new Blob", () => {
   var blob = new Blob(["Bun", "Foo"], { type: "text/foo" });
@@ -158,6 +174,27 @@ test("blob: can reliable get type from fetch #10072", async () => {
   expect(blob.type).toBe("plain/text");
 });
 
+// https://github.com/oven-sh/bun/issues/13049
+test("new Blob(new Uint8Array()) is supported", async () => {
+  const blob = new Blob(Buffer.from("1234"));
+  expect(await blob.text()).toBe("1234");
+});
+
+// https://github.com/oven-sh/bun/issues/13049
+test("new File(new Uint8Array()) is supported", async () => {
+  const blob = new File(Buffer.from("1234"), "file.txt");
+  expect(await blob.text()).toBe("1234");
+  expect(blob.name).toBe("file.txt");
+});
+
+test("new File('123', '123') is NOT supported", async () => {
+  expect(() => new File("123", "123")).toThrow();
+});
+
+test("new Blob('123') is NOT supported", async () => {
+  expect(() => new Blob("123")).toThrow();
+});
+
 test("blob: can set name property #10178", () => {
   const blob = new Blob([Buffer.from("Hello, World")]);
   // @ts-expect-error
@@ -210,4 +247,9 @@ test("blob: can set name property #10178", () => {
   expect(myOtherBlob.name).toBe("logo.svg");
   myOtherBlob.name = 10;
   expect(myOtherBlob.name).toBe(10);
+});
+
+test("#12894", () => {
+  const bunFile = Bun.file("foo.txt");
+  expect(new File([bunFile], "bar.txt").name).toBe("bar.txt");
 });

@@ -9,7 +9,7 @@ const std = @import("std");
 const cpp = @import("./bindings/bindings.zig");
 const generic = opaque {
     pub fn value(this: *const @This()) cpp.JSValue {
-        return @as(cpp.JSValue, @enumFromInt(@as(cpp.JSValue.Type, @bitCast(@intFromPtr(this)))));
+        return @as(cpp.JSValue, @enumFromInt(@as(cpp.JSValueReprInt, @bitCast(@intFromPtr(this)))));
     }
 
     pub inline fn bunVM(this: *@This()) *bun.JSC.VirtualMachine {
@@ -163,7 +163,6 @@ pub const OpaqueJSPropertyNameAccumulator = struct_OpaqueJSPropertyNameAccumulat
 // This is a workaround for not receiving a JSException* object
 // This function lets us use the C API but returns a plain old JSValue
 // allowing us to have exceptions that include stack traces
-pub extern "c" fn JSObjectCallAsFunctionReturnValue(ctx: JSContextRef, object: cpp.JSValue, thisObject: cpp.JSValue, argumentCount: usize, arguments: [*c]const JSValueRef) cpp.JSValue;
 pub extern "c" fn JSObjectCallAsFunctionReturnValueHoldingAPILock(ctx: JSContextRef, object: JSObjectRef, thisObject: JSObjectRef, argumentCount: usize, arguments: [*c]const JSValueRef) cpp.JSValue;
 
 pub extern fn JSRemoteInspectorDisableAutoStart() void;
@@ -172,102 +171,5 @@ pub extern fn JSRemoteInspectorStart() void;
 pub extern fn JSRemoteInspectorSetLogToSystemConsole(enabled: bool) void;
 pub extern fn JSRemoteInspectorGetInspectionEnabledByDefault(void) bool;
 pub extern fn JSRemoteInspectorSetInspectionEnabledByDefault(enabled: bool) void;
-
-// -- Manual --
-
-const size_t = usize;
-
-pub const CellType = enum(u8) {
-    pub const LastMaybeFalsyCellPrimitive = 2;
-    pub const LastJSCObjectType = 73;
-
-    CellType = 0,
-    StringType = 1,
-    HeapBigIntType = 2,
-
-    SymbolType = 3,
-    GetterSetterType = 4,
-    CustomGetterSetterType = 5,
-    APIValueWrapperType = 6,
-    NativeExecutableType = 7,
-    ProgramExecutableType = 8,
-    ModuleProgramExecutableType = 9,
-    EvalExecutableType = 10,
-    FunctionExecutableType = 11,
-    UnlinkedFunctionExecutableType = 12,
-    UnlinkedProgramCodeBlockType = 13,
-    UnlinkedModuleProgramCodeBlockType = 14,
-    UnlinkedEvalCodeBlockType = 15,
-    UnlinkedFunctionCodeBlockType = 16,
-    CodeBlockType = 17,
-    JSImmutableButterflyType = 18,
-    JSSourceCodeType = 19,
-    JSScriptFetcherType = 20,
-    JSScriptFetchParametersType = 21,
-    ObjectType = 22,
-    FinalObjectType = 23,
-    JSCalleeType = 24,
-    JSFunctionType = 25,
-    InternalFunctionType = 26,
-    NullSetterFunctionType = 27,
-    BooleanObjectType = 28,
-    NumberObjectType = 29,
-    ErrorInstanceType = 30,
-    GlobalProxyType = 31,
-    DirectArgumentsType = 32,
-    ScopedArgumentsType = 33,
-    ClonedArgumentsType = 34,
-    ArrayType = 35,
-    DerivedArrayType = 36,
-    ArrayBufferType = 37,
-    Int8ArrayType = 38,
-    Uint8ArrayType = 39,
-    Uint8ClampedArrayType = 40,
-    Int16ArrayType = 41,
-    Uint16ArrayType = 42,
-    Int32ArrayType = 43,
-    Uint32ArrayType = 44,
-    Float32ArrayType = 45,
-    Float64ArrayType = 46,
-    BigInt64ArrayType = 47,
-    BigUint64ArrayType = 48,
-    DataViewType = 49,
-    GlobalObjectType = 50,
-    GlobalLexicalEnvironmentType = 51,
-    LexicalEnvironmentType = 52,
-    ModuleEnvironmentType = 53,
-    StrictEvalActivationType = 54,
-    WithScopeType = 55,
-    ModuleNamespaceObjectType = 56,
-    RegExpObjectType = 57,
-    JSDateType = 58,
-    ProxyObjectType = 59,
-    JSGeneratorType = 60,
-    JSAsyncGeneratorType = 61,
-    JSArrayIteratorType = 62,
-    JSMapIteratorType = 63,
-    JSSetIteratorType = 64,
-    JSStringIteratorType = 65,
-    JSPromiseType = 66,
-    JSMapType = 67,
-    JSSetType = 68,
-    JSWeakMapType = 69,
-    JSWeakSetType = 70,
-    WebAssemblyModuleType = 71,
-    WebAssemblyInstanceType = 72,
-    WebAssemblyGCObjectType = 73,
-    StringObjectType = 74,
-    DerivedStringObjectType = 75,
-
-    MaxJSType = 255,
-    _,
-
-    pub fn isString(this: CellType) bool {
-        return switch (this) {
-            .StringType => true,
-            else => false,
-        };
-    }
-};
 
 pub extern "c" fn JSObjectGetProxyTarget(JSObjectRef) JSObjectRef;

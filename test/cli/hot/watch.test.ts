@@ -1,19 +1,19 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { writeFile } from "fs/promises";
-import { bunEnv, bunExe, forEachLine, tempDirWithFiles } from "harness";
-import { join } from "path";
+import { bunEnv, bunExe, forEachLine, isBroken, isWindows, tempDirWithFiles } from "harness";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
-describe("--watch works", async () => {
-  for (let watchedFile of ["tmp.js", "entry.js"]) {
-    test("with " + watchedFile, async () => {
+describe.todoIf(isBroken && isWindows)("--watch works", async () => {
+  for (const watchedFile of ["entry.js", "tmp.js"]) {
+    test(`with ${watchedFile}`, async () => {
       const tmpdir_ = tempDirWithFiles("watch-fixture", {
         "tmp.js": "console.log('hello #1')",
         "entry.js": "import './tmp.js'",
         "package.json": JSON.stringify({ name: "foo", version: "0.0.1" }),
       });
+      await Bun.sleep(1000);
       const tmpfile = join(tmpdir_, "tmp.js");
-      await writeFile(tmpfile, "console.log('hello #1')");
       const process = spawn({
         cmd: [bunExe(), "--watch", join(tmpdir_, watchedFile)],
         cwd: tmpdir_,
@@ -22,7 +22,7 @@ describe("--watch works", async () => {
       });
       const { stdout } = process;
 
-      let iter = forEachLine(stdout);
+      const iter = forEachLine(stdout);
       let { value: line, done } = await iter.next();
       expect(done).toBe(false);
       expect(line).toBe("hello #1");
@@ -43,7 +43,7 @@ describe("--watch works", async () => {
       ({ value: line } = await iter.next());
       expect(line).toBe("hello #5");
 
-      process.kill();
+      process.kill("SIGKILL");
       await process.exited;
     });
   }

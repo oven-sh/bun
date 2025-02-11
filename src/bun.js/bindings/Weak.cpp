@@ -1,7 +1,6 @@
 #include "root.h"
 #include <JavaScriptCore/StrongInlines.h>
 #include "BunClientData.h"
-#include "root.h"
 #include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/Strong.h>
 
@@ -10,12 +9,17 @@ namespace Bun {
 enum class WeakRefType : uint32_t {
     None = 0,
     FetchResponse = 1,
+    PostgreSQLQueryClient = 2,
 };
 
 typedef void (*WeakRefFinalizeFn)(void* context);
 
+// clang-format off
 #define FOR_EACH_WEAK_REF_TYPE(macro) \
-    macro(FetchResponse)
+    macro(FetchResponse) \
+    macro(PostgreSQLQueryClient)
+
+// clang-format on
 
 #define DECLARE_WEAK_REF_OWNER(X) \
     extern "C" void Bun__##X##_finalize(void* context);
@@ -31,6 +35,9 @@ public:
             switch (T) {
             case WeakRefType::FetchResponse:
                 Bun__FetchResponse_finalize(context);
+                break;
+            case WeakRefType::PostgreSQLQueryClient:
+                // Bun__PostgreSQLQueryClient_finalize(context);
                 break;
             default:
                 break;
@@ -51,6 +58,9 @@ static JSC::WeakHandleOwner* getWeakRefOwner(WeakRefType type)
     switch (type) {
     case WeakRefType::FetchResponse: {
         return getWeakRefOwner<WeakRefType::FetchResponse>();
+    }
+    case WeakRefType::PostgreSQLQueryClient: {
+        return getWeakRefOwner<WeakRefType::PostgreSQLQueryClient>();
     }
     default: {
         RELEASE_ASSERT_NOT_REACHED();

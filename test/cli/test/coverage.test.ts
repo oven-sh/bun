@@ -2,6 +2,7 @@ import { describe, test, expect } from "bun:test";
 import { tempDirWithFiles, bunExe, bunEnv } from "harness";
 import path from "path";
 import { readFileSync } from "node:fs";
+import path from "path";
 
 test("coverage crash", () => {
   const dir = tempDirWithFiles("cov", {
@@ -54,6 +55,7 @@ export class Y {
   expect(result.signalCode).toBeUndefined();
   expect(readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8")).toMatchSnapshot();
 });
+
 
 describe("coveragePathIgnorePatterns", () => {
   const demoFiles = {
@@ -162,4 +164,27 @@ coverageReporter = ["text", "lcov"]
     expect(result.exitCode).toBe(1);
     expect(stderr).toContain("coveragePathIgnorePatterns");
   });
+});
+
+test("coverage excludes node_modules directory", () => {
+  const dir = tempDirWithFiles("cov", {
+    "node_modules/pi/index.js": `
+    export const pi = 3.14;
+    `,
+    "demo.test.ts": `
+    import { pi } from 'pi';
+    console.log(pi);
+    `,
+  });
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage"], {
+    cwd: dir,
+    env: {
+      ...bunEnv,
+    },
+    stdio: [null, null, "pipe"],
+  });
+  expect(result.stderr.toString("utf-8")).toContain("demo.test.ts");
+  expect(result.stderr.toString("utf-8")).not.toContain("node_modules");
+  expect(result.exitCode).toBe(0);
+  expect(result.signalCode).toBeUndefined();
 });

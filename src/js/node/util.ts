@@ -2,8 +2,15 @@
 const types = require("node:util/types");
 /** @type {import('node-inspect-extracted')} */
 const utl = require("internal/util/inspect");
+const { promisify } = require("internal/promisify");
+const { validateString, validateOneOf } = require("internal/validators");
 
-var cjs_exports = {};
+const internalErrorName = $newZigFunction("node_util_binding.zig", "internalErrorName", 1);
+
+const NumberIsSafeInteger = Number.isSafeInteger;
+const ObjectKeys = Object.keys;
+
+var cjs_exports;
 
 function isBuffer(value) {
   return Buffer.isBuffer(value);
@@ -23,27 +30,43 @@ const formatWithOptions = utl.formatWithOptions;
 const format = utl.format;
 const stripVTControlCharacters = utl.stripVTControlCharacters;
 
+const codesWarned = new Set();
+
+function getDeprecationWarningEmitter(code, msg, deprecated, shouldEmitWarning = () => true) {
+  let warned = false;
+  return function () {
+    if (!warned && shouldEmitWarning()) {
+      warned = true;
+      if (code !== undefined) {
+        if (!codesWarned.has(code)) {
+          process.emitWarning(msg, "DeprecationWarning", code, deprecated);
+          codesWarned.add(code);
+        }
+      } else {
+        process.emitWarning(msg, "DeprecationWarning", deprecated);
+      }
+    }
+  };
+}
+
 function deprecate(fn, msg, code) {
-  if (process.noDeprecation === true) {
-    return fn;
+  // Lazy-load to avoid a circular dependency.
+  if (code !== undefined) validateString(code, "code");
+
+  const emitDeprecationWarning = getDeprecationWarningEmitter(code, msg, deprecated);
+
+  function deprecated(...args) {
+    if (!process.noDeprecation) {
+      emitDeprecationWarning();
+    }
+    if (new.target) {
+      return Reflect.construct(fn, args, new.target);
+    }
+    return fn.$apply(this, args);
   }
 
-  var warned = false;
-  function deprecated() {
-    if (!warned) {
-      if (process.throwDeprecation) {
-        var err = new Error(msg);
-        if (code) err.code = code;
-        throw err;
-      } else if (process.traceDeprecation) {
-        console.trace(msg);
-      } else {
-        console.error(msg);
-      }
-      warned = true;
-    }
-    return fn.$apply(this, arguments);
-  }
+  // The wrapper will keep the same prototype as fn to maintain prototype chain
+  Object.setPrototypeOf(deprecated, fn);
   return deprecated;
 }
 
@@ -106,7 +129,7 @@ function isObject(arg) {
   return typeof arg === "object" && arg !== null;
 }
 var isDate = types.isDate;
-var isError = types.isNativeError;
+var isError = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsError", 1);
 function isPrimitive(arg) {
   return (
     arg === null ||
@@ -130,15 +153,25 @@ var log = function log() {
   console.log("%s - %s", timestamp(), format.$apply(cjs_exports, arguments));
 };
 var inherits = function inherits(ctor, superCtor) {
-  ctor.super_ = superCtor;
-  ctor.prototype = Object.create(superCtor.prototype, {
-    constructor: {
-      value: ctor,
-      enumerable: false,
-      writable: true,
-      configurable: true,
-    },
+  if (ctor === undefined || ctor === null) {
+    throw $ERR_INVALID_ARG_TYPE("ctor", "function", ctor);
+  }
+
+  if (superCtor === undefined || superCtor === null) {
+    throw $ERR_INVALID_ARG_TYPE("superCtor", "function", superCtor);
+  }
+
+  if (superCtor.prototype === undefined) {
+    throw $ERR_INVALID_ARG_TYPE("superCtor.prototype", "object", superCtor.prototype);
+  }
+  Object.defineProperty(ctor, "super_", {
+    // @ts-ignore
+    __proto__: null,
+    value: superCtor,
+    writable: true,
+    configurable: true,
   });
+  Object.setPrototypeOf(ctor.prototype, superCtor.prototype);
 };
 var _extend = function (origin, add) {
   if (!add || !isObject(add)) return origin;
@@ -149,80 +182,7 @@ var _extend = function (origin, add) {
   }
   return origin;
 };
-var kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
-function defineCustomPromisify(target, callback) {
-  Object.defineProperty(target, kCustomPromisifiedSymbol, {
-    value: callback,
-    __proto__: null,
-    configurable: true,
-  });
 
-  return callback;
-}
-
-// Lazily load node:timers/promises promisifed functions onto the global timers.
-// This is not a complete solution, as one could load these without loading the "util" module
-// But it is better than nothing.
-{
-  const { setTimeout: timeout, setImmediate: immediate, setInterval: interval } = globalThis;
-
-  if (timeout && $isCallable(timeout)) {
-    defineCustomPromisify(timeout, function setTimeout(arg1) {
-      const fn = defineCustomPromisify(timeout, require("node:timers/promises").setTimeout);
-      return fn.$apply(this, arguments);
-    });
-  }
-
-  if (immediate && $isCallable(immediate)) {
-    defineCustomPromisify(immediate, function setImmediate(arg1) {
-      const fn = defineCustomPromisify(immediate, require("node:timers/promises").setImmediate);
-      return fn.$apply(this, arguments);
-    });
-  }
-
-  if (interval && $isCallable(interval)) {
-    defineCustomPromisify(interval, function setInterval(arg1) {
-      const fn = defineCustomPromisify(interval, require("node:timers/promises").setInterval);
-      return fn.$apply(this, arguments);
-    });
-  }
-}
-
-var promisify = function promisify(original) {
-  if (typeof original !== "function") throw new TypeError('The "original" argument must be of type Function');
-  const custom = original[kCustomPromisifiedSymbol];
-  if (custom) {
-    if (typeof custom !== "function") {
-      throw new TypeError('The "util.promisify.custom" argument must be of type Function');
-    }
-    // ensure that we don't create another promisified function wrapper
-    return defineCustomPromisify(custom, custom);
-  }
-
-  function fn(...originalArgs) {
-    const { promise, resolve, reject } = Promise.withResolvers();
-    try {
-      original.$apply(this, [
-        ...originalArgs,
-        function (err, ...values) {
-          if (err) {
-            return reject(err);
-          }
-
-          resolve(values[0]);
-        },
-      ]);
-    } catch (err) {
-      reject(err);
-    }
-
-    return promise;
-  }
-  Object.setPrototypeOf(fn, Object.getPrototypeOf(original));
-  defineCustomPromisify(fn, fn);
-  return Object.defineProperties(fn, getOwnPropertyDescriptors(original));
-};
-promisify.custom = kCustomPromisifiedSymbol;
 function callbackifyOnRejected(reason, cb) {
   if (!reason) {
     var newReason = new Error("Promise was rejected with a falsy value");
@@ -233,30 +193,40 @@ function callbackifyOnRejected(reason, cb) {
   return cb(reason);
 }
 function callbackify(original) {
-  if (typeof original !== "function") {
-    throw new TypeError('The "original" argument must be of type Function');
-  }
-  function callbackified() {
-    var args = Array.prototype.slice.$call(arguments);
-    var maybeCb = args.pop();
-    if (typeof maybeCb !== "function") {
-      throw new TypeError("The last argument must be of type Function");
-    }
-    var self = this;
-    var cb = function () {
-      return maybeCb.$apply(self, arguments);
-    };
+  const { validateFunction } = require("internal/validators");
+  validateFunction(original, "original");
+
+  // We DO NOT return the promise as it gives the user a false sense that
+  // the promise is actually somehow related to the callback's execution
+  // and that the callback throwing will reject the promise.
+  function callbackified(...args) {
+    const maybeCb = Array.prototype.pop.$call(args);
+    validateFunction(maybeCb, "last argument");
+    const cb = Function.prototype.bind.$call(maybeCb, this);
+    // In true node style we process the callback on `nextTick` with all the
+    // implications (stack, `uncaughtException`, `async_hooks`)
     original.$apply(this, args).then(
-      function (ret) {
-        process.nextTick(cb, null, ret);
-      },
-      function (rej) {
-        process.nextTick(callbackifyOnRejected, rej, cb);
-      },
+      ret => process.nextTick(cb, null, ret),
+      rej => process.nextTick(callbackifyOnRejected, rej, cb),
     );
   }
-  Object.setPrototypeOf(callbackified, Object.getPrototypeOf(original));
-  Object.defineProperties(callbackified, getOwnPropertyDescriptors(original));
+
+  const descriptors = Object.getOwnPropertyDescriptors(original);
+  // It is possible to manipulate a functions `length` or `name` property. This
+  // guards against the manipulation.
+  if (typeof descriptors.length.value === "number") {
+    descriptors.length.value++;
+  }
+  if (typeof descriptors.name.value === "string") {
+    descriptors.name.value += "Callbackified";
+  }
+  const propertiesValues = Object.values(descriptors);
+  for (let i = 0; i < propertiesValues.length; i++) {
+    // We want to use null-prototype objects to not rely on globally mutable
+    // %Object.prototype%.
+    Object.setPrototypeOf(propertiesValues[i], null);
+  }
+  Object.defineProperties(callbackified, descriptors);
   return callbackified;
 }
 var toUSVString = input => {
@@ -264,34 +234,130 @@ var toUSVString = input => {
 };
 
 function styleText(format, text) {
-  if (typeof text !== "string") {
-    const e = new Error(`The text argument must be of type string. Received type ${typeof text}`);
-    e.code = "ERR_INVALID_ARG_TYPE";
-    throw e;
+  validateString(text, "text");
+
+  if ($isJSArray(format)) {
+    let left = "";
+    let right = "";
+    for (const key of format) {
+      const formatCodes = inspect.colors[key];
+      if (formatCodes == null) {
+        validateOneOf(key, "format", ObjectKeys(inspect.colors));
+      }
+      left += `\u001b[${formatCodes[0]}m`;
+      right = `\u001b[${formatCodes[1]}m${right}`;
+    }
+
+    return `${left}${text}${right}`;
   }
-  const formatCodes = inspect.colors[format];
+
+  let formatCodes = inspect.colors[format];
+
   if (formatCodes == null) {
-    const e = new Error(
-      `The value "${typeof format === "symbol" ? format.description : format}" is invalid for argument 'format'. Reason: must be one of: ${Object.keys(inspect.colors).join(", ")}`,
-    );
-    e.code = "ERR_INVALID_ARG_VALUE";
-    throw e;
+    validateOneOf(format, "format", ObjectKeys(inspect.colors));
   }
   return `\u001b[${formatCodes[0]}m${text}\u001b[${formatCodes[1]}m`;
 }
 
-export default Object.assign(cjs_exports, {
-  format,
-  formatWithOptions,
-  stripVTControlCharacters,
-  deprecate,
+function getSystemErrorName(err: any) {
+  if (typeof err !== "number") throw $ERR_INVALID_ARG_TYPE("err", "number", err);
+  if (err >= 0 || !NumberIsSafeInteger(err)) throw $ERR_OUT_OF_RANGE("err", "a negative integer", err);
+  return internalErrorName(err);
+}
+
+let lazyAbortedRegistry: FinalizationRegistry<{
+  ref: WeakRef<AbortSignal>;
+  unregisterToken: (...args: any[]) => void;
+}>;
+function onAbortedCallback(resolveFn: Function) {
+  lazyAbortedRegistry.unregister(resolveFn);
+
+  resolveFn();
+}
+
+function aborted(signal: AbortSignal, resource: object) {
+  if (!$isObject(signal) || !(signal instanceof AbortSignal)) {
+    throw $ERR_INVALID_ARG_TYPE("signal", "AbortSignal", signal);
+  }
+
+  if (!$isObject(resource)) {
+    throw $ERR_INVALID_ARG_TYPE("resource", "object", resource);
+  }
+
+  if (signal.aborted) {
+    return Promise.resolve();
+  }
+
+  const { promise, resolve } = $newPromiseCapability(Promise);
+  const unregisterToken = onAbortedCallback.bind(undefined, resolve);
+  signal.addEventListener(
+    "abort",
+    // Do not leak the current scope into the listener.
+    // Instead, create a new function.
+    unregisterToken,
+    { once: true },
+  );
+
+  if (!lazyAbortedRegistry) {
+    lazyAbortedRegistry = new FinalizationRegistry(({ ref, unregisterToken }) => {
+      const signal = ref.deref();
+      if (signal) signal.removeEventListener("abort", unregisterToken);
+    });
+  }
+
+  // When the resource is garbage collected, clear the listener from the
+  // AbortSignal so we do not cause the AbortSignal itself to leak (AbortSignal
+  // keeps alive until it is signaled).
+  lazyAbortedRegistry.register(
+    resource,
+    {
+      ref: new WeakRef(signal),
+      unregisterToken,
+    },
+    unregisterToken,
+  );
+
+  return promise;
+}
+
+cjs_exports = {
+  // This is in order of `node --print 'Object.keys(util)'`
+  // _errnoException,
+  // _exceptionWithHostPort,
+  _extend,
+  callbackify,
   debug: debuglog,
   debuglog,
-  _extend,
+  deprecate,
+  format,
+  styleText,
+  formatWithOptions,
+  // getCallSite,
+  // getCallSites,
+  // getSystemErrorMap,
+  getSystemErrorName,
+  // getSystemErrorMessage,
+  inherits,
   inspect,
+  isDeepStrictEqual,
+  promisify,
+  stripVTControlCharacters,
+  toUSVString,
+  // transferableAbortSignal,
+  // transferableAbortController,
+  aborted,
   types,
+  // parseEnv,
+  parseArgs,
+  TextDecoder,
+  TextEncoder,
+  // MIMEType,
+  // MIMEParams,
+
+  // Deprecated in Node.js 22, removed in 23
   isArray: $isArray,
   isBoolean,
+  isBuffer,
   isNull,
   isNullOrUndefined,
   isNumber,
@@ -301,18 +367,10 @@ export default Object.assign(cjs_exports, {
   isRegExp,
   isObject,
   isDate,
-  isFunction,
   isError,
+  isFunction,
   isPrimitive,
-  isBuffer,
   log,
-  inherits,
-  toUSVString,
-  promisify,
-  callbackify,
-  isDeepStrictEqual,
-  TextDecoder,
-  TextEncoder,
-  parseArgs,
-  styleText,
-});
+};
+
+export default cjs_exports;

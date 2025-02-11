@@ -111,7 +111,7 @@ pub const DiffFormatter = struct {
                 Writer,
                 buf_writer,
                 fmt_options,
-            );
+            ) catch {}; // TODO:
             buffered_writer.flush() catch unreachable;
 
             buffered_writer_.context = &expected_buf;
@@ -125,12 +125,12 @@ pub const DiffFormatter = struct {
                 Writer,
                 buf_writer,
                 fmt_options,
-            );
+            ) catch {}; // TODO:
             buffered_writer.flush() catch unreachable;
         }
 
-        const received_slice = received_buf.toOwnedSliceLeaky();
-        const expected_slice = expected_buf.toOwnedSliceLeaky();
+        const received_slice = received_buf.slice();
+        const expected_slice = expected_buf.slice();
 
         if (this.not) {
             const not_fmt = "Expected: not <green>{s}<r>";
@@ -148,15 +148,15 @@ pub const DiffFormatter = struct {
                 var formatter = ConsoleObject.Formatter{ .globalThis = this.globalThis, .quote_strings = true };
                 if (Output.enable_ansi_colors) {
                     try writer.print(Output.prettyFmt(fmt, true), .{
-                        expected.toFmt(this.globalThis, &formatter),
-                        received.toFmt(this.globalThis, &formatter),
+                        expected.toFmt(&formatter),
+                        received.toFmt(&formatter),
                     });
                     return;
                 }
 
                 try writer.print(Output.prettyFmt(fmt, true), .{
-                    expected.toFmt(this.globalThis, &formatter),
-                    received.toFmt(this.globalThis, &formatter),
+                    expected.toFmt(&formatter),
+                    received.toFmt(&formatter),
                 });
                 return;
             },

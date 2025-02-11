@@ -56,7 +56,7 @@ template<> struct JSConverter<IDLWebGLExtension> {
     static constexpr bool needsState = true;
     static constexpr bool needsGlobalObject = true;
 
-    template <typename T>
+    template<typename T>
     static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const T& value)
     {
         return convertToJSValue(lexicalGlobalObject, globalObject, Detail::getPtrOrRef(value));

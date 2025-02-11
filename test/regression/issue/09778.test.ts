@@ -1,5 +1,5 @@
+import { expect, test } from "bun:test";
 import { runInNewContext } from "node:vm";
-import { test, expect } from "bun:test";
 
 test("issue #9778", () => {
   const code = `

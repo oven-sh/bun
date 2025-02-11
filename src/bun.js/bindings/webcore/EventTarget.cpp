@@ -31,6 +31,7 @@
 
 #include "config.h"
 #include "Event.h"
+#include "EventPath.h"
 
 #include "EventTarget.h"
 
@@ -101,9 +102,9 @@ bool EventTarget::addEventListener(const AtomString& eventType, Ref<EventListene
         return false;
 
     if (options.signal) {
-        options.signal->addAlgorithm([weakThis = WeakPtr { *this }, eventType, listener = WeakPtr { listener }, capture = options.capture](JSC::JSValue value) {
+        options.signal->addAlgorithm([weakThis = WeakPtr { *this }, eventType, listener = WeakPtr { listener }, capture = options.capture](JSC::JSValue) {
             if (weakThis && listener)
-                weakThis->removeEventListener(eventType, *listener, capture);
+                Ref { *weakThis } -> removeEventListener(eventType, *listener, capture);
         });
     }
 
@@ -248,10 +249,12 @@ void EventTarget::dispatchEvent(Event& event)
     ASSERT(event.isInitialized());
     ASSERT(!event.isBeingDispatched());
 
+    EventPath eventPath(*this);
     event.setTarget(this);
     event.setCurrentTarget(this);
     event.setEventPhase(Event::AT_TARGET);
     event.resetBeforeDispatch();
+    event.setEventPath(eventPath);
     fireEventListeners(event, EventInvokePhase::Capturing);
     fireEventListeners(event, EventInvokePhase::Bubbling);
     event.resetAfterDispatch();

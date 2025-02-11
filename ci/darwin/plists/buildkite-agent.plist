@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.buildkite.buildkite-agent</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>/usr/local/bin/buildkite-agent</string>
+      <string>start</string>
+    </array>
+
+    <key>KeepAlive</key>
+    <dict>
+      <key>SuccessfulExit</key>
+      <false />
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true />
+
+    <key>StandardOutPath</key>
+    <string>/var/buildkite-agent/logs/buildkite-agent.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/var/buildkite-agent/logs/buildkite-agent.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>BUILDKITE_AGENT_CONFIG</key>
+      <string>/etc/buildkite-agent/buildkite-agent.cfg</string>
+    </dict>
+
+    <key>LimitLoadToSessionType</key>
+    <array>
+      <string>Aqua</string>
+      <string>LoginWindow</string>
+      <string>Background</string>
+      <string>StandardIO</string>
+      <string>System</string>
+    </array>
+  </dict>
+</plist>

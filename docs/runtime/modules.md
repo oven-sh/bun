@@ -48,14 +48,6 @@ In this case, we are importing from `./hello`, a relative path with no extension
 - `./hello/index.cjs`
 - `./hello/index.json`
 
-Import paths are case-insensitive, meaning these are all valid imports:
-
-```ts#index.ts
-import { hello } from "./hello";
-import { hello } from "./HELLO";
-import { hello } from "./hElLo";
-```
-
 Import paths can optionally include extensions. If an extension is present, Bun will only check for a file with that exact extension.
 
 ```ts#index.ts
@@ -189,7 +181,6 @@ Once it finds the `foo` package, Bun reads the `package.json` to determine how t
   "name": "foo",
   "exports": {
     "bun": "./index.js",
-    "worker": "./index.js",
     "node": "./index.js",
     "require": "./index.js", // if importer is CommonJS
     "import": "./index.mjs", // if importer is ES module
@@ -244,6 +235,30 @@ If `exports` is not defined, Bun falls back to `"module"` (ESM imports only) the
   "module": "./index.js",
   "main": "./index.js"
 }
+```
+
+### Custom conditions
+
+The `--conditions` flag allows you to specify a list of conditions to use when resolving packages from package.json `"exports"`.
+
+This flag is supported in both `bun build` and Bun's runtime.
+
+```sh
+# Use it with bun build:
+$ bun build --conditions="react-server" --target=bun ./app/foo/route.js
+
+# Use it with bun's runtime:
+$ bun --conditions="react-server" ./app/foo/route.js
+```
+
+You can also use `conditions` programmatically with `Bun.build`:
+
+```js
+await Bun.build({
+  conditions: ["react-server"],
+  target: "bun",
+  entryPoints: ["./app/foo/route.js"],
+});
 ```
 
 ## Path re-mapping

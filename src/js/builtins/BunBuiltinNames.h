@@ -14,13 +14,13 @@
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/BuiltinUtils.h>
+#include "BunBuiltinNames+extras.h"
 
 namespace WebCore {
 
 using namespace JSC;
 
 #define BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(macro) \
-    macro(__esModule) \
     macro(_events) \
     macro(abortAlgorithm) \
     macro(AbortSignal) \
@@ -71,6 +71,7 @@ using namespace JSC;
     macro(dataView) \
     macro(decode) \
     macro(delimiter) \
+    macro(dest) \
     macro(destroy) \
     macro(dir) \
     macro(direct) \
@@ -93,7 +94,7 @@ using namespace JSC;
     macro(fetch) \
     macro(fetchRequest) \
     macro(file) \
-    macro(filePath) \
+    macro(filename) \
     macro(fillFromJS) \
     macro(finishConsumingStream) \
     macro(flush) \
@@ -114,6 +115,7 @@ using namespace JSC;
     macro(inFlightCloseRequest) \
     macro(inFlightWriteRequest) \
     macro(initializeWith) \
+    macro(inherits) \
     macro(internalModuleRegistry) \
     macro(internalRequire) \
     macro(internalStream) \
@@ -132,9 +134,10 @@ using namespace JSC;
     macro(Loader) \
     macro(localStreams) \
     macro(main) \
+    macro(makeAbortError) \
     macro(makeDOMException) \
+    macro(makeErrorWithCode) \
     macro(makeGetterTypeError) \
-    macro(makeThisTypeError) \
     macro(method) \
     macro(mockedFunction) \
     macro(nextTick) \
@@ -152,6 +155,7 @@ using namespace JSC;
     macro(patch) \
     macro(path) \
     macro(pathname) \
+    macro(paths) \
     macro(pause) \
     macro(pendingAbortRequest) \
     macro(pendingPullIntos) \
@@ -194,7 +198,6 @@ using namespace JSC;
     macro(requireESM) \
     macro(requireMap) \
     macro(requireNativeModule) \
-    macro(resolve) \
     macro(resolveSync) \
     macro(resume) \
     macro(self) \
@@ -220,10 +223,13 @@ using namespace JSC;
     macro(stream) \
     macro(structuredCloneForStream) \
     macro(syscall) \
+    macro(textDecoder) \
     macro(textDecoderStreamDecoder) \
     macro(textDecoderStreamTransform) \
     macro(textEncoderStreamEncoder) \
+    macro(TextEncoderStreamEncoder) \
     macro(textEncoderStreamTransform) \
+    macro(toClass) \
     macro(toNamespacedPath) \
     macro(trace) \
     macro(transformAlgorithm) \
@@ -240,6 +246,7 @@ using namespace JSC;
     macro(version) \
     macro(versions) \
     macro(view) \
+    macro(warning) \
     macro(writable) \
     macro(WritableStream) \
     macro(WritableStreamDefaultController) \
@@ -250,6 +257,17 @@ using namespace JSC;
     macro(writeRequests) \
     macro(writing) \
     macro(written) \
+    macro(napiDlopenHandle) \
+    macro(napiWrappedContents) \
+    macro(fastPath) \
+    macro(SQL) \
+    macro(atimeMs) \
+    macro(mtimeMs) \
+    macro(ctimeMs) \
+    macro(birthtimeMs) \
+    macro(mode) \
+    BUN_ADDITIONAL_BUILTIN_NAMES(macro)
+// --- END of BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME ---
 
 class BunBuiltinNames {
 public:
@@ -267,6 +285,8 @@ public:
     }
 
     BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+
+    const JSC::Identifier& resolvePublicName() const { return m_vm.propertyNames->resolve;}
 
 private:
     JSC::VM& m_vm;

@@ -1,7 +1,7 @@
 import { spawn } from "bun";
-import { afterAll, beforeAll, expect, test, describe } from "bun:test";
-import { bunExe, bunEnv } from "harness";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs/promises";
+import { bunEnv, bunExe } from "harness";
 import os from "os";
 import path from "path";
 

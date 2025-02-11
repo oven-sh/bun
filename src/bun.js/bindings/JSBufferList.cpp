@@ -14,7 +14,7 @@ using namespace JSC;
 static JSC_DECLARE_CUSTOM_GETTER(JSBufferList_getLength);
 static JSC_DEFINE_CUSTOM_GETTER(JSBufferList_getLength, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSBufferList* bufferList = JSC::jsDynamicCast<JSBufferList*>(JSValue::decode(thisValue));
@@ -27,10 +27,6 @@ static JSC_DEFINE_CUSTOM_GETTER(JSBufferList_getLength, (JSC::JSGlobalObject * g
 void JSBufferList::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
-
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "length"_s),
-        JSC::CustomGetterSetter::create(vm, JSBufferList_getLength, nullptr),
-        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 }
 
 JSC::JSValue JSBufferList::concat(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, size_t n)
@@ -49,7 +45,8 @@ JSC::JSValue JSBufferList::concat(JSC::VM& vm, JSC::JSGlobalObject* lexicalGloba
             return throwTypeError(lexicalGlobalObject, throwScope, "concat can only be called when all buffers are Uint8Array"_s);
         }
         if (UNLIKELY(array->byteLength() > n)) {
-            return throwRangeError(lexicalGlobalObject, throwScope, "specified size too small to fit all buffers"_s);
+            throwNodeRangeError(lexicalGlobalObject, throwScope, "specified size too small to fit all buffers"_s);
+            return {};
         }
         RELEASE_AND_RETURN(throwScope, array);
     }
@@ -68,7 +65,8 @@ JSC::JSValue JSBufferList::concat(JSC::VM& vm, JSC::JSGlobalObject* lexicalGloba
         }
         const size_t length = array->byteLength();
         if (UNLIKELY(i + length > n)) {
-            return throwRangeError(lexicalGlobalObject, throwScope, "specified size too small to fit all buffers"_s);
+            throwNodeRangeError(lexicalGlobalObject, throwScope, "specified size too small to fit all buffers"_s);
+            return {};
         }
         if (UNLIKELY(!uint8Array->setFromTypedArray(lexicalGlobalObject, i, array, 0, length, JSC::CopyType::Unobservable))) {
             return throwOutOfMemoryError(lexicalGlobalObject, throwScope);
@@ -126,7 +124,7 @@ JSC::JSValue JSBufferList::_getString(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
     size_t n = total;
 
     if (n == len) {
-        m_deque.removeFirst();
+        this->removeFirst();
         RELEASE_AND_RETURN(throwScope, str);
     }
     if (n < len) {
@@ -152,7 +150,7 @@ JSC::JSValue JSBufferList::_getString(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
         }
         if (!ropeBuilder.append(str))
             return throwOutOfMemoryError(lexicalGlobalObject, throwScope);
-        m_deque.removeFirst();
+        this->removeFirst();
         if (n == len)
             break;
         n -= len;
@@ -178,7 +176,7 @@ JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
     size_t n = total;
 
     if (n == len) {
-        m_deque.removeFirst();
+        this->removeFirst();
         RELEASE_AND_RETURN(throwScope, array);
     }
     if (n < len) {
@@ -219,7 +217,7 @@ JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
         if (UNLIKELY(!uint8Array->setFromTypedArray(lexicalGlobalObject, offset, array, 0, len, JSC::CopyType::Unobservable))) {
             return throwOutOfMemoryError(lexicalGlobalObject, throwScope);
         }
-        m_deque.removeFirst();
+        this->removeFirst();
         if (n == len) {
             offset += len;
             break;
@@ -253,8 +251,10 @@ void JSBufferList::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSBufferList* buffer = jsCast<JSBufferList*>(cell);
     ASSERT_GC_OBJECT_INHERITS(buffer, info());
     Base::visitChildren(buffer, visitor);
+    buffer->lock();
     for (auto& val : buffer->m_deque)
         visitor.append(val);
+    buffer->unlock();
 }
 DEFINE_VISIT_CHILDREN(JSBufferList);
 
@@ -264,7 +264,7 @@ static inline JSC::EncodedJSValue jsBufferListPrototypeFunction_pushBody(JSC::JS
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     if (callFrame->argumentCount() < 1) {
         throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     auto v = callFrame->uncheckedArgument(0);
@@ -277,7 +277,7 @@ static inline JSC::EncodedJSValue jsBufferListPrototypeFunction_unshiftBody(JSC:
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     if (callFrame->argumentCount() < 1) {
         throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     auto v = callFrame->uncheckedArgument(0);
@@ -309,13 +309,13 @@ static inline JSC::EncodedJSValue jsBufferListPrototypeFunction_concatBody(JSC::
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     if (callFrame->argumentCount() < 1) {
         throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     int32_t n = callFrame->argument(0).toInt32(lexicalGlobalObject);
     if (UNLIKELY(n < 0)) {
         throwException(lexicalGlobalObject, throwScope, createError(lexicalGlobalObject, "n should be larger than or equal to 0"_s));
-        return JSValue::encode(JSC::jsUndefined());
+        return {};
     }
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->concat(vm, lexicalGlobalObject, n)));
 }
@@ -325,11 +325,11 @@ static inline JSC::EncodedJSValue jsBufferListPrototypeFunction_joinBody(JSC::JS
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     if (callFrame->argumentCount() < 1) {
         throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     JSString* s = callFrame->argument(0).toString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
+    RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->join(vm, lexicalGlobalObject, s)));
 }
 static inline JSC::EncodedJSValue jsBufferListPrototypeFunction_consumeBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBufferList>::ClassParameter castedThis)
@@ -338,13 +338,13 @@ static inline JSC::EncodedJSValue jsBufferListPrototypeFunction_consumeBody(JSC:
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     if (callFrame->argumentCount() < 2) {
         throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     int32_t n = callFrame->argument(0).toInt32(lexicalGlobalObject);
     if (UNLIKELY(n < 0)) {
         throwException(lexicalGlobalObject, throwScope, createError(lexicalGlobalObject, "n should be larger than or equal to 0"_s));
-        return JSValue::encode(JSC::jsUndefined());
+        return {};
     }
     bool hasString = callFrame->argument(1).toBoolean(lexicalGlobalObject);
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->consume(vm, lexicalGlobalObject, n, hasString)));
@@ -409,6 +409,7 @@ static const HashTableValue JSBufferListPrototypeTableValues[]
           { "concat"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferListPrototypeFunction_concat, 1 } },
           { "join"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferListPrototypeFunction_join, 1 } },
           { "consume"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferListPrototypeFunction_consume, 2 } },
+          { "length"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, JSBufferList_getLength, 0 } },
       };
 
 void JSBufferListPrototype::finishCreation(VM& vm, JSC::JSGlobalObject* globalThis)
@@ -436,7 +437,7 @@ JSBufferListConstructor* JSBufferListConstructor::create(JSC::VM& vm, JSC::JSGlo
 
 JSC::EncodedJSValue JSBufferListConstructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-    JSC::VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     JSBufferList* bufferList = JSBufferList::create(
         vm, lexicalGlobalObject, reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject)->JSBufferListStructure());
     return JSC::JSValue::encode(bufferList);

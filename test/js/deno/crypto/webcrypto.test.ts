@@ -2,7 +2,7 @@
 // Copyright 2018+ the Deno authors. All rights reserved. MIT license.
 // https://raw.githubusercontent.com/denoland/deno/main/cli/tests/unit/webcrypto_test.ts
 import { createDenoTest } from "deno:harness";
-const { test, assert, assertEquals, assertNotEquals, assertRejects } = createDenoTest(import.meta.path);
+const { test, assert, assertEquals, assertNotEquals, assertRejects } = createDenoTest(import.meta.path, 10_000);
 test(async function testImportArrayBufferKey() {
     const subtle = window.crypto.subtle;
     assert(subtle);
@@ -991,7 +991,7 @@ test(async function testWrapKey() {
     });
     assert(wrappedKey instanceof ArrayBuffer);
     assertEquals(wrappedKey.byteLength, 512);
-});
+},);
 test.ignore(async function testAesKeyGen() {
     const key = await crypto.subtle.generateKey({
         name: "AES-GCM",

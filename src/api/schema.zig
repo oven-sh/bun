@@ -1,6 +1,7 @@
 const std = @import("std");
 const bun = @import("root").bun;
 const js_ast = bun.JSAst;
+const OOM = bun.OOM;
 
 pub const Reader = struct {
     const Self = @This();
@@ -341,7 +342,7 @@ pub const Api = struct {
         dataurl,
         text,
         sqlite,
-
+        html,
         _,
 
         pub fn jsonStringify(self: @This(), writer: anytype) !void {
@@ -824,12 +825,19 @@ pub const Api = struct {
         }
     };
 
-    pub const StringPointer = packed struct {
+    /// Represents a slice stored within an externally stored buffer. Safe to serialize.
+    /// Must be an extern struct to match with `headers-handwritten.h`.
+    pub const StringPointer = extern struct {
         /// offset
         offset: u32 = 0,
 
         /// length
         length: u32 = 0,
+
+        comptime {
+            bun.assert(@alignOf(StringPointer) == @alignOf(u32));
+            bun.assert(@sizeOf(StringPointer) == @sizeOf(u64));
+        }
 
         pub fn decode(reader: anytype) anyerror!StringPointer {
             var this = std.mem.zeroes(StringPointer);
@@ -842,6 +850,10 @@ pub const Api = struct {
         pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
             try writer.writeInt(this.offset);
             try writer.writeInt(this.length);
+        }
+
+        pub fn slice(this: @This(), bytes: []const u8) []const u8 {
+            return bytes[this.offset .. this.offset + this.length];
         }
     };
 
@@ -1619,10 +1631,12 @@ pub const Api = struct {
         origin: ?[]const u8 = null,
 
         /// absolute_working_dir
-        absolute_working_dir: ?[]const u8 = null,
+        absolute_working_dir: ?[:0]const u8 = null,
 
         /// define
         define: ?StringMap = null,
+
+        drop: []const []const u8 = &.{},
 
         /// preserve_symlinks
         preserve_symlinks: ?bool = null,
@@ -1660,17 +1674,11 @@ pub const Api = struct {
         /// extension_order
         extension_order: []const []const u8,
 
-        /// framework
-        framework: ?FrameworkConfig = null,
-
-        /// router
-        router: ?RouteConfig = null,
-
         /// no_summary
         no_summary: ?bool = null,
 
         /// disable_hmr
-        disable_hmr: ?bool = null,
+        disable_hmr: bool = false,
 
         /// port
         port: ?u16 = null,
@@ -1683,6 +1691,26 @@ pub const Api = struct {
 
         /// conditions
         conditions: []const []const u8,
+
+        /// packages
+        packages: ?PackagesMode = null,
+
+        /// ignore_dce_annotations
+        ignore_dce_annotations: bool,
+
+        /// e.g.:
+        /// [serve.static]
+        /// plugins = ["tailwindcss"]
+        serve_plugins: ?[]const []const u8 = null,
+        serve_minify_syntax: ?bool = null,
+        serve_minify_whitespace: ?bool = null,
+        serve_minify_identifiers: ?bool = null,
+        serve_env_behavior: DotEnvBehavior = ._none,
+        serve_env_prefix: ?[]const u8 = null,
+        serve_splitting: bool = false,
+        serve_public_path: ?[]const u8 = null,
+
+        bunfig_path: []const u8,
 
         pub fn decode(reader: anytype) anyerror!TransformOptions {
             var this = std.mem.zeroes(TransformOptions);
@@ -1738,9 +1766,7 @@ pub const Api = struct {
                     15 => {
                         this.target = try reader.readValue(Target);
                     },
-                    16 => {
-                        this.serve = try reader.readValue(bool);
-                    },
+                    16 => {},
                     17 => {
                         this.env_files = try reader.readArray([]const u8);
                     },
@@ -1770,6 +1796,9 @@ pub const Api = struct {
                     },
                     26 => {
                         this.conditions = try reader.readArray([]const u8);
+                    },
+                    27 => {
+                        this.packages = try reader.readValue(PackagesMode);
                     },
                     else => {
                         return error.InvalidMessage;
@@ -1886,6 +1915,11 @@ pub const Api = struct {
                 try writer.writeArray([]const u8, conditions);
             }
 
+            if (this.packages) |packages| {
+                try writer.writeFieldID(27);
+                try writer.writeValue([]const u8, packages);
+            }
+
             try writer.endMessage();
         }
     };
@@ -1900,6 +1934,20 @@ pub const Api = struct {
         external,
 
         linked,
+
+        _,
+
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
+        }
+    };
+
+    pub const PackagesMode = enum(u8) {
+        /// bundle
+        bundle,
+
+        /// external
+        external,
 
         _,
 
@@ -2782,7 +2830,7 @@ pub const Api = struct {
 
             fn expectString(this: *Parser, expr: js_ast.Expr) !void {
                 switch (expr.data) {
-                    .e_string, .e_utf8_string => {},
+                    .e_string => {},
                     else => {
                         this.log.addErrorFmt(this.source, expr.loc, this.allocator, "expected string but received {}", .{
                             @as(js_ast.Expr.Tag, expr.data),
@@ -2792,11 +2840,11 @@ pub const Api = struct {
                 }
             }
 
-            pub fn parseRegistryURLString(this: *Parser, str: *js_ast.E.String) !Api.NpmRegistry {
+            pub fn parseRegistryURLString(this: *Parser, str: *js_ast.E.String) OOM!Api.NpmRegistry {
                 return try this.parseRegistryURLStringImpl(str.data);
             }
 
-            pub fn parseRegistryURLStringImpl(this: *Parser, str: []const u8) !Api.NpmRegistry {
+            pub fn parseRegistryURLStringImpl(this: *Parser, str: []const u8) OOM!Api.NpmRegistry {
                 const url = bun.URL.parse(str);
                 var registry = std.mem.zeroes(Api.NpmRegistry);
 
@@ -2942,6 +2990,17 @@ pub const Api = struct {
 
         /// concurrent_scripts
         concurrent_scripts: ?u32 = null,
+
+        cafile: ?[]const u8 = null,
+
+        save_text_lockfile: ?bool = null,
+
+        ca: ?union(enum) {
+            str: []const u8,
+            list: []const []const u8,
+        } = null,
+
+        ignore_scripts: ?bool = null,
 
         pub fn decode(reader: anytype) anyerror!BunInstall {
             var this = std.mem.zeroes(BunInstall);

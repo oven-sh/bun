@@ -1,6 +1,7 @@
 #pragma once
 
 #include "root.h"
+#include "wtf/text/ASCIILiteral.h"
 
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/Exception.h>
@@ -9,6 +10,7 @@
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/ThrowScope.h>
 #include <JavaScriptCore/VM.h>
+#include <limits>
 
 using JSC__JSGlobalObject = JSC::JSGlobalObject;
 using JSC__JSValue = JSC::EncodedJSValue;
@@ -22,6 +24,9 @@ class GlobalObject;
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-function"
+
+extern "C" size_t Bun__stringSyntheticAllocationLimit;
+extern "C" const char* Bun__errnoName(int);
 
 namespace Zig {
 
@@ -77,20 +82,32 @@ static const WTF::String toString(ZigString str)
         return WTF::String();
     }
     if (UNLIKELY(isTaggedUTF8Ptr(str.ptr))) {
-        return WTF::String::fromUTF8(std::span { untag(str.ptr), str.len });
+        ASSERT_WITH_MESSAGE(!isTaggedExternalPtr(str.ptr), "UTF8 and external ptr are mutually exclusive. The external will never be freed.");
+        return WTF::String::fromUTF8ReplacingInvalidSequences(std::span { untag(str.ptr), str.len });
     }
 
     if (UNLIKELY(isTaggedExternalPtr(str.ptr))) {
+        // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
+        if (UNLIKELY(str.len > Bun__stringSyntheticAllocationLimit)) {
+            free_global_string(nullptr, reinterpret_cast<void*>(const_cast<unsigned char*>(untag(str.ptr))), static_cast<unsigned>(str.len));
+            return {};
+        }
+
         return !isTaggedUTF16Ptr(str.ptr)
             ? WTF::String(WTF::ExternalStringImpl::create({ untag(str.ptr), str.len }, untagVoid(str.ptr), free_global_string))
             : WTF::String(WTF::ExternalStringImpl::create(
-                { reinterpret_cast<const UChar*>(untag(str.ptr)), str.len }, untagVoid(str.ptr), free_global_string));
+                  { reinterpret_cast<const UChar*>(untag(str.ptr)), str.len }, untagVoid(str.ptr), free_global_string));
+    }
+
+    // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
+    if (UNLIKELY(str.len > Bun__stringSyntheticAllocationLimit)) {
+        return {};
     }
 
     return !isTaggedUTF16Ptr(str.ptr)
         ? WTF::String(WTF::StringImpl::createWithoutCopying({ untag(str.ptr), str.len }))
         : WTF::String(WTF::StringImpl::createWithoutCopying(
-            { reinterpret_cast<const UChar*>(untag(str.ptr)), str.len }));
+              { reinterpret_cast<const UChar*>(untag(str.ptr)), str.len }));
 }
 
 static WTF::AtomString toAtomString(ZigString str)
@@ -112,10 +129,15 @@ static const WTF::String toString(ZigString str, StringPointer ptr)
         return WTF::String::fromUTF8ReplacingInvalidSequences(std::span { &untag(str.ptr)[ptr.off], ptr.len });
     }
 
+    // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
+    if (UNLIKELY(str.len > Bun__stringSyntheticAllocationLimit)) {
+        return {};
+    }
+
     return !isTaggedUTF16Ptr(str.ptr)
         ? WTF::String(WTF::StringImpl::createWithoutCopying({ &untag(str.ptr)[ptr.off], ptr.len }))
         : WTF::String(WTF::StringImpl::createWithoutCopying(
-            { &reinterpret_cast<const UChar*>(untag(str.ptr))[ptr.off], ptr.len }));
+              { &reinterpret_cast<const UChar*>(untag(str.ptr))[ptr.off], ptr.len }));
 }
 
 static const WTF::String toStringCopy(ZigString str, StringPointer ptr)
@@ -127,10 +149,15 @@ static const WTF::String toStringCopy(ZigString str, StringPointer ptr)
         return WTF::String::fromUTF8ReplacingInvalidSequences(std::span { &untag(str.ptr)[ptr.off], ptr.len });
     }
 
+    // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
+    if (UNLIKELY(str.len > Bun__stringSyntheticAllocationLimit)) {
+        return {};
+    }
+
     return !isTaggedUTF16Ptr(str.ptr)
         ? WTF::String(WTF::StringImpl::create(std::span { &untag(str.ptr)[ptr.off], ptr.len }))
         : WTF::String(WTF::StringImpl::create(
-            std::span { &reinterpret_cast<const UChar*>(untag(str.ptr))[ptr.off], ptr.len }));
+              std::span { &reinterpret_cast<const UChar*>(untag(str.ptr))[ptr.off], ptr.len }));
 }
 
 static const WTF::String toStringCopy(ZigString str)
@@ -143,18 +170,18 @@ static const WTF::String toStringCopy(ZigString str)
     }
 
     if (isTaggedUTF16Ptr(str.ptr)) {
-        UChar* out = nullptr;
+        std::span<UChar> out;
         auto impl = WTF::StringImpl::tryCreateUninitialized(str.len, out);
         if (UNLIKELY(!impl))
             return WTF::String();
-        memcpy(out, untag(str.ptr), str.len * sizeof(UChar));
+        memcpy(out.data(), untag(str.ptr), str.len * sizeof(UChar));
         return WTF::String(WTFMove(impl));
     } else {
-        LChar* out = nullptr;
+        std::span<LChar> out;
         auto impl = WTF::StringImpl::tryCreateUninitialized(str.len, out);
         if (UNLIKELY(!impl))
             return WTF::String();
-        memcpy(out, untag(str.ptr), str.len * sizeof(LChar));
+        memcpy(out.data(), untag(str.ptr), str.len * sizeof(LChar));
         return WTF::String(WTFMove(impl));
     }
 }
@@ -226,11 +253,18 @@ static ZigString toZigString(const WTF::StringView& str)
 
 static ZigString toZigString(JSC::JSString& str, JSC::JSGlobalObject* global)
 {
+    if (str.isSubstring()) {
+        return toZigString(str.view(global));
+    }
+
     return toZigString(str.value(global));
 }
 
 static ZigString toZigString(JSC::JSString* str, JSC::JSGlobalObject* global)
 {
+    if (str->isSubstring()) {
+        return toZigString(str->view(global));
+    }
     return toZigString(str->value(global));
 }
 
@@ -258,7 +292,7 @@ static void throwException(JSC::ThrowScope& scope, ZigErrorType err, JSC::JSGlob
 static ZigString toZigString(JSC::JSValue val, JSC::JSGlobalObject* global)
 {
     auto scope = DECLARE_THROW_SCOPE(global->vm());
-    WTF::String str = val.toWTFString(global);
+    auto* str = val.toString(global);
 
     if (scope.exception()) {
         scope.clearException();
@@ -266,9 +300,14 @@ static ZigString toZigString(JSC::JSValue val, JSC::JSGlobalObject* global)
         return ZigStringEmpty;
     }
 
-    scope.release();
+    auto view = str->view(global);
+    if (scope.exception()) {
+        scope.clearException();
+        scope.release();
+        return ZigStringEmpty;
+    }
 
-    return toZigString(str);
+    return toZigString(view);
 }
 
 static const WTF::String toStringStatic(ZigString str)
@@ -284,13 +323,15 @@ static const WTF::String toStringStatic(ZigString str)
         return WTF::String(AtomStringImpl::add(std::span { reinterpret_cast<const UChar*>(untag(str.ptr)), str.len }));
     }
 
-    return WTF::String(AtomStringImpl::add(
-        std::span { reinterpret_cast<const LChar*>(untag(str.ptr)), str.len }));
+    auto* untagged = untag(str.ptr);
+    ASSERT(untagged[str.len] == 0);
+    ASCIILiteral ascii = ASCIILiteral::fromLiteralUnsafe(reinterpret_cast<const char*>(untagged));
+    return WTF::String(ascii);
 }
 
 static JSC::JSValue getErrorInstance(const ZigString* str, JSC__JSGlobalObject* globalObject)
 {
-    WTF::String message = toStringCopy(*str);
+    WTF::String message = toString(*str);
     if (UNLIKELY(message.isNull() && str->len > 0)) {
         // pending exception while creating an error.
         return JSC::JSValue();

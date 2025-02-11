@@ -29,6 +29,7 @@ export type Field =
   | ({
       fn: string;
       length?: number;
+      passThis?: boolean;
       DOMJIT?: {
         returns: string;
         args?: [string, string] | [string, string, string] | [string] | [];
@@ -46,7 +47,7 @@ export type Field =
       length?: number;
     };
 
-export interface ClassDefinition {
+export class ClassDefinition {
   name: string;
   construct?: boolean;
   call?: boolean;
@@ -54,10 +55,33 @@ export interface ClassDefinition {
   overridesToJS?: boolean;
   klass: Record<string, Field>;
   proto: Record<string, Field>;
+  own: Record<string, string>;
   values?: string[];
   JSType?: string;
   noConstructor?: boolean;
+
+  final?: boolean;
+
+  // Do not try to track the `this` value in the constructor automatically.
+  // That is a memory leak.
+  wantsThis?: never;
+
+  /**
+   * Called from any thread.
+   *
+   * Used for GC.
+   */
   estimatedSize?: boolean;
+  /**
+   * Used in heap snapshots.
+   *
+   * If true, the class will have a `memoryCost` method that returns the size of the object in bytes.
+   *
+   * Unlike estimatedSize, this is always called on the main thread and not used for GC.
+   *
+   * If none is provided, we use the struct size.
+   */
+  memoryCost?: boolean;
   hasPendingActivity?: boolean;
   isEventEmitter?: boolean;
   supportsObjectCreate?: boolean;
@@ -71,6 +95,23 @@ export interface ClassDefinition {
   structuredClone?: boolean | { transferable: boolean; tag: number };
 
   callbacks?: Record<string, string>;
+
+  constructor(options: Partial<ClassDefinition>) {
+    this.name = options.name ?? "";
+    this.klass = options.klass ?? {};
+    this.proto = options.proto ?? {};
+    this.own = options.own ?? {};
+
+    Object.assign(this, options);
+  }
+
+  hasOwnProperties() {
+    for (const key in this.own) {
+      return true;
+    }
+
+    return false;
+  }
 }
 
 export interface CustomField {
@@ -84,6 +125,7 @@ export function define(
   {
     klass = {},
     proto = {},
+    own = {},
     values = [],
     overridesToJS = false,
     estimatedSize = false,
@@ -91,9 +133,9 @@ export function define(
     construct = false,
     structuredClone = false,
     ...rest
-  } = {} as ClassDefinition,
-): ClassDefinition {
-  return {
+  } = {} as Partial<ClassDefinition>,
+): Partial<ClassDefinition> {
+  return new ClassDefinition({
     ...rest,
     call,
     overridesToJS,
@@ -101,7 +143,22 @@ export function define(
     estimatedSize,
     structuredClone,
     values,
-    klass: Object.fromEntries(Object.entries(klass).sort(([a], [b]) => a.localeCompare(b))),
-    proto: Object.fromEntries(Object.entries(proto).sort(([a], [b]) => a.localeCompare(b))),
-  };
+    own: own || {},
+    klass: Object.fromEntries(
+      Object.entries(klass)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([k, v]) => {
+          v.DOMJIT = undefined;
+          return [k, v];
+        }),
+    ),
+    proto: Object.fromEntries(
+      Object.entries(proto)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([k, v]) => {
+          v.DOMJIT = undefined;
+          return [k, v];
+        }),
+    ),
+  });
 }

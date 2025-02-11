@@ -1,6 +1,6 @@
 import { $ } from "bun";
-import { bunExe, bunEnv as env, toBeValidBin, toHaveBins, toBeWorkspaceLink, tempDirWithFiles, bunEnv } from "harness";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it, describe, test, setDefaultTimeout } from "bun:test";
+import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 beforeAll(() => {
   setDefaultTimeout(1000 * 60 * 5);

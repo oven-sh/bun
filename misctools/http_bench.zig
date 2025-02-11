@@ -31,7 +31,6 @@ const params = [_]clap.Param(clap.Help){
     clap.parseParam("-b, --body <STR>           HTTP request body as a string") catch unreachable,
     clap.parseParam("-f, --file <STR>           File path to load as body") catch unreachable,
     clap.parseParam("-n, --count <INT>          How many runs? Default 10") catch unreachable,
-    clap.parseParam("-t, --timeout <INT>        Max duration per request") catch unreachable,
     clap.parseParam("-r, --retry <INT>          Max retry count") catch unreachable,
     clap.parseParam("--no-gzip                  Disable gzip") catch unreachable,
     clap.parseParam("--no-deflate               Disable deflate") catch unreachable,
@@ -75,7 +74,6 @@ pub const Arguments = struct {
     body: string = "",
     turbo: bool = false,
     count: usize = 10,
-    timeout: usize = 0,
     repeat: usize = 0,
     concurrency: u16 = 32,
 
@@ -165,10 +163,6 @@ pub const Arguments = struct {
             // .keep_alive = !args.flag("--no-keep-alive"),
             .concurrency = std.fmt.parseInt(u16, args.option("--max-concurrency") orelse "32", 10) catch 32,
             .turbo = args.flag("--turbo"),
-            .timeout = std.fmt.parseInt(usize, args.option("--timeout") orelse "0", 10) catch |err| {
-                Output.prettyErrorln("<r><red>{s}<r> parsing timeout", .{@errorName(err)});
-                Global.exit(1);
-            },
             .count = std.fmt.parseInt(usize, args.option("--count") orelse "10", 10) catch |err| {
                 Output.prettyErrorln("<r><red>{s}<r> parsing count", .{@errorName(err)});
                 Global.exit(1);
@@ -225,7 +219,6 @@ pub fn main() anyerror!void {
                     args.headers_buf,
                     response_body,
                     "",
-                    args.timeout,
                 ),
             };
             ctx.http.client.verbose = args.verbose;

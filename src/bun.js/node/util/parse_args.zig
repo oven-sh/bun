@@ -26,8 +26,6 @@ const isOptionLikeValue = utils.isOptionLikeValue;
 
 const log = bun.Output.scoped(.parseArgs, true);
 
-const ParseArgsError = error{ParseError};
-
 /// Represents a slice of a JSValue array
 const ArgsSlice = struct {
     array: JSValue,
@@ -67,7 +65,7 @@ const TokenKind = enum {
     option,
     @"option-terminator",
 
-    const COUNT = @typeInfo(TokenKind).Enum.fields.len;
+    const COUNT = @typeInfo(TokenKind).@"enum".fields.len;
 };
 const Token = union(TokenKind) {
     positional: struct { index: u32, value: ValueRef },
@@ -185,7 +183,7 @@ fn getDefaultArgs(globalThis: *JSGlobalObject) !ArgsSlice {
 }
 
 /// In strict mode, throw for possible usage errors like "--foo --bar" where foo was defined as a string-valued arg
-fn checkOptionLikeValue(globalThis: *JSGlobalObject, token: OptionToken) ParseArgsError!void {
+fn checkOptionLikeValue(globalThis: *JSGlobalObject, token: OptionToken) bun.JSError!void {
     if (!token.inline_value and isOptionLikeValue(token.value.asBunString(globalThis))) {
         const raw_name = OptionToken.RawNameFormatter{ .token = token, .globalThis = globalThis };
 
@@ -193,7 +191,7 @@ fn checkOptionLikeValue(globalThis: *JSGlobalObject, token: OptionToken) ParseAr
         var err: JSValue = undefined;
         if (token.raw.asBunString(globalThis).hasPrefixComptime("--")) {
             err = JSC.toTypeError(
-                JSC.Node.ErrorCode.ERR_PARSE_ARGS_INVALID_OPTION_VALUE,
+                .ERR_PARSE_ARGS_INVALID_OPTION_VALUE,
                 "Option '{}' argument is ambiguous.\nDid you forget to specify the option argument for '{}'?\nTo specify an option argument starting with a dash use '{}=-XYZ'.",
                 .{ raw_name, raw_name, raw_name },
                 globalThis,
@@ -201,25 +199,24 @@ fn checkOptionLikeValue(globalThis: *JSGlobalObject, token: OptionToken) ParseAr
         } else {
             const token_name = token.name.asBunString(globalThis);
             err = JSC.toTypeError(
-                JSC.Node.ErrorCode.ERR_PARSE_ARGS_INVALID_OPTION_VALUE,
+                .ERR_PARSE_ARGS_INVALID_OPTION_VALUE,
                 "Option '{}' argument is ambiguous.\nDid you forget to specify the option argument for '{}'?\nTo specify an option argument starting with a dash use '--{}=-XYZ' or '{}-XYZ'.",
                 .{ raw_name, raw_name, token_name, raw_name },
                 globalThis,
             );
         }
-        globalThis.vm().throwError(globalThis, err);
-        return error.ParseError;
+        return globalThis.throwValue(err);
     }
 }
 
 /// In strict mode, throw for usage errors.
-fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefinition, allow_positionals: bool, token: OptionToken) ParseArgsError!void {
+fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefinition, allow_positionals: bool, token: OptionToken) bun.JSError!void {
     if (token.option_idx) |option_idx| {
         const option = options[option_idx];
         switch (option.type) {
             .string => if (token.value == .jsvalue and !token.value.jsvalue.isString()) {
                 const err = JSC.toTypeError(
-                    JSC.Node.ErrorCode.ERR_PARSE_ARGS_INVALID_OPTION_VALUE,
+                    .ERR_PARSE_ARGS_INVALID_OPTION_VALUE,
                     "Option '{s}{s}{s}--{s} <value>' argument missing",
                     .{
                         if (!option.short_name.isEmpty()) "-" else "",
@@ -229,12 +226,11 @@ fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefiniti
                     },
                     globalThis,
                 );
-                globalThis.vm().throwError(globalThis, err);
-                return error.ParseError;
+                return globalThis.throwValue(err);
             },
             .boolean => if (token.value != .jsvalue or !token.value.jsvalue.isUndefined()) {
                 const err = JSC.toTypeError(
-                    JSC.Node.ErrorCode.ERR_PARSE_ARGS_INVALID_OPTION_VALUE,
+                    .ERR_PARSE_ARGS_INVALID_OPTION_VALUE,
                     "Option '{s}{s}{s}--{s}' does not take an argument",
                     .{
                         if (!option.short_name.isEmpty()) "-" else "",
@@ -244,26 +240,24 @@ fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefiniti
                     },
                     globalThis,
                 );
-                globalThis.vm().throwError(globalThis, err);
-                return error.ParseError;
+                return globalThis.throwValue(err);
             },
         }
     } else {
         const raw_name = OptionToken.RawNameFormatter{ .token = token, .globalThis = globalThis };
 
         const err = if (allow_positionals) (JSC.toTypeError(
-            JSC.Node.ErrorCode.ERR_PARSE_ARGS_UNKNOWN_OPTION,
+            .ERR_PARSE_ARGS_UNKNOWN_OPTION,
             "Unknown option '{}'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \"{}\"",
             .{ raw_name, raw_name },
             globalThis,
         )) else (JSC.toTypeError(
-            JSC.Node.ErrorCode.ERR_PARSE_ARGS_UNKNOWN_OPTION,
+            .ERR_PARSE_ARGS_UNKNOWN_OPTION,
             "Unknown option '{}'",
             .{raw_name},
             globalThis,
         ));
-        globalThis.vm().throwError(globalThis, err);
-        return error.ParseError;
+        return globalThis.throwValue(err);
     }
 }
 
@@ -303,16 +297,16 @@ fn storeOption(globalThis: *JSGlobalObject, option_name: ValueRef, option_value:
     }
 }
 
-fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, option_definitions: *std.ArrayList(OptionDefinition)) !void {
+fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, option_definitions: *std.ArrayList(OptionDefinition)) bun.JSError!void {
     try validateObject(globalThis, options_obj, "options", .{}, .{});
 
-    var iter = JSC.JSPropertyIterator(.{
+    var iter = try JSC.JSPropertyIterator(.{
         .skip_empty_name = false,
         .include_value = true,
     }).init(globalThis, options_obj);
     defer iter.deinit();
 
-    while (iter.next()) |long_option| {
+    while (try iter.next()) |long_option| {
         var option = OptionDefinition{
             .long_name = String.init(long_option),
         };
@@ -328,9 +322,8 @@ fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, opt
             try validateString(globalThis, short_option, "options.{s}.short", .{option.long_name});
             var short_option_str = short_option.toBunString(globalThis);
             if (short_option_str.length() != 1) {
-                const err = JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_VALUE, "options.{s}.short must be a single character", .{option.long_name}, globalThis);
-                globalThis.vm().throwError(globalThis, err);
-                return error.ParseError;
+                const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "options.{s}.short must be a single character", .{option.long_name}, globalThis);
+                return globalThis.throwValue(err);
             }
             option.short_name = short_option_str;
         }
@@ -385,8 +378,8 @@ fn tokenizeArgs(
     args: ArgsSlice,
     options: []const OptionDefinition,
     ctx: *T,
-    emitToken: fn (ctx: *T, token: Token) ParseArgsError!void,
-) !void {
+    emitToken: fn (ctx: *T, token: Token) bun.JSError!void,
+) bun.JSError!void {
     const num_args: u32 = args.end - args.start;
     var index: u32 = 0;
     while (index < num_args) : (index += 1) {
@@ -578,7 +571,7 @@ const ParseArgsState = struct {
     /// To reuse JSValue for the "kind" field in the output tokens array ("positional", "option", "option-terminator")
     kinds_jsvalues: [TokenKind.COUNT]?JSValue = [_]?JSValue{null} ** TokenKind.COUNT,
 
-    pub fn handleToken(this: *ParseArgsState, token_generic: Token) ParseArgsError!void {
+    pub fn handleToken(this: *ParseArgsState, token_generic: Token) bun.JSError!void {
         var globalThis = this.globalThis;
 
         switch (token_generic) {
@@ -592,13 +585,12 @@ const ParseArgsState = struct {
             .positional => |token| {
                 if (!this.allow_positionals) {
                     const err = JSC.toTypeError(
-                        JSC.Node.ErrorCode.ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL,
+                        .ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL,
                         "Unexpected argument '{s}'. This command does not take positional arguments",
                         .{token.value.asBunString(globalThis)},
                         globalThis,
                     );
-                    globalThis.vm().throwError(globalThis, err);
-                    return error.ParseError;
+                    return globalThis.throwValue(err);
                 }
                 const value = token.value.asJSValue(globalThis);
                 this.positionals.push(globalThis, value);
@@ -618,7 +610,7 @@ const ParseArgsState = struct {
             // reuse JSValue for the kind names: "positional", "option", "option-terminator"
             const kind_idx = @intFromEnum(token_generic);
             const kind_jsvalue = this.kinds_jsvalues[kind_idx] orelse kindval: {
-                const val = String.static(@as(string, @tagName(token_generic))).toJS(globalThis);
+                const val = String.static(@tagName(token_generic)).toJS(globalThis);
                 this.kinds_jsvalues[kind_idx] = val;
                 break :kindval val;
             };
@@ -652,25 +644,18 @@ const ParseArgsState = struct {
 pub fn parseArgs(
     globalThis: *JSGlobalObject,
     callframe: *JSC.CallFrame,
-) JSValue {
+) bun.JSError!JSValue {
     JSC.markBinding(@src());
-    const arguments = callframe.arguments(1).slice();
-    const config = if (arguments.len > 0) arguments[0] else JSValue.undefined;
-    return parseArgsImpl(globalThis, config) catch |err| {
-        // these two types of error will already throw their own js exception
-        if (err != error.ParseError and err != error.InvalidArgument) {
-            globalThis.throwOutOfMemory();
-        }
-        return JSValue.undefined;
-    };
+    const arguments = callframe.argumentsAsArray(1);
+    return parseArgsImpl(globalThis, arguments[0]);
 }
 
 comptime {
     const parseArgsFn = JSC.toJSHostFunction(parseArgs);
-    @export(parseArgsFn, .{ .name = "Bun__NodeUtil__jsParseArgs" });
+    @export(&parseArgsFn, .{ .name = "Bun__NodeUtil__jsParseArgs" });
 }
 
-pub fn parseArgsImpl(globalThis: *JSGlobalObject, config_obj: JSValue) !JSValue {
+pub fn parseArgsImpl(globalThis: *JSGlobalObject, config_obj: JSValue) bun.JSError!JSValue {
     //
     // Phase 0: parse the config object
     //

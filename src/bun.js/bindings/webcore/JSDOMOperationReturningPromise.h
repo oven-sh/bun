@@ -38,7 +38,7 @@ public:
     template<Operation operation, CastedThisErrorBehavior shouldThrow = CastedThisErrorBehavior::RejectPromise>
     static JSC::EncodedJSValue call(JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame, const char* operationName)
     {
-        return JSC::JSValue::encode(callPromiseFunction(lexicalGlobalObject, callFrame, [&operationName] (JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame, Ref<DeferredPromise>&& promise) {
+        return JSC::JSValue::encode(callPromiseFunction(lexicalGlobalObject, callFrame, [&operationName](JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame, Ref<DeferredPromise>&& promise) {
             auto* thisObject = IDLOperation<JSClass>::cast(lexicalGlobalObject, callFrame);
             if constexpr (shouldThrow != CastedThisErrorBehavior::Assert) {
                 if (UNLIKELY(!thisObject))
@@ -47,7 +47,7 @@ public:
                 ASSERT(thisObject);
 
             ASSERT_GC_OBJECT_INHERITS(thisObject, JSClass::info());
-            
+
             // FIXME: We should refactor the binding generated code to use references for lexicalGlobalObject and thisObject.
             return operation(&lexicalGlobalObject, &callFrame, thisObject, WTFMove(promise));
         }));
@@ -74,7 +74,7 @@ public:
     template<StaticOperation operation, CastedThisErrorBehavior shouldThrow = CastedThisErrorBehavior::RejectPromise>
     static JSC::EncodedJSValue callStatic(JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame, const char*)
     {
-        return JSC::JSValue::encode(callPromiseFunction(lexicalGlobalObject, callFrame, [] (JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame, Ref<DeferredPromise>&& promise) {
+        return JSC::JSValue::encode(callPromiseFunction(lexicalGlobalObject, callFrame, [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame, Ref<DeferredPromise>&& promise) {
             // FIXME: We should refactor the binding generated code to use references for lexicalGlobalObject.
             return operation(&lexicalGlobalObject, &callFrame, WTFMove(promise));
         }));

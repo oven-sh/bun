@@ -1,4 +1,4 @@
-export type * from "./src/protocol";
-export type * from "./src/inspector";
-export * from "./src/util/preview";
-export * from "./src/inspector/websocket";
+export type * from "./src/inspector/index.js";
+export * from "./src/inspector/websocket.js";
+export type * from "./src/protocol/index.js";
+export * from "./src/util/preview.js";

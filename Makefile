@@ -1,3 +1,10 @@
+# ------------------------------------------------------------
+#                         WARNING
+# ------------------------------------------------------------
+# This file is very old and will be removed soon!
+# You can build Bun using `cmake` or `bun run build`
+# ------------------------------------------------------------
+
 SHELL := $(shell which bash) # Use bash syntax to be consistent
 
 OS_NAME := $(shell uname -s | tr '[:upper:]' '[:lower:]')
@@ -26,8 +33,11 @@ ifeq ($(ARCH_NAME_RAW),arm64)
 ARCH_NAME = aarch64
 DOCKER_BUILDARCH = arm64
 BREW_PREFIX_PATH = /opt/homebrew
-DEFAULT_MIN_MACOS_VERSION = 11.0
+DEFAULT_MIN_MACOS_VERSION = 13.0
 MARCH_NATIVE = -mtune=$(CPU_TARGET)
+ifeq ($(OS_NAME),linux)
+MARCH_NATIVE = -march=armv8-a+crc -mtune=ampere1
+endif
 else
 ARCH_NAME = x64
 DOCKER_BUILDARCH = amd64
@@ -67,7 +77,7 @@ BUN_RELEASE_BIN = $(PACKAGE_DIR)/bun
 PRETTIER ?= $(shell which prettier 2>/dev/null || echo "./node_modules/.bin/prettier")
 ESBUILD = "$(shell which esbuild 2>/dev/null || echo "./node_modules/.bin/esbuild")"
 DSYMUTIL ?= $(shell which dsymutil 2>/dev/null || which dsymutil-15 2>/dev/null)
-WEBKIT_DIR ?= $(realpath src/bun.js/WebKit)
+WEBKIT_DIR ?= $(realpath vendor/WebKit)
 WEBKIT_RELEASE_DIR ?= $(WEBKIT_DIR)/WebKitBuild/Release
 WEBKIT_DEBUG_DIR ?= $(WEBKIT_DIR)/WebKitBuild/Debug
 WEBKIT_RELEASE_DIR_LTO ?= $(WEBKIT_DIR)/WebKitBuild/ReleaseLTO
@@ -81,9 +91,9 @@ ZIG ?= $(shell which zig 2>/dev/null || echo -e "error: Missing zig. Please make
 # This is easier to happen than you'd expect.
 # Using realpath here causes issues because clang uses clang++ as a symlink
 # so if that's resolved, it won't build for C++
-REAL_CC = $(shell which clang-16 2>/dev/null || which clang 2>/dev/null)
-REAL_CXX = $(shell which clang++-16 2>/dev/null || which clang++ 2>/dev/null)
-CLANG_FORMAT = $(shell which clang-format-16 2>/dev/null || which clang-format 2>/dev/null)
+REAL_CC = $(shell which clang-18 2>/dev/null || which clang 2>/dev/null)
+REAL_CXX = $(shell which clang++-18 2>/dev/null || which clang++ 2>/dev/null)
+CLANG_FORMAT = $(shell which clang-format-18 2>/dev/null || which clang-format 2>/dev/null)
 
 CC = $(REAL_CC)
 CXX = $(REAL_CXX)
@@ -107,14 +117,14 @@ CC_WITH_CCACHE = $(CCACHE_PATH) $(CC)
 ifeq ($(OS_NAME),darwin)
 # Find LLVM
 	ifeq ($(wildcard $(LLVM_PREFIX)),)
-		LLVM_PREFIX = $(shell brew --prefix llvm@16)
+		LLVM_PREFIX = $(shell brew --prefix llvm@18)
 	endif
 	ifeq ($(wildcard $(LLVM_PREFIX)),)
 		LLVM_PREFIX = $(shell brew --prefix llvm)
 	endif
 	ifeq ($(wildcard $(LLVM_PREFIX)),)
 #   This is kinda ugly, but I can't find a better way to error :(
-		LLVM_PREFIX = $(shell echo -e "error: Unable to find llvm. Please run 'brew install llvm@16' or set LLVM_PREFIX=/path/to/llvm")
+		LLVM_PREFIX = $(shell echo -e "error: Unable to find llvm. Please run 'brew install llvm@18' or set LLVM_PREFIX=/path/to/llvm")
 	endif
 
 	LDFLAGS += -L$(LLVM_PREFIX)/lib
@@ -128,8 +138,8 @@ endif
 SED = $(shell which gsed 2>/dev/null || which sed 2>/dev/null)
 
 BUN_DIR ?= $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
-BUN_DEPS_DIR ?= $(shell pwd)/src/deps
-BUN_DEPS_OUT_DIR ?= $(shell pwd)/build/bun-deps
+BUN_DEPS_DIR ?= $(shell pwd)/vendor
+BUN_DEPS_OUT_DIR ?= $(shell pwd)/build/release
 CPU_COUNT = 2
 ifeq ($(OS_NAME),darwin)
 CPU_COUNT = $(shell sysctl -n hw.logicalcpu)
@@ -154,7 +164,12 @@ CMAKE_FLAGS_WITHOUT_RELEASE = -DCMAKE_C_COMPILER=$(CC) \
 	-DCMAKE_OSX_DEPLOYMENT_TARGET=$(MIN_MACOS_VERSION) \
 	$(CMAKE_CXX_COMPILER_LAUNCHER_FLAG) \
 	-DCMAKE_AR=$(AR) \
-    -DCMAKE_RANLIB=$(which llvm-16-ranlib 2>/dev/null || which llvm-ranlib 2>/dev/null)
+	-DCMAKE_RANLIB=$(which llvm-18-ranlib 2>/dev/null || which llvm-ranlib 2>/dev/null) \
+	-DCMAKE_CXX_STANDARD=20 \
+	-DCMAKE_C_STANDARD=17 \
+	-DCMAKE_CXX_STANDARD_REQUIRED=ON \
+	-DCMAKE_C_STANDARD_REQUIRED=ON \
+	-DCMAKE_CXX_EXTENSIONS=ON 
 
 
 
@@ -176,13 +191,13 @@ endif
 
 ifeq ($(OS_NAME),linux)
 LIBICONV_PATH =
-AR = $(shell which llvm-ar-16 2>/dev/null || which llvm-ar 2>/dev/null || which ar 2>/dev/null)
+AR = $(shell which llvm-ar-18 2>/dev/null || which llvm-ar 2>/dev/null || which ar 2>/dev/null)
 endif
 
 OPTIMIZATION_LEVEL=-O3 $(MARCH_NATIVE)
 DEBUG_OPTIMIZATION_LEVEL= -O1 $(MARCH_NATIVE) -gdwarf-4
-CFLAGS_WITHOUT_MARCH = $(MACOS_MIN_FLAG) $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
-BUN_CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE)  $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
+CFLAGS_WITHOUT_MARCH = $(MACOS_MIN_FLAG) $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-pie -fno-pic
+BUN_CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE)  $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden  -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-pie -fno-pic
 BUN_TMP_DIR := /tmp/make-bun
 CFLAGS=$(CFLAGS_WITHOUT_MARCH) $(MARCH_NATIVE)
 
@@ -271,7 +286,7 @@ STRIP=/usr/bin/strip
 endif
 
 ifeq ($(OS_NAME),linux)
-STRIP=$(shell which llvm-strip 2>/dev/null || which llvm-strip-16 2>/dev/null || which strip 2>/dev/null || echo "Missing strip")
+STRIP=$(shell which llvm-strip 2>/dev/null || which llvm-strip-18 2>/dev/null || which strip 2>/dev/null || echo "Missing strip")
 endif
 
 
@@ -358,7 +373,7 @@ ifeq ($(OS_NAME),linux)
 endif
 
 ifeq ($(OS_NAME),darwin)
-MACOS_MIN_FLAG=-mmacosx-version-min=$(MIN_MACOS_VERSION)
+MACOS_MIN_FLAG=-mmacos-version-min=$(MIN_MACOS_VERSION)
 POSIX_PKG_MANAGER=brew
 INCLUDE_DIRS += $(MAC_INCLUDE_DIRS)
 endif
@@ -659,7 +674,7 @@ endif
 .PHONY: assert-deps
 assert-deps:
 	@echo "Checking if the required utilities are available..."
-	@if [ $(CLANG_VERSION) -lt "15" ]; then echo -e "ERROR: clang version >=15 required, found: $(CLANG_VERSION). Install with:\n\n    $(POSIX_PKG_MANAGER) install llvm@16"; exit 1; fi
+	@if [ $(CLANG_VERSION) -lt "18" ]; then echo -e "ERROR: clang version >=18 required, found: $(CLANG_VERSION). Install with:\n\n    $(POSIX_PKG_MANAGER) install llvm@18"; exit 1; fi
 	@cmake --version >/dev/null 2>&1 || (echo -e "ERROR: cmake is required."; exit 1)
 	@$(PYTHON) --version >/dev/null 2>&1 || (echo -e "ERROR: python is required."; exit 1)
 	@$(ESBUILD) --version >/dev/null 2>&1 || (echo -e "ERROR: esbuild is required."; exit 1)
@@ -674,19 +689,10 @@ assert-deps:
 	@test $(shell cargo --version | awk '{print $$2}' | cut -d. -f2) -gt 57 || (echo -e "ERROR: cargo version must be at least 1.57."; exit 1)
 	@echo "You have the dependencies installed! Woo"
 
-# the following allows you to run `make submodule` to update or init submodules. but we will exclude webkit
-# unless you explicitly clone it yourself (a huge download)
-SUBMODULE_NAMES=$(shell cat .gitmodules | grep 'path = ' | awk '{print $$3}')
-ifeq ("$(wildcard src/bun.js/WebKit/.git)", "")
-	SUBMODULE_NAMES := $(filter-out src/bun.js/WebKit, $(SUBMODULE_NAMES))
-endif
 
 .PHONY: init-submodules
 init-submodules: submodule # (backwards-compatibility alias)
 
-.PHONY: submodule
-submodule: ## to init or update all submodules
-	git submodule update --init --recursive --progress --depth=1 --checkout $(SUBMODULE_NAMES)
 
 .PHONY: build-obj
 build-obj:
@@ -789,7 +795,7 @@ cls:
 	@echo -e "\n\n---\n\n"
 
 jsc-check:
-	@ls $(JSC_BASE_DIR)  >/dev/null 2>&1 || (echo -e "Failed to access WebKit build. Please compile the WebKit submodule using the Dockerfile at $(shell pwd)/src/javascript/WebKit/Dockerfile and then copy from /output in the Docker container to $(JSC_BASE_DIR). You can override the directory via JSC_BASE_DIR. \n\n 	DOCKER_BUILDKIT=1 docker build -t bun-webkit $(shell pwd)/src/bun.js/WebKit -f $(shell pwd)/src/bun.js/WebKit/Dockerfile --progress=plain\n\n 	docker container create bun-webkit\n\n 	# Get the container ID\n	docker container ls\n\n 	docker cp DOCKER_CONTAINER_ID_YOU_JUST_FOUND:/output $(JSC_BASE_DIR)" && exit 1)
+	@ls $(JSC_BASE_DIR)  >/dev/null 2>&1 || (echo -e "Failed to access WebKit build. Please compile the WebKit submodule using the Dockerfile at $(shell pwd)/src/javascript/WebKit/Dockerfile and then copy from /output in the Docker container to $(JSC_BASE_DIR). You can override the directory via JSC_BASE_DIR. \n\n 	DOCKER_BUILDKIT=1 docker build -t bun-webkit $(shell pwd)/vendor/WebKit -f $(shell pwd)/vendor/WebKit/Dockerfile --progress=plain\n\n 	docker container create bun-webkit\n\n 	# Get the container ID\n	docker container ls\n\n 	docker cp DOCKER_CONTAINER_ID_YOU_JUST_FOUND:/output $(JSC_BASE_DIR)" && exit 1)
 	@ls $(JSC_INCLUDE_DIR)  >/dev/null 2>&1 || (echo "Failed to access WebKit include directory at $(JSC_INCLUDE_DIR)." && exit 1)
 	@ls $(JSC_LIB)  >/dev/null 2>&1 || (echo "Failed to access WebKit lib directory at $(JSC_LIB)." && exit 1)
 
@@ -920,7 +926,7 @@ bun-codesign-release-local-debug:
 .PHONY: jsc
 jsc: jsc-build jsc-copy-headers jsc-bindings
 .PHONY: jsc-debug
-jsc-debug: jsc-build-debug jsc-copy-headers-debug
+jsc-debug: jsc-build-debug
 .PHONY: jsc-build
 jsc-build: $(JSC_BUILD_STEPS)
 .PHONY: jsc-build-debug
@@ -930,7 +936,7 @@ jsc-bindings: headers bindings
 
 .PHONY: clone-submodules
 clone-submodules:
-	git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress
+	git -c submodule."vendor/WebKit".update=none submodule update --init --recursive --depth=1 --progress
 
 
 .PHONY: headers
@@ -1250,11 +1256,12 @@ jsc-build-mac-compile:
 			-DENABLE_STATIC_JSC=ON \
 			-DENABLE_SINGLE_THREADED_VM_ENTRY_SCOPE=ON \
 			-DALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS=ON \
-			-DCMAKE_BUILD_TYPE=Release \
+			-DCMAKE_BUILD_TYPE=RelWithDebInfo \
 			-DUSE_THIN_ARCHIVES=OFF \
 			-DBUN_FAST_TLS=ON \
 			-DENABLE_FTL_JIT=ON \
 			-DUSE_BUN_JSC_ADDITIONS=ON \
+			-DUSE_BUN_EVENT_LOOP=ON \
 			-G Ninja \
 			$(CMAKE_FLAGS_WITHOUT_RELEASE) \
 			-DPTHREAD_JIT_PERMISSIONS_API=1 \
@@ -1262,7 +1269,7 @@ jsc-build-mac-compile:
 			$(WEBKIT_DIR) \
 			$(WEBKIT_RELEASE_DIR) && \
 	CFLAGS="$(CFLAGS) -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS)  -ffat-lto-objects" \
-		cmake --build $(WEBKIT_RELEASE_DIR) --config Release --target jsc
+		cmake --build $(WEBKIT_RELEASE_DIR) --config RelWithDebInfo --target jsc
 
 .PHONY: jsc-build-mac-compile-lto
 jsc-build-mac-compile-lto:
@@ -1278,6 +1285,7 @@ jsc-build-mac-compile-lto:
 			-DUSE_THIN_ARCHIVES=OFF \
 			-DBUN_FAST_TLS=ON \
 			-DUSE_BUN_JSC_ADDITIONS=ON \
+			-DUSE_BUN_EVENT_LOOP=ON \
 			-DCMAKE_C_FLAGS="-flto=full" \
 			-DCMAKE_CXX_FLAGS="-flto=full" \
 			-DENABLE_FTL_JIT=ON \
@@ -1293,6 +1301,7 @@ jsc-build-mac-compile-lto:
 .PHONY: jsc-build-mac-compile-debug
 jsc-build-mac-compile-debug:
 	mkdir -p $(WEBKIT_DEBUG_DIR) $(WEBKIT_DIR);
+	# to disable asan, remove -DENABLE_SANITIZERS=address and add -DENABLE_MALLOC_HEAP_BREAKDOWN=ON
 	cd $(WEBKIT_DEBUG_DIR) && \
 		ICU_INCLUDE_DIRS="$(HOMEBREW_PREFIX)opt/icu4c/include" \
 		cmake \
@@ -1303,6 +1312,7 @@ jsc-build-mac-compile-debug:
 			-DENABLE_FTL_JIT=ON \
 			-DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
 			-DUSE_BUN_JSC_ADDITIONS=ON \
+			-DUSE_BUN_EVENT_LOOP=ON \
 			-DENABLE_BUN_SKIP_FAILING_ASSERTIONS=ON \
 			-DALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS=ON \
 			-G Ninja \
@@ -1311,6 +1321,7 @@ jsc-build-mac-compile-debug:
 			-DUSE_PTHREAD_JIT_PERMISSIONS_API=ON \
 			-DENABLE_REMOTE_INSPECTOR=ON \
 			-DUSE_VISIBILITY_ATTRIBUTE=1 \
+			-DENABLE_SANITIZERS=address \
 			$(WEBKIT_DIR) \
 			$(WEBKIT_DEBUG_DIR) && \
 	CFLAGS="$(CFLAGS) -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -ffat-lto-objects" \
@@ -1327,6 +1338,7 @@ jsc-build-linux-compile-config:
 			-DENABLE_BUN_SKIP_FAILING_ASSERTIONS=ON \
 			-DUSE_THIN_ARCHIVES=OFF \
 			-DUSE_BUN_JSC_ADDITIONS=ON \
+			-DUSE_BUN_EVENT_LOOP=ON \
 			-DENABLE_FTL_JIT=ON \
 			-DENABLE_REMOTE_INSPECTOR=ON \
 			-DJSEXPORT_PRIVATE=WTF_EXPORT_DECLARATION \
@@ -1350,6 +1362,7 @@ jsc-build-linux-compile-config-debug:
 			-DENABLE_BUN_SKIP_FAILING_ASSERTIONS=ON \
 			-DUSE_THIN_ARCHIVES=OFF \
 			-DUSE_BUN_JSC_ADDITIONS=ON \
+			-DUSE_BUN_EVENT_LOOP=ON \
 			-DENABLE_FTL_JIT=ON \
 			-DENABLE_REMOTE_INSPECTOR=ON \
 			-DJSEXPORT_PRIVATE=WTF_EXPORT_DECLARATION \
@@ -1363,27 +1376,27 @@ jsc-build-linux-compile-config-debug:
 			$(WEBKIT_DEBUG_DIR)
 
 # If you get "Error: could not load cache"
-# run  rm -rf src/bun.js/WebKit/CMakeCache.txt
+# run  rm -rf vendor/WebKit/CMakeCache.txt
 .PHONY: jsc-build-linux-compile-build
 jsc-build-linux-compile-build:
 		mkdir -p $(WEBKIT_RELEASE_DIR)  && \
 		cd $(WEBKIT_RELEASE_DIR)  && \
-	CFLAGS="$(CFLAGS) -Wl,--whole-archive -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -Wl,--whole-archive -ffat-lto-objects -DUSE_BUN_JSC_ADDITIONS=ON" \
+	CFLAGS="$(CFLAGS) -Wl,--whole-archive -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -Wl,--whole-archive -ffat-lto-objects -DUSE_BUN_JSC_ADDITIONS=ON -DUSE_BUN_EVENT_LOOP=ON" \
 		cmake --build $(WEBKIT_RELEASE_DIR) --config relwithdebuginfo --target jsc
 
 .PHONY: jsc-build-linux-compile-build-debug
 jsc-build-linux-compile-build-debug:
 		mkdir -p $(WEBKIT_DEBUG_DIR)  && \
 		cd $(WEBKIT_DEBUG_DIR)  && \
-	CFLAGS="$(CFLAGS) -Wl,--whole-archive -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -Wl,--whole-archive -ffat-lto-objects -DUSE_BUN_JSC_ADDITIONS=ON" \
+	CFLAGS="$(CFLAGS) -Wl,--whole-archive -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -Wl,--whole-archive -ffat-lto-objects -DUSE_BUN_JSC_ADDITIONS=ON -DUSE_BUN_EVENT_LOOP=ON" \
 		cmake --build $(WEBKIT_DEBUG_DIR) --config Debug --target jsc
 
 
 jsc-build-mac: jsc-force-fastjit jsc-build-mac-compile jsc-build-copy
-jsc-build-mac-debug: jsc-force-fastjit jsc-build-mac-compile-debug jsc-build-copy-debug
+jsc-build-mac-debug: jsc-force-fastjit jsc-build-mac-compile-debug
 
 jsc-build-linux: jsc-build-linux-compile-config jsc-build-linux-compile-build jsc-build-copy
-jsc-build-linux-debug: jsc-build-linux-compile-config-debug jsc-build-linux-compile-build-debug jsc-build-copy-debug
+jsc-build-linux-debug: jsc-build-linux-compile-config-debug jsc-build-linux-compile-build-debug
 
 jsc-build-copy:
 	cp $(WEBKIT_RELEASE_DIR)/lib/libJavaScriptCore.a $(BUN_DEPS_OUT_DIR)/libJavaScriptCore.a
@@ -1398,7 +1411,7 @@ jsc-build-copy-debug:
 	cp $(WEBKIT_DEBUG_DIR)/lib/libbmalloc.a $(BUN_DEPS_OUT_DIR)/libbmalloc.a
 
 clean-jsc:
-	cd src/bun.js/WebKit && rm -rf **/CMakeCache.txt **/CMakeFiles && rm -rf src/bun.js/WebKit/WebKitBuild
+	cd vendor/WebKit && rm -rf **/CMakeCache.txt **/CMakeFiles && rm -rf vendor/WebKit/WebKitBuild
 clean-bindings:
 	rm -rf $(OBJ_DIR)/*.o $(DEBUG_OBJ_DIR)/*.o $(DEBUG_OBJ_DIR)/webcore/*.o $(DEBUG_BINDINGS_OBJ) $(OBJ_DIR)/webcore/*.o $(BINDINGS_OBJ) $(OBJ_DIR)/*.d $(DEBUG_OBJ_DIR)/*.d
 

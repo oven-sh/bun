@@ -12,9 +12,11 @@
   "search.exclude": {
     "node_modules": true,
     ".git": true,
-    "src/bun.js/WebKit": true,
-    "src/deps/*/**": true,
+    "vendor/*/**": true,
     "test/node.js/upstream": true,
+    // This will fill up your whole search history.
+    "test/js/node/test/fixtures": true,
+    "test/js/node/test/common": true,
   },
   "search.followSymlinks": false,
   "search.useIgnoreFiles": true,
@@ -27,13 +29,13 @@
   // Zig
   "zig.initialSetupDone": true,
   "zig.buildOption": "build",
-  "zig.zls.zigLibPath": "${workspaceFolder}/src/deps/zig/lib",
-  "zig.buildArgs": ["-Dgenerated-code=./build/codegen"],
+  "zig.zls.zigLibPath": "${workspaceFolder}/vendor/zig/lib",
+  "zig.buildArgs": ["-Dgenerated-code=./build/debug/codegen"],
   "zig.zls.buildOnSaveStep": "check",
   // "zig.zls.enableBuildOnSave": true,
   // "zig.buildOnSave": true,
   "zig.buildFilePath": "${workspaceFolder}/build.zig",
-  "zig.path": "${workspaceFolder}/.cache/zig/zig.exe",
+  "zig.path": "${workspaceFolder}/vendor/zig/zig.exe",
   "zig.formattingProvider": "zls",
   "zig.zls.enableInlayHints": false,
   "[zig]": {
@@ -42,19 +44,26 @@
     "editor.defaultFormatter": "ziglang.vscode-zig",
   },
 
-  // C++
+  // lldb
+  "lldb.launch.initCommands": ["command source ${workspaceFolder}/.lldbinit"],
   "lldb.verboseLogging": false,
+
+  // C++
   "cmake.configureOnOpen": false,
   "C_Cpp.errorSquiggles": "enabled",
   "[cpp]": {
+    "editor.tabSize": 4,
     "editor.defaultFormatter": "xaver.clang-format",
   },
   "[c]": {
+    "editor.tabSize": 4,
     "editor.defaultFormatter": "xaver.clang-format",
   },
   "[h]": {
+    "editor.tabSize": 4,
     "editor.defaultFormatter": "xaver.clang-format",
   },
+  "clangd.arguments": ["--header-insertion=never"],
 
   // JavaScript
   "prettier.enable": true,
@@ -69,7 +78,7 @@
   "prettier.prettierPath": "./node_modules/prettier",
 
   // TypeScript
-  "typescript.tsdk": "${workspaceFolder}/node_modules/typescript/lib",
+  "typescript.tsdk": "node_modules/typescript/lib",
   "[typescript]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode",
   },
@@ -132,6 +141,8 @@
   },
   "files.associations": {
     "*.idl": "cpp",
+    "*.mdc": "markdown",
+    "array": "cpp",
   },
   "C_Cpp.files.exclude": {
     "**/.vscode": true,

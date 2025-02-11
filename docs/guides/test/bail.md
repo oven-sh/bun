@@ -14,9 +14,9 @@ To bail after a certain threshold of failures, optionally specify a number after
 
 ```sh
 # bail after 10 failures
-$ bun test --bail 10
+$ bun test --bail=10
 ```
 
 ---
 
-See [Docs > Test runner](/docs/cli/test) for complete documentation of `bun test`.
+See [Docs > Test runner](https://bun.sh/docs/cli/test) for complete documentation of `bun test`.

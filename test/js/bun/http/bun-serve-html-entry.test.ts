@@ -204,8 +204,15 @@ test("bun ./index.html ./about.html", async () => {
     "about.js": /*js*/ `
       const message = document.getElementById('message');
       message.textContent += " - Updated via JS";
+      console.log(process.env.BUN_PUBLIC_FOO);
+      console.log(typeof process.env.BUN_PRIVATE_FOO !== "undefined");
     `,
+    "bunfig.toml": /*toml*/ `
+[serve.static]
+env = "BUN_PUBLIC_*"
+  `,
   });
+  console.log({ dir });
 
   // Start the server by running bun with multiple HTML files
   await using process = Bun.spawn({
@@ -213,6 +220,8 @@ test("bun ./index.html ./about.html", async () => {
     env: {
       ...bunEnv,
       NODE_ENV: "production",
+      BUN_PUBLIC_FOO: "bar",
+      BUN_PRIVATE_FOO: "baz",
     },
     cwd: dir,
     stdout: "pipe",
@@ -274,6 +283,10 @@ test("bun ./index.html ./about.html", async () => {
       const jsResponse = await fetch(new URL(aboutJsMatch[1], serverUrl).href);
       expect(jsResponse.status).toBe(200);
       const js = await jsResponse.text();
+      expect(js).not.toContain("process.env.BUN_PUBLIC_FOO");
+      expect(js).toContain('console.log("bar")');
+      expect(js).toContain("process.env.BUN_PRIVATE_FOO");
+      expect(js).not.toContain('console.log("baz")');
       expect(js).toContain('document.getElementById("message")');
     }
   } finally {

@@ -1189,6 +1189,20 @@ pub const ServerConfig = struct {
                         .frontend_only = true,
                         .bundler_options = bun.bake.SplitBundlerOptions.empty,
                     };
+
+                    switch (vm.transpiler.options.transform_options.serve_env_behavior) {
+                        .prefix => {
+                            args.bake.?.bundler_options.client.env_prefix = vm.transpiler.options.transform_options.serve_env_prefix;
+                            args.bake.?.bundler_options.client.env = .prefix;
+                        },
+                        .load_all => {
+                            args.bake.?.bundler_options.client.env = .load_all;
+                        },
+                        .disable => {
+                            args.bake.?.bundler_options.client.env = .disable;
+                        },
+                        else => {},
+                    }
                 }
             }
 
@@ -1956,6 +1970,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         .globalThis = globalThis,
                         .quote_strings = true,
                     };
+                    defer formatter.deinit();
                     Output.errGeneric("Expected a Response object, but received '{}'", .{value.toFmt(&formatter)});
                 } else {
                     Output.errGeneric("Expected a Response object", .{});

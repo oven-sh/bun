@@ -59,7 +59,7 @@ for (const flag of ["-e", "--print"]) {
 
       testProcessArgv([], [bunExe()]);
       testProcessArgv(["abc", "def"], [bunExe(), "abc", "def"]);
-      testProcessArgv(["--", "abc", "def"], [bunExe(), "abc", "def"]);
+      testProcessArgv(["--", "abc", "def"], [bunExe(), "abc" /**, "--" */, "def"]);
     });
   });
 }
@@ -134,7 +134,7 @@ function group(run: (code: string) => SyncSubprocess<"pipe", "inherit">) {
 
   test("process.argv", async () => {
     const { stdout } = run("console.log(process.argv)");
-    expect(stdout.toString("utf8")).toEqual(`[ "${bunExe()}" ]\n`);
+    expect(stdout.toString("utf8")).toEqual(`[ "${bunExe()}", "-" ]\n`);
   });
 }
 

@@ -43,7 +43,7 @@ _read_scripts_in_package_json() {
 
     [[ "${package_json}" =~ "\"scripts\""[[:space:]]*":"[[:space:]]*\{(.*)\} ]] && {
         local package_json_compreply;
-        readarray -t package_json_compreply < <(bun -e 'import("package.json").then(p=>Object.keys(p.scripts).forEach(k=>console.log(k)))')
+        readarray -t package_json_compreply < <(bun -e 'import("./package.json").then(p=>Object.keys(p.scripts).forEach(k=>console.log(k)))')
         COMPREPLY+=( $(compgen -W "${package_json_compreply[*]}" -- "${cur_word}") );
     }
 

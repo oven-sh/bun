@@ -39,13 +39,7 @@ _read_scripts_in_package_json() {
         [[ "${COMP_WORDS[${line}]}" == "--cwd" ]] && working_dir="${COMP_WORDS[$((line + 1))]}";
     done
 
-    [[ -f "${working_dir}/package.json" ]] && package_json=$(<"${working_dir}/package.json");
-
-    [[ "${package_json}" =~ "\"scripts\""[[:space:]]*":"[[:space:]]*\{(.*)\} ]] && {
-        local package_json_compreply;
-        readarray -t package_json_compreply < <(bun -e 'import("./package.json").then(p=>Object.keys(p.scripts).forEach(k=>console.log(k)))')
-        COMPREPLY+=( $(compgen -W "${package_json_compreply[*]}" -- "${cur_word}") );
-    }
+    COMPREPLY+=( $(compgen -W "$(bun getcompletes s)" -- "${cur_word}") );
 
     # when a script is passed as an option, do not show other scripts as part of the completion anymore
     local re_prev_script="(^| )${prev}($| )";

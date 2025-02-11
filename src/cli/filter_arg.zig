@@ -145,7 +145,7 @@ pub const FilterSet = struct {
     pub fn init(allocator: std.mem.Allocator, filters: []const []const u8, cwd_: []const u8) !FilterSet {
         const cwd: []const u8 = if (comptime bun.Environment.isWindows) brk: {
             const c = try allocator.dupe(u8, cwd_);
-            std.mem.replaceScalar(u8, c, "\\", "/");
+            std.mem.replaceScalar(u8, c, '\\', '/');
             break :brk c;
         } else cwd_;
         defer if (comptime bun.Environment.isWindows) allocator.free(cwd);
@@ -170,6 +170,7 @@ pub const FilterSet = struct {
                     .kind = .path,
                 });
             } else {
+                self.has_name_filters = true;
                 try list.append(.{
                     .pattern = filter_utf8,
                     .kind = .name,

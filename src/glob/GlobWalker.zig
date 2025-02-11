@@ -1653,6 +1653,7 @@ pub fn GlobWalker_(
                     else => {},
                 }
             }
+            i -|= 1;
 
             if (makeComponent(
                 pattern,

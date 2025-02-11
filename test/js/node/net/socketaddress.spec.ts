@@ -1,9 +1,9 @@
 /**
  * @see https://nodejs.org/api/net.html#class-netsocketaddress
  */
-import { SocketAddress } from "node:net";
+import { SocketAddress, SocketAddressInitOptions } from "node:net";
 
-describe("SocketAddress", () => {
+describe("SocketAddress constructor", () => {
   it("is named SocketAddress", () => {
     expect(SocketAddress.name).toBe("SocketAddress");
   });
@@ -41,9 +41,11 @@ describe("SocketAddress", () => {
 
   describe("new SocketAddress({ family: 'ipv6' })", () => {
     let address: SocketAddress;
+
     beforeAll(() => {
       address = new SocketAddress({ family: "ipv6" });
     });
+
     it("creates a new ipv6 any address", () => {
       expect(address).toMatchObject({
         address: "::",
@@ -53,7 +55,23 @@ describe("SocketAddress", () => {
       });
     });
   }); // </new SocketAddress({ family: 'ipv6' })>
-}); // </SocketAddress>
+
+  it.each([
+    [
+      { family: "ipv4", address: "1.2.3.4", port: 1234, flowlabel: 9 },
+      { address: "1.2.3.4", port: 1234, family: "ipv4", flowlabel: 0 },
+    ],
+    // family gets lowercased
+    [{ family: "IPv4" }, { address: "127.0.0.1", family: "ipv4", port: 0 }],
+    [{ family: "IPV6" }, { address: "::", family: "ipv6", port: 0 }],
+  ] as [SocketAddressInitOptions, Partial<SocketAddress>][])(
+    "new SocketAddress(%o) matches %o",
+    (options, expected) => {
+      const address = new SocketAddress(options);
+      expect(address).toMatchObject(expected);
+    },
+  );
+}); // </SocketAddress constructor>
 
 describe("SocketAddress.isSocketAddress", () => {
   it("is a function that takes 1 argument", () => {
@@ -70,6 +88,30 @@ describe("SocketAddress.isSocketAddress", () => {
       enumerable: false,
       configurable: true,
     });
+  });
+
+  it("returns true for a SocketAddress instance", () => {
+    expect(SocketAddress.isSocketAddress(new SocketAddress())).toBeTrue();
+  });
+
+  it("returns false for POJOs that look like a SocketAddress", () => {
+    const notASocketAddress = {
+      address: "127.0.0.1",
+      port: 0,
+      family: "ipv4",
+      flowlabel: 0,
+    };
+    expect(SocketAddress.isSocketAddress(notASocketAddress)).toBeFalse();
+  });
+
+  it("returns false for faked SocketAddresses", () => {
+    const sockaddr = new SocketAddress();
+    const fake = Object.create(SocketAddress.prototype);
+    for (const key of Object.keys(sockaddr)) {
+      fake[key] = sockaddr[key];
+    }
+    expect(fake instanceof SocketAddress).toBeTrue();
+    expect(SocketAddress.isSocketAddress(fake)).toBeFalse();
   });
 }); // </SocketAddress.isSocketAddress>
 

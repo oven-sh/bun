@@ -28,8 +28,6 @@ var ArrayPrototypeMap = Array.prototype.map;
 var ArrayPrototypeIncludes = Array.prototype.includes;
 var ArrayPrototypeSlice = Array.prototype.slice;
 var ArrayPrototypeUnshift = Array.prototype.unshift;
-var ArrayPrototypeLastIndexOf = Array.prototype.lastIndexOf;
-var ArrayPrototypeSplice = Array.prototype.splice;
 const ArrayPrototypeFilter = Array.prototype.filter;
 const ArrayPrototypeSort = Array.prototype.sort;
 const StringPrototypeToUpperCase = String.prototype.toUpperCase;
@@ -750,19 +748,20 @@ function fork(modulePath, args = [], options) {
   options.execPath = options.execPath || process.execPath;
   validateArgumentNullCheck(options.execPath, "options.execPath");
 
-  execArgv = options.execArgv || process.execArgv;
-  validateArgumentsNullCheck(execArgv, "options.execArgv");
+  // Prepare arguments for fork:
+  // execArgv = options.execArgv || process.execArgv;
+  // validateArgumentsNullCheck(execArgv, "options.execArgv");
 
-  if (execArgv === process.execArgv && process._eval != null) {
-    const index = ArrayPrototypeLastIndexOf.$call(execArgv, process._eval);
-    if (index > 0) {
-      // Remove the -e switch to avoid fork bombing ourselves.
-      execArgv = ArrayPrototypeSlice.$call(execArgv);
-      ArrayPrototypeSplice.$call(execArgv, index - 1, 2);
-    }
-  }
+  // if (execArgv === process.execArgv && process._eval != null) {
+  //   const index = ArrayPrototypeLastIndexOf.$call(execArgv, process._eval);
+  //   if (index > 0) {
+  //     // Remove the -e switch to avoid fork bombing ourselves.
+  //     execArgv = ArrayPrototypeSlice.$call(execArgv);
+  //     ArrayPrototypeSplice.$call(execArgv, index - 1, 2);
+  //   }
+  // }
 
-  args = [...execArgv, modulePath, ...args];
+  args = [/*...execArgv,*/ modulePath, ...args];
 
   if (typeof options.stdio === "string") {
     options.stdio = stdioStringToArray(options.stdio, "ipc");

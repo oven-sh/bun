@@ -1287,21 +1287,13 @@ fn parseRgb(input: *css.Parser, parser: *ComponentParser) Result(CssColor) {
 //     return .{ .result = .{ r, g, b, is_legacy_syntax } };
 // }
 
-fn parseLegacyAlpha(input: *css.Parser, parser: *ComponentParser) Result(f32) {
+fn parseLegacyAlpha(input: *css.Parser, parser: *const ComponentParser) Result(f32) {
     if (!input.isExhausted()) {
         if (input.expectComma().asErr()) |e| return .{ .err = e };
-        const old_parsing_alpha = parser.parsing_alpha;
-        parser.parsing_alpha = true;
-        defer parser.parsing_alpha = old_parsing_alpha;
         return .{ .result = bun.clamp(
             switch (parseNumberOrPercentage(input, parser)) {
                 .result => |vv| vv,
-                .err => |e| {
-                    if (e.kind == .custom and e.kind.custom == .invalid_calc_nan) {
-                        return .{ .result = 0.0 };
-                    }
-                    return .{ .err = e };
-                },
+                .err => |e| return .{ .err = e },
             },
             0.0,
             1.0,
@@ -1310,21 +1302,14 @@ fn parseLegacyAlpha(input: *css.Parser, parser: *ComponentParser) Result(f32) {
     return .{ .result = 1.0 };
 }
 
-fn parseAlpha(input: *css.Parser, parser: *ComponentParser) Result(f32) {
-    const res = if (input.tryParse(css.Parser.expectDelim, .{'/'}).isOk()) brk: {
-        const old_parsing_alpha = parser.parsing_alpha;
-        parser.parsing_alpha = true;
-        defer parser.parsing_alpha = old_parsing_alpha;
-        break :brk bun.clamp(switch (parseNumberOrPercentage(input, parser)) {
+fn parseAlpha(input: *css.Parser, parser: *const ComponentParser) Result(f32) {
+    const res = if (input.tryParse(css.Parser.expectDelim, .{'/'}).isOk())
+        bun.clamp(switch (parseNumberOrPercentage(input, parser)) {
             .result => |v| v,
-            .err => |e| {
-                if (e.kind == .custom and e.kind.custom == .invalid_calc_nan) {
-                    return .{ .result = 0.0 };
-                }
-                return .{ .err = e };
-            },
-        }, 0.0, 1.0);
-    } else 1.0;
+            .err => |e| return .{ .err = e },
+        }, 0.0, 1.0)
+    else
+        1.0;
 
     return .{ .result = res };
 }
@@ -2048,9 +2033,6 @@ pub const OKLCH = struct {
 
 pub const ComponentParser = struct {
     allow_none: bool,
-    /// When parsing an alpha component, if it is calc() function which
-    /// evaluates to NaN, we should return 0.0 instead of NaN.
-    parsing_alpha: bool = false,
     from: ?RelativeComponentParser,
 
     pub fn new(allow_none: bool) ComponentParser {
@@ -2120,15 +2102,9 @@ pub const ComponentParser = struct {
             }
         }
 
-        switch (input.tryParse(CSSNumberFns.parseImpl, .{this.parsing_alpha})) {
-            .result => |value| return .{ .result = NumberOrPercentage{ .number = .{ .value = value } } },
-            .err => |e| {
-                if (this.parsing_alpha and e.kind == .custom and e.kind.custom == .invalid_calc_nan) {
-                    return .{ .err = e };
-                }
-            },
-        }
-        if (input.tryParse(Percentage.parse, .{}).asValue()) |value| {
+        if (input.tryParse(CSSNumberFns.parse, .{}).asValue()) |value| {
+            return .{ .result = NumberOrPercentage{ .number = .{ .value = value } } };
+        } else if (input.tryParse(Percentage.parse, .{}).asValue()) |value| {
             return .{
                 .result = NumberOrPercentage{
                     .percentage = .{ .unit_value = value.v },

@@ -937,8 +937,6 @@ pub fn Calc(comptime V: type) type {
                         if (val != 0.0) {
                             node = node.mulF32(input.allocator(), 1.0 / val);
                             continue;
-                        } else {
-                            return .{ .err = input.newCustomError(css.ParserError{ .invalid_calc_nan = {} }) };
                         }
                     }
                     return .{ .err = input.newCustomError(css.ParserError{ .invalid_value = {} }) };

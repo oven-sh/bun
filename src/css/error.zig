@@ -246,11 +246,6 @@ pub const ParserError = union(enum) {
     invalid_page_selector,
     /// An invalid value was encountered.
     invalid_value,
-    /// Invalid NaN - tried to parse a calc() which evaluates to NaN
-    /// e.g. `calc(0 / 0)`
-    /// In some places we need to handle this, e.g.:
-    /// `rgba(0, 0, 0, calc(0 / 0))` -> `#0000`
-    invalid_calc_nan,
     /// Invalid qualified rule.
     qualified_rule_invalid,
     /// A selector was invalid.
@@ -276,12 +271,6 @@ pub const ParserError = union(enum) {
             .deprecated_nest_rule => writer.writeAll("The @nest rule is deprecated, use standard CSS nesting instead"),
             .invalid_page_selector => writer.writeAll("Invalid @page selector"),
             .invalid_value => writer.writeAll("Invalid value"),
-            .invalid_calc_nan => {
-                if (comptime bun.Environment.isDebug) {
-                    @panic("We probably should be handling this error rather than bubbling it up to the user.");
-                }
-                return writer.writeAll("calc() value evaluates to NaN");
-            },
             .qualified_rule_invalid => writer.writeAll("Invalid qualified rule"),
             .selector_error => |err| writer.print("Invalid selector. {s}", .{err}),
             .unexpected_import_rule => writer.writeAll("@import rules must come before any other rules except @charset and @layer"),

@@ -24,16 +24,7 @@ const JSPrinter = bun.js_printer;
 const exists = bun.sys.exists;
 const existsZ = bun.sys.existsZ;
 
-// makes read return error.WouldBlock instead of blocking if no input is available
-// posix only
-fn setNonblock(b: bool) !void {
-    var flags: std.posix.O = @bitCast(@as(u32, @intCast(try std.posix.fcntl(std.posix.STDIN_FILENO, std.posix.F.GETFL, 0))));
-    flags.NONBLOCK = b;
-    _ = try std.posix.fcntl(std.posix.STDIN_FILENO, std.posix.F.SETFL, @as(u32, @bitCast(flags)));
-}
-
-// makes it so that no newline character is required for forwarding the input
-// also makes it so that input characters are not printed to the console
+// make terminal input raw
 fn setRawInput(b: bool) !void {
     if (comptime Environment.isWindows) {
         const ENABLE_ECHO_INPUT: u32 = 0x0004;

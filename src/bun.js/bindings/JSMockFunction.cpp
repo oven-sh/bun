@@ -1196,7 +1196,6 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockResolvedValueOnce, (JSC::JSGlobalObje
 
     RELEASE_AND_RETURN(scope, JSValue::encode(thisObject));
 }
-
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockResolvedValue_rejected, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1211,7 +1210,6 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockResolvedValue_rejected, (JSC::JSGloba
 
     RELEASE_AND_RETURN(scope, JSValue::encode(promise));
 }
-
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockRejectedValue, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe))
 {
     JSValue thisValue = callframe->thisValue();
@@ -1241,7 +1239,6 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockRejectedValue, (JSC::JSGlobalObject* 
 
     RELEASE_AND_RETURN(scope, JSValue::encode(thisObject));
 }
-
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockRejectedValueOnce, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     JSValue thisValue = callframe->thisValue();

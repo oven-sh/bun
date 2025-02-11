@@ -8,7 +8,7 @@ import { Matchers } from "bun:test";
 import { EventEmitter } from "node:events";
 // @ts-ignore
 import { dedent } from "../bundler/expectBundled.ts";
-import { bunEnv, mergeWindowEnvs } from "harness";
+import { bunEnv, isWindows, mergeWindowEnvs } from "harness";
 import { expect } from "bun:test";
 
 /** For testing bundler related bugs in the DevServer */

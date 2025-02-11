@@ -2677,6 +2677,7 @@ pub const BundleV2 = struct {
     fn runResolutionForParseTask(parse_result: *ParseTask.Result, this: *BundleV2) ResolveQueue {
         var ast = &parse_result.value.success.ast;
         const source = &parse_result.value.success.source;
+        const loader = parse_result.value.success.loader;
         const source_dir = source.path.sourceDir();
         var estimated_resolve_queue_count: usize = 0;
         for (ast.import_records.slice()) |*import_record| {
@@ -2934,15 +2935,25 @@ pub const BundleV2 = struct {
 
             if (this.transpiler.options.dev_server) |dev_server| {
                 import_record.source_index = Index.invalid;
-                import_record.is_external_without_side_effects = true;
 
                 if (dev_server.isFileCached(path.text, bake_graph)) |entry| {
                     const rel = bun.path.relativePlatform(this.transpiler.fs.top_level_dir, path.text, .loose, false);
-                    import_record.path.text = rel;
-                    import_record.path.pretty = rel;
-                    import_record.path = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
-                    if (entry.kind == .css) {
-                        import_record.path.is_disabled = true;
+                    if (loader == .html and entry.kind == .asset) {
+                        // Overload `path.text` to point to the final URL
+                        // This information cannot be queried while printing because a lock wouldn't get held.
+                        const hash = dev_server.assets.getHash(path.text) orelse @panic("cached asset not found");
+                        import_record.path.text = std.fmt.allocPrint(this.graph.allocator, bun.bake.DevServer.asset_prefix ++ "/{s}{s}", .{
+                            &std.fmt.bytesToHex(std.mem.asBytes(&hash), .lower),
+                            std.fs.path.extension(path.text),
+                        }) catch bun.outOfMemory();
+                        import_record.path.is_disabled = false;
+                    } else {
+                        import_record.path.text = path.text;
+                        import_record.path.pretty = rel;
+                        import_record.path = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
+                        if (entry.kind != .js or loader == .html) {
+                            import_record.path.is_disabled = true;
+                        }
                     }
                     continue;
                 }
@@ -2951,7 +2962,7 @@ pub const BundleV2 = struct {
             const hash_key = path.hashKey();
 
             if (this.pathToSourceIndexMap(target).get(hash_key)) |id| {
-                if (this.transpiler.options.dev_server != null) {
+                if (this.transpiler.options.dev_server != null and loader != .html) {
                     import_record.path = this.graph.input_files.items(.source)[id].path;
                 } else {
                     import_record.source_index = Index.init(id);
@@ -2993,8 +3004,8 @@ pub const BundleV2 = struct {
 
             // Figure out the loader.
             {
-                if (import_record.tag.loader()) |loader| {
-                    resolve_task.loader = loader;
+                if (import_record.tag.loader()) |l| {
+                    resolve_task.loader = l;
                 }
 
                 if (resolve_task.loader == null) {
@@ -3003,8 +3014,8 @@ pub const BundleV2 = struct {
                 }
 
                 // HTML must be an entry point.
-                if (resolve_task.loader) |*loader| {
-                    loader.* = loader.disableHTML();
+                if (resolve_task.loader) |*l| {
+                    l.* = l.disableHTML();
                 }
             }
 
@@ -3218,10 +3229,12 @@ pub const BundleV2 = struct {
                 var import_records = result.ast.import_records.clone(this.graph.allocator) catch unreachable;
 
                 const input_file_loaders = this.graph.input_files.items(.loader);
+                const save_import_record_source_index = this.transpiler.options.dev_server == null or
+                    result.loader == .html;
 
                 if (this.resolve_tasks_waiting_for_import_source_index.fetchSwapRemove(result.source.index.get())) |pending_entry| {
                     for (pending_entry.value.slice()) |to_assign| {
-                        if (this.transpiler.options.dev_server == null or
+                        if (save_import_record_source_index or
                             input_file_loaders[to_assign.to_source_index.get()] == .css)
                         {
                             import_records.slice()[to_assign.import_record_index].source_index = to_assign.to_source_index;
@@ -3238,8 +3251,7 @@ pub const BundleV2 = struct {
 
                 for (import_records.slice(), 0..) |*record, i| {
                     if (path_to_source_index_map.get(record.path.hashKey())) |source_index| {
-                        if (this.transpiler.options.dev_server == null or
-                            input_file_loaders[source_index] == .css)
+                        if (save_import_record_source_index or input_file_loaders[source_index] == .css)
                             record.source_index.value = source_index;
 
                         if (getRedirectId(result.ast.redirect_import_record_index)) |compare| {
@@ -10313,21 +10325,30 @@ pub const LinkerContext = struct {
 
                 const import_record: *const ImportRecord = &this.import_records[this.current_import_record_index];
                 this.current_import_record_index += 1;
-                const unique_key_for_additional_files = this.linker.parse_graph.input_files.items(.unique_key_for_additional_file)[import_record.source_index.get()];
+                const unique_key_for_additional_files = if (import_record.source_index.isValid())
+                    this.linker.parse_graph.input_files.items(.unique_key_for_additional_file)[import_record.source_index.get()]
+                else
+                    "";
+
+                if (import_record.is_external_without_side_effects) {
+                    debug("Leaving external import: {s}", .{import_record.path.text});
+                    return;
+                }
 
                 if (this.linker.dev_server != null) {
                     if (unique_key_for_additional_files.len > 0) {
                         // Replace the external href/src with the unique key so that we later will rewrite it to the final URL or pathname
                         element.setAttribute(url_attribute, unique_key_for_additional_files) catch bun.outOfMemory();
-                    } else {
-                        // TODO: Dev server does not support setting "external" since it bundles everything.
+                    } else if (import_record.path.is_disabled) {
                         element.remove();
+                    } else {
+                        element.setAttribute(url_attribute, import_record.path.text) catch bun.outOfMemory();
                     }
                     return;
                 }
 
-                if (import_record.is_external_without_side_effects or import_record.source_index.isInvalid()) {
-                    debug("Leaving external import {s}", .{import_record.path.text});
+                if (import_record.source_index.isInvalid()) {
+                    debug("Leaving import with invalid source index: {s}", .{import_record.path.text});
                     return;
                 }
 

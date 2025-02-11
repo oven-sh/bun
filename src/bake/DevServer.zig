@@ -67,6 +67,7 @@ route_lookup: AutoArrayHashMapUnmanaged(IncrementalGraph(.server).FileIndex, Rou
 /// the active pages are notified of a hot updates.
 html_router: HTMLRouter,
 /// Assets are accessible via `/_bun/asset/<key>`
+/// This store is not thread safe.
 assets: Assets,
 /// All bundling failures are stored until a file is saved and rebuilt.
 /// They are stored in the wire format the HMR runtime expects so that
@@ -854,6 +855,8 @@ pub fn attachRoutes(dev: *DevServer, server: anytype) !bool {
     app.get(asset_prefix ++ "/:asset", *DevServer, dev, wrapGenericRequestHandler(onAssetRequest, is_ssl));
     app.get(internal_prefix ++ "/src/*", *DevServer, dev, wrapGenericRequestHandler(onSrcRequest, is_ssl));
 
+    app.any(internal_prefix, *DevServer, dev, wrapGenericRequestHandler(onNotFound, is_ssl));
+
     app.ws(
         internal_prefix ++ "/hmr",
         dev,
@@ -878,6 +881,16 @@ pub fn attachRoutes(dev: *DevServer, server: anytype) !bool {
     } else {
         return false;
     }
+}
+
+fn onNotFound(_: *DevServer, _: *Request, resp: anytype) void {
+    resp.corked(onNotFoundCorked, .{resp});
+}
+
+fn onNotFoundCorked(resp: anytype) void {
+    resp.writeHeaderInt("Content-Length", 0);
+    resp.writeStatus("404 Not Found");
+    resp.endWithoutBody(false);
 }
 
 fn onJsRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
@@ -1797,6 +1810,8 @@ pub const HotUpdateContext = struct {
     import_records: []bun.ImportRecord.List,
     /// bundle_v2.Graph.server_component_boundaries.slice()
     scbs: bun.JSAst.ServerComponentBoundary.List.Slice,
+    /// bundle_v2.Graph.input_files.items(.loader)
+    loaders: []bun.options.Loader,
     /// Which files have a server-component boundary.
     server_to_client_bitset: DynamicBitSetUnmanaged,
     /// Used to reduce calls to the IncrementalGraph hash table.
@@ -1868,6 +1883,7 @@ pub fn finalizeBundle(
 
     const js_chunk = result.jsPseudoChunk();
     const input_file_sources = bv2.graph.input_files.items(.source);
+    const input_file_loaders = bv2.graph.input_files.items(.loader);
     const import_records = bv2.graph.ast.items(.import_records);
     const targets = bv2.graph.ast.items(.target);
     const scbs = bv2.graph.server_component_boundaries.slice();
@@ -1891,6 +1907,7 @@ pub fn finalizeBundle(
     var ctx: bun.bake.DevServer.HotUpdateContext = .{
         .import_records = import_records,
         .sources = input_file_sources,
+        .loaders = input_file_loaders,
         .scbs = scbs,
         .server_to_client_bitset = scb_bitset,
         .resolved_index_cache = resolved_index_cache,
@@ -2918,7 +2935,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 }
 
                 fn initJavaScript(code_slice: []const u8, flags: Flags) @This() {
-                    assert(flags.kind == .js);
+                    assert(flags.kind == .js or flags.kind == .asset);
                     return .{
                         .content = .{ .js_code_ptr = code_slice.ptr },
                         .code_len = @intCast(code_slice.len),
@@ -3169,7 +3186,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         .is_special_framework_file = false,
                         .is_html_route = false,
                         .kind = switch (content) {
-                            .js => .js,
+                            .js => if (ctx.loaders[index.get()].isJavaScriptLike()) .js else .asset,
                             .css => .css,
                         },
                     };
@@ -3941,8 +3958,31 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         // knowledge of the boundary between them.
                         if (data.flags.kind == .css)
                             try entry_points.appendCss(alloc, path)
-                        else if (!data.flags.is_hmr_root)
+                        else if (!data.flags.is_hmr_root) {
                             try entry_points.appendJs(alloc, path, .client);
+
+                            if (data.flags.kind == .asset) {
+                                // Changing asset files directly currently
+                                // violates the "do not reprocess unchanged
+                                // files" rule. An asset invalidate will
+                                // implicitly invalidate all direct dependants.
+                                // This is currently required to force HTML
+                                // bundles to become up to date with the new
+                                // asset URL. This is also done for other files
+                                // not out of requirement, but to make HMR a bit
+                                // nicer.
+                                @branchHint(.unlikely);
+                                const keys = g.bundled_files.keys();
+                                var it = g.first_dep.items[index].unwrap();
+                                while (it) |edge_index| {
+                                    const entry = g.edges.items[edge_index.get()];
+                                    const dep = entry.dependency;
+                                    g.stale_files.set(dep.get());
+                                    try entry_points.appendJs(alloc, keys[dep.get()], .client);
+                                    it = entry.next_dependency.unwrap();
+                                }
+                            }
+                        }
                     },
                     .server => {
                         if (data.is_rsc)
@@ -4059,11 +4099,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             for (g.current_chunk_parts.items) |entry| {
                 list.appendSliceAssumeCapacity(switch (side) {
                     // entry is an index into files
-                    .client => brk: {
-                        if (Environment.allow_assert)
-                            bun.assert(files[entry.get()].flags.kind == .js);
-                        break :brk files[entry.get()].jsCode();
-                    },
+                    .client => files[entry.get()].jsCode(),
                     // entry is the '[]const u8' itself
                     .server => entry,
                 });
@@ -5947,6 +5983,13 @@ pub const Assets = struct {
 
     fn owner(assets: *Assets) *DevServer {
         return @alignCast(@fieldParentPtr("assets", assets));
+    }
+
+    pub fn getHash(assets: *Assets, path: []const u8) ?u64 {
+        return if (assets.path_map.get(path)) |idx|
+            assets.files.keys()[idx]
+        else
+            null;
     }
 
     // / When an asset is overwritten, it receives a new URL to get around browser auto-caching.

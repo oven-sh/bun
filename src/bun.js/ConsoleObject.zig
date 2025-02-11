@@ -2078,8 +2078,7 @@ pub const Formatter = struct {
                 this.map = this.map_node.?.data;
             }
 
-            const entry = this.map.getOrPut(value) catch unreachable;
-            if (entry.found_existing) {
+            if (this.map.get(value)) |_| {
                 writer.writeAll(comptime Output.prettyFmt("<r><cyan>[Circular]<r>", enable_ansi_colors));
                 return;
             }

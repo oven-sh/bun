@@ -75,10 +75,17 @@ yourself with Bun.serve().
 
       for (const file of glob.scanSync(cwd)) {
         let resolved = path.resolve(cwd, file);
+        if (resolved.includes(path.sep + "node_modules" + path.sep)) {
+          continue;
+        }
         try {
           resolved = Bun.resolveSync(resolved, cwd);
         } catch {
           resolved = Bun.resolveSync("./" + resolved, cwd);
+        }
+
+        if (resolved.includes(path.sep + "node_modules" + path.sep)) {
+          continue;
         }
 
         args.push(resolved);
@@ -89,6 +96,10 @@ yourself with Bun.serve().
         resolved = Bun.resolveSync(arg, cwd);
       } catch {
         resolved = Bun.resolveSync("./" + arg, cwd);
+      }
+
+      if (resolved.includes(path.sep + "node_modules" + path.sep)) {
+        continue;
       }
 
       args.push(resolved);
@@ -102,6 +113,10 @@ yourself with Bun.serve().
   if (args.length === 0) {
     throw new Error("No HTML files found matching " + JSON.stringify(Bun.main));
   }
+
+  args.sort((a, b) => {
+    return a.localeCompare(b);
+  });
 
   // Add cwd to find longest common path
   let needsPop = false;
@@ -181,7 +196,7 @@ yourself with Bun.serve().
 
   // If you're only providing one entry point, then match everything to it.
   // (except for assets, which have higher precedence)
-  if (htmlImports.length === 1 && servePaths[0] === "") {
+  if (htmlImports.length === 1) {
     servePaths[0] = "*";
   }
 
@@ -247,13 +262,28 @@ yourself with Bun.serve().
   const elapsed = (performance.now() - initial).toFixed(2);
   const enableANSIColors = Bun.enableANSIColors;
   function printInitialMessage(isFirst: boolean) {
+    let pathnameToPrint;
+    if (servePaths.length === 1) {
+      pathnameToPrint = servePaths[0];
+    } else {
+      const indexRoute = servePaths.find(a => {
+        return a === "index" || a === "" || a === "/";
+      });
+      pathnameToPrint = indexRoute !== undefined ? indexRoute : servePaths[0];
+    }
+
+    pathnameToPrint ||= "/";
+    if (pathnameToPrint === "*") {
+      pathnameToPrint = "/";
+    }
+
     if (enableANSIColors) {
       let topLine = `${server.development ? "\x1b[34;7m DEV \x1b[0m " : ""}\x1b[1;34m\x1b[5mBun\x1b[0m \x1b[1;34mv${Bun.version}\x1b[0m`;
       if (isFirst) {
         topLine += ` \x1b[2mready in\x1b[0m \x1b[1m${elapsed}\x1b[0m ms`;
       }
       console.log(topLine + "\n");
-      console.log(`\x1b[1;34m➜\x1b[0m \x1b[36m${server!.url.href}\x1b[0m`);
+      console.log(`\x1b[1;34m➜\x1b[0m \x1b[36m${new URL(pathnameToPrint, server!.url)}\x1b[0m`);
     } else {
       let topLine = `Bun v${Bun.version}`;
       if (isFirst) {
@@ -263,7 +293,7 @@ yourself with Bun.serve().
         topLine += ` ready in ${elapsed} ms`;
       }
       console.log(topLine + "\n");
-      console.log(`url: ${server!.url.href}`);
+      console.log(`url: ${new URL(pathnameToPrint, server!.url)}`);
     }
     if (htmlImports.length > 1 || (servePaths[0] !== "" && servePaths[0] !== "*")) {
       console.log("\nRoutes:");

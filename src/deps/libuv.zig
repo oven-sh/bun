@@ -2273,8 +2273,7 @@ pub const uv_stdio_container_t = struct_uv_stdio_container_s;
 pub const uv_process_options_t = extern struct {
     exit_cb: uv_exit_cb,
     file: [*:0]const u8,
-    // TODO(@paperdave): upstream changing libuv's args to const
-    // it is not mutated in any of their code
+    // In libuv, this is not 'const', but they never mutate it.
     args: [*:null]?[*:0]const u8,
     env: [*:null]?[*:0]const u8,
     cwd: [*:0]const u8,

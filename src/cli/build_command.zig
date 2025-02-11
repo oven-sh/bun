@@ -39,7 +39,7 @@ pub const BuildCommand = struct {
         "process.versions.bun",
     };
 
-    pub fn exec(ctx: Command.Context) !void {
+    pub fn exec(ctx: Command.Context, fetcher: ?*BundleV2.DependenciesScanner) !void {
         Global.configureAllocator(.{ .long_running = true });
         const allocator = ctx.allocator;
         var log = ctx.log;
@@ -50,6 +50,11 @@ pub const BuildCommand = struct {
 
         if (ctx.bundler_options.bake) {
             return bun.bake.production.buildCommand(ctx);
+        }
+
+        if (fetcher != null) {
+            ctx.args.packages = .external;
+            ctx.bundler_options.compile = false;
         }
 
         const compile_target = &ctx.bundler_options.compile_target;
@@ -75,6 +80,12 @@ pub const BuildCommand = struct {
         }
 
         var this_transpiler = try transpiler.Transpiler.init(allocator, log, ctx.args, null);
+        if (fetcher) |fetch| {
+            this_transpiler.options.entry_points = fetch.entry_points;
+            this_transpiler.resolver.opts.entry_points = fetch.entry_points;
+            this_transpiler.options.ignore_module_resolution_errors = true;
+            this_transpiler.resolver.opts.ignore_module_resolution_errors = true;
+        }
 
         this_transpiler.options.source_map = options.SourceMapOption.fromApi(ctx.args.source_map);
 
@@ -167,7 +178,7 @@ pub const BuildCommand = struct {
             }
         }
 
-        if (ctx.bundler_options.outdir.len == 0 and !ctx.bundler_options.compile) {
+        if (ctx.bundler_options.outdir.len == 0 and !ctx.bundler_options.compile and fetcher == null) {
             if (this_transpiler.options.entry_points.len > 1) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> Must use <b>--outdir<r> when specifying more than one entry point.", .{});
                 Global.exit(1);
@@ -235,18 +246,18 @@ pub const BuildCommand = struct {
             .unspecified => {},
         }
 
-        var client_bundler: transpiler.Transpiler = undefined;
+        var client_transpiler: transpiler.Transpiler = undefined;
         if (this_transpiler.options.server_components) {
-            client_bundler = try transpiler.Transpiler.init(allocator, log, ctx.args, null);
-            client_bundler.options = this_transpiler.options;
-            client_bundler.options.target = .browser;
-            client_bundler.options.server_components = true;
-            client_bundler.options.conditions = try this_transpiler.options.conditions.clone();
+            client_transpiler = try transpiler.Transpiler.init(allocator, log, ctx.args, null);
+            client_transpiler.options = this_transpiler.options;
+            client_transpiler.options.target = .browser;
+            client_transpiler.options.server_components = true;
+            client_transpiler.options.conditions = try this_transpiler.options.conditions.clone();
             try this_transpiler.options.conditions.appendSlice(&.{"react-server"});
             this_transpiler.options.react_fast_refresh = false;
             this_transpiler.options.minify_syntax = true;
-            client_bundler.options.minify_syntax = true;
-            client_bundler.options.define = try options.Define.init(
+            client_transpiler.options.minify_syntax = true;
+            client_transpiler.options.define = try options.Define.init(
                 allocator,
                 if (ctx.args.define) |user_defines|
                     try options.Define.Data.fromInput(try options.stringHashMapFromArrays(
@@ -262,10 +273,10 @@ pub const BuildCommand = struct {
             );
 
             try bun.bake.addImportMetaDefines(allocator, this_transpiler.options.define, .development, .server);
-            try bun.bake.addImportMetaDefines(allocator, client_bundler.options.define, .development, .client);
+            try bun.bake.addImportMetaDefines(allocator, client_transpiler.options.define, .development, .client);
 
             this_transpiler.resolver.opts = this_transpiler.options;
-            client_bundler.resolver.opts = client_bundler.options;
+            client_transpiler.resolver.opts = client_transpiler.options;
         }
 
         // var env_loader = this_transpiler.env;
@@ -313,6 +324,7 @@ pub const BuildCommand = struct {
                 &reachable_file_count,
                 &minify_duration,
                 &input_code_length,
+                fetcher,
             ) catch |err| {
                 if (log.msgs.items.len > 0) {
                     try log.print(Output.errorWriter());

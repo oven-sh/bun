@@ -547,7 +547,7 @@ pub const NumberRenamer = struct {
             .fixed_buffer_allocator = undefined,
         };
         renamer.name_temp_allocator = renamer.name_stack_fallback.get();
-        renamer.number_scope_pool = bun.HiveArray(NumberScope, 128).Fallback.init(renamer.arena.allocator());
+        renamer.number_scope_pool = .init(renamer.arena.allocator());
         renamer.root.name_counts = root_names;
         if (comptime Environment.allow_assert and !Environment.isWindows) {
             if (std.posix.getenv("BUN_DUMP_SYMBOLS") != null)
@@ -597,7 +597,7 @@ pub const NumberRenamer = struct {
             std.sort.pdq(u32, sorted.items, {}, std.sort.asc(u32));
 
             for (sorted.items) |inner_index| {
-                r.assignName(s, Ref.init(@as(Ref.Int, @intCast(inner_index)), source_index, false));
+                r.assignName(s, Ref.init(@intCast(inner_index), source_index, false));
             }
         }
 

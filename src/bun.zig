@@ -70,8 +70,6 @@ pub inline fn clampFloat(_self: anytype, min: @TypeOf(_self), max: @TypeOf(_self
     return self;
 }
 
-pub const ArrayList = std.ArrayListUnmanaged;
-
 /// We cannot use a threadlocal memory allocator for FileSystem-related things
 /// FileSystem is a singleton.
 pub const fs_allocator = default_allocator;
@@ -3856,19 +3854,15 @@ pub fn OrdinalT(comptime Int: type) type {
 pub const Ordinal = OrdinalT(c_int);
 
 pub fn memmove(output: []u8, input: []const u8) void {
-    if (@intFromPtr(output.ptr) == @intFromPtr(input.ptr) or output.len == 0) return;
-    if (comptime Environment.allow_assert) {
-        assert(output.len >= input.len and output.len > 0);
+    if (output.len == 0) {
+        return;
     }
 
-    const does_input_or_output_overlap = (@intFromPtr(input.ptr) < @intFromPtr(output.ptr) and
-        @intFromPtr(input.ptr) + input.len > @intFromPtr(output.ptr)) or
-        (@intFromPtr(output.ptr) < @intFromPtr(input.ptr) and
-        @intFromPtr(output.ptr) + output.len > @intFromPtr(input.ptr));
+    if (comptime Environment.allow_assert) {
+        assert(output.len >= input.len);
+    }
 
-    if (!does_input_or_output_overlap) {
-        @memcpy(output[0..input.len], input);
-    } else if (comptime Environment.isNative) {
+    if (Environment.isNative and !@inComptime()) {
         C.memmove(output.ptr, input.ptr, input.len);
     } else {
         for (input, output) |input_byte, *out| {
@@ -4024,7 +4018,7 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
             return @enumFromInt(int);
         }
 
-        /// Prefer this over @intFromEnum because of type confusion with `.optional`
+        /// Prefer this over @intFromEnum because of type confusion with `.Optional`
         pub inline fn get(i: @This()) backing_int {
             bun.assert(@intFromEnum(i) != null_value); // memory corruption
             return @intFromEnum(i);
@@ -4051,8 +4045,15 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
             none = std.math.maxInt(backing_int),
             _,
 
-            pub inline fn init(maybe: ?Index) Optional {
-                return if (maybe) |i| i.toOptional() else .none;
+            /// Signatures:
+            /// - `init(maybe: ?Index) Optional`
+            /// - `init(maybe: ?backing_int) Optional`
+            pub inline fn init(maybe: anytype) Optional {
+                comptime var t = @typeInfo(@TypeOf(maybe));
+                if (t == .optional) t = @typeInfo(t.optional.child);
+                if (t == .int or t == .comptime_int)
+                    return if (@as(?backing_int, maybe)) |i| Index.init(i).toOptional() else .none;
+                return if (@as(?Index, maybe)) |i| i.toOptional() else .none;
             }
 
             pub inline fn unwrap(oi: Optional) ?Index {
@@ -4364,7 +4365,7 @@ pub const OSPathBufferPool = if (Environment.isWindows) WPathBufferPool else Pat
 
 pub const S3 = @import("./s3/client.zig");
 
-const CowString = CowSlice(u8);
+pub const CowString = CowSlice(u8);
 
 /// "Copy on write" slice. There are many instances when it is desired to re-use
 /// a slice, but doing so would make it unknown if that slice should be freed.
@@ -4391,7 +4392,7 @@ pub fn CowSlice(T: type) type {
     return struct {
         ptr: [*]const T,
         flags: packed struct(usize) {
-            len: @Type(.{ .Int = .{
+            len: @Type(.{ .int = .{
                 .bits = @bitSizeOf(usize) - 1,
                 .signedness = .unsigned,
             } }),
@@ -4411,12 +4412,16 @@ pub fn CowSlice(T: type) type {
                     .len = @intCast(data.len),
                 },
                 .debug = if (cow_str_assertions)
-                    bun.new(DebugData(.{
+                    bun.new(DebugData, .{
                         .mutex = .{},
                         .allocator = allocator,
                         .borrows = 0,
-                    })),
+                    }),
             };
+        }
+
+        pub fn initDupe(data: []const T, allocator: Allocator) !@This() {
+            return initOwned(try allocator.dupe(T, data), allocator);
         }
 
         /// `.deinit` will not free memory from this slice.
@@ -4457,7 +4462,10 @@ pub fn CowSlice(T: type) type {
             if (cow_str_assertions) if (str.debug) |debug| {
                 debug.mutex.lock();
                 defer debug.mutex.unlock();
-                bun.assert(debug.allocator == allocator);
+                bun.assert(
+                    debug.allocator.ptr == allocator.ptr and
+                        debug.allocator.vtable == allocator.vtable,
+                );
                 if (str.flags.is_owned) {
                     bun.assert(debug.borrows == 0); // active borrows become invalid data
                 } else {
@@ -4473,3 +4481,5 @@ pub fn CowSlice(T: type) type {
 }
 
 const Allocator = std.mem.Allocator;
+
+pub const server = @import("./bun.js/api/server.zig");

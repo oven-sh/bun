@@ -412,18 +412,18 @@ pub const FileSystem = struct {
 
     // }
     pub fn normalize(_: *@This(), str: string) string {
-        return @call(bun.callmod_inline, path_handler.normalizeString, .{ str, true, .auto });
+        return @call(bun.callmod_inline, path_handler.normalizeString, .{ str, true, bun.path.Platform.auto });
     }
 
     pub fn normalizeBuf(_: *@This(), buf: []u8, str: string) string {
-        return @call(bun.callmod_inline, path_handler.normalizeStringBuf, .{ str, buf, false, .auto, false });
+        return @call(bun.callmod_inline, path_handler.normalizeStringBuf, .{ str, buf, false, bun.path.Platform.auto, false });
     }
 
     pub fn join(_: *@This(), parts: anytype) string {
         return @call(bun.callmod_inline, path_handler.joinStringBuf, .{
             &join_buf,
             parts,
-            .loose,
+            bun.path.Platform.loose,
         });
     }
 
@@ -431,7 +431,7 @@ pub const FileSystem = struct {
         return @call(bun.callmod_inline, path_handler.joinStringBuf, .{
             buf,
             parts,
-            .loose,
+            bun.path.Platform.loose,
         });
     }
 

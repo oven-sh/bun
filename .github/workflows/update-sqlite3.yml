@@ -55,7 +55,7 @@ jobs:
 
           # Convert numeric version to semantic version for display
           LATEST_MAJOR=$((10#$LATEST_VERSION_NUM / 1000000))
-          LATEST_MINOR=$((($LATEST_VERSION_NUM / 1000) % 1000))
+          LATEST_MINOR=$((($LATEST_VERSION_NUM / 10000) % 100))
           LATEST_PATCH=$((10#$LATEST_VERSION_NUM % 1000))
           LATEST_VERSION="$LATEST_MAJOR.$LATEST_MINOR.$LATEST_PATCH"
 

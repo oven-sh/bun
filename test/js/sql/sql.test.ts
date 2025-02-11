@@ -159,6 +159,12 @@ if (isDockerEnabled()) {
     max: 1,
   };
 
+  test("should handle encoded chars in password and username when using url #17155", () => {
+    const sql = new Bun.SQL("postgres://bun%40bunbun:bunbun%40bun@127.0.0.1:5432/bun%40bun");
+    expect(sql.options.username).toBe("bun@bunbun");
+    expect(sql.options.password).toBe("bunbun@bun");
+    expect(sql.options.database).toBe("bun@bun");
+  });
   test("Connects with no options", async () => {
     // we need at least the usename and port
     await using sql = postgres({ max: 1, port: container.port, username: login.username });
@@ -10569,6 +10575,211 @@ if (isDockerEnabled()) {
       await using sql = postgres({ ...options, max: 1 });
       const result = await sql`SELECT NULL::aclitem[] as null_array`;
       expect(result[0].null_array).toBeNull();
+    });
+  });
+
+  describe("numeric", () => {
+    test("handles standard decimal numbers", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (area text, price NUMERIC(10,4))`;
+
+      const body = [
+        { area: "D", price: "0.00001" }, // should collapse to 0
+        { area: "D", price: "0.0001" },
+        { area: "D", price: "0.0010" },
+        { area: "D", price: "0.0100" },
+        { area: "D", price: "0.1000" },
+        { area: "D", price: "1.0000" },
+        { area: "D", price: "10.0000" },
+        { area: "D", price: "100.0000" },
+        { area: "D", price: "1000.0000" },
+        { area: "D", price: "10000.0000" },
+        { area: "D", price: "100000.0000" },
+
+        { area: "D", price: "1.1234" },
+        { area: "D", price: "10.1234" },
+        { area: "D", price: "100.1234" },
+        { area: "D", price: "1000.1234" },
+        { area: "D", price: "10000.1234" },
+        { area: "D", price: "100000.1234" },
+
+        { area: "D", price: "1.1234" },
+        { area: "D", price: "10.1234" },
+        { area: "D", price: "101.1234" },
+        { area: "D", price: "1010.1234" },
+        { area: "D", price: "10100.1234" },
+        { area: "D", price: "101000.1234" },
+
+        { area: "D", price: "999999.9999" }, // limit of NUMERIC(10,4)
+
+        // negative numbers
+        { area: "D", price: "-0.00001" }, // should collapse to 0
+        { area: "D", price: "-0.0001" },
+        { area: "D", price: "-0.0010" },
+        { area: "D", price: "-0.0100" },
+        { area: "D", price: "-0.1000" },
+        { area: "D", price: "-1.0000" },
+        { area: "D", price: "-10.0000" },
+        { area: "D", price: "-100.0000" },
+        { area: "D", price: "-1000.0000" },
+        { area: "D", price: "-10000.0000" },
+        { area: "D", price: "-100000.0000" },
+
+        { area: "D", price: "-1.1234" },
+        { area: "D", price: "-10.1234" },
+        { area: "D", price: "-100.1234" },
+        { area: "D", price: "-1000.1234" },
+        { area: "D", price: "-10000.1234" },
+        { area: "D", price: "-100000.1234" },
+
+        { area: "D", price: "-1.1234" },
+        { area: "D", price: "-10.1234" },
+        { area: "D", price: "-101.1234" },
+        { area: "D", price: "-1010.1234" },
+        { area: "D", price: "-10100.1234" },
+        { area: "D", price: "-101000.1234" },
+
+        { area: "D", price: "-999999.9999" }, // limit of NUMERIC(10,4)
+
+        // NaN
+        { area: "D", price: "NaN" },
+      ];
+      const results = await sql`INSERT INTO ${sql(random_name)} ${sql(body)} RETURNING *`;
+      expect(results[0].price).toEqual("0");
+      expect(results[1].price).toEqual("0.0001");
+      expect(results[2].price).toEqual("0.0010");
+      expect(results[3].price).toEqual("0.0100");
+      expect(results[4].price).toEqual("0.1000");
+      expect(results[5].price).toEqual("1.0000");
+      expect(results[6].price).toEqual("10.0000");
+      expect(results[7].price).toEqual("100.0000");
+      expect(results[8].price).toEqual("1000.0000");
+      expect(results[9].price).toEqual("10000.0000");
+      expect(results[10].price).toEqual("100000.0000");
+
+      expect(results[11].price).toEqual("1.1234");
+      expect(results[12].price).toEqual("10.1234");
+      expect(results[13].price).toEqual("100.1234");
+      expect(results[14].price).toEqual("1000.1234");
+      expect(results[15].price).toEqual("10000.1234");
+      expect(results[16].price).toEqual("100000.1234");
+
+      expect(results[17].price).toEqual("1.1234");
+      expect(results[18].price).toEqual("10.1234");
+      expect(results[19].price).toEqual("101.1234");
+      expect(results[20].price).toEqual("1010.1234");
+      expect(results[21].price).toEqual("10100.1234");
+      expect(results[22].price).toEqual("101000.1234");
+
+      expect(results[23].price).toEqual("999999.9999");
+
+      // negative numbers
+      expect(results[24].price).toEqual("0");
+      expect(results[25].price).toEqual("-0.0001");
+      expect(results[26].price).toEqual("-0.0010");
+      expect(results[27].price).toEqual("-0.0100");
+      expect(results[28].price).toEqual("-0.1000");
+      expect(results[29].price).toEqual("-1.0000");
+      expect(results[30].price).toEqual("-10.0000");
+      expect(results[31].price).toEqual("-100.0000");
+      expect(results[32].price).toEqual("-1000.0000");
+      expect(results[33].price).toEqual("-10000.0000");
+      expect(results[34].price).toEqual("-100000.0000");
+
+      expect(results[35].price).toEqual("-1.1234");
+      expect(results[36].price).toEqual("-10.1234");
+      expect(results[37].price).toEqual("-100.1234");
+      expect(results[38].price).toEqual("-1000.1234");
+      expect(results[39].price).toEqual("-10000.1234");
+      expect(results[40].price).toEqual("-100000.1234");
+
+      expect(results[41].price).toEqual("-1.1234");
+      expect(results[42].price).toEqual("-10.1234");
+      expect(results[43].price).toEqual("-101.1234");
+      expect(results[44].price).toEqual("-1010.1234");
+      expect(results[45].price).toEqual("-10100.1234");
+      expect(results[46].price).toEqual("-101000.1234");
+
+      expect(results[47].price).toEqual("-999999.9999");
+
+      expect(results[48].price).toEqual("NaN");
+    });
+    test("handle different scales", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (area text, price NUMERIC(20,10))`;
+      const body = [{ area: "D", price: "1010001010.1234" }];
+      const results = await sql`INSERT INTO ${sql(random_name)} ${sql(body)} RETURNING *`;
+      expect(results[0].price).toEqual("1010001010.1234000000");
+    });
+    test("handles leading zeros", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (area text, price NUMERIC(10,4))`;
+      const body = [
+        { area: "A", price: "00001.00045" }, // should collapse to 1.0005
+        { area: "B", price: "0000.12345" }, // should collapse to 0.1235
+      ];
+      const results = await sql`INSERT INTO ${sql(random_name)} ${sql(body)} RETURNING *`;
+      expect(results[0].price).toBe("1.0005");
+      expect(results[1].price).toBe("0.1235");
+    });
+
+    test("handles numbers at scale boundaries", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (area text, price NUMERIC(10,4))`;
+      const body = [
+        { area: "C", price: "999999.9999" }, // Max for NUMERIC(10,4)
+        { area: "D", price: "0.0001" }, // Min positive for 4 decimals
+      ];
+      const results = await sql`INSERT INTO ${sql(random_name)} ${sql(body)} RETURNING *`;
+      expect(results[0].price).toBe("999999.9999");
+      expect(results[1].price).toBe("0.0001");
+    });
+
+    test("handles zero values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (area text, price NUMERIC(10,4))`;
+      const body = [
+        { area: "E", price: "0" },
+        { area: "F", price: "0.0000" },
+        { area: "G", price: "00000.0000" },
+      ];
+      const results = await sql`INSERT INTO ${sql(random_name)} ${sql(body)} RETURNING *`;
+      results.forEach(row => {
+        expect(row.price).toBe("0");
+      });
+    });
+
+    test("handles negative numbers", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (area text, price NUMERIC(10,4))`;
+      const body = [
+        { area: "H", price: "-1.2345" },
+        { area: "I", price: "-0.0001" },
+        { area: "J", price: "-9999.9999" },
+      ];
+      const results = await sql`INSERT INTO ${sql(random_name)} ${sql(body)} RETURNING *`;
+      expect(results[0].price).toBe("-1.2345");
+      expect(results[1].price).toBe("-0.0001");
+      expect(results[2].price).toBe("-9999.9999");
+    });
+
+    test("handles scientific notation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (area text, price NUMERIC(10,4))`;
+      const body = [
+        { area: "O", price: "1.2345e1" }, // 12.345
+        { area: "P", price: "1.2345e-2" }, // 0.012345
+      ];
+      const results = await sql`INSERT INTO ${sql(random_name)} ${sql(body)} RETURNING *`;
+      expect(results[0].price).toBe("12.3450");
+      expect(results[1].price).toBe("0.0123");
     });
   });
 }

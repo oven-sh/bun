@@ -24,6 +24,41 @@ const JSPrinter = bun.js_printer;
 const exists = bun.sys.exists;
 const existsZ = bun.sys.existsZ;
 
+// makes read return error.WouldBlock instead of blocking if no input is available
+// posix only
+fn setNonblock(b: bool) !void {
+    var flags: std.posix.O = @bitCast(@as(u32, @intCast(try std.posix.fcntl(std.posix.STDIN_FILENO, std.posix.F.GETFL, 0))));
+    flags.NONBLOCK = b;
+    _ = try std.posix.fcntl(std.posix.STDIN_FILENO, std.posix.F.SETFL, @as(u32, @bitCast(flags)));
+}
+
+// makes it so that no newline character is required for forwarding the input
+// also makes it so that input characters are not printed to the console
+fn setRawInput(b: bool) !void {
+    if (comptime Environment.isWindows) {
+        const ENABLE_ECHO_INPUT: u32 = 0x0004;
+        const ENABLE_LINE_INPUT: u32 = 0x0002;
+
+        const handle = std.io.getStdIn().handle;
+        var flags: u32 = undefined;
+        if (std.windows.kernel32.GetConsoleMode(handle, &flags) == 0) return error.NotATerminal;
+        if (b) {
+            flags &= ~(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT);
+        } else {
+            flags |= ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT;
+        }
+
+        std.debug.assert(std.windows.kernel32.SetConsoleMode(handle, flags) != 0);
+    } else {
+        var t: std.posix.termios = try std.posix.tcgetattr(std.posix.STDIN_FILENO);
+
+        t.lflag.ECHO = !b;
+        t.lflag.ICANON = !b;
+        t.lflag.FLUSHO = true;
+        try std.posix.tcsetattr(std.posix.STDIN_FILENO, .NOW, t);
+    }
+}
+
 pub const InitCommand = struct {
     pub fn prompt(
         alloc: std.mem.Allocator,
@@ -57,6 +92,148 @@ pub const InitCommand = struct {
         } else {
             return default;
         }
+    }
+
+    pub fn promptBool(
+        _: std.mem.Allocator,
+        comptime label: []const u8,
+        default: bool,
+    ) !bool {
+        Output.prettyln(label, .{});
+        // Output.pretty("\n", .{});
+        // Output.pretty(" <d>(y/n):<r> \n", .{});
+        Output.flush();
+
+        const original_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (comptime Environment.isWindows)
+            bun.win32.unsetStdioModeFlags(0, bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT) catch null;
+
+        defer if (comptime Environment.isWindows) {
+            if (original_mode) |mode| {
+                _ = bun.windows.SetConsoleMode(bun.win32.STDIN_FD.cast(), mode);
+            }
+        };
+
+        Output.flush();
+        try setRawInput(true);
+
+        const reader = std.io.getStdIn().reader();
+        const val: bool = brk: {
+            var selected = default;
+
+            while (true) {
+                Output.pretty("\r\x1B[K", .{});
+                if (selected) {
+                    Output.pretty("<r><green>●<r> Yes <d>/ ○ No<r>", .{});
+                } else {
+                    Output.pretty("<r><d>○ Yes / <r><green>●<r> No<r>", .{});
+                }
+                Output.pretty("\x1B", .{});
+
+                Output.flush();
+                const byte = try reader.readByte();
+
+                switch (byte) {
+                    'y', 'Y' => break :brk true,
+                    'n', 'N' => break :brk false,
+                    '\r', '\n' => break :brk selected,
+                    '\x1b' => {
+                        const seq_byte = try reader.readByte();
+                        if (seq_byte != '[') continue;
+                        const arrow = try reader.readByte();
+                        switch (arrow) {
+                            'C' => selected = false, // left arrow
+                            'D' => selected = true, // right arrow
+                            else => {},
+                        }
+                    },
+
+                    else => continue,
+                }
+                Output.flush();
+            }
+        };
+        setRawInput(false) catch unreachable;
+
+        Output.pretty("\r\x1B[A\r\x1B[K", .{});
+        Output.pretty(label, .{});
+        Output.pretty(" {s}\n", .{if (val) "yes" else "no"});
+        Output.flush();
+
+        return val;
+    }
+
+    pub fn promptSelect(
+        comptime label: []const u8,
+        opts: []const []const u8,
+        default: usize,
+    ) !usize {
+        Output.prettyln(label, .{});
+        Output.flush();
+
+        const original_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (comptime Environment.isWindows)
+            bun.win32.unsetStdioModeFlags(0, bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT) catch null;
+
+        defer if (comptime Environment.isWindows) {
+            if (original_mode) |mode| {
+                _ = bun.windows.SetConsoleMode(bun.win32.STDIN_FD.cast(), mode);
+            }
+        };
+
+        Output.flush();
+        try setRawInput(true);
+
+        const reader = std.io.getStdIn().reader();
+        const val: usize = brk: {
+            var selected = default;
+
+            while (true) {
+                for (opts, 0..) |option, i| {
+                    if (i == selected) {
+                        Output.prettyln("<r><green>●<r> {s}", .{option});
+                    } else {
+                        Output.prettyln("<r><d>○ {s}<r>", .{option});
+                    }
+                }
+                Output.pretty("\x1B[J", .{});
+                Output.flush();
+
+                const byte = try reader.readByte();
+
+                switch (byte) {
+                    '\r', '\n' => break :brk selected,
+                    '\x1b' => {
+                        const seq_byte = try reader.readByte();
+                        if (seq_byte != '[') continue;
+                        const arrow = try reader.readByte();
+                        switch (arrow) {
+                            'A' => { // Up arrow
+                                if (selected > 0) selected -= 1;
+                            },
+                            'B' => { // Down arrow
+                                if (selected < opts.len - 1) selected += 1;
+                            },
+                            else => continue,
+                        }
+                    },
+                    else => continue,
+                }
+
+                for (0..opts.len) |_| {
+                    Output.pretty("\x1B[A", .{});
+                }
+            }
+        };
+        setRawInput(false) catch unreachable;
+
+        for (0..opts.len + 2) |_| {
+            Output.pretty("\x1B[A", .{});
+        }
+        Output.pretty(label, .{});
+        Output.prettyln(" {s}", .{opts[val]});
+        Output.prettyln("\x1B[J", .{});
+        Output.flush();
+
+        return val;
     }
 
     const Assets = struct {
@@ -300,19 +477,51 @@ pub const InitCommand = struct {
 
                 fields.name = try normalizePackageName(alloc, name);
 
-                fields.entry_point = prompt(
-                    alloc,
-                    "<r><cyan>entry point<r> ",
-                    fields.entry_point,
-                ) catch |err| {
+                const is_fullstack = promptBool(alloc, "<r><cyan>do you want to create a fullstack app?<r>", false) catch |err| {
                     if (err == error.EndOfStream) return;
                     return err;
                 };
 
+                if (is_fullstack) {
+                    const template_options = [_][]const u8{
+                        "TypeScript (default)",
+                        "React + TypeScript",
+                        "React + TypeScript + Tailwind + shadcn/ui",
+                    };
+
+                    const selected = promptSelect("<r><cyan>select fullstack template:<r>", &template_options, 0) catch |err| {
+                        if (err == error.EndOfStream) return;
+                        return err;
+                    };
+
+                    // // Set appropriate entry point based on selection
+                    // const fullstack_template = switch (selected) {
+                    //     0 => .base_typescript,
+                    //     1 => .react_typescript,
+                    //     2 => .react_typescript_tailwind_shadcn,
+                    //     else => unreachable,
+                    // };
+
+                    // todo:
+                    Output.prettyln("Setting up project with {s} template...", .{template_options[selected]});
+                    Output.flush();
+
+                    // try SourceFileProjectGenerator.generate();
+                } else {
+                    fields.entry_point = prompt(
+                        alloc,
+                        "<r><cyan>entry point<r> ",
+                        fields.entry_point,
+                    ) catch |err| {
+                        if (err == error.EndOfStream) return;
+                        return err;
+                    };
+                }
+
                 try Output.writer().writeAll("\n");
                 Output.flush();
             } else {
-                Output.prettyln("A package.json was found here. Would you like to configure", .{});
+                Output.prettyln("A package.json was found here.", .{});
             }
         }
 
@@ -490,3 +699,5 @@ pub const InitCommand = struct {
         }
     }
 };
+
+const SourceFileProjectGenerator = @import("../create/SourceFileProjectGenerator.zig");

@@ -121,6 +121,11 @@ public:
         return us_socket_close(SSL, (us_socket_t *) this, 0, nullptr);
     }
 
+    void abort() {
+        this->uncorkWithoutSending();
+        us_socket_close(SSL, (us_socket_t *) this, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, nullptr);
+    }
+
     void corkUnchecked() {
         /* What if another socket is corked? */
         getLoopData()->setCorkedSocket(this, SSL);

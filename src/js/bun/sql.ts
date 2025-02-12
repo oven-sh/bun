@@ -923,30 +923,31 @@ function normalizeStrings(strings, values) {
       }
 
       for (var i = 1; i < count; i++) {
-        out += strings[i];
+        out += " " + strings[i];
       }
 
       return out;
     }
 
     for (var i = 1; i < count; i++) {
-      out += `$${i}${strings[i]}`;
+      // this space in betweenis important
+      out += `$${i} ${strings[i]}`;
     }
     return out;
   }
-
   return strings + "";
 }
 function hasQuery(value: any) {
   return value instanceof Query;
 }
-function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize, bigint) {
+function handleQueryFragment(strings, values) {
   let sqlString;
   let final_values: Array<any>;
+  let final_strings = [];
+
   if ($isArray(strings) && values.some(hasQuery)) {
     // we need to handle fragments of queries
     final_values = [];
-    const final_strings = [];
     let strings_idx = 0;
 
     for (let i = 0; i < values.length; i++) {
@@ -966,7 +967,16 @@ function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize, bigint
           // in this case we dont have values to merge
         } else {
           // complex fragment, we need to merge values
-          const sub_values = value[_values];
+          let sub_values = value[_values];
+
+          if (sub_values.some(hasQuery)) {
+            const { final_strings: sub_final_strings, final_values: sub_final_values } = handleQueryFragment(
+              sub_strings,
+              sub_values,
+            );
+            sub_strings = sub_final_strings;
+            sub_values = sub_final_values;
+          }
 
           if (final_strings.length > 0) {
             // complex not the first
@@ -1001,13 +1011,17 @@ function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize, bigint
         final_values.push(value);
       }
     }
-
-    sqlString = normalizeStrings(final_strings, final_values);
   } else {
-    sqlString = normalizeStrings(strings, values);
+    final_strings = strings;
     final_values = values;
   }
+
+  return { final_strings, final_values };
+}
+function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize, bigint) {
   let columns;
+  let { final_strings, final_values } = handleQueryFragment(strings, values);
+  const sqlString = normalizeStrings(final_strings, final_values);
   if (hasSQLArrayParameter) {
     hasSQLArrayParameter = false;
     const v = final_values[0];

@@ -2986,6 +2986,8 @@ it("Buffer.from(arrayBuffer)", () => {
   const buf = Buffer.from(ab);
   expect(buf.length).toBe(10);
   expect(buf.buffer).toBe(ab);
+  expect(buf.byteOffset).toBe(0);
+  expect(buf.byteLength).toBe(10);
   expect(buf[Symbol.iterator]().toArray()).toEqual([10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
 });
 it("Buffer.from(arrayBuffer, byteOffset)", () => {
@@ -2993,6 +2995,8 @@ it("Buffer.from(arrayBuffer, byteOffset)", () => {
   const buf = Buffer.from(ab, 2);
   expect(buf.length).toBe(8);
   expect(buf.buffer).toBe(ab);
+  expect(buf.byteOffset).toBe(2);
+  expect(buf.byteLength).toBe(8);
   expect(buf[Symbol.iterator]().toArray()).toEqual([12, 13, 14, 15, 16, 17, 18, 19]);
 });
 it("Buffer.from(arrayBuffer, byteOffset, length)", () => {
@@ -3000,5 +3004,7 @@ it("Buffer.from(arrayBuffer, byteOffset, length)", () => {
   const buf = Buffer.from(ab, 3, 5);
   expect(buf.length).toBe(5);
   expect(buf.buffer).toBe(ab);
+  expect(buf.byteOffset).toBe(3);
+  expect(buf.byteLength).toBe(5);
   expect(buf[Symbol.iterator]().toArray()).toEqual([13, 14, 15, 16, 17]);
 });

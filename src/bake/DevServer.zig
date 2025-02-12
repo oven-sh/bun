@@ -884,6 +884,10 @@ pub fn attachRoutes(dev: *DevServer, server: anytype) !bool {
 }
 
 fn onNotFound(_: *DevServer, _: *Request, resp: anytype) void {
+    notFound(resp);
+}
+
+fn notFound(resp: anytype) void {
     resp.corked(onNotFoundCorked, .{resp});
 }
 
@@ -896,28 +900,28 @@ fn onNotFoundCorked(resp: anytype) void {
 fn onJsRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
     const route_id = req.parameter(0);
     if (!bun.strings.hasSuffixComptime(route_id, ".js"))
-        return req.setYield(true);
+        return notFound(resp);
     const min_len = "-00000000FFFFFFFF.js".len;
     if (route_id.len < min_len)
-        return req.setYield(true);
+        return notFound(resp);
     const hex = route_id[route_id.len - min_len + 1 ..][0 .. @sizeOf(u64) * 2];
     if (hex.len != @sizeOf(u64) * 2)
-        return req.setYield(true);
+        return notFound(resp);
     const id = parseHexToInt(u64, hex) orelse
-        return req.setYield(true);
+        return notFound(resp);
 
     const route_bundle_index: RouteBundle.Index = .init(@intCast(id & 0xFFFFFFFF));
     const generation: u32 = @intCast(id >> 32);
 
     if (route_bundle_index.get() >= dev.route_bundles.items.len)
-        return req.setYield(true);
+        return notFound(resp);
 
     const route_bundle = dev.route_bundles.items[route_bundle_index.get()];
     if (route_bundle.client_script_generation != generation or
         route_bundle.server_state != .loaded)
     {
         bun.Output.debugWarn("TODO: Outdated JS Payload", .{});
-        return req.setYield(true);
+        return notFound(resp);
     }
 
     dev.onJsRequestWithBundle(route_bundle_index, resp, bun.http.Method.which(req.method()) orelse .POST);
@@ -926,15 +930,15 @@ fn onJsRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
 fn onAssetRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
     const param = req.parameter(0);
     if (param.len < @sizeOf(u64) * 2)
-        return req.setYield(true);
+        return notFound(resp);
     const hex = param[0 .. @sizeOf(u64) * 2];
     var out: [@sizeOf(u64)]u8 = undefined;
     assert((std.fmt.hexToBytes(&out, hex) catch
-        return req.setYield(true)).len == @sizeOf(u64));
+        return notFound(resp)).len == @sizeOf(u64));
     const hash: u64 = @bitCast(out);
     debug.log("onAssetRequest {} {s}", .{ hash, param });
     const asset = dev.assets.get(hash) orelse
-        return req.setYield(true);
+        return notFound(resp);
     req.setYield(false);
     asset.on(resp);
 }
@@ -1356,9 +1360,13 @@ fn getJavaScriptCodeForHTMLFile(
     try bun.js_printer.writeJSONString(input_file_sources[index.get()].path.pretty, @TypeOf(w), w, .utf8);
     try w.writeAll("(m) {\n  ");
     for (import_records[index.get()].slice()) |import| {
-        if (import.source_index.isValid() and
-            !loaders[import.source_index.get()].isJavaScriptLike())
-            continue; // ignore non-JavaScript imports
+        if (import.source_index.isValid()) {
+            if (!loaders[import.source_index.get()].isJavaScriptLike())
+                continue; // ignore non-JavaScript imports
+        } else {
+            if (!import.path.is_disabled)
+                continue;
+        }
 
         try w.writeAll("  m.dynamicImport(");
         try bun.js_printer.writeJSONString(import.path.pretty, @TypeOf(w), w, .utf8);
@@ -1831,7 +1839,7 @@ pub const HotUpdateContext = struct {
         rc: *const HotUpdateContext,
         comptime side: bake.Side,
         i: bun.JSAst.Index,
-    ) *IncrementalGraph(side).FileIndex {
+    ) *IncrementalGraph(side).FileIndex.Optional {
         const start = switch (side) {
             .client => 0,
             .server => rc.sources.len,
@@ -1903,6 +1911,7 @@ pub fn finalizeBundle(
     }
 
     const resolved_index_cache = try bv2.graph.allocator.alloc(u32, input_file_sources.len * 2);
+    @memset(resolved_index_cache, @intFromEnum(IncrementalGraph(.server).FileIndex.Optional.none));
 
     var ctx: bun.bake.DevServer.HotUpdateContext = .{
         .import_records = import_records,
@@ -2011,7 +2020,7 @@ pub fn finalizeBundle(
             null, // HTML chunk does not have a source map.
             false,
         );
-        const client_index = ctx.getCachedIndex(.client, index).*;
+        const client_index = ctx.getCachedIndex(.client, index).*.unwrap() orelse @panic("unresolved index");
         const route_bundle_index = dev.client_graph.htmlRouteBundleIndex(client_index);
         const route_bundle = dev.routeBundlePtr(route_bundle_index);
         assert(route_bundle.data.html.bundled_file == client_index);
@@ -3176,7 +3185,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 g.stale_files.unset(gop.index);
             }
 
-            ctx.getCachedIndex(side, index).* = FileIndex.init(@intCast(gop.index));
+            ctx.getCachedIndex(side, index).* = .init(FileIndex.init(@intCast(gop.index)));
 
             switch (side) {
                 .client => {
@@ -3311,7 +3320,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
             temp_alloc: Allocator,
         ) bun.OOM!void {
             const log = bun.Output.scoped(.processChunkDependencies, false);
-            const file_index: FileIndex = ctx.getCachedIndex(side, bundle_graph_index).*;
+            const file_index: FileIndex = ctx.getCachedIndex(side, bundle_graph_index).*.unwrap() orelse
+                @panic("unresolved index"); // do not process for failed chunks
             log("index id={d} {}:", .{
                 file_index.get(),
                 bun.fmt.quote(g.bundled_files.keys()[file_index.get()]),
@@ -3425,22 +3435,20 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
                 if (!import_record.source_index.isRuntime()) try_index_record: {
                     const key = import_record.path.keyForIncrementalGraph();
-                    const imported_file_index = if (import_record.source_index.isInvalid())
-                        FileIndex.init(@intCast(
-                            g.bundled_files.getIndex(key) orelse break :try_index_record,
-                        ))
-                    else
-                        ctx.getCachedIndex(side, import_record.source_index).*;
+                    const imported_file_index: FileIndex = brk: {
+                        if (import_record.source_index.isValid()) {
+                            if (ctx.getCachedIndex(side, import_record.source_index).*.unwrap()) |i| {
+                                break :brk i;
+                            }
+                        }
+                        break :brk .init(@intCast(
+                            g.bundled_files.getIndex(key) orelse
+                                break :try_index_record,
+                        ));
+                    };
 
                     if (Environment.isDebug) {
-                        if (imported_file_index.get() > g.bundled_files.count()) {
-                            Output.debugWarn("Invalid mapped source index {x}. {} was not inserted into IncrementalGraph", .{
-                                imported_file_index.get(),
-                                bun.fmt.quote(key),
-                            });
-                            Output.flush();
-                            continue;
-                        }
+                        bun.assert(imported_file_index.get() < g.bundled_files.count());
                     }
 
                     const gop = try quick_lookup.getOrPut(temp_alloc, imported_file_index);
@@ -3649,9 +3657,6 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         try g.owner().incremental_result.failures_added.append(g.owner().allocator, fail);
                         return;
                     }
-
-                    if (Environment.isDebug)
-                        assert(!g.stale_files.isSet(file_index.get())); // should not be left stale
                 },
             }
 
@@ -3770,7 +3775,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             debug.log("Insert stale: {s}", .{abs_path});
             const gop = try g.bundled_files.getOrPut(g.owner().allocator, abs_path);
-            const file_index = FileIndex.init(@intCast(gop.index));
+            const file_index: FileIndex = .init(@intCast(gop.index));
 
             if (!gop.found_existing) {
                 gop.key_ptr.* = try bun.default_allocator.dupe(u8, abs_path);
@@ -3794,7 +3799,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 },
             }
 
-            ctx.getCachedIndex(.server, index).* = file_index;
+            ctx.getCachedIndex(.server, index).* = .init(file_index);
         }
 
         pub fn insertFailure(

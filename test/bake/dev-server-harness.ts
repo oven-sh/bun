@@ -27,6 +27,20 @@ export const minimalFramework: Bake.Framework = {
   },
 };
 
+export function emptyHtmlFile({ styles = [], scripts = [] }: { styles?: string[]; scripts?: string[] }) {
+  return dedent`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        ${styles.map(style => `<link rel="stylesheet" href="${style}">`).join("\n        ")}
+      </head>
+      <body>
+        ${scripts.map(script => `<script type="module" src="${script}"></script>`).join("\n        ")}
+      </body>
+    </html>
+  `;
+}
+
 export type DevServerTest = (
   | {
       /** Starting files */
@@ -45,13 +59,39 @@ export type DevServerTest = (
   | {
       /**
        * Copy all files from test/bake/fixtures/<name>
-       * This directory must contain `bun.app.ts` to allow hacking on fixtures manually via `bun run .`
+       * This directory must contain `bun.app.ts` or `index.html` to allow hacking on fixtures manually via `bun run .`
        */
       fixture: string;
     }
 ) & {
   test: (dev: Dev) => Promise<void>;
 };
+
+let interactive = false;
+async function maybeWaitInteractive(message: string) {
+  if (interactive) {
+    console.error("Press key to " + message);
+    await new Promise(resolve => {
+      // Enable raw mode
+      process.stdin.setRawMode(true);
+      process.stdin.resume();
+      process.stdin.on("data", chunk => {
+        if (chunk.toString().trim() === "q" || chunk[0] === 3) {
+          process.exit(0);
+          return;
+        }
+        // Disable after one keypress
+        process.stdin.setRawMode(false);
+        process.stdin.pause();
+        resolve(undefined);
+      });
+    });
+  }
+}
+
+const hmrClientInitRegex = /\[Bun\] (Live|Hot-module)-reloading socket connected, waiting for changes/;
+
+type ErrorSpec = string;
 
 type FileObject = Record<string, string | Buffer>;
 
@@ -93,14 +133,16 @@ export class Dev {
     });
   }
 
-  write(file: string, contents: string) {
+  async write(file: string, contents: string) {
+    await maybeWaitInteractive("write " + file);
     const wait = this.waitForHotReload();
     // TODO: consider using IncomingMessageId.virtual_file_change to reduce theoretical flakiness.
     fs.writeFileSync(this.join(file), contents);
     return wait;
   }
 
-  patch(file: string, { find, replace }: { find: string; replace: string }) {
+  async patch(file: string, { find, replace }: { find: string; replace: string }) {
+    await maybeWaitInteractive("patch " + file);
     const wait = this.waitForHotReload();
     const filename = this.join(file);
     const source = fs.readFileSync(filename, "utf8");
@@ -131,7 +173,27 @@ export class Dev {
     ]);
   }
 
-  async [Symbol.asyncDispose]() {}
+  async client(url = "/", options: { errors?: ErrorSpec[] } = {}) {
+    await maybeWaitInteractive("open client " + url);
+    const client = new Client(new URL(url, this.baseUrl).href);
+    try {
+      await client.output.waitForLine(hmrClientInitRegex);
+    } catch (e) {
+      client[Symbol.asyncDispose]();
+      throw e;
+    }
+    const hasVisibleModal = await client.js`document.querySelector("bun-hmr")?.style.display === "block"`;
+    if (options.errors) {
+      if (!hasVisibleModal) {
+        throw new Error("Expected errors, but none found");
+      }
+    } else {
+      if (hasVisibleModal) {
+        throw new Error("Bundle failures!");
+      }
+    }
+    return client;
+  }
 }
 
 type StepFn = (dev: Dev) => Promise<void>;
@@ -197,6 +259,226 @@ class DevFetchPromise extends Promise<Response> {
   get expect(): Matchers<string> {
     return expectProxy(this.text(), [], expect(""));
   }
+
+  expect404() {
+    return withAnnotatedStack(snapshotCallerLocation(), async () => {
+      try {
+        const res = await this;
+        expect(res.status).toBe(404);
+      } catch (err) {
+        if (this.dev.panicked) {
+          throw new Error("DevServer crashed");
+        }
+        throw err;
+      }
+    });
+  }
+}
+
+const node = process.env.DEV_SERVER_CLIENT_EXECUTABLE ?? Bun.which("node");
+
+/**
+ * Controls a subprocess that uses happy-dom as a lightweight browser. It is
+ * sandboxed in a separate process because happy-dom is a terrible mess to work
+ * with, and has some compatibility issues with Bun.
+ */
+class Client extends EventEmitter {
+  #proc: Subprocess;
+  output: OutputLineStream;
+  exited = false;
+  exitCode: string | null = null;
+  messages: any[] = [];
+
+  constructor(url: string) {
+    super();
+    const proc = Bun.spawn({
+      cmd: [node, path.join(import.meta.dir, "client-fixture.mjs"), url],
+      env: {
+        ...process.env,
+      },
+      serialization: "json",
+      ipc: (message, subprocess) => {
+        this.emit(message.type, ...message.args);
+      },
+      onExit: (subprocess, exitCode, signalCode, error) => {
+        if (exitCode !== null) {
+          this.exitCode = exitCode.toString();
+        } else if (signalCode !== null) {
+          this.exitCode = `SIG${signalCode}`;
+        } else {
+          this.exitCode = "unknown";
+        }
+        this.emit("exit", this.exitCode, error);
+        this.exited = true;
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    this.on("message", (message: any) => {
+      this.messages.push(message);
+    });
+    this.#proc = proc;
+    // @ts-expect-error
+    this.output = new OutputLineStream("browser", proc.stdout, proc.stderr);
+  }
+
+  hardReload() {
+    return withAnnotatedStack(snapshotCallerLocation(), async () => {
+      await maybeWaitInteractive("hard-reload");
+      if (this.exited) throw new Error("Client is not running.");
+      this.#proc.send({ type: "hard-reload" });
+      await this.output.waitForLine(hmrClientInitRegex);
+    });
+  }
+
+  elemText(selector: string): Promise<string> {
+    return withAnnotatedStack(snapshotCallerLocation(), async () => {
+      const text = await this.js<string | null>`
+        const elem = document.querySelector(${selector});
+        if (!elem) throw new Error("Element not found: " + ${selector});
+        return elem.innerHTML;
+      `;
+      if (text == null) throw new Error(`Element found but has no text content: ${selector}`);
+      return text;
+    });
+  }
+
+  async [Symbol.asyncDispose]() {
+    try {
+      this.#proc.send({ type: "exit" });
+    } catch (e) {}
+    await this.#proc.exited;
+    if (this.exitCode !== null && this.exitCode !== "0") {
+      throw new Error(`Client exited with code ${this.exitCode}`);
+    }
+    if (this.messages.length > 0) {
+      throw new Error(`Client sent ${this.messages.length} unread messages: ${JSON.stringify(this.messages, null, 2)}`);
+    }
+    this.output[Symbol.dispose]();
+  }
+
+  expectReload(cb: () => Promise<void>) {
+    return withAnnotatedStack(snapshotCallerLocation(), async () => {
+      if (this.exited) throw new Error("Client exited while waiting for reload");
+      let emitted = false;
+      const resolver = Promise.withResolvers();
+      this.#proc.send({ type: "expect-reload" });
+      function onEvent() {
+        emitted = true;
+        resolver.resolve();
+      }
+      this.once("reload", onEvent);
+      this.once("exit", onEvent);
+      let t: any = setTimeout(() => {
+        t = null;
+        resolver.resolve();
+      }, 1000);
+      await cb();
+      await resolver.promise;
+      if (t) clearTimeout(t);
+      this.off("reload", onEvent);
+      this.off("exit", onEvent);
+      if (this.exited) throw new Error("Client exited while waiting for reload");
+      if (!emitted) {
+        throw new Error("expectReload: reload event was not emitted");
+      }
+    });
+  }
+
+  expectMessage(...x: any) {
+    return withAnnotatedStack(snapshotCallerLocation(), async () => {
+      if (this.exited) throw new Error("Client exited while waiting for message");
+      if (this.messages.length !== x.length) {
+        // Wait up to a threshold before giving up
+        const resolver = Promise.withResolvers();
+        function onMessage(message: any) {
+          if (this.messages.length === x.length) resolver.resolve();
+        }
+        function onExit() {
+          resolver.resolve();
+        }
+        this.once("message", onMessage);
+        this.once("exit", onExit);
+        let t: any = setTimeout(() => {
+          t = null;
+          resolver.resolve();
+        }, 1000);
+        await resolver.promise;
+        if (t) clearTimeout(t);
+        this.off("message", onMessage);
+      }
+      if (this.exited) throw new Error("Client exited while waiting for message");
+      const m = this.messages;
+      this.messages = [];
+      expect(m).toEqual(x);
+    });
+  }
+
+  getStringMessage(): Promise<string> {
+    return withAnnotatedStack(snapshotCallerLocation(), async () => {
+      if (this.messages.length === 0) {
+        // Wait up to a threshold before giving up
+        const resolver = Promise.withResolvers();
+        function onEvent() {
+          resolver.resolve();
+        }
+        this.once("message", onEvent);
+        this.once("exit", onEvent);
+        let t: any = setTimeout(() => {
+          t = null;
+          resolver.resolve();
+        }, 1000);
+        await resolver.promise;
+        if (t) clearTimeout(t);
+        this.off("message", onEvent);
+      }
+      if (this.messages.length === 0) {
+        throw new Error("No message received");
+      }
+      const m = this.messages.shift();
+      expect(m).toBeString();
+      return m;
+    });
+  }
+
+  js<T = any>(strings: TemplateStringsArray, ...values: any[]): Promise<T> {
+    // Combine the template strings and values into a single string
+    const code = strings.reduce(
+      (acc, str, i) => acc + str + (values[i] !== undefined ? JSON.stringify(values[i]) : ""),
+      "",
+    );
+    return withAnnotatedStack(snapshotCallerLocationMayFail(), async () => {
+      await maybeWaitInteractive("js");
+      return new Promise((resolve, reject) => {
+        // Create unique message ID for this evaluation
+        const messageId = Math.random().toString(36).slice(2);
+
+        // Set up one-time handler for the response
+        const handler = (result: any) => {
+          if (result.error) {
+            reject(new Error(result.error));
+          } else {
+            resolve(result.value);
+          }
+        };
+
+        this.once(`js-result-${messageId}`, handler);
+
+        // Send the evaluation request
+        this.#proc.send({
+          type: "evaluate",
+          args: [messageId, code],
+        });
+      });
+    });
+  }
+
+  click(selector: string) {
+    this.js`
+      const elem = document.querySelector(${selector});
+      if (!elem) throw new Error("Element not found: " + ${selector});
+      elem.click();
+    `;
+  }
 }
 
 function expectProxy(text: Promise<string>, chain: string[], expect: any): any {
@@ -248,6 +530,13 @@ function snapshotCallerLocation(): string {
   }
   throw new Error("Couldn't find caller location in stack trace:\n" + stack);
 }
+function snapshotCallerLocationMayFail(): string {
+  try {
+    return snapshotCallerLocation();
+  } catch (e) {
+    return "";
+  }
+}
 function stackTraceFileName(line: string): string {
   let result = line.trim();
 
@@ -287,13 +576,16 @@ function stackTraceFileName(line: string): string {
 }
 
 async function withAnnotatedStack<T>(stackLine: string, cb: () => Promise<T>): Promise<T> {
+  if (stackLine === "") return cb();
   try {
     return await cb();
   } catch (err: any) {
     console.log();
+    console.error(stackLine);
+    stackLine = stackLine.replace("<anonymous>", "test");
     const oldStack = err.stack;
     const newError = new Error(err?.message ?? oldStack.slice(0, oldStack.indexOf("\n    at ")));
-    newError.stack = `${newError.message}\n${stackLine}\n    at \x1b[1moriginal stack:\x1b[0m ()\n${oldStack}`;
+    newError.stack = `${newError.message}\n${stackLine}`;
     throw newError;
   }
 }
@@ -320,13 +612,16 @@ class OutputLineStream extends EventEmitter {
   reader1: ReadableStreamDefaultReader;
   reader2: ReadableStreamDefaultReader;
 
+  name: string;
   lines: string[] = [];
   cursor: number = 0;
   disposed = false;
   closes = 0;
 
-  constructor(readable1: ReadableStream, readable2: ReadableStream) {
+  constructor(name: string, readable1: ReadableStream, readable2: ReadableStream) {
     super();
+
+    this.name = name;
 
     // @ts-ignore TODO: fix broken type definitions in @types/bun
     const reader1 = (this.reader1 = readable1.getReader());
@@ -349,7 +644,7 @@ class OutputLineStream extends EventEmitter {
             if (line.includes("============================================================")) {
               this.emit("panic");
             }
-            console.log("\x1b[0;30mdev|\x1b[0m", line);
+            console.log("\x1b[0;30m" + name + "|\x1b[0m", line);
             this.emit("line", line);
           }
         }
@@ -416,6 +711,8 @@ class OutputLineStream extends EventEmitter {
 }
 
 export function devTest<T extends DevServerTest>(description: string, options: T): T {
+  if (interactive) return options;
+
   // Capture the caller name as part of the test tempdir
   const callerLocation = snapshotCallerLocation();
   const caller = stackTraceFileName(callerLocation);
@@ -424,107 +721,143 @@ export function devTest<T extends DevServerTest>(description: string, options: T
   const basename = path.basename(caller, ".test" + path.extname(caller));
   const count = (counts[basename] = (counts[basename] ?? 0) + 1);
 
-  jest.test(
-    `DevServer > ${basename}.${count}: ${description}`,
-    async () => {
-      const root = path.join(tempDir, basename + count);
-      if ("files" in options) {
-        writeAll(root, options.files);
-        if (options.files["bun.app.ts"] == undefined && options.files["index.html"] == undefined) {
-          if (!options.framework) {
-            throw new Error("Must specify one of: `options.framework`, `index.html`, or `bun.app.ts`");
-          }
-          if (options.pluginFile) {
-            fs.writeFileSync(path.join(root, "pluginFile.ts"), dedent(options.pluginFile));
-          }
-          fs.writeFileSync(
-            path.join(root, "bun.app.ts"),
-            dedent`
-              ${options.pluginFile ? `import plugins from './pluginFile.ts';` : "let plugins = undefined;"}
-              export default {
-                app: {
-                  framework: ${JSON.stringify(options.framework)},
-                  plugins,
-                },
-              };
-            `,
-          );
-        } else if (options.files["index.html"]) {
-          if (options.files["bun.app.ts"]) {
-            throw new Error("Cannot provide both bun.app.ts and index.html");
-          }
-          fs.writeFileSync(
-            path.join(root, "bun.app.ts"),
-            dedent`
-              import html from "./index.html";
-              export default {
-                static: {
-                  '/*': html,
-                },
-                fetch(req) {
-                  return new Response("Not Found", { status: 404 });
-                },
-              };
-            `,
-          );
-        }
-      } else {
-        if (!options.fixture) {
-          throw new Error("Must provide either `fixture` or `files`");
-        }
-        const fixture = path.join(devTestRoot, "../fixtures", options.fixture);
-        fs.cpSync(fixture, root, { recursive: true });
+  const indexHtmlScript = dedent`
+    import html from "./index.html";
+    export default {
+      static: {
+        '/*': html,
+      },
+      fetch(req) {
+        return new Response("Not Found", { status: 404 });
+      },
+    };
+  `;
 
-        if (!fs.existsSync(path.join(root, "bun.app.ts"))) {
-          throw new Error(`Fixture ${fixture} must contain a bun.app.ts file.`);
+  async function run() {
+    const root = path.join(tempDir, basename + count);
+    if ("files" in options) {
+      writeAll(root, options.files);
+      if (options.files["bun.app.ts"] == undefined && options.files["index.html"] == undefined) {
+        if (!options.framework) {
+          throw new Error("Must specify one of: `options.framework`, `index.html`, or `bun.app.ts`");
         }
-        if (!fs.existsSync(path.join(root, "node_modules"))) {
+        if (options.pluginFile) {
+          fs.writeFileSync(path.join(root, "pluginFile.ts"), dedent(options.pluginFile));
+        }
+        fs.writeFileSync(
+          path.join(root, "bun.app.ts"),
+          dedent`
+            ${options.pluginFile ? `import plugins from './pluginFile.ts';` : "let plugins = undefined;"}
+            export default {
+              app: {
+                framework: ${JSON.stringify(options.framework)},
+                plugins,
+              },
+            };
+          `,
+        );
+      } else if (options.files["index.html"]) {
+        if (options.files["bun.app.ts"]) {
+          throw new Error("Cannot provide both bun.app.ts and index.html");
+        }
+        fs.writeFileSync(path.join(root, "bun.app.ts"), indexHtmlScript);
+      }
+    } else {
+      if (!options.fixture) {
+        throw new Error("Must provide either `fixture` or `files`");
+      }
+      const fixture = path.join(devTestRoot, "../fixtures", options.fixture);
+      fs.cpSync(fixture, root, { recursive: true });
+
+      if (!fs.existsSync(path.join(root, "bun.app.ts"))) {
+        if (!fs.existsSync(path.join(root, "index.html"))) {
+          throw new Error(`Fixture ${fixture} must contain a bun.app.ts or index.html file.`);
+        } else {
+          fs.writeFileSync(path.join(root, "bun.app.ts"), indexHtmlScript);
+        }
+      }
+      if (!fs.existsSync(path.join(root, "node_modules"))) {
+        if (fs.existsSync(path.join(root, "bun.lockb"))) {
+          // run bun install
+          await Bun.$`cd ${root} && ${process.execPath} install`;
+        } else {
           // link the node_modules directory from test/node_modules to the temp directory
           fs.symlinkSync(path.join(devTestRoot, "../../node_modules"), path.join(root, "node_modules"), "junction");
         }
       }
-      fs.writeFileSync(
-        path.join(root, "harness_start.ts"),
-        dedent`
-          import appConfig from "./bun.app.ts";
-          export default {
-            ...appConfig,
-            port: 0,
-          };
-        `,
-      );
+    }
+    fs.writeFileSync(
+      path.join(root, "harness_start.ts"),
+      dedent`
+        import appConfig from "./bun.app.ts";
+        export default {
+          ...appConfig,
+          port: 0,
+        };
+      `,
+    );
 
-      await using devProcess = Bun.spawn({
-        cwd: root,
-        cmd: [process.execPath, "./harness_start.ts"],
-        env: mergeWindowEnvs([
-          bunEnv,
-          {
-            FORCE_COLOR: "1",
-            BUN_DEV_SERVER_TEST_RUNNER: "1",
-            BUN_DUMP_STATE_ON_CRASH: "1",
-          },
-        ]),
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-      using stream = new OutputLineStream(devProcess.stdout, devProcess.stderr);
-      const port = parseInt((await stream.waitForLine(/localhost:(\d+)/))[1], 10);
-      await using dev = new Dev(root, port, devProcess, stream);
+    await using devProcess = Bun.spawn({
+      cwd: root,
+      cmd: [process.execPath, "./harness_start.ts"],
+      env: mergeWindowEnvs([
+        bunEnv,
+        {
+          FORCE_COLOR: "1",
+          BUN_DEV_SERVER_TEST_RUNNER: "1",
+          BUN_DUMP_STATE_ON_CRASH: "1",
+        },
+      ]),
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    using stream = new OutputLineStream("dev", devProcess.stdout, devProcess.stderr);
+    const port = parseInt((await stream.waitForLine(/localhost:(\d+)/))[1], 10);
+    const dev = new Dev(root, port, devProcess, stream);
 
-      try {
-        await options.test(dev);
-      } catch (err: any) {
-        // const oldStack = err.stack;
-        // const editedCallerStep = callerLocation.replace(/\w*at.*?\(/, "at test defined at (");
-        // const main = dev.panicked
-        // ? `caused a DevServer crash`
-        // : `failed: ${oldStack.slice(0, oldStack.indexOf("\n    at "))}`;
-        // const newError = new Error(`Step ${n} ${main}`);
-        // newError.stack = `${newError.message}\n${editedCallerStep}\n    at \x1b[1moriginal stack:\x1b[0m ()\n${oldStack}`;
-        throw err;
+    await maybeWaitInteractive("start");
+
+    try {
+      await options.test(dev);
+    } catch (err: any) {
+      while (err instanceof SuppressedError) {
+        console.error(err.suppressed);
+        err = err.error;
       }
-    },
-    (isWindows ? 10_000 : 5_000) * (Bun.version.includes("debug") ? 3 : 1),
-  );
+      if (interactive) {
+        console.error(err);
+        await maybeWaitInteractive("exit");
+        process.exit(1);
+      }
+      throw err;
+    }
+
+    if (interactive) {
+      console.log("\x1b[32mPASS\x1b[0m");
+      await maybeWaitInteractive("exit");
+      process.exit(0);
+    }
+  }
+
+  const name = `DevServer > ${basename}.${count}: ${description}`;
+  try {
+    jest.test(name, run, (isWindows ? 10_000 : 5_000) * (Bun.version.includes("debug") ? 3 : 1));
+    return options;
+  } catch {
+    // not in bun test. allow interactive use
+    const arg = process.argv[2];
+    if (!arg) {
+      const mainFile = JSON.stringify(path.relative(process.cwd(), process.argv[1]));
+      console.error("Options for running Dev Server tests:");
+      console.error(" - automated:   bun test " + mainFile);
+      console.error(" - interactive: bun " + mainFile + " <filter or number for test>");
+      process.exit(1);
+    }
+    if (name.includes(arg)) {
+      interactive = true;
+      console.log("\x1b[32m" + name + " (Interactive)\x1b[0m");
+      run();
+      return options;
+    }
+  }
   return options;
 }

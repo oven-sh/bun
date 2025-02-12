@@ -1,5 +1,5 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
-import { devTest, minimalFramework } from "../dev-server-harness";
+import { devTest } from "../dev-server-harness";
 
 devTest("html file is watched", {
   files: {
@@ -13,7 +13,7 @@ devTest("html file is watched", {
       </html>
     `,
     "script.ts": `
-      harness.send("hello");
+      console.log("hello");
     `,
   },
   async test(dev) {
@@ -25,6 +25,130 @@ devTest("html file is watched", {
     });
     await dev.fetch("/").expect.toInclude("<h1>World</h1>");
 
-    const client = dev.client("/");
+    // Works
+    await using c = await dev.client("/");
+    await c.expectMessage("hello");
+
+    // Editing HTML reloads
+    await c.expectReload(async () => {
+      await dev.patch("index.html", {
+        find: "World",
+        replace: "Hello",
+      });
+      await dev.fetch("/").expect.toInclude("<h1>Hello</h1>");
+    });
+    await c.expectMessage("hello");
+
+    await c.expectReload(async () => {
+      await dev.patch("index.html", {
+        find: "Hello",
+        replace: "Bar",
+      });
+      await dev.fetch("/").expect.toInclude("<h1>Bar</h1>");
+    });
+    await c.expectMessage("hello");
+
+    await c.expectReload(async () => {
+      await dev.patch("script.ts", {
+        find: "hello",
+        replace: "world",
+      });
+    });
+    await c.expectMessage("world");
   },
 });
+
+devTest("image tag", {
+  files: {
+    "index.html": `
+      <!DOCTYPE html><html><head></head><body>
+      <img src="image.png" alt="test image">
+      </body></html>
+    `,
+    "image.png": "FIRST",
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+
+    const url: string = await c.js`document.querySelector("img").src`;
+    expect(url).toBeString(); // image tag exists
+    await dev.fetch(url).expect.toBe("FIRST");
+
+    // Editing HTML causes reload but image still works
+    await c.expectReload(async () => {
+      await dev.patch("index.html", {
+        find: 'alt="test image"',
+        replace: 'alt="modified image"',
+      });
+      await dev.fetch("/").expect.toInclude('alt="modified image"');
+    });
+
+    // Editing image content causes a hard reload because the html must reflect the new image content
+    await c.expectReload(async () => {
+      await dev.patch("image.png", {
+        find: "FIRST",
+        replace: "SECOND",
+      });
+    });
+
+    const url2 = await c.js`document.querySelector("img").src`;
+    expect(url).not.toBe(url2);
+    await dev.fetch(url2).expect.toBe("SECOND");
+
+    // await dev.fetch(url).expect404(); // TODO
+  },
+});
+devTest("image import in JS", {
+  files: {
+    "index.html": `
+      <!DOCTYPE html><html><head></head><body>
+      <script type="module" src="script.ts"></script>
+      </body></html>
+    `,
+    "script.ts": `
+      import img from "./image.png";
+      console.log(img);
+    `,
+    "image.png": "FIRST",
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+
+    const img1 = await c.getStringMessage();
+    await dev.fetch(img1).expect.toBe("FIRST");
+
+    // Editing image content updates the image URL
+    await c.expectReload(async () => {
+      await dev.patch("image.png", {
+        find: "FIRST",
+        replace: "SECOND",
+      });
+    });
+
+    const img2 = await c.getStringMessage();
+    await dev.fetch(img2).expect.toBe("SECOND");
+    // await dev.fetch(img1).expect404();
+  },
+});
+devTest("import then create", {
+  files: {
+    "index.html": `
+      <!DOCTYPE html>
+      <html>
+      <head></head>
+      <body>
+        <script type="module" src="/script.ts"></script>
+      </body>
+      </html>
+    `,
+    "script.ts": `
+      import data from "./data";
+    `,
+  },
+  async test(dev) {
+    const c = await dev.client("/");
+  },
+});
+
+// TODO: cmd+r busts cache
+// TODO: svelte in HTML loader test

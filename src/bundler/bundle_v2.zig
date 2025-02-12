@@ -2942,7 +2942,9 @@ pub const BundleV2 = struct {
                         // Overload `path.text` to point to the final URL
                         // This information cannot be queried while printing because a lock wouldn't get held.
                         const hash = dev_server.assets.getHash(path.text) orelse @panic("cached asset not found");
-                        import_record.path.text = std.fmt.allocPrint(this.graph.allocator, bun.bake.DevServer.asset_prefix ++ "/{s}{s}", .{
+                        import_record.path.text = path.text;
+                        import_record.path.namespace = "file";
+                        import_record.path.pretty = std.fmt.allocPrint(this.graph.allocator, bun.bake.DevServer.asset_prefix ++ "/{s}{s}", .{
                             &std.fmt.bytesToHex(std.mem.asBytes(&hash), .lower),
                             std.fs.path.extension(path.text),
                         }) catch bun.outOfMemory();
@@ -10329,6 +10331,10 @@ pub const LinkerContext = struct {
                     this.linker.parse_graph.input_files.items(.unique_key_for_additional_file)[import_record.source_index.get()]
                 else
                     "";
+                const loader: Loader = if (import_record.source_index.isValid())
+                    this.linker.parse_graph.input_files.items(.loader)[import_record.source_index.get()]
+                else
+                    .file;
 
                 if (import_record.is_external_without_side_effects) {
                     debug("Leaving external import: {s}", .{import_record.path.text});
@@ -10337,12 +10343,11 @@ pub const LinkerContext = struct {
 
                 if (this.linker.dev_server != null) {
                     if (unique_key_for_additional_files.len > 0) {
-                        // Replace the external href/src with the unique key so that we later will rewrite it to the final URL or pathname
                         element.setAttribute(url_attribute, unique_key_for_additional_files) catch bun.outOfMemory();
-                    } else if (import_record.path.is_disabled) {
+                    } else if (import_record.path.is_disabled or loader.isJavaScriptLike() or loader == .css) {
                         element.remove();
                     } else {
-                        element.setAttribute(url_attribute, import_record.path.text) catch bun.outOfMemory();
+                        element.setAttribute(url_attribute, import_record.path.pretty) catch bun.outOfMemory();
                     }
                     return;
                 }
@@ -10352,13 +10357,15 @@ pub const LinkerContext = struct {
                     return;
                 }
 
-                const loader: Loader = this.linker.parse_graph.input_files.items(.loader)[import_record.source_index.get()];
                 if (loader.isJavaScriptLike() or loader == .css) {
                     // Remove the original non-external tags
                     element.remove();
-                } else if (unique_key_for_additional_files.len > 0) {
+                    return;
+                }
+                if (unique_key_for_additional_files.len > 0) {
                     // Replace the external href/src with the unique key so that we later will rewrite it to the final URL or pathname
                     element.setAttribute(url_attribute, unique_key_for_additional_files) catch bun.outOfMemory();
+                    return;
                 }
             }
 

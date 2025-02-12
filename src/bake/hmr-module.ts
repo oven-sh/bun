@@ -68,11 +68,11 @@ export class HotModule<E = any> {
       : (mod._ext_exports ??= { ...(typeof exports === "object" && exports), default: exports });
 
     if (expectedImports && mod._state === State.Ready) {
-      // for (const key of expectedImports) {
-      //   if (!(key in object)) {
-      //     throw new SyntaxError(`The requested module '${id}' does not provide an export named '${key}'`);
-      //   }
-      // }
+      for (const key of expectedImports) {
+        if (!(key in object)) {
+          throw new SyntaxError(`The requested module '${id}' does not provide an export named '${key}'`);
+        }
+      }
     }
     return object;
   }
@@ -281,6 +281,7 @@ export function replaceModule(key: Id, load: ModuleLoadFunction): Promise<void> 
 }
 
 export async function replaceModules(modules: any) {
+  let needsHardReload = false;
   for (const k in modules) {
     input_graph[k] = modules[k];
     const mod = registry.get(k);
@@ -289,6 +290,13 @@ export async function replaceModules(modules: any) {
       mod._state = State.Replacing;
       mod.exports = {};
       mod._ext_exports = undefined;
+      if (side === "client" && !config.refresh && !needsHardReload) {
+        // TODO: import meta hot
+        needsHardReload = true;
+        console.info("[Bun] Reloading because there was not an `import.meta.hot.accept` boundary");
+        location.reload();
+        return;
+      }
     }
   }
   const promises: Promise<void>[] = [];
@@ -310,8 +318,10 @@ export async function replaceModules(modules: any) {
       console.error(err);
     }
   }
-  if (side === "client" && refreshRuntime) {
-    refreshRuntime.performReactRefresh(window);
+  if (side === "client") {
+    if (refreshRuntime) {
+      refreshRuntime.performReactRefresh(window);
+    }
   }
 }
 

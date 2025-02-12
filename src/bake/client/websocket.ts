@@ -46,7 +46,7 @@ interface WebSocketWrapper {
 
 export function initWebSocket(
   handlers: Record<number, (dv: DataView<ArrayBuffer>, ws: WebSocket) => void>,
-  url: string = "/_bun/hmr",
+  { url = "/_bun/hmr", displayMessage = "Live-reloading socket" }: { url?: string; displayMessage?: string } = {},
 ): WebSocketWrapper {
   let firstConnection = true;
   let closed = false;
@@ -71,7 +71,7 @@ export function initWebSocket(
   function onOpen() {
     if (firstConnection) {
       firstConnection = false;
-      console.info("[Bun] Hot-module-reloading socket connected, waiting for changes...");
+      console.info(`[Bun] ${displayMessage} connected, waiting for changes...`);
     }
   }
 

@@ -1,5 +1,5 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
-import { devTest, minimalFramework } from "../dev-server-harness";
+import { devTest, emptyHtmlFile, minimalFramework } from "../dev-server-harness";
 
 devTest("import identifier doesnt get renamed", {
   framework: minimalFramework,
@@ -73,5 +73,28 @@ devTest('uses "development" condition', {
   },
   async test(dev) {
     await dev.fetch("/").equals("Environment: development");
+  },
+});
+devTest("importing a file before it is created", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { abc } from './second';
+      console.log('value: ' + abc);
+    `,
+  },
+  async test(dev) {
+    const c = await dev.client("/", {
+      errors: [`index.ts:1:21 error: Could not resolve: "./second"`],
+    });
+
+    await c.expectReload(async () => {
+      await dev.write("second.ts", `export const abc = "456";`);
+    });
+
+    await c.expectMessage("value: 456");
   },
 });

@@ -870,6 +870,28 @@ if (isDockerEnabled()) {
     }),
   ]);
 
+  test("should work with fragmetns", async () => {
+    await using sql = postgres({ ...options, max: 1 });
+    const random_name = sql("test_" + randomUUIDv7("hex").replaceAll("-", ""));
+    await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${random_name} (id int, hotel_id int, created_at timestamp)`;
+    await sql`INSERT INTO ${random_name} VALUES (1, 1, '2024-01-01 10:00:00')`;
+    // single escaped identifier
+    {
+      const results = await sql`SELECT * FROM ${random_name}`;
+      expect(results).toEqual([{ id: 1, hotel_id: 1, created_at: new Date("2024-01-01T10:00:00.000Z") }]);
+    }
+    // multiple escaped identifiers
+    {
+      const results = await sql`SELECT ${random_name}.* FROM ${random_name}`;
+      expect(results).toEqual([{ id: 1, hotel_id: 1, created_at: new Date("2024-01-01T10:00:00.000Z") }]);
+    }
+    // even more complex fragment
+    {
+      const results =
+        await sql`SELECT ${random_name}.* FROM ${random_name} WHERE ${random_name}.hotel_id = ${1} ORDER BY ${random_name}.created_at DESC`;
+      expect(results).toEqual([{ id: 1, hotel_id: 1, created_at: new Date("2024-01-01T10:00:00.000Z") }]);
+    }
+  });
   test("should handle nested fragments", async () => {
     await using sql = postgres({ ...options, max: 1 });
     const random_name = sql("test_" + randomUUIDv7("hex").replaceAll("-", ""));

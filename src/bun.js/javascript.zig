@@ -990,6 +990,10 @@ pub const VirtualMachine = struct {
                 return null;
             };
         }
+
+        pub export fn Bun__thisThreadHasVM() bool {
+            return vm != null;
+        }
     };
 
     pub inline fn get() *VirtualMachine {

@@ -2684,7 +2684,7 @@ pub const PostgresSQLConnection = struct {
                                         switch (arrayType) {
                                             .int8_array => {
                                                 if (bigint) {
-                                                    try array.append(bun.default_allocator, DataCell{ .tag = .int8, .value = .{ .int8 = bun.fmt.parseInt(i64, element, 0) catch return error.UnsupportedArrayFormat } });
+                                                    try array.append(bun.default_allocator, DataCell{ .tag = .int8, .value = .{ .int8 = std.fmt.parseInt(i64, element, 0) catch return error.UnsupportedArrayFormat } });
                                                 } else {
                                                     try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (element.len > 0) bun.String.createUTF8(element).value.WTFStringImpl else null }, .free_value = 1 });
                                                 }
@@ -2692,12 +2692,12 @@ pub const PostgresSQLConnection = struct {
                                                 continue;
                                             },
                                             .cid_array, .xid_array, .oid_array => {
-                                                try array.append(bun.default_allocator, DataCell{ .tag = .uint4, .value = .{ .uint4 = bun.fmt.parseInt(u32, element, 0) catch 0 } });
+                                                try array.append(bun.default_allocator, DataCell{ .tag = .uint4, .value = .{ .uint4 = std.fmt.parseInt(u32, element, 0) catch 0 } });
                                                 slice = trySlice(slice, current_idx);
                                                 continue;
                                             },
                                             else => {
-                                                const value = bun.fmt.parseInt(i32, element, 0) catch return error.UnsupportedArrayFormat;
+                                                const value = std.fmt.parseInt(i32, element, 0) catch return error.UnsupportedArrayFormat;
 
                                                 try array.append(bun.default_allocator, DataCell{ .tag = .int4, .value = .{ .int4 = @intCast(value) } });
                                                 slice = trySlice(slice, current_idx);
@@ -2794,28 +2794,28 @@ pub const PostgresSQLConnection = struct {
                     if (binary) {
                         return DataCell{ .tag = .int4, .value = .{ .int4 = try parseBinary(.int2, i16, bytes) } };
                     } else {
-                        return DataCell{ .tag = .int4, .value = .{ .int4 = bun.fmt.parseInt(i32, bytes, 0) catch 0 } };
+                        return DataCell{ .tag = .int4, .value = .{ .int4 = std.fmt.parseInt(i32, bytes, 0) catch 0 } };
                     }
                 },
                 .cid, .xid, .oid => {
                     if (binary) {
                         return DataCell{ .tag = .uint4, .value = .{ .uint4 = try parseBinary(.oid, u32, bytes) } };
                     } else {
-                        return DataCell{ .tag = .uint4, .value = .{ .uint4 = bun.fmt.parseInt(u32, bytes, 0) catch 0 } };
+                        return DataCell{ .tag = .uint4, .value = .{ .uint4 = std.fmt.parseInt(u32, bytes, 0) catch 0 } };
                     }
                 },
                 .int4 => {
                     if (binary) {
                         return DataCell{ .tag = .int4, .value = .{ .int4 = try parseBinary(.int4, i32, bytes) } };
                     } else {
-                        return DataCell{ .tag = .int4, .value = .{ .int4 = bun.fmt.parseInt(i32, bytes, 0) catch 0 } };
+                        return DataCell{ .tag = .int4, .value = .{ .int4 = std.fmt.parseInt(i32, bytes, 0) catch 0 } };
                     }
                 },
                 // postgres when reading bigint as int8 it returns a string unless type: { bigint: postgres.BigInt is set
                 .int8 => {
                     if (bigint) {
                         // .int8 is a 64-bit integer always string
-                        return DataCell{ .tag = .int8, .value = .{ .int8 = bun.fmt.parseInt(i64, bytes, 0) catch 0 } };
+                        return DataCell{ .tag = .int8, .value = .{ .int8 = std.fmt.parseInt(i64, bytes, 0) catch 0 } };
                     } else {
                         return DataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) bun.String.createUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
                     }
@@ -4123,7 +4123,7 @@ const Signature = struct {
             return error.InvalidQueryBinding;
         }
         // max u64 length is 20, max prepared_statement_name length is 63
-        const prepared_statement_name = try bun.fmt.allocPrint(bun.default_allocator, "P{s}${d}", .{ name.items[0..@min(40, name.items.len)], prepared_statement_id });
+        const prepared_statement_name = try std.fmt.allocPrint(bun.default_allocator, "P{s}${d}", .{ name.items[0..@min(40, name.items.len)], prepared_statement_id });
 
         return Signature{
             .prepared_statement_name = prepared_statement_name,

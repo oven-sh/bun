@@ -537,7 +537,7 @@ pub const FileSystem = struct {
                 .windows => win_tempdir_cache orelse {
                     const value = bun.getenvZ("TEMP") orelse bun.getenvZ("TMP") orelse brk: {
                         if (bun.getenvZ("SystemRoot") orelse bun.getenvZ("windir")) |windir| {
-                            break :brk bun.fmt.allocPrint(
+                            break :brk std.fmt.allocPrint(
                                 bun.default_allocator,
                                 "{s}\\Temp",
                                 .{strings.withoutTrailingSlash(windir)},
@@ -554,7 +554,7 @@ pub const FileSystem = struct {
                         var tmp_buf: bun.PathBuffer = undefined;
                         const cwd = std.posix.getcwd(&tmp_buf) catch @panic("Failed to get cwd for platformTempDir");
                         const root = bun.path.windowsFilesystemRoot(cwd);
-                        break :brk bun.fmt.allocPrint(
+                        break :brk std.fmt.allocPrint(
                             bun.default_allocator,
                             "{s}\\Windows\\Temp",
                             .{strings.withoutTrailingSlash(root)},

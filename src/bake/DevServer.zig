@@ -165,6 +165,17 @@ dump_dir: if (bun.FeatureFlags.bake_debugging_features) ?std.fs.Dir else void,
 /// Reference count to number of active sockets with the visualizer enabled.
 emit_visualizer_events: u32,
 has_pre_crash_handler: bool,
+/// Perfect incremental bundling implies that there are zero bugs in the
+/// code that bundles, watches, and rebuilds routes and client side code.
+///
+/// More specifically, when this is false, DevServer will run a full rebundle
+/// when a user force-refreshes an error page. In a perfect system, a rebundle
+/// could not possibly fix the build. But since builds are NOT perfect, this
+/// could very well be the case.
+///
+/// DISABLED in releases, ENABLED in debug.
+/// Can be enabled with env var `BUN_ASSUME_PERFECT_INCREMENTAL=1`
+assume_perfect_incremental_bundling: bool = false,
 
 pub const internal_prefix = "/_bun";
 /// Assets which are routed to the `Assets` storage.
@@ -370,6 +381,13 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .plugin_state = .unknown,
         .bundling_failures = .{},
         .deferred_request_pool = .init(allocator),
+        .assume_perfect_incremental_bundling = if (bun.Environment.isDebug)
+            if (bun.getenvZ("BUN_ASSUME_PERFECT_INCREMENTAL")) |env|
+                !bun.strings.eqlComptime(env, "0")
+            else
+                true
+        else
+            bun.getRuntimeFeatureFlag("BUN_ASSUME_PERFECT_INCREMENTAL"),
 
         .server_transpiler = undefined,
         .client_transpiler = undefined,
@@ -712,6 +730,7 @@ pub fn memoryCost(dev: *DevServer) usize {
         .server_fetch_function_callback = {},
         .server_register_update_callback = {},
         .deferred_request_pool = {},
+        .assume_perfect_incremental_bundling = {},
 
         // pointers that are not considered a part of DevServer
         .vm = {},
@@ -1082,6 +1101,7 @@ fn ensureRouteIsBundled(
                 switch (try checkRouteFailures(dev, route_bundle_index, resp)) {
                     .stop => return,
                     .ok => {}, // Errors were cleared or not in the way.
+                    .rebuild => continue :sw .unqueued,
                 }
             }
 
@@ -1125,7 +1145,11 @@ fn deferRequest(
     requests_array.prepend(deferred);
 }
 
-fn checkRouteFailures(dev: *DevServer, route_bundle_index: RouteBundle.Index, resp: anytype) !enum { stop, ok } {
+fn checkRouteFailures(
+    dev: *DevServer,
+    route_bundle_index: RouteBundle.Index,
+    resp: anytype,
+) !enum { stop, ok, rebuild } {
     var sfa_state = std.heap.stackFallback(65536, dev.allocator);
     const sfa = sfa_state.get();
     var gts = try dev.initGraphTraceState(sfa);
@@ -1135,6 +1159,21 @@ fn checkRouteFailures(dev: *DevServer, route_bundle_index: RouteBundle.Index, re
     defer dev.graph_safety_lock.unlock();
     try dev.traceAllRouteImports(dev.routeBundlePtr(route_bundle_index), &gts, .find_errors);
     if (dev.incremental_result.failures_added.items.len > 0) {
+        // See comment on this field for information
+        if (!dev.assume_perfect_incremental_bundling) {
+            // Cache bust EVERYTHING reachable
+            inline for (.{
+                .{ .graph = &dev.client_graph, .bits = &gts.client_bits },
+                .{ .graph = &dev.server_graph, .bits = &gts.server_bits },
+            }) |entry| {
+                var it = entry.bits.iterator(.{});
+                while (it.next()) |file_index| {
+                    entry.graph.stale_files.set(file_index);
+                }
+            }
+            return .rebuild;
+        }
+
         resp.corked(sendSerializedFailures, .{
             dev,
             resp,

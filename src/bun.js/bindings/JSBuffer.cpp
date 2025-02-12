@@ -1512,7 +1512,6 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalOb
         RETURN_IF_EXCEPTION(scope, {});
         JSC::PropertyNameArray array(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
 
-        auto extras = false;
         auto filter = showHidden.toBoolean(globalObject) ? DontEnumPropertiesMode::Include : DontEnumPropertiesMode::Exclude;
 
         if (UNLIKELY(castedThis->hasNonReifiedStaticProperties())) {
@@ -1520,22 +1519,24 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalOb
         }
         castedThis->getOwnNonIndexPropertyNames(globalObject, array, filter);
         RETURN_IF_EXCEPTION(scope, {});
-        auto obj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 0);
 
-        for (auto ident : array) {
-            extras = true;
-            auto value = castedThis->get(globalObject, ident);
-            RETURN_IF_EXCEPTION(scope, {});
-            obj->putDirect(vm, ident, value);
-        }
-        if (extras) {
+        if (array.size() > 0) {
             any = true;
             if (data.size() > 0) {
                 result.append(","_s);
             }
             result.append(' ');
-            auto inspected = Bun__inspect_singleline(globalObject, obj).transferToWTFString();
-            result.append(inspected.substring(2, inspected.length() - 4));
+            size_t i = 0;
+            for (auto ident : array) {
+                if (i > 0) result.append(", "_s);
+                result.append(ident.string());
+                result.append(": "_s);
+                auto value = castedThis->get(globalObject, ident);
+                RETURN_IF_EXCEPTION(scope, {});
+                auto inspected = Bun__inspect_singleline(globalObject, value).transferToWTFString();
+                result.append(inspected);
+                i++;
+            }
         }
     }
     if (!any) result.append(' ');

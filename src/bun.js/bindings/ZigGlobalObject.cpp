@@ -888,6 +888,9 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
 
     vm.heap.disableStopIfNecessaryTimer();
 
+    // Every JS VM's RunLoop should use Bun's RunLoop implementation
+    ASSERT(vmPtr->runLoop().kind() == WTF::RunLoop::Kind::Bun);
+
     WebCore::JSVMClientData::create(&vm, Bun__getVM());
 
     const auto createGlobalObject = [&]() -> Zig::GlobalObject* {

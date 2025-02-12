@@ -110,11 +110,13 @@ void CryptoAlgorithmECDH::deriveBits(const CryptoAlgorithmParameters& parameters
 
     // This is a special case that can't use dispatchOperation() because it bundles
     // the result validation and callback dispatch into unifiedCallback.
-    workQueue.dispatch(context.globalObject(),
+    context.refEventLoop();
+    workQueue.dispatch(
         [baseKey = WTFMove(baseKey), publicKey = ecParameters.publicKey, length, unifiedCallback = WTFMove(unifiedCallback), contextIdentifier = context.identifier()]() mutable {
             auto derivedKey = platformDeriveBits(downcast<CryptoKeyEC>(baseKey.get()), downcast<CryptoKeyEC>(*publicKey));
-            ScriptExecutionContext::postTaskTo(contextIdentifier, [derivedKey = WTFMove(derivedKey), length, unifiedCallback = WTFMove(unifiedCallback)](auto&) mutable {
+            ScriptExecutionContext::postTaskTo(contextIdentifier, [derivedKey = WTFMove(derivedKey), length, unifiedCallback = WTFMove(unifiedCallback)](auto& context) mutable {
                 unifiedCallback(WTFMove(derivedKey), length);
+                context.unrefEventLoop();
             });
         });
 }

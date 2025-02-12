@@ -726,7 +726,7 @@ const ReactTailwindSpa = struct {
     pub const files = &[_]TemplateFile{
         .{
             .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.tsx",
-            .content = @embedFile("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.tsx"),
+            .content = shared_app_tsx,
             .reason = .bun,
             .overwrite = false,
         },
@@ -767,6 +767,7 @@ const ReactTailwindSpa = struct {
 
 const shared_build_ts = @embedFile("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts");
 const shared_client_tsx = @embedFile("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.client.tsx");
+const shared_app_tsx = @embedFile("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.tsx");
 const shared_html = @embedFile("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.html");
 const shared_package_json = @embedFile("projects/react-shadcn-spa/package.json");
 const shared_bunfig_toml = @embedFile("projects/react-shadcn-spa/bunfig.toml");
@@ -776,7 +777,7 @@ const ReactSpa = struct {
     pub const files = &[_]TemplateFile{
         .{
             .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.tsx",
-            .content = @embedFile("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.tsx"),
+            .content = shared_app_tsx,
             .reason = .bun,
             .overwrite = false,
         },
@@ -816,7 +817,7 @@ const ReactShadcnSpa = struct {
     pub const files = &[_]TemplateFile{
         .{
             .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.tsx",
-            .content = @embedFile("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.tsx"),
+            .content = shared_app_tsx,
             .reason = .bun,
             .overwrite = false,
         },

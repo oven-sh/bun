@@ -3000,5 +3000,5 @@ it("Buffer.from(arrayBuffer, byteOffset, length)", () => {
   const buf = Buffer.from(ab, 3, 5);
   expect(buf.length).toBe(5);
   expect(buf.buffer).toBe(ab);
-  expect(buf[Symbol.iterator]().toArray()).toEqual([13, 14, 15, 16, 17, 18]);
+  expect(buf[Symbol.iterator]().toArray()).toEqual([13, 14, 15, 16, 17]);
 });

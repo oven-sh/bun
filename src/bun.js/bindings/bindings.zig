@@ -6618,7 +6618,7 @@ pub fn toJSHostFunction(comptime Function: JSHostZigFunction) JSC.JSHostFunction
                                 \\
                                 \\    fn: {s}
                                 \\ value: {}
-                                \\q
+                                \\
                             , .{
                                 &Function, // use `(lldb) image lookup --address 0x1ec4` to discover what function failed
                                 value.toFmt(&formatter),

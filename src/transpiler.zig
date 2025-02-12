@@ -56,9 +56,9 @@ const DataURL = @import("./resolver/data_url.zig").DataURL;
 pub const MacroJSValueType = JSC.JSValue;
 const default_macro_js_value = JSC.JSValue.zero;
 
-const EntryPoints = @import("./bundler/entry_points.zig");
+pub const EntryPoints = @import("./bundler/entry_points.zig");
 const SystemTimer = @import("./system_timer.zig").Timer;
-pub usingnamespace EntryPoints;
+
 pub const ParseResult = struct {
     source: logger.Source,
     loader: options.Loader,

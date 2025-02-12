@@ -1939,8 +1939,9 @@ pub fn NestedRuleParser(comptime T: type) type {
                         @"font-palette-values",
                         @"counter-style",
                         viewport,
-                        keyframes,
                         @"-ms-viewport",
+                        keyframes,
+                        @"-webkit-keyframes",
                         @"-moz-keyframes",
                         @"-o-keyframes",
                         @"-ms-keyframes",
@@ -1987,14 +1988,14 @@ pub fn NestedRuleParser(comptime T: type) type {
                             const prefix: VendorPrefix = if (bun.strings.startsWithCaseInsensitiveAscii(name, "-ms")) VendorPrefix{ .ms = true } else VendorPrefix{ .none = true };
                             break :brk .{ .viewport = prefix };
                         },
-                        .keyframes, .@"-moz-keyframes", .@"-o-keyframes", .@"-ms-keyframes" => {
-                            const prefix: VendorPrefix = if (bun.strings.startsWithCaseInsensitiveAscii(name, "-webkit"))
-                                VendorPrefix{ .webkit = true }
-                            else if (bun.strings.startsWithCaseInsensitiveAscii(name, "-moz-"))
-                                VendorPrefix{ .moz = true }
-                            else if (bun.strings.startsWithCaseInsensitiveAscii(name, "-o-"))
-                                VendorPrefix{ .o = true }
-                            else if (bun.strings.startsWithCaseInsensitiveAscii(name, "-ms-")) VendorPrefix{ .ms = true } else VendorPrefix{ .none = true };
+                        inline .keyframes, .@"-webkit-keyframes", .@"-moz-keyframes", .@"-o-keyframes", .@"-ms-keyframes" => |n| {
+                            const prefix: VendorPrefix = switch (n) {
+                                .@"-webkit-keyframes" => VendorPrefix{ .webkit = true },
+                                .@"-moz-keyframes" => VendorPrefix{ .moz = true },
+                                .@"-o-keyframes" => VendorPrefix{ .o = true },
+                                .@"-ms-keyframes" => VendorPrefix{ .ms = true },
+                                else => VendorPrefix{ .none = true },
+                            };
 
                             const keyframes_name = switch (input.tryParse(css_rules.keyframes.KeyframesName.parse, .{})) {
                                 .err => |e| return .{ .err = e },

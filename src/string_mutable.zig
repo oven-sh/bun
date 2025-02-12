@@ -224,7 +224,7 @@ pub const MutableString = struct {
         try self.list.ensureUnusedCapacity(self.allocator, count);
         const old = self.list.items.len;
         self.list.items.len += count;
-        bun.assert(count == bun.fmt.formatIntBuf(self.list.items.ptr[old .. old + count], int, 10, .lower, .{}));
+        bun.assert(count == std.fmt.formatIntBuf(self.list.items.ptr[old .. old + count], int, 10, .lower, .{}));
     }
 
     pub inline fn appendAssumeCapacity(self: *MutableString, char: []const u8) void {

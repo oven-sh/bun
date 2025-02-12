@@ -3773,7 +3773,7 @@ pub const PackageManager = struct {
         try PATH.appendSlice(this.node_gyp_tempdir_name);
         try this.env.map.put("PATH", PATH.items);
 
-        const npm_config_node_gyp = try bun.fmt.bufPrint(&path_buf, "{s}{s}{s}{s}{s}", .{
+        const npm_config_node_gyp = try std.fmt.bufPrint(&path_buf, "{s}{s}{s}{s}{s}", .{
             strings.withoutTrailingSlash(this.temp_dir_name),
             std.fs.path.sep_str,
             strings.withoutTrailingSlash(this.node_gyp_tempdir_name),

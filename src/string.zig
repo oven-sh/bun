@@ -530,6 +530,10 @@ pub const String = extern struct {
     /// They're de-duplicated in a threadlocal hash table
     /// They cannot be used from other threads.
     pub fn createAtomIfPossible(bytes: []const u8) String {
+        if (bytes.len == 0) {
+            return String.empty;
+        }
+
         if (bytes.len < 64) {
             if (tryCreateAtom(bytes)) |atom| {
                 return atom;
@@ -592,10 +596,10 @@ pub const String = extern struct {
                 const info = @typeInfo(Type);
 
                 // Zig string literals
-                if (info == .Pointer and info.Pointer.size == .One and info.Pointer.is_const) {
-                    const child_info = @typeInfo(info.Pointer.child);
-                    if (child_info == .Array and child_info.Array.child == u8) {
-                        if (child_info.Array.len == 0) return String.empty;
+                if (info == .pointer and info.pointer.size == .one and info.pointer.is_const) {
+                    const child_info = @typeInfo(info.pointer.child);
+                    if (child_info == .array and child_info.array.child == u8) {
+                        if (child_info.array.len == 0) return String.empty;
                         return static(value);
                     }
                 }

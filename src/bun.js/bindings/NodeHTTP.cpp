@@ -413,6 +413,20 @@ extern "C" EncodedJSValue Bun__getNodeHTTPResponseThisValue(int is_ssl, us_socke
     return JSValue::encode(getNodeHTTPResponse<false>(socket));
 }
 
+extern "C" EncodedJSValue Bun__getNodeHTTPServerSocketThisValue(int is_ssl, us_socket_t* socket)
+{
+    if (is_ssl) {
+        return JSValue::encode(getNodeHTTPServerSocket<true>(socket));
+    }
+    return JSValue::encode(getNodeHTTPServerSocket<false>(socket));
+}
+
+extern "C" void Bun__setNodeHTTPServerSocketUsSocketValue(EncodedJSValue thisValue, us_socket_t* socket)
+{
+    auto* response = jsCast<JSNodeHTTPServerSocket*>(JSValue::decode(thisValue));
+    response->socket = socket;
+}
+
 BUN_DECLARE_HOST_FUNCTION(jsFunctionRequestOrResponseHasBodyValue);
 BUN_DECLARE_HOST_FUNCTION(jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer);
 extern "C" uWS::HttpRequest* Request__getUWSRequest(void*);

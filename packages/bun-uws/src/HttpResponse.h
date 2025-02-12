@@ -241,7 +241,7 @@ public:
     /* Manually upgrade to WebSocket. Typically called in upgrade handler. Immediately calls open handler.
      * NOTE: Will invalidate 'this' as socket might change location in memory. Throw away after use. */
     template <typename UserData>
-    void upgrade(UserData &&userData, std::string_view secWebSocketKey, std::string_view secWebSocketProtocol,
+    us_socket_t *upgrade(UserData &&userData, std::string_view secWebSocketKey, std::string_view secWebSocketProtocol,
             std::string_view secWebSocketExtensions,
             struct us_socket_context_t *webSocketContext) {
 
@@ -323,8 +323,8 @@ public:
         bool wasCorked = Super::isCorked();
 
         /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
-        WebSocket<SSL, true, UserData> *webSocket = (WebSocket<SSL, true, UserData> *) us_socket_context_adopt_socket(SSL,
-                    (us_socket_context_t *) webSocketContext, (us_socket_t *) this, sizeof(WebSocketData) + sizeof(UserData));
+        us_socket_t *usSocket = us_socket_context_adopt_socket(SSL, (us_socket_context_t *) webSocketContext, (us_socket_t *) this, sizeof(WebSocketData) + sizeof(UserData));
+        WebSocket<SSL, true, UserData> *webSocket = (WebSocket<SSL, true, UserData> *) usSocket;
 
         /* For whatever reason we were corked, update cork to the new socket */
         if (wasCorked) {
@@ -354,6 +354,8 @@ public:
         if (webSocketContextData->openHandler) {
             webSocketContextData->openHandler(webSocket);
         }
+
+        return usSocket;
     }
 
     /* Immediately terminate this Http response */
@@ -456,7 +458,7 @@ public:
             writeMark();
 
             writeHeader("Transfer-Encoding", "chunked");
-            httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED; 
+            httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
         }
 
         /* This will be sent always when state is HTTP_WRITE_CALLED inside internalEnd, so no need to write the terminating 0 chunk here */
@@ -538,7 +540,7 @@ public:
             Super::cork();
             handler();
 
-            /* The only way we could possibly have changed the corked socket during handler call, would be if 
+            /* The only way we could possibly have changed the corked socket during handler call, would be if
              * the HTTP socket was upgraded to WebSocket and caused a realloc. Because of this we cannot use "this"
              * from here downwards. The corking is done with corkUnchecked() in upgrade. It steals cork. */
             auto *newCorkedSocket = loopData->getCorkedSocket();
@@ -605,7 +607,7 @@ public:
     /* Attach handler for aborted HTTP request */
     HttpResponse *onAborted(void* userData,  HttpResponseData<SSL>::OnAbortedCallback handler) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-        
+
         httpResponseData->userData = userData;
         httpResponseData->onAborted = handler;
         return this;
@@ -613,7 +615,7 @@ public:
 
     HttpResponse *onTimeout(void* userData,  HttpResponseData<SSL>::OnTimeoutCallback handler) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-        
+
         httpResponseData->userData = userData;
         httpResponseData->onTimeout = handler;
         return this;
@@ -643,7 +645,7 @@ public:
         return this;
     }
     /* Attach a read handler for data sent. Will be called with FIN set true if last segment. */
-    void onData(void* userData, HttpResponseData<SSL>::OnDataCallback handler) { 
+    void onData(void* userData, HttpResponseData<SSL>::OnDataCallback handler) {
         HttpResponseData<SSL> *data = getHttpResponseData();
         data->userData = userData;
         data->inStream = handler;

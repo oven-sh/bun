@@ -1521,19 +1521,19 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     return value.length();
   }
 
-  void uws_res_upgrade(int ssl, uws_res_r res, void *data,
-                       const char *sec_web_socket_key,
-                       size_t sec_web_socket_key_length,
-                       const char *sec_web_socket_protocol,
-                       size_t sec_web_socket_protocol_length,
-                       const char *sec_web_socket_extensions,
-                       size_t sec_web_socket_extensions_length,
-                       uws_socket_context_t *ws)
+  us_socket_t *uws_res_upgrade(int ssl, uws_res_r res, void *data,
+                             const char *sec_web_socket_key,
+                             size_t sec_web_socket_key_length,
+                             const char *sec_web_socket_protocol,
+                             size_t sec_web_socket_protocol_length,
+                             const char *sec_web_socket_extensions,
+                             size_t sec_web_socket_extensions_length,
+                             uws_socket_context_t *ws)
   {
     if (ssl) {
     uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
 
-    uwsRes->template upgrade<void *>(
+    return uwsRes->template upgrade<void *>(
         data ? std::move(data) : NULL,
         stringViewFromC(sec_web_socket_key, sec_web_socket_key_length),
         stringViewFromC(sec_web_socket_protocol, sec_web_socket_protocol_length),
@@ -1543,7 +1543,7 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     } else {
     uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
 
-    uwsRes->template upgrade<void *>(
+    return uwsRes->template upgrade<void *>(
         data ? std::move(data) : NULL,
         stringViewFromC(sec_web_socket_key, sec_web_socket_key_length),
         stringViewFromC(sec_web_socket_protocol, sec_web_socket_protocol_length),

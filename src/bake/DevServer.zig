@@ -3571,7 +3571,7 @@ pub fn onWebSocketUpgrade(
         .subscriptions = .{},
         .active_route = .none,
     });
-    res.upgrade(
+    _ = res.upgrade(
         *HmrSocket,
         dw,
         req.header("sec-websocket-key") orelse "",

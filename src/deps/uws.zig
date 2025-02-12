@@ -3438,7 +3438,7 @@ pub const AnyResponse = union(enum) {
         sec_web_socket_protocol: []const u8,
         sec_web_socket_extensions: []const u8,
         ctx: ?*uws_socket_context_t,
-    ) void {
+    ) *Socket {
         return switch (this) {
             .SSL => |resp| resp.upgrade(Data, data, sec_web_socket_key, sec_web_socket_protocol, sec_web_socket_extensions, ctx),
             .TCP => |resp| resp.upgrade(Data, data, sec_web_socket_key, sec_web_socket_protocol, sec_web_socket_extensions, ctx),
@@ -3713,7 +3713,7 @@ pub fn NewApp(comptime ssl: bool) type {
         }
 
         pub const Response = opaque {
-            inline fn castRes(res: *uws_res) *Response {
+            pub inline fn castRes(res: *uws_res) *Response {
                 return @as(*Response, @ptrCast(@alignCast(res)));
             }
 
@@ -4034,8 +4034,8 @@ pub fn NewApp(comptime ssl: bool) type {
                 sec_web_socket_protocol: []const u8,
                 sec_web_socket_extensions: []const u8,
                 ctx: ?*uws_socket_context_t,
-            ) void {
-                uws_res_upgrade(
+            ) *Socket {
+                return uws_res_upgrade(
                     ssl_flag,
                     res.downcast(),
                     data,
@@ -4236,7 +4236,7 @@ extern fn uws_res_upgrade(
     sec_web_socket_extensions: [*c]const u8,
     sec_web_socket_extensions_length: usize,
     ws: ?*uws_socket_context_t,
-) void;
+) *Socket;
 extern fn uws_res_cork(i32, res: *uws_res, ctx: *anyopaque, corker: *const (fn (?*anyopaque) callconv(.C) void)) void;
 extern fn uws_res_write_headers(i32, res: *uws_res, names: [*]const Api.StringPointer, values: [*]const Api.StringPointer, count: usize, buf: [*]const u8) void;
 pub const LIBUS_RECV_BUFFER_LENGTH = 524288;

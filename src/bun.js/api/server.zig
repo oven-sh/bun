@@ -5812,6 +5812,7 @@ pub const NodeHTTPResponse = struct {
     aborted: bool = false,
     finished: bool = false,
     ended: bool = false,
+    upgraded: bool = false,
     is_request_pending: bool = true,
     body_read_state: BodyReadState = .none,
     body_read_ref: JSC.Ref = .{},
@@ -5886,9 +5887,18 @@ pub const NodeHTTPResponse = struct {
         return Bun__getNodeHTTPResponseThisValue(@intFromBool(this.response == .SSL), this.response.socket());
     }
 
+    extern "C" fn Bun__getNodeHTTPServerSocketThisValue(c_int, *anyopaque) JSC.JSValue;
+    fn getServerSocketValue(this: *NodeHTTPResponse) JSC.JSValue {
+        return Bun__getNodeHTTPServerSocketThisValue(@intFromBool(this.response == .SSL), this.response.socket());
+    }
+
+    extern "C" fn Bun__setNodeHTTPServerSocketUsSocketValue(JSC.JSValue, *anyopaque) void;
+
     pub fn upgrade(this: *NodeHTTPResponse, data_value: JSValue, sec_websocket_protocol: ZigString, sec_websocket_extensions: ZigString) bool {
         const upgrade_ctx = this.upgrade_context.context orelse return false;
         const ws_handler = this.server.webSocketHandler() orelse return false;
+        const socketValue = this.getServerSocketValue();
+
         defer {
             this.setOnAbortedHandler();
             this.upgrade_context.deinit();
@@ -5899,6 +5909,16 @@ pub const NodeHTTPResponse = struct {
             .handler = ws_handler,
             .this_value = data_value,
         });
+
+        var new_socket: ?*uws.Socket = null;
+        defer if (new_socket) |socket| {
+            this.upgraded = true;
+            Bun__setNodeHTTPServerSocketUsSocketValue(socketValue, socket);
+            switch (this.response) {
+                .SSL => this.response = uws.AnyResponse.init(uws.NewApp(true).Response.castRes(@alignCast(@ptrCast(socket)))),
+                .TCP => this.response = uws.AnyResponse.init(uws.NewApp(false).Response.castRes(@alignCast(@ptrCast(socket)))),
+            }
+        };
 
         if (this.upgrade_context.request) |request| {
             this.upgrade_context = .{};
@@ -5926,7 +5946,7 @@ pub const NodeHTTPResponse = struct {
                 if (sec_websocket_extensions_str) |str| str.deinit();
             }
 
-            this.response.upgrade(
+            new_socket = this.response.upgrade(
                 *ServerWebSocket,
                 ws,
                 request.header("sec-websocket-key") orelse "",
@@ -5960,7 +5980,7 @@ pub const NodeHTTPResponse = struct {
             if (sec_websocket_extensions_str) |str| str.deinit();
         }
 
-        this.response.upgrade(
+        new_socket = this.response.upgrade(
             *ServerWebSocket,
             ws,
             this.upgrade_context.sec_websocket_key,
@@ -5968,11 +5988,10 @@ pub const NodeHTTPResponse = struct {
             sec_websocket_extensions_value,
             upgrade_ctx,
         );
-
         return true;
     }
     pub fn maybeStopReadingBody(this: *NodeHTTPResponse, vm: *JSC.VirtualMachine) void {
-        this.upgrade_context.deinit(); // we can discart the upgrade context now
+        this.upgrade_context.deinit(); // we can discard the upgrade context now
 
         if ((this.aborted or this.ended) and (this.body_read_ref.has or this.body_read_state == .pending) and !this.onDataCallback.has()) {
             const had_ref = this.body_read_ref.has;
@@ -6084,8 +6103,11 @@ pub const NodeHTTPResponse = struct {
     }
 
     pub fn setOnAbortedHandler(this: *NodeHTTPResponse) void {
-        this.response.onAborted(*NodeHTTPResponse, onAbort, this);
-        this.response.onTimeout(*NodeHTTPResponse, onTimeout, this);
+        // Don't overwrite WebSocket user data
+        if (!this.upgraded) {
+            this.response.onAborted(*NodeHTTPResponse, onAbort, this);
+            this.response.onTimeout(*NodeHTTPResponse, onTimeout, this);
+        }
         // detach and
         this.upgrade_context.preserveWebSocketHeadersIfNeeded();
     }
@@ -7480,7 +7502,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             upgrader.deref();
 
-            resp.upgrade(
+            _ = resp.upgrade(
                 *ServerWebSocket,
                 ws,
                 sec_websocket_key_str.slice(),

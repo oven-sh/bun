@@ -718,12 +718,14 @@ pub const PostgresSQLQuery = struct {
                         if (!connection.hasQueryRunning()) {
                             this.flags.binary = this.statement.?.fields.len > 0;
                             debug("bindAndExecute", .{});
+
                             // bindAndExecute will bind + execute, it will change to running after binding is complete
                             PostgresRequest.bindAndExecute(globalObject, this.statement.?, binding_value, columns_value, PostgresSQLConnection.Writer, writer) catch |err| {
                                 if (!globalObject.hasException())
                                     return globalObject.throwValue(postgresErrorToJS(globalObject, "failed to bind and execute query", err));
                                 return error.JSError;
                             };
+                            connection.flags.is_ready_for_query = false;
                             this.status = .binding;
 
                             did_write = true;
@@ -748,10 +750,12 @@ pub const PostgresSQLQuery = struct {
                             return globalObject.throwValue(postgresErrorToJS(globalObject, "failed to prepare and query", err));
                         return error.JSError;
                     };
+                    connection.flags.is_ready_for_query = false;
                     this.status = .binding;
                     did_write = true;
                 } else {
                     debug("writeQuery", .{});
+
                     PostgresRequest.writeQuery(query_str.slice(), signature.prepared_statement_name, signature.fields, PostgresSQLConnection.Writer, writer) catch |err| {
                         signature.deinit();
                         if (!globalObject.hasException())
@@ -764,6 +768,7 @@ pub const PostgresSQLQuery = struct {
                             return globalObject.throwValue(postgresErrorToJS(globalObject, "failed to flush", err));
                         return error.JSError;
                     };
+                    connection.flags.is_ready_for_query = false;
                     did_write = true;
                 }
             }
@@ -3243,6 +3248,7 @@ pub const PostgresSQLConnection = struct {
 
                                 continue;
                             };
+                            this.flags.is_ready_for_query = false;
                             req.status = .binding;
                             return;
                         },
@@ -3257,7 +3263,6 @@ pub const PostgresSQLConnection = struct {
                                 bun.assert(thisValue != .zero);
                                 // prepareAndQueryWithSignature will write + bind + execute, it will change to running after binding is complete
                                 const binding_value = PostgresSQLQuery.bindingGetCached(thisValue) orelse .zero;
-
                                 PostgresRequest.prepareAndQueryWithSignature(this.globalObject, query_str.slice(), binding_value, PostgresSQLConnection.Writer, this.writer(), &stmt.signature) catch |err| {
                                     stmt.status = .failed;
                                     stmt.error_response = .{ .postgres_error = err };
@@ -3267,6 +3272,7 @@ pub const PostgresSQLConnection = struct {
 
                                     continue;
                                 };
+                                this.flags.is_ready_for_query = false;
                                 req.status = .binding;
                                 stmt.status = .parsing;
 
@@ -3294,6 +3300,7 @@ pub const PostgresSQLConnection = struct {
 
                                 continue;
                             };
+                            this.flags.is_ready_for_query = false;
                             stmt.status = .parsing;
                             return;
                         },
@@ -3324,9 +3331,6 @@ pub const PostgresSQLConnection = struct {
 
     pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_literal), comptime Context: type, reader: protocol.NewReader(Context)) AnyPostgresError!void {
         debug("on({s})", .{@tagName(MessageType)});
-        if (comptime MessageType != .ReadyForQuery) {
-            this.flags.is_ready_for_query = false;
-        }
 
         switch (comptime MessageType) {
             .DataRow => {

@@ -2009,35 +2009,51 @@ declare module "bun" {
    */
   type SQLOptions = {
     /** Connection URL (can be string or URL object) */
-    url: URL | string;
+    url?: URL | string;
     /** Database server hostname */
-    host: string;
+    host?: string;
+    /** Database server hostname (alias for host) */
+    hostname?: string;
     /** Database server port number */
-    port: number | string;
+    port?: number | string;
     /** Database user for authentication */
-    username: string;
+    username?: string;
+    /** Database user for authentication (alias for username) */
+    user?: string;
     /** Database password for authentication */
-    password: string;
+    password?: string;
+    /** Database password for authentication (alias for password) */
+    pass?: string;
     /** Name of the database to connect to */
-    database: string;
+    database?: string;
+    /** Name of the database to connect to (alias for database) */
+    db?: string;
     /** Database adapter/driver to use */
-    adapter: string;
-    /** Maximum time in milliseconds to wait for connection to become available */
-    idleTimeout: number;
-    /** Maximum time in milliseconds to wait when establishing a connection */
-    connectionTimeout: number;
-    /** Maximum lifetime in milliseconds of a connection */
-    maxLifetime: number;
+    adapter?: string;
+    /** Maximum time in seconds to wait for connection to become available */
+    idleTimeout?: number;
+    /** Maximum time in seconds to wait for connection to become available (alias for idleTimeout) */
+    idle_timeout?: number;
+    /** Maximum time in seconds to wait when establishing a connection */
+    connectionTimeout?: number;
+    /** Maximum time in seconds to wait when establishing a connection (alias for connectionTimeout) */
+    connection_timeout?: number;
+    /** Maximum lifetime in seconds of a connection */
+    maxLifetime?: number;
+    /** Maximum lifetime in seconds of a connection (alias for maxLifetime) */
+    max_lifetime?: number;
     /** Whether to use TLS/SSL for the connection */
-    tls: boolean;
+    tls?: TLSOptions | boolean;
+    /** Whether to use TLS/SSL for the connection (alias for tls) */
+    ssl?: TLSOptions | boolean;
     /** Callback function executed when a connection is established */
-    onconnect: (client: SQL) => void;
+    onconnect?: (client: SQL) => void;
     /** Callback function executed when a connection is closed */
-    onclose: (client: SQL) => void;
+    onclose?: (client: SQL) => void;
     /** Maximum number of connections in the pool */
-    max: number;
+    max?: number;
     /** By default values outside i32 range are returned as strings. If this is true, values outside i32 range are returned as BigInts. */
-    bigint: boolean;
+    bigint?: boolean;
   };
 
   /**
@@ -3686,7 +3702,17 @@ declare module "bun" {
      * Render contextual errors? This enables bun's error page
      * @default process.env.NODE_ENV !== 'production'
      */
-    development?: boolean;
+    development?:
+      | boolean
+      | {
+          /**
+           * Enable Hot Module Replacement for routes (including React Fast Refresh, if React is in use)
+           *
+           * @default true if process.env.NODE_ENV !== 'production'
+           *
+           */
+          hmr?: boolean;
+        };
 
     error?: (this: Server, error: ErrorLike) => Response | Promise<Response> | undefined | Promise<undefined>;
 
@@ -5309,7 +5335,10 @@ declare module "bun" {
 
   interface PluginBuilder {
     /**
-     * Register a callback which will be invoked when bundling starts.
+     * Register a callback which will be invoked when bundling starts. When
+     * using hot module reloading, this is called at the start of each
+     * incremental rebuild.
+     *
      * @example
      * ```ts
      * Bun.plugin({
@@ -5406,9 +5435,9 @@ declare module "bun" {
      * - `browser`: The plugin will be applied to browser builds
      * - `node`: The plugin will be applied to Node.js builds
      *
-     * If in Bun's runtime, the default target is `bun`.
+     * If unspecified, it is assumed that the plugin is compatible with all targets.
      *
-     * If unspecified, it is assumed that the plugin is compatible with the default target.
+     * This field is not read by Bun.plugin
      */
     target?: Target;
     /**

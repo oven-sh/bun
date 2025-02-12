@@ -192,8 +192,6 @@ Otherwise, the database to embed is copied into the `outdir` with a hashed filen
 
 ### `html`
 
-**HTML loader**. Default for `.html` after Bun v1.2.0.
-
 The html loader processes HTML files and bundles any referenced assets. It will:
 
 - Bundle and hash referenced JavaScript files (`<script src="...">`)

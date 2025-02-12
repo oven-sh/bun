@@ -37,6 +37,7 @@ async function run() {
         entrypoints: [join(base_dir, `hmr-runtime-${file}.ts`)],
         define: {
           side: JSON.stringify(side),
+          IS_ERROR_RUNTIME: String(file === "error"),
           IS_BUN_DEVELOPMENT: String(!!debug),
         },
         minify: {
@@ -120,7 +121,7 @@ async function run() {
 
           code = debug ? `((${params}) => {${code}})\n` : `((${params})=>{${code}})\n`;
         } else {
-          code = debug ? `((${names}) => {${code}})({\n` : `((${names})=>{${code}})({`;
+          code = debug ? `(async (${names}) => {${code}})({\n` : `(async(${names})=>{${code}})({`;
         }
       }
 
@@ -139,6 +140,7 @@ async function run() {
     { kind: ["error"], result: results[2] },
   ]
     .filter(x => x.result.status === "rejected")
+    // @ts-ignore
     .map(x => ({ kind: x.kind, err: x.result.reason })) as Err[];
   if (failed.length > 0) {
     const flattened_errors: Err[] = [];

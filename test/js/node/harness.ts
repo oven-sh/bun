@@ -348,8 +348,9 @@ if (normalized.includes("node/test/parallel")) {
       }
     }
 
-    function describe(labelOrFn: string | Function, maybeFn?: Function) {
-      const [label, fn] = typeof labelOrFn == "function" ? [labelOrFn.name, labelOrFn] : [labelOrFn, maybeFn];
+    function describe(labelOrFn: string | Function, maybeFnOrOptions?: Function, maybeFn?: Function) {
+      const [label, fn] =
+        typeof labelOrFn == "function" ? [labelOrFn.name, labelOrFn] : [labelOrFn, maybeFn ?? maybeFnOrOptions];
       if (typeof fn !== "function") throw new TypeError("Second argument to describe() must be a function.");
 
       getContext().testStack.push(label);
@@ -372,7 +373,9 @@ if (normalized.includes("node/test/parallel")) {
 
     return {
       test,
+      it: test,
       describe,
+      suite: describe,
     };
   }
 

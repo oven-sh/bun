@@ -1049,7 +1049,7 @@ pub const JestPrettyFormat = struct {
                             1;
                         this.addForNewLine(digits);
                     } else {
-                        this.addForNewLine(bun.fmt.count("{d}", .{int}));
+                        this.addForNewLine(std.fmt.count("{d}", .{int}));
                     }
                     writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{int});
                 },

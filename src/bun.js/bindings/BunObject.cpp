@@ -492,12 +492,12 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepEquals, (JSGlobalObject * globalObject, 
 
     JSC::JSValue arg1 = callFrame->uncheckedArgument(0);
     JSC::JSValue arg2 = callFrame->uncheckedArgument(1);
-    JSC::JSValue arg3 = callFrame->argument(2);
+    JSC::JSValue strict = callFrame->argument(2);
 
     Vector<std::pair<JSValue, JSValue>, 16> stack;
     MarkedArgumentBuffer gcBuffer;
 
-    if (arg3.isBoolean() && arg3.asBoolean()) {
+    if (strict.isBoolean() && strict.asBoolean()) {
 
         bool isEqual = Bun__deepEquals<true, false>(globalObject, arg1, arg2, gcBuffer, stack, &scope, true);
         RETURN_IF_EXCEPTION(scope, {});

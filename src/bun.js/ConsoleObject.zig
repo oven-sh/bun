@@ -1541,7 +1541,7 @@ pub const Formatter = struct {
                                     1;
                                 this.addForNewLine(digits);
                             } else {
-                                this.addForNewLine(bun.fmt.count("{d}", .{int}));
+                                this.addForNewLine(std.fmt.count("{d}", .{int}));
                             }
                             writer.print("{d}", .{int});
                         },
@@ -1576,7 +1576,7 @@ pub const Formatter = struct {
 
                             const abs = @abs(converted);
                             if (abs < max_before_e_notation and abs >= min_before_e_notation) {
-                                this.addForNewLine(bun.fmt.count("{d}", .{converted}));
+                                this.addForNewLine(std.fmt.count("{d}", .{converted}));
                                 writer.print("{d}", .{converted});
                             } else if (std.math.isNan(converted)) {
                                 this.addForNewLine("NaN".len);
@@ -2165,7 +2165,7 @@ pub const Formatter = struct {
                         1;
                     this.addForNewLine(digits);
                 } else {
-                    this.addForNewLine(bun.fmt.count("{d}", .{int}));
+                    this.addForNewLine(std.fmt.count("{d}", .{int}));
                 }
                 writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{int});
             },

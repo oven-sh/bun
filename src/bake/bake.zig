@@ -2,7 +2,6 @@
 //! combines `Bun.build` and `Bun.serve`, providing a hot-reloading development
 //! server, server components, and other integrations. Instead of taking the
 //! role as a framework, Bake is tool for frameworks to build on top of.
-
 pub const production = @import("./production.zig");
 pub const DevServer = @import("./DevServer.zig");
 pub const FrameworkRouter = @import("./FrameworkRouter.zig");
@@ -12,12 +11,15 @@ pub const api_name = "app";
 
 /// Zig version of the TS definition 'Bake.Options' in 'bake.d.ts'
 pub const UserOptions = struct {
+    /// This arena contains some miscellaneous allocations at startup
     arena: std.heap.ArenaAllocator,
     allocations: StringRefList,
 
     root: [:0]const u8,
     framework: Framework,
     bundler_options: SplitBundlerOptions,
+
+    frontend_only: bool = false,
 
     pub fn deinit(options: *UserOptions) void {
         options.arena.deinit();
@@ -75,8 +77,10 @@ pub const UserOptions = struct {
 };
 
 /// Each string stores its allocator since some may hold reference counts to JSC
-const StringRefList = struct {
+pub const StringRefList = struct {
     strings: std.ArrayListUnmanaged(ZigString.Slice),
+
+    pub const empty: StringRefList = .{ .strings = .{} };
 
     pub fn track(al: *StringRefList, str: ZigString.Slice) [:0]const u8 {
         al.strings.append(bun.default_allocator, str) catch bun.outOfMemory();
@@ -87,8 +91,6 @@ const StringRefList = struct {
         for (al.strings.items) |item| item.deinit();
         al.strings.clearAndFree(bun.default_allocator);
     }
-
-    pub const empty: StringRefList = .{ .strings = .{} };
 };
 
 pub const SplitBundlerOptions = struct {
@@ -154,6 +156,9 @@ const BuildConfigSubset = struct {
     ignoreDCEAnnotations: ?bool = null,
     conditions: bun.StringArrayHashMapUnmanaged(void) = .{},
     drop: bun.StringArrayHashMapUnmanaged(void) = .{},
+    env: bun.Schema.Api.DotEnvBehavior = ._none,
+    env_prefix: ?[]const u8 = null,
+
     // TODO: plugins
 
     pub fn loadFromJs(config: *BuildConfigSubset, value: JSValue, arena: Allocator) !void {
@@ -219,6 +224,42 @@ pub const Framework = struct {
             }) catch bun.outOfMemory(),
         };
     }
+
+    /// Default that requires no packages or configuration.
+    /// - If `react-refresh` is installed, enable react fast refresh with it.
+    ///     - Otherwise, if `react` is installed, use a bundled copy of
+    ///     react-refresh so that it still works.
+    /// The provided allocator is not stored.
+    pub fn auto(arena: std.mem.Allocator, resolver: *bun.resolver.Resolver) !Framework {
+        var fw: Framework = Framework.none;
+
+        if (resolveOrNull(resolver, "react-refresh/runtime")) |rfr| {
+            fw.react_fast_refresh = .{ .import_source = rfr };
+        } else if (resolveOrNull(resolver, "react")) |_| {
+            fw.react_fast_refresh = .{
+                .import_source = "react-refresh/runtime/index.js",
+            };
+            try fw.built_in_modules.put(
+                arena,
+                "react-refresh/runtime/index.js",
+                if (Environment.codegen_embed)
+                    .{ .code = @embedFile("node-fallbacks/react-refresh.js") }
+                else
+                    .{ .code = bun.runtimeEmbedFile(.codegen, "node-fallbacks/react-refresh.js") },
+            );
+        }
+
+        return fw;
+    }
+
+    /// Unopiniated default.
+    pub const none: Framework = .{
+        .is_built_in_react = false,
+        .file_system_router_types = &.{},
+        .server_components = null,
+        .react_fast_refresh = null,
+        .built_in_modules = .{},
+    };
 
     pub const FileSystemRouterType = struct {
         root: []const u8,
@@ -304,6 +345,13 @@ pub const Framework = struct {
             return;
         };
         path.* = result.path().?.text;
+    }
+
+    inline fn resolveOrNull(r: *bun.resolver.Resolver, path: []const u8) ?[]const u8 {
+        return (r.resolve(r.fs.top_level_dir, path, .stmt) catch {
+            r.log.reset();
+            return null;
+        }).pathConst().?.text;
     }
 
     fn fromJS(
@@ -543,8 +591,9 @@ pub const Framework = struct {
         allocator: std.mem.Allocator,
         log: *bun.logger.Log,
         mode: Mode,
-        comptime renderer: Graph,
+        renderer: Graph,
         out: *bun.transpiler.Transpiler,
+        bundler_options: *const BuildConfigSubset,
     ) !void {
         out.* = try bun.Transpiler.init(
             allocator, // TODO: this is likely a memory leak
@@ -603,6 +652,11 @@ pub const Framework = struct {
             // TODO: follow user configuration
             else => .none,
         };
+        if (bundler_options.env != ._none) {
+            out.options.env.behavior = bundler_options.env;
+            out.options.env.prefix = bundler_options.env_prefix orelse "";
+        }
+        out.resolver.opts = out.options;
 
         out.configureLinker();
         try out.configureDefines();
@@ -640,17 +694,33 @@ fn getOptionalString(
     return allocations.track(str.toUTF8(arena));
 }
 
-pub inline fn getHmrRuntime(side: Side) [:0]const u8 {
+pub const HmrRuntime = struct {
+    code: [:0]const u8,
+    /// The number of lines in the HMR runtime. This is used for sourcemap
+    /// generation, where the first n lines are skipped. In release, these
+    /// are always precalculated.
+    line_count: u32,
+
+    pub fn init(code: [:0]const u8) HmrRuntime {
+        return .{
+            .code = code,
+            .line_count = @intCast(std.mem.count(u8, code, "\n")),
+        };
+    }
+};
+
+pub fn getHmrRuntime(side: Side) callconv(bun.callconv_inline) HmrRuntime {
     return if (Environment.codegen_embed)
         switch (side) {
-            .client => @embedFile("bake-codegen/bake.client.js"),
-            .server => @embedFile("bake-codegen/bake.server.js"),
+            .client => .init(@embedFile("bake-codegen/bake.client.js")),
+            .server => .init(@embedFile("bake-codegen/bake.server.js")),
         }
-    else switch (side) {
-        .client => bun.runtimeEmbedFile(.codegen_eager, "bake.client.js"),
-        // may not be live-reloaded
-        .server => bun.runtimeEmbedFile(.codegen, "bake.server.js"),
-    };
+    else
+        .init(switch (side) {
+            .client => bun.runtimeEmbedFile(.codegen_eager, "bake.client.js"),
+            // server runtime is loaded once, so it is pointless to make this eager.
+            .server => bun.runtimeEmbedFile(.codegen, "bake.server.js"),
+        });
 }
 
 pub const Mode = enum {
@@ -799,6 +869,5 @@ const Environment = bun.Environment;
 
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
-const validators = bun.JSC.Node.validators;
 const ZigString = JSC.ZigString;
 const Plugin = JSC.API.JSBundler.Plugin;

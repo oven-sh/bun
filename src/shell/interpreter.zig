@@ -10149,13 +10149,13 @@ pub const Interpreter = struct {
                 }
 
                 const maybe1 = iter.next().?;
-                const int1 = bun.fmt.parseFloat(f32, bun.sliceTo(maybe1, 0)) catch return this.fail("seq: invalid argument\n");
+                const int1 = std.fmt.parseFloat(f32, bun.sliceTo(maybe1, 0)) catch return this.fail("seq: invalid argument\n");
                 this._end = int1;
                 if (this._start > this._end) this.increment = -1;
 
                 const maybe2 = iter.next();
                 if (maybe2 == null) return this.do();
-                const int2 = bun.fmt.parseFloat(f32, bun.sliceTo(maybe2.?, 0)) catch return this.fail("seq: invalid argument\n");
+                const int2 = std.fmt.parseFloat(f32, bun.sliceTo(maybe2.?, 0)) catch return this.fail("seq: invalid argument\n");
                 this._start = int1;
                 this._end = int2;
                 if (this._start < this._end) this.increment = 1;
@@ -10163,7 +10163,7 @@ pub const Interpreter = struct {
 
                 const maybe3 = iter.next();
                 if (maybe3 == null) return this.do();
-                const int3 = bun.fmt.parseFloat(f32, bun.sliceTo(maybe3.?, 0)) catch return this.fail("seq: invalid argument\n");
+                const int3 = std.fmt.parseFloat(f32, bun.sliceTo(maybe3.?, 0)) catch return this.fail("seq: invalid argument\n");
                 this._start = int1;
                 this.increment = int2;
                 this._end = int3;

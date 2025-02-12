@@ -6,7 +6,6 @@ const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const Debugger = JSC.Debugger;
 const Environment = bun.Environment;
-const Async = @import("async");
 const uv = bun.windows.libuv;
 const StatWatcherScheduler = @import("../node/node_fs_stat_watcher.zig").StatWatcherScheduler;
 const Timer = @This();

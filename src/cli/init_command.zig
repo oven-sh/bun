@@ -32,14 +32,14 @@ fn setRawInput(b: bool) !void {
 
         const handle = std.io.getStdIn().handle;
         var flags: u32 = undefined;
-        if (std.windows.kernel32.GetConsoleMode(handle, &flags) == 0) return error.NotATerminal;
+        if (std.os.windows.kernel32.GetConsoleMode(handle, &flags) == 0) return error.NotATerminal;
         if (b) {
             flags &= ~(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT);
         } else {
             flags |= ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT;
         }
 
-        std.debug.assert(std.windows.kernel32.SetConsoleMode(handle, flags) != 0);
+        std.debug.assert(std.os.windows.kernel32.SetConsoleMode(handle, flags) != 0);
     } else {
         var t: std.posix.termios = try std.posix.tcgetattr(std.posix.STDIN_FILENO);
 

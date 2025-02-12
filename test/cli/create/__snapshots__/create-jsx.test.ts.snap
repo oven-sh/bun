@@ -18,19 +18,27 @@ create  index.css          css
 create  index.html         html
 create  index.client.tsx   bun
 create  package.json       npm
-📦 Auto-installing 3 detected dependencies
-$ bun --only-missing install classnames react-dom@19 react@19
+📦 Auto-installing 7 detected dependencies
+$ bun --only-missing install classnames react-dom@19 react@19 @types/react@19 @types/react-dom@19 @types/bun@latest typescript@^5.0.0
 bun add v*.*.*
 installed classnames@*.*.*
 installed react-dom@*.*.*
 installed react@*.*.*
-4 packages installed [*ms]
+installed @types/react@*.*.*
+installed @types/react-dom@*.*.*
+installed @types/bun@*.*.*
+installed typescript@*.*.* with binaries:
+- tsc
+- tsserver
+13 packages installed [*ms]
 --------------------------------
 ✨ React project configured
 Development - frontend dev server with hot reload
 bun dev
 Production - build optimized assets
 bun run build
+Component - your main react component
+./index.jsx
 Happy bunning! 🐇
 Bun v*.*.* dev server ready in *.** ms
 url: http://[SERVER_URL]/"
@@ -55,20 +63,26 @@ create  index.html         html
 create  index.client.tsx   bun
 create  bunfig.toml        bun
 create  package.json       npm
-📦 Auto-installing 4 detected dependencies
-$ bun --only-missing install tailwindcss bun-plugin-tailwind react-dom@19 react@19
+📦 Auto-installing 8 detected dependencies
+$ bun --only-missing install tailwindcss bun-plugin-tailwind react-dom@19 react@19 @types/react@19 @types/react-dom@19 @types/bun@latest typescript@^5.0.0
 bun add v*.*.*
++ @types/bun@*.*.*
++ typescript@*.*.*
 installed tailwindcss@*.*.*
 installed bun-plugin-tailwind@*.*.*
 installed react-dom@*.*.*
 installed react@*.*.*
-7 packages installed [*ms]
+installed @types/react@*.*.*
+installed @types/react-dom@*.*.*
+15 packages installed [*ms]
 --------------------------------
 ✨ React + Tailwind project configured
 Development - frontend dev server with hot reload
 bun dev
 Production - build optimized assets
 bun run build
+Component - your main react component
+./index.tsx
 Happy bunning! 🐇
 Bun v*.*.* dev server ready in *.** ms
 url: http://[SERVER_URL]/"
@@ -86,9 +100,11 @@ create  bunfig.toml          bun
 create  package.json         npm
 create  tsconfig.json        tsc
 create  components.json      shadcn
-📦 Auto-installing 9 detected dependencies
-$ bun --only-missing install lucide-react tailwindcss bun-plugin-tailwind tailwindcss-animate class-variance-authority clsx tailwind-merge react@^18 react-dom@^18
+📦 Auto-installing 14 detected dependencies
+$ bun --only-missing install lucide-react tailwindcss bun-plugin-tailwind tailwindcss-animate class-variance-authority clsx tailwind-merge lucide-react react@^18 react-dom@^18 @types/react@^18 @types/react-dom@^18 @types/bun@latest typescript@^5.0.0
 bun add v*.*.*
++ @types/bun@*.*.*
++ typescript@*.*.*
 installed lucide-react@*.*.*
 installed tailwindcss@*.*.*
 installed bun-plugin-tailwind@*.*.*
@@ -98,7 +114,9 @@ installed clsx@*.*.*
 installed tailwind-merge@*.*.*
 installed react@*.*.*
 installed react-dom@*.*.*
-14 packages installed [*ms]
+installed @types/react@*.*.*
+installed @types/react-dom@*.*.*
+23 packages installed [*ms]
 😎 Setting up shadcn/ui components
 $ bun x shadcn@canary add -y button badge card
 - components/ui/button.tsx
@@ -110,6 +128,8 @@ Development - frontend dev server with hot reload
 bun dev
 Production - build optimized assets
 bun run build
+Component - your main react component
+./index.tsx
 Happy bunning! 🐇
 Bun v*.*.* dev server ready in *.** ms
 url: http://[SERVER_URL]/"
@@ -133,19 +153,27 @@ create  index.css          css
 create  index.html         html
 create  index.client.tsx   bun
 create  package.json       npm
-📦 Auto-installing 3 detected dependencies
-$ bun --only-missing install classnames react-dom@19 react@19
+📦 Auto-installing 7 detected dependencies
+$ bun --only-missing install classnames react-dom@19 react@19 @types/react@19 @types/react-dom@19 @types/bun@latest typescript@^5.0.0
 bun add v*.*.*
 installed classnames@*.*.*
 installed react-dom@*.*.*
 installed react@*.*.*
-4 packages installed [*ms]
+installed @types/react@*.*.*
+installed @types/react-dom@*.*.*
+installed @types/bun@*.*.*
+installed typescript@*.*.* with binaries:
+- tsc
+- tsserver
+13 packages installed [*ms]
 --------------------------------
 ✨ React project configured
 Development - frontend dev server with hot reload
 bun dev
 Production - build optimized assets
 bun run build
+Component - your main react component
+./index.jsx
 Happy bunning! 🐇
 Bun v*.*.* ready in *.** ms
 url: http://[SERVER_URL]/"
@@ -170,20 +198,26 @@ create  index.html         html
 create  index.client.tsx   bun
 create  bunfig.toml        bun
 create  package.json       npm
-📦 Auto-installing 4 detected dependencies
-$ bun --only-missing install tailwindcss bun-plugin-tailwind react-dom@19 react@19
+📦 Auto-installing 8 detected dependencies
+$ bun --only-missing install tailwindcss bun-plugin-tailwind react-dom@19 react@19 @types/react@19 @types/react-dom@19 @types/bun@latest typescript@^5.0.0
 bun add v*.*.*
++ @types/bun@*.*.*
++ typescript@*.*.*
 installed tailwindcss@*.*.*
 installed bun-plugin-tailwind@*.*.*
 installed react-dom@*.*.*
 installed react@*.*.*
-7 packages installed [*ms]
+installed @types/react@*.*.*
+installed @types/react-dom@*.*.*
+15 packages installed [*ms]
 --------------------------------
 ✨ React + Tailwind project configured
 Development - frontend dev server with hot reload
 bun dev
 Production - build optimized assets
 bun run build
+Component - your main react component
+./index.tsx
 Happy bunning! 🐇
 Bun v*.*.* ready in *.** ms
 url: http://[SERVER_URL]/"
@@ -201,9 +235,11 @@ create  bunfig.toml          bun
 create  package.json         npm
 create  tsconfig.json        tsc
 create  components.json      shadcn
-📦 Auto-installing 9 detected dependencies
-$ bun --only-missing install lucide-react tailwindcss bun-plugin-tailwind tailwindcss-animate class-variance-authority clsx tailwind-merge react@^18 react-dom@^18
+📦 Auto-installing 14 detected dependencies
+$ bun --only-missing install lucide-react tailwindcss bun-plugin-tailwind tailwindcss-animate class-variance-authority clsx tailwind-merge lucide-react react@^18 react-dom@^18 @types/react@^18 @types/react-dom@^18 @types/bun@latest typescript@^5.0.0
 bun add v*.*.*
++ @types/bun@*.*.*
++ typescript@*.*.*
 installed lucide-react@*.*.*
 installed tailwindcss@*.*.*
 installed bun-plugin-tailwind@*.*.*
@@ -213,7 +249,9 @@ installed clsx@*.*.*
 installed tailwind-merge@*.*.*
 installed react@*.*.*
 installed react-dom@*.*.*
-14 packages installed [*ms]
+installed @types/react@*.*.*
+installed @types/react-dom@*.*.*
+23 packages installed [*ms]
 😎 Setting up shadcn/ui components
 $ bun x shadcn@canary add -y button badge card
 - components/ui/button.tsx
@@ -225,6 +263,8 @@ Development - frontend dev server with hot reload
 bun dev
 Production - build optimized assets
 bun run build
+Component - your main react component
+./index.tsx
 Happy bunning! 🐇
 Bun v*.*.* ready in *.** ms
 url: http://[SERVER_URL]/"

@@ -252,7 +252,13 @@ fn generateFiles(allocator: std.mem.Allocator, entry_point: string, dependencies
             // Create all template files
             inline for (0..files.len) |index| {
                 const file = &files[index];
-                const file_name = try stringWithReplacements(file.name, basename, normalized_name, react_component_export orelse "App", allocator);
+                var file_name = try stringWithReplacements(file.name, basename, normalized_name, react_component_export orelse "App", allocator);
+
+                if (strings.eqlComptime(file.name, "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.tsx") and !strings.eqlComptime(extension, ".tsx")) {
+                    // replace the extension with the extension of the file
+                    file_name = try std.fmt.allocPrint(allocator, "{s}{s}", .{ file_name[0 .. file_name.len - extension.len], extension });
+                }
+
                 if (file.overwrite or !bun.sys.exists(file_name)) {
                     switch (createFile(file_name, try stringWithReplacements(file.content, basename, normalized_name, react_component_export orelse "", default_allocator))) {
                         .result => |new| {

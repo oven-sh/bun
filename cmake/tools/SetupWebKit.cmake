@@ -79,6 +79,10 @@ else()
   set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}")
 endif()
 
+if(ENABLE_ASAN)
+  set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}-asan")
+endif()
+
 set(WEBKIT_NAME bun-webkit-${WEBKIT_OS}-${WEBKIT_ARCH}${WEBKIT_SUFFIX})
 set(WEBKIT_FILENAME ${WEBKIT_NAME}.tar.gz)
 setx(WEBKIT_DOWNLOAD_URL https://github.com/oven-sh/WebKit/releases/download/autobuild-${WEBKIT_VERSION}/${WEBKIT_FILENAME})

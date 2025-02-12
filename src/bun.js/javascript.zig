@@ -835,6 +835,8 @@ pub const VirtualMachine = struct {
     after_event_loop_callback_ctx: ?*anyopaque = null,
     after_event_loop_callback: ?OpaqueCallback = null,
 
+    remap_stack_frames_mutex: bun.Mutex = .{},
+
     /// The arguments used to launch the process _after_ the script name and bun and any flags applied to Bun
     ///     "bun run foo --bar"
     ///          ["--bar"]
@@ -3555,8 +3557,10 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub export fn Bun__remapStackFramePositions(globalObject: *JSGlobalObject, frames: [*]JSC.ZigStackFrame, frames_count: usize) void {
-        globalObject.bunVM().remapStackFramePositions(frames, frames_count);
+    pub export fn Bun__remapStackFramePositions(vm: *JSC.VirtualMachine, frames: [*]JSC.ZigStackFrame, frames_count: usize) void {
+        // **Warning** this method can be called in the heap collector thread!!
+        // https://github.com/oven-sh/bun/issues/17087
+        vm.remapStackFramePositions(frames, frames_count);
     }
 
     pub fn remapStackFramePositions(this: *VirtualMachine, frames: [*]JSC.ZigStackFrame, frames_count: usize) void {
@@ -3564,6 +3568,11 @@ pub const VirtualMachine = struct {
             if (frame.position.isInvalid() or frame.remapped) continue;
             var sourceURL = frame.source_url.toUTF8(bun.default_allocator);
             defer sourceURL.deinit();
+
+            // **Warning** this method can be called in the heap collector thread!!
+            // https://github.com/oven-sh/bun/issues/17087
+            this.remap_stack_frames_mutex.lock();
+            defer this.remap_stack_frames_mutex.unlock();
 
             if (this.resolveSourceMapping(
                 sourceURL.slice(),

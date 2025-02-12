@@ -77,12 +77,12 @@ pub fn Err(comptime T: type) type {
             };
         }
 
-        pub fn addToLogger(this: @This(), log: *logger.Log, source: *const logger.Source) !void {
+        pub fn addToLogger(this: @This(), log: *logger.Log, source: *const logger.Source, allocator: std.mem.Allocator) !void {
             try log.addMsg(.{
                 .kind = .err,
                 .data = .{
-                    .location = if (this.loc) |*loc| try loc.toLocation(source, log.msgs.allocator) else null,
-                    .text = try std.fmt.allocPrint(log.msgs.allocator, "{}", .{this.kind}),
+                    .location = if (this.loc) |*loc| try loc.toLocation(source, allocator) else null,
+                    .text = try std.fmt.allocPrint(allocator, "{}", .{this.kind}),
                 },
             });
 

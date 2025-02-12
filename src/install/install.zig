@@ -255,7 +255,8 @@ pub const Aligner = struct {
 };
 
 const NetworkTask = struct {
-    http: AsyncHTTP = undefined,
+    unsafe_http_client: AsyncHTTP = undefined,
+    response: bun.http.HTTPClientResult = .{},
     task_id: u64,
     url_buf: []const u8 = &[_]u8{},
     retried: u16 = 0,
@@ -282,10 +283,11 @@ const NetworkTask = struct {
     };
     pub const DedupeMap = std.HashMap(u64, DedupeMapEntry, IdentityContext(u64), 80);
 
-    pub fn notify(this: *NetworkTask, async_http: *AsyncHTTP, _: anytype) void {
+    pub fn notify(this: *NetworkTask, async_http: *AsyncHTTP, result: bun.http.HTTPClientResult) void {
         defer this.package_manager.wake();
         async_http.real.?.* = async_http.*;
         async_http.real.?.response_buffer = async_http.response_buffer;
+        this.response = result;
         this.package_manager.async_network_task_queue.push(this);
     }
 
@@ -454,13 +456,13 @@ const NetworkTask = struct {
         this.allocator = allocator;
 
         const url = URL.parse(this.url_buf);
-        this.http = AsyncHTTP.init(allocator, .GET, url, header_builder.entries, header_builder.content.ptr.?[0..header_builder.content.len], &this.response_buffer, "", this.getCompletionCallback(), HTTP.FetchRedirect.follow, .{
+        this.unsafe_http_client = AsyncHTTP.init(allocator, .GET, url, header_builder.entries, header_builder.content.ptr.?[0..header_builder.content.len], &this.response_buffer, "", this.getCompletionCallback(), HTTP.FetchRedirect.follow, .{
             .http_proxy = this.package_manager.httpProxy(url),
         });
-        this.http.client.flags.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
+        this.unsafe_http_client.client.flags.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
 
         if (PackageManager.verbose_install) {
-            this.http.client.verbose = .headers;
+            this.unsafe_http_client.client.verbose = .headers;
         }
 
         this.callback = .{
@@ -471,14 +473,14 @@ const NetworkTask = struct {
         };
 
         if (PackageManager.verbose_install) {
-            this.http.verbose = .headers;
-            this.http.client.verbose = .headers;
+            this.unsafe_http_client.verbose = .headers;
+            this.unsafe_http_client.client.verbose = .headers;
         }
 
         // Incase the ETag causes invalidation, we fallback to the last modified date.
         if (last_modified.len != 0 and bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304")) {
-            this.http.client.flags.force_last_modified = true;
-            this.http.client.if_modified_since = last_modified;
+            this.unsafe_http_client.client.flags.force_last_modified = true;
+            this.unsafe_http_client.client.if_modified_since = last_modified;
         }
     }
 
@@ -487,7 +489,7 @@ const NetworkTask = struct {
     }
 
     pub fn schedule(this: *NetworkTask, batch: *ThreadPool.Batch) void {
-        this.http.schedule(this.allocator, batch);
+        this.unsafe_http_client.schedule(this.allocator, batch);
     }
 
     pub const ForTarballError = OOM || error{
@@ -547,12 +549,12 @@ const NetworkTask = struct {
 
         const url = URL.parse(this.url_buf);
 
-        this.http = AsyncHTTP.init(allocator, .GET, url, header_builder.entries, header_buf, &this.response_buffer, "", this.getCompletionCallback(), HTTP.FetchRedirect.follow, .{
+        this.unsafe_http_client = AsyncHTTP.init(allocator, .GET, url, header_builder.entries, header_buf, &this.response_buffer, "", this.getCompletionCallback(), HTTP.FetchRedirect.follow, .{
             .http_proxy = this.package_manager.httpProxy(url),
         });
-        this.http.client.flags.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
+        this.unsafe_http_client.client.flags.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
         if (PackageManager.verbose_install) {
-            this.http.client.verbose = .headers;
+            this.unsafe_http_client.client.verbose = .headers;
         }
     }
 };
@@ -736,7 +738,7 @@ pub const Task = struct {
                 const package_manifest = Npm.Registry.getPackageMetadata(
                     allocator,
                     manager.scopeForPackageName(manifest.name.slice()),
-                    manifest.network.http.response.?,
+                    (manifest.network.response.metadata orelse @panic("Assertion failure: Expected metadata to be set")).response,
                     body,
                     &this.log,
                     manifest.name.slice(),
@@ -2696,8 +2698,8 @@ pub const PackageManager = struct {
     pending_pre_calc_hashes: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     pending_tasks: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     total_tasks: u32 = 0,
-    preallocated_network_tasks: PreallocatedNetworkTasks = PreallocatedNetworkTasks.init(bun.default_allocator),
-    preallocated_resolve_tasks: PreallocatedTaskStore = PreallocatedTaskStore.init(bun.default_allocator),
+    preallocated_network_tasks: PreallocatedNetworkTasks = .init(bun.default_allocator),
+    preallocated_resolve_tasks: PreallocatedTaskStore = .init(bun.default_allocator),
 
     /// items are only inserted into this if they took more than 500ms
     lifecycle_script_time_log: LifecycleScriptTimeLog = .{},
@@ -2842,12 +2844,12 @@ pub const PackageManager = struct {
                 const package_name = active_lifecycle_script_running_for_the_longest_amount_of_time.package_name;
 
                 if (!(package_name.len > 1 and package_name[package_name.len - 1] == 's')) {
-                    Output.warn("{s}'s postinstall has costed you {}\n", .{
+                    Output.warn("{s}'s postinstall cost you {}\n", .{
                         package_name,
                         bun.fmt.fmtDurationOneDecimal(time_running),
                     });
                 } else {
-                    Output.warn("{s}' postinstall has costed you {}\n", .{
+                    Output.warn("{s}' postinstall cost you {}\n", .{
                         package_name,
                         bun.fmt.fmtDurationOneDecimal(time_running),
                     });
@@ -6402,7 +6404,7 @@ pub const PackageManager = struct {
                         }
                     }
 
-                    if (!has_network_error and task.http.response == null) {
+                    if (!has_network_error and task.response.metadata == null) {
                         has_network_error = true;
                         const min = manager.options.min_simultaneous_requests;
                         const max = AsyncHTTP.max_simultaneous_requests.load(.monotonic);
@@ -6412,8 +6414,8 @@ pub const PackageManager = struct {
                     }
 
                     // Handle retry-able errors.
-                    if (task.http.response == null or task.http.response.?.status_code > 499) {
-                        const err = task.http.err orelse error.HTTPError;
+                    if (task.response.metadata == null or task.response.metadata.?.response.status_code > 499) {
+                        const err = task.response.fail orelse error.HTTPError;
 
                         if (task.retried < manager.options.max_retry_count) {
                             task.retried += 1;
@@ -6433,9 +6435,9 @@ pub const PackageManager = struct {
                         }
                     }
 
-                    const response = task.http.response orelse {
+                    const metadata = task.response.metadata orelse {
                         // Handle non-retry-able errors.
-                        const err = task.http.err orelse error.HTTPError;
+                        const err = task.response.fail orelse error.HTTPError;
 
                         if (@TypeOf(callbacks.onPackageManifestError) != void) {
                             callbacks.onPackageManifestError(
@@ -6478,6 +6480,7 @@ pub const PackageManager = struct {
 
                         continue;
                     };
+                    const response = metadata.response;
 
                     if (response.status_code > 399) {
                         if (@TypeOf(callbacks.onPackageManifestError) != void) {
@@ -6507,7 +6510,7 @@ pub const PackageManager = struct {
                                 logger.Loc.Empty,
                                 manager.allocator,
                                 "<r><red><b>GET<r><red> {s}<d> - {d}<r>",
-                                .{ task.http.client.url.href, response.status_code },
+                                .{ metadata.url, response.status_code },
                             ) catch bun.outOfMemory();
                         } else {
                             manager.log.addWarningFmt(
@@ -6515,7 +6518,7 @@ pub const PackageManager = struct {
                                 logger.Loc.Empty,
                                 manager.allocator,
                                 "<r><yellow><b>GET<r><yellow> {s}<d> - {d}<r>",
-                                .{ task.http.client.url.href, response.status_code },
+                                .{ metadata.url, response.status_code },
                             ) catch bun.outOfMemory();
                         }
                         if (manager.subcommand != .remove) {
@@ -6534,7 +6537,7 @@ pub const PackageManager = struct {
 
                     if (comptime log_level.isVerbose()) {
                         Output.prettyError("    ", .{});
-                        Output.printElapsed(@as(f64, @floatFromInt(task.http.elapsed)) / std.time.ns_per_ms);
+                        Output.printElapsed(@as(f64, @floatFromInt(task.unsafe_http_client.elapsed)) / std.time.ns_per_ms);
                         Output.prettyError("\n<d>Downloaded <r><green>{s}<r> versions\n", .{name.slice()});
                         Output.flush();
                     }
@@ -6582,7 +6585,7 @@ pub const PackageManager = struct {
                     manager.task_batch.push(ThreadPool.Batch.from(manager.enqueueParseNPMPackage(task.task_id, name, task)));
                 },
                 .extract => |*extract| {
-                    if (!has_network_error and task.http.response == null) {
+                    if (!has_network_error and task.response.metadata == null) {
                         has_network_error = true;
                         const min = manager.options.min_simultaneous_requests;
                         const max = AsyncHTTP.max_simultaneous_requests.load(.monotonic);
@@ -6591,8 +6594,8 @@ pub const PackageManager = struct {
                         }
                     }
 
-                    if (task.http.response == null or task.http.response.?.status_code > 499) {
-                        const err = task.http.err orelse error.TarballFailedToDownload;
+                    if (task.response.metadata == null or task.response.metadata.?.response.status_code > 499) {
+                        const err = task.response.fail orelse error.TarballFailedToDownload;
 
                         if (task.retried < manager.options.max_retry_count) {
                             task.retried += 1;
@@ -6618,8 +6621,8 @@ pub const PackageManager = struct {
                         }
                     }
 
-                    const response = task.http.response orelse {
-                        const err = task.http.err orelse error.TarballFailedToDownload;
+                    const metadata = task.response.metadata orelse {
+                        const err = task.response.fail orelse error.TarballFailedToDownload;
 
                         if (@TypeOf(callbacks.onPackageDownloadError) != void) {
                             const package_id = manager.lockfile.buffers.resolutions.items[extract.dependency_id];
@@ -6674,6 +6677,8 @@ pub const PackageManager = struct {
                         continue;
                     };
 
+                    const response = metadata.response;
+
                     if (response.status_code > 399) {
                         if (@TypeOf(callbacks.onPackageDownloadError) != void) {
                             const err = switch (response.status_code) {
@@ -6705,7 +6710,7 @@ pub const PackageManager = struct {
                                 manager.allocator,
                                 "<r><red><b>GET<r><red> {s}<d> - {d}<r>",
                                 .{
-                                    task.http.client.url.href,
+                                    metadata.url,
                                     response.status_code,
                                 },
                             ) catch bun.outOfMemory();
@@ -6716,7 +6721,7 @@ pub const PackageManager = struct {
                                 manager.allocator,
                                 "<r><yellow><b>GET<r><yellow> {s}<d> - {d}<r>",
                                 .{
-                                    task.http.client.url.href,
+                                    metadata.url,
                                     response.status_code,
                                 },
                             ) catch bun.outOfMemory();
@@ -6737,7 +6742,7 @@ pub const PackageManager = struct {
 
                     if (comptime log_level.isVerbose()) {
                         Output.prettyError("    ", .{});
-                        Output.printElapsed(@as(f64, @floatCast(@as(f64, @floatFromInt(task.http.elapsed)) / std.time.ns_per_ms)));
+                        Output.printElapsed(@as(f64, @floatCast(@as(f64, @floatFromInt(task.unsafe_http_client.elapsed)) / std.time.ns_per_ms)));
                         Output.prettyError("<d> Downloaded <r><green>{s}<r> tarball\n", .{extract.name.slice()});
                         Output.flush();
                     }
@@ -7329,6 +7334,7 @@ pub const PackageManager = struct {
                     base = registry;
                 }
             }
+
             if (base.url.len == 0) base.url = Npm.Registry.default_url;
             this.scope = try Npm.Registry.Scope.fromAPI("", base, allocator, env);
             defer {
@@ -7536,6 +7542,9 @@ pub const PackageManager = struct {
             }
 
             if (maybe_cli) |cli| {
+                this.do.analyze = cli.analyze;
+                this.enable.only_missing = cli.only_missing or cli.analyze;
+
                 if (cli.registry.len > 0) {
                     this.scope.url = URL.parse(cli.registry);
                 }
@@ -7722,6 +7731,7 @@ pub const PackageManager = struct {
             summary: bool = true,
             trust_dependencies_from_args: bool = false,
             update_to_latest: bool = false,
+            analyze: bool = false,
         };
 
         pub const Enable = packed struct {
@@ -7738,6 +7748,7 @@ pub const PackageManager = struct {
             force_install: bool = false,
 
             exact_versions: bool = false,
+            only_missing: bool = false,
         };
     };
 
@@ -8152,7 +8163,7 @@ pub const PackageManager = struct {
         /// if options.add_trusted_dependencies is true, gets list from PackageManager.trusted_deps_to_add_to_package_json
         pub fn edit(
             manager: *PackageManager,
-            updates: []UpdateRequest,
+            updates: *[]UpdateRequest,
             current_package_json: *Expr,
             dependency_list: string,
             options: EditOptions,
@@ -8166,6 +8177,7 @@ pub const PackageManager = struct {
             const allocator = manager.allocator;
             var remaining = updates.len;
             var replacing: usize = 0;
+            const only_add_missing = manager.options.enable.only_missing;
 
             // There are three possible scenarios here
             // 1. There is no "dependencies" (or equivalent list) or it is empty
@@ -8196,61 +8208,74 @@ pub const PackageManager = struct {
                         }
                     }
                 }
+                {
+                    var i: usize = 0;
+                    loop: while (i < updates.len) {
+                        var request = &updates.*[i];
+                        inline for ([_]string{ "dependencies", "devDependencies", "optionalDependencies", "peerDependencies" }) |list| {
+                            if (current_package_json.asProperty(list)) |query| {
+                                if (query.expr.data == .e_object) {
+                                    const name = if (request.is_aliased)
+                                        request.name
+                                    else
+                                        request.version.literal.slice(request.version_buf);
 
-                for (updates) |*request| {
-                    inline for ([_]string{ "dependencies", "devDependencies", "optionalDependencies", "peerDependencies" }) |list| {
-                        if (current_package_json.asProperty(list)) |query| {
-                            if (query.expr.data == .e_object) {
-                                const name = if (request.is_aliased)
-                                    request.name
-                                else
-                                    request.version.literal.slice(request.version_buf);
+                                    if (query.expr.asProperty(name)) |value| {
+                                        if (value.expr.data == .e_string) {
+                                            if (request.package_id != invalid_package_id and strings.eqlLong(list, dependency_list, true)) {
+                                                replacing += 1;
+                                            } else {
+                                                if (manager.subcommand == .update and options.before_install) add_packages_to_update: {
+                                                    const version_literal = try value.expr.asStringCloned(allocator) orelse break :add_packages_to_update;
+                                                    var tag = Dependency.Version.Tag.infer(version_literal);
 
-                                if (query.expr.asProperty(name)) |value| {
-                                    if (value.expr.data == .e_string) {
-                                        if (request.package_id != invalid_package_id and strings.eqlLong(list, dependency_list, true)) {
-                                            replacing += 1;
-                                        } else {
-                                            if (manager.subcommand == .update and options.before_install) add_packages_to_update: {
-                                                const version_literal = try value.expr.asStringCloned(allocator) orelse break :add_packages_to_update;
-                                                var tag = Dependency.Version.Tag.infer(version_literal);
+                                                    if (tag != .npm and tag != .dist_tag) break :add_packages_to_update;
 
-                                                if (tag != .npm and tag != .dist_tag) break :add_packages_to_update;
+                                                    const entry = manager.updating_packages.getOrPut(allocator, name) catch bun.outOfMemory();
 
-                                                const entry = manager.updating_packages.getOrPut(allocator, name) catch bun.outOfMemory();
+                                                    // first come, first serve
+                                                    if (entry.found_existing) break :add_packages_to_update;
 
-                                                // first come, first serve
-                                                if (entry.found_existing) break :add_packages_to_update;
-
-                                                var is_alias = false;
-                                                if (strings.hasPrefixComptime(strings.trim(version_literal, &strings.whitespace_chars), "npm:")) {
-                                                    if (strings.lastIndexOfChar(version_literal, '@')) |at_index| {
-                                                        tag = Dependency.Version.Tag.infer(version_literal[at_index + 1 ..]);
-                                                        if (tag != .npm and tag != .dist_tag) break :add_packages_to_update;
-                                                        is_alias = true;
+                                                    var is_alias = false;
+                                                    if (strings.hasPrefixComptime(strings.trim(version_literal, &strings.whitespace_chars), "npm:")) {
+                                                        if (strings.lastIndexOfChar(version_literal, '@')) |at_index| {
+                                                            tag = Dependency.Version.Tag.infer(version_literal[at_index + 1 ..]);
+                                                            if (tag != .npm and tag != .dist_tag) break :add_packages_to_update;
+                                                            is_alias = true;
+                                                        }
                                                     }
-                                                }
 
-                                                entry.value_ptr.* = .{
-                                                    .original_version_literal = version_literal,
-                                                    .is_alias = is_alias,
-                                                    .original_version = null,
-                                                };
-                                            }
-                                            request.e_string = value.expr.data.e_string;
-                                            remaining -= 1;
-                                        }
-                                    }
-                                    break;
-                                } else {
-                                    if (request.version.tag == .github or request.version.tag == .git) {
-                                        for (query.expr.data.e_object.properties.slice()) |item| {
-                                            if (item.value) |v| {
-                                                const url = request.version.literal.slice(request.version_buf);
-                                                if (v.data == .e_string and v.data.e_string.eql(string, url)) {
-                                                    request.e_string = v.data.e_string;
+                                                    entry.value_ptr.* = .{
+                                                        .original_version_literal = version_literal,
+                                                        .is_alias = is_alias,
+                                                        .original_version = null,
+                                                    };
+                                                }
+                                                if (!only_add_missing) {
+                                                    request.e_string = value.expr.data.e_string;
                                                     remaining -= 1;
-                                                    break;
+                                                } else {
+                                                    if (i < updates.*.len - 1) {
+                                                        updates.*[i] = updates.*[updates.*.len - 1];
+                                                    }
+
+                                                    updates.*.len -= 1;
+                                                    remaining -= 1;
+                                                    continue :loop;
+                                                }
+                                            }
+                                        }
+                                        break;
+                                    } else {
+                                        if (request.version.tag == .github or request.version.tag == .git) {
+                                            for (query.expr.data.e_object.properties.slice()) |item| {
+                                                if (item.value) |v| {
+                                                    const url = request.version.literal.slice(request.version_buf);
+                                                    if (v.data == .e_string and v.data.e_string.eql(string, url)) {
+                                                        request.e_string = v.data.e_string;
+                                                        remaining -= 1;
+                                                        break;
+                                                    }
                                                 }
                                             }
                                         }
@@ -8258,6 +8283,7 @@ pub const PackageManager = struct {
                                 }
                             }
                         }
+                        i += 1;
                     }
                 }
             }
@@ -8319,7 +8345,7 @@ pub const PackageManager = struct {
                     break :brk deps;
                 };
 
-                outer: for (updates) |*request| {
+                outer: for (updates.*) |*request| {
                     if (request.e_string != null) continue;
                     defer if (comptime Environment.allow_assert) bun.assert(request.e_string != null);
 
@@ -8486,7 +8512,7 @@ pub const PackageManager = struct {
             }
 
             const resolutions = if (!options.before_install) manager.lockfile.packages.items(.resolution) else &.{};
-            for (updates) |*request| {
+            for (updates.*) |*request| {
                 if (request.e_string) |e_string| {
                     if (request.package_id >= resolutions.len or resolutions[request.package_id].tag == .uninitialized) {
                         e_string.data = uninitialized: {
@@ -9605,6 +9631,8 @@ pub const PackageManager = struct {
         clap.parseParam("--peer                        Add dependency to \"peerDependencies\"") catch unreachable,
         clap.parseParam("-E, --exact                  Add the exact version instead of the ^range") catch unreachable,
         clap.parseParam("--filter <STR>...                 Install packages for the matching workspaces") catch unreachable,
+        clap.parseParam("-a, --analyze                   Analyze & install all dependencies of files passed as arguments recursively (using Bun's bundler)") catch unreachable,
+        clap.parseParam("--only-missing                  Only add dependencies to package.json if they are not already present") catch unreachable,
         clap.parseParam("<POS> ...                         ") catch unreachable,
     });
 
@@ -9627,6 +9655,8 @@ pub const PackageManager = struct {
         clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
         clap.parseParam("--peer                        Add dependency to \"peerDependencies\"") catch unreachable,
         clap.parseParam("-E, --exact                  Add the exact version instead of the ^range") catch unreachable,
+        clap.parseParam("-a, --analyze                   Recursively analyze & install dependencies of files passed as arguments (using Bun's bundler)") catch unreachable,
+        clap.parseParam("--only-missing                  Only add dependencies to package.json if they are not already present") catch unreachable,
         clap.parseParam("<POS> ...                         \"name\" or \"name@version\" of package(s) to install") catch unreachable,
     });
 
@@ -9683,7 +9713,8 @@ pub const PackageManager = struct {
         config: ?string = null,
         network_concurrency: ?u16 = null,
         backend: ?PackageInstall.Method = null,
-
+        analyze: bool = false,
+        only_missing: bool = false,
         positionals: []const string = &[_]string{},
 
         yarn: bool = false,
@@ -10196,6 +10227,8 @@ pub const PackageManager = struct {
                 cli.optional = args.flag("--optional");
                 cli.peer = args.flag("--peer");
                 cli.exact = args.flag("--exact");
+                cli.analyze = args.flag("--analyze");
+                cli.only_missing = args.flag("--only-missing");
             }
 
             if (args.option("--concurrent-scripts")) |concurrency| {
@@ -10267,6 +10300,11 @@ pub const PackageManager = struct {
 
             if (cli.frozen_lockfile and cli.trusted) {
                 Output.errGeneric("The '--frozen-lockfile' and '--trust' flags together are not supported because the --trust flag potentially modifies the lockfile after installing packages\n", .{});
+                Global.crash();
+            }
+
+            if (cli.analyze and cli.positionals.len == 0) {
+                Output.errGeneric("Missing script(s) to analyze. Pass paths to scripts to analyze their dependencies and add any missing ones to the lockfile.\n", .{});
                 Global.crash();
             }
 
@@ -10502,9 +10540,59 @@ pub const PackageManager = struct {
         ctx: Command.Context,
         subcommand: Subcommand,
     ) !void {
-        const cli = switch (subcommand) {
+        var cli = switch (subcommand) {
             inline else => |cmd| try PackageManager.CommandLineArguments.parse(ctx.allocator, cmd),
         };
+
+        // The way this works:
+        // 1. Run the bundler on source files
+        // 2. Rewrite positional arguments to act identically to the developer
+        //    typing in the dependency names
+        // 3. Run the install command
+        if (cli.analyze) {
+            const Analyzer = struct {
+                ctx: Command.Context,
+                cli: *PackageManager.CommandLineArguments,
+                subcommand: Subcommand,
+                pub fn onAnalyze(
+                    this: *@This(),
+                    result: *bun.bundle_v2.BundleV2.DependenciesScanner.Result,
+                ) anyerror!void {
+                    // TODO: add separate argument that makes it so positionals[1..] is not done and instead the positionals are passed
+                    var positionals = bun.default_allocator.alloc(string, result.dependencies.keys().len + 1) catch bun.outOfMemory();
+                    positionals[0] = "add";
+                    bun.copy(string, positionals[1..], result.dependencies.keys());
+                    this.cli.positionals = positionals;
+
+                    try updatePackageJSONAndInstallAndCLI(this.ctx, this.subcommand, this.cli.*);
+
+                    Global.exit(0);
+                }
+            };
+            var analyzer = Analyzer{
+                .ctx = ctx,
+                .cli = &cli,
+                .subcommand = subcommand,
+            };
+            var fetcher = bun.bundle_v2.BundleV2.DependenciesScanner{
+                .ctx = &analyzer,
+                .entry_points = cli.positionals[1..],
+                .onFetch = @ptrCast(&Analyzer.onAnalyze),
+            };
+
+            // This runs the bundler.
+            try bun.CLI.BuildCommand.exec(bun.CLI.Command.get(), &fetcher);
+            return;
+        }
+
+        return updatePackageJSONAndInstallAndCLI(ctx, subcommand, cli);
+    }
+
+    fn updatePackageJSONAndInstallAndCLI(
+        ctx: Command.Context,
+        subcommand: Subcommand,
+        cli: CommandLineArguments,
+    ) !void {
         var manager, const original_cwd = init(ctx, cli, subcommand) catch |err| brk: {
             if (err == error.MissingPackageJSON) {
                 switch (subcommand) {
@@ -10702,23 +10790,40 @@ pub const PackageManager = struct {
             }
         }
 
-        const updates: []UpdateRequest = if (manager.subcommand == .@"patch-commit" or manager.subcommand == .patch)
+        return try updatePackageJSONAndInstallWithManagerWithUpdatesAndUpdateRequests(
+            manager,
+            ctx,
+            original_cwd,
+            manager.options.positionals[1..],
+            &update_requests,
+            log_level,
+        );
+    }
+
+    fn updatePackageJSONAndInstallWithManagerWithUpdatesAndUpdateRequests(
+        manager: *PackageManager,
+        ctx: Command.Context,
+        original_cwd: string,
+        positionals: []const string,
+        update_requests: *UpdateRequest.Array,
+        comptime log_level: Options.LogLevel,
+    ) !void {
+        var updates: []UpdateRequest = if (manager.subcommand == .@"patch-commit" or manager.subcommand == .patch)
             &[_]UpdateRequest{}
         else
-            UpdateRequest.parse(ctx.allocator, manager, ctx.log, manager.options.positionals[1..], &update_requests, manager.subcommand);
+            UpdateRequest.parse(ctx.allocator, manager, ctx.log, positionals, update_requests, manager.subcommand);
         try manager.updatePackageJSONAndInstallWithManagerWithUpdates(
             ctx,
-            updates,
+            &updates,
             manager.subcommand,
             original_cwd,
             log_level,
         );
     }
-
     fn updatePackageJSONAndInstallWithManagerWithUpdates(
         manager: *PackageManager,
         ctx: Command.Context,
-        updates: []UpdateRequest,
+        updates: *[]UpdateRequest,
         subcommand: Subcommand,
         original_cwd: string,
         comptime log_level: Options.LogLevel,
@@ -10795,7 +10900,7 @@ pub const PackageManager = struct {
             .remove => {
                 // if we're removing, they don't have to specify where it is installed in the dependencies list
                 // they can even put it multiple times and we will just remove all of them
-                for (updates) |request| {
+                for (updates.*) |request| {
                     inline for ([_]string{ "dependencies", "devDependencies", "optionalDependencies", "peerDependencies" }) |list| {
                         if (current_package_json.root.asProperty(list)) |query| {
                             if (query.expr.data == .e_object) {
@@ -10887,7 +10992,12 @@ pub const PackageManager = struct {
         }
 
         manager.to_update = subcommand == .update;
-        manager.update_requests = updates;
+
+        {
+            // Incase it's a pointer to self. Avoid RLS.
+            const cloned = updates.*;
+            manager.update_requests = cloned;
+        }
 
         var buffer_writer = try JSPrinter.BufferWriter.init(manager.allocator);
         try buffer_writer.buffer.list.ensureTotalCapacity(manager.allocator, current_package_json.source.contents.len + 1);
@@ -10991,7 +11101,7 @@ pub const PackageManager = struct {
         try manager.installWithManager(ctx, root_package_json_source, original_cwd, log_level);
 
         if (subcommand == .update or subcommand == .add or subcommand == .link) {
-            for (updates) |request| {
+            for (updates.*) |request| {
                 if (request.failed) {
                     Global.exit(1);
                     return;
@@ -11080,7 +11190,7 @@ pub const PackageManager = struct {
                 bun.copy(u8, &node_modules_buf, "node_modules" ++ std.fs.path.sep_str);
                 const offset_buf = node_modules_buf["node_modules/".len..];
                 const name_hashes = manager.lockfile.packages.items(.name_hash);
-                for (updates) |request| {
+                for (updates.*) |request| {
                     // If the package no longer exists in the updated lockfile, delete the directory
                     // This is not thorough.
                     // It does not handle nested dependencies
@@ -12218,8 +12328,48 @@ pub const PackageManager = struct {
     pub var package_json_cwd: string = "";
 
     pub fn install(ctx: Command.Context) !void {
-        const cli = try CommandLineArguments.parse(ctx.allocator, .install);
+        var cli = try CommandLineArguments.parse(ctx.allocator, .install);
 
+        // The way this works:
+        // 1. Run the bundler on source files
+        // 2. Rewrite positional arguments to act identically to the developer
+        //    typing in the dependency names
+        // 3. Run the install command
+        if (cli.analyze) {
+            const Analyzer = struct {
+                ctx: Command.Context,
+                cli: *CommandLineArguments,
+                pub fn onAnalyze(this: *@This(), result: *bun.bundle_v2.BundleV2.DependenciesScanner.Result) anyerror!void {
+                    // TODO: add separate argument that makes it so positionals[1..] is not done     and instead the positionals are passed
+                    var positionals = bun.default_allocator.alloc(string, result.dependencies.keys().len + 1) catch bun.outOfMemory();
+                    positionals[0] = "install";
+                    bun.copy(string, positionals[1..], result.dependencies.keys());
+                    this.cli.positionals = positionals;
+
+                    try installWithCLI(this.ctx, this.cli.*);
+
+                    Global.exit(0);
+                }
+            };
+            var analyzer = Analyzer{
+                .ctx = ctx,
+                .cli = &cli,
+            };
+
+            var fetcher = bun.bundle_v2.BundleV2.DependenciesScanner{
+                .ctx = &analyzer,
+                .entry_points = cli.positionals[1..],
+                .onFetch = @ptrCast(&Analyzer.onAnalyze),
+            };
+
+            try bun.CLI.BuildCommand.exec(bun.CLI.Command.get(), &fetcher);
+            return;
+        }
+
+        return installWithCLI(ctx, cli);
+    }
+
+    pub fn installWithCLI(ctx: Command.Context, cli: CommandLineArguments) !void {
         const subcommand: Subcommand = if (cli.positionals.len > 1) .add else .install;
 
         // TODO(dylan-conway): print `bun install <version>` or `bun add <version>` before logs from `init`.
@@ -15242,13 +15392,15 @@ pub const PackageManager = struct {
             } else if (install_summary.skipped > 0 and install_summary.fail == 0 and this.update_requests.len == 0) {
                 const count = @as(PackageID, @truncate(this.lockfile.packages.len));
                 if (count != install_summary.skipped) {
-                    Output.pretty("Checked <green>{d} install{s}<r> across {d} package{s} <d>(no changes)<r> ", .{
-                        install_summary.skipped,
-                        if (install_summary.skipped == 1) "" else "s",
-                        count,
-                        if (count == 1) "" else "s",
-                    });
-                    Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
+                    if (!this.options.enable.only_missing) {
+                        Output.pretty("Checked <green>{d} install{s}<r> across {d} package{s} <d>(no changes)<r> ", .{
+                            install_summary.skipped,
+                            if (install_summary.skipped == 1) "" else "s",
+                            count,
+                            if (count == 1) "" else "s",
+                        });
+                        Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
+                    }
                     printed_timestamp = true;
                     printBlockedPackagesInfo(install_summary, this.options.global);
                 } else {

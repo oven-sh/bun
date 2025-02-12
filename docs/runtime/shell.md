@@ -56,9 +56,9 @@ By default, `await`ing will return stdout and stderr as `Buffer`s.
 ```js
 import { $ } from "bun";
 
-const { stdout, stderr } = await $`echo "Hello World!"`.quiet();
+const { stdout, stderr } = await $`echo "Hello!"`.quiet();
 
-console.log(stdout); // Buffer(6) [ 72, 101, 108, 108, 111, 32 ]
+console.log(stdout); // Buffer(7) [ 72, 101, 108, 108, 111, 33, 10 ]
 console.log(stderr); // Buffer(0) []
 ```
 

@@ -37,12 +37,32 @@ pub const syslog = log;
 
 pub const syscall = switch (Environment.os) {
     .linux => std.os.linux,
-
-    // This is actually libc on MacOS
     // We don't directly use the Darwin syscall interface.
-    .mac => bun.AsyncIO.system,
-
+    .mac => std.c,
     else => @compileError("not implemented"),
+};
+
+/// Non-cancellable verisons of various libc functions are undocumented
+const darwin_nocancel = struct {
+    const c = std.c;
+    pub extern "c" fn @"recvfrom$NOCANCEL"(sockfd: c.fd_t, noalias buf: *anyopaque, len: usize, flags: u32, noalias src_addr: ?*c.sockaddr, noalias addrlen: ?*c.socklen_t) isize;
+    pub extern "c" fn @"sendto$NOCANCEL"(sockfd: c.fd_t, buf: *const anyopaque, len: usize, flags: u32, dest_addr: ?*const c.sockaddr, addrlen: c.socklen_t) isize;
+    pub extern "c" fn @"fcntl$NOCANCEL"(fd: c.fd_t, cmd: c_int, ...) c_int;
+    // pub extern "c" fn @"sendmsg$NOCANCEL"(sockfd: c.fd_t, msg: *const std.x.os.Socket.Message, flags: c_int) isize;
+    // pub extern "c" fn @"recvmsg$NOCANCEL"(sockfd: c.fd_t, msg: *std.x.os.Socket.Message, flags: c_int) isize;
+    pub extern "c" fn @"connect$NOCANCEL"(sockfd: c.fd_t, sock_addr: *const c.sockaddr, addrlen: c.socklen_t) c_int;
+    pub extern "c" fn @"accept$NOCANCEL"(sockfd: c.fd_t, noalias addr: ?*c.sockaddr, noalias addrlen: ?*c.socklen_t) c_int;
+    pub extern "c" fn @"accept4$NOCANCEL"(sockfd: c.fd_t, noalias addr: ?*c.sockaddr, noalias addrlen: ?*c.socklen_t, flags: c_uint) c_int;
+    pub extern "c" fn @"open$NOCANCEL"(path: [*:0]const u8, oflag: c_uint, ...) c_int;
+    // https://opensource.apple.com/source/xnu/xnu-7195.81.3/libsyscall/wrappers/open-base.c
+    pub extern "c" fn @"openat$NOCANCEL"(fd: c.fd_t, path: [*:0]const u8, oflag: c_uint, ...) c_int;
+    pub extern "c" fn @"read$NOCANCEL"(fd: c.fd_t, buf: [*]u8, nbyte: usize) isize;
+    pub extern "c" fn @"pread$NOCANCEL"(fd: c.fd_t, buf: [*]u8, nbyte: usize, offset: c.off_t) isize;
+    pub extern "c" fn @"preadv$NOCANCEL"(fd: c.fd_t, uf: [*]std.posix.iovec, count: i32, offset: c.off_t) isize;
+    pub extern "c" fn @"readv$NOCANCEL"(fd: c.fd_t, uf: [*]std.posix.iovec, count: i32) isize;
+    pub extern "c" fn @"write$NOCANCEL"(fd: c.fd_t, buf: [*]const u8, nbyte: usize) isize;
+    pub extern "c" fn @"writev$NOCANCEL"(fd: c.fd_t, buf: [*]const std.posix.iovec_const, count: i32) isize;
+    pub extern "c" fn @"pwritev$NOCANCEL"(fd: c.fd_t, buf: [*]const std.posix.iovec_const, count: i32, offset: c.off_t) isize;
 };
 
 fn toPackedO(number: anytype) std.posix.O {
@@ -1671,7 +1691,7 @@ pub fn openatWindowsA(
 pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSliceZ, flags: i32, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isMac) {
         // https://opensource.apple.com/source/xnu/xnu-7195.81.3/libsyscall/wrappers/open-base.c
-        const rc = syscall.@"openat$NOCANCEL"(dirfd.cast(), file_path.ptr, @bitCast(bun.O.toPacked(flags)), perm);
+        const rc = darwin_nocancel.@"openat$NOCANCEL"(dirfd.cast(), file_path.ptr, @bitCast(bun.O.toPacked(flags)), perm);
         if (comptime Environment.allow_assert)
             log("openat({}, {s}, {d}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), flags, rc });
 
@@ -1822,7 +1842,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
 
     return switch (Environment.os) {
         .mac => {
-            const rc = syscall.@"write$NOCANCEL"(fd.cast(), bytes.ptr, adjusted_len);
+            const rc = darwin_nocancel.@"write$NOCANCEL"(fd.cast(), bytes.ptr, adjusted_len);
             log("write({}, {d}) = {d} ({})", .{ fd, adjusted_len, rc, debug_timer });
 
             if (Maybe(usize).errnoSysFd(rc, .write, fd)) |err| {
@@ -2022,31 +2042,31 @@ pub fn preadv(fd: bun.FileDescriptor, buffers: []std.posix.iovec, position: isiz
 const preadv_sym = if (builtin.os.tag == .linux and builtin.link_libc)
     std.os.linux.preadv
 else if (builtin.os.tag.isDarwin())
-    syscall.@"preadv$NOCANCEL"
+    darwin_nocancel.@"preadv$NOCANCEL"
 else
     syscall.preadv;
 
 const readv_sym = if (builtin.os.tag == .linux and builtin.link_libc)
     std.os.linux.readv
 else if (builtin.os.tag.isDarwin())
-    syscall.@"readv$NOCANCEL"
+    darwin_nocancel.@"readv$NOCANCEL"
 else
     syscall.readv;
 
 const pwritev_sym = if (builtin.os.tag == .linux and builtin.link_libc)
     std.os.linux.pwritev
 else if (builtin.os.tag.isDarwin())
-    syscall.@"pwritev$NOCANCEL"
+    darwin_nocancel.@"pwritev$NOCANCEL"
 else
     syscall.pwritev;
 
 const writev_sym = if (builtin.os.tag.isDarwin())
-    syscall.@"writev$NOCANCEL"
+    darwin_nocancel.@"writev$NOCANCEL"
 else
     syscall.writev;
 
 const pread_sym = if (builtin.os.tag.isDarwin())
-    syscall.@"pread$NOCANCEL"
+    darwin_nocancel.@"pread$NOCANCEL"
 else
     syscall.pread;
 
@@ -2108,7 +2128,7 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
     const adjusted_len = @min(buf.len, max_count);
     return switch (Environment.os) {
         .mac => {
-            const rc = syscall.@"read$NOCANCEL"(fd.cast(), buf.ptr, adjusted_len);
+            const rc = darwin_nocancel.@"read$NOCANCEL"(fd.cast(), buf.ptr, adjusted_len);
 
             if (Maybe(usize).errnoSysFd(rc, .read, fd)) |err| {
                 log("read({}, {d}) = {s} ({any})", .{ fd, adjusted_len, err.err.name(), debug_timer });
@@ -2174,7 +2194,7 @@ pub fn recv(fd: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
     }
 
     if (comptime Environment.isMac) {
-        const rc = syscall.@"recvfrom$NOCANCEL"(fd.cast(), buf.ptr, adjusted_len, flag, null, null);
+        const rc = darwin_nocancel.@"recvfrom$NOCANCEL"(fd.cast(), buf.ptr, adjusted_len, flag, null, null);
 
         if (Maybe(usize).errnoSysFd(rc, .recv, fd)) |err| {
             log("recv({}, {d}) = {s} {}", .{ fd, adjusted_len, err.err.name(), debug_timer });
@@ -2205,7 +2225,7 @@ pub fn sendNonBlock(fd: bun.FileDescriptor, buf: []const u8) Maybe(usize) {
 
 pub fn send(fd: bun.FileDescriptor, buf: []const u8, flag: u32) Maybe(usize) {
     if (comptime Environment.isMac) {
-        const rc = syscall.@"sendto$NOCANCEL"(fd.cast(), buf.ptr, buf.len, flag, null, 0);
+        const rc = darwin_nocancel.@"sendto$NOCANCEL"(fd.cast(), buf.ptr, buf.len, flag, null, 0);
 
         if (Maybe(usize).errnoSysFd(rc, .send, fd)) |err| {
             syslog("send({}, {d}) = {s}", .{ fd, buf.len, err.err.name() });

@@ -955,15 +955,30 @@ function handleQueryFragment(strings, values) {
       if (value instanceof Query) {
         let sub_strings = value[_strings];
         var is_unsafe = value[_flags] & SQLQueryFlags.unsafe;
-
         if (typeof sub_strings === "string") {
           if (!is_unsafe) {
             // identifier
             sub_strings = escapeIdentifier(sub_strings);
           }
-          //@ts-ignore
-          final_strings.push(strings[strings_idx] + sub_strings + strings[strings_idx + 1]);
-          strings_idx += 2; // we merged 2 strings into 1
+          if (final_strings.length === 0) {
+            // we are the first value
+            let final_string_value = strings[strings_idx] + sub_strings;
+            strings_idx++;
+            if (strings_idx < strings.length) {
+              final_string_value += strings[strings_idx];
+              strings_idx++;
+            }
+            //@ts-ignore
+            final_strings.push(final_string_value);
+          } else {
+            // merge the strings with current string
+            const current_idx = final_strings.length - 1;
+            final_strings[current_idx] = final_strings[current_idx] + sub_strings;
+            if (strings_idx < strings.length) {
+              final_strings[current_idx] += strings[strings_idx];
+              strings_idx++;
+            }
+          }
           // in this case we dont have values to merge
         } else {
           // complex fragment, we need to merge values
@@ -1020,7 +1035,9 @@ function handleQueryFragment(strings, values) {
 }
 function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize, bigint) {
   let columns;
+
   let { final_strings, final_values } = handleQueryFragment(strings, values);
+
   const sqlString = normalizeStrings(final_strings, final_values);
   if (hasSQLArrayParameter) {
     hasSQLArrayParameter = false;

@@ -923,7 +923,7 @@ function normalizeStrings(strings, values) {
       }
 
       for (var i = 1; i < count; i++) {
-        out += " " + strings[i];
+        out += strings[i];
       }
 
       return out;

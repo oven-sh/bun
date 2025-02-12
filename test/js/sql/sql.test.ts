@@ -870,7 +870,7 @@ if (isDockerEnabled()) {
     }),
   ]);
 
-  test("should handle sub fragments", async () => {
+  test("should handle nested fragments", async () => {
     await using sql = postgres({ ...options, max: 1 });
     const random_name = sql("test_" + randomUUIDv7("hex").replaceAll("-", ""));
 

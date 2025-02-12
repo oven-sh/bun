@@ -1487,6 +1487,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalOb
     WTF::StringBuilder result;
     auto data = castedThis->span();
     auto alphabet = "0123456789abcdef"_s;
+    auto any = false;
 
     result.append("<Buffer"_s);
     auto max = globalObject->INSPECT_MAX_BYTES;
@@ -1494,6 +1495,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalOb
     size_t actualMax = actualMaxD;
 
     for (auto item : data.first(actualMax)) {
+        any = true;
         result.append(' ');
         result.append(alphabet[item / 16]);
         result.append(alphabet[item % 16]);
@@ -1527,6 +1529,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalOb
             obj->putDirect(vm, ident, value);
         }
         if (extras) {
+            any = true;
             if (data.size() > 0) {
                 result.append(","_s);
             }
@@ -1535,6 +1538,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalOb
             result.append(inspected.substring(2, inspected.length() - 4));
         }
     }
+    if (!any) result.append(' ');
     result.append('>');
     return JSValue::encode(JSC::jsString(vm, result.toString()));
 }

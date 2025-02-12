@@ -870,6 +870,34 @@ if (isDockerEnabled()) {
     }),
   ]);
 
+  test("should handle sub fragments", async () => {
+    await using sql = postgres({ ...options, max: 1 });
+    const random_name = sql("test_" + randomUUIDv7("hex").replaceAll("-", ""));
+
+    await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${random_name} (id int, hotel_id int, created_at timestamp)`;
+    await sql`INSERT INTO ${random_name} VALUES (1, 1, '2024-01-01 10:00:00')`;
+    await sql`INSERT INTO ${random_name} VALUES (2, 1, '2024-01-02 10:00:00')`;
+    await sql`INSERT INTO ${random_name} VALUES (3, 2, '2024-01-03 10:00:00')`;
+
+    // fragment containing another scape fragment for the field name
+    const orderBy = (field_name: string) => sql`ORDER BY ${sql(field_name)} DESC`;
+
+    // dynamic information
+    const sortBy = { should_sort: true, field: "created_at" };
+    const user = { hotel_id: 1 };
+
+    // query containing the fragments
+    const results = await sql`
+    SELECT ${random_name}.*
+    FROM ${random_name}
+    WHERE ${random_name}.hotel_id = ${user.hotel_id} 
+    ${sortBy.should_sort ? orderBy(sortBy.field) : sql``}`;
+    expect(results).toEqual([
+      { id: 2, hotel_id: 1, created_at: new Date("2024-01-02T10:00:00.000Z") },
+      { id: 1, hotel_id: 1, created_at: new Date("2024-01-01T10:00:00.000Z") },
+    ]);
+  });
+
   // t('Options from uri with special characters in user and pass', async() => {
   //   const opt = postgres({ user: 'öla', pass: 'pass^word' }).options
   //   return [[opt.user, opt.pass].toString(), 'öla,pass^word']

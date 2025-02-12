@@ -930,7 +930,7 @@ function normalizeStrings(strings, values) {
     }
 
     for (var i = 1; i < count; i++) {
-      // this space in betweenis important
+      // this space in between is important
       out += `$${i} ${strings[i]}`;
     }
     return out;

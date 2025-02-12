@@ -9,6 +9,7 @@ const S3Credentials = @import("./credentials.zig").S3Credentials;
 const picohttp = bun.picohttp;
 const ACL = @import("./acl.zig").ACL;
 const StorageClass = @import("./storage_class.zig").StorageClass;
+const ListObjects = @import("./list_objects.zig");
 
 pub const S3StatResult = union(enum) {
     success: struct {
@@ -48,6 +49,14 @@ pub const S3DeleteResult = union(enum) {
     /// failure error is not owned and need to be copied if used after this callback
     failure: S3Error,
 };
+pub const S3ListObjectsResult = union(enum) {
+    success: ListObjects.S3ListObjectsV2Result,
+    not_found: S3Error,
+
+    /// failure error is not owned and need to be copied if used after this callback
+    failure: S3Error,
+};
+
 // commit result also fails if status 200 but with body containing an Error
 pub const S3CommitResult = union(enum) {
     success: void,
@@ -86,6 +95,7 @@ pub const S3HttpSimpleTask = struct {
         download: *const fn (S3DownloadResult, *anyopaque) void,
         upload: *const fn (S3UploadResult, *anyopaque) void,
         delete: *const fn (S3DeleteResult, *anyopaque) void,
+        listObjects: *const fn (S3ListObjectsResult, *anyopaque) void,
         commit: *const fn (S3CommitResult, *anyopaque) void,
         part: *const fn (S3PartResult, *anyopaque) void,
 
@@ -95,6 +105,7 @@ pub const S3HttpSimpleTask = struct {
                 .download,
                 .stat,
                 .delete,
+                .listObjects,
                 .commit,
                 .part,
                 => |callback| callback(.{
@@ -110,6 +121,7 @@ pub const S3HttpSimpleTask = struct {
                 inline .download,
                 .stat,
                 .delete,
+                .listObjects,
                 => |callback| callback(.{
                     .not_found = .{
                         .code = code,
@@ -246,6 +258,28 @@ pub const S3HttpSimpleTask = struct {
                 switch (response.status_code) {
                     200, 204 => {
                         callback(.{ .success = {} }, this.callback_context);
+                    },
+                    404 => {
+                        this.errorWithBody(.not_found);
+                    },
+                    else => {
+                        this.errorWithBody(.failure);
+                    },
+                }
+            },
+            .listObjects => |callback| {
+                switch (response.status_code) {
+                    200 => {
+                        if (this.result.body) |body| {
+                            const success = ListObjects.parseS3ListObjectsResult(body.slice()) catch {
+                                this.errorWithBody(.failure);
+                                return;
+                            };
+
+                            callback(.{ .success = success }, this.callback_context);
+                        } else {
+                            this.errorWithBody(.failure);
+                        }
                     },
                     404 => {
                         this.errorWithBody(.not_found);

@@ -1,387 +1,385 @@
+# globals
+
 Bun implements the following globals.
 
-{% table %}
+* Global
+* Source
+* Notes
 
-- Global
-- Source
-- Notes
+***
 
----
+* [`AbortController`](https://developer.mozilla.org/en-US/docs/Web/API/AbortController)
+* Web
+* &#x20;
 
-- [`AbortController`](https://developer.mozilla.org/en-US/docs/Web/API/AbortController)
-- Web
-- &nbsp;
+***
 
----
+* [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal)
+* Web
+* &#x20;
 
-- [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal)
-- Web
-- &nbsp;
+***
 
----
+* [`alert`](https://developer.mozilla.org/en-US/docs/Web/API/Window/alert)
+* Web
+* Intended for command-line tools
 
-- [`alert`](https://developer.mozilla.org/en-US/docs/Web/API/Window/alert)
-- Web
-- Intended for command-line tools
+***
 
----
+* [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob)
+* Web
+* &#x20;
 
-- [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob)
-- Web
-- &nbsp;
+***
 
----
+* [`Buffer`](https://nodejs.org/api/buffer.html#class-buffer)
+* Node.js
+* See [Node.js > `Buffer`](https://bun.sh/docs/runtime/nodejs-apis#node-buffer)
 
-- [`Buffer`](https://nodejs.org/api/buffer.html#class-buffer)
-- Node.js
-- See [Node.js > `Buffer`](https://bun.sh/docs/runtime/nodejs-apis#node-buffer)
+***
 
----
+* `Bun`
+* Bun
+* Subject to change as additional APIs are added
 
-- `Bun`
-- Bun
-- Subject to change as additional APIs are added
+***
 
----
+* [`ByteLengthQueuingStrategy`](https://developer.mozilla.org/en-US/docs/Web/API/ByteLengthQueuingStrategy)
+* Web
+* &#x20;
 
-- [`ByteLengthQueuingStrategy`](https://developer.mozilla.org/en-US/docs/Web/API/ByteLengthQueuingStrategy)
-- Web
-- &nbsp;
+***
 
----
+* [`confirm`](https://developer.mozilla.org/en-US/docs/Web/API/Window/confirm)
+* Web
+* Intended for command-line tools
 
-- [`confirm`](https://developer.mozilla.org/en-US/docs/Web/API/Window/confirm)
-- Web
-- Intended for command-line tools
+***
 
----
+* [`__dirname`](https://nodejs.org/api/globals.html#__dirname)
+* Node.js
+* &#x20;
 
-- [`__dirname`](https://nodejs.org/api/globals.html#__dirname)
-- Node.js
-- &nbsp;
+***
 
----
+* [`__filename`](https://nodejs.org/api/globals.html#__filename)
+* Node.js
+* &#x20;
 
-- [`__filename`](https://nodejs.org/api/globals.html#__filename)
-- Node.js
-- &nbsp;
+***
 
----
+* [`atob()`](https://developer.mozilla.org/en-US/docs/Web/API/atob)
+* Web
+* &#x20;
 
-- [`atob()`](https://developer.mozilla.org/en-US/docs/Web/API/atob)
-- Web
-- &nbsp;
+***
 
----
+* [`btoa()`](https://developer.mozilla.org/en-US/docs/Web/API/btoa)
+* Web
+* &#x20;
 
-- [`btoa()`](https://developer.mozilla.org/en-US/docs/Web/API/btoa)
-- Web
-- &nbsp;
+***
 
----
+* `BuildMessage`
+* Bun
+* &#x20;
 
-- `BuildMessage`
-- Bun
-- &nbsp;
+***
 
----
+* [`clearImmediate()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/clearImmediate)
+* Web
+* &#x20;
 
-- [`clearImmediate()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/clearImmediate)
-- Web
-- &nbsp;
+***
 
----
+* [`clearInterval()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/clearInterval)
+* Web
+* &#x20;
 
-- [`clearInterval()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/clearInterval)
-- Web
-- &nbsp;
+***
 
----
+* [`clearTimeout()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/clearTimeout)
+* Web
+* &#x20;
 
-- [`clearTimeout()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/clearTimeout)
-- Web
-- &nbsp;
+***
 
----
+* [`console`](https://developer.mozilla.org/en-US/docs/Web/API/console)
+* Web
+* &#x20;
 
-- [`console`](https://developer.mozilla.org/en-US/docs/Web/API/console)
-- Web
-- &nbsp;
+***
 
----
+* [`CountQueuingStrategy`](https://developer.mozilla.org/en-US/docs/Web/API/CountQueuingStrategy)
+* Web
+* &#x20;
 
-- [`CountQueuingStrategy`](https://developer.mozilla.org/en-US/docs/Web/API/CountQueuingStrategy)
-- Web
-- &nbsp;
+***
 
----
+* [`Crypto`](https://developer.mozilla.org/en-US/docs/Web/API/Crypto)
+* Web
+* &#x20;
 
-- [`Crypto`](https://developer.mozilla.org/en-US/docs/Web/API/Crypto)
-- Web
-- &nbsp;
+***
 
----
+* [`crypto`](https://developer.mozilla.org/en-US/docs/Web/API/crypto)
+* Web
+* &#x20;
 
-- [`crypto`](https://developer.mozilla.org/en-US/docs/Web/API/crypto)
-- Web
-- &nbsp;
+***
 
----
+* [`CryptoKey`](https://developer.mozilla.org/en-US/docs/Web/API/CryptoKey)
+* Web
+* &#x20;
 
-- [`CryptoKey`](https://developer.mozilla.org/en-US/docs/Web/API/CryptoKey)
-- Web
-- &nbsp;
+***
 
----
+* [`CustomEvent`](https://developer.mozilla.org/en-US/docs/Web/API/CustomEvent)
+* Web
+* &#x20;
 
-- [`CustomEvent`](https://developer.mozilla.org/en-US/docs/Web/API/CustomEvent)
-- Web
-- &nbsp;
+***
 
----
+* [`Event`](https://developer.mozilla.org/en-US/docs/Web/API/Event)
+* Web
+* Also [`ErrorEvent`](https://developer.mozilla.org/en-US/docs/Web/API/ErrorEvent) [`CloseEvent`](https://developer.mozilla.org/en-US/docs/Web/API/CloseEvent) [`MessageEvent`](https://developer.mozilla.org/en-US/docs/Web/API/MessageEvent).
 
-- [`Event`](https://developer.mozilla.org/en-US/docs/Web/API/Event)
-- Web
-- Also [`ErrorEvent`](https://developer.mozilla.org/en-US/docs/Web/API/ErrorEvent) [`CloseEvent`](https://developer.mozilla.org/en-US/docs/Web/API/CloseEvent) [`MessageEvent`](https://developer.mozilla.org/en-US/docs/Web/API/MessageEvent).
+***
 
----
+* [`EventTarget`](https://developer.mozilla.org/en-US/docs/Web/API/EventTarget)
+* Web
+* &#x20;
 
-- [`EventTarget`](https://developer.mozilla.org/en-US/docs/Web/API/EventTarget)
-- Web
-- &nbsp;
+***
 
----
+* [`exports`](https://nodejs.org/api/globals.html#exports)
+* Node.js
+* &#x20;
 
-- [`exports`](https://nodejs.org/api/globals.html#exports)
-- Node.js
-- &nbsp;
+***
 
----
+* [`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/fetch)
+* Web
+* &#x20;
 
-- [`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/fetch)
-- Web
-- &nbsp;
+***
 
----
+* [`FormData`](https://developer.mozilla.org/en-US/docs/Web/API/FormData)
+* Web
+* &#x20;
 
-- [`FormData`](https://developer.mozilla.org/en-US/docs/Web/API/FormData)
-- Web
-- &nbsp;
+***
 
----
+* [`global`](https://nodejs.org/api/globals.html#global)
+* Node.js
+* See [Node.js > `global`](https://bun.sh/docs/runtime/nodejs-apis#global).
 
-- [`global`](https://nodejs.org/api/globals.html#global)
-- Node.js
-- See [Node.js > `global`](https://bun.sh/docs/runtime/nodejs-apis#global).
+***
 
----
+* [`globalThis`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/globalThis)
+* Cross-platform
+* Aliases to `global`
 
-- [`globalThis`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/globalThis)
-- Cross-platform
-- Aliases to `global`
+***
 
----
+* [`Headers`](https://developer.mozilla.org/en-US/docs/Web/API/Headers)
+* Web
+* &#x20;
 
-- [`Headers`](https://developer.mozilla.org/en-US/docs/Web/API/Headers)
-- Web
-- &nbsp;
+***
 
----
+* [`HTMLRewriter`](https://bun.sh/docs/api/html-rewriter)
+* Cloudflare
+* &#x20;
 
-- [`HTMLRewriter`](https://bun.sh/docs/api/html-rewriter)
-- Cloudflare
-- &nbsp;
+***
 
----
+* [`JSON`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/JSON)
+* Web
+* &#x20;
 
-- [`JSON`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/JSON)
-- Web
-- &nbsp;
+***
 
----
+* [`MessageEvent`](https://developer.mozilla.org/en-US/docs/Web/API/MessageEvent)
+* Web
+* &#x20;
 
-- [`MessageEvent`](https://developer.mozilla.org/en-US/docs/Web/API/MessageEvent)
-- Web
-- &nbsp;
+***
 
----
+* [`module`](https://nodejs.org/api/globals.html#module)
+* Node.js
+* &#x20;
 
-- [`module`](https://nodejs.org/api/globals.html#module)
-- Node.js
-- &nbsp;
+***
 
----
+* [`performance`](https://developer.mozilla.org/en-US/docs/Web/API/performance)
+* Web
+* &#x20;
 
-- [`performance`](https://developer.mozilla.org/en-US/docs/Web/API/performance)
-- Web
-- &nbsp;
+***
 
----
+* [`process`](https://nodejs.org/api/process.html)
+* Node.js
+* See [Node.js > `process`](https://bun.sh/docs/runtime/nodejs-apis#node-process)
 
-- [`process`](https://nodejs.org/api/process.html)
-- Node.js
-- See [Node.js > `process`](https://bun.sh/docs/runtime/nodejs-apis#node-process)
+***
 
----
+* [`prompt`](https://developer.mozilla.org/en-US/docs/Web/API/Window/prompt)
+* Web
+* Intended for command-line tools
 
-- [`prompt`](https://developer.mozilla.org/en-US/docs/Web/API/Window/prompt)
-- Web
-- Intended for command-line tools
+***
 
----
+* [`queueMicrotask()`](https://developer.mozilla.org/en-US/docs/Web/API/queueMicrotask)
+* Web
+* &#x20;
 
-- [`queueMicrotask()`](https://developer.mozilla.org/en-US/docs/Web/API/queueMicrotask)
-- Web
-- &nbsp;
+***
 
----
+* [`ReadableByteStreamController`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableByteStreamController)
+* Web
+* &#x20;
 
-- [`ReadableByteStreamController`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableByteStreamController)
-- Web
-- &nbsp;
+***
 
----
+* [`ReadableStream`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream)
+* Web
+* &#x20;
 
-- [`ReadableStream`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream)
-- Web
-- &nbsp;
+***
 
----
+* [`ReadableStreamDefaultController`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStreamDefaultController)
+* Web
+* &#x20;
 
-- [`ReadableStreamDefaultController`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStreamDefaultController)
-- Web
-- &nbsp;
+***
 
----
+* [`ReadableStreamDefaultReader`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStreamDefaultReader)
+* Web
+* &#x20;
 
-- [`ReadableStreamDefaultReader`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStreamDefaultReader)
-- Web
-- &nbsp;
+***
 
----
+* [`reportError`](https://developer.mozilla.org/en-US/docs/Web/API/reportError)
+* Web
+* &#x20;
 
-- [`reportError`](https://developer.mozilla.org/en-US/docs/Web/API/reportError)
-- Web
-- &nbsp;
+***
 
----
+* [`require()`](https://nodejs.org/api/globals.html#require)
+* Node.js
+* &#x20;
 
-- [`require()`](https://nodejs.org/api/globals.html#require)
-- Node.js
-- &nbsp;
+***
 
----
+* `ResolveMessage`
+* Bun
+* &#x20;
 
-- `ResolveMessage`
-- Bun
-- &nbsp;
+***
 
----
+* [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response)
+* Web
+* &#x20;
 
-- [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response)
-- Web
-- &nbsp;
+***
 
----
+* [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request)
+* Web
+* &#x20;
 
-- [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request)
-- Web
-- &nbsp;
+***
 
----
+* [`setImmediate()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/setImmediate)
+* Web
+* &#x20;
 
-- [`setImmediate()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/setImmediate)
-- Web
-- &nbsp;
+***
 
----
+* [`setInterval()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/setInterval)
+* Web
+* &#x20;
 
-- [`setInterval()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/setInterval)
-- Web
-- &nbsp;
+***
 
----
+* [`setTimeout()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/setTimeout)
+* Web
+* &#x20;
 
-- [`setTimeout()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/setTimeout)
-- Web
-- &nbsp;
+***
 
----
+* [`ShadowRealm`](https://github.com/tc39/proposal-shadowrealm)
+* Web
+* Stage 3 proposal
 
-- [`ShadowRealm`](https://github.com/tc39/proposal-shadowrealm)
-- Web
-- Stage 3 proposal
+***
 
----
+* [`SubtleCrypto`](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto)
+* Web
+* &#x20;
 
-- [`SubtleCrypto`](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto)
-- Web
-- &nbsp;
+***
 
----
+* [`DOMException`](https://developer.mozilla.org/en-US/docs/Web/API/DOMException)
+* Web
+* &#x20;
 
-- [`DOMException`](https://developer.mozilla.org/en-US/docs/Web/API/DOMException)
-- Web
-- &nbsp;
+***
 
----
+* [`TextDecoder`](https://developer.mozilla.org/en-US/docs/Web/API/TextDecoder)
+* Web
+* &#x20;
 
-- [`TextDecoder`](https://developer.mozilla.org/en-US/docs/Web/API/TextDecoder)
-- Web
-- &nbsp;
+***
 
----
+* [`TextEncoder`](https://developer.mozilla.org/en-US/docs/Web/API/TextEncoder)
+* Web
+* &#x20;
 
-- [`TextEncoder`](https://developer.mozilla.org/en-US/docs/Web/API/TextEncoder)
-- Web
-- &nbsp;
+***
 
----
+* [`TransformStream`](https://developer.mozilla.org/en-US/docs/Web/API/TransformStream)
+* Web
+* &#x20;
 
-- [`TransformStream`](https://developer.mozilla.org/en-US/docs/Web/API/TransformStream)
-- Web
-- &nbsp;
+***
 
----
+* [`TransformStreamDefaultController`](https://developer.mozilla.org/en-US/docs/Web/API/TransformStreamDefaultController)
+* Web
+* &#x20;
 
-- [`TransformStreamDefaultController`](https://developer.mozilla.org/en-US/docs/Web/API/TransformStreamDefaultController)
-- Web
-- &nbsp;
+***
 
----
+* [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL)
+* Web
+* &#x20;
 
-- [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL)
-- Web
-- &nbsp;
+***
 
----
+* [`URLSearchParams`](https://developer.mozilla.org/en-US/docs/Web/API/URLSearchParams)
+* Web
+* &#x20;
 
-- [`URLSearchParams`](https://developer.mozilla.org/en-US/docs/Web/API/URLSearchParams)
-- Web
-- &nbsp;
+***
 
----
+* [`WebAssembly`](https://nodejs.org/api/globals.html#webassembly)
+* Web
+* &#x20;
 
-- [`WebAssembly`](https://nodejs.org/api/globals.html#webassembly)
-- Web
-- &nbsp;
+***
 
----
+* [`WritableStream`](https://developer.mozilla.org/en-US/docs/Web/API/WritableStream)
+* Web
+* &#x20;
 
-- [`WritableStream`](https://developer.mozilla.org/en-US/docs/Web/API/WritableStream)
-- Web
-- &nbsp;
+***
 
----
+* [`WritableStreamDefaultController`](https://developer.mozilla.org/en-US/docs/Web/API/WritableStreamDefaultController)
+* Web
+* &#x20;
 
-- [`WritableStreamDefaultController`](https://developer.mozilla.org/en-US/docs/Web/API/WritableStreamDefaultController)
-- Web
-- &nbsp;
+***
 
----
-
-- [`WritableStreamDefaultWriter`](https://developer.mozilla.org/en-US/docs/Web/API/WritableStreamDefaultWriter)
-- Web
-- &nbsp;
-
-{% /table %}
+* [`WritableStreamDefaultWriter`](https://developer.mozilla.org/en-US/docs/Web/API/WritableStreamDefaultWriter)
+* Web
+* &#x20;

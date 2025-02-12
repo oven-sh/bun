@@ -95,8 +95,7 @@ ExceptionOr<size_t> CryptoAlgorithm::getKeyLength(const CryptoAlgorithmParameter
 template<typename ResultCallbackType, typename OperationType>
 static void dispatchAlgorithmOperation(WorkQueue& workQueue, ScriptExecutionContext& context, ResultCallbackType&& callback, CryptoAlgorithm::ExceptionCallback&& exceptionCallback, OperationType&& operation)
 {
-    context.refEventLoop();
-    workQueue.dispatch(
+    workQueue.dispatch(context.globalObject(),
         [operation = WTFMove(operation), callback = WTFMove(callback), exceptionCallback = WTFMove(exceptionCallback), contextIdentifier = context.identifier()]() mutable {
             auto result = operation();
             ScriptExecutionContext::postTaskTo(contextIdentifier, [result = crossThreadCopy(WTFMove(result)), callback = WTFMove(callback), exceptionCallback = WTFMove(exceptionCallback)](auto& context) mutable {
@@ -105,7 +104,6 @@ static void dispatchAlgorithmOperation(WorkQueue& workQueue, ScriptExecutionCont
                     return;
                 }
                 callback(result.releaseReturnValue());
-                context.unrefEventLoop();
             });
         });
 }

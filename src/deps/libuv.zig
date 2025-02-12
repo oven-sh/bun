@@ -1793,26 +1793,13 @@ pub const fs_t = extern struct {
     const UV_FS_CLEANEDUP = 0x0010;
 
     pub inline fn deinit(this: *fs_t) void {
-        this.assertInitialized();
         uv_fs_req_cleanup(this);
         this.assertCleanedUp();
-    }
-
-    // This assertion tripping is a sign that .deinit() is going to cause invalid memory access
-    pub inline fn assertInitialized(this: *const fs_t) void {
-        if (bun.Environment.allow_assert) {
-            if (@intFromPtr(this.loop) == 0xAAAAAAAAAAAA0000) {
-                @panic("uv_fs_t was not initialized");
-            }
-        }
     }
 
     // This assertion tripping is a sign that a memory leak may happen
     pub inline fn assertCleanedUp(this: *const fs_t) void {
         if (bun.Environment.allow_assert) {
-            if (@intFromPtr(this.loop) == 0xAAAAAAAAAAAA0000) {
-                return;
-            }
             if ((this.flags & UV_FS_CLEANEDUP) != 0) {
                 return;
             }
@@ -1821,7 +1808,6 @@ pub const fs_t = extern struct {
     }
 
     pub inline fn ptrAs(this: *fs_t, comptime T: type) T {
-        this.assertInitialized();
         return @ptrCast(this.ptr);
     }
 

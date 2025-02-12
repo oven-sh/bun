@@ -46,7 +46,7 @@ pub const Header = struct {
     };
 
     pub fn isMultiline(self: Header) bool {
-        return @intFromPtr(self.name.ptr) == 0;
+        return self.name.len == 0;
     }
 
     pub fn format(self: Header, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {

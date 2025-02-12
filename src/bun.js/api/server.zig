@@ -3065,7 +3065,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         const streamLog = Output.scoped(.ReadableStream, false);
 
         pub fn didUpgradeWebSocket(this: *RequestContext) bool {
-            return @intFromPtr(this.upgrade_context) == std.math.maxInt(usize);
+            return this.upgrade_context == null;
         }
 
         fn toAsyncWithoutAbortHandler(ctx: *RequestContext, req: *uws.Request, request_object: *Request) void {
@@ -6271,7 +6271,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 return JSC.jsBoolean(false);
             }
 
-            if (upgrader.upgrade_context == null or @intFromPtr(upgrader.upgrade_context) == std.math.maxInt(usize)) {
+            if (upgrader.upgrade_context == null) {
                 return JSC.jsBoolean(false);
             }
 

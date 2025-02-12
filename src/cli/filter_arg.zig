@@ -143,12 +143,7 @@ pub const FilterSet = struct {
     };
 
     pub fn init(allocator: std.mem.Allocator, filters: []const []const u8, cwd_: []const u8) !FilterSet {
-        const cwd: []const u8 = if (comptime bun.Environment.isWindows) brk: {
-            const c = try allocator.dupe(u8, cwd_);
-            std.mem.replaceScalar(u8, c, '\\', '/');
-            break :brk c;
-        } else cwd_;
-        defer if (comptime bun.Environment.isWindows) allocator.free(cwd);
+        const cwd = cwd_;
 
         var buf: bun.PathBuffer = undefined;
         // TODO fixed buffer allocator with fallback?
@@ -164,7 +159,9 @@ pub const FilterSet = struct {
             const is_path = filter_utf8.len > 0 and filter_utf8[0] == '.';
             if (is_path) {
                 const parts = [_]string{filter_utf8};
-                filter_utf8 = try allocator.dupe(u8, bun.path.joinAbsStringBuf(cwd, &buf, &parts, .loose));
+                const filter_utf8_temp = try allocator.dupe(u8, bun.path.joinAbsStringBuf(cwd, &buf, &parts, .loose));
+                std.mem.replaceScalar(u8, filter_utf8_temp, '\\', '/');
+                filter_utf8 = filter_utf8_temp;
                 try list.append(.{
                     .pattern = filter_utf8,
                     .kind = .path,

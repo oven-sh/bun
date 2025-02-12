@@ -159,7 +159,7 @@ inline fn globMatchImpl(state: *State, glob: []const u8, path: []const u8) bool 
                         const is_end_invalid = state.glob_index < glob.len;
 
                         // FIXME: explain this bug fix
-                        if (is_end_invalid and state.path_index == path.len and glob.len - state.glob_index == 2 and glob[state.glob_index] == '/' and glob[state.glob_index + 1] == '*') {
+                        if (is_end_invalid and state.path_index == path.len and glob.len - state.glob_index == 2 and isSeparator(glob[state.glob_index]) and glob[state.glob_index + 1] == '*') {
                             continue;
                         }
 

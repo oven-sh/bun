@@ -5,5 +5,9 @@
   "scripts": {
     "dev": "bun './**/*.html'",
     "build": "bun 'REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts'"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "latest"
   }
 }

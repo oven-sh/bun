@@ -50,6 +50,34 @@ fn setRawInput(b: bool) !void {
     }
 }
 
+// Convert string to PascalCase
+fn toPascalCase(allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
+    var result = try allocator.alloc(u8, input.len);
+    var output_index: usize = 0;
+    var capitalize_next = true;
+
+    for (input) |c| {
+        if (c == '-' or c == '_' or c == ' ') {
+            capitalize_next = true;
+            continue;
+        }
+
+        if (capitalize_next) {
+            if (c >= 'a' and c <= 'z') {
+                result[output_index] = c - 32;
+            } else {
+                result[output_index] = c;
+            }
+            capitalize_next = false;
+        } else {
+            result[output_index] = c;
+        }
+        output_index += 1;
+    }
+
+    return result[0..output_index];
+}
+
 pub const InitCommand = struct {
     pub fn prompt(
         alloc: std.mem.Allocator,
@@ -502,13 +530,21 @@ pub const InitCommand = struct {
                         return err;
                     };
                 } else {
-                    fields.entry_point = "src/index.tsx";
+                    fields.entry_point = "src/App.tsx";
 
-                    // todo:
-                    Output.prettyln("Setting up project with {s} template...", .{template_options[selected]});
-                    Output.flush();
+                    var dependencies = SourceFileProjectGenerator.Dependencies.init(alloc);
+                    defer dependencies.deinit();
 
-                    // try SourceFileProjectGenerator.generate();
+                    try dependencies.dev_deps.append("@types/bun@latest");
+                    try dependencies.dev_deps.append("typescript@^5.0.0");
+
+                    try SourceFileProjectGenerator.generateFromOptions(.{
+                        .tailwind = true,
+                        .shadcn = if (fullstack_template == .react_typescript_tailwind_shadcn) bun.StringSet.init(alloc) else null,
+                        .dependencies = dependencies,
+                    }, fields.entry_point, "App");
+
+                    return;
                 }
 
                 try Output.writer().writeAll("\n");

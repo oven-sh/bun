@@ -1,4 +1,28 @@
 // Generate project files based on the entry point and dependencies
+pub const Dependencies = struct {
+    deps: std.ArrayList([]const u8),
+    dev_deps: std.ArrayList([]const u8),
+
+    pub fn init(allocator: std.mem.Allocator) Dependencies {
+        return .{
+            .deps = std.ArrayList([]const u8).init(allocator),
+            .dev_deps = std.ArrayList([]const u8).init(allocator),
+        };
+    }
+
+    pub fn deinit(self: *Dependencies) void {
+        self.deps.deinit();
+        self.dev_deps.deinit();
+    }
+};
+
+pub const GenerateOptions = struct {
+    tailwind: bool = false,
+    shadcn: ?bun.StringSet = null,
+    dependencies: ?Dependencies = null,
+};
+
+// Original function that analyzes an existing entry point
 pub fn generate(entry_point: string, result: *BundleV2.DependenciesScanner.Result) !void {
     const react_component_export = findReactComponentExport(result.bundle_v2) orelse {
         Output.errGeneric("No component export found in <b>{s}<r>", .{bun.fmt.quote(entry_point)});
@@ -28,49 +52,77 @@ pub fn generate(entry_point: string, result: *BundleV2.DependenciesScanner.Resul
 
     // Get any shadcn components used in the project
     const shadcn = if (enable_shadcn_ui) try getShadcnComponents(result.bundle_v2, result.reachable_files) else bun.StringSet.init(default_allocator);
-    const needs_to_inject_shadcn_ui = shadcn.keys().len > 0;
+
+    // Convert dependencies to new format
+    var dependencies = Dependencies.init(default_allocator);
+    try dependencies.deps.appendSlice(result.dependencies.keys());
+
+    try generateFromOptions(.{
+        .tailwind = has_tailwind_in_dependencies or needs_to_inject_tailwind,
+        .shadcn = if (shadcn.keys().len > 0) shadcn else null,
+        .dependencies = dependencies,
+    }, entry_point, react_component_export);
+}
+
+// New function for generating without an existing entry point
+pub fn generateFromOptions(options: GenerateOptions, entry_point: string, react_component_export: ?[]const u8) !void {
+    var dependencies = options.dependencies orelse Dependencies.init(default_allocator);
+    const needs_to_inject_shadcn_ui = options.shadcn != null;
+    const uses_tailwind = options.tailwind;
 
     // Add Tailwind dependencies if needed
-    if (needs_to_inject_tailwind) {
-        try result.dependencies.insert("tailwindcss");
-        try result.dependencies.insert("bun-plugin-tailwind");
+    if (uses_tailwind) {
+        try dependencies.deps.append("tailwindcss");
+        try dependencies.deps.append("bun-plugin-tailwind");
     }
 
     // Add shadcn-ui dependencies if needed
     if (needs_to_inject_shadcn_ui) {
         // https://ui.shadcn.com/docs/installation/manual
-        // This will probably be tricky to keep updated.
-        // but hopefully the dependency scanning will just handle it for us.
-        try result.dependencies.insert("tailwindcss-animate");
-        try result.dependencies.insert("class-variance-authority");
-        try result.dependencies.insert("clsx");
-        try result.dependencies.insert("tailwind-merge");
-        try result.dependencies.insert("lucide-react");
+        try dependencies.deps.append("tailwindcss-animate");
+        try dependencies.deps.append("class-variance-authority");
+        try dependencies.deps.append("clsx");
+        try dependencies.deps.append("tailwind-merge");
+        try dependencies.deps.append("lucide-react");
     }
-
-    const uses_tailwind = has_tailwind_in_dependencies or needs_to_inject_tailwind;
 
     // We are JSX-only for now.
     // The versions of react & react-dom need to match up, and it's SO easy to mess that up.
     // So we have to be a little opinionated here.
     if (needs_to_inject_shadcn_ui) {
         // Use react 18 instead of 19 if shadcn is in use.
-        _ = result.dependencies.swapRemove("react");
-        _ = result.dependencies.swapRemove("react-dom");
-        try result.dependencies.insert("react@^18");
-        try result.dependencies.insert("react-dom@^18");
+        // Remove any existing react dependencies
+        for (dependencies.deps.items, 0..) |dep, i| {
+            if (strings.eqlComptime(dep, "react") or strings.eqlComptime(dep, "react-dom")) {
+                _ = dependencies.deps.orderedRemove(i);
+            }
+        }
+        try dependencies.deps.append("react@^18");
+        try dependencies.deps.append("react-dom@^18");
+        try dependencies.dev_deps.append("@types/react@^18");
+        try dependencies.dev_deps.append("@types/react-dom@^18");
     } else {
         // Add react-dom if react is used
-        _ = result.dependencies.swapRemove("react");
-        _ = result.dependencies.swapRemove("react-dom");
-        try result.dependencies.insert("react-dom@19");
-        try result.dependencies.insert("react@19");
+        // Remove any existing react dependencies
+        for (dependencies.deps.items, 0..) |dep, i| {
+            if (strings.eqlComptime(dep, "react") or strings.eqlComptime(dep, "react-dom")) {
+                _ = dependencies.deps.orderedRemove(i);
+            }
+        }
+        try dependencies.deps.append("react-dom@19");
+        try dependencies.deps.append("react@19");
+        try dependencies.dev_deps.append("@types/react@19");
+        try dependencies.dev_deps.append("@types/react-dom@19");
     }
+
+    // Add dev dependencies
+    try dependencies.dev_deps.append("@types/bun@latest");
+    try dependencies.dev_deps.append("typescript@^5.0.0");
 
     // Choose template based on dependencies and example type
     const template: Template = brk: {
         if (needs_to_inject_shadcn_ui) {
-            break :brk .{ .ReactShadcnSpa = .{ .components = shadcn } };
+            break :brk .{ .ReactShadcnSpa = .{ .components = options.shadcn orelse bun.StringSet.init(default_allocator) } };
         } else if (uses_tailwind) {
             break :brk .ReactTailwindSpa;
         } else {
@@ -79,7 +131,7 @@ pub fn generate(entry_point: string, result: *BundleV2.DependenciesScanner.Resul
     };
 
     // Generate project files from template
-    try generateFiles(default_allocator, entry_point, result, template, react_component_export);
+    try generateFiles(default_allocator, entry_point, dependencies, template, react_component_export);
 
     Global.exit(0);
 }
@@ -168,7 +220,7 @@ fn stringWithReplacements(original_input: []const u8, basename: []const u8, rela
 }
 
 // Generate all project files from template
-fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *BundleV2.DependenciesScanner.Result, template: Template, react_component_export: []const u8) !void {
+fn generateFiles(allocator: std.mem.Allocator, entry_point: string, dependencies: Dependencies, template: Template, react_component_export: ?[]const u8) !void {
     var log = template.logger();
     var basename = std.fs.path.basename(entry_point);
     const extension = std.fs.path.extension(basename);
@@ -200,9 +252,9 @@ fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *Bun
             // Create all template files
             inline for (0..files.len) |index| {
                 const file = &files[index];
-                const file_name = try stringWithReplacements(file.name, basename, normalized_name, react_component_export, allocator);
+                const file_name = try stringWithReplacements(file.name, basename, normalized_name, react_component_export orelse "App", allocator);
                 if (file.overwrite or !bun.sys.exists(file_name)) {
-                    switch (createFile(file_name, try stringWithReplacements(file.content, basename, normalized_name, react_component_export, default_allocator))) {
+                    switch (createFile(file_name, try stringWithReplacements(file.content, basename, normalized_name, react_component_export orelse "", default_allocator))) {
                         .result => |new| {
                             if (new) {
                                 created_files[index] = true;
@@ -231,11 +283,14 @@ fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *Bun
     try argv.append("bun");
     try argv.append("--only-missing");
     try argv.append("install");
-    try argv.appendSlice(result.dependencies.keys());
+    try argv.appendSlice(dependencies.deps.items);
+    // TODO: add this to --dev flag
+    try argv.appendSlice(dependencies.dev_deps.items);
+
     if (log.has_written_initial_message) {
         Output.print("\n", .{});
     }
-    Output.pretty("<r>📦 <b>Auto-installing {d} detected dependencies<r>\n", .{result.dependencies.keys().len});
+    Output.pretty("<r>📦 <b>Auto-installing {d} detected dependencies<r>\n", .{dependencies.deps.items.len + dependencies.dev_deps.items.len});
 
     // print "bun" but use bun.selfExePath()
     Output.commandOut(argv.items);
@@ -341,14 +396,12 @@ fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *Bun
                 }
 
                 Output.print("\n", .{});
-
-                log.ifNew();
             }
         },
-        .ReactSpa, .ReactTailwindSpa => {
-            log.ifNew();
-        },
+        .ReactSpa, .ReactTailwindSpa => {},
     }
+    const normalized_name_with_ext = try std.fmt.allocPrint(allocator, "./{s}{s}", .{ normalized_name, extension });
+    log.ifNew(normalized_name_with_ext);
 
     Output.flush();
 
@@ -672,6 +725,12 @@ const Reason = enum {
 const ReactTailwindSpa = struct {
     pub const files = &[_]TemplateFile{
         .{
+            .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.tsx",
+            .content = @embedFile("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.tsx"),
+            .reason = .bun,
+            .overwrite = false,
+        },
+        .{
             .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts",
             .content = shared_build_ts,
             .reason = .build,
@@ -716,6 +775,12 @@ const shared_bunfig_toml = @embedFile("projects/react-shadcn-spa/bunfig.toml");
 const ReactSpa = struct {
     pub const files = &[_]TemplateFile{
         .{
+            .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.tsx",
+            .content = @embedFile("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.tsx"),
+            .reason = .bun,
+            .overwrite = false,
+        },
+        .{
             .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts",
             .content = shared_build_ts,
             .reason = .build,
@@ -749,6 +814,12 @@ const ReactSpa = struct {
 // Template for React + Shadcn project
 const ReactShadcnSpa = struct {
     pub const files = &[_]TemplateFile{
+        .{
+            .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.tsx",
+            .content = @embedFile("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.tsx"),
+            .reason = .bun,
+            .overwrite = false,
+        },
         .{
             .name = "lib/utils.ts",
             .content = @embedFile("projects/react-shadcn-spa/lib/utils.ts"),
@@ -857,8 +928,8 @@ const Template = union(Tag) {
             Output.prettyln("   <d>{s}<r>", .{@tagName(template_file.reason)});
         }
 
-        pub fn ifNew(this: *Logger) void {
-            if (!this.has_written_initial_message) return;
+        pub fn ifNew(this: *Logger, main_file_name: []const u8) void {
+            // if (!this.has_written_initial_message) return;
 
             Output.prettyln(
                 \\<r><d>--------------------------------<r>
@@ -872,8 +943,14 @@ const Template = union(Tag) {
                 \\
                 \\  <green><b>bun run build<r>
                 \\
-                \\<blue>Happy bunning! 🐇<r>
-            , .{this.template.label()});
+                \\<b><orange>Component<r><d> - your main react component<r>
+                \\
+                \\  <orange><b>{s}<r>
+                \\
+                \\  <blue>Happy bunning! 🐇<r>
+                \\
+                \\
+            , .{ this.template.label(), main_file_name });
         }
     };
 };

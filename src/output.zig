@@ -861,6 +861,7 @@ pub const color_map = ComptimeStringMap(string, .{
     &.{ "red", CSI ++ "31m" },
     &.{ "green", CSI ++ "32m" },
     &.{ "yellow", CSI ++ "33m" },
+    &.{ "orange", CSI ++ "33m" ++ CSI ++ "38;5;208m" },
     &.{ "blue", CSI ++ "34m" },
     &.{ "magenta", CSI ++ "35m" },
     &.{ "cyan", CSI ++ "36m" },

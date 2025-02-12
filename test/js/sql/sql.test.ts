@@ -870,7 +870,7 @@ if (isDockerEnabled()) {
     }),
   ]);
 
-  test("should work with fragmetns", async () => {
+  test("should work with fragments", async () => {
     await using sql = postgres({ ...options, max: 1 });
     const random_name = sql("test_" + randomUUIDv7("hex").replaceAll("-", ""));
     await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${random_name} (id int, hotel_id int, created_at timestamp)`;

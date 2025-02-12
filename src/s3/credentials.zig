@@ -21,7 +21,8 @@ pub const S3Credentials = struct {
     storage_class: ?StorageClass = null,
     /// Important for MinIO support.
     insecure_http: bool = false,
-
+    /// indicates if the endpoint is a virtual hosted style bucket
+    virtual_hosted_style: bool = false,
     ref_count: u32 = 1,
     pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
@@ -148,6 +149,11 @@ pub const S3Credentials = struct {
                     }
                 }
 
+                if (try opts.getBooleanStrict(globalObject, "virtualHostedStyle")) |virtual_hosted_style| {
+                    new_credentials.credentials.virtual_hosted_style = virtual_hosted_style;
+                    new_credentials.changed_credentials = true;
+                }
+
                 if (try opts.getTruthyComptime(globalObject, "sessionToken")) |js_value| {
                     if (!js_value.isEmptyOrUndefinedOrNull()) {
                         if (js_value.isString()) {
@@ -242,6 +248,7 @@ pub const S3Credentials = struct {
                 "",
 
             .insecure_http = this.insecure_http,
+            .virtual_hosted_style = this.virtual_hosted_style,
         });
     }
     pub fn deinit(this: *@This()) void {
@@ -387,7 +394,33 @@ pub const S3Credentials = struct {
         acl: ?ACL = null,
         storage_class: ?StorageClass = null,
     };
-
+    /// This is not used for signing but for console.log output, is just nice to have
+    pub fn guessBucket(endpoint: []const u8) ?[]const u8 {
+        // check if is amazonaws.com
+        if (strings.indexOf(endpoint, ".amazonaws.com")) |_| {
+            // check if is .s3. virtual host style
+            if (strings.indexOf(endpoint, ".s3.")) |end| {
+                // its https://bucket-name.s3.region-code.amazonaws.com/key-name
+                const start = strings.indexOf(endpoint, "/") orelse {
+                    return endpoint[0..end];
+                };
+                return endpoint[start + 1 .. end];
+            }
+        } else if (strings.indexOf(endpoint, ".r2.cloudflarestorage.com")) |r2_start| {
+            // check if is <BUCKET>.<ACCOUNT_ID>.r2.cloudflarestorage.com
+            const end = strings.indexOf(endpoint, ".") orelse return null; // actually unreachable
+            if (end > 0 and r2_start == end) {
+                // its https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+                return null;
+            }
+            // ok its virtual host style
+            const start = strings.indexOf(endpoint, "/") orelse {
+                return endpoint[0..end];
+            };
+            return endpoint[start + 1 .. end];
+        }
+        return null;
+    }
     pub fn guessRegion(endpoint: []const u8) []const u8 {
         if (endpoint.len > 0) {
             if (strings.endsWith(endpoint, ".r2.cloudflarestorage.com")) return "auto";
@@ -485,24 +518,24 @@ pub const S3Credentials = struct {
         var path: []const u8 = full_path;
         var bucket: []const u8 = this.bucket;
 
-        if (bucket.len == 0) {
-            //TODO: r2 supports bucket in the endpoint
-
-            // guess bucket using path
-            if (strings.indexOf(full_path, "/")) |end| {
-                if (strings.indexOf(full_path, "\\")) |backslash_index| {
-                    if (backslash_index < end) {
-                        bucket = full_path[0..backslash_index];
-                        path = full_path[backslash_index + 1 ..];
+        if (!this.virtual_hosted_style) {
+            if (bucket.len == 0) {
+                // guess bucket using path
+                if (strings.indexOf(full_path, "/")) |end| {
+                    if (strings.indexOf(full_path, "\\")) |backslash_index| {
+                        if (backslash_index < end) {
+                            bucket = full_path[0..backslash_index];
+                            path = full_path[backslash_index + 1 ..];
+                        }
                     }
+                    bucket = full_path[0..end];
+                    path = full_path[end + 1 ..];
+                } else if (strings.indexOf(full_path, "\\")) |backslash_index| {
+                    bucket = full_path[0..backslash_index];
+                    path = full_path[backslash_index + 1 ..];
+                } else {
+                    return error.InvalidPath;
                 }
-                bucket = full_path[0..end];
-                path = full_path[end + 1 ..];
-            } else if (strings.indexOf(full_path, "\\")) |backslash_index| {
-                bucket = full_path[0..backslash_index];
-                path = full_path[backslash_index + 1 ..];
-            } else {
-                return error.InvalidPath;
             }
         }
         if (strings.endsWith(path, "/")) {
@@ -541,12 +574,27 @@ pub const S3Credentials = struct {
                 // only the host part is needed here
                 break :brk_host try bun.default_allocator.dupe(u8, host);
             } else {
+                if (this.virtual_hosted_style) {
+                    // virtual hosted style requires a bucket name if an endpoint is not provided
+                    if (bucket.len == 0) {
+                        return error.InvalidEndpoint;
+                    }
+                    // default to https://<BUCKET_NAME>.s3.<REGION>.amazonaws.com/
+                    endpoint = try std.fmt.allocPrint(bun.default_allocator, "{s}.s3.{s}.amazonaws.com", .{ bucket, region });
+                    break :brk_host endpoint;
+                }
                 endpoint = try std.fmt.allocPrint(bun.default_allocator, "s3.{s}.amazonaws.com", .{region});
                 break :brk_host endpoint;
             }
         };
         errdefer bun.default_allocator.free(host);
-        const normalizedPath = std.fmt.bufPrint(&normalized_path_buffer, "{s}/{s}/{s}", .{ extra_path, bucket, path }) catch return error.InvalidPath;
+        const normalizedPath = brk: {
+            if (this.virtual_hosted_style) {
+                break :brk std.fmt.bufPrint(&normalized_path_buffer, "{s}/{s}", .{ extra_path, path }) catch return error.InvalidPath;
+            } else {
+                break :brk std.fmt.bufPrint(&normalized_path_buffer, "{s}/{s}/{s}", .{ extra_path, bucket, path }) catch return error.InvalidPath;
+            }
+        };
 
         const date_result = getAMZDate(bun.default_allocator);
         const amz_date = date_result.date;
@@ -898,7 +946,8 @@ pub const S3CredentialsWithOptions = struct {
     storage_class: ?StorageClass = null,
     /// indicates if the credentials have changed
     changed_credentials: bool = false,
-
+    /// indicates if the virtual hosted style is used
+    virtual_hosted_style: bool = false,
     _accessKeyIdSlice: ?JSC.ZigString.Slice = null,
     _secretAccessKeySlice: ?JSC.ZigString.Slice = null,
     _regionSlice: ?JSC.ZigString.Slice = null,

@@ -53,6 +53,8 @@ pub const MachoFile = struct {
             16 * 1024
         else
             4 * 1024;
+        const PAGE_SIZE: u64 = 1 << 12;
+        const HASH_SIZE: usize = 32; // SHA256 = 32 bytes
 
         const header_size = @sizeOf(u32);
         const total_size = header_size + data.len;
@@ -137,7 +139,16 @@ pub const MachoFile = struct {
         // Calculate how much larger/smaller the section will be compared to its current size
         const size_diff = @as(i64, @intCast(aligned_size)) - @as(i64, @intCast(original_segsize));
 
-        try self.data.ensureUnusedCapacity(@intCast(size_diff));
+        // We assume that the section is page-aligned, so we can calculate the number of new pages
+        const num_of_new_pages = @divExact(size_diff, PAGE_SIZE);
+
+        // Since we're adding a new section, we also need to increase our CODE_SIGNATURE size to add the
+        // hashes for these pages.
+        const size_of_new_hashes = num_of_new_pages * HASH_SIZE;
+
+        // So, total increase in size is size of new section + size of hashes for the new pages added
+        // due to the section
+        try self.data.ensureUnusedCapacity(@intCast(size_diff + size_of_new_hashes));
 
         const code_sign_cmd: ?*align(1) macho.linkedit_data_command =
             if (code_sign_cmd_idx) |idx|
@@ -184,19 +195,21 @@ pub const MachoFile = struct {
 
         // Only update offsets if the size actually changed
         if (size_diff != 0) {
+            // New signature size is the old size plus the size of the hashes for the new pages
+            sig_size = sig_size + @as(usize, @intCast(size_of_new_hashes));
+
+            // We move the offsets of the LINKEDIT segment ahead by `size_diff`
             linkedit_seg.fileoff += @as(usize, @intCast(size_diff));
-            try self.updateLoadCommandOffsets(original_fileoff, @intCast(size_diff), linkedit_seg.fileoff, linkedit_seg.filesize);
-        }
+            linkedit_seg.vmaddr += @as(usize, @intCast(size_diff));
 
-        if (code_sign_cmd) |cs| {
-            // Calculate new end of LINKEDIT excluding signature
-            var new_linkedit_end = linkedit_seg.fileoff + linkedit_seg.filesize;
-            if (sig_size > 0) {
-                new_linkedit_end -= sig_size;
-            }
+            // We also update the sizes of the LINKEDIT segment to account for the hashes we're adding
+            linkedit_seg.filesize += @as(usize, @intCast(size_of_new_hashes));
+            linkedit_seg.vmsize += @as(usize, @intCast(size_of_new_hashes));
 
-            // Place signature at new end
-            cs.dataoff = @intCast(new_linkedit_end);
+            // Finally, the vmsize of the segment should be page-aligned for an executable
+            linkedit_seg.vmsize = alignSize(linkedit_seg.vmsize, PAGE_SIZE);
+
+            try self.updateLoadCommandOffsets(original_fileoff, @intCast(size_diff), linkedit_seg.fileoff, linkedit_seg.filesize, sig_size);
         }
 
         try self.validateSegments();
@@ -229,7 +242,7 @@ pub const MachoFile = struct {
     };
 
     // Helper function to update load command offsets when resizing an existing section
-    fn updateLoadCommandOffsets(self: *MachoFile, previous_fileoff: u64, size_diff: u64, new_linkedit_fileoff: u64, new_linkedit_filesize: u64) !void {
+    fn updateLoadCommandOffsets(self: *MachoFile, previous_fileoff: u64, size_diff: u64, new_linkedit_fileoff: u64, new_linkedit_filesize: u64, sig_size: usize) !void {
         // Validate inputs
         if (new_linkedit_fileoff < previous_fileoff) {
             return error.InvalidLinkeditOffset;
@@ -290,8 +303,8 @@ pub const MachoFile = struct {
 
                     // Special handling for code signature
                     if (cmd.cmd == .CODE_SIGNATURE) {
-                        // Ensure code signature is at the end of LINKEDIT
-                        linkedit_cmd.dataoff = @intCast(new_linkedit_fileoff + new_linkedit_filesize - linkedit_cmd.datasize);
+                        // Update the size of the code signature to the newer signature size
+                        linkedit_cmd.datasize = @intCast(sig_size);
                     }
                 },
                 .DYLD_INFO, .DYLD_INFO_ONLY => {
@@ -445,6 +458,7 @@ pub const MachoFile = struct {
 
         pub fn sign(self: *MachoSigner, writer: anytype) !void {
             const PAGE_SIZE: usize = 1 << 12;
+            const HASH_SIZE: usize = 32; // SHA256 = 32 bytes
 
             // Calculate total binary pages before signature
             const total_pages = (self.sig_off + PAGE_SIZE - 1) / PAGE_SIZE;
@@ -459,7 +473,7 @@ pub const MachoFile = struct {
             const hash_offset = id_offset + id.len;
 
             // Calculate hash sizes
-            const hashes_size = total_pages * 32; // SHA256 = 32 bytes
+            const hashes_size = total_pages * HASH_SIZE;
             const code_dir_length = hash_offset + hashes_size;
 
             // Calculate total signature size
@@ -489,8 +503,8 @@ pub const MachoFile = struct {
             code_dir.identOffset = @byteSwap(@as(u32, @truncate(id_offset)));
             code_dir.nSpecialSlots = 0;
             code_dir.nCodeSlots = @byteSwap(@as(u32, @truncate(total_pages)));
-            code_dir.codeLimit = @byteSwap(@as(u32, @truncate(aligned_sig_off)));
-            code_dir.hashSize = 32;
+            code_dir.codeLimit = @byteSwap(@as(u32, @truncate(self.sig_off)));
+            code_dir.hashSize = HASH_SIZE;
             code_dir.hashType = SEC_CODE_SIGNATURE_HASH_SHA256;
             code_dir.pageSize = 12; // log2(4096)
 
@@ -532,6 +546,9 @@ pub const MachoFile = struct {
                 bun.sha.SHA256.hash(&last_page, &digest, null);
                 try sig_writer.writeAll(&digest);
             }
+
+            // Finally, ensure that the length of data we write matches the total data expected
+            self.data.items.len = self.linkedit_seg.fileoff + self.linkedit_seg.filesize;
 
             // Write final binary
             try writer.writeAll(self.data.items);

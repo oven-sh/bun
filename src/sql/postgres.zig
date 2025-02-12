@@ -44,6 +44,7 @@ pub const AnyPostgresError = error{
     UnsupportedByteaFormat,
     UnsupportedIntegerSize,
     UnsupportedArrayFormat,
+    UnsupportedNumericFormat,
 };
 
 pub fn postgresErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8, err: AnyPostgresError) JSValue {
@@ -75,6 +76,7 @@ pub fn postgresErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8
         error.UnsupportedByteaFormat => JSC.Error.ERR_POSTGRES_UNSUPPORTED_BYTEA_FORMAT,
         error.UnsupportedArrayFormat => JSC.Error.ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT,
         error.UnsupportedIntegerSize => JSC.Error.ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE,
+        error.UnsupportedNumericFormat => JSC.Error.ERR_POSTGRES_UNSUPPORTED_NUMERIC_FORMAT,
         error.JSError => {
             return globalObject.takeException(error.JSError);
         },
@@ -716,12 +718,14 @@ pub const PostgresSQLQuery = struct {
                         if (!connection.hasQueryRunning()) {
                             this.flags.binary = this.statement.?.fields.len > 0;
                             debug("bindAndExecute", .{});
+
                             // bindAndExecute will bind + execute, it will change to running after binding is complete
                             PostgresRequest.bindAndExecute(globalObject, this.statement.?, binding_value, columns_value, PostgresSQLConnection.Writer, writer) catch |err| {
                                 if (!globalObject.hasException())
                                     return globalObject.throwValue(postgresErrorToJS(globalObject, "failed to bind and execute query", err));
                                 return error.JSError;
                             };
+                            connection.flags.is_ready_for_query = false;
                             this.status = .binding;
 
                             did_write = true;
@@ -746,10 +750,12 @@ pub const PostgresSQLQuery = struct {
                             return globalObject.throwValue(postgresErrorToJS(globalObject, "failed to prepare and query", err));
                         return error.JSError;
                     };
+                    connection.flags.is_ready_for_query = false;
                     this.status = .binding;
                     did_write = true;
                 } else {
                     debug("writeQuery", .{});
+
                     PostgresRequest.writeQuery(query_str.slice(), signature.prepared_statement_name, signature.fields, PostgresSQLConnection.Writer, writer) catch |err| {
                         signature.deinit();
                         if (!globalObject.hasException())
@@ -762,6 +768,7 @@ pub const PostgresSQLQuery = struct {
                             return globalObject.throwValue(postgresErrorToJS(globalObject, "failed to flush", err));
                         return error.JSError;
                     };
+                    connection.flags.is_ready_for_query = false;
                     did_write = true;
                 }
             }
@@ -2522,9 +2529,9 @@ pub const PostgresSQLConnection = struct {
                                 } else {
                                     // the only escape sequency possible here is \b
                                     if (bun.strings.eqlComptime(element, "\\b")) {
-                                        try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = bun.String.static("\x08").value.WTFStringImpl }, .free_value = 1 });
+                                        try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = bun.String.createUTF8("\x08").value.WTFStringImpl }, .free_value = 1 });
                                     } else {
-                                        try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (element.len > 0) bun.String.createUTF8(element).value.WTFStringImpl else null }, .free_value = 1 });
+                                        try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (element.len > 0) bun.String.createUTF8(element).value.WTFStringImpl else null }, .free_value = 0 });
                                     }
                                 }
                                 slice = trySlice(slice, current_idx);
@@ -2682,7 +2689,7 @@ pub const PostgresSQLConnection = struct {
                                         switch (arrayType) {
                                             .int8_array => {
                                                 if (bigint) {
-                                                    try array.append(bun.default_allocator, DataCell{ .tag = .int8, .value = .{ .int8 = bun.fmt.parseInt(i64, element, 0) catch return error.UnsupportedArrayFormat } });
+                                                    try array.append(bun.default_allocator, DataCell{ .tag = .int8, .value = .{ .int8 = std.fmt.parseInt(i64, element, 0) catch return error.UnsupportedArrayFormat } });
                                                 } else {
                                                     try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (element.len > 0) bun.String.createUTF8(element).value.WTFStringImpl else null }, .free_value = 1 });
                                                 }
@@ -2690,12 +2697,12 @@ pub const PostgresSQLConnection = struct {
                                                 continue;
                                             },
                                             .cid_array, .xid_array, .oid_array => {
-                                                try array.append(bun.default_allocator, DataCell{ .tag = .uint4, .value = .{ .uint4 = bun.fmt.parseInt(u32, element, 0) catch 0 } });
+                                                try array.append(bun.default_allocator, DataCell{ .tag = .uint4, .value = .{ .uint4 = std.fmt.parseInt(u32, element, 0) catch 0 } });
                                                 slice = trySlice(slice, current_idx);
                                                 continue;
                                             },
                                             else => {
-                                                const value = bun.fmt.parseInt(i32, element, 0) catch return error.UnsupportedArrayFormat;
+                                                const value = std.fmt.parseInt(i32, element, 0) catch return error.UnsupportedArrayFormat;
 
                                                 try array.append(bun.default_allocator, DataCell{ .tag = .int4, .value = .{ .int4 = @intCast(value) } });
                                                 slice = trySlice(slice, current_idx);
@@ -2792,28 +2799,28 @@ pub const PostgresSQLConnection = struct {
                     if (binary) {
                         return DataCell{ .tag = .int4, .value = .{ .int4 = try parseBinary(.int2, i16, bytes) } };
                     } else {
-                        return DataCell{ .tag = .int4, .value = .{ .int4 = bun.fmt.parseInt(i32, bytes, 0) catch 0 } };
+                        return DataCell{ .tag = .int4, .value = .{ .int4 = std.fmt.parseInt(i32, bytes, 0) catch 0 } };
                     }
                 },
                 .cid, .xid, .oid => {
                     if (binary) {
                         return DataCell{ .tag = .uint4, .value = .{ .uint4 = try parseBinary(.oid, u32, bytes) } };
                     } else {
-                        return DataCell{ .tag = .uint4, .value = .{ .uint4 = bun.fmt.parseInt(u32, bytes, 0) catch 0 } };
+                        return DataCell{ .tag = .uint4, .value = .{ .uint4 = std.fmt.parseInt(u32, bytes, 0) catch 0 } };
                     }
                 },
                 .int4 => {
                     if (binary) {
                         return DataCell{ .tag = .int4, .value = .{ .int4 = try parseBinary(.int4, i32, bytes) } };
                     } else {
-                        return DataCell{ .tag = .int4, .value = .{ .int4 = bun.fmt.parseInt(i32, bytes, 0) catch 0 } };
+                        return DataCell{ .tag = .int4, .value = .{ .int4 = std.fmt.parseInt(i32, bytes, 0) catch 0 } };
                     }
                 },
                 // postgres when reading bigint as int8 it returns a string unless type: { bigint: postgres.BigInt is set
                 .int8 => {
                     if (bigint) {
                         // .int8 is a 64-bit integer always string
-                        return DataCell{ .tag = .int8, .value = .{ .int8 = bun.fmt.parseInt(i64, bytes, 0) catch 0 } };
+                        return DataCell{ .tag = .int8, .value = .{ .int8 = std.fmt.parseInt(i64, bytes, 0) catch 0 } };
                     } else {
                         return DataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) bun.String.createUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
                     }
@@ -2832,6 +2839,23 @@ pub const PostgresSQLConnection = struct {
                     } else {
                         const float4: f64 = bun.parseDouble(bytes) catch std.math.nan(f64);
                         return DataCell{ .tag = .float8, .value = .{ .float8 = float4 } };
+                    }
+                },
+                .numeric => {
+                    if (binary) {
+                        // this is probrably good enough for most cases
+                        var stack_buffer = std.heap.stackFallback(1024, bun.default_allocator);
+                        const allocator = stack_buffer.get();
+                        var numeric_buffer = std.ArrayList(u8).fromOwnedSlice(allocator, &stack_buffer.buffer);
+                        numeric_buffer.items.len = 0;
+                        defer numeric_buffer.deinit();
+
+                        // if is binary format lets display as a string because JS cant handle it in a safe way
+                        const result = parseBinaryNumeric(bytes, &numeric_buffer) catch return error.UnsupportedNumericFormat;
+                        return DataCell{ .tag = .string, .value = .{ .string = bun.String.createUTF8(result.slice()).value.WTFStringImpl }, .free_value = 1 };
+                    } else {
+                        // nice text is actually what we want here
+                        return DataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) String.createUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
                     }
                 },
                 .jsonb, .json => {
@@ -2950,6 +2974,104 @@ pub const PostgresSQLConnection = struct {
 
         fn pg_ntoh32(x: anytype) u32 {
             return pg_ntoT(32, x);
+        }
+        const PGNummericString = union(enum) {
+            static: [:0]const u8,
+            dynamic: []const u8,
+
+            pub fn slice(this: PGNummericString) []const u8 {
+                return switch (this) {
+                    .static => |value| value,
+                    .dynamic => |value| value,
+                };
+            }
+        };
+
+        fn parseBinaryNumeric(input: []const u8, result: *std.ArrayList(u8)) !PGNummericString {
+            // Reference: https://github.com/postgres/postgres/blob/50e6eb731d98ab6d0e625a0b87fb327b172bbebd/src/backend/utils/adt/numeric.c#L7612-L7740
+            if (input.len < 8) return error.InvalidBuffer;
+            var fixed_buffer = std.io.fixedBufferStream(input);
+            var reader = fixed_buffer.reader();
+
+            // Read header values using big-endian
+            const ndigits = try reader.readInt(i16, .big);
+            const weight = try reader.readInt(i16, .big);
+            const sign = try reader.readInt(u16, .big);
+            const dscale = try reader.readInt(i16, .big);
+
+            // Handle special cases
+            switch (sign) {
+                0xC000 => return PGNummericString{ .static = "NaN" },
+                0xD000 => return PGNummericString{ .static = "Infinity" },
+                0xF000 => return PGNummericString{ .static = "-Infinity" },
+                0x4000, 0x0000 => {},
+                else => return error.InvalidSign,
+            }
+
+            if (ndigits == 0) {
+                return PGNummericString{ .static = "0" };
+            }
+
+            // Add negative sign if needed
+            if (sign == 0x4000) {
+                try result.append('-');
+            }
+
+            // Calculate decimal point position
+            var decimal_pos: i32 = @as(i32, weight + 1) * 4;
+            if (decimal_pos <= 0) {
+                decimal_pos = 1;
+            }
+            // Output all digits before the decimal point
+
+            var scale_start: i32 = 0;
+            if (weight < 0) {
+                try result.append('0');
+                scale_start = @as(i32, @intCast(weight)) + 1;
+            } else {
+                var idx: usize = 0;
+                var first_non_zero = false;
+
+                while (idx <= weight) : (idx += 1) {
+                    const digit = if (idx < ndigits) try reader.readInt(u16, .big) else 0;
+                    var digit_str: [4]u8 = undefined;
+                    const digit_len = std.fmt.formatIntBuf(&digit_str, digit, 10, .lower, .{ .width = 4, .fill = '0' });
+                    if (!first_non_zero) {
+                        //In the first digit, suppress extra leading decimal zeroes
+                        var start_idx: usize = 0;
+                        while (start_idx < digit_len and digit_str[start_idx] == '0') : (start_idx += 1) {}
+                        if (start_idx == digit_len) continue;
+                        const digit_slice = digit_str[start_idx..digit_len];
+                        try result.appendSlice(digit_slice);
+                        first_non_zero = true;
+                    } else {
+                        try result.appendSlice(digit_str[0..digit_len]);
+                    }
+                }
+            }
+            // If requested, output a decimal point and all the digits that follow it.
+            // We initially put out a multiple of 4 digits, then truncate if needed.
+            if (dscale > 0) {
+                try result.append('.');
+                // negative scale means we need to add zeros before the decimal point
+                // greater than ndigits means we need to add zeros after the decimal point
+                var idx: isize = scale_start;
+                const end: usize = result.items.len + @as(usize, @intCast(dscale));
+                while (idx < dscale) : (idx += 4) {
+                    if (idx >= 0 and idx < ndigits) {
+                        const digit = reader.readInt(u16, .big) catch 0;
+                        var digit_str: [4]u8 = undefined;
+                        const digit_len = std.fmt.formatIntBuf(&digit_str, digit, 10, .lower, .{ .width = 4, .fill = '0' });
+                        try result.appendSlice(digit_str[0..digit_len]);
+                    } else {
+                        try result.appendSlice("0000");
+                    }
+                }
+                if (result.items.len > end) {
+                    result.items.len = end;
+                }
+            }
+            return PGNummericString{ .dynamic = result.items };
         }
 
         pub fn parseBinary(comptime tag: types.Tag, comptime ReturnType: type, bytes: []const u8) AnyPostgresError!ReturnType {
@@ -3126,6 +3248,7 @@ pub const PostgresSQLConnection = struct {
 
                                 continue;
                             };
+                            this.flags.is_ready_for_query = false;
                             req.status = .binding;
                             return;
                         },
@@ -3140,7 +3263,6 @@ pub const PostgresSQLConnection = struct {
                                 bun.assert(thisValue != .zero);
                                 // prepareAndQueryWithSignature will write + bind + execute, it will change to running after binding is complete
                                 const binding_value = PostgresSQLQuery.bindingGetCached(thisValue) orelse .zero;
-
                                 PostgresRequest.prepareAndQueryWithSignature(this.globalObject, query_str.slice(), binding_value, PostgresSQLConnection.Writer, this.writer(), &stmt.signature) catch |err| {
                                     stmt.status = .failed;
                                     stmt.error_response = .{ .postgres_error = err };
@@ -3150,6 +3272,7 @@ pub const PostgresSQLConnection = struct {
 
                                     continue;
                                 };
+                                this.flags.is_ready_for_query = false;
                                 req.status = .binding;
                                 stmt.status = .parsing;
 
@@ -3177,6 +3300,7 @@ pub const PostgresSQLConnection = struct {
 
                                 continue;
                             };
+                            this.flags.is_ready_for_query = false;
                             stmt.status = .parsing;
                             return;
                         },
@@ -3207,9 +3331,6 @@ pub const PostgresSQLConnection = struct {
 
     pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_literal), comptime Context: type, reader: protocol.NewReader(Context)) AnyPostgresError!void {
         debug("on({s})", .{@tagName(MessageType)});
-        if (comptime MessageType != .ReadyForQuery) {
-            this.flags.is_ready_for_query = false;
-        }
 
         switch (comptime MessageType) {
             .DataRow => {
@@ -4006,7 +4127,7 @@ const Signature = struct {
             return error.InvalidQueryBinding;
         }
         // max u64 length is 20, max prepared_statement_name length is 63
-        const prepared_statement_name = try bun.fmt.allocPrint(bun.default_allocator, "P{s}${d}", .{ name.items[0..@min(40, name.items.len)], prepared_statement_id });
+        const prepared_statement_name = try std.fmt.allocPrint(bun.default_allocator, "P{s}${d}", .{ name.items[0..@min(40, name.items.len)], prepared_statement_id });
 
         return Signature{
             .prepared_statement_name = prepared_statement_name,

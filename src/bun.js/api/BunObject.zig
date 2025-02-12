@@ -532,17 +532,18 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
     return ret;
 }
 
-export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) ZigString {
+export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) bun.String {
     // very stable memory address
     var array = MutableString.init(getAllocator(globalThis), 0) catch unreachable;
+    defer array.deinit();
     var buffered_writer = MutableString.BufferedWriter{ .context = &array };
     const writer = buffered_writer.writer();
 
     var formatter = ConsoleObject.Formatter{ .globalThis = globalThis };
-    writer.print("{}", .{value.toFmt(&formatter)}) catch return ZigString.Empty;
-    buffered_writer.flush() catch return ZigString.Empty;
-
-    return ZigString.init(array.slice()).withEncoding();
+    defer formatter.deinit();
+    writer.print("{}", .{value.toFmt(&formatter)}) catch return .empty;
+    buffered_writer.flush() catch return .empty;
+    return bun.String.createUTF8(array.slice());
 }
 
 export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) bun.String {
@@ -3123,7 +3124,7 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
 
     switch (config.ssl_config != null) {
         inline else => |has_ssl_config| {
-            switch (config.development) {
+            switch (config.isDevelopment()) {
                 inline else => |development| {
                     const ServerType = comptime switch (development) {
                         true => switch (has_ssl_config) {

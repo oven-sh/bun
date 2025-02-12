@@ -146,8 +146,7 @@ pub const LifecycleScriptSubprocess = struct {
         const combined_script: [:0]u8 = copy_script.items[0 .. copy_script.items.len - 1 :0];
 
         if (this.foreground and this.manager.options.log_level != .silent) {
-            Output.prettyError("<r><d><magenta>$<r> <d><b>{s}<r>\n", .{combined_script});
-            Output.flush();
+            Output.command(combined_script);
         } else if (manager.scripts_node) |scripts_node| {
             manager.setNodeName(
                 scripts_node,

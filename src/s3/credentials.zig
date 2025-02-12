@@ -674,7 +674,7 @@ pub const S3Credentials = struct {
                 var sha_digest = std.mem.zeroes(bun.sha.SHA256.Digest);
                 bun.sha.SHA256.hash(canonical, &sha_digest, JSC.VirtualMachine.get().rareData().boringEngine());
 
-                const signValue = try std.fmt.bufPrint(&tmp_buffer, "AWS4-HMAC-SHA256\n{s}\n{s}/{s}/{s}/aws4_request\n{s}", .{ amz_date, amz_day, region, service_name, bun.fmt.bytesToHex(sha_digest[0..bun.sha.SHA256.digest], .lower) });
+                const signValue = try std.fmt.bufPrint(&tmp_buffer, "AWS4-HMAC-SHA256\n{s}\n{s}/{s}/{s}/aws4_request\n{s}", .{ amz_date, amz_day, region, service_name, std.fmt.bytesToHex(sha_digest[0..bun.sha.SHA256.digest], .lower) });
 
                 const signature = bun.hmac.generate(sigDateRegionServiceReq, signValue, .sha256, &hmac_sig_service) orelse return error.FailedToGenerateSignature;
 
@@ -684,13 +684,13 @@ pub const S3Credentials = struct {
                             break :brk try std.fmt.allocPrint(
                                 bun.default_allocator,
                                 "{s}://{s}{s}?X-Amz-Acl={s}&x-amz-storage-class={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                                .{ protocol, host, normalizedPath, acl_value, storage_class_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                                .{ protocol, host, normalizedPath, acl_value, storage_class_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
                             );
                         } else {
                             break :brk try std.fmt.allocPrint(
                                 bun.default_allocator,
                                 "{s}://{s}{s}?X-Amz-Acl={s}&x-amz-storage-class={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                                .{ protocol, host, normalizedPath, acl_value, storage_class_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                                .{ protocol, host, normalizedPath, acl_value, storage_class_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
                             );
                         }
                     } else {
@@ -698,13 +698,13 @@ pub const S3Credentials = struct {
                             break :brk try std.fmt.allocPrint(
                                 bun.default_allocator,
                                 "{s}://{s}{s}?x-amz-storage-class={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                                .{ protocol, host, normalizedPath, storage_class_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                                .{ protocol, host, normalizedPath, storage_class_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
                             );
                         } else {
                             break :brk try std.fmt.allocPrint(
                                 bun.default_allocator,
                                 "{s}://{s}{s}?x-amz-storage-class={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                                .{ protocol, host, normalizedPath, storage_class_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                                .{ protocol, host, normalizedPath, storage_class_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
                             );
                         }
                     }
@@ -714,13 +714,13 @@ pub const S3Credentials = struct {
                             break :brk try std.fmt.allocPrint(
                                 bun.default_allocator,
                                 "{s}://{s}{s}?X-Amz-Acl={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                                .{ protocol, host, normalizedPath, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                                .{ protocol, host, normalizedPath, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
                             );
                         } else {
                             break :brk try std.fmt.allocPrint(
                                 bun.default_allocator,
                                 "{s}://{s}{s}?X-Amz-Acl={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                                .{ protocol, host, normalizedPath, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                                .{ protocol, host, normalizedPath, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
                             );
                         }
                     } else {
@@ -728,13 +728,13 @@ pub const S3Credentials = struct {
                             break :brk try std.fmt.allocPrint(
                                 bun.default_allocator,
                                 "{s}://{s}{s}?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                                .{ protocol, host, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                                .{ protocol, host, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
                             );
                         } else {
                             break :brk try std.fmt.allocPrint(
                                 bun.default_allocator,
                                 "{s}://{s}{s}?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                                .{ protocol, host, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                                .{ protocol, host, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
                             );
                         }
                     }
@@ -808,14 +808,14 @@ pub const S3Credentials = struct {
                 var sha_digest = std.mem.zeroes(bun.sha.SHA256.Digest);
                 bun.sha.SHA256.hash(canonical, &sha_digest, JSC.VirtualMachine.get().rareData().boringEngine());
 
-                const signValue = try std.fmt.bufPrint(&tmp_buffer, "AWS4-HMAC-SHA256\n{s}\n{s}/{s}/{s}/aws4_request\n{s}", .{ amz_date, amz_day, region, service_name, bun.fmt.bytesToHex(sha_digest[0..bun.sha.SHA256.digest], .lower) });
+                const signValue = try std.fmt.bufPrint(&tmp_buffer, "AWS4-HMAC-SHA256\n{s}\n{s}/{s}/{s}/aws4_request\n{s}", .{ amz_date, amz_day, region, service_name, std.fmt.bytesToHex(sha_digest[0..bun.sha.SHA256.digest], .lower) });
 
                 const signature = bun.hmac.generate(sigDateRegionServiceReq, signValue, .sha256, &hmac_sig_service) orelse return error.FailedToGenerateSignature;
 
                 break :brk try std.fmt.allocPrint(
                     bun.default_allocator,
                     "AWS4-HMAC-SHA256 Credential={s}/{s}/{s}/{s}/aws4_request, SignedHeaders={s}, Signature={s}",
-                    .{ this.accessKeyId, amz_day, region, service_name, signed_headers, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                    .{ this.accessKeyId, amz_day, region, service_name, signed_headers, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
                 );
             }
         };

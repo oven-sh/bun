@@ -1629,3 +1629,5 @@ declare class ResolveMessage {
   toString(): string;
 }
 ```
+
+{% bunCLIUsage command="build" /%}

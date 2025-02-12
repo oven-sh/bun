@@ -202,8 +202,8 @@ JSObject* createError(Zig::JSGlobalObject* globalObject, ErrorCode code, JSC::JS
     return createError(vm, globalObject, code, message, isDOMExceptionPrototype);
 }
 
-// export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) ZigString
-extern "C" ZigString Bun__inspect(JSC::JSGlobalObject* globalObject, JSValue value);
+// export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) bun.String
+extern "C" BunString Bun__inspect(JSC::JSGlobalObject* globalObject, JSValue value);
 
 //
 WTF::String JSValueToStringSafe(JSC::JSGlobalObject* globalObject, JSValue arg)
@@ -247,9 +247,7 @@ WTF::String JSValueToStringSafe(JSC::JSGlobalObject* globalObject, JSValue arg)
     }
     }
 
-    ZigString zstring = Bun__inspect(globalObject, arg);
-    BunString bstring(BunStringTag::ZigString, BunStringImpl(zstring));
-    return bstring.toWTFString();
+    return Bun__inspect(globalObject, arg).transferToWTFString();
 }
 
 WTF::String determineSpecificType(JSC::JSGlobalObject* globalObject, JSValue value)
@@ -618,8 +616,12 @@ JSC::EncodedJSValue STRING_TOO_LONG(JSC::ThrowScope& throwScope, JSC::JSGlobalOb
     return {};
 }
 
-JSC::EncodedJSValue BUFFER_OUT_OF_BOUNDS(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+JSC::EncodedJSValue BUFFER_OUT_OF_BOUNDS(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral name)
 {
+    if (!name.isEmpty()) {
+        throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_BUFFER_OUT_OF_BOUNDS, makeString("\""_s, name, "\" is outside of buffer bounds"_s)));
+        return {};
+    }
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_BUFFER_OUT_OF_BOUNDS, "Attempt to access memory outside buffer bounds"_s));
     return {};
 }

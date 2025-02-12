@@ -196,6 +196,8 @@ import icon from "./icon.png" with { type: "file" };
 import { file } from "bun";
 
 const bytes = await file(icon).arrayBuffer();
+// await fs.promises.readFile(icon)
+// fs.readFileSync(icon)
 ```
 
 ### Embed SQLite databases

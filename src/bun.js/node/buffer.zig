@@ -1,3 +1,4 @@
+const std = @import("std");
 const bun = @import("root").bun;
 const JSC = bun.JSC;
 const Encoder = JSC.WebCore.Encoder;
@@ -58,7 +59,7 @@ pub const BufferVectorized = struct {
             inline 4, 8, 16 => |n| if (comptime Environment.isMac) {
                 const pattern = buf[0..n];
                 buf = buf[pattern.len..];
-                @field(bun.C, bun.fmt.comptimePrint("memset_pattern{d}", .{n}))(buf.ptr, pattern.ptr, buf.len);
+                @field(bun.C, std.fmt.comptimePrint("memset_pattern{d}", .{n}))(buf.ptr, pattern.ptr, buf.len);
                 return true;
             },
             else => {},

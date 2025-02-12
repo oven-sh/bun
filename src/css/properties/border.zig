@@ -479,7 +479,7 @@ pub const BorderInlineWidth = struct {
 };
 
 pub fn ImplFallbacks(comptime T: type) type {
-    const field_names = bun.meta.fieldNames(T);
+    const field_names = std.meta.fieldNames(T);
     return struct {
         pub fn getFallbacks(this: *T, allocator: std.mem.Allocator, targets: css.Targets) css.SmallList(T, 2) {
             const ColorFallbackKind = css.css_values.color.ColorFallbackKind;

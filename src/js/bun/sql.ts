@@ -34,7 +34,6 @@ const escapeIdentifier = function escape(str) {
 class SQLResultArray extends PublicArray {
   static [Symbol.toStringTag] = "SQLResults";
 
-  statement;
   command;
   count;
 }
@@ -135,6 +134,7 @@ class Query extends PublicPromise {
       resolve_ = resolve;
       reject_ = reject;
     });
+
     this[_resolve] = resolve_;
     this[_reject] = reject_;
     this[_handle] = null;
@@ -930,23 +930,24 @@ function normalizeStrings(strings, values) {
     }
 
     for (var i = 1; i < count; i++) {
-      out += `$${i}${strings[i]}`;
+      // this space in between is important
+      out += `$${i} ${strings[i]}`;
     }
     return out;
   }
-
   return strings + "";
 }
 function hasQuery(value: any) {
   return value instanceof Query;
 }
-function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize, bigint) {
+function handleQueryFragment(strings, values) {
   let sqlString;
   let final_values: Array<any>;
+  let final_strings = [];
+
   if ($isArray(strings) && values.some(hasQuery)) {
     // we need to handle fragments of queries
     final_values = [];
-    const final_strings = [];
     let strings_idx = 0;
 
     for (let i = 0; i < values.length; i++) {
@@ -954,19 +955,43 @@ function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize, bigint
       if (value instanceof Query) {
         let sub_strings = value[_strings];
         var is_unsafe = value[_flags] & SQLQueryFlags.unsafe;
-
         if (typeof sub_strings === "string") {
           if (!is_unsafe) {
             // identifier
             sub_strings = escapeIdentifier(sub_strings);
           }
-          //@ts-ignore
-          final_strings.push(strings[strings_idx] + sub_strings + strings[strings_idx + 1]);
-          strings_idx += 2; // we merged 2 strings into 1
+          if (final_strings.length === 0) {
+            // we are the first value
+            let final_string_value = strings[strings_idx] + sub_strings;
+            strings_idx++;
+            if (strings_idx < strings.length) {
+              final_string_value += strings[strings_idx];
+              strings_idx++;
+            }
+            //@ts-ignore
+            final_strings.push(final_string_value);
+          } else {
+            // merge the strings with current string
+            const current_idx = final_strings.length - 1;
+            final_strings[current_idx] = final_strings[current_idx] + sub_strings;
+            if (strings_idx < strings.length) {
+              final_strings[current_idx] += strings[strings_idx];
+              strings_idx++;
+            }
+          }
           // in this case we dont have values to merge
         } else {
           // complex fragment, we need to merge values
-          const sub_values = value[_values];
+          let sub_values = value[_values];
+
+          if (sub_values.some(hasQuery)) {
+            const { final_strings: sub_final_strings, final_values: sub_final_values } = handleQueryFragment(
+              sub_strings,
+              sub_values,
+            );
+            sub_strings = sub_final_strings;
+            sub_values = sub_final_values;
+          }
 
           if (final_strings.length > 0) {
             // complex not the first
@@ -1001,13 +1026,19 @@ function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize, bigint
         final_values.push(value);
       }
     }
-
-    sqlString = normalizeStrings(final_strings, final_values);
   } else {
-    sqlString = normalizeStrings(strings, values);
+    final_strings = strings;
     final_values = values;
   }
+
+  return { final_strings, final_values };
+}
+function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize, bigint) {
   let columns;
+
+  let { final_strings, final_values } = handleQueryFragment(strings, values);
+
+  const sqlString = normalizeStrings(final_strings, final_values);
   if (hasSQLArrayParameter) {
     hasSQLArrayParameter = false;
     const v = final_values[0];
@@ -1058,6 +1089,12 @@ class SQLArrayParameter {
   }
 }
 
+function decodeIfValid(value) {
+  if (value) {
+    return decodeURIComponent(value);
+  }
+  return null;
+}
 function loadOptions(o) {
   var hostname,
     port,
@@ -1102,7 +1139,6 @@ function loadOptions(o) {
         url = _url;
       }
     }
-
     if (o?.tls) {
       sslMode = SSLMode.require;
       tls = o.tls;
@@ -1110,14 +1146,14 @@ function loadOptions(o) {
   } else if (typeof o === "string") {
     url = new URL(o);
   }
-
+  o ||= {};
   if (url) {
     ({ hostname, port, username, password, adapter } = o);
     // object overrides url
     hostname ||= url.hostname;
     port ||= url.port;
-    username ||= url.username;
-    password ||= url.password;
+    username ||= decodeIfValid(url.username);
+    password ||= decodeIfValid(url.password);
     adapter ||= url.protocol;
 
     if (adapter[adapter.length - 1] === ":") {
@@ -1135,12 +1171,12 @@ function loadOptions(o) {
     }
     query = query.trim();
   }
-  o ||= {};
   hostname ||= o.hostname || o.host || env.PGHOST || "localhost";
   port ||= Number(o.port || env.PGPORT || 5432);
   username ||= o.username || o.user || env.PGUSERNAME || env.PGUSER || env.USER || env.USERNAME || "postgres";
-  database ||= o.database || o.db || (url?.pathname ?? "").slice(1) || env.PGDATABASE || username;
+  database ||= o.database || o.db || decodeIfValid((url?.pathname ?? "").slice(1)) || env.PGDATABASE || username;
   password ||= o.password || o.pass || env.PGPASSWORD || "";
+
   tls ||= o.tls || o.ssl;
   adapter ||= o.adapter || "postgres";
   max = o.max;
@@ -1212,15 +1248,13 @@ function loadOptions(o) {
 
   if (sslMode !== SSLMode.disable && !tls?.serverName) {
     if (hostname) {
-      tls = {
-        serverName: hostname,
-      };
-    } else {
+      tls = { ...tls, serverName: hostname };
+    } else if (!!tls) {
       tls = true;
     }
   }
 
-  if (!!tls) {
+  if (!!tls && sslMode === SSLMode.disable) {
     sslMode = SSLMode.prefer;
   }
   port = Number(port);

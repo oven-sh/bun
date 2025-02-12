@@ -70,8 +70,6 @@ pub inline fn clampFloat(_self: anytype, min: @TypeOf(_self), max: @TypeOf(_self
     return self;
 }
 
-pub const ArrayList = std.ArrayListUnmanaged;
-
 /// We cannot use a threadlocal memory allocator for FileSystem-related things
 /// FileSystem is a singleton.
 pub const fs_allocator = default_allocator;
@@ -104,7 +102,7 @@ pub const JSOOM = OOM || JSError;
 
 pub const detectCI = @import("./ci_info.zig").detectCI;
 
-pub const C = @import("root").C;
+pub const C = @import("c.zig");
 pub const sha = @import("./sha.zig");
 pub const FeatureFlags = @import("feature_flags.zig");
 pub const meta = @import("./meta.zig");
@@ -140,11 +138,7 @@ pub const Bitflags = @import("./bitflags.zig").Bitflags;
 pub const css = @import("./css/css_parser.zig");
 pub const validators = @import("./bun.js/node/util/validators.zig");
 
-pub const shell = struct {
-    pub usingnamespace @import("./shell/shell.zig");
-    pub const ShellSubprocess = @import("./shell/subproc.zig").ShellSubprocess;
-    // pub const ShellSubprocessMini = @import("./shell/subproc.zig").ShellSubprocessMini;
-};
+pub const shell = @import("./shell/shell.zig");
 
 pub const Output = @import("./output.zig");
 pub const Global = @import("./Global.zig");
@@ -730,7 +724,11 @@ pub const http = @import("./http.zig");
 
 pub const Analytics = @import("./analytics/analytics_thread.zig");
 
-pub usingnamespace @import("./tagged_pointer.zig");
+const tagged_pointer = @import("./tagged_pointer.zig");
+pub const TagTypeEnumWithTypeMap = tagged_pointer.TagTypeEnumWithTypeMap;
+pub const TaggedPointer = tagged_pointer.TaggedPointer;
+pub const TaggedPointerUnion = tagged_pointer.TaggedPointerUnion;
+pub const TypeMap = tagged_pointer.TypeMap;
 
 pub fn onceUnsafe(comptime function: anytype, comptime ReturnType: type) ReturnType {
     const Result = struct {
@@ -791,8 +789,7 @@ pub const invalid_fd: FileDescriptor = FDImpl.invalid.encode();
 
 pub const simdutf = @import("./bun.js/bindings/bun-simdutf.zig");
 
-pub const JSC = @import("root").JavaScriptCore;
-pub const AsyncIO = @import("async_io");
+pub const JSC = @import("jsc.zig");
 
 pub const logger = @import("./logger.zig");
 pub const ThreadPool = @import("./thread_pool.zig");
@@ -1466,7 +1463,7 @@ pub fn getFdPathW(fd_: anytype, buf: *WPathBuffer) ![]u16 {
     @panic("TODO unsupported platform for getFdPathW");
 }
 
-fn lenSliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) usize {
+fn lenSliceTo(ptr: anytype, comptime end: std.meta.Elem(@TypeOf(ptr))) usize {
     switch (@typeInfo(@TypeOf(ptr))) {
         .pointer => |ptr_info| switch (ptr_info.size) {
             .one => switch (@typeInfo(ptr_info.child)) {
@@ -1510,7 +1507,7 @@ fn lenSliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) usize {
 }
 
 /// Helper for the return type of sliceTo()
-fn SliceTo(comptime T: type, comptime end: meta.Elem(T)) type {
+fn SliceTo(comptime T: type, comptime end: std.meta.Elem(T)) type {
     switch (@typeInfo(T)) {
         .optional => |optional_info| {
             return ?SliceTo(optional_info.child, end);
@@ -1570,7 +1567,7 @@ fn SliceTo(comptime T: type, comptime end: meta.Elem(T)) type {
 /// resulting slice is also sentinel terminated.
 /// Pointer properties such as mutability and alignment are preserved.
 /// C pointers are assumed to be non-null.
-pub fn sliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) SliceTo(@TypeOf(ptr), end) {
+pub fn sliceTo(ptr: anytype, comptime end: std.meta.Elem(@TypeOf(ptr))) SliceTo(@TypeOf(ptr), end) {
     if (@typeInfo(@TypeOf(ptr)) == .optional) {
         const non_null = ptr orelse return null;
         return sliceTo(non_null, end);
@@ -3857,19 +3854,15 @@ pub fn OrdinalT(comptime Int: type) type {
 pub const Ordinal = OrdinalT(c_int);
 
 pub fn memmove(output: []u8, input: []const u8) void {
-    if (@intFromPtr(output.ptr) == @intFromPtr(input.ptr) or output.len == 0) return;
-    if (comptime Environment.allow_assert) {
-        assert(output.len >= input.len and output.len > 0);
+    if (output.len == 0) {
+        return;
     }
 
-    const does_input_or_output_overlap = (@intFromPtr(input.ptr) < @intFromPtr(output.ptr) and
-        @intFromPtr(input.ptr) + input.len > @intFromPtr(output.ptr)) or
-        (@intFromPtr(output.ptr) < @intFromPtr(input.ptr) and
-        @intFromPtr(output.ptr) + output.len > @intFromPtr(input.ptr));
+    if (comptime Environment.allow_assert) {
+        assert(output.len >= input.len);
+    }
 
-    if (!does_input_or_output_overlap) {
-        @memcpy(output[0..input.len], input);
-    } else if (comptime Environment.isNative) {
+    if (Environment.isNative and !@inComptime()) {
         C.memmove(output.ptr, input.ptr, input.len);
     } else {
         for (input, output) |input_byte, *out| {
@@ -4025,7 +4018,7 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
             return @enumFromInt(int);
         }
 
-        /// Prefer this over @intFromEnum because of type confusion with `.optional`
+        /// Prefer this over @intFromEnum because of type confusion with `.Optional`
         pub inline fn get(i: @This()) backing_int {
             bun.assert(@intFromEnum(i) != null_value); // memory corruption
             return @intFromEnum(i);
@@ -4052,8 +4045,15 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
             none = std.math.maxInt(backing_int),
             _,
 
-            pub inline fn init(maybe: ?Index) Optional {
-                return if (maybe) |i| i.toOptional() else .none;
+            /// Signatures:
+            /// - `init(maybe: ?Index) Optional`
+            /// - `init(maybe: ?backing_int) Optional`
+            pub inline fn init(maybe: anytype) Optional {
+                comptime var t = @typeInfo(@TypeOf(maybe));
+                if (t == .optional) t = @typeInfo(t.optional.child);
+                if (t == .int or t == .comptime_int)
+                    return if (@as(?backing_int, maybe)) |i| Index.init(i).toOptional() else .none;
+                return if (@as(?Index, maybe)) |i| i.toOptional() else .none;
             }
 
             pub inline fn unwrap(oi: Optional) ?Index {
@@ -4365,7 +4365,7 @@ pub const OSPathBufferPool = if (Environment.isWindows) WPathBufferPool else Pat
 
 pub const S3 = @import("./s3/client.zig");
 
-const CowString = CowSlice(u8);
+pub const CowString = CowSlice(u8);
 
 /// "Copy on write" slice. There are many instances when it is desired to re-use
 /// a slice, but doing so would make it unknown if that slice should be freed.
@@ -4392,7 +4392,7 @@ pub fn CowSlice(T: type) type {
     return struct {
         ptr: [*]const T,
         flags: packed struct(usize) {
-            len: @Type(.{ .Int = .{
+            len: @Type(.{ .int = .{
                 .bits = @bitSizeOf(usize) - 1,
                 .signedness = .unsigned,
             } }),
@@ -4412,12 +4412,16 @@ pub fn CowSlice(T: type) type {
                     .len = @intCast(data.len),
                 },
                 .debug = if (cow_str_assertions)
-                    bun.new(DebugData(.{
+                    bun.new(DebugData, .{
                         .mutex = .{},
                         .allocator = allocator,
                         .borrows = 0,
-                    })),
+                    }),
             };
+        }
+
+        pub fn initDupe(data: []const T, allocator: Allocator) !@This() {
+            return initOwned(try allocator.dupe(T, data), allocator);
         }
 
         /// `.deinit` will not free memory from this slice.
@@ -4458,7 +4462,10 @@ pub fn CowSlice(T: type) type {
             if (cow_str_assertions) if (str.debug) |debug| {
                 debug.mutex.lock();
                 defer debug.mutex.unlock();
-                bun.assert(debug.allocator == allocator);
+                bun.assert(
+                    debug.allocator.ptr == allocator.ptr and
+                        debug.allocator.vtable == allocator.vtable,
+                );
                 if (str.flags.is_owned) {
                     bun.assert(debug.borrows == 0); // active borrows become invalid data
                 } else {
@@ -4474,3 +4481,5 @@ pub fn CowSlice(T: type) type {
 }
 
 const Allocator = std.mem.Allocator;
+
+pub const server = @import("./bun.js/api/server.zig");

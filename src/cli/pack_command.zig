@@ -71,7 +71,7 @@ pub const PackCommand = struct {
             if (log_level != .silent) {
                 Output.prettyln("\n<r><b><blue>Total files<r>: {d}", .{stats.total_files});
                 if (maybe_shasum) |shasum| {
-                    Output.prettyln("<b><blue>Shasum<r>: {s}", .{bun.fmt.bytesToHex(shasum, .lower)});
+                    Output.prettyln("<b><blue>Shasum<r>: {s}", .{std.fmt.bytesToHex(shasum, .lower)});
                 }
                 if (maybe_integrity) |integrity| {
                     Output.prettyln("<b><blue>Integrity<r>: {}", .{bun.fmt.integrity(integrity, .short)});
@@ -1356,10 +1356,12 @@ pub const PackCommand = struct {
                         var includes: std.ArrayListUnmanaged(Pattern) = .{};
                         defer includes.deinit(ctx.allocator);
 
+                        var path_buf: PathBuffer = undefined;
                         var files_array = _files_array;
                         while (files_array.next()) |files_entry| {
                             if (files_entry.asString(ctx.allocator)) |file_entry_str| {
-                                const parsed = try Pattern.fromUTF8(ctx.allocator, file_entry_str) orelse continue;
+                                const normalized = bun.path.normalizeBuf(file_entry_str, &path_buf, .posix);
+                                const parsed = try Pattern.fromUTF8(ctx.allocator, normalized) orelse continue;
                                 try includes.append(ctx.allocator, parsed);
                                 continue;
                             }
@@ -2403,7 +2405,7 @@ pub const bindings = struct {
         defer sha1.deinit();
         sha1.update(tarball);
         sha1.final(&sha1_digest);
-        const shasum_str = String.createFormat("{s}", .{bun.fmt.bytesToHex(sha1_digest, .lower)}) catch bun.outOfMemory();
+        const shasum_str = String.createFormat("{s}", .{std.fmt.bytesToHex(sha1_digest, .lower)}) catch bun.outOfMemory();
 
         var sha512_digest: sha.SHA512.Digest = undefined;
         var sha512 = sha.SHA512.init();

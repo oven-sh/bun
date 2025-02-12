@@ -46,6 +46,7 @@ const BunBuildOptions = struct {
     sha: []const u8,
     /// enable debug logs in release builds
     enable_logs: bool = false,
+    enable_asan: bool,
     tracy_callstack_depth: u16,
     reported_nodejs_version: Version,
     /// To make iterating on some '@embedFile's faster, we load them at runtime
@@ -275,6 +276,7 @@ pub fn build(b: *Build) !void {
 
         .tracy_callstack_depth = b.option(u16, "tracy_callstack_depth", "") orelse 10,
         .enable_logs = b.option(bool, "enable_logs", "Enable logs in release") orelse false,
+        .enable_asan = b.option(bool, "enable_asan", "Enable asan") orelse false,
     };
 
     // zig build obj
@@ -393,6 +395,7 @@ pub fn addMultiCheck(
                 .reported_nodejs_version = root_build_options.reported_nodejs_version,
                 .codegen_path = root_build_options.codegen_path,
                 .no_llvm = root_build_options.no_llvm,
+                .enable_asan = root_build_options.enable_asan,
             };
 
             var obj = addBunObject(b, &options);
@@ -426,7 +429,7 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
         .name = if (opts.optimize == .Debug) "bun-debug" else "bun",
         .root_source_file = switch (opts.os) {
             .wasm => b.path("root_wasm.zig"),
-            else => b.path("root.zig"),
+            else => b.path("src/main.zig"),
             // else => b.path("root_css.zig"),
         },
         .target = opts.target,
@@ -440,6 +443,14 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
         .omit_frame_pointer = false,
         .strip = false, // stripped at the end
     });
+    if (opts.enable_asan) {
+        if (@hasField(Build.Module, "sanitize_address")) {
+            obj.root_module.sanitize_address = true;
+        } else {
+            const fail_step = b.addFail("asan is not supported on this platform");
+            obj.step.dependOn(&fail_step.step);
+        }
+    }
     obj.bundle_compiler_rt = false;
     obj.root_module.omit_frame_pointer = false;
 
@@ -508,16 +519,6 @@ fn exists(path: []const u8) bool {
 fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
     const os = opts.os;
 
-    const io_path = switch (os) {
-        .mac => "src/io/io_darwin.zig",
-        .linux => "src/io/io_linux.zig",
-        .windows => "src/io/io_windows.zig",
-        else => "src/io/io_stub.zig",
-    };
-    obj.root_module.addAnonymousImport("async_io", .{
-        .root_source_file = b.path(io_path),
-    });
-
     const zlib_internal_path = switch (os) {
         .windows => "src/deps/zlib.win32.zig",
         .linux, .mac => "src/deps/zlib.posix.zig",
@@ -550,6 +551,7 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
         .{ .file = "bun-error/index.js", .enable = opts.shouldEmbedCode() },
         .{ .file = "bun-error/bun-error.css", .enable = opts.shouldEmbedCode() },
         .{ .file = "fallback-decoder.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/react-refresh.js", .enable = opts.shouldEmbedCode() },
         .{ .file = "node-fallbacks/assert.js", .enable = opts.shouldEmbedCode() },
         .{ .file = "node-fallbacks/buffer.js", .enable = opts.shouldEmbedCode() },
         .{ .file = "node-fallbacks/console.js", .enable = opts.shouldEmbedCode() },
@@ -585,6 +587,15 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
                 .root_source_file = .{ .cwd_relative = path },
             });
         }
+    }
+    inline for (.{
+        .{ .import = "completions-bash", .file = b.path("completions/bun.bash") },
+        .{ .import = "completions-zsh", .file = b.path("completions/bun.zsh") },
+        .{ .import = "completions-fish", .file = b.path("completions/bun.fish") },
+    }) |entry| {
+        obj.root_module.addAnonymousImport(entry.import, .{
+            .root_source_file = entry.file,
+        });
     }
 
     if (os == .windows) {

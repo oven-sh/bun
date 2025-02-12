@@ -592,8 +592,10 @@ pub const FilePoll = struct {
 
             poll.flags.insert(.ignore_updates);
             this.pending_free_tail = poll;
-            bun.assert(vm.after_event_loop_callback == null or vm.after_event_loop_callback == @as(?JSC.OpaqueCallback, @ptrCast(&processDeferredFrees)));
-            vm.after_event_loop_callback = @ptrCast(&processDeferredFrees);
+
+            const callback = JSC.OpaqueWrap(Store, processDeferredFrees);
+            bun.assert(vm.after_event_loop_callback == null or vm.after_event_loop_callback == @as(?JSC.OpaqueCallback, callback));
+            vm.after_event_loop_callback = callback;
             vm.after_event_loop_callback_ctx = this;
         }
     };
@@ -1093,7 +1095,111 @@ pub const FilePoll = struct {
     }
 };
 
-pub const Waker = bun.AsyncIO.Waker;
+pub const Waker = switch (Environment.os) {
+    .mac => KEventWaker,
+    .linux => LinuxWaker,
+    else => @compileError(unreachable),
+};
+
+pub const LinuxWaker = struct {
+    fd: bun.FileDescriptor,
+
+    pub fn init() !Waker {
+        return initWithFileDescriptor(bun.toFD(try std.posix.eventfd(0, 0)));
+    }
+
+    pub fn getFd(this: *const Waker) bun.FileDescriptor {
+        return this.fd;
+    }
+
+    pub fn initWithFileDescriptor(fd: bun.FileDescriptor) Waker {
+        return Waker{ .fd = fd };
+    }
+
+    pub fn wait(this: Waker) void {
+        var bytes: usize = 0;
+        _ = std.posix.read(this.fd.cast(), @as(*[8]u8, @ptrCast(&bytes))) catch 0;
+    }
+
+    pub fn wake(this: *const Waker) void {
+        var bytes: usize = 1;
+        _ = std.posix.write(
+            this.fd.cast(),
+            @as(*[8]u8, @ptrCast(&bytes)),
+        ) catch 0;
+    }
+};
+
+pub const KEventWaker = struct {
+    kq: std.posix.fd_t,
+    machport: *anyopaque = undefined,
+    machport_buf: []u8 = &.{},
+    has_pending_wake: bool = false,
+
+    const zeroed = std.mem.zeroes([16]Kevent64);
+
+    const Kevent64 = std.posix.system.kevent64_s;
+
+    pub fn wake(this: *Waker) void {
+        bun.JSC.markBinding(@src());
+
+        if (io_darwin_schedule_wakeup(this.machport)) {
+            this.has_pending_wake = false;
+            return;
+        }
+        this.has_pending_wake = true;
+    }
+
+    pub fn getFd(this: *const Waker) bun.FileDescriptor {
+        return bun.toFD(this.kq);
+    }
+
+    pub fn wait(this: Waker) void {
+        bun.JSC.markBinding(@src());
+        var events = zeroed;
+
+        _ = std.posix.system.kevent64(
+            this.kq,
+            &events,
+            0,
+            &events,
+            events.len,
+            0,
+            null,
+        );
+    }
+
+    extern fn io_darwin_create_machport(
+        *anyopaque,
+        std.posix.fd_t,
+        *anyopaque,
+        usize,
+    ) ?*anyopaque;
+
+    extern fn io_darwin_schedule_wakeup(*anyopaque) bool;
+
+    pub fn init() !Waker {
+        return initWithFileDescriptor(bun.default_allocator, try std.posix.kqueue());
+    }
+
+    pub fn initWithFileDescriptor(allocator: std.mem.Allocator, kq: i32) !Waker {
+        bun.JSC.markBinding(@src());
+        bun.assert(kq > -1);
+        const machport_buf = try allocator.alloc(u8, 1024);
+        const machport = io_darwin_create_machport(
+            machport_buf.ptr,
+            kq,
+            machport_buf.ptr,
+            1024,
+        ) orelse return error.MachportCreationFailed;
+
+        return Waker{
+            .kq = kq,
+            .machport = machport,
+            .machport_buf = machport_buf,
+        };
+    }
+};
 
 pub const Closer = struct {
     fd: bun.FileDescriptor,

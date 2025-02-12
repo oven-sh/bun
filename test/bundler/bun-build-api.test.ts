@@ -612,3 +612,22 @@ describe("Bun.build", () => {
     expect(await html?.text()).toContain("<meta name='injected-by-plugin' content='true'>");
   });
 });
+
+test("onEnd Plugin does not crash", async () => {
+  expect(
+    (async () => {
+      await Bun.build({
+        entrypoints: ["./build.js"],
+        plugins: [
+          {
+            name: "plugin",
+            setup(build) {
+              // @ts-expect-error
+              build.onEnd();
+            },
+          },
+        ],
+      });
+    })(),
+  ).rejects.toThrow("On-end callbacks is not implemented yet. See https://github.com/oven-sh/bun/issues/2771");
+});

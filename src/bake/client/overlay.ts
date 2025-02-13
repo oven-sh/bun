@@ -161,8 +161,6 @@ export function decodeAndAppendError(r: DataViewReader) {
 }
 
 export function updateErrorOverlay() {
-  console.log(errors, updatedErrorOwners);
-
   if (errors.size === 0) {
     if (IS_ERROR_RUNTIME) {
       location.reload();

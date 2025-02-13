@@ -352,7 +352,19 @@ pub const Error = struct {
     }
 
     pub fn format(self: Error, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-        try self.toShellSystemError().format(fmt, opts, writer);
+        // We want to reuse the code from SystemError for formatting.
+        // But, we do not want to call String.createUTF8 on the path/dest strings
+        // because we're intending to pass them to writer.print()
+        // which will convert them back into UTF*.
+        var that = self.withoutPath().toShellSystemError();
+        bun.debugAssert(that.path.tag != .WTFStringImpl);
+        bun.debugAssert(that.dest.tag != .WTFStringImpl);
+        that.path = bun.String.fromUTF8(self.path);
+        that.dest = bun.String.fromUTF8(self.dest);
+        bun.debugAssert(that.path.tag != .WTFStringImpl);
+        bun.debugAssert(that.dest.tag != .WTFStringImpl);
+
+        return that.format(fmt, opts, writer);
     }
 
     pub inline fn getErrno(this: Error) E {
@@ -419,6 +431,14 @@ pub const Error = struct {
             .fd => |fd| this.withFd(fd),
             .path => |path| this.withPath(path.slice()),
         };
+    }
+
+    /// When the memory of the path/dest buffer is unsafe to use, call this function to clone the error without the path/dest.
+    pub fn withoutPath(this: *const Error) Error {
+        var copy = this.*;
+        copy.path = "";
+        copy.dest = "";
+        return copy;
     }
 
     pub fn name(this: *const Error) []const u8 {

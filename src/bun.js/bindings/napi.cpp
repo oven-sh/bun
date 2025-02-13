@@ -322,8 +322,6 @@ void NapiRef::clear()
 // class Reference
 // }
 
-WTF_MAKE_ISO_ALLOCATED_IMPL(NapiRef);
-
 static uint32_t getPropertyAttributes(napi_property_attributes attributes_)
 {
     const uint32_t attributes = static_cast<uint32_t>(attributes_);

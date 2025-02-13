@@ -82,10 +82,7 @@ const BunBuildOptions = struct {
 
         var opts = b.addOptions();
         opts.addOption([]const u8, "base_path", b.pathFromRoot("."));
-        opts.addOption([]const u8, "codegen_path", std.fs.path.resolve(b.graph.arena, &.{
-            b.build_root.path.?,
-            this.codegen_path,
-        }) catch @panic("OOM"));
+        opts.addOption([]const u8, "codegen_path", std.fs.path.resolve(b.graph.arena, &.{ b.build_root.path.?, this.codegen_path }) catch @panic("OOM"));
 
         opts.addOption(bool, "codegen_embed", this.shouldEmbedCode());
         opts.addOption(u32, "canary_revision", this.canary_revision orelse 0);

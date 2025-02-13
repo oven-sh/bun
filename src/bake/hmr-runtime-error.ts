@@ -24,18 +24,21 @@ declare const error: Uint8Array<ArrayBuffer>;
 
 let firstVersionPacket = true;
 
-const ws = initWebSocket({
-  [MessageId.version](dv) {
-    if (firstVersionPacket) {
-      firstVersionPacket = false;
-    } else {
-      // On re-connection, the server may have restarted. The route that was
-      // requested could be in unqueued state. A reload is the only way to
-      // ensure this bundle is enqueued.
-      location.reload();
-    }
-    ws.send("se"); // IncomingMessageId.subscribe with route_update
-  },
+const ws = initWebSocket(
+  {
+    [MessageId.version](dv) {
+      if (firstVersionPacket) {
+        firstVersionPacket = false;
+      } else {
+        // On re-connection, the server may have restarted. The route that was
+        // requested could be in unqueued state. A reload is the only way to
+        // ensure this bundle is enqueued.
+        location.reload();
+      }
+      ws.send("se"); // IncomingMessageId.subscribe with route_update
+    },
 
-  [MessageId.errors]: onErrorMessage,
-});
+    [MessageId.errors]: onErrorMessage,
+  },
+  { displayMessage: "Live-reloading socket" },
+);

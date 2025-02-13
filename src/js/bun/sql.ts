@@ -931,7 +931,7 @@ function createConnection(
     idleTimeout,
     connectionTimeout,
     maxLifetime,
-    !!prepare,
+    !prepare,
   );
 }
 
@@ -1164,8 +1164,8 @@ function loadOptions(o) {
     onconnect,
     onclose,
     max,
-    bigint,
-    prepare;
+    bigint;
+  let prepare = true;
   const env = Bun.env || {};
   var sslMode: SSLMode = SSLMode.disable;
 
@@ -1242,7 +1242,10 @@ function loadOptions(o) {
   maxLifetime ??= o.maxLifetime;
   maxLifetime ??= o.max_lifetime;
   bigint ??= o.bigint;
-  prepare ??= o.prepare;
+  // we need to explicitly set prepare to false if it is false
+  if (o.prepare === false) {
+    prepare = false;
+  }
 
   onconnect ??= o.onconnect;
   onclose ??= o.onclose;

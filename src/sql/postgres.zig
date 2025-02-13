@@ -331,7 +331,6 @@ pub const PostgresSQLQuery = struct {
         binary: bool = false,
         bigint: bool = false,
         simple: bool = false,
-        has_params: bool = false,
         result_mode: PostgresSQLQueryResultMode = .objects,
     } = .{},
 
@@ -631,9 +630,8 @@ pub const PostgresSQLQuery = struct {
 
         const bigint = js_bigint.isBoolean() and js_bigint.asBoolean();
         const simple = js_simple.isBoolean() and js_simple.asBoolean();
-        const has_params = values.getLength(globalThis) > 0;
         if (simple) {
-            if (has_params) {
+            if (values.getLength(globalThis) > 0) {
                 return globalThis.throwInvalidArguments("simple query cannot have parameters", .{});
             }
             if (query.getLength(globalThis) >= std.math.maxInt(i32)) {
@@ -655,7 +653,6 @@ pub const PostgresSQLQuery = struct {
             .flags = .{
                 .bigint = bigint,
                 .simple = simple,
-                .has_params = has_params,
             },
         };
 
@@ -763,47 +760,49 @@ pub const PostgresSQLQuery = struct {
             return error.JSError;
         };
 
-        const entry = connection.statements.getOrPut(bun.default_allocator, bun.hash(signature.name)) catch |err| {
-            signature.deinit();
-            return globalObject.throwError(err, "failed to allocate statement");
-        };
-
         const has_params = signature.fields.len > 0;
         var did_write = false;
         enqueue: {
-            if (entry.found_existing) {
-                this.statement = entry.value_ptr.*;
-                this.statement.?.ref();
-                signature.deinit();
+            var connection_entry_value: ?**PostgresSQLStatement = null;
+            if (!connection.flags.use_unnamed_prepared_statements) {
+                const entry = connection.statements.getOrPut(bun.default_allocator, bun.hash(signature.name)) catch |err| {
+                    signature.deinit();
+                    return globalObject.throwError(err, "failed to allocate statement");
+                };
+                connection_entry_value = entry.value_ptr;
+                if (entry.found_existing) {
+                    this.statement = connection_entry_value.?.*;
+                    this.statement.?.ref();
+                    signature.deinit();
 
-                switch (this.statement.?.status) {
-                    .failed => {
-                        // If the statement failed, we need to throw the error
-                        return globalObject.throwValue(this.statement.?.error_response.?.toJS(globalObject));
-                    },
-                    .prepared => {
-                        if (!connection.hasQueryRunning()) {
-                            this.flags.binary = this.statement.?.fields.len > 0;
-                            debug("bindAndExecute", .{});
+                    switch (this.statement.?.status) {
+                        .failed => {
+                            // If the statement failed, we need to throw the error
+                            return globalObject.throwValue(this.statement.?.error_response.?.toJS(globalObject));
+                        },
+                        .prepared => {
+                            if (!connection.hasQueryRunning()) {
+                                this.flags.binary = this.statement.?.fields.len > 0;
+                                debug("bindAndExecute", .{});
 
-                            // bindAndExecute will bind + execute, it will change to running after binding is complete
-                            PostgresRequest.bindAndExecute(globalObject, this.statement.?, binding_value, columns_value, PostgresSQLConnection.Writer, writer) catch |err| {
-                                if (!globalObject.hasException())
-                                    return globalObject.throwValue(postgresErrorToJS(globalObject, "failed to bind and execute query", err));
-                                return error.JSError;
-                            };
-                            connection.flags.is_ready_for_query = false;
-                            this.status = .binding;
+                                // bindAndExecute will bind + execute, it will change to running after binding is complete
+                                PostgresRequest.bindAndExecute(globalObject, this.statement.?, binding_value, columns_value, PostgresSQLConnection.Writer, writer) catch |err| {
+                                    if (!globalObject.hasException())
+                                        return globalObject.throwValue(postgresErrorToJS(globalObject, "failed to bind and execute query", err));
+                                    return error.JSError;
+                                };
+                                connection.flags.is_ready_for_query = false;
+                                this.status = .binding;
 
-                            did_write = true;
-                        }
-                    },
-                    .parsing, .pending => {},
+                                did_write = true;
+                            }
+                        },
+                        .parsing, .pending => {},
+                    }
+
+                    break :enqueue;
                 }
-
-                break :enqueue;
             }
-
             const can_execute = !connection.hasQueryRunning();
 
             if (can_execute) {
@@ -843,10 +842,16 @@ pub const PostgresSQLQuery = struct {
                 const stmt = bun.default_allocator.create(PostgresSQLStatement) catch {
                     return globalObject.throwOutOfMemory();
                 };
-                connection.prepared_statement_id += 1;
-                stmt.* = .{ .signature = signature, .ref_count = 2, .status = if (can_execute) .parsing else .pending };
-                this.statement = stmt;
-                entry.value_ptr.* = stmt;
+                // we only have connection_entry_value if we are using named prepared statements
+                if (connection_entry_value) |entry_value| {
+                    connection.prepared_statement_id += 1;
+                    stmt.* = .{ .signature = signature, .ref_count = 2, .status = if (can_execute) .parsing else .pending };
+                    this.statement = stmt;
+                    entry_value.* = stmt;
+                } else {
+                    stmt.* = .{ .signature = signature, .ref_count = 1, .status = if (can_execute) .parsing else .pending };
+                    this.statement = stmt;
+                }
             }
         }
         // We need a strong reference to the query so that it doesn't get GC'd
@@ -1818,7 +1823,7 @@ pub const PostgresSQLConnection = struct {
 
     pub fn call(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         var vm = globalObject.bunVM();
-        const arguments = callframe.arguments_old(13).slice();
+        const arguments = callframe.arguments_old(14).slice();
         const hostname_str = arguments[0].toBunString(globalObject);
         defer hostname_str.deref();
         const port = arguments[1].coerce(i32, globalObject);
@@ -4209,7 +4214,7 @@ const Signature = struct {
         return hasher.final();
     }
 
-    pub fn generate(globalObject: *JSC.JSGlobalObject, query: []const u8, array_value: JSValue, columns: JSValue, prepared_statement_id: u64, comptime unnamed: bool) !Signature {
+    pub fn generate(globalObject: *JSC.JSGlobalObject, query: []const u8, array_value: JSValue, columns: JSValue, prepared_statement_id: u64, unnamed: bool) !Signature {
         var fields = std.ArrayList(int4).init(bun.default_allocator);
         var name = try std.ArrayList(u8).initCapacity(bun.default_allocator, query.len);
 

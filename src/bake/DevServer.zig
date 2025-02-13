@@ -4125,7 +4125,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 }
                 try w.writeAll("})");
                 if (side == .client) if (options.source_map_id) |source_map_id| {
-                    try w.writeAll("\n//# sourceMappingURL=" ++ asset_prefix);
+                    try w.writeAll("\n//# sourceMappingURL=" ++ asset_prefix ++ "/");
                     try w.writeAll(&std.fmt.bytesToHex(std.mem.asBytes(&source_map_id), .lower));
                     try w.writeAll(".js.map\n");
                 };

@@ -27,7 +27,15 @@ export const minimalFramework: Bake.Framework = {
   },
 };
 
-export function emptyHtmlFile({ styles = [], scripts = [] }: { styles?: string[]; scripts?: string[] }) {
+export function emptyHtmlFile({
+  styles = [],
+  scripts = [],
+  body = "",
+}: {
+  styles?: string[];
+  scripts?: string[];
+  body?: string;
+}) {
   return dedent`
     <!DOCTYPE html>
     <html>
@@ -36,6 +44,7 @@ export function emptyHtmlFile({ styles = [], scripts = [] }: { styles?: string[]
       </head>
       <body>
         ${scripts.map(script => `<script type="module" src="${script}"></script>`).join("\n        ")}
+        ${body}
       </body>
     </html>
   `;
@@ -68,9 +77,20 @@ export type DevServerTest = (
 };
 
 let interactive = false;
+let activeClient: Client | null = null;
+
 async function maybeWaitInteractive(message: string) {
   if (interactive) {
-    console.error("Press key to " + message);
+    while (activeClient) {
+      const input = prompt("\x1b[32mPress return to " + message + "; JS>\x1b[0m");
+      if (input === "q" || input === "exit") {
+        process.exit(0);
+      }
+      if (input === "" || input == null) return;
+      const result = await activeClient.jsInteractive(input);
+      console.log(result);
+    }
+    console.log("\x1b[32mPress return to " + message + "\x1b[0m");
     await new Promise(resolve => {
       // Enable raw mode
       process.stdin.setRawMode(true);
@@ -161,7 +181,7 @@ export class Dev {
 
   async waitForHotReload() {
     const err = this.output.waitForLine(/error/i);
-    const success = this.output.waitForLine(/bundled route|reloaded/i);
+    const success = this.output.waitForLine(/bundled page|bundled route|reloaded/i);
     await Promise.race([
       // On failure, give a little time in case a partial write caused a
       // bundling error, and a success came in.
@@ -291,6 +311,7 @@ class Client extends EventEmitter {
 
   constructor(url: string) {
     super();
+    activeClient = this;
     const proc = Bun.spawn({
       cmd: [node, path.join(import.meta.dir, "client-fixture.mjs"), url],
       env: {
@@ -310,6 +331,9 @@ class Client extends EventEmitter {
         }
         this.emit("exit", this.exitCode, error);
         this.exited = true;
+        if (activeClient === this) {
+          activeClient = null;
+        }
       },
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -343,6 +367,9 @@ class Client extends EventEmitter {
   }
 
   async [Symbol.asyncDispose]() {
+    if (activeClient === this) {
+      activeClient = null;
+    }
     try {
       this.#proc.send({ type: "exit" });
     } catch (e) {}
@@ -468,6 +495,30 @@ class Client extends EventEmitter {
           type: "evaluate",
           args: [messageId, code],
         });
+      });
+    });
+  }
+
+  jsInteractive(code: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      // Create unique message ID for this evaluation
+      const messageId = Math.random().toString(36).slice(2);
+
+      // Set up one-time handler for the response
+      const handler = (result: any) => {
+        if (result.error) {
+          reject(new Error(result.error));
+        } else {
+          resolve(result.value);
+        }
+      };
+
+      this.once(`js-result-${messageId}`, handler);
+
+      // Send the evaluation request
+      this.#proc.send({
+        type: "evaluate",
+        args: [messageId, code, "interactive"],
       });
     });
   }
@@ -706,7 +757,6 @@ class OutputLineStream extends EventEmitter {
     this.disposed = true;
     this.reader1.cancel();
     this.reader2.cancel();
-    this.emit("close");
   }
 }
 

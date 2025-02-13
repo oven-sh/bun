@@ -32,6 +32,10 @@ onError: *const fn (this: *anyopaque, err: bun.sys.Error) void,
 thread_lock: bun.DebugThreadLock = bun.DebugThreadLock.unlocked,
 
 pub const max_count = 128;
+pub const requires_file_descriptors = switch (Environment.os) {
+    .mac => true,
+    else => false,
+};
 
 pub const Event = WatchEvent;
 pub const Item = WatchItem;

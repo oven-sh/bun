@@ -325,11 +325,13 @@ const Watcher = bun.JSC.NewHotReloader(BundleV2, EventLoop, true);
 /// This assigns a concise, predictable, and unique `.pretty` attribute to a Path.
 /// DevServer relies on pretty paths for identifying modules, so they must be unique.
 fn genericPathWithPrettyInitialized(path: Fs.Path, target: options.Target, top_level_dir: string, allocator: std.mem.Allocator) !Fs.Path {
-    // TODO: outbase
     var buf: bun.PathBuffer = undefined;
 
     const is_node = bun.strings.eqlComptime(path.namespace, "node");
-    if (is_node and bun.strings.hasPrefixComptime(path.text, NodeFallbackModules.import_path)) {
+    if (is_node and
+        (bun.strings.hasPrefixComptime(path.text, NodeFallbackModules.import_path) or
+        !std.fs.path.isAbsolute(path.text)))
+    {
         return path;
     }
 

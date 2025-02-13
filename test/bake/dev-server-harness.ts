@@ -276,6 +276,7 @@ class DevFetchPromise extends Promise<Response> {
 }
 
 const node = process.env.DEV_SERVER_CLIENT_EXECUTABLE ?? Bun.which("node");
+expect(node, "test will fail if this is not node").not.toBe(process.execPath);
 
 /**
  * Controls a subprocess that uses happy-dom as a lightweight browser. It is
@@ -292,7 +293,13 @@ class Client extends EventEmitter {
   constructor(url: string) {
     super();
     const proc = Bun.spawn({
-      cmd: [node, path.join(import.meta.dir, "client-fixture.mjs"), url],
+      cmd: [
+        node,
+        "--no-warnings",
+        "--experimental-websocket", // support node 20
+        path.join(import.meta.dir, "client-fixture.mjs"),
+        url,
+      ],
       env: {
         ...process.env,
       },
@@ -644,6 +651,8 @@ class OutputLineStream extends EventEmitter {
             if (line.includes("============================================================")) {
               this.emit("panic");
             }
+            // These can be noisy due to symlinks.
+            if (isWindows && line.includes("is not in the project directory and will not be watched")) continue;
             console.log("\x1b[0;30m" + name + "|\x1b[0m", line);
             this.emit("line", line);
           }
@@ -777,9 +786,14 @@ export function devTest<T extends DevServerTest>(description: string, options: T
         }
       }
       if (!fs.existsSync(path.join(root, "node_modules"))) {
-        if (fs.existsSync(path.join(root, "bun.lockb"))) {
+        if (fs.existsSync(path.join(root, "bun.lock"))) {
           // run bun install
-          await Bun.$`cd ${root} && ${process.execPath} install`;
+          Bun.spawnSync({
+            cmd: [process.execPath, "install"],
+            cwd: root,
+            stdio: ["inherit", "inherit", "inherit"],
+            env: bunEnv,
+          });
         } else {
           // link the node_modules directory from test/node_modules to the temp directory
           fs.symlinkSync(path.join(devTestRoot, "../../node_modules"), path.join(root, "node_modules"), "junction");
@@ -792,7 +806,7 @@ export function devTest<T extends DevServerTest>(description: string, options: T
         import appConfig from "./bun.app.ts";
         export default {
           ...appConfig,
-          port: 0,
+          port: ${interactive ? 3000 : 0},
         };
       `,
     );
@@ -846,7 +860,7 @@ export function devTest<T extends DevServerTest>(description: string, options: T
     // not in bun test. allow interactive use
     const arg = process.argv[2];
     if (!arg) {
-      const mainFile = JSON.stringify(path.relative(process.cwd(), process.argv[1]));
+      const mainFile = Bun.$.escape(path.relative(process.cwd(), process.argv[1]));
       console.error("Options for running Dev Server tests:");
       console.error(" - automated:   bun test " + mainFile);
       console.error(" - interactive: bun " + mainFile + " <filter or number for test>");

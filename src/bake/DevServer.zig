@@ -4567,46 +4567,49 @@ const DirectoryWatchStore = struct {
             break :fd if (fd == .zero) null else fd;
         } else null;
 
-        const fd, const owned_fd = if (cache_fd) |fd|
-            .{ fd, false }
-        else
-            .{
-                switch (bun.sys.open(
-                    &(std.posix.toPosixPath(dir_name_to_watch) catch |err| switch (err) {
-                        error.NameTooLong => return, // wouldn't be able to open, ignore
-                    }),
-                    bun.O.DIRECTORY,
-                    0,
-                )) {
-                    .result => |fd| fd,
-                    .err => |err| switch (err.getErrno()) {
-                        // If this directory doesn't exist, a watcher should be
-                        // placed on the parent directory. Then, if this
-                        // directory is later created, the watcher can be
-                        // properly initialized. This would happen if you write
-                        // an import path like `./dir/whatever/hello.tsx` and
-                        // `dir` does not exist, Bun must place a watcher on
-                        // `.`, see the creation of `dir`, and repeat until it
-                        // can open a watcher on `whatever` to see the creation
-                        // of `hello.tsx`
-                        .NOENT => {
-                            // TODO: implement that. for now it ignores
-                            return;
-                        },
-                        .NOTDIR => return error.Ignore, // ignore
-                        else => {
-                            bun.todoPanic(@src(), "log watcher error", .{});
+        const fd, const owned_fd = if (Watcher.requires_file_descriptors)
+            if (cache_fd) |fd|
+                .{ fd, false }
+            else
+                .{
+                    switch (bun.sys.open(
+                        &(std.posix.toPosixPath(dir_name_to_watch) catch |err| switch (err) {
+                            error.NameTooLong => return, // wouldn't be able to open, ignore
+                        }),
+                        bun.O.DIRECTORY,
+                        0,
+                    )) {
+                        .result => |fd| fd,
+                        .err => |err| switch (err.getErrno()) {
+                            // If this directory doesn't exist, a watcher should be
+                            // placed on the parent directory. Then, if this
+                            // directory is later created, the watcher can be
+                            // properly initialized. This would happen if you write
+                            // an import path like `./dir/whatever/hello.tsx` and
+                            // `dir` does not exist, Bun must place a watcher on
+                            // `.`, see the creation of `dir`, and repeat until it
+                            // can open a watcher on `whatever` to see the creation
+                            // of `hello.tsx`
+                            .NOENT => {
+                                // TODO: implement that. for now it ignores
+                                return;
+                            },
+                            .NOTDIR => return error.Ignore, // ignore
+                            else => {
+                                bun.todoPanic(@src(), "log watcher error", .{});
+                            },
                         },
                     },
-                },
-                true,
-            };
+                    true,
+                }
+        else
+            .{ bun.invalid_fd, false };
         errdefer _ = if (owned_fd) bun.sys.close(fd);
-
-        debug.log("-> fd: {} ({s})", .{
-            fd,
-            if (owned_fd) "from dir cache" else "owned fd",
-        });
+        if (Watcher.requires_file_descriptors)
+            debug.log("-> fd: {} ({s})", .{
+                fd,
+                if (owned_fd) "from dir cache" else "owned fd",
+            });
 
         const dir_name = try dev.allocator.dupe(u8, dir_name_to_watch);
         errdefer dev.allocator.free(dir_name);

@@ -4576,7 +4576,7 @@ const DirectoryWatchStore = struct {
                         &(std.posix.toPosixPath(dir_name_to_watch) catch |err| switch (err) {
                             error.NameTooLong => return, // wouldn't be able to open, ignore
                         }),
-                        // pass 
+                        // pass
                         bun.O.DIRECTORY,
                         0,
                     )) {

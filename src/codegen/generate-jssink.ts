@@ -26,7 +26,7 @@ function header() {
             static constexpr SinkID Sink = SinkID::${name};
                                                                                                                                                                                     
             static constexpr unsigned StructureFlags = Base::StructureFlags;                                                                                                        
-            static constexpr bool needsDestruction = false;                                                                                                                         
+            static constexpr JSC::DestructionMode needsDestruction = DoesNotNeedDestruction;                                                                                                                         
                                                                                                                                                                                     
             DECLARE_EXPORT_INFO;                                                                                                                                                    
             template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)                                                                

@@ -560,7 +560,7 @@ class ${name} final : public JSC::InternalFunction {
       )}* prototype);
 
       static constexpr unsigned StructureFlags = Base::StructureFlags;
-      static constexpr bool needsDestruction = false;
+      static constexpr JSC::DestructionMode needsDestruction = DoesNotNeedDestruction;
 
       static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
       {

@@ -44,7 +44,7 @@ namespace WebCore {
 class SerializedScriptValue;
 
 class BroadcastChannel : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<BroadcastChannel>, public EventTarget /*, public ActiveDOMObject*/, public ContextDestructionObserver {
-    WTF_MAKE_ISO_ALLOCATED(BroadcastChannel);
+    WTF_MAKE_TZONE_ALLOCATED(BroadcastChannel);
 
 public:
     static Ref<BroadcastChannel> create(ScriptExecutionContext& context, const String& name)

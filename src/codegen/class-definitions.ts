@@ -74,6 +74,28 @@ export class ClassDefinition {
    * callable.
    */
   call?: boolean;
+  /**
+   * ## IMPORTANT
+   * You _must_ free the pointer to your native class!
+   * ```zig
+   * pub const NativeClass = struct {
+   *   pub usingnamespace bun.New(NativeClass);
+   *
+   *   fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSError!*SocketAddress {
+   *     // do stuff
+   *     return NativeClass.new(.{
+   *       // ...
+   *     });
+   *   }
+   *
+   *   fn finalize(this: *NativeClass) void {
+   *     // free allocations owned by this class, then free the struct itself.
+   *     this.destroy();
+   *   }
+   * };
+   * ```
+   * @todo remove this and require all classes to implement `finalize`.
+   */
   finalize?: boolean;
   overridesToJS?: boolean;
   /**
@@ -162,6 +184,10 @@ export interface CustomField {
   type?: string;
 }
 
+/**
+ * Define a native class written in ZIg. Bun's codegen step will create CPP wrappers
+ * for interacting with JSC.
+ */
 export function define(
   {
     klass = {},

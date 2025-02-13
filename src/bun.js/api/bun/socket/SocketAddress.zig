@@ -26,7 +26,7 @@ pub const Options = struct {
 
     /// NOTE: assumes options object has been normalized and validated by JS code.
     pub fn fromJS(global: *JSC.JSGlobalObject, obj: JSValue) bun.JSError!Options {
-        bun.assert(obj.isObject());
+        if (comptime isDebug) bun.assert(obj.isObject());
 
         const address_str: ?bun.String = if (try obj.get(global, "address")) |a|
             try bun.String.fromJS2(a, global)
@@ -35,11 +35,12 @@ pub const Options = struct {
 
         const _family: AF = if (try obj.get(global, "family")) |fam| blk: {
             if (fam.isString()) {
-                const slice = fam.asString().toSlice(global, bun.default_allocator);
-                defer slice.deinit();
-                if (bun.strings.eqlComptime(slice.slice(), "ipv4")) {
+                const fam_str = try bun.String.fromJSRef(fam, global);
+                defer fam_str.deref();
+
+                if (fam_str.eqlComptime("ipv4")) {
                     break :blk AF.INET;
-                } else if (bun.strings.eqlComptime(slice.slice(), "ipv6")) {
+                } else if (fam_str.eqlComptime("ipv6")) {
                     break :blk AF.INET6;
                 } else {
                     return global.throwInvalidArgumentPropertyValue("options.family", "'ipv4' or 'ipv6'", fam);
@@ -116,8 +117,8 @@ pub fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSErr
 /// socket address data, prefer `SocketAddress.new`.
 ///
 /// ## Safety
-/// - If provided, `options.address` must be ref-ed before being passed in. That
-///   is, the ref gets moved.
+/// - `options.address` gets moved, much like `adoptRef`. Do not `deref` it
+///   after passing it in.
 pub fn create(global: *JSC.JSGlobalObject, options: Options) bun.JSError!*SocketAddress {
     const presentation: bun.String = options.address orelse switch (options.family) {
         AF.INET => WellKnownAddress.@"127.0.0.1",
@@ -227,12 +228,13 @@ pub fn deinit(this: *SocketAddress) void {
 pub fn finalize(this: *SocketAddress) void {
     JSC.markBinding(@src());
     this.deinit();
+    this.destroy();
 }
 
 // =============================================================================
 
 pub fn getAddress(this: *SocketAddress, global: *JSC.JSGlobalObject) JSC.JSValue {
-    // TODO: check that this doesn't ref() again.
+    // toJS increments ref count
     return this.address().toJS(global);
 }
 
@@ -242,10 +244,8 @@ pub fn getAddress(this: *SocketAddress, global: *JSC.JSGlobalObject) JSC.JSValue
 /// - replace `addressToString` in `dns.zig` w this
 /// - use this impl in server.zig
 pub fn address(this: *SocketAddress) bun.String {
-    if (this._presentation) |p| {
-        // p.ref();
-        return p;
-    }
+    if (this._presentation) |p| return p;
+
     var buf: [inet.INET6_ADDRSTRLEN]u8 = undefined;
     const addr_src: *const anyopaque = if (this.family() == AF.INET)
         @ptrCast(&this.asV4().addr)
@@ -259,7 +259,6 @@ pub fn address(this: *SocketAddress) bun.String {
         bun.assertWithLocation(bun.strings.isAllASCII(formatted), @src());
     }
     const presentation = bun.JSC.WebCore.Encoder.toBunStringComptime(formatted, .latin1);
-    // presentation.ref();
     this._presentation = presentation;
     return presentation;
 }
@@ -445,6 +444,9 @@ const JSC = bun.JSC;
 const ZigString = JSC.ZigString;
 const CallFrame = JSC.CallFrame;
 const JSValue = JSC.JSValue;
+
+const isDebug = bun.Environment.isDebug;
+const allow_assert = bun.Environment.allow_assert;
 
 const inet = if (bun.Environment.isWindows)
 win: {

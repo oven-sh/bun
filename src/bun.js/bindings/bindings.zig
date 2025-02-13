@@ -5732,6 +5732,11 @@ pub const JSValue = enum(i64) {
         return .none;
     }
 
+    /// Static cast a value into a `JSC::JSString`.
+    /// - `this` is re-interpreted, so runtime casting does not occur (e.g. `this.toString()`)
+    /// - Does not allocate
+    /// - Does not increment ref count
+    /// - Make sure `this` stays on the stack. If you're method chaining, you may need to call `this.ensureStillAlive()`.
     pub fn asString(this: JSValue) *JSString {
         return cppFn("asString", .{
             this,

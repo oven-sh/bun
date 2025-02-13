@@ -410,7 +410,7 @@ public:
 class JSSQLStatement : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
-    static constexpr bool needsDestruction = true;
+    static constexpr JSC::DestructionMode needsDestruction = NeedsDestruction;
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {

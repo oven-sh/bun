@@ -1101,8 +1101,8 @@ pub fn GlobWalker_(
             err: Syscall.Error,
             path_buf: [:0]const u8,
         ) Syscall.Error {
-            std.mem.copyForwards(u8, this.pathBuf[0 .. path_buf.len + 1], @as([]const u8, @ptrCast(path_buf[0 .. path_buf.len + 1])));
-            return err.withPath(this.pathBuf[0 .. path_buf.len + 1]);
+            bun.copy(u8, this.pathBuf[0..path_buf.len], path_buf[0..path_buf.len]);
+            return err.withPath(this.pathBuf[0..path_buf.len]);
         }
 
         pub fn walk(this: *GlobWalker) !Maybe(void) {

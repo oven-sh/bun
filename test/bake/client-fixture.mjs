@@ -4,12 +4,15 @@
 import { Window } from "happy-dom";
 import util from "node:util";
 
-let url = process.argv[2];
+const args = process.argv.slice(2);
+let url = args.find(arg => !arg.startsWith("-"));
 if (!url) {
-  console.error("Usage: node client-fixture.mjs <url>");
+  console.error("Usage: node client-fixture.mjs <url> [...]");
   process.exit(1);
 }
 url = new URL(url, "http://localhost:3000");
+
+const storeHotChunks = args.includes("--store-hot-chunks");
 
 // Create a new window instance
 let window;
@@ -104,6 +107,14 @@ function createWindow(windowUrl) {
       }, 1000);
     }
   };
+
+  if (storeHotChunks) {
+    const prevEval = window.eval;
+    window.eval = code => {
+      process.send({ type: "hmr-chunk", args: [code] });
+      return prevEval(code);
+    };
+  }
 }
 
 async function handleReload() {

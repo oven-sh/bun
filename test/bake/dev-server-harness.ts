@@ -1,6 +1,6 @@
 /// <reference path="../../src/bake/bake.d.ts" />
 import { Bake, Subprocess } from "bun";
-import fs from "node:fs";
+import fs, { realpathSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import assert from "node:assert";
@@ -131,7 +131,7 @@ export class Dev {
   output: OutputLineStream;
 
   constructor(root: string, port: number, process: Subprocess<"pipe", "pipe", "pipe">, stream: OutputLineStream) {
-    this.rootDir = root;
+    this.rootDir = realpathSync(root);
     this.port = port;
     this.baseUrl = `http://localhost:${port}`;
     this.devProcess = process;
@@ -198,9 +198,19 @@ export class Dev {
     ]);
   }
 
-  async client(url = "/", options: { errors?: ErrorSpec[] } = {}) {
+  async client(
+    url = "/",
+    options: {
+      /** Expect the page to load with errors */
+      errors?: ErrorSpec[];
+      /** Allow using `getMostRecentHmrChunk` */
+      storeHotChunks?: boolean;
+    } = {},
+  ) {
     await maybeWaitInteractive("open client " + url);
-    const client = new Client(new URL(url, this.baseUrl).href);
+    const client = new Client(new URL(url, this.baseUrl).href, {
+      storeHotChunks: options.storeHotChunks,
+    });
     try {
       await client.output.waitForLine(hmrClientInitRegex);
     } catch (e) {
@@ -212,6 +222,8 @@ export class Dev {
       if (!hasVisibleModal) {
         throw new Error("Expected errors, but none found");
       }
+      // TODO: verify errors match. likely through a event type that sends
+      // ErrorSpec[] into the subprocess. and does all the dom matching there.
     } else {
       if (hasVisibleModal) {
         throw new Error("Bundle failures!");
@@ -314,8 +326,9 @@ export class Client extends EventEmitter {
   exited = false;
   exitCode: string | null = null;
   messages: any[] = [];
+  #hmrChunk: string | null = null;
 
-  constructor(url: string) {
+  constructor(url: string, options: { storeHotChunks?: boolean } = {}) {
     super();
     activeClient = this;
     const proc = Bun.spawn({
@@ -325,10 +338,9 @@ export class Client extends EventEmitter {
         "--experimental-websocket", // support node 20
         path.join(import.meta.dir, "client-fixture.mjs"),
         url,
-      ],
-      env: {
-        ...process.env,
-      },
+        options.storeHotChunks ? "--store-hot-chunks" : "",
+      ].filter(Boolean) as string[],
+      env: bunEnv,
       serialization: "json",
       ipc: (message, subprocess) => {
         this.emit(message.type, ...message.args);
@@ -351,6 +363,9 @@ export class Client extends EventEmitter {
     });
     this.on("message", (message: any) => {
       this.messages.push(message);
+    });
+    this.on("hmr-chunk", (chunk: string) => {
+      this.#hmrChunk = chunk;
     });
     this.#proc = proc;
     // @ts-expect-error
@@ -541,6 +556,27 @@ export class Client extends EventEmitter {
       if (!elem) throw new Error("Element not found: " + ${selector});
       elem.click();
     `;
+  }
+
+  async getMostRecentHmrChunk() {
+    if (!this.#hmrChunk) {
+      // Wait up to a threshold before giving up
+      const resolver = Promise.withResolvers();
+      this.once("hmr-chunk", () => resolver.resolve());
+      this.once("exit", () => resolver.reject(new Error("Client exited while waiting for HMR chunk")));
+      let t: any = setTimeout(() => {
+        t = null;
+        resolver.reject(new Error("Timeout waiting for HMR chunk"));
+      }, 1000);
+      await resolver.promise;
+      if (t) clearTimeout(t);
+    }
+    if (!this.#hmrChunk) {
+      throw new Error("No HMR chunks received. Make sure storeHotChunks is true");
+    }
+    const chunk = this.#hmrChunk;
+    this.#hmrChunk = null;
+    return chunk;
   }
 }
 

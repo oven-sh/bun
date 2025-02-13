@@ -4185,12 +4185,11 @@ pub fn IncrementalGraph(side: bake.Side) type {
             };
 
             j.pushStatic(
-                \\{"version":3,"sourceRoot":"/_bun/src","sources":[
+                \\{"version":3,"sources":[
             );
 
             var source_map_strings = std.ArrayList(u8).init(arena);
             defer source_map_strings.deinit();
-            const smw = source_map_strings.writer();
             var needs_comma = false;
             for (g.current_chunk_parts.items) |entry| {
                 if (source_maps[entry.get()].vlq_chunk.len == 0)
@@ -4198,12 +4197,35 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 if (needs_comma)
                     try source_map_strings.appendSlice(",");
                 needs_comma = true;
-                try bun.js_printer.writeJSONString(
-                    g.owner().relativePath(paths[entry.get()]),
-                    @TypeOf(smw),
-                    smw,
-                    .utf8,
-                );
+                const path = paths[entry.get()];
+                if (std.fs.path.isAbsolute(path)) {
+                    const is_windows_drive_path = Environment.isWindows and bun.path.isSepAny(path[0]);
+                    try source_map_strings.appendSlice(if (is_windows_drive_path)
+                        "file:///"
+                    else
+                        "\"file://");
+                    if (Environment.isWindows and !is_windows_drive_path) {
+                        // UNC namespace -> file://server/share/path.ext
+                        try bun.strings.percentEncodeWrite(
+                            if (path.len > 2 and bun.path.isSepAny(path[0]) and bun.path.isSepAny(path[1]))
+                                path[2..]
+                            else
+                                path, // invalid but must not crash
+                            &source_map_strings,
+                        );
+                    } else {
+                        // posix paths always start with '/'
+                        // -> file:///path/to/file.js
+                        // windows drive letter paths have the extra slash added
+                        // -> file:///C:/path/to/file.js
+                        try bun.strings.percentEncodeWrite(path, &source_map_strings);
+                    }
+                    try source_map_strings.appendSlice("\"");
+                } else {
+                    try source_map_strings.appendSlice("\"bun://");
+                    try bun.strings.percentEncodeWrite(path, &source_map_strings);
+                    try source_map_strings.appendSlice("\"");
+                }
             }
             j.pushStatic(source_map_strings.items);
             j.pushStatic(

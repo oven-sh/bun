@@ -31,7 +31,7 @@ public:
     using Base = JSC::JSFunction;
 
     static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr bool needsDestruction = false;
+    static constexpr JSC::DestructionMode needsDestruction = DoesNotNeedDestruction;
     static void destroy(JSCell* cell)
     {
         static_cast<JSWrappingFunction*>(cell)->JSWrappingFunction::~JSWrappingFunction();

@@ -433,6 +433,28 @@ pub const String = extern struct {
         };
     }
 
+    /// Allocate memory for a WTF::String of a given length and encoding, and
+    /// return the string and a mutable slice for that string.
+    ///
+    /// Provides `String.empty` when `bytes` is empty.
+    ///
+    /// ## Memory Characteristics
+    /// - Usually allocates. No allocation for empty `bytes`.
+    pub fn createWTF(
+        comptime kind: WTFStringEncoding,
+        bytes: []const WTFStringEncoding.Byte(kind),
+    ) OOM!String {
+        if (bytes.len == 0) {
+            @branchHint(.unlikely);
+            return String.empty;
+        }
+        const str = switch (comptime kind) {
+            .latin1 => createLatin1(bytes),
+            .utf16 => createUTF16(bytes),
+        };
+        return str.oomIfDead();
+    }
+
     pub fn createLatin1(bytes: []const u8) String {
         JSC.markBinding(@src());
         if (bytes.len == 0) return String.empty;
@@ -448,6 +470,13 @@ pub const String = extern struct {
             }
         }
 
+        return this;
+    }
+    pub inline fn oomIfDead(this: String) OOM!String {
+        if (this.tag == .Dead) {
+            @branchHint(.unlikely);
+            return error.OutOfMemory;
+        }
         return this;
     }
 

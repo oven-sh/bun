@@ -4,7 +4,6 @@ import { loadModule, LoadModuleType, onServerSideReload, replaceModules } from "
 import { hasFatalError, onErrorMessage, onRuntimeError, RuntimeErrorType } from "./client/overlay";
 import { Bake } from "bun";
 import { DataViewReader } from "./client/reader";
-import { routeMatch } from "./client/route";
 import { initWebSocket } from "./client/websocket";
 import { MessageId } from "./generated";
 import { editCssContent, editCssArray } from "./client/css-reloader";
@@ -16,6 +15,7 @@ if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
 
 let isPerformingRouteReload = false;
 let shouldPerformAnotherRouteReload = false;
+let currentRouteIndex: number = -1;
 
 async function performRouteReload() {
   console.info("[Bun] Server-side code changed, reloading!");
@@ -68,11 +68,10 @@ const ws = initWebSocket({
       return;
     }
 
-    ws.send("she"); // IncomingMessageId.subscribe with hot_update and route_update
+    ws.send("she"); // IncomingMessageId.subscribe with hot_update and errors
     ws.send("n" + location.pathname); // IncomingMessageId.set_url
   },
   [MessageId.hot_update](view) {
-    console.log(view);
     const reader = new DataViewReader(view, 1);
 
     // The code genearting each list is annotated with equivalent "List n"
@@ -90,8 +89,7 @@ const ws = initWebSocket({
     do {
       const routeId = reader.i32();
       if (routeId === -1 || routeId == undefined) break;
-      const routePattern = reader.string32();
-      if (routeMatch(routeId, routePattern)) {
+      if (routeId === currentRouteIndex) {
         isServerSideRouteUpdate = serverSideRoutesUpdated.has(routeId);
         const cssCount = reader.i32();
         if (cssCount !== -1) {
@@ -100,7 +98,6 @@ const ws = initWebSocket({
             cssArray[i] = reader.stringWithLength(16);
           }
           editCssArray(cssArray);
-          console.log("oh shit", { routePattern, cssArray });
         }
 
         // Skip to the last route
@@ -132,12 +129,25 @@ const ws = initWebSocket({
     // JavaScript modules
     if (reader.hasMoreData()) {
       const code = td.decode(reader.rest());
-      const modules = (0, eval)(code);
-      replaceModules(modules);
+      try {
+        const modules = (0, eval)(code);
+        replaceModules(modules);
+      } catch (e) {
+        if (IS_BUN_DEVELOPMENT) {
+          console.error(e, "Failed to parse HMR payload", { code });
+          onRuntimeError(e, RuntimeErrorType.fatal);
+          return;
+        }
+        throw e;
+      }
     }
     if (isServerSideRouteUpdate) {
       performRouteReload();
     }
+  },
+  [MessageId.set_url_response](view) {
+    const reader = new DataViewReader(view, 1);
+    currentRouteIndex = reader.u32();
   },
   [MessageId.errors]: onErrorMessage,
 });
@@ -148,16 +158,21 @@ const ws = initWebSocket({
   History.prototype.pushState = function pushState(this: History, state: any, title: string, url?: string | null) {
     truePushState.call(this, state, title, url);
     ws.send("n" + location.pathname);
-  }
+  };
   const trueReplaceState = History.prototype.replaceState;
-  History.prototype.replaceState = function replaceState(this: History, state: any, title: string, url?: string | null) {
+  History.prototype.replaceState = function replaceState(
+    this: History,
+    state: any,
+    title: string,
+    url?: string | null,
+  ) {
     trueReplaceState.call(this, state, title, url);
     ws.send("n" + location.pathname);
-  }
+  };
 }
 
 try {
-  loadModule<Bake.ClientEntryPoint>(config.main, LoadModuleType.AssertPresent);
+  await loadModule<Bake.ClientEntryPoint>(config.main, LoadModuleType.AsyncAssertPresent);
 } catch (e) {
   onRuntimeError(e, RuntimeErrorType.fatal);
 }

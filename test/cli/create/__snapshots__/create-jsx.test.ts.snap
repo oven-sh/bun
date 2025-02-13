@@ -1,0 +1,231 @@
+// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`development: true react spa (no tailwind) dev server 1`] = `
+"<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>index | Powered by Bun</title>
+<link rel="stylesheet" href="/_bun/asset/[GENERATION_ID]"><link rel="stylesheet" href="/_bun/asset/[GENERATION_ID]"></head>
+<body>
+<div id="root"><div class="app"><main class="container"><div class="hero"><div class="logo animate-bounce">🥟</div><h1>Welcome to <span class="gradient-text">Bun</span></h1><p class="description">The all-in-one JavaScript runtime &amp; toolkit designed for speed</p><div class="cta-buttons"><a href="https://bun.sh" class="button primary" target="_blank" rel="noopener noreferrer">Get Started</a><a href="https://github.com/oven-sh/bun" class="button secondary" target="_blank" rel="noopener noreferrer">View on GitHub</a></div><div class="stats"><div class="stat"><span class="stat-value">3x</span><span class="stat-label">Bun Bun Bun</span></div><div class="stat"><span class="stat-value">0.5s</span><span class="stat-label">Average Install Time</span></div><div class="stat"><span class="stat-value">Extremely</span><span class="stat-label">Node.js Compatible</span></div></div></div><section class="features-section"><h2>Why Choose Bun?</h2><div class="features"><div class="feature hover:scale-105"><div class="feature-icon">⚡️</div><h3>Lightning Fast</h3><p>Built from scratch in <span class="highlight">Zig</span>, Bun is focused on performance and developer experience</p></div><div class="feature hover:scale-105"><div class="feature-icon">🎯</div><h3>All-in-One</h3><p>Bundler, test runner, and npm-compatible package manager in a single tool</p></div><div class="feature hover:scale-105"><div class="feature-icon">🚀</div><h3>JavaScript Runtime</h3><p>Drop-in replacement for Node.js with <span class="highlight">3x faster</span> startup time</p></div><div class="feature hover:scale-105"><div class="feature-icon">📦</div><h3>Package Management</h3><p>Native package manager that can install dependencies up to <span class="highlight">30x faster</span> than npm</p></div><div class="feature hover:scale-105"><div class="feature-icon">🧪</div><h3>Testing Made Simple</h3><p>Built-in test runner with Jest-compatible API and snapshot testing</p></div><div class="feature hover:scale-105"><div class="feature-icon">🔥</div><h3>Hot Reloading</h3><p>Lightning-fast hot module replacement (HMR) for rapid development</p></div></div></section></main><footer class="footer"><div class="footer-content"><div class="footer-logo"><span class="logo-small">🥟</span><span class="footer-text">Built with Bun</span></div><nav class="footer-links"><a href="https://bun.sh/docs" class="footer-link hover:text-accent" target="_blank" rel="noopener noreferrer">Documentation</a><a href="https://github.com/oven-sh/bun" class="footer-link hover:text-accent" target="_blank" rel="noopener noreferrer">GitHub</a><a href="https://bun.sh/discord" class="footer-link hover:text-accent" target="_blank" rel="noopener noreferrer">Discord</a><a href="https://bun.sh/blog" class="footer-link hover:text-accent" target="_blank" rel="noopener noreferrer">Blog</a></nav></div></footer></div></div>
+<script type="module" crossorigin="" src="/_bun/client/index-0000000000000000.js"></script>
+</body>"
+`;
+
+exports[`development: true react spa (no tailwind) dev server 2`] = `
+"create  index.build.ts     build
+create  index.css          css
+create  index.html         html
+create  index.client.tsx   bun
+create  package.json       npm
+📦 Auto-installing 3 detected dependencies
+$ bun --only-missing install classnames react-dom@19 react@19
+bun add v*.*.*
+installed classnames@*.*.*
+installed react-dom@*.*.*
+installed react@*.*.*
+4 packages installed [*ms]
+--------------------------------
+✨ React project configured
+Development - frontend dev server with hot reload
+bun dev
+Production - build optimized assets
+bun run build
+Happy bunning! 🐇
+Bun v*.*.* dev server ready in *.** ms
+url: http://[SERVER_URL]/"
+`;
+
+exports[`development: true react spa (tailwind) dev server 1`] = `
+"<html><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>index | Powered by Bun</title>
+<link rel="stylesheet" href="/_bun/asset/[GENERATION_ID]"></head>
+<body>
+<div id="root"><div class="min-h-screen bg-gradient-to-b from-gray-900 to-black text-white"><div class="max-w-6xl mx-auto px-4 py-20"><div class="text-center mb-16"><h1 class="text-6xl font-bold mb-6"><span class="text-purple-400">bun create</span> for React</h1><p class="text-xl text-gray-300 mb-8">Start a React dev server instantly from a single component file</p><div class="bg-gray-800 p-4 rounded-lg flex items-center justify-between max-w-lg mx-auto mb-8"><code class="text-purple-400">bun create ./MyComponent.tsx</code><button class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded transition">Copy</button></div></div><div class="grid md:grid-cols-3 gap-8 mb-20"><div class="bg-gray-800 p-6 rounded-lg"><h3 class="text-xl font-semibold mb-4">Zero Config</h3><p class="text-gray-300">Just write your React component and run. No setup needed.</p></div><div class="bg-gray-800 p-6 rounded-lg"><h3 class="text-xl font-semibold mb-4">Auto Dependencies</h3><p class="text-gray-300">Automatically detects and installs required npm packages.</p></div><div class="bg-gray-800 p-6 rounded-lg"><h3 class="text-xl font-semibold mb-4">Tool Detection</h3><p class="text-gray-300">Recognizes Tailwind, animations, and UI libraries automatically.</p></div></div><div class="bg-gray-800 rounded-lg p-8 mb-20"><h2 class="text-3xl font-bold mb-6">How it Works</h2><div class="space-y-4"><div class="flex items-start gap-4"><div class="bg-purple-600 rounded-full p-2 mt-1">1</div><div><h3 class="font-semibold mb-2">Create Component</h3><p class="text-gray-300">Write your React component in a .tsx file</p></div></div><div class="flex items-start gap-4"><div class="bg-purple-600 rounded-full p-2 mt-1">2</div><div><h3 class="font-semibold mb-2">Run Command</h3><p class="text-gray-300">Execute bun create with your file path</p></div></div><div class="flex items-start gap-4"><div class="bg-purple-600 rounded-full p-2 mt-1">3</div><div><h3 class="font-semibold mb-2">Start Developing</h3><p class="text-gray-300">Dev server starts instantly with hot reload</p></div></div></div></div><div class="text-center"><h2 class="text-3xl font-bold mb-6">Ready to Try?</h2><div class="space-x-4"><a href="https://bun.sh/docs" class="inline-block bg-purple-600 hover:bg-purple-700 px-6 py-3 rounded-lg transition">Read Docs</a><a href="https://github.com/oven-sh/bun" class="inline-block bg-gray-700 hover:bg-gray-600 px-6 py-3 rounded-lg transition">GitHub →</a></div></div></div></div></div>
+<script type="module" crossorigin="" src="/_bun/client/index-0000000000000000.js"></script>
+</body></html>"
+`;
+
+exports[`development: true react spa (tailwind) dev server 2`] = `
+"create  index.build.ts     build
+create  index.css          css
+create  index.html         html
+create  index.client.tsx   bun
+create  bunfig.toml        bun
+create  package.json       npm
+📦 Auto-installing 4 detected dependencies
+$ bun --only-missing install tailwindcss bun-plugin-tailwind react-dom@19 react@19
+bun add v*.*.*
+installed tailwindcss@*.*.*
+installed bun-plugin-tailwind@*.*.*
+installed react-dom@*.*.*
+installed react@*.*.*
+7 packages installed [*ms]
+--------------------------------
+✨ React + Tailwind project configured
+Development - frontend dev server with hot reload
+bun dev
+Production - build optimized assets
+bun run build
+Happy bunning! 🐇
+Bun v*.*.* dev server ready in *.** ms
+url: http://[SERVER_URL]/"
+`;
+
+exports[`development: true shadcn/ui dev server 1`] = `
+"create  lib/utils.ts         shadcn
+create  src/index.css        shadcn
+create  index.build.ts       bun
+create  index.client.tsx     bun
+create  index.css            css
+create  index.html           html
+create  styles/globals.css   shadcn
+create  bunfig.toml          bun
+create  package.json         npm
+create  tsconfig.json        tsc
+create  components.json      shadcn
+📦 Auto-installing 9 detected dependencies
+$ bun --only-missing install lucide-react tailwindcss bun-plugin-tailwind tailwindcss-animate class-variance-authority clsx tailwind-merge react@^18 react-dom@^18
+bun add v*.*.*
+installed lucide-react@*.*.*
+installed tailwindcss@*.*.*
+installed bun-plugin-tailwind@*.*.*
+installed tailwindcss-animate@*.*.*
+installed class-variance-authority@*.*.*
+installed clsx@*.*.*
+installed tailwind-merge@*.*.*
+installed react@*.*.*
+installed react-dom@*.*.*
+14 packages installed [*ms]
+😎 Setting up shadcn/ui components
+$ bun x shadcn@canary add -y button badge card
+- components/ui/button.tsx
+- components/ui/badge.tsx
+- components/ui/card.tsx
+--------------------------------
+✨ React + shadcn/ui + Tailwind project configured
+Development - frontend dev server with hot reload
+bun dev
+Production - build optimized assets
+bun run build
+Happy bunning! 🐇
+Bun v*.*.* dev server ready in *.** ms
+url: http://[SERVER_URL]/"
+`;
+
+exports[`development: false react spa (no tailwind) dev server 1`] = `
+"<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>index | Powered by Bun</title>
+<link rel="icon" type="image/x-icon" href="https://bun.sh/favicon.ico">
+<link rel="stylesheet" crossorigin="" href="/chunk-[HASH].css"><script type="module" crossorigin="" src="/chunk-[HASH].js"></script></head>
+<body>
+<div id="root"><div class="app"><main class="container"><div class="hero"><div class="logo animate-bounce">🥟</div><h1>Welcome to <span class="gradient-text">Bun</span></h1><p class="description">The all-in-one JavaScript runtime &amp; toolkit designed for speed</p><div class="cta-buttons"><a href="https://bun.sh" class="button primary" target="_blank" rel="noopener noreferrer">Get Started</a><a href="https://github.com/oven-sh/bun" class="button secondary" target="_blank" rel="noopener noreferrer">View on GitHub</a></div><div class="stats"><div class="stat"><span class="stat-value">3x</span><span class="stat-label">Bun Bun Bun</span></div><div class="stat"><span class="stat-value">0.5s</span><span class="stat-label">Average Install Time</span></div><div class="stat"><span class="stat-value">Extremely</span><span class="stat-label">Node.js Compatible</span></div></div></div><section class="features-section"><h2>Why Choose Bun?</h2><div class="features"><div class="feature hover:scale-105"><div class="feature-icon">⚡️</div><h3>Lightning Fast</h3><p>Built from scratch in <span class="highlight">Zig</span>, Bun is focused on performance and developer experience</p></div><div class="feature hover:scale-105"><div class="feature-icon">🎯</div><h3>All-in-One</h3><p>Bundler, test runner, and npm-compatible package manager in a single tool</p></div><div class="feature hover:scale-105"><div class="feature-icon">🚀</div><h3>JavaScript Runtime</h3><p>Drop-in replacement for Node.js with <span class="highlight">3x faster</span> startup time</p></div><div class="feature hover:scale-105"><div class="feature-icon">📦</div><h3>Package Management</h3><p>Native package manager that can install dependencies up to <span class="highlight">30x faster</span> than npm</p></div><div class="feature hover:scale-105"><div class="feature-icon">🧪</div><h3>Testing Made Simple</h3><p>Built-in test runner with Jest-compatible API and snapshot testing</p></div><div class="feature hover:scale-105"><div class="feature-icon">🔥</div><h3>Hot Reloading</h3><p>Lightning-fast hot module replacement (HMR) for rapid development</p></div></div></section></main><footer class="footer"><div class="footer-content"><div class="footer-logo"><span class="logo-small">🥟</span><span class="footer-text">Built with Bun</span></div><nav class="footer-links"><a href="https://bun.sh/docs" class="footer-link hover:text-accent" target="_blank" rel="noopener noreferrer">Documentation</a><a href="https://github.com/oven-sh/bun" class="footer-link hover:text-accent" target="_blank" rel="noopener noreferrer">GitHub</a><a href="https://bun.sh/discord" class="footer-link hover:text-accent" target="_blank" rel="noopener noreferrer">Discord</a><a href="https://bun.sh/blog" class="footer-link hover:text-accent" target="_blank" rel="noopener noreferrer">Blog</a></nav></div></footer></div></div>
+</body>"
+`;
+
+exports[`development: false react spa (no tailwind) dev server 2`] = `
+"create  index.build.ts     build
+create  index.css          css
+create  index.html         html
+create  index.client.tsx   bun
+create  package.json       npm
+📦 Auto-installing 3 detected dependencies
+$ bun --only-missing install classnames react-dom@19 react@19
+bun add v*.*.*
+installed classnames@*.*.*
+installed react-dom@*.*.*
+installed react@*.*.*
+4 packages installed [*ms]
+--------------------------------
+✨ React project configured
+Development - frontend dev server with hot reload
+bun dev
+Production - build optimized assets
+bun run build
+Happy bunning! 🐇
+Bun v*.*.* ready in *.** ms
+url: http://[SERVER_URL]/"
+`;
+
+exports[`development: false react spa (tailwind) dev server 1`] = `
+"<html><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>index | Powered by Bun</title>
+<link rel="icon" type="image/x-icon" href="https://bun.sh/favicon.ico">
+<link rel="stylesheet" crossorigin="" href="/chunk-[HASH].css"><script type="module" crossorigin="" src="/chunk-[HASH].js"></script></head>
+<body>
+<div id="root"><div class="min-h-screen bg-gradient-to-b from-gray-900 to-black text-white"><div class="max-w-6xl mx-auto px-4 py-20"><div class="text-center mb-16"><h1 class="text-6xl font-bold mb-6"><span class="text-purple-400">bun create</span> for React</h1><p class="text-xl text-gray-300 mb-8">Start a React dev server instantly from a single component file</p><div class="bg-gray-800 p-4 rounded-lg flex items-center justify-between max-w-lg mx-auto mb-8"><code class="text-purple-400">bun create ./MyComponent.tsx</code><button class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded transition">Copy</button></div></div><div class="grid md:grid-cols-3 gap-8 mb-20"><div class="bg-gray-800 p-6 rounded-lg"><h3 class="text-xl font-semibold mb-4">Zero Config</h3><p class="text-gray-300">Just write your React component and run. No setup needed.</p></div><div class="bg-gray-800 p-6 rounded-lg"><h3 class="text-xl font-semibold mb-4">Auto Dependencies</h3><p class="text-gray-300">Automatically detects and installs required npm packages.</p></div><div class="bg-gray-800 p-6 rounded-lg"><h3 class="text-xl font-semibold mb-4">Tool Detection</h3><p class="text-gray-300">Recognizes Tailwind, animations, and UI libraries automatically.</p></div></div><div class="bg-gray-800 rounded-lg p-8 mb-20"><h2 class="text-3xl font-bold mb-6">How it Works</h2><div class="space-y-4"><div class="flex items-start gap-4"><div class="bg-purple-600 rounded-full p-2 mt-1">1</div><div><h3 class="font-semibold mb-2">Create Component</h3><p class="text-gray-300">Write your React component in a .tsx file</p></div></div><div class="flex items-start gap-4"><div class="bg-purple-600 rounded-full p-2 mt-1">2</div><div><h3 class="font-semibold mb-2">Run Command</h3><p class="text-gray-300">Execute bun create with your file path</p></div></div><div class="flex items-start gap-4"><div class="bg-purple-600 rounded-full p-2 mt-1">3</div><div><h3 class="font-semibold mb-2">Start Developing</h3><p class="text-gray-300">Dev server starts instantly with hot reload</p></div></div></div></div><div class="text-center"><h2 class="text-3xl font-bold mb-6">Ready to Try?</h2><div class="space-x-4"><a href="https://bun.sh/docs" class="inline-block bg-purple-600 hover:bg-purple-700 px-6 py-3 rounded-lg transition">Read Docs</a><a href="https://github.com/oven-sh/bun" class="inline-block bg-gray-700 hover:bg-gray-600 px-6 py-3 rounded-lg transition">GitHub →</a></div></div></div></div></div>
+</body></html>"
+`;
+
+exports[`development: false react spa (tailwind) dev server 2`] = `
+"create  index.build.ts     build
+create  index.css          css
+create  index.html         html
+create  index.client.tsx   bun
+create  bunfig.toml        bun
+create  package.json       npm
+📦 Auto-installing 4 detected dependencies
+$ bun --only-missing install tailwindcss bun-plugin-tailwind react-dom@19 react@19
+bun add v*.*.*
+installed tailwindcss@*.*.*
+installed bun-plugin-tailwind@*.*.*
+installed react-dom@*.*.*
+installed react@*.*.*
+7 packages installed [*ms]
+--------------------------------
+✨ React + Tailwind project configured
+Development - frontend dev server with hot reload
+bun dev
+Production - build optimized assets
+bun run build
+Happy bunning! 🐇
+Bun v*.*.* ready in *.** ms
+url: http://[SERVER_URL]/"
+`;
+
+exports[`development: false shadcn/ui dev server 1`] = `
+"create  lib/utils.ts         shadcn
+create  src/index.css        shadcn
+create  index.build.ts       bun
+create  index.client.tsx     bun
+create  index.css            css
+create  index.html           html
+create  styles/globals.css   shadcn
+create  bunfig.toml          bun
+create  package.json         npm
+create  tsconfig.json        tsc
+create  components.json      shadcn
+📦 Auto-installing 9 detected dependencies
+$ bun --only-missing install lucide-react tailwindcss bun-plugin-tailwind tailwindcss-animate class-variance-authority clsx tailwind-merge react@^18 react-dom@^18
+bun add v*.*.*
+installed lucide-react@*.*.*
+installed tailwindcss@*.*.*
+installed bun-plugin-tailwind@*.*.*
+installed tailwindcss-animate@*.*.*
+installed class-variance-authority@*.*.*
+installed clsx@*.*.*
+installed tailwind-merge@*.*.*
+installed react@*.*.*
+installed react-dom@*.*.*
+14 packages installed [*ms]
+😎 Setting up shadcn/ui components
+$ bun x shadcn@canary add -y button badge card
+- components/ui/button.tsx
+- components/ui/badge.tsx
+- components/ui/card.tsx
+--------------------------------
+✨ React + shadcn/ui + Tailwind project configured
+Development - frontend dev server with hot reload
+bun dev
+Production - build optimized assets
+bun run build
+Happy bunning! 🐇
+Bun v*.*.* ready in *.** ms
+url: http://[SERVER_URL]/"
+`;

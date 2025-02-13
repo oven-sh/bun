@@ -19,14 +19,14 @@ const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const Fs = @import("../fs.zig");
 const Resolver = @import("../resolver/resolver.zig");
 const ast = @import("../import_record.zig");
-const MacroEntryPoint = bun.transpiler.MacroEntryPoint;
+const MacroEntryPoint = bun.transpiler.EntryPoints.MacroEntryPoint;
 const ParseResult = bun.transpiler.ParseResult;
 const logger = bun.logger;
 const Api = @import("../api/schema.zig").Api;
 const options = @import("../options.zig");
 const Transpiler = bun.Transpiler;
 const PluginRunner = bun.transpiler.PluginRunner;
-const ServerEntryPoint = bun.transpiler.ServerEntryPoint;
+const ServerEntryPoint = bun.transpiler.EntryPoints.ServerEntryPoint;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
@@ -835,6 +835,8 @@ pub const VirtualMachine = struct {
     after_event_loop_callback_ctx: ?*anyopaque = null,
     after_event_loop_callback: ?OpaqueCallback = null,
 
+    remap_stack_frames_mutex: bun.Mutex = .{},
+
     /// The arguments used to launch the process _after_ the script name and bun and any flags applied to Bun
     ///     "bun run foo --bar"
     ///          ["--bar"]
@@ -1298,14 +1300,6 @@ pub const VirtualMachine = struct {
         this.pending_internal_promise = this.reloadEntryPoint(this.main) catch @panic("Failed to reload");
     }
 
-    pub fn io(this: *VirtualMachine) *bun.AsyncIO {
-        if (this.io_ == null) {
-            this.io_ = bun.AsyncIO.init(this) catch @panic("Failed to initialize AsyncIO");
-        }
-
-        return &this.io_.?;
-    }
-
     pub inline fn nodeFS(this: *VirtualMachine) *Node.NodeFS {
         return this.node_fs orelse brk: {
             this.node_fs = bun.default_allocator.create(Node.NodeFS) catch unreachable;
@@ -1644,7 +1638,7 @@ pub const VirtualMachine = struct {
                         this.eventLoop().autoTickActive();
 
                         if (comptime Environment.enable_logs)
-                            log("waited: {}", .{bun.fmt.fmtDuration(@intCast(@as(i64, @truncate(std.time.nanoTimestamp() - bun.CLI.start_time))))});
+                            log("waited: {}", .{std.fmt.fmtDuration(@intCast(@as(i64, @truncate(std.time.nanoTimestamp() - bun.CLI.start_time))))});
                     },
                     .shortly => {
                         // Handle .incrementRefConcurrently
@@ -1659,7 +1653,7 @@ pub const VirtualMachine = struct {
                         this.uwsLoop().tickWithTimeout(&deadline);
 
                         if (comptime Environment.enable_logs)
-                            log("waited: {}", .{bun.fmt.fmtDuration(@intCast(@as(i64, @truncate(std.time.nanoTimestamp() - bun.CLI.start_time))))});
+                            log("waited: {}", .{std.fmt.fmtDuration(@intCast(@as(i64, @truncate(std.time.nanoTimestamp() - bun.CLI.start_time))))});
 
                         const elapsed = bun.timespec.now();
                         if (elapsed.order(&deadline) != .lt) {
@@ -3551,8 +3545,10 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub export fn Bun__remapStackFramePositions(globalObject: *JSGlobalObject, frames: [*]JSC.ZigStackFrame, frames_count: usize) void {
-        globalObject.bunVM().remapStackFramePositions(frames, frames_count);
+    pub export fn Bun__remapStackFramePositions(vm: *JSC.VirtualMachine, frames: [*]JSC.ZigStackFrame, frames_count: usize) void {
+        // **Warning** this method can be called in the heap collector thread!!
+        // https://github.com/oven-sh/bun/issues/17087
+        vm.remapStackFramePositions(frames, frames_count);
     }
 
     pub fn remapStackFramePositions(this: *VirtualMachine, frames: [*]JSC.ZigStackFrame, frames_count: usize) void {
@@ -3560,6 +3556,11 @@ pub const VirtualMachine = struct {
             if (frame.position.isInvalid() or frame.remapped) continue;
             var sourceURL = frame.source_url.toUTF8(bun.default_allocator);
             defer sourceURL.deinit();
+
+            // **Warning** this method can be called in the heap collector thread!!
+            // https://github.com/oven-sh/bun/issues/17087
+            this.remap_stack_frames_mutex.lock();
+            defer this.remap_stack_frames_mutex.unlock();
 
             if (this.resolveSourceMapping(
                 sourceURL.slice(),

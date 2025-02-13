@@ -1301,8 +1301,8 @@ pub const Symbol = struct {
                         .{
                             symbol.original_name, @tagName(symbol.kind),
                             if (symbol.hasLink()) symbol.link else Ref{
-                                .source_index = @as(Ref.Int, @truncate(i)),
-                                .inner_index = @as(Ref.Int, @truncate(inner_index)),
+                                .source_index = @truncate(i),
+                                .inner_index = @truncate(inner_index),
                                 .tag = .symbol,
                             },
                         },
@@ -1614,7 +1614,7 @@ pub const E = struct {
         pub fn hasSameFlagsAs(a: *Dot, b: *Dot) bool {
             return (a.optional_chain == b.optional_chain and
                 a.is_direct_eval == b.is_direct_eval and
-                a.can_be_unwrapped_if_unused == b.can_be_unwrapped_if_unused and a.call_can_be_unwrapped_if_unused == b.call_can_be_unwrapped_if_unused);
+                a.can_be_removed_if_unused == b.can_be_removed_if_unused and a.call_can_be_unwrapped_if_unused == b.call_can_be_unwrapped_if_unused);
         }
     };
 
@@ -1648,7 +1648,7 @@ pub const E = struct {
         must_keep_due_to_with_stmt: bool = false,
 
         // If true, this identifier is known to not have a side effect (i.e. to not
-        // throw an exception) when referenced. If false, this identifier may or may
+        // throw an exception) when referenced. If false, this identifier may or
         // not have side effects when referenced. This is used to allow the removal
         // of known globals such as "Object" if they aren't used.
         can_be_removed_if_unused: bool = false,
@@ -2027,12 +2027,12 @@ pub const E = struct {
                         return error.Clobber;
                     },
                     .e_object => |object| {
-                        if (rope.next == null) {
-                            // success
-                            return existing;
+                        if (rope.next != null) {
+                            return try object.getOrPutObject(rope.next.?, allocator);
                         }
 
-                        return try object.getOrPutObject(rope.next.?, allocator);
+                        // success
+                        return existing;
                     },
                     else => {
                         return error.Clobber;
@@ -7896,7 +7896,7 @@ pub const Macro = struct {
     const js = @import("./bun.js/javascript_core_c_api.zig");
     const Zig = @import("./bun.js/bindings/exports.zig");
     const Transpiler = bun.Transpiler;
-    const MacroEntryPoint = bun.transpiler.MacroEntryPoint;
+    const MacroEntryPoint = bun.transpiler.EntryPoints.MacroEntryPoint;
     const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
     pub const MacroRemapEntry = @import("./resolver/package_json.zig").MacroImportReplacementMap;
 

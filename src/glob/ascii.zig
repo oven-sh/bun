@@ -140,139 +140,145 @@ pub fn match(alloc: Allocator, glob: []const u8, path: []const u8) MatchResult {
 
 inline fn globMatchImpl(state: *State, glob: []const u8, path: []const u8) bool {
     while (state.glob_index < glob.len or state.path_index < path.len) {
-        if (state.glob_index < glob.len) {
-            switch (glob[state.glob_index]) {
-                '*' => {
-                    const is_globstar =
-                        state.glob_index + 1 < glob.len and glob[state.glob_index + 1] == '*';
-                    if (is_globstar) {
-                        skipGlobstars(glob, &state.glob_index);
-                    }
-
-                    state.wildcard.glob_index = state.glob_index;
-                    state.wildcard.path_index = state.path_index + if (state.path_index < path.len) bun.strings.wtf8ByteSequenceLength(path[state.path_index]) else 1;
-
-                    var in_globstar = false;
-                    if (is_globstar) {
-                        state.glob_index += 2;
-
-                        const is_end_invalid = state.glob_index < glob.len;
-
-                        // FIXME: explain this bug fix
-                        if (is_end_invalid and state.path_index == path.len and glob.len - state.glob_index == 2 and isSeparator(glob[state.glob_index]) and glob[state.glob_index + 1] == '*') {
-                            continue;
+        if (state.glob_index < glob.len) fallthrough: {
+            const char = glob[state.glob_index];
+            to_else: {
+                switch (char) {
+                    '*' => {
+                        const is_globstar =
+                            state.glob_index + 1 < glob.len and glob[state.glob_index + 1] == '*';
+                        if (is_globstar) {
+                            skipGlobstars(glob, &state.glob_index);
                         }
 
-                        if ((state.glob_index < 3 or glob[state.glob_index - 3] == '/') and (!is_end_invalid or glob[state.glob_index] == '/')) {
-                            if (is_end_invalid) {
-                                state.glob_index += 1;
+                        state.wildcard.glob_index = state.glob_index;
+                        state.wildcard.path_index = state.path_index + if (state.path_index < path.len) bun.strings.wtf8ByteSequenceLength(path[state.path_index]) else 1;
+
+                        var in_globstar = false;
+                        if (is_globstar) {
+                            state.glob_index += 2;
+
+                            const is_end_invalid = state.glob_index < glob.len;
+
+                            // FIXME: explain this bug fix
+                            if (is_end_invalid and state.path_index == path.len and glob.len - state.glob_index == 2 and isSeparator(glob[state.glob_index]) and glob[state.glob_index + 1] == '*') {
+                                continue;
                             }
 
-                            // skip to separator
-                            state.skipToSeparator(path, is_end_invalid);
-                            in_globstar = true;
-                        }
-                    } else {
-                        state.glob_index += 1;
-                    }
+                            if ((state.glob_index < 3 or glob[state.glob_index - 3] == '/') and (!is_end_invalid or glob[state.glob_index] == '/')) {
+                                if (is_end_invalid) {
+                                    state.glob_index += 1;
+                                }
 
-                    if (!in_globstar and state.path_index < path.len and isSeparator(path[state.path_index])) {
-                        state.wildcard = state.globstar;
-                    }
-
-                    continue;
-                },
-                '?' => if (state.path_index < path.len) {
-                    if (!isSeparator(path[state.path_index])) {
-                        state.glob_index += 1;
-                        state.path_index += bun.strings.wtf8ByteSequenceLength(path[state.path_index]);
-                        continue;
-                    }
-                },
-                '[' => if (state.path_index < path.len) {
-                    state.glob_index += 1;
-
-                    var negated = false;
-                    if (state.glob_index < glob.len and (glob[state.glob_index] == '^' or glob[state.glob_index] == '!')) {
-                        negated = true;
-                        state.glob_index += 1;
-                    }
-
-                    var first = true;
-                    var is_match = false;
-
-                    // length of the unicode char in the path
-                    const len = bun.strings.wtf8ByteSequenceLength(path[state.path_index]);
-                    // source unicode char to match against the target
-                    const c = bun.strings.decodeWTF8RuneT(path[state.path_index..].ptr[0..4], len, u32, 0xFFFD);
-
-                    while (state.glob_index < glob.len and (first or glob[state.glob_index] != ']')) {
-                        // Get low ( ͡° ͜ʖ ͡°), and unescape it
-                        var low: u32 = glob[state.glob_index];
-                        var low_len: u8 = 1;
-                        if (!getUnicode(&low, &low_len, glob, &state.glob_index)) {
-                            return false; // Invalid pattern!
-                        }
-
-                        // skip past the target char
-                        state.glob_index += low_len;
-
-                        const high = if (state.glob_index + 1 < glob.len and glob[state.glob_index] == '-' and glob[state.glob_index + 1] != ']') blk: {
+                                // skip to separator
+                                state.skipToSeparator(path, is_end_invalid);
+                                in_globstar = true;
+                            }
+                        } else {
                             state.glob_index += 1;
-
-                            var high: u32 = glob[state.glob_index];
-                            var high_len: u8 = 1;
-                            if (!getUnicode(&high, &high_len, glob, &state.glob_index)) {
-                                return false; // Invalid pattern!
-                            }
-
-                            state.glob_index += high_len;
-                            break :blk high;
-                        } else low;
-
-                        if (low <= c and c <= high) {
-                            is_match = true;
                         }
 
-                        first = false;
-                    }
-
-                    if (state.glob_index >= glob.len) {
-                        return false; // Invalid pattern!
-                    }
-
-                    state.glob_index += 1;
-                    if (is_match != negated) {
-                        state.path_index += len;
-                        continue;
-                    }
-                },
-                '{' => return matchBrace(state, glob, path),
-                else => |c| if (state.path_index < path.len) {
-                    var cc: u8 = c;
-                    if (!unescape(&cc, glob, &state.glob_index)) {
-                        return false; // Invalid pattern!
-                    }
-                    const cc_len = bun.strings.wtf8ByteSequenceLength(cc);
-
-                    const is_match = if (cc == '/')
-                        isSeparator(path[state.path_index])
-                    else if (cc_len > 1)
-                        state.path_index + cc_len <= path.len and std.mem.eql(u8, path[state.path_index..][0..cc_len], glob[state.glob_index..][0..cc_len])
-                    else
-                        path[state.path_index] == cc;
-
-                    if (is_match) {
-                        state.glob_index += cc_len;
-                        state.path_index += cc_len;
-
-                        if (cc == '/') {
+                        if (!in_globstar and state.path_index < path.len and isSeparator(path[state.path_index])) {
                             state.wildcard = state.globstar;
                         }
 
                         continue;
+                    },
+                    '?' => if (state.path_index < path.len) {
+                        if (!isSeparator(path[state.path_index])) {
+                            state.glob_index += 1;
+                            state.path_index += bun.strings.wtf8ByteSequenceLength(path[state.path_index]);
+                            continue;
+                        }
+                        break :fallthrough;
+                    } else break :to_else,
+                    '[' => if (state.path_index < path.len) {
+                        state.glob_index += 1;
+
+                        var negated = false;
+                        if (state.glob_index < glob.len and (glob[state.glob_index] == '^' or glob[state.glob_index] == '!')) {
+                            negated = true;
+                            state.glob_index += 1;
+                        }
+
+                        var first = true;
+                        var is_match = false;
+
+                        // length of the unicode char in the path
+                        const len = bun.strings.wtf8ByteSequenceLength(path[state.path_index]);
+                        // source unicode char to match against the target
+                        const c = bun.strings.decodeWTF8RuneT(path[state.path_index..].ptr[0..4], len, u32, 0xFFFD);
+
+                        while (state.glob_index < glob.len and (first or glob[state.glob_index] != ']')) {
+                            // Get low ( ͡° ͜ʖ ͡°), and unescape it
+                            var low: u32 = glob[state.glob_index];
+                            var low_len: u8 = 1;
+                            if (!getUnicode(&low, &low_len, glob, &state.glob_index)) {
+                                return false; // Invalid pattern!
+                            }
+
+                            // skip past the target char
+                            state.glob_index += low_len;
+
+                            const high = if (state.glob_index + 1 < glob.len and glob[state.glob_index] == '-' and glob[state.glob_index + 1] != ']') blk: {
+                                state.glob_index += 1;
+
+                                var high: u32 = glob[state.glob_index];
+                                var high_len: u8 = 1;
+                                if (!getUnicode(&high, &high_len, glob, &state.glob_index)) {
+                                    return false; // Invalid pattern!
+                                }
+
+                                state.glob_index += high_len;
+                                break :blk high;
+                            } else low;
+
+                            if (low <= c and c <= high) {
+                                is_match = true;
+                            }
+
+                            first = false;
+                        }
+
+                        if (state.glob_index >= glob.len) {
+                            return false; // Invalid pattern!
+                        }
+
+                        state.glob_index += 1;
+                        if (is_match != negated) {
+                            state.path_index += len;
+                            continue;
+                        }
+                        break :fallthrough;
+                    } else break :to_else,
+                    '{' => return matchBrace(state, glob, path),
+                    else => break :to_else,
+                }
+            }
+            if (state.path_index < path.len) {
+                var cc: u8 = char;
+                if (!unescape(&cc, glob, &state.glob_index)) {
+                    return false; // Invalid pattern!
+                }
+                const cc_len = bun.strings.wtf8ByteSequenceLength(cc);
+
+                const is_match = if (cc == '/')
+                    isSeparator(path[state.path_index])
+                else if (cc_len > 1)
+                    state.path_index + cc_len <= path.len and std.mem.eql(u8, path[state.path_index..][0..cc_len], glob[state.glob_index..][0..cc_len])
+                else
+                    path[state.path_index] == cc;
+
+                if (is_match) {
+                    state.glob_index += cc_len;
+                    state.path_index += cc_len;
+
+                    if (cc == '/') {
+                        state.wildcard = state.globstar;
                     }
-                },
+
+                    continue;
+                }
             }
         }
 

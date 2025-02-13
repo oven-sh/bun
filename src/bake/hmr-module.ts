@@ -1,3 +1,7 @@
+// This is an implementation of an ES module loader with hot-module reloading support.
+//
+// TODO: solve a major design flaw where circular dependencies initialize stuff
+// wrong, as well as the over-aggressive use of async functions.
 import * as runtimeHelpers from "../runtime.bun.js";
 
 let refreshRuntime: any;
@@ -79,6 +83,15 @@ export class HotModule<E = any> {
 
   /// Equivalent to `import()` in ES modules
   async dynamicImport(specifier: string, opts?: ImportCallOptions) {
+    if (!registry.has(specifier) && !input_graph[specifier]) {
+      try {
+        return await import(specifier, opts);
+      } catch (err) {
+        // fall through to loadModule, which will throw a more specific error.
+        // but still show this one.
+        console.error(err);
+      }
+    }
     const mod = await (loadModule(specifier, LoadModuleType.AsyncUserDynamic) as Promise<HotModule>);
     // insert into the map if not present
     mod._deps.set(this, mod._deps.get(this));
@@ -192,7 +205,11 @@ function isUnsupportedViteEventName(str: string) {
  * Load a module by ID. Use `type` to specify if the module is supposed to be
  * present, or is something a user is able to dynamically specify.
  */
-export function loadModule<T = any>(key: Id, type: LoadModuleType): HotModule<T> | Promise<HotModule<T>> {
+export function loadModule<T = any>(
+  key: Id,
+  type: LoadModuleType,
+  opts?: ImportCallOptions,
+): HotModule<T> | Promise<HotModule<T>> {
   let mod = registry.get(key);
   if (mod) {
     // Preserve failures until they are re-saved.
@@ -213,7 +230,7 @@ export function loadModule<T = any>(key: Id, type: LoadModuleType): HotModule<T>
       );
     } else {
       throw new Error(
-        `Failed to resolve dynamic import '${key}'. In Bun Bake, all imports must be statically known at compile time so that the bundler can trace everything.`,
+        `Failed to resolve dynamic import '${key}'. With Bun's DevServer, all imports must be statically known at build time so that the bundler can trace everything.`,
       );
     }
   }

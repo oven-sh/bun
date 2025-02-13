@@ -62,7 +62,7 @@
 #include <JavaScriptCore/ScriptCallStack.h>
 #include <wtf/HashSet.h>
 #include <wtf/HexNumber.h>
-// #include <wtf/IsoMallocInlines.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/NeverDestroyed.h>
 // #include <wtf/RunLoop.h>
 #include <wtf/StdLibExtras.h>
@@ -77,7 +77,7 @@
 // #endif
 
 namespace WebCore {
-WTF_MAKE_ISO_ALLOCATED_IMPL(WebSocket);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(WebSocket);
 extern "C" int Bun__getTLSRejectUnauthorizedValue();
 
 static size_t getFramingOverhead(size_t payloadSize)

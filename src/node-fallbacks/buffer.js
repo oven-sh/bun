@@ -7,6 +7,7 @@ export * from "./node_modules/buffer";
 export { Buffer as default } from "./node_modules/buffer";
 export { Buffer } from "./node_modules/buffer";
 export var kStringMaxLength = 2 ** 32 - 1;
+export var kMaxLength = 9007199254740991;
 export var { Blob, File, atob, btoa } = globalThis;
 export var { createObjectURL } = URL;
 export var isAscii = buf => {

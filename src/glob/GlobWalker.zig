@@ -41,7 +41,7 @@ const Codepoint = CodepointIterator.Cursor.CodePointType;
 const Dirent = @import("../bun.js/node/types.zig").Dirent;
 const DirIterator = @import("../bun.js/node/dir_iterator.zig");
 const EntryKind = @import("../bun.js/node/types.zig").Dirent.Kind;
-const GlobAscii = @import("./ascii.zig");
+const match = @import("./match.zig").match;
 const JSC = bun.JSC;
 const Maybe = JSC.Maybe;
 const PathLike = @import("../bun.js/node/types.zig").PathLike;
@@ -336,8 +336,6 @@ pub fn GlobWalker_(
 
         /// not owned by this struct
         pattern: []const u8 = "",
-
-        cp_len: u32 = 0,
 
         /// If the pattern contains "./" or "../"
         has_relative_components: bool = false,
@@ -1333,7 +1331,7 @@ pub fn GlobWalker_(
         }
 
         fn matchPatternSlow(this: *GlobWalker, pattern_component: *Component, filepath: []const u8) bool {
-            return GlobAscii.match(
+            return match(
                 this.arena.allocator(),
                 pattern_component.patternSlice(this.pattern),
                 filepath,
@@ -1729,4 +1727,4 @@ pub fn matchWildcardLiteral(literal: []const u8, path: []const u8) bool {
     return std.mem.eql(u8, literal, path);
 }
 
-pub const matchImpl = GlobAscii.match;
+pub const matchImpl = match;

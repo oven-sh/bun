@@ -391,7 +391,7 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame
     var str = try str_arg.toSlice(globalThis, arena.allocator());
     defer str.deinit();
 
-    return JSC.JSValue.jsBoolean(globImpl.Ascii.match(arena.allocator(), this.pattern, str.slice()).matches());
+    return JSC.JSValue.jsBoolean(globImpl.match(arena.allocator(), this.pattern, str.slice()).matches());
 }
 
 pub fn convertUtf8(codepoints: *std.ArrayList(u32), pattern: []const u8) !void {

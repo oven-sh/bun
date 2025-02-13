@@ -352,7 +352,19 @@ pub const Error = struct {
     }
 
     pub fn format(self: Error, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-        try self.toShellSystemError().format(fmt, opts, writer);
+        // We want to reuse the code from SystemError for formatting.
+        // But, we do not want to call String.createUTF8 on the path/dest strings
+        // because we're intending to pass them to writer.print()
+        // which will convert them back into UTF*.
+        var that = self.withoutPath().toShellSystemError();
+        bun.debugAssert(that.path.tag != .WTFStringImpl);
+        bun.debugAssert(that.dest.tag != .WTFStringImpl);
+        that.path = bun.String.fromUTF8(self.path);
+        that.dest = bun.String.fromUTF8(self.dest);
+        bun.debugAssert(that.path.tag != .WTFStringImpl);
+        bun.debugAssert(that.dest.tag != .WTFStringImpl);
+
+        return that.format(fmt, opts, writer);
     }
 
     pub inline fn getErrno(this: Error) E {

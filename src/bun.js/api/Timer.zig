@@ -195,8 +195,8 @@ pub const All = struct {
         if (this.timers.peek()) |timer| {
             uv.uv_update_time(vm.uvLoop());
             const now = timespec.now();
-            const wait = if (timer.next.greater(&now))
-                timer.next.duration(&now)
+            const wait = if (timer.data.next.greater(&now))
+                timer.data.next.duration(&now)
             else
                 timespec{ .nsec = 0, .sec = 0 };
 

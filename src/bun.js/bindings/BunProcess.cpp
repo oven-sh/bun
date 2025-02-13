@@ -75,6 +75,7 @@ typedef int mode_t;
 #include "JSNextTickQueue.h"
 #include "ProcessBindingUV.h"
 #include "ProcessBindingNatives.h"
+#include "ProcessBindingTimers.h"
 
 #if OS(LINUX)
 #include <features.h>
@@ -2580,6 +2581,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
     if (moduleName == "spawn_sync"_s) PROCESS_BINDING_NOT_IMPLEMENTED("spawn_sync");
     if (moduleName == "stream_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED_ISSUE("stream_wrap", "4957");
     if (moduleName == "tcp_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("tcp_wrap");
+    if (moduleName == "timers"_s) return JSValue::encode(process->bindingTimers());
     if (moduleName == "tls_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("tls_wrap");
     if (moduleName == "tty_wrap"_s) return JSValue::encode(Bun::createNodeTTYWrapObject(globalObject));
     if (moduleName == "udp_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("udp_wrap");
@@ -3450,6 +3452,9 @@ void Process::finishCreation(JSC::VM& vm)
     });
     m_bindingNatives.initLater([](const JSC::LazyProperty<Process, JSC::JSObject>::Initializer& init) {
         init.set(Bun::ProcessBindingNatives::create(init.vm, ProcessBindingNatives::createStructure(init.vm, init.owner->globalObject())));
+    });
+    m_bindingTimers.initLater([](const JSC::LazyProperty<Process, JSC::JSObject>::Initializer& init) {
+        init.set(Bun::ProcessBindingTimers::create(init.vm, init.owner->globalObject()));
     });
 
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);

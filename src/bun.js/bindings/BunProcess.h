@@ -23,6 +23,7 @@ class Process : public WebCore::JSEventEmitter {
     LazyProperty<Process, Structure> m_memoryUsageStructure;
     LazyProperty<Process, JSObject> m_bindingUV;
     LazyProperty<Process, JSObject> m_bindingNatives;
+    LazyProperty<Process, JSObject> m_bindingTimers;
     WriteBarrier<Unknown> m_uncaughtExceptionCaptureCallback;
     WriteBarrier<JSObject> m_nextTickFunction;
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/bootstrap/switches/does_own_process_state.js#L113-L116
@@ -102,6 +103,7 @@ public:
     inline Structure* memoryUsageStructure() { return m_memoryUsageStructure.getInitializedOnMainThread(this); }
     inline JSObject* bindingUV() { return m_bindingUV.getInitializedOnMainThread(this); }
     inline JSObject* bindingNatives() { return m_bindingNatives.getInitializedOnMainThread(this); }
+    inline JSObject* bindingTimers() { return m_bindingTimers.getInitializedOnMainThread(this); }
 };
 
 bool isSignalName(WTF::String input);

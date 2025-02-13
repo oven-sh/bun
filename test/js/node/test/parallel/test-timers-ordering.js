@@ -19,9 +19,18 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+// Flags: --expose-internals
+
 'use strict';
 require('../common');
 const assert = require('assert');
+let binding;
+if (typeof Bun === 'undefined') {
+  const { internalBinding } = require('internal/test/binding');
+  binding = internalBinding('timers');
+} else {
+  binding = process.binding('timers');
+}
 
 const N = 30;
 
@@ -36,7 +45,7 @@ function f(i) {
 
     // Check that this iteration is fired at least 1ms later than the previous
     // We need to use the binding as the receiver for fast API calls.
-    const now = performance.now();
+    const now = binding.getLibuvNow();
     assert(now >= last_ts + 1,
            `current ts ${now} < prev ts ${last_ts} + 1`);
     last_ts = now;

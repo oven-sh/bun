@@ -149,6 +149,38 @@ devTest("import then create", {
     const c = await dev.client("/");
   },
 });
+devTest("external", {
+  files: {
+    "index.html": `
+      <!doctype html>
+      <html>
+      <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>index | Powered by Bun</title>
+        <link rel="stylesheet" href="./index.css" />
+        <link rel="icon" type="image/x-icon" href="https://bun.sh/favicon.ico" />
+      </head>
+      <body>
+        <div id="root"></div>
+        <script src="./index.client.tsx" type="module"></script>
+      </body>
+      </html>
+    `,
+    "index.css": `
+      body {
+        background-color: red;
+      }
+    `,
+    "index.client.tsx": `
+      console.log("hello");
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("hello");
 
-// TODO: cmd+r busts cache
-// TODO: svelte in HTML loader test
+    const ico: string = await c.js`document.querySelector("link[rel='icon']").href`;
+    expect(ico).toBe("https://bun.sh/favicon.ico");
+  },
+});

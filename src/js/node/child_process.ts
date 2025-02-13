@@ -771,7 +771,7 @@ function fork(modulePath, args = [], options) {
     // and stderr from the parent if silent isn't set.
     options.stdio = stdioStringToArray(options.silent ? "pipe" : "inherit", "ipc");
   } else if (!ArrayPrototypeIncludes.$call(options.stdio, "ipc")) {
-    throw ERR_CHILD_PROCESS_IPC_REQUIRED("options.stdio");
+    throw $ERR_CHILD_PROCESS_IPC_REQUIRED("options.stdio");
   }
 
   return spawn(options.execPath, args, options);
@@ -1858,12 +1858,6 @@ function ERR_UNKNOWN_SIGNAL(name) {
 function ERR_INVALID_OPT_VALUE(name, value) {
   const err = new TypeError(`The value "${value}" is invalid for option "${name}"`);
   err.code = "ERR_INVALID_OPT_VALUE";
-  return err;
-}
-
-function ERR_CHILD_PROCESS_IPC_REQUIRED(name) {
-  const err = new TypeError(`Forked processes must have an IPC channel, missing value 'ipc' in ${name}`);
-  err.code = "ERR_CHILD_PROCESS_IPC_REQUIRED";
   return err;
 }
 

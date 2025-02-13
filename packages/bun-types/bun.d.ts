@@ -2054,6 +2054,8 @@ declare module "bun" {
     max?: number;
     /** By default values outside i32 range are returned as strings. If this is true, values outside i32 range are returned as BigInts. */
     bigint?: boolean;
+    /** Automatic creation of prepared statements, defaults to true */
+    prepare?: boolean;
   };
 
   /**
@@ -2067,6 +2069,8 @@ declare module "bun" {
     cancelled: boolean;
     /** Cancels the executing query */
     cancel(): SQLQuery;
+    /** Execute as a simple query, no parameters are allowed but can execute multiple commands separated by semicolons */
+    simple(): SQLQuery;
     /** Executes the query */
     execute(): SQLQuery;
     /** Returns the raw query result */

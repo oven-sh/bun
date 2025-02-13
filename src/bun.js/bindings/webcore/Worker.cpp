@@ -244,7 +244,7 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
         auto ports = MessagePort::entanglePorts(context, WTFMove(message.transferredPorts));
         auto event = MessageEvent::create(*globalObject, message.message.releaseNonNull(), std::nullopt, WTFMove(ports));
 
-        globalObject->globalEventScope.dispatchEvent(event.event);
+        globalObject->globalEventScope->dispatchEvent(event.event);
     });
     return {};
 }
@@ -346,9 +346,9 @@ void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
         return;
     }
     RELEASE_ASSERT(&thisContext->vm() == &workerGlobalObject->vm());
-    RELEASE_ASSERT(thisContext == workerGlobalObject->globalEventScope.scriptExecutionContext());
+    RELEASE_ASSERT(thisContext == workerGlobalObject->globalEventScope->scriptExecutionContext());
 
-    if (workerGlobalObject->globalEventScope.hasActiveEventListeners(eventNames().messageEvent)) {
+    if (workerGlobalObject->globalEventScope->hasActiveEventListeners(eventNames().messageEvent)) {
         auto tasks = std::exchange(this->m_pendingTasks, {});
         lock.unlockEarly();
         for (auto& task : tasks) {
@@ -454,7 +454,7 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
     init.cancelable = false;
     init.bubbles = false;
 
-    globalObject->globalEventScope.dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
+    globalObject->globalEventScope->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
     worker->dispatchError(message.toWTFString(BunString::ZeroCopy));
 }
 

@@ -308,7 +308,7 @@ expect(node, "test will fail if this is not node").not.toBe(process.execPath);
  * sandboxed in a separate process because happy-dom is a terrible mess to work
  * with, and has some compatibility issues with Bun.
  */
-class Client extends EventEmitter {
+export class Client extends EventEmitter {
   #proc: Subprocess;
   output: OutputLineStream;
   exited = false;
@@ -723,7 +723,10 @@ class OutputLineStream extends EventEmitter {
     }
   }
 
-  waitForLine(regex: RegExp, timeout = (isWindows ? 5000 : 1000) * (Bun.version.includes("debug") ? 3 : 1)): Promise<RegExpMatchArray> {
+  waitForLine(
+    regex: RegExp,
+    timeout = (isWindows ? 5000 : 1000) * (Bun.version.includes("debug") ? 3 : 1),
+  ): Promise<RegExpMatchArray> {
     return new Promise((resolve, reject) => {
       let ran = false;
       let timer: any;
@@ -913,8 +916,12 @@ export function devTest<T extends DevServerTest>(description: string, options: T
     if (isCI && isWindows) {
       return jest.test.skip(name, run);
     }
-  
-    jest.test(name, run, (options.timeoutMultiplier ?? 1) * (isWindows ? 10_000 : 5_000) * (Bun.version.includes("debug") ? 3 : 1));
+
+    jest.test(
+      name,
+      run,
+      (options.timeoutMultiplier ?? 1) * (isWindows ? 10_000 : 5_000) * (Bun.version.includes("debug") ? 3 : 1),
+    );
     return options;
   } catch {
     // not in bun test. allow interactive use

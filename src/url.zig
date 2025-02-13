@@ -42,7 +42,7 @@ pub const URL = struct {
     /// host + path without the ending slash, protocol, searchParams and hash
     pub fn hostWithPath(this: *const URL) []const u8 {
         if (this.host.len > 0) {
-            if (this.path.len > 1) {
+            if (this.path.len > 1 and bun.isSliceInBuffer(this.path, this.href) and bun.isSliceInBuffer(this.host, this.href)) {
                 const end = @intFromPtr(this.path.ptr) + this.path.len;
                 const start = @intFromPtr(this.host.ptr);
                 const len: usize = end - start - (if (bun.strings.endsWithComptime(this.path, "/")) @as(usize, 1) else @as(usize, 0));

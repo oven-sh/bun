@@ -29,10 +29,8 @@ public:
 
     JSC::VM& vm() const { return ticket->scriptExecutionOwner()->vm(); }
 
-    WTF_MAKE_ISO_ALLOCATED(JSCDeferredWorkTask);
+    WTF_MAKE_TZONE_ALLOCATED(JSCDeferredWorkTask);
 };
-
-WTF_MAKE_ISO_ALLOCATED_IMPL(JSCDeferredWorkTask);
 
 static JSC::VM& getVM(Ticket& ticket)
 {

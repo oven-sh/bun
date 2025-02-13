@@ -4543,7 +4543,7 @@ const DirectoryWatchStore = struct {
         if (store.dependencies_free_list.items.len == 0)
             try store.dependencies.ensureUnusedCapacity(dev.allocator, 1);
 
-        const gop = try store.watches.getOrPut(dev.allocator, dir_name_to_watch);
+        const gop = try store.watches.getOrPut(dev.allocator, bun.strings.withoutTrailingSlashWindowsPath(dir_name_to_watch));
         if (gop.found_existing) {
             const specifier_cloned = try dev.allocator.dupe(u8, specifier);
             errdefer dev.allocator.free(specifier_cloned);
@@ -4576,6 +4576,7 @@ const DirectoryWatchStore = struct {
                         &(std.posix.toPosixPath(dir_name_to_watch) catch |err| switch (err) {
                             error.NameTooLong => return, // wouldn't be able to open, ignore
                         }),
+                        // pass 
                         bun.O.DIRECTORY,
                         0,
                     )) {
@@ -4604,7 +4605,7 @@ const DirectoryWatchStore = struct {
                 }
         else
             .{ bun.invalid_fd, false };
-        errdefer _ = if (owned_fd) bun.sys.close(fd);
+        errdefer _ = if (Watcher.requires_file_descriptors) if (owned_fd) bun.sys.close(fd);
         if (Watcher.requires_file_descriptors)
             debug.log("-> fd: {} ({s})", .{
                 fd,
@@ -4614,7 +4615,7 @@ const DirectoryWatchStore = struct {
         const dir_name = try dev.allocator.dupe(u8, dir_name_to_watch);
         errdefer dev.allocator.free(dir_name);
 
-        gop.key_ptr.* = dir_name;
+        gop.key_ptr.* = bun.strings.withoutTrailingSlashWindowsPath(dir_name);
 
         const specifier_cloned = try dev.allocator.dupe(u8, specifier);
         errdefer dev.allocator.free(specifier_cloned);
@@ -5734,7 +5735,7 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
                 // failures, check those now.
                 dev.directory_watchers.lock.lock();
                 defer dev.directory_watchers.lock.unlock();
-                if (dev.directory_watchers.watches.getIndex(file_path)) |watcher_index| {
+                if (dev.directory_watchers.watches.getIndex(bun.strings.withoutTrailingSlashWindowsPath(file_path))) |watcher_index| {
                     const entry = &dev.directory_watchers.watches.values()[watcher_index];
                     var new_chain: DirectoryWatchStore.Dep.Index.Optional = .none;
                     var it: ?DirectoryWatchStore.Dep.Index = entry.first_dep;
@@ -5864,7 +5865,7 @@ fn relativePath(dev: *const DevServer, path: []const u8) []const u8 {
         threadlocal var buf: bun.PathBuffer = undefined;
     }.buf;
     const rel = bun.path.relativePlatformBuf(relative_path_buf, dev.root, path, .auto, true);
-    // @constCast: `rel` is owned by a mutable threadlocal buffer in the path code.
+    // @constCast: `rel` is owned by a mutable threadlocal buffer above
     bun.path.platformToPosixInPlace(u8, @constCast(rel));
     return rel;
 }

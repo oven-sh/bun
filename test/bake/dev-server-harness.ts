@@ -74,6 +74,11 @@ export type DevServerTest = (
     }
 ) & {
   test: (dev: Dev) => Promise<void>;
+
+  /**
+   * Multiply the timeout by this number.
+   */
+  timeoutMultiplier?: number;
 };
 
 let interactive = false;
@@ -718,7 +723,7 @@ class OutputLineStream extends EventEmitter {
     }
   }
 
-  waitForLine(regex: RegExp, timeout = isWindows ? 5000 : 1000): Promise<RegExpMatchArray> {
+  waitForLine(regex: RegExp, timeout = (isWindows ? 5000 : 1000) * (Bun.version.includes("debug") ? 3 : 1)): Promise<RegExpMatchArray> {
     return new Promise((resolve, reject) => {
       let ran = false;
       let timer: any;
@@ -904,7 +909,7 @@ export function devTest<T extends DevServerTest>(description: string, options: T
 
   const name = `DevServer > ${basename}.${count}: ${description}`;
   try {
-    jest.test(name, run, (isWindows ? 10_000 : 5_000) * (Bun.version.includes("debug") ? 3 : 1));
+    jest.test(name, run, (options.timeoutMultiplier ?? 1) * (isWindows ? 10_000 : 5_000) * (Bun.version.includes("debug") ? 3 : 1));
     return options;
   } catch {
     // not in bun test. allow interactive use

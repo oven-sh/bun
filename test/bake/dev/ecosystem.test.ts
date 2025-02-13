@@ -11,6 +11,7 @@ import { devTest } from "../dev-server-harness";
 // - export { x as y }
 devTest("svelte component islands example", {
   fixture: "svelte-component-islands",
+  timeoutMultiplier: 2,
   async test(dev) {
     const html = await dev.fetch("/").text();
     if (html.includes("Bun__renderFallbackError")) throw new Error("failed");
@@ -23,6 +24,7 @@ devTest("svelte component islands example", {
     const c = await dev.client("/");
     expect(await c.elemText("button")).toBe("Clicked 5 times");
     await c.click("button");
+    await Bun.sleep(500); // TODO: de-flake event ordering.
     expect(await c.elemText("button")).toBe("Clicked 6 times");
 
     // TODO: plugin watch

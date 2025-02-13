@@ -35,6 +35,12 @@ const Allocator = std.mem.Allocator;
 const GLOB_STACK_BUF_SIZE = 64;
 const BRACE_DEPTH_MAX = 10;
 
+const Brace = struct {
+    open_brace_idx: u32,
+    branch_idx: u32,
+};
+const BraceStack = std.BoundedArray(Brace, 10);
+
 pub const MatchResult = enum {
     no_match,
     match,
@@ -54,13 +60,12 @@ const State = struct {
     wildcard: Wildcard = .{},
     globstar: Wildcard = .{},
 
-    depth: u8 = 0,
-
-    allocator: Allocator,
+    brace_depth: u8 = 0,
 
     inline fn backtrack(self: *State) void {
         self.path_index = self.wildcard.path_index;
         self.glob_index = self.wildcard.glob_index;
+        self.brace_depth = self.wildcard.brace_depth;
     }
 
     inline fn skipToSeparator(self: *State, path: []const u8, is_end_invalid: bool) void {
@@ -87,6 +92,7 @@ const Wildcard = struct {
     // Using u32 rather than usize for these results in 10% faster performance.
     glob_index: u32 = 0,
     path_index: u32 = 0,
+    brace_depth: u8 = 0,
 };
 
 /// This function checks returns a boolean value if the pathname `path` matches
@@ -118,8 +124,8 @@ const Wildcard = struct {
 ///     Used to escape any of the special characters above.
 // TODO: consider just taking arena and resetting to initial state,
 // all usages of this function pass in Arena.allocator()
-pub fn match(alloc: Allocator, glob: []const u8, path: []const u8) MatchResult {
-    var state = State{ .allocator = alloc };
+pub fn match(_: Allocator, glob: []const u8, path: []const u8) MatchResult {
+    var state = State{};
 
     var negated = false;
     while (state.glob_index < glob.len and glob[state.glob_index] == '!') {
@@ -127,7 +133,8 @@ pub fn match(alloc: Allocator, glob: []const u8, path: []const u8) MatchResult {
         state.glob_index += 1;
     }
 
-    const matched = globMatchImpl(&state, glob, path);
+    var brace_stack = BraceStack.init(0) catch unreachable;
+    const matched = globMatchImpl(&state, glob, path, &brace_stack);
 
     // TODO: consider just returning a bool
     // return matched != negated;
@@ -138,8 +145,8 @@ pub fn match(alloc: Allocator, glob: []const u8, path: []const u8) MatchResult {
     }
 }
 
-inline fn globMatchImpl(state: *State, glob: []const u8, path: []const u8) bool {
-    while (state.glob_index < glob.len or state.path_index < path.len) {
+inline fn globMatchImpl(state: *State, glob: []const u8, path: []const u8, brace_stack: *BraceStack) bool {
+    main_loop: while (state.glob_index < glob.len or state.path_index < path.len) {
         if (state.glob_index < glob.len) fallthrough: {
             const char = glob[state.glob_index];
             to_else: {
@@ -153,6 +160,7 @@ inline fn globMatchImpl(state: *State, glob: []const u8, path: []const u8) bool 
 
                         state.wildcard.glob_index = state.glob_index;
                         state.wildcard.path_index = state.path_index + if (state.path_index < path.len) bun.strings.wtf8ByteSequenceLength(path[state.path_index]) else 1;
+                        state.wildcard.brace_depth = state.brace_depth;
 
                         var in_globstar = false;
                         if (is_globstar) {
@@ -251,7 +259,24 @@ inline fn globMatchImpl(state: *State, glob: []const u8, path: []const u8) bool 
                         }
                         break :fallthrough;
                     } else break :to_else,
-                    '{' => return matchBrace(state, glob, path),
+                    '{' => {
+                        for (brace_stack.slice()) |brace| {
+                            if (brace.open_brace_idx == state.glob_index) {
+                                state.glob_index = brace.branch_idx;
+                                state.brace_depth += 1;
+                                continue :main_loop;
+                            }
+                        }
+                        return matchBrace(state, glob, path, brace_stack);
+                    },
+                    ',' => if (state.brace_depth > 0) {
+                        skipBranch(state, glob);
+                        continue;
+                    } else break :to_else,
+                    '}' => if (state.brace_depth > 0) {
+                        skipBranch(state, glob);
+                        continue;
+                    } else break :to_else,
                     else => break :to_else,
                 }
             }
@@ -293,83 +318,15 @@ inline fn globMatchImpl(state: *State, glob: []const u8, path: []const u8) bool 
     return true;
 }
 
-fn matchBrace(state: *State, glob: []const u8, path: []const u8) bool {
-    if (state.depth + 1 > BRACE_DEPTH_MAX) {
-        return false; // Invalid pattern! Too many nested braces
-    }
-    var brace_depth: u32 = 0;
+fn matchBrace(state: *State, glob: []const u8, path: []const u8, brace_stack: *BraceStack) bool {
+    var brace_depth: i16 = 0;
     var in_brackets = false;
-    var is_empty = true;
 
     const open_brace_index = state.glob_index;
-    var close_brace_index: u32 = 0;
-    var glob_index: u32 = state.glob_index;
-
-    var max_branch_len: u32 = 0;
-    var last_branch_start_index = open_brace_index + 1;
-
-    while (glob_index < glob.len) : (glob_index += 1) {
-        is_empty = is_empty and (glob[glob_index] == '{' or glob[glob_index] == '}');
-        switch (glob[glob_index]) {
-            '{' => if (!in_brackets) {
-                brace_depth += 1;
-            },
-            '}' => if (!in_brackets) {
-                brace_depth -= 1;
-                if (brace_depth == 0) {
-                    max_branch_len = @max(max_branch_len, glob_index - last_branch_start_index);
-                    close_brace_index = glob_index;
-                    break;
-                }
-            },
-            '[' => if (!in_brackets) {
-                in_brackets = true;
-            },
-            ']' => in_brackets = false,
-            '\\' => glob_index += 1,
-            ',' => if (brace_depth == 1) {
-                max_branch_len = @max(max_branch_len, glob_index - last_branch_start_index);
-                last_branch_start_index = glob_index + 1;
-            },
-            else => {},
-        }
-    }
-
-    if (brace_depth != 0) {
-        // std.debug.print("Invalid Pattern - Braces Mismatched! (by {d})", .{brace_depth});
-        return false; // Invalid pattern!
-    }
-
-    const max_sub_len = open_brace_index + max_branch_len + (glob.len - (close_brace_index + 1));
-
-    var buf: [GLOB_STACK_BUF_SIZE]u8 = undefined;
-    var fixed_buf_alloc = std.heap.FixedBufferAllocator.init(&buf);
-    const buf_alloc = fixed_buf_alloc.allocator();
-    // PERF: doing the following results in a large performance improvement over using std.heap.stackFallback
-    var buffer = if (max_sub_len <= GLOB_STACK_BUF_SIZE) blk: {
-        break :blk std.ArrayList(u8).initCapacity(buf_alloc, GLOB_STACK_BUF_SIZE) catch unreachable;
-    } else blk: {
-        break :blk std.ArrayList(u8).initCapacity(state.allocator, max_sub_len) catch bun.outOfMemory();
-    };
-    defer buffer.deinit();
-
-    // prefix is common among all branches
-    // if checking a branch fails to match, buffer is truncated to include only the prefix
-    buffer.appendSliceAssumeCapacity(glob[0..open_brace_index]);
-
-    if (is_empty) {
-        // add tail to buffer
-        // e.g. for glob `b{{}}m` match `bm` against path instead of `b{}m`
-        buffer.appendSliceAssumeCapacity(glob[close_brace_index + 1 ..]);
-        var branch_state = state.*;
-        branch_state.glob_index = open_brace_index;
-        branch_state.depth += 1;
-        return globMatchImpl(&branch_state, buffer.items, path);
-    }
 
     var branch_index: u32 = 0;
 
-    while (state.glob_index < glob.len) : (state.glob_index += 1) {
+    while (state.glob_index < glob.len) {
         switch (glob[state.glob_index]) {
             '{' => if (!in_brackets) {
                 brace_depth += 1;
@@ -380,39 +337,16 @@ fn matchBrace(state: *State, glob: []const u8, path: []const u8) bool {
             '}' => if (!in_brackets) {
                 brace_depth -= 1;
                 if (brace_depth == 0) {
-                    // add branch to buffer
-                    buffer.appendSliceAssumeCapacity(glob[branch_index..state.glob_index]);
-                    // add tail to buffer
-                    buffer.appendSliceAssumeCapacity(glob[close_brace_index + 1 ..]);
-
-                    var branch_state = state.*;
-                    branch_state.glob_index = open_brace_index;
-                    branch_state.depth += 1;
-
-                    const matched = globMatchImpl(&branch_state, buffer.items, path);
-                    if (matched) {
+                    if (matchBraceBranch(state, glob, path, open_brace_index, branch_index, brace_stack)) {
                         return true;
                     }
-
                     break;
                 }
             },
             ',' => if (brace_depth == 1) {
-                // add branch to buffer
-                buffer.appendSliceAssumeCapacity(glob[branch_index..state.glob_index]);
-                // add tail to buffer
-                buffer.appendSliceAssumeCapacity(glob[close_brace_index + 1 ..]);
-
-                var branch_state = state.*;
-                branch_state.glob_index = open_brace_index;
-                branch_state.depth += 1;
-
-                const matched = globMatchImpl(&branch_state, buffer.items, path);
-                if (matched) {
+                if (matchBraceBranch(state, glob, path, open_brace_index, branch_index, brace_stack)) {
                     return true;
                 }
-
-                buffer.shrinkRetainingCapacity(open_brace_index); // clear items past prefix, without decreasing allocated capacity
                 branch_index = state.glob_index + 1;
             },
             '[' => if (!in_brackets) {
@@ -422,9 +356,51 @@ fn matchBrace(state: *State, glob: []const u8, path: []const u8) bool {
             '\\' => state.glob_index += 1,
             else => {},
         }
+        state.glob_index += 1;
     }
 
     return false;
+}
+
+fn matchBraceBranch(state: *State, glob: []const u8, path: []const u8, open_brace_index: u32, branch_index: u32, brace_stack: *BraceStack) bool {
+    brace_stack.append(Brace{ .open_brace_idx = open_brace_index, .branch_idx = branch_index }) catch
+        return false; // exceeded brace depth
+
+    // Clone state
+    var branch_state = state.*;
+    branch_state.glob_index = branch_index;
+    branch_state.brace_depth = @intCast(brace_stack.len);
+
+    const matched = globMatchImpl(&branch_state, glob, path, brace_stack);
+
+    _ = brace_stack.pop();
+
+    return matched;
+}
+
+fn skipBranch(state: *State, glob: []const u8) void {
+    var in_brackets = false;
+    while (state.glob_index < glob.len) {
+        switch (glob[state.glob_index]) {
+            '{' => if (!in_brackets) {
+                state.brace_depth += 1;
+            },
+            '}' => if (!in_brackets) {
+                state.brace_depth -= 1;
+                if (state.brace_depth == 0) {
+                    state.glob_index += 1;
+                    return;
+                }
+            },
+            '[' => if (!in_brackets) {
+                in_brackets = true;
+            },
+            ']' => in_brackets = false,
+            '\\' => state.glob_index += 1,
+            else => {},
+        }
+        state.glob_index += 1;
+    }
 }
 
 inline fn isSeparator(c: u8) bool {

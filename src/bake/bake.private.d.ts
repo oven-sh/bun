@@ -43,6 +43,9 @@ declare const side: "client" | "server";
  */
 declare const IS_BUN_DEVELOPMENT: any;
 
+/** If this is the fallback error page */
+declare const IS_ERROR_RUNTIME: boolean;
+
 declare var __bun_f: any;
 
 // The following interfaces have been transcribed manually.

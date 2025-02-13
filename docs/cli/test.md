@@ -247,3 +247,5 @@ $ bun test foo
 ```
 
 Any test file in the directory with an _absolute path_ that contains one of the targets will run. Glob patterns are not yet supported. -->
+
+{% bunCLIUsage command="test" /%}

@@ -7,19 +7,6 @@
   // - "cppvsdbg" is used instead of "lldb" on Windows, because "lldb" is too slow
   "version": "0.2.0",
   "configurations": [
-    {
-      "type": "bun",
-      "request": "launch",
-      "name": "[js] bun test [file]",
-      "runtime": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "${file}"],
-      "cwd": "${workspaceFolder}",
-      "env": {
-        "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_DEBUG_jest": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "1",
-      },
-    },
     // bun test [file]
     {
       "type": "lldb",

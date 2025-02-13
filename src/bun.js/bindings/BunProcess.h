@@ -12,8 +12,7 @@ class GlobalObject;
 
 namespace Bun {
 
-// TODO: find a better place for this
-int getRSS(size_t* rss);
+extern "C" int getRSS(size_t* rss);
 
 using namespace JSC;
 

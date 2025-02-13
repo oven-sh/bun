@@ -1,8 +1,8 @@
 #pragma once
 
+#include "root.h"
 #include "TaggedPointer.h"
 #include "Map.h"
-#include "JavaScriptCore/JSCJSValue.h"
 
 namespace v8 {
 namespace shim {

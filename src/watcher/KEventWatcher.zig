@@ -1,4 +1,5 @@
 const KEventWatcher = @This();
+const log = Output.scoped(.watcher, false);
 pub const EventListIndex = u32;
 
 const KEvent = std.c.Kevent;
@@ -48,32 +49,29 @@ pub fn watchLoopCycle(this: *Watcher) bun.JSC.Maybe(void) {
 
     var count = std.posix.system.kevent(
         this.platform.fd.cast(),
-        @as([*]KEvent, changelist),
+        changelist,
         0,
-        @as([*]KEvent, changelist),
+        changelist,
         128,
-
-        null,
+        null, // timeout
     );
 
     // Give the events more time to coalesce
     if (count < 128 / 2) {
         const remain = 128 - count;
-        var timespec = std.posix.timespec{ .sec = 0, .nsec = 100_000 };
         const extra = std.posix.system.kevent(
             this.platform.fd.cast(),
-            @as([*]KEvent, changelist[@as(usize, @intCast(count))..].ptr),
+            changelist[@intCast(count)..].ptr,
             0,
-            @as([*]KEvent, changelist[@as(usize, @intCast(count))..].ptr),
+            changelist[@intCast(count)..].ptr,
             remain,
-
-            &timespec,
+            &.{ .sec = 0, .nsec = 100_000 }, // 0.0001 seconds
         );
 
         count += extra;
     }
 
-    var changes = changelist[0..@as(usize, @intCast(@max(0, count)))];
+    var changes = changelist[0..@intCast(@max(0, count))];
     var watchevents = this.watch_events[0..changes.len];
     var out_len: usize = 0;
     if (changes.len > 0) {

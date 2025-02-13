@@ -12,6 +12,12 @@ list(APPEND CMAKE_MODULE_PATH
 include(Policies)
 include(Globals)
 
+if (CMAKE_HOST_WIN32)
+  # Workaround for TLS certificate verification issue on Windows when downloading from GitHub
+  # Remove this once we've bumped the CI machines build image
+  set(CMAKE_TLS_VERIFY 0)
+endif()
+
 # --- Compilers ---
 
 if(CMAKE_HOST_APPLE)

@@ -433,7 +433,7 @@ bool Bun__deepMatch(
     bool replacePropsWithAsymmetricMatchers,
     bool isMatchingObjectContaining);
 
-extern "C" void Bun__remapStackFramePositions(JSC::JSGlobalObject*, ZigStackFrame*, size_t);
+extern "C" void Bun__remapStackFramePositions(void*, ZigStackFrame*, size_t);
 
 namespace Inspector {
 class ScriptArguments;

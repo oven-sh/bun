@@ -801,7 +801,7 @@ pub const PublishCommand = struct {
                         const nanoseconds = nanoseconds: {
                             if (res.headers.get("retry-after")) |retry| default: {
                                 const trimmed = strings.trim(retry, &strings.whitespace_chars);
-                                const seconds = bun.fmt.parseInt(u32, trimmed, 10) catch break :default;
+                                const seconds = std.fmt.parseInt(u32, trimmed, 10) catch break :default;
                                 break :nanoseconds seconds * std.time.ns_per_s;
                             }
 
@@ -890,7 +890,7 @@ pub const PublishCommand = struct {
         // TODO: npm version
         try json.setString(allocator, "_npmVersion", "10.8.3");
         try json.setString(allocator, "integrity", integrity_fmt);
-        try json.setString(allocator, "shasum", try std.fmt.allocPrint(allocator, "{s}", .{bun.fmt.bytesToHex(shasum, .lower)}));
+        try json.setString(allocator, "shasum", try std.fmt.allocPrint(allocator, "{s}", .{std.fmt.bytesToHex(shasum, .lower)}));
 
         var dist_props = try allocator.alloc(G.Property, 3);
         dist_props[0] = .{
@@ -913,7 +913,7 @@ pub const PublishCommand = struct {
             ),
             .value = Expr.init(
                 E.String,
-                .{ .data = try std.fmt.allocPrint(allocator, "{s}", .{bun.fmt.bytesToHex(shasum, .lower)}) },
+                .{ .data = try std.fmt.allocPrint(allocator, "{s}", .{std.fmt.bytesToHex(shasum, .lower)}) },
                 logger.Loc.Empty,
             ),
         };
@@ -926,7 +926,7 @@ pub const PublishCommand = struct {
             .value = Expr.init(
                 E.String,
                 .{
-                    .data = try bun.fmt.allocPrint(allocator, "http://{s}/{s}/-/{}", .{
+                    .data = try std.fmt.allocPrint(allocator, "http://{s}/{s}/-/{}", .{
                         // always use replace https with http
                         // https://github.com/npm/cli/blob/9281ebf8e428d40450ad75ba61bc6f040b3bf896/workspaces/libnpmpublish/lib/publish.js#L120
                         strings.withoutTrailingSlash(strings.withoutPrefixComptime(registry.url.href, "https://")),
@@ -1156,7 +1156,7 @@ pub const PublishCommand = struct {
                     while (iter.next().unwrap() catch null) |entry| {
                         const name, const subpath = name_and_subpath: {
                             const name = entry.name.slice();
-                            const join = try bun.fmt.allocPrintZ(allocator, "{s}{s}{s}", .{
+                            const join = try std.fmt.allocPrintZ(allocator, "{s}{s}{s}", .{
                                 dir_subpath,
                                 // only using posix separators
                                 if (dir_subpath.len == 0) "" else std.fs.path.sep_str_posix,

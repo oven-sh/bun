@@ -44,6 +44,7 @@ using namespace JSC;
     macro(cancel) \
     macro(cancelAlgorithm) \
     macro(chdir) \
+    macro(checkBufferRead) \
     macro(cloneArrayBuffer) \
     macro(close) \
     macro(closeAlgorithm) \

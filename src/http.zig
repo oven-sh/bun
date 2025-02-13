@@ -410,7 +410,7 @@ const ProxyTunnel = struct {
             };
             const pending = encoded_data[@intCast(written)..];
             if (pending.len > 0) {
-                // lets flush when we are trully writable
+                // lets flush when we are truly writable
                 proxy.write_buffer.write(pending) catch bun.outOfMemory();
             }
         }
@@ -583,7 +583,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
             return ActiveSocket.init(&dead_socket);
         }
 
-        pending_sockets: HiveArray(PooledSocket, pool_size) = HiveArray(PooledSocket, pool_size).init(),
+        pending_sockets: HiveArray(PooledSocket, pool_size) = .empty,
         us_socket_context: *uws.SocketContext,
 
         const Context = @This();
@@ -1767,7 +1767,7 @@ pub inline fn cleanup(force: bool) void {
     default_arena.gc(force);
 }
 
-pub const Headers = @import("./http/headers.zig");
+pub const Headers = JSC.WebCore.Headers;
 
 pub const SOCKET_FLAGS: u32 = if (Environment.isLinux)
     SOCK.CLOEXEC | posix.MSG.NOSIGNAL
@@ -2226,7 +2226,7 @@ pub const Flags = packed struct {
 // TODO: reduce the size of this struct
 // Many of these fields can be moved to a packed struct and use less space
 method: Method,
-header_entries: Headers.Entries,
+header_entries: Headers.Entry.List,
 header_buf: string,
 url: URL,
 connected_url: URL = URL{},
@@ -2400,8 +2400,8 @@ pub const HTTPChannelContext = struct {
 pub const AsyncHTTP = struct {
     request: ?picohttp.Request = null,
     response: ?picohttp.Response = null,
-    request_headers: Headers.Entries = Headers.Entries{},
-    response_headers: Headers.Entries = Headers.Entries{},
+    request_headers: Headers.Entry.List = .empty,
+    response_headers: Headers.Entry.List = .empty,
     response_buffer: *MutableString,
     request_body: HTTPRequestBody = .{ .bytes = "" },
     allocator: std.mem.Allocator,
@@ -2551,7 +2551,7 @@ pub const AsyncHTTP = struct {
         allocator: std.mem.Allocator,
         method: Method,
         url: URL,
-        headers: Headers.Entries,
+        headers: Headers.Entry.List,
         headers_buf: string,
         response_buffer: *MutableString,
         request_body: []const u8,
@@ -2671,7 +2671,7 @@ pub const AsyncHTTP = struct {
         allocator: std.mem.Allocator,
         method: Method,
         url: URL,
-        headers: Headers.Entries,
+        headers: Headers.Entry.List,
         headers_buf: string,
         response_buffer: *MutableString,
         request_body: []const u8,
@@ -2833,7 +2833,7 @@ pub const AsyncHTTP = struct {
                 this.client.deinit();
                 var threadlocal_http: *ThreadlocalAsyncHTTP = @fieldParentPtr("async_http", async_http);
                 defer threadlocal_http.destroy();
-                log("onAsyncHTTPCallback: {any}", .{bun.fmt.fmtDuration(this.elapsed)});
+                log("onAsyncHTTPCallback: {any}", .{std.fmt.fmtDuration(this.elapsed)});
                 callback.function(callback.ctx, async_http, result);
             }
 

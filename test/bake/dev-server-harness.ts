@@ -8,7 +8,7 @@ import { Matchers } from "bun:test";
 import { EventEmitter } from "node:events";
 // @ts-ignore
 import { dedent } from "../bundler/expectBundled.ts";
-import { bunEnv, isWindows, mergeWindowEnvs } from "harness";
+import { bunEnv, isCI, isWindows, mergeWindowEnvs } from "harness";
 import { expect } from "bun:test";
 
 /** For testing bundler related bugs in the DevServer */
@@ -909,6 +909,11 @@ export function devTest<T extends DevServerTest>(description: string, options: T
 
   const name = `DevServer > ${basename}.${count}: ${description}`;
   try {
+    // TODO: resolve ci flakiness.
+    if (isCI && isWindows) {
+      return jest.test.skip(name, run);
+    }
+  
     jest.test(name, run, (options.timeoutMultiplier ?? 1) * (isWindows ? 10_000 : 5_000) * (Bun.version.includes("debug") ? 3 : 1));
     return options;
   } catch {

@@ -2428,9 +2428,12 @@ pub fn finalizeBundle(
 
         // Compute a file name to display
         const file_name: ?[]const u8 = if (current_bundle.had_reload_event)
-            dev.relativePath(
-                bv2.graph.input_files.items(.source)[bv2.graph.entry_points.items[0].get()].path.text,
-            )
+            if (bv2.graph.entry_points.items.len > 0)
+                dev.relativePath(
+                    bv2.graph.input_files.items(.source)[bv2.graph.entry_points.items[0].get()].path.text,
+                )
+            else
+                null // TODO: How does this happen
         else switch (dev.routeBundlePtr(current_bundle.requests.first.?.data.route_bundle_index).data) {
             .html => |html| dev.relativePath(html.html_bundle.html_bundle.path),
             .framework => |fw| file_name: {
@@ -4576,7 +4579,7 @@ const DirectoryWatchStore = struct {
                         &(std.posix.toPosixPath(dir_name_to_watch) catch |err| switch (err) {
                             error.NameTooLong => return, // wouldn't be able to open, ignore
                         }),
-                        // pass 
+                        // pass
                         bun.O.DIRECTORY,
                         0,
                     )) {
@@ -5743,6 +5746,11 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
                     while (it) |index| {
                         const dep = &dev.directory_watchers.dependencies.items[index.get()];
                         it = dep.next.unwrap();
+
+                        const prev_watcher = dev.server_transpiler.resolver.watcher;
+                        dev.server_transpiler.resolver.watcher = null;
+                        defer dev.server_transpiler.resolver.watcher = prev_watcher;
+
                         if ((dev.server_transpiler.resolver.resolve(
                             bun.path.dirname(dep.source_file_path, .auto),
                             dep.specifier,

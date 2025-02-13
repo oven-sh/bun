@@ -1306,15 +1306,13 @@ bool setProcessExitCodeInner(JSC::JSGlobalObject* lexicalGlobalObject, Process* 
                 code = jsDoubleNumber(num);
             }
         }
-        Bun::V::validateInteger(throwScope, lexicalGlobalObject, code, "code"_s, jsUndefined(), jsUndefined());
-        RETURN_IF_EXCEPTION(throwScope, false);
-
-        int exitCodeInt = code.toInt32(lexicalGlobalObject) % 256;
+        ssize_t exitCodeInt;
+        Bun::V::validateInteger(throwScope, lexicalGlobalObject, code, "code"_s, jsUndefined(), jsUndefined(), &exitCodeInt);
         RETURN_IF_EXCEPTION(throwScope, false);
 
         process->m_isExitCodeObservable = true;
         void* ptr = jsCast<Zig::GlobalObject*>(process->globalObject())->bunVM();
-        Bun__setExitCode(ptr, static_cast<uint8_t>(exitCodeInt));
+        Bun__setExitCode(ptr, static_cast<uint8_t>(exitCodeInt % 256));
     }
     return true;
 }
@@ -2370,12 +2368,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetuid, (JSGlobalObject * globalObject,
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto value = callFrame->argument(0);
+    uint32_t id = 0;
     auto is_number = value.isNumber();
     value = maybe_uid_by_name(scope, globalObject, value);
     RETURN_IF_EXCEPTION(scope, {});
-    if (is_number) Bun::V::validateInteger(scope, globalObject, value, "id"_s, jsNumber(0), jsNumber(std::pow(2, 31) - 1));
-    RETURN_IF_EXCEPTION(scope, {});
-    auto id = value.toUInt32(globalObject);
+    if (is_number) Bun::V::validateInteger(scope, globalObject, value, "id"_s, jsNumber(0), jsNumber(std::pow(2, 31) - 1), &id);
+    if (!is_number) id = value.toUInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     auto result = setuid(id);
     if (result != 0) throwSystemError(scope, globalObject, "setuid"_s, errno);
@@ -2388,12 +2386,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionseteuid, (JSGlobalObject * globalObject
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto value = callFrame->argument(0);
+    uint32_t id = 0;
     auto is_number = value.isNumber();
     value = maybe_uid_by_name(scope, globalObject, value);
     RETURN_IF_EXCEPTION(scope, {});
-    if (is_number) Bun::V::validateInteger(scope, globalObject, value, "id"_s, jsNumber(0), jsNumber(std::pow(2, 31) - 1));
-    RETURN_IF_EXCEPTION(scope, {});
-    auto id = value.toUInt32(globalObject);
+    if (is_number) Bun::V::validateInteger(scope, globalObject, value, "id"_s, jsNumber(0), jsNumber(std::pow(2, 31) - 1), &id);
+    if (!is_number) id = value.toUInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     auto result = seteuid(id);
     if (result != 0) throwSystemError(scope, globalObject, "seteuid"_s, errno);
@@ -2406,12 +2404,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetegid, (JSGlobalObject * globalObject
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto value = callFrame->argument(0);
+    uint32_t id = 0;
     auto is_number = value.isNumber();
     value = maybe_gid_by_name(scope, globalObject, value);
     RETURN_IF_EXCEPTION(scope, {});
-    if (is_number) Bun::V::validateInteger(scope, globalObject, value, "id"_s, jsNumber(0), jsNumber(std::pow(2, 31) - 1));
-    RETURN_IF_EXCEPTION(scope, {});
-    auto id = value.toUInt32(globalObject);
+    if (is_number) Bun::V::validateInteger(scope, globalObject, value, "id"_s, jsNumber(0), jsNumber(std::pow(2, 31) - 1), &id);
+    if (!is_number) id = value.toUInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     auto result = setegid(id);
     if (result != 0) throwSystemError(scope, globalObject, "setegid"_s, errno);
@@ -2424,12 +2422,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetgid, (JSGlobalObject * globalObject,
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto value = callFrame->argument(0);
+    uint32_t id = 0;
     auto is_number = value.isNumber();
     value = maybe_gid_by_name(scope, globalObject, value);
     RETURN_IF_EXCEPTION(scope, {});
-    if (is_number) Bun::V::validateInteger(scope, globalObject, value, "id"_s, jsNumber(0), jsNumber(std::pow(2, 31) - 1));
-    RETURN_IF_EXCEPTION(scope, {});
-    auto id = value.toUInt32(globalObject);
+    if (is_number) Bun::V::validateInteger(scope, globalObject, value, "id"_s, jsNumber(0), jsNumber(std::pow(2, 31) - 1), &id);
+    if (!is_number) id = value.toUInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     auto result = setgid(id);
     if (result != 0) throwSystemError(scope, globalObject, "setgid"_s, errno);

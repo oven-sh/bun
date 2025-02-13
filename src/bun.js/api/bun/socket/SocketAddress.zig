@@ -36,6 +36,7 @@ pub const Options = struct {
         const _family: AF = if (try obj.get(global, "family")) |fam| blk: {
             if (fam.isString()) {
                 const slice = fam.asString().toSlice(global, bun.default_allocator);
+                defer slice.deinit();
                 if (bun.strings.eqlComptime(slice.slice(), "ipv4")) {
                     break :blk AF.INET;
                 } else if (bun.strings.eqlComptime(slice.slice(), "ipv6")) {
@@ -138,7 +139,6 @@ pub fn create(global: *JSC.JSGlobalObject, options: Options) bun.JSError!*Socket
                 .addr = undefined,
             };
             if (options.address) |address_str| {
-                defer address_str.deref();
                 const slice = address_str.toOwnedSliceZ(alloc) catch bun.outOfMemory();
                 defer alloc.free(slice);
                 try pton(global, inet.AF_INET, slice, &sin.addr);
@@ -156,7 +156,6 @@ pub fn create(global: *JSC.JSGlobalObject, options: Options) bun.JSError!*Socket
                 .scope_id = 0,
             };
             if (options.address) |address_str| {
-                defer address_str.deref();
                 const slice = address_str.toOwnedSliceZ(alloc) catch bun.outOfMemory();
                 defer alloc.free(slice);
                 try pton(global, inet.AF_INET6, slice, &sin6.addr);
@@ -226,6 +225,7 @@ pub fn deinit(this: *SocketAddress) void {
 }
 
 pub fn finalize(this: *SocketAddress) void {
+    JSC.markBinding(@src());
     this.deinit();
 }
 
@@ -238,14 +238,12 @@ pub fn getAddress(this: *SocketAddress, global: *JSC.JSGlobalObject) JSC.JSValue
 
 /// Get the address in presentation format. Does not include the port.
 ///
-/// You must `.unref()` the returned string when you're done with it.
-///
 /// ### TODO
 /// - replace `addressToString` in `dns.zig` w this
 /// - use this impl in server.zig
 pub fn address(this: *SocketAddress) bun.String {
     if (this._presentation) |p| {
-        p.ref();
+        // p.ref();
         return p;
     }
     var buf: [inet.INET6_ADDRSTRLEN]u8 = undefined;
@@ -260,8 +258,8 @@ pub fn address(this: *SocketAddress) bun.String {
     if (comptime bun.Environment.isDebug) {
         bun.assertWithLocation(bun.strings.isAllASCII(formatted), @src());
     }
-    var presentation = bun.JSC.WebCore.Encoder.toBunStringComptime(formatted, .latin1);
-    presentation.ref();
+    const presentation = bun.JSC.WebCore.Encoder.toBunStringComptime(formatted, .latin1);
+    // presentation.ref();
     this._presentation = presentation;
     return presentation;
 }
@@ -334,21 +332,18 @@ pub fn estimatedSize(this: *SocketAddress) usize {
 }
 
 fn pton(global: *JSC.JSGlobalObject, comptime af: c_int, addr: [:0]const u8, dst: *anyopaque) bun.JSError!void {
-    switch (ares.ares_inet_pton(af, addr.ptr, dst)) {
-        0 => {
-            return global.throwSysError(.{ .code = .ERR_INVALID_IP_ADDRESS }, "Invalid socket address", .{});
-        },
-        -1 => {
-            // TODO: figure out proper wayto convert a c errno into a js exception
-            return global.throwSysError(
-                .{ .code = .ERR_INVALID_IP_ADDRESS, .errno = std.c._errno().* },
-                "Invalid socket address",
-                .{},
-            );
-        },
-        1 => return,
+    return switch (ares.ares_inet_pton(af, addr.ptr, dst)) {
+        0 => global.throwSysError(.{ .code = .ERR_INVALID_IP_ADDRESS }, "Invalid socket address", .{}),
+
+        // TODO: figure out proper wayto convert a c errno into a js exception
+        -1 => global.throwSysError(
+            .{ .code = .ERR_INVALID_IP_ADDRESS, .errno = std.c._errno().* },
+            "Invalid socket address",
+            .{},
+        ),
+        1 => {},
         else => unreachable,
-    }
+    };
 }
 
 inline fn asV4(this: *const SocketAddress) *const inet.sockaddr_in {
@@ -435,6 +430,8 @@ comptime {
         if (@sizeOf(inet.socklen_t) != @sizeOf(other_socklen)) @compileError("socklen_t size mismatch");
         if (@alignOf(inet.socklen_t) != @alignOf(other_socklen)) @compileError("socklen_t alignment mismatch");
     }
+    std.debug.assert(AF.INET.int() == ares.AF.INET);
+    std.debug.assert(AF.INET6.int() == ares.AF.INET6);
 }
 
 const std = @import("std");

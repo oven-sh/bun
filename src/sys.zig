@@ -421,6 +421,14 @@ pub const Error = struct {
         };
     }
 
+    /// When the memory of the path/dest buffer is unsafe to use, call this function to clone the error without the path/dest.
+    pub fn withoutPath(this: *const Error) Error {
+        var copy = this.*;
+        copy.path = "";
+        copy.dest = "";
+        return copy;
+    }
+
     pub fn name(this: *const Error) []const u8 {
         if (comptime Environment.isWindows) {
             const system_errno = brk: {

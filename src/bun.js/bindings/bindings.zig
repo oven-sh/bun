@@ -653,7 +653,7 @@ pub const ZigString = extern struct {
         }
 
         pub fn sliceZ(this: Slice) [:0]const u8 {
-            return bun.cstring(this.ptr[0..this.len]);
+            return this.ptr[0..this.len :0];
         }
 
         pub fn toSliceZ(this: Slice, buf: []u8) [:0]const u8 {
@@ -671,7 +671,7 @@ pub const ZigString = extern struct {
 
             bun.copy(u8, buf, this.slice());
             buf[this.len] = 0;
-            return bun.cstring(buf[0..this.len]);
+            return buf[0..this.len :0];
         }
 
         pub fn mut(this: Slice) []u8 {

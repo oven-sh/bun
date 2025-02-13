@@ -906,14 +906,13 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_copyBytesFromBody(
         return JSValue::encode(createEmptyBuffer(lexicalGlobalObject));
     }
 
-    double offset;
-    double length;
+    size_t offset;
+    size_t length;
 
     if (!offsetValue.isUndefined() || !lengthValue.isUndefined()) {
         if (!offsetValue.isUndefined()) {
-            Bun::V::validateInteger(throwScope, lexicalGlobalObject, offsetValue, "offset"_s, jsNumber(0), jsUndefined());
+            Bun::V::validateInteger(throwScope, lexicalGlobalObject, offsetValue, "offset"_s, jsNumber(0), jsUndefined(), &offset);
             RETURN_IF_EXCEPTION(throwScope, {});
-            offset = offsetValue.asNumber();
             if (offset >= viewLength) return JSValue::encode(createEmptyBuffer(lexicalGlobalObject));
         } else {
             offset = 0;
@@ -921,9 +920,8 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_copyBytesFromBody(
 
         double end = 0;
         if (!lengthValue.isUndefined()) {
-            Bun::V::validateInteger(throwScope, lexicalGlobalObject, lengthValue, "length"_s, jsNumber(0), jsUndefined());
+            Bun::V::validateInteger(throwScope, lexicalGlobalObject, lengthValue, "length"_s, jsNumber(0), jsUndefined(), &length);
             RETURN_IF_EXCEPTION(throwScope, {});
-            length = lengthValue.asNumber();
             end = offset + length;
         } else {
             end = viewLength;
@@ -1023,36 +1021,32 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_compareBody(JSC::JSG
     default:
         sourceEndValue = callFrame->uncheckedArgument(4);
         if (sourceEndValue != jsUndefined()) {
-            Bun::V::validateInteger(throwScope, lexicalGlobalObject, sourceEndValue, "sourceEnd"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength));
+            Bun::V::validateInteger(throwScope, lexicalGlobalObject, sourceEndValue, "sourceEnd"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength), &sourceEnd);
             RETURN_IF_EXCEPTION(throwScope, {});
-            sourceEnd = sourceEndValue.asNumber();
         }
         RETURN_IF_EXCEPTION(throwScope, {});
         FALLTHROUGH;
     case 4:
         sourceStartValue = callFrame->uncheckedArgument(3);
         if (sourceStartValue != jsUndefined()) {
-            Bun::V::validateInteger(throwScope, lexicalGlobalObject, sourceStartValue, "sourceStart"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength));
+            Bun::V::validateInteger(throwScope, lexicalGlobalObject, sourceStartValue, "sourceStart"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength), &sourceStart);
             RETURN_IF_EXCEPTION(throwScope, {});
-            sourceStart = sourceStartValue.asNumber();
         }
         RETURN_IF_EXCEPTION(throwScope, {});
         FALLTHROUGH;
     case 3:
         targetEndValue = callFrame->uncheckedArgument(2);
         if (targetEndValue != jsUndefined()) {
-            Bun::V::validateInteger(throwScope, lexicalGlobalObject, targetEndValue, "targetEnd"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength));
+            Bun::V::validateInteger(throwScope, lexicalGlobalObject, targetEndValue, "targetEnd"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength), &targetEnd);
             RETURN_IF_EXCEPTION(throwScope, {});
-            targetEnd = targetEndValue.asNumber();
         }
         RETURN_IF_EXCEPTION(throwScope, {});
         FALLTHROUGH;
     case 2:
         targetStartValue = callFrame->uncheckedArgument(1);
         if (targetStartValue != jsUndefined()) {
-            Bun::V::validateInteger(throwScope, lexicalGlobalObject, targetStartValue, "targetStart"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength));
+            Bun::V::validateInteger(throwScope, lexicalGlobalObject, targetStartValue, "targetStart"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength), &targetStart);
             RETURN_IF_EXCEPTION(throwScope, {});
-            targetStart = targetStartValue.asNumber();
         }
         RETURN_IF_EXCEPTION(throwScope, {});
         break;

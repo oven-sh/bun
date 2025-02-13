@@ -56,7 +56,7 @@ struct StructuredSerializeOptions;
 struct WorkerOptions;
 
 class Worker final : public ThreadSafeRefCounted<Worker>, public EventTargetWithInlineData, private ContextDestructionObserver {
-    WTF_MAKE_ISO_ALLOCATED_EXPORT(Worker, WEBCORE_EXPORT);
+    WTF_MAKE_TZONE_ALLOCATED(Worker);
 
 public:
     static ExceptionOr<Ref<Worker>> create(ScriptExecutionContext&, const String& url, WorkerOptions&&);

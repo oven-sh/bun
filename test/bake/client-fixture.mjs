@@ -2,6 +2,7 @@
 // - https://github.com/oven-sh/bun/issues/16363
 // - https://github.com/oven-sh/bun/issues/6044
 import { Window } from "happy-dom";
+import util from "node:util";
 
 let url = process.argv[2];
 if (!url) {
@@ -164,7 +165,7 @@ process.on("message", async message => {
     await handleReload();
   }
   if (message.type === "evaluate") {
-    const [messageId, code] = message.args;
+    const [messageId, code, mode] = message.args;
     try {
       // Evaluate the code in the window context
       let result;
@@ -176,6 +177,10 @@ process.on("message", async message => {
         } else {
           throw error;
         }
+      }
+
+      if (mode === "interactive") {
+        result = util.inspect(result, false, null, true);
       }
 
       // Send back the result

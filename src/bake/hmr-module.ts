@@ -67,13 +67,13 @@ export class HotModule<E = any> {
       ? exports
       : (mod._ext_exports ??= { ...(typeof exports === "object" && exports), default: exports });
 
-    if (expectedImports && mod._state === State.Ready) {
-      for (const key of expectedImports) {
-        if (!(key in object)) {
-          throw new SyntaxError(`The requested module '${id}' does not provide an export named '${key}'`);
-        }
-      }
-    }
+    // if (expectedImports && mod._state === State.Ready) {
+    //   for (const key of expectedImports) {
+    //     if (!(key in object)) {
+    //       throw new SyntaxError(`The requested module '${id}' does not provide an export named '${key}'`);
+    //     }
+    //   }
+    // }
     return object;
   }
 

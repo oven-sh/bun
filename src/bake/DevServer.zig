@@ -1302,9 +1302,9 @@ fn onHtmlRequestWithBundle(dev: *DevServer, route_bundle_index: RouteBundle.Inde
         const payload = generateHTMLPayload(dev, route_bundle_index, route_bundle, html) catch bun.outOfMemory();
         errdefer dev.allocator.free(payload);
         html.cached_response = StaticRoute.initFromAnyBlob(
-            .fromOwnedSlice(dev.allocator, payload),
+            &.fromOwnedSlice(dev.allocator, payload),
             .{
-                .mime_type = .html,
+                .mime_type = &.html,
                 .server = dev.server orelse unreachable,
             },
         );
@@ -1432,9 +1432,9 @@ pub fn onJsRequestWithBundle(dev: *DevServer, bundle_index: RouteBundle.Index, r
         const payload = dev.generateClientBundle(route_bundle) catch bun.outOfMemory();
         errdefer dev.allocator.free(payload);
         route_bundle.client_bundle = StaticRoute.initFromAnyBlob(
-            .fromOwnedSlice(dev.allocator, payload),
+            &.fromOwnedSlice(dev.allocator, payload),
             .{
-                .mime_type = .javascript,
+                .mime_type = &.javascript,
                 .server = dev.server orelse unreachable,
             },
         );
@@ -1760,9 +1760,9 @@ fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u
         // TODO: this asset is never unreferenced
         const source_map = try dev.client_graph.takeSourceMap(.initial_response, sfa, dev.allocator);
         errdefer dev.allocator.free(source_map);
-        static_route_ptr.* = StaticRoute.initFromAnyBlob(.fromOwnedSlice(dev.allocator, source_map), .{
+        static_route_ptr.* = StaticRoute.initFromAnyBlob(&.fromOwnedSlice(dev.allocator, source_map), .{
             .server = dev.server.?,
-            .mime_type = .json,
+            .mime_type = &.json,
         });
     }
 
@@ -2019,8 +2019,8 @@ pub fn finalizeBundle(
         const hash = bun.hash(key);
         const asset_index = try dev.assets.replacePath(
             key,
-            .fromOwnedSlice(dev.allocator, code.buffer),
-            .css,
+            &.fromOwnedSlice(dev.allocator, code.buffer),
+            &.css,
             hash,
         );
         // Later code needs to retrieve the CSS content
@@ -2356,9 +2356,9 @@ pub fn finalizeBundle(
                 if (try dev.assets.putOrIncrementRefCount(hash, hot_update_subscribers)) |static_route_ptr| {
                     const source_map = try dev.client_graph.takeSourceMap(.hmr_chunk, bv2.graph.allocator, dev.allocator);
                     errdefer dev.allocator.free(source_map);
-                    static_route_ptr.* = StaticRoute.initFromAnyBlob(.fromOwnedSlice(dev.allocator, source_map), .{
+                    static_route_ptr.* = StaticRoute.initFromAnyBlob(&.fromOwnedSlice(dev.allocator, source_map), .{
                         .server = dev.server.?,
-                        .mime_type = .json,
+                        .mime_type = &.json,
                     });
                 }
                 // Build and send the source chunk
@@ -4184,7 +4184,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
         }
 
         /// Uses `arena` as a temporary allocator, returning a string owned by `gpa`
-        pub fn takeSourceMap(g: *@This(), kind: ChunkKind, arena: std.mem.Allocator, gpa: Allocator) ![]u8 {
+        pub fn takeSourceMap(g: *@This(), kind: ChunkKind, arena: std.mem.Allocator, gpa: Allocator) bun.OOM![]u8 {
             if (side == .server) @compileError("not implemented");
 
             const paths = g.bundled_files.keys();
@@ -4220,24 +4220,48 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         "\"file://");
                     if (Environment.isWindows and !is_windows_drive_path) {
                         // UNC namespace -> file://server/share/path.ext
-                        try bun.strings.percentEncodeWrite(
+                        bun.strings.percentEncodeWrite(
                             if (path.len > 2 and bun.path.isSepAny(path[0]) and bun.path.isSepAny(path[1]))
                                 path[2..]
                             else
                                 path, // invalid but must not crash
                             &source_map_strings,
-                        );
+                        ) catch |err| {
+                            switch (err) {
+                                error.IncompleteUTF8 => {
+                                    @panic("Unexpected: asset with incomplete UTF-8 as file path");
+                                },
+                                // TODO: file an issue. This shouldn't be necessary.
+                                else => |e| return e,
+                            }
+                        };
                     } else {
                         // posix paths always start with '/'
                         // -> file:///path/to/file.js
                         // windows drive letter paths have the extra slash added
                         // -> file:///C:/path/to/file.js
-                        try bun.strings.percentEncodeWrite(path, &source_map_strings);
+                        bun.strings.percentEncodeWrite(path, &source_map_strings) catch |err| {
+                            switch (err) {
+                                error.IncompleteUTF8 => {
+                                    @panic("Unexpected: asset with incomplete UTF-8 as file path");
+                                },
+                                // TODO: file an issue. This shouldn't be necessary.
+                                else => |e| return e,
+                            }
+                        };
                     }
                     try source_map_strings.appendSlice("\"");
                 } else {
                     try source_map_strings.appendSlice("\"bun://");
-                    try bun.strings.percentEncodeWrite(path, &source_map_strings);
+                    bun.strings.percentEncodeWrite(path, &source_map_strings) catch |err| {
+                        switch (err) {
+                            error.IncompleteUTF8 => {
+                                @panic("Unexpected: asset with incomplete UTF-8 as file path");
+                            },
+                            // TODO: file an issue. This shouldn't be necessary.
+                            else => |e| return e,
+                        }
+                    };
                     try source_map_strings.appendSlice("\"");
                 }
             }
@@ -6047,13 +6071,14 @@ const HTMLRouter = struct {
 
 pub fn putOrOverwriteAsset(
     dev: *DevServer,
-    abs_path: []const u8,
-    contents: AnyBlob,
+    path: *const bun.fs.Path,
+    /// Ownership is transferred to this function.
+    contents: *const AnyBlob,
     content_hash: u64,
 ) !void {
     dev.graph_safety_lock.lock();
     defer dev.graph_safety_lock.unlock();
-    _ = try dev.assets.replacePath(abs_path, contents, .detectFromPath(abs_path), content_hash);
+    _ = try dev.assets.replacePath(path.text, contents, &.byExtension(path.name.extWithoutLeadingDot()), content_hash);
 }
 
 /// Storage for hashed assets on `/_bun/asset/{hash}.ext`
@@ -6089,18 +6114,20 @@ pub const Assets = struct {
         assets: *Assets,
         /// not allocated
         abs_path: []const u8,
-        contents: AnyBlob,
-        mime_type: MimeType,
+        /// Ownership is transferred to this function
+        contents: *const AnyBlob,
+        mime_type: *const MimeType,
         /// content hash of the asset
         content_hash: u64,
     ) !EntryIndex {
         defer assert(assets.files.count() == assets.refs.items.len);
         const alloc = assets.owner().allocator;
-        debug.log("replacePath {} {} - {s}/{s}", .{
+        debug.log("replacePath {} {} - {s}/{s} ({s})", .{
             bun.fmt.quote(abs_path),
             content_hash,
             asset_prefix,
             &std.fmt.bytesToHex(std.mem.asBytes(&content_hash), .lower),
+            mime_type.value,
         });
 
         const gop = try assets.path_map.getOrPut(alloc, abs_path);
@@ -6138,7 +6165,7 @@ pub const Assets = struct {
             });
         } else {
             assets.refs.items[file_index_gop.index] += 1;
-            var contents_mut = contents;
+            var contents_mut = contents.*;
             contents_mut.detach();
         }
         gop.value_ptr.* = .init(@intCast(file_index_gop.index));

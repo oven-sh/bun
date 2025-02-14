@@ -3158,7 +3158,7 @@ pub const BundleV2 = struct {
                             &result.source.path,
                             // SAFETY: when shouldCopyForBundling is true, the
                             // contents are allocated by bun.default_allocator
-                            .fromOwnedSlice(bun.default_allocator, @constCast(result.source.contents)),
+                            &.fromOwnedSlice(bun.default_allocator, @constCast(result.source.contents)),
                             result.content_hash_for_additional_file,
                         ) catch bun.outOfMemory();
                     }

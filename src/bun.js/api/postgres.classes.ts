@@ -72,6 +72,10 @@ export default [
         fn: "setMode",
         length: 1,
       },
+      setPendingValue: {
+        fn: "setPendingValue",
+        length: 1,
+      },
     },
     values: ["pendingValue", "target", "columns", "binding"],
     estimatedSize: true,

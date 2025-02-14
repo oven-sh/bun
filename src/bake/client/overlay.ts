@@ -253,7 +253,7 @@ function renderErrorMessageLine(level: BundlerMessageLevel, text: string) {
     throw new Error("Unknown log level: " + level);
   }
   return elem("div", { class: "message-text" }, [
-    elemText("span", { class: "log-" + levelName }, levelName),
+    elemText("span", { class: "log-label log-" + levelName }, levelName),
     elemText("span", { class: "log-colon" }, ": "),
     elemText("span", { class: "log-text" }, text),
   ]);

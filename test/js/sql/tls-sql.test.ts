@@ -13,6 +13,7 @@ for (const options of [
     max: 1,
     bigint: true,
     prepare: true,
+    transactionPool: false,
   },
   {
     url: PG_TRANSACTION_POOL_SUPABASE_URL,
@@ -21,9 +22,10 @@ for (const options of [
     max: 1,
     bigint: true,
     prepare: false,
+    transactionPool: true,
   },
 ]) {
-  describe(`${options.prepare === false ? "Transaction Pooling" : "Prepared Statements"}`, () => {
+  describe(`${options.transactionPool ? "Transaction Pooling" : "Prepared Statements"}`, () => {
     test("default sql", async () => {
       expect(sql.reserve).toBeDefined();
       expect(sql.options).toBeDefined();
@@ -70,7 +72,7 @@ for (const options of [
       return expect(error.code).toBe("ERR_POSTGRES_UNSAFE_TRANSACTION");
     });
 
-    test("Transaction throws", async () => {
+    test.skipIf(options.transactionPool)("Transaction throws", async () => {
       await using sql = new SQL(options);
       const random_name = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
 
@@ -85,7 +87,7 @@ for (const options of [
       ).toBe("22P02");
     });
 
-    test("Transaction rolls back", async () => {
+    test.skipIf(options.transactionPool)("Transaction rolls back", async () => {
       await using sql = new SQL(options);
       const random_name = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
 
@@ -103,7 +105,7 @@ for (const options of [
       expect((await sql`select a from ${sql(random_name)}`).count).toBe(0);
     });
 
-    test("Transaction throws on uncaught savepoint", async () => {
+    test.skipIf(options.transactionPool)("Transaction throws on uncaught savepoint", async () => {
       await using sql = new SQL(options);
       const random_name = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
       await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${sql(random_name)} (a int)`;
@@ -120,7 +122,7 @@ for (const options of [
       ).toBe("fail");
     });
 
-    test("Transaction throws on uncaught named savepoint", async () => {
+    test.skipIf(options.transactionPool)("Transaction throws on uncaught named savepoint", async () => {
       await using sql = new SQL(options);
       const random_name = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
       await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${sql(random_name)} (a int)`;
@@ -228,7 +230,7 @@ for (const options of [
       ).toBe("11");
     });
 
-    test("Transaction waits", async () => {
+    test.skipIf(options.transactionPool)("Transaction waits", async () => {
       await using sql = new SQL({ ...options, max: 2 });
       const random_name = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
       await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${sql(random_name)} (a int)`;

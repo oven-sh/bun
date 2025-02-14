@@ -6749,11 +6749,19 @@ pub fn splitFirstWithExpected(self: string, comptime expected: u8) ?[]const u8 {
 pub fn percentEncodeWrite(
     utf8_input: []const u8,
     writer: *std.ArrayList(u8),
-) !void {
-    var i: usize = 0;
-    while (indexOfNeedsURLEncode(utf8_input[i..])) |j| {
-        const code_point_len = wtf8ByteSequenceLengthWithInvalid(utf8_input[i..][j]);
-        const safe = utf8_input[i..][0..j];
+) error{ OutOfMemory, IncompleteUTF8 }!void {
+    var remaining = utf8_input;
+    while (indexOfNeedsURLEncode(remaining)) |j| {
+        const safe = remaining[0..j];
+        remaining = remaining[j..];
+        const code_point_len: usize = wtf8ByteSequenceLengthWithInvalid(remaining[0]);
+        if (remaining.len < code_point_len) {
+            @branchHint(.unlikely);
+            return error.IncompleteUTF8;
+        }
+
+        const to_encode = remaining[0..code_point_len];
+        remaining = remaining[code_point_len..];
 
         try writer.ensureUnusedCapacity(safe.len + ("%FF".len) * code_point_len);
 
@@ -6761,17 +6769,15 @@ pub fn percentEncodeWrite(
         writer.appendSliceAssumeCapacity(safe);
 
         // URL encode the code point
-        for (utf8_input[i + j ..][0..code_point_len]) |byte| {
+        for (to_encode) |byte| {
             writer.appendSliceAssumeCapacity(&.{
                 '%',
                 byte2hex((byte >> 4) & 0xF),
                 byte2hex(byte & 0xF),
             });
         }
-
-        i += j + code_point_len;
     }
 
     // Write the rest of the string
-    try writer.appendSlice(utf8_input[i..]);
+    try writer.appendSlice(remaining);
 }

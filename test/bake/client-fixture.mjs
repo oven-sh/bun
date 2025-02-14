@@ -16,6 +16,7 @@ const storeHotChunks = args.includes("--store-hot-chunks");
 
 // Create a new window instance
 let window;
+let nativeEval;
 let expectingReload = false;
 let webSockets = [];
 let pendingReload = null;
@@ -113,11 +114,11 @@ function createWindow(windowUrl) {
     return result;
   };
 
+  nativeEval = window.eval;
   if (storeHotChunks) {
-    const prevEval = window.eval;
     window.eval = code => {
       process.send({ type: "hmr-chunk", args: [code] });
-      return prevEval(code);
+      return nativeEval.call(window, code);
     };
   }
 }
@@ -186,10 +187,10 @@ process.on("message", async message => {
       // Evaluate the code in the window context
       let result;
       try {
-        result = await window.eval(`(async () => ${code})()`);
+        result = await nativeEval(`(async () => ${code})()`);
       } catch (error) {
-        if (error.message === "Illegal return statement") {
-          result = await window.eval(`(async () => { ${code} })()`);
+        if (error.message === "Illegal return statement" || error.message.includes("Unexpected token")) {
+          result = await nativeEval(`(async () => { ${code} })()`);
         } else {
           throw error;
         }

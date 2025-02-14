@@ -941,7 +941,13 @@ class OutputLineStream extends EventEmitter {
           const { done, value } = (await reader.read()) as { done: boolean; value: Uint8Array };
           if (done) break;
           const clearScreenCode = "\x1B[2J\x1B[3J\x1B[H";
-          const text = last + td.decode(value, { stream: true }).replace(clearScreenCode, "").replaceAll("\r", "");
+          const text =
+            last +
+            td
+              .decode(value, { stream: true })
+              .replace(clearScreenCode, "") // no screen clears
+              .replaceAll("\r", "") // windows hell
+              .replaceAll("\x1b[31m", "\x1b[39m"); // remove red because it looks like an error
           const lines = text.split("\n");
           last = lines.pop()!;
           for (const line of lines) {

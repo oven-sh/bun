@@ -2278,8 +2278,12 @@ pub fn finalizeBundle(
 
     // Softly affected HTML routes only need the bundle invalidated. WebSocket
     // connections don't have to be told anything.
-    for (dev.incremental_result.html_routes_soft_affected.items) |index| {
-        dev.routeBundlePtr(index).invalidateClientBundle();
+    if (dev.incremental_result.html_routes_soft_affected.items.len > 0) {
+        for (dev.incremental_result.html_routes_soft_affected.items) |index| {
+            dev.routeBundlePtr(index).invalidateClientBundle();
+            route_bits.set(index.get());
+        }
+        has_route_bits_set = true;
     }
 
     // `route_bits` will have all of the routes that were modified. If any of

@@ -90,7 +90,7 @@ async function extractSourceMapHtml(dev: Dev, html: string) {
 async function extractSourceMap(dev: Dev, scriptSource: string) {
   const sourceMapUrl = scriptSource.match(/\n\/\/# sourceMappingURL=([^"]+)/);
   if (!sourceMapUrl) {
-    throw new Error("Source map URL not found");
+    throw new Error("Source map URL not found in " + scriptSource);
   }
   const sourceMap = await dev.fetch(sourceMapUrl[1]).text();
   return new Promise<SourceMap>((resolve, reject) => {

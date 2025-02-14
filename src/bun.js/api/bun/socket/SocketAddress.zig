@@ -10,7 +10,7 @@ const SocketAddress = @This();
 _addr: sockaddr,
 /// Cached address in presentation format. Prevents repeated conversion between
 /// strings and bytes.
-/// 
+///
 /// .Dead is used as an alternative to null
 ///
 /// @internal

@@ -731,6 +731,10 @@ const TimerObjectInternals = struct {
 
     has_js_ref: bool = true,
 
+    /// Set to `true` only during execution of the JavaScript function so that `_destroyed` can be
+    /// false during the callback, even though the `state` will be `FIRED`.
+    in_callback: bool = false,
+
     fn eventLoopTimer(this: *TimerObjectInternals) *EventLoopTimer {
         return &this.node().data;
     }
@@ -787,7 +791,7 @@ const TimerObjectInternals = struct {
             this.ref();
             defer this.deref();
 
-            run(this_object, globalThis, this.asyncID(), vm);
+            this.run(this_object, globalThis, this.asyncID(), vm);
 
             if (this.eventLoopTimer().state == .FIRED) {
                 this.deref();
@@ -838,7 +842,7 @@ const TimerObjectInternals = struct {
             this.ref();
             defer this.deref();
 
-            run(this_object, globalThis, ID.asyncID(.{ .id = id, .kind = kind }), vm);
+            this.run(this_object, globalThis, ID.asyncID(.{ .id = id, .kind = kind }), vm);
 
             var is_timer_done = false;
 
@@ -892,7 +896,7 @@ const TimerObjectInternals = struct {
         return .disarm;
     }
 
-    pub fn run(this_object: JSC.JSValue, globalThis: *JSC.JSGlobalObject, async_id: u64, vm: *JSC.VirtualMachine) void {
+    pub fn run(this: *TimerObjectInternals, this_object: JSC.JSValue, globalThis: *JSC.JSGlobalObject, async_id: u64, vm: *JSC.VirtualMachine) void {
         if (vm.isInspectorEnabled()) {
             Debugger.willDispatchAsyncCall(globalThis, .DOMTimer, async_id);
         }
@@ -904,6 +908,8 @@ const TimerObjectInternals = struct {
         }
 
         // Bun__JSTimeout__call handles exceptions.
+        this.in_callback = true;
+        defer this.in_callback = false;
         Bun__JSTimeout__call(this_object, globalThis);
     }
 
@@ -1044,6 +1050,12 @@ const TimerObjectInternals = struct {
 
     /// This is the getter for `_destroyed` on JS Timeout and Immediate objects
     pub fn getDestroyed(this: *TimerObjectInternals) bool {
+        if (this.has_cleared_timer) {
+            return true;
+        }
+        if (this.in_callback) {
+            return false;
+        }
         return switch (this.eventLoopTimer().state) {
             .ACTIVE, .PENDING => false,
             .FIRED, .CANCELLED => true,

@@ -3155,7 +3155,7 @@ pub const BundleV2 = struct {
                 if (result.unique_key_for_additional_file.len > 0 and result.loader.shouldCopyForBundling()) {
                     if (this.transpiler.options.dev_server) |dev| {
                         dev.putOrOverwriteAsset(
-                            result.source.path.text,
+                            &result.source.path,
                             // SAFETY: when shouldCopyForBundling is true, the
                             // contents are allocated by bun.default_allocator
                             .fromOwnedSlice(bun.default_allocator, @constCast(result.source.contents)),

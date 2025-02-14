@@ -1517,6 +1517,10 @@ pub const PathName = struct {
     ext: string,
     filename: string,
 
+    pub fn extWithoutLeadingDot(self: *const PathName) string {
+        return if (self.ext.len > 0 and self.ext[0] == '.') self.ext[1..] else self.ext;
+    }
+
     pub fn nonUniqueNameStringBase(self: *const PathName) string {
         // /bar/foo/index.js -> foo
         if (self.dir.len > 0 and strings.eqlComptime(self.base, "index")) {

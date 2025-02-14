@@ -127,12 +127,9 @@ pub const OutdatedCommand = struct {
             };
         }
 
-        pub fn deinit(_: @This(), _: std.mem.Allocator) void {
-            // switch (this) {
-            //     .path, .name => |pattern| allocator.free(pattern),
-            //     else => {},
-            // }
-        }
+        /// *NOTE*: Currently this does nothing since name and path are not
+        /// allocated.
+        pub fn deinit(_: @This(), _: std.mem.Allocator) void {}
     };
 
     fn findMatchingWorkspaces(

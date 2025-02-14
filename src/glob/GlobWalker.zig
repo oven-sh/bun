@@ -1651,6 +1651,7 @@ pub fn GlobWalker_(
                     else => {},
                 }
             }
+            bun.assert(i == 0 or i == pattern.len);
             i -|= 1;
 
             if (makeComponent(

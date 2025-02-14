@@ -11,7 +11,7 @@ namespace ProcessBindingTimers {
 
 JSC_DEFINE_HOST_FUNCTION(jsGetLibuvNow, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    return JSValue::encode(jsDoubleNumber(Bun__timespecNowMs()));
+    return JSValue::encode(jsNumber(Bun__timespecNowMs()));
 }
 
 JSObject* create(VM& vm, JSGlobalObject* globalObject)

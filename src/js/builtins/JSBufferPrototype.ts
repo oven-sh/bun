@@ -296,14 +296,22 @@ export function readBigUInt64BE(this: BufferExt, offset) {
 
 export function writeInt8(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
-  require("internal/buffer").writeU_Int8(this, value, offset, -0x80, 0x7f);
+  value = +value;
+  const min = -0x80;
+  const max = 0x7f;
+  // prettier-ignore
+  if (typeof offset !== "number" || value < min || value > max || this[offset] === undefined) require("internal/buffer").writeU_Int8(this, value, offset, min, max);
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt8(offset, value);
   return offset + 1;
 }
 
 export function writeUInt8(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
-  require("internal/buffer").writeU_Int8(this, value, offset, 0, 0xff);
+  value = +value;
+  const min = 0;
+  const max = 0xff;
+  // prettier-ignore
+  if (typeof offset !== "number" || value < min || value > max || this[offset] === undefined) require("internal/buffer").writeU_Int8(this, value, offset, min, max);
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint8(offset, value);
   return offset + 1;
 }
@@ -311,7 +319,10 @@ export function writeUInt8(this: BufferExt, value, offset) {
 export function writeInt16LE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
   value = +value;
-  require("internal/buffer").checkInt(this, value, offset, -0x8000, 0x7fff, 2);
+  const min = -0x8000;
+  const max = 0x7fff;
+  // prettier-ignore
+  if (typeof offset !== "number" || value < min || value > max || this[offset] === undefined || this[offset + 1] === undefined) require("internal/buffer").checkInt(this, value, offset, min, max, 2);
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt16(offset, value, true);
   return offset + 2;
 }
@@ -319,7 +330,10 @@ export function writeInt16LE(this: BufferExt, value, offset) {
 export function writeInt16BE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
   value = +value;
-  require("internal/buffer").checkInt(this, value, offset, -0x8000, 0x7fff, 2);
+  const min = -0x8000;
+  const max = 0x7fff;
+  // prettier-ignore
+  if (typeof offset !== "number" || value < min || value > max || this[offset] === undefined || this[offset + 1] === undefined) require("internal/buffer").checkInt(this, value, offset, min, max, 2);
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt16(offset, value, false);
   return offset + 2;
 }
@@ -327,7 +341,10 @@ export function writeInt16BE(this: BufferExt, value, offset) {
 export function writeUInt16LE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
   value = +value;
-  require("internal/buffer").checkInt(this, value, offset, 0, 0xffff, 2);
+  const min = 0;
+  const max = 0xffff;
+  // prettier-ignore
+  if (typeof offset !== "number" || value < min || value > max || this[offset] === undefined || this[offset + 1] === undefined) require("internal/buffer").checkInt(this, value, offset, min, max, 2);
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint16(offset, value, true);
   return offset + 2;
 }
@@ -335,7 +352,10 @@ export function writeUInt16LE(this: BufferExt, value, offset) {
 export function writeUInt16BE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
   value = +value;
-  require("internal/buffer").checkInt(this, value, offset, 0, 0xffff, 2);
+  const min = 0;
+  const max = 0xffff;
+  // prettier-ignore
+  if (typeof offset !== "number" || value < min || value > max || this[offset] === undefined || this[offset + 1] === undefined) require("internal/buffer").checkInt(this, value, offset, min, max, 2);
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint16(offset, value, false);
   return offset + 2;
 }
@@ -343,7 +363,10 @@ export function writeUInt16BE(this: BufferExt, value, offset) {
 export function writeInt32LE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
   value = +value;
-  require("internal/buffer").checkInt(this, value, offset, -0x80000000, 0x7fffffff, 4);
+  const min = -0x80000000;
+  const max = 0x7fffffff;
+  // prettier-ignore
+  if (typeof offset !== "number" || value < min || value > max || this[offset] === undefined || this[offset + 3] === undefined) require("internal/buffer").checkInt(this, value, offset, min, max, 4);
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt32(offset, value, true);
   return offset + 4;
 }
@@ -351,7 +374,10 @@ export function writeInt32LE(this: BufferExt, value, offset) {
 export function writeInt32BE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
   value = +value;
-  require("internal/buffer").checkInt(this, value, offset, -0x80000000, 0x7fffffff, 4);
+  const min = -0x80000000;
+  const max = 0x7fffffff;
+  // prettier-ignore
+  if (typeof offset !== "number" || value < min || value > max || this[offset] === undefined || this[offset + 3] === undefined) require("internal/buffer").checkInt(this, value, offset, min, max, 4);
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt32(offset, value, false);
   return offset + 4;
 }
@@ -359,7 +385,10 @@ export function writeInt32BE(this: BufferExt, value, offset) {
 export function writeUInt32LE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
   value = +value;
-  require("internal/buffer").checkInt(this, value, offset, 0, 0xffffffff, 4);
+  const min = 0;
+  const max = 0xffffffff;
+  // prettier-ignore
+  if (typeof offset !== "number" || value < min || value > max || this[offset] === undefined || this[offset + 3] === undefined) require("internal/buffer").checkInt(this, value, offset, min, max, 4);
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint32(offset, value, true);
   return offset + 4;
 }
@@ -367,7 +396,10 @@ export function writeUInt32LE(this: BufferExt, value, offset) {
 export function writeUInt32BE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
   value = +value;
-  require("internal/buffer").checkInt(this, value, offset, 0, 0xffffffff, 4);
+  const min = 0;
+  const max = 0xffffffff;
+  // prettier-ignore
+  if (typeof offset !== "number" || value < min || value > max || this[offset] === undefined || this[offset + 3] === undefined) require("internal/buffer").checkInt(this, value, offset, min, max, 4);
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint32(offset, value, false);
   return offset + 4;
 }

@@ -34,7 +34,6 @@ function checkInt(buf, value, offset, min, max, byteLength) {
 }
 
 function writeU_Int8(buf, value, offset, min, max) {
-  value = +value;
   // `checkInt()` can not be used here because it checks two entries.
   validateNumber(offset, "offset");
   if (value > max || value < min) {

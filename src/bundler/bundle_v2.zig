@@ -2385,7 +2385,7 @@ pub const BundleV2 = struct {
 
         this.graph.heap.helpCatchMemoryIssues();
 
-        this.dynamic_import_entry_points = std.AutoArrayHashMap(Index.Int, void).init(this.graph.allocator);
+        this.dynamic_import_entry_points = .init(this.graph.allocator);
         var html_files: std.AutoArrayHashMapUnmanaged(Index, void) = .{};
 
         // Separate non-failing files into two lists: JS and CSS
@@ -2441,6 +2441,20 @@ pub const BundleV2 = struct {
                     }
                 } else {
                     _ = start.css_entry_points.swapRemove(Index.init(index));
+                }
+            }
+
+            // Find CSS entry points. Originally, this was computed up front, but
+            // failed files do not remember their loader, and plugins can
+            // asynchronously decide a file is CSS.
+            const css = asts.items(.css);
+            for (this.graph.entry_points.items) |entry_point| {
+                if (css[entry_point.get()] != null) {
+                    try start.css_entry_points.put(
+                        this.graph.allocator,
+                        entry_point,
+                        .{ .imported_on_server = false },
+                    );
                 }
             }
 
@@ -3141,10 +3155,10 @@ pub const BundleV2 = struct {
                 if (result.unique_key_for_additional_file.len > 0 and result.loader.shouldCopyForBundling()) {
                     if (this.transpiler.options.dev_server) |dev| {
                         dev.putOrOverwriteAsset(
-                            result.source.path.text,
+                            &result.source.path,
                             // SAFETY: when shouldCopyForBundling is true, the
                             // contents are allocated by bun.default_allocator
-                            .fromOwnedSlice(bun.default_allocator, @constCast(result.source.contents)),
+                            &.fromOwnedSlice(bun.default_allocator, @constCast(result.source.contents)),
                             result.content_hash_for_additional_file,
                         ) catch bun.outOfMemory();
                     }

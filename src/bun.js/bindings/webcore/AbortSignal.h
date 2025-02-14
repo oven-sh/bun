@@ -58,7 +58,7 @@ enum class CommonAbortReason : uint8_t {
 JSC::JSValue toJS(JSC::JSGlobalObject*, CommonAbortReason);
 
 class AbortSignal final : public RefCounted<AbortSignal>, public EventTargetWithInlineData, private ContextDestructionObserver {
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(AbortSignal);
+    WTF_MAKE_TZONE_ALLOCATED(AbortSignal);
 
 public:
     static Ref<AbortSignal> create(ScriptExecutionContext*);

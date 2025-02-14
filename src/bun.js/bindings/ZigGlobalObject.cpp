@@ -49,6 +49,7 @@
 #include "JavaScriptCore/LazyClassStructure.h"
 #include "JavaScriptCore/LazyClassStructureInlines.h"
 #include "JavaScriptCore/ObjectConstructor.h"
+#include "JavaScriptCore/JSBasePrivate.h"
 #include "JavaScriptCore/ScriptExecutable.h"
 #include "JavaScriptCore/ScriptFetchParameters.h"
 #include "JavaScriptCore/SourceOrigin.h"
@@ -162,7 +163,7 @@
 #include "JSS3File.h"
 #include "S3Error.h"
 #include "ProcessBindingBuffer.h"
-#include <JavaScriptCore/JSBasePrivate.h>
+#include "NodeValidator.h"
 
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
@@ -239,22 +240,6 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         return;
     has_loaded_jsc = true;
     JSC::Config::enableRestrictedOptions();
-#if OS(LINUX)
-    {
-        // By default, JavaScriptCore's garbage collector sends SIGUSR1 to the JS thread to suspend
-        // and resume it in order to scan its stack memory. Whatever signal it uses can't be
-        // reliably intercepted by JS code, and several npm packages use SIGUSR1 for various
-        // features. We tell it to use SIGPWR instead, which we assume is unlikely to be reliable
-        // for its stated purpose. Mono's garbage collector also uses SIGPWR:
-        // https://www.mono-project.com/docs/advanced/embedding/#signal-handling
-        //
-        // This call needs to be before most of the other JSC initialization, as we can't
-        // reconfigure which signal is used once the signal handler has already been registered.
-        bool configure_signal_success = JSConfigureSignalForGC(SIGPWR);
-        ASSERT(configure_signal_success);
-        ASSERT(g_wtfConfig.sigThreadSuspendResume == SIGPWR);
-    }
-#endif
 
     std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
     WTF::initializeMainThread();
@@ -904,6 +889,9 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     JSC::JSLockHolder locker(vm);
 
     vm.heap.disableStopIfNecessaryTimer();
+
+    // Every JS VM's RunLoop should use Bun's RunLoop implementation
+    ASSERT(vmPtr->runLoop().kind() == WTF::RunLoop::Kind::Bun);
 
     WebCore::JSVMClientData::create(&vm, Bun__getVM());
 
@@ -1752,7 +1740,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
             throwOutOfMemoryError(globalObject, throwScope);
             return {};
         }
-        WTF::StringImpl::copyCharacters(ptr.data(), encodedString.span16());
+        WTF::StringImpl::copyCharacters(ptr, encodedString.span16());
         encodedString = WTFMove(dest);
     }
 
@@ -3551,6 +3539,37 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject,
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionCheckBufferRead, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto bufVal = callFrame->argument(0);
+    auto offsetVal = callFrame->argument(1);
+    auto byteLengthVal = callFrame->argument(2);
+
+    ssize_t offset;
+    Bun::V::validateInteger(scope, globalObject, offsetVal, "offset"_s, jsUndefined(), jsUndefined(), &offset);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (!bufVal.isCell()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "buf"_s, "Buffer"_s, bufVal);
+    auto* buf = jsDynamicCast<JSC::JSArrayBufferView*>(bufVal.asCell());
+    if (!buf) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "buf"_s, "Buffer"_s, bufVal);
+    size_t byteLength = byteLengthVal.asNumber();
+    ssize_t type = ((ssize_t)buf->length()) - byteLength;
+
+    if (!(offset >= 0 && offset <= type)) {
+        if (std::floor(offset) != offset) {
+            Bun::V::validateNumber(scope, globalObject, offsetVal, jsUndefined(), jsUndefined(), jsUndefined());
+            RETURN_IF_EXCEPTION(scope, {});
+            return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "offset"_s, "an integer"_s, offsetVal);
+        }
+        if (type < 0) return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, globalObject, ""_s);
+        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "offset"_s, makeString(">= 0 and <= "_s, type), offsetVal);
+    }
+    return JSValue::encode(jsUndefined());
+}
+
 EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
 {
     auto& vm = this->vm();
@@ -3654,6 +3673,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         GlobalPropertyInfo(builtinNames.toClassPrivateName(), JSFunction::create(vm, this, 1, String(), jsFunctionToClass, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.inheritsPrivateName(), JSFunction::create(vm, this, 1, String(), jsFunctionInherits, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.makeAbortErrorPrivateName(), JSFunction::create(vm, this, 1, String(), jsFunctionMakeAbortError, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
+        GlobalPropertyInfo(builtinNames.checkBufferReadPrivateName(), JSFunction::create(vm, this, 1, String(), jsFunctionCheckBufferRead, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
     };
     addStaticGlobals(staticGlobals, std::size(staticGlobals));
 

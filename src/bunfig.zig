@@ -660,6 +660,12 @@ pub const Bunfig = struct {
                         this.bunfig.serve_plugins = plugins;
                     }
 
+                    if (serve_obj.get("hmr")) |hmr| {
+                        if (hmr.asBool()) |value| {
+                            this.bunfig.serve_hmr = value;
+                        }
+                    }
+
                     if (serve_obj.get("minify")) |minify| {
                         if (minify.asBool()) |value| {
                             this.bunfig.serve_minify_syntax = value;

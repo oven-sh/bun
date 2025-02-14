@@ -75,7 +75,7 @@ async function getServerUrl(process: Subprocess<any, "pipe", any>, all = { text:
   reader.releaseLock();
 
   if (!serverUrl) {
-    throw new Error("Could not find server URL in stdout");
+    throw new Error("Could not find server URL in stdout: " + all.text);
   }
 
   return serverUrl;
@@ -135,7 +135,7 @@ describe.each(["true", "false"])("development: %s", developmentString => {
 
         expect(
           all.text
-            .replace(/v\d+\.\d+\.\d+(?:\s*\([a-f0-9]+\))?/g, "v*.*.*") // Handle version with git hash
+            .replace(/v\d+\.\d+\.\d+(?:\s*\([a-f0-9]+\))?(?:-debug)?/g, "v*.*.*") // Handle version with git hash
             .replace(/\[\d+\.?\d*m?s\]/g, "[*ms]")
             .replace(/@\d+\.\d+\.\d+/g, "@*.*.*")
             .replace(/\d+\.\d+\s*ms/g, "*.** ms")
@@ -206,7 +206,7 @@ describe.each(["true", "false"])("development: %s", developmentString => {
 
         expect(
           all.text
-            .replace(/v\d+\.\d+\.\d+(?:\s*\([a-f0-9]+\))?/g, "v*.*.*")
+            .replace(/v\d+\.\d+\.\d+(?:\s*\([a-f0-9]+\))?(?:-debug)?/g, "v*.*.*")
             .replace(/\[\d+\.?\d*m?s\]/g, "[*ms]")
             .replace(/@\d+\.\d+\.\d+/g, "@*.*.*")
             .replace(/\d+\.\d+\s*ms/g, "*.** ms")
@@ -285,7 +285,7 @@ describe.each(["true", "false"])("development: %s", developmentString => {
 
             expect(
               all.text
-                .replace(/v\d+\.\d+\.\d+(?:\s*\([a-f0-9]+\))?/g, "v*.*.*")
+                .replace(/v\d+\.\d+\.\d+(?:\s*\([a-f0-9]+\))?(?:-debug)?/g, "v*.*.*")
                 .replace(/\[\d+\.?\d*m?s\]/g, "[*ms]")
                 .replace(/@\d+\.\d+\.\d+/g, "@*.*.*")
                 .replace(/\d+\.\d+\s*ms/g, "*.** ms")
@@ -354,11 +354,10 @@ function normalizeHTMLFn(development: boolean = true) {
           );
         }
 
-        // In development mode, replace generational IDs in script/link tags
-        return trimmed.replace(
-          /<(link rel="stylesheet" href|script type="module" src)="\/_bun\/(client|asset)\/[^"]+\.(?:css|js)("><\/script>|">)/g,
-          (_, tagStart, path, end) => `<${tagStart}="/_bun/${path}/[GENERATION_ID]${end}`,
-        );
+        // In development mode, replace non-deterministic generation IDs
+        return trimmed
+          .replace(/\/_bun\/client\/(.*?-[a-z0-9]{8})[a-z0-9]{8}\.js/, "/_bun/client/$1[NONDETERMINISTIC].js")
+          .replace(/\/_bun\/asset\/[a-z0-9]{8}[a-z0-9]{8}\.[a-z]+/, "/_bun/asset/[ASSET_HASH].css");
       })
       .filter(Boolean)
       .join("\n")

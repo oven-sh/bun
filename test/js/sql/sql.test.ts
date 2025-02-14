@@ -870,6 +870,56 @@ if (isDockerEnabled()) {
     }),
   ]);
 
+  test("should work with fragments", async () => {
+    await using sql = postgres({ ...options, max: 1 });
+    const random_name = sql("test_" + randomUUIDv7("hex").replaceAll("-", ""));
+    await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${random_name} (id int, hotel_id int, created_at timestamp)`;
+    await sql`INSERT INTO ${random_name} VALUES (1, 1, '2024-01-01 10:00:00')`;
+    // single escaped identifier
+    {
+      const results = await sql`SELECT * FROM ${random_name}`;
+      expect(results).toEqual([{ id: 1, hotel_id: 1, created_at: new Date("2024-01-01T10:00:00.000Z") }]);
+    }
+    // multiple escaped identifiers
+    {
+      const results = await sql`SELECT ${random_name}.* FROM ${random_name}`;
+      expect(results).toEqual([{ id: 1, hotel_id: 1, created_at: new Date("2024-01-01T10:00:00.000Z") }]);
+    }
+    // even more complex fragment
+    {
+      const results =
+        await sql`SELECT ${random_name}.* FROM ${random_name} WHERE ${random_name}.hotel_id = ${1} ORDER BY ${random_name}.created_at DESC`;
+      expect(results).toEqual([{ id: 1, hotel_id: 1, created_at: new Date("2024-01-01T10:00:00.000Z") }]);
+    }
+  });
+  test("should handle nested fragments", async () => {
+    await using sql = postgres({ ...options, max: 1 });
+    const random_name = sql("test_" + randomUUIDv7("hex").replaceAll("-", ""));
+
+    await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${random_name} (id int, hotel_id int, created_at timestamp)`;
+    await sql`INSERT INTO ${random_name} VALUES (1, 1, '2024-01-01 10:00:00')`;
+    await sql`INSERT INTO ${random_name} VALUES (2, 1, '2024-01-02 10:00:00')`;
+    await sql`INSERT INTO ${random_name} VALUES (3, 2, '2024-01-03 10:00:00')`;
+
+    // fragment containing another scape fragment for the field name
+    const orderBy = (field_name: string) => sql`ORDER BY ${sql(field_name)} DESC`;
+
+    // dynamic information
+    const sortBy = { should_sort: true, field: "created_at" };
+    const user = { hotel_id: 1 };
+
+    // query containing the fragments
+    const results = await sql`
+    SELECT ${random_name}.*
+    FROM ${random_name}
+    WHERE ${random_name}.hotel_id = ${user.hotel_id} 
+    ${sortBy.should_sort ? orderBy(sortBy.field) : sql``}`;
+    expect(results).toEqual([
+      { id: 2, hotel_id: 1, created_at: new Date("2024-01-02T10:00:00.000Z") },
+      { id: 1, hotel_id: 1, created_at: new Date("2024-01-01T10:00:00.000Z") },
+    ]);
+  });
+
   // t('Options from uri with special characters in user and pass', async() => {
   //   const opt = postgres({ user: 'öla', pass: 'pass^word' }).options
   //   return [[opt.user, opt.pass].toString(), 'öla,pass^word']
@@ -1238,6 +1288,14 @@ if (isDockerEnabled()) {
     expect(await sql.unsafe("select 1 as x")).toEqual([{ x: 1 }]);
   });
 
+  test("simple query with multiple statements", async () => {
+    const result = await sql`select 1 as x;select 2 as x`.simple();
+    expect(result).toBeDefined();
+    expect(result.length).toEqual(2);
+    expect(result[0][0].x).toEqual(1);
+    expect(result[1][0].x).toEqual(2);
+  });
+
   // t('unsafe simple includes columns', async() => {
   //   return ['x', (await sql.unsafe('select 1 as x').values()).columns[0].name]
   // })
@@ -1254,21 +1312,13 @@ if (isDockerEnabled()) {
   //   ]
   // })
 
-  test.todo("simple query using unsafe with multiple statements", async () => {
-    // bun always uses prepared statements, so this is not supported
-    //     PostgresError: cannot insert multiple commands into a prepared statement
-    //  errno: "42601",
-    //   code: "ERR_POSTGRES_SYNTAX_ERROR"
-    expect(await sql.unsafe("select 1 as x;select 2 as x")).toEqual([{ x: 1 }, { x: 2 }]);
-    // return ["1,2", (await sql.unsafe("select 1 as x;select 2 as x")).map(x => x[0].x).join()];
+  test("simple query using unsafe with multiple statements", async () => {
+    const result = await sql.unsafe("select 1 as x;select 2 as x");
+    expect(result).toBeDefined();
+    expect(result.length).toEqual(2);
+    expect(result[0][0].x).toEqual(1);
+    expect(result[1][0].x).toEqual(2);
   });
-
-  // t('simple query using simple() with multiple statements', async() => {
-  //   return [
-  //     '1,2',
-  //     (await sql`select 1 as x;select 2 as x`.simple()).map(x => x[0].x).join()
-  //   ]
-  // })
 
   // t('listen and notify', async() => {
   //   const sql = postgres(options)

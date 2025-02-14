@@ -2766,8 +2766,8 @@ pub const PackageManager = struct {
 
     pub const WorkspaceFilter = union(enum) {
         all,
-        name: []const u32,
-        path: []const u32,
+        name: []const u8,
+        path: []const u8,
 
         pub fn init(allocator: std.mem.Allocator, input: string, cwd: string, path_buf: []u8) OOM!WorkspaceFilter {
             if ((input.len == 1 and input[0] == '*') or strings.eqlComptime(input, "**")) {
@@ -2793,23 +2793,17 @@ pub const PackageManager = struct {
                 // won't match anything
                 return .{ .path = &.{} };
             }
+            const copy_start = @intFromBool(prepend_negate);
+            const copy_end = copy_start + filter.len;
 
-            // TODO(dylan-conway): finish encoding agnostic glob matcher so we don't
-            // need to convert
-            const len = bun.simdutf.length.utf32.from.utf8.le(filter) + @intFromBool(prepend_negate);
-            const buf = try allocator.alloc(u32, len);
-
-            const result = bun.simdutf.convert.utf8.to.utf32.with_errors.le(filter, buf[@intFromBool(prepend_negate)..]);
-            if (!result.isSuccessful()) {
-                // won't match anything
-                return .{ .path = &.{} };
-            }
+            const buf = try allocator.alloc(u8, copy_end);
+            @memcpy(buf[copy_start..copy_end], filter);
 
             if (prepend_negate) {
                 buf[0] = '!';
             }
 
-            const pattern = buf[0..len];
+            const pattern = buf[0..copy_end];
 
             return if (is_path)
                 .{ .path = pattern }
@@ -2819,7 +2813,9 @@ pub const PackageManager = struct {
 
         pub fn deinit(this: WorkspaceFilter, allocator: std.mem.Allocator) void {
             switch (this) {
-                .path, .name => |pattern| allocator.free(pattern),
+                .name,
+                .path,
+                => |pattern| allocator.free(pattern),
                 .all => {},
             }
         }
@@ -3773,7 +3769,7 @@ pub const PackageManager = struct {
         try PATH.appendSlice(this.node_gyp_tempdir_name);
         try this.env.map.put("PATH", PATH.items);
 
-        const npm_config_node_gyp = try bun.fmt.bufPrint(&path_buf, "{s}{s}{s}{s}{s}", .{
+        const npm_config_node_gyp = try std.fmt.bufPrint(&path_buf, "{s}{s}{s}{s}{s}", .{
             strings.withoutTrailingSlash(this.temp_dir_name),
             std.fs.path.sep_str,
             strings.withoutTrailingSlash(this.node_gyp_tempdir_name),
@@ -6369,13 +6365,14 @@ pub const PackageManager = struct {
                                 installer.node_modules.path = path;
                                 installer.current_tree_id = ctx.tree_id;
                                 const pkg_id = ptask.callback.apply.pkg_id;
+                                const resolution = &manager.lockfile.packages.items(.resolution)[pkg_id];
 
                                 installer.installPackageWithNameAndResolution(
                                     ctx.dependency_id,
                                     pkg_id,
                                     log_level,
                                     ptask.callback.apply.pkgname,
-                                    ptask.callback.apply.resolution,
+                                    resolution,
                                     false,
                                     false,
                                 );
@@ -14445,7 +14442,8 @@ pub const PackageManager = struct {
         manager.options.global_bin_dir = try Options.openGlobalBinDir(ctx.install);
         var out_buffer: bun.PathBuffer = undefined;
         const result = try bun.getFdPathZ(manager.options.global_bin_dir.fd, &out_buffer);
-        manager.options.bin_path = bun.cstring(try FileSystem.instance.dirname_store.append([:0]u8, result));
+        const path = try FileSystem.instance.dirname_store.append([:0]u8, result);
+        manager.options.bin_path = path.ptr[0..path.len :0];
     }
 
     pub fn startProgressBarIfNone(manager: *PackageManager) void {
@@ -15213,7 +15211,7 @@ pub const PackageManager = struct {
                     },
                 };
 
-                switch (bun.glob.walk.matchImpl(pattern, path_or_name)) {
+                switch (bun.glob.walk.matchImpl(manager.allocator, pattern, path_or_name)) {
                     .match, .negate_match => install_root_dependencies = true,
 
                     .negate_no_match => {

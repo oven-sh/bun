@@ -474,7 +474,9 @@ pub const All = struct {
                 defer string.deref();
                 // Custom parseInt logic. I've done this because Node.js is very strict about string
                 // parameters to this function: they can't have leading whitespace, trailing
-                // characters, signs, or even leading zeroes.
+                // characters, signs, or even leading zeroes. None of the readily-available string
+                // parsing functions are this strict. The error case is to just do nothing (not
+                // clear any timer).
                 //
                 // The reason is that in Node.js this function's parameter is used for an array
                 // lookup, and array[0] is the same as array['0'] in JS but not the same as array['00'].
@@ -484,6 +486,7 @@ pub const All = struct {
                         // We can handle all encodings the same way since the only permitted characters
                         // are ASCII.
                         inline else => |encoding| {
+                            // Call the function named for this encoding (.latin1(), etc.)
                             const slice = @field(bun.String, @tagName(encoding))(string);
                             for (slice, 0..) |c, i| {
                                 if (c < '0' or c > '9') {
@@ -493,8 +496,9 @@ pub const All = struct {
                                     // Leading zeroes are not allowed
                                     return;
                                 }
-                                accumulator *= 10;
-                                accumulator += c - '0';
+                                // Fail on overflow
+                                accumulator = std.math.mul(i32, 10, accumulator) catch return;
+                                accumulator = std.math.add(i32, accumulator, c - '0') catch return;
                             }
                         },
                     }

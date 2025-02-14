@@ -962,7 +962,7 @@ pub const Tree = struct {
                                 },
                             };
 
-                            switch (bun.glob.walk.matchImpl(pattern, path_or_name)) {
+                            switch (bun.glob.walk.matchImpl(builder.allocator, pattern, path_or_name)) {
                                 .match, .negate_match => match = true,
 
                                 .negate_no_match => {
@@ -5045,7 +5045,7 @@ pub const Package = extern struct {
 
             if (input_path.len == 0 or input_path.len == 1 and input_path[0] == '.') continue;
 
-            if (Glob.Ascii.detectGlobSyntax(input_path)) {
+            if (Glob.detectGlobSyntax(input_path)) {
                 workspace_globs.append(input_path) catch bun.outOfMemory();
                 continue;
             }

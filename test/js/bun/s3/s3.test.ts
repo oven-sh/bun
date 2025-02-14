@@ -253,7 +253,7 @@ for (let credentials of allCredentials) {
                   method: "DELETE",
                   s3: options,
                 });
-                expect([204, 200]).toContain(result.status);
+                expect([204, 200, 404]).toContain(result.status);
                 await result.text();
               } catch (e) {
                 // if error with NoSuchKey, it means the file does not exist and its fine
@@ -487,7 +487,7 @@ for (let credentials of allCredentials) {
                           await writer.end();
                           const stat = await s3File.stat();
                           expect(stat.size).toBe(Buffer.byteLength(payload) * payloadQuantity);
-                          s3File.delete();
+                          await s3File.delete();
                         }
                       },
                       30_000,
@@ -577,7 +577,6 @@ for (let credentials of allCredentials) {
 
               await writer.end();
               expect(await s3file.text()).toBe(mediumPayload.repeat(2));
-              s3file.delete();
             });
             it("should be able to upload large files in one go using Bun.write", async () => {
               {
@@ -593,7 +592,7 @@ for (let credentials of allCredentials) {
                 await s3File.write(bigPayload);
                 expect(s3File.size).toBeNaN();
                 expect(await s3File.text()).toBe(bigPayload);
-                s3File.delete();
+                await s3File.delete();
               }
             }, 10_000);
           });
@@ -691,7 +690,7 @@ for (let credentials of allCredentials) {
 
                 expect(stat.lastModified).toBeDefined();
                 expect(await s3file.text()).toBe(bigPayload);
-                s3file.delete();
+                await s3file.delete();
               }
             }, 10_000);
 
@@ -706,7 +705,7 @@ for (let credentials of allCredentials) {
                 expect(stat.lastModified).toBeDefined();
 
                 expect(await s3File.text()).toBe(bigPayload);
-                s3File.delete();
+                await s3File.delete();
               }
             }, 10_000);
 

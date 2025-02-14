@@ -47,6 +47,7 @@ const _strings = Symbol("strings");
 const _values = Symbol("values");
 const _poolSize = Symbol("poolSize");
 const _flags = Symbol("flags");
+const _results = Symbol("results");
 const PublicPromise = Promise;
 type TransactionCallback = (sql: (strings: string, ...values: any[]) => Query) => Promise<any>;
 
@@ -90,6 +91,7 @@ enum SQLQueryFlags {
   allowUnsafeTransaction = 1 << 0,
   unsafe = 1 << 1,
   bigint = 1 << 2,
+  simple = 1 << 3,
 }
 
 function getQueryHandle(query) {
@@ -102,6 +104,7 @@ function getQueryHandle(query) {
         query[_flags] & SQLQueryFlags.allowUnsafeTransaction,
         query[_poolSize],
         query[_flags] & SQLQueryFlags.bigint,
+        query[_flags] & SQLQueryFlags.simple,
       );
     } catch (err) {
       query[_queryStatus] |= QueryStatus.error | QueryStatus.invalidHandle;
@@ -144,6 +147,7 @@ class Query extends PublicPromise {
     this[_strings] = strings;
     this[_values] = values;
     this[_flags] = allowUnsafeTransaction;
+    this[_results] = null;
   }
 
   async [_run](async: boolean) {
@@ -237,6 +241,11 @@ class Query extends PublicPromise {
     return this;
   }
 
+  simple() {
+    this[_flags] |= SQLQueryFlags.simple;
+    return this;
+  }
+
   values() {
     const handle = getQueryHandle(this);
     if (!handle) return this;
@@ -266,7 +275,51 @@ class Query extends PublicPromise {
 Object.defineProperty(Query, Symbol.species, { value: PublicPromise });
 Object.defineProperty(Query, Symbol.toStringTag, { value: "Query" });
 init(
-  function onResolvePostgresQuery(query, result, commandTag, count, queries) {
+  function onResolvePostgresQuery(query, result, commandTag, count, queries, is_last) {
+    /// simple queries
+    if (query[_flags] & SQLQueryFlags.simple) {
+      // simple can have multiple results or a single result
+      if (is_last) {
+        if (queries) {
+          const queriesIndex = queries.indexOf(query);
+          if (queriesIndex !== -1) {
+            queries.splice(queriesIndex, 1);
+          }
+        }
+        try {
+          query.resolve(query[_results]);
+        } catch (e) {}
+        return;
+      }
+      $assert(result instanceof SQLResultArray, "Invalid result array");
+      // prepare for next query
+      query[_handle].setPendingValue(new SQLResultArray());
+
+      if (typeof commandTag === "string") {
+        if (commandTag.length > 0) {
+          result.command = commandTag;
+        }
+      } else {
+        result.command = cmds[commandTag];
+      }
+
+      result.count = count || 0;
+      const last_result = query[_results];
+
+      if (!last_result) {
+        query[_results] = result;
+      } else {
+        if (last_result instanceof SQLResultArray) {
+          // multiple results
+          query[_results] = [last_result, result];
+        } else {
+          // 3 or more results
+          last_result.push(result);
+        }
+      }
+      return;
+    }
+    /// prepared statements
     $assert(result instanceof SQLResultArray, "Invalid result array");
     if (typeof commandTag === "string") {
       if (commandTag.length > 0) {
@@ -277,14 +330,12 @@ init(
     }
 
     result.count = count || 0;
-
     if (queries) {
       const queriesIndex = queries.indexOf(query);
       if (queriesIndex !== -1) {
         queries.splice(queriesIndex, 1);
       }
     }
-
     try {
       query.resolve(result);
     } catch (e) {}
@@ -857,6 +908,7 @@ function createConnection(
     idleTimeout = 0,
     connectionTimeout = 30 * 1000,
     maxLifetime = 0,
+    prepare = true,
   },
   onConnected,
   onClose,
@@ -879,6 +931,7 @@ function createConnection(
     idleTimeout,
     connectionTimeout,
     maxLifetime,
+    !prepare,
   );
 }
 
@@ -1033,7 +1086,7 @@ function handleQueryFragment(strings, values) {
 
   return { final_strings, final_values };
 }
-function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize, bigint) {
+function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize, bigint, simple) {
   let columns;
 
   let { final_strings, final_values } = handleQueryFragment(strings, values);
@@ -1053,7 +1106,7 @@ function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize, bigint
       }
     }
   }
-  return createQuery(sqlString, final_values, new SQLResultArray(), columns, !!bigint);
+  return createQuery(sqlString, final_values, new SQLResultArray(), columns, !!bigint, !!simple);
 }
 
 class SQLArrayParameter {
@@ -1112,6 +1165,7 @@ function loadOptions(o) {
     onclose,
     max,
     bigint;
+  let prepare = true;
   const env = Bun.env || {};
   var sslMode: SSLMode = SSLMode.disable;
 
@@ -1188,6 +1242,10 @@ function loadOptions(o) {
   maxLifetime ??= o.maxLifetime;
   maxLifetime ??= o.max_lifetime;
   bigint ??= o.bigint;
+  // we need to explicitly set prepare to false if it is false
+  if (o.prepare === false) {
+    prepare = false;
+  }
 
   onconnect ??= o.onconnect;
   onclose ??= o.onclose;
@@ -1271,7 +1329,7 @@ function loadOptions(o) {
     default:
       throw new Error(`Unsupported adapter: ${adapter}. Only \"postgres\" is supported for now`);
   }
-  const ret: any = { hostname, port, username, password, database, tls, query, sslMode, adapter };
+  const ret: any = { hostname, port, username, password, database, tls, query, sslMode, adapter, prepare, bigint };
   if (idleTimeout != null) {
     ret.idleTimeout = idleTimeout;
   }
@@ -1288,8 +1346,6 @@ function loadOptions(o) {
     ret.onclose = onclose;
   }
   ret.max = max || 10;
-
-  ret.bigint = bigint;
 
   return ret;
 }
@@ -1368,13 +1424,11 @@ function SQL(o, e = {}) {
 
   function unsafeQuery(strings, values) {
     try {
-      return new Query(
-        strings,
-        values,
-        connectionInfo.bigint ? SQLQueryFlags.bigint | SQLQueryFlags.unsafe : SQLQueryFlags.unsafe,
-        connectionInfo.max,
-        queryFromPoolHandler,
-      );
+      let flags = connectionInfo.bigint ? SQLQueryFlags.bigint | SQLQueryFlags.unsafe : SQLQueryFlags.unsafe;
+      if ((values?.length ?? 0) === 0) {
+        flags |= SQLQueryFlags.simple;
+      }
+      return new Query(strings, values, flags, connectionInfo.max, queryFromPoolHandler);
     } catch (err) {
       return Promise.reject(err);
     }
@@ -1418,12 +1472,17 @@ function SQL(o, e = {}) {
   }
   function unsafeQueryFromTransaction(strings, values, pooledConnection, transactionQueries) {
     try {
+      let flags = connectionInfo.bigint
+        ? SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.unsafe | SQLQueryFlags.bigint
+        : SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.unsafe;
+
+      if ((values?.length ?? 0) === 0) {
+        flags |= SQLQueryFlags.simple;
+      }
       const query = new Query(
         strings,
         values,
-        connectionInfo.bigint
-          ? SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.unsafe | SQLQueryFlags.bigint
-          : SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.unsafe,
+        flags,
         connectionInfo.max,
         queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
       );
@@ -2048,7 +2107,6 @@ function SQL(o, e = {}) {
   sql.unsafe = (string, args = []) => {
     return unsafeQuery(string, args);
   };
-
   sql.reserve = () => {
     if (pool.closed) {
       return Promise.reject(connectionClosedError());

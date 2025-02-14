@@ -354,6 +354,8 @@ pub const PostgresSQLQuery = struct {
         binding,
         /// The query is running
         running,
+        /// The query is waiting for a partial response
+        partial_response,
         /// The query was successful
         success,
         /// The query failed
@@ -570,6 +572,8 @@ pub const PostgresSQLQuery = struct {
         const targetValue = this.getTarget(globalObject, is_last);
         if (is_last) {
             this.status = .success;
+        } else {
+            this.status = .partial_response;
         }
         defer if (is_last) {
             allowGC(thisValue, globalObject);
@@ -2130,6 +2134,7 @@ pub const PostgresSQLConnection = struct {
                 // in the middle of running
                 .binding,
                 .running,
+                .partial_response,
                 => {
                     if (js_reason) |reason| {
                         request.onJSError(reason, this.globalObject);
@@ -3414,7 +3419,7 @@ pub const PostgresSQLConnection = struct {
                     }
                 },
 
-                .running, .binding => {
+                .running, .binding, .partial_response => {
                     // if we are binding it will switch to running immediately
                     // if we are running, we need to wait for it to be success or fail
                     return;
@@ -3526,8 +3531,8 @@ pub const PostgresSQLConnection = struct {
                 defer this.updateRef();
 
                 if (this.current()) |request| {
-                    if (request.flags.simple and request.status == .running) {
-                        // just signal that the query is now complete
+                    if (request.status == .partial_response) {
+                        // if is a partial response, just signal that the query is now complete
                         request.onResult("", this.globalObject, this.js_value, true);
                     }
                 }

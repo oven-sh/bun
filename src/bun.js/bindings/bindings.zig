@@ -5699,7 +5699,7 @@ pub const JSValue = enum(i64) {
 
     /// Static cast a value into a `JSC::JSString`. Casting a non-string results
     /// in safety-protected undefined behavior.
-    /// 
+    ///
     /// - `this` is re-interpreted, so runtime casting does not occur (e.g. `this.toString()`)
     /// - Does not allocate
     /// - Does not increment ref count

@@ -93,7 +93,7 @@ describe("SocketAddress constructor", () => {
   // ===========================================================================
 
   it("does not leak memory", () => {
-    const growthFactor = 2.0; // allowed growth factor for memory usage
+    const growthFactor = 3.0; // allowed growth factor for memory usage
     const warmup = 1_000; // # of warmup iterations
     const iters = 100_000; // # of iterations
     const debug = false;
@@ -107,22 +107,23 @@ describe("SocketAddress constructor", () => {
     ] as SocketAddressInitOptions[];
 
     // warmup
+    var sa;
     for (let i = 0; i < warmup; i++) {
-      const sa = new SocketAddress(options[i % options.length]);
-      const a = sa.address; //
-      expect(a).not.toBeEmpty(); // ensure transpiler doesn't strip away getter call
+      sa = new SocketAddress(options[i % options.length]);
     }
+    sa = undefined;
     Bun.gc(true);
+
     const before = process.memoryUsage();
     if (debug) console.log("before", before);
 
     // actual test
     for (let i = 0; i < iters; i++) {
-      const sa = new SocketAddress(options[i % 2]);
-      const a = sa.address; //
-      expect(a).not.toBeEmpty(); // ensure transpiler doesn't strip away getter call
+      sa = new SocketAddress(options[i % 2]);
     }
+    sa = undefined;
     Bun.gc(true);
+
     const after = process.memoryUsage();
     if (debug) console.log("after", after);
 

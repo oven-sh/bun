@@ -72,7 +72,7 @@ for (const options of [
 
     test("Transaction throws", async () => {
       await using sql = new SQL(options);
-      const random_name = ("test_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
+      const random_name = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
 
       await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${sql(random_name)} (a int)`;
       expect(
@@ -87,7 +87,7 @@ for (const options of [
 
     test("Transaction rolls back", async () => {
       await using sql = new SQL(options);
-      const random_name = ("test_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
+      const random_name = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
 
       await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${sql(random_name)} (a int)`;
 
@@ -105,7 +105,7 @@ for (const options of [
 
     test("Transaction throws on uncaught savepoint", async () => {
       await using sql = new SQL(options);
-      const random_name = ("test_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
+      const random_name = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
       await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${sql(random_name)} (a int)`;
       expect(
         await sql
@@ -122,7 +122,7 @@ for (const options of [
 
     test("Transaction throws on uncaught named savepoint", async () => {
       await using sql = new SQL(options);
-      const random_name = ("test_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
+      const random_name = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
       await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${sql(random_name)} (a int)`;
       expect(
         await sql
@@ -139,7 +139,7 @@ for (const options of [
 
     test("Transaction succeeds on caught savepoint", async () => {
       await using sql = new SQL(options);
-      const random_name = ("test_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
+      const random_name = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
       await sql`CREATE TABLE IF NOT EXISTS ${sql(random_name)} (a int)`;
       try {
         await sql.begin(async sql => {
@@ -230,7 +230,7 @@ for (const options of [
 
     test("Transaction waits", async () => {
       await using sql = new SQL({ ...options, max: 2 });
-      const random_name = ("test_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
+      const random_name = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
       await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${sql(random_name)} (a int)`;
       await sql.begin(async sql => {
         await sql`insert into ${sql(random_name)} values(1)`;

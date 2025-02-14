@@ -44,13 +44,33 @@ describe("HTMLRewriter", () => {
     ).toThrow("test");
   });
 
-  it("async error inside element handler", () => {
+  it("fast async error inside element handler", () => {
     let caught = false;
     try {
       new HTMLRewriter()
         .on("div", {
           async element(element) {
             await setImmediatePromise();
+            throw new Error("test");
+          },
+        })
+        .transform(new Response("<div>hello</div>"));
+      expect.unreachable();
+    } catch (e) {
+      caught = true;
+      expect(e.message).toBe("test");
+    } finally {
+      expect(caught).toBeTrue();
+    }
+  });
+
+  it("slow async error inside element handler", () => {
+    let caught = false;
+    try {
+      new HTMLRewriter()
+        .on("div", {
+          async element(element) {
+            await Bun.sleep(1);
             throw new Error("test");
           },
         })

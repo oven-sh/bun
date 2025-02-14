@@ -1383,6 +1383,18 @@ declare module "bun" {
     endpoint?: string;
 
     /**
+     * Use virtual hosted style endpoint. default to false, when true if `endpoint` is informed it will ignore the `bucket`
+     *
+     * @example
+     *     // Using virtual hosted style
+     *     const file = s3("my-file.txt", {
+     *       virtualHostedStyle: true,
+     *       endpoint: "https://my-bucket.s3.us-east-1.amazonaws.com"
+     *     });
+     */
+    virtualHostedStyle?: boolean;
+
+    /**
      * The size of each part in multipart uploads (in bytes).
      * - Minimum: 5 MiB
      * - Maximum: 5120 MiB

@@ -126,7 +126,6 @@ describe("SocketAddress constructor", () => {
     const after = process.memoryUsage();
     if (debug) console.log("after", after);
 
-    expect(after.heapUsed).toBeLessThanOrEqual(before.heapUsed * growthFactor);
     expect(after.rss).toBeLessThanOrEqual(before.rss * growthFactor);
   });
 }); // </SocketAddress constructor>

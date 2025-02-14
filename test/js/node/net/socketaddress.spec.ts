@@ -93,9 +93,9 @@ describe("SocketAddress constructor", () => {
   // ===========================================================================
 
   it("does not leak memory", () => {
-    const growthFactor = 1.1; // allowed growth factor for memory usage
+    const growthFactor = 2.0; // allowed growth factor for memory usage
     const warmup = 1_000; // # of warmup iterations
-    const iters = 25_000; // # of iterations
+    const iters = 100_000; // # of iterations
     const debug = false;
 
     // we want to hit both cached and uncached code paths

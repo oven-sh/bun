@@ -10,9 +10,11 @@ const SocketAddress = @This();
 _addr: sockaddr,
 /// Cached address in presentation format. Prevents repeated conversion between
 /// strings and bytes.
+/// 
+/// .Dead is used as an alternative to null
 ///
 /// @internal
-_presentation: ?bun.String = null,
+_presentation: bun.String = .dead,
 
 pub const Options = struct {
     family: AF = AF.INET,
@@ -216,7 +218,8 @@ pub fn initIPv6(addr: [16]u8, port_: u16, flowinfo: u32, scope_id: u32) SocketAd
 // =============================================================================
 
 pub fn deinit(this: *SocketAddress) void {
-    if (this._presentation) |p| p.deref();
+    // .deref() on dead strings is a no-op.
+    this._presentation.deref();
 }
 
 pub fn finalize(this: *SocketAddress) void {
@@ -238,7 +241,7 @@ pub fn getAddress(this: *SocketAddress, global: *JSC.JSGlobalObject) JSC.JSValue
 /// - replace `addressToString` in `dns.zig` w this
 /// - use this impl in server.zig
 pub fn address(this: *SocketAddress) bun.String {
-    if (this._presentation) |p| return p;
+    if (this._presentation.tag != .Dead) return this._presentation;
 
     var buf: [inet.INET6_ADDRSTRLEN]u8 = undefined;
     const addr_src: *const anyopaque = if (this.family() == AF.INET)
@@ -253,6 +256,7 @@ pub fn address(this: *SocketAddress) bun.String {
         bun.assertWithLocation(bun.strings.isAllASCII(formatted), @src());
     }
     const presentation = bun.JSC.WebCore.Encoder.toBunStringComptime(formatted, .latin1);
+    bun.debugAssert(presentation.tag != .Dead);
     this._presentation = presentation;
     return presentation;
 }
@@ -320,8 +324,7 @@ pub fn socklen(this: *const SocketAddress) inet.socklen_t {
 }
 
 pub fn estimatedSize(this: *SocketAddress) usize {
-    const presentation_size = if (this._presentation) |p| p.estimatedSize() else 0;
-    return @sizeOf(SocketAddress) + presentation_size;
+    return @sizeOf(SocketAddress) + this._presentation.estimatedSize();
 }
 
 pub fn toJSON(this: *SocketAddress, global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {

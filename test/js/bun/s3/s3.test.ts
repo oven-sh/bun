@@ -236,7 +236,6 @@ for (let credentials of allCredentials) {
             const options = bucketInName ? s3Options : { ...s3Options, bucket: S3Bucket };
             beforeEach(async () => {
               // await a little bit so we dont change the filename before deleting it
-              await Bun.sleep(10);
               tmp_filename = bucketInName ? `s3://${S3Bucket}/${randomUUID()}` : `s3://${randomUUID()}`;
               const result = await fetch(tmp_filename, {
                 method: "PUT",
@@ -244,7 +243,6 @@ for (let credentials of allCredentials) {
                 s3: options,
               });
               expect(result.status).toBe(200);
-              await result.text();
             });
 
             afterEach(async () => {
@@ -254,7 +252,6 @@ for (let credentials of allCredentials) {
                   s3: options,
                 });
                 expect([204, 200, 404]).toContain(result.status);
-                await result.text();
               } catch (e) {
                 // if error with NoSuchKey, it means the file does not exist and its fine
                 expect(e?.code || e).toBe("NoSuchKey");
@@ -349,7 +346,6 @@ for (let credentials of allCredentials) {
 
             var bucket = S3(s3Options);
             beforeEach(async () => {
-              await Bun.sleep(10);
               tmp_filename = bucketInName ? `${S3Bucket}/${randomUUID()}` : `${randomUUID()}`;
               const file = bucket.file(tmp_filename, options);
               await file.write("Hello Bun!");
@@ -504,7 +500,6 @@ for (let credentials of allCredentials) {
             let tmp_filename: string;
             const options = bucketInName ? s3Options : { ...s3Options, bucket: S3Bucket };
             beforeEach(async () => {
-              await Bun.sleep(10);
               tmp_filename = bucketInName ? `s3://${S3Bucket}/${randomUUID()}` : `s3://${randomUUID()}`;
               const s3file = file(tmp_filename, options);
               await s3file.write("Hello Bun!");
@@ -603,7 +598,6 @@ for (let credentials of allCredentials) {
             let tmp_filename: string;
             const options = bucketInName ? s3Options : { ...s3Options, bucket: S3Bucket };
             beforeEach(async () => {
-              await Bun.sleep(10);
               tmp_filename = bucketInName ? `${S3Bucket}/${randomUUID()}` : `${randomUUID()}`;
               const s3file = s3(tmp_filename, options);
               await s3file.write("Hello Bun!");

@@ -1237,7 +1237,7 @@ pub const ServerConfig = struct {
             }
             if (global.hasException()) return error.JSError;
 
-            if (try arg.get(global, "static")) |static| {
+            if ((try arg.get(global, "static")) orelse (try arg.get(global, "routes"))) |static| {
                 if (!static.isObject()) {
                     return global.throwInvalidArguments("Bun.serve expects 'static' to be an object shaped like { [pathname: string]: Response }", .{});
                 }

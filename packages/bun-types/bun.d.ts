@@ -3765,7 +3765,18 @@ declare module "bun" {
      *
      * @experimental
      */
-    static?: Record<`/${string}`, Response>;
+    static?: Record<
+      `/${string}`,
+      | Response
+      /**
+       * An HTML import.
+       */
+      | HTMLBundle
+      /**
+       * false to force fetch() to handle the route
+       */
+      | false
+    >;
   }
 
   interface ServeOptions extends GenericServeOptions {

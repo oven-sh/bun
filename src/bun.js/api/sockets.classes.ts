@@ -375,14 +375,8 @@ export default [
     construct: true,
     finalize: true,
     estimatedSize: true,
-    klass: {
-      parse: {
-        fn: "parse",
-        length: 1,
-        enumerable: false,
-        configurable: true,
-      },
-    },
+    JSType: "0b11101110",
+    klass: {},
     proto: {
       address: {
         getter: "getAddress",
@@ -408,8 +402,12 @@ export default [
       },
       flowlabel: {
         getter: "getFlowLabel",
-        enumerable: false,
+        enumerable: true,
         configurable: true,
+      },
+      toJSON: {
+        fn: "toJSON",
+        length: 0,
       },
     },
   }),

@@ -6795,7 +6795,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
                         var buf: [64]u8 = [_]u8{0} ** 64;
                         const address_bytes = listener.socket().localAddress(&buf) orelse return JSValue.jsNull();
-                        const addr = SocketAddress.init(address_bytes, port) catch return JSValue.jsNull();
+                        const addr = SocketAddress.init(address_bytes, port) catch {
+                            @branchHint(.unlikely);
+                            return JSValue.jsNull();
+                        };
                         return SocketAddress.new(addr).toJS(this.globalThis);
                     }
                     return JSValue.jsNull();

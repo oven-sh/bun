@@ -29,7 +29,7 @@ pub const Options = struct {
         if (comptime isDebug) bun.assert(obj.isObject());
 
         const address_str: ?bun.String = if (try obj.get(global, "address")) |a|
-            try bun.String.fromJS2(a, global)
+            try bun.String.fromJSRef(a, global)
         else
             null;
 
@@ -171,12 +171,6 @@ pub fn create(global: *JSC.JSGlobalObject, options: Options) bun.JSError!*Socket
         ._addr = addr,
         ._presentation = presentation,
     });
-}
-
-pub fn parse(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    _ = globalObject;
-    _ = callframe;
-    return JSC.JSValue.jsUndefined(); // TODO;
 }
 
 pub const AddressError = error{
@@ -328,6 +322,15 @@ pub fn socklen(this: *const SocketAddress) inet.socklen_t {
 pub fn estimatedSize(this: *SocketAddress) usize {
     const presentation_size = if (this._presentation) |p| p.estimatedSize() else 0;
     return @sizeOf(SocketAddress) + presentation_size;
+}
+
+pub fn toJSON(this: *SocketAddress, global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    return JSC.JSObject.create(.{
+        .address = this.address(),
+        .family = this.getFamily(global),
+        .port = this.port(),
+        .flowlabel = this.flowLabel() orelse 0,
+    }, global).toJS();
 }
 
 fn pton(global: *JSC.JSGlobalObject, comptime af: c_int, addr: [:0]const u8, dst: *anyopaque) bun.JSError!void {

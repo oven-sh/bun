@@ -85,7 +85,7 @@ for (const options of [
       ).toBe("22P02");
     });
 
-    test.only("Transaction rolls back", async () => {
+    test("Transaction rolls back", async () => {
       await using sql = new SQL(options);
       const random_name = ("test_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
 
@@ -103,7 +103,7 @@ for (const options of [
       expect((await sql`select a from ${sql(random_name)}`).count).toBe(0);
     });
 
-    test.only("Transaction throws on uncaught savepoint", async () => {
+    test("Transaction throws on uncaught savepoint", async () => {
       await using sql = new SQL(options);
       const random_name = ("test_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
       await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${sql(random_name)} (a int)`;

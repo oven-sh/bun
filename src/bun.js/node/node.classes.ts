@@ -157,6 +157,9 @@ export default [
         fn: "toPrimitive",
         length: 1,
       },
+      _destroyed: {
+        getter: "getDestroyed",
+      },
     },
     values: ["arguments", "callback"],
   }),
@@ -187,6 +190,9 @@ export default [
       ["@@toPrimitive"]: {
         fn: "toPrimitive",
         length: 1,
+      },
+      _destroyed: {
+        getter: "getDestroyed",
       },
     },
     values: ["arguments", "callback"],

@@ -632,6 +632,11 @@ pub const TimeoutObject = struct {
     pub fn finalize(this: *TimeoutObject) void {
         this.internals.finalize();
     }
+
+    pub fn getDestroyed(this: *TimeoutObject, globalThis: *JSGlobalObject) JSValue {
+        _ = globalThis;
+        return .jsBoolean(this.internals.getDestroyed());
+    }
 };
 
 pub const ImmediateObject = struct {
@@ -702,6 +707,11 @@ pub const ImmediateObject = struct {
 
     pub fn finalize(this: *ImmediateObject) void {
         this.internals.finalize();
+    }
+
+    pub fn getDestroyed(this: *ImmediateObject, globalThis: *JSGlobalObject) JSValue {
+        _ = globalThis;
+        return .jsBoolean(this.internals.getDestroyed());
     }
 };
 
@@ -1022,6 +1032,7 @@ const TimerObjectInternals = struct {
     pub fn hasRef(this: *TimerObjectInternals, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         return JSValue.jsBoolean(this.is_keeping_event_loop_alive);
     }
+
     pub fn toPrimitive(this: *TimerObjectInternals, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         if (!this.has_accessed_primitive) {
             this.has_accessed_primitive = true;
@@ -1029,6 +1040,14 @@ const TimerObjectInternals = struct {
             vm.timer.maps.get(this.kind).put(bun.default_allocator, this.id, this.eventLoopTimer()) catch bun.outOfMemory();
         }
         return JSValue.jsNumber(this.id);
+    }
+
+    /// This is the getter for `_destroyed` on JS Timeout and Immediate objects
+    pub fn getDestroyed(this: *TimerObjectInternals) bool {
+        return switch (this.eventLoopTimer().state) {
+            .ACTIVE, .PENDING => false,
+            .FIRED, .CANCELLED => true,
+        };
     }
 
     pub fn finalize(this: *TimerObjectInternals) void {

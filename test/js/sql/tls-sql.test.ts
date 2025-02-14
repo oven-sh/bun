@@ -24,8 +24,18 @@ for (const options of [
     prepare: false,
     transactionPool: true,
   },
+
+  {
+    url: TLS_POSTGRES_DATABASE_URL,
+    tls: true,
+    adapter: "postgresql",
+    max: 1,
+    bigint: true,
+    prepare: false,
+    transactionPool: false,
+  },
 ]) {
-  describe(`${options.transactionPool ? "Transaction Pooling" : "Prepared Statements"}`, () => {
+  describe(`${options.transactionPool ? "Transaction Pooling" : `Prepared Statements (${options.prepare ? "on" : "off"})`}`, () => {
     test("default sql", async () => {
       expect(sql.reserve).toBeDefined();
       expect(sql.options).toBeDefined();

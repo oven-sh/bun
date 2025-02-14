@@ -29,13 +29,13 @@ pub const Options = struct {
         if (comptime isDebug) bun.assert(obj.isObject());
 
         const address_str: ?bun.String = if (try obj.get(global, "address")) |a|
-            try bun.String.fromJSRef(a, global)
+            try bun.String.fromJS2(a, global)
         else
             null;
 
         const _family: AF = if (try obj.get(global, "family")) |fam| blk: {
             if (fam.isString()) {
-                const fam_str = try bun.String.fromJSRef(fam, global);
+                const fam_str = try bun.String.fromJS2(fam, global);
                 defer fam_str.deref();
 
                 if (fam_str.eqlComptime("ipv4")) {

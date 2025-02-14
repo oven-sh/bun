@@ -613,7 +613,8 @@ export function writeUIntBE(this: BufferExt, value, offset, byteLength) {
 export function writeFloatLE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
   value = +value;
-  require("internal/buffer").checkBounds(this, offset, 4);
+  // prettier-ignore
+  if (typeof offset !== "number" || this[offset] === undefined || this[offset + 3] === undefined) require("internal/buffer").checkBounds(this, offset, 4);
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setFloat32(offset, value, true);
   return offset + 4;
 }
@@ -621,7 +622,8 @@ export function writeFloatLE(this: BufferExt, value, offset) {
 export function writeFloatBE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
   value = +value;
-  require("internal/buffer").checkBounds(this, offset, 4);
+  // prettier-ignore
+  if (typeof offset !== "number" || this[offset] === undefined || this[offset + 3] === undefined) require("internal/buffer").checkBounds(this, offset, 4);
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setFloat32(offset, value, false);
   return offset + 4;
 }
@@ -629,7 +631,8 @@ export function writeFloatBE(this: BufferExt, value, offset) {
 export function writeDoubleLE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
   value = +value;
-  require("internal/buffer").checkBounds(this, offset, 8);
+  // prettier-ignore
+  if (typeof offset !== "number" || this[offset] === undefined || this[offset + 7] === undefined) require("internal/buffer").checkBounds(this, offset, 8);
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setFloat64(offset, value, true);
   return offset + 8;
 }
@@ -637,7 +640,8 @@ export function writeDoubleLE(this: BufferExt, value, offset) {
 export function writeDoubleBE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
   value = +value;
-  require("internal/buffer").checkBounds(this, offset, 8);
+  // prettier-ignore
+  if (typeof offset !== "number" || this[offset] === undefined || this[offset + 7] === undefined) require("internal/buffer").checkBounds(this, offset, 8);
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setFloat64(offset, value, false);
   return offset + 8;
 }

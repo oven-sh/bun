@@ -1,7 +1,7 @@
 // This script is JS so that it can run in Node.js due to issues with happy dom and Bun
 // - https://github.com/oven-sh/bun/issues/16363
 // - https://github.com/oven-sh/bun/issues/6044
-import { Window, PropertySymbol } from "happy-dom";
+import { Window } from "happy-dom";
 import util from "node:util";
 
 const args = process.argv.slice(2);

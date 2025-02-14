@@ -108,6 +108,7 @@ bundler_options: bake.SplitBundlerOptions,
 server_transpiler: Transpiler,
 client_transpiler: Transpiler,
 ssr_transpiler: Transpiler,
+watcher_thread_resolver: bun.resolver.Resolver,
 /// The log used by all `server_transpiler`, `client_transpiler` and `ssr_transpiler`.
 /// Note that it is rarely correct to write messages into it. Instead, associate
 /// messages with the IncrementalGraph file or Route using `SerializedFailure`
@@ -392,6 +393,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .server_transpiler = undefined,
         .client_transpiler = undefined,
         .ssr_transpiler = undefined,
+        .watcher_thread_resolver = undefined,
         .bun_watcher = undefined,
         .configuration_hash_key = undefined,
         .router = undefined,
@@ -443,6 +445,9 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         dev.ssr_transpiler.options.dev_server = dev;
         dev.ssr_transpiler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
     }
+
+    dev.watcher_thread_resolver = dev.server_transpiler.resolver;
+    dev.watcher_thread_resolver.watcher = null;
 
     assert(dev.server_transpiler.resolver.opts.target != .browser);
     assert(dev.client_transpiler.resolver.opts.target == .browser);
@@ -731,6 +736,7 @@ pub fn memoryCost(dev: *DevServer) usize {
         .server_register_update_callback = {},
         .deferred_request_pool = {},
         .assume_perfect_incremental_bundling = {},
+        .watcher_thread_resolver = {},
 
         // pointers that are not considered a part of DevServer
         .vm = {},
@@ -1602,7 +1608,7 @@ fn startAsyncBundle(
     dev.next_bundle.requests = .{};
 }
 
-fn indexFailures(dev: *DevServer) !void {
+fn prepareAndLogResolutionFailures(dev: *DevServer) !void {
     // Since resolution failures can be asynchronous, their logs are not inserted
     // until the very end.
     const resolution_failures = dev.current_bundle.?.resolution_failure_entries;
@@ -1626,7 +1632,9 @@ fn indexFailures(dev: *DevServer) !void {
         }
         dev.log.print(Output.errorWriter()) catch {};
     }
+}
 
+fn indexFailures(dev: *DevServer) !void {
     // After inserting failures into the IncrementalGraphs, they are traced to their routes.
     var sfa_state = std.heap.stackFallback(65536, dev.allocator);
     const sfa = sfa_state.get();
@@ -1660,8 +1668,8 @@ fn indexFailures(dev: *DevServer) !void {
 
             switch (added.getOwner()) {
                 .none, .route => unreachable,
-                .server => |index| try dev.server_graph.traceDependencies(index, &gts, .no_stop, {}),
-                .client => |index| try dev.client_graph.traceDependencies(index, &gts, .no_stop, {}),
+                .server => |index| try dev.server_graph.traceDependencies(index, &gts, .no_stop, index),
+                .client => |index| try dev.client_graph.traceDependencies(index, &gts, .no_stop, index),
             }
         }
 
@@ -2009,15 +2017,15 @@ pub fn finalizeBundle(
         // TODO: use a hash mix with the first half being a path hash (to identify files) and
         // the second half to be the content hash (to know if the file has changed)
         const hash = bun.hash(key);
-        const asset_index = (try dev.assets.replacePath(
+        const asset_index = try dev.assets.replacePath(
             key,
             .fromOwnedSlice(dev.allocator, code.buffer),
             .css,
             hash,
-        )).index;
+        );
         // Later code needs to retrieve the CSS content
         // The hack is to use `entry_point_id`, which is otherwise unused, to store an index.
-        chunk.entry_point.entry_point_id = asset_index;
+        chunk.entry_point.entry_point_id = asset_index.get();
 
         // Track css files that look like tailwind files.
         if (dev.has_tailwind_plugin_hack) |*map| {
@@ -2087,6 +2095,8 @@ pub fn finalizeBundle(
     ctx.server_seen_bit_set = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(bv2.graph.allocator, dev.server_graph.bundled_files.count());
 
     dev.incremental_result.had_adjusted_edges = false;
+
+    try prepareAndLogResolutionFailures(dev);
 
     // Pass 2, update the graph's edges by performing import diffing on each
     // changed file, removing dependencies. This pass also flags what routes
@@ -2225,10 +2235,12 @@ pub fn finalizeBundle(
         has_route_bits_set = true;
 
         dev.incremental_result.framework_routes_affected.clearRetainingCapacity();
+        dev.incremental_result.html_routes_hard_affected.clearRetainingCapacity();
+        dev.incremental_result.html_routes_soft_affected.clearRetainingCapacity();
         gts.clear();
 
         for (dev.incremental_result.client_components_affected.items) |index| {
-            try dev.server_graph.traceDependencies(index, &gts, .no_stop, {});
+            try dev.server_graph.traceDependencies(index, &gts, .no_stop, index);
         }
 
         // A bit-set is used to avoid duplicate entries. This is not a problem
@@ -2544,20 +2556,10 @@ pub fn handleParseTaskFailure(
             .client => try dev.client_graph.onFileDeleted(abs_path, log),
         }
     } else {
-        Output.prettyErrorln("<red><b>Error{s} while bundling \"{s}\":<r>", .{
-            if (log.errors +| log.warnings != 1) "s" else "",
-            dev.relativePath(abs_path),
-        });
-        log.print(Output.errorWriterBuffered()) catch {};
-        Output.flush();
-
-        // Do not index css errors
-        if (!bun.strings.hasSuffixComptime(abs_path, ".css")) {
-            switch (graph) {
-                .server => try dev.server_graph.insertFailure(.abs_path, abs_path, log, false),
-                .ssr => try dev.server_graph.insertFailure(.abs_path, abs_path, log, true),
-                .client => try dev.client_graph.insertFailure(.abs_path, abs_path, log, false),
-            }
+        switch (graph) {
+            .server => try dev.server_graph.insertFailure(.abs_path, abs_path, log, false),
+            .ssr => try dev.server_graph.insertFailure(.abs_path, abs_path, log, true),
+            .client => try dev.client_graph.insertFailure(.abs_path, abs_path, log, false),
         }
     }
 }
@@ -3543,15 +3545,14 @@ pub fn IncrementalGraph(side: bake.Side) type {
         const TraceDependencyGoal = enum {
             stop_at_boundary,
             no_stop,
-            css_to_route,
         };
 
         fn traceDependencies(
             g: *@This(),
             file_index: FileIndex,
             gts: *GraphTraceState,
-            comptime goal: TraceDependencyGoal,
-            from_file_index: if (goal == .stop_at_boundary) FileIndex else void,
+            goal: TraceDependencyGoal,
+            from_file_index: FileIndex,
         ) !void {
             g.owner().graph_safety_lock.assertLocked();
 
@@ -3585,12 +3586,12 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 },
                 .client => {
                     const dev = g.owner();
-                    if (file.flags.is_hmr_root or (file.flags.kind == .css and goal == .css_to_route)) {
+                    if (file.flags.is_hmr_root) {
                         const key = g.bundled_files.keys()[file_index.get()];
                         const index = dev.server_graph.getFileIndex(key) orelse
                             Output.panic("Server Incremental Graph is missing component for {}", .{bun.fmt.quote(key)});
-                        try dev.server_graph.traceDependencies(index, gts, goal, if (goal == .stop_at_boundary) index else {});
-                    } else if (goal == .stop_at_boundary and file.flags.is_html_route) {
+                        try dev.server_graph.traceDependencies(index, gts, goal, index);
+                    } else if (file.flags.is_html_route) {
                         const route_bundle_index = dev.client_graph.htmlRouteBundleIndex(file_index);
 
                         // If the HTML file itself was modified, or an asset was
@@ -3629,7 +3630,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     edge.dependency,
                     gts,
                     goal,
-                    if (goal == .stop_at_boundary) file_index,
+                    file_index,
                 );
             }
         }
@@ -3790,18 +3791,27 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
         /// Returns the key that was inserted.
         pub fn insertEmpty(g: *@This(), abs_path: []const u8) bun.OOM![]const u8 {
-            comptime assert(side == .client); // not implemented
             g.owner().graph_safety_lock.assertLocked();
             const gop = try g.bundled_files.getOrPut(g.owner().allocator, abs_path);
             if (!gop.found_existing) {
                 gop.key_ptr.* = try bun.default_allocator.dupe(u8, abs_path);
-                gop.value_ptr.* = File.initUnknown(.{
-                    .failed = false,
-                    .is_hmr_root = false,
-                    .is_special_framework_file = false,
-                    .is_html_route = false,
-                    .kind = .unknown,
-                });
+                gop.value_ptr.* = switch (side) {
+                    .client => File.initUnknown(.{
+                        .failed = false,
+                        .is_hmr_root = false,
+                        .is_special_framework_file = false,
+                        .is_html_route = false,
+                        .kind = .unknown,
+                    }),
+                    .server => .{
+                        .is_rsc = false,
+                        .is_ssr = false,
+                        .is_route = false,
+                        .is_client_component_boundary = false,
+                        .failed = false,
+                        .kind = .unknown,
+                    },
+                };
                 try g.first_dep.append(g.owner().allocator, .none);
                 try g.first_import.append(g.owner().allocator, .none);
                 if (side == .client)
@@ -4531,14 +4541,8 @@ const DirectoryWatchStore = struct {
         dev.graph_safety_lock.lock();
         defer dev.graph_safety_lock.unlock();
         const owned_file_path = switch (renderer) {
-            .client => path: {
-                const index = try dev.client_graph.insertStale(import_source, false);
-                break :path dev.client_graph.bundled_files.keys()[index.get()];
-            },
-            .server, .ssr => path: {
-                const index = try dev.client_graph.insertStale(import_source, renderer == .ssr);
-                break :path dev.client_graph.bundled_files.keys()[index.get()];
-            },
+            .client => try dev.client_graph.insertEmpty(import_source),
+            .server, .ssr => try dev.server_graph.insertEmpty(import_source),
         };
 
         store.insert(dir, owned_file_path, specifier) catch |err| switch (err) {
@@ -5396,6 +5400,9 @@ pub fn startReloadBundle(dev: *DevServer, event: *HotReloadEvent) bun.OOM!void {
     event.processFileList(dev, &entry_points, temp_alloc);
     if (entry_points.set.count() == 0) {
         Output.debugWarn("nothing to bundle. watcher may potentially be watching too many files.", .{});
+        Output.debugWarn("modified files: {s}", .{
+            bun.fmt.fmtSlice(event.files.keys(), ", "),
+        });
         return;
     }
 
@@ -5541,6 +5548,9 @@ pub const HotReloadEvent = struct {
 
         if (entry_points.set.count() == 0) {
             Output.debugWarn("nothing to bundle. watcher may potentially be watching too many files.", .{});
+            Output.debugWarn("modified files: {s}", .{
+                bun.fmt.fmtSlice(first.files.keys(), ", "),
+            });
             return;
         }
 
@@ -5769,11 +5779,7 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
                         const dep = &dev.directory_watchers.dependencies.items[index.get()];
                         it = dep.next.unwrap();
 
-                        const prev_watcher = dev.server_transpiler.resolver.watcher;
-                        dev.server_transpiler.resolver.watcher = null;
-                        defer dev.server_transpiler.resolver.watcher = prev_watcher;
-
-                        if ((dev.server_transpiler.resolver.resolve(
+                        if ((dev.watcher_thread_resolver.resolve(
                             bun.path.dirname(dep.source_file_path, .auto),
                             dep.specifier,
                             .stmt,
@@ -6050,7 +6056,7 @@ pub fn putOrOverwriteAsset(
 pub const Assets = struct {
     /// Keys are absolute paths, sharing memory with the keys in IncrementalGraph(.client)
     /// Values are indexes into files
-    path_map: bun.StringArrayHashMapUnmanaged(u32),
+    path_map: bun.StringArrayHashMapUnmanaged(EntryIndex),
     /// Content-addressable store. Multiple paths can point to the same content
     /// hash, which is tracked by the `refs` array. One reference is held to
     /// contained StaticRoute instances when they are stored.
@@ -6060,13 +6066,15 @@ pub const Assets = struct {
 
     needs_reindex: bool = false,
 
+    pub const EntryIndex = bun.GenericIndex(u30, Assets);
+
     fn owner(assets: *Assets) *DevServer {
         return @alignCast(@fieldParentPtr("assets", assets));
     }
 
     pub fn getHash(assets: *Assets, path: []const u8) ?u64 {
         return if (assets.path_map.get(path)) |idx|
-            assets.files.keys()[idx]
+            assets.files.keys()[idx.get()]
         else
             null;
     }
@@ -6081,7 +6089,7 @@ pub const Assets = struct {
         mime_type: MimeType,
         /// content hash of the asset
         content_hash: u64,
-    ) !struct { index: u30 } {
+    ) !EntryIndex {
         defer assert(assets.files.count() == assets.refs.items.len);
         const alloc = assets.owner().allocator;
         debug.log("replacePath {} {} - {s}/{s}", .{
@@ -6097,22 +6105,22 @@ pub const Assets = struct {
             const stable_abs_path = try assets.owner().client_graph.insertEmpty(abs_path);
             gop.key_ptr.* = stable_abs_path;
         } else {
-            const i = gop.value_ptr.*;
+            const entry_index = gop.value_ptr.*;
             // When there is one reference to the asset, the entry can be
             // replaced in-place with the new asset.
-            if (assets.refs.items[i] == 1) {
+            if (assets.refs.items[entry_index.get()] == 1) {
                 const slice = assets.files.entries.slice();
-                slice.items(.key)[i] = content_hash;
-                slice.items(.value)[i] = StaticRoute.initFromAnyBlob(contents, .{
+                slice.items(.key)[entry_index.get()] = content_hash;
+                slice.items(.value)[entry_index.get()] = StaticRoute.initFromAnyBlob(contents, .{
                     .mime_type = mime_type,
                     .server = assets.owner().server orelse unreachable,
                 });
                 comptime assert(@TypeOf(slice.items(.hash)[0]) == void);
                 assets.needs_reindex = true;
-                return .{ .index = @intCast(i) };
+                return entry_index;
             } else {
-                assets.refs.items[i] -= 1;
-                assert(assets.refs.items[i] > 0);
+                assets.refs.items[entry_index.get()] -= 1;
+                assert(assets.refs.items[entry_index.get()] > 0);
             }
         }
 
@@ -6129,9 +6137,8 @@ pub const Assets = struct {
             var contents_mut = contents;
             contents_mut.detach();
         }
-        gop.value_ptr.* = @intCast(file_index_gop.index);
-
-        return .{ .index = @intCast(gop.value_ptr.*) };
+        gop.value_ptr.* = .init(@intCast(file_index_gop.index));
+        return gop.value_ptr.*;
     }
 
     /// Returns a pointer to insert the *StaticRoute. If `null` is returned, then it
@@ -6149,20 +6156,24 @@ pub const Assets = struct {
     }
 
     pub fn unrefByHash(assets: *Assets, content_hash: u64, dec_count: u32) void {
-        defer assert(assets.files.count() == assets.refs.items.len);
-        assert(dec_count > 0);
         const index = assets.files.getIndex(content_hash) orelse
             Output.panic("Asset double unref: {s}", .{std.fmt.fmtSliceHexLower(std.mem.asBytes(&content_hash))});
-        assets.refs.items[index] -= dec_count;
-        if (assets.refs.items[index] == 0) {
-            assets.files.swapRemoveAt(index);
-            _ = assets.refs.swapRemove(index);
+        assets.unrefByIndex(.init(@intCast(index)), dec_count);
+    }
+
+    pub fn unrefByIndex(assets: *Assets, index: EntryIndex, dec_count: u32) void {
+        defer assert(assets.files.count() == assets.refs.items.len);
+        assert(dec_count > 0);
+        assets.refs.items[index.get()] -= dec_count;
+        if (assets.refs.items[index.get()] == 0) {
+            assets.files.swapRemoveAt(index.get());
+            _ = assets.refs.swapRemove(index.get());
         }
     }
 
     pub fn unrefByPath(assets: *Assets, path: []const u8) void {
         const entry = assets.path_map.fetchSwapRemove(path) orelse return;
-        assets.unrefByHash(entry.value, 1);
+        assets.unrefByIndex(entry.value, 1);
     }
 
     pub fn reindexIfNeeded(assets: *Assets, alloc: Allocator) !void {

@@ -1,7 +1,7 @@
 // This script is JS so that it can run in Node.js due to issues with happy dom and Bun
 // - https://github.com/oven-sh/bun/issues/16363
 // - https://github.com/oven-sh/bun/issues/6044
-import { Window } from "happy-dom";
+import { Window, PropertySymbol } from "happy-dom";
 import util from "node:util";
 
 const args = process.argv.slice(2);
@@ -37,9 +37,6 @@ function reset() {
       error: () => {},
       warn: () => {},
       info: () => {},
-    };
-    window.harness = {
-      send: () => {},
     };
   }
 }
@@ -106,6 +103,14 @@ function createWindow(windowUrl) {
         process.exit(2);
       }, 1000);
     }
+  };
+
+  let hasHadCssReplace = false;
+  const originalCSSStyleSheetReplace = window.CSSStyleSheet.prototype.replaceSync;
+  window.CSSStyleSheet.prototype.replace = function (newContent) {
+    const result = originalCSSStyleSheetReplace.apply(this, [newContent]);
+    hasHadCssReplace = true;
+    return result;
   };
 
   if (storeHotChunks) {
@@ -181,7 +186,7 @@ process.on("message", async message => {
       // Evaluate the code in the window context
       let result;
       try {
-        result = await window.eval(code);
+        result = await window.eval(`(async () => ${code})()`);
       } catch (error) {
         if (error.message === "Illegal return statement") {
           result = await window.eval(`(async () => { ${code} })()`);
@@ -218,6 +223,101 @@ process.on("message", async message => {
   if (message.type === "exit") {
     process.exit(0);
   }
+  if (message.type === "get-style") {
+    const [messageId, selector] = message.args;
+    try {
+      for (const sheet of [...window.document.styleSheets, ...window.document.adoptedStyleSheets]) {
+        if (sheet.disabled) continue;
+        for (const rule of sheet.cssRules) {
+          if (rule.selectorText === selector) {
+            const style = {};
+            for (let i = 0; i < rule.style.length; i++) {
+              const prop = rule.style[i];
+              const camelCase = prop.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
+              style[camelCase] = rule.style.getPropertyValue(prop);
+            }
+            process.send({
+              type: `get-style-result-${messageId}`,
+              args: [
+                {
+                  value: style,
+                },
+              ],
+            });
+            return;
+          }
+        }
+      }
+
+      process.send({
+        type: `get-style-result-${messageId}`,
+        args: [
+          {
+            value: undefined,
+          },
+        ],
+      });
+    } catch (error) {
+      process.send({
+        type: `get-style-result-${messageId}`,
+        args: [
+          {
+            error: error.message,
+          },
+        ],
+      });
+    }
+  }
+  if (message.type === "get-errors") {
+    const [messageId] = message.args;
+    try {
+      const overlay = window.document.querySelector("bun-hmr");
+      if (!overlay) {
+        process.send({
+          type: `get-errors-result-${messageId}`,
+          args: [{ value: [] }],
+        });
+        return;
+      }
+
+      const errors = [];
+      const messages = overlay.shadowRoot.querySelectorAll(".message");
+
+      for (const message of messages) {
+        const fileName = message.closest(".message-group").querySelector(".file-name").textContent;
+        const label = message.querySelector(".log-label").textContent;
+        const text = message.querySelector(".log-text").textContent;
+
+        const lineNumElem = message.querySelector(".line-num");
+        const spaceElem = message.querySelector(".highlight-wrap > .space");
+
+        let formatted;
+        if (lineNumElem && spaceElem) {
+          const line = lineNumElem.textContent;
+          const col = spaceElem.textContent.length;
+          formatted = `${fileName}:${line}:${col}: ${label}: ${text}`;
+        } else {
+          formatted = `${fileName}: ${label}: ${text}`;
+        }
+
+        errors.push(formatted);
+      }
+
+      process.send({
+        type: `get-errors-result-${messageId}`,
+        args: [{ value: errors.sort() }],
+      });
+    } catch (error) {
+      console.error(error);
+      process.send({
+        type: `get-errors-result-${messageId}`,
+        args: [{ error: error.message }],
+      });
+    }
+  }
+});
+process.on("disconnect", () => {
+  process.exit(0);
 });
 process.on("exit", () => {
   if (expectingReload) {

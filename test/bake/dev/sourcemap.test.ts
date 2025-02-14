@@ -3,7 +3,7 @@
 // work because hmr-runtime is minified in release builds, which would affect
 // the generated line/column numbers across different build configurations.
 import { expect } from "bun:test";
-import { Dev, devTest, emptyHtmlFile } from "../dev-server-harness";
+import { Dev, devTest, emptyHtmlFile, reactRefreshStub } from "../dev-server-harness";
 import { BasicSourceMapConsumer, IndexedSourceMapConsumer, SourceMapConsumer } from "source-map";
 
 devTest("source map emitted for primary chunk", {
@@ -38,13 +38,10 @@ devTest("source map emitted for primary chunk", {
 });
 devTest("source map emitted for hmr chunk", {
   files: {
+    ...reactRefreshStub,
     "index.html": emptyHtmlFile({
       scripts: ["index.ts"],
     }),
-    "node_modules/react-refresh/runtime.js": `
-      export const performReactRefresh = () => {};
-      export const injectIntoGlobalHook = () => {};
-    `,
     "index.ts": `
       import "react-refresh/runtime";
       import other from "./App";

@@ -213,21 +213,7 @@ struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
   s->ssl_read_wants_write = 0;
   s->fatal_error = 0;
   s->handshake_state = HANDSHAKE_PENDING;
-
-  uint16_t verify_algorithms[] = {
-      SSL_SIGN_ECDSA_SECP256R1_SHA256,
-      SSL_SIGN_ECDSA_SECP384R1_SHA384,
-      SSL_SIGN_ECDSA_SECP521R1_SHA512,
-      SSL_SIGN_ED25519, // not enabled by default, but secure and in use
-      SSL_SIGN_RSA_PSS_RSAE_SHA256,
-      SSL_SIGN_RSA_PSS_RSAE_SHA384,
-      SSL_SIGN_RSA_PSS_RSAE_SHA512,
-      SSL_SIGN_RSA_PKCS1_SHA256,
-      SSL_SIGN_RSA_PKCS1_SHA384,
-      SSL_SIGN_RSA_PKCS1_SHA512,
-      // SSL_SIGN_RSA_PKCS1_SHA1, // enabled by default, but old and insecure
-  };
-  SSL_set_verify_algorithm_prefs(s->ssl, verify_algorithms, sizeof(verify_algorithms) / sizeof(verify_algorithms[0]));
+  
 
   SSL_set_bio(s->ssl, loop_ssl_data->shared_rbio, loop_ssl_data->shared_wbio);
 // if we allow renegotiation, we need to set the mode here
@@ -2066,6 +2052,7 @@ struct us_socket_t *us_socket_upgrade_to_tls(us_socket_r s, us_socket_context_r 
   *new_ext_ptr = prev_ext;
 
   ssl_on_open(socket, 1, NULL, 0, sni);
+
 
   return (struct us_socket_t *)socket;
 }

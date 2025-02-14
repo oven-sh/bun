@@ -341,6 +341,7 @@ pub const ServerConfig = struct {
     ipv6_only: bool = false,
 
     static_routes: std.ArrayList(StaticRouteEntry) = std.ArrayList(StaticRouteEntry).init(bun.default_allocator),
+    negative_routes: std.ArrayList([:0]const u8) = std.ArrayList([:0]const u8).init(bun.default_allocator),
 
     bake: ?bun.bake.UserOptions = null,
 
@@ -348,6 +349,10 @@ pub const ServerConfig = struct {
         development,
         production,
         development_without_hmr,
+
+        pub fn isHMREnabled(this: DevelopmentOption) bool {
+            return this == .development;
+        }
 
         pub fn isDevelopment(this: DevelopmentOption) bool {
             return this == .development or this == .development_without_hmr;
@@ -366,6 +371,10 @@ pub const ServerConfig = struct {
         }
         cost += this.id.len;
         cost += this.base_url.href.len;
+        for (this.negative_routes.items) |route| {
+            cost += route.len;
+        }
+
         return cost;
     }
 
@@ -466,6 +475,11 @@ pub const ServerConfig = struct {
 
     pub fn deinit(this: *ServerConfig) void {
         this.address.deinit(bun.default_allocator);
+
+        for (this.negative_routes.items) |route| {
+            bun.default_allocator.free(route);
+        }
+        this.negative_routes.clearAndFree();
 
         if (this.base_url.href.len > 0) {
             bun.default_allocator.free(this.base_url.href);
@@ -1146,13 +1160,22 @@ pub const ServerConfig = struct {
                     .hostname = null,
                 },
             },
-            .development = .development,
+            .development = if (vm.transpiler.options.transform_options.serve_hmr) |hmr|
+                if (!hmr) .development_without_hmr else .development
+            else
+                .development,
 
             // If this is a node:cluster child, let's default to SO_REUSEPORT.
             // That way you don't have to remember to set reusePort: true in Bun.serve() when using node:cluster.
             .reuse_port = env.get("NODE_UNIQUE_ID") != null,
         };
         var has_hostname = false;
+
+        defer {
+            if (!args.development.isHMREnabled()) {
+                bun.assert(args.bake == null);
+            }
+        }
 
         if (strings.eqlComptime(env.get("NODE_ENV") orelse "", "production")) {
             args.development = .production;
@@ -1199,6 +1222,21 @@ pub const ServerConfig = struct {
                 return global.throwInvalidArguments("Bun.serve expects an object", .{});
             }
 
+            // "development" impacts other settings like bake.
+            if (try arg.get(global, "development")) |dev| {
+                if (dev.isObject()) {
+                    if (try dev.getBooleanStrict(global, "hmr")) |hmr| {
+                        args.development = if (!hmr) .development_without_hmr else .development;
+                    } else {
+                        args.development = .development;
+                    }
+                } else {
+                    args.development = if (dev.toBoolean()) .development else .production;
+                }
+                args.reuse_port = args.development == .production;
+            }
+            if (global.hasException()) return error.JSError;
+
             if (try arg.get(global, "static")) |static| {
                 if (!static.isObject()) {
                     return global.throwInvalidArguments("Bun.serve expects 'static' to be an object shaped like { [pathname: string]: Response }", .{});
@@ -1239,12 +1277,23 @@ pub const ServerConfig = struct {
 
                     const value = iter.value;
 
+                    if (value.isUndefined()) {
+                        continue;
+                    }
+
                     if (path.len == 0 or (path[0] != '/')) {
                         return global.throwInvalidArguments("Invalid static route \"{s}\". path must start with '/'", .{path});
                     }
 
                     if (!is_ascii) {
                         return global.throwInvalidArguments("Invalid static route \"{s}\". Please encode all non-ASCII characters in the path.", .{path});
+                    }
+
+                    if (value == .false) {
+                        const duped = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory();
+                        defer bun.default_allocator.free(path);
+                        args.negative_routes.append(duped) catch bun.outOfMemory();
+                        continue;
                     }
 
                     const route = try AnyRoute.fromJS(global, path, value, &init_ctx);
@@ -1259,7 +1308,7 @@ pub const ServerConfig = struct {
                 if ((init_ctx.dedupe_html_bundle_map.count() > 0 or
                     init_ctx.framework_router_list.items.len > 0))
                 {
-                    if (args.development == .development) {
+                    if (args.development.isHMREnabled()) {
                         const root = bun.fs.FileSystem.instance.top_level_dir;
                         const framework = try bun.bake.Framework.auto(
                             init_ctx.arena.allocator(),
@@ -1397,20 +1446,6 @@ pub const ServerConfig = struct {
                         args.allow_hot = false;
                     }
                 }
-            }
-            if (global.hasException()) return error.JSError;
-
-            if (try arg.get(global, "development")) |dev| {
-                if (dev.isObject()) {
-                    if (try dev.getBooleanStrict(global, "hmr")) |hmr| {
-                        args.development = if (!hmr) .development_without_hmr else .development;
-                    } else {
-                        args.development = .development;
-                    }
-                } else {
-                    args.development = if (dev.toBoolean()) .development else .production;
-                }
-                args.reuse_port = args.development == .production;
             }
             if (global.hasException()) return error.JSError;
 
@@ -6560,6 +6595,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             static_routes.deinit();
             this.config.static_routes = new_config.static_routes;
 
+            for (this.config.negative_routes.items) |route| {
+                bun.default_allocator.free(route);
+            }
+            this.config.negative_routes.clearAndFree();
+            this.config.negative_routes = new_config.negative_routes;
+
             this.setRoutes();
         }
 
@@ -7320,7 +7361,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             ctx.onResponse(this, prepared.js_request, response_value);
-
             // Reference in the stack here in case it is not for whatever reason
             prepared.js_request.ensureStillAlive();
 
@@ -7598,6 +7638,14 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             var needs_plugins = dev_server != null;
             var has_html_catch_all = false;
 
+            // negative routes have backwards precedence.
+            for (this.config.negative_routes.items) |route| {
+                // Since .applyStaticRoute does head, we need to do it first here too.
+                app.head(route, *ThisServer, this, onRequest);
+
+                app.any(route, *ThisServer, this, onRequest);
+            }
+
             if (this.config.static_routes.items.len > 0) {
                 for (this.config.static_routes.items) |*entry| {
                     switch (entry.route) {
@@ -7656,6 +7704,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 // DevServer adds a catch-all handler to use FrameworkRouter (full stack apps)
                 has_dev_catch_all = dev.attachRoutes(this) catch bun.outOfMemory();
             }
+
             if (!has_dev_catch_all) {
                 // "/*" routes are added backwards, so if they have a static route,
                 // it will never be matched so we need to check for that first

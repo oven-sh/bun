@@ -174,57 +174,124 @@ pub fn writeStatus(comptime ssl: bool, resp_ptr: ?*uws.NewApp(ssl).Response, sta
     }
 }
 
-// TODO: rename to StaticBlobRoute, rename AnyStaticRoute to StaticRoute
+// TODO: rename to StaticBlobRoute? the html bundle is sometimes a static route
 pub const StaticRoute = @import("./server/StaticRoute.zig");
 
 const HTMLBundle = JSC.API.HTMLBundle;
-const HTMLBundleRoute = HTMLBundle.HTMLBundleRoute;
-pub const AnyStaticRoute = union(enum) {
-    StaticRoute: *StaticRoute,
-    HTMLBundleRoute: *HTMLBundleRoute,
 
-    pub fn memoryCost(this: AnyStaticRoute) usize {
+pub const AnyRoute = union(enum) {
+    /// Serve a static file
+    /// "/robots.txt": new Response(...),
+    static: *StaticRoute,
+    /// Bundle an HTML import
+    /// import html from "./index.html";
+    /// "/": html,
+    html: *HTMLBundle.Route,
+    /// Use file system routing.
+    /// "/*": {
+    ///   "dir": import.meta.resolve("./pages"),
+    ///   "style": "nextjs-pages",
+    /// }
+    framework_router: bun.bake.FrameworkRouter.Type.Index,
+
+    pub fn memoryCost(this: AnyRoute) usize {
         return switch (this) {
-            .StaticRoute => |static_route| static_route.memoryCost(),
-            .HTMLBundleRoute => |html_bundle_route| html_bundle_route.memoryCost(),
+            .static => |static_route| static_route.memoryCost(),
+            .html => |html_bundle_route| html_bundle_route.memoryCost(),
+            .framework_router => @sizeOf(bun.bake.Framework.FileSystemRouterType),
         };
     }
 
-    pub fn setServer(this: AnyStaticRoute, server: ?AnyServer) void {
+    pub fn setServer(this: AnyRoute, server: ?AnyServer) void {
         switch (this) {
-            .StaticRoute => |static_route| static_route.server = server,
-            .HTMLBundleRoute => |html_bundle_route| html_bundle_route.server = server,
+            .static => |static_route| static_route.server = server,
+            .html => |html_bundle_route| html_bundle_route.server = server,
+            .framework_router => {}, // DevServer contains .server field
         }
     }
 
-    pub fn deref(this: AnyStaticRoute) void {
+    pub fn deref(this: AnyRoute) void {
         switch (this) {
-            .StaticRoute => |static_route| static_route.deref(),
-            .HTMLBundleRoute => |html_bundle_route| html_bundle_route.deref(),
+            .static => |static_route| static_route.deref(),
+            .html => |html_bundle_route| html_bundle_route.deref(),
+            .framework_router => {}, // not reference counted
         }
     }
 
-    pub fn ref(this: AnyStaticRoute) void {
+    pub fn ref(this: AnyRoute) void {
         switch (this) {
-            .StaticRoute => |static_route| static_route.ref(),
-            .HTMLBundleRoute => |html_bundle_route| html_bundle_route.ref(),
+            .static => |static_route| static_route.ref(),
+            .html => |html_bundle_route| html_bundle_route.ref(),
+            .framework_router => {}, // not reference counted
         }
     }
 
-    pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue, dedupe_html_bundle_map: *std.AutoHashMap(*HTMLBundle, *HTMLBundleRoute)) bun.JSError!AnyStaticRoute {
+    pub fn fromJS(
+        global: *JSC.JSGlobalObject,
+        path: []const u8,
+        argument: JSC.JSValue,
+        init_ctx: *ServerInitContext,
+    ) bun.JSError!AnyRoute {
         if (argument.as(HTMLBundle)) |html_bundle| {
-            const entry = try dedupe_html_bundle_map.getOrPut(html_bundle);
+            const entry = try init_ctx.dedupe_html_bundle_map.getOrPut(html_bundle);
             if (!entry.found_existing) {
-                entry.value_ptr.* = HTMLBundleRoute.init(html_bundle);
+                entry.value_ptr.* = HTMLBundle.Route.init(html_bundle);
             } else {
                 entry.value_ptr.*.ref();
             }
 
-            return .{ .HTMLBundleRoute = entry.value_ptr.* };
+            return .{ .html = entry.value_ptr.* };
         }
 
-        return .{ .StaticRoute = try StaticRoute.fromJS(globalThis, argument) };
+        if (argument.isObject()) {
+            const FrameworkRouter = bun.bake.FrameworkRouter;
+            if (try argument.getOptional(global, "dir", bun.String.Slice)) |dir| {
+                var alloc = init_ctx.js_string_allocations;
+                const relative_root = alloc.track(dir);
+
+                var style: FrameworkRouter.Style = if (try argument.get(global, "style")) |style|
+                    try FrameworkRouter.Style.fromJS(style, global)
+                else
+                    .nextjs_pages;
+                errdefer style.deinit();
+
+                if (!bun.strings.endsWith(path, "/*")) {
+                    return global.throwInvalidArguments("To mount a directory, make sure the path ends in `/*`", .{});
+                }
+
+                try init_ctx.framework_router_list.append(.{
+                    .root = relative_root,
+                    .style = style,
+
+                    // trim the /*
+                    .prefix = if (path.len == 2) "/" else path[0 .. path.len - 2],
+
+                    // TODO: customizable framework option.
+                    .entry_client = "bun-framework-react/client.tsx",
+                    .entry_server = "bun-framework-react/server.tsx",
+                    .ignore_underscores = true,
+                    .ignore_dirs = &.{ "node_modules", ".git" },
+                    .extensions = &.{ ".tsx", ".jsx" },
+                    .allow_layouts = true,
+                });
+
+                const limit = std.math.maxInt(@typeInfo(FrameworkRouter.Type.Index).@"enum".tag_type);
+                if (init_ctx.framework_router_list.items.len > limit) {
+                    return global.throwInvalidArguments("Too many framework routers. Maximum is {d}.", .{limit});
+                }
+                return .{ .framework_router = .init(@intCast(init_ctx.framework_router_list.items.len - 1)) };
+            }
+        }
+
+        return .{ .static = try StaticRoute.fromJS(global, argument) };
     }
+};
+
+pub const ServerInitContext = struct {
+    arena: std.heap.ArenaAllocator,
+    dedupe_html_bundle_map: std.AutoHashMap(*HTMLBundle, *HTMLBundle.Route),
+    js_string_allocations: bun.bake.StringRefList,
+    framework_router_list: std.ArrayList(bun.bake.Framework.FileSystemRouterType),
 };
 
 pub const ServerConfig = struct {
@@ -305,7 +372,7 @@ pub const ServerConfig = struct {
     // TODO: rename to StaticRoute.Entry
     pub const StaticRouteEntry = struct {
         path: []const u8,
-        route: AnyStaticRoute,
+        route: AnyRoute,
 
         pub fn memoryCost(this: *const StaticRouteEntry) usize {
             return this.path.len + this.route.memoryCost();
@@ -369,7 +436,7 @@ pub const ServerConfig = struct {
         return that;
     }
 
-    pub fn appendStaticRoute(this: *ServerConfig, path: []const u8, route: AnyStaticRoute) !void {
+    pub fn appendStaticRoute(this: *ServerConfig, path: []const u8, route: AnyRoute) !void {
         try this.static_routes.append(StaticRouteEntry{
             .path = try bun.default_allocator.dupe(u8, path),
             .route = route,
@@ -1143,8 +1210,21 @@ pub const ServerConfig = struct {
                 }).init(global, static);
                 defer iter.deinit();
 
-                var dedupe_html_bundle_map = std.AutoHashMap(*HTMLBundle, *HTMLBundleRoute).init(bun.default_allocator);
-                defer dedupe_html_bundle_map.deinit();
+                var init_ctx: ServerInitContext = .{
+                    .arena = .init(bun.default_allocator),
+                    .dedupe_html_bundle_map = .init(bun.default_allocator),
+                    .framework_router_list = .init(bun.default_allocator),
+                    .js_string_allocations = .empty,
+                };
+                errdefer {
+                    init_ctx.arena.deinit();
+                    init_ctx.framework_router_list.deinit();
+                }
+                // This list is not used in the success case
+                defer init_ctx.dedupe_html_bundle_map.deinit();
+
+                var framework_router_list = std.ArrayList(bun.bake.FrameworkRouter.Type).init(bun.default_allocator);
+                errdefer framework_router_list.deinit();
 
                 errdefer {
                     for (args.static_routes.items) |*static_route| {
@@ -1167,7 +1247,7 @@ pub const ServerConfig = struct {
                         return global.throwInvalidArguments("Invalid static route \"{s}\". Please encode all non-ASCII characters in the path.", .{path});
                     }
 
-                    const route = try AnyStaticRoute.fromJS(global, value, &dedupe_html_bundle_map);
+                    const route = try AnyRoute.fromJS(global, path, value, &init_ctx);
                     args.static_routes.append(.{
                         .path = path,
                         .route = route,
@@ -1176,33 +1256,47 @@ pub const ServerConfig = struct {
 
                 // When HTML bundles are provided, ensure DevServer options are ready
                 // The presence of these options causes Bun.serve to initialize things.
-                if (args.development == .development and dedupe_html_bundle_map.count() > 0) {
-                    // TODO: this should be the dir with bunfig??
-                    const root = bun.fs.FileSystem.instance.top_level_dir;
-                    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
-                    const framework = try bun.bake.Framework.auto(arena.allocator(), &global.bunVM().transpiler.resolver);
-                    args.bake = .{
-                        .arena = arena,
-                        .allocations = bun.bake.StringRefList.empty,
-                        .root = root,
-                        .framework = framework,
-                        .frontend_only = true,
-                        .bundler_options = bun.bake.SplitBundlerOptions.empty,
-                    };
+                if ((init_ctx.dedupe_html_bundle_map.count() > 0 or
+                    init_ctx.framework_router_list.items.len > 0))
+                {
+                    if (args.development == .development) {
+                        const root = bun.fs.FileSystem.instance.top_level_dir;
+                        const framework = try bun.bake.Framework.auto(
+                            init_ctx.arena.allocator(),
+                            &global.bunVM().transpiler.resolver,
+                            init_ctx.framework_router_list.items,
+                        );
+                        args.bake = .{
+                            .arena = init_ctx.arena,
+                            .allocations = init_ctx.js_string_allocations,
+                            .root = root,
+                            .framework = framework,
+                            .bundler_options = bun.bake.SplitBundlerOptions.empty,
+                        };
 
-                    switch (vm.transpiler.options.transform_options.serve_env_behavior) {
-                        .prefix => {
-                            args.bake.?.bundler_options.client.env_prefix = vm.transpiler.options.transform_options.serve_env_prefix;
-                            args.bake.?.bundler_options.client.env = .prefix;
-                        },
-                        .load_all => {
-                            args.bake.?.bundler_options.client.env = .load_all;
-                        },
-                        .disable => {
-                            args.bake.?.bundler_options.client.env = .disable;
-                        },
-                        else => {},
+                        switch (vm.transpiler.options.transform_options.serve_env_behavior) {
+                            .prefix => {
+                                args.bake.?.bundler_options.client.env_prefix = vm.transpiler.options.transform_options.serve_env_prefix;
+                                args.bake.?.bundler_options.client.env = .prefix;
+                            },
+                            .load_all => {
+                                args.bake.?.bundler_options.client.env = .load_all;
+                            },
+                            .disable => {
+                                args.bake.?.bundler_options.client.env = .disable;
+                            },
+                            else => {},
+                        }
+                    } else {
+                        if (init_ctx.framework_router_list.items.len > 0) {
+                            return global.throwInvalidArguments("FrameworkRouter is currently only supported when `development: true`", .{});
+                        }
+                        init_ctx.arena.deinit();
                     }
+                } else {
+                    bun.debugAssert(init_ctx.arena.state.end_index == 0 and
+                        init_ctx.arena.state.buffer_list.first == null);
+                    init_ctx.arena.deinit();
                 }
             }
 
@@ -1320,13 +1414,13 @@ pub const ServerConfig = struct {
             }
             if (global.hasException()) return error.JSError;
 
-            if (try arg.getTruthy(global, "app")) |bake_args_js| {
+            if (try arg.getTruthy(global, "app")) |bake_args_js| brk: {
+                if (!bun.FeatureFlags.bake()) {
+                    break :brk;
+                }
                 if (args.bake != null) {
                     // "app" is likely to be removed in favor of the HTML loader.
                     return global.throwInvalidArguments("'app' + HTML loader not supported.", .{});
-                }
-                if (!bun.FeatureFlags.bake()) {
-                    return global.throwInvalidArguments("To use the experimental \"app\" option, upgrade to the canary build of bun via \"bun upgrade --canary\"", .{});
                 }
                 if (!allow_bake_config) {
                     return global.throwInvalidArguments("To use the \"app\" option, change from calling \"Bun.serve({ app })\" to \"export default { app: ... }\"", .{});
@@ -1970,6 +2064,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         .globalThis = globalThis,
                         .quote_strings = true,
                     };
+                    defer formatter.deinit();
                     Output.errGeneric("Expected a Response object, but received '{}'", .{value.toFmt(&formatter)});
                 } else {
                     Output.errGeneric("Expected a Response object", .{});
@@ -5853,7 +5948,7 @@ const ServePlugins = struct {
             /// Promise may be empty if the plugin load finishes synchronously.
             plugin: *bun.JSC.API.JSBundler.Plugin,
             promise: JSC.JSPromise.Strong,
-            html_bundle_routes: std.ArrayListUnmanaged(*HTMLBundleRoute),
+            html_bundle_routes: std.ArrayListUnmanaged(*HTMLBundle.Route),
             dev_server: ?*bun.bake.DevServer,
         },
         loaded: *bun.JSC.API.JSBundler.Plugin,
@@ -5869,7 +5964,7 @@ const ServePlugins = struct {
     };
 
     pub const Callback = union(enum) {
-        html_bundle_route: *HTMLBundleRoute,
+        html_bundle_route: *HTMLBundle.Route,
         dev_server: *bun.bake.DevServer,
     };
 
@@ -6193,7 +6288,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this.config.idleTimeout = @truncate(@min(seconds, 255));
         }
 
-        pub fn appendStaticRoute(this: *ThisServer, path: []const u8, route: AnyStaticRoute) !void {
+        pub fn appendStaticRoute(this: *ThisServer, path: []const u8, route: AnyRoute) !void {
             try this.config.appendStaticRoute(path, route);
         }
 
@@ -6937,20 +7032,16 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             const base_url = try bun.default_allocator.dupe(u8, strings.trim(config.base_url.href, "/"));
             errdefer bun.default_allocator.free(base_url);
 
-            const dev_server = if (config.bake) |*bake_options| dev_server: {
-                if (!bake_options.frontend_only) {
-                    bun.bake.printWarning();
-                }
-
-                break :dev_server try bun.bake.DevServer.init(.{
+            const dev_server = if (config.bake) |*bake_options|
+                try bun.bake.DevServer.init(.{
                     .arena = bake_options.arena.allocator(),
                     .root = bake_options.root,
                     .framework = bake_options.framework,
                     .bundler_options = bake_options.bundler_options,
                     .vm = global.bunVM(),
-                    .frontend_only = bake_options.frontend_only,
-                });
-            } else null;
+                })
+            else
+                null;
             errdefer if (dev_server) |d| d.deinit();
 
             var server = ThisServer.new(.{
@@ -7510,16 +7601,17 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             if (this.config.static_routes.items.len > 0) {
                 for (this.config.static_routes.items) |*entry| {
                     switch (entry.route) {
-                        .StaticRoute => |static_route| {
+                        .static => |static_route| {
                             ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *StaticRoute, static_route, entry.path);
                         },
-                        .HTMLBundleRoute => |html_bundle_route| {
-                            ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *HTMLBundleRoute, html_bundle_route, entry.path);
+                        .html => |html_bundle_route| {
+                            ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *HTMLBundle.Route, html_bundle_route, entry.path);
                             if (dev_server) |dev| {
                                 dev.html_router.put(dev.allocator, entry.path, html_bundle_route) catch bun.outOfMemory();
                             }
                             needs_plugins = true;
                         },
+                        .framework_router => {},
                     }
                     if (!has_html_catch_all and strings.eqlComptime(entry.path, "/*")) {
                         has_html_catch_all = true;
@@ -7571,7 +7663,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     bun.assert(this.config.onRequest != .zero);
                     app.any("/*", *ThisServer, this, onRequest);
                 } else if (this.config.onRequest != .zero) {
-                    // The HTML catch all recieves GET, HEAD, and OPTIONS
+                    // The HTML catch-all receives GET, HEAD, and OPTIONS
                     app.post("/*", *ThisServer, this, onRequest);
                     app.put("/*", *ThisServer, this, onRequest);
                     app.patch("/*", *ThisServer, this, onRequest);
@@ -7799,7 +7891,7 @@ pub const AnyServer = union(enum) {
         };
     }
 
-    pub fn appendStaticRoute(this: AnyServer, path: []const u8, route: AnyStaticRoute) !void {
+    pub fn appendStaticRoute(this: AnyServer, path: []const u8, route: AnyRoute) !void {
         return switch (this) {
             inline else => |server| server.appendStaticRoute(path, route),
         };

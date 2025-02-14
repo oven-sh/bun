@@ -159,24 +159,17 @@ DEFINE_NATIVE_MODULE(NodeBuffer)
 {
     INIT_NATIVE_MODULE(12);
 
-    put(JSC::Identifier::fromString(vm, "Buffer"_s),
-        globalObject->JSBufferConstructor());
+    put(JSC::Identifier::fromString(vm, "Buffer"_s), globalObject->JSBufferConstructor());
 
-    auto* slowBuffer = JSC::JSFunction::create(
-        vm, globalObject, 0, "SlowBuffer"_s, WebCore::constructSlowBuffer,
-        ImplementationVisibility::Public, NoIntrinsic,
-        WebCore::constructSlowBuffer);
-    slowBuffer->putDirect(
-        vm, vm.propertyNames->prototype, globalObject->JSBufferPrototype(),
-        JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    auto* slowBuffer = JSC::JSFunction::create(vm, globalObject, 0, "SlowBuffer"_s, WebCore::constructSlowBuffer, ImplementationVisibility::Public, NoIntrinsic, WebCore::constructSlowBuffer);
+    slowBuffer->putDirect(vm, vm.propertyNames->prototype, globalObject->JSBufferPrototype(), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
     put(JSC::Identifier::fromString(vm, "SlowBuffer"_s), slowBuffer);
     auto blobIdent = JSC::Identifier::fromString(vm, "Blob"_s);
 
     JSValue blobValue = globalObject->JSBlobConstructor();
     put(blobIdent, blobValue);
 
-    put(JSC::Identifier::fromString(vm, "File"_s),
-        globalObject->JSDOMFileConstructor());
+    put(JSC::Identifier::fromString(vm, "File"_s), globalObject->JSDOMFileConstructor());
 
     {
         auto name = Identifier::fromString(vm, "INSPECT_MAX_BYTES"_s);
@@ -206,30 +199,17 @@ DEFINE_NATIVE_MODULE(NodeBuffer)
     put(atobI, atobV);
     put(btoaI, btoaV);
 
-    auto* transcode = InternalFunction::createFunctionThatMasqueradesAsUndefined(
-        vm, globalObject, 1, "transcode"_s, jsFunctionNotImplemented);
+    auto* transcode = InternalFunction::createFunctionThatMasqueradesAsUndefined(vm, globalObject, 1, "transcode"_s, jsFunctionNotImplemented);
 
     put(JSC::Identifier::fromString(vm, "transcode"_s), transcode);
 
-    auto* resolveObjectURL = JSC::JSFunction::create(
-        vm, globalObject, 1, "resolveObjectURL"_s,
-        jsFunctionResolveObjectURL,
-        ImplementationVisibility::Public, NoIntrinsic,
-        jsFunctionResolveObjectURL);
+    auto* resolveObjectURL = JSC::JSFunction::create(vm, globalObject, 1, "resolveObjectURL"_s, jsFunctionResolveObjectURL, ImplementationVisibility::Public, NoIntrinsic, jsFunctionResolveObjectURL);
 
     put(JSC::Identifier::fromString(vm, "resolveObjectURL"_s), resolveObjectURL);
 
-    put(JSC::Identifier::fromString(vm, "isAscii"_s),
-        JSC::JSFunction::create(vm, globalObject, 1, "isAscii"_s,
-            jsBufferConstructorFunction_isAscii,
-            ImplementationVisibility::Public, NoIntrinsic,
-            jsBufferConstructorFunction_isUtf8));
+    put(JSC::Identifier::fromString(vm, "isAscii"_s), JSC::JSFunction::create(vm, globalObject, 1, "isAscii"_s, jsBufferConstructorFunction_isAscii, ImplementationVisibility::Public, NoIntrinsic, jsBufferConstructorFunction_isUtf8));
 
-    put(JSC::Identifier::fromString(vm, "isUtf8"_s),
-        JSC::JSFunction::create(vm, globalObject, 1, "isUtf8"_s,
-            jsBufferConstructorFunction_isUtf8,
-            ImplementationVisibility::Public, NoIntrinsic,
-            jsBufferConstructorFunction_isUtf8));
+    put(JSC::Identifier::fromString(vm, "isUtf8"_s), JSC::JSFunction::create(vm, globalObject, 1, "isUtf8"_s, jsBufferConstructorFunction_isUtf8, ImplementationVisibility::Public, NoIntrinsic, jsBufferConstructorFunction_isUtf8));
 }
 
 } // namespace Zig

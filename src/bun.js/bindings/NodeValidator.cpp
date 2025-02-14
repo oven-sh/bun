@@ -31,9 +31,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateInteger, (JSC::JSGlobalObject * glob
     auto name = callFrame->argument(1);
     auto min = callFrame->argument(2);
     auto max = callFrame->argument(3);
-    return Bun::V::validateInteger(scope, globalObject, value, name, min, max);
+    ssize_t unused;
+    return Bun::V::validateInteger(scope, globalObject, value, name, min, max, &unused);
 }
-JSC::EncodedJSValue V::validateInteger(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, JSC::JSValue name, JSC::JSValue min, JSC::JSValue max)
+template<typename T> JSC::EncodedJSValue V::validateInteger(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, JSC::JSValue name, JSC::JSValue min, JSC::JSValue max, T* out)
 {
     if (!value.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
     if (min.isUndefined()) min = jsDoubleNumber(JSC::minSafeInteger());
@@ -49,9 +50,10 @@ JSC::EncodedJSValue V::validateInteger(JSC::ThrowScope& scope, JSC::JSGlobalObje
     if (std::fmod(value_num, 1.0) != 0) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
     if (value_num < min_num || value_num > max_num) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min_num, max_num, value);
 
+    *out = value_num;
     return JSValue::encode(jsUndefined());
 }
-JSC::EncodedJSValue V::validateInteger(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, ASCIILiteral name, JSC::JSValue min, JSC::JSValue max)
+template<typename T> JSC::EncodedJSValue V::validateInteger(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, ASCIILiteral name, JSC::JSValue min, JSC::JSValue max, T* out)
 {
     if (!value.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
     if (min.isUndefined()) min = jsDoubleNumber(JSC::minSafeInteger());
@@ -67,6 +69,7 @@ JSC::EncodedJSValue V::validateInteger(JSC::ThrowScope& scope, JSC::JSGlobalObje
     if (std::fmod(value_num, 1.0) != 0) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
     if (value_num < min_num || value_num > max_num) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min_num, max_num, value);
 
+    *out = value_num;
     return JSValue::encode(jsUndefined());
 }
 
@@ -542,5 +545,16 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateBuffer, (JSC::JSGlobalObject * globa
     }
     return JSValue::encode(jsUndefined());
 }
+
+//
+//
+
+template JSC::EncodedJSValue V::validateInteger<size_t>(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, JSC::JSValue name, JSC::JSValue min, JSC::JSValue max, size_t* out);
+template JSC::EncodedJSValue V::validateInteger<ssize_t>(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, JSC::JSValue name, JSC::JSValue min, JSC::JSValue max, ssize_t* out);
+template JSC::EncodedJSValue V::validateInteger<uint32_t>(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, JSC::JSValue name, JSC::JSValue min, JSC::JSValue max, uint32_t* out);
+
+template JSC::EncodedJSValue V::validateInteger<size_t>(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, ASCIILiteral name, JSC::JSValue min, JSC::JSValue max, size_t* out);
+template JSC::EncodedJSValue V::validateInteger<ssize_t>(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, ASCIILiteral name, JSC::JSValue min, JSC::JSValue max, ssize_t* out);
+template JSC::EncodedJSValue V::validateInteger<uint32_t>(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, ASCIILiteral name, JSC::JSValue min, JSC::JSValue max, uint32_t* out);
 
 }

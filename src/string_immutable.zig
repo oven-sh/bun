@@ -832,7 +832,7 @@ pub fn isOnCharBoundary(self: string, idx: usize) bool {
 
 pub fn isUtf8CharBoundary(c: u8) bool {
     // This is bit magic equivalent to: b < 128 || b >= 192
-    return @as(i8, @intCast(c)) >= -0x40;
+    return @as(i8, @bitCast(c)) >= -0x40;
 }
 
 pub fn startsWithCaseInsensitiveAscii(self: string, prefix: string) bool {
@@ -4328,6 +4328,7 @@ pub fn containsNewlineOrNonASCIIOrQuote(slice_: []const u8) bool {
     return false;
 }
 
+/// JSON escape
 pub fn indexOfNeedsEscape(slice: []const u8, comptime quote_char: u8) ?u32 {
     var remaining = slice;
     if (remaining.len == 0)
@@ -4367,6 +4368,72 @@ pub fn indexOfNeedsEscape(slice: []const u8, comptime quote_char: u8) ?u32 {
     for (remaining) |*char_| {
         const char = char_.*;
         if (char > 127 or char < 0x20 or char == '\\' or char == quote_char or (quote_char == '`' and char == '$')) {
+            return @as(u32, @truncate(@intFromPtr(char_) - @intFromPtr(slice.ptr)));
+        }
+    }
+
+    return null;
+}
+
+pub fn indexOfNeedsURLEncode(slice: []const u8) ?u32 {
+    var remaining = slice;
+    if (remaining.len == 0)
+        return null;
+
+    if (remaining[0] >= 127 or
+        remaining[0] < 0x20 or
+        remaining[0] == '\\' or
+        remaining[0] == '"' or
+        remaining[0] == '#' or
+        remaining[0] == '?' or
+        remaining[0] == '[' or
+        remaining[0] == ']' or
+        remaining[0] == '^' or
+        remaining[0] == '|' or
+        remaining[0] == '~')
+    {
+        return 0;
+    }
+
+    if (comptime Environment.enableSIMD) {
+        while (remaining.len >= ascii_vector_size) {
+            const vec: AsciiVector = remaining[0..ascii_vector_size].*;
+            const cmp: AsciiVectorU1 =
+                @as(AsciiVectorU1, @bitCast(vec > max_16_ascii)) |
+                @as(AsciiVectorU1, @bitCast((vec < min_16_ascii))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('%')))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('"')))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('#')))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('?')))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('[')))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(']')))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('^')))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('|')))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('~'))));
+
+            if (@reduce(.Max, cmp) > 0) {
+                const bitmask = @as(AsciiVectorInt, @bitCast(cmp));
+                const first = @ctz(bitmask);
+                return @as(u32, first) + @as(u32, @truncate(@intFromPtr(remaining.ptr) - @intFromPtr(slice.ptr)));
+            }
+
+            remaining = remaining[ascii_vector_size..];
+        }
+    }
+
+    for (remaining) |*char_| {
+        const char = char_.*;
+        if (char > 127 or char < 0x20 or
+            char == '\\' or
+            char == '"' or
+            char == '#' or
+            char == '?' or
+            char == '[' or
+            char == ']' or
+            char == '^' or
+            char == '|' or
+            char == '~')
+        {
             return @as(u32, @truncate(@intFromPtr(char_) - @intFromPtr(slice.ptr)));
         }
     }
@@ -6677,4 +6744,40 @@ pub fn splitFirstWithExpected(self: string, comptime expected: u8) ?[]const u8 {
         return self[1..];
     }
     return null;
+}
+
+pub fn percentEncodeWrite(
+    utf8_input: []const u8,
+    writer: *std.ArrayList(u8),
+) error{ OutOfMemory, IncompleteUTF8 }!void {
+    var remaining = utf8_input;
+    while (indexOfNeedsURLEncode(remaining)) |j| {
+        const safe = remaining[0..j];
+        remaining = remaining[j..];
+        const code_point_len: usize = wtf8ByteSequenceLengthWithInvalid(remaining[0]);
+        if (remaining.len < code_point_len) {
+            @branchHint(.unlikely);
+            return error.IncompleteUTF8;
+        }
+
+        const to_encode = remaining[0..code_point_len];
+        remaining = remaining[code_point_len..];
+
+        try writer.ensureUnusedCapacity(safe.len + ("%FF".len) * code_point_len);
+
+        // Write the safe bytes
+        writer.appendSliceAssumeCapacity(safe);
+
+        // URL encode the code point
+        for (to_encode) |byte| {
+            writer.appendSliceAssumeCapacity(&.{
+                '%',
+                byte2hex((byte >> 4) & 0xF),
+                byte2hex(byte & 0xF),
+            });
+        }
+    }
+
+    // Write the rest of the string
+    try writer.appendSlice(remaining);
 }

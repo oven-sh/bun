@@ -8,7 +8,7 @@ const bun = @import("root").bun;
 pub fn BabyList(comptime Type: type) type {
     return struct {
         const ListType = @This();
-        ptr: [*]Type = undefined,
+        ptr: [*]Type = &[_]Type{},
         len: u32 = 0,
         cap: u32 = 0,
 

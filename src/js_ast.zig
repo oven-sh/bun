@@ -3362,7 +3362,7 @@ pub const Expr = struct {
     pub fn hasAnyPropertyNamed(expr: *const Expr, comptime names: []const string) bool {
         if (std.meta.activeTag(expr.data) != .e_object) return false;
         const obj = expr.data.e_object;
-        if (@intFromPtr(obj.properties.ptr) == 0) return false;
+        if (obj.properties.len == 0) return false;
 
         for (obj.properties.slice()) |prop| {
             if (prop.value == null) continue;
@@ -3527,7 +3527,7 @@ pub const Expr = struct {
     pub fn asProperty(expr: *const Expr, name: string) ?Query {
         if (std.meta.activeTag(expr.data) != .e_object) return null;
         const obj = expr.data.e_object;
-        if (@intFromPtr(obj.properties.ptr) == 0) return null;
+        if (obj.properties.len == 0) return null;
 
         return obj.asProperty(name);
     }
@@ -3535,7 +3535,7 @@ pub const Expr = struct {
     pub fn asPropertyStringMap(expr: *const Expr, name: string, allocator: std.mem.Allocator) ?*bun.StringArrayHashMap(string) {
         if (std.meta.activeTag(expr.data) != .e_object) return null;
         const obj_ = expr.data.e_object;
-        if (@intFromPtr(obj_.properties.ptr) == 0) return null;
+        if (obj_.properties.len == 0) return null;
         const query = obj_.asProperty(name) orelse return null;
         if (query.expr.data != .e_object) return null;
 
@@ -3581,7 +3581,7 @@ pub const Expr = struct {
     pub fn asArray(expr: *const Expr) ?ArrayIterator {
         if (std.meta.activeTag(expr.data) != .e_array) return null;
         const array = expr.data.e_array;
-        if (array.items.len == 0 or @intFromPtr(array.items.ptr) == 0) return null;
+        if (array.items.len == 0) return null;
 
         return ArrayIterator{ .array = array, .index = 0 };
     }
@@ -7896,7 +7896,7 @@ pub const Macro = struct {
     const js = @import("./bun.js/javascript_core_c_api.zig");
     const Zig = @import("./bun.js/bindings/exports.zig");
     const Transpiler = bun.Transpiler;
-    const MacroEntryPoint = bun.transpiler.MacroEntryPoint;
+    const MacroEntryPoint = bun.transpiler.EntryPoints.MacroEntryPoint;
     const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
     pub const MacroRemapEntry = @import("./resolver/package_json.zig").MacroImportReplacementMap;
 

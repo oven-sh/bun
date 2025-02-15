@@ -122,6 +122,10 @@ pub const All = struct {
     timers: TimerList = .empty,
     active_timer_count: i32 = 0,
     uv_timer: if (Environment.isWindows) uv.Timer else void = if (Environment.isWindows) std.mem.zeroes(uv.Timer),
+    /// Whether we have emitted a warning for passing a negative timeout duration
+    warned_negative_number: bool = false,
+    /// Whether we have emitted a warning for passing NaN for the timeout duration
+    warned_not_number: bool = false,
 
     // We split up the map here to avoid storing an extra "repeat" boolean
     maps: struct {
@@ -387,8 +391,68 @@ pub const All = struct {
             return JSValue.jsUndefined();
     }
 
-    comptime {
-        @export(&setImmediate, .{ .name = "Bun__Timer__setImmediate" });
+    const TimeoutWarning = enum {
+        TimeoutOverflowWarning,
+        TimeoutNegativeWarning,
+        TimeoutNaNWarning,
+    };
+
+    fn warnInvalidCountdown(globalThis: *JSGlobalObject, countdown: f64, warning_type: TimeoutWarning) void {
+        const suffix = ".\nTimeout duration was set to 1.";
+
+        var warning_string = switch (warning_type) {
+            .TimeoutOverflowWarning => bun.String.createFormat(
+                "{d} does not fit into a 32-bit signed integer" ++ suffix,
+                .{countdown},
+            ) catch bun.outOfMemory(),
+            .TimeoutNegativeWarning => bun.String.createFormat(
+                "{d} is a negative number" ++ suffix,
+                .{countdown},
+            ) catch bun.outOfMemory(),
+            // std.fmt gives us "nan" but Node.js wants "NaN".
+            .TimeoutNaNWarning => nan_warning: {
+                assert(std.math.isNan(countdown));
+                break :nan_warning bun.String.ascii("NaN is not a number" ++ suffix);
+            },
+        };
+        var warning_type_string = bun.String.createAtomIfPossible(@tagName(warning_type));
+        // these arguments are valid so emitWarning won't throw
+        globalThis.emitWarning(
+            warning_string.transferToJS(globalThis),
+            warning_type_string.transferToJS(globalThis),
+            .undefined,
+            .undefined,
+        ) catch unreachable;
+    }
+
+    fn jsValueToTimeout(
+        this: *All,
+        globalThis: *JSGlobalObject,
+        countdown: JSValue,
+        /// True for Bun.sleep, false for setTimeout/setInterval
+        saturateTimeoutOnOverflowInsteadOfZeroing: bool,
+    ) i32 {
+        // We don't deal with nesting levels directly
+        // but we do set the minimum timeout to be 1ms for repeating timers
+        // TODO: this is wrong as it clears exceptions
+        const countdown_double = countdown.coerceToDouble(globalThis);
+
+        const countdown_int: i32 = if (saturateTimeoutOnOverflowInsteadOfZeroing)
+            std.math.lossyCast(i32, countdown_double)
+        else if (!(countdown_double >= 1 and countdown_double <= std.math.maxInt(i32))) one: {
+            if (countdown_double > std.math.maxInt(i32)) {
+                warnInvalidCountdown(globalThis, countdown_double, .TimeoutOverflowWarning);
+            } else if (countdown_double < 0 and !this.warned_negative_number) {
+                this.warned_negative_number = true;
+                warnInvalidCountdown(globalThis, countdown_double, .TimeoutNegativeWarning);
+            } else if (std.math.isNan(countdown_double) and !this.warned_not_number) {
+                this.warned_not_number = true;
+                warnInvalidCountdown(globalThis, countdown_double, .TimeoutNaNWarning);
+            }
+            break :one 1;
+        } else @intFromFloat(countdown_double);
+
+        return countdown_int;
     }
 
     pub fn setTimeout(
@@ -402,18 +466,7 @@ pub const All = struct {
         const id = globalThis.bunVM().timer.last_id;
         globalThis.bunVM().timer.last_id +%= 1;
 
-        // TODO: this is wrong as it clears exceptions
-        const countdown_double = countdown.coerceToDouble(globalThis);
-
-        const countdown_int: i32 = if (saturateTimeoutOnOverflowInsteadOfZeroing)
-            std.math.lossyCast(i32, countdown_double)
-        else
-            (if (!std.math.isFinite(countdown_double))
-                1
-            else if (countdown_double < std.math.minInt(i32) or countdown_double > std.math.maxInt(i32))
-                1
-            else
-                @max(1, @as(i32, @intFromFloat(countdown_double))));
+        const countdown_int = globalThis.bunVM().timer.jsValueToTimeout(globalThis, countdown, saturateTimeoutOnOverflowInsteadOfZeroing);
 
         const wrappedCallback = callback.withAsyncContextIfNeeded(globalThis);
 
@@ -432,17 +485,7 @@ pub const All = struct {
 
         const wrappedCallback = callback.withAsyncContextIfNeeded(globalThis);
 
-        // We don't deal with nesting levels directly
-        // but we do set the minimum timeout to be 1ms for repeating timers
-        // TODO: this is wrong as it clears exceptions
-        const countdown_double = countdown.coerceToDouble(globalThis);
-
-        const countdown_int: i32 = if (!std.math.isFinite(countdown_double))
-            1
-        else if (countdown_double < std.math.minInt(i32) or countdown_double > std.math.maxInt(i32))
-            1
-        else
-            @max(1, @as(i32, @intFromFloat(countdown_double)));
+        const countdown_int = globalThis.bunVM().timer.jsValueToTimeout(globalThis, countdown, false);
 
         return set(id, globalThis, wrappedCallback, countdown_int, arguments, true) catch
             return JSValue.jsUndefined();
@@ -553,6 +596,7 @@ pub const All = struct {
     pub const namespace = shim.namespace;
 
     pub const Export = shim.exportFunctions(.{
+        .setImmediate = setImmediate,
         .setTimeout = setTimeout,
         .setInterval = setInterval,
         .clearImmediate = clearImmediate,

@@ -2214,7 +2214,7 @@ function getOrigin(origin: any, isAltSvc: boolean): string {
     origin = origin.origin;
   }
   validateString(origin, "origin");
-  if (!origin) {
+  if (!origin || origin === "null") {
     if (isAltSvc) {
       throw $ERR_HTTP2_ALTSVC_INVALID_ORIGIN("HTTP/2 ALTSVC frames require a valid origin");
     } else {
@@ -2230,7 +2230,7 @@ function initOriginSet(session: Http2Session) {
     const socket = session[bunHTTP2Socket];
     session[bunHTTP2OriginSet] = originSet = new Set<string>();
     let hostName = socket.servername;
-    if (hostName === null || hostName === false) {
+    if (!hostName) {
       if (socket.remoteFamily === "IPv6") {
         hostName = `[${socket.remoteAddress}]`;
       } else {
@@ -2333,7 +2333,6 @@ class ServerHttp2Session extends Http2Session {
     ) {
       if (!self || typeof stream !== "object") return;
       const headers = toHeaderObject(rawheaders, sensitiveHeadersValue || []);
-
       const status = stream[bunHTTP2StreamStatus];
       if ((status & StreamState.StreamResponded) !== 0) {
         stream.emit("trailers", headers, flags, rawheaders);
@@ -2480,7 +2479,10 @@ class ServerHttp2Session extends Http2Session {
     }
 
     validateString(alt, "alt");
-    if (!kQuotedString.test(alt)) throw $ERR_INVALID_CHAR("alt");
+
+    if (!kQuotedString.test(alt)) {
+      throw $ERR_INVALID_CHAR("Invalid character in alt");
+    }
     origin = origin || "";
     if (Buffer.byteLength(origin) + Buffer.byteLength(alt) > MAX_LENGTH) {
       throw $ERR_HTTP2_ALTSVC_LENGTH("HTTP/2 ALTSVC frames are limited to 16382 bytes");
@@ -2491,7 +2493,11 @@ class ServerHttp2Session extends Http2Session {
     const MAX_LENGTH = 16384;
     const parser = this.#parser;
     if (this.destroyed || !parser) throw $ERR_HTTP2_INVALID_SESSION(`The session has been destroyed`);
-    if (origins.length === 1) {
+    let length = origins.length;
+    if (length === 0) {
+      return;
+    }
+    if (length === 1) {
       const origin = getOrigin(origins[0], false);
       if (Buffer.byteLength(origin) + 2 > MAX_LENGTH) {
         throw $ERR_HTTP2_ORIGIN_LENGTH("HTTP/2 ORIGIN frames are limited to 16382 bytes");
@@ -2499,11 +2505,12 @@ class ServerHttp2Session extends Http2Session {
       parser.origin(origin);
     }
     let totalSize = 0;
-    let validOrigins: string[] = [];
+    let validOrigins: any[] = [];
     for (const origin of origins) {
       const validOrigin = getOrigin(origin, false);
-      totalSize += Buffer.byteLength(validOrigin) + 2;
-      validOrigins.push(validOrigin);
+      const size = Buffer.byteLength(validOrigin, "ascii");
+      totalSize += size + 2;
+      validOrigins.push(validOrigin, size);
     }
     if (totalSize > MAX_LENGTH) {
       throw $ERR_HTTP2_ORIGIN_LENGTH("HTTP/2 ORIGIN frames are limited to 16382 bytes");
@@ -2512,9 +2519,14 @@ class ServerHttp2Session extends Http2Session {
     // encode origins into a buffer
     const buffer = Buffer.allocUnsafe(totalSize);
     let offset = 0;
-    for (const origin of validOrigins) {
-      offset += buffer.writeUInt16BE(origin.length, offset);
-      offset += buffer.write(origin, offset);
+    length = validOrigins.length;
+    for (let i = 0; i < length; i += 2) {
+      const origin = validOrigins[i] as string;
+      const size = validOrigins[i + 1] as number;
+
+      buffer.writeUInt16BE(size, offset);
+      buffer.write(origin, offset + 2, totalSize, "ascii");
+      offset += size + 2;
     }
 
     parser.origin(buffer);
@@ -3339,7 +3351,6 @@ function connectionListener(socket: Socket) {
   session.on("error", sessionOnError);
   const timeout = this.timeout;
   if (timeout) session.setTimeout(timeout, sessionOnTimeout);
-
   this.emit("session", session);
 }
 class Http2Server extends net.Server {

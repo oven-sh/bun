@@ -25,7 +25,7 @@
 
 #include "config.h"
 
-#include <wtf/IsoMalloc.h>
+#include <wtf/TZoneMallocInlines.h>
 #include "MessagePortChannelRegistry.h"
 
 // #include "Logging.h"
@@ -37,7 +37,7 @@
 
 namespace WebCore {
 
-WTF_MAKE_ISO_ALLOCATED_IMPL(MessagePortChannelRegistry);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(MessagePortChannelRegistry);
 
 MessagePortChannelRegistry::MessagePortChannelRegistry() = default;
 

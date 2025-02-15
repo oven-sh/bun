@@ -231,7 +231,7 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
         for (auto& it : *typeCounts) {
             if (it.value > 0)
                 counts.append(
-                    std::make_pair(Identifier::fromLatin1(vm, it.key), it.value));
+                    std::make_pair(Identifier::fromString(vm, it.key), it.value));
         }
 
         // Sort by count first, then by name.
@@ -272,7 +272,7 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
         objectTypeCounts);
 
     object->putDirect(vm,
-        Identifier::fromLatin1(vm, "protectedObjectTypeCounts"_s),
+        Identifier::fromString(vm, "protectedObjectTypeCounts"_s),
         protectedCounts);
     object->putDirect(vm, Identifier::fromString(vm, "heapSize"_s),
         jsNumber(vm.heap.size()));

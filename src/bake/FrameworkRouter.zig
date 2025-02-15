@@ -1081,7 +1081,8 @@ fn scanInner(
 /// creation. A production-grade JS api would be able to re-use objects.
 pub const JSFrameworkRouter = struct {
     pub const codegen = JSC.Codegen.JSFrameworkFileSystemRouter;
-    pub usingnamespace codegen;
+    pub const toJS = codegen.toJS;
+    pub const fromJS = codegen.fromJS;
 
     files: std.ArrayListUnmanaged(bun.String),
     router: FrameworkRouter,

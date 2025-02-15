@@ -32,6 +32,10 @@ onError: *const fn (this: *anyopaque, err: bun.sys.Error) void,
 thread_lock: bun.DebugThreadLock = bun.DebugThreadLock.unlocked,
 
 pub const max_count = 128;
+pub const requires_file_descriptors = switch (Environment.os) {
+    .mac => true,
+    else => false,
+};
 
 pub const Event = WatchEvent;
 pub const Item = WatchItem;
@@ -265,7 +269,9 @@ pub fn flushEvictions(this: *Watcher) void {
         if (!Environment.isWindows) {
             // on mac and linux we can just close the file descriptor
             // TODO do we need to call inotify_rm_watch on linux?
-            _ = bun.sys.close(fds[item]);
+            if (fds[item].isValid()) {
+                _ = bun.sys.close(fds[item]);
+            }
         }
         last_item = item;
     }

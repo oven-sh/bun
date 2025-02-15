@@ -82,12 +82,17 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
   var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
   var shouldUnref = false;
+  let needsInternalReadRefresh = false;
 
   function ref() {
     $debug("ref();", reader ? "already has reader" : "getting reader");
     reader ??= native.getReader();
     source.updateRef(true);
     shouldUnref = false;
+    if (needsInternalReadRefresh) {
+      needsInternalReadRefresh = false;
+      internalRead(stream);
+    }
   }
 
   function unref() {
@@ -217,21 +222,28 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
       }
     } catch (err) {
       if (err?.code === "ERR_STREAM_RELEASE_LOCK") {
-        // Not a bug. Happens in unref().
+        // The stream was unref()ed. It may be ref()ed again in the future,
+        // or maybe it has already been ref()ed again and we just need to
+        // restart the internalRead() function. triggerRead() will figure that out.
+        triggerRead.$call(stream, undefined);
         return;
       }
       stream.destroy(err);
     }
   }
 
-  stream._read = function (size) {
+  function triggerRead(size) {
     $debug("_read();", reader);
-    if (!reader) return;
 
-    if (!shouldUnref) {
+    if (reader && !shouldUnref) {
       internalRead(this);
+    } else {
+      // The stream has not been ref()ed yet. If it is ever ref()ed,
+      // run internalRead()
+      needsInternalReadRefresh = true;
     }
-  };
+  }
+  stream._read = triggerRead;
 
   stream.on("resume", () => {
     $debug('on("resume");');

@@ -1994,7 +1994,8 @@ pub fn finalizeBundle(
 
     for (result.cssChunks(), result.css_file_list.values()) |*chunk, metadata| {
         assert(chunk.content == .css);
-        for (chunk.content.css.imports_in_chunk_in_order.slice(), chunk.compile_results_for_chunk) |css_import, compile_result| {
+
+        for (chunk.content.css.imports_in_chunk_in_order.slice()) |css_import| {
             switch (css_import.kind) {
                 // a CSS import which was made redundant by an later import, we can skip
                 // this here
@@ -2004,63 +2005,67 @@ pub fn finalizeBundle(
                 .source_index => |src_idx| {
                     const index = src_idx;
 
-                    const code = try bun.default_allocator.dupe(u8, compile_result.code());
-                    // const code = try chunk.intermediate_output.code(
-                    //     dev.allocator,
-                    //     &bv2.graph,
-                    //     &bv2.linker.graph,
-                    //     "/_bun/TODO-import-prefix-where-is-this-used?",
-                    //     chunk,
-                    //     result.chunks,
-                    //     null,
-                    //     false,
-                    // );
-
-                    // Create an entry for this file.
-                    const key = ctx.sources[index.get()].path.keyForIncrementalGraph();
-                    // const hash = brk: {
-                    //     var hash: ContentHasher.Hash = .init(0x9a4e); // arbitrary seed
-                    //     hash.update(key);
-                    //     hash.update(code.buffer);
-                    //     break :brk hash.final();
-                    // };
-                    // TODO: use a hash mix with the first half being a path hash (to identify files) and
-                    // the second half to be the content hash (to know if the file has changed)
-                    const hash = bun.hash(key);
-                    const asset_index = try dev.assets.replacePath(
-                        key,
-                        &.fromOwnedSlice(dev.allocator, code),
-                        &.css,
-                        hash,
-                    );
-                    // Later code needs to retrieve the CSS content
-                    // The hack is to use `entry_point_id`, which is otherwise unused, to store an index.
-                    chunk.entry_point.entry_point_id = asset_index.get();
-
-                    // Track css files that look like tailwind files.
-                    if (dev.has_tailwind_plugin_hack) |*map| {
-                        const first_1024 = code[0..@min(code.len, 1024)];
-                        if (std.mem.indexOf(u8, first_1024, "tailwind") != null) {
-                            try map.put(dev.allocator, key, {});
-                        } else {
-                            _ = map.swapRemove(key);
-                        }
-                    }
-
-                    try dev.client_graph.receiveChunk(&ctx, index, .{ .css = hash }, null, false);
-
-                    // If imported on server, there needs to be a server-side file entry
-                    // so that edges can be attached. When a file is only imported on
-                    // the server, this file is used to trace the CSS to the route.
-                    if (metadata.imported_on_server) {
-                        try dev.server_graph.insertCssFileOnServer(
-                            &ctx,
-                            index,
-                            key,
-                        );
-                    }
+                    const abs_path = ctx.sources[index.get()].path.keyForIncrementalGraph();
+                    _ = try dev.client_graph.insertEmpty(abs_path, .css);
                 },
             }
+        }
+
+        const index = bun.JSAst.Index.init(chunk.entry_point.source_index);
+
+        const code = try chunk.intermediate_output.code(
+            dev.allocator,
+            &bv2.graph,
+            &bv2.linker.graph,
+            "/_bun/TODO-import-prefix-where-is-this-used?",
+            chunk,
+            result.chunks,
+            null,
+            false,
+        );
+
+        // Create an entry for this file.
+        const key = ctx.sources[index.get()].path.keyForIncrementalGraph();
+        // const hash = brk: {
+        //     var hash: ContentHasher.Hash = .init(0x9a4e); // arbitrary seed
+        //     hash.update(key);
+        //     hash.update(code.buffer);
+        //     break :brk hash.final();
+        // };
+        // TODO: use a hash mix with the first half being a path hash (to identify files) and
+        // the second half to be the content hash (to know if the file has changed)
+        const hash = bun.hash(key);
+        const asset_index = try dev.assets.replacePath(
+            key,
+            &.fromOwnedSlice(dev.allocator, code.buffer),
+            &.css,
+            hash,
+        );
+        // Later code needs to retrieve the CSS content
+        // The hack is to use `entry_point_id`, which is otherwise unused, to store an index.
+        chunk.entry_point.entry_point_id = asset_index.get();
+
+        // Track css files that look like tailwind files.
+        if (dev.has_tailwind_plugin_hack) |*map| {
+            const first_1024 = code.buffer[0..@min(code.buffer.len, 1024)];
+            if (std.mem.indexOf(u8, first_1024, "tailwind") != null) {
+                try map.put(dev.allocator, key, {});
+            } else {
+                _ = map.swapRemove(key);
+            }
+        }
+
+        try dev.client_graph.receiveChunk(&ctx, index, .{ .css = hash }, null, false);
+
+        // If imported on server, there needs to be a server-side file entry
+        // so that edges can be attached. When a file is only imported on
+        // the server, this file is used to trace the CSS to the route.
+        if (metadata.imported_on_server) {
+            try dev.server_graph.insertCssFileOnServer(
+                &ctx,
+                index,
+                key,
+            );
         }
     }
 
@@ -2130,7 +2135,7 @@ pub fn finalizeBundle(
             const entry_index = bun.JSAst.Index.init(chunk.entry_point.source_index);
             // TODO: index css deps. this must add all recursively referenced files
             // as dependencies of the entry point, instead of building a recursive tree.
-            dev.client_graph.processChunkDependencies(&ctx, .css, entry_index, bv2.graph.allocator);
+            try dev.client_graph.processChunkDependencies(&ctx, .css, entry_index, bv2.graph.allocator);
         }
     }
 
@@ -3944,7 +3949,9 @@ pub fn IncrementalGraph(side: bake.Side) type {
         }
 
         /// Returns the key that was inserted.
-        pub fn insertEmpty(g: *@This(), abs_path: []const u8) bun.OOM![]const u8 {
+        pub fn insertEmpty(g: *@This(), abs_path: []const u8, kind_: FileKind) bun.OOM![]const u8 {
+            _ = kind_;
+            const kind = .unknown;
             g.owner().graph_safety_lock.assertLocked();
             const gop = try g.bundled_files.getOrPut(g.owner().allocator, abs_path);
             if (!gop.found_existing) {
@@ -3956,7 +3963,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         .is_special_framework_file = false,
                         .is_html_route = false,
                         .is_css_root = false,
-                        .kind = .unknown,
+                        .kind = kind,
                     }),
                     .server => .{
                         .is_rsc = false,
@@ -3964,7 +3971,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         .is_route = false,
                         .is_client_component_boundary = false,
                         .failed = false,
-                        .kind = .unknown,
+                        .kind = kind,
                     },
                 };
                 try g.first_dep.append(g.owner().allocator, .none);
@@ -4736,8 +4743,8 @@ const DirectoryWatchStore = struct {
         dev.graph_safety_lock.lock();
         defer dev.graph_safety_lock.unlock();
         const owned_file_path = switch (renderer) {
-            .client => try dev.client_graph.insertEmpty(import_source),
-            .server, .ssr => try dev.server_graph.insertEmpty(import_source),
+            .client => try dev.client_graph.insertEmpty(import_source, .unknown),
+            .server, .ssr => try dev.server_graph.insertEmpty(import_source, .unknown),
         };
 
         store.insert(dir, owned_file_path, specifier) catch |err| switch (err) {
@@ -6300,7 +6307,7 @@ pub const Assets = struct {
         const gop = try assets.path_map.getOrPut(alloc, abs_path);
         if (!gop.found_existing) {
             // Locate a stable pointer for the file path
-            const stable_abs_path = try assets.owner().client_graph.insertEmpty(abs_path);
+            const stable_abs_path = try assets.owner().client_graph.insertEmpty(abs_path, .unknown);
             gop.key_ptr.* = stable_abs_path;
         } else {
             const entry_index = gop.value_ptr.*;

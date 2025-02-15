@@ -3133,13 +3133,15 @@ pub const H2FrameParser = struct {
             for (in_slice, 0..) |c, i| {
                 switch (c) {
                     'A'...'Z' => {
-                        bun.copy(u8, out_slice, in_slice[0..i]);
-                        out_slice[i] = std.ascii.toLower(c);
-                        const end = i + 1;
-                        in_slice = in_slice[end..];
-                        out_slice = out_slice[end..];
-                        any = true;
-                        continue :begin;
+                        if (!any) {
+                            bun.copy(u8, out_slice, in_slice[0..i]);
+                            out_slice[i] = std.ascii.toLower(c);
+                            const end = i + 1;
+                            in_slice = in_slice[end..];
+                            out_slice = out_slice[end..];
+                            any = true;
+                        }
+                        continue;
                     },
                     'a'...'z', '0'...'9', '-', '_', '.' => {},
 

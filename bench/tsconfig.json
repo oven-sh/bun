@@ -1,7 +1,0 @@
-{
-  "extends": "../tsconfig.json",
-  "compilerOptions": {
-    // For the organize imports plugin
-    "jsx": "react"
-  }
-}

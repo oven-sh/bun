@@ -1,4 +1,0 @@
-{
-  "name": "bun-loader-svelte",
-  "module": "./bun-loader-svelte.ts"
-}

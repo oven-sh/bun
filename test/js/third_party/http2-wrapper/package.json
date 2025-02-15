@@ -1,7 +1,0 @@
-{
-  "name": "http2-wrapper-test",
-  "version": "1.0.0",
-  "dependencies": {
-    "http2-wrapper": "2.2.1"
-  }
-}

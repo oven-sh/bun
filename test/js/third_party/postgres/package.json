@@ -1,7 +1,0 @@
-{
-  "name": "postgres",
-  "dependencies": {
-    "postgres": "3.3.5",
-    "pg-connection-string": "2.6.1"
-  }
-}

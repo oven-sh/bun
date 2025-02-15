@@ -1,2 +1,0 @@
-[serve.static]
-plugins = ["bun-plugin-tailwind"]

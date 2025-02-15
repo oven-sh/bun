@@ -1,9 +1,0 @@
-WarningsAsErrors: "*"
-FormatStyle: webkit
-Checks: >
-  -*,
-  clang-analyzer-*,
-  -clang-analyzer-optin.core.EnumCastOutOfRange
-  -clang-analyzer-webkit.UncountedLambdaCapturesChecker
-  -clang-analyzer-optin.core.EnumCastOutOfRange
-  -clang-analyzer-webkit.RefCntblBaseVirtualDtor

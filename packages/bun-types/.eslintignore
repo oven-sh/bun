@@ -1,5 +1,0 @@
-*.cjs
-dist/**
-tests/**
-scripts/**
-docs/**

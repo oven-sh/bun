@@ -1,7 +1,0 @@
-{
-  "name": "bun-inspector-protocol",
-  "version": "0.0.1",
-  "dependencies": {
-    "ws": "^8.13.0"
-  }
-}

@@ -1,9 +1,0 @@
-[test]
-# Large monorepos (like Bun) may want to specify the test directory more specifically 
-# By default, `bun test` scans every single folder recursively which, if you
-# have a gigantic submodule (like WebKit), requires lots of directory
-# traversals
-#
-# Instead, we can only scan the test directory for Bun's runtime tests
-root = "test"
-preload = "./test/preload.ts"

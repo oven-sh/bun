@@ -1,8 +1,0 @@
-// Bun Snapshot v1, https://goo.gl/fbAQLP
-
-exports[`macros should not lead to seg faults under any given input 1`] = `
-"2 | fn(\`©\${Number(0)}\`);
-    ^
-error: "Cannot convert argument type to JS" error in macro
-    at [dir]/index.ts:2:1"
-`;

@@ -1,6 +1,0 @@
-{
-  "name": "lol",
-  "dependencies": {
-    "esbuild": "^0.19.4"
-  }
-}

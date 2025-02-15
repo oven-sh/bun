@@ -81,6 +81,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_UNKNOWN_ENCODING", TypeError],
   ["ERR_UNKNOWN_SIGNAL", TypeError],
   ["ERR_ZLIB_INITIALIZATION_FAILED", Error],
+  ["ERR_INVALID_CHAR", TypeError],
   ["MODULE_NOT_FOUND", Error],
 
   // Bun-specific
@@ -132,6 +133,10 @@ const errors: ErrorCodeMapping = [
   ["ERR_HTTP2_SOCKET_UNBOUND", Error],
   ["ERR_HTTP2_ERROR", Error],
   ["ERR_HTTP2_OUT_OF_STREAMS", Error],
+  ["ERR_HTTP2_ORIGIN_LENGTH", TypeError],
+  ["ERR_HTTP2_INVALID_ORIGIN", TypeError],
+  ["ERR_HTTP2_ALTSVC_LENGTH", TypeError],
+  ["ERR_HTTP2_ALTSVC_INVALID_ORIGIN", TypeError],
 
   // AsyncHooks
   ["ERR_ASYNC_TYPE", TypeError],

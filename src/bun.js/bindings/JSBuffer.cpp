@@ -1402,21 +1402,13 @@ static int64_t indexOfNumber(JSC::JSGlobalObject* lexicalGlobalObject, bool last
 {
     ssize_t byteOffset = indexOfOffset(byteLength, byteOffsetD, 1, !last);
     if (byteOffset == -1) return -1;
+    auto span = std::span<const uint8_t>(typedVector, byteLength);
     if (last) {
-#if (OS(LINUX) && defined(__GNU_LIBRARY__))
-        const void* offset = memrchr(reinterpret_cast<const void*>(typedVector), byteValue, byteOffset + 1);
-        if (offset != NULL) return static_cast<const uint8_t*>(offset) - (typedVector);
-        return -1;
-#else
-        for (int64_t i = byteOffset; i >= 0; --i) {
-            if (byteValue == typedVector[i]) return i;
-        }
-#endif
-    } else {
-        const void* offset = memchr(reinterpret_cast<const void*>(typedVector + byteOffset), byteValue, byteLength - byteOffset);
-        if (offset != NULL) return static_cast<const uint8_t*>(offset) - typedVector;
+        span = span.subspan(0, byteOffset + 1);
+        return WTF::reverseFind(span, byteValue);
     }
-    return -1;
+    span = span.subspan(byteOffset);
+    return WTF::find<uint8_t>(span, byteValue);
 }
 
 static int64_t indexOfString(JSC::JSGlobalObject* lexicalGlobalObject, bool last, const uint8_t* typedVector, size_t byteLength, double byteOffsetD, JSString* str, BufferEncodingType encoding)
